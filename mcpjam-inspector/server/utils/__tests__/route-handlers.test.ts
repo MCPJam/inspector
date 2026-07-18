@@ -4,9 +4,15 @@ import { listTools } from "../route-handlers.js";
 // Mock tokenizer-helpers
 vi.mock("../tokenizer-helpers.js", () => ({
   countToolsTokens: vi.fn().mockResolvedValue(150),
+  mapModelIdToTokenizerBackend: vi
+    .fn()
+    .mockReturnValue("anthropic/claude-sonnet-4.5"),
 }));
 
-import { countToolsTokens } from "../tokenizer-helpers.js";
+import {
+  countToolsTokens,
+  mapModelIdToTokenizerBackend,
+} from "../tokenizer-helpers.js";
 
 function createMockManager(overrides: Record<string, any> = {}) {
   return {
@@ -47,6 +53,25 @@ describe("listTools (inspector enrichment)", () => {
 
     expect(countToolsTokens).not.toHaveBeenCalled();
     expect(result.tokenCount).toBeUndefined();
+  });
+
+  it("reports unavailable token counting for unsupported models", async () => {
+    vi.mocked(mapModelIdToTokenizerBackend).mockReturnValueOnce(null);
+    const tools = [{ name: "echo" }];
+    const manager = createMockManager({
+      listTools: vi.fn().mockResolvedValue({ tools }),
+    });
+
+    const result = await listTools(manager, {
+      serverId: "srv",
+      modelId: "custom-provider/some-model",
+    });
+
+    expect(countToolsTokens).not.toHaveBeenCalled();
+    expect(result.tokenCount).toBeUndefined();
+    expect(result.tokenCountError).toBe(
+      "Could not pre-calculate tool description tokens for this model."
+    );
   });
 
   it("passes through metadata from manager", async () => {

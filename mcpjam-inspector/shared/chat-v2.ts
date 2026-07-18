@@ -1,5 +1,6 @@
 import { UIMessage } from "ai";
 import type { ModelDefinition } from "./types";
+import type { UiToolAnnotations } from "./client-fulfilled-tools";
 import type {
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
@@ -154,14 +155,19 @@ export interface AppToolSnapshotEntry {
  *
  * Unlike app tools, UI tools are first-party and curated: `name` is the
  * model-facing tool name directly (reserved `ui_` prefix, validated at the
- * boundary), with no alias indirection. `readOnly` is metadata for policy
- * and native `annotations.readOnlyHint`, not an inclusion gate.
+ * boundary), with no alias indirection.
+ *
+ * `annotations` carries the MCP `ToolAnnotations` hints and is what drives
+ * approval policy (`uiToolCallNeedsApproval`). `readOnly` predates it and is
+ * retained for wire compatibility: an old client ships only `readOnly`, and
+ * the validator rejects a snapshot whose `readOnlyHint` contradicts it.
  */
 export interface UiToolSnapshotEntry {
   name: string;
   description: string;
   inputSchema?: Record<string, unknown>;
   readOnly: boolean;
+  annotations?: UiToolAnnotations;
 }
 
 export interface WidgetModelContextEntry {

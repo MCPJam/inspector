@@ -258,11 +258,21 @@ import {
 import { useProjectClientConfigSyncPending } from "./hooks/use-project-client-config-sync-pending";
 import { ingestOAuthTraceLogs } from "./stores/traffic-log-store";
 import { clearGuestSession, getGuestBearerToken } from "./lib/guest-session";
+import { publishSelectedServerNames } from "./lib/webmcp/ui-context-source";
 import type {
+  ConnectServerInspectorCommand,
+  DisconnectServerInspectorCommand,
   NavigateInspectorCommand,
   OpenPlaygroundInspectorCommand,
+  RemoveServerInspectorCommand,
   SelectServerInspectorCommand,
+  SnapshotAppInspectorCommand,
 } from "@/shared/inspector-command.js";
+import { isAppSurfaceId } from "@/shared/app-surfaces";
+import {
+  readAllSurfaceSnapshots,
+  readSurfaceSnapshot,
+} from "@/lib/webmcp/surface-snapshot-registry";
 
 const OCCUPATION_GATE_ROLLOUT_MS = Date.parse("2026-04-29T00:00:00.000Z");
 // Accounts created on/after this ship date are treated as "new" for the
@@ -586,6 +596,7 @@ function ServersTabBody() {
     handleReconnect,
     handleUpdate,
     handleRemoveServer,
+    saveServerConfigWithoutConnecting,
     projects,
     activeProjectId,
     activeProjectBillingOrganizationId,
@@ -609,6 +620,7 @@ function ServersTabBody() {
       onReconnect={handleReconnect}
       onUpdate={handleUpdate}
       onRemove={handleRemoveServer}
+      onSaveServerConfig={saveServerConfigWithoutConnecting}
       projects={projects}
       activeProjectId={activeProjectId}
       organizationId={activeProjectBillingOrganizationId}
@@ -847,7 +859,7 @@ export function HostCompareRoute({ bare = false }: { bare?: boolean } = {}) {
         rightSlot={
           // Host/Compare sub-nav inline in the header row (single bar) rather
           // than stacked beneath the primary nav.
-          <div className="flex min-w-0 items-center justify-center md:justify-end">
+          <div className="flex min-w-0 flex-wrap items-center justify-center gap-2 @2xl:justify-end">
             <HostSectionTabs
               value="compare"
               hostEnabled={Boolean(previewedHostId)}
@@ -1983,6 +1995,11 @@ export default function App() {
     pendingDashboardOAuth,
     isCloudSyncActive,
     persistRuntimeServerToProjectIfNeeded,
+    // Connect-screen inspector commands (`ui_add_server` & co) delegate to
+    // these — the same handles the Connect screen's own buttons use.
+    connectServerWithResult,
+    handleDisconnect: handleDisconnectAction,
+    handleRemoveServer: handleRemoveServerAction,
     activeMcpProfile,
     activeHost,
     activeHostId,
@@ -2046,11 +2063,33 @@ export default function App() {
   projectServersRef.current = projectServers;
   const selectedServerRef = useRef(appState.selectedServer);
   selectedServerRef.current = appState.selectedServer;
+  // Publish the current selection for the agent's per-turn orientation block,
+  // which is built in a hook that can't reach app state (ui-context-source).
+  // `selectedServer` uses the string "none" as its no-selection sentinel —
+  // excluded here so the model isn't told a server literally named "none" is
+  // selected.
+  useEffect(() => {
+    const names = appState.selectedMultipleServers.length
+      ? appState.selectedMultipleServers
+      : appState.selectedServer && appState.selectedServer !== "none"
+        ? [appState.selectedServer]
+        : [];
+    publishSelectedServerNames(names);
+  }, [appState.selectedMultipleServers, appState.selectedServer]);
   const persistRuntimeServerToProjectRef = useRef(
     persistRuntimeServerToProjectIfNeeded
   );
   persistRuntimeServerToProjectRef.current =
     persistRuntimeServerToProjectIfNeeded;
+  // Action-layer handles for the Connect-screen inspector commands. Refs,
+  // like the ones above, so the handler-registration effect doesn't tear
+  // down and re-register on every render these identities change.
+  const connectServerWithResultRef = useRef(connectServerWithResult);
+  connectServerWithResultRef.current = connectServerWithResult;
+  const handleDisconnectRef = useRef(handleDisconnectAction);
+  handleDisconnectRef.current = handleDisconnectAction;
+  const handleRemoveServerRef = useRef(handleRemoveServerAction);
+  handleRemoveServerRef.current = handleRemoveServerAction;
   const getInspectorServerState = useCallback((serverName: string) => {
     const runtimeServer = oauthDebuggerServersRef.current[serverName];
     const projectServer = projectServersRef.current[serverName];
@@ -2723,12 +2762,208 @@ export default function App() {
       }
     );
 
+    // The ONE `snapshotApp` handler. Surfaces contribute via the provider
+    // registry rather than registering their own handler here: the bus
+    // dispatches newest-first and returns the first success, so a second
+    // handler would shadow this one whenever its surface happened to be
+    // mounted — a whole-app snapshot would silently become a one-screen one.
+    //
+    // Always registered, so `ui_snapshot_app` works from anywhere. It stays
+    // read-only: it never mounts a surface to observe it, which is what
+    // makes its `readOnlyHint` (and its approval exemption) honest.
+    const unregisterSnapshotApp = registerInspectorCommandHandler(
+      "snapshotApp",
+      async (rawCommand) => {
+        const command = rawCommand as SnapshotAppInspectorCommand;
+        const hasSurfaceKey =
+          command.payload != null && "surface" in command.payload;
+        const requested = command.payload?.surface;
+
+        // Handlers cast rather than parse, so the type is no guarantee. An
+        // absent `surface` means whole-app; a PRESENT surface that isn't a
+        // real id (empty string, junk) is an error, not a silent fall-through
+        // to whole-app.
+        if (hasSurfaceKey && !isAppSurfaceId(requested)) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            `Invalid surface ${JSON.stringify(requested)}. Omit it to snapshot the whole app, or pass a known screen id.`
+          );
+        }
+
+        if (requested) {
+          const result = await readSurfaceSnapshot(requested);
+          if (!result.ok) {
+            // A missing provider means the screen isn't open (recoverable by
+            // navigating); a provider that threw or timed out is a genuine
+            // execution failure. Same error string, different code — the
+            // agent reacts differently to each.
+            if (result.reason === "no_provider") {
+              throw createInspectorCommandClientError(
+                "unsupported_in_mode",
+                `${result.error} That screen is not open — navigate to it first, or omit "surface" for app-level state.`
+              );
+            }
+            throw createInspectorCommandClientError(
+              "execution_failed",
+              result.error
+            );
+          }
+          return { surface: requested, [requested]: result.data };
+        }
+
+        const pathname = window.location.pathname;
+        // "none" is the no-selection sentinel — don't report it as a server.
+        const focused =
+          selectedServerRef.current && selectedServerRef.current !== "none"
+            ? selectedServerRef.current
+            : undefined;
+        const selectedServers = appState.selectedMultipleServers?.length
+          ? appState.selectedMultipleServers
+          : focused
+            ? [focused]
+            : [];
+        return {
+          path: pathname,
+          activeTab: pathnameToActiveTab(pathname),
+          selectedServers,
+          servers: Object.entries(projectServersRef.current).map(
+            ([name, server]) => ({
+              name,
+              connectionStatus:
+                (server as { connectionStatus?: string })?.connectionStatus ??
+                "unknown",
+            })
+          ),
+          surfaces: await readAllSurfaceSnapshots(),
+        };
+      }
+    );
+
+    // --- Connect-screen commands -------------------------------------
+    // These delegate to the SAME action layer the Connect screen's own
+    // buttons use (`use-app-state`), so an agent-added server is
+    // byte-identical to a hand-added one. No DOM events, no component
+    // internals — the difference between driving the app and puppeting it.
+
+    const requireKnownServer = (serverName: string) => {
+      const state = getInspectorServerState(serverName);
+      if (!state) {
+        throw createInspectorCommandClientError(
+          "unknown_server",
+          `Unknown server "${serverName}".`
+        );
+      }
+      return state;
+    };
+
+    const readConnectionStatus = (serverName: string) => {
+      const state = getInspectorServerState(serverName);
+      return (
+        state?.runtimeServer?.connectionStatus ??
+        state?.projectServer?.connectionStatus ??
+        "disconnected"
+      );
+    };
+
+    // `addServer` lives in ServersTab, NOT here: creating a server has to
+    // honor `BILLING_GATES.serverCreation`, and that gate is a hook that only
+    // exists on the Connect screen. Registering it here would have bypassed
+    // the same limit the Add button enforces. connect/disconnect/remove don't
+    // create servers, so they stay App-level.
+
+    const unregisterConnectServer = registerInspectorCommandHandler(
+      "connectServer",
+      async (rawCommand) => {
+        const command = rawCommand as ConnectServerInspectorCommand;
+        const serverName = command.payload.serverName;
+        requireKnownServer(serverName);
+
+        const result = await connectServerWithResultRef.current(serverName);
+        await waitForUiCommit();
+
+        // Report what happened, including the outcomes that are neither
+        // success nor failure. `reauth` is the important one: the server
+        // needs the USER to authorize it, and saying "failed" would send
+        // the agent off retrying something only a human can finish.
+        if (result.status === "reauth") {
+          return {
+            serverName,
+            status: "authorization_required",
+            connectionStatus: readConnectionStatus(serverName),
+            message: `"${serverName}" needs authorization. The user must click Authorize on the Connect screen; it opens their identity provider.`,
+          };
+        }
+        if (result.status === "superseded") {
+          return {
+            serverName,
+            status: "superseded",
+            message: `Another connection attempt for "${serverName}" is already in flight; leaving it alone.`,
+          };
+        }
+        if (result.status !== "connected") {
+          throw createInspectorCommandClientError(
+            "execution_failed",
+            result.error ?? `Could not connect "${serverName}".`
+          );
+        }
+
+        return {
+          serverName,
+          status: "connected",
+          connectionStatus: readConnectionStatus(serverName),
+        };
+      }
+    );
+
+    const unregisterDisconnectServer = registerInspectorCommandHandler(
+      "disconnectServer",
+      async (rawCommand) => {
+        const command = rawCommand as DisconnectServerInspectorCommand;
+        const serverName = command.payload.serverName;
+        requireKnownServer(serverName);
+
+        await handleDisconnectRef.current(serverName);
+        await waitForUiCommit();
+        return {
+          serverName,
+          connectionStatus: readConnectionStatus(serverName),
+        };
+      }
+    );
+
+    const unregisterRemoveServer = registerInspectorCommandHandler(
+      "removeServer",
+      async (rawCommand) => {
+        const command = rawCommand as RemoveServerInspectorCommand;
+        const serverName = command.payload.serverName;
+        requireKnownServer(serverName);
+
+        await handleRemoveServerRef.current(serverName);
+        await waitForUiCommit();
+
+        // Verify rather than assume: `handleRemoveServer` resolves void and
+        // the tool result is the only thing the user will read.
+        if (getInspectorServerState(serverName)) {
+          throw createInspectorCommandClientError(
+            "execution_failed",
+            `"${serverName}" is still present after the remove.`
+          );
+        }
+        return { serverName, removed: true };
+      }
+    );
+
     return () => {
       unregisterNavigate();
       unregisterSelectServer();
       unregisterOpenPlayground();
+      unregisterSnapshotApp();
+      unregisterConnectServer();
+      unregisterDisconnectServer();
+      unregisterRemoveServer();
     };
   }, [
+    appState.selectedMultipleServers,
     getInspectorServerState,
     setSelectedServer,
     setSelectedMCPConfigs,

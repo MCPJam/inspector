@@ -1880,6 +1880,15 @@ describe("POST /api/mcp/chat-v2", () => {
             .mocked(global.fetch)
             .mock.calls.find(([url]) => String(url).endsWith("/stream"));
           expect(streamCall).toBeDefined();
+          // …and that minted bearer must actually be SENT on the upstream
+          // /stream call, not merely resolved — otherwise the guest request
+          // would reach Convex unauthenticated.
+          const streamHeaders = new Headers(
+            (streamCall?.[1] as RequestInit | undefined)?.headers,
+          );
+          expect(streamHeaders.get("authorization")).toBe(
+            "Bearer guest-test-token",
+          );
         } finally {
           global.fetch = originalFetch;
         }

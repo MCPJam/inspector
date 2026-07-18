@@ -899,11 +899,11 @@ function NewJourneyButton({
         value={goal}
         onChange={(e) => setGoal(e.target.value)}
       />
-      <p className="mb-1 text-xs font-medium">Hosts</p>
+      <p className="mb-1 text-xs font-medium">Clients</p>
       <div className="mb-3 flex flex-wrap gap-2">
         {hosts.length === 0 ? (
           <span className="text-xs text-muted-foreground">
-            No hosts in this project.
+            No clients in this project.
           </span>
         ) : (
           sortedHosts.map((h) => {

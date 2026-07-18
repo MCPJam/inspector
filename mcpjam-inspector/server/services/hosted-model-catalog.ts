@@ -155,15 +155,24 @@ export function startHostedModelCatalogRefresh(): void {
  * current between hourly cron refreshes — without which a brand-new model can
  * show in the picker and then mis-dispatch to BYOK because this cache hasn't
  * refreshed yet. Empty input is ignored (never clobber a good cache with a
- * failed/partial fetch); a non-empty set replaces the dynamic ids, matching
- * refreshHostedModelCatalog's "fresh catalog is authoritative" semantics.
+ * failed/partial fetch).
+ *
+ * ADDITIVE ONLY: this warm signal never removes ids. The picker proxy fetch can
+ * be partial/truncated, and replacing the set with a truncated response would
+ * drop live hosted models, misclassifying them as BYOK (billing mis-dispatch)
+ * until the next hourly refresh. We union into the current set instead; pruning
+ * of genuinely-removed ids is left to refreshHostedModelCatalog(), which
+ * replaces from a validated full fetch.
  */
 export function ingestHostedCatalogIds(ids: Iterable<string>): void {
   const fresh = new Set<string>();
   for (const id of ids) {
     if (typeof id === "string" && id.length > 0) fresh.add(id);
   }
-  if (fresh.size > 0) catalogIds = fresh;
+  if (fresh.size === 0) return;
+  const merged = new Set(catalogIds ?? []);
+  for (const id of fresh) merged.add(id);
+  catalogIds = merged;
 }
 
 /**

@@ -10,7 +10,7 @@ import {
   useHostedModelCatalog,
 } from "../use-hosted-model-catalog";
 
-const STORAGE_KEY = "mcpjam.hostedModelCatalog.v1";
+const STORAGE_KEY = "mcpjam.hostedModelCatalog.v2";
 
 function catalogDto(id: string, guestAllowed = true) {
   return {

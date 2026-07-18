@@ -68,6 +68,11 @@ import type { HarnessSessionCommitPayload } from "./harness/harness-session-stat
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-helpers.js";
 import { ErrorCode, WebRouteError } from "./../routes/web/errors.js";
 import { readUrlElicitations } from "@/shared/http-tool-calls";
+import {
+  classifyUiToolApprovals,
+  type UiToolApprovalClassification,
+} from "@/shared/client-fulfilled-tools";
+import { isRenderedUiContextText } from "@/shared/ui-context";
 import type { createHostedRpcLogCollector } from "./../routes/web/hosted-rpc-logs.js";
 import type { HostedElicitationBridge } from "./../routes/web/hosted-elicitation.js";
 import { bridgeHarnessRpcLogsToCollector } from "./../routes/web/hosted-rpc-logs.js";
@@ -208,16 +213,54 @@ export interface StreamWebChatTurnArgs {
 }
 
 /**
- * Read-only `ui_*` names from the validated snapshot — exempt from the
- * MCPJam loop's approval gate (see `isApprovalFreeToolCallName` in
- * mcpjam-stream-handler). Computed from the VALIDATED entries' `readOnly`
- * flag, never from the raw name, which a third-party server could spoof.
+ * Drop rendered UI-context blocks from history on its way to storage.
+ *
+ * Persistence stores CONVERTED ModelMessages, not UI messages — by then the
+ * data part is already the text block the model read. Left in, it would come
+ * back on reload as visible text the user appears to have typed, and the
+ * client re-attaches fresh context to the next turn anyway.
+ *
+ * Only exact, whole text parts produced by `renderUiContextText` are
+ * removed, and only from USER messages. Never a substring replace: a user who
+ * types the marker into chat keeps their message intact.
  */
-function approvalFreeUiToolNamesFrom(
-  uiTools: UiToolEntry[] | undefined
-): ReadonlySet<string> | undefined {
-  const names = (uiTools ?? []).filter((t) => t.readOnly).map((t) => t.name);
-  return names.length > 0 ? new Set(names) : undefined;
+export function stripUiContextModelParts(
+  messages: ModelMessage[],
+): ModelMessage[] {
+  let changed = false;
+  const out = messages.map((message) => {
+    if (message?.role !== "user" || !Array.isArray(message.content)) {
+      return message;
+    }
+    const content = message.content.filter(
+      (part) =>
+        !(
+          part &&
+          typeof part === "object" &&
+          (part as { type?: unknown }).type === "text" &&
+          isRenderedUiContextText((part as { text?: unknown }).text)
+        ),
+    );
+    if (content.length === message.content.length) return message;
+    changed = true;
+    return { ...message, content } as ModelMessage;
+  });
+  return changed ? out : messages;
+}
+
+/**
+ * Per-tool approval policy for this turn's `ui_*` tools, from the VALIDATED
+ * snapshot's MCP annotations — never from the raw name, which a third-party
+ * server could spoof. Consumed by the MCPJam loop's approval gate (see
+ * `toolCallNeedsApproval` in mcpjam-stream-handler); the BYOK `streamText`
+ * path gets the same policy baked into each tool's `needsApproval` by
+ * `buildUiTools`.
+ */
+function uiToolApprovalsFrom(
+  uiTools: UiToolEntry[] | undefined,
+  requireToolApproval: boolean | undefined
+): UiToolApprovalClassification {
+  return classifyUiToolApprovals(uiTools, requireToolApproval === true);
 }
 
 /**
@@ -433,7 +476,7 @@ export async function streamWebChatTurn(
         accessVersion: persist.accessVersion,
         authHeader: runtime.authHeader,
         sessionMessages: stampSenderUserIdsOnSessionMessages(
-          fullHistory,
+          stripUiContextModelParts(fullHistory),
           persist.originalMessages as unknown[],
           { authenticatedUserId: persist.authenticatedUserId },
         ),
@@ -558,7 +601,10 @@ export async function streamWebChatTurn(
       selectedServers: persist.selectedServerIds,
       serverIds: persist.selectedServerIds,
       requireToolApproval: persist.requireToolApproval,
-      approvalFreeUiToolNames: approvalFreeUiToolNamesFrom(prepare.uiTools),
+      uiToolApprovals: uiToolApprovalsFrom(
+        prepare.uiTools,
+        persist.requireToolApproval
+      ),
       modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
       onConversationComplete,
       onStreamComplete: cleanupStream,
@@ -620,7 +666,10 @@ export async function streamWebChatTurn(
     mcpClientManager: manager,
     selectedServers: persist.selectedServerIds,
     requireToolApproval: persist.requireToolApproval,
-    approvalFreeUiToolNames: approvalFreeUiToolNamesFrom(prepare.uiTools),
+    uiToolApprovals: uiToolApprovalsFrom(
+        prepare.uiTools,
+        persist.requireToolApproval
+      ),
     modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
     ...(persist.harness ? { harness: persist.harness } : {}),
     ...(harnessMcpProxy ? { harnessMcpProxy } : {}),

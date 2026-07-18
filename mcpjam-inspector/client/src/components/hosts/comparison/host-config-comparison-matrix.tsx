@@ -512,7 +512,7 @@ function FieldRow({
           {coverage && (
             <span
               className="text-[10.5px] text-muted-foreground tabular-nums"
-              title={`Supported by ${coverage.supported} of ${coverage.total} hosts`}
+              title={`Supported by ${coverage.supported} of ${coverage.total} clients`}
               data-testid={`coverage-${field.id}`}
             >
               {coverage.supported}/{coverage.total}

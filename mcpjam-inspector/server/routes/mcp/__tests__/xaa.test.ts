@@ -23,7 +23,11 @@ import {
   XAA_DEBUG_IDP_CLIENT_ID,
 } from "@mcpjam/sdk";
 import { WebRouteError } from "../../web/errors.js";
+import { NEGATIVE_TEST_MODES } from "../../../../shared/xaa.js";
 import xaa, { createXaaRouter } from "../xaa.js";
+
+// The 11 scorecard modes — everything the hosted split must mint and redeem.
+const SCORECARD_MODES = NEGATIVE_TEST_MODES.filter((mode) => mode !== "valid");
 
 function jsonResponse(
   body: unknown,
@@ -648,6 +652,191 @@ describe("POST /negative-tests", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  // A hosted evaluator matches subject AND email exactly. Minting without the
+  // email gets every case denied on identity before its mutation is evaluated —
+  // 11 rejections that would score as 11 passes.
+  it("mints the full identity pair into the assertion", async () => {
+    // Params are typed so mock.calls carries the request tuple the assertions
+    // below read back.
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify({ error: "invalid_grant" }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await buildApp().request("/api/web/xaa/negative-tests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...INLINE_BODY,
+        subject: "user-42",
+        email: "person@example.com",
+      }),
+    });
+    expect(response.status).toBe(200);
+
+    // Read the claims off the wire rather than trusting the request body.
+    const assertions = fetchMock.mock.calls.map(([, init]) =>
+      decodeJwtPayload(
+        new URLSearchParams(String(init?.body)).get("assertion") as string
+      )
+    );
+    expect(assertions).toHaveLength(11);
+
+    // Most modes leave the email intact; missing_claims drops it and
+    // unknown_sub rewrites it — mutations that can only happen to a real email.
+    expect(
+      assertions.filter((claims) => claims.email === "person@example.com")
+        .length
+    ).toBeGreaterThan(0);
+    expect(
+      assertions.some((claims) =>
+        String(claims.email).endsWith("@unknown.invalid")
+      )
+    ).toBe(true);
+
+    // The identity is a PAIR — a regression that dropped or mis-set `sub`
+    // would be denied on identity just the same, scoring 11 false passes.
+    const subjects = assertions.map((claims) => claims.sub);
+    expect(subjects.filter((s) => s === "user-42").length).toBeGreaterThan(0);
+    expect(subjects.some((s) => s === "unknown-user-00000")).toBe(true);
+    expect(subjects.some((s) => s === undefined)).toBe(true);
+  });
+
+  // Public CIMD: the client_id is the metadata document URL and there is no
+  // secret to present.
+  it("uses a public CIMD URL client_id without sending a secret", async () => {
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify({ error: "invalid_grant" }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const clientId = "https://app.example.com/.well-known/oauth/client.json";
+    const response = await buildApp().request("/api/web/xaa/negative-tests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...INLINE_BODY,
+        clientId,
+        tokenEndpointAuthMethod: "none",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const responseBody = (await response.json()) as {
+      results: Array<{ mode: string; verdict: string; diff?: unknown }>;
+    };
+    expect(responseBody.results).toHaveLength(11);
+    expect(fetchMock).toHaveBeenCalledTimes(11);
+    for (const [, init] of fetchMock.mock.calls) {
+      const headers = init?.headers as Record<string, string>;
+      const form = new URLSearchParams(String(init?.body));
+      expect(headers.Authorization).toBeUndefined();
+      expect(form.get("client_id")).toBe(clientId);
+      expect(form.has("client_secret")).toBe(false);
+      expect(form.has("client_assertion")).toBe(false);
+    }
+    // The URL client_id is what client_id_mismatch is measured against.
+    const mismatch = responseBody.results.find(
+      (row) => row.mode === "client_id_mismatch"
+    );
+    expect(mismatch?.diff).toMatchObject({
+      field: "client_id",
+      expected: clientId,
+    });
+  });
+
+  it("rejects private_key_jwt when no confidential provider is configured", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await buildApp().request("/api/web/xaa/negative-tests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...INLINE_BODY,
+        clientId: "https://app.example.com/.well-known/oauth/xaa-cimd/AbC123",
+        tokenEndpointAuthMethod: "private_key_jwt",
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("not available"),
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("signs a fresh private_key_jwt client_assertion for every confidential CIMD case", async () => {
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify({ error: "invalid_grant" }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const app = new Hono();
+    app.route(
+      "/api/web/xaa",
+      createXaaRouter({
+        issuerBasePath: "/api/web",
+        httpsOnlyProxy: false,
+        confidentialCimdProvider: getLocalConfidentialCimdProvider(),
+      })
+    );
+
+    const clientId =
+      "https://app.example.com/.well-known/oauth/xaa-cimd/AbC123";
+    const response = await app.request("/api/web/xaa/negative-tests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...INLINE_BODY,
+        clientId,
+        tokenEndpointAuthMethod: "private_key_jwt",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const responseBody = (await response.json()) as {
+      results: Array<{ verdict: string }>;
+    };
+    expect(responseBody.results).toHaveLength(11);
+    expect(fetchMock).toHaveBeenCalledTimes(11);
+
+    const assertions = new Set<string>();
+    for (const [, init] of fetchMock.mock.calls) {
+      const form = new URLSearchParams(String(init?.body));
+      expect(form.get("client_assertion_type")).toBe(
+        "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+      );
+      expect(form.get("client_id")).toBe(clientId);
+      expect(form.has("client_secret")).toBe(false);
+      const assertion = form.get("client_assertion") as string;
+      expect(assertion.split(".")).toHaveLength(3);
+      // iss = sub = the CIMD URL; aud = the token endpoint the case posts to.
+      // A mismatched aud would get every case refused on client auth and
+      // scored "pass" without ever testing the broken ID-JAG.
+      const claims = decodeJwtPayload(assertion);
+      expect(claims.iss).toBe(clientId);
+      expect(claims.sub).toBe(clientId);
+      expect(claims.aud).toBe(INLINE_BODY.tokenEndpoint);
+      assertions.add(assertion);
+    }
+    // Each case authenticates on its own assertion (unique jti), not a shared one.
+    expect(assertions.size).toBe(11);
+  });
+
   it("yields partial results when a case times out (one slow case doesn't sink the run)", async () => {
     let call = 0;
     const fetchMock = vi.fn(async () => {
@@ -766,6 +955,314 @@ describe("hosted-issuer forwarding on the local router", () => {
     expect(forwarded).toEqual({ userId: "user-12345" });
   });
 
+  const HOSTED_MINT_URL = `${HOSTED_ORIGIN}/api/web/xaa/o/org_123/negative-tests`;
+  const HOSTED_SCOPED_ISSUER = `${HOSTED_ORIGIN}/api/web/xaa/o/org_123`;
+
+  // A hosted mint-only response: the 11 broken assertions plus the canonical
+  // hosted issuer. Tokens are opaque here — the redeem forwards them verbatim.
+  function hostedMintResponse() {
+    return jsonResponse({
+      issuer: HOSTED_SCOPED_ISSUER,
+      mints: SCORECARD_MODES.map((mode) => ({
+        mode,
+        token: `hosted.${mode}`,
+        header: { alg: "RS256", typ: "oauth-id-jag+jwt" },
+        // A realistic payload — what the hosted mint actually returns — so the
+        // diff builder reads real claim values rather than undefined.
+        payload: {
+          iss: HOSTED_SCOPED_ISSUER,
+          sub: "user-12345",
+          aud: "https://auth.example.com",
+          resource: "https://mcp.example.com",
+          client_id: "dynamic-client",
+          exp: 1000,
+        },
+      })),
+    });
+  }
+
+  // Routes the hosted mint call vs the local AS redeems. Captures the mint
+  // request body, and each redeem's DESTINATION as well as its form — the
+  // destination matters: an assertion (or the DCR secret) posted to the wrong
+  // endpoint must fail the test, not pass it.
+  type Redeem = { url: string; form: URLSearchParams };
+  function splitFetchMock(captured: {
+    mintBody?: Record<string, unknown>;
+    redeems: Redeem[];
+  }) {
+    return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === HOSTED_MINT_URL) {
+        captured.mintBody = JSON.parse(String(init?.body));
+        return hostedMintResponse();
+      }
+      captured.redeems.push({
+        url,
+        form: new URLSearchParams(String(init?.body)),
+      });
+      return new Response(JSON.stringify({ error: "invalid_grant" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    });
+  }
+
+  // Confidential DCR on hosted: the secret never leaves the machine. Hosted
+  // mints (mint-only, no secret in the body); the local server redeems the 11
+  // assertions at the user's AS, attaching the secret there.
+  it("splits confidential DCR — mints on hosted without the secret, redeems locally with it", async () => {
+    const TOKEN_ENDPOINT = "https://auth.example.com/oauth/token";
+    const captured = { redeems: [] as Redeem[] } as {
+      mintBody?: Record<string, unknown>;
+      redeems: Redeem[];
+    };
+    vi.stubGlobal("fetch", splitFetchMock(captured));
+
+    const response = await buildApp().request("/api/mcp/xaa/negative-tests", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer workos-token",
+      },
+      body: JSON.stringify({
+        audience: "https://auth.example.com",
+        resource: "https://mcp.example.com",
+        tokenEndpoint: TOKEN_ENDPOINT,
+        clientId: "dynamic-client",
+        clientSecret: "session-secret",
+        tokenEndpointAuthMethod: "client_secret_post",
+        issuerMode: "hosted",
+        organizationId: "org_123",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      results: Array<{ mode: string }>;
+    };
+    expect(body.results).toHaveLength(11);
+
+    // Mint request: hosted, mint-only, and the secret/endpoint are stripped.
+    expect(captured.mintBody?.mintOnly).toBe(true);
+    expect(captured.mintBody?.clientSecret).toBeUndefined();
+    expect(captured.mintBody?.tokenEndpoint).toBeUndefined();
+
+    // Redeems: 11, each to the REQUESTED endpoint (never elsewhere — the
+    // secret rides along), carrying a hosted-minted token.
+    expect(captured.redeems).toHaveLength(11);
+    for (const { url, form } of captured.redeems) {
+      expect(url).toBe(TOKEN_ENDPOINT);
+      expect(form.get("client_secret")).toBe("session-secret");
+      expect(String(form.get("assertion"))).toMatch(/^hosted\./);
+    }
+  });
+
+  // Confidential CIMD on hosted: same split. Hosted mints; the local provider
+  // signs the private_key_jwt client_assertion at redeem time.
+  it("splits confidential CIMD — mints on hosted, signs the assertion locally", async () => {
+    const TOKEN_ENDPOINT = "https://auth.example.com/oauth/token";
+    const captured = { redeems: [] as Redeem[] } as {
+      mintBody?: Record<string, unknown>;
+      redeems: Redeem[];
+    };
+    vi.stubGlobal("fetch", splitFetchMock(captured));
+
+    const app = new Hono();
+    app.route(
+      "/api/mcp/xaa",
+      createXaaRouter({
+        issuerBasePath: "/api/mcp",
+        httpsOnlyProxy: false,
+        forwardHostedIssuer: { origin: HOSTED_ORIGIN },
+        confidentialCimdProvider: getLocalConfidentialCimdProvider(),
+      })
+    );
+
+    const clientId = "https://localhost/.well-known/oauth/xaa-cimd/AbC123";
+    const response = await app.request("/api/mcp/xaa/negative-tests", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer workos-token",
+      },
+      body: JSON.stringify({
+        audience: "https://auth.example.com",
+        resource: "https://mcp.example.com",
+        tokenEndpoint: TOKEN_ENDPOINT,
+        clientId,
+        tokenEndpointAuthMethod: "private_key_jwt",
+        issuerMode: "hosted",
+        organizationId: "org_123",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      results: Array<{ mode: string }>;
+    };
+    expect(body.results).toHaveLength(11);
+
+    expect(captured.mintBody?.mintOnly).toBe(true);
+    // There's no secret in a CIMD run, but the endpoint is still redemption-
+    // side and must not go to hosted.
+    expect(captured.mintBody?.tokenEndpoint).toBeUndefined();
+
+    expect(captured.redeems).toHaveLength(11);
+    const clientAssertions = new Set<string>();
+    for (const { url, form } of captured.redeems) {
+      expect(url).toBe(TOKEN_ENDPOINT);
+      expect(form.get("client_assertion_type")).toBe(
+        "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+      );
+      expect(form.get("client_id")).toBe(clientId);
+      expect(form.has("client_secret")).toBe(false);
+      // The ID-JAG came from hosted...
+      expect(String(form.get("assertion"))).toMatch(/^hosted\./);
+
+      // ...but the client_assertion was signed HERE, by the local provider.
+      // Inspect it rather than trusting the type: a missing, malformed, or
+      // reused JWT is exactly the regression this split could introduce.
+      const clientAssertion = form.get("client_assertion") as string;
+      expect(clientAssertion.split(".")).toHaveLength(3);
+      const claims = decodeJwtPayload(clientAssertion);
+      expect(claims.iss).toBe(clientId);
+      expect(claims.sub).toBe(clientId);
+      expect(claims.aud).toBe(TOKEN_ENDPOINT);
+      clientAssertions.add(clientAssertion);
+    }
+    // One fresh signature per case, not a single one reused across all 11.
+    expect(clientAssertions.size).toBe(11);
+  });
+
+  // A malformed / short hosted mint response fails the whole run rather than
+  // silently redeeming fewer cases (which would read as passes).
+  it("fails the run when the hosted issuer mints fewer than every case", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url === HOSTED_MINT_URL) {
+          return jsonResponse({
+            issuer: HOSTED_SCOPED_ISSUER,
+            mints: [
+              {
+                mode: "expired",
+                token: "hosted.expired",
+                header: {},
+                payload: {},
+              },
+            ],
+          });
+        }
+        throw new Error("redeem should never run when minting is incomplete");
+      })
+    );
+
+    const response = await buildApp().request("/api/mcp/xaa/negative-tests", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer workos-token",
+      },
+      body: JSON.stringify({
+        audience: "https://auth.example.com",
+        resource: "https://mcp.example.com",
+        tokenEndpoint: "https://auth.example.com/oauth/token",
+        clientId: "dynamic-client",
+        clientSecret: "session-secret",
+        tokenEndpointAuthMethod: "client_secret_post",
+        issuerMode: "hosted",
+        organizationId: "org_123",
+      }),
+    });
+
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toMatchObject({
+      message: expect.stringContaining("every scorecard case"),
+    });
+  });
+
+  // Counting isn't enough: "valid" is a real mode name, so a skewed response
+  // could hit 11 entries while dropping a required negative case. Completeness
+  // is checked by membership, so this must still fail rather than quietly
+  // redeem 10 broken cases plus one valid one.
+  it("fails the run when the hosted issuer swaps a negative case for 'valid'", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url === HOSTED_MINT_URL) {
+          return jsonResponse({
+            issuer: HOSTED_SCOPED_ISSUER,
+            // 11 entries, but "valid" stands in for the dropped "expired".
+            mints: [
+              { mode: "valid", token: "hosted.valid", header: {}, payload: {} },
+              ...SCORECARD_MODES.filter((mode) => mode !== "expired").map(
+                (mode) => ({
+                  mode,
+                  token: `hosted.${mode}`,
+                  header: {},
+                  payload: { exp: 1000 },
+                })
+              ),
+            ],
+          });
+        }
+        throw new Error("redeem should never run when minting is incomplete");
+      })
+    );
+
+    const response = await buildApp().request("/api/mcp/xaa/negative-tests", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer workos-token",
+      },
+      body: JSON.stringify({
+        audience: "https://auth.example.com",
+        resource: "https://mcp.example.com",
+        tokenEndpoint: "https://auth.example.com/oauth/token",
+        clientId: "dynamic-client",
+        clientSecret: "session-secret",
+        tokenEndpointAuthMethod: "client_secret_post",
+        issuerMode: "hosted",
+        organizationId: "org_123",
+      }),
+    });
+
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toMatchObject({
+      message: expect.stringContaining("expired"),
+    });
+  });
+
+  it("still forwards public CIMD negative tests to the hosted issuer", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ results: [], failures: 0 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await buildApp().request("/api/mcp/xaa/negative-tests", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer workos-token",
+      },
+      body: JSON.stringify({
+        audience: "https://auth.example.com",
+        resource: "https://mcp.example.com",
+        tokenEndpoint: "https://auth.example.com/oauth/token",
+        clientId: "https://app.mcpjam.com/.well-known/oauth/client.json",
+        tokenEndpointAuthMethod: "none",
+        issuerMode: "hosted",
+        organizationId: "org_123",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("forwards issuerKind:anonymous mints to the /g/ hosted endpoint", async () => {
     const fetchMock = vi.fn(async () =>
       jsonResponse({ id_token: "hosted-guest-token", token_type: "Bearer" })
@@ -839,12 +1336,39 @@ describe("hosted-issuer forwarding on the local router", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  // Defense in depth over the field-level check above: the secret string must
+  // appear NOWHERE in the request that reaches the hosted origin, only in the
+  // local AS redeems.
   it("does not forward confidential DCR secrets to the hosted issuer", async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
+    let hostedRawBody = "";
+    let sawSecretInRedeem = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.startsWith(HOSTED_ORIGIN)) {
+          hostedRawBody = String(init?.body);
+          return jsonResponse({
+            issuer: HOSTED_SCOPED_ISSUER,
+            mints: SCORECARD_MODES.map((mode) => ({
+              mode,
+              token: `hosted.${mode}`,
+              header: {},
+              payload: { exp: 1000 },
+            })),
+          });
+        }
+        if (String(init?.body).includes("dynamic-secret")) {
+          sawSecretInRedeem = true;
+        }
+        return new Response(JSON.stringify({ error: "invalid_grant" }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      })
+    );
 
-    const app = buildApp();
-    const response = await app.request("/api/mcp/xaa/negative-tests", {
+    const response = await buildApp().request("/api/mcp/xaa/negative-tests", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -862,9 +1386,10 @@ describe("hosted-issuer forwarding on the local router", () => {
       }),
     });
 
-    expect(response.status).toBe(400);
-    expect((await response.json()).message).toMatch(/confidential DCR/i);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    // Never in the hosted request; always in the local redeems.
+    expect(hostedRawBody).not.toContain("dynamic-secret");
+    expect(sawSecretInRedeem).toBe(true);
   });
 
   it("preserves the upstream status + WWW-Authenticate on a non-JSON hosted error", async () => {
@@ -2141,6 +2666,114 @@ describe("org-scoped /token with SAML subject tokens", () => {
       sub: "alice-123",
       client_id: "client-1",
     });
+  });
+});
+
+describe("negative-tests mint-only (the hosted half of the split)", () => {
+  const BASE = "http://127.0.0.1:6274/api/mcp/xaa";
+  const originalKeyDir = process.env.XAA_IDP_KEY_DIR;
+  let tempDir: string;
+  let app: Hono;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(path.join(os.tmpdir(), "xaa-mintonly-"));
+    process.env.XAA_IDP_KEY_DIR = tempDir;
+    resetXAAIdpKeyPairForTests();
+    initXAAIdpKeyPair();
+    app = new Hono();
+    app.route(
+      "/api/mcp/xaa",
+      createXaaRouter({
+        issuerBasePath: "/api/mcp",
+        httpsOnlyProxy: false,
+        authorizeOrgIssuer: async ({ bearerToken }) => {
+          if (bearerToken !== "member-token") {
+            throw new WebRouteError(403, "FORBIDDEN", "Not an org member");
+          }
+        },
+      })
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    resetXAAIdpKeyPairForTests();
+    rmSync(tempDir, { recursive: true, force: true });
+    if (originalKeyDir === undefined) delete process.env.XAA_IDP_KEY_DIR;
+    else process.env.XAA_IDP_KEY_DIR = originalKeyDir;
+  });
+
+  it("mints every case under the scoped issuer and never fires at an AS", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await app.request(`${BASE}/o/org1/negative-tests`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer member-token",
+      },
+      body: JSON.stringify({
+        mintOnly: true,
+        audience: "https://as.example.com",
+        resource: "https://mcp.example.com",
+        subject: "user-42",
+        email: "person@example.com",
+        clientId: "https://app.example.com/client.json",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      issuer: string;
+      mints: Array<{ mode: string; token: string }>;
+    };
+
+    // Never touched an authorization server — mint-only only signs.
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(body.issuer).toBe(`${BASE}/o/org1`);
+    expect(body.mints).toHaveLength(11);
+
+    // Each token is a real JWT. Every case carries the scoped issuer except
+    // wrong_issuer, whose whole point is to mutate `iss`.
+    for (const { mode, token } of body.mints) {
+      expect(token.split(".")).toHaveLength(3);
+      if (mode !== "wrong_issuer") {
+        expect(decodeJwtPayload(token).iss).toBe(`${BASE}/o/org1`);
+      }
+    }
+    expect(
+      decodeJwtPayload(body.mints.find((m) => m.mode === "wrong_issuer")!.token)
+        .iss
+    ).not.toBe(`${BASE}/o/org1`);
+    // The email is minted into the pair: most cases carry it verbatim, and the
+    // two identity-mutating modes prove it was there to mutate — unknown_sub
+    // rewrites it to @unknown.invalid, missing_claims drops it entirely.
+    const emails = body.mints.map((m) => decodeJwtPayload(m.token).email);
+    expect(
+      emails.filter((e) => e === "person@example.com").length
+    ).toBeGreaterThan(0);
+    expect(emails.some((e) => String(e).endsWith("@unknown.invalid"))).toBe(
+      true
+    );
+    expect(emails.some((e) => e === undefined)).toBe(true);
+  });
+
+  it("gates mint-only behind org membership", async () => {
+    const response = await app.request(`${BASE}/o/org1/negative-tests`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer not-a-member",
+      },
+      body: JSON.stringify({
+        mintOnly: true,
+        audience: "https://as.example.com",
+        resource: "https://mcp.example.com",
+      }),
+    });
+
+    expect(response.status).toBe(403);
   });
 });
 

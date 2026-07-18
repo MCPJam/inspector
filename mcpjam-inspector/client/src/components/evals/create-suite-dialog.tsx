@@ -184,10 +184,10 @@ export function CreateSuiteDialog({
               <div className="space-y-2 p-3">
                 <div className="space-y-0.5">
                   <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    Hosts
+                    Clients
                   </h3>
                   <p className="text-xs text-muted-foreground">
-                    Each attached host fans out into its own run.
+                    Each attached client fans out into its own run.
                   </p>
                 </div>
                 <ClientAttachmentsEditor

@@ -24,6 +24,7 @@
 
 import { create } from "zustand";
 import { isUiToolName } from "@/shared/client-fulfilled-tools.js";
+import type { UiToolAnnotations } from "@/shared/client-fulfilled-tools.js";
 import type { UiToolSnapshotEntry } from "@/shared/chat-v2.js";
 import { mirrorUiToolToNative } from "./native-mirror";
 
@@ -38,8 +39,31 @@ export interface UiToolDefinition {
   description: string;
   /** Plain JSON Schema object (no zod), same as the app-tool pipeline. */
   inputSchema?: Record<string, unknown>;
-  /** Mirrored to native `annotations.readOnlyHint`; metadata, not a gate. */
+  /**
+   * Legacy read-only flag. Kept as the wire-compatible mirror of
+   * `annotations.readOnlyHint`; `registerUiTool` rejects a definition where
+   * the two disagree. Prefer reading `annotations`.
+   */
   readOnly: boolean;
+  /**
+   * MCP `ToolAnnotations` for this tool. Drives approval policy
+   * (`uiToolCallNeedsApproval`) and is projected onto the native WebMCP
+   * descriptor. Every entry in the first-party catalog sets these
+   * explicitly — an absent `destructiveHint` is read as DESTRUCTIVE (the
+   * protocol's pessimistic default), so a tool added without annotations
+   * gates rather than executing silently.
+   */
+  annotations?: UiToolAnnotations;
+  /**
+   * WebMCP's `untrustedContentHint` for the NATIVE mirror only. WebMCP has
+   * its own signal for "this tool's output is externally sourced and should
+   * be treated as untrusted"; MCP's `openWorldHint` is a different thing, so
+   * a native agent won't infer it. Set true for a tool whose result comes
+   * from a third party (e.g. `ui_execute_tool` runs an arbitrary MCP server).
+   * Client-only: it is NOT a valid MCP annotation, so the server validator
+   * would reject it — `snapshotForChatBody` never ships it.
+   */
+  nativeUntrustedContentHint?: boolean;
   /**
    * Executing this tool can change the SPA route (directly, or via the
    * auto-open-playground fallback). Route-bound chat surfaces use this to
@@ -92,6 +116,17 @@ export const useUiToolsRegistry = create<UiToolsRegistryState>((set, get) => ({
       // First-party catalog bug, not user input — fail loudly.
       throw new Error(
         `[webmcp] UI tool name "${def.name}" must match ui_[a-z0-9][a-z0-9_]* (max 64 chars).`,
+      );
+    }
+    if (
+      def.annotations?.readOnlyHint !== undefined &&
+      def.annotations.readOnlyHint !== def.readOnly
+    ) {
+      // The server validator rejects contradictory snapshots; catching it at
+      // registration turns a 400 on every chat POST into an obvious local
+      // failure. Same posture as the name check: first-party bug, fail loud.
+      throw new Error(
+        `[webmcp] UI tool "${def.name}" has readOnly=${def.readOnly} but annotations.readOnlyHint=${def.annotations.readOnlyHint}; they must agree.`,
       );
     }
     if (opts?.signal?.aborted) {
@@ -159,6 +194,7 @@ export const useUiToolsRegistry = create<UiToolsRegistryState>((set, get) => ({
         description: def.description.slice(0, MAX_DESCRIPTION_CHARS),
         inputSchema,
         readOnly: def.readOnly,
+        ...(def.annotations ? { annotations: def.annotations } : {}),
       });
     }
     if (dropped > 0) {
