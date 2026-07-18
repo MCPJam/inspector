@@ -49,6 +49,8 @@ export interface UsageTokens {
   cachedInputTokens?: number;
   /** Provider-reported prompt-cache CREATION (write) tokens. */
   cacheWriteTokens?: number;
+  /** Provider-reported NON-cached input tokens (carried, not derived). */
+  noCacheInputTokens?: number;
 }
 
 /** The `onStepFinish` payload shape both engines fire (mirrors
@@ -183,6 +185,9 @@ export class StreamTurnDriver {
                   : {}),
                 ...(this.usage.cacheWriteTokens !== undefined
                   ? { cacheWriteTokens: this.usage.cacheWriteTokens }
+                  : {}),
+                ...(this.usage.noCacheInputTokens !== undefined
+                  ? { noCacheInputTokens: this.usage.noCacheInputTokens }
                   : {}),
               },
             }
