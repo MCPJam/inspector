@@ -6,6 +6,21 @@
  * when run, fans out one single-host session per (host × sessionsPerHost).
  *
  * Consumes the project-scoped backend: personas:*, journeys:*, journeyRuns:*.
+ *
+ * ## Agent bridge (v1 scope)
+ *
+ * This is the surface component that calls `useSurfaceAgentBridge` for the
+ * `swarms` tool group (create persona, open journey form, launch run). Two
+ * scoping decisions, both grounded in the actual UI:
+ *
+ * - **Promote-to-eval is OUT of v1.** The promotable session is lazily
+ *   paginated inside `RunSessionsView` (per expanded run) and there is no
+ *   top-level "selected session"; an agent tool couldn't resolve one without a
+ *   large lift of run/session state that would diverge the snapshot from the
+ *   multi-card view. The human uses the in-view "Promote to test case" button.
+ * - **Swarm host CRUD is OUT of v1.** Creating/deleting swarm hosts is admin
+ *   role-gated (`SwarmHostsPanel`, `canManageHosts`); the snapshot still
+ *   surfaces host TARGETS (names) via the journey→hosts mapping.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, usePaginatedQuery } from "convex/react";
@@ -13,6 +28,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { toast } from "@/lib/toast";
 import {
   launchJourneyRun,
+  LaunchJourneyRunError,
   SWARM_QUERIES,
   DEFAULT_PAGE_SIZE,
   type GoalScoreRollup,
@@ -48,6 +64,19 @@ import {
   canManageHosts,
   type ProjectMembershipRole,
 } from "@/hooks/useProjects";
+import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
+import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
+import type {
+  CreatePersonaInspectorCommand,
+  LaunchSwarmRunInspectorCommand,
+  OpenJourneyFormInspectorCommand,
+} from "@/shared/inspector-command.js";
+
+// Cap the agent snapshot's list sizes — a redacted STATE overview, never a
+// data dump. Personas/journeys are usually few; the cap just bounds the
+// pathological case.
+const AGENT_SNAPSHOT_MAX_PERSONAS = 30;
+const AGENT_SNAPSHOT_MAX_JOURNEYS = 30;
 
 // Valid readiness enums (mirror `session-readiness.tsx`). The backend
 // denormalizes a WIDE `{ status?: string; verdict?: string }` subset onto the
@@ -246,6 +275,8 @@ export function SwarmsTab({
     () => deepLink.personaRefId ?? null,
   );
   const journeys = useJourneys(selectedPersonaId);
+  // Lifted for the agent snapshot AND the persona strip (one subscription).
+  const trackRecord = usePersonaTrackRecord(selectedPersonaId);
 
   const createPersona = useMutation("personas:createPersona" as any);
   const deletePersona = useMutation("personas:deletePersona" as any);
@@ -255,6 +286,299 @@ export function SwarmsTab({
     () => personas?.find((p) => p._id === selectedPersonaId) ?? null,
     [personas, selectedPersonaId]
   );
+
+  // New-journey form, lifted so `ui_open_journey_form` can open it (the
+  // prefill-over-commit posture — a journey targets hosts + sets fan-out
+  // config, so the human finishes and submits it).
+  const [journeyFormOpen, setJourneyFormOpen] = useState(false);
+  const [journeyGoalSeed, setJourneyGoalSeed] = useState("");
+
+  // ── Agent bridge ──────────────────────────────────────────────────────────
+  // The swarms tool group + this screen's command handlers and snapshot. Lives
+  // HERE in the surface component (SwarmsTab owns personas/journeys and the
+  // launch path and shares no state hook with another surface). Handlers reuse
+  // the EXACT callbacks the buttons use: the createPersona mutation, the
+  // new-journey form, and the launchJourneyRun REST path (with the same
+  // per-launch idempotency key).
+  const agentOperable = isAuthenticated && Boolean(projectId);
+  const requireAgentOperable = () => {
+    if (!agentOperable) {
+      throw createInspectorCommandClientError(
+        "unsupported_in_mode",
+        "Swarms is locked here — sign in and select a project before using the swarm tools.",
+      );
+    }
+  };
+
+  // One idempotency key per (journey) launch, retained verbatim after ANY
+  // unsuccessful response and reused on retry so a network retry can't spawn a
+  // duplicate run (the backend dedupes the reused key). Cleared only after a
+  // confirmed 2xx — mirrors the Run button's `launchKeyRef` semantics.
+  const launchKeysRef = useRef<Map<string, string>>(new Map());
+  const launchingRef = useRef<Set<string>>(new Set());
+
+  // Exact (case-insensitive) resolution against the loaded lists — unknown or
+  // ambiguous → invalid_request, never a fuzzy guess.
+  const resolvePersona = (raw: unknown): Persona => {
+    if (typeof raw !== "string" || raw.trim().length === 0) {
+      throw createInspectorCommandClientError(
+        "invalid_request",
+        "Missing required 'persona' string (a persona name or id).",
+      );
+    }
+    const wanted = raw.trim();
+    const wantedLower = wanted.toLowerCase();
+    const matches = (personas ?? []).filter(
+      (p) => p._id === wanted || p.name.toLowerCase() === wantedLower,
+    );
+    if (matches.length === 1) return matches[0];
+    if (matches.length === 0) {
+      throw createInspectorCommandClientError(
+        "invalid_request",
+        `No persona matches "${wanted}". Use a persona name or id from this screen (list them with ui_snapshot_app).`,
+      );
+    }
+    throw createInspectorCommandClientError(
+      "invalid_request",
+      `${matches.length} personas match "${wanted}" — pass the persona id instead (ids are in ui_snapshot_app).`,
+    );
+  };
+
+  const resolveJourney = (raw: unknown): Journey => {
+    if (typeof raw !== "string" || raw.trim().length === 0) {
+      throw createInspectorCommandClientError(
+        "invalid_request",
+        "Missing required 'journey' string (a goal or journey id).",
+      );
+    }
+    if (!selectedPersona) {
+      throw createInspectorCommandClientError(
+        "invalid_request",
+        "Select a persona first — journeys are listed per persona (see ui_snapshot_app).",
+      );
+    }
+    const wanted = raw.trim();
+    const wantedLower = wanted.toLowerCase();
+    const matches = (journeys ?? []).filter(
+      (j) =>
+        j._id === wanted ||
+        j.goal.toLowerCase() === wantedLower ||
+        (j.name ?? "").toLowerCase() === wantedLower,
+    );
+    if (matches.length === 1) return matches[0];
+    if (matches.length === 0) {
+      throw createInspectorCommandClientError(
+        "invalid_request",
+        `No journey matches "${wanted}" for persona "${selectedPersona.name}". Use a journey goal or id from this screen; if the journey belongs to another persona, select that persona first.`,
+      );
+    }
+    throw createInspectorCommandClientError(
+      "invalid_request",
+      `${matches.length} journeys match "${wanted}" — pass the journey id instead (ids are in ui_snapshot_app).`,
+    );
+  };
+
+  const hostTargetName = (id: string) =>
+    hosts?.find((h) => h.hostId === id)?.name ?? id.slice(0, 8);
+
+  useSurfaceAgentBridge({
+    surfaceId: "swarms",
+    handlers: {
+      createPersona: async (command) => {
+        requireAgentOperable();
+        const pid = projectId;
+        if (!pid) {
+          throw createInspectorCommandClientError(
+            "unsupported_in_mode",
+            "No project is selected.",
+          );
+        }
+        const { payload } = command as CreatePersonaInspectorCommand;
+        const name =
+          typeof payload?.name === "string" ? payload.name.trim() : "";
+        const role =
+          typeof payload?.role === "string" ? payload.role.trim() : "";
+        if (!name) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            "Missing required 'name' string.",
+          );
+        }
+        if (!role) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            "Missing required 'role' string.",
+          );
+        }
+        if (payload?.notes !== undefined && typeof payload.notes !== "string") {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            "'notes' must be a string when provided.",
+          );
+        }
+        const notes =
+          typeof payload?.notes === "string" ? payload.notes.trim() : "";
+        // The SAME mutation the New-persona dialog calls; select the new row
+        // just as the dialog's onCreate does.
+        const row = await createPersona({
+          projectId: pid,
+          name,
+          role,
+          notes,
+        } as any);
+        setSelectedPersonaId(row._id);
+        return {
+          status: "persona_created",
+          personaId: row._id,
+          name,
+          note: "The persona is now selected; add a journey with ui_open_journey_form.",
+        };
+      },
+      openJourneyForm: async (command) => {
+        requireAgentOperable();
+        const { payload } = command as OpenJourneyFormInspectorCommand;
+        let persona = selectedPersona;
+        if (payload?.persona !== undefined) {
+          persona = resolvePersona(payload.persona);
+          setSelectedPersonaId(persona._id);
+        }
+        if (!persona) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            "Select or name a persona first — a journey belongs to a persona.",
+          );
+        }
+        if (payload?.goal !== undefined && typeof payload.goal !== "string") {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            "'goal' must be a string when provided.",
+          );
+        }
+        const goal =
+          typeof payload?.goal === "string" ? payload.goal.trim() : "";
+        setJourneyGoalSeed(goal);
+        setJourneyFormOpen(true);
+        return {
+          status: "form_opened",
+          personaId: persona._id,
+          ...(goal ? { prefilledGoal: goal } : {}),
+          note: "The user picks the target hosts and fan-out config and submits — no journey is created yet.",
+        };
+      },
+      launchSwarmRun: async (command) => {
+        requireAgentOperable();
+        const pid = projectId;
+        if (!pid) {
+          throw createInspectorCommandClientError(
+            "unsupported_in_mode",
+            "No project is selected.",
+          );
+        }
+        const { payload } = command as LaunchSwarmRunInspectorCommand;
+        const journey = resolveJourney(payload.journey);
+        const jid = journey._id;
+        if (launchingRef.current.has(jid)) {
+          throw createInspectorCommandClientError(
+            "execution_failed",
+            "This journey is already launching — wait for it to start.",
+          );
+        }
+        let launchKey = launchKeysRef.current.get(jid);
+        if (!launchKey) {
+          launchKey = crypto.randomUUID();
+          launchKeysRef.current.set(jid, launchKey);
+        }
+        launchingRef.current.add(jid);
+        try {
+          // The SAME gated REST path the Run button uses. Never bypass it.
+          const result = await launchJourneyRun({
+            journeyId: jid,
+            projectId: pid,
+            launchKey,
+          });
+          // Confirmed 2xx — the ONLY place we drop the idempotency key.
+          launchKeysRef.current.delete(jid);
+          return {
+            status: "run_requested",
+            journeyId: jid,
+            runId: result.runId,
+            note: "The run fans out in the background; observe it with ui_snapshot_app.",
+          };
+        } catch (e) {
+          // RETAIN the key on ANY failure (4xx/5xx/network) so a retry reuses
+          // it and the backend dedupes — no duplicate run or double spend.
+          if (e instanceof LaunchJourneyRunError) {
+            if (e.status === 402) {
+              throw createInspectorCommandClientError(
+                "execution_failed",
+                `Cannot launch this journey run: ${e.message} Launching spends the organization's swarm quota, which is exhausted — do not retry until it resets or billing is updated.`,
+              );
+            }
+            throw createInspectorCommandClientError(
+              "execution_failed",
+              `Could not launch the journey run: ${e.message}`,
+            );
+          }
+          throw createInspectorCommandClientError(
+            "execution_failed",
+            e instanceof Error ? e.message : "Failed to launch the journey run.",
+          );
+        } finally {
+          launchingRef.current.delete(jid);
+        }
+      },
+    },
+    // Redacted STATE, not payloads: persona/journey names + ids, host target
+    // NAMES, and aggregate counters/scores only — no transcripts, no tokens,
+    // no PII. Per-run session rows stay in the lazily-paginated per-run view.
+    snapshot: () => {
+      if (!agentOperable) {
+        return {
+          gated: true,
+          reason: "Sign in and select a project to use Swarms.",
+        };
+      }
+      return {
+        view: swarmView,
+        canManageHosts: canManage,
+        selectedPersona: selectedPersona
+          ? {
+              id: selectedPersona._id,
+              name: selectedPersona.name,
+              role: selectedPersona.role,
+            }
+          : null,
+        personaCount: personas?.length ?? 0,
+        personas: (personas ?? [])
+          .slice(0, AGENT_SNAPSHOT_MAX_PERSONAS)
+          .map((p) => ({ id: p._id, name: p.name, role: p.role })),
+        journeys: (journeys ?? [])
+          .slice(0, AGENT_SNAPSHOT_MAX_JOURNEYS)
+          .map((j) => ({
+            id: j._id,
+            goal: j.goal,
+            name: j.name ?? null,
+            hostTargets: j.hostIds.map(hostTargetName),
+            sessionsPerHost: j.config.sessionsPerHost,
+            maxTurns: j.config.maxTurns,
+          })),
+        trackRecord:
+          trackRecord && trackRecord.sessionCount > 0
+            ? {
+                runCount: trackRecord.runCount,
+                sessionCount: trackRecord.sessionCount,
+                goalScore: trackRecord.goalScore
+                  ? {
+                      gradedCount: trackRecord.goalScore.gradedCount,
+                      passedCount: trackRecord.goalScore.passedCount,
+                      avgScore: trackRecord.goalScore.avgScore,
+                    }
+                  : null,
+              }
+            : null,
+      };
+    },
+  });
 
   if (!projectId) {
     return (
@@ -361,12 +685,20 @@ export function SwarmsTab({
               </Button>
             </div>
 
-            <PersonaTrackRecordStrip personaRefId={selectedPersona._id} />
+            <PersonaTrackRecordStrip record={trackRecord} />
 
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-sm font-semibold">Journeys</h3>
               <NewJourneyButton
                 hosts={hosts ?? []}
+                open={journeyFormOpen}
+                onOpenChange={(o) => {
+                  setJourneyFormOpen(o);
+                  // Drop the agent prefill on close so a later manual open
+                  // starts blank.
+                  if (!o) setJourneyGoalSeed("");
+                }}
+                goalSeed={journeyGoalSeed}
                 onCreate={async (draft) => {
                   await createJourney({
                     projectId,
@@ -408,8 +740,13 @@ export function SwarmsTab({
 }
 
 // ── persona track record ─────────────────────────────────────────────────────
-function PersonaTrackRecordStrip({ personaRefId }: { personaRefId: string }) {
-  const record = usePersonaTrackRecord(personaRefId);
+// The record is fetched once in SwarmsTab (shared with the agent snapshot) and
+// passed in, rather than re-subscribing here.
+function PersonaTrackRecordStrip({
+  record,
+}: {
+  record: PersonaTrackRecord | undefined;
+}) {
   if (!record || record.sessionCount === 0) return null;
   return (
     <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-xs">
@@ -852,6 +1189,9 @@ function NewPersonaButton({
 function NewJourneyButton({
   hosts,
   onCreate,
+  open,
+  onOpenChange,
+  goalSeed,
 }: {
   hosts: HostItem[];
   onCreate: (draft: {
@@ -859,12 +1199,22 @@ function NewJourneyButton({
     hostIds: string[];
     config: { sessionsPerHost: number; maxTurns: number };
   }) => Promise<void>;
+  // Controlled by SwarmsTab so `ui_open_journey_form` can open + prefill it.
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** Goal to seed each time the form opens ("" for a manual open). */
+  goalSeed: string;
 }) {
-  const [open, setOpen] = useState(false);
   const [goal, setGoal] = useState("");
   const [hostIds, setHostIds] = useState<string[]>([]);
   const [sessionsPerHost, setSessionsPerHost] = useState(2);
   const [maxTurns, setMaxTurns] = useState(6);
+  // Seed the goal from the agent prefill (or reset to "") whenever the form
+  // transitions open. Manual "+ New journey" opens pass goalSeed="".
+  useEffect(() => {
+    if (open) setGoal(goalSeed);
+  }, [open, goalSeed]);
+  const setOpen = onOpenChange;
   // A journey may target ANY project host, including chatbox/suite-owned ones
   // (the backend validates only project ownership). But surface the Swarms'
   // own clients first and badge the "shared" ones so it's clear which hosts

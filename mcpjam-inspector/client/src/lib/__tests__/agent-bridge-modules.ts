@@ -15,4 +15,7 @@ export const BRIDGE_MODULES: Record<string, string> = {
   // EvalsTab only — NEVER use-eval-handlers or anything CiEvalsTab mounts:
   // ci-evals stays agentTools kind "none".
   evals: "client/src/components/EvalsTab.tsx",
+  // SwarmsTab owns its personas/journeys and the launch path; it does not
+  // share state hooks with another surface, so the bridge lives here.
+  swarms: "client/src/components/swarms/SwarmsTab.tsx",
 };

@@ -256,16 +256,16 @@ export const APP_SURFACES = [
     navSegments: ["swarms"],
     title: "Swarms",
     purpose:
-      "Run many simulated agent sessions against a host to see how it behaves at scale.",
+      "Run many simulated agent sessions against your hosts at scale: define a persona, give it a journey (a goal across one or more hosts), launch a run, and review how each session did.",
     userActivities: [
-      "Publish a swarm and configure personas",
-      "Review swarm sessions",
+      "Create a persona (a simulated user with a role and personality)",
+      "Set up a journey — a goal a persona pursues across one or more hosts",
+      "Launch a journey run that fans out many sessions and spends quota",
+      "Review each run's sessions, readiness, and goal-completion scores",
+      "Promote a strong session into an eval test case",
     ],
-    agentTools: {
-      kind: "none",
-      reason:
-        "Tool group planned (publish a swarm, configure personas, open sessions); tracked in the surface-tools rollout.",
-    },
+    hasSnapshotProvider: true,
+    agentTools: { kind: "group" },
     showInAtlas: true,
   },
   {

@@ -47,7 +47,10 @@ export type InspectorCommandType =
   | "runEvalSuite"
   | "cancelEvalRun"
   | "generateEvalTests"
-  | "deleteEvalSuite";
+  | "deleteEvalSuite"
+  | "createPersona"
+  | "openJourneyForm"
+  | "launchSwarmRun";
 
 export const KNOWN_INSPECTOR_COMMAND_TYPES = [
   "navigate",
@@ -71,6 +74,9 @@ export const KNOWN_INSPECTOR_COMMAND_TYPES = [
   "cancelEvalRun",
   "generateEvalTests",
   "deleteEvalSuite",
+  "createPersona",
+  "openJourneyForm",
+  "launchSwarmRun",
 ] as const satisfies readonly InspectorCommandType[];
 
 export interface InspectorCommandError {
@@ -322,6 +328,57 @@ export interface DeleteEvalSuiteInspectorCommand {
   timeoutMs?: number;
 }
 
+/**
+ * Swarms-screen commands, handled by `SwarmsTab` while `/swarms` is mounted.
+ *
+ * Personas are addressed by name or id as the Personas list shows them;
+ * journeys by their goal text or id as the journey cards show them. Handlers
+ * resolve each against the loaded personas/journeys and reject anything else
+ * as `invalid_request` (ambiguous → ask for the id) — never a fuzzy guess.
+ * The one entity that is created directly is a persona (low-entropy: a name +
+ * role + optional notes); a journey targets hosts and sets fan-out config, so
+ * its command only PREFILLS the form for the user, mirroring the
+ * `openServerForm`/`openEvalSuiteForm` prefill-over-commit precedent.
+ */
+
+/**
+ * Create a persona directly. Low-entropy: a short name + role, plus optional
+ * free-text notes (personality). The new persona becomes the selected one.
+ */
+export interface CreatePersonaInspectorCommand {
+  id: string;
+  type: "createPersona";
+  payload: { name: string; role: string; notes?: string };
+  timeoutMs?: number;
+}
+
+/**
+ * Open the new-journey form for the USER to finish. A journey is high-entropy
+ * (goal, host targeting, sessions-per-host / max-turns), so the ONLY prefill
+ * an agent may pass is the goal text — hosts and config are picked by the
+ * human. `persona` selects which persona's journey list the form opens under
+ * (defaults to the currently selected persona).
+ */
+export interface OpenJourneyFormInspectorCommand {
+  id: string;
+  type: "openJourneyForm";
+  payload: { persona?: string; goal?: string };
+  timeoutMs?: number;
+}
+
+/**
+ * Launch a run of an existing journey. Fans out one session per
+ * (host × sessionsPerHost) and SPENDS the organization's quota — the same
+ * gated `launchJourneyRun` REST path the Run button uses, with the same
+ * per-launch idempotency key so a retry can't spawn a duplicate run.
+ */
+export interface LaunchSwarmRunInspectorCommand {
+  id: string;
+  type: "launchSwarmRun";
+  payload: { journey: string };
+  timeoutMs?: number;
+}
+
 export type InspectorCommand =
   | NavigateInspectorCommand
   | SelectServerInspectorCommand
@@ -343,7 +400,10 @@ export type InspectorCommand =
   | RunEvalSuiteInspectorCommand
   | CancelEvalRunInspectorCommand
   | GenerateEvalTestsInspectorCommand
-  | DeleteEvalSuiteInspectorCommand;
+  | DeleteEvalSuiteInspectorCommand
+  | CreatePersonaInspectorCommand
+  | OpenJourneyFormInspectorCommand
+  | LaunchSwarmRunInspectorCommand;
 
 export interface InspectorCommandSuccessResponse {
   id: string;
