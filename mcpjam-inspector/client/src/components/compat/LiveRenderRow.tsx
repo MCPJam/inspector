@@ -26,7 +26,7 @@ export type LiveRenderOutcome = {
 function withResult(
   prev: Record<string, LiveRenderOutcome>,
   hostId: string,
-  outcome: LiveRenderOutcome,
+  outcome: LiveRenderOutcome
 ): Record<string, LiveRenderOutcome> {
   const trimmed: Record<string, LiveRenderOutcome> = {};
   for (const [k, v] of Object.entries(prev)) {
@@ -48,7 +48,7 @@ function withResult(
  */
 export function useLiveRenders(
   serverName: string,
-  requirements: ServerRequirements,
+  requirements: ServerRequirements
 ) {
   const [runningHostId, setRunningHostId] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, LiveRenderOutcome>>({});
@@ -89,7 +89,7 @@ export function useLiveRenders(
       if (!widgetTool) return;
       if (runningRef.current !== null) return; // a render is already in flight
       const injectOpenAiCompat = getCompatRuntimeForStyle(
-        report.hostId,
+        report.hostId
       ).injected;
       const gen = genRef.current;
       runningRef.current = report.hostId;
@@ -107,7 +107,7 @@ export function useLiveRenders(
         setResults((prev) =>
           withResult(prev, report.hostId, {
             error: err instanceof Error ? err.message : String(err),
-          }),
+          })
         );
       } finally {
         // Only the still-current run clears the in-flight markers; a render
@@ -118,24 +118,26 @@ export function useLiveRenders(
         }
       }
     },
-    [serverName, widgetTool],
+    [serverName, widgetTool]
   );
 
   return { available, runningHostId, results, run, widgetTool };
 }
 
-const STATUS_META: Record<WidgetRenderStatus, { label: string; tone: CompatTone }> =
-  {
-    rendered: { label: "Rendered", tone: "ok" },
-    no_ui_resource: { label: "No widget resource", tone: "neutral" },
-    resource_read_failed: { label: "Resource read failed", tone: "bad" },
-    mount_failed: { label: "Failed to mount", tone: "bad" },
-    bridge_timeout: { label: "Bridge timed out", tone: "bad" },
-    render_error: { label: "Render error", tone: "bad" },
-    blank_screenshot: { label: "Rendered blank", tone: "bad" },
-    screenshot_failed: { label: "Screenshot failed", tone: "neutral" },
-    browser_unavailable: { label: "Browser unavailable", tone: "neutral" },
-  };
+const STATUS_META: Record<
+  WidgetRenderStatus,
+  { label: string; tone: CompatTone }
+> = {
+  rendered: { label: "Rendered", tone: "ok" },
+  no_ui_resource: { label: "No widget resource", tone: "neutral" },
+  resource_read_failed: { label: "Resource read failed", tone: "bad" },
+  mount_failed: { label: "Failed to mount", tone: "bad" },
+  bridge_timeout: { label: "Bridge timed out", tone: "bad" },
+  render_error: { label: "Render error", tone: "bad" },
+  blank_screenshot: { label: "Rendered blank", tone: "bad" },
+  screenshot_failed: { label: "Screenshot failed", tone: "neutral" },
+  browser_unavailable: { label: "Browser unavailable", tone: "neutral" },
+};
 
 /** Compact observed-render result for one host row. */
 export function LiveRenderRow({ outcome }: { outcome: LiveRenderOutcome }) {
@@ -169,7 +171,7 @@ export function LiveRenderRow({ outcome }: { outcome: LiveRenderOutcome }) {
       {r.consoleErrors && r.consoleErrors.length > 0 && (
         <div className="text-muted-foreground">
           {r.consoleErrors.length} console error
-          {r.consoleErrors.length === 1 ? "" : "s"} —{" "}
+          {r.consoleErrors.length === 1 ? "" : "s"}:{" "}
           <span className="font-mono">{r.consoleErrors[0]}</span>
           {r.consoleErrors.length > 1 ? ` +${r.consoleErrors.length - 1}` : ""}
         </div>
