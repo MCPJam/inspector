@@ -19,6 +19,7 @@ import { RecommendedHosts } from "./home/RecommendedHosts";
 import { ProductUpdatesRow } from "./home/ProductUpdatesRow";
 import { McpjamAgentHero } from "./mcpjam-agent/McpjamAgentHero";
 import { McpjamAgentThread } from "./mcpjam-agent/McpjamAgentThread";
+import { useAgentChatEnabled } from "@/hooks/useAgentChatEnabled";
 
 interface HomeTabProps {
   organizationId: string | null;
@@ -144,6 +145,10 @@ export function HomeTab({
   const [searchParams, setSearchParams] = useSearchParams();
   const sessionParam = searchParams.get("session");
   const composeParam = searchParams.get("compose") === "1";
+  // Fail-open kill switch (undefined ⇒ on); see useAgentChatEnabled. When
+  // thrown, the hero/thread/takeover drop out and home renders greeting +
+  // stats + updates + recommendations only.
+  const agentChatEnabled = useAgentChatEnabled();
 
   // Re-arms whenever loading restarts; only fires while still loading.
   const [loadingTimedOut, setLoadingTimedOut] = useState(false);
@@ -334,7 +339,7 @@ export function HomeTab({
   // chose "New chat" from inside the takeover, the entire home screen *becomes*
   // the conversation surface. The greeting, stats, and recommended cards drop
   // out until the user clicks Back.
-  if (sessionParam || composeParam) {
+  if (agentChatEnabled && (sessionParam || composeParam)) {
     return (
       <McpjamAgentTakeoverFrame
         onBack={handleBackToHome}
@@ -385,12 +390,14 @@ export function HomeTab({
           />
         </header>
 
-        <McpjamAgentHero
-          surface="home"
-          onSessionStart={handleSessionStart}
-          onResumeSession={handleResumeSession}
-          ready={Boolean(projectId)}
-        />
+        {agentChatEnabled ? (
+          <McpjamAgentHero
+            surface="home"
+            onSessionStart={handleSessionStart}
+            onResumeSession={handleResumeSession}
+            ready={Boolean(projectId)}
+          />
+        ) : null}
 
         <ProductUpdatesRow />
 

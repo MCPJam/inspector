@@ -58,6 +58,7 @@ import { ConnectViewHeader } from "./components/hosts/ConnectViewHeader";
 import { ComputerView } from "./components/computer/ComputerView";
 import { useComputersEnabledState } from "./hooks/useComputersEnabled";
 import { useSkillsEnabledState } from "./hooks/useSkillsEnabled";
+import { useAgentChatEnabled } from "./hooks/useAgentChatEnabled";
 import { motion } from "framer-motion";
 import { SNAPPY_RAIL } from "./components/hosts/transition-tokens";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
@@ -1586,6 +1587,8 @@ export default function App() {
   const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-ci");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
+  // Fail-open kill switch (undefined ⇒ on); see useAgentChatEnabled.
+  const agentChatEnabled = useAgentChatEnabled();
 
   // Per-tab "hide from this header" list for the OAuth / XAA debugger chip strip.
   // View-only (localStorage) — the x on a chip dismisses it from this header
@@ -2047,8 +2050,10 @@ export default function App() {
   // agents via the chat POST snapshot and mirrored to the browser's native
   // modelContext when present. Disabled on the standalone chatbox chat route:
   // its end user is not the inspector operator, so inspector-driving tools
-  // must not exist on that page (chat snapshot OR native mirror).
-  useRegisterUiTools({ enabled: !isChatboxChatRoute });
+  // must not exist on that page (chat snapshot OR native mirror). Also
+  // dropped when the agent-chat kill switch is thrown: without the agent
+  // there is no consumer, and the catalog must not leak to the native mirror.
+  useRegisterUiTools({ enabled: !isChatboxChatRoute && agentChatEnabled });
   // One-time migration from legacy localStorage state to Convex. No-op in
   // hosted mode and after the first successful run; safe to keep in the tree.
   useLocalStateMigration({
@@ -3813,11 +3818,13 @@ export default function App() {
           </AppRouteReactContext.Provider>
         </div>
       </SidebarInset>
-      <AgentSidePanelMount
-        projectId={activeProjectId ?? null}
-        organizationId={activeOrganizationId ?? null}
-        activeTab={activeTab}
-      />
+      {agentChatEnabled ? (
+        <AgentSidePanelMount
+          projectId={activeProjectId ?? null}
+          organizationId={activeOrganizationId ?? null}
+          activeTab={activeTab}
+        />
+      ) : null}
       <Dialog
         open={showTrialDecisionModal}
         onOpenChange={(open) => {
