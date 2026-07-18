@@ -111,9 +111,11 @@ New hook `useAgentChatEnabled` in `client/src/hooks/`, documented head-to-head w
 `!== false`.**
 
 Kill-flip mid-session rides existing machinery: the `useRegisterUiTools` cleanup aborts
-its controller → all 12 tools unregister and native mirrors dispose; an in-flight stream
-calling a `ui_*` tool errors instead of hanging (`shippedNames` + membership-gated
-dispatch). No new teardown code.
+its controller → all 12 tools unregister and native mirrors dispose; a `ui_*` call
+DISPATCHED after the flip errors instead of hanging (`shippedNames` + membership-gated
+dispatch). A call already mid-execute (`def.execute` in flight) isn't cancelled — execute
+isn't abort-wired — so it finishes and emits its output; the flip governs new dispatch,
+not in-flight execution. No new teardown code.
 
 **Ops:** create `agent-chat-enabled` in PostHog rolled out "on for all" *before* F-1
 deploys. Absence already means on, but pre-creating removes ambiguity and makes the
@@ -174,10 +176,10 @@ For a tool group G gated by flag F (and, via Layer 1, the whole catalog):
 |---|---|---|---|
 | I1 | No G tool in the registry ⇒ absent from every `snapshotForChatBody` | `useRegisterUiTools` group composition | hook flag-matrix test |
 | I2 | No G tool in `document.modelContext` | 1:1 mirror disposers (follows I1) | registry abort/mirror test |
-| I3 | G's nav segments rejected with reason `flag_off`; omitted from `listUiNavigationTargets` | `ui-actions.ts` resolver | resolver unit matrix |
+| I3 | Nav segments **newly introduced by G** are rejected with reason `flag_off` and omitted from `listUiNavigationTargets`. Segments of a **pre-existing** surface that merely gains a flagged tool group stay navigable/observable (atlas case 1) — the flag gates the group's tools, not the human's ability to reach the screen. So `agentToolsFlag` must mark which segments are *group-introduced*; the resolver keys off that, not off surface identity | `ui-actions.ts` resolver (group-introduced segments only) | resolver unit matrix incl. an existing-surface-stays-navigable case |
 | I4 | G's snapshot providers never register while F is off — even when the surface is mounted (a human can navigate there; I3 gates only the agent's path) | the group's provider opt-in (its `snapshotSurfaceId` wiring) is part of the flagged group and registers only when F is `true` | integration test: mount the surface with F off ⇒ provider absent from whole-app and per-surface reads |
 | I5 | A NEW surface shipped behind its own product flag has `showInAtlas: false` until GA (atlas case 2). Existing surfaces gaining a flagged tool group keep `showInAtlas: true` — atlas case 1 applies, no contradiction | manifest data | policy test cloned from the `hostedBlocked` exact-match template (`app-surface-coverage.test.ts:133-138`), keyed on new-surface manifests only |
-| I6 | Flip on→off mid-session: tools + mirrors gone; in-flight calls ERROR, never hang | AbortSignal + `shippedNames` | group-scoped abort test |
+| I6 | Flip on→off mid-session: the group's tools + native mirrors are unregistered, so **calls dispatched after the flip** are rejected (never hang — `shippedNames` lets an in-flight stream error). A call **already executing** (`executeResolvedUiTool` is awaiting `def.execute`) is NOT cancelled — `UiToolDefinition.execute` doesn't receive the registration `AbortSignal`, so it can still complete and emit its output. The guarantee is scoped to post-unregistration dispatch; true mid-execution cancellation would require threading an `AbortSignal` into every tool (out of scope) | AbortSignal (dispatch gate) + `shippedNames` | group-scoped test: post-flip dispatch rejected; an in-flight execute is allowed to finish |
 | I7 | Flip off→on mid-session: tools appear in the next POST | full-set snapshot semantics | register-after-snapshot test |
 | I8 | Flags never touch `uiToolCallNeedsApproval`; approval parity is flag-independent | leave `shared/client-fulfilled-tools.ts` untouched | no-flag-import assertion + existing parity tests |
 
@@ -214,7 +216,7 @@ in an evidence table kept in `docs/qa/ui-only-chat/` (or appended here).
 | 3 | Full chain | navigate → add → connect → open Playground → select harmless tool → execute → observe; execution pills, add/connect do not |
 | 4 | Entry-point × policy matrix | Home hero and side panel, each under default (destructive-only) and strict approval |
 | 5 | Rollback smoke | `MCPJAM_AGENT_PLATFORM_TOOLS=1` in non-prod restores the full prior platform-tools contract |
-| 6 | *(post-F-1)* Kill-switch flip | `agent-chat-enabled=false` mid-session: hero + panel vanish, registry and native mirror empty, in-flight turn errors gracefully |
+| 6 | *(post-F-1)* Kill-switch flip | `agent-chat-enabled=false` mid-session: hero + panel vanish, registry and native mirror empty; a call dispatched after the flip errors gracefully (an already-executing call finishes) |
 
 **Exit criterion** (unchanged from the summary): retain evidence per scenario, file
 failures, and do not expand the tool catalog while any correctness or safety failure is
@@ -468,10 +470,10 @@ off design — stop and re-check §2.
 
 | Symptom | Switch | Blast radius | In-flight turns |
 |---|---|---|---|
-| Agent misbehaving / safety failure in the wild | PostHog `agent-chat-enabled` → `false` | Hero + panel gone, catalog unregistered, mirror clean; playground chat untouched | error cleanly (`shippedNames`), no hang |
+| Agent misbehaving / safety failure in the wild | PostHog `agent-chat-enabled` → `false` | Hero + panel gone, catalog unregistered, mirror clean; playground chat untouched | post-flip dispatch errors cleanly (`shippedNames`), no hang; a call already executing finishes (execute isn't abort-wired) |
 | Cache canary suspected of quality regression | unset `MCPJAM_PROMPT_CACHE_CANARY` | providerOptions/`promptCache` stop being emitted; telemetry keeps flowing | next turn uncached |
 | UI-only contract itself wrong | `MCPJAM_AGENT_PLATFORM_TOOLS=1` | full restore of platform server + preflight + workspace prompt | server-side, per-turn |
-| One tool group misbehaving (post-E-1) | its `agentToolsFlag` → off | that group only; base 12 unaffected | group calls error cleanly |
+| One tool group misbehaving (post-E-1) | its `agentToolsFlag` → off | that group only; base 12 unaffected | post-flip dispatch of the group's tools errors cleanly; an already-executing call finishes |
 
 ## §10 Open items / external dependencies
 
