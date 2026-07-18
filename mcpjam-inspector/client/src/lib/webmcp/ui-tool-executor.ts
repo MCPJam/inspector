@@ -67,7 +67,7 @@ const settledOrInFlightToolCallIds = new Set<string>();
 /** Calls claimed-but-deferred, awaiting the user's approval. */
 const deferredUiToolCalls = new Map<
   string,
-  { toolName: string; input: unknown }
+  { toolName: string; input: unknown; telemetryScope?: string }
 >();
 
 export function __resetUiToolExecutorForTests(): void {
@@ -261,6 +261,7 @@ export function listDeferredUiToolCalls(): Array<{
   toolCallId: string;
   toolName: string;
   input: unknown;
+  telemetryScope?: string;
 }> {
   return [...deferredUiToolCalls.entries()].map(([toolCallId, v]) => ({
     toolCallId,
@@ -349,6 +350,14 @@ export async function handleUiToolCall(
   const registry = useUiToolsRegistry.getState();
   const def = registry.resolve(toolName);
 
+  // Re-emission of an already-executed call (approval-resume re-fires
+  // onToolCall): claimed, output already in the transcript — do nothing.
+  // Checked BEFORE the unavailable branch so a settled call whose tool has
+  // since unregistered (HMR/unmount) can't send a second output or inflate
+  // telemetry with a duplicate started/completed pair. Only IDs this module
+  // executed are ever in the set, so claiming here is always ours to claim.
+  if (settledOrInFlightToolCallIds.has(toolCallId)) return true;
+
   if (!def) {
     // The name was advertised to the server in an earlier snapshot but the
     // tool is gone (HMR teardown, unmount). An output MUST still be
@@ -378,10 +387,6 @@ export async function handleUiToolCall(
     return false;
   }
 
-  // Re-emission of an already-executed call (approval-resume path): claimed,
-  // and its output already exists in the transcript — do nothing.
-  if (settledOrInFlightToolCallIds.has(toolCallId)) return true;
-
   const needsApproval = uiToolCallNeedsApproval({
     readOnly: def.readOnly,
     annotations: def.annotations,
@@ -396,7 +401,11 @@ export async function handleUiToolCall(
   });
 
   if (needsApproval) {
-    deferredUiToolCalls.set(toolCallId, { toolName, input });
+    deferredUiToolCalls.set(toolCallId, {
+      toolName,
+      input,
+      telemetryScope: opts.telemetryScope,
+    });
     return true;
   }
 
@@ -432,6 +441,8 @@ export async function fulfillApprovedUiToolCall(opts: {
   input?: unknown;
   addToolOutput: HandleUiToolCallOptions["addToolOutput"];
   onNavigationToolCall?: (toolName: string) => void;
+  /** Duplicate-detection scope; falls back to the deferred stash's scope. */
+  telemetryScope?: string;
 }): Promise<void> {
   const { toolCallId, addToolOutput } = opts;
   if (settledOrInFlightToolCallIds.has(toolCallId)) return;
@@ -448,6 +459,7 @@ export async function fulfillApprovedUiToolCall(opts: {
       toolName,
       input,
       needsApproval: true,
+      telemetryScope: opts.telemetryScope ?? stashed?.telemetryScope,
     });
   }
 

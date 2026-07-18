@@ -228,6 +228,8 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
     onNavigationToolCall: (toolName) => {
       maybeHandoffToPanel(config, toolName);
     },
+    // Keeps reload-approved calls in this session's duplicate ring.
+    telemetryScope: chatSessionId,
   });
 
   const entry: AgentChatEntry = { chat, config, handleToolApprovalResponse };

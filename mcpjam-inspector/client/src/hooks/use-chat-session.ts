@@ -2132,8 +2132,10 @@ export function useChatSession(
         addToolOutput: addToolOutput as Parameters<
           typeof createUiAwareApprovalResponseHandler
         >[0]["addToolOutput"],
+        // Keeps reload-approved calls in this session's duplicate ring.
+        telemetryScope: chatSessionId,
       }),
-    [addToolApprovalResponse, addToolOutput]
+    [addToolApprovalResponse, addToolOutput, chatSessionId]
   );
 
   // Orphaned-defer fallback: a UI tool call deferred for approval whose

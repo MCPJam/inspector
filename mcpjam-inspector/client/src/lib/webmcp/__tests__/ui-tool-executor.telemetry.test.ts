@@ -325,6 +325,38 @@ describe("ui-tool-executor outcome telemetry", () => {
       });
     });
 
+    it("re-emitted settled call with an unregistered tool emits no telemetry", async () => {
+      const unregister = useUiToolsRegistry
+        .getState()
+        .registerUiTool(makeTool());
+      const addToolOutput = vi.fn();
+
+      await handleUiToolCall({
+        toolName: "ui_navigate",
+        toolCallId: "tc-r-1",
+        input: { target: "servers" },
+        addToolOutput,
+      });
+      expect(eventCalls("ui_tool_call_completed")).toHaveLength(1);
+
+      // HMR/unmount: tool gone, name still shipped. The SDK re-emits the
+      // already-fulfilled call during resume.
+      unregister();
+      trackMock.mockClear();
+      addToolOutput.mockClear();
+      const claimed = await handleUiToolCall({
+        toolName: "ui_navigate",
+        toolCallId: "tc-r-1",
+        input: { target: "servers" },
+        addToolOutput,
+      });
+
+      expect(claimed).toBe(true); // still ours — but nothing re-runs
+      expect(addToolOutput).not.toHaveBeenCalled();
+      expect(eventCalls("ui_tool_call_started")).toHaveLength(0);
+      expect(eventCalls("ui_tool_call_completed")).toHaveLength(0);
+    });
+
     it("identical calls in different telemetry scopes are not duplicates", async () => {
       useUiToolsRegistry.getState().registerUiTool(makeTool());
       const addToolOutput = vi.fn();
