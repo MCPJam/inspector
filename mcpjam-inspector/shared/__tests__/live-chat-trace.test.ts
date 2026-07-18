@@ -15,6 +15,23 @@ describe("mergeLiveChatTraceUsage", () => {
     ).toEqual({ inputTokens: 11, outputTokens: 22, totalTokens: 33 });
   });
 
+  it("carries non-cached input tokens (never derived from the total)", () => {
+    const merged = mergeLiveChatTraceUsage(
+      { inputTokens: 100, cachedInputTokens: 30, cacheWriteTokens: 10 },
+      undefined,
+    );
+    // The provider's own noCache figure only appears when carried; it is
+    // NOT synthesized from inputTokens - cacheRead (which would ignore
+    // writes). Absent here because the base carried none.
+    expect(Object.keys(merged ?? {})).not.toContain("noCacheInputTokens");
+
+    const withNoCache = mergeLiveChatTraceUsage(
+      { inputTokens: 100, noCacheInputTokens: 60 },
+      { inputTokens: 100, noCacheInputTokens: 55 },
+    );
+    expect(withNoCache).toMatchObject({ noCacheInputTokens: 115 });
+  });
+
   it("sums cache-read/write tokens when present on both sides", () => {
     expect(
       mergeLiveChatTraceUsage(

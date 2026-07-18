@@ -312,6 +312,8 @@ export interface TokenUsage {
   cachedInputTokens?: number;
   /** Prompt-cache CREATION (write) tokens for the latest assistant response. */
   cacheWriteTokens?: number;
+  /** Provider-reported NON-cached input tokens (carried, not derived). */
+  noCacheInputTokens?: number;
 }
 
 export interface UseChatSessionReturn {
@@ -2962,6 +2964,7 @@ export function useChatSession(
     // Undefined is preserved when the provider reported no cache data.
     let lastCachedInputTokens: number | undefined;
     let lastCacheWriteTokens: number | undefined;
+    let lastNoCacheInputTokens: number | undefined;
 
     for (const message of messages) {
       if (message.role === "assistant" && message.metadata) {
@@ -2971,6 +2974,7 @@ export function useChatSession(
               outputTokens?: number;
               cachedInputTokens?: number;
               cacheWriteTokens?: number;
+              noCacheInputTokens?: number;
             }
           | undefined;
 
@@ -2979,6 +2983,7 @@ export function useChatSession(
           totalOutputTokens += metadata.outputTokens ?? 0;
           lastCachedInputTokens = metadata.cachedInputTokens;
           lastCacheWriteTokens = metadata.cacheWriteTokens;
+          lastNoCacheInputTokens = metadata.noCacheInputTokens;
         }
       }
     }
@@ -2989,6 +2994,7 @@ export function useChatSession(
       totalTokens: lastInputTokens + totalOutputTokens,
       cachedInputTokens: lastCachedInputTokens,
       cacheWriteTokens: lastCacheWriteTokens,
+      noCacheInputTokens: lastNoCacheInputTokens,
     };
   }, [messages]);
 

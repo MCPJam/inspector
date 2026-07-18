@@ -293,6 +293,8 @@ interface ChatInputProps {
     cachedInputTokens?: number;
     /** Prompt-cache CREATION (write) tokens for the latest response. */
     cacheWriteTokens?: number;
+    /** Provider-reported NON-cached input tokens (carried, not derived). */
+    noCacheInputTokens?: number;
   };
   selectedServers?: string[];
   mcpToolsTokenCount?: Record<string, number> | null;
@@ -1769,16 +1771,11 @@ export function ChatInput({
                             outputTokens: tokenUsage.outputTokens,
                             totalTokens: tokenUsage.totalTokens,
                             inputTokenDetails: {
-                              // Only derive the input partition when cache
-                              // READS were reported — write tokens are
-                              // orthogonal to the read/no-cache split, and
-                              // deriving from them would claim "all input
-                              // uncached" without breakdown data.
-                              noCacheTokens:
-                                tokenUsage.cachedInputTokens !== undefined
-                                  ? tokenUsage.inputTokens -
-                                    tokenUsage.cachedInputTokens
-                                  : undefined,
+                              // The provider's own non-cached count, carried
+                              // through the usage pipeline — never derived
+                              // from the total (which would double-count
+                              // writes). Absent ⇒ the Uncached row is hidden.
+                              noCacheTokens: tokenUsage.noCacheInputTokens,
                               cacheReadTokens: tokenUsage.cachedInputTokens,
                               cacheWriteTokens: tokenUsage.cacheWriteTokens,
                             },

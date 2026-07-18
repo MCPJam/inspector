@@ -432,13 +432,18 @@ export function finishStepUsageMessageMetadata(usage: {
   outputTokens?: number;
   totalTokens?: number;
   cachedInputTokens?: number;
-  inputTokenDetails?: { cacheReadTokens?: number; cacheWriteTokens?: number };
+  inputTokenDetails?: {
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
+    noCacheTokens?: number;
+  };
 }): {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
   cachedInputTokens?: number;
   cacheWriteTokens?: number;
+  noCacheInputTokens?: number;
 } {
   return {
     inputTokens: usage.inputTokens,
@@ -447,5 +452,6 @@ export function finishStepUsageMessageMetadata(usage: {
     cachedInputTokens:
       usage.inputTokenDetails?.cacheReadTokens ?? usage.cachedInputTokens,
     cacheWriteTokens: usage.inputTokenDetails?.cacheWriteTokens,
+    noCacheInputTokens: usage.inputTokenDetails?.noCacheTokens,
   };
 }

@@ -10,6 +10,12 @@ export type LiveChatTraceUsage = {
   cachedInputTokens?: number;
   /** Provider-reported prompt-cache CREATION (write) tokens. */
   cacheWriteTokens?: number;
+  /**
+   * Provider-reported NON-cached input tokens. Carried directly rather than
+   * derived: `inputTokens - cacheRead` would double-count writes, and the
+   * total's relationship to the parts is provider-specific.
+   */
+  noCacheInputTokens?: number;
 };
 
 export type LiveChatTraceToolCall = {
@@ -147,6 +153,8 @@ export function mergeLiveChatTraceUsage(
     (base?.cachedInputTokens ?? 0) + (delta?.cachedInputTokens ?? 0);
   const cacheWriteTokens =
     (base?.cacheWriteTokens ?? 0) + (delta?.cacheWriteTokens ?? 0);
+  const noCacheInputTokens =
+    (base?.noCacheInputTokens ?? 0) + (delta?.noCacheInputTokens ?? 0);
 
   if (inputTokens > 0) {
     next.inputTokens = inputTokens;
@@ -162,6 +170,9 @@ export function mergeLiveChatTraceUsage(
   }
   if (cacheWriteTokens > 0) {
     next.cacheWriteTokens = cacheWriteTokens;
+  }
+  if (noCacheInputTokens > 0) {
+    next.noCacheInputTokens = noCacheInputTokens;
   }
 
   return Object.keys(next).length > 0 ? next : undefined;

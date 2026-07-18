@@ -848,9 +848,11 @@ function readUsageFromFinishChunk(
     // `totalUsage` objects. Absent (backend not sending yet) ⇒ undefined.
     cachedInputTokens?: number;
     cacheWriteTokens?: number;
+    noCacheInputTokens?: number;
     inputTokenDetails?: {
       cacheReadTokens?: number;
       cacheWriteTokens?: number;
+      noCacheTokens?: number;
     };
   };
   const chunk = finishChunk as UIMessageChunk & {
@@ -881,6 +883,11 @@ function readUsageFromFinishChunk(
     usage.inputTokenDetails?.cacheWriteTokens ?? usage.cacheWriteTokens;
   if (typeof cacheWriteTokens === "number") {
     next.cacheWriteTokens = cacheWriteTokens;
+  }
+  const noCacheInputTokens =
+    usage.inputTokenDetails?.noCacheTokens ?? usage.noCacheInputTokens;
+  if (typeof noCacheInputTokens === "number") {
+    next.noCacheInputTokens = noCacheInputTokens;
   }
 
   return Object.keys(next).length > 0 ? next : undefined;

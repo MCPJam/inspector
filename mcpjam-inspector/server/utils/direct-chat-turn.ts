@@ -457,6 +457,7 @@ function toLiveChatTraceUsage(
         inputTokenDetails?: {
           cacheReadTokens?: number;
           cacheWriteTokens?: number;
+          noCacheTokens?: number;
         };
       }
     | null

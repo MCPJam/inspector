@@ -428,6 +428,7 @@ export async function runHarnessTurn(
         totalTokens?: number;
         cachedInputTokens?: number;
         cacheWriteTokens?: number;
+        noCacheInputTokens?: number;
       }
     | undefined;
   let turnFinishReason: FinishReason = "stop";
@@ -1653,6 +1654,7 @@ export async function runHarnessTurn(
                   ? ur.cachedInputTokens
                   : objTotal(ur.inputTokens, "cacheRead");
               const cacheWriteTokens = objTotal(ur.inputTokens, "cacheWrite");
+              const noCacheInputTokens = objTotal(ur.inputTokens, "noCache");
               usage = {
                 ...(inputTokens !== undefined ? { inputTokens } : {}),
                 ...(outputTokens !== undefined ? { outputTokens } : {}),
@@ -1661,6 +1663,9 @@ export async function runHarnessTurn(
                   ? { cachedInputTokens }
                   : {}),
                 ...(cacheWriteTokens !== undefined ? { cacheWriteTokens } : {}),
+                ...(noCacheInputTokens !== undefined
+                  ? { noCacheInputTokens }
+                  : {}),
               };
             }
           }
