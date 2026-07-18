@@ -275,9 +275,27 @@ export function listDeferredUiToolCalls(): Array<{
  * approve event (double-emitted pill handlers, replayed state) could still
  * execute a side-effectful tool the user explicitly rejected.
  */
-export function settleDeniedUiToolCall(toolCallId: string): void {
+export function settleDeniedUiToolCall(
+  toolCallId: string,
+  meta?: { toolName?: string; input?: unknown; telemetryScope?: string },
+): void {
   settledOrInFlightToolCallIds.add(toolCallId);
+  const stashed = deferredUiToolCalls.get(toolCallId);
   deferredUiToolCalls.delete(toolCallId);
+  // Reload-then-deny: the defer (and its started event) happened in a
+  // previous page load, so no in-memory entry exists. The approval part's
+  // persisted metadata lets us establish the lifecycle here so denied calls
+  // are not silently absent from outcome telemetry.
+  const toolName = meta?.toolName ?? stashed?.toolName;
+  if (!telemetryByToolCallId.has(toolCallId) && toolName) {
+    beginUiToolCallTelemetry({
+      toolCallId,
+      toolName,
+      input: meta?.input !== undefined ? meta.input : stashed?.input,
+      needsApproval: true,
+      telemetryScope: meta?.telemetryScope ?? stashed?.telemetryScope,
+    });
+  }
   // Denied approvals are terminal for the client: exactly one completed
   // event, outcome "denied" (the server synthesizes the denial result).
   completeUiToolCallTelemetry(toolCallId, "denied", "denied");
@@ -357,6 +375,10 @@ export async function handleUiToolCall(
   // telemetry with a duplicate started/completed pair. Only IDs this module
   // executed are ever in the set, so claiming here is always ours to claim.
   if (settledOrInFlightToolCallIds.has(toolCallId)) return true;
+  // Same idempotency for a call that is still parked awaiting approval: a
+  // re-emitted deferred call is claimed but must not re-begin telemetry or
+  // re-stash.
+  if (deferredUiToolCalls.has(toolCallId)) return true;
 
   if (!def) {
     // The name was advertised to the server in an earlier snapshot but the

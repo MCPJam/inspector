@@ -118,7 +118,13 @@ export function createUiAwareApprovalResponseHandler(
       // Settle first: the server's denial machinery supplies the result,
       // and a later duplicate approve event must not be able to execute a
       // call the user explicitly rejected.
-      settleDeniedUiToolCall(located.toolCallId);
+      settleDeniedUiToolCall(located.toolCallId, {
+        toolName: located.toolName,
+        input: located.input,
+        ...(deps.telemetryScope !== undefined
+          ? { telemetryScope: deps.telemetryScope }
+          : {}),
+      });
       deps.addToolApprovalResponse({ id, approved: false });
       return;
     }

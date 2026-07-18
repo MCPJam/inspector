@@ -325,6 +325,58 @@ describe("ui-tool-executor outcome telemetry", () => {
       });
     });
 
+    it("reload-then-deny emits a full started/completed pair from part metadata", () => {
+      // No handleUiToolCall first: simulates a deny after a page reload,
+      // where the defer happened in a previous load and no in-memory entry
+      // exists. The approval part's persisted metadata establishes the
+      // lifecycle.
+      settleDeniedUiToolCall("tc-reload-deny", {
+        toolName: "ui_remove_server",
+        input: { serverName: "disposable" },
+        telemetryScope: "chat-session-a",
+      });
+
+      const started = eventCalls("ui_tool_call_started");
+      const completed = eventCalls("ui_tool_call_completed");
+      expect(started).toHaveLength(1);
+      expect(started[0]).toMatchObject({
+        tool_name: "ui_remove_server",
+        needs_approval: true,
+      });
+      expect(completed).toHaveLength(1);
+      expect(completed[0]).toMatchObject({
+        tool_name: "ui_remove_server",
+        outcome: "denied",
+        approval: "denied",
+      });
+    });
+
+    it("re-emitted deferred call is claimed without a second started event", async () => {
+      useUiToolsRegistry.getState().registerUiTool(
+        makeTool({ readOnly: false, annotations: { destructiveHint: true } }),
+      );
+      const addToolOutput = vi.fn();
+
+      await handleUiToolCall({
+        toolName: "ui_navigate",
+        toolCallId: "tc-defer-re",
+        input: { target: "servers" },
+        addToolOutput,
+      });
+      expect(eventCalls("ui_tool_call_started")).toHaveLength(1);
+
+      // SDK re-emits the same still-deferred call (e.g. stream resume).
+      const claimed = await handleUiToolCall({
+        toolName: "ui_navigate",
+        toolCallId: "tc-defer-re",
+        input: { target: "servers" },
+        addToolOutput,
+      });
+      expect(claimed).toBe(true);
+      expect(eventCalls("ui_tool_call_started")).toHaveLength(1);
+      expect(addToolOutput).not.toHaveBeenCalled();
+    });
+
     it("re-emitted settled call with an unregistered tool emits no telemetry", async () => {
       const unregister = useUiToolsRegistry
         .getState()
