@@ -17,6 +17,82 @@ const CATALOG_TTL_MS = 60_000;
 
 let catalogCache: { data: unknown[]; fetchedAt: number } | null = null;
 
+// A single in-flight refresh shared by all concurrent cache misses. Without
+// this, a cold start or TTL-expiry burst fires one full Convex request per
+// caller; here they all await the same fetch.
+let inflightRefresh: Promise<CatalogResult> | null = null;
+
+type CatalogResult =
+  | { ok: true; data: unknown[] }
+  | { ok: false; status: 500 | 502; error: string };
+
+/**
+ * Fetch + normalize the catalog from Convex. Updates `catalogCache` only on a
+ * genuinely usable payload. Never throws — network/parse failures come back as
+ * a degraded result so the caller can serve last-good.
+ */
+async function refreshCatalog(): Promise<CatalogResult> {
+  const convexHttpUrl = process.env.CONVEX_HTTP_URL;
+  if (!convexHttpUrl) {
+    return {
+      ok: false,
+      status: 500,
+      error: "Server missing CONVEX_HTTP_URL configuration",
+    };
+  }
+
+  try {
+    const response = await fetch(`${convexHttpUrl}/v1/models`, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      logger.error("[models] Convex backend error", new Error(errorText), {
+        status: response.status,
+      });
+      return {
+        ok: false,
+        status: 502,
+        error: `Failed to fetch models: ${response.status}`,
+      };
+    }
+
+    const page = (await response.json()) as { items?: unknown };
+    // A real catalog is never empty. Treat a missing/empty/malformed payload as
+    // degradation rather than truth — overwriting last-good with `[]` would
+    // blank every picker on a backend hiccup (empty pricing table, partial
+    // deploy, etc.). The caller serves last-good or 502 instead.
+    if (!Array.isArray(page?.items) || page.items.length === 0) {
+      logger.error(
+        "[models] Convex returned an empty or malformed catalog",
+        new Error("empty_or_malformed_catalog")
+      );
+      return { ok: false, status: 502, error: "Empty or malformed catalog" };
+    }
+
+    const data = page.items;
+    // Feed the fresh catalog ids into the billing classifier's cache so a new
+    // model that just appeared in the picker can't mis-dispatch to BYOK before
+    // the hourly cron refresh catches up (see hosted-model-catalog.ts).
+    ingestHostedCatalogIds(
+      data
+        .map((m) => (m as { id?: unknown })?.id)
+        .filter((id): id is string => typeof id === "string")
+    );
+    catalogCache = { data, fetchedAt: Date.now() };
+    return { ok: true, data };
+  } catch (error) {
+    logger.error("[models] Error fetching model metadata", error);
+    return {
+      ok: false,
+      status: 500,
+      error: error instanceof Error ? error.message : "Unknown error",
+    };
+  }
+}
+
 /**
  * Proxy endpoint to fetch the model catalog from the Convex backend.
  * GET /api/mcp/models
@@ -39,73 +115,31 @@ models.get("/", async (c) => {
     return c.json({ ok: true, data: catalogCache.data });
   }
 
-  try {
-    const convexHttpUrl = process.env.CONVEX_HTTP_URL;
-    if (!convexHttpUrl) {
-      return c.json(
-        {
-          ok: false,
-          error: "Server missing CONVEX_HTTP_URL configuration",
-        },
-        500
-      );
-    }
-
-    const response = await fetch(`${convexHttpUrl}/v1/models`, {
-      method: "GET",
-      headers: { Accept: "application/json" },
+  // Coalesce concurrent misses onto one upstream refresh.
+  if (!inflightRefresh) {
+    inflightRefresh = refreshCatalog().finally(() => {
+      inflightRefresh = null;
     });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      logger.error("[models] Convex backend error", new Error(errorText), {
-        status: response.status,
-      });
-      // Serve the last good catalog if we have one — a transient backend blip
-      // shouldn't collapse the picker to the static snapshot.
-      if (catalogCache) {
-        return c.json({ ok: true, data: catalogCache.data });
-      }
-      return c.json(
-        {
-          ok: false,
-          error: `Failed to fetch models: ${response.status}`,
-        },
-        502
-      );
-    }
-
-    const page = (await response.json()) as { items?: unknown };
-    const data = Array.isArray(page?.items) ? page.items : [];
-    // Feed the fresh catalog ids into the billing classifier's cache so a new
-    // model that just appeared in the picker can't mis-dispatch to BYOK before
-    // the hourly cron refresh catches up (see hosted-model-catalog.ts).
-    ingestHostedCatalogIds(
-      data
-        .map((m) => (m as { id?: unknown })?.id)
-        .filter((id): id is string => typeof id === "string")
-    );
-    catalogCache = { data, fetchedAt: Date.now() };
-    return c.json({ ok: true, data });
-  } catch (error) {
-    logger.error("[models] Error fetching model metadata", error);
-    // Same last-good fallback for network/parse errors.
-    if (catalogCache) {
-      return c.json({ ok: true, data: catalogCache.data });
-    }
-    return c.json(
-      {
-        ok: false,
-        error: error instanceof Error ? error.message : "Unknown error",
-      },
-      500
-    );
   }
+  const result = await inflightRefresh;
+
+  if (result.ok) {
+    return c.json({ ok: true, data: result.data });
+  }
+
+  // Degraded (upstream error / empty payload / missing config): prefer the last
+  // good catalog so a transient failure doesn't collapse the picker to the
+  // static snapshot. Only surface the error when we have nothing cached.
+  if (catalogCache) {
+    return c.json({ ok: true, data: catalogCache.data });
+  }
+  return c.json({ ok: false, error: result.error }, result.status);
 });
 
-/** Reset the in-memory catalog memo. Test-only. */
+/** Reset the in-memory catalog memo and in-flight refresh. Test-only. */
 export function __resetModelsCacheForTests(): void {
   catalogCache = null;
+  inflightRefresh = null;
 }
 
 export default models;

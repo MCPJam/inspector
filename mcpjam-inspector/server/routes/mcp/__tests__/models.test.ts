@@ -114,4 +114,61 @@ describe("GET /api/mcp/models (catalog proxy)", () => {
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it("coalesces concurrent cache misses into a single upstream fetch", async () => {
+    // Gate the fetch so all three requests are in flight before it resolves.
+    let resolveFetch!: (r: Response) => void;
+    const gate = new Promise<Response>((resolve) => {
+      resolveFetch = resolve;
+    });
+    fetchMock.mockReturnValueOnce(gate);
+    const app = mount();
+
+    const inflight = [
+      app.request("/api/mcp/models"),
+      app.request("/api/mcp/models"),
+      app.request("/api/mcp/models"),
+    ];
+    // Let every handler reach `await inflightRefresh` before the fetch resolves.
+    await new Promise((r) => setTimeout(r, 0));
+    resolveFetch(okCatalog([{ id: "openai/gpt-4o" }]));
+
+    const results = await Promise.all(inflight);
+    for (const res of results) {
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        ok: true,
+        data: [{ id: "openai/gpt-4o" }],
+      });
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not overwrite last-good with an empty catalog", async () => {
+    vi.useFakeTimers();
+    fetchMock.mockResolvedValueOnce(okCatalog([{ id: "anthropic/claude" }]));
+    const app = mount();
+    await app.request("/api/mcp/models"); // prime the cache
+
+    // Memo goes stale, then the backend returns an (invalid) empty catalog.
+    vi.advanceTimersByTime(61_000);
+    fetchMock.mockResolvedValueOnce(okCatalog([]));
+
+    const res = await app.request("/api/mcp/models");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      ok: true,
+      data: [{ id: "anthropic/claude" }],
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns 502 on an empty catalog when there is no cached catalog", async () => {
+    fetchMock.mockResolvedValueOnce(okCatalog([]));
+    const res = await mount().request("/api/mcp/models");
+    expect(res.status).toBe(502);
+    expect((await res.json()).ok).toBe(false);
+    // An empty payload must not be ingested into the billing classifier.
+    expect(ingestMock).not.toHaveBeenCalled();
+  });
 });
