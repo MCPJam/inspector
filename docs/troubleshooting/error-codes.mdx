@@ -133,7 +133,7 @@ The server did not respond within the configured request timeout.
 
 ### Header mismatch
 
-`-32001 — jsonrpc/header_mismatch`
+`-32020 — jsonrpc/header_mismatch`
 
 The server returned an `MCP-Protocol-Version` header that does not match what the client negotiated.
 
@@ -144,8 +144,6 @@ The server returned an `MCP-Protocol-Version` header that does not match what th
 **Next steps**
 - Verify the server's protocol-version pinning in the connection settings.
 - If you set an explicit protocol version per server, ensure it matches what the server advertises.
-
-> The `-32001` code is overloaded between `request_timeout` and `header_mismatch`. The inspector disambiguates by message; check the raw message in the ErrorCard's details panel.
 
 ### Unsupported protocol version
 
