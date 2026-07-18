@@ -154,10 +154,6 @@ export function PersonForm({
         void submit();
       }}
     >
-      <p className="text-xs text-muted-foreground">
-        Synthetic identity for testing — don&apos;t use real user data. Your
-        authorization server decides what this subject can access.
-      </p>
       <div className="flex flex-col gap-1.5">
         <Label htmlFor={`${fieldId}-name`} className="text-xs">
           Name
@@ -228,6 +224,45 @@ export function PersonForm({
  * when the roster is empty — an empty roster leaves the debugger exactly as
  * it was before this feature.
  */
+/**
+ * The "Run as… / Add person" trigger and its add-person popover. Extracted so
+ * it can sit in the IdP card header next to the identity-assertion toggle,
+ * separate from the roster chips. Owns its own popover state; renders nothing
+ * when there is no project to attach an identity to.
+ */
+export function AddPersonButton({
+  projectId,
+  peopleCount,
+}: {
+  projectId: string | null;
+  peopleCount: number;
+}) {
+  const [adding, setAdding] = useState(false);
+  if (!projectId) return null;
+  return (
+    <Popover open={adding} onOpenChange={setAdding}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-7 gap-1 px-2 text-xs text-muted-foreground"
+        >
+          <Plus className="size-3.5" />
+          {peopleCount === 0 ? "Run as…" : "Add person"}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-80">
+        <PersonForm
+          initial={EMPTY_PERSON_DRAFT}
+          projectId={projectId}
+          onDone={() => setAdding(false)}
+        />
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 export function XAAPeopleStrip({
   people,
   isLoading,
@@ -251,7 +286,6 @@ export function XAAPeopleStrip({
 }) {
   const { remove } = useXaaPeopleMutations();
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [adding, setAdding] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
 
   // If the roster shrinks under an open edit popover, close it.
@@ -265,36 +299,10 @@ export function XAAPeopleStrip({
     return null;
   }
 
-  const addButton = (
-    <Popover open={adding} onOpenChange={setAdding}>
-      <PopoverTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-7 gap-1 px-2 text-xs text-muted-foreground"
-        >
-          <Plus className="size-3.5" />
-          {people.length === 0 ? "Run as…" : "Add person"}
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="start" className="w-80">
-        <PersonForm
-          initial={EMPTY_PERSON_DRAFT}
-          projectId={projectId}
-          onDone={() => setAdding(false)}
-        />
-      </PopoverContent>
-    </Popover>
-  );
-
-  // Loaded-and-empty: just the ghost button, no bar chrome.
+  // Loaded-and-empty: the add button now lives in the IdP card header, so the
+  // strip itself renders nothing until there is at least one identity chip.
   if (people.length === 0) {
-    return (
-      <div className="border-b border-border bg-background px-4 py-1.5">
-        {addButton}
-      </div>
-    );
+    return null;
   }
 
   return (
@@ -411,7 +419,6 @@ export function XAAPeopleStrip({
           </div>
         );
       })}
-      {addButton}
     </div>
   );
 }

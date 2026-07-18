@@ -36,6 +36,7 @@ import {
   type XAAFlowInput,
 } from "@/hooks/useXaaTestTarget";
 import {
+  AddPersonButton,
   XAAPeopleStrip,
   type XaaPersonOutcome,
 } from "./XAAPeopleStrip";
@@ -1731,6 +1732,14 @@ export function XAAFlowTab({
           onSaveServerConfig ? handleAssertionFormatChange : undefined
         }
         identityAssertionFormatDisabledReason={assertionFormatDisabledReason}
+        runAsControl={
+          peopleAvailable && !peopleLoading && people !== undefined ? (
+            <AddPersonButton
+              projectId={projectId ?? null}
+              peopleCount={people.length}
+            />
+          ) : null
+        }
       />
       <XAAPeopleStrip
         people={people}

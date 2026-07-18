@@ -114,9 +114,6 @@ describe("XAAIdpCard", () => {
       screen.getByRole("button", { name: /copy jwks url/i })
     ).toHaveAttribute("title", `${issuer}/o/org_a1B2/.well-known/jwks.json`);
     expect(
-      screen.getByText(/scoped to your organization/i)
-    ).toBeInTheDocument();
-    expect(
       screen.queryByTestId("anonymous-issuer-note")
     ).not.toBeInTheDocument();
   });
@@ -233,21 +230,6 @@ describe("XAAIdpCard", () => {
     expect(samlButton).toBeDisabled();
     await user.click(samlButton);
     expect(onChange).not.toHaveBeenCalled();
-  });
-
-  it("explains that the chips stay valid when SAML is active", () => {
-    render(
-      <XAAIdpCard
-        identityAssertionFormat="saml"
-        onIdentityAssertionFormatChange={() => {}}
-      />
-    );
-
-    // The ID-JAG is a JWT under this issuer in both formats — the note keeps
-    // the "OpenID Config"/"JWKS" chips from reading as a contradiction.
-    const note = screen.getByTestId("saml-format-note");
-    expect(note).toHaveTextContent(/SAML 2\.0/);
-    expect(note).toHaveTextContent(/still a\s+JWT/i);
   });
 
 });

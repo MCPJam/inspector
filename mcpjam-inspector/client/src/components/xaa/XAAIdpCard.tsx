@@ -146,6 +146,7 @@ export function XAAIdpCard({
   identityAssertionFormat,
   onIdentityAssertionFormatChange,
   identityAssertionFormatDisabledReason = null,
+  runAsControl = null,
 }: {
   organizationId?: string | null;
   /** LOCAL builds only: which issuer mints this run's assertions. */
@@ -170,6 +171,9 @@ export function XAAIdpCard({
   onIdentityAssertionFormatChange?: (format: IdentityAssertionFormat) => void;
   /** Non-null disables the format control and explains why (native title). */
   identityAssertionFormatDisabledReason?: string | null;
+  /** Rendered in the header row beside the identity-assertion toggle — the
+   * "Run as / Add person" control lifted out of the roster strip. */
+  runAsControl?: ReactNode;
 }) {
   const hostedIssuerOn =
     !HOSTED_MODE && issuerMode === "hosted" && canUseHostedIssuer;
@@ -267,6 +271,9 @@ export function XAAIdpCard({
                 />
               </div>
             )}
+            {runAsControl && (
+              <div className="flex shrink-0 items-center">{runAsControl}</div>
+            )}
             {!HOSTED_MODE && (
               <div className="flex shrink-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
                 {onIssuerModeChange && (
@@ -335,47 +342,24 @@ export function XAAIdpCard({
         </div>
       </div>
 
-      {/* The chips above stay valid in SAML mode — the ID-JAG is a JWT under
-          this issuer either way; only the identity assertion changes shape.
-          Say so, or the "OpenID Config" labels next to a SAML selection read
-          as a contradiction. */}
-      {identityAssertionFormat === "saml" &&
-        onIdentityAssertionFormatChange && (
-          <div
-            className="mt-2 text-xs text-muted-foreground"
-            data-testid="saml-format-note"
-          >
-            This server's identity assertions are SAML 2.0 (the ID-JAG carries
-            a saml-nameid subject identifier). The ID-JAG itself is still a
-            JWT minted under this issuer, so the discovery and JWKS URLs above
-            are unchanged.
-          </div>
-        )}
-
-      {isOrgScoped &&
-        (issuerKind === "anonymous" ? (
-          <div
-            className="mt-3 text-xs text-muted-foreground"
-            data-testid="anonymous-issuer-note"
-          >
-            <span className="mr-1.5 rounded bg-amber-500/15 px-1.5 py-0.5 font-medium text-amber-600 dark:text-amber-400">
-              Anonymous test issuer
-            </span>
-            This guest session mints under the anonymous test issuer (
-            <code className="font-mono">/g/…</code>). Its discovery document is
-            marked{" "}
-            <code className="font-mono">mcpjam:issuer_kind: anonymous-test</code>{" "}
-            and an authorization server must explicitly allowlist it —
-            assertions prove control of an anonymous session, not
-            enterprise-managed authorization. Sign in to mint under a
-            membership-gated organization issuer.
-          </div>
-        ) : (
-          <div className="mt-3 text-xs text-muted-foreground">
-            This issuer is scoped to your organization. Only its members can
-            mint assertions under it.
-          </div>
-        ))}
+      {isOrgScoped && issuerKind === "anonymous" && (
+        <div
+          className="mt-3 text-xs text-muted-foreground"
+          data-testid="anonymous-issuer-note"
+        >
+          <span className="mr-1.5 rounded bg-amber-500/15 px-1.5 py-0.5 font-medium text-amber-600 dark:text-amber-400">
+            Anonymous test issuer
+          </span>
+          This guest session mints under the anonymous test issuer (
+          <code className="font-mono">/g/…</code>). Its discovery document is
+          marked{" "}
+          <code className="font-mono">mcpjam:issuer_kind: anonymous-test</code>{" "}
+          and an authorization server must explicitly allowlist it —
+          assertions prove control of an anonymous session, not
+          enterprise-managed authorization. Sign in to mint under a
+          membership-gated organization issuer.
+        </div>
+      )}
     </div>
   );
 }

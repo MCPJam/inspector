@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  AddPersonButton,
   XAAPeopleStrip,
   type XaaPersonOutcome,
 } from "../XAAPeopleStrip";
@@ -78,8 +79,13 @@ describe("XAAPeopleStrip", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("shows only the ghost add button for an empty roster", () => {
-    renderStrip({ people: [] });
+  it("renders nothing for an empty roster (the add button moved to the header)", () => {
+    const { container } = renderStrip({ people: [] });
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("AddPersonButton shows the 'Run as…' label until the first identity exists", () => {
+    render(<AddPersonButton projectId="proj_1" peopleCount={0} />);
     expect(
       screen.getByRole("button", { name: /run as/i }),
     ).toBeInTheDocument();
@@ -184,7 +190,7 @@ describe("XAAPeopleStrip", () => {
   it("requires name, subject, AND email before a person can be added", async () => {
     const user = userEvent.setup();
     createMock.mockResolvedValue({});
-    renderStrip();
+    render(<AddPersonButton projectId="proj_1" peopleCount={2} />);
 
     await user.click(screen.getByRole("button", { name: /add person/i }));
     // Both the trigger and the form submit are named "Add person" — the
