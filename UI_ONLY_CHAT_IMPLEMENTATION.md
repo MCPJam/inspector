@@ -321,10 +321,22 @@ Additive, zero behavior change:
 
 ### Baseline dashboard
 
-Task completion, tool error rate, approval/denial rate, duplicate-call rate,
-nav-rejection volume, capability-gap volume, p50/p95 turn latency — by model, provider,
-and execution path. **Exit criterion:** a baseline window long enough to separate
-one-off QA behavior from recurring product demand before interpreting the numbers.
+**Directly from the event set** (by model, provider, and — via the shared turn key —
+execution path): tool error rate, approval/denial rate, duplicate-call rate,
+nav-rejection volume, capability-gap volume (per the coarse-pre-filter caveat above), and
+p50/p95 turn latency.
+
+**Task completion is NOT directly derivable.** `agent_turn_completed` carries only
+aggregate tool/token counts and `had_error`; there is no privacy-safe signal for "did the
+user's task succeed," and the plan deliberately excludes message content. `had_error`
+tracks turn-level errors, not task success. So treat task completion as a **sampled-trace
+/ manual measure** (rate a sample of sessions), NOT a live dashboard tile — unless a
+privacy-safe outcome dimension (e.g. a coarse server-side "turn ended in an error state
+vs. clean" or an explicit user thumbs-up) is added first, in which case promote it. Don't
+baseline a number the events can't produce.
+
+**Exit criterion:** a baseline window long enough to separate one-off QA behavior from
+recurring product demand before interpreting the numbers.
 
 ## §5 Workstream 3 — Provider-aware prompt-caching canary
 
