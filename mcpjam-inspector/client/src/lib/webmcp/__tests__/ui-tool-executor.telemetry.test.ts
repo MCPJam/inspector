@@ -351,6 +351,18 @@ describe("ui-tool-executor outcome telemetry", () => {
       });
     });
 
+    it("reload-then-deny reports null duration (reconstructed lifecycle)", () => {
+      settleDeniedUiToolCall("tc-recon-deny", {
+        toolName: "ui_remove_server",
+        input: { serverName: "x" },
+        telemetryScope: "s",
+      });
+      const completed = eventCalls("ui_tool_call_completed");
+      expect(completed).toHaveLength(1);
+      // No real start time survived the reload → null, not a misleading ~0ms.
+      expect(completed[0].duration_ms).toBeNull();
+    });
+
     it("re-emitted deferred call is claimed without a second started event", async () => {
       useUiToolsRegistry.getState().registerUiTool(
         makeTool({ readOnly: false, annotations: { destructiveHint: true } }),

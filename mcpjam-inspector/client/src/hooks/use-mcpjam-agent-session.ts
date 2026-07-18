@@ -67,7 +67,11 @@ export function lastAssistantHasUnresolvedToolParts(
     const type = (part as { type?: unknown }).type;
     if (typeof type !== "string" || !type.startsWith("tool-")) return false;
     const state = (part as { state?: unknown }).state;
-    return state !== "output-available" && state !== "output-error";
+    // Resolved = any terminal `output-*` state: output-available (incl. a
+    // synthesized denial result), output-error, output-denied. Anything else
+    // (input-streaming/input-available/approval-requested) is mid-flight, so
+    // a denied turn — which ends in a terminal output part — still completes.
+    return !(typeof state === "string" && state.startsWith("output-"));
   });
 }
 

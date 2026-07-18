@@ -94,6 +94,13 @@ interface UiToolCallTelemetry {
   startedAt: number;
   duplicateOfPrevious: boolean;
   callsSinceDuplicate?: number;
+  /**
+   * True when this started entry was rebuilt after a page reload (the original
+   * tool-call/defer happened in a previous load). The real start time is lost,
+   * so duration is reported as null rather than a misleading ~0 ms covering
+   * only local execution.
+   */
+  reconstructed?: boolean;
 }
 
 /** Started-time facts carried to the (possibly much later) completed emit. */
@@ -150,6 +157,10 @@ const SIGNATURE_MAX_CHARS = 2048;
 // WIDE payload (huge flat array/object) is bounded the same way depth bounds
 // a deep one — the traversal stops before it can build a megabyte string.
 const SIGNATURE_MAX_NODES = 512;
+// Per-string cap: a single multi-megabyte scalar is one node, so the node
+// budget wouldn't catch it — truncate long strings DURING traversal, before
+// JSON.stringify ever materializes them.
+const SIGNATURE_MAX_STRING = 256;
 
 /**
  * Recursively sort object keys so equal args hash equal. Bounded three ways —
@@ -190,6 +201,10 @@ function canonicalize(
     }
     return out;
   }
+  // Truncate long scalars in place so one giant string can't blow the budget.
+  if (typeof value === "string" && value.length > SIGNATURE_MAX_STRING) {
+    return `${value.slice(0, SIGNATURE_MAX_STRING)}…<${value.length}>`;
+  }
   return value;
 }
 
@@ -225,6 +240,7 @@ function beginUiToolCallTelemetry(opts: {
   input: unknown;
   needsApproval: boolean;
   telemetryScope?: string;
+  reconstructed?: boolean;
 }): void {
   const ring = signatureRingFor(opts.telemetryScope ?? "default");
   const signature = callSignature(opts.toolName, opts.input);
@@ -244,6 +260,7 @@ function beginUiToolCallTelemetry(opts: {
     startedAt: Date.now(),
     duplicateOfPrevious,
     ...(callsSinceDuplicate !== undefined ? { callsSinceDuplicate } : {}),
+    ...(opts.reconstructed ? { reconstructed: true } : {}),
   };
   telemetryByToolCallId.set(opts.toolCallId, entry);
   emitTelemetry("ui_tool_call_started", {
@@ -267,7 +284,9 @@ function completeUiToolCallTelemetry(
   emitTelemetry("ui_tool_call_completed", {
     tool_name: entry.toolName,
     surface_id: entry.surfaceId,
-    duration_ms: Date.now() - entry.startedAt,
+    // A reconstructed (post-reload) lifecycle never saw the real start, so its
+    // elapsed time would be a misleading ~0 ms — report null instead.
+    duration_ms: entry.reconstructed ? null : Date.now() - entry.startedAt,
     outcome,
     ...(errorCode ? { error_code: errorCode } : {}),
     approval,
@@ -343,6 +362,7 @@ export function settleDeniedUiToolCall(
       input: meta?.input !== undefined ? meta.input : stashed?.input,
       needsApproval: true,
       telemetryScope: meta?.telemetryScope ?? stashed?.telemetryScope,
+      reconstructed: true,
     });
   }
   // Denied approvals are terminal for the client: exactly one completed
@@ -531,6 +551,7 @@ export async function fulfillApprovedUiToolCall(opts: {
       input,
       needsApproval: true,
       telemetryScope: opts.telemetryScope ?? stashed?.telemetryScope,
+      reconstructed: true,
     });
   }
 

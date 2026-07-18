@@ -52,6 +52,14 @@ describe("lastAssistantHasUnresolvedToolParts", () => {
     ).toBe(false);
   });
 
+  it("treats a denied tool output as resolved (denied turns still complete)", () => {
+    expect(
+      lastAssistantHasUnresolvedToolParts(
+        msg([{ type: "tool-ui_remove_server", state: "output-denied" }]),
+      ),
+    ).toBe(false);
+  });
+
   it("is false for undefined / non-assistant messages", () => {
     expect(lastAssistantHasUnresolvedToolParts(undefined)).toBe(false);
     expect(
