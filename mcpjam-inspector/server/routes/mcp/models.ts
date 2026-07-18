@@ -15,6 +15,12 @@ const models = new Hono();
  */
 const CATALOG_TTL_MS = 60_000;
 
+// Bound the upstream fetch so the shared in-flight promise always settles. A
+// stalled backend (headers sent, body never finishes) would otherwise leave
+// `inflightRefresh` pending forever, wedging every concurrent and subsequent
+// request past the last-good fallback. Matches the background refresh timeout.
+const CATALOG_FETCH_TIMEOUT_MS = 10_000;
+
 let catalogCache: { data: unknown[]; fetchedAt: number } | null = null;
 
 // A single in-flight refresh shared by all concurrent cache misses. Without
@@ -45,6 +51,7 @@ async function refreshCatalog(): Promise<CatalogResult> {
     const response = await fetch(`${convexHttpUrl}/v1/models`, {
       method: "GET",
       headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(CATALOG_FETCH_TIMEOUT_MS),
     });
 
     if (!response.ok) {

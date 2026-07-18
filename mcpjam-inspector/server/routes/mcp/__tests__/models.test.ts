@@ -171,4 +171,27 @@ describe("GET /api/mcp/models (catalog proxy)", () => {
     // An empty payload must not be ingested into the billing classifier.
     expect(ingestMock).not.toHaveBeenCalled();
   });
+
+  it("settles and serves last-good when the upstream fetch rejects (e.g. timeout)", async () => {
+    vi.useFakeTimers();
+    fetchMock.mockResolvedValueOnce(okCatalog([{ id: "openai/gpt-4o" }]));
+    const app = mount();
+    await app.request("/api/mcp/models"); // prime the cache
+
+    // Memo goes stale, then the upstream stalls out — the bounded fetch rejects
+    // (AbortSignal.timeout surfaces as a rejection), which must not wedge the
+    // shared in-flight promise: the request settles and serves last-good.
+    vi.advanceTimersByTime(61_000);
+    fetchMock.mockRejectedValueOnce(
+      new DOMException("The operation timed out.", "TimeoutError"),
+    );
+
+    const res = await app.request("/api/mcp/models");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      ok: true,
+      data: [{ id: "openai/gpt-4o" }],
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });
