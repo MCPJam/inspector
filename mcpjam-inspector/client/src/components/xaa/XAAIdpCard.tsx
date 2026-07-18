@@ -225,8 +225,6 @@ export function XAAIdpCard({
     return () => controller.abort();
   }, [organizationId, hostedIssuerOn, issuerKind]);
 
-  const isOrgScoped = HOSTED_MODE && Boolean(organizationId);
-
   return (
     <div className="border-b border-border bg-background px-4 py-3">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -299,23 +297,6 @@ export function XAAIdpCard({
                     fetch its JWKS. No tunnel is needed. Token requests and MCP
                     calls still run from this machine; your authorization server
                     must be reachable over https.
-                    {issuerKind === "anonymous" && (
-                      <>
-                        {" "}
-                        This session mints under the{" "}
-                        <b>anonymous test issuer</b> (
-                        <code className="font-mono">/g/…</code>): its discovery
-                        document is marked{" "}
-                        <code className="font-mono">
-                          mcpjam:issuer_kind: anonymous-test
-                        </code>{" "}
-                        and an authorization server must explicitly allowlist
-                        it. Assertions prove control of an anonymous session —
-                        this is a testing convenience, not enterprise-managed
-                        authorization. Sign in to mint under a membership-gated
-                        organization issuer.
-                      </>
-                    )}
                   </IssuerModeHint>
                 ) : (
                   <IssuerModeHint label="About local issuer URLs">
@@ -341,25 +322,6 @@ export function XAAIdpCard({
           <SetupGuidance />
         </div>
       </div>
-
-      {isOrgScoped && issuerKind === "anonymous" && (
-        <div
-          className="mt-3 text-xs text-muted-foreground"
-          data-testid="anonymous-issuer-note"
-        >
-          <span className="mr-1.5 rounded bg-amber-500/15 px-1.5 py-0.5 font-medium text-amber-600 dark:text-amber-400">
-            Anonymous test issuer
-          </span>
-          This guest session mints under the anonymous test issuer (
-          <code className="font-mono">/g/…</code>). Its discovery document is
-          marked{" "}
-          <code className="font-mono">mcpjam:issuer_kind: anonymous-test</code>{" "}
-          and an authorization server must explicitly allowlist it —
-          assertions prove control of an anonymous session, not
-          enterprise-managed authorization. Sign in to mint under a
-          membership-gated organization issuer.
-        </div>
-      )}
     </div>
   );
 }

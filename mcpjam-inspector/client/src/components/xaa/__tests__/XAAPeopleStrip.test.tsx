@@ -2,18 +2,10 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  AddPersonButton,
   XAAPeopleStrip,
   type XaaPersonOutcome,
 } from "../XAAPeopleStrip";
 import type { RemoteXaaPerson } from "@/hooks/useXaaPeople";
-
-// Avoid the chatboxes import chain — only the avatar is borrowed from it.
-vi.mock("@/components/chatboxes/personas", () => ({
-  CharacterAvatar: ({ name }: { name: string }) => (
-    <span data-testid="avatar">{name[0]}</span>
-  ),
-}));
 
 const createMock = vi.fn();
 const updateMock = vi.fn();
@@ -79,17 +71,11 @@ describe("XAAPeopleStrip", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("renders nothing for an empty roster (the add button moved to the header)", () => {
-    const { container } = renderStrip({ people: [] });
-    expect(container).toBeEmptyDOMElement();
-  });
-
-  it("AddPersonButton shows the 'Run as…' label until the first identity exists", () => {
-    render(<AddPersonButton projectId="proj_1" peopleCount={0} />);
+  it("shows the 'Run as…' row control for an empty roster", () => {
+    renderStrip({ people: [] });
     expect(
       screen.getByRole("button", { name: /run as/i }),
     ).toBeInTheDocument();
-    expect(screen.queryByText("Run as")).not.toBeInTheDocument();
   });
 
   it("renders a chip per person and toggles selection", async () => {
@@ -109,6 +95,43 @@ describe("XAAPeopleStrip", () => {
       screen.getByRole("button", { name: /jonah kim/i, pressed: false }),
     );
     expect(props.onSelectPerson).toHaveBeenCalledWith(jonah._id);
+  });
+
+  it("uses the same rounded-square initials avatar as the sidebar", () => {
+    renderStrip();
+
+    const avatar = screen.getByText("BT").closest('[data-slot="avatar"]');
+    expect(avatar).toHaveClass("size-6", "rounded-md");
+    const fallback = avatar?.querySelector('[data-slot="avatar-fallback"]');
+    expect(fallback).toHaveClass("rounded-md");
+    expect(
+      [
+        "bg-blue-600",
+        "bg-violet-600",
+        "bg-emerald-700",
+        "bg-amber-500",
+        "bg-rose-600",
+        "bg-cyan-600",
+      ].some((color) => fallback?.classList.contains(color)),
+    ).toBe(true);
+    expect(fallback).not.toHaveClass(
+      "bg-muted",
+      "bg-orange-500",
+      "bg-lime-500",
+      "bg-teal-500",
+      "bg-indigo-500",
+      "bg-fuchsia-500",
+    );
+  });
+
+  it("keeps square-avatar chips compact instead of using a tall pill", () => {
+    renderStrip();
+
+    const bobChip = screen
+      .getByRole("button", { name: /bob tables/i, pressed: false })
+      .closest(".group\\/chip");
+    expect(bobChip).toHaveClass("rounded-lg", "p-0.5");
+    expect(bobChip).not.toHaveClass("rounded-full", "py-1");
   });
 
   it("ignores chip clicks while disabled (busy run)", async () => {
@@ -190,7 +213,7 @@ describe("XAAPeopleStrip", () => {
   it("requires name, subject, AND email before a person can be added", async () => {
     const user = userEvent.setup();
     createMock.mockResolvedValue({});
-    render(<AddPersonButton projectId="proj_1" peopleCount={2} />);
+    renderStrip();
 
     await user.click(screen.getByRole("button", { name: /add person/i }));
     // Both the trigger and the form submit are named "Add person" — the
