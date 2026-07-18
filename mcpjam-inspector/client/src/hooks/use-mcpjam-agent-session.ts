@@ -49,15 +49,6 @@ import { getChatHistoryDetail } from "@/lib/apis/web/chat-history-api";
  * counts only; args/outputs never leave the message.
  */
 /**
- * A turn is only truly finished when its tool calls have resolved. During a
- * UI-tool turn the SDK reaches an intermediate `ready` with the tool part
- * still awaiting a result (input-streaming/input-available) or the user's
- * approval (approval-requested); the real completion is the LATER `ready`
- * after the tool-resume chain. Terminal tool states are output-available /
- * output-error. Any tool part not in a terminal output state means the turn
- * is mid-flight.
- */
-/**
  * The assistant message THIS turn produced, or undefined. On an error before
  * the SDK appended the turn's own assistant message, `last` is the previous
  * turn's answer (same id as the pre-submit boundary) — return undefined so its
@@ -70,6 +61,15 @@ export function turnAssistantMessage(
   return last && last.id !== boundaryMessageId ? last : undefined;
 }
 
+/**
+ * A turn is only truly finished when its tool calls have resolved. During a
+ * UI-tool turn the SDK reaches an intermediate `ready` with the tool part
+ * still awaiting a result (input-streaming/input-available) or the user's
+ * approval (approval-requested); the real completion is the LATER `ready`
+ * after the tool-resume chain. Terminal tool states are output-available /
+ * output-error. Any tool part not in a terminal output state means the turn
+ * is mid-flight.
+ */
 export function lastAssistantHasUnresolvedToolParts(
   last: UIMessage | undefined,
 ): boolean {

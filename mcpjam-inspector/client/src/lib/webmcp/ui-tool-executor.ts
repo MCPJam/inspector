@@ -347,6 +347,9 @@ export function settleDeniedUiToolCall(
   toolCallId: string,
   meta?: { toolName?: string; input?: unknown; telemetryScope?: string },
 ): void {
+  // Idempotent: a denial callback delivered twice (replay/double-dispatch)
+  // must not reconstruct a second lifecycle and emit another denied pair.
+  if (settledOrInFlightToolCallIds.has(toolCallId)) return;
   settledOrInFlightToolCallIds.add(toolCallId);
   const stashed = deferredUiToolCalls.get(toolCallId);
   deferredUiToolCalls.delete(toolCallId);

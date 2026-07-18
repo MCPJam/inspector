@@ -351,6 +351,24 @@ describe("ui-tool-executor outcome telemetry", () => {
       });
     });
 
+    it("a duplicate denial callback emits only one denied pair", () => {
+      settleDeniedUiToolCall("tc-dup-deny", {
+        toolName: "ui_remove_server",
+        input: { serverName: "x" },
+        telemetryScope: "s",
+      });
+      // Replayed/double-dispatched denial for the same call id.
+      settleDeniedUiToolCall("tc-dup-deny", {
+        toolName: "ui_remove_server",
+        input: { serverName: "x" },
+        telemetryScope: "s",
+      });
+      expect(eventCalls("ui_tool_call_started")).toHaveLength(1);
+      const completed = eventCalls("ui_tool_call_completed");
+      expect(completed).toHaveLength(1);
+      expect(completed[0]).toMatchObject({ outcome: "denied" });
+    });
+
     it("reload-then-deny reports null duration (reconstructed lifecycle)", () => {
       settleDeniedUiToolCall("tc-recon-deny", {
         toolName: "ui_remove_server",
