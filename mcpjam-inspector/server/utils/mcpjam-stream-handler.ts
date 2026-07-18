@@ -314,6 +314,7 @@ export interface MCPJamStepFinishEvent {
     totalTokens?: number;
     cachedInputTokens?: number;
     cacheWriteTokens?: number;
+    noCacheInputTokens?: number;
   };
   /**
    * **Step SETTLED, not necessarily successful.** `onStepFinish` fires
