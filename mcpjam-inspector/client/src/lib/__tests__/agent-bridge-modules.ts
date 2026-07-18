@@ -28,4 +28,10 @@ export const BRIDGE_MODULES: Record<string, string> = {
   // availability + daily-cap gates the buttons use are in scope. Not a shared
   // hook, so the "computer" group can't be mis-scoped.
   computer: "client/src/components/computer/ComputerView.tsx",
+  // ChatboxesTab owns the previewed host's chatbox + the publish/generate/delete
+  // flows (ensureChatboxForHost, the Generate-with-AI endpoints, deleteChatbox)
+  // and the host list a publish/delete call resolves against. It honors the
+  // Swarms-owned dead-end there. Not a shared hook (SwarmsTab is a separate
+  // component), so the "chatboxes" group can't be mis-scoped.
+  chatboxes: "client/src/components/ChatboxesTab.tsx",
 };

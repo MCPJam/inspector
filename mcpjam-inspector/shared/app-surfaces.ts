@@ -236,14 +236,13 @@ export const APP_SURFACES = [
     purpose:
       "Publish a host as a shareable chat surface for humans, and review its sessions.",
     userActivities: [
-      "Publish or unpublish a chatbox",
-      "Review chatbox sessions",
+      "Publish a client's chatbox (its shareable chat surface)",
+      "Generate synthetic AI sessions against a chatbox (spends money)",
+      "Delete a client's chatbox",
+      "Review chatbox sessions and copy its share link",
     ],
-    agentTools: {
-      kind: "none",
-      reason:
-        "Tool group planned (publish/unpublish a chatbox, open a session); tracked in the surface-tools rollout.",
-    },
+    hasSnapshotProvider: true,
+    agentTools: { kind: "group" },
     showInAtlas: true,
   },
   {
