@@ -71,7 +71,8 @@ vi.mock("@/stores/preferences/preferences-provider", () => ({
     selector({ themeMode: "light" }),
 }));
 
-vi.mock("@/lib/provider-logos", () => ({
+vi.mock("@/lib/provider-registry", async (orig) => ({
+  ...(await orig<typeof import("@/lib/provider-registry")>()),
   getProviderLogo: () => null,
 }));
 

@@ -15,9 +15,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useChat, type UIMessage } from "@ai-sdk/react";
 import { generateId } from "ai";
-import { getOrCreateAgentChat } from "@/lib/mcpjam-agent/agent-chat-instances";
+import {
+  getOrCreateAgentChat,
+  markAgentTurnStarted,
+  claimAgentTurnCompletion,
+} from "@/lib/mcpjam-agent/agent-chat-instances";
 import { fulfillOrphanedDeferredUiToolCalls } from "@/lib/webmcp/ui-tool-approval";
 import { buildUiContextPart } from "@/lib/webmcp/ui-context-snapshot";
+import { useUiToolsRegistry } from "@/lib/webmcp/ui-tools-registry";
 import {
   loadAgentRequireToolApproval,
   saveAgentRequireToolApproval,
@@ -36,6 +41,100 @@ import {
   transcriptToUIMessages,
 } from "@/lib/transcript-to-ui-messages";
 import { getChatHistoryDetail } from "@/lib/apis/web/chat-history-api";
+
+/**
+ * Count the `ui_*` client-fulfilled tool calls on the turn's assistant
+ * message. Ownership mirrors the executor's dispatch gate (registry
+ * membership / shipped names) — never the `ui_` prefix alone. Names and
+ * counts only; args/outputs never leave the message.
+ */
+/**
+ * The assistant message THIS turn produced, or undefined. On an error before
+ * the SDK appended the turn's own assistant message, `last` is the previous
+ * turn's answer (same id as the pre-submit boundary) — return undefined so its
+ * tools/usage aren't misattributed to the failed turn.
+ */
+export function turnAssistantMessage(
+  last: UIMessage | undefined,
+  boundaryMessageId: string | null,
+): UIMessage | undefined {
+  return last && last.id !== boundaryMessageId ? last : undefined;
+}
+
+/**
+ * A turn is only truly finished when its tool calls have resolved. During a
+ * UI-tool turn the SDK reaches an intermediate `ready` with the tool part
+ * still awaiting a result (input-streaming/input-available) or the user's
+ * approval (approval-requested); the real completion is the LATER `ready`
+ * after the tool-resume chain. Terminal tool states are output-available /
+ * output-error. Any tool part not in a terminal output state means the turn
+ * is mid-flight.
+ */
+export function lastAssistantHasUnresolvedToolParts(
+  last: UIMessage | undefined,
+): boolean {
+  if (!last || last.role !== "assistant" || !Array.isArray(last.parts)) {
+    return false;
+  }
+  return last.parts.some((part) => {
+    const type = (part as { type?: unknown }).type;
+    if (typeof type !== "string" || !type.startsWith("tool-")) return false;
+    const state = (part as { state?: unknown }).state;
+    // Resolved = any terminal `output-*` state: output-available (incl. a
+    // synthesized denial result), output-error, output-denied. Anything else
+    // (input-streaming/input-available/approval-requested) is mid-flight, so
+    // a denied turn — which ends in a terminal output part — still completes.
+    return !(typeof state === "string" && state.startsWith("output-"));
+  });
+}
+
+function summarizeUiToolCalls(last: UIMessage | undefined): {
+  ui_tool_call_count: number;
+  distinct_tool_count: number;
+} {
+  if (!last || last.role !== "assistant" || !Array.isArray(last.parts)) {
+    return { ui_tool_call_count: 0, distinct_tool_count: 0 };
+  }
+  const registry = useUiToolsRegistry.getState();
+  const names: string[] = [];
+  for (const part of last.parts) {
+    const type = (part as { type?: unknown }).type;
+    if (typeof type !== "string" || !type.startsWith("tool-")) continue;
+    const name = type.slice("tool-".length);
+    if (registry.resolve(name) !== null || registry.wasShipped(name)) {
+      names.push(name);
+    }
+  }
+  return {
+    ui_tool_call_count: names.length,
+    distinct_tool_count: new Set(names).size,
+  };
+}
+
+/**
+ * Token usage IF the session already carries it on the assistant message's
+ * metadata. The agent route doesn't stream usage metadata today, so these
+ * are usually null — deliberately no new server plumbing here.
+ */
+function usageTokens(last: UIMessage | undefined): {
+  input_tokens: number | null;
+  output_tokens: number | null;
+} {
+  const usage =
+    last && last.role === "assistant"
+      ? (
+          last as {
+            metadata?: { usage?: { inputTokens?: unknown; outputTokens?: unknown } };
+          }
+        ).metadata?.usage
+      : undefined;
+  return {
+    input_tokens:
+      typeof usage?.inputTokens === "number" ? usage.inputTokens : null,
+    output_tokens:
+      typeof usage?.outputTokens === "number" ? usage.outputTokens : null,
+  };
+}
 
 export interface UseMcpjamAgentSessionArgs {
   /**
@@ -244,42 +343,94 @@ export function useMcpjamAgentSession(
   // useChat `onFinish` callback in this @ai-sdk/react version.
   const turnStartedAtRef = useRef<number | null>(null);
   const turnIndexRef = useRef<number>(0);
-  const prevStatusRef = useRef(status);
+  // Completion is detected from the SHARED entry + terminal state, NOT a
+  // hook-local status edge. Three reasons this matters for the agent chat:
+  //   1. A UI-tool turn passes through an intermediate `ready` while the tool
+  //      part is still input-available/approval-requested (AI SDK #7430:
+  //      streaming→ready→submitted→streaming→ready). Emitting there would
+  //      report a truncated duration and, via the one-shot claim, SUPPRESS
+  //      the real final completion. So we only treat `ready` as terminal when
+  //      the last assistant message has no unresolved tool parts.
+  //   2. On a hand-off, the adopting surface may mount AFTER the shared Chat
+  //      already reached `ready` — no status edge occurs. A state-driven
+  //      effect still runs on mount and can claim the pending completion once.
+  //   3. Dedup + timing + attribution live on the shared entry, so exactly
+  //      one surface emits per turn with the submit-time duration/model.
   useEffect(() => {
-    const prev = prevStatusRef.current;
-    prevStatusRef.current = status;
-    if (prev === status) return;
-    if ((prev === "submitted" || prev === "streaming") && status === "ready") {
-      const startedAt = turnStartedAtRef.current;
-      turnStartedAtRef.current = null;
-      const last = messages[messages.length - 1];
-      let toolCallCount = 0;
-      if (last && last.role === "assistant" && Array.isArray(last.parts)) {
-        toolCallCount = last.parts.filter((p) =>
-          typeof (p as { type?: unknown }).type === "string" &&
-          (p as { type: string }).type.startsWith("tool-")
-        ).length;
+    const last = messages[messages.length - 1];
+    const isTerminal =
+      status === "error" ||
+      (status === "ready" && !lastAssistantHasUnresolvedToolParts(last));
+    if (!isTerminal) return;
+    const claim = claimAgentTurnCompletion(chatSessionId);
+    if (!claim) return;
+    turnStartedAtRef.current = null;
+    const startedAt = claim.startedAt;
+    const durationMs = startedAt != null ? Date.now() - startedAt : null;
+    // Only attribute tool counts / usage to an assistant message THIS turn
+    // produced. On an error before the SDK appended the turn's assistant
+    // message, `last` is the previous turn's answer — attributing its tools
+    // to the failed turn would corrupt the experiment. A new message has an
+    // id different from the pre-submit boundary.
+    const turnAssistant = turnAssistantMessage(last, claim.boundaryMessageId);
+    // Observation-only: a throwing analytics client must never break the
+    // session's effect.
+    try {
+      if (status === "error") {
+        track("mcpjam_agent_response_error", {
+          location: "mcpjam_agent",
+          surface,
+          session_id: chatSessionId,
+          message_index: claim.messageIndex,
+          duration_ms: durationMs,
+          error_message: error?.message ?? null,
+        });
+        track("agent_turn_completed", {
+          location: "mcpjam_agent",
+          surface,
+          session_id: chatSessionId,
+          model: claim.model,
+          provider: claim.provider,
+          ...summarizeUiToolCalls(turnAssistant),
+          had_error: true,
+          ...usageTokens(turnAssistant),
+          duration_ms: durationMs,
+        });
+      } else {
+        let toolCallCount = 0;
+        if (
+          turnAssistant &&
+          turnAssistant.role === "assistant" &&
+          Array.isArray(turnAssistant.parts)
+        ) {
+          toolCallCount = turnAssistant.parts.filter((p) =>
+            typeof (p as { type?: unknown }).type === "string" &&
+            (p as { type: string }).type.startsWith("tool-")
+          ).length;
+        }
+        track("mcpjam_agent_response_finished", {
+          location: "mcpjam_agent",
+          surface,
+          session_id: chatSessionId,
+          message_index: claim.messageIndex,
+          duration_ms: durationMs,
+          tool_call_count: toolCallCount,
+          message_count: messages.length,
+        });
+        track("agent_turn_completed", {
+          location: "mcpjam_agent",
+          surface,
+          session_id: chatSessionId,
+          model: claim.model,
+          provider: claim.provider,
+          ...summarizeUiToolCalls(turnAssistant),
+          had_error: false,
+          ...usageTokens(turnAssistant),
+          duration_ms: durationMs,
+        });
       }
-      track("mcpjam_agent_response_finished", {
-        location: "mcpjam_agent",
-        surface,
-        session_id: chatSessionId,
-        message_index: turnIndexRef.current,
-        duration_ms: startedAt != null ? Date.now() - startedAt : null,
-        tool_call_count: toolCallCount,
-        message_count: messages.length,
-      });
-    } else if (status === "error") {
-      const startedAt = turnStartedAtRef.current;
-      turnStartedAtRef.current = null;
-      track("mcpjam_agent_response_error", {
-        location: "mcpjam_agent",
-        surface,
-        session_id: chatSessionId,
-        message_index: turnIndexRef.current,
-        duration_ms: startedAt != null ? Date.now() - startedAt : null,
-        error_message: error?.message ?? null,
-      });
+    } catch {
+      // swallow — telemetry is observation-only
     }
   }, [chatSessionId, error, messages, status, surface]);
 
@@ -343,6 +494,20 @@ export function useMcpjamAgentSession(
       }
       turnIndexRef.current += 1;
       turnStartedAtRef.current = Date.now();
+      // Turn timing/attribution lives on the shared Chat entry so a hand-off
+      // to another surface mid-turn still reports the right duration and
+      // emits the completion exactly once.
+      const priorMessages = messagesForDeferRef.current;
+      const boundaryMessageId =
+        priorMessages.length > 0
+          ? (priorMessages[priorMessages.length - 1]?.id ?? null)
+          : null;
+      markAgentTurnStarted(chatSessionId, {
+        model: config.model?.id ?? null,
+        provider: config.model?.provider ?? null,
+        messageIndex: turnIndexRef.current,
+        boundaryMessageId,
+      });
       track("mcpjam_agent_message_sent", {
         location: "mcpjam_agent",
         surface,

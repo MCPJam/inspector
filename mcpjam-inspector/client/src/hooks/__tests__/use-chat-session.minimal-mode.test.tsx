@@ -869,7 +869,7 @@ describe("useChatSession minimal mode parity", () => {
     expect(useMCPJamLimitDialogStore.getState().intent).toBeNull();
   });
 
-  it("keeps only the three premium MCPJam models gated on the unauthenticated non-hosted path", async () => {
+  it("leaves all MCPJam models enabled on the unauthenticated non-hosted path (guests un-gated)", async () => {
     mockModelState.availableModels = [
       baseModel,
       gatedMcpJamModel,
@@ -908,28 +908,10 @@ describe("useChatSession minimal mode parity", () => {
       "openai/gpt-5-mini",
       "anthropic/claude-haiku-4.5",
     ]);
-    expect(
-      result.current.availableModels.find((model) => model.id === "gpt-4")
-        ?.disabled
-    ).toBeUndefined();
-    expect(
-      result.current.availableModels.find(
-        (model) => model.id === "openai/gpt-5.4-pro"
-      )
-    ).toMatchObject({
-      disabled: true,
-      disabledReason: "Sign in to use MCPJam provided models",
-    });
-    expect(
-      result.current.availableModels.find(
-        (model) => model.id === "openai/gpt-5-mini"
-      )?.disabled
-    ).toBeUndefined();
-    expect(
-      result.current.availableModels.find(
-        (model) => model.id === "anthropic/claude-haiku-4.5"
-      )?.disabled
-    ).toBeUndefined();
+    // Guests un-gated: no MCPJam model carries the "Sign in" lock anymore.
+    for (const model of result.current.availableModels) {
+      expect(model.disabled).toBeUndefined();
+    }
     expect(result.current.selectedModel.id).toBe("openai/gpt-5-mini");
     expect(mockAuthFetch).not.toHaveBeenCalled();
   });
@@ -1128,7 +1110,7 @@ describe("useChatSession minimal mode parity", () => {
     });
   });
 
-  it("keeps an initialModelId authoritative even when that model is guest-locked", async () => {
+  it("keeps an initialModelId authoritative (now guest-allowed, no lock or auth gate)", async () => {
     mockModelState.availableModels = [
       baseModel,
       gatedMcpJamModel,
@@ -1154,13 +1136,11 @@ describe("useChatSession minimal mode parity", () => {
       expect(result.current.selectedModel.id).toBe("openai/gpt-5.4-pro");
     });
 
-    expect(result.current.selectedModel).toMatchObject({
-      id: "openai/gpt-5.4-pro",
-      disabled: true,
-      disabledReason: "Sign in to use MCPJam provided models",
-    });
-    expect(result.current.isAuthReady).toBe(false);
-    expect(result.current.disableForAuthentication).toBe(true);
+    // The pinned model resolves from availableModels and is no longer locked;
+    // being guest-allowed, it needs no sign-in on the non-hosted path.
+    expect(result.current.selectedModel.disabled).toBeUndefined();
+    expect(result.current.isAuthReady).toBe(true);
+    expect(result.current.disableForAuthentication).toBe(false);
   });
 
   it("creates a locked placeholder when initialModelId is missing from availableModels", async () => {
@@ -1188,15 +1168,16 @@ describe("useChatSession minimal mode parity", () => {
       expect(result.current.selectedModel.id).toBe("openai/gpt-5.4-pro");
     });
 
+    // A pinned model absent from availableModels still resolves to a
+    // placeholder so the id is honored; but as a guest-allowed model it no
+    // longer gates the chat behind sign-in.
     expect(result.current.selectedModel).toMatchObject({
       id: "openai/gpt-5.4-pro",
       name: "openai/gpt-5.4-pro",
       provider: "openai",
-      disabled: true,
-      disabledReason: "Sign in to use MCPJam provided models",
     });
-    expect(result.current.isAuthReady).toBe(false);
-    expect(result.current.disableForAuthentication).toBe(true);
+    expect(result.current.isAuthReady).toBe(true);
+    expect(result.current.disableForAuthentication).toBe(false);
   });
 
   it("uses the latest selectedServers on the next non-hosted send without changing chatSessionId", async () => {

@@ -644,14 +644,16 @@ export class StatelessMcpHttpPreviewClient implements ManagedMcpClient {
     // Silently dropping `opts.task` / `opts.relatedTask` would let the
     // request go out looking normal but miss the task association the
     // caller intended; throwing here keeps the contract honest.
-    const taskOpt = (opts as RequestOptions).task;
+    // beta.4 removed `task`/`relatedTask` from RequestOptions; read them off a
+    // loose shape so we can still detect a caller that passed them and reject.
+    const taskOpt = (opts as Record<string, unknown>).task;
     if (taskOpt !== undefined) {
       throw new NotYetSupportedInStateless(
         `${method} (RequestOptions.task)`,
         "task-augmented requests require MRTR / InputRequiredResult, which is out of scope for the 2026-07-28 preview"
       );
     }
-    const relatedTaskOpt = (opts as RequestOptions).relatedTask;
+    const relatedTaskOpt = (opts as Record<string, unknown>).relatedTask;
     if (relatedTaskOpt !== undefined) {
       throw new NotYetSupportedInStateless(
         `${method} (RequestOptions.relatedTask)`,

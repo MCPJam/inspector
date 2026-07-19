@@ -859,7 +859,7 @@ export function HostCompareRoute({ bare = false }: { bare?: boolean } = {}) {
         rightSlot={
           // Host/Compare sub-nav inline in the header row (single bar) rather
           // than stacked beneath the primary nav.
-          <div className="flex min-w-0 items-center justify-center md:justify-end">
+          <div className="flex min-w-0 flex-wrap items-center justify-center gap-2 @2xl:justify-end">
             <HostSectionTabs
               value="compare"
               hostEnabled={Boolean(previewedHostId)}

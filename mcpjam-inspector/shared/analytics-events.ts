@@ -136,6 +136,7 @@ export const ANALYTICS_EVENTS = {
   host_capabilities_dialog_opened: { source: "client" },
   host_catalog_degraded: { source: "client" },
   hosted_model_catalog_degraded: { source: "client" },
+  hosted_provider_logo_missing: { source: "client" },
   host_compat_tab_viewed: { source: "client" },
   host_context_dialog_opened: { source: "client" },
   host_theme_toggled: { source: "client" },
@@ -222,6 +223,21 @@ export const ANALYTICS_EVENTS = {
   xaa_tab_viewed: { source: "client" },
   playground_compare_host_removed: { source: "client" },
   playground_compare_host_added: { source: "client" },
+
+  // --- UI-only agent chat: ui_* tool + turn outcomes ---
+  // Props are ids/names/booleans/counts/durations ONLY — never message
+  // text, tool args, tool outputs, URLs, headers, or env values.
+  // agent_turn_completed: one agent-chat turn finished (model/provider,
+  //   ui-tool counts, token counts, duration, had_error).
+  // ui_navigation_rejected: resolveUiNavigationTarget refused a segment
+  //   (reason: unknown | hosted_blocked).
+  // ui_tool_call_started / ui_tool_call_completed: lifecycle of one ui_*
+  //   client-fulfilled tool call (outcome, approval, structured error code,
+  //   duplicate-call detection).
+  agent_turn_completed: { source: "client" },
+  ui_navigation_rejected: { source: "client" },
+  ui_tool_call_completed: { source: "client" },
+  ui_tool_call_started: { source: "client" },
 } as const satisfies Record<string, { source: "client" | "server" }>;
 
 export type AnalyticsEventName = keyof typeof ANALYTICS_EVENTS;

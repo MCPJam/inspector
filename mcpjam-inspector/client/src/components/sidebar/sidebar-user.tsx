@@ -36,7 +36,6 @@ import { Popover, PopoverAnchor } from "@mcpjam/design-system/popover";
 import { NotificationsPanelContent } from "@/components/notifications/NotificationsPanel";
 import { useNotifications } from "@/hooks/useNotifications";
 import { useProfilePicture } from "@/hooks/useProfilePicture";
-import { HOSTED_MODE } from "@/lib/config";
 import { useAppNavigate } from "@/lib/app-navigation";
 
 interface SidebarUserProps {
@@ -121,34 +120,36 @@ export function SidebarUser({ onBeforeSignOut }: SidebarUserProps = {}) {
   // While WorkOS/Convex are still resolving the session, `user` is null even for
   // signed-in users. Show the neutral loading state before the `!user` guest
   // branch so authenticated users don't flash the "Sign in" footer on load.
-  const authResolving =
-    HOSTED_MODE && !user && (isWorkOsAuthLoading || isLoading);
+  // Applies in both modes: local/npx users can also sign in with WorkOS, so a
+  // signed-in local user would otherwise flash "Sign in" while auth resolves.
+  const authResolving = !user && (isWorkOsAuthLoading || isLoading);
 
   if (authResolving) {
     return loadingState;
   }
 
+  // No WorkOS user → offer sign-in. In local/npx mode the actor is an anonymous
+  // guest (the raw WorkOS `user` stays null), and the header's sign-in button is
+  // hidden on the Home route, so the sidebar footer is the only sign-in
+  // affordance there. Surface it in both modes for parity with hosted.
   if (!user) {
-    if (HOSTED_MODE) {
-      return (
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              size="lg"
-              onClick={() => signIn()}
-              aria-label="Sign in"
-              className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
-            >
-              <LogIn className="size-4" />
-              <span className="truncate group-data-[collapsible=icon]:hidden">
-                Sign in
-              </span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      );
-    }
-    return null;
+    return (
+      <SidebarMenu>
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="lg"
+            onClick={() => signIn()}
+            aria-label="Sign in"
+            className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+          >
+            <LogIn className="size-4" />
+            <span className="truncate group-data-[collapsible=icon]:hidden">
+              Sign in
+            </span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      </SidebarMenu>
+    );
   }
 
   if (isLoading) {

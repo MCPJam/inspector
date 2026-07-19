@@ -7,6 +7,33 @@ import {
   type WidgetUsage,
 } from "@mcpjam/sdk/host-compat";
 
+export type WidgetUsageScanState =
+  | { status: "idle"; usage: undefined }
+  | { status: "loading"; usage: undefined }
+  | { status: "ready"; usage: WidgetUsage }
+  | { status: "failed"; usage: undefined };
+
+/**
+ * The inspector resource endpoint wraps MCP's `resources/read` result in a
+ * `content` field, while the shared scanner consumes the MCP result itself.
+ * Keep that transport detail at this adapter boundary so existing resource
+ * browser consumers can continue receiving the endpoint response unchanged.
+ */
+export function normalizeWidgetResourceReadResult(
+  result: unknown
+): ReadResourceResult {
+  if (
+    result &&
+    typeof result === "object" &&
+    "content" in result &&
+    result.content &&
+    typeof result.content === "object"
+  ) {
+    return result.content as ReadResourceResult;
+  }
+  return (result ?? {}) as ReadResourceResult;
+}
+
 /**
  * L1 widget scan for one server's tools — a thin React wrapper over the shared
  * SDK `scanWidgetUsage`. For each widget-bearing tool it reads the widget's
@@ -18,23 +45,37 @@ import {
  * Each widget URI is read once even when several tools share it; every tool
  * pointing at that widget inherits its needs.
  */
-export function useWidgetUsage(
+export function useWidgetUsageState(
   serverName: string,
-  toolsData: ListToolsResultWithMetadata | null | undefined,
-): WidgetUsage | undefined {
-  const [usage, setUsage] = useState<WidgetUsage | undefined>(undefined);
+  toolsData: ListToolsResultWithMetadata | null | undefined
+): WidgetUsageScanState {
+  const [state, setState] = useState<WidgetUsageScanState>({
+    status: "idle",
+    usage: undefined,
+  });
 
   useEffect(() => {
     let cancelled = false;
-    setUsage(undefined);
+    setState({ status: "idle", usage: undefined });
     if (!toolsData?.tools) return;
 
-    scanWidgetUsage(
-      toolsData,
-      (uri) => readResource(serverName, uri) as Promise<ReadResourceResult>,
-    ).then((result) => {
-      if (!cancelled) setUsage(result);
-    });
+    setState({ status: "loading", usage: undefined });
+
+    scanWidgetUsage(toolsData, (uri) =>
+      readResource(serverName, uri).then(normalizeWidgetResourceReadResult)
+    )
+      .then((result) => {
+        if (cancelled) return;
+        setState(
+          result === undefined
+            ? { status: "failed", usage: undefined }
+            : { status: "ready", usage: result }
+        );
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setState({ status: "failed", usage: undefined });
+      });
 
     return () => {
       cancelled = true;
@@ -42,5 +83,12 @@ export function useWidgetUsage(
     // toolsData identity changes per fetch; that's the intended re-scan key.
   }, [serverName, toolsData]);
 
-  return usage;
+  return state;
+}
+
+export function useWidgetUsage(
+  serverName: string,
+  toolsData: ListToolsResultWithMetadata | null | undefined
+): WidgetUsage | undefined {
+  return useWidgetUsageState(serverName, toolsData).usage;
 }

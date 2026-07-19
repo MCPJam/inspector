@@ -11,12 +11,13 @@ import type {
   ListTasksResult as BaseListTasksResult,
   RequestOptions,
   SSEClientTransportOptions,
-  StdioServerParameters,
   StreamableHTTPClientTransportOptions,
   Task as BaseTask,
   Tool as BaseTool,
   Transport,
 } from "@modelcontextprotocol/client";
+// beta.4 moved the stdio transport params to the `/stdio` subpath.
+import type { StdioServerParameters } from "@modelcontextprotocol/client/stdio";
 import type { RetryPolicy } from "../retry.js";
 import type { RefreshTokenOAuthProvider } from "./refresh-token-auth-provider.js";
 import type { ToolSet } from "ai";
