@@ -313,7 +313,10 @@ export function LearnMoreExpandedPanel({
             )}
 
             {isXAAGuide ? (
-              <XAAHowItWorksContent title={entry.title} />
+              <XAAHowItWorksContent
+                title={entry.title}
+                docsUrl={entry.docsUrl}
+              />
             ) : (
               <div className="px-6 pb-8 sm:px-10">
                 <p className="text-base text-muted-foreground leading-relaxed">

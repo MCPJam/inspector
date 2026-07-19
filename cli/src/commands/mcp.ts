@@ -1,4 +1,5 @@
-import { StdioServerTransport } from "@modelcontextprotocol/server";
+// beta.4 moved the stdio server transport to the `/stdio` subpath.
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { Command } from "commander";
 import packageJson from "../../package.json" with { type: "json" };
 import { createMcpJamMcpServer } from "../lib/mcp-server.js";

@@ -18,7 +18,11 @@
  * underlying Client.
  */
 
-import type { Client } from "@modelcontextprotocol/client";
+import type {
+  Client,
+  Request,
+  RequestOptions,
+} from "@modelcontextprotocol/client";
 import type {
   ManagedMcpClient,
   ManagedMcpClientConnectOptions,
@@ -89,14 +93,12 @@ export class OfficialSdkClientAdapter implements ManagedMcpClient {
       ManagedMcpClient["callTool"]
     >;
   }
-  request<T = unknown>(
-    req: Parameters<Client["request"]>[0],
-    options?: Parameters<Client["request"]>[1],
-  ): Promise<T> {
+  request<T = unknown>(req: Request, options?: RequestOptions): Promise<T> {
     // upstream `Client.request` is method-dispatched and typed against
-    // RequestTypeMap. We're a generic boundary; the caller has already
-    // narrowed to a method literal it understands.
-    return this.inner.request(req as never, options) as Promise<T>;
+    // RequestTypeMap; beta.4 also overloaded it with an explicit-result-schema
+    // form. We're a generic boundary — the caller has narrowed to a method
+    // literal it understands, so cast to the pass-through form.
+    return this.inner.request(req as never, options as never) as Promise<T>;
   }
   listResources(
     params?: Parameters<Client["listResources"]>[0],
@@ -171,15 +173,17 @@ export class OfficialSdkClientAdapter implements ManagedMcpClient {
     method: ManagedMcpClientNotificationMethod,
     handler: ManagedMcpClientNotificationHandler,
   ): void {
-    this.inner.setNotificationHandler(method, handler);
+    // beta.4 overloaded this (typed `NotificationMethod` vs Standard-Schema).
+    // The manager keys by method string; cast to the pass-through form.
+    this.inner.setNotificationHandler(method as never, handler as never);
   }
   setRequestHandler(
     method: ManagedMcpClientRequestMethod,
     handler: ManagedMcpClientRequestHandler,
   ): void {
-    this.inner.setRequestHandler(method, handler);
+    this.inner.setRequestHandler(method as never, handler as never);
   }
   removeRequestHandler(method: ManagedMcpClientRequestMethod): void {
-    this.inner.removeRequestHandler(method);
+    this.inner.removeRequestHandler(method as never);
   }
 }
