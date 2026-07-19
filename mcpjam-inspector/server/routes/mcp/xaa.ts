@@ -94,6 +94,16 @@ function checkNegativeTestHostCap(host: string): boolean {
 // is rejected rather than normalized.
 const ORG_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
+type XaaResult<T> = { ok: true; value: T } | { ok: false; response: Response };
+
+function xaaSuccess<T>(value: T): XaaResult<T> {
+  return { ok: true, value };
+}
+
+function xaaFailure(response: Response): XaaResult<never> {
+  return { ok: false, response };
+}
+
 // Single source of truth for what a legal org path segment looks like, shared
 // by the well-known routes, the gated mint routes, and the hosted-issuer
 // forward so they can never validate org ids differently.
@@ -101,16 +111,18 @@ function isValidOrgId(value: unknown): value is string {
   return typeof value === "string" && ORG_ID_RE.test(value);
 }
 
-// Validates the `:orgId` route param; returns the id or the 400 Response.
-function validateOrgSegment(c: Context): string | Response {
+// Validates the `:orgId` route param without relying on Response class identity.
+function validateOrgSegment(c: Context): XaaResult<string> {
   const orgId = c.req.param("orgId");
   if (!isValidOrgId(orgId)) {
-    return toJsonError("Invalid organization id in issuer path", {
-      status: 400,
-      code: "VALIDATION_ERROR",
-    });
+    return xaaFailure(
+      toJsonError("Invalid organization id in issuer path", {
+        status: 400,
+        code: "VALIDATION_ERROR",
+      })
+    );
   }
-  return orgId;
+  return xaaSuccess(orgId);
 }
 
 // ── Mock OIDC IdP (authorization_code + userinfo) ─────────────────────────
@@ -945,31 +957,37 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     c: Context,
     body: Record<string, unknown>
   ): Promise<
-    | { mints: Map<NegativeTestMode, MintedNegativeCase>; issuer: string }
-    | Response
+    XaaResult<{
+      mints: Map<NegativeTestMode, MintedNegativeCase>;
+      issuer: string;
+    }>
   > => {
     const relayed = await forwardToHostedIssuer(c, "/negative-tests", body, {
       mintOnly: true,
     });
-    if (!relayed.ok) return relayed;
+    if (!relayed.ok) return xaaFailure(relayed);
 
     let payload: unknown;
     try {
       payload = await relayed.json();
     } catch {
-      return toJsonError(
-        "The hosted issuer returned a malformed mint response",
-        { status: 502, code: "SERVER_UNREACHABLE" }
+      return xaaFailure(
+        toJsonError("The hosted issuer returned a malformed mint response", {
+          status: 502,
+          code: "SERVER_UNREACHABLE",
+        })
       );
     }
 
     const rawMints = (payload as { mints?: unknown })?.mints;
     const issuer = (payload as { issuer?: unknown })?.issuer;
     if (!Array.isArray(rawMints) || typeof issuer !== "string") {
-      return toJsonError("The hosted issuer returned no minted assertions", {
-        status: 502,
-        code: "SERVER_UNREACHABLE",
-      });
+      return xaaFailure(
+        toJsonError("The hosted issuer returned no minted assertions", {
+          status: 502,
+          code: "SERVER_UNREACHABLE",
+        })
+      );
     }
 
     const mints = new Map<NegativeTestMode, MintedNegativeCase>();
@@ -1005,14 +1023,16 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     // clearer than letting a short map surface as scattered per-case errors.
     const missing = NEGATIVE_CASE_MODES.filter((mode) => !mints.has(mode));
     if (missing.length > 0) {
-      return toJsonError(
-        `The hosted issuer did not mint every scorecard case (missing: ${missing.join(
-          ", "
-        )})`,
-        { status: 502, code: "SERVER_UNREACHABLE" }
+      return xaaFailure(
+        toJsonError(
+          `The hosted issuer did not mint every scorecard case (missing: ${missing.join(
+            ", "
+          )})`,
+          { status: 502, code: "SERVER_UNREACHABLE" }
+        )
       );
     }
-    return { mints, issuer };
+    return xaaSuccess({ mints, issuer });
   };
 
   // Hosted-issuer forward for the standards-track /token endpoint. The RFC
@@ -1095,17 +1115,19 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
   const requireScopedIssuer = async (
     c: Context,
     issuerKind: "org" | "anonymous"
-  ): Promise<string | Response> => {
-    const orgIdOrError = validateOrgSegment(c);
-    if (orgIdOrError instanceof Response) return orgIdOrError;
-    const orgId = orgIdOrError;
+  ): Promise<XaaResult<string>> => {
+    const orgIdResult = validateOrgSegment(c);
+    if (!orgIdResult.ok) return orgIdResult;
+    const orgId = orgIdResult.value;
     const authHeader = c.req.header("authorization");
     if (!authHeader?.startsWith("Bearer ")) {
-      return toJsonError(
-        issuerKind === "anonymous"
-          ? "Minting under the anonymous test issuer requires a session"
-          : "Minting under an organization issuer requires signing in",
-        { status: 401, code: "UNAUTHORIZED" }
+      return xaaFailure(
+        toJsonError(
+          issuerKind === "anonymous"
+            ? "Minting under the anonymous test issuer requires a session"
+            : "Minting under an organization issuer requires signing in",
+          { status: 401, code: "UNAUTHORIZED" }
+        )
       );
     }
     try {
@@ -1117,19 +1139,23 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       });
     } catch (error) {
       if (error instanceof WebRouteError) {
-        return toJsonError(error.message, {
-          status: error.status,
-          code: error.code,
-          details: error.details,
-        });
+        return xaaFailure(
+          toJsonError(error.message, {
+            status: error.status,
+            code: error.code,
+            details: error.details,
+          })
+        );
       }
       logger.error("[XAA Org Issuer] authorization failed", error);
-      return toJsonError("Couldn't authorize the organization issuer", {
-        status: 500,
-        code: "INTERNAL_ERROR",
-      });
+      return xaaFailure(
+        toJsonError("Couldn't authorize the organization issuer", {
+          status: 500,
+          code: "INTERNAL_ERROR",
+        })
+      );
     }
-    return orgId;
+    return xaaSuccess(orgId);
   };
   const requireScopedOrg = (c: Context) => requireScopedIssuer(c, "org");
   const requireScopedAnonymousOrg = (c: Context) =>
@@ -1288,9 +1314,11 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     // It hands an authorized org member the URL whose embedded public JWK the
     // existing `/.well-known/oauth/xaa-cimd/:key` reflector serves to the AS.
     router.get("/o/:orgId/confidential-cimd/client", async (c) => {
-      const orgIdOrError = await requireScopedOrg(c);
-      if (orgIdOrError instanceof Response) return orgIdOrError;
-      const provider = resolveDerivedConfidentialCimdProvider(orgIdOrError);
+      const orgIdResult = await requireScopedOrg(c);
+      if (!orgIdResult.ok) return orgIdResult.response;
+      const provider = resolveDerivedConfidentialCimdProvider(
+        orgIdResult.value
+      );
       if (provider instanceof Response) return provider;
       c.header("Cache-Control", "no-store");
       return c.json({
@@ -2071,8 +2099,8 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         b.tokenEndpointAuthMethod === "private_key_jwt";
       if (isConfidential) {
         const minted = await mintNegativeViaHosted(c, b);
-        if (minted instanceof Response) return minted;
-        return handleNegativeTests(c, minted.issuer, minted.mints);
+        if (!minted.ok) return minted.response;
+        return handleNegativeTests(c, minted.value.issuer, minted.value.mints);
       }
       return forwardToHostedIssuer(c, "/negative-tests", b);
     }
@@ -2092,40 +2120,40 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       `${unscopedIssuer(c)}/o/${orgId}`;
 
     router.get("/o/:orgId/.well-known/jwks.json", (c) => {
-      const orgIdOrError = validateOrgSegment(c);
-      if (orgIdOrError instanceof Response) return orgIdOrError;
+      const orgIdResult = validateOrgSegment(c);
+      if (!orgIdResult.ok) return orgIdResult.response;
       return serveJwks(c);
     });
 
     router.get("/o/:orgId/.well-known/openid-configuration", (c) => {
-      const orgIdOrError = validateOrgSegment(c);
-      if (orgIdOrError instanceof Response) return orgIdOrError;
+      const orgIdResult = validateOrgSegment(c);
+      if (!orgIdResult.ok) return orgIdResult.response;
       // The scoped /token serves token exchange (bearer + membership gated).
-      return serveOpenidConfiguration(c, scopedIssuer(c, orgIdOrError), {
+      return serveOpenidConfiguration(c, scopedIssuer(c, orgIdResult.value), {
         tokenExchangeAtToken: true,
       });
     });
 
     router.post("/o/:orgId/authenticate", async (c) => {
-      const orgIdOrError = await requireScopedOrg(c);
-      if (orgIdOrError instanceof Response) return orgIdOrError;
-      return handleAuthenticate(c, scopedIssuer(c, orgIdOrError));
+      const orgIdResult = await requireScopedOrg(c);
+      if (!orgIdResult.ok) return orgIdResult.response;
+      return handleAuthenticate(c, scopedIssuer(c, orgIdResult.value));
     });
 
     router.post("/o/:orgId/token-exchange", async (c) => {
-      const orgIdOrError = await requireScopedOrg(c);
-      if (orgIdOrError instanceof Response) return orgIdOrError;
-      return handleTokenExchange(c, scopedIssuer(c, orgIdOrError));
+      const orgIdResult = await requireScopedOrg(c);
+      if (!orgIdResult.ok) return orgIdResult.response;
+      return handleTokenExchange(c, scopedIssuer(c, orgIdResult.value));
     });
 
     router.post("/o/:orgId/negative-tests", async (c) => {
-      const orgIdOrError = await requireScopedOrg(c);
-      if (orgIdOrError instanceof Response) return orgIdOrError;
+      const orgIdResult = await requireScopedOrg(c);
+      if (!orgIdResult.ok) return orgIdResult.response;
       return handleNegativeTests(
         c,
-        scopedIssuer(c, orgIdOrError),
+        scopedIssuer(c, orgIdResult.value),
         undefined,
-        orgIdOrError
+        orgIdResult.value
       );
     });
 
@@ -2141,17 +2169,17 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       `${unscopedIssuer(c)}/g/${orgId}`;
 
     router.get("/g/:orgId/.well-known/jwks.json", (c) => {
-      const orgIdOrError = validateOrgSegment(c);
-      if (orgIdOrError instanceof Response) return orgIdOrError;
+      const orgIdResult = validateOrgSegment(c);
+      if (!orgIdResult.ok) return orgIdResult.response;
       return serveJwks(c);
     });
 
     router.get("/g/:orgId/.well-known/openid-configuration", (c) => {
-      const orgIdOrError = validateOrgSegment(c);
-      if (orgIdOrError instanceof Response) return orgIdOrError;
+      const orgIdResult = validateOrgSegment(c);
+      if (!orgIdResult.ok) return orgIdResult.response;
       return serveOpenidConfiguration(
         c,
-        anonymousScopedIssuer(c, orgIdOrError),
+        anonymousScopedIssuer(c, orgIdResult.value),
         {
           tokenExchangeAtToken: true,
           anonymousTestIssuer: true,
@@ -2160,21 +2188,27 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     });
 
     router.post("/g/:orgId/authenticate", async (c) => {
-      const orgIdOrError = await requireScopedAnonymousOrg(c);
-      if (orgIdOrError instanceof Response) return orgIdOrError;
-      return handleAuthenticate(c, anonymousScopedIssuer(c, orgIdOrError));
+      const orgIdResult = await requireScopedAnonymousOrg(c);
+      if (!orgIdResult.ok) return orgIdResult.response;
+      return handleAuthenticate(c, anonymousScopedIssuer(c, orgIdResult.value));
     });
 
     router.post("/g/:orgId/token-exchange", async (c) => {
-      const orgIdOrError = await requireScopedAnonymousOrg(c);
-      if (orgIdOrError instanceof Response) return orgIdOrError;
-      return handleTokenExchange(c, anonymousScopedIssuer(c, orgIdOrError));
+      const orgIdResult = await requireScopedAnonymousOrg(c);
+      if (!orgIdResult.ok) return orgIdResult.response;
+      return handleTokenExchange(
+        c,
+        anonymousScopedIssuer(c, orgIdResult.value)
+      );
     });
 
     router.post("/g/:orgId/negative-tests", async (c) => {
-      const orgIdOrError = await requireScopedAnonymousOrg(c);
-      if (orgIdOrError instanceof Response) return orgIdOrError;
-      return handleNegativeTests(c, anonymousScopedIssuer(c, orgIdOrError));
+      const orgIdResult = await requireScopedAnonymousOrg(c);
+      if (!orgIdResult.ok) return orgIdResult.response;
+      return handleNegativeTests(
+        c,
+        anonymousScopedIssuer(c, orgIdResult.value)
+      );
     });
   }
 
@@ -2483,82 +2517,82 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     // as anyone — it's a test IdP), but the token-exchange grant requires the
     // caller to be a member of the org, mapped to OAuth-shaped errors.
     if (authorizeOrgIssuer) {
-      const scopedIssuerFromParam = (c: Context): string | Response => {
+      const scopedIssuerFromParam = (c: Context): XaaResult<string> => {
         const orgId = c.req.param("orgId");
         if (!orgId || !ORG_ID_RE.test(orgId)) {
-          return oauthError(400, "invalid_request", "Invalid organization id");
+          return xaaFailure(
+            oauthError(400, "invalid_request", "Invalid organization id")
+          );
         }
-        return `${unscopedIssuer(c)}/o/${orgId}`;
+        return xaaSuccess(`${unscopedIssuer(c)}/o/${orgId}`);
       };
 
       router.get("/o/:orgId/authorize", (c) => {
-        const issuerOrError = scopedIssuerFromParam(c);
-        if (issuerOrError instanceof Response) return issuerOrError;
-        return handleAuthorize(c, issuerOrError);
+        const issuerResult = scopedIssuerFromParam(c);
+        if (!issuerResult.ok) return issuerResult.response;
+        return handleAuthorize(c, issuerResult.value);
       });
       router.post("/o/:orgId/authorize/confirm", (c) => {
-        const issuerOrError = scopedIssuerFromParam(c);
-        if (issuerOrError instanceof Response) return issuerOrError;
-        return handleAuthorizeConfirm(c, issuerOrError);
+        const issuerResult = scopedIssuerFromParam(c);
+        if (!issuerResult.ok) return issuerResult.response;
+        return handleAuthorizeConfirm(c, issuerResult.value);
       });
       router.post("/o/:orgId/token", (c) => {
-        const issuerOrError = scopedIssuerFromParam(c);
-        if (issuerOrError instanceof Response) return issuerOrError;
-        return handleToken(
-          c,
-          issuerOrError,
-          async () => {
-            const orgIdOrError = await requireScopedOrg(c);
-            if (!(orgIdOrError instanceof Response)) return null;
-            // Map the gate's JSON error shape onto OAuth token-endpoint errors.
-            const status = orgIdOrError.status;
-            return oauthError(
-              status,
-              status === 401
-                ? "invalid_client"
-                : status === 403
-                ? "access_denied"
-                : "invalid_request",
-              "Token exchange under an organization issuer requires an org member's bearer token"
-            );
-          }
-        );
+        const issuerResult = scopedIssuerFromParam(c);
+        if (!issuerResult.ok) return issuerResult.response;
+        return handleToken(c, issuerResult.value, async () => {
+          const orgIdResult = await requireScopedOrg(c);
+          if (orgIdResult.ok) return null;
+          // Map the gate's JSON error shape onto OAuth token-endpoint errors.
+          const status = orgIdResult.response.status;
+          return oauthError(
+            status,
+            status === 401
+              ? "invalid_client"
+              : status === 403
+              ? "access_denied"
+              : "invalid_request",
+            "Token exchange under an organization issuer requires an org member's bearer token"
+          );
+        });
       });
       router.get("/o/:orgId/userinfo", (c) => {
-        const issuerOrError = scopedIssuerFromParam(c);
-        if (issuerOrError instanceof Response) return issuerOrError;
-        return handleUserinfo(c, issuerOrError);
+        const issuerResult = scopedIssuerFromParam(c);
+        if (!issuerResult.ok) return issuerResult.response;
+        return handleUserinfo(c, issuerResult.value);
       });
 
       // Anonymous test issuer (/g/): same public front-channel endpoints;
       // the token-exchange grant is gated to the caller's own personal org
       // (guest sessions included) via the anonymous authorize flavor.
-      const anonymousIssuerFromParam = (c: Context): string | Response => {
+      const anonymousIssuerFromParam = (c: Context): XaaResult<string> => {
         const orgId = c.req.param("orgId");
         if (!orgId || !ORG_ID_RE.test(orgId)) {
-          return oauthError(400, "invalid_request", "Invalid organization id");
+          return xaaFailure(
+            oauthError(400, "invalid_request", "Invalid organization id")
+          );
         }
-        return `${unscopedIssuer(c)}/g/${orgId}`;
+        return xaaSuccess(`${unscopedIssuer(c)}/g/${orgId}`);
       };
 
       router.get("/g/:orgId/authorize", (c) => {
-        const issuerOrError = anonymousIssuerFromParam(c);
-        if (issuerOrError instanceof Response) return issuerOrError;
-        return handleAuthorize(c, issuerOrError);
+        const issuerResult = anonymousIssuerFromParam(c);
+        if (!issuerResult.ok) return issuerResult.response;
+        return handleAuthorize(c, issuerResult.value);
       });
       router.post("/g/:orgId/authorize/confirm", (c) => {
-        const issuerOrError = anonymousIssuerFromParam(c);
-        if (issuerOrError instanceof Response) return issuerOrError;
-        return handleAuthorizeConfirm(c, issuerOrError);
+        const issuerResult = anonymousIssuerFromParam(c);
+        if (!issuerResult.ok) return issuerResult.response;
+        return handleAuthorizeConfirm(c, issuerResult.value);
       });
       router.post("/g/:orgId/token", (c) => {
-        const issuerOrError = anonymousIssuerFromParam(c);
-        if (issuerOrError instanceof Response) return issuerOrError;
-        return handleToken(c, issuerOrError, async () => {
-          const orgIdOrError = await requireScopedAnonymousOrg(c);
-          if (!(orgIdOrError instanceof Response)) return null;
+        const issuerResult = anonymousIssuerFromParam(c);
+        if (!issuerResult.ok) return issuerResult.response;
+        return handleToken(c, issuerResult.value, async () => {
+          const orgIdResult = await requireScopedAnonymousOrg(c);
+          if (orgIdResult.ok) return null;
           // Map the gate's JSON error shape onto OAuth token-endpoint errors.
-          const status = orgIdOrError.status;
+          const status = orgIdResult.response.status;
           return oauthError(
             status,
             status === 401
@@ -2571,9 +2605,9 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         });
       });
       router.get("/g/:orgId/userinfo", (c) => {
-        const issuerOrError = anonymousIssuerFromParam(c);
-        if (issuerOrError instanceof Response) return issuerOrError;
-        return handleUserinfo(c, issuerOrError);
+        const issuerResult = anonymousIssuerFromParam(c);
+        if (!issuerResult.ok) return issuerResult.response;
+        return handleUserinfo(c, issuerResult.value);
       });
     }
   }
