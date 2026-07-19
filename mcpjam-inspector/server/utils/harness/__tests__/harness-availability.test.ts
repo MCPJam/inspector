@@ -145,7 +145,12 @@ describe("checkHarnessRuntimeAvailable", () => {
       args({ harnessId: "codex", hasSelectedMcpServers: true }),
     );
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toMatch(/doesn't support MCP servers/);
+    // Copy explains the upstream limitation and points to the Claude Code
+    // alternative rather than just telling the user to remove their servers.
+    if (!r.ok) {
+      expect(r.reason).toMatch(/can't use attached MCP servers/);
+      expect(r.reason).toMatch(/Claude Code host/);
+    }
   });
 
   it("allows a Claude Code host with selected MCP servers (it delivers them)", () => {

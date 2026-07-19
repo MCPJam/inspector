@@ -101,13 +101,20 @@ export function checkHarnessRuntimeAvailable(args: {
   }
 
   // MCP gate: a harness that can't deliver the host's selected servers (Codex
-  // v1) must not silently run without them.
+  // v1) must not silently run without them. The limitation is upstream, not an
+  // MCPJam gap — the Codex runtime doesn't expose mcp_servers tools to the model
+  // in the exec mode it runs, so even a delivered config would leave the servers
+  // connected-but-dead. The bundled bridge documents and works around this for
+  // its own tools (@ai-sdk/harness-codex src/bridge/cli-relay.ts; upstream
+  // tracker openai/codex#19425). Full analysis: docs/codex-mcp-spike.md.
   if (args.hasSelectedMcpServers && !adapter.supportsSelectedMcpServers) {
     return {
       ok: false,
       reason:
-        `the ${name} harness doesn't support MCP servers yet — remove the ` +
-        "selected servers from this host to run it",
+        `the ${name} harness can't use attached MCP servers yet — its runtime ` +
+        "doesn't expose MCP-server tools to the model, so they would stay " +
+        "connected but unusable. Run these servers on a Claude Code host " +
+        `instead, or remove them to use ${name} for tasks that don't need MCP`,
     };
   }
 
