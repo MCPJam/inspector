@@ -12,6 +12,7 @@ export interface ProductUpdateEntry {
   videoUrl?: string;
   videoPosterUrl?: string;
   previewVideoUrl?: string;
+  hideControls?: boolean;
   dismissed: boolean;
   isNew: boolean;
 }

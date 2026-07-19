@@ -25,7 +25,7 @@ function getViewportSize() {
 function getPanelLayout(viewWidth: number, viewHeight: number) {
   const width = Math.min(
     PANEL_WIDTH,
-    Math.max(viewWidth - PANEL_GUTTER * 2, 0),
+    Math.max(viewWidth - PANEL_GUTTER * 2, 0)
   );
   const left = Math.max((viewWidth - width) / 2, PANEL_GUTTER);
   const top = Math.max(viewHeight * 0.1, PANEL_GUTTER);
@@ -46,7 +46,7 @@ function ExpandedVideo({ entry }: { entry: ProductUpdateEntry }) {
           muted
           playsInline
           preload="auto"
-          controls
+          controls={!entry.hideControls}
         />
       </div>
     );
@@ -71,7 +71,9 @@ function ExpandedVideo({ entry }: { entry: ProductUpdateEntry }) {
     <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-black">
       <iframe
         key={entry.slug}
-        src={`${embed.embedSrc}${embed.embedSrc.includes("?") ? "&" : "?"}autoplay=1`}
+        src={`${embed.embedSrc}${
+          embed.embedSrc.includes("?") ? "&" : "?"
+        }autoplay=1`}
         className="absolute inset-0 h-full w-full"
         allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture"
         allowFullScreen
