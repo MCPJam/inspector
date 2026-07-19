@@ -47,6 +47,9 @@ import type { HostAttentionIssue } from "../types";
 // states; "Auto" preserves `undefined` so the backend dedupe hash
 // stays distinct from an explicit on/off override.
 type ProgressiveTriState = "auto" | "on" | "off";
+const TRI_SELECTOR_ACTIVE_CLASSES =
+  "data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:hover:bg-primary data-[state=on]:hover:text-primary-foreground";
+
 function progressiveValueToTri(
   value: boolean | undefined
 ): ProgressiveTriState {
@@ -401,21 +404,21 @@ export function BehaviorTab({
               <ToggleGroupItem
                 value="auto"
                 aria-label="Auto (default)"
-                className="h-7 px-2 text-xs"
+                className={`h-7 px-2 text-xs ${TRI_SELECTOR_ACTIVE_CLASSES}`}
               >
                 Auto
               </ToggleGroupItem>
               <ToggleGroupItem
                 value="on"
                 aria-label="On"
-                className="h-7 px-2 text-xs"
+                className={`h-7 px-2 text-xs ${TRI_SELECTOR_ACTIVE_CLASSES}`}
               >
                 On
               </ToggleGroupItem>
               <ToggleGroupItem
                 value="off"
                 aria-label="Off"
-                className="h-7 px-2 text-xs"
+                className={`h-7 px-2 text-xs ${TRI_SELECTOR_ACTIVE_CLASSES}`}
               >
                 Off
               </ToggleGroupItem>
@@ -477,21 +480,21 @@ export function BehaviorTab({
                 <ToggleGroupItem
                   value="none"
                   aria-label="Do not render images"
-                  className="h-7 min-w-[4.25rem] px-3 text-xs"
+                  className={`h-7 min-w-[4.25rem] px-3 text-xs ${TRI_SELECTOR_ACTIVE_CLASSES}`}
                 >
                   None
                 </ToggleGroupItem>
                 <ToggleGroupItem
                   value="collapsed"
                   aria-label="Render images in collapsed tool cards"
-                  className="h-7 min-w-[5.75rem] px-3 text-xs"
+                  className={`h-7 min-w-[5.75rem] px-3 text-xs ${TRI_SELECTOR_ACTIVE_CLASSES}`}
                 >
                   Collapsed
                 </ToggleGroupItem>
                 <ToggleGroupItem
                   value="inline"
                   aria-label="Render images inline"
-                  className="h-7 min-w-[4.25rem] px-3 text-xs"
+                  className={`h-7 min-w-[4.25rem] px-3 text-xs ${TRI_SELECTOR_ACTIVE_CLASSES}`}
                 >
                   Inline
                 </ToggleGroupItem>
