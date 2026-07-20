@@ -20,6 +20,7 @@ import {
   HOST_CONFIG_SCHEMA_VERSION_V2,
   isHarness,
   SEP_1865_PERMISSION_FEATURES,
+  type CanonicalHostConfigSkillSelection,
   type CanonicalHostConfigV2,
   type CspDomainSet,
   type HostConfigComputer,
@@ -407,6 +408,79 @@ function canonicalizeBuiltInToolIds(value: unknown): string[] | undefined {
   }
   if (seen.size === 0) return undefined;
   return Array.from(seen).sort();
+}
+
+// Allowed keys per skillSelection mode. Explicit construction below keeps
+// stray keys out of the canonical JSON; these sets make a stray key a loud
+// error instead of a silent drop (the `computer` precedent).
+const SKILL_SELECTION_ALL_VISIBLE_KEYS = new Set(["mode"]);
+const SKILL_SELECTION_EXPLICIT_KEYS = new Set(["mode", "skillIds"]);
+
+// Canonicalize the skill selection policy.
+//
+// SINGLE-IDENTITY RULE: `{ mode: "all-visible" }` canonicalizes to ABSENT
+// (returns undefined, dropping the key). Absent and explicit all-visible have
+// identical runtime behavior — the legacy "advertise every visible skill"
+// path — so keeping both encodings would mint two content-addressed
+// identities for one behavior, breaking hostConfig dedupe and host
+// comparison. One behavior, one canonical byte sequence.
+//
+// `{ mode: "explicit", skillIds }` is preserved — INCLUDING an empty
+// skillIds, which means "explicitly no skills" and must hash
+// distinctly from absent (absence is semantic here; contrast the
+// builtInToolIds empty-collapse). Explicit skillIds are deduped + sorted
+// like every other unordered id set. Entries are OPAQUE skill ids to the SDK:
+// wire-shape validated only, never dereferenced.
+function canonicalizeSkillSelection(
+  value: unknown
+): CanonicalHostConfigSkillSelection | undefined {
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value)) {
+    throw new Error("hostConfigV2: skillSelection must be a plain object");
+  }
+  const record = value as Record<string, unknown>;
+  const mode = record.mode;
+  if (mode === "all-visible") {
+    assertOnlyKnownKeys(
+      record,
+      SKILL_SELECTION_ALL_VISIBLE_KEYS,
+      "skillSelection"
+    );
+    // Same behavior as absent → same identity (see SINGLE-IDENTITY RULE).
+    return undefined;
+  }
+  if (mode === "explicit") {
+    assertOnlyKnownKeys(
+      record,
+      SKILL_SELECTION_EXPLICIT_KEYS,
+      "skillSelection"
+    );
+    const skillIds = record.skillIds;
+    if (!Array.isArray(skillIds)) {
+      throw new Error(
+        "hostConfigV2: skillSelection.skillIds must be a string[] when mode is \"explicit\""
+      );
+    }
+    const seen = new Set<string>();
+    for (const entry of skillIds) {
+      if (typeof entry !== "string") {
+        throw new Error(
+          "hostConfigV2: skillSelection.skillIds entries must be strings"
+        );
+      }
+      if (entry.trim() === "") {
+        throw new Error(
+          "hostConfigV2: skillSelection.skillIds entries must be non-empty strings"
+        );
+      }
+      seen.add(entry);
+    }
+    // Key order (mode, skillIds) is already sorted — stable canonical JSON.
+    return { mode: "explicit", skillIds: Array.from(seen).sort() };
+  }
+  throw new Error(
+    'hostConfigV2: skillSelection.mode must be "all-visible" | "explicit"'
+  );
 }
 
 // Plain-object guard shared by hostCapabilitiesOverride and mcpProfile.
@@ -1321,6 +1395,9 @@ export function canonicalizeHostConfigV2(
     // Opaque built-in tool ids. Helper returns undefined for absent/empty, so
     // JSON.stringify drops the key and pre-feature rows hash byte-identically.
     builtInToolIds: canonicalizeBuiltInToolIds(input.builtInToolIds),
+    // Skill selection. all-visible collapses to absent (single identity per
+    // behavior); explicit — including explicit-empty — survives.
+    skillSelection: canonicalizeSkillSelection(input.skillSelection),
     // Preserve undefined-vs-set: absent rows keep their historical hash, while
     // explicit off/on leaves survive template hostContext reseeds.
     modelVisibleMcpToolResults,

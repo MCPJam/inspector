@@ -1,5 +1,5 @@
 {
-  "__inputHash": "c0318c3797442aaffff93f5cab1b855d536adb3b8dcb4245d4d66506cbdd9d21",
+  "__inputHash": "ad409c68ab785b37fc4b6479965bb4c03c0111ce1a2720a285ee5e2f3fe5fa89",
   "rows": [
     {
       "label": "base-minimal",
@@ -457,6 +457,75 @@
       },
       "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"serverIds\":[],\"optionalServerIds\":[],\"builtInToolIds\":[\"code_exec\",\"web_search\"],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{}}",
       "sha256": "f52dc644d170085356969ceb86f3a370cd7a9fc8648a53481b318ba478a72d7a"
+    },
+    {
+      "label": "skill-selection-all-visible-omitted",
+      "input": {
+        "hostStyle": "claude",
+        "modelId": "anthropic/claude-sonnet-4-6",
+        "systemPrompt": "You are a helpful assistant.",
+        "temperature": 0.7,
+        "requireToolApproval": false,
+        "connectionDefaults": {
+          "headers": {},
+          "requestTimeout": 10000
+        },
+        "clientCapabilities": {},
+        "hostContext": {},
+        "skillSelection": {
+          "mode": "all-visible"
+        }
+      },
+      "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"serverIds\":[],\"optionalServerIds\":[],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{}}",
+      "sha256": "f6df30e89bb13c7b9fe2a098bcdd1e2778a0612d831cd4497471ca8ef2a4d729"
+    },
+    {
+      "label": "skill-selection-explicit-unsorted-dupes",
+      "input": {
+        "hostStyle": "claude",
+        "modelId": "anthropic/claude-sonnet-4-6",
+        "systemPrompt": "You are a helpful assistant.",
+        "temperature": 0.7,
+        "requireToolApproval": false,
+        "connectionDefaults": {
+          "headers": {},
+          "requestTimeout": 10000
+        },
+        "clientCapabilities": {},
+        "hostContext": {},
+        "skillSelection": {
+          "mode": "explicit",
+          "skillIds": [
+            "sk-b",
+            "sk-a",
+            "sk-b"
+          ]
+        }
+      },
+      "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"serverIds\":[],\"optionalServerIds\":[],\"skillSelection\":{\"mode\":\"explicit\",\"skillIds\":[\"sk-a\",\"sk-b\"]},\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{}}",
+      "sha256": "b7b95d8a469b8502326f156cfde3ffbd13dd02f520a208fc04a5593e9c421eb9"
+    },
+    {
+      "label": "skill-selection-explicit-empty-preserved",
+      "input": {
+        "hostStyle": "claude",
+        "modelId": "anthropic/claude-sonnet-4-6",
+        "systemPrompt": "You are a helpful assistant.",
+        "temperature": 0.7,
+        "requireToolApproval": false,
+        "connectionDefaults": {
+          "headers": {},
+          "requestTimeout": 10000
+        },
+        "clientCapabilities": {},
+        "hostContext": {},
+        "skillSelection": {
+          "mode": "explicit",
+          "skillIds": []
+        }
+      },
+      "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"serverIds\":[],\"optionalServerIds\":[],\"skillSelection\":{\"mode\":\"explicit\",\"skillIds\":[]},\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{}}",
+      "sha256": "0706287dcd5ea56cc0374d6d26125f879c779d217a4ed0c249cdbecc6c44ddec"
     },
     {
       "label": "adversarial-stray-deny-must-be-dropped",

@@ -18,6 +18,7 @@ import type {
   HostConfigComputerInput,
   HostConfigConnectionDefaults,
   HostConfigMcpProfileV1,
+  HostConfigSkillSelection,
   Harness,
   HostStyleId,
   McpAppsCapabilities,
@@ -59,6 +60,17 @@ export type HostComputer = HostConfigComputer;
  * `{ kind: "personal" }` and grant capabilities via `builtInToolIds`.
  */
 export type HostComputerInput = HostConfigComputerInput;
+
+/**
+ * Skill selection policy for a host (OpenAI plugin import).
+ * Absent → legacy all-visible behavior. `{ mode: "all-visible" }` is the
+ * explicit spelling of the same behavior and normalizes away at `toJSON()`;
+ * `{ mode: "explicit", skillIds }` — including an empty `skillIds`
+ * ("explicitly no skills") — is preserved. Plugin-imported skills are
+ * ordinary materialized skill rows, selectable by id here like any
+ * standalone skill (the UI groups them by plugin provenance).
+ */
+export type HostSkillSelection = HostConfigSkillSelection;
 
 /** Per-host connection defaults (headers + request timeout in ms). */
 export type HostConnectionDefaults = HostConfigConnectionDefaults;
@@ -107,6 +119,11 @@ export interface HostJson {
   harness?: Harness;
   servers: ServerId[];
   optionalServers: ServerId[];
+  /** Skill selection. Absent ⇒ legacy all-visible. Normalized:
+   * only the explicit variant survives to `HostJson` (`all-visible` collapses
+   * to absent — the type enforces it); `skillIds: []` means "explicitly no
+   * standalone skills". */
+  skillSelection?: Extract<HostSkillSelection, { mode: "explicit" }>;
   connectionDefaults: HostConnectionDefaults;
   clientCapabilities: Record<string, unknown>;
   hostContext: Record<string, unknown>;
@@ -172,6 +189,10 @@ export interface HostInit {
   servers?: ServerId[];
   /** Optional (auto-connect-if-available) servers. */
   optionalServers?: ServerId[];
+  /** Skill selection. Absent (or `{ mode: "all-visible" }`) ⇒
+   * legacy all-visible behavior; `{ mode: "explicit", skillIds }` restricts
+   * to the listed skills (`[]` = explicitly none). */
+  skillSelection?: HostSkillSelection;
   connectionDefaults?: Partial<HostConnectionDefaults>;
   clientCapabilities?: Record<string, unknown>;
   hostContext?: Record<string, unknown>;

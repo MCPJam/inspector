@@ -97,6 +97,7 @@ export {
 } from "./mint/jwt-bearer.js";
 export {
   buildXaaJwtBearerRequest,
+  createDerivedConfidentialCimdProviderFactory,
   getLocalConfidentialCimdProvider,
   type BuildXaaJwtBearerRequestArgs,
   type ConfidentialCimdProvider,

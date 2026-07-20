@@ -14,7 +14,7 @@ import {
   SquareSlash,
   MessageCircleQuestionIcon,
   GraduationCap,
-  Box,
+  Network,
   PackageOpen,
   LayoutGrid,
   GitBranch,
@@ -218,7 +218,7 @@ const navigationSections: NavSection[] = [
       {
         title: "Swarms",
         url: "/swarms",
-        icon: Box,
+        icon: Network,
         featureFlag: "sandboxes-enabled",
         billingFeature: "chatboxes",
       },

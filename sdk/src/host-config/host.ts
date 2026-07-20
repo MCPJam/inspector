@@ -46,6 +46,7 @@ import type {
   HostJson,
   HostMcp,
   HostServerOverride,
+  HostSkillSelection,
   HostStyleId,
   McpToolResultImageRendering,
   ModelVisibleMcpToolResults,
@@ -183,6 +184,9 @@ function canonicalToPublic(c: CanonicalHostConfigV2): HostJson {
   if (c.mcpToolResultImageRendering !== undefined) {
     out.mcpToolResultImageRendering = c.mcpToolResultImageRendering;
   }
+  if (c.skillSelection !== undefined) {
+    out.skillSelection = c.skillSelection;
+  }
   if (c.computer !== undefined) {
     out.computer = c.computer;
   }
@@ -283,6 +287,14 @@ export class Host {
   /** Optional (auto-connect-if-available) servers. */
   optionalServers: ServerId[];
 
+  /**
+   * Skill selection. `undefined` (or `{ mode: "all-visible" }`,
+   * which normalizes to absent at `toJSON()`) ⇒ legacy all-visible behavior;
+   * `{ mode: "explicit", skillIds }` restricts advertised skills
+   * (`[]` = explicitly none — preserved, distinct from absent).
+   */
+  skillSelection?: HostSkillSelection;
+
   connectionDefaults: HostConnectionDefaults;
 
   /**
@@ -364,6 +376,13 @@ export class Host {
     this.optionalServers = cfg.optionalServers
       ? dedup(cfg.optionalServers)
       : [];
+    // Defensive copy like the sibling id lists — a caller mutating its own
+    // skillIds after construction must not change this host's later toJSON().
+    this.skillSelection = cfg.skillSelection
+      ? cfg.skillSelection.mode === "explicit"
+        ? { mode: "explicit", skillIds: [...cfg.skillSelection.skillIds] }
+        : { mode: "all-visible" }
+      : undefined;
     this.connectionDefaults = {
       headers: cfg.connectionDefaults?.headers ?? {},
       requestTimeout:
@@ -535,6 +554,7 @@ export class Host {
       harness: this.harness,
       servers: this.servers,
       optionalServers: this.optionalServers,
+      skillSelection: this.skillSelection,
       connectionDefaults: this.connectionDefaults,
       clientCapabilities: this.clientCapabilities,
       hostContext: this.hostContext,
@@ -575,6 +595,12 @@ export class Host {
     }
     if (snap.harness !== undefined) {
       input.harness = snap.harness;
+    }
+    // `{ mode: "all-visible" }` is forwarded — the canonicalizer collapses it
+    // to absent (one identity per behavior); explicit — including
+    // explicit-empty — survives.
+    if (snap.skillSelection !== undefined) {
+      input.skillSelection = snap.skillSelection;
     }
     if (snap.hostCapabilitiesOverride !== undefined) {
       input.hostCapabilitiesOverride = snap.hostCapabilitiesOverride;
@@ -767,6 +793,7 @@ export type {
   HostJson,
   HostMcp,
   HostServerOverride,
+  HostSkillSelection,
   HostConnectionDefaults,
   HostStyleId,
   McpProtocolVersion,

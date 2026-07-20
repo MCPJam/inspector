@@ -27,6 +27,42 @@ export interface DynamicClientRegistrationRequestInput {
 }
 
 /**
+ * Derive the OIDC / SEP-837 `application_type` from the redirect URIs. A `"web"`
+ * client requires HTTPS redirect URIs and forbids localhost; loopback and
+ * custom-scheme (e.g. `mcpjam://`) redirects are `"native"`. If any redirect is
+ * native-only, the whole registration is native.
+ *
+ * This helper is version-agnostic, but it is deliberately NOT wired into
+ * `buildDynamicClientRegistrationRequest` — `application_type` is an OIDC-DCR
+ * field the 2026-07-28 spec introduced as a client MUST, so only the
+ * `debug-oauth-2026-07-28` machine attaches it. The three 2025 machines keep
+ * their RFC-7591 registration body unchanged (fidelity to their spec version).
+ */
+export function deriveApplicationType(
+  redirectUris: readonly string[]
+): "native" | "web" {
+  const isNativeRedirect = (uri: string): boolean => {
+    let parsed: URL;
+    try {
+      parsed = new URL(uri);
+    } catch {
+      return true; // unparseable → treat conservatively as native
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return true; // custom scheme (mcpjam://, …)
+    }
+    // OIDC loopback redirects are native and use http (not https); an https
+    // loopback is not a native loopback, so keep the loopback→native
+    // classification http-only. `URL.hostname` serializes IPv6 with brackets
+    // (`[::1]`), so the bracketed form is the only one that can match.
+    if (parsed.protocol !== "http:") return false;
+    const host = parsed.hostname;
+    return host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+  };
+  return redirectUris.some(isNativeRedirect) ? "native" : "web";
+}
+
+/**
  * Builds the RFC 7591 registration POST exactly as the debug OAuth machines
  * historically did: caller-supplied metadata defaults win, with
  * authorization-code-flavored fallbacks for anything absent. Callers that are
