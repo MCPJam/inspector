@@ -1,6 +1,6 @@
 /**
  * The evals group's own contract: exact tool set, honest annotations (the
- * destructive set is exactly generate + delete — both spend money or destroy
+ * destructive set is run + generate + delete — each spends money/quota or destroys
  * data), dispatch shapes, and the quota-exhausted command error passing
  * through as a tool error (the quota decision itself lives in EvalsTab's
  * handler — see EvalsTab.test.tsx).
@@ -56,11 +56,11 @@ describe("buildEvalsUiTools", () => {
       idempotentHint: true,
       openWorldHint: false,
     });
-    // run: real model + MCP traffic; a retry starts another quota-spending
-    // run, so NOT idempotent.
+    // run: real model + MCP traffic that spends quota → destructive (the
+    // guide gates money spends on the confirmation pill); NOT idempotent.
     expect(getTool("ui_run_eval_suite").annotations).toEqual({
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: false,
       openWorldHint: true,
     });
@@ -95,6 +95,7 @@ describe("buildEvalsUiTools", () => {
       .filter((tool) => tool.annotations?.destructiveHint === true)
       .map((tool) => tool.name);
     expect(destructive).toEqual([
+      "ui_run_eval_suite",
       "ui_generate_eval_tests",
       "ui_delete_eval_suite",
     ]);
