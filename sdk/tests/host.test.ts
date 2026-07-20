@@ -324,6 +324,20 @@ describe("Host — toJSON() round-trips", () => {
     expect(withEmpty).toEqual(without);
   });
 
+  it("defensively copies skillSelection — caller mutation after construction never leaks into toJSON()", () => {
+    const skillIds = ["sk-1"];
+    const host = new Host({
+      style: "mcpjam",
+      model: "test-model",
+      skillSelection: { mode: "explicit", skillIds },
+    });
+    skillIds.push("sk-2");
+    expect(host.toJSON().skillSelection).toEqual({
+      mode: "explicit",
+      skillIds: ["sk-1"],
+    });
+  });
+
   it('normalizes { mode: "all-visible" } skillSelection to absent (one identity per behavior)', () => {
     const allVisible = new Host({
       style: "mcpjam",

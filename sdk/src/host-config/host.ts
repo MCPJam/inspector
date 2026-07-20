@@ -389,7 +389,13 @@ export class Host {
     this.pluginVersionIds = cfg.pluginVersionIds
       ? dedup(cfg.pluginVersionIds)
       : undefined;
-    this.skillSelection = cfg.skillSelection;
+    // Defensive copy like the sibling id lists — a caller mutating its own
+    // skillIds after construction must not change this host's later toJSON().
+    this.skillSelection = cfg.skillSelection
+      ? cfg.skillSelection.mode === "explicit"
+        ? { mode: "explicit", skillIds: [...cfg.skillSelection.skillIds] }
+        : { mode: "all-visible" }
+      : undefined;
     this.connectionDefaults = {
       headers: cfg.connectionDefaults?.headers ?? {},
       requestTimeout:

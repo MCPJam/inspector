@@ -123,8 +123,9 @@ export interface HostJson {
   pluginVersionIds?: string[];
   /** Standalone-skill selection. Absent ⇒ legacy all-visible. Normalized:
    * only the explicit variant survives to `HostJson` (`all-visible` collapses
-   * to absent); `skillIds: []` means "explicitly no standalone skills". */
-  skillSelection?: HostSkillSelection;
+   * to absent — the type enforces it); `skillIds: []` means "explicitly no
+   * standalone skills". */
+  skillSelection?: Extract<HostSkillSelection, { mode: "explicit" }>;
   connectionDefaults: HostConnectionDefaults;
   clientCapabilities: Record<string, unknown>;
   hostContext: Record<string, unknown>;
