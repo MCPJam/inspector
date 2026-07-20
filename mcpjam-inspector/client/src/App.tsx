@@ -1119,31 +1119,49 @@ export function SwarmsRoute() {
     convexProjectId,
     isAuthenticated,
   } = useAppRouteContext();
-  const { user } = useAuth();
+  // WorkOS identity is the membership match key for the *invitee guest*
+  // notice. Convex `isAuthenticated` is also true for anonymous sessions,
+  // which never get a WorkOS `user.email` — but those actors still own a
+  // personal-org project and pass `requireProjectRole('member')` server-side
+  // via userId. Do NOT treat "no WorkOS email" as "not a member".
+  const { user, isLoading: isWorkOsLoading } = useAuth();
+  const isWorkOsSignedIn = !!user;
 
-  // The backend made the entire Swarm surface member-only: personas, journeys,
-  // journeyRuns, session lists and transcript reads all reject a project
-  // **guest**. Mirror that here — resolve the authenticated viewer's project
-  // role and, when they're a guest/non-member, show an access notice INSTEAD of
-  // mounting `SwarmsTab` so none of the member-only queries ever fire.
+  // The backend made Swarm member-only vs project *invitee guests* (role
+  // `guest`): personas/journeys/runs reject that tier. Mirror that for
+  // WorkOS-signed-in viewers by resolving role from the members list.
   //
-  // Only engage for an authenticated viewer on a real (Convex) project. An
-  // unauthenticated / guest-mode local user (no `convexProjectId`) has no
-  // project membership to check and keeps its existing behavior.
-  const roleGateActive = isAuthenticated && !!convexProjectId;
+  // Anonymous Convex guests skip this notice and mount SwarmsTab — they are
+  // owners of their personal-org default project. Unauthenticated local
+  // (no `convexProjectId`) also keeps existing behavior.
+  const roleGateActive =
+    isAuthenticated && !!convexProjectId && isWorkOsSignedIn;
   const { role, isLoading: roleLoading } = useViewerProjectRole({
     isAuthenticated,
     projectId: convexProjectId,
     viewerEmail: user?.email,
+    // Bound the "wait for email" window to WorkOS hydrate — not Convex auth —
+    // so we never spin forever on anonymous sessions.
+    identityLoading: isWorkOsLoading,
   });
 
   if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
     return <ActiveBillingUpsellGate />;
   }
 
+  // Wait for WorkOS before choosing signed-in gate vs anonymous fallthrough,
+  // so a real member never briefly mounts (or gets denied) mid-hydrate.
+  if (isAuthenticated && !!convexProjectId && isWorkOsLoading) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <Loader2 className="size-5 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
   if (roleGateActive) {
-    // Wait for the members list to resolve before deciding, so a guest never
-    // briefly mounts `SwarmsTab` (which would fire the member-only queries).
+    // Wait for members before deciding, so an invitee guest never briefly
+    // mounts `SwarmsTab` (which would fire the member-only queries).
     if (roleLoading) {
       return (
         <div className="flex h-full items-center justify-center">
@@ -1157,7 +1175,7 @@ export function SwarmsRoute() {
         <EmptyState
           icon={Users}
           title="Swarms is available to project members"
-          description="You have guest access to this project. Swarms — personas, journeys and their runs — can only be viewed and run by project members. Ask a project admin to add you as a member to get access."
+          description="Personas, journeys, and their runs can only be viewed and run by project members. Ask a project admin to add you as a member to get access."
         />
       );
     }
@@ -1171,7 +1189,13 @@ export function SwarmsRoute() {
       // Host create/edit/apply/delete on the Clients sub-tab are admin-gated
       // server-side; pass the resolved role so the UI hides those affordances
       // for non-admins (members can still view Swarms + run journeys).
-      viewerRole={role}
+      // Anonymous Convex guests can't be matched via the email members list,
+      // but they own their personal-org project — treat as owner for UI
+      // affordances; writes still enforce server-side.
+      viewerRole={
+        role ??
+        (isAuthenticated && !isWorkOsSignedIn ? "owner" : undefined)
+      }
     />
   );
 }
