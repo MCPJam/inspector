@@ -114,12 +114,23 @@ export async function sessionAuthMiddleware(
   // custom headers. Avoid accepting tokens in URLs because query parameters
   // are commonly captured by browser history, referrer headers, and logs.
   if (!token) {
-    token = c.req
+    const rawCookieValue = c.req
       .header("Cookie")
       ?.split(";")
       .map((part) => part.trim())
       .find((part) => part.startsWith("mcp_session_auth="))
       ?.substring("mcp_session_auth=".length);
+
+    if (rawCookieValue) {
+      try {
+        token = decodeURIComponent(rawCookieValue);
+      } catch {
+        // Malformed percent-encoding — treat as missing token so the
+        // request is rejected with 401 rather than validated against
+        // a corrupted value.
+        token = undefined;
+      }
+    }
   }
 
   // No token provided

@@ -120,6 +120,25 @@ describe("sessionAuthMiddleware", () => {
       expect(res.status).toBe(200);
     });
 
+    it("URL-decodes the session cookie value", async () => {
+      // Simulate client-side encodeURIComponent() from session-token.ts.
+      const encoded = encodeURIComponent(validToken);
+      const res = await app.request("/api/mcp/test", {
+        headers: { Cookie: `mcp_session_auth=${encoded}` },
+      });
+
+      expect(res.status).toBe(200);
+    });
+
+    it("rejects a cookie with malformed percent-encoding", async () => {
+      const res = await app.request("/api/mcp/test", {
+        // %ZZ is not valid percent-encoding and will make decodeURIComponent throw.
+        headers: { Cookie: `mcp_session_auth=%ZZ` },
+      });
+
+      expect(res.status).toBe(401);
+    });
+
     it("works with POST requests", async () => {
       const res = await app.request("/api/mcp/test", {
         method: "POST",
