@@ -193,4 +193,16 @@ export const PROTOCOL_VERSION_INFO = {
       "Enhanced security with URL-based client IDs",
     ],
   },
+  "2026-07-28": {
+    label: "2026-07-28 (Draft)",
+    description:
+      "Draft MCP OAuth specification: 2025-11-25 discovery plus OIDC application_type",
+    features: [
+      "Client ID Metadata Documents (CIMD) SHOULD be supported",
+      "Protected Resource Metadata (RFC9728) required",
+      "RFC8414 OR OIDC discovery without root fallback",
+      "PKCE strictly required and enforced",
+      "SEP-837: OIDC application_type sent on Dynamic Client Registration",
+    ],
+  },
 } as const;
