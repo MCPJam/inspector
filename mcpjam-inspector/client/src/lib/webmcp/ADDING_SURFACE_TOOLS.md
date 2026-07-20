@@ -51,12 +51,16 @@ can already advertise them.
 Every tool carries a COMPLETE `annotations` object —
 `readOnlyHint` / `destructiveHint` / `idempotentHint` / `openWorldHint`, all
 booleans, with `readOnlyHint === readOnly` (the coverage test checks all of
-this). Destructive = deletes something, spends money/quota, or is otherwise
-irreversible → `destructiveHint: true`, which shows the confirmation pill
-even in the default approval mode (`ui_remove_server`, `ui_execute_tool`
-precedents). Read-only tools never gate — so they must genuinely be
-side-effect-free (`ui_snapshot_app` errors rather than auto-opening a
-surface).
+this). Destructive = deletes something, **spends money/quota, or consumes
+billed/capped infrastructure**, or is otherwise irreversible →
+`destructiveHint: true`, which shows the confirmation pill even in the default
+approval mode. This includes actions that *create* but still spend: e.g.
+`ui_run_eval_suite` (eval quota), `ui_start_computer` (billed, daily-capped),
+`ui_launch_swarm_run` (swarm quota), `ui_generate_*` — all `destructiveHint:
+true`, NOT merely `openWorldHint`. A server-side gate (quota/cap) does not
+replace the pill; both apply. Read-only tools never gate — so they must
+genuinely be side-effect-free (`ui_snapshot_app` errors rather than
+auto-opening a surface).
 
 ### Billing gates
 

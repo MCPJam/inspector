@@ -136,6 +136,7 @@ export const ANALYTICS_EVENTS = {
   host_capabilities_dialog_opened: { source: "client" },
   host_catalog_degraded: { source: "client" },
   hosted_model_catalog_degraded: { source: "client" },
+  hosted_provider_logo_missing: { source: "client" },
   host_compat_tab_viewed: { source: "client" },
   host_context_dialog_opened: { source: "client" },
   host_theme_toggled: { source: "client" },

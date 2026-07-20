@@ -17,7 +17,7 @@ describe("scanWidgetUsage", () => {
   it("returns undefined when tools aren't loaded", async () => {
     expect(await scanWidgetUsage(null, async () => ({}))).toBeUndefined();
     expect(
-      await scanWidgetUsage(undefined as never, async () => ({})),
+      await scanWidgetUsage(undefined as never, async () => ({}))
     ).toBeUndefined();
   });
 
@@ -31,17 +31,72 @@ describe("scanWidgetUsage", () => {
       tools: [widgetTool("chart", "ui://chart")],
     };
     const usage = await scanWidgetUsage(tools, async () =>
-      htmlResource("window.openai.sendFollowUpMessage('hi')"),
+      htmlResource("window.openai.sendFollowUpMessage('hi')")
     );
     expect(usage).toEqual({ message: ["chart"] });
   });
 
+  it("preserves the exact sandbox permission names from widget metadata", async () => {
+    const tools: HostCompatToolsInput = {
+      tools: [widgetTool("create_view", "ui://widget")],
+    };
+    const usage = await scanWidgetUsage(tools, async () => ({
+      contents: [
+        {
+          text: "<div />",
+          _meta: {
+            ui: {
+              permissions: {
+                clipboardWrite: {},
+              },
+            },
+          },
+        },
+      ],
+    }));
+    expect(usage).toEqual({
+      sandboxPermissions: ["create_view"],
+      sandboxPermissionNames: ["clipboardWrite"],
+      sandboxPermissionTools: { clipboardWrite: ["create_view"] },
+    });
+  });
+
+  it("keeps sandbox permissions tied to the tools that requested them", async () => {
+    const tools: HostCompatToolsInput = {
+      tools: [
+        widgetTool("clipboard_view", "ui://clipboard"),
+        widgetTool("camera_view", "ui://camera"),
+      ],
+    };
+    const usage = await scanWidgetUsage(tools, async (uri) => ({
+      contents: [
+        {
+          text: "<div />",
+          _meta: {
+            ui: {
+              permissions:
+                uri === "ui://clipboard"
+                  ? { clipboardWrite: {} }
+                  : { camera: {} },
+            },
+          },
+        },
+      ],
+    }));
+    expect(usage?.sandboxPermissionTools).toEqual({
+      camera: ["camera_view"],
+      clipboardWrite: ["clipboard_view"],
+    });
+  });
+
   it("scans an OpenAI-only widget (openai/outputTemplate, no ui.resourceUri)", async () => {
     const tools: HostCompatToolsInput = {
-      tools: [{ name: "card", _meta: { "openai/outputTemplate": "ui://card" } }],
+      tools: [
+        { name: "card", _meta: { "openai/outputTemplate": "ui://card" } },
+      ],
     };
     const readResource = vi.fn(async () =>
-      htmlResource("window.openai.sendFollowUpMessage()"),
+      htmlResource("window.openai.sendFollowUpMessage()")
     );
     const usage = await scanWidgetUsage(tools, readResource);
     expect(readResource).toHaveBeenCalledWith("ui://card");
@@ -52,9 +107,7 @@ describe("scanWidgetUsage", () => {
     const tools: HostCompatToolsInput = {
       tools: [widgetTool("a", "ui://w"), widgetTool("b", "ui://w")],
     };
-    const readResource = vi.fn(async () =>
-      htmlResource("el.callTool('x')"),
-    );
+    const readResource = vi.fn(async () => htmlResource("el.callTool('x')"));
     const usage = await scanWidgetUsage(tools, readResource);
     expect(readResource).toHaveBeenCalledTimes(1);
     expect(usage).toEqual({ serverTools: ["a", "b"] });
@@ -77,7 +130,7 @@ describe("scanWidgetUsage", () => {
     // Read resolves, but there's nothing to scan — must NOT read as clean.
     expect(await scanWidgetUsage(tools, async () => ({}))).toBeUndefined();
     expect(
-      await scanWidgetUsage(tools, async () => ({ contents: [] })),
+      await scanWidgetUsage(tools, async () => ({ contents: [] }))
     ).toBeUndefined();
   });
 
@@ -89,7 +142,7 @@ describe("scanWidgetUsage", () => {
     const usage = await scanWidgetUsage(tools, async (uri) =>
       uri === "ui://a"
         ? htmlResource("<div/>")
-        : Promise.reject(new Error("unreadable")),
+        : Promise.reject(new Error("unreadable"))
     );
     expect(usage).toBeUndefined();
   });

@@ -72,7 +72,7 @@ export interface XaaCredentialFieldsProps {
    * the MCPJam demo identity instead.
    */
   projectDefaultIdentity?: { subject: string; email: string } | null;
-  /** Per-surface copy under the "Override identity" heading. */
+  /** Per-surface copy under the "Simulated identity" heading. */
   identityHelpText?: string;
   /** Start the Advanced section expanded (Debugger wants identity visible). */
   defaultAdvancedOpen?: boolean;
@@ -603,7 +603,7 @@ export function XaaCredentialFields({
             <div className="space-y-1">
               <div className="flex items-center gap-1">
                 <span className="block text-xs font-medium text-foreground">
-                  Override identity for this server
+                  Simulated identity
                 </span>
                 <Tooltip>
                   <TooltipTrigger asChild>

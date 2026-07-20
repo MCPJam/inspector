@@ -7,8 +7,8 @@ import {
 import { Badge } from "@mcpjam/design-system/badge";
 import { Separator } from "@mcpjam/design-system/separator";
 import type { OpenRouterModel } from "@/types/model-metadata";
-import { getProviderLogo } from "@/lib/provider-logos";
-import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { getProviderDisplayName } from "@/lib/provider-registry";
+import { ProviderLogo } from "@/components/chat-v2/chat-input/model/provider-logo";
 
 interface ModelDetailsModalProps {
   model: OpenRouterModel;
@@ -46,51 +46,25 @@ function formatPrice(price: string): string {
   return `$${numPrice} per 1M tokens`;
 }
 
-/**
- * Extract provider name from model ID
- */
-function getProviderFromId(modelId: string): string {
-  const parts = modelId.split("/");
-  if (parts.length < 2) return "";
-
-  const provider = parts[0];
-  const providerMap: Record<string, string> = {
-    openai: "OpenAI",
-    anthropic: "Anthropic",
-    google: "Google",
-    meta: "Meta",
-    "meta-llama": "Meta",
-    "x-ai": "xAI",
-    moonshotai: "Moonshot AI",
-    "z-ai": "Zhipu AI",
-    qwen: "Qwen",
-  };
-
-  return providerMap[provider] || provider;
-}
-
 export function ModelDetailsModal({
   model,
   open,
   onOpenChange,
 }: ModelDetailsModalProps) {
-  const themeMode = usePreferencesStore((s) => s.themeMode);
-  const providerName = getProviderFromId(model.id);
   const providerKey = model.id.split("/")[0];
-  const logoSrc = getProviderLogo(providerKey, themeMode);
+  const providerName = getProviderDisplayName(providerKey);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[85vh] w-full max-w-2xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-3">
-            {logoSrc && (
-              <img
-                src={logoSrc}
-                alt={`${providerName} logo`}
-                className="h-6 w-6 object-contain"
-              />
-            )}
+            <ProviderLogo
+              provider={providerKey}
+              className="h-6 w-6"
+              letterClassName="text-xs"
+              hosted
+            />
             <span>{model.name}</span>
           </DialogTitle>
         </DialogHeader>
