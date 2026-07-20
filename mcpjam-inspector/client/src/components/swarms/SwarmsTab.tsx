@@ -18,9 +18,9 @@
  *   top-level "selected session"; an agent tool couldn't resolve one without a
  *   large lift of run/session state that would diverge the snapshot from the
  *   multi-card view. The human uses the in-view "Promote to test case" button.
- * - **Swarm host CRUD is OUT of v1.** Creating/deleting swarm hosts is admin
- *   role-gated (`SwarmHostsPanel`, `canManageHosts`); the snapshot still
- *   surfaces host TARGETS (names) via the journey→hosts mapping.
+ * - **Host CRUD is OUT of v1.** Journeys attach existing project hosts; create
+ *   / edit / delete hosts live on Connect. The snapshot still surfaces host
+ *   TARGETS (names) via the journey→hosts mapping.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, usePaginatedQuery } from "convex/react";
@@ -77,12 +77,8 @@ import {
 } from "@/lib/app-navigation";
 import { getShareableAppOrigin } from "@/lib/chatbox-session";
 import { ConvertSwarmSessionDialog } from "@/components/swarms/convert-swarm-session-dialog";
-import { SegmentedControl } from "@/components/ui/json-editor/segmented-control";
-import { SwarmHostsPanel } from "@/components/swarms/SwarmHostsPanel";
-import {
-  canManageHosts,
-  type ProjectMembershipRole,
-} from "@/hooks/useProjects";
+import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
+import { useProjectServerAttachments } from "@/hooks/useViews";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
 import type {
@@ -222,6 +218,8 @@ type Journey = {
   name?: string;
   goal: string;
   hostIds: string[];
+  /** Standalone server group shared across all hosts at launch (suite-like). */
+  serverAttachmentId?: string | null;
   config: { sessionsPerHost: number; maxTurns: number };
 };
 type HostItem = {
@@ -237,13 +235,6 @@ type HostItem = {
 interface SwarmsTabProps {
   projectId: string | null;
   isAuthenticated: boolean;
-  /**
-   * The viewer's resolved project role (from `SwarmsRoute`). Host management
-   * on the Clients sub-tab is admin-only server-side; when the viewer can't
-   * manage hosts those affordances are hidden. Undefined → treated as no
-   * management (fail-closed).
-   */
-  viewerRole?: ProjectMembershipRole;
 }
 
 // ── hooks ─────────────────────────────────────────────────────────────────
@@ -299,7 +290,6 @@ function RunningPersonasSubscriber({
 export function SwarmsTab({
   projectId,
   isAuthenticated,
-  viewerRole,
 }: SwarmsTabProps) {
   // Don't subscribe to project-scoped Convex reads until auth is ready — a
   // signed-out/loading mount with a persisted project would otherwise surface
@@ -315,10 +305,6 @@ export function SwarmsTab({
   const onRunningPersonasChange = useCallback((ids: string[]) => {
     setRunningPersonaIds(ids);
   }, []);
-  const [swarmView, setSwarmView] = useState<"journeys" | "clients">(
-    "journeys",
-  );
-  const canManage = canManageHosts(viewerRole);
   // Restore a copied session deep-link (`/swarms?persona=&run=&host=&session=`).
   // Parse ONCE on mount so later user navigation isn't clobbered by the URL.
   const deepLink = useMemo(
@@ -584,15 +570,12 @@ export function SwarmsTab({
         const goal =
           typeof payload?.goal === "string" ? payload.goal.trim() : "";
         setJourneyGoalSeed(goal);
-        // The bridge covers the whole Swarms surface incl. the Clients
-        // sub-tab; switch to Journeys so the opened form is actually visible.
-        setSwarmView("journeys");
         setJourneyFormOpen(true);
         return {
           status: "form_opened",
           personaId: persona._id,
           ...(goal ? { prefilledGoal: goal } : {}),
-          note: "The user picks the target hosts and fan-out config and submits — no journey is created yet.",
+          note: "The user picks a server group, target hosts, and fan-out config and submits — no journey is created yet.",
         };
       },
       launchSwarmRun: async (command) => {
@@ -651,8 +634,6 @@ export function SwarmsTab({
         };
       }
       return {
-        view: swarmView,
-        canManageHosts: canManage,
         selectedPersona: selectedPersona
           ? {
               id: selectedPersona._id,
@@ -708,84 +689,63 @@ export function SwarmsTab({
           onChange={onRunningPersonasChange}
         />
       </ErrorBoundary>
-      {/* Product sub-nav: Journeys (personas/journeys/runs) vs Clients
-          (product-scoped host management). */}
-      <div className="flex shrink-0 items-center justify-center border-b px-4 py-2">
-        <SegmentedControl
-          value={swarmView}
-          onChange={(v) => setSwarmView(v as "journeys" | "clients")}
-          options={[
-            { value: "journeys", label: "Journeys" },
-            { value: "clients", label: "Clients" },
-          ]}
-        />
-      </div>
-      {swarmView === "clients" ? (
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <SwarmHostsPanel
-            projectId={projectId}
-            isAuthenticated={isAuthenticated}
-            canManage={canManage}
-          />
-        </div>
-      ) : (
-        <div className="flex min-h-0 flex-1">
-          {/* Personas */}
-          <aside className="flex w-72 shrink-0 flex-col border-r">
-        <div className="flex items-center justify-between border-b px-4 py-3">
-          <h2 className="text-sm font-semibold">Personas</h2>
-          <NewPersonaDialog
-            onCreate={async (draft) => {
-              const row = await createPersona({ projectId, ...draft } as any);
-              setSelectedPersonaId(row._id);
-            }}
-          />
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          {personas === undefined ? (
-            <div className="p-4 text-sm text-muted-foreground">Loading…</div>
-          ) : personas.length === 0 ? (
-            <div className="p-4 text-sm text-muted-foreground">
-              No personas yet. Create one to get started.
-            </div>
-          ) : (
-            personas.map((p) => {
-              const selected = p._id === selectedPersonaId;
-              return (
-                <button
-                  key={p._id}
-                  type="button"
-                  onClick={() => setSelectedPersonaId(p._id)}
-                  className={cn(
-                    "flex w-full items-center gap-3 border-b px-4 py-3 text-left hover:bg-muted/50",
-                    selected && "bg-muted",
-                  )}
-                >
-                  <PersonaPixelAvatar
-                    seed={p._id}
-                    shapeIndex={p.avatarShape}
-                    paletteIndex={p.avatarPalette}
-                    size="md"
-                    active={selected}
-                    state={runningSet.has(p._id) ? "running" : "idle"}
-                  />
-                  <span className="flex min-w-0 flex-col items-start gap-0.5">
-                    <span className="truncate text-sm font-medium">
-                      {p.name}
+      <div className="flex min-h-0 flex-1">
+        {/* Personas */}
+        <aside className="flex w-72 shrink-0 flex-col border-r">
+          <div className="flex items-center justify-between border-b px-4 py-3">
+            <h2 className="text-sm font-semibold">Personas</h2>
+            <NewPersonaDialog
+              onCreate={async (draft) => {
+                const row = await createPersona({ projectId, ...draft } as any);
+                setSelectedPersonaId(row._id);
+              }}
+            />
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {personas === undefined ? (
+              <div className="p-4 text-sm text-muted-foreground">Loading…</div>
+            ) : personas.length === 0 ? (
+              <div className="p-4 text-sm text-muted-foreground">
+                No personas yet. Create one to get started.
+              </div>
+            ) : (
+              personas.map((p) => {
+                const selected = p._id === selectedPersonaId;
+                return (
+                  <button
+                    key={p._id}
+                    type="button"
+                    onClick={() => setSelectedPersonaId(p._id)}
+                    className={cn(
+                      "flex w-full items-center gap-3 border-b px-4 py-3 text-left hover:bg-muted/50",
+                      selected && "bg-muted",
+                    )}
+                  >
+                    <PersonaPixelAvatar
+                      seed={p._id}
+                      shapeIndex={p.avatarShape}
+                      paletteIndex={p.avatarPalette}
+                      size="md"
+                      active={selected}
+                      state={runningSet.has(p._id) ? "running" : "idle"}
+                    />
+                    <span className="flex min-w-0 flex-col items-start gap-0.5">
+                      <span className="truncate text-sm font-medium">
+                        {p.name}
+                      </span>
+                      <span className="truncate text-xs text-muted-foreground">
+                        {p.role}
+                      </span>
                     </span>
-                    <span className="truncate text-xs text-muted-foreground">
-                      {p.role}
-                    </span>
-                  </span>
-                </button>
-              );
-            })
-          )}
-        </div>
-      </aside>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </aside>
 
-      {/* Journeys for the selected persona */}
-      <main className="min-w-0 flex-1 overflow-y-auto">
+        {/* Journeys for the selected persona */}
+        <main className="min-w-0 flex-1 overflow-y-auto">
         {!selectedPersona ? (
           <JourneyNetworkBackdrop />
         ) : (
@@ -812,6 +772,7 @@ export function SwarmsTab({
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-sm font-semibold">Journeys</h3>
               <NewJourneyButton
+                projectId={projectId}
                 hosts={hosts ?? []}
                 open={journeyFormOpen}
                 onOpenChange={(o) => {
@@ -846,6 +807,8 @@ export function SwarmsTab({
                     journey={j}
                     onLaunch={launchJourney}
                     hosts={hosts ?? []}
+                    isAuthenticated={isAuthenticated}
+                    projectId={projectId}
                     initialRunId={deepLink.runId}
                     initialThreadId={deepLink.threadId}
                   />
@@ -855,8 +818,7 @@ export function SwarmsTab({
           </div>
         )}
       </main>
-        </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -883,12 +845,16 @@ function runStatusClass(status: string): string {
 function JourneyCard({
   journey,
   hosts,
+  isAuthenticated,
+  projectId,
   initialRunId,
   initialThreadId,
   onLaunch,
 }: {
   journey: Journey;
   hosts: HostItem[];
+  isAuthenticated: boolean;
+  projectId: string;
   /** Shared launch coordinator — see SwarmsTab.launchJourney. */
   onLaunch: (
     journeyId: string,
@@ -900,6 +866,14 @@ function JourneyCard({
   /** Deep-link session to auto-select inside the opened run. */
   initialThreadId?: string;
 }) {
+  const { serverAttachments } = useProjectServerAttachments({
+    isAuthenticated,
+    projectId,
+  });
+  const serverGroupName = journey.serverAttachmentId
+    ? (serverAttachments.find((a) => a._id === journey.serverAttachmentId)
+        ?.name ?? null)
+    : null;
   // Real Convex pagination (numItems + cursor) over the journey's runs.
   const {
     results: runs,
@@ -961,6 +935,7 @@ function JourneyCard({
         <div className="min-w-0">
           <p className="truncate text-sm font-medium">{journey.goal}</p>
           <p className="mt-1 text-xs text-muted-foreground">
+            {serverGroupName ? `${serverGroupName} · ` : null}
             {journey.hostIds.map(hostName).join(", ")} ·{" "}
             {journey.config.sessionsPerHost}/host · {journey.config.maxTurns} turns
           </p>
@@ -1440,16 +1415,19 @@ function NewPersonaDialog({
 }
 
 function NewJourneyButton({
+  projectId,
   hosts,
   onCreate,
   open,
   onOpenChange,
   goalSeed,
 }: {
+  projectId: string;
   hosts: HostItem[];
   onCreate: (draft: {
     goal: string;
     hostIds: string[];
+    serverAttachmentId: string;
     config: { sessionsPerHost: number; maxTurns: number };
   }) => Promise<void>;
   // Controlled by SwarmsTab so `ui_open_journey_form` can open + prefill it.
@@ -1460,6 +1438,9 @@ function NewJourneyButton({
 }) {
   const [goal, setGoal] = useState("");
   const [hostIds, setHostIds] = useState<string[]>([]);
+  const [serverAttachmentId, setServerAttachmentId] = useState<string | null>(
+    null,
+  );
   const [sessionsPerHost, setSessionsPerHost] = useState(2);
   const [maxTurns, setMaxTurns] = useState(6);
   // Seed the goal from the agent prefill (or reset to "") whenever the form
@@ -1513,56 +1494,85 @@ function NewJourneyButton({
           className="leading-relaxed"
         />
       </div>
-      <p className="mb-1.5 text-xs font-medium">Clients</p>
-      <div className="mb-3 flex flex-wrap gap-2">
-        {hosts.length === 0 ? (
-          <span className="text-xs text-muted-foreground">
-            No clients in this project.
-          </span>
-        ) : (
-          sortedHosts.map((h) => {
-            // Compact config chips so the picker shows what each client brings
-            // (model · N servers · computer) without opening the editor.
-            const meta = [
-              h.modelId || null,
-              typeof h.serverCount === "number"
-                ? `${h.serverCount} srv`
-                : null,
-              h.hasComputer ? "computer" : null,
-            ].filter(Boolean);
-            const shared = !isSwarmClient(h);
-            return (
-              <button
-                key={h.hostId}
-                type="button"
-                onClick={() => toggleHost(h.hostId)}
-                className={cn(
-                  "flex flex-col items-start gap-0.5 rounded-lg border px-2.5 py-1.5 text-left text-xs",
-                  hostIds.includes(h.hostId)
-                    ? "border-primary bg-primary/10"
-                    : "hover:bg-muted",
-                )}
-              >
-                <span className="flex items-center gap-1.5 font-medium">
-                  {h.name}
-                  {shared ? (
-                    <span
-                      className="rounded-full border border-border/60 px-1 py-0 text-[9px] font-normal text-muted-foreground"
-                      title="Managed in another product surface — still runnable by this journey"
-                    >
-                      shared
+      <div className="mb-3 divide-y rounded-lg border bg-muted/20">
+        <div className="flex items-start justify-between gap-4 p-3">
+          <div className="min-w-0 space-y-0.5">
+            <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Servers
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              Server group all clients run against for this journey.
+            </p>
+          </div>
+          <div className="shrink-0">
+            <ServerGroupPicker
+              projectId={projectId}
+              value={serverAttachmentId}
+              onChange={(id) => setServerAttachmentId(id)}
+              onClearSelection={() => setServerAttachmentId(null)}
+              emptyTriggerLabel="No server group · pick one"
+              infoText="A named set of MCP servers shared across every client this journey targets — same pattern as eval suites."
+            />
+          </div>
+        </div>
+        <div className="space-y-2 p-3">
+          <div className="space-y-0.5">
+            <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Clients
+            </h3>
+            <p className="text-xs text-muted-foreground">
+              Each selected client fans out into its own sessions.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {hosts.length === 0 ? (
+              <span className="text-xs text-muted-foreground">
+                No clients in this project.
+              </span>
+            ) : (
+              sortedHosts.map((h) => {
+                // Compact config chips so the picker shows what each client
+                // brings (model · computer) without opening the editor. Server
+                // count is journey-scoped via the group above, not the host.
+                const meta = [
+                  h.modelId || null,
+                  h.hasComputer ? "computer" : null,
+                ].filter(Boolean);
+                const shared = !isSwarmClient(h);
+                return (
+                  <button
+                    key={h.hostId}
+                    type="button"
+                    onClick={() => toggleHost(h.hostId)}
+                    className={cn(
+                      "flex flex-col items-start gap-0.5 rounded-lg border px-2.5 py-1.5 text-left text-xs",
+                      hostIds.includes(h.hostId)
+                        ? "border-primary bg-primary/10"
+                        : "hover:bg-muted",
+                    )}
+                  >
+                    <span className="flex items-center gap-1.5 font-medium">
+                      {h.name}
+                      {shared ? (
+                        <span
+                          className="rounded-full border border-border/60 px-1 py-0 text-[9px] font-normal text-muted-foreground"
+                          title="Managed in another product surface — still runnable by this journey"
+                        >
+                          shared
+                        </span>
+                      ) : null}
                     </span>
-                  ) : null}
-                </span>
-                {meta.length > 0 ? (
-                  <span className="text-[10px] text-muted-foreground">
-                    {meta.join(" · ")}
-                  </span>
-                ) : null}
-              </button>
-            );
-          })
-        )}
+                    {meta.length > 0 ? (
+                      <span className="text-[10px] text-muted-foreground">
+                        {meta.join(" · ")}
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
       </div>
       <div className="mb-3 flex flex-wrap gap-4">
         <div className="flex flex-col gap-1">
@@ -1603,6 +1613,7 @@ function NewJourneyButton({
           size="sm"
           disabled={
             !goal.trim() ||
+            !serverAttachmentId ||
             hostIds.length === 0 ||
             !Number.isInteger(sessionsPerHost) ||
             sessionsPerHost < 1 ||
@@ -1612,14 +1623,17 @@ function NewJourneyButton({
             maxTurns > 20
           }
           onClick={async () => {
+            if (!serverAttachmentId) return;
             await onCreate({
               goal,
               hostIds,
+              serverAttachmentId,
               config: { sessionsPerHost, maxTurns },
             });
             setOpen(false);
             setGoal("");
             setHostIds([]);
+            setServerAttachmentId(null);
           }}
         >
           Create journey

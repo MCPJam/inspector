@@ -21,7 +21,7 @@
  *
  * Out of v1 (see the module comment in SwarmsTab.tsx): promote-to-eval (the
  * promotable session is lazily paginated inside a per-run view with no
- * top-level "selected session") and swarm host CRUD (admin role-gated). The
+ * top-level "selected session") and host CRUD (lives on Connect). The
  * snapshot still surfaces host targets by name.
  */
 
