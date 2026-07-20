@@ -1148,7 +1148,7 @@ describe("RegistryTab", () => {
       );
     });
 
-    it("disconnectRegistryServer rejects a server that is not connected or installed", async () => {
+    it("disconnectRegistryServer is idempotent: not-connected reports already_disconnected", async () => {
       renderWithCards([toCatalogCard([createMockServer()])]);
 
       const response = await dispatch({
@@ -1156,9 +1156,11 @@ describe("RegistryTab", () => {
         payload: { serverName: "Test Server" },
       });
 
+      // idempotentHint: true — a retry after disconnect is the desired end
+      // state, not an error.
       expect(response).toMatchObject({
-        status: "error",
-        error: { code: "invalid_request" },
+        status: "success",
+        result: { status: "already_disconnected" },
       });
       expect(mockDisconnect).not.toHaveBeenCalled();
     });
@@ -1173,7 +1175,9 @@ describe("RegistryTab", () => {
       });
       expect(starred).toMatchObject({
         status: "success",
-        result: { status: "starred", starred: true },
+        // toggleStar swallows failures (rolls back), so the handler reports the
+        // action as REQUESTED, not confirmed — verify via snapshot.
+        result: { status: "star_requested", requestedStarred: true },
       });
       expect(mockToggleStar).toHaveBeenCalledWith(card.registryCardKey);
 

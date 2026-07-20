@@ -23,7 +23,6 @@
 
 import type {
   CallToolResult,
-  Client,
   EmptyResult,
   GetPromptResult,
   Implementation,
@@ -51,28 +50,35 @@ export interface ManagedMcpClientConnectOptions {
 }
 
 /**
- * Notification / request handler signatures mirror upstream
- * `@modelcontextprotocol/client@2.0.0-alpha.2`. Both are method-string
- * keyed (`"sampling/createMessage"`, `"notifications/progress"`, …) —
- * the upstream Client looks up the handler in a `Map<RequestMethod,
- * Handler>` and dispatches based on incoming `jsonrpc.method`. Reusing
- * the upstream parameter types via `Parameters<Client["..."]>[N]` keeps
- * the adapter pass-through honest without re-declaring opaque generics
- * the manager doesn't need (it only ever uses the wide string form via
- * `ElicitRequestMethod` and `*NotificationMethod` constants).
+ * Notification / request handlers the manager registers. Both are
+ * method-string keyed (`"elicitation/create"`, `"notifications/progress"`,
+ * …); the underlying client dispatches on incoming `jsonrpc.method`.
+ *
+ * These are declared explicitly rather than derived from
+ * `Parameters<Client["setNotificationHandler"]>` because beta.4 made those
+ * methods **overloaded** (a typed method-literal form and a Standard-Schema
+ * form). `Parameters<>` of an overload resolves to the *last* signature — the
+ * schema-object form — which is not how the manager registers handlers. The
+ * manager keys by method string and reads `.params` off a loose payload; the
+ * `OfficialSdkClientAdapter` casts to upstream's typed form at the boundary.
  */
-export type ManagedMcpClientNotificationMethod = Parameters<
-  Client["setNotificationHandler"]
->[0];
-export type ManagedMcpClientNotificationHandler = Parameters<
-  Client["setNotificationHandler"]
->[1];
-export type ManagedMcpClientRequestMethod = Parameters<
-  Client["setRequestHandler"]
->[0];
-export type ManagedMcpClientRequestHandler = Parameters<
-  Client["setRequestHandler"]
->[1];
+export type ManagedMcpClientNotificationMethod = string;
+export interface ManagedMcpClientNotification {
+  method: string;
+  params?: Record<string, unknown>;
+}
+export type ManagedMcpClientNotificationHandler = (
+  notification: ManagedMcpClientNotification
+) => void;
+
+export type ManagedMcpClientRequestMethod = string;
+export interface ManagedMcpClientIncomingRequest {
+  method: string;
+  params?: Record<string, unknown>;
+}
+export type ManagedMcpClientRequestHandler = (
+  request: ManagedMcpClientIncomingRequest
+) => unknown | Promise<unknown>;
 
 /**
  * The single surface the manager talks to. Every method here corresponds

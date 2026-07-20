@@ -6,10 +6,7 @@ import {
 } from "ai";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { createLlmModel } from "../../utils/chat-helpers";
-import {
-  getCanonicalModelId,
-  isMCPJamGuestAllowedModel,
-} from "@/shared/types";
+import { getCanonicalModelId } from "@/shared/types";
 import type { ModelProvider } from "@/shared/types";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import { getClientIp } from "../../utils/client-ip.js";
@@ -569,20 +566,10 @@ chatV2.post("/", async (c) => {
       modelDefinition.id &&
         isHostedCatalogModel(modelDefinition.id, modelDefinition.provider)
     );
-    if (
-      isMcpJamProvidedModel &&
-      modelDefinition.id &&
-      !requestAuthHeader &&
-      !isMCPJamGuestAllowedModel(modelDefinition.id, modelDefinition.provider)
-    ) {
-      return c.json(
-        {
-          error:
-            "This MCPJam model is not available for guest access. Sign in to continue.",
-        },
-        403,
-      );
-    }
+    // Guests may use any hosted model — model curation for guests is gone;
+    // the backend enforces spend caps (a soft postpaid guard), not an
+    // allowlist. A guest MCPJam-model request still gets its bearer minted
+    // lazily below (resolveMcpJamAuthHeader).
     let mcpJamAuthHeader = requestAuthHeader;
     const resolveMcpJamAuthHeader = async () => {
       if (mcpJamAuthHeader || !isMcpJamProvidedModel) return mcpJamAuthHeader;

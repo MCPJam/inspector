@@ -42,24 +42,7 @@ The XAA Flow header shows three URLs:
 
 Configure your authorization server with the values it requests. The **Issuer URL** identifies MCPJam's test identity provider, the **OpenID Config** URL provides discovery metadata, and the **JWKS URL** provides the public signing keys.
 
-### Identity assertion format
-
-The header also shows an **Identity assertion** toggle that lets you choose the format MCPJam uses when minting the identity assertion for a run:
-
-| Option | What MCPJam mints |
-| ------ | ----------------- |
-| **OIDC** | An OIDC ID token (default). |
-| **SAML** | A signed SAML 2.0 assertion. The ID-JAG carries a `saml-nameid` subject identifier. |
-
-Selecting a format saves it as the per-server preset immediately — the same setting you can also change in **Configure Server to Test**. The two surfaces always agree: changing one updates the other.
-
-When SAML is active, a note appears below the header explaining that the discovery and JWKS URLs above are unchanged. The ID-JAG is still a JWT minted under this issuer in both formats; only the identity assertion inside it changes shape.
-
-The toggle is unavailable in these situations:
-
-- **Registered app target** — runs against a registered app always use the OIDC ID token; the per-server preset does not apply.
-- **Run in progress** — wait for the current run to finish before switching.
-- **No server configured** — configure a server to test first.
+### Local and hosted issuers
 
 If MCPJam is running locally and your authorization server is hosted in the
 cloud, turn on **Use hosted issuer** in the XAA Flow header. A cloud server
@@ -74,22 +57,13 @@ cannot reach a local Issuer URL.
   />
 </Frame>
 
-The hosted issuer is available to both signed-in users and guest (not-signed-in) sessions, provided an organization is active. The issuer used depends on your session:
+### Other header controls
 
-| Session | Issuer path | Trust model |
-| ------- | ----------- | ----------- |
-| **Signed in** | `/o/<orgId>` | Membership-gated. Only org members can mint assertions under it. |
-| **Guest** | `/g/<personalOrgId>` | **Anonymous test issuer.** Its discovery document is marked `mcpjam:issuer_kind: anonymous-test`. Your authorization server must explicitly allowlist this issuer. Assertions prove control of an anonymous session — this is a testing convenience, not enterprise-managed authorization. Sign in to use the membership-gated issuer instead. |
-
-When a guest session is active, hover the info icon next to the hosted-issuer toggle to see a reminder of this distinction.
+The header also has an **Identity assertion** (OIDC / SAML) toggle that sets the format MCPJam mints, covered under [Identity assertion format](#identity-assertion-format). It also has a **[Run as](#simulated-identity)** control for choosing the simulated identity.
 
 ## Add Your MCP Server
 
-In the XAA Flow tab, click **Configure Server to Test** to open the server modal prefilled with the currently selected server, or click **Add** in the logger toolbar to open a blank form and save a new target without changing the current selection.
-
-<Note>
-The header **Add Server** button also opens a blank form so you can add a new target without affecting the server currently selected in the debugger.
-</Note>
+Select **Configure Server to Test** (or **Add Server**), enter the MCP server name and URL, then choose how MCPJam identifies itself to the authorization server.
 
 ### Server Configuration
 
@@ -102,40 +76,37 @@ The header **Add Server** button also opens a blank form so you can add a new ta
   />
 </Frame>
 
-Enter a name and URL for the MCP server. Then choose a registration method and
-provide credentials if that method requires them. Scopes are optional.
-
-The identity provider is fixed to **MCPJam test identity provider** for this
-test.
-
 #### Registration Method
-
-Use the **Registration** menu to choose how MCPJam identifies itself to your
-authorization server:
 
 - **Pre-registered client:** Register MCPJam in your authorization server first,
   then enter the client ID and optional client secret it gives you.
 - **Client metadata URL (CIMD):** MCPJam uses a client metadata URL as the
-  client ID. Your authorization server must advertise CIMD support. When running
-  the local inspector, a **Client authentication** control appears with two
-  options:
-  - **Public (no client auth):** MCPJam presents its hosted metadata URL as the
-    client ID with no client authentication. This is the default.
-  - **Confidential (private_key_jwt):** The local inspector holds a client key
-    and signs a `client_assertion`. The `client_id` is a reflector document
-    publishing the matching public key. Use this when your authorization server
-    requires a confidential client. The private key never leaves the local
-    inspector process.
+  client ID. Your authorization server must advertise CIMD support. The
+  **Client authentication** control chooses whether MCPJam proves it owns that
+  identity:
+  - **Public (no client auth):** Your authorization server takes the metadata
+    URL at face value. Nothing proves MCPJam owns that identity. This is the
+    default.
+  - **Confidential (private_key_jwt):** MCPJam holds a private key and signs
+    each token request with it, proving it owns the identity. Choose this when
+    your authorization server requires a confidential client.
 - **Open dynamic registration (DCR):** MCPJam registers a client during the
-  test, so no client credentials are required beforehand. Your authorization
-  server must provide an open registration endpoint; protected registration
-  requiring an initial access token is not tested.
+  test. Your authorization server must provide an open registration endpoint.
+
+#### Identity assertion format
+
+Choose the protocol MCPJam's identity provider uses to authenticate users.
+
+- **OIDC ID token:** MCPJam mints an OIDC ID token as the identity assertion.
+  This is the default.
+- **SAML assertion:** MCPJam mints a signed SAML 2.0 assertion, and the ID-JAG
+  carries a `saml-nameid` subject identifier so a SAML-federated server can
+  resolve the user.
 
 #### Scopes
 
-Enter the permissions MCPJam should request, separated by spaces. MCPJam
-includes them when requesting the ID-JAG and access token. Leave blank to omit
-scopes from those requests.
+Enter optional permissions separated by spaces. MCPJam includes them when
+requesting the ID-JAG and access token.
 
 ### Advanced Settings
 
@@ -148,31 +119,20 @@ scopes from those requests.
   />
 </Frame>
 
-Open **Advanced** to override authorization server discovery or test a specific
-user identity. Most tests can leave these settings unchanged.
-
 #### Authorization Server Issuer
 
-Leave **Authorization Server Issuer** blank to use the authorization server
-MCPJam discovers from the MCP server. Enter a URL to use a different
-authorization server instead.
+Leave it blank to use the authorization server MCPJam discovers from the MCP
+server. Enter a URL to use a different authorization server.
 
-Leave **Allow non-standard issuer mismatch** disabled for normal RFC 8414
-behavior. Use it only for compatibility testing when the discovered
-authorization server URL and the metadata issuer differ but belong to the same
-origin. [RFC 8414](https://www.rfc-editor.org/rfc/rfc8414) requires an exact
-match, so enabling this setting relaxes that check.
+#### Path-scoped authorization server
 
-#### Simulated Identity
+Keep this off for normal RFC 8414 behavior. Turn it on only when the discovered
+URL and metadata issuer differ on the same origin.
 
-The **Simulated identity** fields let you choose the user that MCPJam, acting
-as the test identity provider, puts in the ID token. Leave them blank to use
-your signed-in account. Change them to test how your authorization server
-handles a specific user.
+#### Simulated identity
 
-Your authorization server must validate MCPJam's ID-JAG before issuing an
-access token. It may also apply its own policy to decide which users are
-allowed.
+Choose the user MCPJam puts in the ID token. Leave the fields blank to use a
+built-in demo user (`user-12345` / `demo.user@example.com`).
 
 ## Inspect the ID-JAG
 
@@ -230,22 +190,12 @@ public signing keys.
   />
 </Frame>
 
-The **Negative-test scorecard** sends invalid ID-JAGs to your authorization
-server and checks that it refuses the assertions that the ID-JAG profile
-requires it to reject. It also reports two policy-dependent probes separately.
-Run a successful flow first to unlock it.
-The scorecard reuses the client identity resolved by that flow — whether it was
-pre-registered, dynamically registered with DCR, or resolved via CIMD.
+Checks that your authorization server rejects broken ID-JAGs. Run a successful
+flow first, then click **Run negative tests**. A strict check passes when the
+authorization server rejects the broken assertion. The MCP server is not called
+during these checks.
 
-Click **Run negative tests** to send intentionally broken ID-JAGs to the
-authorization server's token endpoint. The MCP server is not called during
-these probes.
-
-A strict rejection check passes when the authorization server rejects the
-broken assertion. It fails when the authorization server issues an access token
-for one.
-
-The scorecard runs these nine strict rejection checks:
+The scorecard runs these strict rejection checks:
 
 - Bad Signature
 - Wrong Audience
@@ -257,16 +207,13 @@ The scorecard runs these nine strict rejection checks:
 - Client ID Mismatch
 - Unknown `kid`
 
-It also reports these policy probes without treating acceptance or rejection as
-a security verdict:
+It also reports two policy probes:
 
 - Unknown Subject
 - Scope Denial
 
-An authorization server may resolve or JIT-provision an unknown subject. It may
-also reject a scope request or issue a token containing only an allowed subset.
-Inspect these rows against your deployment's intended subject-resolution and
-authorization policy.
+No pass or fail here. Your server can accept or reject an unknown user, and can
+trim the scopes it grants. Just confirm the result is what you expect.
 
 These are targeted security and policy checks, not a full conformance test.
 

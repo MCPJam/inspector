@@ -75,9 +75,15 @@ export function useSurfaceAgentBridge(
 ): void {
   const { surfaceId } = options;
   const handlersRef = useRef(options.handlers);
-  handlersRef.current = options.handlers;
   const snapshotRef = useRef(options.snapshot);
-  snapshotRef.current = options.snapshot;
+  // Sync the latest closures in a layout effect (every commit, no deps) rather
+  // than during render, so a discarded concurrent render can never make
+  // dispatch read props that never committed. Runs before the registration
+  // effect below, so the stable wrappers always see current values.
+  useLayoutEffect(() => {
+    handlersRef.current = options.handlers;
+    snapshotRef.current = options.snapshot;
+  });
 
   // Layout effect, matching the surfaces' own mount effects: the group's
   // tools must be live before the App navigate handler's readiness wait

@@ -43,9 +43,8 @@ type SuiteOutcome =
   | { status: "done"; passed: boolean; failedTitles: string[]; total: number };
 
 const failedTitlesOf = (
-  checks: ReadonlyArray<{ status: string; title: string }>,
-): string[] =>
-  checks.filter((c) => c.status === "failed").map((c) => c.title);
+  checks: ReadonlyArray<{ status: string; title: string }>
+): string[] => checks.filter((c) => c.status === "failed").map((c) => c.title);
 
 export function ConformanceGate({ server }: { server: ServerWithName }) {
   const isConnected = server.connectionStatus === "connected";
@@ -78,7 +77,8 @@ export function ConformanceGate({ server }: { server: ServerWithName }) {
   }, [server.name]);
 
   const isRunning =
-    outcomes.protocol.status === "running" || outcomes.apps.status === "running";
+    outcomes.protocol.status === "running" ||
+    outcomes.apps.status === "running";
 
   const runChecks = useCallback(async () => {
     const token = (runTokenRef.current += 1);
@@ -94,8 +94,11 @@ export function ConformanceGate({ server }: { server: ServerWithName }) {
     const runSuite = async (
       suite: SuiteId,
       run: () => Promise<{
-        result: { passed: boolean; checks: ReadonlyArray<{ status: string; title: string }> };
-      }>,
+        result: {
+          passed: boolean;
+          checks: ReadonlyArray<{ status: string; title: string }>;
+        };
+      }>
     ) => {
       if (!support[suite].supported) {
         apply(suite, {
@@ -155,7 +158,7 @@ export function ConformanceGate({ server }: { server: ServerWithName }) {
             Spec conformance
           </div>
           <div className="text-[11px] text-muted-foreground">
-            The floor — a spec failure breaks on every host.
+            These checks apply to every host.
           </div>
         </div>
         <Link
@@ -202,18 +205,14 @@ export function ConformanceGate({ server }: { server: ServerWithName }) {
       {anyFailed && (
         <div className="mt-2.5 flex items-start gap-1.5 rounded border border-red-500/30 bg-red-500/5 px-2 py-1.5 text-[11px] text-red-600 dark:text-red-400">
           <AlertCircle className="mt-0.5 h-3 w-3 flex-shrink-0" />
-          <span>
-            Fix these spec failures first — they break on every host, not just
-            the ones flagged below.
-          </span>
+          <span>Fix these checks first. They affect every host.</span>
         </div>
       )}
       {allClean && !anyFailed && (
         <div className="mt-2.5 flex items-start gap-1.5 text-[11px] text-emerald-600 dark:text-emerald-400">
           <CheckCircle2 className="mt-0.5 h-3 w-3 flex-shrink-0" />
           <span>
-            Passes spec checks — the gaps below are host-specific, not spec
-            problems.
+            Spec checks passed. The remaining issues depend on the host.
           </span>
         </div>
       )}
@@ -242,7 +241,7 @@ function SuiteRow({
       <Row label={label}>
         <MinusCircle className="h-3 w-3 text-muted-foreground" />
         <span className="text-muted-foreground">
-          Not runnable here — {outcome.reason}
+          Checks unavailable here: {outcome.reason}
         </span>
       </Row>
     );

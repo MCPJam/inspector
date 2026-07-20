@@ -32,6 +32,7 @@ export { deriveServerRequirements, evaluateHostCompat };
 export type HostCompatEvaluation = {
   requirements: ServerRequirements;
   reports: HostCompatReport[];
+  analysisStatus?: "analyzing" | "ready" | "failed";
 };
 
 /**
@@ -44,7 +45,7 @@ export function evaluateAllHosts(
   widgetUsage?: WidgetUsage,
   connectionFacts?: ConnectionFacts,
   // Live-fetched catalog (useHostCatalog). Omitted/null = bundled fallback.
-  catalog?: HostCompatCatalog | null,
+  catalog?: HostCompatCatalog | null
 ): HostCompatEvaluation {
   const { requirements, reports } = evaluateMarketHosts(toolsData, {
     widgetUsage,

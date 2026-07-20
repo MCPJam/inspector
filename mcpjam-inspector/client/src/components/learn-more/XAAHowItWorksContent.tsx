@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { CheckCircle2, HelpCircle, Play } from "lucide-react";
+import { CheckCircle2, ExternalLink, HelpCircle, Play } from "lucide-react";
 
 const xaaVideoUrl =
   "https://outstanding-fennec-304.convex.cloud/api/storage/b3a2592b-ab5f-42df-ad2c-db4fa2f39172";
@@ -13,12 +13,37 @@ const registrationMethods = [
   {
     name: "Client metadata URL (CIMD)",
     description:
-      "MCPJam uses its hosted client metadata URL as the client ID. Your authorization server must advertise CIMD support.",
+      "MCPJam uses a client metadata URL as the client ID. Your authorization server must advertise CIMD support. The Client authentication control chooses whether MCPJam proves it owns that identity:",
+    options: [
+      {
+        name: "Public (no client auth)",
+        description:
+          "Your authorization server takes the metadata URL at face value. Nothing proves MCPJam owns that identity. This is the default.",
+      },
+      {
+        name: "Confidential (private_key_jwt)",
+        description:
+          "MCPJam holds a private key and signs each token request with it, proving it owns the identity. Choose this when your authorization server requires a confidential client.",
+      },
+    ],
   },
   {
     name: "Open dynamic registration (DCR)",
     description:
       "MCPJam registers a client during the test. Your authorization server must provide an open registration endpoint.",
+  },
+];
+
+const identityAssertionFormats = [
+  {
+    name: "OIDC ID token",
+    description:
+      "MCPJam mints an OIDC ID token as the identity assertion. This is the default.",
+  },
+  {
+    name: "SAML assertion",
+    description:
+      "MCPJam mints a signed SAML 2.0 assertion, and the ID-JAG carries a saml-nameid subject identifier so a SAML-federated server can resolve the user.",
   },
 ];
 
@@ -140,18 +165,37 @@ function XAAVideoThumbnail() {
   );
 }
 
-export function XAAHowItWorksContent({ title }: { title: string }) {
+export function XAAHowItWorksContent({
+  title,
+  docsUrl,
+}: {
+  title: string;
+  docsUrl?: string;
+}) {
   return (
     <div className="px-6 pb-10 sm:px-10">
       <div className="border-b pb-10 pt-4">
         <div>
           <div className="flex flex-col justify-center gap-5">
-            <h2
-              id="learn-more-panel-title"
-              className="text-4xl font-bold leading-tight"
-            >
-              {title}
-            </h2>
+            <div className="flex items-start justify-between gap-4">
+              <h2
+                id="learn-more-panel-title"
+                className="text-4xl font-bold leading-tight"
+              >
+                {title}
+              </h2>
+              {docsUrl && (
+                <a
+                  href={docsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-1 flex shrink-0 items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  Docs
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+              )}
+            </div>
             <p className="text-base leading-7 text-muted-foreground">
               The XAA Debugger tests an MCP server and its authorization setup.
               MCPJam acts as both the test identity provider that signs the ID
@@ -193,6 +237,15 @@ export function XAAHowItWorksContent({ title }: { title: string }) {
             alt="Use hosted issuer toggle"
           />
         </div>
+
+        <div className="mt-8">
+          <h4 className="font-semibold">Other header controls</h4>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">
+            The header also holds an <strong>Identity assertion</strong> toggle
+            (OIDC / SAML) and <strong>Run as</strong> (the simulated identity).
+            Both are covered in step 2.
+          </p>
+        </div>
       </section>
 
       <section className="border-b py-10">
@@ -201,7 +254,7 @@ export function XAAHowItWorksContent({ title }: { title: string }) {
             <SectionHeading
               number="2"
               title="Add your MCP server"
-              description="Select Configure Server to Test, enter the MCP server name and URL, then choose how MCPJam identifies itself to the authorization server."
+              description="Select Configure Server to Test (or Add Server), enter the MCP server name and URL, then choose how MCPJam identifies itself to the authorization server."
             />
 
             <div>
@@ -212,6 +265,36 @@ export function XAAHowItWorksContent({ title }: { title: string }) {
                     <p className="text-sm font-medium">{method.name}</p>
                     <p className="mt-1 text-sm leading-5 text-muted-foreground">
                       {method.description}
+                    </p>
+                    {method.options && (
+                      <div className="mt-3 space-y-3 border-l pl-4">
+                        {method.options.map((option) => (
+                          <div key={option.name}>
+                            <p className="text-sm font-medium">{option.name}</p>
+                            <p className="mt-1 text-sm leading-5 text-muted-foreground">
+                              {option.description}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <h4 className="font-semibold">Identity assertion</h4>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                Choose the protocol MCPJam's identity provider uses to
+                authenticate users.
+              </p>
+              <div className="mt-3 space-y-3 border-l pl-4">
+                {identityAssertionFormats.map((format) => (
+                  <div key={format.name}>
+                    <p className="text-sm font-medium">{format.name}</p>
+                    <p className="mt-1 text-sm leading-5 text-muted-foreground">
+                      {format.description}
                     </p>
                   </div>
                 ))}
@@ -252,12 +335,12 @@ export function XAAHowItWorksContent({ title }: { title: string }) {
               </div>
               <div>
                 <p className="font-medium text-foreground">
-                  Issuer mismatch check
+                  Path-scoped authorization server
                 </p>
                 <p className="mt-1 text-muted-foreground">
-                  Keep <strong>Allow non-standard issuer mismatch</strong> off
-                  for normal RFC 8414 behavior. Turn it on only when the
-                  discovered URL and metadata issuer differ on the same origin.
+                  Keep this off for normal RFC 8414 behavior. Turn it on only
+                  when the discovered URL and metadata issuer differ on the
+                  same origin.
                 </p>
               </div>
               <div>
@@ -266,7 +349,8 @@ export function XAAHowItWorksContent({ title }: { title: string }) {
                 </p>
                 <p className="mt-1 text-muted-foreground">
                   Choose the user MCPJam puts in the ID token. Leave the fields
-                  blank to use your signed-in account.
+                  blank to use a built-in demo user (user-12345 /
+                  demo.user@example.com).
                 </p>
               </div>
             </div>
@@ -275,7 +359,7 @@ export function XAAHowItWorksContent({ title }: { title: string }) {
       </section>
 
       <section className="border-b py-10">
-        <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(520px,620px)]">
+        <div className="space-y-8">
           <div>
             <SectionHeading
               number="3"
@@ -346,14 +430,13 @@ export function XAAHowItWorksContent({ title }: { title: string }) {
             <SectionHeading
               number="4"
               title="Run negative tests"
-              description="The scorecard checks that the authorization server rejects structurally invalid ID-JAGs and reports policy-dependent behavior separately."
+              description="Checks that your authorization server rejects broken ID-JAGs."
             />
             <p className="text-sm leading-6 text-muted-foreground">
               Run a successful flow first, then select{" "}
               <strong>Run negative tests</strong>. A strict check passes when
               the authorization server rejects the broken assertion. The MCP
-              server is not called during these checks. The scorecard reuses the
-              pre-registered or DCR client identity from that flow.
+              server is not called during these checks.
             </p>
             <div className="mt-6 grid gap-x-6 gap-y-3 sm:grid-cols-2">
               {strictNegativeTests.map((test) => (
@@ -368,9 +451,9 @@ export function XAAHowItWorksContent({ title }: { title: string }) {
                 Policy probes
               </p>
               <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                Unknown subjects may be resolved or JIT-provisioned, and scope
-                requests may be narrowed. Compare these observations with your
-                deployment policy.
+                No pass or fail here. Your server can accept or reject an
+                unknown user, and can trim the scopes it grants. Just confirm
+                the result is what you expect.
               </p>
               <div className="mt-3 grid gap-x-6 gap-y-3 sm:grid-cols-2">
                 {policyProbes.map((test) => (

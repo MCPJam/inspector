@@ -32,6 +32,7 @@ function createTestApp(): Hono {
   // Unprotected routes
   app.get("/health", (c) => c.json({ status: "ok" }));
   app.get("/api/mcp/health", (c) => c.json({ status: "ok" }));
+  app.get("/api/mcp/models", (c) => c.json({ ok: true, data: [] }));
   app.get("/api/session-token", (c) => c.json({ token: "test" }));
   // Mock OIDC IdP endpoints (external browsers/RPs, no session possible)
   app.get("/api/mcp/xaa/authorize", (c) => c.html("<html>authorize</html>"));
@@ -188,6 +189,12 @@ describe("sessionAuthMiddleware", () => {
 
     it("allows /api/mcp/health without token", async () => {
       const res = await app.request("/api/mcp/health");
+
+      expect(res.status).toBe(200);
+    });
+
+    it("allows /api/mcp/models without token (public catalog for guests)", async () => {
+      const res = await app.request("/api/mcp/models");
 
       expect(res.status).toBe(200);
     });
