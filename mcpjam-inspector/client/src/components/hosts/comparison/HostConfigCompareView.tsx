@@ -503,20 +503,31 @@ export function HostConfigCompareView({
   // and capability LABELS, never a host's resolved config.
   useSurfaceAgentBridge({
     surfaceId: "host-compare",
-    snapshot: () =>
-      buildHostCompareSnapshot({
+    snapshot: () => {
+      // List EVERY selected host (not only hydrated `orderedSubjects`), so the
+      // snapshot names the hosts in the selector throughout loading. Prefer the
+      // resolved subject name, else the known-host name, else null (loading).
+      const subjectNameById = new Map(
+        orderedSubjects.map((s) => [s.hostId, s.hostName] as const),
+      );
+      const hostNameById = new Map(
+        hosts.map((h) => [h.hostId, h.name] as const),
+      );
+      return buildHostCompareSnapshot({
         totalSelectableHosts: knownHostIds.length,
-        selectedHosts: orderedSubjects.map((subject) => ({
-          hostId: subject.hostId,
-          hostName: subject.hostName,
+        selectedHosts: selectedHostIds.map((hostId) => ({
+          hostId,
+          hostName: subjectNameById.get(hostId) ?? hostNameById.get(hostId) ?? null,
         })),
         capabilityFields: compareFields,
         viewMode,
         searchQuery: fieldSearchQuery,
         supportFilter: effectiveSupportFilter,
+        divergingOnly,
         loadedSelectedCount,
         totalSelectedCount,
-      }),
+      });
+    },
   });
 
   if (!presetOnly && !projectId) {
