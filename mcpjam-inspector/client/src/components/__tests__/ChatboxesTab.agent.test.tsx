@@ -274,6 +274,35 @@ describe("ChatboxesTab — agent bridge handlers", () => {
     expect(deleteChatboxMock).toHaveBeenCalledWith({ chatboxId: "cb-2" });
   });
 
+  it("keeps the PREVIEWED host's chatbox deleted — no auto-remint after delete", async () => {
+    // host-1 (Claude) is the previewed host and is currently published.
+    const { rerender } = render(
+      <ChatboxesTab projectId="proj-1" isAuthenticated product="swarm" />,
+    );
+    const response = await dispatch({
+      type: "deleteChatbox",
+      payload: { host: "Claude" },
+    });
+    expect(response).toMatchObject({
+      status: "success",
+      result: { status: "chatbox_deleted", chatboxId: "cb-1" },
+    });
+    expect(deleteChatboxMock).toHaveBeenCalledWith({ chatboxId: "cb-1" });
+
+    // The reactive query now reports null for the deleted host. Without the
+    // suppression, the back-mint effect would call ensureChatboxForHost and
+    // re-provision it — contradicting chatbox_deleted.
+    currentChatbox = null;
+    await act(async () => {
+      rerender(
+        <ChatboxesTab projectId="proj-1" isAuthenticated product="swarm" />,
+      );
+    });
+    expect(ensureChatboxForHostMock).not.toHaveBeenCalledWith({
+      hostId: "host-1",
+    });
+  });
+
   it("deleteChatbox rejects an unknown host without touching the mutation", async () => {
     renderChatboxes();
     const response = await dispatch({

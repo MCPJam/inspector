@@ -182,6 +182,11 @@ export function ChatboxesTab({
     "chatboxes:ensureChatboxForHost" as any
   );
   const ensureLatchRef = useRef<Set<string>>(new Set());
+  // Hosts whose chatbox was INTENTIONALLY deleted (ui_delete_chatbox). The
+  // back-mint effect below treats a reactive `chatbox === null` as drift and
+  // re-provisions; an intentional delete must stay deleted, so we suppress the
+  // remint for that host until a chatbox exists again (explicit re-publish).
+  const suppressEnsureHostsRef = useRef<Set<string>>(new Set());
   // Tracks hostIds where ensure resolved successfully but the reactive
   // query is *still* returning null. That's not provisioning latency —
   // it's the backend silently dropping the chatbox for some reason the
@@ -207,6 +212,8 @@ export function ChatboxesTab({
     // back-mint entirely (the notice below handles the empty render).
     if (isJourneysHost) return;
     if (chatbox !== null) return;
+    // Intentionally deleted → keep it deleted (don't re-mint on the null).
+    if (suppressEnsureHostsRef.current.has(previewedHostId)) return;
     if (ensureLatchRef.current.has(previewedHostId)) return;
     ensureLatchRef.current.add(previewedHostId);
     const targetHostId = previewedHostId;
@@ -260,6 +267,9 @@ export function ChatboxesTab({
     if (!previewedHostId) return;
     if (chatbox === null || chatbox === undefined) return;
     ensureLatchRef.current.delete(previewedHostId);
+    // A chatbox exists again for this host, so any intentional-delete
+    // suppression is spent: future backend drift should re-mint as before.
+    suppressEnsureHostsRef.current.delete(previewedHostId);
     setEnsureCompletedNullHosts((prev) => {
       if (!prev.has(previewedHostId)) return prev;
       const next = new Set(prev);
@@ -367,6 +377,9 @@ export function ChatboxesTab({
             `"${target.name}" belongs to the Swarms surface and has no publish surface. Manage its journeys and runs on the Swarms screen, or publish a different client.`,
           );
         }
+        // Explicit publish intent — lift any prior intentional-delete
+        // suppression so provisioning (and future drift-remint) works again.
+        suppressEnsureHostsRef.current.delete(target.hostId);
         try {
           await ensureChatboxForHost({ hostId: target.hostId } as any);
           setPreviewedHostId(target.hostId);
@@ -396,6 +409,11 @@ export function ChatboxesTab({
             `"${target.name}" has no chatbox to delete.`,
           );
         }
+        // Suppress the auto-remint BEFORE the delete lands: the reactive query
+        // flipping to null must not trigger ensureChatboxForHost, or the tool
+        // would report chatbox_deleted while the surface is immediately reminted.
+        suppressEnsureHostsRef.current.add(target.hostId);
+        ensureLatchRef.current.delete(target.hostId);
         try {
           await deleteChatbox({ chatboxId: match.chatboxId } as any);
           return {
@@ -405,6 +423,8 @@ export function ChatboxesTab({
             name: target.name,
           };
         } catch (e) {
+          // Delete failed — the chatbox still exists, so allow provisioning.
+          suppressEnsureHostsRef.current.delete(target.hostId);
           throw createInspectorCommandClientError(
             "execution_failed",
             e instanceof Error ? e.message : "Failed to delete the chatbox.",
