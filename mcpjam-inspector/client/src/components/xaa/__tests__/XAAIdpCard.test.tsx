@@ -114,27 +114,18 @@ describe("XAAIdpCard", () => {
       screen.getByRole("button", { name: /copy jwks url/i })
     ).toHaveAttribute("title", `${issuer}/o/org_a1B2/.well-known/jwks.json`);
     expect(
-      screen.getByText(/scoped to your organization/i)
-    ).toBeInTheDocument();
-    expect(
       screen.queryByTestId("anonymous-issuer-note")
     ).not.toBeInTheDocument();
   });
 
-  it("labels the anonymous test issuer (/g/) for hosted guest sessions", () => {
+  it("shows the /g/ issuer without an extra guest explanation", () => {
     render(<XAAIdpCard organizationId="org_guest1" issuerKind="anonymous" />);
 
-    // The advertised issuer lives under the visibly separate /g/ namespace.
     expect(
       screen.getByRole("button", { name: /copy issuer url/i })
     ).toHaveAttribute("title", `${issuer}/g/org_guest1`);
-    // The labeling states the trust contract: explicit allowlisting, not
-    // enterprise-managed authorization.
-    const note = screen.getByTestId("anonymous-issuer-note");
-    expect(note).toHaveTextContent(/anonymous test issuer/i);
-    expect(note).toHaveTextContent(/must explicitly allowlist/i);
     expect(
-      screen.queryByText(/scoped to your organization/i)
+      screen.queryByTestId("anonymous-issuer-note")
     ).not.toBeInTheDocument();
   });
 
@@ -235,21 +226,6 @@ describe("XAAIdpCard", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it("explains that the chips stay valid when SAML is active", () => {
-    render(
-      <XAAIdpCard
-        identityAssertionFormat="saml"
-        onIdentityAssertionFormatChange={() => {}}
-      />
-    );
-
-    // The ID-JAG is a JWT under this issuer in both formats — the note keeps
-    // the "OpenID Config"/"JWKS" chips from reading as a contradiction.
-    const note = screen.getByTestId("saml-format-note");
-    expect(note).toHaveTextContent(/SAML 2\.0/);
-    expect(note).toHaveTextContent(/still a\s+JWT/i);
-  });
-
 });
 
 describe("XAAIdpCard (non-hosted mode)", () => {
@@ -299,8 +275,8 @@ describe("XAAIdpCard (non-hosted mode)", () => {
     await user.hover(
       screen.getByRole("button", { name: /about the hosted issuer/i })
     );
-    expect(await screen.findByRole("tooltip")).toHaveTextContent(
-      /must explicitly allowlist/i
+    expect(await screen.findByRole("tooltip")).not.toHaveTextContent(
+      /anonymous test issuer|must explicitly allowlist/i
     );
     // The toggle itself stays usable for guests with an org.
     expect(

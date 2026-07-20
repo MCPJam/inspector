@@ -207,6 +207,16 @@ describe("buildHostProfilesFromCatalog", () => {
     ).toBe(expected);
   });
 
+  it("carries each host's explicit sandbox permission allowlist", () => {
+    const profiles = buildMarketHostProfiles();
+    expect(
+      profiles.find((p) => p.id === "claude")?.sandboxPermissionAllow,
+    ).toEqual({ clipboardWrite: true });
+    expect(
+      profiles.find((p) => p.id === "goose")?.sandboxPermissionAllow,
+    ).toEqual({});
+  });
+
   it("keeps rendersOpenAiApps independent of rendersMcpApps (NOT &&-gated)", () => {
     const catalog: HostCompatCatalog = {
       hostsById: {
