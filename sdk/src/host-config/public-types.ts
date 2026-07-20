@@ -18,6 +18,7 @@ import type {
   HostConfigComputerInput,
   HostConfigConnectionDefaults,
   HostConfigMcpProfileV1,
+  HostConfigSkillSelection,
   Harness,
   HostStyleId,
   McpAppsCapabilities,
@@ -59,6 +60,16 @@ export type HostComputer = HostConfigComputer;
  * `{ kind: "personal" }` and grant capabilities via `builtInToolIds`.
  */
 export type HostComputerInput = HostConfigComputerInput;
+
+/**
+ * Standalone-skill selection policy for a host (OpenAI plugin import).
+ * Absent → legacy all-visible behavior. `{ mode: "all-visible" }` is the
+ * explicit spelling of the same behavior and normalizes away at `toJSON()`;
+ * `{ mode: "explicit", skillIds }` — including an empty `skillIds`
+ * ("explicitly no standalone skills") — is preserved. Plugin component
+ * skills always come from `pluginVersionIds`, never from `skillIds`.
+ */
+export type HostSkillSelection = HostConfigSkillSelection;
 
 /** Per-host connection defaults (headers + request timeout in ms). */
 export type HostConnectionDefaults = HostConfigConnectionDefaults;
@@ -107,6 +118,13 @@ export interface HostJson {
   harness?: Harness;
   servers: ServerId[];
   optionalServers: ServerId[];
+  /** Exact plugin versions attached to this host (sorted, deduped). Absent ⇒
+   * none. Normalized: an empty list never survives to `HostJson`. */
+  pluginVersionIds?: string[];
+  /** Standalone-skill selection. Absent ⇒ legacy all-visible. Normalized:
+   * only the explicit variant survives to `HostJson` (`all-visible` collapses
+   * to absent); `skillIds: []` means "explicitly no standalone skills". */
+  skillSelection?: HostSkillSelection;
   connectionDefaults: HostConnectionDefaults;
   clientCapabilities: Record<string, unknown>;
   hostContext: Record<string, unknown>;
@@ -172,6 +190,13 @@ export interface HostInit {
   servers?: ServerId[];
   /** Optional (auto-connect-if-available) servers. */
   optionalServers?: ServerId[];
+  /** Exact plugin versions to attach (opaque ids; deduped + sorted at
+   * `toJSON()`; an empty list normalizes to absent). */
+  pluginVersionIds?: string[];
+  /** Standalone-skill selection. Absent (or `{ mode: "all-visible" }`) ⇒
+   * legacy all-visible behavior; `{ mode: "explicit", skillIds }` restricts
+   * to the listed standalone skills (`[]` = explicitly none). */
+  skillSelection?: HostSkillSelection;
   connectionDefaults?: Partial<HostConnectionDefaults>;
   clientCapabilities?: Record<string, unknown>;
   hostContext?: Record<string, unknown>;

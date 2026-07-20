@@ -46,6 +46,7 @@ import type {
   HostJson,
   HostMcp,
   HostServerOverride,
+  HostSkillSelection,
   HostStyleId,
   McpToolResultImageRendering,
   ModelVisibleMcpToolResults,
@@ -183,6 +184,12 @@ function canonicalToPublic(c: CanonicalHostConfigV2): HostJson {
   if (c.mcpToolResultImageRendering !== undefined) {
     out.mcpToolResultImageRendering = c.mcpToolResultImageRendering;
   }
+  if (c.pluginVersionIds !== undefined) {
+    out.pluginVersionIds = c.pluginVersionIds;
+  }
+  if (c.skillSelection !== undefined) {
+    out.skillSelection = c.skillSelection;
+  }
   if (c.computer !== undefined) {
     out.computer = c.computer;
   }
@@ -283,6 +290,21 @@ export class Host {
   /** Optional (auto-connect-if-available) servers. */
   optionalServers: ServerId[];
 
+  /**
+   * Exact plugin versions (immutable revisions) attached to this host.
+   * Opaque ids — deduped + sorted at `toJSON()`; an empty list normalizes
+   * to absent so "no plugins" hashes identically to a pre-feature host.
+   */
+  pluginVersionIds?: string[];
+
+  /**
+   * Standalone-skill selection. `undefined` (or `{ mode: "all-visible" }`,
+   * which normalizes to absent at `toJSON()`) ⇒ legacy all-visible behavior;
+   * `{ mode: "explicit", skillIds }` restricts advertised standalone skills
+   * (`[]` = explicitly none — preserved, distinct from absent).
+   */
+  skillSelection?: HostSkillSelection;
+
   connectionDefaults: HostConnectionDefaults;
 
   /**
@@ -364,6 +386,10 @@ export class Host {
     this.optionalServers = cfg.optionalServers
       ? dedup(cfg.optionalServers)
       : [];
+    this.pluginVersionIds = cfg.pluginVersionIds
+      ? dedup(cfg.pluginVersionIds)
+      : undefined;
+    this.skillSelection = cfg.skillSelection;
     this.connectionDefaults = {
       headers: cfg.connectionDefaults?.headers ?? {},
       requestTimeout:
@@ -535,6 +561,8 @@ export class Host {
       harness: this.harness,
       servers: this.servers,
       optionalServers: this.optionalServers,
+      pluginVersionIds: this.pluginVersionIds,
+      skillSelection: this.skillSelection,
       connectionDefaults: this.connectionDefaults,
       clientCapabilities: this.clientCapabilities,
       hostContext: this.hostContext,
@@ -575,6 +603,17 @@ export class Host {
     }
     if (snap.harness !== undefined) {
       input.harness = snap.harness;
+    }
+    // Empty [] is forwarded — the canonicalizer collapses it to absent so it
+    // hashes identically to "never set" (the builtInToolIds policy).
+    if (snap.pluginVersionIds !== undefined) {
+      input.pluginVersionIds = snap.pluginVersionIds;
+    }
+    // `{ mode: "all-visible" }` is forwarded — the canonicalizer collapses it
+    // to absent (one identity per behavior); explicit — including
+    // explicit-empty — survives.
+    if (snap.skillSelection !== undefined) {
+      input.skillSelection = snap.skillSelection;
     }
     if (snap.hostCapabilitiesOverride !== undefined) {
       input.hostCapabilitiesOverride = snap.hostCapabilitiesOverride;
@@ -767,6 +806,7 @@ export type {
   HostJson,
   HostMcp,
   HostServerOverride,
+  HostSkillSelection,
   HostConnectionDefaults,
   HostStyleId,
   McpProtocolVersion,

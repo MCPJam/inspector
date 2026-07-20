@@ -24,7 +24,7 @@ import type { HostConfigInputV2 } from "../src/host-config/internal";
  * directly, so the SDK-side constant is the single source of truth.
  */
 const EXPECTED_INPUT_HASH =
-  "c0318c3797442aaffff93f5cab1b855d536adb3b8dcb4245d4d66506cbdd9d21";
+  "672edd3de5f1e080d0ea37d36925741ecf125679f477eaa6b6a37527a5f0f4c4";
 
 type FixtureRow = {
   label: string;
@@ -64,6 +64,28 @@ describe("hostConfig v2 golden-vector parity", () => {
       expect(await computeHostConfigHashV2(row.input)).toBe(row.sha256);
     });
   }
+
+  it("legacy inputs (no plugin fields) never gain plugin keys (byte-identical legacy hash)", () => {
+    // OpenAI plugin import (PR SDK-2): every fixture input that predates
+    // `pluginVersionIds` / `skillSelection` must canonicalize WITHOUT those
+    // keys, so its canonical JSON — and therefore its content-address —
+    // is byte-identical to the pre-feature goldens pinned in this file.
+    // (The per-row golden assertions above prove the bytes; this guards the
+    // key-omission invariant explicitly.)
+    const legacyRows = fixture.rows.filter(
+      (r) =>
+        !("pluginVersionIds" in (r.input as Record<string, unknown>)) &&
+        !("skillSelection" in (r.input as Record<string, unknown>)),
+    );
+    expect(legacyRows.length).toBeGreaterThanOrEqual(10);
+    for (const row of legacyRows) {
+      const canonical = JSON.parse(
+        JSON.stringify(canonicalizeHostConfigV2(row.input)),
+      ) as Record<string, unknown>;
+      expect("pluginVersionIds" in canonical).toBe(false);
+      expect("skillSelection" in canonical).toBe(false);
+    }
+  });
 
   it("never persists a `deny` field (allowlist-only invariant)", () => {
     // The adversarial vector feeds stray csp.deny + permissions.deny. The

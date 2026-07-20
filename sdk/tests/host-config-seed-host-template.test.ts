@@ -218,6 +218,34 @@ describe("seedHostTemplate", () => {
     expect(caps.extensions.foo.bar).toBe(1);
   });
 
+  it("emptyHostConfigInputV2 leaves plugin fields absent by default and clones them when seeded", () => {
+    // Absent stays absent — a fresh seed must hash byte-identically to a
+    // pre-feature seed (the canonicalizer omits absent/empty plugin fields).
+    const fresh = emptyHostConfigInputV2();
+    expect("pluginVersionIds" in fresh).toBe(false);
+    expect("skillSelection" in fresh).toBe(false);
+
+    const pluginVersionIds = ["pv-1"];
+    const skillSelection = {
+      mode: "explicit" as const,
+      skillIds: ["sk-1"],
+    };
+    const seeded = emptyHostConfigInputV2({ pluginVersionIds, skillSelection });
+    expect(seeded.pluginVersionIds).toEqual(["pv-1"]);
+    expect(seeded.skillSelection).toEqual({
+      mode: "explicit",
+      skillIds: ["sk-1"],
+    });
+    // Cloned, not aliased.
+    pluginVersionIds.push("pv-2");
+    skillSelection.skillIds.push("sk-2");
+    expect(seeded.pluginVersionIds).toEqual(["pv-1"]);
+    expect(seeded.skillSelection).toEqual({
+      mode: "explicit",
+      skillIds: ["sk-1"],
+    });
+  });
+
   // Golden-output guard. The committed snapshot was captured when these seeds
   // were extracted from the old inspector client template adapter. It now locks
   // the fallback seed output so any accidental drift — a changed default, a

@@ -18,6 +18,15 @@
  *                                   into a personal computer isn't reproducible;
  *                                   the backend also rejects it at run start.
  *                                   See mcpjam-backend docs/project-computers.md)
+ *   - `pluginVersionIds`           (platform-internal Convex `pluginVersions` ids,
+ *                                   not portable across projects/deployments)
+ *   - `skillSelection`             (explicit `skillIds` are platform-internal
+ *                                   Convex skill ids — same portability problem)
+ *
+ * Plugin/skill stripping is EXTERNAL-wire-only: platform-owned eval suites
+ * keep `pluginVersionIds` / `skillSelection` in their persisted HostConfigs —
+ * only this external SDK eval wire normalization strips them (until a
+ * portable plugin source reference is defined).
  *
  * Everything else is preserved verbatim. We do NOT canonicalize, sort, hash,
  * or otherwise reshape — that's the canonicalizer's job. This is a thin,
@@ -113,7 +122,10 @@ function hostJsonToStrippedInput(json: HostJson): HostConfigInputV2 {
   }
   // `servers`, `optionalServers`, `serverOverrides` deliberately dropped —
   // the wire form must not carry runtime-manager identifiers. `computer` is
-  // dropped too: evals never target personal computers.
+  // dropped too: evals never target personal computers. `pluginVersionIds`
+  // and `skillSelection` are dropped as well — they carry platform-internal
+  // Convex ids that are not portable on the EXTERNAL eval wire (platform-owned
+  // suites keep them in persisted HostConfigs; only this normalizer strips).
   return input;
 }
 
@@ -130,6 +142,10 @@ function stripRuntimeIdsFromCanonical(
     optionalServerIds: _optionalServerIds,
     serverConnectionOverrides: _serverConnectionOverrides,
     computer: _computer,
+    // Platform-internal Convex ids — external-wire-only strip (platform-owned
+    // suites keep these fields in their persisted HostConfigs).
+    pluginVersionIds: _pluginVersionIds,
+    skillSelection: _skillSelection,
     ...rest
   } = input;
   // Discard the unused locals (silences `no-unused-vars` without disabling).
@@ -137,6 +153,8 @@ function stripRuntimeIdsFromCanonical(
   void _optionalServerIds;
   void _serverConnectionOverrides;
   void _computer;
+  void _pluginVersionIds;
+  void _skillSelection;
   return { ...rest };
 }
 
@@ -144,9 +162,11 @@ function stripRuntimeIdsFromCanonical(
  * Pass-1 wire normalizer for SDK→backend eval ingestion.
  *
  * Strips runtime-manager identifiers (`serverIds`, `optionalServerIds`,
- * `serverConnectionOverrides`) and the eval-forbidden `computer` field so the
- * SDK reporter and backend handler hash byte-identical wire shapes — and so
- * evals never carry a personal computer. Accepts EITHER a canonical
+ * `serverConnectionOverrides`), the eval-forbidden `computer` field, and the
+ * platform-internal plugin/skill attachments (`pluginVersionIds`,
+ * `skillSelection`) so the SDK reporter and backend handler hash
+ * byte-identical wire shapes — and so evals never carry a personal computer
+ * or non-portable Convex ids. Accepts EITHER a canonical
  * {@link HostConfigInputV2} OR a public {@link HostJson} (`Host.toJSON()`);
  * the public shape is projected to the canonical input shape before stripping.
  *
