@@ -1,3 +1,4 @@
+import { Loader2 } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -5,44 +6,41 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import type { ServerWithName } from "@/state/app-types";
 import { useHostCompatReports } from "@/lib/host-compat/use-host-compat";
-import type { CompatVerdict, HostCompatReport } from "@/lib/host-compat/types";
+import type { HostCompatReport } from "@/lib/host-compat/types";
 import type { HostThemeMode } from "@/lib/client-styles";
-
-const VERDICT_DOT_CLASS: Record<CompatVerdict, string> = {
-  works: "bg-emerald-500",
-  degraded: "bg-amber-500",
-  blocked: "bg-red-500",
-  unknown: "bg-muted-foreground/40",
-};
-
-const VERDICT_LABEL: Record<CompatVerdict, string> = {
-  works: "Works",
-  degraded: "Degraded",
-  blocked: "Blocked",
-  unknown: "Unknown",
-};
+import {
+  COMPAT_DISPLAY_META,
+  getCompatDisplayLabel,
+  getCompatDisplayStatus,
+} from "@/components/compat/verdict-meta";
 
 export function summarizeReports(reports: HostCompatReport[]): string {
   if (reports.length === 0) return "checking…";
   const counts = reports.reduce(
     (acc, report) => {
-      acc[report.verdict] += 1;
+      const status = getCompatDisplayStatus(report);
+      if (status === "green") {
+        acc.green += 1;
+      } else if (status === "orange") {
+        if (report.verdict === "degraded" || report.verdict === "blocked") {
+          acc.unsupported += 1;
+        } else {
+          acc.unverified += 1;
+        }
+      }
       return acc;
     },
-    { works: 0, degraded: 0, blocked: 0, unknown: 0 }
+    { green: 0, orange: 0, unsupported: 0, unverified: 0 }
   );
   const parts: string[] = [];
-  if (counts.works > 0) parts.push(`works in ${counts.works}`);
-  if (counts.degraded > 0) parts.push(`degraded in ${counts.degraded}`);
-  if (counts.blocked > 0) parts.push(`blocked in ${counts.blocked}`);
-  // Surface unknowns only when no host produced a definite verdict —
-  // otherwise the grey dots already carry it and a roll-up would just add
-  // noise. An all-unknown result is a real state (incomplete connect data),
-  // not "still checking".
-  if (parts.length === 0 && counts.unknown > 0) {
-    return `unknown in ${counts.unknown}`;
+  if (counts.green > 0) parts.push(`supported in ${counts.green}`);
+  if (counts.unsupported > 0) {
+    parts.push(`unsupported in ${counts.unsupported}`);
   }
-  return parts.join(" · ");
+  if (counts.unverified > 0) {
+    parts.push(`not verified in ${counts.unverified}`);
+  }
+  return parts.length > 0 ? parts.join(" · ") : "no result available";
 }
 
 /**
@@ -55,12 +53,21 @@ export function HostCompatStripView({
   reports,
   onOpenDetails,
   themeMode = "light",
+  analysisStatus = "ready",
 }: {
   serverName: string;
   reports: HostCompatReport[];
   onOpenDetails?: () => void;
   themeMode?: HostThemeMode;
+  analysisStatus?: "analyzing" | "ready" | "failed";
 }) {
+  const analysisLabel =
+    analysisStatus === "analyzing"
+      ? "Checking compatibility…"
+      : analysisStatus === "failed"
+      ? "Compatibility checks unavailable"
+      : null;
+
   return (
     <div
       data-server-card-context-menu-exempt
@@ -71,52 +78,66 @@ export function HostCompatStripView({
         type="button"
         onClick={onOpenDetails}
         disabled={!onOpenDetails}
-        aria-label={`Host compatibility for ${serverName}: ${summarizeReports(
-          reports
-        )}`}
+        aria-label={`Host compatibility for ${serverName}: ${
+          analysisLabel ?? summarizeReports(reports)
+        }`}
         className="inline-flex max-w-full flex-nowrap items-center rounded-full border border-border/70 bg-muted/30 px-2 py-0.5 transition-colors hover:bg-accent/60 cursor-pointer disabled:cursor-default"
       >
-        <div className="flex shrink-0 items-center gap-1">
-          {reports.map((report) => (
-            <Tooltip key={report.hostId}>
-              <TooltipTrigger asChild>
-                <span className="relative inline-flex h-4 w-4 items-center justify-center">
-                  <img
-                    src={report.logoSrcByTheme?.[themeMode] ?? report.logoSrc}
-                    alt={report.hostLabel}
-                    className="h-3.5 w-3.5 rounded-[3px] object-contain"
-                  />
-                  <span
-                    className={`absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full ring-1 ring-background ${
-                      VERDICT_DOT_CLASS[report.verdict]
-                    }`}
-                  />
-                </span>
-              </TooltipTrigger>
-              <TooltipContent
-                side="top"
-                sideOffset={4}
-                variant="muted"
-                className="max-w-56 px-2.5 text-left [text-wrap:normal]"
-              >
-                <span className="font-medium">
-                  {report.hostLabel}: {VERDICT_LABEL[report.verdict]}
-                </span>
-                {report.findings[0] ? (
-                  <>
-                    {" — "}
-                    {report.findings[0].title}
-                    {report.findings.length > 1
-                      ? ` (+${report.findings.length - 1} more)`
-                      : ""}
-                  </>
-                ) : report.verdict === "works" ? (
-                  " — all checks passed"
-                ) : null}
-              </TooltipContent>
-            </Tooltip>
-          ))}
-        </div>
+        {analysisLabel ? (
+          <span className="inline-flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
+            {analysisStatus === "analyzing" ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : null}
+            {analysisLabel}
+          </span>
+        ) : (
+          <div className="flex shrink-0 items-center gap-1">
+            {reports.map((report) => {
+              const status = getCompatDisplayStatus(report);
+              const meta = status ? COMPAT_DISPLAY_META[status] : null;
+              return (
+                <Tooltip key={report.hostId}>
+                  <TooltipTrigger asChild>
+                    <span className="relative inline-flex h-4 w-4 items-center justify-center">
+                      <img
+                        src={
+                          report.logoSrcByTheme?.[themeMode] ?? report.logoSrc
+                        }
+                        alt={report.hostLabel}
+                        className="h-3.5 w-3.5 rounded-[3px] object-contain"
+                      />
+                      {meta ? (
+                        <span
+                          className={`absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full ring-1 ring-background ${meta.dot}`}
+                        />
+                      ) : null}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent
+                    side="top"
+                    sideOffset={4}
+                    variant="muted"
+                    className="max-w-56 px-2.5 text-left [text-wrap:normal]"
+                  >
+                    <span className="font-medium">
+                      {report.hostLabel}
+                      {meta ? `: ${getCompatDisplayLabel(report)}` : ""}
+                    </span>
+                    {report.findings[0] ? (
+                      <>
+                        {": "}
+                        {report.findings[0].title}
+                        {report.findings.length > 1
+                          ? ` (+${report.findings.length - 1} more)`
+                          : ""}
+                      </>
+                    ) : null}
+                  </TooltipContent>
+                </Tooltip>
+              );
+            })}
+          </div>
+        )}
       </button>
     </div>
   );
@@ -135,12 +156,13 @@ export function HostCompatStrip({
   server: ServerWithName;
   onOpenDetails?: () => void;
 }) {
-  const { reports } = useHostCompatReports(server);
+  const { reports, analysisStatus } = useHostCompatReports(server);
   return (
     <HostCompatStripView
       serverName={server.name}
       reports={reports}
       onOpenDetails={onOpenDetails}
+      analysisStatus={analysisStatus}
     />
   );
 }

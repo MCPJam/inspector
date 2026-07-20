@@ -73,6 +73,22 @@ function matchesRegistryServerName(
   );
 }
 
+/**
+ * The registry data layer is gated behind REGISTRY_FEATURE_ENABLED. When it's
+ * off (or the catalog simply hasn't loaded) every lookup would fail with a
+ * confusing "no server matches" — surface an honest "unavailable" instead so
+ * a flag-enabled-route-but-feature-off user gets a clear signal, not a fake
+ * failure buried in resolution.
+ */
+function assertRegistryAvailable(cards: readonly unknown[]): void {
+  if (cards.length === 0) {
+    throw createInspectorCommandClientError(
+      "unsupported_in_mode",
+      "The registry catalog is empty or unavailable right now — no servers to act on.",
+    );
+  }
+}
+
 function requireRegistryCard(
   cards: EnrichedRegistryCatalogCard[],
   serverName: unknown,
@@ -119,26 +135,6 @@ function resolveConnectVariant(
     "invalid_request",
     `"${card.variants[0].displayName}" has both Text and App variants — pass variant: "text" or "app".`,
   );
-}
-
-/** The variant a disconnect acts on: the connected/added one, like the UI. */
-function resolveDisconnectVariant(
-  card: EnrichedRegistryCatalogCard,
-  variantType: "text" | "app" | undefined,
-): EnrichedRegistryServer {
-  const candidates = variantType
-    ? card.variants.filter((v) => v.clientType === variantType)
-    : card.variants;
-  const active =
-    candidates.find((v) => v.connectionStatus === "connected") ??
-    candidates.find((v) => v.connectionStatus === "added");
-  if (!active) {
-    throw createInspectorCommandClientError(
-      "invalid_request",
-      `"${card.variants[0].displayName}" is not connected or installed in this project.`,
-    );
-  }
-  return active;
 }
 
 interface RegistryTabProps {
@@ -284,6 +280,7 @@ export function RegistryTab({
     surfaceId: "registry",
     handlers: {
       connectRegistryServer: async (command) => {
+        assertRegistryAvailable(catalogCards);
         const { payload } = command as ConnectRegistryServerInspectorCommand;
         const { card, serverName } = requireRegistryCard(
           catalogCards,
@@ -320,20 +317,34 @@ export function RegistryTab({
         return { status: "connecting", serverName: name };
       },
       disconnectRegistryServer: async (command) => {
+        assertRegistryAvailable(catalogCards);
         const { payload } =
           command as DisconnectRegistryServerInspectorCommand;
         const { card } = requireRegistryCard(catalogCards, payload.serverName);
-        const variant = resolveDisconnectVariant(
-          card,
-          readCommandVariant(payload.variant),
-        );
-        await handleDisconnect(variant);
+        const variantType = readCommandVariant(payload.variant);
+        // Idempotent (idempotentHint: true): a retry after a successful
+        // disconnect finds nothing connected/added — that is the desired end
+        // state, not an error, so report it as already disconnected.
+        const candidates = variantType
+          ? card.variants.filter((v) => v.clientType === variantType)
+          : card.variants;
+        const active =
+          candidates.find((v) => v.connectionStatus === "connected") ??
+          candidates.find((v) => v.connectionStatus === "added");
+        if (!active) {
+          return {
+            status: "already_disconnected",
+            serverName: getRegistryServerName(card.variants[0]),
+          };
+        }
+        await handleDisconnect(active);
         return {
           status: "disconnected",
-          serverName: getRegistryServerName(variant),
+          serverName: getRegistryServerName(active),
         };
       },
       toggleRegistryStar: async (command) => {
+        assertRegistryAvailable(catalogCards);
         const { payload } = command as ToggleRegistryStarInspectorCommand;
         if (typeof payload.starred !== "boolean") {
           throw createInspectorCommandClientError(
@@ -342,19 +353,24 @@ export function RegistryTab({
           );
         }
         const { card } = requireRegistryCard(catalogCards, payload.serverName);
-        const displayName = card.variants[0].displayName;
+        // Consistent with connect/disconnect: getRegistryServerName appends the
+        // (App)/(Text) suffix on dual-type cards, so a name echoed back here can
+        // be passed straight to a connect call without ambiguous resolution.
+        const serverName = getRegistryServerName(card.variants[0]);
         if (card.isStarred === payload.starred) {
-          return {
-            status: "unchanged",
-            serverName: displayName,
-            starred: card.isStarred,
-          };
+          return { status: "unchanged", serverName, starred: card.isStarred };
         }
+        // toggleStar catches failures, rolls the optimistic update back, and
+        // returns void — so we can't confirm persistence here. Report the
+        // action as REQUESTED (not done) and point at the snapshot for the
+        // authoritative resulting state, rather than claiming a success that
+        // may have been rolled back.
         await toggleStar(card.registryCardKey);
         return {
-          status: payload.starred ? "starred" : "unstarred",
-          serverName: displayName,
-          starred: payload.starred,
+          status: "star_requested",
+          serverName,
+          requestedStarred: payload.starred,
+          note: "Verify the resulting starred state with ui_snapshot_app; a failed request is rolled back.",
         };
       },
     },

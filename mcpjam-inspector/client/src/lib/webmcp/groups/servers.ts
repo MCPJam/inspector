@@ -86,8 +86,12 @@ function readServerDraft(args: Record<string, unknown>) {
     ...(asOptionalString(args.command)
       ? { command: asOptionalString(args.command) }
       : {}),
-    ...(Array.isArray(args.args)
-      ? { args: (args.args as unknown[]).map((a) => String(a)) }
+    // Only carry `args` when every element is already a string — coercing
+    // arbitrary values with String() would seed the draft with junk like
+    // "[object Object]"; a malformed array is dropped and the user fills it in.
+    ...(Array.isArray(args.args) &&
+    (args.args as unknown[]).every((a) => typeof a === "string")
+      ? { args: args.args as string[] }
       : {}),
   };
 }

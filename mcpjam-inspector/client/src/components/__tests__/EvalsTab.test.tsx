@@ -21,7 +21,7 @@ const mocks = vi.hoisted(() => ({
   handleGenerateTests: vi.fn(),
   handleRerun: vi.fn(),
   handleCancelRun: vi.fn(),
-  confirmDelete: vi.fn(),
+  confirmDelete: vi.fn(async () => true),
   setSuiteToDelete: vi.fn(),
   getEffectiveSuiteServers: vi.fn((..._args: unknown[]): string[] => []),
   isDirectGuest: false,
@@ -584,7 +584,7 @@ describe("EvalsTab", () => {
 
       expect(response).toMatchObject({
         status: "success",
-        result: { status: "delete_requested", suiteId: "suite-b" },
+        result: { status: "deleted", suiteId: "suite-b" },
       });
       expect(mocks.setSuiteToDelete).toHaveBeenCalledWith(
         expect.objectContaining({ _id: "suite-b" }),
@@ -595,6 +595,23 @@ describe("EvalsTab", () => {
         mocks.setSuiteToDelete.mock.invocationCallOrder[0],
       ).toBeLessThan(mocks.confirmDelete.mock.invocationCallOrder[0]);
       expect(mocks.setSuiteToDelete).toHaveBeenLastCalledWith(null);
+    });
+
+    it("deleteEvalSuite propagates a failed delete as an error", async () => {
+      mocks.confirmDelete.mockResolvedValueOnce(false);
+      render(<EvalsTab projectId="ws-1" />);
+
+      const response = await dispatch({
+        type: "deleteEvalSuite",
+        payload: { suite: "suite-b" },
+      });
+
+      // confirmDelete swallows the backend error to a toast but now returns
+      // false — the agent must see a real failure, not a claimed deletion.
+      expect(response).toMatchObject({
+        status: "error",
+        error: { code: "execution_failed" },
+      });
     });
 
     it("cancelEvalRun cancels visible running runs and reports finished ones instead", async () => {

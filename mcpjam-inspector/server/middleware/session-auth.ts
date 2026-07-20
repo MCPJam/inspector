@@ -30,6 +30,12 @@ const UNPROTECTED_ROUTES = [
   "/api/mcp/health", // Health check - no sensitive data
   "/api/apps/health", // Health check - no sensitive data
   "/api/session-token", // Token endpoint - protected by localhost check instead
+  // Public model catalog proxy: guests fetch it to populate the picker. It
+  // forwards no auth and returns only the keyless backend /v1/models (no
+  // sensitive data). Without this exemption the client's authless fetch 401s
+  // and the picker silently falls back to the static snapshot. EXACT match —
+  // it has no sub-paths.
+  "/api/mcp/models",
   // Mock OIDC IdP front-channel/RP endpoints: external browsers and relying
   // parties reach these without any MCPJam session (that's their purpose).
   // EXACT matches only — never move these to UNPROTECTED_PREFIXES, where the

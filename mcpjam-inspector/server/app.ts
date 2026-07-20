@@ -62,6 +62,10 @@ import { fetchRemoteGuestJwks } from "./utils/guest-session-source.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy.js";
 import { initXAAIdpKeyPair, setXaaIdpLogger } from "@mcpjam/sdk";
 import { requestLogContextMiddleware } from "./middleware/request-log-context.js";
+import {
+  applyHostedPartition,
+  mountHostedOpenRoutes,
+} from "./middleware/hosted-partition.js";
 import { registerSelfFetch } from "./utils/self-app.js";
 import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url.js";
 import { initComputersStartup } from "./utils/computers/remote-data-plane.js";
@@ -188,27 +192,11 @@ export async function createHonoApp() {
   // 2. Origin validation (blocks CSRF/DNS rebinding)
   app.use("*", originValidationMiddleware);
 
-  // 3. Hosted mode partition blocks legacy API families (health endpoints exempt).
+  // 3. Hosted mode partition blocks legacy API families (health + public
+  // catalog exempt). Shared with server/index.ts via applyHostedPartition —
+  // keep the allowlist in middleware/hosted-partition.ts, not inline here.
   if (HOSTED_MODE) {
-    app.use("/api/session-token", (c) =>
-      strictModeResponse(c, "/api/session-token")
-    );
-    app.use("/api/mcp", (c, next) => {
-      if (c.req.path === "/api/mcp/health") return next();
-      return strictModeResponse(c, "/api/mcp/*");
-    });
-    app.use("/api/mcp/*", (c, next) => {
-      if (c.req.path === "/api/mcp/health") return next();
-      return strictModeResponse(c, "/api/mcp/*");
-    });
-    app.use("/api/apps", (c, next) => {
-      if (c.req.path === "/api/apps/health") return next();
-      return strictModeResponse(c, "/api/apps/*");
-    });
-    app.use("/api/apps/*", (c, next) => {
-      if (c.req.path === "/api/apps/health") return next();
-      return strictModeResponse(c, "/api/apps/*");
-    });
+    applyHostedPartition(app);
   }
 
   // 4. Session authentication (blocks unauthorized API requests)
@@ -248,21 +236,10 @@ export async function createHonoApp() {
     app.route("/api/apps", appsRoutes);
     app.route("/api/mcp", mcpRoutes);
   } else {
-    // Health endpoints always available, even when legacy API families are disabled.
-    app.get("/api/mcp/health", (c) =>
-      c.json({
-        service: "MCP API",
-        status: "ready",
-        timestamp: new Date().toISOString(),
-      })
-    );
-    app.get("/api/apps/health", (c) =>
-      c.json({
-        service: "Apps API",
-        status: "ready",
-        timestamp: new Date().toISOString(),
-      })
-    );
+    // Only the hosted-open paths (health + public model catalog) are mounted;
+    // the rest of /api/mcp and /api/apps stays 410'd by applyHostedPartition.
+    // Mirror of server/index.ts — both entries share mountHostedOpenRoutes.
+    mountHostedOpenRoutes(app);
   }
   app.route("/api/web", webRoutes);
   // Computer terminal WebSocket + file upload (Project Computers). Registered

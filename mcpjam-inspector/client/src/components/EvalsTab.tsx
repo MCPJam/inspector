@@ -587,6 +587,11 @@ function EvalsTabContent({
   // with flushSync and must then call the confirmDelete closure produced by
   // that commit, not the one captured when the command arrived.
   const latestHandlersRef = useRef(handlers);
+  // Synchronous in-flight lock for agent-driven generation. `isGeneratingTests`
+  // is React state (commits async), so two approved generate calls dispatched
+  // back-to-back could both pass that check and fire duplicate BILLABLE
+  // requests. This ref flips synchronously, before the fire-and-forget kickoff.
+  const agentGenerateInFlightRef = useRef<Set<string>>(new Set());
   latestHandlersRef.current = handlers;
 
   // EvalsTabContent's hooks run even while EvalTabGate shows the sign-in /
@@ -768,7 +773,11 @@ function EvalsTabContent({
             `Suite "${suiteDisplayName(entry.suite)}" has no servers attached — attach a client in the suite header before generating cases.`,
           );
         }
-        if (latestHandlersRef.current.isGeneratingTests) {
+        const generateSuiteId = entry.suite._id;
+        if (
+          latestHandlersRef.current.isGeneratingTests ||
+          agentGenerateInFlightRef.current.has(generateSuiteId)
+        ) {
           throw createInspectorCommandClientError(
             "execution_failed",
             "Test generation is already running — wait for it to finish.",
@@ -776,8 +785,13 @@ function EvalsTabContent({
         }
         // Fire-and-forget through the button's exact path: generation can
         // outlive the command timeout, and generateTestsForSuite handles
-        // its own errors (toasts + tracking).
-        void generateTestsForSuite(entry.suite);
+        // its own errors (toasts + tracking). The ref lock is set BEFORE the
+        // kickoff (synchronous) and cleared when it settles, so a second
+        // concurrent call can't double-bill before React state commits.
+        agentGenerateInFlightRef.current.add(generateSuiteId);
+        void Promise.resolve(generateTestsForSuite(entry.suite)).finally(() => {
+          agentGenerateInFlightRef.current.delete(generateSuiteId);
+        });
         return {
           status: "generation_started",
           suiteId: entry.suite._id,
@@ -802,15 +816,20 @@ function EvalsTabContent({
         flushSync(() => {
           latestHandlersRef.current.setSuiteToDelete(entry.suite);
         });
-        await latestHandlersRef.current.confirmDelete();
+        const deleted = await latestHandlersRef.current.confirmDelete();
         // Success clears suiteToDelete itself; on failure (surfaced as a
         // toast) close the confirmation dialog the staging opened.
         latestHandlersRef.current.setSuiteToDelete(null);
+        if (!deleted) {
+          throw createInspectorCommandClientError(
+            "execution_failed",
+            `Deleting suite "${suiteDisplayName(entry.suite)}" failed — it is still present. Check for a backend or authorization error.`,
+          );
+        }
         return {
-          status: "delete_requested",
+          status: "deleted",
           suiteId: entry.suite._id,
           suiteName: suiteDisplayName(entry.suite),
-          note: "Verify with ui_snapshot_app — a failed delete surfaces as a toast and keeps the suite listed.",
         };
       },
     },

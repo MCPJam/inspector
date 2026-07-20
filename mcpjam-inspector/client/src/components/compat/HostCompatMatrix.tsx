@@ -9,7 +9,11 @@ import { getHostProfiles } from "@/lib/host-compat/profiles";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { useHostCompatReports } from "@/lib/host-compat/use-host-compat";
 import type { HostCompatReport } from "@/lib/host-compat/types";
-import { VERDICT_META } from "@/components/compat/verdict-meta";
+import {
+  COMPAT_DISPLAY_META,
+  getCompatDisplayLabel,
+  getCompatDisplayStatus,
+} from "@/components/compat/verdict-meta";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
@@ -18,24 +22,11 @@ import { filterProfilesByFeatureFlags } from "@/lib/host-compat/feature-visibili
 type HostColumn = {
   id: string;
   label: string;
-  verifiedAt?: number;
   logoSrc: string;
   logoSrcByTheme?: { light: string; dark: string };
 };
 
 export type ColumnSummary = { works: number; loaded: number };
-
-const VERIFIED_DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
-  timeZone: "UTC",
-  month: "short",
-  day: "numeric",
-  year: "numeric",
-});
-
-function formatVerifiedDate(verifiedAt: number | undefined): string | null {
-  if (verifiedAt === undefined || !Number.isFinite(verifiedAt)) return null;
-  return VERIFIED_DATE_FORMATTER.format(new Date(verifiedAt));
-}
 
 /**
  * For one host column, count how many of the loaded servers "work" there.
@@ -45,7 +36,7 @@ function formatVerifiedDate(verifiedAt: number | undefined): string | null {
  */
 export function summarizeColumn(
   perServerReports: Array<HostCompatReport[] | undefined>,
-  hostId: string,
+  hostId: string
 ): ColumnSummary {
   let works = 0;
   let loaded = 0;
@@ -80,7 +71,7 @@ function MatrixRow({
   onReports: (name: string, reports: HostCompatReport[]) => void;
   onRemove: (name: string) => void;
 }) {
-  const { reports } = useHostCompatReports(server);
+  const { reports, analysisStatus } = useHostCompatReports(server);
 
   const byHost = useMemo(() => {
     const m = new Map<string, HostCompatReport>();
@@ -127,21 +118,27 @@ function MatrixRow({
         </button>
       </td>
       {hosts.map((h) => {
-        const verdict = byHost.get(h.id)?.verdict ?? "unknown";
-        const meta = VERDICT_META[verdict];
+        const report = byHost.get(h.id);
+        const status =
+          analysisStatus === "ready" && report
+            ? getCompatDisplayStatus(report)
+            : null;
+        const meta = status ? COMPAT_DISPLAY_META[status] : null;
         return (
           <td key={h.id} className="px-2 py-2 text-center">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span
-                  className={`inline-block h-2 w-2 rounded-full ${meta.dot}`}
-                  aria-label={`${meta.label} on ${h.label}`}
-                />
-              </TooltipTrigger>
-              <TooltipContent side="top" variant="muted">
-                {h.label}: {meta.label}
-              </TooltipContent>
-            </Tooltip>
+            {meta ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span
+                    className={`inline-block h-2 w-2 rounded-full ${meta.dot}`}
+                    aria-label={`${getCompatDisplayLabel(report!) ?? ""} on ${h.label}`}
+                  />
+                </TooltipTrigger>
+                <TooltipContent side="top" variant="muted">
+                  {h.label}: {getCompatDisplayLabel(report!) ?? ""}
+                </TooltipContent>
+              </Tooltip>
+            ) : null}
           </td>
         );
       })}
@@ -178,23 +175,22 @@ export function HostCompatMatrix({
       }).map((p) => ({
         id: p.id,
         label: p.label,
-        verifiedAt: p.verifiedAt,
         logoSrc: p.logoSrc,
         logoSrcByTheme: p.logoSrcByTheme,
       })),
-    [catalogState, claudeCodeEnabled, codexEnabled],
+    [catalogState, claudeCodeEnabled, codexEnabled]
   );
 
   const [byServer, setByServer] = useState<Record<string, HostCompatReport[]>>(
-    {},
+    {}
   );
   const handleReports = useCallback(
     (name: string, reports: HostCompatReport[]) => {
       setByServer((prev) =>
-        prev[name] === reports ? prev : { ...prev, [name]: reports },
+        prev[name] === reports ? prev : { ...prev, [name]: reports }
       );
     },
-    [],
+    []
   );
   const handleRemove = useCallback((name: string) => {
     setByServer((prev) => {
@@ -216,7 +212,6 @@ export function HostCompatMatrix({
               Server
             </th>
             {hosts.map((h) => {
-              const verifiedDate = formatVerifiedDate(h.verifiedAt);
               return (
                 <th key={h.id} className="px-2 py-2 text-center">
                   <Tooltip>
@@ -229,11 +224,6 @@ export function HostCompatMatrix({
                     </TooltipTrigger>
                     <TooltipContent side="top" variant="muted">
                       <div>{h.label}</div>
-                      {verifiedDate ? (
-                        <div className="text-[10px] text-muted-foreground">
-                          Last verified {verifiedDate}
-                        </div>
-                      ) : null}
                     </TooltipContent>
                   </Tooltip>
                 </th>
@@ -257,7 +247,7 @@ export function HostCompatMatrix({
         <tfoot>
           <tr className="border-t border-border/50">
             <td className="sticky left-0 z-10 bg-background px-3 py-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-              Works
+              Supported
             </td>
             {hosts.map((h) => {
               const { works, loaded } = summarizeColumn(perServerReports, h.id);

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   __resetHostedModelCatalogForTests,
   __setHostedCatalogForTests,
+  ingestHostedCatalogIds,
   isHostedCatalogModel,
   refreshHostedModelCatalog,
 } from "../hosted-model-catalog.js";
@@ -65,6 +66,38 @@ describe("isHostedCatalogModel — billing classification", () => {
     expect(billingSource(SEED_MODEL)).toBe("mcpjam");
     expect(billingSource(CATALOG_ONLY_MODEL)).toBe("mcpjam");
     expect(billingSource(BYOK_MODEL)).toBe("byok");
+  });
+});
+
+describe("ingestHostedCatalogIds — picker-proxy warms the classifier", () => {
+  it("a model fed from the picker proxy classifies as mcpjam immediately (no cron wait)", () => {
+    // Cold: a brand-new model the hourly cron hasn't picked up misroutes to BYOK.
+    expect(billingSource(CATALOG_ONLY_MODEL)).toBe("byok");
+    // The /api/mcp/models proxy hands its fresh catalog ids here…
+    ingestHostedCatalogIds([SEED_MODEL, CATALOG_ONLY_MODEL]);
+    // …and the classifier is current without waiting for the cron refresh.
+    expect(billingSource(CATALOG_ONLY_MODEL)).toBe("mcpjam");
+  });
+
+  it("an empty/failed proxy fetch never clobbers a warm cache", () => {
+    ingestHostedCatalogIds([CATALOG_ONLY_MODEL]);
+    expect(billingSource(CATALOG_ONLY_MODEL)).toBe("mcpjam");
+    // A subsequent empty ingest (failed/partial fetch) must be a no-op.
+    ingestHostedCatalogIds([]);
+    expect(billingSource(CATALOG_ONLY_MODEL)).toBe("mcpjam");
+  });
+
+  it("a truncated/partial proxy fetch never drops previously-warmed ids", () => {
+    // Two models warmed from a full picker fetch…
+    ingestHostedCatalogIds([CATALOG_ONLY_MODEL, "openai/some-new-model"]);
+    expect(billingSource(CATALOG_ONLY_MODEL)).toBe("mcpjam");
+    expect(billingSource("openai/some-new-model")).toBe("mcpjam");
+    // …then a NON-EMPTY but truncated fetch that omits one of them. Additive
+    // ingest must keep the omitted model classified as hosted (no BYOK
+    // mis-dispatch); only the authoritative hourly refresh prunes.
+    ingestHostedCatalogIds([CATALOG_ONLY_MODEL]);
+    expect(billingSource(CATALOG_ONLY_MODEL)).toBe("mcpjam");
+    expect(billingSource("openai/some-new-model")).toBe("mcpjam");
   });
 });
 
