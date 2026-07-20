@@ -94,7 +94,7 @@ describe("buildComputerUiTools", () => {
     }
   });
 
-  it("gates exactly reset + delete behind the destructive approval pill", () => {
+  it("gates exactly start + reset + delete behind the destructive approval pill", () => {
     const destructive = buildComputerUiTools()
       .filter((tool) => tool.annotations?.destructiveHint === true)
       .map((tool) => tool.name);
@@ -107,11 +107,14 @@ describe("buildComputerUiTools", () => {
 
   it("every tool takes an empty, closed input schema (no target, no secrets)", () => {
     for (const tool of buildComputerUiTools()) {
-      expect(tool.inputSchema).toMatchObject({
+      // toEqual, not toMatchObject: `{ properties: {} }` is vacuously satisfied
+      // by ANY properties object, so it wouldn't catch a field creeping in.
+      expect(tool.inputSchema).toEqual({
         type: "object",
         properties: {},
         additionalProperties: false,
       });
+      expect(Object.keys((tool.inputSchema as { properties: object }).properties)).toHaveLength(0);
     }
   });
 

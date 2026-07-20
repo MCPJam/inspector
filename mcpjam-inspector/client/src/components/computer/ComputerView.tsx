@@ -228,6 +228,17 @@ export function ComputerView({
         "The Computer tools need a signed-in project — sign in and select a project first.",
       );
     }
+    // Config still loading: `dataPlaneUnavailable` is false while `dataPlane`
+    // is undefined, so without this a same-turn call right after navigation
+    // could reach reserve() and BILL/provision before we know there's even a
+    // usable data plane. Treat unresolved config as pending (retryable), the
+    // way the terminal controller refuses to open until dataPlane resolves.
+    if (dataPlane === undefined) {
+      throw createInspectorCommandClientError(
+        "execution_failed",
+        "The Computer configuration is still loading — try again in a moment.",
+      );
+    }
     if (dataPlaneUnavailable) {
       throw createInspectorCommandClientError(
         "unsupported_in_mode",
@@ -284,6 +295,15 @@ export function ComputerView({
       },
       resetComputer: async () => {
         const pid = requireComputerProject();
+        // Same gate as the Reset button (disabled unless `canReset`): a reset
+        // wipes/rebuilds the box, so it's only valid once the computer is
+        // settled (ready or hibernating), never mid-provision/waking/error.
+        if (!canReset) {
+          throw createInspectorCommandClientError(
+            "execution_failed",
+            `The computer can't be reset from "${liveStatus ?? "none"}" — reset only when it's ready or hibernating.`,
+          );
+        }
         try {
           const res = await resetComputer({ projectId: pid });
           return {
@@ -337,8 +357,13 @@ export function ComputerView({
           : null,
         imageLabel,
         terminalOpen,
-        // Short, redacted error text only (no stack, no payload).
-        lastError: status?.lastError ? status.lastError.slice(0, 300) : null,
+        // Presence only — the raw provider error can carry tokens/URLs/PII, and
+        // slicing bounds length but not content. The agent gets a fixed summary;
+        // the human sees the full text on the Computer screen.
+        hasError: Boolean(status?.lastError),
+        lastError: status?.lastError
+          ? "The computer reported an error — open the Computer screen for details."
+          : null,
       };
     },
   });

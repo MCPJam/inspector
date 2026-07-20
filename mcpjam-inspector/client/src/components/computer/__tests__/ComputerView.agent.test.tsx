@@ -227,4 +227,45 @@ describe("ComputerView — agent bridge handlers", () => {
     const snapshot = await readSurfaceSnapshot("computer");
     expect(snapshot).toMatchObject({ ok: true, data: { gated: true } });
   });
+
+  it("does NOT reserve/bill while the data-plane config is still loading", async () => {
+    // dataPlane undefined = config unresolved: dataPlaneUnavailable is false,
+    // but we must not reach reserve() before we know a data plane exists.
+    mockDataPlane = undefined;
+    renderComputer();
+    const response = await dispatch({ type: "startComputer" });
+    // Retryable, not "unsupported" — the config just hasn't landed yet.
+    expect(response).toMatchObject({
+      status: "error",
+      error: { code: "execution_failed" },
+    });
+    expect(reserve).not.toHaveBeenCalled();
+  });
+
+  it("refuses reset from a non-resettable status (same gate as the disabled button)", async () => {
+    mockStatus = { computerId: "c-1", status: "provisioning", provider: "e2b" };
+    renderComputer();
+    const response = await dispatch({ type: "resetComputer" });
+    expect(response).toMatchObject({
+      status: "error",
+      error: { code: "execution_failed" },
+    });
+    // The destructive wipe/rebuild mutation is never invoked from this state.
+    expect(resetComputer).not.toHaveBeenCalled();
+  });
+
+  it("snapshot never passes raw provider error text into the transcript", async () => {
+    mockStatus = {
+      computerId: "c-1",
+      status: "error",
+      provider: "e2b",
+      lastError: "auth failed token=SECRET-abc123 at https://internal.example/vm",
+    } as ComputerViewModel;
+    renderComputer();
+    const snapshot = await readSurfaceSnapshot("computer");
+    expect(snapshot).toMatchObject({ ok: true, data: { hasError: true } });
+    const serialized = JSON.stringify(snapshot);
+    expect(serialized).not.toContain("SECRET-abc123");
+    expect(serialized).not.toContain("internal.example");
+  });
 });
