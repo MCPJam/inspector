@@ -1143,6 +1143,7 @@ function JourneyCard({
                       personaRefId={journey.personaRefId}
                       hosts={hosts}
                       hostSummaries={r.hostSummaries}
+                      runSummary={r.summary}
                       initialThreadId={
                         initialRunId === r._id ? initialThreadId : undefined
                       }
@@ -1173,6 +1174,7 @@ function RunSessionsView({
   personaRefId,
   hosts,
   hostSummaries,
+  runSummary,
   initialThreadId,
 }: {
   runId: string;
@@ -1180,6 +1182,7 @@ function RunSessionsView({
   personaRefId: string;
   hosts: HostItem[];
   hostSummaries: JourneyRun["hostSummaries"];
+  runSummary: JourneyRun["summary"];
   /** Deep-link session (`id`) to auto-select once it's on a loaded page. */
   initialThreadId?: string;
 }) {
@@ -1194,7 +1197,17 @@ function RunSessionsView({
     { journeyRunId: runId } as any,
     { initialNumItems: DEFAULT_PAGE_SIZE }
   );
-  const [filter, setFilter] = useState<SessionFilterState>(EMPTY_SESSION_FILTER);
+  // Prefer landing on a host that failed — progressive discovery into the
+  // problem. Deep-link restore still wins once the linked session appears.
+  const defaultFailedHostId = useMemo(() => {
+    const withFails = hostSummaries.find((hs) => hs.failed > 0);
+    return withFails?.hostId ?? null;
+  }, [hostSummaries]);
+  const [filter, setFilter] = useState<SessionFilterState>(() =>
+    defaultFailedHostId
+      ? { hostId: defaultFailedHostId }
+      : EMPTY_SESSION_FILTER,
+  );
   const [selected, setSelected] = useState<JourneySessionRow | null>(null);
   const [sessionToPromote, setSessionToPromote] =
     useState<JourneySessionRow | null>(null);
@@ -1203,10 +1216,51 @@ function RunSessionsView({
     hosts.find((h) => h.hostId === id)?.name ?? id.slice(0, 8);
 
   const rows = sessions as JourneySessionRow[];
-  const visible = useMemo(
-    () => rows.filter((s) => sessionMatchesFilter(s, filter)),
-    [rows, filter]
-  );
+  const visible = useMemo(() => {
+    const matched = rows.filter((s) => sessionMatchesFilter(s, filter));
+    // Surface failed / errored sessions first so "N failed" is findable.
+    return [...matched].sort((a, b) => {
+      const rank = (s: JourneySessionRow) => {
+        if (s.status === "failed") return 0;
+        if (s.readiness?.status === "failed") return 1;
+        if (s.readiness?.verdict === "not_ready") return 2;
+        return 3;
+      };
+      return rank(a) - rank(b);
+    });
+  }, [rows, filter]);
+
+  // Attempts that failed before a chatSession was persisted never appear in
+  // `listSessionsByJourneyRun`. Derive placeholders from hostSummaries so the
+  // "N failed" rollup is inspectable instead of silently empty.
+  const missingAttemptHints = useMemo(() => {
+    return hostSummaries
+      .map((hs) => {
+        const listed = rows.filter((s) => s.hostId === hs.hostId).length;
+        // Unaccounted terminals ≈ claimed total minus listed rows. Prefer the
+        // failed/rate-limited counts when they exceed what's missing so we
+        // never under-report vs the run summary the user already saw.
+        const unlisted = Math.max(0, hs.total - listed);
+        const failedUnlisted = Math.min(hs.failed, unlisted);
+        const rateLimitedUnlisted = Math.min(
+          hs.rateLimited,
+          Math.max(0, unlisted - failedUnlisted),
+        );
+        if (failedUnlisted === 0 && rateLimitedUnlisted === 0) return null;
+        return {
+          hostId: hs.hostId,
+          failed: failedUnlisted,
+          rateLimited: rateLimitedUnlisted,
+        };
+      })
+      .filter((h): h is NonNullable<typeof h> => h != null)
+      .filter((h) => filter.hostId == null || filter.hostId === h.hostId);
+  }, [hostSummaries, rows, filter.hostId]);
+
+  const showRunFailureHint =
+    runSummary.failed > 0 &&
+    rows.every((s) => s.status !== "failed") &&
+    missingAttemptHints.length > 0;
 
   // Deep-link restore: auto-select the linked session once it appears on a
   // loaded page. Runs once. NOTE (remainder): a session on a not-yet-loaded
@@ -1218,60 +1272,141 @@ function RunSessionsView({
     const match = rows.find((s) => s.id === initialThreadId);
     if (match) {
       appliedInitialThreadRef.current = true;
+      setFilter({ hostId: match.hostId });
       setSelected(match);
     }
   }, [initialThreadId, rows]);
 
   return (
     <div className="mt-2 rounded-lg border bg-muted/20 p-2">
-      {/* Host filter chips */}
+      {/* Host filter chips — include outcome counts so failures are locatable. */}
       <div className="mb-2 flex flex-wrap gap-1.5">
-        {hostSummaries.map((hs) => (
-          <button
-            key={hs.hostId}
-            type="button"
-            onClick={() =>
-              setFilter((f) => toggleSessionFilter(f, "hostId", hs.hostId))
-            }
-            className={`rounded-full border px-2 py-0.5 text-[11px] ${
-              filter.hostId === hs.hostId
-                ? "border-primary bg-primary/10"
-                : "hover:bg-muted"
-            }`}
-          >
-            {hostName(hs.hostId)}
-          </button>
-        ))}
+        {hostSummaries.map((hs) => {
+          const selectedHost = filter.hostId === hs.hostId;
+          const hasFails = hs.failed > 0 || hs.rateLimited > 0;
+          return (
+            <button
+              key={hs.hostId}
+              type="button"
+              onClick={() =>
+                setFilter((f) => toggleSessionFilter(f, "hostId", hs.hostId))
+              }
+              className={cn(
+                "rounded-full border px-2 py-0.5 text-[11px] outline-none transition-colors",
+                "focus-visible:ring-2 focus-visible:ring-ring",
+                selectedHost
+                  ? "border-primary bg-primary/10"
+                  : "hover:bg-muted",
+                hasFails && !selectedHost && "border-red-500/30",
+              )}
+              aria-label={`${hostName(hs.hostId)}: ${hs.succeeded}/${hs.total} ok${hs.failed > 0 ? `, ${hs.failed} failed` : ""}`}
+            >
+              <span className="font-medium">{hostName(hs.hostId)}</span>
+              <span className="ml-1 text-muted-foreground">
+                {hs.succeeded}/{hs.total}
+              </span>
+              {hs.failed > 0 ? (
+                <span className="ml-1 text-red-600 dark:text-red-400">
+                  · {hs.failed} failed
+                </span>
+              ) : null}
+            </button>
+          );
+        })}
       </div>
 
-      {rows.length === 0 ? (
+      {showRunFailureHint ? (
+        <p
+          className="mb-2 rounded-md border border-red-500/25 bg-red-500/5 px-2 py-1.5 text-[11px] text-red-700 dark:text-red-400"
+          role="status"
+        >
+          {runSummary.failed} attempt
+          {runSummary.failed === 1 ? "" : "s"} failed without a session
+          transcript — open a host chip with failures to see which clients
+          never persisted a run.
+        </p>
+      ) : null}
+
+      {rows.length === 0 && missingAttemptHints.length === 0 ? (
         <p className="px-1 py-2 text-[11px] text-muted-foreground">
-          No sessions recorded yet for this run.
+          {runSummary.total === 0
+            ? "No sessions recorded yet for this run."
+            : "Sessions are still starting…"}
         </p>
       ) : (
         <div className="flex flex-col divide-y">
-          {visible.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              onClick={() => setSelected(s)}
-              className={`flex items-center justify-between gap-2 px-1 py-1.5 text-left hover:bg-muted/50 ${
-                selected?.id === s.id ? "bg-muted" : ""
-              }`}
+          {missingAttemptHints.map((hint) => (
+            <div
+              key={`missing-${hint.hostId}`}
+              className="flex items-start justify-between gap-2 px-1 py-1.5"
+              data-testid={`missing-attempts-${hint.hostId}`}
             >
               <span className="flex min-w-0 flex-col">
                 <span className="truncate text-[11px] font-medium">
-                  {hostName(s.hostId)}
+                  {hostName(hint.hostId)}
                 </span>
-                <span className="truncate text-[10px] text-muted-foreground">
-                  {s.status ?? "—"}
-                  {s.modelId ? ` · ${s.modelId}` : ""}
+                <span className="text-[10px] text-muted-foreground">
+                  Failed before a session was recorded
+                  {hint.rateLimited > 0
+                    ? ` · ${hint.rateLimited} rate-limited`
+                    : ""}
                 </span>
               </span>
-              <SessionGoalScoreBadge goalScore={s.goalScore} />
-              <SessionReadinessBadge readiness={toSessionReadiness(s.readiness)} />
-            </button>
+              <span className="shrink-0 rounded-full bg-red-500/10 px-1.5 py-0.5 text-[10px] font-medium text-red-700 dark:text-red-400">
+                {hint.failed} failed
+              </span>
+            </div>
           ))}
+          {visible.map((s) => {
+            const isFailed =
+              s.status === "failed" || s.readiness?.status === "failed";
+            return (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => setSelected(s)}
+                className={cn(
+                  "flex items-center justify-between gap-2 px-1 py-1.5 text-left hover:bg-muted/50",
+                  selected?.id === s.id && "bg-muted",
+                )}
+              >
+                <span className="flex min-w-0 flex-col">
+                  <span className="truncate text-[11px] font-medium">
+                    {hostName(s.hostId)}
+                  </span>
+                  <span
+                    className={cn(
+                      "truncate text-[10px]",
+                      isFailed
+                        ? "text-red-600 dark:text-red-400"
+                        : "text-muted-foreground",
+                    )}
+                  >
+                    {s.status ?? "—"}
+                    {s.modelId ? ` · ${s.modelId}` : ""}
+                  </span>
+                </span>
+                <span className="flex shrink-0 items-center gap-1.5">
+                  {isFailed ? (
+                    <span className="rounded-full bg-red-500/10 px-1.5 py-0.5 text-[10px] font-medium text-red-700 dark:text-red-400">
+                      Failed
+                    </span>
+                  ) : null}
+                  <SessionGoalScoreBadge goalScore={s.goalScore} />
+                  {!isFailed ? (
+                    <SessionReadinessBadge
+                      readiness={toSessionReadiness(s.readiness)}
+                    />
+                  ) : null}
+                </span>
+              </button>
+            );
+          })}
+          {visible.length === 0 && missingAttemptHints.length === 0 ? (
+            <p className="px-1 py-2 text-[11px] text-muted-foreground">
+              No sessions for this client in the loaded page.
+            </p>
+          ) : null}
         </div>
       )}
 
@@ -1695,8 +1830,15 @@ function NewJourneyButton({
               <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
             </button>
           </PopoverTrigger>
-          <PopoverContent className="w-64 p-1" align="start" sideOffset={4}>
-            <div className="space-y-0.5">
+          <PopoverContent
+            className="w-64 p-1"
+            align="start"
+            sideOffset={4}
+            // Multi-select: don't dismiss when focus moves between rows
+            // (Radix otherwise treats the click as "outside" the trigger).
+            onCloseAutoFocus={(e) => e.preventDefault()}
+          >
+            <div className="space-y-0.5" role="group" aria-label="Clients">
               <div className="flex items-center justify-between gap-2 px-2 pb-1 pt-0.5">
                 <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                   Clients
@@ -1713,8 +1855,8 @@ function NewJourneyButton({
                   </TooltipTrigger>
                   <TooltipContent side="top" className="max-w-[240px]">
                     <p className="text-xs leading-snug">
-                      Each selected client fans out into its own sessions for
-                      this journey.
+                      Pick one or more. Each selected client fans out into its
+                      own sessions for this journey.
                     </p>
                   </TooltipContent>
                 </Tooltip>
@@ -1735,6 +1877,11 @@ function NewJourneyButton({
                     <button
                       key={h.hostId}
                       type="button"
+                      role="checkbox"
+                      aria-checked={selected}
+                      // Prevent focus steal from closing the multi-select popover
+                      // before the toggle applies (same pattern as evals).
+                      onPointerDown={(e) => e.preventDefault()}
                       onClick={() => toggleHost(h.hostId)}
                       className={cn(
                         "flex w-full items-center gap-2 rounded py-1.5 pl-2 pr-2 text-left text-sm",

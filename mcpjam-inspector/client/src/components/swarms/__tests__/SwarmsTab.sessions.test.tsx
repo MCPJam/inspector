@@ -22,10 +22,11 @@ const journey = {
   _id: "journey-1",
   personaRefId: "persona-1",
   goal: "Book a flight",
-  hostIds: ["host-1"],
+  hostIds: ["host-1", "host-2"],
   config: { sessionsPerHost: 2, maxTurns: 6 },
 };
 const host = { hostId: "host-1", name: "Host One" };
+const hostTwo = { hostId: "host-2", name: "Host Two" };
 
 const run = {
   _id: "run-1",
@@ -35,6 +36,18 @@ const run = {
     { hostId: "host-1", total: 1, succeeded: 1, failed: 0, rateLimited: 0 },
   ],
   createdAt: 1,
+};
+
+/** Partial run: Host Two failed both attempts with no persisted chatSessions. */
+const runWithMissingFailures = {
+  _id: "run-fail",
+  status: "partial",
+  summary: { total: 4, succeeded: 2, failed: 2, rateLimited: 0 },
+  hostSummaries: [
+    { hostId: "host-1", total: 2, succeeded: 2, failed: 0, rateLimited: 0 },
+    { hostId: "host-2", total: 2, succeeded: 0, failed: 2, rateLimited: 0 },
+  ],
+  createdAt: 2,
 };
 
 // A real JourneySessionDto row — identifier is `id`.
@@ -64,9 +77,9 @@ vi.mock("convex/react", () => ({
       case "journeys:listJourneysByPersona":
         return [journey];
       case "hosts:listHosts":
-        return [host];
+        return [host, hostTwo];
       case "journeys:getJourneyRollup":
-        return { journeyRefId: "journey-1", runCount: 1, hosts: [] };
+        return { journeyRefId: "journey-1", runCount: 2, hosts: [] };
       default:
         return undefined;
     }
@@ -76,15 +89,33 @@ vi.mock("convex/react", () => ({
     paginatedCalls.push({ name, args });
     if (name === "journeyRuns:listJourneyRuns") {
       return {
-        results: [run],
+        results: [runWithMissingFailures, run],
         status: "Exhausted",
         loadMore: vi.fn(),
         isLoading: false,
       };
     }
     if (name === "journeyRuns:listSessionsByJourneyRun") {
+      const journeyRunId =
+        args && typeof args === "object" && "journeyRunId" in args
+          ? (args as { journeyRunId: string }).journeyRunId
+          : null;
+      // Partial run: only Host One persisted sessions; Host Two failures have
+      // no chatSession rows. Completed run: single session fixture.
+      const results =
+        journeyRunId === "run-fail"
+          ? [
+              session,
+              {
+                ...session,
+                id: "thread-abc",
+                hostId: "host-1",
+                chatSessionId: "synth_2",
+              },
+            ]
+          : [session];
       return {
-        results: [session],
+        results,
         status: "Exhausted",
         loadMore: vi.fn(),
         isLoading: false,
@@ -157,14 +188,12 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-/** Progressive discovery: expand journey → open run sessions. */
-async function expandJourneyAndOpenRunSessions() {
+/** Progressive discovery: expand journey → open a specific run's sessions. */
+async function expandJourneyAndOpenRunSessions(
+  runAriaLabel = /view sessions for run completed/i,
+) {
   fireEvent.click(await screen.findByRole("button", { name: /show runs/i }));
-  fireEvent.click(
-    await screen.findByRole("button", {
-      name: /view sessions for run completed/i,
-    }),
-  );
+  fireEvent.click(await screen.findByRole("button", { name: runAriaLabel }));
 }
 
 describe("SwarmsTab — sessions-by-run query contract", () => {
@@ -220,5 +249,26 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
       expect(dialog.getAttribute("data-open")).toBe("true");
       expect(dialog.getAttribute("data-session-id")).toBe("thread-xyz");
     });
+  });
+
+  it("surfaces failed attempts that never persisted a session transcript", async () => {
+    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    fireEvent.click(screen.getByText("Persona One"));
+    await expandJourneyAndOpenRunSessions(
+      /view sessions for run partial/i,
+    );
+
+    // Auto-focuses the failing host and shows a placeholder (no chatSession).
+    expect(
+      await screen.findByRole("button", {
+        name: /host two: 0\/2 ok, 2 failed/i,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByTestId("missing-attempts-host-2"),
+    ).toHaveTextContent(/failed before a session was recorded/i);
+    expect(
+      screen.getByText(/2 attempts failed without a session transcript/i),
+    ).toBeInTheDocument();
   });
 });
