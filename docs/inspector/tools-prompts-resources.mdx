@@ -67,6 +67,19 @@ Inspect your MCP server's resources:
 - **Read resources** - Fetch and view resource content
 - **Resource templates** - Test templated resources with dynamic parameters
 
+### Agent tool: `ui_read_resource`
+
+When the Resources tab is open and a server is connected, agents can read resources through the `ui_read_resource` tool. It mirrors exactly what the **Read** button does.
+
+Pass a concrete resource's URI or name, or a resource template's name or URI template. For templates, supply `templateArguments` as a string-to-string map to fill the RFC 6570 parameters.
+
+```
+ui_read_resource(resource: "file:///config.json")
+ui_read_resource(resource: "greeting", templateArguments: { name: "Ada" })
+```
+
+Large or binary resource bodies are truncated in the tool result to keep the transcript bounded. The full content is always visible on screen. Use `ui_snapshot_app` to list available resources and templates before calling this tool.
+
 ## Prompts
 
 Test your MCP prompts:
@@ -74,6 +87,18 @@ Test your MCP prompts:
 - **View prompts** - Browse prompt names, descriptions, and parameters
 - **Fetch prompts** - Retrieve prompt content with custom arguments
 - **Use in Playground** - Type `/` in the Playground to insert prompts directly into the conversation
+
+### Agent tool: `ui_get_prompt`
+
+When the Prompts tab is open and a server is connected, agents can render prompts through the `ui_get_prompt` tool. It mirrors exactly what the **Run** button does.
+
+Pass a prompt's name or title as shown in the list. Supply `arguments` as a string-to-string map for prompts that take parameters.
+
+```
+ui_get_prompt(prompt: "summarize", arguments: { topic: "MCP" })
+```
+
+Rendered messages are truncated in the tool result to keep the transcript bounded. The full render is always visible on screen. Use `ui_snapshot_app` to list available prompts before calling this tool.
 
 ## JSON-RPC Logging
 
