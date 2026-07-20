@@ -73,19 +73,45 @@ export function createDerivedConfidentialCimdProviderFactory(
       stableMasterKey,
       organizationId
     );
-    const expectedClientId = buildConfidentialCimdUrl(publicJwk);
 
     return {
       getClientIdMetadataUrl(origin = XAA_CONFIDENTIAL_CIMD_ORIGIN): string {
-        const clientId = buildConfidentialCimdUrl(publicJwk, origin);
-        if (clientId !== expectedClientId) {
+        let reflectorOrigin: URL;
+        try {
+          reflectorOrigin = new URL(origin);
+        } catch {
           throw new Error(
-            "derived confidential CIMD provider only supports the configured reflector origin"
+            "derived confidential CIMD provider requires a valid HTTP(S) reflector origin"
           );
         }
-        return expectedClientId;
+        if (
+          !["http:", "https:"].includes(reflectorOrigin.protocol) ||
+          reflectorOrigin.username ||
+          reflectorOrigin.password ||
+          (reflectorOrigin.pathname !== "" &&
+            reflectorOrigin.pathname !== "/") ||
+          reflectorOrigin.search ||
+          reflectorOrigin.hash
+        ) {
+          throw new Error(
+            "derived confidential CIMD provider requires a valid HTTP(S) reflector origin"
+          );
+        }
+        return buildConfidentialCimdUrl(publicJwk, reflectorOrigin.origin);
       },
       signClientAssertion(args): string {
+        let expectedClientId: string | undefined;
+        try {
+          const clientIdUrl = new URL(args.clientId);
+          if (["http:", "https:"].includes(clientIdUrl.protocol)) {
+            expectedClientId = buildConfidentialCimdUrl(
+              publicJwk,
+              clientIdUrl.origin
+            );
+          }
+        } catch {
+          // The byte-match below handles malformed client IDs uniformly.
+        }
         if (args.clientId !== expectedClientId) {
           throw new Error(
             "confidential CIMD client_id does not match the organization-bound client key"

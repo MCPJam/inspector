@@ -157,17 +157,44 @@ describe("confidential CIMD provider", () => {
     ).toThrow(/organization-bound/);
   });
 
-  it("rejects reflector origins the derived provider cannot sign for", () => {
+  it("signs for a custom reflector origin while preserving key binding", () => {
+    const provider = createDerivedConfidentialCimdProviderFactory(
+      Buffer.alloc(32, 9)
+    )("org_abc123");
+    const tokenEndpoint = "https://auth.example.com/token";
+    const clientId = provider.getClientIdMetadataUrl(
+      "https://inspector.example.com"
+    );
+
+    const assertion = provider.signClientAssertion({ clientId, tokenEndpoint });
+    const payload = JSON.parse(
+      Buffer.from(assertion.split(".")[1], "base64url").toString("utf8")
+    );
+    expect(payload).toMatchObject({ iss: clientId, sub: clientId });
+    expect(() =>
+      provider.signClientAssertion({
+        clientId: `${clientId}?different-document=true`,
+        tokenEndpoint,
+      })
+    ).toThrow(/organization-bound/);
+    expect(provider.getClientIdMetadataUrl("https://app.mcpjam.com/")).toBe(
+      provider.getClientIdMetadataUrl()
+    );
+  });
+
+  it("rejects values that are not reflector origins", () => {
     const provider = createDerivedConfidentialCimdProviderFactory(
       Buffer.alloc(32, 9)
     )("org_abc123");
 
     expect(() =>
-      provider.getClientIdMetadataUrl("https://inspector.example.com")
-    ).toThrow(/configured reflector origin/);
-    expect(provider.getClientIdMetadataUrl("https://app.mcpjam.com/")).toBe(
-      provider.getClientIdMetadataUrl()
-    );
+      provider.getClientIdMetadataUrl(
+        "https://inspector.example.com/unexpected-path"
+      )
+    ).toThrow(/valid HTTP\(S\) reflector origin/);
+    expect(() =>
+      provider.getClientIdMetadataUrl("file:///tmp/reflector")
+    ).toThrow(/valid HTTP\(S\) reflector origin/);
   });
 
   it("rejects malformed derived-key master material", () => {
