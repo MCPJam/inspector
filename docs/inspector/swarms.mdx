@@ -1,0 +1,76 @@
+---
+title: "Swarms"
+description: "Run many simulated agent sessions against your hosts at scale: define a persona, give it a journey, launch a run, and review how each session did."
+icon: "users"
+---
+
+Swarms lets you fan out many simulated agent sessions across one or more hosts at once. You define a **persona** (a simulated user with a role and personality), give it a **journey** (a goal to pursue across one or more hosts), launch a **run**, and then review each session's readiness and goal-completion scores.
+
+## How it's organized
+
+<Steps>
+  <Step title="Persona">
+    A simulated user — a short name, a role (e.g. "first-time customer", "QA tester"), and optional personality notes. Journeys and runs belong to a persona.
+  </Step>
+  <Step title="Journey">
+    A goal a persona pursues across one or more hosts. You pick which hosts it targets, how many sessions to run per host, and the maximum number of turns per session.
+  </Step>
+  <Step title="Run">
+    One execution of a journey. Fans out one session per (host × sessions-per-host). Each session runs independently and produces its own readiness verdict and goal-completion score.
+  </Step>
+</Steps>
+
+## Creating a persona
+
+Click **New persona** to open the persona dialog. Fill in a short display name, a role, and optional personality notes, then save. The new persona is selected automatically and its journey list opens.
+
+## Setting up a journey
+
+With a persona selected, click **New journey** to open the journey form. A journey needs:
+
+- **Goal** — what the persona is trying to accomplish (e.g. "Book a flight to Tokyo").
+- **Target hosts** — one or more hosts from your project. Swarms-owned clients appear first; hosts shared with other surfaces are badged as shared.
+- **Sessions per host** — how many parallel sessions to run against each host.
+- **Max turns** — the turn limit per session.
+
+Fill in the form and submit to create the journey. The journey card appears in the persona's journey list.
+
+## Launching a run
+
+Click **Run** on a journey card to launch a run. The run fans out sessions in the background — one per (host × sessions-per-host). Each session makes real model and MCP tool calls and spends your organization's swarm quota.
+
+<Warning>
+  Launching a run spends your organization's swarm quota. A quota/billing rejection (HTTP 402) is reported as an error and the run is refused — it is never bypassed.
+</Warning>
+
+A per-journey idempotency key ensures that a network retry cannot spawn a duplicate run. The key is retained after any failure and reused on retry; it is cleared only after a confirmed successful launch.
+
+## Reviewing sessions
+
+Open a completed run to see each session's readiness verdict and goal-completion score. Click a session row to open the session viewer. From there you can promote a strong session into an eval test case — see [Promoting sessions to cases](/inspector/evals#promoting-sessions-to-cases).
+
+## Agent tools
+
+When you are signed in and a project is selected, the Swarms screen exposes three agent tools. These tools are available only while the Swarms screen is mounted.
+
+| Tool | What it does |
+|---|---|
+| `ui_create_persona` | Creates a persona directly (name + role + optional notes) and selects it. Low-entropy, so no form is opened. |
+| `ui_open_journey_form` | Opens the new-journey form for you to finish. Optionally selects a persona and prefills the goal text. The journey is not created until you submit the form. |
+| `ui_launch_swarm_run` | Launches a run of an existing journey. **Destructive** — fans out sessions and spends quota. Requires the journey to belong to the currently selected persona. |
+
+### Addressing personas and journeys
+
+- **Persona** — pass the persona's display name (e.g. `"Impatient buyer"`) or its id. Names are matched case-insensitively. If more than one persona matches, pass the id instead.
+- **Journey** — pass the journey's goal text (e.g. `"Book a flight to Tokyo"`) or its id. The journey must belong to the currently selected persona.
+
+Use `ui_snapshot_app` to list the current personas, journeys, and their ids.
+
+### Launch safety
+
+`ui_launch_swarm_run` goes through the same gated `launchJourneyRun` path as the **Run** button. A concurrent button-click and agent launch of the same journey share one idempotency key, so the backend dedupes them into a single run. A quota exhaustion (HTTP 402) is returned as an `execution_failed` error — the run is never started.
+
+### What is out of scope (v1)
+
+- **Promote to eval** — the promotable session is lazily paginated inside a per-run view with no top-level selected session. Use the in-view **Promote to test case** button instead.
+- **Swarm host CRUD** — creating and deleting swarm hosts is admin role-gated. The agent snapshot still surfaces host target names via the journey → hosts mapping.
