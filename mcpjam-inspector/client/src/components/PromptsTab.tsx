@@ -29,6 +29,7 @@ import {
 } from "@/lib/apis/mcp-prompts-api";
 import { SelectedToolHeader } from "./ui-playground/SelectedToolHeader";
 import type { ConnectionStatus } from "@/state/app-types";
+import { boundedJsonByteLength } from "@/lib/webmcp/bounded-size";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
 import { clampText } from "@/lib/webmcp/groups/shared";
@@ -392,14 +393,11 @@ export function PromptsTab({
     // (bounded), the current selection + its argument FIELD NAMES (never the
     // values), and whether a render exists (presence/size only, never content).
     snapshot: () => {
-      let lastResultBytes = 0;
-      if (promptContent !== null && promptContent !== undefined) {
-        try {
-          lastResultBytes = JSON.stringify(promptContent).length;
-        } catch {
-          lastResultBytes = 0;
-        }
-      }
+      // Bounded: never fully serialize a huge prompt body just to size it.
+      const { bytes: lastResultBytes, truncated: lastResultTruncated } =
+        promptContent !== null && promptContent !== undefined
+          ? boundedJsonByteLength(promptContent)
+          : { bytes: 0, truncated: false };
       return {
         selectedServer: serverName ?? null,
         connected: isServerConnected,
@@ -412,6 +410,7 @@ export function PromptsTab({
         lastResult: {
           present: promptContent !== null && promptContent !== undefined,
           approxSizeBytes: lastResultBytes,
+          ...(lastResultTruncated ? { approxSizeCapped: true } : {}),
         },
       };
     },

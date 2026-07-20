@@ -174,6 +174,33 @@ function templateRendersOpenAiApps(
   return apps?.compatRuntime?.openaiApps === true;
 }
 
+/**
+ * Pull the exact sandbox permission allowlist out of a host template. Keep an
+ * empty allowlist: it is an explicit host decision, not the same as absent
+ * catalog data.
+ */
+function getTemplateSandboxPermissionAllow(
+  host: HostCompatCatalogHost | undefined,
+): Record<string, boolean> | undefined {
+  const permissions = (
+    host?.mcpProfile?.apps as
+      | { sandbox?: { permissions?: { allow?: unknown } } }
+      | undefined
+  )?.sandbox?.permissions;
+  const allow = permissions?.allow;
+  if (
+    !allow ||
+    typeof allow !== "object" ||
+    Array.isArray(allow)
+  ) {
+    return undefined;
+  }
+  const entries = Object.entries(allow).filter(
+    ([, value]) => typeof value === "boolean",
+  );
+  return Object.fromEntries(entries);
+}
+
 /** Fresh copy of a profile (incl. its nested arrays) so callers can't mutate
  * the cache or the shared capability-matrix constants. */
 function cloneProfile(p: HostCompatProfile): HostCompatProfile {
@@ -190,6 +217,9 @@ function cloneProfile(p: HostCompatProfile): HostCompatProfile {
             ? [...p.capabilities.availableDisplayModes]
             : undefined,
         }
+      : undefined,
+    sandboxPermissionAllow: p.sandboxPermissionAllow
+      ? { ...p.sandboxPermissionAllow }
       : undefined,
     imageSupport: p.imageSupport
       ? {
@@ -235,6 +265,7 @@ export function buildHostProfilesFromCatalog(
         rendersOpenAiApps,
         supportedProtocolVersions: host.supportedProtocolVersions,
         capabilities,
+        sandboxPermissionAllow: getTemplateSandboxPermissionAllow(host),
         imageSupport: host.imageSupport,
       };
     })

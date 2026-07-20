@@ -74,12 +74,19 @@ interface CopyableValueProps {
   children: React.ReactNode;
   value: string;
   onCopy?: (value: string) => void;
+  /**
+   * Keep the copy button visible even when the value isn't hovered. Used on
+   * object/array braces so "copy this (sub)tree" is always discoverable, while
+   * primitive values stay hover-gated to avoid an icon after every leaf.
+   */
+  alwaysVisible?: boolean;
 }
 
 const CopyableValue = memo(function CopyableValue({
   children,
   value,
   onCopy,
+  alwaysVisible = false,
 }: CopyableValueProps) {
   const [copied, setCopied] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
@@ -110,7 +117,7 @@ const CopyableValue = memo(function CopyableValue({
           "inline-flex items-center justify-center ml-1 p-0.5 rounded",
           "transition-all duration-150",
           "hover:bg-muted",
-          isHovered || copied ? "opacity-100" : "opacity-0",
+          alwaysVisible || isHovered || copied ? "opacity-100" : "opacity-0",
         )}
         style={{ verticalAlign: "middle" }}
       >
@@ -183,7 +190,7 @@ function JsonArrayNode({
     return (
       <div className="leading-5" style={{ paddingLeft: indent }}>
         {renderKeyPrefix()}
-        <CopyableValue value="[]" onCopy={onCopy}>
+        <CopyableValue value="[]" onCopy={onCopy} alwaysVisible>
           <span className="json-punctuation">[]</span>
         </CopyableValue>
         {renderComma()}
@@ -207,7 +214,11 @@ function JsonArrayNode({
           <ChevronRight className="h-3 w-3" />
         </button>
         {renderKeyPrefix()}
-        <CopyableValue value={JSON.stringify(value, null, 2)} onCopy={onCopy}>
+        <CopyableValue
+          value={JSON.stringify(value, null, 2)}
+          onCopy={onCopy}
+          alwaysVisible
+        >
           <span className="json-punctuation">[</span>
           <span className="text-muted-foreground text-xs px-1">
             {value.length} {value.length === 1 ? "item" : "items"}
@@ -230,7 +241,11 @@ function JsonArrayNode({
           <ChevronRight className="h-3 w-3" />
         </button>
         {renderKeyPrefix()}
-        <CopyableValue value={JSON.stringify(value, null, 2)} onCopy={onCopy}>
+        <CopyableValue
+          value={JSON.stringify(value, null, 2)}
+          onCopy={onCopy}
+          alwaysVisible
+        >
           <span className="json-punctuation">[</span>
         </CopyableValue>
       </div>
@@ -305,7 +320,7 @@ function JsonObjectNode({
     return (
       <div className="leading-5" style={{ paddingLeft: indent }}>
         {renderKeyPrefix()}
-        <CopyableValue value="{}" onCopy={onCopy}>
+        <CopyableValue value="{}" onCopy={onCopy} alwaysVisible>
           <span className="json-punctuation">{"{}"}</span>
         </CopyableValue>
         {renderComma()}
@@ -329,7 +344,11 @@ function JsonObjectNode({
           <ChevronRight className="h-3 w-3" />
         </button>
         {renderKeyPrefix()}
-        <CopyableValue value={JSON.stringify(value, null, 2)} onCopy={onCopy}>
+        <CopyableValue
+          value={JSON.stringify(value, null, 2)}
+          onCopy={onCopy}
+          alwaysVisible
+        >
           <span className="json-punctuation">{"{"}</span>
           <span className="text-muted-foreground text-xs px-1">
             {entries.length} {entries.length === 1 ? "key" : "keys"}
@@ -352,7 +371,11 @@ function JsonObjectNode({
           <ChevronRight className="h-3 w-3" />
         </button>
         {renderKeyPrefix()}
-        <CopyableValue value={JSON.stringify(value, null, 2)} onCopy={onCopy}>
+        <CopyableValue
+          value={JSON.stringify(value, null, 2)}
+          onCopy={onCopy}
+          alwaysVisible
+        >
           <span className="json-punctuation">{"{"}</span>
         </CopyableValue>
       </div>

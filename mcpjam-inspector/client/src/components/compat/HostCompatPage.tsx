@@ -40,7 +40,7 @@ export function HostCompatPage({
   // runs unconditionally; it no-ops for a null/empty server.
   const detailServer =
     servers.find((s) => s.name === selectedServer?.name) ?? servers[0] ?? null;
-  const toolsData = useServerToolsData(detailServer);
+  const toolsState = useServerToolsData(detailServer);
 
   // Agent bridge: SNAPSHOT-ONLY (no tools). Compatibility is a read-only review
   // screen (agentTools kind "none") that the agent may OBSERVE: which connected
@@ -106,7 +106,8 @@ export function HostCompatPage({
           </h2>
           <HostCompatContent
             server={detailServer}
-            toolsData={toolsData}
+            toolsData={toolsState.data}
+            toolsLoadStatus={toolsState.status}
             projectId={projectId}
             source="compat_page"
           />

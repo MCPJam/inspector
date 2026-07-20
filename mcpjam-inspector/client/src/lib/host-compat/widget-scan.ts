@@ -9,6 +9,7 @@
 export {
   scanWidgetSource,
   scanWidgetMeta,
+  scanWidgetPermissionNames,
   type WidgetCapabilityNeed,
   type WidgetUsage,
 } from "@mcpjam/sdk/host-compat";

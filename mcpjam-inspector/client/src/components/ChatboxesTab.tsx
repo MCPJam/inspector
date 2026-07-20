@@ -36,7 +36,6 @@ import { useUsageInsights } from "@/hooks/useUsageInsights";
 import { EMPTY_USAGE_FILTER } from "@/hooks/chatbox-usage-filters";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { buildChatboxLink } from "@/lib/chatbox-session";
-import { authFetch } from "@/lib/session-token";
 import { copyToClipboard } from "@/lib/clipboard";
 import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
 import { previewIframeAllow } from "@/lib/client-preview-iframe-allow";
@@ -44,7 +43,6 @@ import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
 import type {
   DeleteChatboxInspectorCommand,
-  GenerateChatboxSessionsInspectorCommand,
   PublishChatboxInspectorCommand,
 } from "@/shared/inspector-command.js";
 import { cn } from "@/lib/utils";
@@ -382,100 +380,6 @@ export function ChatboxesTab({
           throw createInspectorCommandClientError(
             "execution_failed",
             e instanceof Error ? e.message : "Failed to publish the chatbox.",
-          );
-        }
-      },
-      generateChatboxSessions: async (command) => {
-        requireAgentOperable();
-        if (!allowSynthetic) {
-          throw createInspectorCommandClientError(
-            "unsupported_in_mode",
-            "Synthetic sessions are a Swarms feature and aren't available on the human Chatbox surface.",
-          );
-        }
-        // Acts on the on-screen chatbox (like the computer commands act on the
-        // one computer). No target — publish/select a client first if none is
-        // loaded.
-        if (!chatbox) {
-          throw createInspectorCommandClientError(
-            "unsupported_in_mode",
-            "No chatbox is selected. Publish or select a client first (ui_publish_chatbox).",
-          );
-        }
-        // The dialog's own gate: an unpinned client persists modelId "" and
-        // every synthetic session would fail. Refuse with the same fix.
-        if (!chatbox.modelId.trim()) {
-          throw createInspectorCommandClientError(
-            "execution_failed",
-            "This client has no model selected — pick one on its Behavior tab before running synthetic sessions.",
-          );
-        }
-        const { payload } =
-          command as GenerateChatboxSessionsInspectorCommand;
-        const personaCount = payload?.personaCount ?? 3;
-        const sessionsPerPersona = payload?.sessionsPerPersona ?? 2;
-        const maxTurns = payload?.maxTurns ?? 6;
-        // Same server payload the dialog forwards; the start route filters
-        // optionals out server-side.
-        const serversPayload = chatbox.servers.map((s) => ({
-          serverId: s.serverId,
-          serverName: s.serverName,
-          optional: s.optional === true,
-        }));
-        const chatboxId = chatbox.chatboxId;
-        try {
-          const personasRes = await authFetch(
-            `/api/web/chatboxes/${encodeURIComponent(chatboxId)}/generate-personas`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                projectId: chatbox.projectId,
-                servers: serversPayload,
-                personaCount,
-                chatboxName: chatbox.name,
-              }),
-            },
-          );
-          if (!personasRes.ok) {
-            throw new Error(await personasRes.text());
-          }
-          const { personas } = (await personasRes.json()) as {
-            personas: unknown[];
-          };
-          const startRes = await authFetch(
-            `/api/web/chatboxes/${encodeURIComponent(chatboxId)}/simulate-sessions/start`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                projectId: chatbox.projectId,
-                servers: serversPayload,
-                personas,
-                sessionsPerPersona,
-                maxTurns,
-              }),
-            },
-          );
-          if (!startRes.ok) {
-            throw new Error(await startRes.text());
-          }
-          const { runId } = (await startRes.json()) as { runId: string };
-          return {
-            status: "chatbox_sessions_started",
-            chatboxId,
-            runId,
-            personaCount: Array.isArray(personas) ? personas.length : personaCount,
-            sessionsPerPersona,
-            maxTurns,
-            note: "Synthetic sessions are running in the background; watch ui_snapshot_app for them to appear.",
-          };
-        } catch (e) {
-          throw createInspectorCommandClientError(
-            "execution_failed",
-            e instanceof Error
-              ? e.message
-              : "Failed to start synthetic sessions.",
           );
         }
       },

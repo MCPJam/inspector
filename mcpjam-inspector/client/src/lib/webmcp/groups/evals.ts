@@ -55,7 +55,7 @@ export function buildEvalsUiTools(): UiToolDefinition[] {
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
-        idempotentHint: false,
+        idempotentHint: true,
         openWorldHint: false,
       },
       // Opens the /evals/create route (the dialog) on the Evaluate screen.
@@ -83,11 +83,11 @@ export function buildEvalsUiTools(): UiToolDefinition[] {
         additionalProperties: false,
       },
       readOnly: false,
-      // Real LLM + third-party MCP server traffic; a retry starts ANOTHER
-      // quota-spending run.
+      // Real LLM + third-party MCP server traffic that SPENDS quota; per the
+      // guide, a money/quota-spending action gates on the confirmation pill.
       annotations: {
         readOnlyHint: false,
-        destructiveHint: false,
+        destructiveHint: true,
         idempotentHint: false,
         openWorldHint: true,
       },

@@ -14,12 +14,13 @@
  *   signed-in project) ⇒ `unsupported_in_mode`; the daily start cap is enforced
  *   server-side on reserve and comes back from `ui_start_computer` as an
  *   `execution_failed` naming the cap, never a bypass.
- * - **Start is billed, not destructive.** `ui_start_computer` spins/wakes real
- *   infra (`openWorldHint: true`) and counts against the daily cap, but it
- *   CREATES rather than wipes, so it is not destructive — the cap gate, not an
- *   approval pill, governs it. `ui_reset_computer` and `ui_delete_computer`
- *   wipe files and are `destructiveHint: true`. Hibernate is a reversible
- *   pause.
+ * - **Start is billed → confirmation pill.** `ui_start_computer` spins/wakes
+ *   real infra (`openWorldHint: true`) and counts against the daily cap. Per
+ *   the guide, a billed/capped action gates on the confirmation pill, so it is
+ *   `destructiveHint: true` even though it creates rather than wipes — the pill
+ *   AND the server-side cap both govern it. `ui_reset_computer` and
+ *   `ui_delete_computer` wipe files and are `destructiveHint: true`. Hibernate
+ *   is a reversible, unbilled pause.
  * - **Terminal is human-only.** Opening the interactive terminal mints a
  *   short-lived token and drops a human into a live shell — not an agent
  *   action — so there is intentionally no `ui_open_terminal`. The snapshot
@@ -47,12 +48,13 @@ export function buildComputerUiTools(): UiToolDefinition[] {
         "Start the project's cloud computer — provision it on first use, or wake it if it's asleep. This spins up REAL infrastructure and counts against the daily start cap (same gate as the Open-terminal button; a cap rejection is reported as an error and the start is refused). It does NOT open the interactive terminal (that's a human action). The computer comes up in the background; watch ui_snapshot_app for it to reach 'ready'.",
       inputSchema: EMPTY_SCHEMA,
       readOnly: false,
-      // Billed + daily-cap-gated: spins/wakes real infra → open-world. It
-      // CREATES rather than wipes, so not destructive (the cap gate governs
-      // it). A retry can consume another start against the cap → not idempotent.
+      // Billed + daily-cap-gated: spins/wakes real infra → open-world. Per the
+      // guide, a money/cap-spending action gates on the confirmation pill, so
+      // destructive even though it creates. A retry can consume another start
+      // against the cap → not idempotent.
       annotations: {
         readOnlyHint: false,
-        destructiveHint: false,
+        destructiveHint: true,
         idempotentHint: false,
         openWorldHint: true,
       },

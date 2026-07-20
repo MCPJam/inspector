@@ -51,6 +51,7 @@ import { useToolQualityEnabled } from "@/hooks/useToolQualityEnabled";
 import type { ConnectionStatus } from "@/state/app-types";
 import type { ToolQualityInfo } from "./tools/ToolItem";
 import type { McpToolResultImageRenderingPolicy } from "@/lib/client-config-v2";
+import { boundedJsonByteLength } from "@/lib/webmcp/bounded-size";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 
 type ToolMap = Record<string, Tool>;
@@ -774,14 +775,10 @@ export function ToolsTab({
   useSurfaceAgentBridge({
     surfaceId: "tools",
     snapshot: () => {
-      let lastResultBytes = 0;
-      if (result) {
-        try {
-          lastResultBytes = JSON.stringify(result).length;
-        } catch {
-          lastResultBytes = 0;
-        }
-      }
+      // Bounded: never fully serialize a huge tool result just to size it.
+      const { bytes: lastResultBytes, truncated: lastResultTruncated } = result
+        ? boundedJsonByteLength(result)
+        : { bytes: 0, truncated: false };
       const names = Object.keys(tools);
       return {
         selectedServer: serverName ?? null,
@@ -796,6 +793,7 @@ export function ToolsTab({
         lastResult: {
           present: Boolean(result),
           approxSizeBytes: lastResultBytes,
+          ...(lastResultTruncated ? { approxSizeCapped: true } : {}),
         },
       };
     },

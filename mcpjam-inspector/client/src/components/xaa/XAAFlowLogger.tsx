@@ -856,49 +856,7 @@ export function XAAFlowLogger({
           />
         )}
 
-        {!hasProfile ? (
-          <div className="bg-background border border-border rounded-lg p-6 space-y-4">
-            <div className="space-y-1.5">
-              <h3 className="text-base font-semibold">
-                Welcome to the XAA Debugger
-              </h3>
-              <p className="text-sm text-muted-foreground">
-                Cross-app access (XAA) lets one app call another app&apos;s MCP
-                server on a user&apos;s behalf — without a second login. Step
-                through that flow here and see exactly where your authorization
-                server accepts or rejects it.
-              </p>
-            </div>
-
-            <ol className="list-decimal space-y-2 pl-5 text-sm text-muted-foreground marker:font-medium marker:text-foreground">
-              <li>
-                <span className="font-medium text-foreground">
-                  Pick a server to test
-                </span>{" "}
-                — add or pick one in the bar above (each environment —
-                beta/staging/prod — is its own server), then set the simulated
-                user and test mode in the run bar.
-              </li>
-              <li>
-                <span className="font-medium text-foreground">
-                  Trust MCPJam at your auth server
-                </span>{" "}
-                — MCPJam acts as the identity provider. Register its Issuer and
-                JWKS (public signing keys) URLs (the card at the top) so your
-                authorization server accepts the tokens MCPJam signs. Do this
-                first, or the next step gets rejected.
-              </li>
-              <li>
-                <span className="font-medium text-foreground">
-                  Run the flow
-                </span>{" "}
-                — MCPJam mints an ID-JAG (a signed assertion of who the user
-                is); your authorization server exchanges it for an access token.
-                Advance one step at a time to inspect each request.
-              </li>
-            </ol>
-          </div>
-        ) : groups.length === 0 ? (
+        {groups.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground text-sm">
             No activity yet. Click &quot;{actions.continueLabel}&quot; to begin.
           </div>

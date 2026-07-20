@@ -68,17 +68,17 @@ describe("ConformanceGate", () => {
     expect(screen.getByRole("button", { name: /Run checks/ })).toBeDisabled();
   });
 
-  it("reports a clean pass — gaps below are host-specific, not spec problems", async () => {
+  it("reports a clean pass", async () => {
     renderGate(httpServer());
     fireEvent.click(screen.getByRole("button", { name: /Run checks/ }));
     await waitFor(() =>
-      expect(screen.getByText(/Passes spec checks/)).toBeInTheDocument(),
+      expect(screen.getByText(/Spec checks passed/)).toBeInTheDocument(),
     );
     expect(mockRunProtocol).toHaveBeenCalledWith("http-server");
     expect(mockRunApps).toHaveBeenCalledWith("http-server");
   });
 
-  it("surfaces a spec failure as 'fix first — breaks on every host'", async () => {
+  it("surfaces a spec failure", async () => {
     mockRunApps.mockResolvedValue({
       success: true,
       result: appsResult({
@@ -95,7 +95,7 @@ describe("ConformanceGate", () => {
     fireEvent.click(screen.getByRole("button", { name: /Run checks/ }));
     await waitFor(() =>
       expect(
-        screen.getByText(/Fix these spec failures first/),
+        screen.getByText(/Fix these checks first/),
       ).toBeInTheDocument(),
     );
     expect(
@@ -107,7 +107,7 @@ describe("ConformanceGate", () => {
     const { rerender } = renderGate(httpServer({ name: "server-a" }));
     fireEvent.click(screen.getByRole("button", { name: /Run checks/ }));
     await waitFor(() =>
-      expect(screen.getByText(/Passes spec checks/)).toBeInTheDocument(),
+      expect(screen.getByText(/Spec checks passed/)).toBeInTheDocument(),
     );
 
     // Same component instance, new active server (the page's selector, not a
@@ -117,17 +117,17 @@ describe("ConformanceGate", () => {
         <ConformanceGate server={httpServer({ name: "server-b" })} />
       </MemoryRouter>,
     );
-    expect(screen.queryByText(/Passes spec checks/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Spec checks passed/)).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /Run checks/ }),
     ).toBeInTheDocument();
   });
 
-  it("marks protocol 'not runnable here' for stdio (never failed) but still runs apps", async () => {
+  it("marks protocol unavailable for stdio but still runs apps", async () => {
     renderGate(stdioServer());
     fireEvent.click(screen.getByRole("button", { name: /Run checks/ }));
     await waitFor(() =>
-      expect(screen.getByText(/Not runnable here/)).toBeInTheDocument(),
+      expect(screen.getByText(/Checks unavailable here/)).toBeInTheDocument(),
     );
     // Protocol is HTTP-only — never invoked over stdio…
     expect(mockRunProtocol).not.toHaveBeenCalled();
@@ -136,7 +136,7 @@ describe("ConformanceGate", () => {
     // …and a skipped (unsupported) protocol suite must NOT be counted as a
     // pass: no blanket green "Passes spec checks" when protocol never ran.
     expect(
-      screen.queryByText(/Passes spec checks/),
+      screen.queryByText(/Spec checks passed/),
     ).not.toBeInTheDocument();
   });
 });

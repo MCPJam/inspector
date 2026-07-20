@@ -9,26 +9,27 @@ interface ServerInfoToolsMetadataContentProps {
 export function ServerInfoToolsMetadataContent({
   toolsData,
 }: ServerInfoToolsMetadataContentProps) {
-  const hasToolMetadata = (toolsData?.tools ?? []).some(
-    (tool) => (tool as Tool)?._meta || toolsData?.toolsMetadata?.[tool.name],
-  );
+  const tools = toolsData?.tools ?? [];
 
-  if (!hasToolMetadata) {
+  // The tab is labelled "Tools", so always list the server's tools — most MCP
+  // servers ship tools without `_meta`, and gating the whole list on metadata
+  // made a normal server's tools tab read "No tools" (#125K4kNJ). Metadata and
+  // annotations are surfaced per-tool below only when they exist.
+  if (tools.length === 0) {
     return (
       <div className="text-sm text-muted-foreground text-center py-8">
-        No tool metadata available
+        No tools available
       </div>
     );
   }
 
   return (
     <div className="space-y-4">
-      {(toolsData?.tools ?? [])
+      {tools
         .map((tool: Tool) => {
           const metadata = tool._meta ?? toolsData?.toolsMetadata?.[tool.name];
           const annotations = tool.annotations;
 
-          if (!metadata) return null;
           return (
             <div
               key={tool.name}
@@ -96,8 +97,7 @@ export function ServerInfoToolsMetadataContent({
               )}
             </div>
           );
-        })
-        .filter(Boolean)}
+        })}
     </div>
   );
 }
