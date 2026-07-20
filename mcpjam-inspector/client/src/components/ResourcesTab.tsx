@@ -31,6 +31,7 @@ import { listResourceTemplates } from "@/lib/apis/mcp-resource-templates-api";
 import { parseTemplate } from "url-template";
 import { HOSTED_MODE } from "@/lib/config";
 import type { ConnectionStatus } from "@/state/app-types";
+import { boundedJsonByteLength } from "@/lib/webmcp/bounded-size";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
 import { clampText } from "@/lib/webmcp/groups/shared";
@@ -591,12 +592,12 @@ export function ResourcesTab({
     snapshot: () => {
       const lastRead = resourceContent ?? templateContent;
       let lastResultBytes = 0;
+      let lastResultTruncated = false;
       if (lastRead) {
-        try {
-          lastResultBytes = JSON.stringify(lastRead).length;
-        } catch {
-          lastResultBytes = 0;
-        }
+        // Bounded: never fully serialize a huge resource body just to size it.
+        const sized = boundedJsonByteLength(lastRead);
+        lastResultBytes = sized.bytes;
+        lastResultTruncated = sized.truncated;
       }
       return {
         selectedServer: serverName ?? null,
@@ -620,6 +621,7 @@ export function ResourcesTab({
         lastResult: {
           present: Boolean(lastRead),
           approxSizeBytes: lastResultBytes,
+          ...(lastResultTruncated ? { approxSizeCapped: true } : {}),
         },
       };
     },

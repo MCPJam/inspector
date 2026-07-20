@@ -71,6 +71,9 @@ export function buildPromptsUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: true,
       },
+      // Result is arbitrary content from a THIRD-PARTY MCP server — flag it
+      // untrusted for native WebMCP agents.
+      nativeUntrustedContentHint: true,
       execute: async (args) => {
         const prompt = asOptionalString(args.prompt);
         if (!prompt) {
