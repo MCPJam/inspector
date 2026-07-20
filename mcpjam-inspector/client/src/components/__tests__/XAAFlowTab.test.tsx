@@ -7,6 +7,13 @@ import { fetchConfidentialCimdClientUrl } from "@/lib/xaa/idp-endpoints";
 import type { XaaTestTarget } from "@/hooks/useXaaTestTarget";
 import { buildXaaDcrCredentialCacheKey } from "@/lib/xaa/types";
 
+const runtimeConfig = vi.hoisted(() => ({ hostedMode: false }));
+vi.mock("@/lib/config", () => ({
+  get HOSTED_MODE() {
+    return runtimeConfig.hostedMode;
+  },
+}));
+
 const captureMock = vi.fn();
 vi.mock("@/lib/analytics", () => ({
   track: (...args: unknown[]) => captureMock(...args),
@@ -302,6 +309,7 @@ describe("XAAFlowTab", () => {
     setNegativeTestModeMock.mockClear();
     setSelectedPersonIdMock.mockClear();
     confidentialCimdUrlResult = null;
+    runtimeConfig.hostedMode = false;
     currentTarget = makeTarget();
   });
 
@@ -409,6 +417,65 @@ describe("XAAFlowTab", () => {
     );
     await user.click(screen.getByRole("button", { name: /run all/i }));
     expect(runAllMock).toHaveBeenCalled();
+  });
+
+  it("keeps a hosted public CIMD run public after capability discovery", async () => {
+    runtimeConfig.hostedMode = true;
+    confidentialCimdUrlResult =
+      "https://app.mcpjam.com/.well-known/oauth/xaa-cimd/AbC123";
+
+    render(
+      <XAAFlowTab
+        serverConfigs={{
+          staging: { registrationMode: "cimd", xaaClientAuth: "none" },
+        } as any}
+        selectedServerName="staging"
+        organizationId="org_123"
+      />
+    );
+
+    await waitFor(() =>
+      expect(capturedServerModalProps.confidentialCimdAvailable).toBe(true)
+    );
+    expect(capturedMachineConfig.registrationStrategy).toBe("cimd");
+    expect(capturedMachineConfig.clientIdMetadataUrl).toBeUndefined();
+    expect(capturedMachineConfig.allowLoopbackClientMetadata).toBeUndefined();
+  });
+
+  it("preserves an existing hosted confidential config while capability is loading", async () => {
+    runtimeConfig.hostedMode = true;
+    // Modal persistence must follow the saved config even when the target is
+    // temporarily not runnable (for example, while fixing an unrelated URL).
+    currentTarget = makeTarget({ isTestable: false });
+    let resolveCapability: ((url: string) => void) | undefined;
+    vi.mocked(fetchConfidentialCimdClientUrl).mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          resolveCapability = resolve;
+        })
+    );
+
+    const { unmount } = render(
+      <XAAFlowTab
+        serverConfigs={CONFIDENTIAL_SERVER}
+        selectedServerName="staging"
+        organizationId="org_123"
+      />
+    );
+
+    await waitFor(() =>
+      expect(fetchConfidentialCimdClientUrl).toHaveBeenCalled()
+    );
+    expect(capturedServerModalProps.confidentialCimdAvailable).toBe(false);
+    expect(
+      capturedServerModalProps.preserveConfidentialCimdSelection
+    ).toBe(true);
+
+    // Avoid leaving an unresolved effect behind after the assertion.
+    resolveCapability?.(
+      "https://app.mcpjam.com/.well-known/oauth/xaa-cimd/AbC123"
+    );
+    unmount();
   });
 
   it("places the negative-test scorecard behind a vertical resize handle", () => {

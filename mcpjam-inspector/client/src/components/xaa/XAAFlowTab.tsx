@@ -1503,7 +1503,7 @@ export function XAAFlowTab({
       // signs the assertion. A loopback (local-dev) reflector needs the gated
       // carve-out for the machine's up-front URL validation. Public CIMD leaves
       // both unset.
-      ...(confidentialCimdUrl
+      ...(wantsConfidentialCimd && confidentialCimdUrl
         ? {
             clientIdMetadataUrl: confidentialCimdUrl,
             allowLoopbackClientMetadata:
@@ -1524,6 +1524,7 @@ export function XAAFlowTab({
     runsDynamicRegistration,
     dcrCredentialCache,
     targetKey,
+    wantsConfidentialCimd,
     confidentialCimdUrl,
   ]);
 
@@ -1953,6 +1954,15 @@ export function XAAFlowTab({
           !HOSTED_MODE ||
           (hostedConfidentialCimdEligible &&
             confidentialCimdStatus === "ready")
+        }
+        preserveConfidentialCimdSelection={
+          HOSTED_MODE &&
+          hostedConfidentialCimdEligible &&
+          serverModalMode === "edit" &&
+          persistedStrategy === "cimd" &&
+          selectedServer?.xaaClientAuth === "private_key_jwt" &&
+          (confidentialCimdStatus === "idle" ||
+            confidentialCimdStatus === "loading")
         }
         onSave={async ({ formData }) => {
           // Await so the modal can keep itself open (and preserve the entered

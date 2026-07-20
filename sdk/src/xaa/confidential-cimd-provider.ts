@@ -21,6 +21,7 @@ import {
  * XAA protocol engine without learning how the private key is loaded or stored.
  */
 export interface ConfidentialCimdProvider {
+  /** Providers may reject origins for which they cannot bind the signing key. */
   getClientIdMetadataUrl(origin?: string): string;
   signClientAssertion(args: {
     clientId: string;
@@ -56,13 +57,13 @@ export function getLocalConfidentialCimdProvider(): ConfidentialCimdProvider {
  * any other client_id.
  */
 export function createDerivedConfidentialCimdProviderFactory(
-  masterKey: Uint8Array,
+  masterKey: Uint8Array
 ): (organizationId: string) => ConfidentialCimdProvider {
   // Validate eagerly so a configured but malformed deployment secret fails at
   // startup rather than during a user's token redemption.
   if (Buffer.from(masterKey).length !== 32) {
     throw new Error(
-      "XAA confidential CIMD master key must contain exactly 32 bytes",
+      "XAA confidential CIMD master key must contain exactly 32 bytes"
     );
   }
   const stableMasterKey = Buffer.from(masterKey);
@@ -70,18 +71,24 @@ export function createDerivedConfidentialCimdProviderFactory(
   return (organizationId: string): ConfidentialCimdProvider => {
     const { privateKey, publicJwk } = deriveOrgConfidentialCimdKey(
       stableMasterKey,
-      organizationId,
+      organizationId
     );
     const expectedClientId = buildConfidentialCimdUrl(publicJwk);
 
     return {
       getClientIdMetadataUrl(origin = XAA_CONFIDENTIAL_CIMD_ORIGIN): string {
-        return buildConfidentialCimdUrl(publicJwk, origin);
+        const clientId = buildConfidentialCimdUrl(publicJwk, origin);
+        if (clientId !== expectedClientId) {
+          throw new Error(
+            "derived confidential CIMD provider only supports the configured reflector origin"
+          );
+        }
+        return expectedClientId;
       },
       signClientAssertion(args): string {
         if (args.clientId !== expectedClientId) {
           throw new Error(
-            "confidential CIMD client_id does not match the organization-bound client key",
+            "confidential CIMD client_id does not match the organization-bound client key"
           );
         }
         return signClientAssertionWithKey(args, privateKey);

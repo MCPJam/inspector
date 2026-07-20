@@ -1,9 +1,4 @@
-import {
-  createECDH,
-  createPrivateKey,
-  hkdfSync,
-  type KeyObject,
-} from "crypto";
+import { createECDH, createPrivateKey, hkdfSync, type KeyObject } from "crypto";
 import { XAA_CLIENT_KID, type XaaClientJwk } from "./client-keypair.js";
 
 const DERIVATION_SALT = Buffer.from("mcpjam/xaa/confidential-cimd/v1", "utf8");
@@ -19,7 +14,7 @@ function requireMasterKey(masterKey: Uint8Array): Buffer {
   const key = Buffer.from(masterKey);
   if (key.length !== 32) {
     throw new Error(
-      "XAA confidential CIMD master key must contain exactly 32 bytes",
+      "XAA confidential CIMD master key must contain exactly 32 bytes"
     );
   }
   return key;
@@ -27,6 +22,12 @@ function requireMasterKey(masterKey: Uint8Array): Buffer {
 
 function derivationInfo(orgId: string, counter: number): Buffer {
   const orgBytes = Buffer.from(orgId, "utf8");
+  // Node replaces unpaired UTF-16 surrogates with U+FFFD while encoding. That
+  // would allow distinct malformed JavaScript strings to collapse to the same
+  // HKDF input, so require the UTF-8 conversion to round-trip exactly.
+  if (orgBytes.toString("utf8") !== orgId) {
+    throw new Error("organization id must be losslessly encodable as UTF-8");
+  }
   if (orgBytes.length === 0 || orgBytes.length > 0xffffffff) {
     throw new Error("organization id must be a non-empty UTF-8 string");
   }
@@ -40,7 +41,13 @@ function derivationInfo(orgId: string, counter: number): Buffer {
 function derivePrivateScalar(masterKey: Buffer, orgId: string): Buffer {
   for (let counter = 0; counter <= 0xffffffff; counter += 1) {
     const candidate = Buffer.from(
-      hkdfSync("sha256", masterKey, DERIVATION_SALT, derivationInfo(orgId, counter), 32),
+      hkdfSync(
+        "sha256",
+        masterKey,
+        DERIVATION_SALT,
+        derivationInfo(orgId, counter),
+        32
+      )
     );
     const scalar = BigInt(`0x${candidate.toString("hex")}`);
     if (scalar > 0n && scalar < P256_ORDER) return candidate;
@@ -54,7 +61,7 @@ function derivePrivateScalar(masterKey: Buffer, orgId: string): Buffer {
  */
 export function deriveOrgConfidentialCimdKey(
   masterKey: Uint8Array,
-  orgId: string,
+  orgId: string
 ): DerivedOrgConfidentialCimdKey {
   const scalar = derivePrivateScalar(requireMasterKey(masterKey), orgId);
   const ecdh = createECDH("prime256v1");

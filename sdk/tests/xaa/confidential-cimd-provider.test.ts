@@ -104,20 +104,31 @@ describe("confidential CIMD provider", () => {
       alg: "ES256",
       use: "sig",
     });
-    expect(deriveOrgConfidentialCimdKey(master, "org_abc123").publicJwk).toEqual(
-      derived.publicJwk,
-    );
-    expect(deriveOrgConfidentialCimdKey(master, "org_other").publicJwk).not.toEqual(
-      derived.publicJwk,
-    );
     expect(
-      deriveOrgConfidentialCimdKey(Buffer.alloc(32, 8), "org_abc123").publicJwk,
+      deriveOrgConfidentialCimdKey(master, "org_abc123").publicJwk
+    ).toEqual(derived.publicJwk);
+    expect(
+      deriveOrgConfidentialCimdKey(master, "org_other").publicJwk
     ).not.toEqual(derived.publicJwk);
+    expect(
+      deriveOrgConfidentialCimdKey(Buffer.alloc(32, 8), "org_abc123").publicJwk
+    ).not.toEqual(derived.publicJwk);
+  });
+
+  it("rejects organization IDs that are not losslessly encodable as UTF-8", () => {
+    const master = Buffer.alloc(32, 7);
+
+    expect(() => deriveOrgConfidentialCimdKey(master, "org_\ud800")).toThrow(
+      /losslessly encodable as UTF-8/
+    );
+    expect(() => deriveOrgConfidentialCimdKey(master, "org_\udc00")).toThrow(
+      /losslessly encodable as UTF-8/
+    );
   });
 
   it("signs only for its derived client_id", () => {
     const provider = createDerivedConfidentialCimdProviderFactory(
-      Buffer.alloc(32, 9),
+      Buffer.alloc(32, 9)
     )("org_abc123");
     const clientId = provider.getClientIdMetadataUrl();
     const tokenEndpoint = "https://auth.example.com/token";
@@ -135,20 +146,33 @@ describe("confidential CIMD provider", () => {
           key: createPublicKey({ key: publicJwk!, format: "jwk" }),
           dsaEncoding: "ieee-p1363",
         },
-        Buffer.from(signature, "base64url"),
-      ),
+        Buffer.from(signature, "base64url")
+      )
     ).toBe(true);
     expect(() =>
       provider.signClientAssertion({
         clientId: "https://app.mcpjam.com/.well-known/oauth/xaa-cimd/other",
         tokenEndpoint,
-      }),
+      })
     ).toThrow(/organization-bound/);
   });
 
-  it("rejects malformed derived-key master material", () => {
-    expect(() => createDerivedConfidentialCimdProviderFactory(Buffer.alloc(31))).toThrow(
-      /32 bytes/,
+  it("rejects reflector origins the derived provider cannot sign for", () => {
+    const provider = createDerivedConfidentialCimdProviderFactory(
+      Buffer.alloc(32, 9)
+    )("org_abc123");
+
+    expect(() =>
+      provider.getClientIdMetadataUrl("https://inspector.example.com")
+    ).toThrow(/configured reflector origin/);
+    expect(provider.getClientIdMetadataUrl("https://app.mcpjam.com/")).toBe(
+      provider.getClientIdMetadataUrl()
     );
+  });
+
+  it("rejects malformed derived-key master material", () => {
+    expect(() =>
+      createDerivedConfidentialCimdProviderFactory(Buffer.alloc(31))
+    ).toThrow(/32 bytes/);
   });
 });
