@@ -17,6 +17,65 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       label: "MCPJam",
       provenance: "assumed",
       rendersMcpApps: true,
+      capabilityVerification: {
+        availableDisplayModes: {
+          provenance: "assumed",
+        },
+        toolInputPartial: {
+          provenance: "assumed",
+        },
+        toolCancelled: {
+          provenance: "assumed",
+        },
+        hostContextChanged: {
+          provenance: "assumed",
+        },
+        resourceTeardown: {
+          provenance: "assumed",
+        },
+        toolInfo: {
+          provenance: "assumed",
+        },
+        openLinks: {
+          provenance: "assumed",
+        },
+        serverTools: {
+          provenance: "assumed",
+        },
+        serverResources: {
+          provenance: "assumed",
+        },
+        logging: {
+          provenance: "assumed",
+        },
+        updateModelContext: {
+          provenance: "assumed",
+        },
+        message: {
+          provenance: "assumed",
+        },
+        sandboxPermissions: {
+          provenance: "assumed",
+        },
+        cspFrameDomains: {
+          provenance: "assumed",
+        },
+        cspBaseUriDomains: {
+          provenance: "assumed",
+        },
+        resourcePrefersBorder: {
+          provenance: "assumed",
+        },
+        downloadFile: {
+          provenance: "assumed",
+        },
+        requestTeardown: {
+          provenance: "assumed",
+        },
+        widgetDisplayModeRequests: {
+          provenance: "assumed",
+        },
+      },
       verifiedAt: 1783468800000,
       modelVisibleMcpToolResults: {
         directContent: {
@@ -241,6 +300,98 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       label: "Claude",
       provenance: "assumed",
       rendersMcpApps: true,
+      capabilityVerification: {
+        availableDisplayModes: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts claude capture (2026-05-18 DevTools, 2026-06-24 automated pipeline)",
+        },
+        toolInputPartial: {
+          provenance: "assumed",
+        },
+        toolCancelled: {
+          provenance: "assumed",
+        },
+        hostContextChanged: {
+          provenance: "assumed",
+        },
+        resourceTeardown: {
+          provenance: "assumed",
+        },
+        toolInfo: {
+          provenance: "assumed",
+        },
+        openLinks: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts claude capture (2026-05-18 DevTools, 2026-06-24 automated pipeline)",
+        },
+        serverTools: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts claude capture (2026-05-18 DevTools, 2026-06-24 automated pipeline)",
+        },
+        serverResources: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts claude capture (2026-05-18 DevTools, 2026-06-24 automated pipeline)",
+        },
+        logging: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts claude capture (2026-05-18 DevTools, 2026-06-24 automated pipeline)",
+        },
+        updateModelContext: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts claude capture (2026-05-18 DevTools, 2026-06-24 automated pipeline)",
+        },
+        message: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts claude capture (2026-05-18 DevTools, 2026-06-24 automated pipeline)",
+        },
+        sandboxPermissions: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts claude capture (2026-05-18 DevTools, 2026-06-24 automated pipeline)",
+        },
+        cspFrameDomains: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts claude capture (2026-05-18 DevTools, 2026-06-24 automated pipeline)",
+        },
+        cspBaseUriDomains: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts claude capture (2026-05-18 DevTools, 2026-06-24 automated pipeline)",
+        },
+        resourcePrefersBorder: {
+          provenance: "assumed",
+        },
+        downloadFile: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts claude capture (2026-05-18 DevTools, 2026-06-24 automated pipeline)",
+        },
+        requestTeardown: {
+          provenance: "assumed",
+        },
+        widgetDisplayModeRequests: {
+          provenance: "assumed",
+        },
+      },
       verifiedAt: 1783468800000,
       modelVisibleMcpToolResults: {
         directContent: {
@@ -637,6 +788,98 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       label: "ChatGPT",
       provenance: "vendor-doc",
       rendersMcpApps: true,
+      capabilityVerification: {
+        availableDisplayModes: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts chatgpt capture (2026-05-18 DevTools, 2026-06-24 automated pipeline)",
+        },
+        toolInputPartial: {
+          provenance: "assumed",
+        },
+        toolCancelled: {
+          provenance: "assumed",
+        },
+        hostContextChanged: {
+          provenance: "assumed",
+        },
+        resourceTeardown: {
+          provenance: "assumed",
+        },
+        toolInfo: {
+          provenance: "assumed",
+        },
+        openLinks: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts chatgpt capture (2026-05-18 DevTools, 2026-06-24 automated pipeline)",
+        },
+        serverTools: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts chatgpt capture (2026-05-18 DevTools, 2026-06-24 automated pipeline)",
+        },
+        serverResources: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts chatgpt capture (2026-05-18 DevTools, 2026-06-24 automated pipeline)",
+        },
+        logging: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts chatgpt capture (2026-05-18 DevTools, 2026-06-24 automated pipeline)",
+        },
+        updateModelContext: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts chatgpt capture (2026-05-18 DevTools, 2026-06-24 automated pipeline)",
+        },
+        message: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts chatgpt capture (2026-05-18 DevTools, 2026-06-24 automated pipeline)",
+        },
+        sandboxPermissions: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts chatgpt capture (2026-05-18 DevTools, 2026-06-24 automated pipeline)",
+        },
+        cspFrameDomains: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts chatgpt capture (2026-05-18 DevTools, 2026-06-24 automated pipeline)",
+        },
+        cspBaseUriDomains: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts chatgpt capture (2026-05-18 DevTools, 2026-06-24 automated pipeline)",
+        },
+        resourcePrefersBorder: {
+          provenance: "assumed",
+        },
+        downloadFile: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts chatgpt capture (2026-05-18 DevTools, 2026-06-24 automated pipeline)",
+        },
+        requestTeardown: {
+          provenance: "assumed",
+        },
+        widgetDisplayModeRequests: {
+          provenance: "assumed",
+        },
+      },
       verifiedAt: 1783468800000,
       modelVisibleMcpToolResults: {
         directContent: {
@@ -783,8 +1026,67 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
     mistral: {
       id: "mistral",
       label: "Mistral",
-      provenance: "probe",
+      provenance: "assumed",
       rendersMcpApps: true,
+      capabilityVerification: {
+        availableDisplayModes: {
+          provenance: "assumed",
+        },
+        toolInputPartial: {
+          provenance: "assumed",
+        },
+        toolCancelled: {
+          provenance: "assumed",
+        },
+        hostContextChanged: {
+          provenance: "assumed",
+        },
+        resourceTeardown: {
+          provenance: "assumed",
+        },
+        toolInfo: {
+          provenance: "assumed",
+        },
+        openLinks: {
+          provenance: "assumed",
+        },
+        serverTools: {
+          provenance: "assumed",
+        },
+        serverResources: {
+          provenance: "assumed",
+        },
+        logging: {
+          provenance: "assumed",
+        },
+        updateModelContext: {
+          provenance: "assumed",
+        },
+        message: {
+          provenance: "assumed",
+        },
+        sandboxPermissions: {
+          provenance: "assumed",
+        },
+        cspFrameDomains: {
+          provenance: "assumed",
+        },
+        cspBaseUriDomains: {
+          provenance: "assumed",
+        },
+        resourcePrefersBorder: {
+          provenance: "assumed",
+        },
+        downloadFile: {
+          provenance: "assumed",
+        },
+        requestTeardown: {
+          provenance: "assumed",
+        },
+        widgetDisplayModeRequests: {
+          provenance: "assumed",
+        },
+      },
       supportedProtocolVersions: ["2025-11-25"],
       verifiedAt: 1783468800000,
       modelVisibleMcpToolResults: {
@@ -942,8 +1244,85 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
     goose: {
       id: "goose",
       label: "Goose",
-      provenance: "probe",
+      provenance: "assumed",
       rendersMcpApps: true,
+      capabilityVerification: {
+        availableDisplayModes: {
+          provenance: "assumed",
+        },
+        toolInputPartial: {
+          provenance: "assumed",
+        },
+        toolCancelled: {
+          provenance: "assumed",
+        },
+        hostContextChanged: {
+          provenance: "assumed",
+        },
+        resourceTeardown: {
+          provenance: "assumed",
+        },
+        toolInfo: {
+          provenance: "assumed",
+        },
+        openLinks: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts goose capture (Goose Desktop 1.38.0)",
+        },
+        serverTools: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts goose capture (Goose Desktop 1.38.0)",
+        },
+        serverResources: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts goose capture (Goose Desktop 1.38.0)",
+        },
+        logging: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts goose capture (Goose Desktop 1.38.0)",
+        },
+        updateModelContext: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts goose capture (Goose Desktop 1.38.0)",
+        },
+        message: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts goose capture (Goose Desktop 1.38.0)",
+        },
+        sandboxPermissions: {
+          provenance: "assumed",
+        },
+        cspFrameDomains: {
+          provenance: "assumed",
+        },
+        cspBaseUriDomains: {
+          provenance: "assumed",
+        },
+        resourcePrefersBorder: {
+          provenance: "assumed",
+        },
+        downloadFile: {
+          provenance: "assumed",
+        },
+        requestTeardown: {
+          provenance: "assumed",
+        },
+        widgetDisplayModeRequests: {
+          provenance: "assumed",
+        },
+      },
       supportedProtocolVersions: ["2025-03-26"],
       verifiedAt: 1783468800000,
       modelVisibleMcpToolResults: {
@@ -1169,8 +1548,91 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
     slack: {
       id: "slack",
       label: "Slackbot",
-      provenance: "probe",
+      provenance: "assumed",
       rendersMcpApps: true,
+      capabilityVerification: {
+        availableDisplayModes: {
+          provenance: "assumed",
+        },
+        toolInputPartial: {
+          provenance: "assumed",
+        },
+        toolCancelled: {
+          provenance: "assumed",
+        },
+        hostContextChanged: {
+          provenance: "assumed",
+        },
+        resourceTeardown: {
+          provenance: "assumed",
+        },
+        toolInfo: {
+          provenance: "assumed",
+        },
+        openLinks: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts slack capture (Slackbot, 2026-06-24)",
+        },
+        serverTools: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts slack capture (Slackbot, 2026-06-24)",
+        },
+        serverResources: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts slack capture (Slackbot, 2026-06-24)",
+        },
+        logging: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts slack capture (Slackbot, 2026-06-24)",
+        },
+        updateModelContext: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts slack capture (Slackbot, 2026-06-24)",
+        },
+        message: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts slack capture (Slackbot, 2026-06-24)",
+        },
+        sandboxPermissions: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts slack capture (Slackbot, 2026-06-24)",
+        },
+        cspFrameDomains: {
+          provenance: "assumed",
+        },
+        cspBaseUriDomains: {
+          provenance: "assumed",
+        },
+        resourcePrefersBorder: {
+          provenance: "assumed",
+        },
+        downloadFile: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts slack capture (Slackbot, 2026-06-24)",
+        },
+        requestTeardown: {
+          provenance: "assumed",
+        },
+        widgetDisplayModeRequests: {
+          provenance: "assumed",
+        },
+      },
       supportedProtocolVersions: ["2025-06-18"],
       verifiedAt: 1783468800000,
       modelVisibleMcpToolResults: {
@@ -1383,8 +1845,91 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
     cursor: {
       id: "cursor",
       label: "Cursor",
-      provenance: "probe",
+      provenance: "assumed",
       rendersMcpApps: true,
+      capabilityVerification: {
+        availableDisplayModes: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts cursor capture (Cursor 3.4.20 probe)",
+        },
+        toolInputPartial: {
+          provenance: "assumed",
+        },
+        toolCancelled: {
+          provenance: "assumed",
+        },
+        hostContextChanged: {
+          provenance: "assumed",
+        },
+        resourceTeardown: {
+          provenance: "assumed",
+        },
+        toolInfo: {
+          provenance: "assumed",
+        },
+        openLinks: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts cursor capture (Cursor 3.4.20 probe)",
+        },
+        serverTools: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts cursor capture (Cursor 3.4.20 probe)",
+        },
+        serverResources: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts cursor capture (Cursor 3.4.20 probe)",
+        },
+        logging: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts cursor capture (Cursor 3.4.20 probe)",
+        },
+        updateModelContext: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts cursor capture (Cursor 3.4.20 probe)",
+        },
+        message: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts cursor capture (Cursor 3.4.20 probe)",
+        },
+        sandboxPermissions: {
+          provenance: "probe",
+          verifiedAt: 1783468800000,
+          evidence:
+            "seed-host-template.ts cursor capture (Cursor 3.4.20 probe)",
+        },
+        cspFrameDomains: {
+          provenance: "assumed",
+        },
+        cspBaseUriDomains: {
+          provenance: "assumed",
+        },
+        resourcePrefersBorder: {
+          provenance: "assumed",
+        },
+        downloadFile: {
+          provenance: "assumed",
+        },
+        requestTeardown: {
+          provenance: "assumed",
+        },
+        widgetDisplayModeRequests: {
+          provenance: "assumed",
+        },
+      },
       verifiedAt: 1783468800000,
       modelVisibleMcpToolResults: {
         directContent: {
@@ -1584,6 +2129,111 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       label: "Copilot",
       provenance: "vendor-doc",
       rendersMcpApps: true,
+      capabilityVerification: {
+        availableDisplayModes: {
+          provenance: "vendor-doc",
+          verifiedAt: 1783468800000,
+          evidence:
+            "https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/plugin-mcp-apps#supported-mcp-apps-capabilities-in-copilot",
+        },
+        toolInputPartial: {
+          provenance: "untestable",
+          reason:
+            "Microsoft 365 Copilot runs only inside an enterprise tenant; no probe path exists, and Microsoft publishes no capability table entry for this dimension.",
+        },
+        toolCancelled: {
+          provenance: "untestable",
+          reason:
+            "Microsoft 365 Copilot runs only inside an enterprise tenant; no probe path exists, and Microsoft publishes no capability table entry for this dimension.",
+        },
+        hostContextChanged: {
+          provenance: "untestable",
+          reason:
+            "Microsoft 365 Copilot runs only inside an enterprise tenant; no probe path exists, and Microsoft publishes no capability table entry for this dimension.",
+        },
+        resourceTeardown: {
+          provenance: "untestable",
+          reason:
+            "Microsoft 365 Copilot runs only inside an enterprise tenant; no probe path exists, and Microsoft publishes no capability table entry for this dimension.",
+        },
+        toolInfo: {
+          provenance: "untestable",
+          reason:
+            "Microsoft 365 Copilot runs only inside an enterprise tenant; no probe path exists, and Microsoft publishes no capability table entry for this dimension.",
+        },
+        openLinks: {
+          provenance: "vendor-doc",
+          verifiedAt: 1783468800000,
+          evidence:
+            "https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/plugin-mcp-apps#supported-mcp-apps-capabilities-in-copilot",
+        },
+        serverTools: {
+          provenance: "vendor-doc",
+          verifiedAt: 1783468800000,
+          evidence:
+            "https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/plugin-mcp-apps#supported-mcp-apps-capabilities-in-copilot",
+        },
+        serverResources: {
+          provenance: "vendor-doc",
+          verifiedAt: 1783468800000,
+          evidence:
+            "https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/plugin-mcp-apps#supported-mcp-apps-capabilities-in-copilot",
+        },
+        logging: {
+          provenance: "vendor-doc",
+          verifiedAt: 1783468800000,
+          evidence:
+            "https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/plugin-mcp-apps#supported-mcp-apps-capabilities-in-copilot",
+        },
+        updateModelContext: {
+          provenance: "vendor-doc",
+          verifiedAt: 1783468800000,
+          evidence:
+            "https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/plugin-mcp-apps#supported-mcp-apps-capabilities-in-copilot",
+        },
+        message: {
+          provenance: "vendor-doc",
+          verifiedAt: 1783468800000,
+          evidence:
+            "https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/plugin-mcp-apps#supported-mcp-apps-capabilities-in-copilot",
+        },
+        sandboxPermissions: {
+          provenance: "untestable",
+          reason:
+            "Microsoft 365 Copilot runs only inside an enterprise tenant; no probe path exists, and Microsoft publishes no capability table entry for this dimension.",
+        },
+        cspFrameDomains: {
+          provenance: "vendor-doc",
+          verifiedAt: 1783468800000,
+          evidence:
+            "https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/plugin-mcp-apps#supported-mcp-apps-capabilities-in-copilot",
+        },
+        cspBaseUriDomains: {
+          provenance: "untestable",
+          reason:
+            "Microsoft 365 Copilot runs only inside an enterprise tenant; no probe path exists, and Microsoft publishes no capability table entry for this dimension.",
+        },
+        resourcePrefersBorder: {
+          provenance: "untestable",
+          reason:
+            "Microsoft 365 Copilot runs only inside an enterprise tenant; no probe path exists, and Microsoft publishes no capability table entry for this dimension.",
+        },
+        downloadFile: {
+          provenance: "untestable",
+          reason:
+            "Microsoft 365 Copilot runs only inside an enterprise tenant; no probe path exists, and Microsoft publishes no capability table entry for this dimension.",
+        },
+        requestTeardown: {
+          provenance: "untestable",
+          reason:
+            "Microsoft 365 Copilot runs only inside an enterprise tenant; no probe path exists, and Microsoft publishes no capability table entry for this dimension.",
+        },
+        widgetDisplayModeRequests: {
+          provenance: "untestable",
+          reason:
+            "Microsoft 365 Copilot runs only inside an enterprise tenant; no probe path exists, and Microsoft publishes no capability table entry for this dimension.",
+        },
+      },
       verifiedAt: 1783468800000,
       modelVisibleMcpToolResults: {
         directContent: {
@@ -1722,8 +2372,67 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
     vscode: {
       id: "vscode",
       label: "VS Code",
-      provenance: "probe",
+      provenance: "assumed",
       rendersMcpApps: true,
+      capabilityVerification: {
+        availableDisplayModes: {
+          provenance: "assumed",
+        },
+        toolInputPartial: {
+          provenance: "assumed",
+        },
+        toolCancelled: {
+          provenance: "assumed",
+        },
+        hostContextChanged: {
+          provenance: "assumed",
+        },
+        resourceTeardown: {
+          provenance: "assumed",
+        },
+        toolInfo: {
+          provenance: "assumed",
+        },
+        openLinks: {
+          provenance: "assumed",
+        },
+        serverTools: {
+          provenance: "assumed",
+        },
+        serverResources: {
+          provenance: "assumed",
+        },
+        logging: {
+          provenance: "assumed",
+        },
+        updateModelContext: {
+          provenance: "assumed",
+        },
+        message: {
+          provenance: "assumed",
+        },
+        sandboxPermissions: {
+          provenance: "assumed",
+        },
+        cspFrameDomains: {
+          provenance: "assumed",
+        },
+        cspBaseUriDomains: {
+          provenance: "assumed",
+        },
+        resourcePrefersBorder: {
+          provenance: "assumed",
+        },
+        downloadFile: {
+          provenance: "assumed",
+        },
+        requestTeardown: {
+          provenance: "assumed",
+        },
+        widgetDisplayModeRequests: {
+          provenance: "assumed",
+        },
+      },
       verifiedAt: 1783468800000,
       modelVisibleMcpToolResults: {
         directContent: {

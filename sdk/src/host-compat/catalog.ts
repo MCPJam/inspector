@@ -10,6 +10,7 @@ import {
 import { hostConfigFieldsToImageSupport } from "./image-support.js";
 import type { HostCompatToolsInput } from "./server-requirements.js";
 import type {
+  CapabilityVerification,
   CompatProvenance,
   HostCompatProfile,
   HostImageSupport,
@@ -33,6 +34,11 @@ type HostCatalogMetadata = {
   supportedProtocolVersions?: string[];
   /** When this host's facts were last verified (ms epoch). */
   verifiedAt?: number;
+  /**
+   * Per-dimension provenance for the host's MCP Apps capability matrix, keyed
+   * by dimension name. Absent for hosts the catalog hasn't audited.
+   */
+  capabilityVerification?: Record<string, CapabilityVerification>;
   /** Tool-result image handling (see `HostImageSupport`). */
   imageSupport?: HostImageSupport;
 };
@@ -159,6 +165,7 @@ function hostConfigFromCatalogHost(
     rendersMcpApps: _rendersMcpApps,
     supportedProtocolVersions: _supportedProtocolVersions,
     verifiedAt: _verifiedAt,
+    capabilityVerification: _capabilityVerification,
     imageSupport: _imageSupport,
     ...config
   } = host;
@@ -207,6 +214,14 @@ function cloneProfile(p: HostCompatProfile): HostCompatProfile {
   return {
     ...p,
     verifiedAt: p.verifiedAt,
+    capabilityVerification: p.capabilityVerification
+      ? Object.fromEntries(
+          Object.entries(p.capabilityVerification).map(([dim, entry]) => [
+            dim,
+            { ...entry },
+          ])
+        )
+      : undefined,
     supportedProtocolVersions: p.supportedProtocolVersions
       ? [...p.supportedProtocolVersions]
       : undefined,
@@ -261,6 +276,7 @@ export function buildHostProfilesFromCatalog(
         label: host.label,
         provenance: host.provenance,
         verifiedAt: host.verifiedAt,
+        capabilityVerification: host.capabilityVerification,
         rendersMcpApps: host.rendersMcpApps,
         rendersOpenAiApps,
         supportedProtocolVersions: host.supportedProtocolVersions,

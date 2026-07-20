@@ -103,6 +103,25 @@ const hostCatalogMetadataSchema = z.object({
   rendersMcpApps: z.boolean(),
   supportedProtocolVersions: z.array(z.string()).optional(),
   verifiedAt: z.number().optional(),
+  // Per-dimension provenance (HP-9). Additive within schema v2: an older SDK
+  // strips it and keeps using the host-level `provenance`, which stays correct
+  // (just coarser). Keys are plain strings for the same reason host ids are —
+  // a new capability dimension must not require an SDK release to parse.
+  // An unknown per-dimension provenance degrades to `assumed` rather than
+  // failing the parse, matching the host-level `.catch` policy above.
+  capabilityVerification: z
+    .record(
+      z.string(),
+      z.object({
+        provenance: z
+          .enum(["observed", "probe", "vendor-doc", "assumed", "untestable"])
+          .catch("assumed"),
+        verifiedAt: z.number().optional(),
+        reason: z.string().optional(),
+        evidence: z.string().optional(),
+      })
+    )
+    .optional(),
   imageSupport: hostImageSupportSchema.optional(),
 });
 

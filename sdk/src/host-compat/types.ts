@@ -32,6 +32,34 @@ export type CompatLane = "apps" | "server";
 export type CompatProvenance = "observed" | "vendor-doc" | "probe" | "assumed";
 
 /**
+ * Provenance for a single capability dimension. Extends `CompatProvenance` with
+ * `untestable` — a dimension that cannot be exercised against the real client
+ * at all (the host ships no public build, needs an enterprise tenant, never
+ * sends `ui/initialize`, …).
+ *
+ * `untestable` is not a synonym for `assumed`. `assumed` means nobody checked;
+ * `untestable` means somebody tried and the door is closed. Only the second can
+ * be shown to a developer without misleading them, which is why the catalog
+ * requires a `reason` alongside it.
+ */
+export type CapabilityProvenance = CompatProvenance | "untestable";
+
+/**
+ * Where one capability fact came from. A host-level `provenance` alone can't
+ * express that a matrix is part-measured and part-guessed, which is how a
+ * "verified against X" badge ends up sitting on top of values nobody checked.
+ */
+export type CapabilityVerification = {
+  provenance: CapabilityProvenance;
+  /** When this dimension specifically was last verified (ms epoch). */
+  verifiedAt?: number;
+  /** Why it can't be tested. Always present when provenance is `untestable`. */
+  reason?: string;
+  /** Where the evidence lives (capture id, vendor doc URL, probe run). */
+  evidence?: string;
+};
+
+/**
  * Connection-derived facts about the *server under test* (not the host).
  * Threaded separately from tool metadata because they come from the live
  * `initialize` handshake, not the tools list.
@@ -191,6 +219,13 @@ export type HostCompatProfile = {
    * that renders no widgets (e.g. a CLI host).
    */
   capabilities?: McpAppsCapabilities;
+  /**
+   * Per-dimension provenance for `capabilities`, keyed by dimension name.
+   * Present only for hosts the catalog has audited; a dimension missing from
+   * the map has no recorded evidence either way. Surfaces should prefer this
+   * over the host-level `provenance` when explaining a specific capability.
+   */
+  capabilityVerification?: Record<string, CapabilityVerification>;
   /**
    * Explicit sandbox permission allowlist from the host's MCP Apps profile.
    * `undefined` means the catalog did not publish an exact allowlist; an
