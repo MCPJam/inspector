@@ -132,12 +132,15 @@ export function createInspectorXAAStateMachine(
     : `${window.location.origin}${XAA_API_BASE}${mintPathPrefix}`;
   return createXAAStateMachine({
     ...rest,
+    // This context governs both scoped mint endpoints and the final
+    // private_key_jwt proxy request. It is required in direct hosted runs too
+    // (not only local runs forwarding to the hosted issuer).
+    organizationId,
     issuerBaseUrl: issuerBaseUrl ?? defaultIssuerBaseUrl,
     mintPathPrefix,
     ...(hostedIssuerOptIn
       ? {
           issuerMode: "hosted",
-          organizationId,
           ...(resolvedIssuerKind === "anonymous"
             ? { issuerKind: "anonymous" as const }
             : {}),

@@ -15,7 +15,10 @@ import {
   resetXaaClientKeyPairForTests,
   XAA_CLIENT_KID,
 } from "../../src/xaa/mint/client-keypair.js";
-import { signClientAssertion } from "../../src/xaa/mint/client-assertion.js";
+import {
+  signClientAssertion,
+  signClientAssertionWithKey,
+} from "../../src/xaa/mint/client-assertion.js";
 
 // The confidential-CIMD client key is DISTINCT from the IdP issuer key: it
 // signs the private_key_jwt client_assertion the RAS verifies against the
@@ -34,7 +37,7 @@ function verifyAgainstPublishedJwks(jws: string): boolean {
   verifier.update(`${header}.${payload}`);
   return verifier.verify(
     { key: publicKey, dsaEncoding: "ieee-p1363" },
-    Buffer.from(signature, "base64url"),
+    Buffer.from(signature, "base64url")
   );
 }
 
@@ -164,14 +167,45 @@ describe("signClientAssertion", () => {
     else process.env.XAA_IDP_KEY_DIR = originalKeyDir;
   });
 
-  const clientId =
-    "https://app.mcpjam.com/.well-known/oauth/xaa-cimd/AbC123";
+  const clientId = "https://app.mcpjam.com/.well-known/oauth/xaa-cimd/AbC123";
   const tokenEndpoint = "https://auth.example.com/oauth/token";
 
   it("signs a verifiable ES256 assertion", () => {
     const jws = signClientAssertion({ clientId, tokenEndpoint });
     expect(jws.split(".")).toHaveLength(3);
     expect(verifyAgainstPublishedJwks(jws)).toBe(true);
+  });
+
+  it("accepts an explicit private P-256 key", () => {
+    // Node normalizes both the JOSE alias "P-256" and OpenSSL's
+    // "prime256v1" name to asymmetricKeyDetails.namedCurve=prime256v1.
+    const { privateKey } = generateKeyPairSync("ec", {
+      namedCurve: "prime256v1",
+    });
+    const jws = signClientAssertionWithKey(
+      { clientId, tokenEndpoint },
+      privateKey
+    );
+    expect(Buffer.from(jws.split(".")[2], "base64url")).toHaveLength(64);
+  });
+
+  it.each([
+    [
+      "RSA",
+      () => generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey,
+    ],
+    [
+      "a different EC curve",
+      () => generateKeyPairSync("ec", { namedCurve: "P-384" }).privateKey,
+    ],
+    [
+      "a public P-256 key",
+      () => generateKeyPairSync("ec", { namedCurve: "P-256" }).publicKey,
+    ],
+  ])("rejects %s before producing an ES256-labeled assertion", (_name, key) => {
+    expect(() =>
+      signClientAssertionWithKey({ clientId, tokenEndpoint }, key())
+    ).toThrow(/private EC P-256 key/);
   });
 
   it("emits the RFC 7523 claims the worker requires (iss=sub=client_id, aud, exp)", () => {
@@ -200,10 +234,10 @@ describe("signClientAssertion", () => {
 
   it("uses a fresh jti per call (replay protection)", () => {
     const a = decodeJwtPart(
-      signClientAssertion({ clientId, tokenEndpoint }).split(".")[1],
+      signClientAssertion({ clientId, tokenEndpoint }).split(".")[1]
     );
     const b = decodeJwtPart(
-      signClientAssertion({ clientId, tokenEndpoint }).split(".")[1],
+      signClientAssertion({ clientId, tokenEndpoint }).split(".")[1]
     );
     expect(a.jti).not.toBe(b.jti);
   });
