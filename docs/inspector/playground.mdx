@@ -351,6 +351,21 @@ The Playground respects every skill you've configured in the [Skills](/inspector
 
 Prompts are MCP prompt templates exposed by your servers via `prompts/list`. Type `/` in the input and pick one from the **PROMPTS** section. Selected prompts appear as expandable cards above the input — source server ID, description, arguments (required ones marked with `*`), and a preview of the first message — so you can review or remove them before sending.
 
+## Agent chat-composer controls
+
+When an agent drives the inspector through the WebMCP protocol, four global tools let it control the Playground chat composer from any route. Each tool auto-opens the Playground if it is not already active.
+
+| Tool | Annotations | What it does |
+|---|---|---|
+| `ui_select_model` | idempotent | Switch the chat model. Pass the model's id (e.g. `claude-sonnet-5`) or its display name. Unknown identifiers are rejected. |
+| `ui_set_system_prompt` | idempotent | Set the system prompt the model sees. Pass an empty string to clear it. The prompt is an input only — it is never echoed back in results or snapshots. |
+| `ui_reset_chat` | **destructive** | Start a new chat, clearing the current conversation. This cannot be undone. Runs the same reset as the Clear-chat button. |
+| `ui_stop_generation` | idempotent | Stop an in-flight response. Succeeds as a no-op when nothing is generating. |
+
+These tools are part of the global playground catalog and are always advertised to agents regardless of which route is open. When the Playground chat is not yet mounted (no server connected), the tools return an `unsupported_in_mode` error rather than silently failing.
+
+Snapshots returned by these tools include a redacted `chat` block: selected model id and name, system-prompt presence and length (never the text itself), message count and last role (never message contents), and whether a generation is in flight.
+
 ## Workspace tools
 
 When you are signed in as a project member, the Playground gives the model a set of built-in tools for interacting with the MCP servers saved in your project. These tools are not available to guests or in shared chatbox sessions.
