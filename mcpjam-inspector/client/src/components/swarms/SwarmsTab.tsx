@@ -24,7 +24,15 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, usePaginatedQuery } from "convex/react";
-import { Check, ChevronDown, Info, Loader2, Plus, Users } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Info,
+  Loader2,
+  Plus,
+  Users,
+} from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
@@ -842,21 +850,42 @@ export function SwarmsTab({
 }
 
 // ── run status treatment ─────────────────────────────────────────────────────
-function runStatusClass(status: string): string {
+function runStatusChipClass(status: string): string {
   switch (status) {
     case "completed":
-      return "text-emerald-600 dark:text-emerald-400";
+      return "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400";
     case "partial":
-      return "text-amber-600 dark:text-amber-400";
     case "rate_limited":
-      return "text-amber-600 dark:text-amber-400";
+      return "bg-muted text-muted-foreground";
     case "failed":
-      return "text-red-600 dark:text-red-400";
+      return "bg-red-500/10 text-red-700 dark:text-red-400";
     case "stale":
-      return "text-muted-foreground";
+      return "bg-muted text-muted-foreground";
     default:
-      return "text-foreground"; // running
+      return "bg-muted text-foreground"; // running
   }
+}
+
+function formatJourneyRelativeTime(timestamp: number): string {
+  const diff = Date.now() - timestamp;
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(timestamp).toLocaleDateString();
+}
+
+function runSummaryLine(r: JourneyRun): string {
+  const parts = [
+    `${r.summary.succeeded}/${r.summary.total} ok`,
+    r.summary.failed > 0 ? `${r.summary.failed} failed` : null,
+    r.summary.rateLimited > 0 ? `${r.summary.rateLimited} rate-limited` : null,
+    goalScoreAvgLabel(r.goalScoreSummary),
+  ].filter(Boolean);
+  return parts.join(" · ");
 }
 
 // ── journey card + runs ──────────────────────────────────────────────────────
@@ -909,22 +938,36 @@ function JourneyCard({
 
   const [launching, setLaunching] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
   const [openRunId, setOpenRunId] = useState<string | null>(null);
 
-  // Deep-link restore: once this journey's runs load, if the linked run belongs
-  // to THIS card, open it (so RunSessionsView mounts and can select the
-  // session). Runs itself once — later user toggling isn't overridden.
+  // Deep-link restore: expand this journey and open the linked run so
+  // RunSessionsView mounts. Runs once — later user toggling isn't overridden.
   const appliedInitialRunRef = useRef(false);
   useEffect(() => {
     if (appliedInitialRunRef.current || !initialRunId) return;
     if ((runs as JourneyRun[]).some((r) => r._id === initialRunId)) {
       appliedInitialRunRef.current = true;
+      setExpanded(true);
       setOpenRunId(initialRunId);
     }
   }, [initialRunId, runs]);
 
   const hostName = (id: string) =>
     hosts.find((h) => h.hostId === id)?.name ?? id.slice(0, 8);
+
+  const journeyHostNames = useMemo(
+    () => journey.hostIds.map(hostName),
+    // hostName closes over `hosts`; recompute when either changes.
+    [journey.hostIds, hosts],
+  );
+  const firstHostName = journeyHostNames[0] ?? null;
+  const extraHosts = Math.max(0, journeyHostNames.length - 1);
+  const typedRuns = runs as JourneyRun[];
+  const latestRun = typedRuns[0] ?? null;
+  const runCount = rollup?.runCount ?? typedRuns.length;
+  const hasRuns = runCount > 0 || typedRuns.length > 0;
+  const configHint = `${journey.config.sessionsPerHost}/host · ${journey.config.maxTurns} turns`;
 
   const onRun = async () => {
     if (launching) return;
@@ -948,86 +991,171 @@ function JourneyCard({
   };
 
   return (
-    <div className="rounded-lg border p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-medium">{journey.goal}</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {serverGroupName ? `${serverGroupName} · ` : null}
-            {journey.hostIds.map(hostName).join(", ")} ·{" "}
-            {journey.config.sessionsPerHost}/host · {journey.config.maxTurns} turns
-          </p>
-          {rollup && rollup.runCount > 0 && (
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              {rollup.runCount} run{rollup.runCount === 1 ? "" : "s"} total
-            </p>
+    <div className="rounded-lg border border-border/60 px-3 py-2.5">
+      <div className="flex items-start gap-1.5">
+        <button
+          type="button"
+          className={cn(
+            "mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors",
+            "hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
+            !hasRuns && "cursor-default opacity-40 hover:bg-transparent",
           )}
+          aria-expanded={expanded}
+          aria-label={expanded ? "Hide runs" : "Show runs"}
+          disabled={!hasRuns}
+          onClick={() => setExpanded((v) => !v)}
+        >
+          {expanded ? (
+            <ChevronDown className="size-3.5" />
+          ) : (
+            <ChevronRight className="size-3.5" />
+          )}
+        </button>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-3">
+            <button
+              type="button"
+              className="min-w-0 flex-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+              disabled={!hasRuns}
+              onClick={() => hasRuns && setExpanded((v) => !v)}
+            >
+              <p className="truncate text-sm font-medium">{journey.goal}</p>
+            </button>
+            <Button
+              type="button"
+              size="sm"
+              className="h-7 shrink-0 px-2.5 text-xs"
+              disabled={launching}
+              onClick={onRun}
+            >
+              {launching ? "Starting…" : "Run"}
+            </Button>
+          </div>
+
+          <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
+            {firstHostName ? (
+              <span className="inline-flex min-w-0 max-w-[160px] items-center gap-1">
+                <JourneyHostLogoMark label={firstHostName} />
+                <span className="truncate font-medium text-foreground/80">
+                  {firstHostName}
+                </span>
+                {extraHosts > 0 ? (
+                  <span className="shrink-0 text-[10px]">+{extraHosts}</span>
+                ) : null}
+              </span>
+            ) : (
+              <span>No clients</span>
+            )}
+            {serverGroupName ? (
+              <>
+                <span aria-hidden>·</span>
+                <span className="truncate">{serverGroupName}</span>
+              </>
+            ) : null}
+            <span aria-hidden>·</span>
+            <span>
+              {runCount} run{runCount === 1 ? "" : "s"}
+            </span>
+            {latestRun ? (
+              <>
+                <span aria-hidden>·</span>
+                <span
+                  className={cn(
+                    "rounded-full px-1.5 py-px text-[10px] font-medium capitalize",
+                    runStatusChipClass(latestRun.status),
+                  )}
+                >
+                  {latestRun.status.replace(/_/g, " ")}
+                </span>
+              </>
+            ) : null}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="Journey config"
+                  className="rounded-full p-0.5 text-muted-foreground outline-none transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <Info className="size-3" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-[220px]">
+                <p className="text-xs leading-snug">{configHint}</p>
+              </TooltipContent>
+            </Tooltip>
+          </div>
         </div>
-        <Button type="button" size="sm" disabled={launching} onClick={onRun}>
-          {launching ? "Starting…" : "Run journey"}
-        </Button>
       </div>
 
       {launchError && (
-        <p className="mt-2 rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-xs text-red-600 dark:text-red-400">
+        <p className="mt-2 ml-7 rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-xs text-red-600 dark:text-red-400">
           {launchError}
         </p>
       )}
 
-      {runs.length > 0 && (
-        <div className="mt-3 border-t pt-3">
-          {(runs as JourneyRun[]).map((r) => (
-            <div key={r._id} className="mb-3 last:mb-0">
-              <div className="flex items-center justify-between text-xs">
-                <span className={`font-medium ${runStatusClass(r.status)}`}>
-                  {r.status}
-                </span>
-                <span className="text-muted-foreground">
-                  {r.summary.succeeded}/{r.summary.total} ok
-                  {r.summary.failed > 0 && ` · ${r.summary.failed} failed`}
-                  {r.summary.rateLimited > 0 &&
-                    ` · ${r.summary.rateLimited} rate-limited`}
-                  {goalScoreAvgLabel(r.goalScoreSummary)
-                    ? ` · ${goalScoreAvgLabel(r.goalScoreSummary)}`
-                    : ""}
-                </span>
-              </div>
-              <div className="mt-1 flex flex-wrap items-center gap-2">
-                {r.hostSummaries.map((hs) => (
-                  <span
-                    key={hs.hostId}
-                    className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
+      {expanded && (
+        <div className="mt-2 ml-7 space-y-0.5 border-t border-border/40 pt-2">
+          {typedRuns.length === 0 ? (
+            <p className="px-1 py-1.5 text-[11px] text-muted-foreground">
+              No runs yet.
+            </p>
+          ) : (
+            typedRuns.map((r) => {
+              const isOpen = openRunId === r._id;
+              return (
+                <div key={r._id}>
+                  <button
+                    type="button"
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left text-xs outline-none transition-colors",
+                      "hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring",
+                      isOpen && "bg-muted/40",
+                    )}
+                    aria-expanded={isOpen}
+                    aria-label={
+                      isOpen
+                        ? `Hide sessions for run ${r.status}`
+                        : `View sessions for run ${r.status}`
+                    }
+                    onClick={() =>
+                      setOpenRunId((cur) => (cur === r._id ? null : r._id))
+                    }
                   >
-                    {hostName(hs.hostId)}: {hs.succeeded}/{hs.total}
-                  </span>
-                ))}
-                <button
-                  type="button"
-                  className="text-[11px] font-medium text-primary hover:underline"
-                  onClick={() =>
-                    setOpenRunId((cur) => (cur === r._id ? null : r._id))
-                  }
-                >
-                  {openRunId === r._id ? "Hide sessions" : "View sessions"}
-                </button>
-              </div>
-              {openRunId === r._id && (
-                <RunSessionsView
-                  runId={r._id}
-                  personaRefId={journey.personaRefId}
-                  hosts={hosts}
-                  hostSummaries={r.hostSummaries}
-                  initialThreadId={
-                    initialRunId === r._id ? initialThreadId : undefined
-                  }
-                />
-              )}
-            </div>
-          ))}
+                    {isOpen ? (
+                      <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+                    ) : (
+                      <ChevronRight className="size-3 shrink-0 text-muted-foreground" />
+                    )}
+                    <span className="capitalize text-foreground/90">
+                      {r.status.replace(/_/g, " ")}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                      {runSummaryLine(r)}
+                    </span>
+                    <span className="shrink-0 text-[10px] text-muted-foreground">
+                      {formatJourneyRelativeTime(r.createdAt)}
+                    </span>
+                  </button>
+                  {isOpen && (
+                    <RunSessionsView
+                      runId={r._id}
+                      personaRefId={journey.personaRefId}
+                      hosts={hosts}
+                      hostSummaries={r.hostSummaries}
+                      initialThreadId={
+                        initialRunId === r._id ? initialThreadId : undefined
+                      }
+                    />
+                  )}
+                </div>
+              );
+            })
+          )}
           {runsStatus === "CanLoadMore" && (
             <button
               type="button"
-              className="mt-1 text-[11px] font-medium text-primary hover:underline"
+              className="mt-0.5 px-1.5 text-[11px] font-medium text-primary hover:underline"
               onClick={() => loadMore(DEFAULT_PAGE_SIZE)}
             >
               Load more runs

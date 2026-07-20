@@ -157,13 +157,22 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+/** Progressive discovery: expand journey → open run sessions. */
+async function expandJourneyAndOpenRunSessions() {
+  fireEvent.click(await screen.findByRole("button", { name: /show runs/i }));
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: /view sessions for run completed/i,
+    }),
+  );
+}
+
 describe("SwarmsTab — sessions-by-run query contract", () => {
   it("queries listSessionsByJourneyRun with { journeyRunId } and opens the viewer on the row's `id`", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
     fireEvent.click(screen.getByText("Persona One"));
 
-    // Open the run's sessions.
-    fireEvent.click(await screen.findByText("View sessions"));
+    await expandJourneyAndOpenRunSessions();
 
     // CONTRACT: the session query is dispatched with the arg name `journeyRunId`
     // (NOT `runId`) carrying the run's id.
@@ -194,7 +203,7 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
   it("opens the promote dialog with the selected session row", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
     fireEvent.click(screen.getByText("Persona One"));
-    fireEvent.click(await screen.findByText("View sessions"));
+    await expandJourneyAndOpenRunSessions();
 
     // The dialog is mounted closed until a session is selected + promoted.
     const dialog = await screen.findByTestId("promote-dialog");
