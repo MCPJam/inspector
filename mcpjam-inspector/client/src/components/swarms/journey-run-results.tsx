@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -8,13 +8,17 @@ import {
 } from "@/lib/swarm-api";
 import { formatScore } from "@/components/shared/session-quality/judge-presentation";
 import { TraceViewer } from "@/components/evals/trace-viewer";
+import {
+  TraceViewModeTabs,
+  type TraceViewMode,
+} from "@/components/evals/trace-view-mode-tabs";
 import type { TraceEnvelope } from "@/components/evals/trace-viewer-adapter";
 import {
   swarmCellKey,
   type JourneyRunStreamState,
   type SwarmCellLiveStatus,
-  type SwarmLiveSessionState,
 } from "./use-journey-run-stream";
+import { usePersistedSessionTrace } from "./use-persisted-session-trace";
 
 export type SwarmMatrixCellOutcome =
   | "pending"
@@ -270,52 +274,10 @@ export function SwarmSessionsMatrix({
   );
 }
 
-function LiveToolCallList({
-  session,
-}: {
-  session: SwarmLiveSessionState | undefined;
-}) {
-  const calls = session?.stream.actualToolCalls ?? [];
-  // Also surface draft tool-calls while actualToolCalls is empty (no snapshot).
-  const draftNames: string[] = [];
-  for (const msg of session?.stream.draftMessages ?? []) {
-    if (msg.role !== "assistant" || !Array.isArray(msg.content)) continue;
-    for (const part of msg.content) {
-      if (
-        part &&
-        typeof part === "object" &&
-        (part as { type?: string }).type === "tool-call" &&
-        typeof (part as { toolName?: string }).toolName === "string"
-      ) {
-        draftNames.push((part as { toolName: string }).toolName);
-      }
-    }
-  }
-  const names =
-    calls.length > 0 ? calls.map((c) => c.toolName) : draftNames;
-
-  if (names.length === 0) {
-    return (
-      <p className="text-[11px] text-muted-foreground">
-        Waiting for tool calls…
-      </p>
-    );
-  }
-
-  return (
-    <div className="flex flex-wrap gap-1">
-      {names.map((name, i) => (
-        <span
-          key={`${name}-${i}`}
-          className="rounded border border-border/60 bg-muted/30 px-1.5 py-0.5 font-mono text-[10px]"
-        >
-          {name}
-        </span>
-      ))}
-    </div>
-  );
-}
-
+/**
+ * Live session detail — same Trace / Chat / Raw streaming surface as
+ * playground (`TraceViewModeTabs` + `TraceViewer` with `forcedViewMode`).
+ */
 export function SwarmLiveStreamPane({
   selection,
   stream,
@@ -332,6 +294,20 @@ export function SwarmLiveStreamPane({
   /** Open the full ShareUsageThreadDetail for a completed Convex session. */
   onOpenCompleted: (session: JourneySessionRow) => void;
 }) {
+  // Match playground default: Chat while the stream is live.
+  const [viewMode, setViewMode] = useState<TraceViewMode>("chat");
+
+  useEffect(() => {
+    // Reset to Chat when the selected cell changes so each session opens on
+    // the streaming-friendly view (same idea as playground turn start).
+    setViewMode("chat");
+  }, [selection?.chatSessionId]);
+
+  // Completed / late-open sessions: SSE buffer is gone — load the persisted
+  // transcript blob the same way ShareUsageThreadDetail does.
+  const persisted = usePersistedSessionTrace(convexSession?.id ?? null);
+  const displayTrace = fallbackTrace ?? persisted.trace;
+
   if (!selection) {
     return (
       <div
@@ -356,10 +332,12 @@ export function SwarmLiveStreamPane({
     outcome === "failed" ||
     outcome === "rate_limited";
   const meta = CELL_META[outcome];
+  const isStreaming = outcome === "running" || outcome === "pending";
+  const showLoading = !displayTrace && (isStreaming || persisted.loading);
 
   return (
     <div
-      className="flex min-h-0 flex-col gap-3 rounded-lg border border-border/60 bg-background/80 p-3"
+      className="flex min-h-0 flex-col gap-2 rounded-lg border border-border/60 bg-background/80 p-3"
       data-testid="swarm-live-pane"
     >
       <div className="flex items-center justify-between gap-2">
@@ -372,7 +350,7 @@ export function SwarmLiveStreamPane({
           </p>
         </div>
         <span className="inline-flex items-center gap-1.5 shrink-0">
-          {outcome === "running" ? (
+          {isStreaming || persisted.loading ? (
             <Loader2 className="size-3 animate-spin text-muted-foreground" />
           ) : (
             <span className={cn("size-1.5 rounded-full", meta.dot)} />
@@ -392,30 +370,50 @@ export function SwarmLiveStreamPane({
         </p>
       )}
 
-      <div className="space-y-1.5">
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          Tool calls
-        </p>
-        <LiveToolCallList session={live} />
+      <div data-testid="swarm-live-trace-view-tabs">
+        <TraceViewModeTabs
+          layout="fullWidth"
+          appearance="segment"
+          mode={viewMode}
+          onModeChange={(next) => {
+            if (next === "tools") return;
+            setViewMode(next);
+          }}
+          showToolsTab={false}
+        />
       </div>
 
-      <div className="min-h-[10rem] flex-1 overflow-hidden rounded-md border border-border/40">
-        {fallbackTrace ? (
-          <div className="h-[280px] overflow-auto">
-            <TraceViewer
-              trace={fallbackTrace}
-              toolsMetadata={{}}
-              toolServerMap={{}}
-              connectedServerIds={[]}
-              chromeDensity="compact"
-              hideToolbar
-            />
-          </div>
+      {/* TraceViewer (fillContent) must be a flex child; otherwise nested
+          flex-1 / min-h-0 inside TraceTimeline collapse and paint empty. */}
+      <div className="flex min-h-[14rem] max-h-[min(70vh,36rem)] flex-1 flex-col overflow-hidden rounded-md border border-border/40">
+        {displayTrace ? (
+          <TraceViewer
+            trace={displayTrace}
+            toolsMetadata={{}}
+            toolServerMap={{}}
+            connectedServerIds={[]}
+            chromeDensity="compact"
+            hideToolbar
+            forcedViewMode={viewMode}
+            isLoading={isStreaming && !fallbackTrace}
+            fillContent
+          />
         ) : (
-          <div className="flex h-full min-h-[10rem] items-center justify-center px-4 text-center text-[12px] text-muted-foreground">
-            {outcome === "running" || outcome === "pending"
-              ? "Stream will appear as the agent runs…"
-              : "No live transcript for this attempt."}
+          <div className="flex h-full min-h-[14rem] items-center justify-center px-4 text-center text-[12px] text-muted-foreground">
+            {showLoading ? (
+              <span className="inline-flex items-center gap-2">
+                <Loader2 className="size-3.5 animate-spin" />
+                {isStreaming
+                  ? "Stream will appear as the agent runs…"
+                  : "Loading transcript…"}
+              </span>
+            ) : persisted.error ? (
+              persisted.error
+            ) : !convexSession ? (
+              "No session transcript for this attempt."
+            ) : (
+              "No transcript for this attempt."
+            )}
           </div>
         )}
       </div>

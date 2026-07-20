@@ -5,6 +5,11 @@
  * journeys live at the project level; a journey targets one-or-more hosts and,
  * when run, fans out one single-host session per (host × sessionsPerHost).
  *
+ * Top-level views (ViewModeSelector):
+ *   - Journeys — persona detail, journey cards, run matrix / live stream
+ *   - Sessions — flat chatSessions browser for the selected persona
+ *     (`listSessionsByPersona` + shared ShareUsageThreadList/Detail)
+ *
  * Consumes the project-scoped backend: personas:*, journeys:*, journeyRuns:*.
  *
  * ## Agent bridge (v1 scope)
@@ -87,6 +92,7 @@ import {
 import { getShareableAppOrigin } from "@/lib/chatbox-session";
 import { resolveHostLogoByDisplayName } from "@/lib/chatbox-client-style";
 import { ConvertSwarmSessionDialog } from "@/components/swarms/convert-swarm-session-dialog";
+import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
 import {
   SwarmLiveStreamPane,
   SwarmSessionsMatrix,
@@ -96,6 +102,7 @@ import {
   liveSessionTrace,
   useJourneyRunStream,
 } from "@/components/swarms/use-journey-run-stream";
+import { ViewModeSelector } from "@/components/shared/view-mode-selector";
 import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
 import { useProjectServerAttachments } from "@/hooks/useViews";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
@@ -295,6 +302,16 @@ export function SwarmsTab({
   const deepLink = useMemo(
     () => parseSwarmSessionParams(window.location.search),
     [],
+  );
+  type SwarmViewMode = "journeys" | "sessions";
+  const SWARM_VIEW_OPTIONS = [
+    { value: "journeys" as const, label: "Journeys" },
+    { value: "sessions" as const, label: "Sessions" },
+  ];
+  // Session deep-links open the flat Sessions browser; run-only links stay on
+  // Journeys so the matrix / live stream can restore.
+  const [viewMode, setViewMode] = useState<SwarmViewMode>(() =>
+    deepLink.threadId ? "sessions" : "journeys",
   );
   const [selectedPersonaId, setSelectedPersonaId] = useState<string | null>(
     () => deepLink.personaRefId ?? null,
@@ -674,6 +691,19 @@ export function SwarmsTab({
           onChange={onRunningPersonasChange}
         />
       </ErrorBoundary>
+      <div
+        className="relative shrink-0 border-b border-border/40 px-8 py-2.5"
+        data-testid="swarms-tab-header-chrome"
+      >
+        <div className="flex min-w-0 items-center justify-center">
+          <ViewModeSelector
+            value={viewMode}
+            ariaLabel="Swarm view"
+            onChange={setViewMode}
+            options={SWARM_VIEW_OPTIONS}
+          />
+        </div>
+      </div>
       <div className="flex min-h-0 flex-1">
         {/* Personas */}
         <aside className="flex w-72 shrink-0 flex-col border-r">
@@ -729,87 +759,99 @@ export function SwarmsTab({
           </div>
         </aside>
 
-        {/* Journeys for the selected persona */}
-        <main className="min-w-0 flex-1 overflow-y-auto">
-        {!selectedPersona ? (
-          <JourneyNetworkBackdrop />
-        ) : (
-          <div className="mx-auto max-w-3xl px-8 py-6">
-            <PersonaDetailHeader
-              persona={selectedPersona}
-              running={runningSet.has(selectedPersona._id)}
-              onSave={(patch) => savePersonaField(selectedPersona._id, patch)}
-              onDelete={async () => {
-                if (
-                  !window.confirm(
-                    `Delete persona "${selectedPersona.name}"? Its journeys are hidden but historical runs are kept.`,
-                  )
-                ) {
-                  return;
-                }
-                await deletePersona({
-                  personaRefId: selectedPersona._id,
-                } as any);
-                setSelectedPersonaId(null);
-              }}
+        {viewMode === "sessions" ? (
+          <main className="min-w-0 flex-1 overflow-hidden">
+            <SwarmsSessionsPanel
+              projectId={projectId}
+              personaRefId={selectedPersona?._id ?? null}
+              personaName={selectedPersona?.name}
+              onClearPersonaFilter={() => setSelectedPersonaId(null)}
+              initialThreadId={deepLink.threadId}
             />
-
-            <div
-              className={cn(
-                "mb-3",
-                journeyFormOpen
-                  ? "space-y-2"
-                  : "flex items-center justify-between",
-              )}
-            >
-              <h3 className="text-sm font-semibold">Journeys</h3>
-              <NewJourneyButton
-                projectId={projectId}
-                hosts={hosts ?? []}
-                open={journeyFormOpen}
-                onOpenChange={(o) => {
-                  setJourneyFormOpen(o);
-                  // Drop the agent prefill on close so a later manual open
-                  // starts blank.
-                  if (!o) setJourneyGoalSeed("");
-                }}
-                goalSeed={journeyGoalSeed}
-                onCreate={async (draft) => {
-                  await createJourney({
-                    projectId,
-                    personaRefId: selectedPersona._id,
-                    ...draft,
-                  } as any);
-                }}
-              />
-            </div>
-
-            {journeys === undefined ? (
-              <div className="text-sm text-muted-foreground">Loading…</div>
-            ) : journeys.length === 0 ? (
-              <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-                No journeys yet. A journey is a goal this persona pursues across
-                one or more hosts.
-              </div>
+          </main>
+        ) : (
+          /* Journeys for the selected persona */
+          <main className="min-w-0 flex-1 overflow-y-auto">
+            {!selectedPersona ? (
+              <JourneyNetworkBackdrop />
             ) : (
-              <div className="flex flex-col gap-3">
-                {journeys.map((j) => (
-                  <JourneyCard
-                    key={j._id}
-                    journey={j}
-                    onLaunch={launchJourney}
-                    hosts={hosts ?? []}
-                    isAuthenticated={isAuthenticated}
+              <div className="mx-auto max-w-3xl px-8 py-6">
+                <PersonaDetailHeader
+                  persona={selectedPersona}
+                  running={runningSet.has(selectedPersona._id)}
+                  onSave={(patch) => savePersonaField(selectedPersona._id, patch)}
+                  onDelete={async () => {
+                    if (
+                      !window.confirm(
+                        `Delete persona "${selectedPersona.name}"? Its journeys are hidden but historical runs are kept.`,
+                      )
+                    ) {
+                      return;
+                    }
+                    await deletePersona({
+                      personaRefId: selectedPersona._id,
+                    } as any);
+                    setSelectedPersonaId(null);
+                  }}
+                />
+
+                <div
+                  className={cn(
+                    "mb-3",
+                    journeyFormOpen
+                      ? "space-y-2"
+                      : "flex items-center justify-between",
+                  )}
+                >
+                  <h3 className="text-sm font-semibold">Journeys</h3>
+                  <NewJourneyButton
                     projectId={projectId}
-                    initialRunId={deepLink.runId}
-                    initialThreadId={deepLink.threadId}
+                    hosts={hosts ?? []}
+                    open={journeyFormOpen}
+                    onOpenChange={(o) => {
+                      setJourneyFormOpen(o);
+                      // Drop the agent prefill on close so a later manual open
+                      // starts blank.
+                      if (!o) setJourneyGoalSeed("");
+                    }}
+                    goalSeed={journeyGoalSeed}
+                    onCreate={async (draft) => {
+                      await createJourney({
+                        projectId,
+                        personaRefId: selectedPersona._id,
+                        ...draft,
+                      } as any);
+                    }}
                   />
-                ))}
+                </div>
+
+                {journeys === undefined ? (
+                  <div className="text-sm text-muted-foreground">Loading…</div>
+                ) : journeys.length === 0 ? (
+                  <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+                    No journeys yet. A journey is a goal this persona pursues
+                    across one or more hosts.
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-3">
+                    {journeys.map((j) => (
+                      <JourneyCard
+                        key={j._id}
+                        journey={j}
+                        onLaunch={launchJourney}
+                        hosts={hosts ?? []}
+                        isAuthenticated={isAuthenticated}
+                        projectId={projectId}
+                        initialRunId={deepLink.runId}
+                        initialThreadId={deepLink.threadId}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
             )}
-          </div>
+          </main>
         )}
-      </main>
       </div>
     </div>
   );

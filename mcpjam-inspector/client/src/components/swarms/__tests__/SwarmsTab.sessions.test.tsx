@@ -5,10 +5,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * CONTRACT (finding 4): the sessions-by-run view must call the backend query
  * `journeyRuns:listSessionsByJourneyRun` with the arg name `journeyRunId` (NOT
  * `runId`), and consume the REAL `JourneySessionDto` — whose identifier is `id`
- * (there is no `_id` / `personaLabel` / `messageCount`). A test that mocked the
- * query away wouldn't catch the wrong arg name (Convex would throw at runtime).
- * Here we intercept `usePaginatedQuery` and assert the actual (name, args) the
- * component dispatches, then assert the row's `id` is what the viewer opens.
+ * (not `_id`). A test that mocked the query away wouldn't catch the wrong arg
+ * name (Convex would throw at runtime). Here we intercept `usePaginatedQuery`
+ * and assert the actual (name, args) the component dispatches, then assert the
+ * row's `id` is what the viewer opens.
+ *
+ * The top-level Sessions tab defaults to `journeyRuns:listSessionsByProject`
+ * (`{ projectId }`) and narrows to `listSessionsByPersona` (`{ personaRefId }`)
+ * when a persona filter is applied — same `id`-keyed DTO.
  */
 
 const persona = {
@@ -59,10 +63,17 @@ const session = {
   projectId: "proj-1",
   hostId: "host-1",
   personaRefId: "persona-1",
+  journeyRunId: "run-1",
+  journeyRefId: "journey-1",
   status: "active",
   modelId: "anthropic/claude-haiku-4.5",
   startedAt: 1,
   lastActivityAt: 2,
+  messageCount: 4,
+  firstMessagePreview: "hello",
+  personaLabel: "Persona One",
+  visitorDisplayName: "Persona One",
+  synthetic: true,
   readiness: { status: "completed", verdict: "ready", issueCount: 0 },
 };
 
@@ -121,6 +132,22 @@ vi.mock("convex/react", () => ({
           : [session];
       return {
         results,
+        status: "Exhausted",
+        loadMore: vi.fn(),
+        isLoading: false,
+      };
+    }
+    if (name === "journeyRuns:listSessionsByProject") {
+      return {
+        results: [session],
+        status: "Exhausted",
+        loadMore: vi.fn(),
+        isLoading: false,
+      };
+    }
+    if (name === "journeyRuns:listSessionsByPersona") {
+      return {
+        results: [session],
         status: "Exhausted",
         loadMore: vi.fn(),
         isLoading: false,
@@ -293,5 +320,75 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
       .filter((el) => el.getAttribute("data-outcome") === "succeeded");
     expect(done.length).toBeGreaterThan(0);
     expect(within(done[0]!).getByText("Done")).toBeInTheDocument();
+  });
+
+  it("shows playground-style Trace / Chat / Raw tabs in the live pane", async () => {
+    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    fireEvent.click(screen.getByText("Persona One"));
+    await expandJourneyAndOpenRunSessions();
+    await selectFirstDoneCell();
+
+    const tabs = await screen.findByTestId("swarm-live-trace-view-tabs");
+    expect(within(tabs).getByRole("button", { name: /^trace$/i })).toBeInTheDocument();
+    expect(within(tabs).getByRole("button", { name: /^chat$/i })).toBeInTheDocument();
+    expect(within(tabs).getByRole("button", { name: /^raw$/i })).toBeInTheDocument();
+    // Playground parity: no Tool Calls / Steps / App tabs on this surface.
+    expect(within(tabs).queryByRole("button", { name: /tool calls/i })).toBeNull();
+  });
+});
+
+describe("SwarmsTab — top-level Sessions view", () => {
+  it("defaults to listSessionsByProject and opens the viewer on `id`", async () => {
+    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    fireEvent.click(screen.getByRole("button", { name: /^sessions$/i }));
+
+    await waitFor(() => {
+      const call = paginatedCalls.find(
+        (c) => c.name === "journeyRuns:listSessionsByProject",
+      );
+      expect(call).toBeTruthy();
+      expect(call!.args).toEqual({ projectId: "proj-1" });
+    });
+
+    const panel = await screen.findByTestId("swarms-sessions-panel");
+    expect(within(panel).getByText("All personas")).toBeInTheDocument();
+
+    // Select via preview text — name appears twice (title + persona badge).
+    fireEvent.click(within(panel).getByText("hello"));
+
+    const viewer = await screen.findByTestId("viewer");
+    expect(viewer.getAttribute("data-thread-id")).toBe("thread-xyz");
+    expect(viewer.getAttribute("data-link")).toContain("persona=persona-1");
+    expect(viewer.getAttribute("data-link")).toContain("run=run-1");
+    expect(viewer.getAttribute("data-link")).toContain("session=thread-xyz");
+  });
+
+  it("narrows to listSessionsByPersona when a persona is selected, and clears back to all", async () => {
+    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    fireEvent.click(screen.getByRole("button", { name: /^sessions$/i }));
+    // Sidebar row (role=tester) — not the list-card title which also says Persona One.
+    fireEvent.click(screen.getByText("tester"));
+
+    await waitFor(() => {
+      const call = paginatedCalls.find(
+        (c) => c.name === "journeyRuns:listSessionsByPersona",
+      );
+      expect(call).toBeTruthy();
+      expect(call!.args).toEqual({ personaRefId: "persona-1" });
+    });
+
+    const filterChip = await screen.findByTestId(
+      "swarms-sessions-persona-filter",
+    );
+    expect(filterChip).toHaveTextContent("Persona One");
+    fireEvent.click(filterChip);
+
+    await waitFor(() => {
+      expect(screen.getByText("All personas")).toBeInTheDocument();
+      const projectCalls = paginatedCalls.filter(
+        (c) => c.name === "journeyRuns:listSessionsByProject",
+      );
+      expect(projectCalls.length).toBeGreaterThan(0);
+    });
   });
 });

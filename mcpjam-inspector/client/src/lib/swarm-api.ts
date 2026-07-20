@@ -12,6 +12,7 @@
  */
 
 import { authFetch } from "@/lib/session-token";
+import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
 import type { SwarmStreamEvent } from "@/shared/swarm-stream-events";
 
 // ── Convex query names (string-keyed reads) ─────────────────────────────────
@@ -23,6 +24,10 @@ export const SWARM_QUERIES = {
   listHosts: "hosts:listHosts",
   listJourneyRuns: "journeyRuns:listJourneyRuns",
   listSessionsByJourneyRun: "journeyRuns:listSessionsByJourneyRun",
+  /** Flat Sessions-tab default: all swarm sessions in the project. */
+  listSessionsByProject: "journeyRuns:listSessionsByProject",
+  /** Sessions-tab persona filter (narrows the project feed). */
+  listSessionsByPersona: "journeyRuns:listSessionsByPersona",
   listRunningPersonaRefIds: "journeyRuns:listRunningPersonaRefIds",
 } as const;
 
@@ -96,9 +101,9 @@ export interface JourneyRun {
 /**
  * A single synthetic session row — the backend `JourneySessionDto` returned by
  * `journeyRuns:listSessionsBy*` page items. The row identifier is `id`
- * (`s._id` under the hood); there is NO `personaLabel` / `messageCount`.
- * `readiness` is the server-denormalized WIDE subset the readiness badge reads
- * (`session-readiness.tsx`).
+ * (`s._id` under the hood). List-card fields (`messageCount`, previews,
+ * persona labels) power the Swarms Sessions tab; `readiness` /
+ * `goalScore` are the server-denormalized subsets the badges read.
  */
 export interface JourneySessionRow {
   /** `s._id` — the id `ShareUsageThreadDetail` opens + the deep-link threadId. */
@@ -107,10 +112,18 @@ export interface JourneySessionRow {
   projectId: string;
   hostId: string;
   personaRefId?: string;
+  /** Parent journey run — required for `buildSwarmSessionPath` deep links. */
+  journeyRunId?: string;
+  journeyRefId?: string;
   status?: string;
   modelId?: string;
   startedAt: number;
   lastActivityAt?: number;
+  messageCount?: number;
+  firstMessagePreview?: string;
+  personaLabel?: string;
+  visitorDisplayName?: string;
+  synthetic?: boolean;
   /** Server-denormalized readiness subset (see `session-readiness.tsx`). */
   readiness?: {
     status?: string;
@@ -119,6 +132,38 @@ export interface JourneySessionRow {
   };
   /** Server-denormalized judge verdict subset (see `swarmJudge.ts` backend). */
   goalScore?: SessionGoalScore;
+}
+
+/**
+ * Map a journey session list row into the shape `ShareUsageThreadList` /
+ * chatbox Sessions cards expect. Swarm sessions are always synthetic for
+ * badge purposes even if an older row omitted the flag.
+ */
+export function journeySessionRowToThread(
+  row: JourneySessionRow,
+  fallbackPersonaName?: string,
+): SharedChatThread {
+  const displayName =
+    row.visitorDisplayName ??
+    row.personaLabel ??
+    fallbackPersonaName ??
+    "Swarm session";
+  return {
+    _id: row.id,
+    sourceType: "swarm",
+    chatSessionId: row.chatSessionId,
+    visitorDisplayName: displayName,
+    modelId: row.modelId,
+    messageCount: row.messageCount ?? 0,
+    firstMessagePreview: row.firstMessagePreview,
+    startedAt: row.startedAt,
+    lastActivityAt: row.lastActivityAt ?? row.startedAt,
+    synthetic: row.synthetic ?? true,
+    personaId: row.personaRefId,
+    personaLabel: row.personaLabel ?? fallbackPersonaName,
+    readiness: row.readiness as SharedChatThread["readiness"] | undefined,
+    goalScore: row.goalScore,
+  };
 }
 
 /**
