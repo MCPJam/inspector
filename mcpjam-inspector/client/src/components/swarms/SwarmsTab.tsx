@@ -743,7 +743,6 @@ export function SwarmsTab({
                           shapeIndex={p.avatarShape}
                           paletteIndex={p.avatarPalette}
                           size="md"
-                          active={selected}
                           state={runningSet.has(p._id) ? "running" : "idle"}
                         />
                         <span className="flex min-w-0 flex-col items-start gap-0.5">

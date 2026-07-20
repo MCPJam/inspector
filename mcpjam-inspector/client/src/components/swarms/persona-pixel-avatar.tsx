@@ -427,7 +427,6 @@ export function PersonaPixelAvatar({
   shapeIndex: shapeOverride,
   paletteIndex: paletteOverride,
   size = "md",
-  active = false,
   state = "idle",
   className,
 }: {
@@ -438,8 +437,6 @@ export function PersonaPixelAvatar({
   /** Persisted look override (`personas.avatarPalette`) — mineral. */
   paletteIndex?: number | null;
   size?: "sm" | "md" | "lg";
-  /** Selected / focused in a list — ring only; does NOT mean a journey is running. */
-  active?: boolean;
   /**
    * Activity language. Peppy bob is reserved for `running` / `thinking` so
    * motion answers "is a journey happening?" — not "is this row selected?".
@@ -471,7 +468,6 @@ export function PersonaPixelAvatar({
         isBusy
           ? "animate-persona-pixel-bob-active"
           : "animate-persona-pixel-bob",
-        active && "ring-2 ring-ring/35 ring-offset-1 ring-offset-background",
         className,
       )}
       style={{ width, height: height + (size === "lg" ? 4 : 2) }}
