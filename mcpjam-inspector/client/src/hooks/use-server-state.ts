@@ -841,7 +841,7 @@ export function useServerState({
   // in saveServerConfigWithoutConnecting reaches it through a ref rather than a
   // dependency (a dep array entry would evaluate before the const initializes).
   const handleRemoveServerRef = useRef<
-    ((serverName: string) => Promise<void>) | null
+    ((serverName: string, options?: { removeFromCloud?: boolean }) => Promise<void>) | null
   >(null);
 
   async function sleep(ms: number): Promise<void> {
@@ -3403,6 +3403,18 @@ export function useServerState({
 
       const hostedProjectId =
         options?.hostedWriteTarget?.projectId ?? effectiveActiveProjectId;
+      const activeHostedProjectId =
+        effectiveActiveProjectId && effectiveActiveProjectId !== "none"
+          ? effectiveProjects[effectiveActiveProjectId]?.sharedProjectId ??
+            effectiveActiveProjectId
+          : null;
+      // A pinned hosted write can outlive an OAuth redirect that changes the
+      // ambient project. Convex still updates the pinned row, but this client
+      // state only represents the ambient project, so never inject the saved
+      // config into a different project's server map.
+      const shouldUpdateActiveProjectState =
+        !options?.hostedWriteTarget ||
+        options.hostedWriteTarget.projectId === activeHostedProjectId;
       if (
         isAuthenticated &&
         !useLocalFallback &&
@@ -3458,23 +3470,25 @@ export function useServerState({
         });
       }
 
-      // Drop the old row only once the new one is stored. Removing first meant
-      // a failed save left the rename with neither row — the server was gone
-      // with nothing to retry from. Safe to run after the write: the sync
-      // resolves its row by the NEW name, so removing the OLD name can't touch
-      // it. (The local branch already dropped it via originalServerName; this
-      // still disconnects the old runtime entry and clears its artifacts.)
-      if (isRename && originalServerName) {
-        await handleRemoveServerRef.current?.(originalServerName);
+      if (shouldUpdateActiveProjectState) {
+        // Drop the old local row only once the new one is stored. An exact-ID
+        // hosted rename already renamed the same Convex row, so its cleanup
+        // must not issue a second name-based cloud delete against a stale
+        // snapshot.
+        if (isRename && originalServerName) {
+          await handleRemoveServerRef.current?.(originalServerName, {
+            removeFromCloud: !options?.hostedWriteTarget,
+          });
+        }
+
+        dispatch({
+          type: "UPSERT_SERVER",
+          name: serverName,
+          server: serverEntry,
+        });
+
+        saveOAuthConfigToLocalStorage(formData);
       }
-
-      dispatch({
-        type: "UPSERT_SERVER",
-        name: serverName,
-        server: serverEntry,
-      });
-
-      saveOAuthConfigToLocalStorage(formData);
 
       logger.info("Saved server configuration without connecting", {
         serverName,
@@ -4029,12 +4043,23 @@ export function useServerState({
   );
 
   const handleRemoveServer = useCallback(
-    async (serverName: string) => {
+    async (serverName: string, options?: { removeFromCloud?: boolean }) => {
       logger.info("Removing server", { serverName });
       await handleDisconnect(serverName);
-      await removeServerFromStateAndCloud(serverName);
+      if (options?.removeFromCloud === false) {
+        cleanupServerLocalArtifacts(serverName);
+        dispatch({ type: "REMOVE_SERVER", name: serverName });
+      } else {
+        await removeServerFromStateAndCloud(serverName);
+      }
     },
-    [logger, handleDisconnect, removeServerFromStateAndCloud]
+    [
+      logger,
+      handleDisconnect,
+      cleanupServerLocalArtifacts,
+      dispatch,
+      removeServerFromStateAndCloud,
+    ]
   );
   handleRemoveServerRef.current = handleRemoveServer;
 

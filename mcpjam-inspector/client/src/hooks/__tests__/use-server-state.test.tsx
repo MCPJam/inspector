@@ -39,6 +39,7 @@ const {
   mockCreateServerWithClientSecret,
   mockUpdateServer,
   mockUpdateServerWithClientSecret,
+  mockDeleteServer,
   mockUseDbUserReady,
   mockHostedMode,
 } = vi.hoisted(() => ({
@@ -64,6 +65,7 @@ const {
   mockCreateServerWithClientSecret: vi.fn(),
   mockUpdateServer: vi.fn(),
   mockUpdateServerWithClientSecret: vi.fn(),
+  mockDeleteServer: vi.fn(),
   mockUseDbUserReady: vi.fn(() => false),
   mockHostedMode: vi.fn(() => false),
 }));
@@ -162,7 +164,7 @@ vi.mock("../useProjects", () => ({
     createServer: mockCreateServer,
     createServerIfMissing: mockCreateServerIfMissing,
     updateServer: mockUpdateServer,
-    deleteServer: vi.fn(),
+    deleteServer: mockDeleteServer,
     createServerWithClientSecret: mockCreateServerWithClientSecret,
     updateServerWithClientSecret: mockUpdateServerWithClientSecret,
   }),
@@ -2739,6 +2741,7 @@ describe("syncServerToConvex name-collision recovery", () => {
     mockCreateServerWithClientSecret.mockReset();
     mockUpdateServer.mockReset();
     mockUpdateServerWithClientSecret.mockReset();
+    mockDeleteServer.mockReset();
     mockConvexQuery.mockReset();
     getStoredTokensMock.mockReturnValue(null);
     readStoredOAuthConfigMock.mockReturnValue({});
@@ -3051,6 +3054,112 @@ describe("syncServerToConvex name-collision recovery", () => {
           xaaClientAuth: "private_key_jwt",
         }),
       })
+    );
+  });
+
+  it("does not write an exact hosted edit into a different active project's state", async () => {
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_fallback";
+    const dispatch = vi.fn();
+
+    mockUpdateServer.mockResolvedValue(undefined);
+
+    const { result } = renderUseServerState(dispatch, appState, {
+      isAuthenticated: true,
+      hasSignedInUser: true,
+      useLocalFallback: false,
+      effectiveProjects: appState.projects,
+      activeProjectServersFlat: [],
+    });
+
+    let saved: boolean | void;
+    await act(async () => {
+      saved = await result.current.saveServerConfigWithoutConnecting(
+        {
+          name: "demo-server",
+          type: "http",
+          url: "https://example.com/mcp",
+          useXaa: true,
+          useOAuth: false,
+          registrationMode: "cimd",
+          xaaClientAuth: "private_key_jwt",
+        },
+        {
+          originalServerName: "demo-server",
+          hostedWriteTarget: {
+            projectId: "project_pinned",
+            serverId: "srv_pinned",
+          },
+        }
+      );
+    });
+
+    expect(saved).toBe(true);
+    expect(mockUpdateServer).toHaveBeenCalledWith(
+      expect.objectContaining({ serverId: "srv_pinned" })
+    );
+    expect(dispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "UPSERT_SERVER" })
+    );
+    expect(dispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "REMOVE_SERVER" })
+    );
+  });
+
+  it("renames an exact hosted row without deleting it through a stale name snapshot", async () => {
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+    const dispatch = vi.fn();
+
+    mockUpdateServer.mockResolvedValue(undefined);
+
+    const { result } = renderUseServerState(dispatch, appState, {
+      isAuthenticated: true,
+      hasSignedInUser: true,
+      useLocalFallback: false,
+      effectiveProjects: appState.projects,
+      activeProjectServersFlat: [
+        {
+          _id: "srv_demo",
+          projectId: "project_default",
+          name: "demo-server",
+        },
+      ],
+    });
+
+    await act(async () => {
+      await result.current.saveServerConfigWithoutConnecting(
+        {
+          name: "renamed-server",
+          type: "http",
+          url: "https://example.com/mcp",
+          useXaa: true,
+          useOAuth: false,
+          registrationMode: "cimd",
+          xaaClientAuth: "private_key_jwt",
+        },
+        {
+          originalServerName: "demo-server",
+          hostedWriteTarget: {
+            projectId: "project_default",
+            serverId: "srv_demo",
+          },
+        }
+      );
+    });
+
+    expect(mockUpdateServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverId: "srv_demo",
+        name: "renamed-server",
+      })
+    );
+    expect(mockDeleteServer).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "REMOVE_SERVER", name: "demo-server" })
+    );
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "UPSERT_SERVER", name: "renamed-server" })
     );
   });
 

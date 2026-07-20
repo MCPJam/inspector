@@ -405,6 +405,52 @@ describe("XAAFlowTab", () => {
     );
   });
 
+  it("pins a hosted server rename to the selected server row", async () => {
+    runtimeConfig.hostedMode = true;
+    currentTarget = makeTarget({
+      barServerId: "srv_staging",
+      barServerProjectId: "project_staging",
+    });
+    const onSaveServerConfig = vi.fn().mockResolvedValue(true);
+
+    render(
+      <XAAFlowTab
+        serverConfigs={{
+          staging: {
+            name: "staging",
+            config: { url: "https://staging.mcp.example.com" },
+            useXaa: true,
+          } as any,
+        }}
+        selectedServerName="staging"
+        organizationId="org_staging"
+        onSaveServerConfig={onSaveServerConfig}
+      />
+    );
+
+    await act(async () => {
+      await capturedServerModalProps.onSave({
+        formData: {
+          name: "renamed-staging",
+          type: "http",
+          url: "https://staging.mcp.example.com",
+          useXaa: true,
+        },
+      });
+    });
+
+    expect(onSaveServerConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "renamed-staging" }),
+      {
+        originalServerName: "staging",
+        hostedWriteTarget: {
+          projectId: "project_staging",
+          serverId: "srv_staging",
+        },
+      }
+    );
+  });
+
   it("does not pin a new hosted server save to the selected existing row", async () => {
     runtimeConfig.hostedMode = true;
     currentTarget = makeTarget({

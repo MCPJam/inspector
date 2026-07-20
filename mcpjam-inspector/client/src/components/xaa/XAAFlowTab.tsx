@@ -1987,9 +1987,7 @@ export function XAAFlowTab({
           const saved = await onSaveServerConfig?.(formData, {
             originalServerName:
               serverModalMode === "add" ? undefined : selectedServer?.name,
-            ...(serverModalMode === "edit" &&
-            formData.name.trim() === selectedServer?.name &&
-            hostedWriteTarget
+            ...(serverModalMode === "edit" && hostedWriteTarget
               ? { hostedWriteTarget }
               : {}),
           });
