@@ -133,6 +133,8 @@ function initializeProtocolVersion(
       return "2024-11-05";
     case "2025-11-25":
       return "2025-11-25";
+    case "2026-07-28":
+      return "2026-07-28";
     default: {
       const exhaustive: never = protocolVersion;
       return exhaustive;

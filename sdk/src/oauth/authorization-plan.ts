@@ -188,7 +188,7 @@ export function resolveRegistrationStrategies(
   }
 
   if (
-    protocolVersion === "2025-11-25" &&
+    (protocolVersion === "2025-11-25" || protocolVersion === "2026-07-28") &&
     authServerMetadata?.client_id_metadata_document_supported === true
   ) {
     strategies.push("cimd");

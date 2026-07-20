@@ -12,6 +12,7 @@ import type {
   RegistrationStrategy2025_03_26,
   RegistrationStrategy2025_06_18,
   RegistrationStrategy2025_11_25,
+  RegistrationStrategy2026_07_28,
 } from "./types.js";
 
 import {
@@ -29,6 +30,11 @@ import {
   type DebugOAuthStateMachineConfig as Config2025_11_25,
 } from "./debug-oauth-2025-11-25.js";
 
+import {
+  createDebugOAuthStateMachine as create2026_07_28,
+  type DebugOAuthStateMachineConfig as Config2026_07_28,
+} from "./debug-oauth-2026-07-28.js";
+
 /**
  * Configuration for creating an OAuth state machine with protocol version selection
  */
@@ -37,7 +43,8 @@ export interface OAuthStateMachineFactoryConfig extends BaseOAuthStateMachineCon
   registrationStrategy:
     | RegistrationStrategy2025_03_26
     | RegistrationStrategy2025_06_18
-    | RegistrationStrategy2025_11_25;
+    | RegistrationStrategy2025_11_25
+    | RegistrationStrategy2026_07_28;
 }
 
 /**
@@ -99,6 +106,10 @@ export function createOAuthStateMachine(
       // All registration strategies are valid for 2025-11-25
       return create2025_11_25(baseConfig as Config2025_11_25);
 
+    case "2026-07-28":
+      // All registration strategies are valid for 2026-07-28
+      return create2026_07_28(baseConfig as Config2026_07_28);
+
     default:
       // TypeScript exhaustiveness check
       const _exhaustive: never = protocolVersion;
@@ -119,6 +130,8 @@ export function getDefaultRegistrationStrategy(
       return "dcr";
     case "2025-11-25":
       return "cimd";
+    case "2026-07-28":
+      return "cimd";
     default:
       return "dcr";
   }
@@ -136,6 +149,8 @@ export function getSupportedRegistrationStrategies(
     case "2025-06-18":
       return ["dcr", "preregistered"] as const;
     case "2025-11-25":
+      return ["cimd", "dcr", "preregistered"] as const;
+    case "2026-07-28":
       return ["cimd", "dcr", "preregistered"] as const;
     default:
       return ["dcr", "preregistered"] as const;
