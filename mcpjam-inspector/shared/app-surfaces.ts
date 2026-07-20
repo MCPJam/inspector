@@ -327,10 +327,11 @@ export const APP_SURFACES = [
     purpose:
       "List and invoke the tools a connected MCP server exposes, without a model in the loop.",
     userActivities: ["Browse a server's tools", "Invoke a tool directly"],
+    hasSnapshotProvider: true,
     agentTools: {
       kind: "none",
       reason:
-        "Tool group planned (list a server's tools, prefill/invoke one directly); tracked in the surface-tools rollout.",
+        "Snapshot-only: tool EXECUTION is already covered by the global ui_execute_tool, so a screen tool would duplicate it — this surface only exposes state (its tools, selection, last result) via ui_snapshot_app.",
     },
     showInAtlas: true,
   },
@@ -342,12 +343,12 @@ export const APP_SURFACES = [
     title: "Resources",
     purpose:
       "List and read the resources a connected MCP server exposes.",
-    userActivities: ["Browse a server's resources", "Read a resource"],
-    agentTools: {
-      kind: "none",
-      reason:
-        "Tool group planned (list a server's resources, read one); tracked in the surface-tools rollout.",
-    },
+    userActivities: [
+      "Browse a server's resources and resource templates",
+      "Read a resource, or resolve and read a template",
+    ],
+    hasSnapshotProvider: true,
+    agentTools: { kind: "group" },
     showInAtlas: true,
   },
   {
@@ -357,12 +358,12 @@ export const APP_SURFACES = [
     navSegments: ["prompts"],
     title: "Prompts",
     purpose: "List and render the prompts a connected MCP server exposes.",
-    userActivities: ["Browse a server's prompts", "Render a prompt"],
-    agentTools: {
-      kind: "none",
-      reason:
-        "Tool group planned (list a server's prompts, render one with arguments); tracked in the surface-tools rollout.",
-    },
+    userActivities: [
+      "Browse a server's prompts",
+      "Render a prompt with arguments",
+    ],
+    hasSnapshotProvider: true,
+    agentTools: { kind: "group" },
     showInAtlas: true,
   },
   {

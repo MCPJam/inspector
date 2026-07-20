@@ -65,7 +65,9 @@ export type InspectorCommandType =
   | "selectModel"
   | "setSystemPrompt"
   | "resetChat"
-  | "stopGeneration";
+  | "stopGeneration"
+  | "readResource"
+  | "getPrompt";
 
 export const KNOWN_INSPECTOR_COMMAND_TYPES = [
   "navigate",
@@ -107,6 +109,8 @@ export const KNOWN_INSPECTOR_COMMAND_TYPES = [
   "setSystemPrompt",
   "resetChat",
   "stopGeneration",
+  "readResource",
+  "getPrompt",
 ] as const satisfies readonly InspectorCommandType[];
 
 export interface InspectorCommandError {
@@ -656,6 +660,48 @@ export interface StopGenerationInspectorCommand {
   timeoutMs?: number;
 }
 
+/**
+ * Server-primitive READ commands, handled by the Resources and Prompts screens
+ * while `/resources` / `/prompts` are mounted. Both act on the currently
+ * SELECTED server (resolved from the surface, never from the agent) — there is
+ * no `serverName` in the payload, mirroring the computer/chatbox "no target"
+ * shape. Both call the SAME api the screen's Read/Run buttons use.
+ *
+ * Read-only reads (a GET against the server), so both stay side-effect-free
+ * from MCPJam's side. The returned CONTENT is capped for transcript safety —
+ * resource bodies and rendered prompts are exactly the "arbitrary content"
+ * risk, so the tool RESULT is truncated (never the snapshot, which reports only
+ * presence/size).
+ */
+
+/**
+ * Read a resource (or a resolved resource TEMPLATE) from the selected server.
+ * `resource` is a concrete resource's uri or name, OR a template's name /
+ * uriTemplate — resolved against the loaded lists, unknown → `invalid_request`,
+ * ambiguous → ask for the uri. `templateArguments` fills a template's RFC 6570
+ * parameters (ignored for a concrete resource).
+ */
+export interface ReadResourceInspectorCommand {
+  id: string;
+  type: "readResource";
+  payload: { resource: string; templateArguments?: Record<string, string> };
+  timeoutMs?: number;
+}
+
+/**
+ * Render a prompt from the selected server with arguments. `prompt` is a
+ * prompt's name (or title) as the Prompts list shows it — resolved against the
+ * loaded prompts, unknown → `invalid_request`, ambiguous → ask for the name.
+ * `arguments` are the prompt's argument values (all string-typed, matching the
+ * screen's form).
+ */
+export interface GetPromptInspectorCommand {
+  id: string;
+  type: "getPrompt";
+  payload: { prompt: string; arguments?: Record<string, string> };
+  timeoutMs?: number;
+}
+
 export type InspectorCommand =
   | NavigateInspectorCommand
   | SelectServerInspectorCommand
@@ -695,7 +741,9 @@ export type InspectorCommand =
   | SelectModelInspectorCommand
   | SetSystemPromptInspectorCommand
   | ResetChatInspectorCommand
-  | StopGenerationInspectorCommand;
+  | StopGenerationInspectorCommand
+  | ReadResourceInspectorCommand
+  | GetPromptInspectorCommand;
 
 export interface InspectorCommandSuccessResponse {
   id: string;

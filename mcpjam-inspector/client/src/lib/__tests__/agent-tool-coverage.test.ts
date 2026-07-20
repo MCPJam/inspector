@@ -112,12 +112,21 @@ describe("group surfaces wire the bridge in their own component", () => {
     }
   });
 
-  it("no BRIDGE_MODULES row exists for a non-group surface", () => {
+  it("every BRIDGE_MODULES row is a group surface or a snapshot-only surface", () => {
+    // A bridge module either drives a mount-scoped tool group, OR is
+    // snapshot-only: a surface that declares kind "none" (its actions are
+    // covered elsewhere — e.g. Tools, whose execution is the global
+    // ui_execute_tool) yet still calls useSurfaceAgentBridge with just a
+    // `snapshot`, which is what flips its `hasSnapshotProvider`.
     for (const surfaceId of Object.keys(BRIDGE_MODULES)) {
+      const surface = getAppSurface(surfaceId);
+      const kind = surface?.agentTools.kind;
+      const snapshotOnly =
+        kind === "none" && surface?.hasSnapshotProvider === true;
       expect(
-        getAppSurface(surfaceId)?.agentTools.kind,
-        `BRIDGE_MODULES maps "${surfaceId}" but its manifest is not kind "group"`,
-      ).toBe("group");
+        kind === "group" || snapshotOnly,
+        `BRIDGE_MODULES maps "${surfaceId}" but it is neither a group surface nor a snapshot-only surface`,
+      ).toBe(true);
     }
   });
 });

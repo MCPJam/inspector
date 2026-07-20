@@ -29,6 +29,53 @@ import {
 } from "@/lib/apis/mcp-prompts-api";
 import { SelectedToolHeader } from "./ui-playground/SelectedToolHeader";
 import type { ConnectionStatus } from "@/state/app-types";
+import { boundedJsonByteLength } from "@/lib/webmcp/bounded-size";
+import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
+import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
+import { clampText } from "@/lib/webmcp/groups/shared";
+import type { GetPromptInspectorCommand } from "@/shared/inspector-command.js";
+
+/** Cap the list of prompts a snapshot enumerates (names/titles only). */
+const PROMPT_SNAPSHOT_MAX_ITEMS = 30;
+/** Cap how many rendered messages a get returns to the transcript. */
+const PROMPT_MESSAGE_MAX_BLOCKS = 20;
+
+/**
+ * Build a transcript-safe view of a rendered prompt: each message's text is
+ * capped with the group's `clampText`; non-text parts are never inlined
+ * (metadata only). The whole tool result is additionally clamped by
+ * `fromActionResult` in the group, so this is the inner, per-message bound.
+ */
+function capPromptContentForTranscript(content: unknown): {
+  description?: string;
+  messages: unknown[];
+  truncated: boolean;
+} {
+  const src = content as any;
+  const messages = Array.isArray(src?.messages) ? (src.messages as any[]) : [];
+  let truncated = false;
+  const out = messages.slice(0, PROMPT_MESSAGE_MAX_BLOCKS).map((m) => {
+    const part = m?.content;
+    if (part && typeof part.text === "string") {
+      const capped = clampText(part.text);
+      if (capped !== part.text) truncated = true;
+      return { role: m?.role, type: part.type ?? "text", text: capped };
+    }
+    return {
+      role: m?.role,
+      type: part?.type ?? "unknown",
+      note: "Non-text content omitted for the transcript.",
+    };
+  });
+  if (messages.length > PROMPT_MESSAGE_MAX_BLOCKS) truncated = true;
+  return {
+    ...(typeof src?.description === "string"
+      ? { description: clampText(src.description) }
+      : {}),
+    messages: out,
+    truncated,
+  };
+}
 
 interface PromptsTabProps {
   serverConfig?: MCPServerConfig;
@@ -271,6 +318,103 @@ export function PromptsTab({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [selectedPrompt, isServerConnected, loading, getPrompt]);
+
+  // Agent bridge: one mount-scoped tool (ui_get_prompt) plus a redacted
+  // snapshot. Registered here — PromptsTab owns the prompt list and the
+  // getPromptApi path the Run button uses. Must run before any early return
+  // (rules of hooks); the handler throws when no server is selected.
+  useSurfaceAgentBridge({
+    surfaceId: "prompts",
+    handlers: {
+      getPrompt: async (command) => {
+        if (!serverName) {
+          throw createInspectorCommandClientError(
+            "unsupported_in_mode",
+            "No server is selected on the Prompts screen — select and connect one first.",
+          );
+        }
+        if (!isServerConnected) {
+          throw createInspectorCommandClientError(
+            "unsupported_in_mode",
+            "The selected server is not connected — connect it before rendering prompts.",
+          );
+        }
+        const { payload } = command as GetPromptInspectorCommand;
+        const key = payload?.prompt?.trim();
+        if (!key) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            "'prompt' is required (a prompt name as shown on the screen).",
+          );
+        }
+        const matches = prompts.filter(
+          (p) => p.name === key || p.title === key,
+        );
+        if (matches.length === 0) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            `No prompt matches "${key}". Use a prompt name from this screen (list them with ui_snapshot_app).`,
+          );
+        }
+        if (matches.length > 1) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            `"${key}" is ambiguous — pass the exact prompt name.`,
+          );
+        }
+        const target = matches[0];
+        const providedArgs = payload.arguments ?? {};
+        // Reflect the selection on screen, like clicking the prompt does.
+        setSelectedPrompt(target.name);
+        setError("");
+        setPromptContent(null);
+        try {
+          // SAME api the Run button uses (getPrompt → getPromptApi).
+          const data = await getPromptApi(serverName, target.name, providedArgs);
+          setPromptContent(data.content);
+          const capped = capPromptContentForTranscript(data.content);
+          return {
+            status: "prompt_rendered",
+            prompt: target.name,
+            ...capped,
+            note: capped.truncated
+              ? "Content was truncated for the transcript — view the full render on screen."
+              : undefined,
+          };
+        } catch (e) {
+          throw createInspectorCommandClientError(
+            "execution_failed",
+            e instanceof Error ? e.message : "Failed to render the prompt.",
+          );
+        }
+      },
+    },
+    // Redacted STATE, not payloads: the selected server, the prompt NAMES
+    // (bounded), the current selection + its argument FIELD NAMES (never the
+    // values), and whether a render exists (presence/size only, never content).
+    snapshot: () => {
+      // Bounded: never fully serialize a huge prompt body just to size it.
+      const { bytes: lastResultBytes, truncated: lastResultTruncated } =
+        promptContent !== null && promptContent !== undefined
+          ? boundedJsonByteLength(promptContent)
+          : { bytes: 0, truncated: false };
+      return {
+        selectedServer: serverName ?? null,
+        connected: isServerConnected,
+        promptCount: prompts.length,
+        prompts: prompts
+          .slice(0, PROMPT_SNAPSHOT_MAX_ITEMS)
+          .map((p) => ({ name: p.name, title: p.title ?? null })),
+        selectedPrompt: selectedPrompt || null,
+        selectedPromptArgumentNames: formFields.map((f) => f.name),
+        lastResult: {
+          present: promptContent !== null && promptContent !== undefined,
+          approxSizeBytes: lastResultBytes,
+          ...(lastResultTruncated ? { approxSizeCapped: true } : {}),
+        },
+      };
+    },
+  });
 
   if (!serverConfig || !serverName) {
     return (

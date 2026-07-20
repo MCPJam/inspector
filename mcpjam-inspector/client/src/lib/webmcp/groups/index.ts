@@ -19,6 +19,8 @@ import { buildSwarmsUiTools } from "./swarms";
 import { buildHostsUiTools } from "./hosts";
 import { buildComputerUiTools } from "./computer";
 import { buildChatboxesUiTools } from "./chatboxes";
+import { buildResourcesUiTools } from "./resources";
+import { buildPromptsUiTools } from "./prompts";
 
 export type { UiToolGroup } from "./types";
 
@@ -30,6 +32,8 @@ export const SURFACE_TOOL_GROUPS: Partial<Record<AppSurfaceId, UiToolGroup>> =
     hosts: { surfaceId: "hosts", buildTools: buildHostsUiTools },
     computer: { surfaceId: "computer", buildTools: buildComputerUiTools },
     chatboxes: { surfaceId: "chatboxes", buildTools: buildChatboxesUiTools },
+    resources: { surfaceId: "resources", buildTools: buildResourcesUiTools },
+    prompts: { surfaceId: "prompts", buildTools: buildPromptsUiTools },
   };
 
 /**

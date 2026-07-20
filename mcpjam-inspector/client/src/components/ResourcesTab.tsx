@@ -31,6 +31,51 @@ import { listResourceTemplates } from "@/lib/apis/mcp-resource-templates-api";
 import { parseTemplate } from "url-template";
 import { HOSTED_MODE } from "@/lib/config";
 import type { ConnectionStatus } from "@/state/app-types";
+import { boundedJsonByteLength } from "@/lib/webmcp/bounded-size";
+import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
+import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
+import { clampText } from "@/lib/webmcp/groups/shared";
+import type { ReadResourceInspectorCommand } from "@/shared/inspector-command.js";
+
+/** Cap the list of primitives a snapshot enumerates (uris/names only). */
+const RESOURCE_SNAPSHOT_MAX_ITEMS = 30;
+/** Cap how many content blocks a read returns to the transcript. */
+const RESOURCE_CONTENT_MAX_BLOCKS = 10;
+
+/**
+ * Build a transcript-safe view of a resource body: each text block is capped
+ * with the group's `clampText`; binary/blob blocks are never inlined (metadata
+ * + approximate size only). The whole tool result is additionally clamped by
+ * `fromActionResult` in the group, so this is the inner, per-block bound.
+ */
+function capResourceContentForTranscript(content: unknown): {
+  contentBlocks: unknown[];
+  truncated: boolean;
+} {
+  const contents = Array.isArray((content as any)?.contents)
+    ? ((content as any).contents as any[])
+    : [];
+  let truncated = false;
+  const contentBlocks = contents
+    .slice(0, RESOURCE_CONTENT_MAX_BLOCKS)
+    .map((c) => {
+      if (typeof c?.text === "string") {
+        const capped = clampText(c.text);
+        if (capped !== c.text) truncated = true;
+        return { uri: c?.uri, mimeType: c?.mimeType, text: capped };
+      }
+      const approxBase64Length =
+        typeof c?.blob === "string" ? c.blob.length : undefined;
+      return {
+        uri: c?.uri,
+        mimeType: c?.mimeType,
+        note: "Binary content omitted for the transcript.",
+        ...(approxBase64Length !== undefined ? { approxBase64Length } : {}),
+      };
+    });
+  if (contents.length > RESOURCE_CONTENT_MAX_BLOCKS) truncated = true;
+  return { contentBlocks, truncated };
+}
 
 interface ResourcesTabProps {
   serverConfig?: MCPServerConfig;
@@ -432,6 +477,155 @@ export function ResourcesTab({
     templateLoading,
     readTemplateResource,
   ]);
+
+  // Agent bridge: one mount-scoped tool (ui_read_resource) plus a redacted
+  // snapshot. Registered here — ResourcesTab owns the resource/template lists
+  // and the readResourceApi path the Read button uses. Must run before any
+  // early return (rules of hooks); handlers throw when no server is selected.
+  useSurfaceAgentBridge({
+    surfaceId: "resources",
+    handlers: {
+      readResource: async (command) => {
+        if (!serverName) {
+          throw createInspectorCommandClientError(
+            "unsupported_in_mode",
+            "No server is selected on the Resources screen — select and connect one first.",
+          );
+        }
+        if (!isServerConnected) {
+          throw createInspectorCommandClientError(
+            "unsupported_in_mode",
+            "The selected server is not connected — connect it before reading resources.",
+          );
+        }
+        const { payload } = command as ReadResourceInspectorCommand;
+        const key = payload?.resource?.trim();
+        if (!key) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            "'resource' is required (a resource uri/name or a template name/uriTemplate).",
+          );
+        }
+        const args = payload.templateArguments ?? {};
+
+        const concreteMatches = resources.filter(
+          (r) => r.uri === key || r.name === key,
+        );
+        const templateMatches = templates.filter(
+          (t) => t.uriTemplate === key || t.name === key,
+        );
+        const total = concreteMatches.length + templateMatches.length;
+        if (total === 0) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            `No resource or template matches "${key}". Use a uri/name from this screen (list them with ui_snapshot_app).`,
+          );
+        }
+        if (total > 1) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            `"${key}" is ambiguous — pass the exact resource uri (or template uriTemplate).`,
+          );
+        }
+
+        let uri: string;
+        let templateUriTemplate: string | null = null;
+        if (concreteMatches.length === 1) {
+          uri = concreteMatches[0].uri;
+          setActiveTab("resources");
+          setSelectedResource(uri);
+        } else {
+          const template = templateMatches[0];
+          templateUriTemplate = template.uriTemplate;
+          const paramNames = extractTemplateParameters(template.uriTemplate);
+          const missing = paramNames.filter(
+            (name) => !args[name] || args[name].trim() === "",
+          );
+          if (missing.length > 0) {
+            throw createInspectorCommandClientError(
+              "invalid_request",
+              `Template "${template.name}" needs templateArguments for: ${missing.join(", ")}.`,
+            );
+          }
+          const provided: Record<string, string> = {};
+          for (const name of paramNames) provided[name] = args[name];
+          uri = buildUriFromTemplate(template.uriTemplate, provided);
+          setActiveTab("templates");
+          setTemplateOverrides(provided);
+          setSelectedTemplate(template.uriTemplate);
+        }
+
+        try {
+          // SAME api the Read button uses (readResource → readResourceApi).
+          const data = await readResourceApi(serverName, uri);
+          const content = data?.content ?? null;
+          if (templateUriTemplate) {
+            setTemplateContent(content);
+          } else {
+            setResourceContent(content);
+          }
+          const { contentBlocks, truncated } =
+            capResourceContentForTranscript(content);
+          return {
+            status: "resource_read",
+            uri,
+            ...(templateUriTemplate
+              ? { uriTemplate: templateUriTemplate }
+              : {}),
+            truncated,
+            contents: contentBlocks,
+            note: truncated
+              ? "Content was truncated for the transcript — read on screen for the full body."
+              : undefined,
+          };
+        } catch (e) {
+          throw createInspectorCommandClientError(
+            "execution_failed",
+            e instanceof Error ? e.message : "Failed to read the resource.",
+          );
+        }
+      },
+    },
+    // Redacted STATE, not payloads: the selected server, the resource/template
+    // NAMES+uris (bounded), the current selection, and whether a body was read
+    // (presence/size only — never the content, which can be large or secret).
+    snapshot: () => {
+      const lastRead = resourceContent ?? templateContent;
+      let lastResultBytes = 0;
+      let lastResultTruncated = false;
+      if (lastRead) {
+        // Bounded: never fully serialize a huge resource body just to size it.
+        const sized = boundedJsonByteLength(lastRead);
+        lastResultBytes = sized.bytes;
+        lastResultTruncated = sized.truncated;
+      }
+      return {
+        selectedServer: serverName ?? null,
+        connected: isServerConnected,
+        activeTab,
+        resourceCount: resources.length,
+        resources: resources
+          .slice(0, RESOURCE_SNAPSHOT_MAX_ITEMS)
+          .map((r) => ({ uri: r.uri, name: r.name })),
+        templateCount: templates.length,
+        templates: templates
+          .slice(0, RESOURCE_SNAPSHOT_MAX_ITEMS)
+          .map((t) => ({
+            name: t.name,
+            uriTemplate: t.uriTemplate,
+            parameters: extractTemplateParameters(t.uriTemplate),
+          })),
+        selectedResource: selectedResource || null,
+        selectedTemplate: selectedTemplate || null,
+        selectedTemplateParameters: templateParams.map((p) => p.name),
+        lastResult: {
+          present: Boolean(lastRead),
+          approxSizeBytes: lastResultBytes,
+          ...(lastResultTruncated ? { approxSizeCapped: true } : {}),
+        },
+      };
+    },
+  });
 
   if (!serverConfig || !serverName) {
     return (
