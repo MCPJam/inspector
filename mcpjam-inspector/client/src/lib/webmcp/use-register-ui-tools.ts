@@ -24,7 +24,9 @@ export function useRegisterUiTools(options?: { enabled?: boolean }): void {
     const controller = new AbortController();
     const registerUiTool = useUiToolsRegistry.getState().registerUiTool;
     for (const def of buildUiToolsCatalog()) {
-      registerUiTool(def, { signal: controller.signal });
+      // Global scope: the app-wide catalog must survive the snapshot's
+      // 64-entry cap ahead of any surface-scoped registrations.
+      registerUiTool(def, { signal: controller.signal, scope: "global" });
     }
     return () => controller.abort();
   }, [enabled]);
