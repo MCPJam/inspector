@@ -373,10 +373,17 @@ export function PromptsTab({
         setSelectedPrompt(target.name);
         setError("");
         setPromptContent(null);
+        // Claim the render-version (same ref the on-screen Run path bumps) so a
+        // slower render can't overwrite a newer selection's result.
+        const getVersion = ++promptGetVersionRef.current;
         try {
           // SAME api the Run button uses (getPrompt → getPromptApi).
           const data = await getPromptApi(serverName, target.name, providedArgs);
-          setPromptContent(data.content);
+          // Commit to the on-screen pane only if this is still the newest
+          // render; the tool still returns what IT fetched.
+          if (getVersion === promptGetVersionRef.current) {
+            setPromptContent(data.content);
+          }
           const capped = capPromptContentForTranscript(data.content);
           return {
             status: "prompt_rendered",
