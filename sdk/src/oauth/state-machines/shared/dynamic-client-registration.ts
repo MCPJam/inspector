@@ -27,6 +27,38 @@ export interface DynamicClientRegistrationRequestInput {
 }
 
 /**
+ * Derive the OIDC / SEP-837 `application_type` from the redirect URIs. A `"web"`
+ * client requires HTTPS redirect URIs and forbids localhost; loopback and
+ * custom-scheme (e.g. `mcpjam://`) redirects are `"native"`. If any redirect is
+ * native-only, the whole registration is native — an OIDC-strict authorization
+ * server would otherwise reject MCPJam's loopback / desktop redirects
+ * registered as `"web"`.
+ */
+export function deriveApplicationType(
+  redirectUris: readonly string[]
+): "native" | "web" {
+  const isNativeRedirect = (uri: string): boolean => {
+    let parsed: URL;
+    try {
+      parsed = new URL(uri);
+    } catch {
+      return true; // unparseable → treat conservatively as native
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return true; // custom scheme (mcpjam://, …)
+    }
+    const host = parsed.hostname;
+    return (
+      host === "localhost" ||
+      host === "127.0.0.1" ||
+      host === "::1" ||
+      host === "[::1]"
+    );
+  };
+  return redirectUris.some(isNativeRedirect) ? "native" : "web";
+}
+
+/**
  * Builds the RFC 7591 registration POST exactly as the debug OAuth machines
  * historically did: caller-supplied metadata defaults win, with
  * authorization-code-flavored fallbacks for anything absent. Callers that are
@@ -51,6 +83,13 @@ export function buildDynamicClientRegistrationRequest(
     token_endpoint_auth_method:
       dynamicRegistrationDefaults.token_endpoint_auth_method ?? "none",
   };
+
+  // SEP-837: register the OIDC `application_type` so an OIDC-strict AS accepts
+  // MCPJam's loopback / custom-scheme (native) or hosted HTTPS (web) redirects.
+  // An explicit caller-supplied value (spread above) wins.
+  clientMetadata.application_type =
+    clientMetadata.application_type ??
+    deriveApplicationType(clientMetadata.redirect_uris);
 
   if (input.scope) {
     clientMetadata.scope = input.scope;
@@ -256,6 +295,7 @@ export async function executeDynamicClientRegistration<
     "Redirect URIs": clientInfo.redirect_uris,
     "Grant Types": clientInfo.grant_types,
     "Response Types": clientInfo.response_types,
+    "Application Type": clientInfo.application_type,
   };
 
   if (clientInfo.client_secret) {

@@ -182,6 +182,8 @@ export interface OAuthDynamicRegistrationMetadata {
   grant_types?: string[];
   response_types?: string[];
   token_endpoint_auth_method?: string;
+  /** OIDC / SEP-837 client application type. */
+  application_type?: "native" | "web";
   [key: string]: unknown;
 }
 

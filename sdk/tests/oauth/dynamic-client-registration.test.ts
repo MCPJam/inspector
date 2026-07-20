@@ -1,5 +1,6 @@
 import {
   buildDynamicClientRegistrationRequest,
+  deriveApplicationType,
   executeDynamicClientRegistration,
   redactDynamicClientRegistrationResponse,
 } from "../../src/oauth/state-machines/shared/dynamic-client-registration.js";
@@ -54,6 +55,8 @@ describe("buildDynamicClientRegistrationRequest", () => {
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
       token_endpoint_auth_method: "none",
+      // REDIRECT_URI is https + non-localhost → web (SEP-837).
+      application_type: "web",
     });
   });
 
@@ -73,6 +76,7 @@ describe("buildDynamicClientRegistrationRequest", () => {
       grant_types: ["client_credentials"],
       response_types: [],
       token_endpoint_auth_method: "client_secret_post",
+      application_type: "web",
     });
   });
 
@@ -88,6 +92,51 @@ describe("buildDynamicClientRegistrationRequest", () => {
     });
     expect(request.headers.Authorization).toBeUndefined();
     expect(request.headers["X-Custom"]).toBe("yes");
+  });
+});
+
+describe("application_type (SEP-837)", () => {
+  it("derives web for HTTPS non-localhost redirects", () => {
+    expect(deriveApplicationType(["https://client.example.com/cb"])).toBe("web");
+    expect(buildRequest().body.application_type).toBe("web");
+  });
+
+  it("derives native for loopback redirects", () => {
+    for (const uri of [
+      "http://localhost:8090/callback",
+      "http://127.0.0.1:8090/callback",
+      "http://[::1]:8090/callback",
+    ]) {
+      expect(deriveApplicationType([uri])).toBe("native");
+    }
+    const request = buildRequest({
+      redirectUri: "http://localhost:8090/callback",
+    });
+    expect(request.body.application_type).toBe("native");
+  });
+
+  it("derives native for custom-scheme redirects", () => {
+    expect(deriveApplicationType(["mcpjam://oauth/callback"])).toBe("native");
+  });
+
+  it("is native if ANY redirect is native", () => {
+    expect(
+      deriveApplicationType([
+        "https://hosted.example.com/cb",
+        "http://localhost:8090/cb",
+      ])
+    ).toBe("native");
+  });
+
+  it("lets a caller-supplied application_type win over the derived value", () => {
+    const request = buildRequest({
+      dynamicRegistrationDefaults: {
+        client_name: "Test Client",
+        application_type: "web",
+        redirect_uris: ["http://localhost:8090/callback"],
+      },
+    });
+    expect(request.body.application_type).toBe("web");
   });
 });
 
