@@ -50,7 +50,12 @@ export type InspectorCommandType =
   | "deleteEvalSuite"
   | "createPersona"
   | "openJourneyForm"
-  | "launchSwarmRun";
+  | "launchSwarmRun"
+  | "createHost"
+  | "openHostEditor"
+  | "setHostServers"
+  | "deleteHost"
+  | "duplicateHost";
 
 export const KNOWN_INSPECTOR_COMMAND_TYPES = [
   "navigate",
@@ -77,6 +82,11 @@ export const KNOWN_INSPECTOR_COMMAND_TYPES = [
   "createPersona",
   "openJourneyForm",
   "launchSwarmRun",
+  "createHost",
+  "openHostEditor",
+  "setHostServers",
+  "deleteHost",
+  "duplicateHost",
 ] as const satisfies readonly InspectorCommandType[];
 
 export interface InspectorCommandError {
@@ -379,6 +389,86 @@ export interface LaunchSwarmRunInspectorCommand {
   timeoutMs?: number;
 }
 
+/**
+ * Hosts-screen commands, handled by `HostsTab` while `/hosts` (or the
+ * `/servers` hub it also wraps) is mounted.
+ *
+ * A host is addressed by name or id as the host list shows it; handlers
+ * resolve it against the loaded host list and reject anything else as
+ * `invalid_request` (ambiguous → ask for the id) — never a fuzzy guess.
+ *
+ * Two deliberate postures mirror the eval/swarm groups:
+ * - **Prefill-over-commit for config.** A host config is high-entropy (model,
+ *   system prompt, behavior flags, protocol, appearance across focus tabs), so
+ *   there is NO one-shot "update host config" command. `openHostEditor` only
+ *   navigates the human to the host's editor to change any of that.
+ * - **Direct commit for the low-entropy actions.** Creating from a client
+ *   TEMPLATE (name + template id), replacing the attached server LIST (existing
+ *   project server names), deleting, and duplicating are all low-entropy — the
+ *   model can plausibly get the full input right and the user can see it
+ *   happen — so they commit directly.
+ */
+
+/**
+ * Create a host from a client TEMPLATE. Low-entropy: a display name plus the
+ * catalog template id (e.g. "claude", "cursor"); `template` defaults to the
+ * default catalog host when omitted. The config is seeded from the template
+ * exactly as the New Client dialog does — the model never authors arbitrary
+ * host config here. The new host is selected and opened.
+ */
+export interface CreateHostInspectorCommand {
+  id: string;
+  type: "createHost";
+  payload: { name: string; template?: string };
+  timeoutMs?: number;
+}
+
+/**
+ * Navigate the human to a host's editor. The way to change any host CONFIG
+ * (model, system prompt, behavior flags, protocol, appearance) — those are
+ * high-entropy and live behind the editor's focus tabs, so the agent opens the
+ * editor rather than committing config from a chat body.
+ */
+export interface OpenHostEditorInspectorCommand {
+  id: string;
+  type: "openHostEditor";
+  payload: { host: string };
+  timeoutMs?: number;
+}
+
+/**
+ * Replace a host's attached server set. Low-entropy: a list of EXISTING project
+ * server names (the same ones the Connect screen lists). Handlers resolve each
+ * name against the project's servers and reject an unknown name as
+ * `invalid_request` — the whole call is refused rather than partially applied.
+ * Set-to-list, so a retry converges rather than accumulating.
+ */
+export interface SetHostServersInspectorCommand {
+  id: string;
+  type: "setHostServers";
+  payload: { host: string; servers: string[] };
+  timeoutMs?: number;
+}
+
+/** Permanently delete a host, including its config and sessions. */
+export interface DeleteHostInspectorCommand {
+  id: string;
+  type: "deleteHost";
+  payload: { host: string };
+  timeoutMs?: number;
+}
+
+/**
+ * Duplicate a host. Low-entropy (a source host + an optional new name); the
+ * copy is selected and opened.
+ */
+export interface DuplicateHostInspectorCommand {
+  id: string;
+  type: "duplicateHost";
+  payload: { host: string; name?: string };
+  timeoutMs?: number;
+}
+
 export type InspectorCommand =
   | NavigateInspectorCommand
   | SelectServerInspectorCommand
@@ -403,7 +493,12 @@ export type InspectorCommand =
   | DeleteEvalSuiteInspectorCommand
   | CreatePersonaInspectorCommand
   | OpenJourneyFormInspectorCommand
-  | LaunchSwarmRunInspectorCommand;
+  | LaunchSwarmRunInspectorCommand
+  | CreateHostInspectorCommand
+  | OpenHostEditorInspectorCommand
+  | SetHostServersInspectorCommand
+  | DeleteHostInspectorCommand
+  | DuplicateHostInspectorCommand;
 
 export interface InspectorCommandSuccessResponse {
   id: string;

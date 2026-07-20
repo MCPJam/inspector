@@ -143,15 +143,14 @@ export const APP_SURFACES = [
     purpose:
       "Model an MCP client/host (Claude, ChatGPT, Cursor, …) and configure how it behaves — its model, tools, and capabilities.",
     userActivities: [
-      "Create or edit a host configuration",
-      "Set a host's model, system prompt, and behavior (tool approval, tool discovery)",
+      "Create a host from a client template",
+      "Open a host's editor to set its model, system prompt, and behavior (tool approval, tool discovery)",
+      "Attach or detach the project's servers on a host",
+      "Duplicate or delete a host",
       "Deep-link to a specific host's canvas",
     ],
-    agentTools: {
-      kind: "none",
-      reason:
-        "Tool group planned (create a host, set its model/prompt/behavior); tracked in the surface-tools rollout.",
-    },
+    hasSnapshotProvider: true,
+    agentTools: { kind: "group" },
     showInAtlas: true,
   },
   {
