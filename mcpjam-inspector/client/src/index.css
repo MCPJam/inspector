@@ -304,6 +304,44 @@
   }
 }
 
+/* Swarm persona 8-bit avatars — idle bob (Cursor-style little characters). */
+@keyframes persona-pixel-bob {
+  0%,
+  100% {
+    transform: translateY(1px);
+  }
+
+  50% {
+    transform: translateY(-2px);
+  }
+}
+
+@keyframes persona-pixel-bob-active {
+  0%,
+  100% {
+    transform: translateY(1px);
+  }
+
+  50% {
+    transform: translateY(-3px);
+  }
+}
+
+.animate-persona-pixel-bob {
+  animation: persona-pixel-bob 1.6s ease-in-out infinite;
+}
+
+.animate-persona-pixel-bob-active {
+  animation: persona-pixel-bob-active 0.9s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-persona-pixel-bob,
+  .animate-persona-pixel-bob-active {
+    animation: none;
+  }
+}
+
 @keyframes thinking-dot-pulse {
   0%,
   100% {
