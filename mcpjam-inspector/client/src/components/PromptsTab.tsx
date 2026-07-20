@@ -68,10 +68,15 @@ function capPromptContentForTranscript(content: unknown): {
     };
   });
   if (messages.length > PROMPT_MESSAGE_MAX_BLOCKS) truncated = true;
+  let description: string | undefined;
+  if (typeof src?.description === "string") {
+    description = clampText(src.description);
+    // A clamped description is also truncation — flag it so the agent doesn't
+    // read `truncated: false` and treat the shortened text as complete.
+    if (description !== src.description) truncated = true;
+  }
   return {
-    ...(typeof src?.description === "string"
-      ? { description: clampText(src.description) }
-      : {}),
+    ...(description !== undefined ? { description } : {}),
     messages: out,
     truncated,
   };

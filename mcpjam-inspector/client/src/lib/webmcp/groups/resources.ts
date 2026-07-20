@@ -22,22 +22,12 @@ import {
   commandResponseToActionResult,
   dispatchInspectorCommand,
 } from "../ui-actions";
-import { asOptionalString, errorResult, fromActionResult } from "./shared";
-
-function asStringRecord(
-  value: unknown,
-): { ok: true; record?: Record<string, string> } | { ok: false } {
-  if (value === undefined) return { ok: true };
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return { ok: false };
-  }
-  const record: Record<string, string> = {};
-  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
-    if (typeof raw !== "string") return { ok: false };
-    record[key] = raw;
-  }
-  return { ok: true, record };
-}
+import {
+  asOptionalString,
+  asStringRecord,
+  errorResult,
+  fromActionResult,
+} from "./shared";
 
 export function buildResourcesUiTools(): UiToolDefinition[] {
   return [
