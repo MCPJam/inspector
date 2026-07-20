@@ -1847,6 +1847,7 @@ interface DynamicHarnessOptions {
   cache?: Map<string, XaaEphemeralDcrCredentials>;
   registrationId?: string;
   seedDuplicateRisk?: boolean;
+  organizationId?: string;
 }
 
 function createDynamicHarness(options: DynamicHarnessOptions) {
@@ -1860,6 +1861,7 @@ function createDynamicHarness(options: DynamicHarnessOptions) {
     userId: "user-12345",
     email: "demo.user@example.com",
     scope: "read:tools",
+    organizationId: options.organizationId,
     registrationStrategy: options.strategy,
     // Simulates the per-target duplicate-risk flag re-seeded into a fresh
     // (from-idle) run after an ordinary reset.
@@ -2057,6 +2059,7 @@ function createDynamicHarness(options: DynamicHarnessOptions) {
     userId: "user-12345",
     email: "demo.user@example.com",
     scope: "read:tools",
+    organizationId: options.organizationId,
     registrationStrategy: options.strategy,
     registrationId: options.registrationId,
     dcrCredentialCache: {
@@ -2741,6 +2744,48 @@ describe("cimd registration strategy", () => {
     expect(proxyBody.clientId).toBe(XAA_DEBUG_CLIENT_ID_METADATA_URL);
     expect(proxyBody.clientSecret).toBeUndefined();
     expect(proxyBody.tokenEndpointAuthMethod).toBe("private_key_jwt");
+    expect(proxyBody.organizationId).toBeUndefined();
+  });
+
+  it("includes the active org only for resolved private_key_jwt CIMD redemption", async () => {
+    const harness = createDynamicHarness({
+      strategy: "cimd",
+      organizationId: "org_123",
+      authzMetadataExtras: CIMD_SUPPORTED,
+      cimdResponse: {
+        status: 200,
+        headers: { "content-type": "application/json" },
+        body: {
+          client_id: XAA_DEBUG_CLIENT_ID_METADATA_URL,
+          grant_types: [
+            "urn:ietf:params:oauth:grant-type:token-exchange",
+            "urn:ietf:params:oauth:grant-type:jwt-bearer",
+          ],
+          authorization_grant_profiles_supported: [
+            "urn:ietf:params:oauth:grant-profile:id-jag",
+          ],
+          token_endpoint_auth_method: "private_key_jwt",
+          jwks: {
+            keys: [
+              {
+                kty: "EC",
+                crv: "P-256",
+                x: "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+                y: "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0",
+                kid: "xaa-client-1",
+                alg: "ES256",
+                use: "sig",
+              },
+            ],
+          },
+        },
+      },
+    });
+    await harness.machine.runAll();
+    expect(harness.proxyTokenBody()).toMatchObject({
+      tokenEndpointAuthMethod: "private_key_jwt",
+      organizationId: "org_123",
+    });
   });
 
   const cimdDoc = {

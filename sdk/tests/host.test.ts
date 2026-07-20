@@ -301,6 +301,55 @@ describe("Host — toJSON() round-trips", () => {
     });
     expect(new Host(json1).toJSON()).toEqual(json1);
   });
+
+  it("defensively copies skillSelection — caller mutation after construction never leaks into toJSON()", () => {
+    const skillIds = ["sk-1"];
+    const host = new Host({
+      style: "mcpjam",
+      model: "test-model",
+      skillSelection: { mode: "explicit", skillIds },
+    });
+    skillIds.push("sk-2");
+    expect(host.toJSON().skillSelection).toEqual({
+      mode: "explicit",
+      skillIds: ["sk-1"],
+    });
+  });
+
+  it('normalizes { mode: "all-visible" } skillSelection to absent (one identity per behavior)', () => {
+    const allVisible = new Host({
+      style: "mcpjam",
+      model: "test-model",
+      skillSelection: { mode: "all-visible" },
+    }).toJSON();
+    const absent = new Host({ style: "mcpjam", model: "test-model" }).toJSON();
+    expect("skillSelection" in allVisible).toBe(false);
+    expect(allVisible).toEqual(absent);
+  });
+
+  it("round-trips an explicit skillSelection — including explicit-empty", () => {
+    const explicit = new Host({
+      style: "mcpjam",
+      model: "test-model",
+      skillSelection: { mode: "explicit", skillIds: ["sk-b", "sk-a"] },
+    });
+    const json1 = explicit.toJSON();
+    expect(json1.skillSelection).toEqual({
+      mode: "explicit",
+      skillIds: ["sk-a", "sk-b"],
+    });
+    expect(new Host(json1).toJSON()).toEqual(json1);
+
+    const explicitEmpty = new Host({
+      style: "mcpjam",
+      model: "test-model",
+      skillSelection: { mode: "explicit", skillIds: [] },
+    });
+    const json2 = explicitEmpty.toJSON();
+    // Explicit-empty ("no standalone skills") survives — absence is semantic.
+    expect(json2.skillSelection).toEqual({ mode: "explicit", skillIds: [] });
+    expect(new Host(json2).toJSON()).toEqual(json2);
+  });
 });
 
 describe("Host — deterministic under post-construction input mutation", () => {
