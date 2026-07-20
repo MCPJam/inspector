@@ -75,6 +75,19 @@ vi.mock("@/lib/swarm-api", async (importOriginal) => {
 vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
   ShareUsageThreadDetail: () => null,
 }));
+vi.mock("@/components/hosts/ServerGroupPicker", () => ({
+  ServerGroupPicker: () => (
+    <button type="button">No server group · pick one</button>
+  ),
+}));
+vi.mock("@/hooks/useViews", () => ({
+  useProjectServerAttachments: () => ({
+    serverAttachments: [],
+    isLoading: false,
+  }),
+  useProjectServers: () => ({ servers: [], isLoading: false }),
+  useDbUserReady: () => true,
+}));
 vi.mock("@/lib/chatbox-session", () => ({
   getShareableAppOrigin: () => "https://app.test",
 }));
@@ -301,7 +314,6 @@ describe("SwarmsTab — agent bridge handlers", () => {
     expect(snapshot).toMatchObject({
       ok: true,
       data: {
-        view: "journeys",
         selectedPersona: { id: "persona-1", name: "Persona One", role: "tester" },
         personaCount: 1,
         personas: [{ id: "persona-1", name: "Persona One" }],

@@ -117,6 +117,13 @@ vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
 vi.mock("@/lib/chatbox-session", () => ({
   getShareableAppOrigin: () => "https://app.test",
 }));
+vi.mock("@/hooks/useViews", () => ({
+  useProjectServerAttachments: () => ({
+    serverAttachments: [],
+    isLoading: false,
+  }),
+  useDbUserReady: () => true,
+}));
 vi.mock("@/lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));

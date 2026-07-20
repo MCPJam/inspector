@@ -62,6 +62,16 @@ vi.mock("@/lib/swarm-api", async (importOriginal) => {
 vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
   ShareUsageThreadDetail: () => null,
 }));
+vi.mock("@/components/hosts/ServerGroupPicker", () => ({
+  ServerGroupPicker: () => null,
+}));
+vi.mock("@/hooks/useViews", () => ({
+  useProjectServerAttachments: () => ({
+    serverAttachments: [],
+    isLoading: false,
+  }),
+  useDbUserReady: () => true,
+}));
 vi.mock("@/lib/chatbox-session", () => ({
   getShareableAppOrigin: () => "https://app.test",
 }));
