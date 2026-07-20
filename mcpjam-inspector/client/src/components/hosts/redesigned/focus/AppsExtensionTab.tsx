@@ -66,6 +66,11 @@ interface AppsExtensionTabProps {
   readOnly?: boolean;
 }
 
+const SEGMENT_ACTIVE_CLASSES =
+  "border-primary-foreground/40 bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground";
+const SEGMENT_BUTTON_CLASSES =
+  "border-l border-border first:border-l-0";
+
 /**
  * User-facing JSON document. The `sandbox` block configures the proxy
  * iframe the inspector renders MCP App views in — one place to edit
@@ -1114,8 +1119,8 @@ function RequestDisplayModeControl({
           type="button"
           className={
             opt.value === value
-              ? "bg-foreground/10 px-2 py-0.5 font-medium"
-              : "px-2 py-0.5 text-muted-foreground hover:bg-muted"
+              ? `${SEGMENT_BUTTON_CLASSES} ${SEGMENT_ACTIVE_CLASSES} px-2 py-0.5 font-medium`
+              : `${SEGMENT_BUTTON_CLASSES} px-2 py-0.5 text-muted-foreground hover:bg-muted`
           }
           onClick={() => onChange(opt.value)}
         >
@@ -1155,8 +1160,8 @@ function WidgetDisplayModeRequestsControl({
           type="button"
           className={
             opt.value === value
-              ? "bg-foreground/10 px-2 py-0.5 font-medium"
-              : "px-2 py-0.5 text-muted-foreground hover:bg-muted"
+              ? `${SEGMENT_BUTTON_CLASSES} ${SEGMENT_ACTIVE_CLASSES} px-2 py-0.5 font-medium`
+              : `${SEGMENT_BUTTON_CLASSES} px-2 py-0.5 text-muted-foreground hover:bg-muted`
           }
           onClick={() => onChange(opt.value)}
         >
@@ -1589,8 +1594,8 @@ function McpAppsCapabilityMatrix({
                     title={mode}
                     className={
                       enabled
-                        ? "bg-foreground/10 px-2.5 py-0.5 font-medium"
-                        : "px-2.5 py-0.5 text-muted-foreground hover:bg-muted"
+                        ? `${SEGMENT_BUTTON_CLASSES} ${SEGMENT_ACTIVE_CLASSES} px-2.5 py-0.5 font-medium`
+                        : `${SEGMENT_BUTTON_CLASSES} px-2.5 py-0.5 text-muted-foreground hover:bg-muted`
                     }
                     onClick={() =>
                       advertised

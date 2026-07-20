@@ -22,7 +22,6 @@ import { listSurfaceGroupToolNames } from "../index";
 
 const CHATBOX_TOOL_NAMES = [
   "ui_publish_chatbox",
-  "ui_generate_chatbox_sessions",
   "ui_delete_chatbox",
 ];
 
@@ -41,7 +40,7 @@ describe("chatboxes group through useSurfaceAgentBridge", () => {
     expect(listSurfaceGroupToolNames("chatboxes")).toEqual(CHATBOX_TOOL_NAMES);
   });
 
-  it("mount registers all three tools surface-scoped; unmount removes them", () => {
+  it("mount registers both tools surface-scoped; unmount removes them", () => {
     const { unmount } = renderHook(() =>
       useSurfaceAgentBridge({
         surfaceId: "chatboxes",

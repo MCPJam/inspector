@@ -488,7 +488,7 @@ export function HostsTab({
                     rightSlot={
                       <div
                         ref={setAddServerSlotEl}
-                        className="flex min-w-0 flex-wrap items-center justify-center gap-3 md:justify-end"
+                        className="flex min-w-0 flex-wrap items-center justify-center gap-3 @2xl:justify-end"
                         data-testid="hosts-tab-add-server-slot"
                       />
                     }

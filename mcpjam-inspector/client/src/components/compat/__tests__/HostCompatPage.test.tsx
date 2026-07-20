@@ -14,7 +14,7 @@ vi.mock("@/components/compat/HostCompatMatrix", () => ({
   ),
 }));
 vi.mock("@/lib/host-compat/use-host-compat", () => ({
-  useServerToolsData: () => null,
+  useServerToolsData: () => ({ data: null, status: "idle" }),
 }));
 
 import { HostCompatPage } from "../HostCompatPage";

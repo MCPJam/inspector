@@ -29,11 +29,15 @@ export function ConnectViewHeader({
   const computersEnabled = useComputersEnabled();
   return (
     <div
-      className="relative shrink-0 border-b border-border/40 px-4 py-2.5 md:px-8"
+      className="@container relative shrink-0 border-b border-border/40 px-4 py-2.5 md:px-8"
       data-testid={testId}
     >
-      <div className="flex flex-col items-stretch gap-2 md:grid md:grid-cols-[1fr_auto_1fr] md:items-center md:gap-3">
-        <div className="hidden md:block" aria-hidden="true" />
+      {/* The layout switch is gated on the header's own width via `@container`
+          (not the viewport) so it stacks correctly when the sidebar is open
+          and the container — not the window — is narrow. Below the container
+          breakpoint the selector and right slot stack into one column. */}
+      <div className="flex flex-col items-stretch gap-2 @2xl:grid @2xl:grid-cols-[1fr_auto_1fr] @2xl:items-center @2xl:gap-3">
+        <div className="hidden @2xl:block" aria-hidden="true" />
         <div className="flex min-w-0 justify-center">
           <ViewModeSelector
             value={value}
@@ -54,7 +58,7 @@ export function ConnectViewHeader({
             ]}
           />
         </div>
-        {rightSlot ?? <div className="hidden md:block" aria-hidden="true" />}
+        {rightSlot ?? <div className="hidden @2xl:block" aria-hidden="true" />}
       </div>
     </div>
   );

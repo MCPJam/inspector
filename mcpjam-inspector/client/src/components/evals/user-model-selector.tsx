@@ -5,7 +5,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
 import { UserModelCard } from "./user-model-card";
 import type { ModelDefinition } from "@/shared/types";
-import { isMCPJamProvidedModel } from "@/shared/types";
+import { isMCPJamProvidedModelMenuItem } from "@/components/chat-v2/shared/model-helpers";
 
 interface UserModelSelectorProps {
   selectedModel: ModelDefinition | null;
@@ -31,7 +31,7 @@ export function UserModelSelector({
   const filteredModels = useMemo(() => {
     // First filter out MCPJam provided models
     const userModels = availableModels.filter(
-      (model) => !isMCPJamProvidedModel(String(model.id)),
+      (model) => !isMCPJamProvidedModelMenuItem(model),
     );
 
     // Then apply search filter

@@ -64,6 +64,7 @@ export {
 export {
   scanWidgetSource,
   scanWidgetMeta,
+  scanWidgetPermissionNames,
   type WidgetCapabilityNeed,
   type WidgetUsage,
 } from "./widget-scan.js";

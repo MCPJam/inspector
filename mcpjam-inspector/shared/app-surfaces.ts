@@ -237,7 +237,6 @@ export const APP_SURFACES = [
       "Publish a host as a shareable chat surface for humans, and review its sessions.",
     userActivities: [
       "Publish a client's chatbox (its shareable chat surface)",
-      "Generate synthetic AI sessions against a chatbox (spends money)",
       "Delete a client's chatbox",
       "Review chatbox sessions and copy its share link",
     ],

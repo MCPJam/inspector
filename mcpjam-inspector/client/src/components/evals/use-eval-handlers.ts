@@ -1122,8 +1122,10 @@ export function useEvalHandlers({
   );
 
   // Confirm deletion - actually performs the deletion
-  const confirmDelete = useCallback(async () => {
-    if (!suiteToDelete || deletingSuiteId) return;
+  // Returns whether the delete actually committed (agent tooling propagates a
+  // real failure from this; the UI dialog ignores the return).
+  const confirmDelete = useCallback(async (): Promise<boolean> => {
+    if (!suiteToDelete || deletingSuiteId) return false;
 
     setDeletingSuiteId(suiteToDelete._id);
 
@@ -1137,9 +1139,11 @@ export function useEvalHandlers({
       }
 
       setSuiteToDelete(null);
+      return true;
     } catch (error) {
       console.error("Failed to delete suite:", error);
       toast.error(getBillingErrorMessage(error, "Failed to delete test suite"));
+      return false;
     } finally {
       setDeletingSuiteId(null);
     }
