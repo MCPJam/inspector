@@ -276,6 +276,26 @@ The downloaded file is named `mcpjam-traces-<scope>-<timestamp>.json`.
   If the project is too large to export in a single file, use **This run** scope and export individual runs instead.
 </Note>
 
+## Agent tools
+
+When you are signed in as a project member and the Evaluate screen is open, the assistant has access to a set of tools for driving the Evaluate surface directly. These tools are only active while `/evals` is mounted — they are not available on the CI tab or in other surfaces.
+
+| Tool | What it does |
+|---|---|
+| `ui_open_eval_suite_form` | Opens the create-suite dialog, optionally prefilling the suite name. The user reviews, picks server attachments, and submits — no suite is created automatically. |
+| `ui_run_eval_suite` | Starts a run of an existing suite. Uses the same quota gate as the **Run** button; an exhausted eval iteration quota is reported as an error and the run is refused. |
+| `ui_cancel_eval_run` | Cancels an in-progress run by its run id (full id or the shortened form shown in the runs list). A run that has already finished is reported as such rather than returning an error. |
+| `ui_generate_eval_tests` | Generates suggested test cases for a suite using an LLM over the suite's connected servers. Spends money; requires at least one server attached to the suite. |
+| `ui_delete_eval_suite` | Permanently deletes a suite, including its test cases and run history. Irreversible. |
+
+Suites are addressed by name or id exactly as shown on the Evaluate screen. If a name matches more than one suite, the assistant will ask for the suite id instead.
+
+`ui_run_eval_suite` and `ui_generate_eval_tests` are marked destructive (they spend quota or money) and gate on the confirmation pill before executing. `ui_delete_eval_suite` is also destructive and irreversible.
+
+<Note>
+  These tools are only available when you are signed in as a project member with a project selected. Guests and unauthenticated users see an `unsupported_in_mode` error.
+</Note>
+
 ## What to author first
 
 If you're new to the surface, the shortest useful loop is:
