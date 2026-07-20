@@ -89,10 +89,13 @@ The agent acts by driving the inspector UI directly — every action it takes is
 | **Navigate** | Opens tabs, pages, and panels in the inspector |
 | **Playground** | Opens the playground, selects tools, and prefills or runs tool calls |
 | **Server management** | Adds, connects, disconnects, and removes MCP servers on the Connect screen by chat |
+| **Registry catalog** | Installs and connects servers from the public registry catalog, disconnects them, and stars or unstars them — available while the Registry screen is open |
 | **App snapshot** | Reads the current state of the UI to observe before acting |
 | **Documentation & web search** | Answers questions about MCPJam features and MCP concepts |
 
 For server management, adding and connecting are always two separate steps — the agent saves the server first, then connects it, so you can see each change as it happens. If a server requires OAuth authorization, the agent reports that and waits for you to click **Authorize** yourself; it never redirects the page on your behalf. Removing a server is irreversible from chat, so it always pauses for approval even when the **Tool approval** toggle is off.
+
+Registry catalog actions are available only while the Registry screen is open. If you ask the agent to install a registry server from another screen, it will navigate to the Registry first. OAuth-protected registry servers follow the same rule as project servers — the agent reports `authorization_required` and leaves the Authorize click to you.
 
 Actions that mutate the UI (such as running a tool call) pause for your explicit approval before they run when the **Tool approval** toggle is on. Destructive actions — those that can't be undone by looking at the screen — always pause for approval regardless of the toggle setting.
 
