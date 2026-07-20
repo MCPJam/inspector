@@ -20,9 +20,6 @@ vi.mock(
   "@/components/connection/share-usage/ShareUsageThreadDetail",
   () => ({ ShareUsageThreadDetail: () => null }),
 );
-vi.mock("@/components/swarms/SwarmHostsPanel", () => ({
-  SwarmHostsPanel: () => null,
-}));
 
 import {
   goalScoreAvgLabel,
