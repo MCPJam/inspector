@@ -191,6 +191,12 @@ export type HostCompatProfile = {
    * that renders no widgets (e.g. a CLI host).
    */
   capabilities?: McpAppsCapabilities;
+  /**
+   * Explicit sandbox permission allowlist from the host's MCP Apps profile.
+   * `undefined` means the catalog did not publish an exact allowlist; an
+   * empty object is meaningful and means the host allows none of them.
+   */
+  sandboxPermissionAllow?: Record<string, boolean>;
   /** Tool-result image handling (see `HostImageSupport`). */
   imageSupport?: HostImageSupport;
 };

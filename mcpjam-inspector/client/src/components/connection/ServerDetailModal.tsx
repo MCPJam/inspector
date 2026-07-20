@@ -865,6 +865,15 @@ export function ServerDetailModal({
                   <HostCompatContent
                     server={server}
                     toolsData={toolsData}
+                    toolsLoadStatus={
+                      isLoadingTools
+                        ? "loading"
+                        : toolsLoadError
+                        ? "failed"
+                        : toolsData
+                        ? "ready"
+                        : "idle"
+                    }
                     projectId={projectId}
                     serverId={serverId}
                     onClose={onClose}

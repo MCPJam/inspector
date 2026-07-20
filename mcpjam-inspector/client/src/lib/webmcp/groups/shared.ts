@@ -10,16 +10,49 @@ import { openPlaygroundAction, type UiActionResult } from "../ui-actions";
 
 /** Keep serialized results well under context-bloating sizes. */
 export const MAX_RESULT_CHARS = 16 * 1024;
+// Stop serializing well before we've built a multi-megabyte string: a tool
+// result can carry arbitrary provider content (e.g. a large resource read).
+// The replacer throws once the running length passes this budget, so we never
+// materialize the whole thing just to clamp it afterwards.
+const SERIALIZE_BUDGET = MAX_RESULT_CHARS * 2;
 
 export function clampText(text: string): string {
   if (text.length <= MAX_RESULT_CHARS) return text;
   return `${text.slice(0, MAX_RESULT_CHARS)}… [truncated]`;
 }
 
+/** JSON.stringify that aborts once it has emitted more than SERIALIZE_BUDGET. */
+function budgetedStringify(value: unknown): string {
+  let emitted = 0;
+  const OVER = Symbol("over-budget");
+  try {
+    return JSON.stringify(value, function (_key, v) {
+      if (typeof v === "string") {
+        emitted += v.length;
+        if (emitted > SERIALIZE_BUDGET) throw OVER;
+        return v;
+      }
+      if (typeof v === "number" || typeof v === "boolean") {
+        emitted += 8;
+        if (emitted > SERIALIZE_BUDGET) throw OVER;
+      }
+      return v;
+    });
+  } catch (e) {
+    if (e === OVER) {
+      // Best-effort truncated head — clampText adds the marker.
+      return JSON.stringify(value)?.slice(0, SERIALIZE_BUDGET) ?? "";
+    }
+    throw e;
+  }
+}
+
 export function okResult(data: unknown): UiToolResult {
   let text: string;
   try {
-    text = JSON.stringify(data === undefined ? { ok: true } : { ok: true, data });
+    text = budgetedStringify(
+      data === undefined ? { ok: true } : { ok: true, data },
+    );
   } catch {
     text = JSON.stringify({ ok: true, note: "Result was not serializable." });
   }

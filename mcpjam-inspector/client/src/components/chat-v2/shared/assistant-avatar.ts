@@ -4,7 +4,7 @@ import {
   getChatboxHostLogo,
   type ChatboxHostStyle,
 } from "@/lib/chatbox-client-style";
-import { getProviderLogoFromModel } from "@/components/chat-v2/shared/chat-helpers";
+import { getProviderLogo } from "@/lib/provider-registry";
 
 type ThemeMode = "light" | "dark" | "system";
 
@@ -43,7 +43,7 @@ export function getAssistantAvatarDescriptor({
   }
 
   return {
-    logoSrc: getProviderLogoFromModel(model, themeMode),
+    logoSrc: getProviderLogo(model.provider, themeMode),
     logoAlt: `${model.id} logo`,
     avatarClasses: DEFAULT_AVATAR_CLASSES,
     ariaLabel: `${model.name} assistant`,

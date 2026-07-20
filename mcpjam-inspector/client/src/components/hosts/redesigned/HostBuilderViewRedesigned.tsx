@@ -449,51 +449,16 @@ export function HostBuilderViewRedesigned({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
-      <div className="relative shrink-0 border-b border-border/40 px-8 py-2.5">
-        <div className="flex min-w-0 items-center justify-end gap-2 sm:gap-3">
-          {/* Host/Compare sub-nav sits inline beside Save — a single header
-              row instead of a second segmented bar stacked over the canvas. */}
-          <HostSectionTabs
-            value="host"
-            hostEnabled
-            onSelect={(next) => {
-              if (next === "compare") navigate("/host-compare");
-            }}
-          />
-          <Tooltip>
-            <TooltipTrigger asChild>
-              {/* Span wrapper: a disabled <button> swallows pointer events,
-                  so the tooltip must hang off an always-interactive parent. */}
-              <span className="inline-flex shrink-0">
-                <Button
-                  size="sm"
-                  onClick={() => void handleSave()}
-                  disabled={!canSave}
-                  variant={isDirty ? "default" : "ghost"}
-                  className={
-                    isDirty
-                      ? "shrink-0"
-                      : "shrink-0 text-muted-foreground hover:text-foreground disabled:opacity-40"
-                  }
-                >
-                  {isSaving ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : (
-                    <Save className="size-4" />
-                  )}
-                  {isDirty ? "Save client" : "Saved"}
-                </Button>
-              </span>
-            </TooltipTrigger>
-            {saveDisabledReason ? (
-              <TooltipContent side="bottom" variant="muted">
-                {saveDisabledReason}
-              </TooltipContent>
-            ) : null}
-          </Tooltip>
-        </div>
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <div className="pointer-events-auto">
+      <div className="@container relative shrink-0 border-b border-border/40 px-4 py-2.5 md:px-8">
+        {/* 3-column grid mirrors the Servers view (ConnectViewHeader): the
+            centered selector and the right-side controls each own a column so
+            they can never overlap. The switch is gated on the header's own
+            width via `@container` (not the viewport) so it stacks correctly
+            when the sidebar is open and the container — not the window — is
+            narrow. Below the container breakpoint it stacks into one column. */}
+        <div className="flex flex-col items-stretch gap-2 @2xl:grid @2xl:grid-cols-[1fr_auto_1fr] @2xl:items-center @2xl:gap-3">
+          <div className="hidden @2xl:block" aria-hidden="true" />
+          <div className="flex min-w-0 justify-center">
             <ViewModeSelector
               value="host"
               ariaLabel="Connect view"
@@ -518,6 +483,50 @@ export function HostBuilderViewRedesigned({
                   : []),
               ]}
             />
+          </div>
+          <div className="flex min-w-0 flex-wrap items-center justify-center gap-2 @2xl:justify-end sm:gap-3">
+            {/* Host/Compare sub-nav sits inline beside Save — a single header
+                row instead of a second segmented bar stacked over the canvas.
+                `flex-wrap` lets the pill + Save drop to their own line rather
+                than overlap if the column is ever squeezed. */}
+            <HostSectionTabs
+              value="host"
+              hostEnabled
+              onSelect={(next) => {
+                if (next === "compare") navigate("/host-compare");
+              }}
+            />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                {/* Span wrapper: a disabled <button> swallows pointer events,
+                    so the tooltip must hang off an always-interactive parent. */}
+                <span className="inline-flex shrink-0">
+                  <Button
+                    size="sm"
+                    onClick={() => void handleSave()}
+                    disabled={!canSave}
+                    variant={isDirty ? "default" : "ghost"}
+                    className={
+                      isDirty
+                        ? "shrink-0"
+                        : "shrink-0 text-muted-foreground hover:text-foreground disabled:opacity-40"
+                    }
+                  >
+                    {isSaving ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <Save className="size-4" />
+                    )}
+                    {isDirty ? "Save client" : "Saved"}
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              {saveDisabledReason ? (
+                <TooltipContent side="bottom" variant="muted">
+                  {saveDisabledReason}
+                </TooltipContent>
+              ) : null}
+            </Tooltip>
           </div>
         </div>
       </div>

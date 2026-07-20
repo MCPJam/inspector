@@ -18,7 +18,8 @@ import {
   type ProviderTokens,
 } from "@/hooks/use-ai-provider-keys";
 import { cn } from "@/lib/utils";
-import { ModelDefinition, isMCPJamProvidedModel } from "@/shared/types";
+import { ModelDefinition } from "@/shared/types";
+import { isMCPJamProvidedModelMenuItem } from "@/components/chat-v2/shared/model-helpers";
 import { track } from "@/lib/analytics";
 import {
   Tooltip,
@@ -346,7 +347,7 @@ export function EvalRunner({
   const stepCompletion = useMemo(() => {
     // Check that all selected models have credentials
     const allModelsHaveCredentials = selectedModels.every((model) => {
-      const isJam = isMCPJamProvidedModel(model.id);
+      const isJam = isMCPJamProvidedModelMenuItem(model);
       return isJam || hasToken(model.provider as keyof ProviderTokens);
     });
 
@@ -598,7 +599,7 @@ export function EvalRunner({
     // Collect API keys for all selected models
     const modelApiKeys: Record<string, string> = {};
     for (const model of selectedModels) {
-      if (!isMCPJamProvidedModel(model.id)) {
+      if (!isMCPJamProvidedModelMenuItem(model)) {
         const key = getToken(model.provider as keyof ProviderTokens);
         if (!key) {
           toast.error(

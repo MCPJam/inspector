@@ -2,12 +2,12 @@
  * Notification handler management for MCPClientManager
  */
 
-import {
-  type Client,
-  type NotificationMethod,
-} from "@modelcontextprotocol/client";
 import type { ProgressHandler } from "./types.js";
-import type { ManagedMcpClient } from "./managed-mcp-client.js";
+import type {
+  ManagedMcpClient,
+  ManagedMcpClientNotificationHandler,
+  ManagedMcpClientNotificationMethod,
+} from "./managed-mcp-client.js";
 
 export const ResourceListChangedNotificationMethod =
   "notifications/resources/list_changed" as const;
@@ -17,9 +17,9 @@ export const PromptListChangedNotificationMethod =
   "notifications/prompts/list_changed" as const;
 export const ProgressNotificationMethod = "notifications/progress" as const;
 
-// Type aliases for notification handling
-type NotificationMethodName = Parameters<Client["setNotificationHandler"]>[0];
-type NotificationHandler = Parameters<Client["setNotificationHandler"]>[1];
+// Type aliases for notification handling (the manager's method-string form).
+type NotificationMethodName = ManagedMcpClientNotificationMethod;
+type NotificationHandler = ManagedMcpClientNotificationHandler;
 
 export type { NotificationMethodName, NotificationHandler };
 
@@ -116,7 +116,7 @@ export class NotificationManager {
    * @param serverId - The server ID
    * @returns Array of registered notification methods
    */
-  getMethods(serverId: string): NotificationMethod[] {
+  getMethods(serverId: string): NotificationMethodName[] {
     const serverHandlers = this.handlers.get(serverId);
     return serverHandlers ? Array.from(serverHandlers.keys()) : [];
   }

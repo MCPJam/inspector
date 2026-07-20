@@ -1,6 +1,7 @@
 import { getToolUiResourceUri } from "@modelcontextprotocol/ext-apps/app-bridge";
 import {
   scanWidgetMeta,
+  scanWidgetPermissionNames,
   scanWidgetSource,
   type WidgetCapabilityNeed,
   type WidgetUsage,
@@ -22,7 +23,7 @@ export type ReadResourceFn = (uri: string) => Promise<ReadResourceResult>;
  * `scanWidgetUsage` return a false "scanned clean").
  */
 function widgetResourceUri(
-  meta: Record<string, unknown> | undefined,
+  meta: Record<string, unknown> | undefined
 ): string | undefined {
   const mcpApps = getToolUiResourceUri({ _meta: meta });
   if (mcpApps) return mcpApps;
@@ -57,7 +58,7 @@ function htmlFromContent(content: { text?: string; blob?: string }): string {
  */
 export async function scanWidgetUsage(
   toolsData: HostCompatToolsInput | null | undefined,
-  readResource: ReadResourceFn,
+  readResource: ReadResourceFn
 ): Promise<WidgetUsage | undefined> {
   if (!toolsData?.tools) return undefined;
 
@@ -76,6 +77,17 @@ export async function scanWidgetUsage(
   const add = (need: WidgetCapabilityNeed, tools: string[]) => {
     acc[need] = Array.from(new Set([...(acc[need] ?? []), ...tools]));
   };
+  const addPermissionNames = (names: Set<string>, tools: string[]) => {
+    if (names.size === 0) return;
+    const permissionTools = acc.sandboxPermissionTools ?? {};
+    for (const name of names) {
+      permissionTools[name] = Array.from(
+        new Set([...(permissionTools[name] ?? []), ...tools])
+      ).sort();
+    }
+    acc.sandboxPermissionTools = permissionTools;
+    acc.sandboxPermissionNames = Object.keys(permissionTools).sort();
+  };
 
   // A widget is "analyzed" only if its read RESOLVED WITH CONTENT — a resolved
   // read that returned nothing was not scanned, so it must not count as clean.
@@ -89,12 +101,13 @@ export async function scanWidgetUsage(
           ...scanWidgetSource(htmlFromContent(content)),
           ...scanWidgetMeta(content._meta),
         ]);
+        addPermissionNames(scanWidgetPermissionNames(content._meta), toolNames);
         for (const need of needs) add(need, toolNames);
         return true;
       } catch {
         return false;
       }
-    }),
+    })
   );
 
   // Conclusive only when EVERY widget was analyzed. If any couldn't be read,

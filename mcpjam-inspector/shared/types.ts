@@ -126,32 +126,12 @@ export type ModelProvider =
 // empty/unreachable (a cold start still bills hosted models to MCPJam credits).
 export const MCPJAM_PROVIDED_MODEL_IDS: string[] = [...HOSTED_MODEL_IDS];
 
-const MCPJAM_GUEST_GATED_MODEL_IDS = [
-  "mistralai/mistral-medium-3-5",
-  "mistralai/mistral-large-2512",
-  "openai/gpt-5.4",
-  "openai/gpt-5.4-mini",
-  "openai/gpt-5.4-nano",
-  "openai/gpt-5.4-pro",
-  "openai/gpt-5.5",
-  "openai/gpt-5.5-pro",
-  "deepseek/deepseek-v4-pro",
-  "deepseek/deepseek-v4-flash",
-  "anthropic/claude-opus-4.6-fast",
-  "anthropic/claude-sonnet-4.6",
-  "anthropic/claude-sonnet-5",
-  "anthropic/claude-opus-4.6",
-  "anthropic/claude-opus-4.7",
-  "anthropic/claude-fable-5",
-  "google/gemini-3.1-pro-preview",
-] as const;
-
-const gatedGuestModelIds = new Set<string>(MCPJAM_GUEST_GATED_MODEL_IDS);
-
-const MCPJAM_GUEST_ALLOWED_MODEL_IDS: string[] =
-  MCPJAM_PROVIDED_MODEL_IDS.filter(
-    (modelId) => !gatedGuestModelIds.has(modelId)
-  );
+// Guests are no longer model-curated: every hosted model is guest-allowed and
+// the backend enforces spend caps rather than an allowlist. Retained as an
+// alias of the full provided set for the snapshot/offline classification path
+// (`isMCPJamGuestAllowedModel`); the live catalog's per-model `guestAllowed`
+// flag (now always true) is the authoritative source when available.
+const MCPJAM_GUEST_ALLOWED_MODEL_IDS: string[] = [...MCPJAM_PROVIDED_MODEL_IDS];
 
 /** Minimal shape `getCanonicalModelId` matches against — `SUPPORTED_MODELS`
  * satisfies it, and so does a `ModelDefinition[]` derived from the backend

@@ -8,7 +8,6 @@ import {
   type McpUiResourceCsp,
   type McpUiResourcePermissions,
 } from "@modelcontextprotocol/ext-apps/app-bridge";
-import type { CallToolResult } from "@modelcontextprotocol/client";
 // Pure JSON-RPC parser + logging transport are shared, framework-free runtime
 // helpers in the SDK.
 import { extractMethod, LoggingTransport } from "@mcpjam/sdk/widget-runtime";
@@ -286,7 +285,12 @@ export function McpAppsModal({
       const resolvedToolInput = toolInputRef.current ?? {};
       bridge.sendToolInput({ arguments: resolvedToolInput });
       if (toolOutputRef.current) {
-        bridge.sendToolResult(toolOutputRef.current as CallToolResult);
+        // ext-apps (v1-sdk peer) and the v2 client each declare a structurally
+        // identical but nominally distinct CallToolResult; cast to exactly what
+        // the bridge accepts at this Apps-compat seam (§1D).
+        bridge.sendToolResult(
+          toolOutputRef.current as Parameters<typeof bridge.sendToolResult>[0],
+        );
       }
 
       const appCaps = bridge.getAppCapabilities();
