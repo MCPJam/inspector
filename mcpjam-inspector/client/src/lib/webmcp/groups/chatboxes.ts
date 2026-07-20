@@ -1,6 +1,5 @@
 /**
- * Chatboxes-screen tools: publish a host's chatbox, generate synthetic
- * sessions against it, and delete it.
+ * Chatboxes-screen tools: publish a host's chatbox and delete it.
  *
  * Mount-scoped like the evals/registry/hosts groups: `ChatboxesTab` owns the
  * command handlers and the hosts/chatboxes they resolve against, so the tools
@@ -13,13 +12,6 @@
  *   has a chatbox converges) and stays inside MCPJam. A standalone
  *   Journeys-owned host has NO publish surface — the handler refuses it as
  *   `unsupported_in_mode`, never back-minting one.
- * - **Generate SPENDS MONEY.** `ui_generate_chatbox_sessions` reproduces the
- *   Generate-with-AI dialog's default path (generate personas, then run
- *   synthetic multi-turn sessions) against the on-screen chatbox through the
- *   SAME gated endpoints the dialog uses. Destructive (approval pill) +
- *   open-world (real model + MCP traffic). It is synthetic-only (the human
- *   Chatbox product refuses it) and requires the client to have a model — the
- *   dialog's own gate, surfaced as an `execution_failed` naming the fix.
  * - **Delete is destructive.** `ui_delete_chatbox` removes a host's chatbox,
  *   its hosted link, and usage history.
  *
@@ -40,14 +32,6 @@ const HOST_PROPERTY = {
   description:
     "Client (host) as the client picker shows it: its name (e.g. 'Claude') or its host id. Chatboxes are 1:1 with clients.",
 } as const;
-
-function asOptionalCount(value: unknown, min: number, max: number) {
-  if (value === undefined) return undefined;
-  if (typeof value !== "number" || !Number.isFinite(value)) return null;
-  const n = Math.round(value);
-  if (n < min || n > max) return null;
-  return n;
-}
 
 export function buildChatboxesUiTools(): UiToolDefinition[] {
   return [
@@ -79,68 +63,6 @@ export function buildChatboxesUiTools(): UiToolDefinition[] {
         const response = await dispatchInspectorCommand({
           type: "publishChatbox",
           payload: { host },
-        });
-        return fromActionResult(commandResponseToActionResult(response));
-      },
-    },
-    {
-      name: "ui_generate_chatbox_sessions",
-      description:
-        "Generate AI personas and run synthetic multi-turn sessions against the chatbox currently selected on the Chatboxes screen. SPENDS MONEY (real model + MCP calls, same gate as the Generate-with-AI dialog) and adds synthetic sessions. Optional counts only (personaCount/sessionsPerPersona/maxTurns) — the backend authors the personas. Requires the client to have a model; synthetic sessions are a Swarms feature, refused on the human Chatbox surface. Runs in the background; watch ui_snapshot_app.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          personaCount: {
-            type: "integer",
-            minimum: 1,
-            maximum: 10,
-            description: "How many personas to generate (1–10, default 3).",
-          },
-          sessionsPerPersona: {
-            type: "integer",
-            minimum: 1,
-            maximum: 5,
-            description: "Sessions to run per persona (1–5, default 2).",
-          },
-          maxTurns: {
-            type: "integer",
-            minimum: 1,
-            maximum: 20,
-            description: "Max turns per session (1–20, default 6).",
-          },
-        },
-        additionalProperties: false,
-      },
-      readOnly: false,
-      // Spends money and drives real model + third-party MCP traffic →
-      // destructive (approval pill) + open-world. A retry starts ANOTHER
-      // money-spending run → not idempotent.
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: false,
-        openWorldHint: true,
-      },
-      execute: async (args) => {
-        const personaCount = asOptionalCount(args.personaCount, 1, 10);
-        if (personaCount === null) {
-          return errorResult("'personaCount' must be an integer from 1 to 10.");
-        }
-        const sessionsPerPersona = asOptionalCount(args.sessionsPerPersona, 1, 5);
-        if (sessionsPerPersona === null) {
-          return errorResult("'sessionsPerPersona' must be an integer from 1 to 5.");
-        }
-        const maxTurns = asOptionalCount(args.maxTurns, 1, 20);
-        if (maxTurns === null) {
-          return errorResult("'maxTurns' must be an integer from 1 to 20.");
-        }
-        const response = await dispatchInspectorCommand({
-          type: "generateChatboxSessions",
-          payload: {
-            ...(personaCount !== undefined ? { personaCount } : {}),
-            ...(sessionsPerPersona !== undefined ? { sessionsPerPersona } : {}),
-            ...(maxTurns !== undefined ? { maxTurns } : {}),
-          },
         });
         return fromActionResult(commandResponseToActionResult(response));
       },

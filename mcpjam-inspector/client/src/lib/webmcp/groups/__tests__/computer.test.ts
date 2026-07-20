@@ -1,6 +1,6 @@
 /**
  * The computer group's own contract: exact tool set, honest annotations (the
- * destructive set is exactly reset + delete; start is billed+capped but NOT
+ * destructive set is start + reset + delete; start is billed+capped (spend →
  * destructive), empty input schemas, dispatch shapes, and command errors
  * passing through as tool errors. The availability + daily-cap gating lives in
  * ComputerView's handlers (see ComputerView.agent.test.tsx).
@@ -59,11 +59,11 @@ describe("buildComputerUiTools", () => {
   });
 
   it("annotates every tool completely and honestly", () => {
-    // start: billed + daily-cap-gated → open-world, but CREATES (not
-    // destructive); a retry can consume another start → not idempotent.
+    // start: billed + daily-cap-gated → open-world AND destructive (spend →
+    // confirmation pill); a retry can consume another start → not idempotent.
     expect(getTool("ui_start_computer").annotations).toEqual({
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: false,
       openWorldHint: true,
     });
@@ -98,7 +98,11 @@ describe("buildComputerUiTools", () => {
     const destructive = buildComputerUiTools()
       .filter((tool) => tool.annotations?.destructiveHint === true)
       .map((tool) => tool.name);
-    expect(destructive).toEqual(["ui_reset_computer", "ui_delete_computer"]);
+    expect(destructive).toEqual([
+      "ui_start_computer",
+      "ui_reset_computer",
+      "ui_delete_computer",
+    ]);
   });
 
   it("every tool takes an empty, closed input schema (no target, no secrets)", () => {

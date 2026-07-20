@@ -61,7 +61,6 @@ export type InspectorCommandType =
   | "resetComputer"
   | "deleteComputer"
   | "publishChatbox"
-  | "generateChatboxSessions"
   | "deleteChatbox"
   | "selectModel"
   | "setSystemPrompt"
@@ -103,7 +102,6 @@ export const KNOWN_INSPECTOR_COMMAND_TYPES = [
   "resetComputer",
   "deleteComputer",
   "publishChatbox",
-  "generateChatboxSessions",
   "deleteChatbox",
   "selectModel",
   "setSystemPrompt",
@@ -560,13 +558,6 @@ export interface DeleteComputerInspectorCommand {
  *   publish surface. `publishChatbox` refuses it with `unsupported_in_mode`
  *   carrying the same reason the UI's "Managed by Swarms" notice shows — it
  *   never back-mints a chatbox for such a host.
- * - **Generate SPENDS MONEY.** `generateChatboxSessions` reproduces the
- *   Generate-with-AI dialog's default path (generate personas, then run
- *   synthetic multi-turn sessions) against the on-screen chatbox through the
- *   SAME gated endpoints the dialog uses. It is synthetic-only (the human
- *   Chatbox product refuses it as `unsupported_in_mode`) and requires the
- *   chatbox's client to have a model (the dialog's own gate), else
- *   `execution_failed`.
  *
  * Reviewing sessions and copying the share link are READ-ONLY human actions —
  * exposed in the snapshot, not as commands. The share TOKEN never crosses the
@@ -594,16 +585,6 @@ export interface PublishChatboxInspectorCommand {
  * currently-selected chatbox, like the computer commands act on the one
  * computer.
  */
-export interface GenerateChatboxSessionsInspectorCommand {
-  id: string;
-  type: "generateChatboxSessions";
-  payload?: {
-    personaCount?: number;
-    sessionsPerPersona?: number;
-    maxTurns?: number;
-  };
-  timeoutMs?: number;
-}
 
 /** Permanently delete a host's chatbox — its hosted link and usage history. */
 export interface DeleteChatboxInspectorCommand {
@@ -710,7 +691,6 @@ export type InspectorCommand =
   | ResetComputerInspectorCommand
   | DeleteComputerInspectorCommand
   | PublishChatboxInspectorCommand
-  | GenerateChatboxSessionsInspectorCommand
   | DeleteChatboxInspectorCommand
   | SelectModelInspectorCommand
   | SetSystemPromptInspectorCommand

@@ -1,5 +1,6 @@
 import { useEffect, useId, useState } from "react";
 import { Check, Pencil, Plus, Trash2 } from "lucide-react";
+import { Avatar, AvatarFallback } from "@mcpjam/design-system/avatar";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
@@ -8,12 +9,11 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@mcpjam/design-system/popover";
-import { CharacterAvatar } from "@/components/chatboxes/personas";
 import {
   useXaaPeopleMutations,
   type RemoteXaaPerson,
 } from "@/hooks/useXaaPeople";
-import { cn } from "@/lib/utils";
+import { cn, getInitials } from "@/lib/utils";
 
 /** Per-person result of the last valid run against the current target,
  * as ruled by the resource authorization server (jwt-bearer redemption).
@@ -56,6 +56,40 @@ function OutcomeBadge({ outcome }: { outcome: XaaPersonOutcome }) {
         </span>
       );
   }
+}
+
+const MCPJAM_USER_AVATAR_COLORS = [
+  "bg-blue-600 text-white",
+  "bg-violet-600 text-white",
+  "bg-emerald-700 text-white",
+  "bg-amber-500 text-amber-950",
+  "bg-rose-600 text-white",
+  "bg-cyan-600 text-white",
+] as const;
+
+function getAvatarColor(seed: string): string {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = (hash * 31 + seed.charCodeAt(i)) | 0;
+  }
+  return MCPJAM_USER_AVATAR_COLORS[
+    Math.abs(hash) % MCPJAM_USER_AVATAR_COLORS.length
+  ];
+}
+
+function PersonAvatar({ name, seed }: { name: string; seed: string }) {
+  return (
+    <Avatar className="size-6 rounded-md">
+      <AvatarFallback
+        className={cn(
+          "rounded-md text-[9px] font-medium",
+          getAvatarColor(seed),
+        )}
+      >
+        {getInitials(name)}
+      </AvatarFallback>
+    </Avatar>
+  );
 }
 
 export interface PersonDraft {
@@ -154,10 +188,6 @@ export function PersonForm({
         void submit();
       }}
     >
-      <p className="text-xs text-muted-foreground">
-        Synthetic identity for testing — don&apos;t use real user data. Your
-        authorization server decides what this subject can access.
-      </p>
       <div className="flex flex-col gap-1.5">
         <Label htmlFor={`${fieldId}-name`} className="text-xs">
           Name
@@ -288,7 +318,7 @@ export function XAAPeopleStrip({
     </Popover>
   );
 
-  // Loaded-and-empty: just the ghost button, no bar chrome.
+  // Loaded-and-empty: just the ghost button, no roster chips yet.
   if (people.length === 0) {
     return (
       <div className="border-b border-border bg-background px-4 py-1.5">
@@ -310,7 +340,7 @@ export function XAAPeopleStrip({
           <div
             key={person._id}
             className={cn(
-              "group/chip flex items-center rounded-full border py-1 pl-1 pr-1 transition-colors",
+              "group/chip flex items-center rounded-lg border p-0.5 transition-colors",
               selected
                 ? "border-primary/60 bg-primary/5 ring-1 ring-primary/40"
                 : "border-border/60 hover:bg-muted/40",
@@ -327,11 +357,11 @@ export function XAAPeopleStrip({
                 onSelectPerson(selected ? null : person._id);
               }}
               className={cn(
-                "flex items-center gap-2 rounded-full py-0 pl-0 pr-2 text-left",
+                "flex items-center gap-2 rounded-md pr-2 text-left",
                 chipBusy && "cursor-not-allowed",
               )}
             >
-              <CharacterAvatar name={person.name} seed={person._id} size="sm" />
+              <PersonAvatar name={person.name} seed={person._id} />
               <span className="text-xs font-medium">{person.name}</span>
               {outcome ? <OutcomeBadge outcome={outcome} /> : null}
             </button>
@@ -353,7 +383,7 @@ export function XAAPeopleStrip({
                     aria-disabled={chipBusy || undefined}
                     title={`Edit ${person.name}`}
                     className={cn(
-                      "rounded-full p-1.5 text-muted-foreground transition-colors",
+                      "rounded-md p-1.5 text-muted-foreground transition-colors",
                       chipBusy
                         ? "cursor-not-allowed"
                         : "hover:bg-muted hover:text-foreground",
@@ -399,7 +429,7 @@ export function XAAPeopleStrip({
                     });
                 }}
                 className={cn(
-                  "rounded-full p-1.5 text-muted-foreground transition-colors",
+                  "rounded-md p-1.5 text-muted-foreground transition-colors",
                   chipBusy
                     ? "cursor-not-allowed"
                     : "hover:bg-destructive/10 hover:text-destructive",

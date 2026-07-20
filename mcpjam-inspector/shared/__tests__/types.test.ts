@@ -15,52 +15,29 @@ describe("MCPJam-provided model classification", () => {
     expect(isMCPJamProvidedModel("openai/gpt-4o-mini")).toBe(true);
   });
 
-  it("gates only the premium hosted models from guest access", () => {
-    expect(isMCPJamGuestAllowedModel("anthropic/claude-haiku-4.5")).toBe(true);
-    expect(isMCPJamProvidedModel("anthropic/claude-haiku-4.5")).toBe(true);
-    expect(isMCPJamProvidedModel("openai/gpt-5.4")).toBe(true);
-    expect(isMCPJamProvidedModel("openai/gpt-5.5")).toBe(true);
-    expect(isMCPJamProvidedModel("openai/gpt-5.5-pro")).toBe(true);
-    expect(isMCPJamProvidedModel("deepseek/deepseek-v4-pro")).toBe(true);
-    expect(isMCPJamProvidedModel("deepseek/deepseek-v4-flash")).toBe(true);
-    expect(isMCPJamProvidedModel("qwen/qwen3.6-plus")).toBe(true);
-    expect(isMCPJamProvidedModel("mistralai/mistral-small-2603")).toBe(true);
-    expect(isMCPJamProvidedModel("mistralai/mistral-medium-3-5")).toBe(true);
-    expect(isMCPJamProvidedModel("mistralai/mistral-large-2512")).toBe(true);
-    expect(isMCPJamProvidedModel("mistralai/devstral-2512")).toBe(true);
-    expect(isMCPJamProvidedModel("z-ai/glm-5.2")).toBe(true);
-    expect(isMCPJamGuestAllowedModel("openai/gpt-oss-120b")).toBe(true);
-    expect(isMCPJamGuestAllowedModel("mistralai/mistral-small-2603")).toBe(
-      true
-    );
-    expect(isMCPJamGuestAllowedModel("mistralai/devstral-2512")).toBe(true);
-    expect(isMCPJamGuestAllowedModel("mistralai/mistral-medium-3-5")).toBe(
-      false
-    );
-    expect(isMCPJamGuestAllowedModel("mistralai/mistral-large-2512")).toBe(
-      false
-    );
-    expect(isMCPJamGuestAllowedModel("openai/gpt-5.4")).toBe(false);
-    expect(isMCPJamGuestAllowedModel("openai/gpt-5.4-mini")).toBe(false);
-    expect(isMCPJamGuestAllowedModel("openai/gpt-5.4-nano")).toBe(false);
-    expect(isMCPJamGuestAllowedModel("openai/gpt-5.4-pro")).toBe(false);
-    expect(isMCPJamGuestAllowedModel("openai/gpt-5.5")).toBe(false);
-    expect(isMCPJamGuestAllowedModel("openai/gpt-5.5-pro")).toBe(false);
-    expect(isMCPJamGuestAllowedModel("deepseek/deepseek-v4-pro")).toBe(false);
-    expect(isMCPJamGuestAllowedModel("deepseek/deepseek-v4-flash")).toBe(false);
-    expect(isMCPJamGuestAllowedModel("anthropic/claude-opus-4.6")).toBe(false);
-    expect(isMCPJamGuestAllowedModel("anthropic/claude-opus-4.6-fast")).toBe(
-      false
-    );
-    expect(isMCPJamGuestAllowedModel("anthropic/claude-sonnet-4.6")).toBe(
-      false
-    );
-    expect(isMCPJamGuestAllowedModel("anthropic/claude-opus-4.7")).toBe(false);
-    expect(isMCPJamGuestAllowedModel("google/gemini-3.1-pro-preview")).toBe(
-      false
-    );
-    expect(isMCPJamGuestAllowedModel("qwen/qwen3.6-plus")).toBe(true);
-    expect(isMCPJamGuestAllowedModel("z-ai/glm-5.2")).toBe(true);
+  it("treats every provided hosted model as guest-allowed (guests un-curated)", () => {
+    // Guest curation is gone — enforcement is spend caps, not an allowlist.
+    // isMCPJamGuestAllowedModel now mirrors isMCPJamProvidedModel: a formerly
+    // guest-gated premium model is guest-allowed too.
+    const ids = [
+      "anthropic/claude-haiku-4.5",
+      "openai/gpt-oss-120b",
+      "mistralai/mistral-small-2603",
+      // formerly guest-gated premium:
+      "openai/gpt-5.4",
+      "openai/gpt-5.5-pro",
+      "deepseek/deepseek-v4-pro",
+      "anthropic/claude-opus-4.6",
+      "anthropic/claude-opus-4.7",
+      "google/gemini-3.1-pro-preview",
+      "mistralai/mistral-large-2512",
+    ];
+    for (const id of ids) {
+      expect(isMCPJamProvidedModel(id)).toBe(true);
+      expect(isMCPJamGuestAllowedModel(id)).toBe(true);
+    }
+    // A non-provided (BYOK/unknown) id is still not guest-allowed.
+    expect(isMCPJamGuestAllowedModel("somevendor/not-hosted")).toBe(false);
   });
 
   it("derives hosted provider from the id prefix (display rows removed)", () => {
@@ -140,10 +117,7 @@ describe("MCPJam-provided model classification", () => {
     const hosted = hostedModelDefinitionsFromSnapshot();
     expect(hosted.length).toBeGreaterThan(100);
     expect(hosted.every((m) => m.hosted === true)).toBe(true);
-    // Guest gating is preserved off the static gated set.
-    const haiku = hosted.find((m) => m.id === "anthropic/claude-haiku-4.5");
-    expect(haiku?.guestAllowed).toBe(true);
-    const gatedOpus = hosted.find((m) => m.id === "anthropic/claude-opus-4.6");
-    expect(gatedOpus?.guestAllowed).toBe(false);
+    // Every hosted snapshot model is guest-allowed now (guests un-curated).
+    expect(hosted.every((m) => m.guestAllowed === true)).toBe(true);
   });
 });

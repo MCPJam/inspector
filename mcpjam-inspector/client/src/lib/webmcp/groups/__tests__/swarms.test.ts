@@ -115,6 +115,16 @@ describe("buildSwarmsUiTools", () => {
     expect(dispatchInspectorCommandMock).not.toHaveBeenCalled();
   });
 
+  it("ui_create_persona rejects non-string notes without dispatching", async () => {
+    const result = await getTool("ui_create_persona").execute({
+      name: "Ada",
+      role: "engineer",
+      notes: { not: "a string" },
+    });
+    expect(result.isError).toBe(true);
+    expect(dispatchInspectorCommandMock).not.toHaveBeenCalled();
+  });
+
   it("ui_open_journey_form dispatches openJourneyForm with optional persona + goal", async () => {
     await getTool("ui_open_journey_form").execute({});
     expect(dispatchInspectorCommandMock).toHaveBeenCalledWith({
@@ -134,6 +144,14 @@ describe("buildSwarmsUiTools", () => {
 
   it("ui_open_journey_form rejects a non-string goal without dispatching", async () => {
     const result = await getTool("ui_open_journey_form").execute({ goal: 42 });
+    expect(result.isError).toBe(true);
+    expect(dispatchInspectorCommandMock).not.toHaveBeenCalled();
+  });
+
+  it("ui_open_journey_form rejects a non-string persona without dispatching", async () => {
+    const result = await getTool("ui_open_journey_form").execute({
+      persona: { not: "a string" },
+    });
     expect(result.isError).toBe(true);
     expect(dispatchInspectorCommandMock).not.toHaveBeenCalled();
   });

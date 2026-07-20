@@ -1,6 +1,4 @@
 import { useEffect, useState } from "react";
-import { useAuth } from "@workos-inc/authkit-react";
-import { useConvexAuth } from "convex/react";
 import { track } from "@/lib/analytics";
 import {
   hostedModelDefinitionsFromSnapshot,
@@ -18,13 +16,21 @@ import type { OpenRouterModel } from "@/types/model-metadata";
  *   live      → the fresh backend catalog
  *   fallback  → last-good localStorage cache, else the static hosted subset
  *
- * A guest (or offline/Electron) can't reach the auth-gated `/models` route, so
- * those cases resolve to `fallback` off the cache/static list rather than an
- * error. The org-config precedence path is unaffected — this only supplies the
- * hosted ("free") source that composition unions with BYOK/org models.
+ * `/api/mcp/models` is a PUBLIC proxy of the backend's keyless `/v1/models`
+ * catalog, so signed-in users AND guests fetch the same live catalog; only
+ * offline/Electron or a failed fetch resolves to `fallback` off the
+ * cache/static list. The org-config precedence path is unaffected — this only
+ * supplies the hosted ("free") source that composition unions with BYOK/org
+ * models.
  */
 
-const STORAGE_KEY = "mcpjam.hostedModelCatalog.v1";
+// v2 invalidates pre-un-gating caches: v1 entries persisted explicit
+// `guestAllowed: false` for then-premium models, and applyGuestModelLocks reads
+// that explicit `false` as authoritative (the `?? isMCPJamGuestAllowedModel`
+// fallback only fires on null/undefined), so a stale v1 cache would keep those
+// models locked for guests despite the new un-gating. Bumping the key drops the
+// stale cache; fresh fetches and the static snapshot are both already un-gated.
+const STORAGE_KEY = "mcpjam.hostedModelCatalog.v2";
 
 export type HostedCatalogStatus = "loading" | "live" | "fallback";
 
@@ -113,17 +119,12 @@ export function resetHostedModelCatalogForTests(): void {
   generation++;
 }
 
-async function fetchCatalogModels(
-  getAccessToken: () => Promise<string | undefined>
-): Promise<ModelDefinition[] | null> {
+async function fetchCatalogModels(): Promise<ModelDefinition[] | null> {
   try {
-    const accessToken = await getAccessToken();
+    // Public proxy — no Authorization header needed (or forwarded).
     const response = await fetch("/api/mcp/models", {
       method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${accessToken}`,
-      },
+      headers: { Accept: "application/json" },
     });
     if (!response.ok) {
       reportDegradation(`http_${response.status}`);
@@ -149,9 +150,6 @@ async function fetchCatalogModels(
 }
 
 export function useHostedModelCatalog(): HostedModelCatalogState {
-  const { isAuthenticated } = useConvexAuth();
-  const { getAccessToken } = useAuth();
-
   const [state, setState] = useState<HostedModelCatalogState>(() =>
     cached
       ? { status: cached.status, hostedCatalog: cached.models }
@@ -159,19 +157,10 @@ export function useHostedModelCatalog(): HostedModelCatalogState {
   );
 
   useEffect(() => {
-    // The `/models` route is auth-gated: a guest (or offline/Electron) can't
-    // fetch it, so resolve straight to the cached/static fallback.
-    if (!isAuthenticated) {
-      const models = fallbackModels();
-      cached = { status: "fallback", models };
-      setState({ status: "fallback", hostedCatalog: models });
-      return;
-    }
-
-    // Authenticated: a `live` cache is authoritative and shared across picker
-    // instances. A `fallback` cache is a guest/offline artifact — do NOT reuse
-    // it here, or a guest who signs in stays pinned to the static fallback
-    // forever; fall through and fetch the now-reachable auth-gated catalog.
+    // A `live` cache is authoritative and shared across picker instances. A
+    // `fallback` cache is an offline artifact — do NOT reuse it, or a client
+    // that first loaded offline stays pinned to the static fallback forever;
+    // fall through and re-attempt the (public) catalog fetch.
     if (cached?.status === "live") {
       setState({ status: cached.status, hostedCatalog: cached.models });
       return;
@@ -181,7 +170,7 @@ export function useHostedModelCatalog(): HostedModelCatalogState {
     const effectGeneration = generation;
 
     if (!inflight) {
-      inflight = fetchCatalogModels(getAccessToken)
+      inflight = fetchCatalogModels()
         .then((models) => {
           if (effectGeneration !== generation) return;
           if (models) {
@@ -205,7 +194,7 @@ export function useHostedModelCatalog(): HostedModelCatalogState {
     return () => {
       mounted = false;
     };
-  }, [isAuthenticated, getAccessToken]);
+  }, []);
 
   return state;
 }

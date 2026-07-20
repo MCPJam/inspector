@@ -7,8 +7,6 @@
  * Findings this pins:
  * - publish resolves a host, calls ensureChatboxForHost, and selects it;
  * - publish HONORS the Swarms-owned dead-end (unsupported_in_mode, no ensure);
- * - generate routes through the gated path (product + model gate) and hits the
- *   SAME generate-personas + simulate-sessions/start endpoints;
  * - delete maps to deleteChatbox; unknown host → invalid_request;
  * - the snapshot reports redacted state and NEVER the share token / transcript
  *   text / visitor PII.
@@ -261,60 +259,6 @@ describe("ChatboxesTab — agent bridge handlers", () => {
       error: { code: "invalid_request" },
     });
     expect(ensureChatboxForHostMock).not.toHaveBeenCalled();
-  });
-
-  it("generateChatboxSessions routes through the SAME generate + start endpoints", async () => {
-    authFetchMock
-      .mockResolvedValueOnce(jsonResponse({ personas: [{ name: "A" }, { name: "B" }] }))
-      .mockResolvedValueOnce(jsonResponse({ runId: "run-1" }));
-    renderChatboxes({ product: "swarm" });
-
-    const response = await dispatch({
-      type: "generateChatboxSessions",
-      payload: { personaCount: 2, sessionsPerPersona: 3, maxTurns: 5 },
-    });
-
-    expect(response).toMatchObject({
-      status: "success",
-      result: { status: "chatbox_sessions_started", runId: "run-1" },
-    });
-    expect(authFetchMock).toHaveBeenCalledTimes(2);
-    const [personasUrl] = authFetchMock.mock.calls[0]!;
-    const [startUrl, startInit] = authFetchMock.mock.calls[1]!;
-    expect(String(personasUrl)).toContain("/generate-personas");
-    expect(String(startUrl)).toContain("/simulate-sessions/start");
-    const startBody = JSON.parse((startInit as RequestInit).body as string);
-    expect(startBody.sessionsPerPersona).toBe(3);
-    expect(startBody.maxTurns).toBe(5);
-    expect(startBody.personas).toHaveLength(2);
-  });
-
-  it("generateChatboxSessions refuses the human Chatbox product (synthetic-only gate)", async () => {
-    renderChatboxes({ product: "chatbox" });
-    const response = await dispatch({
-      type: "generateChatboxSessions",
-      payload: {},
-    });
-    expect(response).toMatchObject({
-      status: "error",
-      error: { code: "unsupported_in_mode" },
-    });
-    expect(authFetchMock).not.toHaveBeenCalled();
-  });
-
-  it("generateChatboxSessions refuses a modelless client (the dialog's gate)", async () => {
-    currentChatbox = { ...previewedChatbox, modelId: "" };
-    renderChatboxes({ product: "swarm" });
-    const response = await dispatch({
-      type: "generateChatboxSessions",
-      payload: {},
-    });
-    expect(response).toMatchObject({
-      status: "error",
-      error: { code: "execution_failed" },
-    });
-    expect((response as any).error.message).toContain("model");
-    expect(authFetchMock).not.toHaveBeenCalled();
   });
 
   it("deleteChatbox maps to the deleteChatbox mutation on the host's chatbox", async () => {
