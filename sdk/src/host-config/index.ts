@@ -36,6 +36,7 @@ export type {
   HostMcp,
   HostComputer,
   HostServerOverride,
+  HostSkillSelection,
   HostConnectionDefaults,
   HostStyleId,
   Harness,

@@ -13,6 +13,7 @@ import {
 } from "../../../services/session-token.js";
 import {
   decodeConfidentialCimdKey,
+  createDerivedConfidentialCimdProviderFactory,
   getLocalConfidentialCimdProvider,
   getXaaClientJwks,
   initXAAIdpKeyPair,
@@ -2835,6 +2836,215 @@ describe("confidential CIMD (private_key_jwt) on the xaa router", () => {
       code: "VALIDATION_ERROR",
       message: expect.stringContaining("not available"),
     });
+  });
+
+  it("rejects invalid confidential-CIMD router configuration", () => {
+    const provider = getLocalConfidentialCimdProvider();
+    const factory = createDerivedConfidentialCimdProviderFactory(
+      Buffer.alloc(32, 1)
+    );
+    expect(() =>
+      createXaaRouter({
+        issuerBasePath: "/api/web",
+        httpsOnlyProxy: true,
+        confidentialCimdProvider: provider,
+        confidentialCimdProviderForOrg: factory,
+        authorizeOrgIssuer: async () => undefined,
+      })
+    ).toThrow("both a static and organization-derived");
+    expect(() =>
+      createXaaRouter({
+        issuerBasePath: "/api/web",
+        httpsOnlyProxy: true,
+        confidentialCimdProviderForOrg: factory,
+      })
+    ).toThrow("requires authorizeOrgIssuer");
+  });
+
+  it("authorizes before deriving and exposes a no-store scoped capability", async () => {
+    let derivations = 0;
+    const factory = createDerivedConfidentialCimdProviderFactory(
+      Buffer.alloc(32, 2)
+    );
+    const providerForOrg = vi.fn((organizationId: string) => {
+      derivations += 1;
+      return factory(organizationId);
+    });
+    const authorizeOrgIssuer = vi.fn(async ({
+      organizationId,
+      bearerToken,
+    }: {
+      organizationId: string;
+      bearerToken: string;
+    }) => {
+      if (organizationId !== "org-a" || bearerToken !== "member-a") {
+        throw new WebRouteError(403, "FORBIDDEN", "Not an org member");
+      }
+    });
+    const app = new Hono();
+    app.route(
+      "/api/web/xaa",
+      createXaaRouter({
+        issuerBasePath: "/api/web",
+        httpsOnlyProxy: true,
+        confidentialCimdProviderForOrg: providerForOrg,
+        authorizeOrgIssuer,
+      })
+    );
+
+    const denied = await app.request(
+      "https://app.example.com/api/web/xaa/o/org-b/confidential-cimd/client",
+      { headers: { Authorization: "Bearer member-a" } }
+    );
+    expect(denied.status).toBe(403);
+    expect(derivations).toBe(0);
+
+    const allowed = await app.request(
+      "https://app.example.com/api/web/xaa/o/org-a/confidential-cimd/client",
+      { headers: { Authorization: "Bearer member-a" } }
+    );
+    expect(allowed.status).toBe(200);
+    expect(allowed.headers.get("cache-control")).toBe("no-store");
+    expect(derivations).toBe(1);
+    expect(authorizeOrgIssuer).toHaveBeenCalledWith(
+      expect.objectContaining({ organizationId: "org-a", issuerKind: "org" })
+    );
+  });
+
+  it("rejects cross-org proxy requests before derivation, signing, or outbound fetch", async () => {
+    const providerForOrg = vi.fn(
+      createDerivedConfidentialCimdProviderFactory(Buffer.alloc(32, 3))
+    );
+    const authorizeOrgIssuer = vi.fn(async ({
+      organizationId,
+      bearerToken,
+    }: {
+      organizationId: string;
+      bearerToken: string;
+    }) => {
+      if (organizationId !== "org-a" || bearerToken !== "member-a") {
+        throw new WebRouteError(403, "FORBIDDEN", "Not an org member");
+      }
+    });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const app = new Hono();
+    app.route(
+      "/api/web/xaa",
+      createXaaRouter({
+        issuerBasePath: "/api/web",
+        httpsOnlyProxy: true,
+        confidentialCimdProviderForOrg: providerForOrg,
+        authorizeOrgIssuer,
+      })
+    );
+
+    const response = await app.request("/api/web/xaa/proxy/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer member-a",
+      },
+      body: JSON.stringify({
+        tokenEndpoint: "https://as.example.com/oauth/token",
+        assertion: "the.id.jag",
+        clientId: "https://app.example.com/client.json",
+        tokenEndpointAuthMethod: "private_key_jwt",
+        organizationId: "org-b",
+      }),
+    });
+    expect(response.status).toBe(403);
+    expect(providerForOrg).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("binds hosted assertions to the authorized org's reflector client id", async () => {
+    const factory = createDerivedConfidentialCimdProviderFactory(
+      Buffer.alloc(32, 4)
+    );
+    const expectedClientId = factory("org-a").getClientIdMetadataUrl();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const app = new Hono();
+    app.route(
+      "/api/web/xaa",
+      createXaaRouter({
+        issuerBasePath: "/api/web",
+        httpsOnlyProxy: true,
+        confidentialCimdProviderForOrg: factory,
+        authorizeOrgIssuer: async () => undefined,
+      })
+    );
+
+    const mismatch = await app.request("/api/web/xaa/proxy/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer member-a",
+      },
+      body: JSON.stringify({
+        tokenEndpoint: "https://as.example.com/oauth/token",
+        assertion: "the.id.jag",
+        clientId: "https://app.example.com/client.json",
+        tokenEndpointAuthMethod: "private_key_jwt",
+        organizationId: "org-a",
+      }),
+    });
+    expect(mismatch.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const unsupportedServer = await app.request("/api/web/xaa/proxy/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer member-a",
+      },
+      body: JSON.stringify({
+        serverId: "server-1",
+        assertion: "the.id.jag",
+        clientId: expectedClientId,
+        tokenEndpointAuthMethod: "private_key_jwt",
+        organizationId: "org-a",
+      }),
+    });
+    expect(unsupportedServer.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not derive a hosted provider for mint-only negative tests", async () => {
+    const providerForOrg = vi.fn(
+      createDerivedConfidentialCimdProviderFactory(Buffer.alloc(32, 5))
+    );
+    const app = new Hono();
+    app.route(
+      "/api/web/xaa",
+      createXaaRouter({
+        issuerBasePath: "/api/web",
+        httpsOnlyProxy: true,
+        confidentialCimdProviderForOrg: providerForOrg,
+        authorizeOrgIssuer: async () => undefined,
+      })
+    );
+
+    const response = await app.request(
+      "/api/web/xaa/o/org-a/negative-tests",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer member-a",
+        },
+        body: JSON.stringify({
+          audience: "https://as.example.com",
+          resource: "https://mcp.example.com",
+          mintOnly: true,
+          tokenEndpointAuthMethod: "private_key_jwt",
+          clientId: "https://app.example.com/client.json",
+        }),
+      }
+    );
+    expect(response.status).toBe(200);
+    expect(providerForOrg).not.toHaveBeenCalled();
   });
 
   it("GET /confidential-cimd/client publishes this server's client key", async () => {

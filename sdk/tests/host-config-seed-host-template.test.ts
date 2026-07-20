@@ -218,6 +218,29 @@ describe("seedHostTemplate", () => {
     expect(caps.extensions.foo.bar).toBe(1);
   });
 
+  it("emptyHostConfigInputV2 leaves skillSelection absent by default and clones it when seeded", () => {
+    // Absent stays absent — a fresh seed must hash byte-identically to a
+    // pre-feature seed (the canonicalizer omits an absent skillSelection).
+    const fresh = emptyHostConfigInputV2();
+    expect("skillSelection" in fresh).toBe(false);
+
+    const skillSelection = {
+      mode: "explicit" as const,
+      skillIds: ["sk-1"],
+    };
+    const seeded = emptyHostConfigInputV2({ skillSelection });
+    expect(seeded.skillSelection).toEqual({
+      mode: "explicit",
+      skillIds: ["sk-1"],
+    });
+    // Cloned, not aliased.
+    skillSelection.skillIds.push("sk-2");
+    expect(seeded.skillSelection).toEqual({
+      mode: "explicit",
+      skillIds: ["sk-1"],
+    });
+  });
+
   // Golden-output guard. The committed snapshot was captured when these seeds
   // were extracted from the old inspector client template adapter. It now locks
   // the fallback seed output so any accidental drift — a changed default, a

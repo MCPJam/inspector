@@ -223,6 +223,27 @@ const inputs = [
     input: { ...base(), builtInToolIds: ["web_search", "code_exec", "web_search"] },
   },
   {
+    // `{ mode: "all-visible" }` canonicalizes to ABSENT: same runtime
+    // behavior as a legacy row with no skillSelection, so it must produce
+    // the same content-addressed identity (byte-identical to base-minimal).
+    label: "skill-selection-all-visible-omitted",
+    input: { ...base(), skillSelection: { mode: "all-visible" } },
+  },
+  {
+    // Explicit selection with unsorted + duplicate ids → deduped + sorted.
+    label: "skill-selection-explicit-unsorted-dupes",
+    input: {
+      ...base(),
+      skillSelection: { mode: "explicit", skillIds: ["sk-b", "sk-a", "sk-b"] },
+    },
+  },
+  {
+    // Explicit-EMPTY ("no standalone skills") is preserved — absence is
+    // semantic here, so this MUST hash differently from base-minimal.
+    label: "skill-selection-explicit-empty-preserved",
+    input: { ...base(), skillSelection: { mode: "explicit", skillIds: [] } },
+  },
+  {
     label: "adversarial-stray-deny-must-be-dropped",
     input: {
       ...base(),

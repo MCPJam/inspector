@@ -466,6 +466,9 @@ const negativeTestsSchema = z
     headers: z.record(z.string(), z.string()).optional(),
     serverId: z.string().trim().min(1).optional(),
     projectId: z.string().trim().min(1).optional(),
+    // Hosted confidential CIMD resolves its org-bound signing key from this
+    // body field. It is authorized independently; never trust it as identity.
+    organizationId: z.string().trim().min(1).optional(),
     // Hosted split: a local inspector asks the hosted issuer to MINT the 11
     // broken assertions only (right `iss`, hosted's key) and return the tokens,
     // then redeems each locally so a confidential client's secret / CIMD key
@@ -619,6 +622,9 @@ const proxyTokenSchema = z
     // are all pinned server-side).
     serverId: z.string().trim().min(1).optional(),
     projectId: z.string().trim().min(1).optional(),
+    // Only organization-derived confidential CIMD uses this selector. It is
+    // separately authorized against the bearer token before key derivation.
+    organizationId: z.string().trim().min(1).optional(),
   })
   .refine((data) => data.serverId || data.tokenEndpoint, {
     message: "tokenEndpoint or serverId is required",
@@ -631,6 +637,12 @@ interface CreateXaaRouterOptions {
   // inspector injects the SDK's filesystem-backed provider; hosted deliberately
   // omits it so the web tier does not become a shared OAuth client/key store.
   confidentialCimdProvider?: ConfidentialCimdProvider;
+  // Hosted confidential-CIMD capability. The caller must be authorized for an
+  // org before this factory is invoked; its provider still binds signing to
+  // that org's derived client_id as defense in depth.
+  confidentialCimdProviderForOrg?: (
+    organizationId: string
+  ) => ConfidentialCimdProvider;
   // When behind a TLS-terminating proxy (hosted mode), the issuer scheme must
   // be reconstructed from X-Forwarded-Proto because c.req.url is http://
   // internally. Leave false for local (no proxy) so the header can't be
@@ -722,6 +734,19 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
   const authorizeOrgIssuer = options.authorizeOrgIssuer;
   const allowedBrowserOrigins = options.allowedBrowserOrigins ?? [];
   const confidentialCimdProvider = options.confidentialCimdProvider;
+  const confidentialCimdProviderForOrg =
+    options.confidentialCimdProviderForOrg;
+
+  if (confidentialCimdProvider && confidentialCimdProviderForOrg) {
+    throw new Error(
+      "XAA router cannot use both a static and organization-derived confidential CIMD provider"
+    );
+  }
+  if (confidentialCimdProviderForOrg && !authorizeOrgIssuer) {
+    throw new Error(
+      "organization-derived confidential CIMD requires authorizeOrgIssuer"
+    );
+  }
 
   if (protectedMiddlewares.length > 0) {
     router.use("/authenticate", ...protectedMiddlewares);
@@ -734,6 +759,12 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       router.use("/o/:orgId/authenticate", ...protectedMiddlewares);
       router.use("/o/:orgId/token-exchange", ...protectedMiddlewares);
       router.use("/o/:orgId/negative-tests", ...protectedMiddlewares);
+      if (confidentialCimdProviderForOrg) {
+        router.use(
+          "/o/:orgId/confidential-cimd/client",
+          ...protectedMiddlewares
+        );
+      }
       router.use("/g/:orgId/authenticate", ...protectedMiddlewares);
       router.use("/g/:orgId/token-exchange", ...protectedMiddlewares);
       router.use("/g/:orgId/negative-tests", ...protectedMiddlewares);
@@ -1130,6 +1161,68 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
   const requireScopedAnonymousOrg = (c: Context) =>
     requireScopedIssuer(c, "anonymous");
 
+  // `/proxy/token` has no org path segment, so confidential-CIMD requests
+  // repeat the same fail-closed membership check the `/o/:orgId` routes use.
+  // The body org id is only a selector; Convex remains the authorization
+  // authority and must approve it before any derived key is constructed.
+  const authorizeOrgForConfidentialCimd = async (
+    c: Context,
+    organizationId: string
+  ): Promise<Response | undefined> => {
+    if (!isValidOrgId(organizationId)) {
+      return toJsonError("Invalid organization id", {
+        status: 400,
+        code: "VALIDATION_ERROR",
+      });
+    }
+    const authHeader = c.req.header("authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return toJsonError("Missing or invalid bearer token", {
+        status: 401,
+        code: "UNAUTHORIZED",
+      });
+    }
+    try {
+      await authorizeOrgIssuer!({
+        organizationId,
+        bearerToken: authHeader.slice("Bearer ".length),
+        issuerKind: "org",
+        clientIp: getClientIp(c),
+      });
+    } catch (error) {
+      if (error instanceof WebRouteError) {
+        return toJsonError(error.message, {
+          status: error.status,
+          code: error.code,
+          details: error.details,
+        });
+      }
+      logger.error("[XAA Confidential CIMD] organization authorization failed", error);
+      return toJsonError("Couldn't authorize the organization", {
+        status: 500,
+        code: "INTERNAL_ERROR",
+      });
+    }
+    return undefined;
+  };
+
+  const resolveDerivedConfidentialCimdProvider = (
+    organizationId: string,
+    clientId?: string
+  ): ConfidentialCimdProvider | Response => {
+    const provider = confidentialCimdProviderForOrg!(organizationId);
+    if (
+      clientId !== undefined &&
+      clientId !== provider.getClientIdMetadataUrl()
+    ) {
+      return toJsonError(
+        "client_id does not match this organization's confidential CIMD client",
+        { status: 400, code: "VALIDATION_ERROR" }
+      );
+    }
+    return provider;
+  };
+
   const serveJwks = (c: Context) => {
     initXAAIdpKeyPair();
     return c.json(getXAAIdpJwks(), 200, {
@@ -1213,6 +1306,24 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       // with an assertion produced after local key rotation.
       c.header("Cache-Control", "no-store");
       return c.json({ clientIdMetadataUrl });
+    });
+  }
+
+  if (confidentialCimdProviderForOrg && authorizeOrgIssuer) {
+    // This is an authenticated capability endpoint, not the public reflector.
+    // It hands an authorized org member the URL whose embedded public JWK the
+    // existing `/.well-known/oauth/xaa-cimd/:key` reflector serves to the AS.
+    router.get("/o/:orgId/confidential-cimd/client", async (c) => {
+      const orgIdResult = await requireScopedOrg(c);
+      if (!orgIdResult.ok) return orgIdResult.response;
+      const provider = resolveDerivedConfidentialCimdProvider(
+        orgIdResult.value
+      );
+      if (provider instanceof Response) return provider;
+      c.header("Cache-Control", "no-store");
+      return c.json({
+        clientIdMetadataUrl: provider.getClientIdMetadataUrl(),
+      });
     });
   }
 
@@ -1309,6 +1420,31 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     try {
       const body = await c.req.json();
       const parsed = parseRequest(proxyTokenSchema, body);
+      const authMethod = parsed.tokenEndpointAuthMethod;
+      let resolvedConfidentialCimdProvider = confidentialCimdProvider;
+
+      if (
+        authMethod === "private_key_jwt" &&
+        confidentialCimdProviderForOrg
+      ) {
+        if (parsed.serverId) {
+          return toJsonError(
+            "Organization-derived confidential CIMD does not support serverId targets",
+            { status: 400, code: "VALIDATION_ERROR" }
+          );
+        }
+        if (!parsed.organizationId) {
+          return toJsonError(
+            "organizationId is required for hosted confidential CIMD",
+            { status: 400, code: "VALIDATION_ERROR" }
+          );
+        }
+        const authorizationError = await authorizeOrgForConfidentialCimd(
+          c,
+          parsed.organizationId
+        );
+        if (authorizationError) return authorizationError;
+      }
 
       let url: string;
       let clientId = parsed.clientId;
@@ -1344,7 +1480,6 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         url = parsed.tokenEndpoint as string;
       }
 
-      const authMethod = parsed.tokenEndpointAuthMethod;
       // The shared helper already handles private_key_jwt correctly: it needs a
       // client_id (its iss/sub) and no secret. RFC 6749 §2.3.1: client_id is
       // required for post/basic; none and private_key_jwt need one too.
@@ -1359,7 +1494,18 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           code: "VALIDATION_ERROR",
         });
       }
-      if (authMethod === "private_key_jwt" && !confidentialCimdProvider) {
+      if (authMethod === "private_key_jwt" && confidentialCimdProviderForOrg) {
+        const provider = resolveDerivedConfidentialCimdProvider(
+          parsed.organizationId!,
+          clientId
+        );
+        if (provider instanceof Response) return provider;
+        resolvedConfidentialCimdProvider = provider;
+      }
+      if (
+        authMethod === "private_key_jwt" &&
+        !resolvedConfidentialCimdProvider
+      ) {
         return toJsonError(
           "private_key_jwt is not available on this inspector deployment",
           { status: 400, code: "VALIDATION_ERROR" }
@@ -1380,7 +1526,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           resource: parsed.resource,
           tokenEndpointAuthMethod: authMethod,
         },
-        confidentialCimdProvider
+        resolvedConfidentialCimdProvider
       );
 
       const result = await executeOAuthProxy({
@@ -1564,7 +1710,8 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
   const handleNegativeTests = async (
     c: Context,
     issuer: string,
-    mintOverride?: Map<NegativeTestMode, MintedNegativeCase>
+    mintOverride?: Map<NegativeTestMode, MintedNegativeCase>,
+    organizationId?: string
   ) => {
     let parsed;
     try {
@@ -1620,6 +1767,17 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       return c.json({ mints, issuer });
     }
 
+    if (
+      parsed.serverId &&
+      parsed.tokenEndpointAuthMethod === "private_key_jwt" &&
+      confidentialCimdProviderForOrg
+    ) {
+      return toJsonError(
+        "Organization-derived confidential CIMD does not support serverId targets",
+        { status: 400, code: "VALIDATION_ERROR" }
+      );
+    }
+
     // Resolve the authorization-server target. Registration-backed runs
     // resolve the stored secret + endpoint server-side (same hardening as
     // /proxy/token); the client-supplied endpoint/headers/secret are ignored.
@@ -1628,6 +1786,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     let clientSecret = parsed.clientSecret;
     let extraHeaders = parsed.headers;
     let tokenEndpointAuthMethod = parsed.tokenEndpointAuthMethod;
+    let resolvedConfidentialCimdProvider = confidentialCimdProvider;
 
     try {
       if (parsed.serverId) {
@@ -1682,7 +1841,24 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     }
     if (
       tokenEndpointAuthMethod === "private_key_jwt" &&
-      !confidentialCimdProvider
+      confidentialCimdProviderForOrg
+    ) {
+      if (!organizationId) {
+        return toJsonError(
+          "private_key_jwt is not available on this inspector deployment",
+          { status: 400, code: "VALIDATION_ERROR" }
+        );
+      }
+      const provider = resolveDerivedConfidentialCimdProvider(
+        organizationId,
+        clientId
+      );
+      if (provider instanceof Response) return provider;
+      resolvedConfidentialCimdProvider = provider;
+    }
+    if (
+      tokenEndpointAuthMethod === "private_key_jwt" &&
+      !resolvedConfidentialCimdProvider
     ) {
       return toJsonError(
         "private_key_jwt is not available on this inspector deployment",
@@ -1803,7 +1979,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
             resource: parsed.resource,
             tokenEndpointAuthMethod,
           },
-          confidentialCimdProvider
+          resolvedConfidentialCimdProvider
         );
       } catch (error) {
         return {
@@ -1973,7 +2149,12 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     router.post("/o/:orgId/negative-tests", async (c) => {
       const orgIdResult = await requireScopedOrg(c);
       if (!orgIdResult.ok) return orgIdResult.response;
-      return handleNegativeTests(c, scopedIssuer(c, orgIdResult.value));
+      return handleNegativeTests(
+        c,
+        scopedIssuer(c, orgIdResult.value),
+        undefined,
+        orgIdResult.value
+      );
     });
 
     // Anonymous test issuer surface: the same mock IdP under /g/:orgId, in a

@@ -49,10 +49,21 @@ export function buildTracingSnapshot(input: TracingSnapshotInput) {
     else if (entry.source === "oauth") counts.oauth += 1;
     else counts.other += 1;
   }
+  // Both slices are newest-first INDEPENDENTLY; concatenating and slicing would
+  // report the first 30 server entries even when app traffic is newer. Sort the
+  // merged stream by timestamp (ISO strings → epoch ms) so `recent` is globally
+  // recent; an unparseable timestamp sorts oldest.
+  const asMillis = (ts: string) => {
+    const parsed = Date.parse(ts);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  };
+  const recentEntries = [...combined].sort(
+    (a, b) => asMillis(b.timestamp) - asMillis(a.timestamp),
+  );
   return {
     totalItems: combined.length,
     counts,
-    recent: combined.slice(0, REVIEW_SNAPSHOT_MAX_ITEMS).map((entry) => ({
+    recent: recentEntries.slice(0, REVIEW_SNAPSHOT_MAX_ITEMS).map((entry) => ({
       source: entry.source,
       method: entry.method,
       direction: entry.direction,
@@ -87,11 +98,13 @@ export function buildCompatibilitySnapshot(input: CompatibilitySnapshotInput) {
 
 export interface HostCompareSnapshotInput {
   totalSelectableHosts: number;
-  selectedHosts: ReadonlyArray<{ hostId: string; hostName: string }>;
+  selectedHosts: ReadonlyArray<{ hostId: string; hostName: string | null }>;
   capabilityFields: ReadonlyArray<{ label: string }>;
   viewMode: string;
   searchQuery: string;
   supportFilter: string;
+  /** The "Only show differences" toggle — an agent should see the same matrix. */
+  divergingOnly: boolean;
   loadedSelectedCount: number;
   totalSelectedCount: number;
 }
@@ -117,6 +130,7 @@ export function buildHostCompareSnapshot(input: HostCompareSnapshotInput) {
     // filter is active, never its contents.
     hasSearchQuery: Boolean(input.searchQuery && input.searchQuery.trim()),
     supportFilter: input.supportFilter,
+    divergingOnly: input.divergingOnly,
     loadedSelectedCount: input.loadedSelectedCount,
   };
 }
@@ -217,7 +231,6 @@ export interface TasksSnapshotInput {
   selectedTaskId: string | null;
   hasActiveTasks: boolean;
   autoRefresh: boolean;
-  selectedProgress: { progress: number; total?: number | null } | null;
 }
 
 /**
@@ -237,11 +250,9 @@ export function buildTasksSnapshot(input: TasksSnapshotInput) {
       createdAt: task.createdAt,
     })),
     selectedTaskId: input.selectedTaskId,
-    selectedProgress: input.selectedProgress
-      ? {
-          progress: input.selectedProgress.progress,
-          total: input.selectedProgress.total ?? null,
-        }
-      : null,
+    // No per-task progress: getLatestProgress is server-WIDE (keyed by
+    // progressToken, which a Task object doesn't carry), so reporting it as the
+    // selected task's progress would mis-attribute another task's fraction.
+    // Omit until the progress API exposes task correlation.
   };
 }
