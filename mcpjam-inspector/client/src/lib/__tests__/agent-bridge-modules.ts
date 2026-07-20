@@ -67,4 +67,8 @@ export const BRIDGE_MODULES: Record<string, string> = {
   "ci-evals": "client/src/components/CiEvalsTab.tsx",
   // TasksTab owns the selected server's long-running MCP task list.
   tasks: "client/src/components/TasksTab.tsx",
+  // OAuthFlowTab owns the debugger's flow state, the state machine, and the
+  // Configure-Server modal the prefill command opens. Not a shared hook, so
+  // the "oauth-flow" group can't be mis-scoped.
+  "oauth-flow": "client/src/components/OAuthFlowTab.tsx",
 };

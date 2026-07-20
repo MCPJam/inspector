@@ -115,3 +115,71 @@ describe("OAuthProfileModal", () => {
     releaseSave?.();
   });
 });
+
+describe("OAuthProfileModal — agentSeed", () => {
+  it("overlays name, URL, and registration mode on open", () => {
+    renderModal({
+      agentSeed: {
+        serverName: "agent-target",
+        serverUrl: "https://agent.example.com/mcp",
+        registrationStrategy: "preregistered",
+      },
+    });
+
+    expect(screen.getByLabelText(/Server Name/)).toHaveValue("agent-target");
+    expect(screen.getByLabelText(/Server URL/)).toHaveValue(
+      "https://agent.example.com/mcp",
+    );
+    // The Select renders the value text in the trigger and its option list.
+    expect(screen.getAllByText("Pre-registered").length).toBeGreaterThan(0);
+  });
+
+  it("keeps derived defaults for anything the seed omits", () => {
+    renderModal({
+      agentSeed: { serverUrl: "https://agent.example.com/mcp" },
+    });
+
+    // Default name (no server prop, no seeded name)…
+    expect(screen.getByLabelText(/Server Name/)).toHaveValue(
+      "oauth-flow-target",
+    );
+    // …and the fresh-profile default registration strategy.
+    expect(screen.getAllByText("Dynamic (DCR)").length).toBeGreaterThan(0);
+  });
+
+  it("does not retain a seed across a reopen without one", () => {
+    const { rerender } = render(
+      <OAuthProfileModal
+        open
+        onOpenChange={vi.fn()}
+        existingServerNames={[]}
+        onSave={vi.fn()}
+        agentSeed={{ serverName: "agent-target" }}
+      />,
+    );
+    expect(screen.getByLabelText(/Server Name/)).toHaveValue("agent-target");
+
+    // Close, then reopen WITHOUT a seed (the tab clears it on close).
+    rerender(
+      <OAuthProfileModal
+        open={false}
+        onOpenChange={vi.fn()}
+        existingServerNames={[]}
+        onSave={vi.fn()}
+        agentSeed={null}
+      />,
+    );
+    rerender(
+      <OAuthProfileModal
+        open
+        onOpenChange={vi.fn()}
+        existingServerNames={[]}
+        onSave={vi.fn()}
+        agentSeed={null}
+      />,
+    );
+    expect(screen.getByLabelText(/Server Name/)).toHaveValue(
+      "oauth-flow-target",
+    );
+  });
+});

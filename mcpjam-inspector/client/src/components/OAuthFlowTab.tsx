@@ -1,6 +1,8 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import {
   EMPTY_OAUTH_FLOW_STATE,
+  buildOAuthSequenceActions,
+  getSupportedRegistrationStrategies,
   type OAuthFlowState,
   type OAuthFlowStep,
 } from "@mcpjam/sdk/browser";
@@ -13,13 +15,31 @@ import {
   ResizablePanelGroup,
 } from "./ui/resizable";
 import { track } from "@/lib/analytics";
-import { OAuthProfileModal } from "./oauth/OAuthProfileModal";
-import { type OAuthTestProfile } from "@/lib/oauth/profile";
+import {
+  OAuthProfileModal,
+  type OAuthProfileAgentSeed,
+} from "./oauth/OAuthProfileModal";
+import {
+  normalizeOAuthRegistrationStrategy,
+  type OAuthTestProfile,
+} from "@/lib/oauth/profile";
 import { OAuthFlowLogger } from "./oauth/OAuthFlowLogger";
 import type { ServerFormData } from "@/shared/types.js";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import { deriveOAuthProfileFromServer } from "./oauth/utils";
 import { RefreshTokensConfirmModal } from "./oauth/RefreshTokensConfirmModal";
+import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
+import {
+  buildOAuthFlowSnapshot,
+  toSafeSequenceSteps,
+} from "@/lib/webmcp/oauth-flow-snapshot";
+import { extractOauthErrorCode } from "@/lib/webmcp/oauth-error-code";
+import { planAuthConfigModal } from "@/lib/webmcp/auth-config-command";
+import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
+import type {
+  InspectorCommand,
+  OpenOauthServerConfigInspectorCommand,
+} from "@/shared/inspector-command.js";
 
 export interface OAuthTokensFromFlow {
   accessToken: string;
@@ -84,6 +104,25 @@ const describeRegistrationStrategy = (strategy: string): string => {
 const isHttpServer = (server?: ServerWithName) =>
   Boolean(server && "url" in server.config);
 
+/**
+ * Honest post-step result for the advanceOauthFlow command. Never echoes the
+ * raw error string — only presence and an allowlisted OAuth error code.
+ */
+const buildAdvanceResult = (
+  previousStep: OAuthFlowStep,
+  state: OAuthFlowState,
+) => {
+  const oauthErrorCode = extractOauthErrorCode(state.error, state.lastResponse);
+  return {
+    status: "advanced" as const,
+    previousStep,
+    currentStep: state.currentStep,
+    ok: !state.error,
+    ...(oauthErrorCode ? { oauthErrorCode } : {}),
+    ...(state.lastResponse ? { httpStatus: state.lastResponse.status } : {}),
+  };
+};
+
 interface OAuthFlowTabProps {
   serverConfigs: Record<string, ServerWithName>;
   selectedServerName: string;
@@ -131,9 +170,20 @@ export const OAuthFlowTab = ({
   const [profileModalMode, setProfileModalMode] = useState<"edit" | "add">(
     "edit",
   );
+  // Prefill set by the openOauthServerConfig agent command. Human-opened
+  // modals clear it first so a stale agent seed never bleeds into them; it is
+  // also cleared whenever the modal closes.
+  const [agentSeed, setAgentSeed] = useState<OAuthProfileAgentSeed | null>(
+    null,
+  );
   const openProfileModal = useCallback((mode: "edit" | "add") => {
+    setAgentSeed(null);
     setProfileModalMode(mode);
     setIsProfileModalOpen(true);
+  }, []);
+  const handleProfileModalOpenChange = useCallback((open: boolean) => {
+    setIsProfileModalOpen(open);
+    if (!open) setAgentSeed(null);
   }, []);
 
   // Open the modal when the shell bumps the signal (header "Add Server"). Skip
@@ -191,13 +241,15 @@ export const OAuthFlowTab = ({
     // by the earlier empty state.
     if (!areServersHydrated) return;
     if (hasHeaderServers) {
-      setIsProfileModalOpen(false);
+      // Don't force-close a modal the agent just opened with a pending
+      // prefill (servers can hydrate right after the command ran).
+      if (!agentSeed) setIsProfileModalOpen(false);
       return;
     }
     if (httpServerCount === 0) {
       setIsProfileModalOpen(true);
     }
-  }, [areServersHydrated, hasHeaderServers, httpServerCount]);
+  }, [areServersHydrated, hasHeaderServers, httpServerCount, agentSeed]);
 
   const profile = useMemo(
     () => deriveOAuthProfileFromServer(activeServer),
@@ -213,10 +265,20 @@ export const OAuthFlowTab = ({
   const protocolVersion = profile.protocolVersion;
   const registrationStrategy = profile.registrationStrategy;
 
+  // Synced SYNCHRONOUSLY by every writer below (not only via this effect):
+  // the state machine's getState, the agent advance handler, and the surface
+  // snapshot all read the ref right after an awaited step, where an
+  // effect-only sync would still be one commit stale. Mirrors XAAFlowTab's
+  // applyFlowState/updateFlowState. The effect stays as belt-and-braces.
   const oauthFlowStateRef = useRef(oauthFlowState);
   useEffect(() => {
     oauthFlowStateRef.current = oauthFlowState;
   }, [oauthFlowState]);
+
+  const applyOAuthFlowState = useCallback((next: OAuthFlowState) => {
+    oauthFlowStateRef.current = next;
+    setOAuthFlowState(next);
+  }, []);
 
   useEffect(() => {
     if (
@@ -243,6 +305,7 @@ export const OAuthFlowTab = ({
 
   const updateOAuthFlowState = useCallback(
     (updates: Partial<OAuthFlowState>) => {
+      oauthFlowStateRef.current = { ...oauthFlowStateRef.current, ...updates };
       setOAuthFlowState((prev) => ({ ...prev, ...updates }));
     },
     [],
@@ -256,7 +319,7 @@ export const OAuthFlowTab = ({
   useEffect(() => {
     if (prevServerNameRef.current !== selectedServerName) {
       prevServerNameRef.current = selectedServerName;
-      setOAuthFlowState({
+      applyOAuthFlowState({
         ...EMPTY_OAUTH_FLOW_STATE,
         serverUrl: profile.serverUrl || undefined,
       });
@@ -266,12 +329,12 @@ export const OAuthFlowTab = ({
         exchangeTimeoutRef.current = null;
       }
     }
-  }, [selectedServerName, profile.serverUrl]);
+  }, [selectedServerName, profile.serverUrl, applyOAuthFlowState]);
 
   const resetOAuthFlow = useCallback(
     (serverUrlOverride?: string) => {
       const nextServerUrl = serverUrlOverride ?? profile.serverUrl;
-      setOAuthFlowState({
+      applyOAuthFlowState({
         ...EMPTY_OAUTH_FLOW_STATE,
         serverUrl: nextServerUrl || undefined,
       });
@@ -281,7 +344,7 @@ export const OAuthFlowTab = ({
         exchangeTimeoutRef.current = null;
       }
     },
-    [profile.serverUrl],
+    [profile.serverUrl, applyOAuthFlowState],
   );
 
   const clearInfoLogs = () => {
@@ -386,6 +449,162 @@ export const OAuthFlowTab = ({
     oauthFlowState.currentStep === "complete" &&
     oauthFlowState.accessToken &&
     activeServer;
+
+  // Memoized: the modal's reseed-on-open effect depends on this array (via
+  // generateDefaultName), so a fresh Object.keys() per render re-seeds the
+  // open modal on any parent re-render and wipes typed values.
+  const existingServerNames = useMemo(
+    () => Object.keys(serverConfigs),
+    [serverConfigs],
+  );
+
+  useSurfaceAgentBridge({
+    surfaceId: "oauth-flow",
+    handlers: {
+      openOauthServerConfig: (command: InspectorCommand) => {
+        const { payload } = command as OpenOauthServerConfigInspectorCommand;
+        const requestedName = payload.serverName?.trim() || undefined;
+        const requestedUrl = payload.serverUrl?.trim() || undefined;
+        let registrationStrategy;
+        if (payload.registrationMode !== undefined) {
+          registrationStrategy = normalizeOAuthRegistrationStrategy(
+            payload.registrationMode,
+          );
+          if (!registrationStrategy) {
+            throw createInspectorCommandClientError(
+              "invalid_request",
+              `Unknown registration mode "${String(payload.registrationMode)}" — use preregistered, dcr, or cimd.`,
+            );
+          }
+        }
+        const plan = planAuthConfigModal({
+          requestedServerName: requestedName,
+          selectedServerName: activeServer?.name ?? null,
+          existingServerNames,
+        });
+        if ("reject" in plan) {
+          throw createInspectorCommandClientError("invalid_request", plan.reject);
+        }
+        // Editing the selected server: a seeded registration mode must be one
+        // its configured protocol version supports (e.g. 2025-03-26 has no
+        // CIMD) — reject naming the supported set instead of letting the form
+        // show an impossible value.
+        if (plan.mode === "edit" && registrationStrategy && hasProfile) {
+          const supported = getSupportedRegistrationStrategies(protocolVersion);
+          if (!supported.includes(registrationStrategy)) {
+            throw createInspectorCommandClientError(
+              "invalid_request",
+              `Registration mode "${registrationStrategy}" is not supported by protocol ${protocolVersion}. Supported: ${supported.join(", ")}.`,
+            );
+          }
+        }
+        setAgentSeed({
+          ...(requestedName ? { serverName: requestedName } : {}),
+          ...(requestedUrl ? { serverUrl: requestedUrl } : {}),
+          ...(registrationStrategy ? { registrationStrategy } : {}),
+        });
+        setProfileModalMode(plan.mode);
+        setIsProfileModalOpen(true);
+        return {
+          status: "form_opened",
+          mode: plan.mode,
+          note: "The Configure-Server modal is open for the user to review, complete (credentials are typed by the human), and save.",
+        };
+      },
+      advanceOauthFlow: async () => {
+        if (!hasProfile || !oauthStateMachine) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            "No OAuth target is configured — open one with ui_open_oauth_server_config first.",
+          );
+        }
+        const before = oauthFlowStateRef.current;
+        if (before.isInitiatingAuth) {
+          throw createInspectorCommandClientError(
+            "execution_failed",
+            "A protocol step is already in flight — check ui_snapshot_app and retry once it settles.",
+          );
+        }
+        if (before.currentStep === "complete") {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            "The flow is already complete — use ui_reset_oauth_flow to run it again.",
+          );
+        }
+        const previousStep = before.currentStep;
+        // Mirror handleAdvance exactly, including its order at the PKCE step:
+        // advance FIRST (that generates the authorizationUrl the auth modal
+        // needs to render), then hand off to the human popup.
+        if (
+          previousStep === "authorization_request" ||
+          previousStep === "generate_pkce_parameters"
+        ) {
+          if (previousStep === "generate_pkce_parameters") {
+            await proceedToNextStep();
+          }
+          const after = oauthFlowStateRef.current;
+          if (!after.authorizationUrl || after.error) {
+            return buildAdvanceResult(previousStep, after);
+          }
+          setIsAuthModalOpen(true);
+          return {
+            status: "authorization_modal_opened",
+            currentStep: after.currentStep,
+            note: "A human must complete sign-in in the authorization popup — the agent cannot and must not do this. If no popup appeared, ask the user to check their popup blocker. The flow advances automatically after the callback; observe with ui_snapshot_app instead of calling this again.",
+          };
+        }
+        // Known race, accepted: the 500ms post-callback exchange timer can
+        // auto-advance concurrently — identical exposure to the human button.
+        await proceedToNextStep();
+        return buildAdvanceResult(previousStep, oauthFlowStateRef.current);
+      },
+      resetOauthFlow: () => {
+        if (!hasProfile) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            "No OAuth target is configured — nothing to reset.",
+          );
+        }
+        if (oauthFlowStateRef.current.isInitiatingAuth) {
+          throw createInspectorCommandClientError(
+            "execution_failed",
+            "A protocol step is in flight — wait for it to settle before resetting.",
+          );
+        }
+        resetOAuthFlow();
+        return { status: "reset", currentStep: "idle" };
+      },
+    },
+    snapshot: () => {
+      const view = oauthFlowStateRef.current;
+      return buildOAuthFlowSnapshot({
+        hasProfile,
+        serverName: hasProfile ? serverIdentifier : undefined,
+        protocolVersion: hasProfile ? protocolVersion : undefined,
+        registrationStrategy: hasProfile
+          ? describeRegistrationStrategy(registrationStrategy)
+          : undefined,
+        scopes: hasProfile ? profile.scopes.trim() || undefined : undefined,
+        clientId: hasProfile ? profile.clientId.trim() || undefined : undefined,
+        customHeaderCount: profile.customHeaders.filter((h) => h.key.trim())
+          .length,
+        hasAccessToken: Boolean(view.accessToken),
+        hasRefreshToken: Boolean(view.refreshToken),
+        serverConnected: isServerConnected,
+        readyToApplyTokens: Boolean(canApplyTokens),
+        steps: hasProfile
+          ? toSafeSequenceSteps(
+              buildOAuthSequenceActions({
+                protocolVersion,
+                registrationStrategy,
+                flowState: view,
+              }),
+            )
+          : [],
+        view,
+      });
+    },
+  });
 
   // Extract tokens from flow state
   const extractTokensFromFlowState = useCallback(
@@ -685,9 +904,10 @@ export const OAuthFlowTab = ({
 
       <OAuthProfileModal
         open={isProfileModalOpen}
-        onOpenChange={setIsProfileModalOpen}
+        onOpenChange={handleProfileModalOpenChange}
         server={profileModalMode === "add" ? undefined : activeServer}
-        existingServerNames={Object.keys(serverConfigs)}
+        existingServerNames={existingServerNames}
+        agentSeed={agentSeed}
         onSave={async ({ formData, profile: savedProfile }) => {
           // Await and check the result: a failed save must not close the modal,
           // reset the flow, or move the selection onto a server that was never
