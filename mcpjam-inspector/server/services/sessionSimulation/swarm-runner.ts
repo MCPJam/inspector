@@ -1,6 +1,7 @@
 import { logger } from "../../utils/logger.js";
 import { buildSyntheticModelDefinition } from "../../utils/org-model-config.js";
 import {
+  captureAndPersistWidgetSnapshotsForSession,
   runSyntheticHostSession,
   type SimulationManagerFactory,
 } from "./runner.js";
@@ -515,8 +516,23 @@ async function runJourneyFanOut(
             personaLabel: personaSnapshot.name,
           },
           emit,
-          // No chatbox-scoped side-persistence on the swarm surface (widget /
-          // browser-artifact rows are keyed by chatboxId, which swarm has none).
+          // Per-turn MCP App widget-snapshot capture, same as the chatbox
+          // surface but through `createWidgetSnapshot`'s direct-session auth
+          // branch (no chatboxId/accessVersion): the runner authenticates as
+          // the run launcher, who owns every swarm session row, and each
+          // snapshot carries its originating `serverId`. Without this the
+          // Swarms session viewers have no `sharedChatWidgetSnapshots` rows
+          // and MCP App tool calls collapse to plain pills. Best-effort — the
+          // helper logs and swallows every failure. Browser-artifact rows are
+          // NOT persisted here: `recordBrowserArtifacts` is chatbox-only.
+          onTurnPersisted: async ({ messages, manager }) => {
+            await captureAndPersistWidgetSnapshotsForSession({
+              messages,
+              mcpClientManager: manager,
+              convexAuthToken: bearer,
+              chatSessionId,
+            });
+          },
         });
 
         // Report the terminal with the SAME chatSessionId ONLY after the

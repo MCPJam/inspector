@@ -607,9 +607,11 @@ export interface SyntheticHostSessionAdapter {
   /** Persistence attribution tags (chatbox vs swarm). */
   persist: SyntheticPersistAttribution;
   /**
-   * Optional per-turn side-persistence (chatbox-scoped MCP App widget snapshots
-   * + browser artifacts). The chatbox surface injects it; the swarm single-host
-   * slice omits it — those rows are keyed by `chatboxId`, which swarm has none.
+   * Optional per-turn side-persistence. The chatbox surface injects widget
+   * snapshots + browser artifacts (chatbox-scoped auth); the swarm surface
+   * injects widget snapshots via the mutation's direct-session path (session
+   * owner + per-snapshot `serverId` — no chatbox). Browser-artifact rows
+   * remain chatbox-only: `recordBrowserArtifacts` still requires a chatbox.
    */
   onTurnPersisted?(args: {
     messages: ModelMessage[];
@@ -1321,14 +1323,20 @@ async function runOneSession(args: {
  * error, transient network) is logged and swallowed — never aborts the
  * synthetic run. The Convex mutation patches existing rows on
  * `(sessionId, toolCallId)` so re-running this per turn is idempotent.
+ *
+ * `chatboxId`/`accessVersion` select the mutation's hosted-chatbox auth
+ * branch; callers without a chatbox (the swarm surface) omit both and the
+ * mutation authorizes via its direct-session path instead (session owner +
+ * per-snapshot `serverId`, which `captureMcpAppWidgetSnapshots` always
+ * stamps from the tool call's originating server).
  */
-async function captureAndPersistWidgetSnapshotsForSession(args: {
+export async function captureAndPersistWidgetSnapshotsForSession(args: {
   messages: ModelMessage[];
   mcpClientManager: MCPClientManager;
   convexAuthToken: string;
   chatSessionId: string;
-  chatboxId: string;
-  accessVersion: number | undefined;
+  chatboxId?: string;
+  accessVersion?: number;
 }): Promise<void> {
   const {
     messages,
@@ -1403,7 +1411,7 @@ async function captureAndPersistWidgetSnapshotsForSession(args: {
         await convexClient.mutation(
           "chatSessions:createWidgetSnapshot" as any,
           {
-            chatboxId,
+            ...(chatboxId !== undefined ? { chatboxId } : {}),
             ...(accessVersion !== undefined ? { accessVersion } : {}),
             chatSessionId,
             ...sanitized,
