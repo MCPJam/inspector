@@ -112,7 +112,10 @@ export function buildHostCompareSnapshot(input: HostCompareSnapshotInput) {
       .slice(0, REVIEW_SNAPSHOT_MAX_ITEMS)
       .map((field) => field.label),
     viewMode: input.viewMode,
-    searchQuery: input.searchQuery,
+    // Presence only — the raw field-search text is user input that can carry a
+    // pasted secret or PII, and it lands in the chat transcript. Report that a
+    // filter is active, never its contents.
+    hasSearchQuery: Boolean(input.searchQuery && input.searchQuery.trim()),
     supportFilter: input.supportFilter,
     loadedSelectedCount: input.loadedSelectedCount,
   };

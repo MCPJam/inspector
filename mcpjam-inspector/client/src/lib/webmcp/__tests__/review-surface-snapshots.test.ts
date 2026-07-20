@@ -101,7 +101,7 @@ describe("review-surface snapshots redact and bound", () => {
       selectedHosts,
       capabilityFields,
       viewMode: "table",
-      searchQuery: "elicitation",
+      searchQuery: "paste-of-a-secret-token",
       supportFilter: "all",
       loadedSelectedCount: 40,
       totalSelectedCount: 40,
@@ -111,6 +111,10 @@ describe("review-surface snapshots redact and bound", () => {
     expect(snapshot.capabilityRows).toHaveLength(REVIEW_SNAPSHOT_MAX_ITEMS);
     expect(snapshot.comparedHostCount).toBe(40);
     expect(snapshot.capabilityRowCount).toBe(40);
+    // The raw field-search text is user input — presence only, never echoed.
+    expect(snapshot).not.toHaveProperty("searchQuery");
+    expect(snapshot.hasSearchQuery).toBe(true);
+    expect(JSON.stringify(snapshot)).not.toContain("paste-of-a-secret-token");
   });
 
   it("host-compare (permalink): reports support levels, never configs", () => {
