@@ -42,7 +42,6 @@ function update(
   overrides: Partial<ProductUpdateEntry> = {}
 ): ProductUpdateEntry {
   return {
-    _id: "update-1",
     slug: "test-update",
     publishAt: Date.UTC(2026, 6, 17),
     title: "Test update",
