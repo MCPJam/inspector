@@ -73,4 +73,36 @@ describe("PersonaPixelAvatar", () => {
     expect(el.getAttribute("data-palette")).toBe(String(paletteIndex));
     expect(el.querySelector("svg")).toBeTruthy();
   });
+
+  it("renders identical SVG markup for the same seed + indices", () => {
+    const { container: a } = render(
+      <PersonaPixelAvatar seed="twin-seed" shapeIndex={4} paletteIndex={1} />,
+    );
+    const markupA = a.querySelector("svg")?.innerHTML;
+    const { container: b } = render(
+      <PersonaPixelAvatar seed="twin-seed" shapeIndex={4} paletteIndex={1} />,
+    );
+    const markupB = b.querySelector("svg")?.innerHTML;
+    expect(markupA).toBeTruthy();
+    expect(markupA).toBe(markupB);
+  });
+
+  it("varies SVG markup across seeds within the same family/mineral", () => {
+    const { container: a } = render(
+      <PersonaPixelAvatar seed="seed-alpha" shapeIndex={0} paletteIndex={0} />,
+    );
+    const { container: b } = render(
+      <PersonaPixelAvatar seed="seed-omega" shapeIndex={0} paletteIndex={0} />,
+    );
+    expect(a.querySelector("svg")?.innerHTML).not.toBe(
+      b.querySelector("svg")?.innerHTML,
+    );
+  });
+
+  it("sets data-state from the state prop", () => {
+    render(<PersonaPixelAvatar seed="persona-bob" state="running" />);
+    expect(
+      screen.getByTestId("persona-pixel-avatar").getAttribute("data-state"),
+    ).toBe("running");
+  });
 });

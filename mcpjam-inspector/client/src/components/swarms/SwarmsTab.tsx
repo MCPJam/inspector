@@ -39,10 +39,12 @@ import { Label } from "@mcpjam/design-system/label";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { InlineEditableText } from "@/components/ui/inline-editable-text";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { PersonaPixelAvatar } from "@/components/swarms/persona-pixel-avatar";
 import { PersonaAvatarLookPicker } from "@/components/swarms/persona-avatar-look-picker";
+import { JourneyNetworkBackdrop } from "@/components/swarms/journey-network-backdrop";
 import {
   launchJourneyRun,
   LaunchJourneyRunError,
@@ -270,6 +272,30 @@ function usePersonaTrackRecord(personaRefId: string | null) {
   ) as PersonaTrackRecord | undefined;
 }
 
+/**
+ * Owns the `listRunningPersonaRefIds` subscription in isolation so a missing
+ * backend deploy (unknown query) cannot white-screen Swarms — the parent
+ * wraps this in `ErrorBoundary` and keeps an empty running set on failure.
+ */
+function RunningPersonasSubscriber({
+  projectId,
+  onChange,
+}: {
+  projectId: string | null;
+  onChange: (ids: string[]) => void;
+}) {
+  const ids = useQuery(
+    SWARM_QUERIES.listRunningPersonaRefIds as any,
+    projectId ? ({ projectId } as any) : "skip",
+  ) as string[] | undefined;
+
+  useEffect(() => {
+    onChange(ids ?? []);
+  }, [ids, onChange]);
+
+  return null;
+}
+
 export function SwarmsTab({
   projectId,
   isAuthenticated,
@@ -281,6 +307,14 @@ export function SwarmsTab({
   const effectiveProjectId = isAuthenticated ? projectId : null;
   const personas = usePersonas(effectiveProjectId);
   const hosts = useProjectHosts(effectiveProjectId);
+  const [runningPersonaIds, setRunningPersonaIds] = useState<string[]>([]);
+  const runningSet = useMemo(
+    () => new Set(runningPersonaIds),
+    [runningPersonaIds],
+  );
+  const onRunningPersonasChange = useCallback((ids: string[]) => {
+    setRunningPersonaIds(ids);
+  }, []);
   const [swarmView, setSwarmView] = useState<"journeys" | "clients">(
     "journeys",
   );
@@ -668,6 +702,12 @@ export function SwarmsTab({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      <ErrorBoundary fallback={null}>
+        <RunningPersonasSubscriber
+          projectId={effectiveProjectId}
+          onChange={onRunningPersonasChange}
+        />
+      </ErrorBoundary>
       {/* Product sub-nav: Journeys (personas/journeys/runs) vs Clients
           (product-scoped host management). */}
       <div className="flex shrink-0 items-center justify-center border-b px-4 py-2">
@@ -727,6 +767,7 @@ export function SwarmsTab({
                     paletteIndex={p.avatarPalette}
                     size="md"
                     active={selected}
+                    state={runningSet.has(p._id) ? "running" : "idle"}
                   />
                   <span className="flex min-w-0 flex-col items-start gap-0.5">
                     <span className="truncate text-sm font-medium">
@@ -746,13 +787,12 @@ export function SwarmsTab({
       {/* Journeys for the selected persona */}
       <main className="min-w-0 flex-1 overflow-y-auto">
         {!selectedPersona ? (
-          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-            Select a persona to see its journeys.
-          </div>
+          <JourneyNetworkBackdrop />
         ) : (
           <div className="mx-auto max-w-3xl px-8 py-6">
             <PersonaDetailHeader
               persona={selectedPersona}
+              running={runningSet.has(selectedPersona._id)}
               onSave={(patch) => savePersonaField(selectedPersona._id, patch)}
               onDelete={async () => {
                 if (
@@ -1178,10 +1218,12 @@ function RunSessionsView({
 
 function PersonaDetailHeader({
   persona,
+  running,
   onSave,
   onDelete,
 }: {
   persona: Persona;
+  running: boolean;
   onSave: (patch: {
     name?: string;
     role?: string;
@@ -1215,6 +1257,7 @@ function PersonaDetailHeader({
           seed={persona._id}
           avatarShape={persona.avatarShape}
           avatarPalette={persona.avatarPalette}
+          state={running ? "running" : "idle"}
           onSave={(look) => onSave(look)}
         />
         <div className="min-w-0 flex-1">

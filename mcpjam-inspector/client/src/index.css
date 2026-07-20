@@ -304,7 +304,7 @@
   }
 }
 
-/* Swarm persona 8-bit avatars — idle bob (Cursor-style little characters). */
+/* Swarm persona pixel golems — idle bob on the wrapper span. */
 @keyframes persona-pixel-bob {
   0%,
   100% {
@@ -327,6 +327,42 @@
   }
 }
 
+/* Head hop: 1px = one grid cell inside the scaled SVG. */
+@keyframes persona-golem-head {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-1px);
+  }
+}
+
+@keyframes persona-golem-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@keyframes persona-golem-pulse-fast {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@keyframes persona-golem-flicker {
+  0%,
+  55% {
+    opacity: 1;
+  }
+
+  30%,
+  80% {
+    opacity: 0.2;
+  }
+}
+
 .animate-persona-pixel-bob {
   animation: persona-pixel-bob 1.6s ease-in-out infinite;
 }
@@ -335,9 +371,29 @@
   animation: persona-pixel-bob-active 0.9s ease-in-out infinite;
 }
 
+.animate-persona-golem-head {
+  animation: persona-golem-head 2.6s steps(1, end) infinite;
+}
+
+.animate-persona-golem-pulse {
+  animation: persona-golem-pulse 3s ease-in-out infinite;
+}
+
+.animate-persona-golem-pulse-fast {
+  animation: persona-golem-pulse-fast 1.1s ease-in-out infinite;
+}
+
+.animate-persona-golem-flicker {
+  animation: persona-golem-flicker 1.7s steps(2, end) infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-persona-pixel-bob,
-  .animate-persona-pixel-bob-active {
+  .animate-persona-pixel-bob-active,
+  .animate-persona-golem-head,
+  .animate-persona-golem-pulse,
+  .animate-persona-golem-pulse-fast,
+  .animate-persona-golem-flicker {
     animation: none;
   }
 }

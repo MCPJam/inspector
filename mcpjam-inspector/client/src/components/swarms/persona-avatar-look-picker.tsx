@@ -1,5 +1,5 @@
 /**
- * Compact shape + palette look picker for swarm persona pixel avatars.
+ * Compact form + mineral look picker for swarm persona pixel golems.
  * Saves immediately via the parent `onSave` (→ `personas:updatePersona`).
  */
 
@@ -12,22 +12,28 @@ import {
   PopoverTrigger,
 } from "@mcpjam/design-system/popover";
 import {
+  PERSONA_PIXEL_FAMILY_NAMES,
+  PERSONA_PIXEL_MINERAL_NAMES,
   PERSONA_PIXEL_PALETTE_COUNT,
   PERSONA_PIXEL_SHAPE_COUNT,
   PersonaPixelAvatar,
   resolvePersonaPixelLook,
   wrapPersonaPixelIndex,
+  type PersonaPixelState,
 } from "@/components/swarms/persona-pixel-avatar";
 
 export function PersonaAvatarLookPicker({
   seed,
   avatarShape,
   avatarPalette,
+  state,
   onSave,
 }: {
   seed: string;
   avatarShape?: number | null;
   avatarPalette?: number | null;
+  /** Forwarded to both avatar instances (trigger + preview). */
+  state?: PersonaPixelState;
   onSave: (look: {
     avatarShape: number;
     avatarPalette: number;
@@ -82,6 +88,9 @@ export function PersonaAvatarLookPicker({
     void persist(shapeIndex, next);
   };
 
+  const familyName = PERSONA_PIXEL_FAMILY_NAMES[shapeIndex] ?? "Form";
+  const mineralName = PERSONA_PIXEL_MINERAL_NAMES[paletteIndex] ?? "Mineral";
+
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -98,10 +107,11 @@ export function PersonaAvatarLookPicker({
             paletteIndex={avatarPalette}
             size="lg"
             active
+            state={state}
           />
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-56 p-3" align="start">
+      <PopoverContent className="w-64 p-3" align="start">
         <div className="flex flex-col items-center gap-3">
           <PersonaPixelAvatar
             seed={seed}
@@ -109,10 +119,11 @@ export function PersonaAvatarLookPicker({
             paletteIndex={paletteIndex}
             size="lg"
             active
+            state={state}
           />
           <div className="flex w-full items-center justify-between gap-2">
             <span className="text-xs font-medium text-muted-foreground">
-              Shape
+              Form
             </span>
             <div className="flex items-center gap-1">
               <Button
@@ -121,13 +132,13 @@ export function PersonaAvatarLookPicker({
                 variant="outline"
                 className="h-7 w-7 p-0"
                 disabled={saving}
-                aria-label="Previous shape"
+                aria-label="Previous form"
                 onClick={() => stepShape(-1)}
               >
                 <ChevronLeft className="h-3.5 w-3.5" />
               </Button>
-              <span className="w-8 text-center text-xs tabular-nums text-muted-foreground">
-                {shapeIndex + 1}/{PERSONA_PIXEL_SHAPE_COUNT}
+              <span className="min-w-16 text-center text-xs tabular-nums text-muted-foreground">
+                {familyName} · {shapeIndex + 1}/{PERSONA_PIXEL_SHAPE_COUNT}
               </span>
               <Button
                 type="button"
@@ -135,7 +146,7 @@ export function PersonaAvatarLookPicker({
                 variant="outline"
                 className="h-7 w-7 p-0"
                 disabled={saving}
-                aria-label="Next shape"
+                aria-label="Next form"
                 data-testid="persona-avatar-next-shape"
                 onClick={() => stepShape(1)}
               >
@@ -145,7 +156,7 @@ export function PersonaAvatarLookPicker({
           </div>
           <div className="flex w-full items-center justify-between gap-2">
             <span className="text-xs font-medium text-muted-foreground">
-              Colors
+              Mineral
             </span>
             <div className="flex items-center gap-1">
               <Button
@@ -154,13 +165,13 @@ export function PersonaAvatarLookPicker({
                 variant="outline"
                 className="h-7 w-7 p-0"
                 disabled={saving}
-                aria-label="Previous colors"
+                aria-label="Previous mineral"
                 onClick={() => stepPalette(-1)}
               >
                 <ChevronLeft className="h-3.5 w-3.5" />
               </Button>
-              <span className="w-8 text-center text-xs tabular-nums text-muted-foreground">
-                {paletteIndex + 1}/{PERSONA_PIXEL_PALETTE_COUNT}
+              <span className="min-w-16 text-center text-xs tabular-nums text-muted-foreground">
+                {mineralName} · {paletteIndex + 1}/{PERSONA_PIXEL_PALETTE_COUNT}
               </span>
               <Button
                 type="button"
@@ -168,7 +179,7 @@ export function PersonaAvatarLookPicker({
                 variant="outline"
                 className="h-7 w-7 p-0"
                 disabled={saving}
-                aria-label="Next colors"
+                aria-label="Next mineral"
                 data-testid="persona-avatar-next-palette"
                 onClick={() => stepPalette(1)}
               >

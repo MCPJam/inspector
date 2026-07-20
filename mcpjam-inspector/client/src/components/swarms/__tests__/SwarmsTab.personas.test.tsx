@@ -1,7 +1,7 @@
 /**
  * Personas create/edit UX on SwarmsTab — dialog create + blur-save profile notes.
  */
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const persona = {
@@ -12,9 +12,14 @@ const persona = {
   notes: "curious and impatient",
 };
 
-const { createPersonaMutation, updatePersonaMutation } = vi.hoisted(() => ({
+const {
+  createPersonaMutation,
+  updatePersonaMutation,
+  runningPersonaRefIds,
+} = vi.hoisted(() => ({
   createPersonaMutation: vi.fn(),
   updatePersonaMutation: vi.fn(),
+  runningPersonaRefIds: { current: [] as string[] },
 }));
 
 vi.mock("convex/react", () => ({
@@ -27,6 +32,8 @@ vi.mock("convex/react", () => ({
         return [];
       case "hosts:listHosts":
         return [];
+      case "journeyRuns:listRunningPersonaRefIds":
+        return runningPersonaRefIds.current;
       default:
         return undefined;
     }
@@ -66,6 +73,7 @@ import { SwarmsTab } from "../SwarmsTab";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  runningPersonaRefIds.current = [];
   createPersonaMutation.mockResolvedValue({ _id: "persona-new" });
   updatePersonaMutation.mockResolvedValue({ ...persona });
 });
@@ -157,6 +165,17 @@ describe("SwarmsTab — persona create/edit", () => {
         avatarShape: (seeded.shapeIndex + 1) % 6,
         avatarPalette: seeded.paletteIndex,
       });
+    });
+  });
+
+  it("lights the sidebar avatar when the persona has a running journey", async () => {
+    runningPersonaRefIds.current = ["persona-1"];
+    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+
+    await waitFor(() => {
+      const aside = screen.getByRole("complementary");
+      const avatar = within(aside).getByTestId("persona-pixel-avatar");
+      expect(avatar.getAttribute("data-state")).toBe("running");
     });
   });
 });
