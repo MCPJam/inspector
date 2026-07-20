@@ -635,3 +635,154 @@ describe("canonicalizeHostConfigV2 — harness field", () => {
     expect(await hash(withHarness)).not.toBe(await hash(without));
   });
 });
+
+describe("canonicalizeHostConfigV2 — skillSelection", () => {
+  it("omits skillSelection when absent (legacy all-visible rows stay byte-identical)", () => {
+    const canonical = JSON.parse(
+      JSON.stringify(canonicalizeHostConfigV2(base()))
+    );
+    expect("skillSelection" in canonical).toBe(false);
+  });
+
+  it('canonicalizes { mode: "all-visible" } to ABSENT (single identity per behavior)', async () => {
+    const c = JSON.parse(
+      JSON.stringify(
+        canonicalizeHostConfigV2(
+          base({ skillSelection: { mode: "all-visible" } })
+        )
+      )
+    );
+    expect("skillSelection" in c).toBe(false);
+    // Absent and explicit all-visible are ONE behavior → one hash. Two
+    // encodings would mint two content-addressed identities for the same
+    // host, breaking dedupe and host comparison.
+    expect(await hash(base({ skillSelection: { mode: "all-visible" } }))).toBe(
+      await hash(base())
+    );
+  });
+
+  it("preserves explicit-EMPTY and hashes it distinctly from absent (absence is semantic)", async () => {
+    const c = canonicalizeHostConfigV2(
+      base({ skillSelection: { mode: "explicit", skillIds: [] } })
+    );
+    expect(c.skillSelection).toEqual({ mode: "explicit", skillIds: [] });
+    expect(
+      await hash(base({ skillSelection: { mode: "explicit", skillIds: [] } }))
+    ).not.toBe(await hash(base()));
+  });
+
+  it("dedupes and sorts explicit skillIds deterministically (order-insensitive)", async () => {
+    const c = canonicalizeHostConfigV2(
+      base({
+        skillSelection: { mode: "explicit", skillIds: ["sk-b", "sk-a", "sk-b"] },
+      })
+    );
+    expect(c.skillSelection).toEqual({
+      mode: "explicit",
+      skillIds: ["sk-a", "sk-b"],
+    });
+    expect(
+      await hash(
+        base({ skillSelection: { mode: "explicit", skillIds: ["sk-a", "sk-b"] } })
+      )
+    ).toBe(
+      await hash(
+        base({
+          skillSelection: {
+            mode: "explicit",
+            skillIds: ["sk-b", "sk-a", "sk-b"],
+          },
+        })
+      )
+    );
+  });
+
+  it("different explicit skillIds hash distinctly", async () => {
+    expect(
+      await hash(
+        base({ skillSelection: { mode: "explicit", skillIds: ["sk-1"] } })
+      )
+    ).not.toBe(
+      await hash(
+        base({ skillSelection: { mode: "explicit", skillIds: ["sk-2"] } })
+      )
+    );
+  });
+
+  it("rejects an unknown mode", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          skillSelection: { mode: "some-of-them" } as unknown as {
+            mode: "all-visible";
+          },
+        })
+      )
+    ).toThrow(/skillSelection\.mode must be "all-visible" \| "explicit"/);
+  });
+
+  it("rejects a non-object skillSelection", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          skillSelection: "all-visible" as unknown as { mode: "all-visible" },
+        })
+      )
+    ).toThrow(/skillSelection must be a plain object/);
+  });
+
+  it("rejects stray keys (loud error, not silent drop)", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          skillSelection: {
+            mode: "all-visible",
+            skillIds: ["sk-1"],
+          } as unknown as { mode: "all-visible" },
+        })
+      )
+    ).toThrow(/skillSelection\.skillIds is not supported/);
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          skillSelection: {
+            mode: "explicit",
+            skillIds: [],
+            extra: true,
+          } as unknown as { mode: "explicit"; skillIds: string[] },
+        })
+      )
+    ).toThrow(/skillSelection\.extra is not supported/);
+  });
+
+  it("rejects missing / non-array skillIds on explicit", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          skillSelection: { mode: "explicit" } as unknown as {
+            mode: "explicit";
+            skillIds: string[];
+          },
+        })
+      )
+    ).toThrow(/skillSelection\.skillIds must be a string\[\]/);
+  });
+
+  it("rejects non-string / empty skillIds entries", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          skillSelection: {
+            mode: "explicit",
+            skillIds: [42 as unknown as string],
+          },
+        })
+      )
+    ).toThrow(/skillSelection\.skillIds entries must be strings/);
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({ skillSelection: { mode: "explicit", skillIds: [" "] } })
+      )
+    ).toThrow(/skillSelection\.skillIds entries must be non-empty strings/);
+  });
+});

@@ -24,8 +24,27 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, usePaginatedQuery } from "convex/react";
+import { Loader2, Plus } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@mcpjam/design-system/dialog";
+import { Input } from "@mcpjam/design-system/input";
+import { Label } from "@mcpjam/design-system/label";
+import { Textarea } from "@mcpjam/design-system/textarea";
 import { toast } from "@/lib/toast";
+import { cn } from "@/lib/utils";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { InlineEditableText } from "@/components/ui/inline-editable-text";
+import { TextareaAutosize } from "@/components/ui/textarea-autosize";
+import { PersonaPixelAvatar } from "@/components/swarms/persona-pixel-avatar";
+import { PersonaAvatarLookPicker } from "@/components/swarms/persona-avatar-look-picker";
+import { JourneyNetworkBackdrop } from "@/components/swarms/journey-network-backdrop";
 import {
   launchJourneyRun,
   LaunchJourneyRunError,
@@ -179,7 +198,7 @@ export function SessionGoalScoreBadge({
   );
 }
 
-/** `· goal 78% avg (4 judged)` — shared by the run card + persona strip. */
+/** `· goal 78% avg (4 judged)` — used on journey run cards. */
 export function goalScoreAvgLabel(rollup: GoalScoreRollup | undefined): string | null {
   if (!rollup || rollup.gradedCount === 0 || rollup.avgScore === null) {
     return null;
@@ -193,6 +212,9 @@ type Persona = {
   name: string;
   role: string;
   notes: string;
+  /** Optional 8-bit look (Inspector PersonaPixelAvatar). */
+  avatarShape?: number;
+  avatarPalette?: number;
 };
 type Journey = {
   _id: string;
@@ -250,6 +272,30 @@ function usePersonaTrackRecord(personaRefId: string | null) {
   ) as PersonaTrackRecord | undefined;
 }
 
+/**
+ * Owns the `listRunningPersonaRefIds` subscription in isolation so a missing
+ * backend deploy (unknown query) cannot white-screen Swarms — the parent
+ * wraps this in `ErrorBoundary` and keeps an empty running set on failure.
+ */
+function RunningPersonasSubscriber({
+  projectId,
+  onChange,
+}: {
+  projectId: string | null;
+  onChange: (ids: string[]) => void;
+}) {
+  const ids = useQuery(
+    SWARM_QUERIES.listRunningPersonaRefIds as any,
+    projectId ? ({ projectId } as any) : "skip",
+  ) as string[] | undefined;
+
+  useEffect(() => {
+    onChange(ids ?? []);
+  }, [ids, onChange]);
+
+  return null;
+}
+
 export function SwarmsTab({
   projectId,
   isAuthenticated,
@@ -261,6 +307,14 @@ export function SwarmsTab({
   const effectiveProjectId = isAuthenticated ? projectId : null;
   const personas = usePersonas(effectiveProjectId);
   const hosts = useProjectHosts(effectiveProjectId);
+  const [runningPersonaIds, setRunningPersonaIds] = useState<string[]>([]);
+  const runningSet = useMemo(
+    () => new Set(runningPersonaIds),
+    [runningPersonaIds],
+  );
+  const onRunningPersonasChange = useCallback((ids: string[]) => {
+    setRunningPersonaIds(ids);
+  }, []);
   const [swarmView, setSwarmView] = useState<"journeys" | "clients">(
     "journeys",
   );
@@ -275,11 +329,35 @@ export function SwarmsTab({
     () => deepLink.personaRefId ?? null,
   );
   const journeys = useJourneys(selectedPersonaId);
-  // Lifted for the agent snapshot AND the persona strip (one subscription).
+  // Lifted for the agent snapshot (one subscription).
 
   const createPersona = useMutation("personas:createPersona" as any);
+  const updatePersona = useMutation("personas:updatePersona" as any);
   const deletePersona = useMutation("personas:deletePersona" as any);
   const createJourney = useMutation("journeys:createJourney" as any);
+
+  const savePersonaField = useCallback(
+    async (
+      personaRefId: string,
+      patch: {
+        name?: string;
+        role?: string;
+        notes?: string;
+        avatarShape?: number;
+        avatarPalette?: number;
+      },
+    ) => {
+      try {
+        await updatePersona({ personaRefId, ...patch } as any);
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : "Failed to update persona",
+        );
+        throw error;
+      }
+    },
+    [updatePersona],
+  );
 
   const selectedPersona = useMemo(
     () => personas?.find((p) => p._id === selectedPersonaId) ?? null,
@@ -624,6 +702,12 @@ export function SwarmsTab({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      <ErrorBoundary fallback={null}>
+        <RunningPersonasSubscriber
+          projectId={effectiveProjectId}
+          onChange={onRunningPersonasChange}
+        />
+      </ErrorBoundary>
       {/* Product sub-nav: Journeys (personas/journeys/runs) vs Clients
           (product-scoped host management). */}
       <div className="flex shrink-0 items-center justify-center border-b px-4 py-2">
@@ -650,7 +734,7 @@ export function SwarmsTab({
           <aside className="flex w-72 shrink-0 flex-col border-r">
         <div className="flex items-center justify-between border-b px-4 py-3">
           <h2 className="text-sm font-semibold">Personas</h2>
-          <NewPersonaButton
+          <NewPersonaDialog
             onCreate={async (draft) => {
               const row = await createPersona({ projectId, ...draft } as any);
               setSelectedPersonaId(row._id);
@@ -665,19 +749,37 @@ export function SwarmsTab({
               No personas yet. Create one to get started.
             </div>
           ) : (
-            personas.map((p) => (
-              <button
-                key={p._id}
-                type="button"
-                onClick={() => setSelectedPersonaId(p._id)}
-                className={`flex w-full flex-col items-start gap-0.5 border-b px-4 py-3 text-left hover:bg-muted/50 ${
-                  p._id === selectedPersonaId ? "bg-muted" : ""
-                }`}
-              >
-                <span className="text-sm font-medium">{p.name}</span>
-                <span className="text-xs text-muted-foreground">{p.role}</span>
-              </button>
-            ))
+            personas.map((p) => {
+              const selected = p._id === selectedPersonaId;
+              return (
+                <button
+                  key={p._id}
+                  type="button"
+                  onClick={() => setSelectedPersonaId(p._id)}
+                  className={cn(
+                    "flex w-full items-center gap-3 border-b px-4 py-3 text-left hover:bg-muted/50",
+                    selected && "bg-muted",
+                  )}
+                >
+                  <PersonaPixelAvatar
+                    seed={p._id}
+                    shapeIndex={p.avatarShape}
+                    paletteIndex={p.avatarPalette}
+                    size="md"
+                    active={selected}
+                    state={runningSet.has(p._id) ? "running" : "idle"}
+                  />
+                  <span className="flex min-w-0 flex-col items-start gap-0.5">
+                    <span className="truncate text-sm font-medium">
+                      {p.name}
+                    </span>
+                    <span className="truncate text-xs text-muted-foreground">
+                      {p.role}
+                    </span>
+                  </span>
+                </button>
+              );
+            })
           )}
         </div>
       </aside>
@@ -685,41 +787,27 @@ export function SwarmsTab({
       {/* Journeys for the selected persona */}
       <main className="min-w-0 flex-1 overflow-y-auto">
         {!selectedPersona ? (
-          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-            Select a persona to see its journeys.
-          </div>
+          <JourneyNetworkBackdrop />
         ) : (
           <div className="mx-auto max-w-3xl px-8 py-6">
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-semibold">{selectedPersona.name}</h2>
-                <p className="text-sm text-muted-foreground">
-                  {selectedPersona.role}
-                </p>
-              </div>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                onClick={async () => {
-                  if (
-                    !window.confirm(
-                      `Delete persona "${selectedPersona.name}"? Its journeys are hidden but historical runs are kept.`
-                    )
-                  ) {
-                    return;
-                  }
-                  await deletePersona({
-                    personaRefId: selectedPersona._id,
-                  } as any);
-                  setSelectedPersonaId(null);
-                }}
-              >
-                Delete persona
-              </Button>
-            </div>
-
-            <PersonaTrackRecordStrip record={trackRecord} />
+            <PersonaDetailHeader
+              persona={selectedPersona}
+              running={runningSet.has(selectedPersona._id)}
+              onSave={(patch) => savePersonaField(selectedPersona._id, patch)}
+              onDelete={async () => {
+                if (
+                  !window.confirm(
+                    `Delete persona "${selectedPersona.name}"? Its journeys are hidden but historical runs are kept.`,
+                  )
+                ) {
+                  return;
+                }
+                await deletePersona({
+                  personaRefId: selectedPersona._id,
+                } as any);
+                setSelectedPersonaId(null);
+              }}
+            />
 
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-sm font-semibold">Journeys</h3>
@@ -769,29 +857,6 @@ export function SwarmsTab({
       </main>
         </div>
       )}
-    </div>
-  );
-}
-
-// ── persona track record ─────────────────────────────────────────────────────
-// The record is fetched once in SwarmsTab (shared with the agent snapshot) and
-// passed in, rather than re-subscribing here.
-function PersonaTrackRecordStrip({
-  record,
-}: {
-  record: PersonaTrackRecord | undefined;
-}) {
-  if (!record || record.sessionCount === 0) return null;
-  return (
-    <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-xs">
-      <span className="font-medium text-muted-foreground">Track record</span>
-      <span className="text-muted-foreground">
-        {record.sessionCount} session{record.sessionCount === 1 ? "" : "s"} ·{" "}
-        {record.runCount} run{record.runCount === 1 ? "" : "s"}
-        {goalScoreAvgLabel(record.goalScore)
-          ? ` · ${goalScoreAvgLabel(record.goalScore)}`
-          : ""}
-      </span>
     </div>
   );
 }
@@ -1149,8 +1214,96 @@ function RunSessionsView({
   );
 }
 
-// ── dialogs (minimal inline forms) ───────────────────────────────────────────
-function NewPersonaButton({
+// ── persona detail (evals-style editable header) ─────────────────────────────
+
+function PersonaDetailHeader({
+  persona,
+  running,
+  onSave,
+  onDelete,
+}: {
+  persona: Persona;
+  running: boolean;
+  onSave: (patch: {
+    name?: string;
+    role?: string;
+    notes?: string;
+    avatarShape?: number;
+    avatarPalette?: number;
+  }) => Promise<void>;
+  onDelete: () => Promise<void>;
+}) {
+  const [notes, setNotes] = useState(persona.notes ?? "");
+
+  useEffect(() => {
+    setNotes(persona.notes ?? "");
+  }, [persona._id, persona.notes]);
+
+  const persistNotes = async () => {
+    const next = notes.trim();
+    const prev = (persona.notes ?? "").trim();
+    if (next === prev) return;
+    try {
+      await onSave({ notes: next });
+    } catch {
+      setNotes(persona.notes ?? "");
+    }
+  };
+
+  return (
+    <div className="mb-4 flex items-start justify-between gap-4">
+      <div className="flex min-w-0 flex-1 items-start gap-3">
+        <PersonaAvatarLookPicker
+          seed={persona._id}
+          avatarShape={persona.avatarShape}
+          avatarPalette={persona.avatarPalette}
+          state={running ? "running" : "idle"}
+          onSave={(look) => onSave(look)}
+        />
+        <div className="min-w-0 flex-1">
+          <InlineEditableText
+            value={persona.name}
+            onSave={(name) => onSave({ name })}
+            className="block w-full text-lg font-semibold tracking-tight sm:text-xl"
+            truncate={false}
+          />
+          <InlineEditableText
+            value={persona.role}
+            onSave={(role) => onSave({ role })}
+            className="mt-0.5 block w-full text-sm text-muted-foreground"
+            truncate={false}
+          />
+          <TextareaAutosize
+            aria-label="Notes / personality"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            onBlur={() => void persistNotes()}
+            minRows={1}
+            maxRows={4}
+            placeholder="Add personality notes…"
+            className={cn(
+              "mt-2 min-h-0 resize-none border-0 bg-transparent px-0 py-0 text-sm",
+              "text-muted-foreground shadow-none placeholder:text-muted-foreground/60",
+              "focus-visible:border-0 focus-visible:ring-0",
+            )}
+          />
+        </div>
+      </div>
+      <Button
+        type="button"
+        size="sm"
+        variant="ghost"
+        className="shrink-0 text-muted-foreground hover:text-destructive"
+        onClick={() => void onDelete()}
+      >
+        Delete persona
+      </Button>
+    </div>
+  );
+}
+
+// ── create persona dialog (design-system; replaces the floating raw form) ────
+function NewPersonaDialog({
   onCreate,
 }: {
   onCreate: (draft: {
@@ -1163,53 +1316,126 @@ function NewPersonaButton({
   const [name, setName] = useState("");
   const [role, setRole] = useState("");
   const [notes, setNotes] = useState("");
-  if (!open) {
-    return (
-      <Button type="button" size="sm" variant="outline" onClick={() => setOpen(true)}>
-        + New
-      </Button>
-    );
-  }
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!open) {
+      setName("");
+      setRole("");
+      setNotes("");
+      setSaving(false);
+    }
+  }, [open]);
+
+  const handleCreate = async () => {
+    if (!name.trim() || !role.trim()) {
+      toast.error("Name and role are required");
+      return;
+    }
+    setSaving(true);
+    try {
+      await onCreate({
+        name: name.trim(),
+        role: role.trim(),
+        notes: notes.trim() || undefined,
+      });
+      toast.success("Persona created");
+      setOpen(false);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to create persona",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <div className="absolute right-4 top-12 z-10 w-64 rounded-lg border bg-background p-3 shadow-lg">
-      <input
-        className="mb-2 w-full rounded border px-2 py-1 text-sm"
-        placeholder="Name"
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-      />
-      <input
-        className="mb-2 w-full rounded border px-2 py-1 text-sm"
-        placeholder="Role"
-        value={role}
-        onChange={(e) => setRole(e.target.value)}
-      />
-      <textarea
-        className="mb-2 w-full rounded border px-2 py-1 text-sm"
-        placeholder="Notes / personality"
-        value={notes}
-        onChange={(e) => setNotes(e.target.value)}
-      />
-      <div className="flex justify-end gap-2">
-        <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>
-          Cancel
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          disabled={!name.trim() || !role.trim()}
-          onClick={async () => {
-            await onCreate({ name, role, notes });
-            setOpen(false);
-            setName("");
-            setRole("");
-            setNotes("");
-          }}
-        >
-          Create
-        </Button>
-      </div>
-    </div>
+    <>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        onClick={() => setOpen(true)}
+      >
+        <Plus className="mr-1 size-3" />
+        New
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>New persona</DialogTitle>
+            <DialogDescription>
+              A synthetic user who pursues journeys across your clients.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-3 py-1">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="swarm-persona-name">Name</Label>
+              <Input
+                id="swarm-persona-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Test User"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void handleCreate();
+                  }
+                }}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="swarm-persona-role">Role</Label>
+              <Input
+                id="swarm-persona-role"
+                value={role}
+                onChange={(e) => setRole(e.target.value)}
+                placeholder="SWE evaluating the product"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void handleCreate();
+                  }
+                }}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="swarm-persona-notes">Notes / personality</Label>
+              <Textarea
+                id="swarm-persona-notes"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="Background, tone, what they care about…"
+                rows={4}
+                className="leading-relaxed"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setOpen(false)}
+              disabled={saving}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={saving || !name.trim() || !role.trim()}
+              onClick={() => void handleCreate()}
+            >
+              {saving ? (
+                <Loader2 className="mr-1 size-3 animate-spin" />
+              ) : null}
+              Create persona
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -1260,7 +1486,8 @@ function NewJourneyButton({
   if (!open) {
     return (
       <Button type="button" size="sm" variant="outline" onClick={() => setOpen(true)}>
-        + New journey
+        <Plus className="mr-1 size-3" />
+        New journey
       </Button>
     );
   }
@@ -1269,14 +1496,24 @@ function NewJourneyButton({
       prev.includes(id) ? prev.filter((h) => h !== id) : [...prev, id]
     );
   return (
-    <div className="w-full rounded-lg border p-4">
-      <textarea
-        className="mb-3 w-full rounded border px-2 py-1 text-sm"
-        placeholder="Goal — what this persona is trying to accomplish"
-        value={goal}
-        onChange={(e) => setGoal(e.target.value)}
-      />
-      <p className="mb-1 text-xs font-medium">Clients</p>
+    <div
+      className={cn(
+        "w-full rounded-xl border border-border/50 bg-card/50 p-4 shadow-sm",
+        "ring-1 ring-black/[0.03] dark:ring-white/[0.06]",
+      )}
+    >
+      <div className="mb-3 flex flex-col gap-1.5">
+        <Label htmlFor="swarm-journey-goal">Goal</Label>
+        <Textarea
+          id="swarm-journey-goal"
+          placeholder="What this persona is trying to accomplish"
+          value={goal}
+          onChange={(e) => setGoal(e.target.value)}
+          rows={3}
+          className="leading-relaxed"
+        />
+      </div>
+      <p className="mb-1.5 text-xs font-medium">Clients</p>
       <div className="mb-3 flex flex-wrap gap-2">
         {hosts.length === 0 ? (
           <span className="text-xs text-muted-foreground">
@@ -1299,11 +1536,12 @@ function NewJourneyButton({
                 key={h.hostId}
                 type="button"
                 onClick={() => toggleHost(h.hostId)}
-                className={`flex flex-col items-start gap-0.5 rounded-lg border px-2.5 py-1.5 text-left text-xs ${
+                className={cn(
+                  "flex flex-col items-start gap-0.5 rounded-lg border px-2.5 py-1.5 text-left text-xs",
                   hostIds.includes(h.hostId)
                     ? "border-primary bg-primary/10"
-                    : "hover:bg-muted"
-                }`}
+                    : "hover:bg-muted",
+                )}
               >
                 <span className="flex items-center gap-1.5 font-medium">
                   {h.name}
@@ -1326,29 +1564,35 @@ function NewJourneyButton({
           })
         )}
       </div>
-      <div className="mb-3 flex gap-4 text-xs">
-        <label className="flex items-center gap-1">
-          Sessions/host
-          <input
+      <div className="mb-3 flex flex-wrap gap-4">
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="swarm-journey-sessions" className="text-xs">
+            Sessions/host
+          </Label>
+          <Input
+            id="swarm-journey-sessions"
             type="number"
             min={1}
             max={5}
-            className="w-14 rounded border px-1 py-0.5"
+            className="h-8 w-20"
             value={sessionsPerHost}
             onChange={(e) => setSessionsPerHost(Number(e.target.value))}
           />
-        </label>
-        <label className="flex items-center gap-1">
-          Max turns
-          <input
+        </div>
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="swarm-journey-turns" className="text-xs">
+            Max turns
+          </Label>
+          <Input
+            id="swarm-journey-turns"
             type="number"
             min={1}
             max={20}
-            className="w-14 rounded border px-1 py-0.5"
+            className="h-8 w-20"
             value={maxTurns}
             onChange={(e) => setMaxTurns(Number(e.target.value))}
           />
-        </label>
+        </div>
       </div>
       <div className="flex justify-end gap-2">
         <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>

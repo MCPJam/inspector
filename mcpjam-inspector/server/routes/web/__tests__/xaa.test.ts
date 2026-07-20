@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { mkdtempSync, rmSync } from "fs";
 import os from "os";
 import path from "path";
-import xaaWeb from "../xaa.js";
+import xaaWeb, { readXaaCimdOrgMasterKey } from "../xaa.js";
 import { createXaaRouter } from "../../mcp/xaa.js";
 import { bearerAuthMiddleware } from "../../../middleware/bearer-auth.js";
 import { guestRateLimitMiddleware } from "../../../middleware/guest-rate-limit.js";
@@ -165,7 +165,6 @@ describe("web xaa routes", () => {
     expect(tokenExchangeBody.negative_test_mode).toBe("unknown_kid");
   });
 });
-
 describe("org-scoped issuer routes", () => {
   const originalKeyDir = process.env.XAA_IDP_KEY_DIR;
   const ORG_ID = "org_a1B2-c3";
@@ -649,4 +648,25 @@ describe("mock OIDC IdP gating on the hosted router", () => {
     // The front-channel flow never consults the membership gate.
     expect(authorizeOrgIssuer).not.toHaveBeenCalled();
   });
+});
+
+describe("hosted confidential CIMD master-key configuration", () => {
+  it("leaves the feature disabled when the master key is unset", () => {
+    expect(readXaaCimdOrgMasterKey(undefined)).toBeUndefined();
+  });
+
+  it("accepts exactly 32 unpadded base64url bytes", () => {
+    const encoded = Buffer.alloc(32, 7).toString("base64url");
+    expect(encoded).toHaveLength(43);
+    expect(readXaaCimdOrgMasterKey(encoded)).toEqual(Buffer.alloc(32, 7));
+  });
+
+  it.each(["", "not-base64", `${"A".repeat(44)}=`, "A".repeat(42)])(
+    "fails startup for malformed configured values: %j",
+    (value) => {
+      expect(() => readXaaCimdOrgMasterKey(value)).toThrow(
+        "XAA_CIMD_ORG_MASTER_KEY"
+      );
+    }
+  );
 });

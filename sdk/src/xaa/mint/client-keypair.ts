@@ -64,8 +64,9 @@ function setKeyPair(nextPrivate: KeyObject, nextPublic: KeyObject): void {
 
 /** The client key MUST be EC P-256 so it maps to the ES256 JWKS/assertion the
  * RAS validates; an RSA/Ed25519/other-curve key would silently break redemption. */
-function isP256PrivateKey(key: KeyObject): boolean {
+export function isP256PrivateKey(key: KeyObject): boolean {
   return (
+    key.type === "private" &&
     key.asymmetricKeyType === "ec" &&
     key.asymmetricKeyDetails?.namedCurve === "prime256v1"
   );

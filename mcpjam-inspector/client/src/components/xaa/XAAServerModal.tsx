@@ -57,6 +57,11 @@ interface XAAServerModalProps {
   hostedServerId?: string | null;
   /** Whether this inspector process has a Node-side confidential-CIMD provider. */
   confidentialCimdAvailable?: boolean;
+  /**
+   * Preserve an existing private_key_jwt selection while hosted capability
+   * discovery is unresolved. This does not expose the confidential picker.
+   */
+  preserveConfidentialCimdSelection?: boolean;
 }
 
 export function XAAServerModal({
@@ -69,6 +74,7 @@ export function XAAServerModal({
   projectId,
   hostedServerId,
   confidentialCimdAvailable = !HOSTED_MODE,
+  preserveConfidentialCimdSelection = false,
 }: XAAServerModalProps) {
   // One shared derivation with the flow-header format toggle's untouched
   // resave, so both surfaces read the same unedited field values.
@@ -229,8 +235,13 @@ export function XAAServerModal({
       identityAssertionFormat,
       // CIMD client-auth — the builder emits it only for the cimd strategy.
       // Resolve to "none" when no confidential provider is available (hosted)
-      // so a stale imported private_key_jwt is actively cleared.
-      clientAuth: confidentialCimdAvailable ? clientAuth : "none",
+      // so a stale imported private_key_jwt is actively cleared. A pending
+      // capability probe is unknown rather than unavailable, so preserve an
+      // existing private selection without exposing the picker until success.
+      clientAuth:
+        confidentialCimdAvailable || preserveConfidentialCimdSelection
+          ? clientAuth
+          : "none",
       registration: {
         dirty: registrationStrategyDirty,
         strategy: registrationStrategy,
