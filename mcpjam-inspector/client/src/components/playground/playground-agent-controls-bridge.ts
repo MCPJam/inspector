@@ -89,3 +89,39 @@ export function resolvePlaygroundModelIdentifier<
   const lower = trimmed.toLowerCase();
   return models.find((model) => model.name.toLowerCase() === lower);
 }
+
+/**
+ * Resolve an identifier AND apply the picker's availability policy: a disabled
+ * row (guest lock, exhausted credits, no tool-calling support) is rejected the
+ * same way the visible `ModelSelector` disables it, so an agent can't select a
+ * model the UI deliberately locks. Pure, so the policy is unit-testable without
+ * a PlaygroundMain render. The caller commits the change only on `ok: true`.
+ */
+export function resolveSelectablePlaygroundModel<
+  M extends {
+    id: unknown;
+    name: string;
+    disabled?: boolean;
+    disabledReason?: string;
+  },
+>(
+  identifier: string,
+  models: readonly M[],
+): { ok: true; model: M } | { ok: false; error: string } {
+  const match = resolvePlaygroundModelIdentifier(identifier, models);
+  if (!match) {
+    return {
+      ok: false,
+      error: `Unknown model "${identifier}". It must match an available model's id or display name.`,
+    };
+  }
+  if (match.disabled) {
+    return {
+      ok: false,
+      error:
+        match.disabledReason ??
+        `The model "${match.name}" isn't available right now.`,
+    };
+  }
+  return { ok: true, model: match };
+}

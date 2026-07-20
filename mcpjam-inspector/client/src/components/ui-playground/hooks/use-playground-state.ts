@@ -810,7 +810,23 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
       return controls;
     };
 
-    const unregisterSelectModel = registerInspectorCommandHandler(
+    // The chat-composer handlers drive the SINGLETON PlaygroundMain controls,
+    // so they must exist only for the real Playground surface — not the Evals
+    // recorder's embedded chat, which mounts this same hook without a
+    // `snapshotSurfaceId`. Registering them there would make
+    // `hasInspectorCommandHandler('resetChat')` true off /playground, skip the
+    // auto-open-playground fallback, and let whichever PlaygroundMain published
+    // its controls last own the action (e.g. ui_reset_chat clearing the eval
+    // preview). Same gate the snapshot provider below already uses.
+    const registerChatControlHandler: typeof registerInspectorCommandHandler = (
+      type,
+      handler,
+    ) =>
+      snapshotSurfaceId
+        ? registerInspectorCommandHandler(type, handler)
+        : () => {};
+
+    const unregisterSelectModel = registerChatControlHandler(
       "selectModel",
       async (rawCommand) => {
         const command = rawCommand as SelectModelInspectorCommand;
@@ -834,19 +850,29 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
       },
     );
 
-    const unregisterSetSystemPrompt = registerInspectorCommandHandler(
+    const unregisterSetSystemPrompt = registerChatControlHandler(
       "setSystemPrompt",
       async (rawCommand) => {
         const command = rawCommand as SetSystemPromptInspectorCommand;
         const controls = requireChatControls();
-        // Free text the user is directing; empty string clears the prompt.
-        controls.setSystemPrompt(command.payload.prompt ?? "");
+        // `prompt` is a required string. The WebMCP wrapper enforces that, but
+        // the server /api/mcp/command path only checks payload is an object, so
+        // validate here too — a nullish coalesce would silently CLEAR the
+        // user's prompt on `{}` / `{ prompt: null }` and report success. An
+        // explicit "" is still a legitimate clear.
+        if (typeof command.payload.prompt !== "string") {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            "Missing required 'prompt' string (pass an empty string to clear it).",
+          );
+        }
+        controls.setSystemPrompt(command.payload.prompt);
         await waitForUiCommit();
         return buildPlaygroundSnapshot();
       },
     );
 
-    const unregisterResetChat = registerInspectorCommandHandler(
+    const unregisterResetChat = registerChatControlHandler(
       "resetChat",
       async () => {
         const controls = requireChatControls();
@@ -856,7 +882,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
       },
     );
 
-    const unregisterStopGeneration = registerInspectorCommandHandler(
+    const unregisterStopGeneration = registerChatControlHandler(
       "stopGeneration",
       async () => {
         const controls = requireChatControls();
