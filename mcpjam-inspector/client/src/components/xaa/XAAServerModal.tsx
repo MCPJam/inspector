@@ -33,7 +33,6 @@ import { HOSTED_MODE } from "@/lib/config";
 import { XaaCredentialFields } from "../connection/shared/XaaCredentialFields";
 import { XAA_PARTIAL_OVERRIDE_ERROR } from "@/lib/xaa/identity";
 import {
-  IDENTITY_ASSERTION_FORMAT_HINTS,
   IDENTITY_ASSERTION_FORMAT_LABELS,
   buildXaaServerFormData,
   deriveXaaServerFormSeed,
@@ -353,11 +352,6 @@ export function XAAServerModal({
                     </SelectItem>
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-muted-foreground">
-                  {clientAuth === "private_key_jwt"
-                    ? "The local inspector holds a client key and signs a client_assertion; the client_id is a reflector document publishing the matching public key. Use when the server requires a confidential client."
-                    : "Presents MCPJam's hosted metadata URL as the client_id with no client authentication (requires advertised CIMD support)."}
-                </p>
               </div>
             )}
 
@@ -382,9 +376,6 @@ export function XAAServerModal({
                   ))}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">
-                {IDENTITY_ASSERTION_FORMAT_HINTS[identityAssertionFormat]}
-              </p>
             </div>
 
             {/* Shared with the /servers Connect page so both surfaces present

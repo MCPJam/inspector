@@ -67,6 +67,15 @@ vi.mock("@/lib/config", () => ({ HOSTED_MODE: false }));
 vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
   buildAvailableModels: vi.fn(() => [mcpJamModel]),
   getDefaultModel: vi.fn(() => mcpJamModel),
+  isMCPJamProvidedModelMenuItem: vi.fn((model: { id: string }) =>
+    String(model.id).includes("/")
+  ),
+}));
+
+// The hosted-model catalog hook fetches `/api/mcp/models` for everyone now;
+// stub it so it doesn't run a real fetch in this hook test.
+vi.mock("@/hooks/use-hosted-model-catalog", () => ({
+  useHostedModelCatalog: () => ({ hostedCatalog: [], status: "fallback" }),
 }));
 
 vi.mock("@/hooks/use-ai-provider-keys", () => ({

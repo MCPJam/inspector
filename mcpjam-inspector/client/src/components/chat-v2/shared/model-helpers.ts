@@ -9,6 +9,12 @@ import {
 } from "@/shared/types";
 import type { CustomProvider } from "@mcpjam/sdk/browser";
 import type { OrgModelProvider } from "@/hooks/use-org-model-config";
+// Provider display name + title-casing live in the centralized provider
+// registry; imported for local use and re-exported so existing importers work.
+import {
+  getProviderDisplayName,
+  titleCaseProviderKey,
+} from "@/lib/provider-registry";
 
 export function parseModelAliases(
   aliasString: string,
@@ -242,58 +248,9 @@ export function compactModelLabel(name: string | undefined | null): string {
   return name.replace(/\s*\(Free\)\s*$/i, "").trim() || name;
 }
 
-/** Title-case an unknown provider key ("arcee-ai" → "Arcee Ai"). */
-function titleCaseProviderKey(groupKey: string): string {
-  return groupKey
-    .split(/[-_]/)
-    .filter(Boolean)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
-}
-
-/** Display name for a provider group key (handles `custom:<slug>`). */
-export function getProviderDisplayName(groupKey: string): string {
-  if (groupKey.startsWith("custom:")) {
-    return groupKey.slice("custom:".length);
-  }
-
-  switch (groupKey) {
-    case "azure":
-      return "Azure OpenAI";
-    case "bedrock":
-      return "Amazon Bedrock";
-    case "anthropic":
-      return "Anthropic";
-    case "openai":
-      return "OpenAI";
-    case "deepseek":
-      return "DeepSeek";
-    case "google":
-      return "Google AI";
-    case "mistral":
-      return "Mistral AI";
-    case "ollama":
-      return "Ollama";
-    case "meta":
-      return "Meta";
-    case "xai":
-      return "xAI";
-    case "openrouter":
-      return "OpenRouter";
-    case "moonshotai":
-      return "Moonshot AI";
-    case "z-ai":
-      return "Zhipu AI";
-    case "minimax":
-      return "MiniMax";
-    case "qwen":
-      return "Qwen";
-    default:
-      // Unknown catalog provider (e.g. "arcee-ai", "nvidia") — render a clean
-      // title-cased name instead of the raw key, so new providers need no code.
-      return titleCaseProviderKey(groupKey);
-  }
-}
+// Re-exported from the centralized provider registry (imported at top) so
+// existing importers of these names keep working.
+export { getProviderDisplayName, titleCaseProviderKey };
 
 /** Logo lookup name — collapses `custom:<slug>` to `custom`. */
 export function getLogoProvider(groupKey: string): string {
