@@ -68,6 +68,7 @@ import {
   LaunchJourneyRunError,
   SWARM_QUERIES,
   DEFAULT_PAGE_SIZE,
+  swarmAttemptChatSessionId,
   type GoalScoreRollup,
   type JourneyRun,
   type JourneySessionRow,
@@ -76,16 +77,6 @@ import {
   type SessionGoalScore,
 } from "@/lib/swarm-api";
 import { formatScore } from "@/components/shared/session-quality/judge-presentation";
-import {
-  EMPTY_SESSION_FILTER,
-  sessionMatchesFilter,
-  toggleSessionFilter,
-  type SessionFilterState,
-} from "@/lib/session-usage-filters";
-import {
-  SessionReadinessBadge,
-  type SessionReadiness,
-} from "@/components/chatboxes/session-readiness";
 import { ShareUsageThreadDetail } from "@/components/connection/share-usage/ShareUsageThreadDetail";
 import {
   buildEvalsPath,
@@ -96,6 +87,15 @@ import {
 import { getShareableAppOrigin } from "@/lib/chatbox-session";
 import { resolveHostLogoByDisplayName } from "@/lib/chatbox-client-style";
 import { ConvertSwarmSessionDialog } from "@/components/swarms/convert-swarm-session-dialog";
+import {
+  SwarmLiveStreamPane,
+  SwarmSessionsMatrix,
+  type SwarmMatrixSelection,
+} from "@/components/swarms/journey-run-results";
+import {
+  liveSessionTrace,
+  useJourneyRunStream,
+} from "@/components/swarms/use-journey-run-stream";
 import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
 import { useProjectServerAttachments } from "@/hooks/useViews";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
@@ -112,43 +112,9 @@ import type {
 const AGENT_SNAPSHOT_MAX_PERSONAS = 30;
 const AGENT_SNAPSHOT_MAX_JOURNEYS = 30;
 
-// Valid readiness enums (mirror `session-readiness.tsx`). The backend
-// denormalizes a WIDE `{ status?: string; verdict?: string }` subset onto the
-// session row, so guard it into a well-typed `SessionReadiness` before handing
-// it to the badge instead of an unchecked `as` cast — an unexpected string must
-// degrade to "no badge", not render a bogus pill.
-const READINESS_STATUSES = ["pending", "completed", "partial", "failed"] as const;
-const READINESS_VERDICTS = ["ready", "needs_attention", "not_ready"] as const;
-
-function toSessionReadiness(
-  raw: JourneySessionRow["readiness"],
-): SessionReadiness | undefined {
-  if (!raw) return undefined;
-  const status = (READINESS_STATUSES as readonly string[]).includes(
-    raw.status ?? "",
-  )
-    ? (raw.status as SessionReadiness["status"])
-    : undefined;
-  // Without a valid status the badge has nothing meaningful to show.
-  if (!status) return undefined;
-  const verdict = (READINESS_VERDICTS as readonly string[]).includes(
-    raw.verdict ?? "",
-  )
-    ? (raw.verdict as SessionReadiness["verdict"])
-    : undefined;
-  return {
-    status,
-    ...(verdict ? { verdict } : {}),
-    issueCount:
-      typeof raw.issueCount === "number" && Number.isFinite(raw.issueCount)
-        ? raw.issueCount
-        : 0,
-  };
-}
-
-// Judge-verdict guard, same philosophy as `toSessionReadiness`: the backend
-// denormalizes a WIDE `goalScore` subset; validate the status enum + score
-// before rendering so a malformed record degrades to "no badge".
+// Judge-verdict guard: the backend denormalizes a WIDE `goalScore` subset;
+// validate the status enum + score before rendering so a malformed record
+// degrades to "no badge".
 const GOAL_SCORE_STATUSES = ["running", "completed", "failed"] as const;
 type GoalScoreStatus = (typeof GOAL_SCORE_STATUSES)[number];
 
@@ -888,24 +854,6 @@ function runSummaryLine(r: JourneyRun): string {
   return parts.join(" · ");
 }
 
-/**
- * Chat-session lifecycle (`active`) is NOT "journey running" — sessions stay
- * `active` after the run completes. Map to copy that matches the run so the
- * sessions list doesn't contradict Completed / Running above.
- */
-function sessionLifecycleLabel(
-  sessionStatus: string | undefined,
-  runStatus: string,
-): string | null {
-  if (!sessionStatus) return null;
-  if (sessionStatus === "failed") return "failed";
-  if (sessionStatus === "completed") return "done";
-  if (sessionStatus === "active" || sessionStatus === "running") {
-    return runStatus === "running" ? "running" : "done";
-  }
-  return sessionStatus.replace(/_/g, " ");
-}
-
 // ── journey card + runs ──────────────────────────────────────────────────────
 function JourneyCard({
   journey,
@@ -1163,6 +1111,8 @@ function JourneyCard({
                       hostSummaries={r.hostSummaries}
                       runSummary={r.summary}
                       runStatus={r.status}
+                      sessionsPerHost={journey.config.sessionsPerHost}
+                      createdAt={r.createdAt}
                       initialThreadId={
                         initialRunId === r._id ? initialThreadId : undefined
                       }
@@ -1187,7 +1137,7 @@ function JourneyCard({
   );
 }
 
-// ── sessions by host (per run) ───────────────────────────────────────────────
+// ── sessions × hosts matrix + live stream (per run) ──────────────────────────
 function RunSessionsView({
   runId,
   personaRefId,
@@ -1195,6 +1145,8 @@ function RunSessionsView({
   hostSummaries,
   runSummary,
   runStatus,
+  sessionsPerHost,
+  createdAt,
   initialThreadId,
 }: {
   runId: string;
@@ -1204,32 +1156,28 @@ function RunSessionsView({
   hostSummaries: JourneyRun["hostSummaries"];
   runSummary: JourneyRun["summary"];
   runStatus: JourneyRun["status"];
+  sessionsPerHost: number;
+  createdAt: number;
   /** Deep-link session (`id`) to auto-select once it's on a loaded page. */
   initialThreadId?: string;
 }) {
-  // Paginated sessions for this run; grouped/filterable by host client-side.
   const {
     results: sessions,
     status,
     loadMore,
   } = usePaginatedQuery(
     SWARM_QUERIES.listSessionsByJourneyRun as any,
-    // Backend arg name is `journeyRunId` (NOT `runId`).
     { journeyRunId: runId } as any,
-    { initialNumItems: DEFAULT_PAGE_SIZE }
+    { initialNumItems: Math.max(DEFAULT_PAGE_SIZE, sessionsPerHost * 4) },
   );
-  // Prefer landing on a host that failed — progressive discovery into the
-  // problem. Deep-link restore still wins once the linked session appears.
-  const defaultFailedHostId = useMemo(() => {
-    const withFails = hostSummaries.find((hs) => hs.failed > 0);
-    return withFails?.hostId ?? null;
-  }, [hostSummaries]);
-  const [filter, setFilter] = useState<SessionFilterState>(() =>
-    defaultFailedHostId
-      ? { hostId: defaultFailedHostId }
-      : EMPTY_SESSION_FILTER,
+
+  const streamEnabled = runStatus === "running";
+  const stream = useJourneyRunStream(runId, streamEnabled);
+
+  const [selection, setSelection] = useState<SwarmMatrixSelection | null>(null);
+  const [detailSession, setDetailSession] = useState<JourneySessionRow | null>(
+    null,
   );
-  const [selected, setSelected] = useState<JourneySessionRow | null>(null);
   const [sessionToPromote, setSessionToPromote] =
     useState<JourneySessionRow | null>(null);
 
@@ -1237,239 +1185,159 @@ function RunSessionsView({
     hosts.find((h) => h.hostId === id)?.name ?? id.slice(0, 8);
 
   const rows = sessions as JourneySessionRow[];
-  const visible = useMemo(() => {
-    const matched = rows.filter((s) => sessionMatchesFilter(s, filter));
-    // Surface failed / errored sessions first so "N failed" is findable.
-    return [...matched].sort((a, b) => {
-      const rank = (s: JourneySessionRow) => {
-        if (s.status === "failed") return 0;
-        if (s.readiness?.status === "failed") return 1;
-        if (s.readiness?.verdict === "not_ready") return 2;
-        return 3;
-      };
-      return rank(a) - rank(b);
-    });
-  }, [rows, filter]);
+  const hostIds = useMemo(() => {
+    const fromSummary = hostSummaries.map((h) => h.hostId);
+    if (fromSummary.length > 0) return fromSummary;
+    const seen = new Set<string>();
+    for (const s of rows) seen.add(s.hostId);
+    return Array.from(seen);
+  }, [hostSummaries, rows]);
 
-  // Attempts that failed before a chatSession was persisted never appear in
-  // `listSessionsByJourneyRun`. Derive placeholders from hostSummaries so the
-  // "N failed" rollup is inspectable instead of silently empty.
-  const missingAttemptHints = useMemo(() => {
-    return hostSummaries
-      .map((hs) => {
-        const listed = rows.filter((s) => s.hostId === hs.hostId).length;
-        // Unaccounted terminals ≈ claimed total minus listed rows. Prefer the
-        // failed/rate-limited counts when they exceed what's missing so we
-        // never under-report vs the run summary the user already saw.
-        const unlisted = Math.max(0, hs.total - listed);
-        const failedUnlisted = Math.min(hs.failed, unlisted);
-        const rateLimitedUnlisted = Math.min(
-          hs.rateLimited,
-          Math.max(0, unlisted - failedUnlisted),
-        );
-        if (failedUnlisted === 0 && rateLimitedUnlisted === 0) return null;
-        return {
-          hostId: hs.hostId,
-          failed: failedUnlisted,
-          rateLimited: rateLimitedUnlisted,
-        };
-      })
-      .filter((h): h is NonNullable<typeof h> => h != null)
-      .filter((h) => filter.hostId == null || filter.hostId === h.hostId);
-  }, [hostSummaries, rows, filter.hostId]);
+  const convexByChatId = useMemo(() => {
+    const map = new Map<string, JourneySessionRow>();
+    for (const s of rows) map.set(s.chatSessionId, s);
+    return map;
+  }, [rows]);
 
-  const showRunFailureHint =
-    runSummary.failed > 0 &&
-    rows.every((s) => s.status !== "failed") &&
-    missingAttemptHints.length > 0;
+  const selectedConvex = selection
+    ? (convexByChatId.get(selection.chatSessionId) ?? null)
+    : null;
 
-  // Deep-link restore: auto-select the linked session once it appears on a
-  // loaded page. Runs once. NOTE (remainder): a session on a not-yet-loaded
-  // page won't auto-select until the user pages to it — full cross-page
-  // restore would need the backend list query to accept a session cursor.
+  const fallbackTrace = useMemo(
+    () =>
+      selection
+        ? liveSessionTrace(stream.sessions[selection.chatSessionId])
+        : null,
+    [selection, stream.sessions],
+  );
+
+  // Deep-link restore: select the matrix cell for the linked Convex session.
   const appliedInitialThreadRef = useRef(false);
   useEffect(() => {
     if (appliedInitialThreadRef.current || !initialThreadId) return;
     const match = rows.find((s) => s.id === initialThreadId);
-    if (match) {
-      appliedInitialThreadRef.current = true;
-      setFilter({ hostId: match.hostId });
-      setSelected(match);
-    }
+    if (!match) return;
+    appliedInitialThreadRef.current = true;
+    const sessionIndex = Number(
+      match.chatSessionId.split("_").pop() ?? "0",
+    );
+    setSelection({
+      hostId: match.hostId,
+      sessionIndex: Number.isFinite(sessionIndex) ? sessionIndex : 0,
+      chatSessionId: match.chatSessionId,
+    });
+    setDetailSession(match);
   }, [initialThreadId, rows]);
 
+  // Auto-select the first running cell when a live stream starts.
+  useEffect(() => {
+    if (selection || !streamEnabled) return;
+    const runningEntry = Object.entries(stream.cellStatus).find(
+      ([, status]) => status === "running",
+    );
+    if (!runningEntry) return;
+    const [key] = runningEntry;
+    const [hostId, idxStr] = key.split(":");
+    if (!hostId || idxStr == null) return;
+    const sessionIndex = Number(idxStr);
+    if (!Number.isFinite(sessionIndex)) return;
+    setSelection({
+      hostId,
+      sessionIndex,
+      chatSessionId: swarmAttemptChatSessionId(runId, hostId, sessionIndex),
+    });
+  }, [selection, streamEnabled, stream.cellStatus, runId]);
+
   return (
-    <div className="mt-2 rounded-lg border bg-muted/20 p-2">
-      {/* Host filter chips — include outcome counts so failures are locatable. */}
-      <div className="mb-2 flex flex-wrap gap-1.5">
-        {hostSummaries.map((hs) => {
-          const selectedHost = filter.hostId === hs.hostId;
-          const hasFails = hs.failed > 0 || hs.rateLimited > 0;
-          return (
-            <button
-              key={hs.hostId}
-              type="button"
-              onClick={() =>
-                setFilter((f) => toggleSessionFilter(f, "hostId", hs.hostId))
-              }
-              className={cn(
-                "rounded-full border px-2 py-0.5 text-[11px] outline-none transition-colors",
-                "focus-visible:ring-2 focus-visible:ring-ring",
-                selectedHost
-                  ? "border-primary bg-primary/10"
-                  : "hover:bg-muted",
-                hasFails && !selectedHost && "border-red-500/30",
-              )}
-              aria-label={`${hostName(hs.hostId)}: ${hs.succeeded}/${hs.total} ok${hs.failed > 0 ? `, ${hs.failed} failed` : ""}`}
-            >
-              <span className="font-medium">{hostName(hs.hostId)}</span>
-              <span className="ml-1 text-muted-foreground">
-                {hs.succeeded}/{hs.total}
-              </span>
-              {hs.failed > 0 ? (
-                <span className="ml-1 text-red-600 dark:text-red-400">
-                  · {hs.failed} failed
-                </span>
-              ) : null}
-            </button>
-          );
-        })}
+    <div className="mt-2 space-y-3 rounded-lg border bg-muted/20 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[12px] font-semibold capitalize text-foreground/90">
+            {String(runStatus).replace(/_/g, " ")}
+            <span className="ml-2 font-normal text-muted-foreground">
+              {runSummary.succeeded}/{runSummary.total} ok
+              {runSummary.failed > 0 ? ` · ${runSummary.failed} failed` : ""}
+            </span>
+          </p>
+          <p className="text-[10px] text-muted-foreground">
+            {formatJourneyRelativeTime(createdAt)}
+            {stream.connected ? " · live" : null}
+            {stream.error ? ` · stream error: ${stream.error}` : null}
+          </p>
+        </div>
+        {status === "CanLoadMore" ? (
+          <button
+            type="button"
+            className="text-[11px] font-medium text-primary hover:underline"
+            onClick={() => loadMore(DEFAULT_PAGE_SIZE)}
+          >
+            Load more sessions
+          </button>
+        ) : null}
       </div>
 
-      {showRunFailureHint ? (
-        <p
-          className="mb-2 rounded-md border border-red-500/25 bg-red-500/5 px-2 py-1.5 text-[11px] text-red-700 dark:text-red-400"
-          role="status"
-        >
-          {runSummary.failed} attempt
-          {runSummary.failed === 1 ? "" : "s"} failed without a session
-          transcript — open a host chip with failures to see which clients
-          never persisted a run.
-        </p>
-      ) : null}
+      <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+        <SwarmSessionsMatrix
+          runId={runId}
+          hostIds={hostIds}
+          hostName={hostName}
+          sessionsPerHost={sessionsPerHost}
+          sessions={rows}
+          hostSummaries={hostSummaries}
+          stream={stream}
+          runStatus={String(runStatus)}
+          selection={selection}
+          onSelect={(sel) => {
+            setSelection(sel);
+            setDetailSession(null);
+          }}
+        />
+        <SwarmLiveStreamPane
+          selection={selection}
+          stream={stream}
+          convexSession={selectedConvex}
+          fallbackTrace={fallbackTrace}
+          runStatus={String(runStatus)}
+          onOpenCompleted={(session) => setDetailSession(session)}
+        />
+      </div>
 
-      {rows.length === 0 && missingAttemptHints.length === 0 ? (
-        <p className="px-1 py-2 text-[11px] text-muted-foreground">
-          {runSummary.total === 0
-            ? "No sessions recorded yet for this run."
-            : "Sessions are still starting…"}
-        </p>
-      ) : (
-        <div className="flex flex-col divide-y">
-          {missingAttemptHints.map((hint) => (
-            <div
-              key={`missing-${hint.hostId}`}
-              className="flex items-start justify-between gap-2 px-1 py-1.5"
-              data-testid={`missing-attempts-${hint.hostId}`}
-            >
-              <span className="flex min-w-0 flex-col">
-                <span className="truncate text-[11px] font-medium">
-                  {hostName(hint.hostId)}
-                </span>
-                <span className="text-[10px] text-muted-foreground">
-                  Failed before a session was recorded
-                  {hint.rateLimited > 0
-                    ? ` · ${hint.rateLimited} rate-limited`
-                    : ""}
-                </span>
-              </span>
-              <span className="shrink-0 rounded-full bg-red-500/10 px-1.5 py-0.5 text-[10px] font-medium text-red-700 dark:text-red-400">
-                {hint.failed} failed
-              </span>
-            </div>
-          ))}
-          {visible.map((s) => {
-            const isFailed =
-              s.status === "failed" || s.readiness?.status === "failed";
-            const lifecycle = sessionLifecycleLabel(s.status, runStatus);
-            const meta = [lifecycle, s.modelId].filter(Boolean).join(" · ");
-            return (
-              <button
-                key={s.id}
-                type="button"
-                onClick={() => setSelected(s)}
-                className={cn(
-                  "flex items-center justify-between gap-2 px-1 py-1.5 text-left hover:bg-muted/50",
-                  selected?.id === s.id && "bg-muted",
-                )}
-              >
-                <span className="flex min-w-0 flex-col">
-                  <span className="truncate text-[11px] font-medium">
-                    {hostName(s.hostId)}
-                  </span>
-                  <span
-                    className={cn(
-                      "truncate text-[10px]",
-                      isFailed
-                        ? "text-red-600 dark:text-red-400"
-                        : lifecycle === "running"
-                          ? "text-foreground/80"
-                          : "text-muted-foreground",
-                    )}
-                  >
-                    {meta || "—"}
-                  </span>
-                </span>
-                <span className="flex shrink-0 items-center gap-1.5">
-                  {isFailed ? (
-                    <span className="rounded-full bg-red-500/10 px-1.5 py-0.5 text-[10px] font-medium text-red-700 dark:text-red-400">
-                      Failed
-                    </span>
-                  ) : null}
-                  <SessionGoalScoreBadge goalScore={s.goalScore} />
-                  {!isFailed ? (
-                    <SessionReadinessBadge
-                      readiness={toSessionReadiness(s.readiness)}
-                    />
-                  ) : null}
-                </span>
-              </button>
-            );
-          })}
-          {visible.length === 0 && missingAttemptHints.length === 0 ? (
-            <p className="px-1 py-2 text-[11px] text-muted-foreground">
-              No sessions for this client in the loaded page.
+      {detailSession ? (
+        <div className="space-y-1">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[11px] font-medium text-muted-foreground">
+              Session detail
             </p>
-          ) : null}
-        </div>
-      )}
-
-      {status === "CanLoadMore" && (
-        <button
-          type="button"
-          className="mt-1 text-[11px] font-medium text-primary hover:underline"
-          onClick={() => loadMore(DEFAULT_PAGE_SIZE)}
-        >
-          Load more sessions
-        </button>
-      )}
-
-      {/* Reuse the existing project-scoped session viewer — do NOT build a new
-          one. `ShareUsageThreadDetail` takes the session row's `id`. */}
-      {selected && (
-        <div className="mt-2">
-          <div className="mb-1 flex justify-end">
-            <button
-              type="button"
-              className="text-[11px] font-medium text-primary hover:underline"
-              onClick={() => setSessionToPromote(selected)}
-            >
-              Promote to test case
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                className="text-[11px] font-medium text-primary hover:underline"
+                onClick={() => setSessionToPromote(detailSession)}
+              >
+                Promote to test case
+              </button>
+              <button
+                type="button"
+                className="text-[11px] text-muted-foreground hover:underline"
+                onClick={() => setDetailSession(null)}
+              >
+                Close
+              </button>
+            </div>
           </div>
           <div className="h-[420px] overflow-hidden rounded-lg border">
             <ShareUsageThreadDetail
-              threadId={selected.id}
+              threadId={detailSession.id}
               sessionLink={`${getShareableAppOrigin()}${buildSwarmSessionPath({
                 personaRefId,
                 runId,
-                hostId: selected.hostId,
-                threadId: selected.id,
+                hostId: detailSession.hostId,
+                threadId: detailSession.id,
               })}`}
             />
           </div>
         </div>
-      )}
+      ) : null}
 
       <ConvertSwarmSessionDialog
         open={sessionToPromote !== null}

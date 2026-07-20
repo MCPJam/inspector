@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -107,12 +107,15 @@ vi.mock("convex/react", () => ({
       const results =
         journeyRunId === "run-fail"
           ? [
-              session,
+              {
+                ...session,
+                chatSessionId: "synth_run-fail_host-1_0",
+              },
               {
                 ...session,
                 id: "thread-abc",
                 hostId: "host-1",
-                chatSessionId: "synth_2",
+                chatSessionId: "synth_run-fail_host-1_1",
               },
             ]
           : [session];
@@ -198,6 +201,15 @@ async function expandJourneyAndOpenRunSessions(
   fireEvent.click(await screen.findByRole("button", { name: runAriaLabel }));
 }
 
+async function selectFirstDoneCell() {
+  const matrix = await screen.findByTestId("swarm-sessions-matrix");
+  const doneCell = within(matrix).getAllByTestId("swarm-host-cell").find(
+    (el) => el.getAttribute("data-outcome") === "succeeded",
+  );
+  expect(doneCell).toBeTruthy();
+  fireEvent.click(doneCell!);
+}
+
 describe("SwarmsTab — sessions-by-run query contract", () => {
   it("queries listSessionsByJourneyRun with { journeyRunId } and opens the viewer on the row's `id`", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
@@ -217,12 +229,9 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
       expect((call!.args as Record<string, unknown>).runId).toBeUndefined();
     });
 
-    // The session row renders (its unique modelId is in the accessible name) —
-    // click it to open the viewer.
+    await selectFirstDoneCell();
     fireEvent.click(
-      await screen.findByRole("button", {
-        name: /anthropic\/claude-haiku-4\.5/i,
-      })
+      await screen.findByRole("button", { name: /open full session detail/i }),
     );
 
     // CONTRACT: the viewer + deep-link consume the row's `id` (thread-xyz).
@@ -240,10 +249,9 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
     const dialog = await screen.findByTestId("promote-dialog");
     expect(dialog.getAttribute("data-open")).toBe("false");
 
+    await selectFirstDoneCell();
     fireEvent.click(
-      await screen.findByRole("button", {
-        name: /anthropic\/claude-haiku-4\.5/i,
-      })
+      await screen.findByRole("button", { name: /open full session detail/i }),
     );
     fireEvent.click(await screen.findByText("Promote to test case"));
 
@@ -260,18 +268,13 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
       /view sessions for run partial/i,
     );
 
-    // Auto-focuses the failing host and shows a placeholder (no chatSession).
-    expect(
-      await screen.findByRole("button", {
-        name: /host two: 0\/2 ok, 2 failed/i,
-      }),
-    ).toBeInTheDocument();
-    expect(
-      await screen.findByTestId("missing-attempts-host-2"),
-    ).toHaveTextContent(/failed before a session was recorded/i);
-    expect(
-      screen.getByText(/2 attempts failed without a session transcript/i),
-    ).toBeInTheDocument();
+    const matrix = await screen.findByTestId("swarm-sessions-matrix");
+    expect(within(matrix).getByText("Host Two")).toBeInTheDocument();
+    // Host Two's unpersisted failures surface as Fail cells in the matrix.
+    const failCells = within(matrix)
+      .getAllByTestId("swarm-host-cell")
+      .filter((el) => el.getAttribute("data-outcome") === "failed");
+    expect(failCells.length).toBeGreaterThanOrEqual(2);
   });
 
   it("maps sticky chat-session 'active' to 'done' once the run completed", async () => {
@@ -279,12 +282,16 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
     fireEvent.click(screen.getByText("Persona One"));
     await expandJourneyAndOpenRunSessions();
 
-    // Completed run + session.status=active must not read as still happening.
-    expect(
-      await screen.findByRole("button", {
-        name: /done · anthropic\/claude-haiku-4\.5/i,
-      }),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/^active ·/i)).not.toBeInTheDocument();
+    const matrix = await screen.findByTestId("swarm-sessions-matrix");
+    // Completed run + session.status=active must not pulse as Running.
+    const running = within(matrix)
+      .getAllByTestId("swarm-host-cell")
+      .filter((el) => el.getAttribute("data-outcome") === "running");
+    expect(running).toHaveLength(0);
+    const done = within(matrix)
+      .getAllByTestId("swarm-host-cell")
+      .filter((el) => el.getAttribute("data-outcome") === "succeeded");
+    expect(done.length).toBeGreaterThan(0);
+    expect(within(done[0]!).getByText("Done")).toBeInTheDocument();
   });
 });

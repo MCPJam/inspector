@@ -12,6 +12,7 @@
  */
 
 import { authFetch } from "@/lib/session-token";
+import type { SwarmStreamEvent } from "@/shared/swarm-stream-events";
 
 // ── Convex query names (string-keyed reads) ─────────────────────────────────
 export const SWARM_QUERIES = {
@@ -273,4 +274,90 @@ export async function launchJourneyRun(
     );
   }
   return { runId };
+}
+
+/**
+ * Subscribe to the multiplexed SSE stream for a journey run. Events are
+ * scoped by `chatSessionId` / `hostId` / `sessionIndex`. Resolves when the
+ * stream ends (`run_complete` or disconnect).
+ */
+export async function streamJourneyRun(
+  runId: string,
+  onEvent: (event: SwarmStreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const response = await authFetch(
+    `/api/web/swarm/runs/${encodeURIComponent(runId)}/stream`,
+    {
+      method: "GET",
+      headers: { Accept: "text/event-stream" },
+      signal,
+    },
+  );
+
+  if (!response.ok) {
+    let message = `Failed to stream journey run (${response.status})`;
+    try {
+      const body = (await response.json()) as { message?: string; error?: string };
+      if (typeof body.message === "string" && body.message.length > 0) {
+        message = body.message;
+      } else if (typeof body.error === "string" && body.error.length > 0) {
+        message = body.error;
+      }
+    } catch {
+      // ignore
+    }
+    throw new Error(message);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error("No response body for swarm run stream");
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const emitSseLine = (line: string) => {
+    const trimmedLine = line.trim();
+    if (!trimmedLine.startsWith("data: ")) return;
+    const data = trimmedLine.slice(6).trim();
+    if (!data || data === "[DONE]") return;
+    try {
+      onEvent(JSON.parse(data) as SwarmStreamEvent);
+    } catch {
+      // ignore malformed lines
+    }
+  };
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        emitSseLine(line);
+      }
+    }
+    buffer += decoder.decode();
+    for (const line of buffer.split("\n")) {
+      emitSseLine(line);
+    }
+  } finally {
+    try {
+      reader.releaseLock?.();
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/** Deterministic attempt chatSessionId — matches the swarm runner claim key. */
+export function swarmAttemptChatSessionId(
+  runId: string,
+  hostId: string,
+  sessionIndex: number,
+): string {
+  return `synth_${runId}_${hostId}_${sessionIndex}`;
 }
