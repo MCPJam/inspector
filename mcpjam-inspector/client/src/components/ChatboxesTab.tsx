@@ -26,13 +26,25 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { useChatboxByHostId } from "@/hooks/useChatboxes";
-import { useHost } from "@/hooks/useClients";
+import {
+  useChatboxByHostId,
+  useChatboxList,
+  useChatboxMutations,
+} from "@/hooks/useChatboxes";
+import { useHost, useHostList } from "@/hooks/useClients";
+import { useUsageInsights } from "@/hooks/useUsageInsights";
+import { EMPTY_USAGE_FILTER } from "@/hooks/chatbox-usage-filters";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { buildChatboxLink } from "@/lib/chatbox-session";
 import { copyToClipboard } from "@/lib/clipboard";
 import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
 import { previewIframeAllow } from "@/lib/client-preview-iframe-allow";
+import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
+import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
+import type {
+  DeleteChatboxInspectorCommand,
+  PublishChatboxInspectorCommand,
+} from "@/shared/inspector-command.js";
 import { cn } from "@/lib/utils";
 
 /**
@@ -267,6 +279,181 @@ export function ChatboxesTab({
     if (ok) toast.success("Share link copied");
     else toast.error("Failed to copy share link");
   };
+
+  // --- Agent tool group (surface "chatboxes") ---------------------------
+  //
+  // ChatboxesTab owns the previewed host's chatbox and the publish/generate/
+  // delete flows; the bridge registers the literal "chatboxes" surface id (the
+  // agent Swarm product renders SwarmsTab, a separate component, so this can't
+  // be mis-scoped). Publish/delete resolve a host by name/id against the live
+  // host list and honor the Swarms-owned dead-end; generate acts on the
+  // on-screen chatbox through the SAME gated endpoints the Generate-with-AI
+  // dialog uses. Snapshot is REDACTED state only — never transcript text, the
+  // share token, or visitor PII.
+  const AGENT_SNAPSHOT_MAX_SESSIONS = 30;
+  const agentOperable = effectiveAuth && Boolean(projectId);
+  // Synthetic sessions are a Swarms-product affordance (the human Chatbox
+  // surface passes allowSynthetic={false} to ChatboxUsagePanel). Mirror that
+  // gate here so ui_generate_chatbox_sessions is inert exactly where the
+  // "Generate with AI" button is.
+  const allowSynthetic = product === "swarm";
+  const { hosts: agentHosts } = useHostList({
+    isAuthenticated: effectiveAuth,
+    projectId,
+  });
+  const { chatboxes: agentChatboxes } = useChatboxList({
+    isAuthenticated: effectiveAuth,
+    projectId,
+  });
+  const { deleteChatbox } = useChatboxMutations();
+  // Session rows for the snapshot only — the same list query ChatboxUsagePanel
+  // reads, unfiltered. Redacted at read time (no transcript, no PII).
+  const { threads: agentSessionThreads } = useUsageInsights({
+    sourceType: "chatbox",
+    sourceId: chatbox?.chatboxId ?? null,
+    filters: EMPTY_USAGE_FILTER,
+    enabled: agentOperable && Boolean(chatbox?.chatboxId),
+  });
+
+  const requireAgentOperable = () => {
+    if (!agentOperable) {
+      throw createInspectorCommandClientError(
+        "unsupported_in_mode",
+        "The Chatbox tools are locked here — sign in and select a project first.",
+      );
+    }
+  };
+
+  // Exact resolution against the loaded host list — unknown or ambiguous →
+  // invalid_request, never a fuzzy guess.
+  const resolveAgentHost = (raw: unknown) => {
+    if (typeof raw !== "string" || raw.trim().length === 0) {
+      throw createInspectorCommandClientError(
+        "invalid_request",
+        "Missing required 'host' string (a client name or id).",
+      );
+    }
+    const wanted = raw.trim();
+    const wantedLower = wanted.toLowerCase();
+    const matches = agentHosts.filter(
+      (h) => h.hostId === wanted || h.name.toLowerCase() === wantedLower,
+    );
+    if (matches.length === 1) return matches[0];
+    if (matches.length === 0) {
+      throw createInspectorCommandClientError(
+        "invalid_request",
+        `No client matches "${wanted}". Use a client name or id from this screen (list them with ui_snapshot_app).`,
+      );
+    }
+    throw createInspectorCommandClientError(
+      "invalid_request",
+      `${matches.length} clients match "${wanted}" — pass the client id instead (ids are in ui_snapshot_app).`,
+    );
+  };
+
+  useSurfaceAgentBridge({
+    surfaceId: "chatboxes",
+    handlers: {
+      publishChatbox: async (command) => {
+        requireAgentOperable();
+        const { payload } = command as PublishChatboxInspectorCommand;
+        const target = resolveAgentHost(payload?.host);
+        // Swarms-owned dead-end: a standalone Journeys host has NO publish
+        // surface and must never be back-minted one — the same reason the UI's
+        // "Managed by Swarms" notice shows.
+        if (target.ownerScope?.type === "journeys") {
+          throw createInspectorCommandClientError(
+            "unsupported_in_mode",
+            `"${target.name}" belongs to the Swarms surface and has no publish surface. Manage its journeys and runs on the Swarms screen, or publish a different client.`,
+          );
+        }
+        try {
+          await ensureChatboxForHost({ hostId: target.hostId } as any);
+          setPreviewedHostId(target.hostId);
+          return {
+            status: "chatbox_published",
+            hostId: target.hostId,
+            name: target.name,
+            note: "The client's chatbox is provisioned and selected. Copying its share link is a human action — check ui_snapshot_app for whether a link exists.",
+          };
+        } catch (e) {
+          throw createInspectorCommandClientError(
+            "execution_failed",
+            e instanceof Error ? e.message : "Failed to publish the chatbox.",
+          );
+        }
+      },
+      deleteChatbox: async (command) => {
+        requireAgentOperable();
+        const { payload } = command as DeleteChatboxInspectorCommand;
+        const target = resolveAgentHost(payload?.host);
+        const match = (agentChatboxes ?? []).find(
+          (c) => c.namedHostId === target.hostId,
+        );
+        if (!match) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            `"${target.name}" has no chatbox to delete.`,
+          );
+        }
+        try {
+          await deleteChatbox({ chatboxId: match.chatboxId } as any);
+          return {
+            status: "chatbox_deleted",
+            hostId: target.hostId,
+            chatboxId: match.chatboxId,
+            name: target.name,
+          };
+        } catch (e) {
+          throw createInspectorCommandClientError(
+            "execution_failed",
+            e instanceof Error ? e.message : "Failed to delete the chatbox.",
+          );
+        }
+      },
+    },
+    // Redacted STATE, not payloads: active tab, the selected client + whether
+    // its chatbox is published, whether a share link EXISTS (never the URL or
+    // token), and bounded session rows (no transcript text, no visitor PII).
+    snapshot: () => {
+      if (!agentOperable) {
+        return {
+          gated: true,
+          reason: "Sign in and select a project to use the Chatbox tools.",
+        };
+      }
+      const sessions = (agentSessionThreads ?? [])
+        .slice(0, AGENT_SNAPSHOT_MAX_SESSIONS)
+        .map((t) => ({
+          id: t._id,
+          startedAt: t.startedAt,
+          lastActivityAt: t.lastActivityAt,
+          messageCount: t.messageCount,
+          toolCallCount: t.toolCallCount ?? 0,
+          synthetic: t.synthetic === true,
+          authType: t.authType ?? null,
+          modelId: t.modelId ?? null,
+        }));
+      return {
+        product,
+        activeTab,
+        syntheticSessionsAllowed: allowSynthetic,
+        selectedHostId: previewedHostId ?? null,
+        selectedHostName: host?.name ?? null,
+        // A standalone Journeys host has no publish surface (the dead-end).
+        isStandaloneSwarmHost: isJourneysHost,
+        published: Boolean(chatbox),
+        chatboxName: chatbox?.name ?? null,
+        modelId: chatbox?.modelId ?? null,
+        serverCount: chatbox?.servers.length ?? 0,
+        // Presence only — the share link embeds a secret token that must never
+        // cross the transcript. Report whether a link exists, not the URL.
+        hasPublishLink: Boolean(chatbox?.link?.token),
+        sessionCount: (agentSessionThreads ?? []).length,
+        sessions,
+      };
+    },
+  });
 
   // Empty state: nothing is selected in the global host bar yet (fresh
   // sign-in, project just switched, etc.). The picker is the navigation

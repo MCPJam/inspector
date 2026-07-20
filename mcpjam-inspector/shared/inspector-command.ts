@@ -59,7 +59,9 @@ export type InspectorCommandType =
   | "startComputer"
   | "hibernateComputer"
   | "resetComputer"
-  | "deleteComputer";
+  | "deleteComputer"
+  | "publishChatbox"
+  | "deleteChatbox";
 
 export const KNOWN_INSPECTOR_COMMAND_TYPES = [
   "navigate",
@@ -95,6 +97,8 @@ export const KNOWN_INSPECTOR_COMMAND_TYPES = [
   "hibernateComputer",
   "resetComputer",
   "deleteComputer",
+  "publishChatbox",
+  "deleteChatbox",
 ] as const satisfies readonly InspectorCommandType[];
 
 export interface InspectorCommandError {
@@ -534,6 +538,54 @@ export interface DeleteComputerInspectorCommand {
   timeoutMs?: number;
 }
 
+/**
+ * Chatboxes-screen commands, handled by `ChatboxesTab` while `/chatboxes` is
+ * mounted. A chatbox is the shareable publish surface bound 1:1 to a host.
+ *
+ * Publish and delete are HOST-ANCHORED: `host` is a host name or id as the
+ * client picker shows it. Handlers resolve it against the loaded host list and
+ * reject anything else as `invalid_request` (ambiguous → ask for the id) — never
+ * a fuzzy guess. Two deliberate postures mirror the eval/swarm/host groups:
+ * - **The Swarms-owned dead-end.** A standalone Journeys-owned host has NO
+ *   publish surface. `publishChatbox` refuses it with `unsupported_in_mode`
+ *   carrying the same reason the UI's "Managed by Swarms" notice shows — it
+ *   never back-mints a chatbox for such a host.
+ *
+ * Reviewing sessions and copying the share link are READ-ONLY human actions —
+ * exposed in the snapshot, not as commands. The share TOKEN never crosses the
+ * transcript (the snapshot reports only "has link").
+ */
+
+/**
+ * Publish (provision-on-first-use) the chatbox for a host, then select that
+ * host so the publish surface follows. Idempotent — calling `ensureChatboxForHost`
+ * the way the publish flow does, so a host that already has a chatbox converges.
+ * Refuses a Swarms-owned host (no publish surface).
+ */
+export interface PublishChatboxInspectorCommand {
+  id: string;
+  type: "publishChatbox";
+  payload: { host: string };
+  timeoutMs?: number;
+}
+
+/**
+ * Generate AI personas and run synthetic sessions against the on-screen
+ * chatbox. Low-entropy counts only (personaCount / sessionsPerPersona /
+ * maxTurns); the backend generates the personas. SPENDS MONEY, so it is
+ * destructive (approval pill) and open-world. No target — it acts on the
+ * currently-selected chatbox, like the computer commands act on the one
+ * computer.
+ */
+
+/** Permanently delete a host's chatbox — its hosted link and usage history. */
+export interface DeleteChatboxInspectorCommand {
+  id: string;
+  type: "deleteChatbox";
+  payload: { host: string };
+  timeoutMs?: number;
+}
+
 export type InspectorCommand =
   | NavigateInspectorCommand
   | SelectServerInspectorCommand
@@ -567,7 +619,9 @@ export type InspectorCommand =
   | StartComputerInspectorCommand
   | HibernateComputerInspectorCommand
   | ResetComputerInspectorCommand
-  | DeleteComputerInspectorCommand;
+  | DeleteComputerInspectorCommand
+  | PublishChatboxInspectorCommand
+  | DeleteChatboxInspectorCommand;
 
 export interface InspectorCommandSuccessResponse {
   id: string;

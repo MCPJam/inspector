@@ -41,11 +41,24 @@ vi.mock("@/hooks/use-previewed-client-id", () => ({
 
 vi.mock("@/hooks/useClients", () => ({
   useHost: () => hostState,
+  useHostList: () => ({ hosts: [], isLoading: false }),
 }));
 
 vi.mock("@/hooks/useChatboxes", () => ({
   useChatboxByHostId: () => chatboxState,
+  useChatboxList: () => ({ chatboxes: [], isLoading: false }),
+  useChatboxMutations: () => ({ deleteChatbox: vi.fn() }),
 }));
+
+vi.mock("@/hooks/useUsageInsights", () => ({
+  useUsageInsights: () => ({
+    threads: undefined,
+    breakdown: undefined,
+    rebuild: vi.fn(),
+  }),
+}));
+
+vi.mock("@/lib/session-token", () => ({ authFetch: vi.fn() }));
 
 // Stub the picker so we don't pull its whole dependency tree; the real one
 // renders this same testid.
