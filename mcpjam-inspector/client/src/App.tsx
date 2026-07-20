@@ -1194,9 +1194,13 @@ export function SwarmsRoute() {
       // Host create/edit/apply/delete on the Clients sub-tab are admin-gated
       // server-side; pass the resolved role so the UI hides those affordances
       // for non-admins (members can still view Swarms + run journeys).
-      // Anonymous Convex guests can't be matched via the email members list,
-      // but they own their personal-org project — treat as owner for UI
-      // affordances; writes still enforce server-side.
+      //
+      // Anonymous Convex guests can't be matched via the email members list.
+      // Backend guest provisioning inserts organizationMembers.role='owner' on
+      // their personal org (mcpjam-backend upsertGuestUserFromIdentity), and
+      // host requireAdminAccess → canManageProjectMembers accepts owner. Mirror
+      // that here so New/Edit/Apply/Delete aren't a 403-on-click lie; writes
+      // still enforce server-side.
       viewerRole={
         role ??
         (isAuthenticated && !isWorkOsSignedIn ? "owner" : undefined)
