@@ -169,17 +169,10 @@ export {
 } from "./managed-mcp-client.js";
 export { OfficialSdkClientAdapter } from "./official-sdk-client-adapter.js";
 export {
-  StatelessMcpHttpPreviewClient,
-  LATEST_STATELESS_PROTOCOL_VERSION,
-  type StatelessMcpHttpPreviewClientOptions,
-  type DiscoverResult,
-} from "./stateless-mcp-http-preview-client.js";
-export {
   createManagedMcpClient,
   wrapLegacyClient,
   type CreateManagedMcpClientArgs,
   type McpProtocolVersion,
-  type TransportKind,
 } from "./managed-mcp-client-factory.js";
 export {
   MCP_PROTOCOL_VERSIONS,
