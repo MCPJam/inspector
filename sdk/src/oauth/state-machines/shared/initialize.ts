@@ -10,8 +10,12 @@ export function resolveInitializeProtocolVersion(
     case "2025-11-25":
       return "2025-11-25";
     case "2026-07-28":
-      // The 2026-07-28 wire is stateless (no initialize handshake); the OAuth
-      // flow's token-verification request still carries this version header.
+      // TODO(2026 machine delta): the 2026-07-28 wire is stateless — there is
+      // no `initialize` handshake. The OAuth flow's final token-verification
+      // step (forked verbatim from 2025-11-25) still sends `initialize` with
+      // this header; it should instead issue a stateless request (e.g.
+      // `tools/list` carrying the `_meta` envelope). Deferred to the larger
+      // 2026 delta; this returns the correct header value for now.
       return "2026-07-28";
     case "2025-06-18":
     case "2025-03-26":

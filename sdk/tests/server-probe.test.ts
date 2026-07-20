@@ -118,6 +118,62 @@ describe("probeMcpServer", () => {
     ]);
   });
 
+  it("uses modern path-insertion AS discovery (no root fallback) for 2026-07-28 + path issuer", async () => {
+    // Regression guard: 2026-07-28 must share the 2025-11-25 AS-metadata
+    // discovery (path insertion, NO root fallback for path-containing issuers).
+    // Before the fix, 2026 fell through to the older branch that adds a root
+    // fallback URL the spec forbids.
+    const serverUrl = "https://mcp.example.com/mcp";
+    const resourceMetadataUrl =
+      "https://mcp.example.com/.well-known/oauth-protected-resource/mcp";
+    const authServerUrl = "https://auth.example.com/tenant1"; // path-containing
+    const pathInsertionUrl =
+      "https://auth.example.com/.well-known/oauth-authorization-server/tenant1";
+    const rootFallbackUrl =
+      "https://auth.example.com/.well-known/oauth-authorization-server";
+    const requested: string[] = [];
+
+    const fetchFn: typeof fetch = jest.fn(async (input) => {
+      const url = String(input);
+      requested.push(url);
+      if (url === serverUrl) {
+        return new Response(null, {
+          status: 401,
+          headers: {
+            "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"`,
+          },
+        });
+      }
+      if (url === resourceMetadataUrl) {
+        return jsonResponse({
+          resource: serverUrl,
+          authorization_servers: [authServerUrl],
+        });
+      }
+      if (url === pathInsertionUrl) {
+        return jsonResponse({
+          issuer: authServerUrl,
+          authorization_endpoint: `${authServerUrl}/authorize`,
+          token_endpoint: `${authServerUrl}/token`,
+          response_types_supported: ["code"],
+          code_challenge_methods_supported: ["S256"],
+        });
+      }
+      return jsonResponse({ error: "unexpected" }, 404);
+    }) as typeof fetch;
+
+    const result = await probeMcpServer({
+      url: serverUrl,
+      protocolVersion: "2026-07-28",
+      fetchFn,
+    });
+
+    expect(result.oauth.authorizationServerMetadataUrl).toBe(pathInsertionUrl);
+    // The root fallback is forbidden for path-containing issuers and must
+    // never be requested on the 2026-07-28 discovery path.
+    expect(requested).not.toContain(rootFallbackUrl);
+  });
+
   it("retries transient probe failures and preserves attempts across retries", async () => {
     const serverUrl = "https://mcp.example.com/mcp";
     let initializeCalls = 0;

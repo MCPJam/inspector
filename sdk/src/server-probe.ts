@@ -149,7 +149,10 @@ function buildAuthServerMetadataUrls(
   const url = new URL(authServerUrl);
   const urls: string[] = [];
 
-  if (protocolVersion === "2025-11-25") {
+  // 2025-11-25 and 2026-07-28 share the same AS-metadata discovery: OAuth
+  // path-insertion, then OIDC path-insertion / path-appending, with NO root
+  // fallback for path-containing issuers (the older branch below keeps it).
+  if (protocolVersion === "2025-11-25" || protocolVersion === "2026-07-28") {
     if (url.pathname === "/" || url.pathname === "") {
       urls.push(
         new URL(

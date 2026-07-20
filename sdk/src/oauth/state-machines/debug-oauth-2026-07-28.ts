@@ -543,6 +543,10 @@ export const createDebugOAuthStateMachine = (
   } = config;
 
   const redirectUri = redirectUrl;
+  // TODO(2026 delta): 2026-07-28 is stateless — no `initialize` handshake. The
+  // idle + authenticated verify steps below still send `initialize` (forked
+  // from 2025-11-25); they should become stateless requests. See the note in
+  // resolveInitializeProtocolVersion. Deferred; behavior is otherwise inherited.
   const initializeProtocolVersion = resolveInitializeProtocolVersion("2026-07-28");
   const dynamicRegistrationDefaults = dynamicRegistration ?? {};
   let cimdClientId = clientIdMetadataUrl ?? "";
