@@ -1279,7 +1279,8 @@ export function SkillsRoute() {
 }
 
 export function LearningRoute() {
-  return <LearningTab />;
+  const { activeProjectId } = useAppRouteContext();
+  return <LearningTab projectId={activeProjectId ?? null} />;
 }
 
 export function TasksRoute() {
