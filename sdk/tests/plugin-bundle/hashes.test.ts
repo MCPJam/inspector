@@ -5,12 +5,13 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { parsePluginBundle } from "../../src/plugin-bundle/index.js";
+// Internal helpers are deliberately not on the public barrel.
 import {
   computeAggregateHash,
   hashCanonicalJson,
-  parsePluginBundle,
   sha256HexBytes,
-} from "../../src/plugin-bundle/index.js";
+} from "../../src/plugin-bundle/hashes.js";
 import {
   MCP_JSON_DIRECT,
   SKILL_MD,

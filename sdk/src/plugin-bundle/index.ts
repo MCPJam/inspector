@@ -6,14 +6,15 @@
  * archive libraries: consumers provide a `PluginFileSource` adapter over
  * their own extraction path and get identical normalization, validation, and
  * deterministic hashing on every runtime.
+ *
+ * The public surface is deliberately lean: `parsePluginBundle`, the DTO
+ * types, the issue contract, and the constants adapters need. Internal
+ * helpers (path normalization, hashing primitives, the YAML subset, the
+ * per-component normalizers) stay module-private to this entry; tests import
+ * them via direct file paths.
  */
 
-export {
-  parsePluginBundle,
-  MCP_CONFIG_PATH,
-  APP_CONFIG_SUFFIX,
-  ASSETS_DIR,
-} from "./parse.js";
+export { parsePluginBundle, MCP_CONFIG_PATH } from "./parse.js";
 
 export {
   DEFAULT_PLUGIN_BUNDLE_LIMITS,
@@ -32,24 +33,20 @@ export {
 export {
   PLUGIN_ISSUE_CODES,
   PluginBundleError,
-  PluginIssueCollector,
   type PluginIssueCode,
   type PluginIssueSeverity,
   type PluginValidationIssue,
 } from "./validation.js";
 
 export {
-  normalizePluginManifest,
   PLUGIN_MANIFEST_DIR,
   PLUGIN_MANIFEST_PATH,
   type NormalizedPluginManifest,
   type PluginManifestAuthor,
-  type PluginManifestNormalization,
 } from "./manifest.js";
 
 export {
   containsRootPlaceholder,
-  normalizePluginMcpConfig,
   PLUGIN_ROOT_PLACEHOLDERS,
   type NormalizedPluginMcpServer,
   type NormalizedPluginOAuthHint,
@@ -59,43 +56,9 @@ export {
 } from "./mcp-config.js";
 
 export {
-  isValidPluginSkillName,
-  parsePluginSkill,
-  parseYamlLite,
-  splitFrontmatter,
-  SKILL_FILE_NAME,
-  SKILL_OPENAI_METADATA_PATH,
-  SKILLS_DIR,
   type ParsedPluginSkill,
   type ParsedPluginSkillFile,
   type ParsedPluginSkillOpenAiMetadata,
-  type ParsePluginSkillArgs,
-  type PluginSkillFileInput,
-  type SplitFrontmatterResult,
-  type YamlLiteResult,
 } from "./skill.js";
 
-export {
-  parsePluginAppConfig,
-  type ParsedPluginApp,
-  type PluginAppBinding,
-} from "./app-config.js";
-
-export {
-  caseFoldPath,
-  isPathInside,
-  normalizeBundlePath,
-  resolveContainedPath,
-  utf8ByteLength,
-  validateBundleEntries,
-  type NormalizedBundleEntry,
-  type PathNormalizationResult,
-} from "./paths.js";
-
-export {
-  computeAggregateHash,
-  hashCanonicalJson,
-  sha256Hex,
-  sha256HexBytes,
-  type HashedFileRef,
-} from "./hashes.js";
+export { type ParsedPluginApp, type PluginAppBinding } from "./app-config.js";

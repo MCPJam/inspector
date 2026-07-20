@@ -6,12 +6,15 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  normalizeBundlePath,
   parsePluginBundle,
-  resolveContainedPath,
   type PluginFileEntry,
   type PluginIssueCode,
 } from "../../src/plugin-bundle/index.js";
+// Internal helpers are deliberately not on the public barrel.
+import {
+  normalizeBundlePath,
+  resolveContainedPath,
+} from "../../src/plugin-bundle/paths.js";
 import {
   bundle,
   expectParseError,
@@ -201,6 +204,71 @@ describe("plugin bundle path attacks", () => {
     });
     const parsed = await parsePluginBundle(source);
     expect(parsed.manifest.name).toBe("demo-plugin");
+  });
+});
+
+describe("Windows path quirks", () => {
+  it("rejects bare-drive prefixes (C:foo)", async () => {
+    await expectPathAttackFails(
+      { [MANIFEST]: manifestJson(), "C:foo.txt": "boom" },
+      "PATH_INVALID_CHARACTER"
+    );
+  });
+
+  it("rejects NTFS alternate-data-stream colons", async () => {
+    await expectPathAttackFails(
+      { [MANIFEST]: manifestJson(), "docs/readme.txt:hidden": "boom" },
+      "PATH_INVALID_CHARACTER"
+    );
+  });
+
+  it("rejects segments that collapse to traversal after trailing-space stripping", async () => {
+    await expectPathAttackFails(
+      { [MANIFEST]: manifestJson(), "a/.. /escape.txt": "boom" },
+      "PATH_INVALID_CHARACTER"
+    );
+  });
+
+  it.each(["a/. /x.txt", "a/.../x.txt", "a/ . /x.txt"])(
+    "rejects Windows-collapsing segment in %j",
+    async (path) => {
+      await expectPathAttackFails(
+        { [MANIFEST]: manifestJson(), [path]: "boom" },
+        "PATH_INVALID_CHARACTER"
+      );
+    }
+  );
+
+  it("still allows ordinary interior dots", async () => {
+    const parsed = await parsePluginBundle(
+      minimalBundle({
+        "docs/archive.tar.gz.txt": "ok",
+        "docs/v1.2/notes.md": "ok",
+      })
+    );
+    expect(parsed.manifest.name).toBe("demo-plugin");
+  });
+});
+
+describe("unicode normalization of canonical paths", () => {
+  const NFC_PATH = "docs/caf\u00e9.md"; // e-acute as one precomposed code point
+  const NFD_PATH = "docs/cafe\u0301.md"; // e + combining acute accent
+
+  it("produces the same bundleHash for NFD and NFC forms of the same path", async () => {
+    const nfc = await parsePluginBundle(
+      bundle({ [MANIFEST]: manifestJson(), [NFC_PATH]: "hello" })
+    );
+    const nfd = await parsePluginBundle(
+      bundle({ [MANIFEST]: manifestJson(), [NFD_PATH]: "hello" })
+    );
+    expect(nfd.bundleHash).toBe(nfc.bundleHash);
+  });
+
+  it("treats NFD and NFC forms of one path in the same bundle as duplicates", async () => {
+    await expectPathAttackFails(
+      { [MANIFEST]: manifestJson(), [NFC_PATH]: "one", [NFD_PATH]: "two" },
+      "PATH_DUPLICATE"
+    );
   });
 });
 

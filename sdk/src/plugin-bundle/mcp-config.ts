@@ -10,7 +10,11 @@
  * verbatim, never substituted at parse time.
  */
 
-import type { PluginIssueCollector } from "./validation.js";
+import {
+  SECRET_FIELD_NAME,
+  sanitizeUnknownRecord,
+  type PluginIssueCollector,
+} from "./validation.js";
 
 export const PLUGIN_ROOT_PLACEHOLDERS = [
   "${PLUGIN_ROOT}",
@@ -26,26 +30,49 @@ export function containsRootPlaceholder(value: string): boolean {
 /** `${SOME_VAR}`-style reference that must be resolved by the user at setup. */
 const ENV_REFERENCE = /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/;
 
+/** Every `${VAR}` reference inside a composite value. */
+const ENV_REFERENCE_GLOBAL = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
+
+/**
+ * A PURE plugin-root path template: the placeholder itself, optionally
+ * followed by a path-y remainder. Anything else — including a secret with a
+ * placeholder smuggled onto the end ("sk-live-...${PLUGIN_ROOT}") — takes
+ * the normal literal-value path and is never stored.
+ */
+const PURE_ROOT_TEMPLATE =
+  /^\$\{(?:PLUGIN_ROOT|CODEX_PLUGIN_ROOT)\}[A-Za-z0-9._/-]*$/;
+
+const ROOT_PLACEHOLDER_VARS = new Set(["PLUGIN_ROOT", "CODEX_PLUGIN_ROOT"]);
+
+/**
+ * Characters allowed in the non-reference remainder of a composite template
+ * ("postgres://${DB_HOST}:${DB_PORT}/x"). A remainder outside this set, or
+ * one containing a long opaque token run, looks like an embedded credential:
+ * the template is then dropped instead of stored.
+ */
+const TEMPLATE_SAFE_REMAINDER = /^[A-Za-z0-9.:/@,+_-]*$/;
+const LONG_TOKEN_RUN = /[A-Za-z0-9_-]{16,}/;
+
 /** Header names that carry credentials (drives `secret: true`). */
 const SECRET_HEADER_NAME =
   /(authorization|token|secret|api[-_]?key|cookie|password|credential)/i;
 
-/**
- * Config field names that carry credential VALUES. Deliberately narrower than
- * the header heuristic: `authorization_server` is a URL, not a secret.
- */
-const SECRET_FIELD_NAME =
-  /(secret|token|password|passwd|api[-_]?key|private[-_]?key|credential)/i;
-
 const SERVER_KEY = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+function byName<T extends { name: string }>(a: T, b: T): number {
+  return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+}
 
 export interface PluginEnvRequirement {
   name: string;
   required: boolean;
   /**
-   * Preserved only when the declared value contains a recognized plugin-root
-   * placeholder (a path template, not a credential). The runtime substitutes
-   * it at process launch; the parser never does.
+   * Preserved only when the declared value is a PURE plugin-root path
+   * template (`${PLUGIN_ROOT}/...`) or a composite reference template whose
+   * literal remainder passed the secret screen
+   * (`postgres://${DB_HOST}:${DB_PORT}/x`). Placeholders are substituted by
+   * the runtime at process launch; the parser never does, and any value that
+   * fails the screen is dropped entirely.
    */
   valueTemplate?: string;
 }
@@ -126,7 +153,8 @@ function normalizeEnv(
     );
     return null;
   }
-  const requirements: PluginEnvRequirement[] = [];
+  const byNameMap = new Map<string, PluginEnvRequirement>();
+  const referencedVars = new Set<string>();
   for (const [name, value] of Object.entries(env as Record<string, unknown>)) {
     if (typeof value !== "string") {
       issues.error(
@@ -136,24 +164,50 @@ function normalizeEnv(
       );
       continue;
     }
-    if (containsRootPlaceholder(value)) {
-      // Path template resolved by the runtime at launch — not a user secret.
-      requirements.push({ name, required: false, valueTemplate: value });
+    if (PURE_ROOT_TEMPLATE.test(value)) {
+      // Pure path template resolved by the runtime at launch — not a secret.
+      byNameMap.set(name, { name, required: false, valueTemplate: value });
       continue;
     }
     if (value === "" || ENV_REFERENCE.test(value)) {
-      requirements.push({ name, required: true });
+      byNameMap.set(name, { name, required: true });
       continue;
     }
-    // A resolved literal value. Never persist it — it may be a credential.
-    requirements.push({ name, required: false });
+    const refs = [...value.matchAll(ENV_REFERENCE_GLOBAL)]
+      .map((match) => match[1])
+      .filter((variable) => !ROOT_PLACEHOLDER_VARS.has(variable));
+    if (refs.length > 0) {
+      // Composite template ("postgres://${DB_HOST}:${DB_PORT}/x"): store it
+      // with placeholders preserved only when the literal remainder cannot
+      // plausibly be a credential; always register the referenced variables
+      // as required setup.
+      const remainder = value.replace(ENV_REFERENCE_GLOBAL, "");
+      const safeRemainder =
+        TEMPLATE_SAFE_REMAINDER.test(remainder) &&
+        !LONG_TOKEN_RUN.test(remainder) &&
+        !SECRET_FIELD_NAME.test(name);
+      if (safeRemainder) {
+        byNameMap.set(name, { name, required: false, valueTemplate: value });
+        for (const variable of refs) referencedVars.add(variable);
+        continue;
+      }
+    }
+    // A resolved literal value (or a value with a placeholder smuggled into
+    // a secret-looking string). Never persist it — it may be a credential.
+    byNameMap.set(name, { name, required: false });
     issues.warn(
       "MCP_ENV_VALUE_OMITTED",
       `server "${serverKey}": literal value of env "${name}" is not stored; configure it during setup`,
       { componentKey }
     );
   }
-  return requirements;
+  for (const variable of referencedVars) {
+    if (!byNameMap.has(variable)) {
+      byNameMap.set(variable, { name: variable, required: true });
+    }
+  }
+  // Sorted so the configHash is insensitive to source key order.
+  return [...byNameMap.values()].sort(byName);
 }
 
 function normalizeHeaders(
@@ -196,7 +250,8 @@ function normalizeHeaders(
     }
     requirements.push({ name, secret: SECRET_HEADER_NAME.test(name) });
   }
-  return requirements;
+  // Sorted so the configHash is insensitive to source key order.
+  return requirements.sort(byName);
 }
 
 function normalizeOAuthHint(
@@ -226,19 +281,19 @@ function normalizeOAuthHint(
     ) {
       hint.scopes = scopes as string[];
     }
-    const metadata: Record<string, unknown> = {};
+    const candidates: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(oauthRecord)) {
       if (key === "scopes") continue;
-      if (SECRET_FIELD_NAME.test(key)) {
-        issues.warn(
-          "MCP_SECRET_FIELD_OMITTED",
-          `server "${serverKey}": oauth field "${key}" looks secret-bearing and is not stored`,
-          { componentKey }
-        );
-        continue;
-      }
-      metadata[key] = value;
+      candidates[key] = value;
     }
+    // Recursive sanitation: this metadata lands in the hashed config DTO, so
+    // no secret-looking key OR value at any depth may survive.
+    const metadata = sanitizeUnknownRecord(candidates, {
+      issues,
+      secretCode: "MCP_SECRET_FIELD_OMITTED",
+      label: `server "${serverKey}": oauth`,
+      context: { componentKey },
+    });
     if (Object.keys(metadata).length > 0) hint.metadata = metadata;
   }
 
@@ -319,18 +374,20 @@ function normalizeServer(
 
   const knownFields =
     transport === "stdio" ? STDIO_KNOWN_FIELDS : HTTP_KNOWN_FIELDS;
-  const extensions: Record<string, unknown> = {};
+  const unknownFields: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(record)) {
     if (knownFields.has(key)) continue;
-    if (SECRET_FIELD_NAME.test(key)) {
-      issues.warn(
-        "MCP_SECRET_FIELD_OMITTED",
-        `server "${serverKey}": field "${key}" looks secret-bearing and is not stored`,
-        { componentKey }
-      );
-      continue;
-    }
-    extensions[key] = value;
+    unknownFields[key] = value;
+  }
+  // Recursive sanitation of unknown fields: secret-looking keys and values
+  // are dropped at every depth before anything reaches the stored DTO.
+  const extensions = sanitizeUnknownRecord(unknownFields, {
+    issues,
+    secretCode: "MCP_SECRET_FIELD_OMITTED",
+    label: `server "${serverKey}"`,
+    context: { componentKey },
+  });
+  for (const key of Object.keys(extensions)) {
     issues.warn(
       "MCP_UNKNOWN_FIELD",
       `server "${serverKey}": field "${key}" is not recognized; preserved in extensions`,
@@ -517,8 +574,13 @@ export function normalizePluginMcpConfig(
   let serverMap: unknown = record;
   if (hasSnake) serverMap = record.mcp_servers;
   else if (hasCamel) serverMap = record.mcpServers;
-  else if (record.command !== undefined || record.url !== undefined) {
-    // A single bare server config is not a server map.
+  else if (
+    typeof record.command === "string" ||
+    typeof record.url === "string"
+  ) {
+    // A single bare server config is not a server map. Only string
+    // command/url values indicate that shape — a direct map may legitimately
+    // contain a server NAMED "url" or "command" (whose value is an object).
     issues.error(
       "MCP_INVALID_CONFIG",
       "expected a map of server name to configuration",

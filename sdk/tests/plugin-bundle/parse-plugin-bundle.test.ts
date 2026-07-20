@@ -318,3 +318,27 @@ describe("parsePluginBundle fixtures", () => {
     expect(codes).toContain("MANIFEST_INSECURE_URL");
   });
 });
+
+describe("hostile nesting (review fixes)", () => {
+  it("fails deep [[[...]]] frontmatter values with VALUE_TOO_DEEP, not a RangeError", async () => {
+    const bomb = `${"[".repeat(5000)}${"]".repeat(5000)}`;
+    const content = `---\nname: demo-skill\ndescription: x\nextra: ${bomb}\n---\nBody`;
+    // expectParseError asserts the throw is a PluginBundleError — a raw
+    // RangeError (stack overflow) would fail the instanceof check.
+    await expectParseError(
+      minimalBundle({ "skills/demo-skill/SKILL.md": content }),
+      "VALUE_TOO_DEEP"
+    );
+  });
+
+  it("fails deep flow values in agents/openai.yaml with VALUE_TOO_DEEP", async () => {
+    const bomb = `${"[".repeat(200)}${"]".repeat(200)}`;
+    await expectParseError(
+      minimalBundle({
+        "skills/demo-skill/SKILL.md": SKILL_MD,
+        "skills/demo-skill/agents/openai.yaml": `mcp_tools: ${bomb}\n`,
+      }),
+      "VALUE_TOO_DEEP"
+    );
+  });
+});

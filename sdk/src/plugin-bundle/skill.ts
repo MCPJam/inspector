@@ -10,7 +10,7 @@
  */
 
 import { computeAggregateHash } from "./hashes.js";
-import type { PluginIssueCollector } from "./validation.js";
+import { MAX_VALUE_DEPTH, type PluginIssueCollector } from "./validation.js";
 
 export const SKILLS_DIR = "skills";
 export const SKILL_FILE_NAME = "SKILL.md";
@@ -83,9 +83,19 @@ export interface YamlLiteResult {
   data: Record<string, unknown>;
   /** Raw lines the YAML subset could not interpret. */
   unparsed: string[];
+  /** Raw lines whose value exceeded `MAX_VALUE_DEPTH` (hostile nesting). */
+  tooDeep: string[];
 }
 
-function parseScalar(raw: string): unknown {
+/** Internal signal: a flow-sequence value exceeded `MAX_VALUE_DEPTH`. */
+class YamlValueTooDeepError extends Error {
+  constructor() {
+    super("yaml value nests too deeply");
+    this.name = "YamlValueTooDeepError";
+  }
+}
+
+function parseScalar(raw: string, depth = 0): unknown {
   const trimmed = raw.trim();
   if (
     trimmed.length >= 2 &&
@@ -99,9 +109,14 @@ function parseScalar(raw: string): unknown {
   if (trimmed === "null" || trimmed === "~") return null;
   if (/^-?\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
   if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+    // Depth cap so a hostile "[[[[...]]]]" value surfaces as a stable
+    // VALUE_TOO_DEEP issue instead of a raw RangeError from the recursion.
+    if (depth >= MAX_VALUE_DEPTH) {
+      throw new YamlValueTooDeepError();
+    }
     const inner = trimmed.slice(1, -1).trim();
     if (inner === "") return [];
-    return inner.split(",").map((item) => parseScalar(item));
+    return inner.split(",").map((item) => parseScalar(item, depth + 1));
   }
   return trimmed;
 }
@@ -114,6 +129,7 @@ function parseScalar(raw: string): unknown {
 export function parseYamlLite(text: string): YamlLiteResult {
   const data: Record<string, unknown> = {};
   const unparsed: string[] = [];
+  const tooDeep: string[] = [];
   const lines = text.split(/\r?\n/);
   let i = 0;
 
@@ -144,7 +160,12 @@ export function parseYamlLite(text: string): YamlLiteResult {
         }
         const listMatch = /^\s+-\s*(.*)$/.exec(next);
         if (listMatch) {
-          items.push(parseScalar(listMatch[1]));
+          try {
+            items.push(parseScalar(listMatch[1]));
+          } catch (error) {
+            if (!(error instanceof YamlValueTooDeepError)) throw error;
+            tooDeep.push(next);
+          }
           j++;
           continue;
         }
@@ -191,11 +212,16 @@ export function parseYamlLite(text: string): YamlLiteResult {
       continue;
     }
 
-    data[key] = parseScalar(rest);
+    try {
+      data[key] = parseScalar(rest);
+    } catch (error) {
+      if (!(error instanceof YamlValueTooDeepError)) throw error;
+      tooDeep.push(line);
+    }
     i++;
   }
 
-  return { data, unparsed };
+  return { data, unparsed, tooDeep };
 }
 
 export interface SplitFrontmatterResult {
@@ -261,11 +287,24 @@ export async function parsePluginSkill(
     return null;
   }
 
-  const { data: frontmatter, unparsed } = parseYamlLite(split.frontmatter);
+  const {
+    data: frontmatter,
+    unparsed,
+    tooDeep,
+  } = parseYamlLite(split.frontmatter);
   for (const line of unparsed) {
     issues.warn(
       "SKILL_FRONTMATTER_UNPARSED",
       `skill "${directoryName}": frontmatter line not interpreted: ${line.trim()}`,
+      context
+    );
+  }
+  for (const line of tooDeep) {
+    issues.error(
+      "VALUE_TOO_DEEP",
+      `skill "${directoryName}": frontmatter value nests deeper than ${MAX_VALUE_DEPTH} levels: ${line
+        .trim()
+        .slice(0, 80)}`,
       context
     );
   }
@@ -321,6 +360,15 @@ export async function parsePluginSkill(
       issues.warn(
         "SKILL_INVALID_METADATA",
         `skill "${directoryName}": openai.yaml line not interpreted: ${line.trim()}`,
+        { path: openaiYaml.path, componentKey }
+      );
+    }
+    for (const line of parsed.tooDeep) {
+      issues.error(
+        "VALUE_TOO_DEEP",
+        `skill "${directoryName}": openai.yaml value nests deeper than ${MAX_VALUE_DEPTH} levels: ${line
+          .trim()
+          .slice(0, 80)}`,
         { path: openaiYaml.path, componentKey }
       );
     }

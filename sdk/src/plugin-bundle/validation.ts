@@ -16,6 +16,7 @@ export const PLUGIN_ISSUE_CODES = [
   "FILE_SIZE_MISMATCH",
   "FILE_INVALID_UTF8",
   "FILE_UNREADABLE",
+  "VALUE_TOO_DEEP",
   // Path safety
   "PATH_EMPTY",
   "PATH_ABSOLUTE",
@@ -40,6 +41,7 @@ export const PLUGIN_ISSUE_CODES = [
   "MANIFEST_PLACEHOLDER",
   "MANIFEST_UNKNOWN_FIELD",
   "MANIFEST_AMBIGUOUS_FIELD",
+  "MANIFEST_SECRET_FIELD_OMITTED",
   // Skills
   "SKILL_TOO_MANY",
   "SKILL_FRONTMATTER_MISSING",
@@ -75,6 +77,7 @@ export const PLUGIN_ISSUE_CODES = [
   "APP_INVALID_CONFIG",
   "APP_MISSING_ID",
   "APP_UNKNOWN_SERVER",
+  "APP_SECRET_FIELD_OMITTED",
   // Assets
   "ASSET_CONTENT_MISMATCH",
   "ASSET_UNSUPPORTED_TYPE",
@@ -157,4 +160,133 @@ export class PluginIssueCollector {
       throw new PluginBundleError(this.issues());
     }
   }
+}
+
+/**
+ * Maximum nesting depth for any parsed value tree (manifest fields, unknown
+ * extensions, oauth metadata, YAML flow sequences). Exceeding it emits
+ * `VALUE_TOO_DEEP` through the normal error path instead of letting hostile
+ * input blow the stack with a raw RangeError.
+ */
+export const MAX_VALUE_DEPTH = 32;
+
+/**
+ * Config/extension field NAMES that carry credential values. Shared by the
+ * MCP config normalizer and the recursive extension sanitizer. Deliberately
+ * excludes bare "auth"/"authorization" so URL-ish fields like
+ * `authorization_server` survive; secret-looking VALUES under any key are
+ * caught by `SECRET_LIKE_VALUE` instead.
+ */
+export const SECRET_FIELD_NAME =
+  /(secret|token|password|passwd|api[-_]?key|private[-_]?key|credential)/i;
+
+/**
+ * String VALUES that look like credentials regardless of their key name:
+ * bearer tokens, PEM blocks, common key-prefix formats, or long opaque
+ * token runs. Closes the `{"auth": "Bearer sk-live-..."}` alias hole that a
+ * key-name denylist alone cannot.
+ */
+const SECRET_LIKE_VALUE =
+  /(bearer\s+\S|-----BEGIN|\b(?:sk|pk|rk|xox[a-z])-[A-Za-z0-9]|[A-Za-z0-9+/_-]{40,})/i;
+
+const DROP: unique symbol = Symbol("drop");
+
+interface SanitizeArgs {
+  issues: PluginIssueCollector;
+  /** Warning code for dropped secret-looking keys/values. */
+  secretCode: PluginIssueCode;
+  /** Message prefix, e.g. `server "crm"` or `manifest`. */
+  label: string;
+  context?: { path?: string; componentKey?: string };
+}
+
+interface SanitizeState {
+  reportedTooDeep: boolean;
+}
+
+function sanitizeValue(
+  value: unknown,
+  keyPath: string,
+  depth: number,
+  args: SanitizeArgs,
+  state: SanitizeState
+): unknown | typeof DROP {
+  if (depth > MAX_VALUE_DEPTH) {
+    if (!state.reportedTooDeep) {
+      state.reportedTooDeep = true;
+      args.issues.error(
+        "VALUE_TOO_DEEP",
+        `${args.label}: field "${keyPath}" nests deeper than ${MAX_VALUE_DEPTH} levels`,
+        args.context
+      );
+    }
+    return DROP;
+  }
+  if (typeof value === "string") {
+    if (SECRET_LIKE_VALUE.test(value)) {
+      args.issues.warn(
+        args.secretCode,
+        `${args.label}: value of "${keyPath}" looks secret-bearing and is not stored`,
+        args.context
+      );
+      return DROP;
+    }
+    return value;
+  }
+  if (
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    value === null
+  ) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    const sanitized: unknown[] = [];
+    for (let i = 0; i < value.length; i++) {
+      const item = sanitizeValue(
+        value[i],
+        `${keyPath}[${i}]`,
+        depth + 1,
+        args,
+        state
+      );
+      if (item !== DROP) sanitized.push(item);
+    }
+    return sanitized;
+  }
+  if (typeof value === "object") {
+    const sanitized: Record<string, unknown> = {};
+    for (const [key, nested] of Object.entries(
+      value as Record<string, unknown>
+    )) {
+      const nestedPath = keyPath === "" ? key : `${keyPath}.${key}`;
+      if (SECRET_FIELD_NAME.test(key)) {
+        args.issues.warn(
+          args.secretCode,
+          `${args.label}: field "${nestedPath}" looks secret-bearing and is not stored`,
+          args.context
+        );
+        continue;
+      }
+      const item = sanitizeValue(nested, nestedPath, depth + 1, args, state);
+      if (item !== DROP) sanitized[key] = item;
+    }
+    return sanitized;
+  }
+  // Non-JSON value (undefined, function, ...) — never store it.
+  return DROP;
+}
+
+/**
+ * Recursively sanitize an unknown/extension record before it reaches a stored
+ * DTO or a hash input: secret-looking KEYS are dropped at every depth,
+ * secret-looking string VALUES are dropped regardless of key, and nesting is
+ * depth-capped. Every drop emits an issue; nothing is silently discarded.
+ */
+export function sanitizeUnknownRecord(
+  record: Record<string, unknown>,
+  args: SanitizeArgs
+): Record<string, unknown> {
+  const state: SanitizeState = { reportedTooDeep: false };
+  return sanitizeValue(record, "", 0, args, state) as Record<string, unknown>;
 }

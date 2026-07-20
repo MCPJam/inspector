@@ -8,7 +8,11 @@
  */
 
 import { resolveContainedPath } from "./paths.js";
-import type { PluginIssueCollector } from "./validation.js";
+import {
+  MAX_VALUE_DEPTH,
+  sanitizeUnknownRecord,
+  type PluginIssueCollector,
+} from "./validation.js";
 
 export const PLUGIN_MANIFEST_DIR = ".codex-plugin";
 export const PLUGIN_MANIFEST_PATH = ".codex-plugin/plugin.json";
@@ -118,7 +122,9 @@ const HANDLED_FIELDS = new Set<string>([
 function scanForPlaceholders(
   value: unknown,
   fieldPath: string,
-  issues: PluginIssueCollector
+  issues: PluginIssueCollector,
+  depth = 0,
+  state = { reportedTooDeep: false }
 ): void {
   if (typeof value === "string") {
     if (PLACEHOLDER.test(value)) {
@@ -129,9 +135,27 @@ function scanForPlaceholders(
     }
     return;
   }
+  // Depth cap: hostile deeply-nested JSON must fail with a stable issue
+  // code, not a raw RangeError from unbounded recursion.
+  if (depth > MAX_VALUE_DEPTH) {
+    if (!state.reportedTooDeep) {
+      state.reportedTooDeep = true;
+      issues.error(
+        "VALUE_TOO_DEEP",
+        `manifest field "${fieldPath}" nests deeper than ${MAX_VALUE_DEPTH} levels`
+      );
+    }
+    return;
+  }
   if (Array.isArray(value)) {
     value.forEach((item, index) =>
-      scanForPlaceholders(item, `${fieldPath}[${index}]`, issues)
+      scanForPlaceholders(
+        item,
+        `${fieldPath}[${index}]`,
+        issues,
+        depth + 1,
+        state
+      )
     );
     return;
   }
@@ -142,7 +166,9 @@ function scanForPlaceholders(
       scanForPlaceholders(
         nested,
         fieldPath === "" ? key : `${fieldPath}.${key}`,
-        issues
+        issues,
+        depth + 1,
+        state
       );
     }
   }
@@ -195,6 +221,7 @@ export function normalizePluginManifest(
 ): PluginManifestNormalization {
   const { filePaths, issues } = context;
   const unsupportedFields: string[] = [];
+  const unknownFields: Record<string, unknown> = {};
 
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     issues.error(
@@ -347,7 +374,18 @@ export function normalizePluginManifest(
       );
       continue;
     }
-    manifest.extensions[key] = value;
+    unknownFields[key] = value;
+  }
+
+  // Recursive sanitation before preservation: secret-looking keys and
+  // values are dropped at every depth, and nesting is depth-capped, so no
+  // credential can ride into the persisted normalized manifest.
+  manifest.extensions = sanitizeUnknownRecord(unknownFields, {
+    issues,
+    secretCode: "MANIFEST_SECRET_FIELD_OMITTED",
+    label: "manifest",
+  });
+  for (const key of Object.keys(manifest.extensions)) {
     issues.warn(
       "MANIFEST_UNKNOWN_FIELD",
       `manifest field "${key}" is not recognized; preserved in extensions`

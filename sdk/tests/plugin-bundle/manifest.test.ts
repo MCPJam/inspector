@@ -194,3 +194,43 @@ describe("plugin manifest validation", () => {
     );
   });
 });
+
+describe("manifest hardening (review fixes)", () => {
+  it("fails deeply nested manifest values with VALUE_TOO_DEEP, not a RangeError", async () => {
+    let nested: unknown = "leaf";
+    for (let i = 0; i < 200; i++) nested = { deeper: nested };
+    await expectParseError(
+      minimalBundle({}, { future_field: nested }),
+      "VALUE_TOO_DEEP"
+    );
+  });
+
+  it("drops secret-looking values from preserved unknown fields", async () => {
+    const parsed = await parsePluginBundle(
+      minimalBundle(
+        {},
+        {
+          integration: {
+            endpoint: "https://api.example.com",
+            auth: "Bearer sk-live-manifest-leak",
+            nested: { api_key: "sk_live_nested_leak" },
+          },
+        }
+      )
+    );
+    expect(parsed.manifest.extensions).toEqual({
+      integration: {
+        endpoint: "https://api.example.com",
+        nested: {},
+      },
+    });
+    const serialized = JSON.stringify(parsed);
+    expect(serialized).not.toContain("sk-live-manifest-leak");
+    expect(serialized).not.toContain("sk_live_nested_leak");
+    expect(
+      parsed.warnings.some(
+        (issue) => issue.code === "MANIFEST_SECRET_FIELD_OMITTED"
+      )
+    ).toBe(true);
+  });
+});

@@ -8,7 +8,10 @@
  * explicit MCPJam server binding.
  */
 
-import type { PluginIssueCollector } from "./validation.js";
+import {
+  sanitizeUnknownRecord,
+  type PluginIssueCollector,
+} from "./validation.js";
 
 export type PluginAppBinding = "declared" | "inferred" | "unbound";
 
@@ -84,11 +87,18 @@ export function parsePluginAppConfig(args: {
     }
   }
 
-  const extensions: Record<string, unknown> = {};
+  const unknownFields: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(record)) {
     if (key === appIdKey || key === serverField) continue;
-    extensions[key] = value;
+    unknownFields[key] = value;
   }
+  // Recursive sanitation: secret-looking keys/values never reach the DTO.
+  const extensions = sanitizeUnknownRecord(unknownFields, {
+    issues,
+    secretCode: "APP_SECRET_FIELD_OMITTED",
+    label: `app "${appId}"`,
+    context,
+  });
 
   if (declaredServer !== undefined) {
     if (serverKeys.includes(declaredServer)) {

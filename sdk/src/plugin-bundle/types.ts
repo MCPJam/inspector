@@ -32,7 +32,12 @@ export interface PluginFileEntry {
  */
 export interface PluginFileSource {
   list(): Promise<PluginFileEntry[]>;
-  readText(path: string, maxBytes: number): Promise<string>;
+  /**
+   * Optional convenience for adapter-side consumers. The parser itself never
+   * calls it — it decodes text from `readBytes` so hashing and decoding see
+   * the same bytes.
+   */
+  readText?(path: string, maxBytes: number): Promise<string>;
   readBytes(path: string, maxBytes: number): Promise<Uint8Array>;
 }
 
