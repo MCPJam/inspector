@@ -888,6 +888,24 @@ function runSummaryLine(r: JourneyRun): string {
   return parts.join(" · ");
 }
 
+/**
+ * Chat-session lifecycle (`active`) is NOT "journey running" — sessions stay
+ * `active` after the run completes. Map to copy that matches the run so the
+ * sessions list doesn't contradict Completed / Running above.
+ */
+function sessionLifecycleLabel(
+  sessionStatus: string | undefined,
+  runStatus: string,
+): string | null {
+  if (!sessionStatus) return null;
+  if (sessionStatus === "failed") return "failed";
+  if (sessionStatus === "completed") return "done";
+  if (sessionStatus === "active" || sessionStatus === "running") {
+    return runStatus === "running" ? "running" : "done";
+  }
+  return sessionStatus.replace(/_/g, " ");
+}
+
 // ── journey card + runs ──────────────────────────────────────────────────────
 function JourneyCard({
   journey,
@@ -1144,6 +1162,7 @@ function JourneyCard({
                       hosts={hosts}
                       hostSummaries={r.hostSummaries}
                       runSummary={r.summary}
+                      runStatus={r.status}
                       initialThreadId={
                         initialRunId === r._id ? initialThreadId : undefined
                       }
@@ -1175,6 +1194,7 @@ function RunSessionsView({
   hosts,
   hostSummaries,
   runSummary,
+  runStatus,
   initialThreadId,
 }: {
   runId: string;
@@ -1183,6 +1203,7 @@ function RunSessionsView({
   hosts: HostItem[];
   hostSummaries: JourneyRun["hostSummaries"];
   runSummary: JourneyRun["summary"];
+  runStatus: JourneyRun["status"];
   /** Deep-link session (`id`) to auto-select once it's on a loaded page. */
   initialThreadId?: string;
 }) {
@@ -1360,6 +1381,8 @@ function RunSessionsView({
           {visible.map((s) => {
             const isFailed =
               s.status === "failed" || s.readiness?.status === "failed";
+            const lifecycle = sessionLifecycleLabel(s.status, runStatus);
+            const meta = [lifecycle, s.modelId].filter(Boolean).join(" · ");
             return (
               <button
                 key={s.id}
@@ -1379,11 +1402,12 @@ function RunSessionsView({
                       "truncate text-[10px]",
                       isFailed
                         ? "text-red-600 dark:text-red-400"
-                        : "text-muted-foreground",
+                        : lifecycle === "running"
+                          ? "text-foreground/80"
+                          : "text-muted-foreground",
                     )}
                   >
-                    {s.status ?? "—"}
-                    {s.modelId ? ` · ${s.modelId}` : ""}
+                    {meta || "—"}
                   </span>
                 </span>
                 <span className="flex shrink-0 items-center gap-1.5">

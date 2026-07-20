@@ -186,6 +186,21 @@ describe("SwarmsTab — persona create/edit", () => {
       const aside = screen.getByRole("complementary");
       const avatar = within(aside).getByTestId("persona-pixel-avatar");
       expect(avatar.getAttribute("data-state")).toBe("running");
+      // Peppy bob is for running journeys — not merely being selected.
+      expect(avatar.getAttribute("data-busy")).toBe("true");
+    });
+  });
+
+  it("does not mark a selected idle persona as busy", async () => {
+    runningPersonaRefIds.current = [];
+    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    fireEvent.click(await screen.findByText("Persona One"));
+
+    await waitFor(() => {
+      const aside = screen.getByRole("complementary");
+      const avatar = within(aside).getByTestId("persona-pixel-avatar");
+      expect(avatar.getAttribute("data-state")).toBe("idle");
+      expect(avatar.getAttribute("data-busy")).toBe("false");
     });
   });
 });

@@ -51,13 +51,15 @@ const runWithMissingFailures = {
 };
 
 // A real JourneySessionDto row — identifier is `id`.
+// `status: "active"` is the chat-session lifecycle (often sticks after the
+// journey run finishes) — UI must not show it as "journey still happening".
 const session = {
   id: "thread-xyz",
   chatSessionId: "synth_run-1_host-1_0",
   projectId: "proj-1",
   hostId: "host-1",
   personaRefId: "persona-1",
-  status: "completed",
+  status: "active",
   modelId: "anthropic/claude-haiku-4.5",
   startedAt: 1,
   lastActivityAt: 2,
@@ -270,5 +272,19 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
     expect(
       screen.getByText(/2 attempts failed without a session transcript/i),
     ).toBeInTheDocument();
+  });
+
+  it("maps sticky chat-session 'active' to 'done' once the run completed", async () => {
+    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    fireEvent.click(screen.getByText("Persona One"));
+    await expandJourneyAndOpenRunSessions();
+
+    // Completed run + session.status=active must not read as still happening.
+    expect(
+      await screen.findByRole("button", {
+        name: /done · anthropic\/claude-haiku-4\.5/i,
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/^active ·/i)).not.toBeInTheDocument();
   });
 });
