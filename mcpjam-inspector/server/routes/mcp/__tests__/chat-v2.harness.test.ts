@@ -164,4 +164,44 @@ describe("POST /api/mcp/chat-v2 harness host routing", () => {
       expect.objectContaining({ harness: "claude-code" }),
     );
   });
+
+  it("rejects an unavailable harness host with 422 FEATURE_NOT_SUPPORTED (config error, not 5xx)", async () => {
+    // A host the harness can't run is a config problem — it must surface as an
+    // actionable 4xx the client can render as "fix this host", never a transient
+    // 5xx that reads as a server outage and invites retry/spin.
+    checkHarnessRuntimeAvailableMock.mockReturnValue({
+      ok: false,
+      reason:
+        "the Codex harness can't use attached MCP servers yet — its runtime " +
+        "doesn't expose MCP-server tools to the model",
+    });
+    const app = createApp();
+
+    const response = await app.request("/api/mcp/chat-v2", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer signed-in-test-token",
+      },
+      body: JSON.stringify({
+        projectId: "project-1",
+        hostId: "host-claude",
+        selectedServers: ["server-1"],
+        selectedServerIds: ["server-id-1"],
+        messages: [{ role: "user", content: "create empty.txt" }],
+        model: {
+          id: "anthropic/claude-haiku-4.5",
+          provider: "anthropic",
+          name: "Claude Haiku 4.5",
+        },
+      }),
+    });
+
+    expect(response.status).toBe(422);
+    const body = (await response.json()) as { code?: string; error?: string };
+    expect(body.code).toBe("FEATURE_NOT_SUPPORTED");
+    expect(body.error).toMatch(/can't use attached MCP servers/);
+    // The turn must be rejected BEFORE the model runs.
+    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+  });
 });

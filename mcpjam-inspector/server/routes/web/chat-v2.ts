@@ -357,9 +357,14 @@ chatV2.post("/", async (c) => {
         xaaEnterprisePolicyOn: xaaPolicy != null,
       });
       if (!availability.ok) {
+        // A host whose configuration this harness can't run is a CONFIG problem,
+        // not a server fault. Classify it 422 FEATURE_NOT_SUPPORTED (not 503
+        // INTERNAL_ERROR) so the client treats it as an actionable "fix this host"
+        // state instead of a transient server error to retry/spin on. The
+        // actionable copy rides in `reason` (see harness-availability.ts).
         throw new WebRouteError(
-          503,
-          ErrorCode.INTERNAL_ERROR,
+          422,
+          ErrorCode.FEATURE_NOT_SUPPORTED,
           `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`,
         );
       }

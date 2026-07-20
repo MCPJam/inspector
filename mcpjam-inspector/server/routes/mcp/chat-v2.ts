@@ -683,11 +683,15 @@ chatV2.post("/", async (c) => {
           ).kind !== "off",
       });
       if (!availability.ok) {
+        // Config problem, not a server fault — 422 FEATURE_NOT_SUPPORTED so the
+        // client treats it as actionable, never a transient 5xx to retry.
+        // Mirrors web/chat-v2.ts.
         return c.json(
           {
+            code: "FEATURE_NOT_SUPPORTED",
             error: `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${availability.reason}.`,
           },
-          503,
+          422,
         );
       }
     }
