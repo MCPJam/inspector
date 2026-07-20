@@ -243,5 +243,4 @@ describe("waitForUiToolNames", () => {
     unregB();
     expect(useUiToolsRegistry.getState().resolve("ui_navigate")).toBeNull();
   });
-
 });

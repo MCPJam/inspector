@@ -63,6 +63,30 @@ export interface AppSurfaceManifest {
   hostedBlocked?: boolean;
   /** A `snapshotApp` provider is registered while this surface is mounted. */
   hasSnapshotProvider?: boolean;
+  /**
+   * REQUIRED: this surface's agent-tools decision. A surface cannot ship
+   * without one — the field is non-optional, so the client typecheck fails,
+   * and `agent-tool-coverage.test.ts` enforces each kind's obligations.
+   *
+   * - `"global"` — this surface's tools live in the always-on catalog
+   *   (`buildUiToolsCatalog`), registered app-wide for the whole session.
+   *   FROZEN to servers + playground by the coverage test: their tools
+   *   self-navigate, so they must stay advertised from every route. New
+   *   surfaces use `"group"` instead.
+   * - `"group"` — mount-scoped tools: an entry in `SURFACE_TOOL_GROUPS`
+   *   plus a `useSurfaceAgentBridge` call in the surface component.
+   * - `"none"` — an explicit, reviewed opt-out with a real reason (≥ 20
+   *   chars). "We haven't decided" is not a reason; "read-only review
+   *   screen" or "admin surface the agent must not automate" is.
+   *
+   * Observation is a SEPARATE dimension: `hasSnapshotProvider` may be true
+   * on a `kind: "none"` surface — a screen the agent may look at but not
+   * operate.
+   */
+  agentTools:
+    | { readonly kind: "global" }
+    | { readonly kind: "group" }
+    | { readonly kind: "none"; readonly reason: string };
   /** Include in the model-facing atlas. */
   showInAtlas: boolean;
 }
@@ -82,6 +106,11 @@ export const APP_SURFACES = [
       "Read What's New updates",
       "Connect a recommended MCP server or create a recommended host",
     ],
+    agentTools: {
+      kind: "none",
+      reason:
+        "Overview screen; the primary agent entry is the chat itself — no workflow mutations to drive here.",
+    },
     showInAtlas: true,
   },
   {
@@ -102,6 +131,7 @@ export const APP_SURFACES = [
       "Edit a server's transport, headers, environment variables, or auth method",
       "Inspect a connection's status and configuration",
     ],
+    agentTools: { kind: "global" },
     showInAtlas: true,
   },
   {
@@ -117,6 +147,11 @@ export const APP_SURFACES = [
       "Set a host's model, system prompt, and behavior (tool approval, tool discovery)",
       "Deep-link to a specific host's canvas",
     ],
+    agentTools: {
+      kind: "none",
+      reason:
+        "Tool group planned (create a host, set its model/prompt/behavior); tracked in the surface-tools rollout.",
+    },
     showInAtlas: true,
   },
   {
@@ -131,6 +166,11 @@ export const APP_SURFACES = [
       "Compare capability support across several hosts",
       "Open a single capability's support page",
     ],
+    agentTools: {
+      kind: "none",
+      reason:
+        "Read-only comparison matrix; there is nothing here for an agent to operate.",
+    },
     showInAtlas: true,
   },
   {
@@ -145,6 +185,11 @@ export const APP_SURFACES = [
       "Start or stop the project's computer",
       "Browse its filesystem and open a terminal",
     ],
+    agentTools: {
+      kind: "none",
+      reason:
+        "Tool group planned (start/stop the computer, read its status); tracked in the surface-tools rollout.",
+    },
     showInAtlas: true,
   },
   {
@@ -159,6 +204,11 @@ export const APP_SURFACES = [
       "Search the registry for a server",
       "Install a registry server into the project",
     ],
+    agentTools: {
+      kind: "none",
+      reason:
+        "Tool group planned (search the registry, install a server into the project); tracked in the surface-tools rollout.",
+    },
     showInAtlas: true,
   },
   {
@@ -179,6 +229,7 @@ export const APP_SURFACES = [
       "Emulate app context: theme, device, display mode, locale, time zone",
     ],
     hasSnapshotProvider: true,
+    agentTools: { kind: "global" },
     showInAtlas: true,
   },
   {
@@ -193,6 +244,11 @@ export const APP_SURFACES = [
       "Publish or unpublish a chatbox",
       "Review chatbox sessions",
     ],
+    agentTools: {
+      kind: "none",
+      reason:
+        "Tool group planned (publish/unpublish a chatbox, open a session); tracked in the surface-tools rollout.",
+    },
     showInAtlas: true,
   },
   {
@@ -207,6 +263,11 @@ export const APP_SURFACES = [
       "Publish a swarm and configure personas",
       "Review swarm sessions",
     ],
+    agentTools: {
+      kind: "none",
+      reason:
+        "Tool group planned (publish a swarm, configure personas, open sessions); tracked in the surface-tools rollout.",
+    },
     showInAtlas: true,
   },
   {
@@ -231,6 +292,11 @@ export const APP_SURFACES = [
       "Open a run to inspect each step, tool call, and score",
       "Compare runs",
     ],
+    agentTools: {
+      kind: "none",
+      reason:
+        "Tool group planned (create/edit suites, start runs, open results); tracked in the surface-tools rollout.",
+    },
     showInAtlas: true,
   },
   {
@@ -254,6 +320,11 @@ export const APP_SURFACES = [
       "Review eval results for a commit",
       "Open a CI run's details",
     ],
+    agentTools: {
+      kind: "none",
+      reason:
+        "Read-only review of results CI already produced; runs are started from CI, not from this screen.",
+    },
     showInAtlas: true,
   },
   {
@@ -265,6 +336,11 @@ export const APP_SURFACES = [
     purpose:
       "List and invoke the tools a connected MCP server exposes, without a model in the loop.",
     userActivities: ["Browse a server's tools", "Invoke a tool directly"],
+    agentTools: {
+      kind: "none",
+      reason:
+        "Tool group planned (list a server's tools, prefill/invoke one directly); tracked in the surface-tools rollout.",
+    },
     showInAtlas: true,
   },
   {
@@ -276,6 +352,11 @@ export const APP_SURFACES = [
     purpose:
       "List and read the resources a connected MCP server exposes.",
     userActivities: ["Browse a server's resources", "Read a resource"],
+    agentTools: {
+      kind: "none",
+      reason:
+        "Tool group planned (list a server's resources, read one); tracked in the surface-tools rollout.",
+    },
     showInAtlas: true,
   },
   {
@@ -286,6 +367,11 @@ export const APP_SURFACES = [
     title: "Prompts",
     purpose: "List and render the prompts a connected MCP server exposes.",
     userActivities: ["Browse a server's prompts", "Render a prompt"],
+    agentTools: {
+      kind: "none",
+      reason:
+        "Tool group planned (list a server's prompts, render one with arguments); tracked in the surface-tools rollout.",
+    },
     showInAtlas: true,
   },
   {
@@ -298,6 +384,11 @@ export const APP_SURFACES = [
       "Inspect long-running MCP tasks a connected server exposes, and their status.",
     userActivities: ["Browse a server's tasks", "Inspect a task's status"],
     hostedBlocked: true,
+    agentTools: {
+      kind: "none",
+      reason:
+        "Read-only view of a server's long-running tasks; there is nothing here for an agent to operate.",
+    },
     showInAtlas: true,
   },
   {
@@ -308,6 +399,11 @@ export const APP_SURFACES = [
     title: "Skills",
     purpose: "View, add, and manage the skills available to hosts.",
     userActivities: ["Browse skills", "Add or edit a skill"],
+    agentTools: {
+      kind: "none",
+      reason:
+        "Tool group planned (browse skills, prefill a new skill for review); tracked in the surface-tools rollout.",
+    },
     showInAtlas: true,
   },
   {
@@ -318,6 +414,11 @@ export const APP_SURFACES = [
     title: "Learning",
     purpose: "Learning material about MCP and the inspector.",
     userActivities: ["Read or watch learning material"],
+    agentTools: {
+      kind: "none",
+      reason:
+        "Read-only learning material; there is nothing here for an agent to operate.",
+    },
     showInAtlas: true,
   },
   {
@@ -332,6 +433,11 @@ export const APP_SURFACES = [
       "Run a conformance scorecard against a server",
       "Review individual check results",
     ],
+    agentTools: {
+      kind: "none",
+      reason:
+        "Tool group planned (run a conformance scorecard against a server, read results); tracked in the surface-tools rollout.",
+    },
     showInAtlas: true,
   },
   {
@@ -343,6 +449,11 @@ export const APP_SURFACES = [
     purpose:
       "Check whether a server works with specific MCP hosts, and where it falls short.",
     userActivities: ["Review a server's host compatibility"],
+    agentTools: {
+      kind: "none",
+      reason:
+        "Read-only review of a server's host compatibility; nothing to operate.",
+    },
     showInAtlas: true,
   },
   {
@@ -357,6 +468,11 @@ export const APP_SURFACES = [
       "Run an OAuth flow against a server step by step",
       "Inspect discovery metadata and each request/response",
     ],
+    agentTools: {
+      kind: "none",
+      reason:
+        "Interactive auth debugger — human-in-the-loop by design; the agent must not drive authorization steps.",
+    },
     showInAtlas: true,
   },
   {
@@ -371,6 +487,11 @@ export const APP_SURFACES = [
       "Run an XAA flow and inspect each token exchange",
       "Configure the identity provider and resource app",
     ],
+    agentTools: {
+      kind: "none",
+      reason:
+        "Interactive auth debugger — human-in-the-loop by design; the agent must not drive token exchanges.",
+    },
     showInAtlas: true,
   },
   {
@@ -382,6 +503,11 @@ export const APP_SURFACES = [
     purpose: "Inspect traces of chat turns and tool calls.",
     userActivities: ["Review turn traces"],
     hostedBlocked: true,
+    agentTools: {
+      kind: "none",
+      reason:
+        "Read-only review of chat-turn traces; there is nothing here for an agent to operate.",
+    },
     showInAtlas: true,
   },
   {
@@ -393,6 +519,11 @@ export const APP_SURFACES = [
     purpose: "Local authentication settings for MCP servers.",
     userActivities: ["Review server auth state"],
     hostedBlocked: true,
+    agentTools: {
+      kind: "none",
+      reason:
+        "Sensitive auth state (server credentials and sessions); the agent must not automate it.",
+    },
     showInAtlas: true,
   },
   {
@@ -403,6 +534,11 @@ export const APP_SURFACES = [
     title: "Settings",
     purpose: "Application settings, including API keys.",
     userActivities: ["Change app settings", "Manage API keys"],
+    agentTools: {
+      kind: "none",
+      reason:
+        "Admin surface holding API keys; the agent must not automate credential management.",
+    },
     showInAtlas: true,
   },
   {
@@ -414,6 +550,11 @@ export const APP_SURFACES = [
     purpose:
       "Settings for the current project, including its members and configuration.",
     userActivities: ["Change project settings", "Manage project members"],
+    agentTools: {
+      kind: "none",
+      reason:
+        "Admin surface (project members and configuration); the agent must not automate membership changes.",
+    },
     showInAtlas: true,
   },
   {
@@ -434,6 +575,11 @@ export const APP_SURFACES = [
       "Review or change billing",
       "Configure allowed models and provider keys",
     ],
+    agentTools: {
+      kind: "none",
+      reason:
+        "Admin surface (members, billing, provider keys); the agent must not automate billing or access.",
+    },
     showInAtlas: true,
   },
   {
@@ -444,6 +590,11 @@ export const APP_SURFACES = [
     title: "Profile",
     purpose: "The signed-in user's own profile.",
     userActivities: ["Review or edit your profile"],
+    agentTools: {
+      kind: "none",
+      reason:
+        "The user's own account details; the agent must not automate identity or profile changes.",
+    },
     showInAtlas: true,
   },
   {
@@ -454,6 +605,11 @@ export const APP_SURFACES = [
     title: "Support",
     purpose: "Get help and contact MCPJam support.",
     userActivities: ["Contact support"],
+    agentTools: {
+      kind: "none",
+      reason:
+        "Contact-support screen; a human conversation, nothing for an agent to automate.",
+    },
     showInAtlas: true,
   },
 ] as const satisfies readonly AppSurfaceManifest[];
@@ -479,6 +635,21 @@ export function getAppSurface(id: string): AppSurfaceManifest | undefined {
 
 export function isAppSurfaceId(value: unknown): value is AppSurfaceId {
   return typeof value === "string" && surfacesById.has(value);
+}
+
+const surfacesByNavSegment = new Map<string, AppSurfaceManifest>(
+  listAppSurfaces().flatMap((s) => s.navSegments.map((seg) => [seg, s])),
+);
+
+/**
+ * Resolve a normalized tab segment (what `resolveUiNavigationTarget` returns
+ * and `pathnameToActiveTab` produces) to its surface manifest. Unambiguous:
+ * the coverage test asserts no segment is claimed by two surfaces.
+ */
+export function getAppSurfaceByNavSegment(
+  segment: string,
+): AppSurfaceManifest | undefined {
+  return surfacesByNavSegment.get(segment);
 }
 
 /**
@@ -507,6 +678,11 @@ export function buildAppAtlas(opts?: { hosted?: boolean }): string {
   return [
     "## The MCPJam inspector, screen by screen",
     "This is the app you are driving. Navigate with `ui_navigate` using the target in parentheses.",
+    // Static on purpose (cacheable prefix): which screens grow tools is a
+    // per-build fact, and the exact names arrive with the next chat POST's
+    // tool snapshot — the sentence only teaches the model that navigating
+    // can unlock more.
+    "Navigating to a screen can make additional screen-specific agent tools available on your next step.",
     "",
     ...surfaces.map((s) =>
       [
