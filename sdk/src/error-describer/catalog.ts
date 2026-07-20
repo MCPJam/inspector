@@ -151,7 +151,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
   ),
   "jsonrpc/header_mismatch": entry(
     "jsonrpc/header_mismatch",
-    "Protocol header mismatch (-32001)",
+    "Protocol header mismatch (-32020)",
     "The server returned an `MCP-Protocol-Version` header that does not match what the client negotiated.",
     [
       "Server is enforcing a different protocol version than the one negotiated at `initialize`.",
@@ -165,7 +165,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
   ),
   "jsonrpc/unsupported_protocol_version": entry(
     "jsonrpc/unsupported_protocol_version",
-    "Unsupported protocol version (-32004)",
+    "Unsupported protocol version (-32022)",
     "The server does not support any protocol version this inspector offered.",
     [
       "Server pinned to a newer MCP draft your inspector build does not understand.",
@@ -173,9 +173,23 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     ],
     [
       "Update the inspector to a newer build.",
-      "Check the supported versions list in the server's `initialize` response.",
+      "Check the supported versions list in the server's `server/discover` result (modern) or `initialize` response (legacy).",
     ],
     "unsupported-protocol-version",
+  ),
+  "jsonrpc/missing_required_client_capability": entry(
+    "jsonrpc/missing_required_client_capability",
+    "Missing required client capability (-32021)",
+    "The server refused the request because the client did not advertise a capability the operation requires.",
+    [
+      "A server-initiated input request (elicitation, sampling) needs a client capability MCPJam did not declare.",
+      "The connection advertised a capability set the server considers insufficient for this operation.",
+    ],
+    [
+      "Enable the required client capability in the connection's Client settings.",
+      "Check the server's documentation for which client capabilities it requires.",
+    ],
+    "missing-required-client-capability",
   ),
   "jsonrpc/url_elicitation_required": entry(
     "jsonrpc/url_elicitation_required",

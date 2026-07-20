@@ -91,6 +91,12 @@ interface UiToolsRegistryState {
    */
   globalNames: Set<string>;
   /**
+   * Current owner token per registered name. A registration's unregister
+   * closure only tears down while its own token is still the live one, so a
+   * `UiToolDefinition` object shared by two registrars can't be mis-owned.
+   */
+  ownerTokens: Map<string, symbol>;
+  /**
    * Every name ever shipped to the server in a snapshot, unioned at snapshot
    * time and NEVER evicted: a `ui_*` tool call only reaches `onToolCall`
    * when that stream's own snapshot advertised the name, and an in-flight
@@ -130,6 +136,7 @@ export const useUiToolsRegistry = create<UiToolsRegistryState>((set, get) => ({
   tools: new Map(),
   nativeDisposers: new Map(),
   globalNames: new Set(),
+  ownerTokens: new Map(),
   shippedNames: new Set(),
 
   registerUiTool: (def, opts) => {
@@ -173,6 +180,12 @@ export const useUiToolsRegistry = create<UiToolsRegistryState>((set, get) => ({
       get().nativeDisposers.get(def.name)?.();
     }
     const dispose = mirrorUiToolToNative(def);
+    // Per-registration ownership token. NOT `def` identity: two registrars can
+    // share the same module-level `UiToolDefinition` object, so a def-identity
+    // guard would let a replaced registration's stale unregister still match
+    // (and delete) the replacement. Each register() call mints a fresh token;
+    // cleanup only fires while its own token is the live one for the name.
+    const ownerToken = Symbol(def.name);
     set((s) => {
       const tools = new Map(s.tools);
       tools.set(def.name, def);
@@ -182,14 +195,16 @@ export const useUiToolsRegistry = create<UiToolsRegistryState>((set, get) => ({
       const globalNames = new Set(s.globalNames);
       if (opts?.scope === "global") globalNames.add(def.name);
       else globalNames.delete(def.name);
-      return { tools, nativeDisposers, globalNames };
+      const ownerTokens = new Map(s.ownerTokens);
+      ownerTokens.set(def.name, ownerToken);
+      return { tools, nativeDisposers, globalNames, ownerTokens };
     });
     const unregister = () => {
-      // Ownership guard (same pattern as surface-snapshot-registry's
-      // disposer): tear down only while OUR definition is still the live
-      // one. After a warn+replace, the replaced registration's unregister/
-      // abort must not delete the replacement or dispose its native mirror.
-      if (get().tools.get(def.name) !== def) return;
+      // Ownership guard: tear down only while OUR registration is still the
+      // live one (checked by token, so a shared def object can't confuse it).
+      // After a warn+replace, the replaced registration's unregister/abort
+      // must not delete the replacement or dispose its native mirror.
+      if (get().ownerTokens.get(def.name) !== ownerToken) return;
       get().unregisterUiTool(def.name);
     };
     opts?.signal?.addEventListener("abort", unregister, { once: true });
@@ -211,10 +226,13 @@ export const useUiToolsRegistry = create<UiToolsRegistryState>((set, get) => ({
       nextDisposers.delete(name);
       const nextGlobals = new Set(s.globalNames);
       nextGlobals.delete(name);
+      const nextOwnerTokens = new Map(s.ownerTokens);
+      nextOwnerTokens.delete(name);
       return {
         tools: nextTools,
         nativeDisposers: nextDisposers,
         globalNames: nextGlobals,
+        ownerTokens: nextOwnerTokens,
       };
     });
   },

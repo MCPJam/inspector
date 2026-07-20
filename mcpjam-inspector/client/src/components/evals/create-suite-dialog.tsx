@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useConvexAuth } from "convex/react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@mcpjam/design-system/dialog";
@@ -77,15 +77,19 @@ export function CreateSuiteDialog({
     shouldFetchDefaults ? projectId : null,
   );
 
+  const wasOpenRef = useRef(false);
   useEffect(() => {
+    const justOpened = open && !wasOpenRef.current;
+    wasOpenRef.current = open;
     if (!open) {
       setName("");
       setHostAttachments([]);
       setServerAttachmentId(null);
       setIsSaving(false);
-    } else if (initialName) {
-      // Applied on open only — typing after open must never be clobbered by
-      // a rerender (the deps stay open/initialName, not the name state).
+    } else if (justOpened && initialName) {
+      // Applied ONLY on the closed→open transition. A parent that changes
+      // initialName while the dialog is open must not clobber the user's
+      // edits, so this deliberately does not re-apply on initialName change.
       setName(initialName);
     }
   }, [open, initialName]);

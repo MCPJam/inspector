@@ -28,7 +28,12 @@ export type WidgetCapabilityNeed =
   | "cspFrameDomains";
 
 /** capability key → tool names whose widget actually needs it. */
-export type WidgetUsage = Partial<Record<WidgetCapabilityNeed, string[]>>;
+export type WidgetUsage = Partial<Record<WidgetCapabilityNeed, string[]>> & {
+  /** Exact keys declared in `_meta.ui.permissions` across scanned widgets. */
+  sandboxPermissionNames?: string[];
+  /** Each permission name mapped to the tools whose widgets requested it. */
+  sandboxPermissionTools?: Record<string, string[]>;
+};
 
 const SOURCE_PATTERNS: ReadonlyArray<{
   key: WidgetCapabilityNeed;
@@ -95,4 +100,18 @@ export function scanWidgetMeta(meta: unknown): Set<WidgetCapabilityNeed> {
     needs.add("sandboxPermissions");
   }
   return needs;
+}
+
+/** Read the exact sandbox permission keys declared by a widget resource. */
+export function scanWidgetPermissionNames(meta: unknown): Set<string> {
+  const ui = (meta as { ui?: { permissions?: unknown } })?.ui;
+  const permissions = ui?.permissions;
+  if (
+    !permissions ||
+    typeof permissions !== "object" ||
+    Array.isArray(permissions)
+  ) {
+    return new Set();
+  }
+  return new Set(Object.keys(permissions).filter((name) => name.length > 0));
 }
