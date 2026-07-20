@@ -51,13 +51,13 @@ export function deriveApplicationType(
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       return true; // custom scheme (mcpjam://, …)
     }
+    // OIDC loopback redirects are native and use http (not https); an https
+    // loopback is not a native loopback, so keep the loopback→native
+    // classification http-only. `URL.hostname` serializes IPv6 with brackets
+    // (`[::1]`), so the bracketed form is the only one that can match.
+    if (parsed.protocol !== "http:") return false;
     const host = parsed.hostname;
-    return (
-      host === "localhost" ||
-      host === "127.0.0.1" ||
-      host === "::1" ||
-      host === "[::1]"
-    );
+    return host === "localhost" || host === "127.0.0.1" || host === "[::1]";
   };
   return redirectUris.some(isNativeRedirect) ? "native" : "web";
 }

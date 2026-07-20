@@ -1341,10 +1341,15 @@ export const createDebugOAuthStateMachine = (
                   // SEP-837 (2026-07-28 MUST): register an appropriate
                   // application_type so an OIDC-strict AS accepts loopback /
                   // custom-scheme redirects. Native for the local debugger
-                  // redirect; an explicit caller value wins.
+                  // redirect; an explicit caller value wins. Derive from the
+                  // SAME effective redirect_uris the builder sends (a caller
+                  // override wins there too), so a `web` redirect override can't
+                  // ship alongside a `native` type.
                   application_type:
                     dynamicRegistrationDefaults.application_type ??
-                    deriveApplicationType([redirectUri]),
+                    deriveApplicationType(
+                      dynamicRegistrationDefaults.redirect_uris ?? [redirectUri],
+                    ),
                 },
                 scope: requestedScopeValue,
                 customHeaders,

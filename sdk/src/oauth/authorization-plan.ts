@@ -285,7 +285,7 @@ export function resolveAuthorizationPlan(
     }
   } else if (registrationMode === "cimd") {
     registrationStrategy = "cimd";
-    if (protocolVersion !== "2025-11-25") {
+    if (protocolVersion !== "2025-11-25" && protocolVersion !== "2026-07-28") {
       pushBlocker(
         "CIMD_UNSUPPORTED_PROTOCOL",
         `CIMD registration is not supported for protocol version ${protocolVersion}.`,

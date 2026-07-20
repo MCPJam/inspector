@@ -32,6 +32,12 @@ describe("deriveApplicationType (SEP-837)", () => {
       ]),
     ).toBe("native");
   });
+
+  it("classifies an https loopback as web (OIDC loopback is http-only)", () => {
+    expect(deriveApplicationType(["https://localhost:3000/callback"])).toBe(
+      "web",
+    );
+  });
 });
 
 describe("debug-oauth-2026-07-28 machine", () => {
@@ -87,5 +93,54 @@ describe("debug-oauth-2026-07-28 machine", () => {
     const req = getState().lastRequest;
     expect(req?.url).toBe("https://auth.example.com/register");
     expect(req?.body?.application_type).toBe("native");
+  });
+
+  it("derives application_type from the caller's redirect_uris override, not the loopback default", async () => {
+    // A caller-supplied redirect_uris override lands in the DCR body; the
+    // application_type must be derived from that SAME effective list, so an
+    // https/web override cannot ship alongside a `native` type.
+    let state: OAuthFlowState = {
+      ...EMPTY_OAUTH_FLOW_STATE,
+      serverUrl: SERVER_URL,
+      currentStep: "received_authorization_server_metadata",
+      authorizationServerMetadata: {
+        issuer: "https://auth.example.com",
+        authorization_endpoint: "https://auth.example.com/authorize",
+        token_endpoint: "https://auth.example.com/token",
+        registration_endpoint: "https://auth.example.com/register",
+        response_types_supported: ["code"],
+        code_challenge_methods_supported: ["S256"],
+      },
+    };
+    const machine = createOAuthStateMachine({
+      protocolVersion: "2026-07-28",
+      registrationStrategy: "dcr",
+      state,
+      getState: () => state,
+      updateState: (updates) => {
+        state = { ...state, ...updates };
+      },
+      serverUrl: SERVER_URL,
+      serverName: "Test Server",
+      redirectUrl: REDIRECT_URI, // loopback
+      requestExecutor: jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        body: {},
+      }),
+      // Override the redirect with a hosted https (web) URI.
+      dynamicRegistration: {
+        client_name: "Test Client",
+        redirect_uris: ["https://hosted.example.com/callback"],
+      },
+    });
+    await machine.proceedToNextStep();
+    const req = state.lastRequest;
+    expect(req?.body?.redirect_uris).toEqual([
+      "https://hosted.example.com/callback",
+    ]);
+    expect(req?.body?.application_type).toBe("web");
   });
 });
