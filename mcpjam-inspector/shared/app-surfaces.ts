@@ -165,10 +165,11 @@ export const APP_SURFACES = [
       "Compare capability support across several hosts",
       "Open a single capability's support page",
     ],
+    hasSnapshotProvider: true,
     agentTools: {
       kind: "none",
       reason:
-        "Read-only comparison matrix; there is nothing here for an agent to operate.",
+        "Read-only comparison matrix; nothing to operate, but snapshot-only for observability so the agent can see which hosts and capabilities are being compared.",
     },
     showInAtlas: true,
   },
@@ -311,10 +312,11 @@ export const APP_SURFACES = [
       "Review eval results for a commit",
       "Open a CI run's details",
     ],
+    hasSnapshotProvider: true,
     agentTools: {
       kind: "none",
       reason:
-        "Read-only review of results CI already produced; runs are started from CI, not from this screen.",
+        "Read-only review of results CI already produced (runs start from CI, not this screen); snapshot-only for observability so the agent can see the suites, commits, and pass rates.",
     },
     showInAtlas: true,
   },
@@ -376,10 +378,11 @@ export const APP_SURFACES = [
       "Inspect long-running MCP tasks a connected server exposes, and their status.",
     userActivities: ["Browse a server's tasks", "Inspect a task's status"],
     hostedBlocked: true,
+    hasSnapshotProvider: true,
     agentTools: {
       kind: "none",
       reason:
-        "Read-only view of a server's long-running tasks; there is nothing here for an agent to operate.",
+        "Read-only view of a server's long-running tasks; nothing to operate, but snapshot-only for observability so the agent can see the tasks and their statuses.",
     },
     showInAtlas: true,
   },
@@ -441,10 +444,11 @@ export const APP_SURFACES = [
     purpose:
       "Check whether a server works with specific MCP hosts, and where it falls short.",
     userActivities: ["Review a server's host compatibility"],
+    hasSnapshotProvider: true,
     agentTools: {
       kind: "none",
       reason:
-        "Read-only review of a server's host compatibility; nothing to operate.",
+        "Read-only review of a server's host compatibility; nothing to operate, but snapshot-only for observability so the agent can see which servers and hosts are on the matrix.",
     },
     showInAtlas: true,
   },
@@ -495,10 +499,11 @@ export const APP_SURFACES = [
     purpose: "Inspect traces of chat turns and tool calls.",
     userActivities: ["Review turn traces"],
     hostedBlocked: true,
+    hasSnapshotProvider: true,
     agentTools: {
       kind: "none",
       reason:
-        "Read-only review of chat-turn traces; there is nothing here for an agent to operate.",
+        "Read-only review of chat-turn traces; nothing to operate, but snapshot-only for observability so the agent can see the recent traffic summary.",
     },
     showInAtlas: true,
   },
