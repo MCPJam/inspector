@@ -7,7 +7,9 @@
  * `surface-snapshot-coverage.test.ts` (a bridge module is the second valid
  * convention for `hasSnapshotProvider`).
  *
- * Empty today: the map's structure and assertions are ready, and the first
- * row lands with the first surface tool group.
+ * A row is the component that OWNS the surface — the one whose mount is the
+ * surface being on screen.
  */
-export const BRIDGE_MODULES: Record<string, string> = {};
+export const BRIDGE_MODULES: Record<string, string> = {
+  registry: "client/src/components/RegistryTab.tsx",
+};
