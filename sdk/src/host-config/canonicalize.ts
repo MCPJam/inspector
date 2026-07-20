@@ -410,57 +410,25 @@ function canonicalizeBuiltInToolIds(value: unknown): string[] | undefined {
   return Array.from(seen).sort();
 }
 
-// Canonicalize attached plugin version ids as a SET: validate wire shape,
-// dedupe, sort. IDs are OPAQUE to the SDK — `pluginVersions` existence and
-// project scope are enforced by the backend. Order is not semantic, so we
-// dedupe + sort like builtInToolIds. Absent (undefined) OR empty ([])
-// collapses to `undefined` so the key is dropped from the canonical JSON,
-// keeping every pre-feature row's hash byte-identical (precedent: the
-// builtInToolIds empty-collapse). Entries are stored verbatim (never trimmed)
-// so a malformed id is preserved and rejected downstream by the backend's
-// scope check rather than silently fixed.
-function canonicalizePluginVersionIds(value: unknown): string[] | undefined {
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value)) {
-    throw new Error("hostConfigV2: pluginVersionIds must be a string[]");
-  }
-  const seen = new Set<string>();
-  for (const entry of value) {
-    if (typeof entry !== "string") {
-      throw new Error(
-        "hostConfigV2: pluginVersionIds entries must be strings"
-      );
-    }
-    if (entry.trim() === "") {
-      throw new Error(
-        "hostConfigV2: pluginVersionIds entries must be non-empty strings"
-      );
-    }
-    seen.add(entry);
-  }
-  if (seen.size === 0) return undefined;
-  return Array.from(seen).sort();
-}
-
 // Allowed keys per skillSelection mode. Explicit construction below keeps
 // stray keys out of the canonical JSON; these sets make a stray key a loud
 // error instead of a silent drop (the `computer` precedent).
 const SKILL_SELECTION_ALL_VISIBLE_KEYS = new Set(["mode"]);
 const SKILL_SELECTION_EXPLICIT_KEYS = new Set(["mode", "skillIds"]);
 
-// Canonicalize the standalone-skill selection policy.
+// Canonicalize the skill selection policy.
 //
 // SINGLE-IDENTITY RULE: `{ mode: "all-visible" }` canonicalizes to ABSENT
 // (returns undefined, dropping the key). Absent and explicit all-visible have
-// identical runtime behavior — the legacy "advertise every visible standalone
-// skill" path — so keeping both encodings would mint two content-addressed
+// identical runtime behavior — the legacy "advertise every visible skill"
+// path — so keeping both encodings would mint two content-addressed
 // identities for one behavior, breaking hostConfig dedupe and host
 // comparison. One behavior, one canonical byte sequence.
 //
 // `{ mode: "explicit", skillIds }` is preserved — INCLUDING an empty
-// skillIds, which means "explicitly no standalone skills" and must hash
+// skillIds, which means "explicitly no skills" and must hash
 // distinctly from absent (absence is semantic here; contrast the
-// pluginVersionIds empty-collapse). Explicit skillIds are deduped + sorted
+// builtInToolIds empty-collapse). Explicit skillIds are deduped + sorted
 // like every other unordered id set. Entries are OPAQUE skill ids to the SDK:
 // wire-shape validated only, never dereferenced.
 function canonicalizeSkillSelection(
@@ -1427,11 +1395,8 @@ export function canonicalizeHostConfigV2(
     // Opaque built-in tool ids. Helper returns undefined for absent/empty, so
     // JSON.stringify drops the key and pre-feature rows hash byte-identically.
     builtInToolIds: canonicalizeBuiltInToolIds(input.builtInToolIds),
-    // Opaque plugin version ids. Helper returns undefined for absent/empty, so
-    // JSON.stringify drops the key and pre-feature rows hash byte-identically.
-    pluginVersionIds: canonicalizePluginVersionIds(input.pluginVersionIds),
-    // Standalone-skill selection. all-visible collapses to absent (single
-    // identity per behavior); explicit — including explicit-empty — survives.
+    // Skill selection. all-visible collapses to absent (single identity per
+    // behavior); explicit — including explicit-empty — survives.
     skillSelection: canonicalizeSkillSelection(input.skillSelection),
     // Preserve undefined-vs-set: absent rows keep their historical hash, while
     // explicit off/on leaves survive template hostContext reseeds.

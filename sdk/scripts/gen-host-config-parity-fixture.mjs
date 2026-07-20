@@ -223,21 +223,6 @@ const inputs = [
     input: { ...base(), builtInToolIds: ["web_search", "code_exec", "web_search"] },
   },
   {
-    // Unsorted + duplicate plugin version ids → deduped + sorted (OpenAI
-    // plugin import, PR SDK-2). Opaque ids, like builtInToolIds.
-    label: "plugin-version-ids-unsorted-dupes",
-    input: {
-      ...base(),
-      pluginVersionIds: ["pv-b", "pv-a", "pv-b"],
-    },
-  },
-  {
-    // Empty pluginVersionIds collapses to absent → canonical JSON has no key,
-    // byte-identical to base-minimal (hash-neutral default).
-    label: "plugin-version-ids-empty-omitted",
-    input: { ...base(), pluginVersionIds: [] },
-  },
-  {
     // `{ mode: "all-visible" }` canonicalizes to ABSENT: same runtime
     // behavior as a legacy row with no skillSelection, so it must produce
     // the same content-addressed identity (byte-identical to base-minimal).
@@ -257,16 +242,6 @@ const inputs = [
     // semantic here, so this MUST hash differently from base-minimal.
     label: "skill-selection-explicit-empty-preserved",
     input: { ...base(), skillSelection: { mode: "explicit", skillIds: [] } },
-  },
-  {
-    // Combination: plugin attachment + explicit-empty standalone skills —
-    // the isolated plugin-test host shape.
-    label: "plugin-versions-with-explicit-empty-skills",
-    input: {
-      ...base(),
-      pluginVersionIds: ["pv-1"],
-      skillSelection: { mode: "explicit", skillIds: [] },
-    },
   },
   {
     label: "adversarial-stray-deny-must-be-dropped",

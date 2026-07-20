@@ -47,14 +47,10 @@ export type SeededHostConfigInput = {
   serverIds: string[];
   optionalServerIds: string[];
   builtInToolIds: string[];
-  // Exact plugin versions attached to this host (OpenAI plugin import).
-  // Optional — absent/[] canonicalizes to omitted so template-seeded hosts
-  // hash byte-identically to pre-feature seeds.
-  pluginVersionIds?: string[];
-  // Standalone-skill selection. Kept as a local structural literal (mirrors
-  // HostConfigSkillSelection in ../types.ts) so this module stays free of
-  // cross-imports, like `harness` below. Absent ⇒ legacy all-visible;
-  // `{ mode: "explicit", skillIds: [] }` = explicitly no standalone skills.
+  // Skill selection (OpenAI plugin import). Kept as a local structural
+  // literal (mirrors HostConfigSkillSelection in ../types.ts) so this module
+  // stays free of cross-imports, like `harness` below. Absent ⇒ legacy
+  // all-visible; `{ mode: "explicit", skillIds: [] }` = explicitly no skills.
   skillSelection?:
     | { mode: "all-visible" }
     | { mode: "explicit"; skillIds: string[] };
@@ -131,11 +127,9 @@ export function emptyHostConfigInputV2(
       ? [...partial.optionalServerIds]
       : [],
     builtInToolIds: partial.builtInToolIds ? [...partial.builtInToolIds] : [],
-    // Optional: absent stays absent (canonicalizer omits absent/empty), so
-    // fresh seeds hash byte-identically to pre-feature seeds.
-    ...(partial.pluginVersionIds !== undefined
-      ? { pluginVersionIds: [...partial.pluginVersionIds] }
-      : {}),
+    // Optional: absent stays absent (all-visible collapses to omitted in the
+    // canonicalizer), so fresh seeds hash byte-identically to pre-feature
+    // seeds.
     ...(partial.skillSelection !== undefined
       ? {
           skillSelection:

@@ -302,28 +302,6 @@ describe("Host — toJSON() round-trips", () => {
     expect(new Host(json1).toJSON()).toEqual(json1);
   });
 
-  it("round-trips pluginVersionIds (deduped + sorted at the first toJSON)", () => {
-    const host = new Host({
-      style: "mcpjam",
-      model: "test-model",
-      pluginVersionIds: ["pv-b", "pv-a", "pv-b"],
-    });
-    const json1 = host.toJSON();
-    expect(json1.pluginVersionIds).toEqual(["pv-a", "pv-b"]);
-    expect(new Host(json1).toJSON()).toEqual(json1);
-  });
-
-  it("normalizes an empty pluginVersionIds to absent (hashes like a pre-feature host)", () => {
-    const withEmpty = new Host({
-      style: "mcpjam",
-      model: "test-model",
-      pluginVersionIds: [],
-    }).toJSON();
-    const without = new Host({ style: "mcpjam", model: "test-model" }).toJSON();
-    expect("pluginVersionIds" in withEmpty).toBe(false);
-    expect(withEmpty).toEqual(without);
-  });
-
   it("defensively copies skillSelection — caller mutation after construction never leaks into toJSON()", () => {
     const skillIds = ["sk-1"];
     const host = new Host({

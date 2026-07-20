@@ -184,9 +184,6 @@ function canonicalToPublic(c: CanonicalHostConfigV2): HostJson {
   if (c.mcpToolResultImageRendering !== undefined) {
     out.mcpToolResultImageRendering = c.mcpToolResultImageRendering;
   }
-  if (c.pluginVersionIds !== undefined) {
-    out.pluginVersionIds = c.pluginVersionIds;
-  }
   if (c.skillSelection !== undefined) {
     out.skillSelection = c.skillSelection;
   }
@@ -291,16 +288,9 @@ export class Host {
   optionalServers: ServerId[];
 
   /**
-   * Exact plugin versions (immutable revisions) attached to this host.
-   * Opaque ids — deduped + sorted at `toJSON()`; an empty list normalizes
-   * to absent so "no plugins" hashes identically to a pre-feature host.
-   */
-  pluginVersionIds?: string[];
-
-  /**
-   * Standalone-skill selection. `undefined` (or `{ mode: "all-visible" }`,
+   * Skill selection. `undefined` (or `{ mode: "all-visible" }`,
    * which normalizes to absent at `toJSON()`) ⇒ legacy all-visible behavior;
-   * `{ mode: "explicit", skillIds }` restricts advertised standalone skills
+   * `{ mode: "explicit", skillIds }` restricts advertised skills
    * (`[]` = explicitly none — preserved, distinct from absent).
    */
   skillSelection?: HostSkillSelection;
@@ -386,9 +376,6 @@ export class Host {
     this.optionalServers = cfg.optionalServers
       ? dedup(cfg.optionalServers)
       : [];
-    this.pluginVersionIds = cfg.pluginVersionIds
-      ? dedup(cfg.pluginVersionIds)
-      : undefined;
     // Defensive copy like the sibling id lists — a caller mutating its own
     // skillIds after construction must not change this host's later toJSON().
     this.skillSelection = cfg.skillSelection
@@ -567,7 +554,6 @@ export class Host {
       harness: this.harness,
       servers: this.servers,
       optionalServers: this.optionalServers,
-      pluginVersionIds: this.pluginVersionIds,
       skillSelection: this.skillSelection,
       connectionDefaults: this.connectionDefaults,
       clientCapabilities: this.clientCapabilities,
@@ -609,11 +595,6 @@ export class Host {
     }
     if (snap.harness !== undefined) {
       input.harness = snap.harness;
-    }
-    // Empty [] is forwarded — the canonicalizer collapses it to absent so it
-    // hashes identically to "never set" (the builtInToolIds policy).
-    if (snap.pluginVersionIds !== undefined) {
-      input.pluginVersionIds = snap.pluginVersionIds;
     }
     // `{ mode: "all-visible" }` is forwarded — the canonicalizer collapses it
     // to absent (one identity per behavior); explicit — including

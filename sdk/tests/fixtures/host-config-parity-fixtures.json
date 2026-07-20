@@ -1,5 +1,5 @@
 {
-  "__inputHash": "672edd3de5f1e080d0ea37d36925741ecf125679f477eaa6b6a37527a5f0f4c4",
+  "__inputHash": "ad409c68ab785b37fc4b6479965bb4c03c0111ce1a2720a285ee5e2f3fe5fa89",
   "rows": [
     {
       "label": "base-minimal",
@@ -459,48 +459,6 @@
       "sha256": "f52dc644d170085356969ceb86f3a370cd7a9fc8648a53481b318ba478a72d7a"
     },
     {
-      "label": "plugin-version-ids-unsorted-dupes",
-      "input": {
-        "hostStyle": "claude",
-        "modelId": "anthropic/claude-sonnet-4-6",
-        "systemPrompt": "You are a helpful assistant.",
-        "temperature": 0.7,
-        "requireToolApproval": false,
-        "connectionDefaults": {
-          "headers": {},
-          "requestTimeout": 10000
-        },
-        "clientCapabilities": {},
-        "hostContext": {},
-        "pluginVersionIds": [
-          "pv-b",
-          "pv-a",
-          "pv-b"
-        ]
-      },
-      "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"serverIds\":[],\"optionalServerIds\":[],\"pluginVersionIds\":[\"pv-a\",\"pv-b\"],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{}}",
-      "sha256": "d783d5f8027273ccce0ac4b4870b2c4d6b36d852cf20f5de008c0bfe79c512a1"
-    },
-    {
-      "label": "plugin-version-ids-empty-omitted",
-      "input": {
-        "hostStyle": "claude",
-        "modelId": "anthropic/claude-sonnet-4-6",
-        "systemPrompt": "You are a helpful assistant.",
-        "temperature": 0.7,
-        "requireToolApproval": false,
-        "connectionDefaults": {
-          "headers": {},
-          "requestTimeout": 10000
-        },
-        "clientCapabilities": {},
-        "hostContext": {},
-        "pluginVersionIds": []
-      },
-      "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"serverIds\":[],\"optionalServerIds\":[],\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{}}",
-      "sha256": "f6df30e89bb13c7b9fe2a098bcdd1e2778a0612d831cd4497471ca8ef2a4d729"
-    },
-    {
       "label": "skill-selection-all-visible-omitted",
       "input": {
         "hostStyle": "claude",
@@ -568,31 +526,6 @@
       },
       "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"serverIds\":[],\"optionalServerIds\":[],\"skillSelection\":{\"mode\":\"explicit\",\"skillIds\":[]},\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{}}",
       "sha256": "0706287dcd5ea56cc0374d6d26125f879c779d217a4ed0c249cdbecc6c44ddec"
-    },
-    {
-      "label": "plugin-versions-with-explicit-empty-skills",
-      "input": {
-        "hostStyle": "claude",
-        "modelId": "anthropic/claude-sonnet-4-6",
-        "systemPrompt": "You are a helpful assistant.",
-        "temperature": 0.7,
-        "requireToolApproval": false,
-        "connectionDefaults": {
-          "headers": {},
-          "requestTimeout": 10000
-        },
-        "clientCapabilities": {},
-        "hostContext": {},
-        "pluginVersionIds": [
-          "pv-1"
-        ],
-        "skillSelection": {
-          "mode": "explicit",
-          "skillIds": []
-        }
-      },
-      "canonicalJson": "{\"schemaVersion\":2,\"hostStyle\":\"claude\",\"modelId\":\"anthropic/claude-sonnet-4-6\",\"systemPrompt\":\"You are a helpful assistant.\",\"temperature\":0.7,\"requireToolApproval\":false,\"serverIds\":[],\"optionalServerIds\":[],\"pluginVersionIds\":[\"pv-1\"],\"skillSelection\":{\"mode\":\"explicit\",\"skillIds\":[]},\"connectionDefaults\":{\"headers\":{},\"requestTimeout\":10000},\"clientCapabilities\":{},\"hostContext\":{}}",
-      "sha256": "93649dca15166ddac822b2b1a68f2eab1cbb84fa642cba2a6c149931738f15f7"
     },
     {
       "label": "adversarial-stray-deny-must-be-dropped",
