@@ -28,6 +28,7 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import type { ServerWithName } from "@/hooks/use-app-state";
+import type { HostedServerWriteTarget } from "@/hooks/use-server-state";
 import type { ServerFormData } from "@/shared/types.js";
 import { useXaaRunSettings } from "@/hooks/useXaaRunSettings";
 import { useXaaPeople } from "@/hooks/useXaaPeople";
@@ -263,7 +264,10 @@ interface XAAFlowTabProps {
   // callers can keep the modal open instead of treating every call as saved.
   onSaveServerConfig?: (
     formData: ServerFormData,
-    options?: { originalServerName?: string }
+    options?: {
+      originalServerName?: string;
+      hostedWriteTarget?: HostedServerWriteTarget;
+    }
   ) => void | boolean | Promise<void | boolean>;
   /**
    * Bumped by the shell when the header "Add Server" button is clicked while
@@ -483,6 +487,13 @@ export function XAAFlowTab({
     projectId: projectId ?? null,
     projectDefault: projectXaaTestDefaults?.defaultIdentity ?? null,
   });
+  const hostedWriteTarget: HostedServerWriteTarget | undefined =
+    HOSTED_MODE && target.barServerProjectId && target.barServerId
+      ? {
+          projectId: target.barServerProjectId,
+          serverId: target.barServerId,
+        }
+      : undefined;
   const runInput = target.runInput;
   const { targetKey, isTestable } = target;
   const flowConfigurationKey = buildXaaFlowConfigurationKey(
@@ -1724,7 +1735,11 @@ export function XAAFlowTab({
       setAssertionFormatSaving(true);
       try {
         await onSaveServerConfig(
-          buildXaaAssertionFormatResave(selectedServer, next)
+          buildXaaAssertionFormatResave(selectedServer, next),
+          {
+            originalServerName: selectedServer.name,
+            ...(hostedWriteTarget ? { hostedWriteTarget } : {}),
+          }
         );
       } finally {
         setAssertionFormatSaving(false);
@@ -1735,6 +1750,7 @@ export function XAAFlowTab({
       onSaveServerConfig,
       effectiveAssertionFormat,
       assertionFormatSaving,
+      hostedWriteTarget,
     ]
   );
 
@@ -1971,6 +1987,11 @@ export function XAAFlowTab({
           const saved = await onSaveServerConfig?.(formData, {
             originalServerName:
               serverModalMode === "add" ? undefined : selectedServer?.name,
+            ...(serverModalMode === "edit" &&
+            formData.name.trim() === selectedServer?.name &&
+            hostedWriteTarget
+              ? { hostedWriteTarget }
+              : {}),
           });
           if (saved === false) {
             throw new Error("Could not save the server. Please try again.");
