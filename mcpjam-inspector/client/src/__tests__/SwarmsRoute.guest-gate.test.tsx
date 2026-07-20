@@ -155,7 +155,6 @@ describe("SwarmsRoute member-only gate", () => {
     expect(mockSwarmsTab).toHaveBeenCalledWith({
       projectId: "project-1",
       isAuthenticated: true,
-      viewerRole: "owner",
     });
   });
 
@@ -171,9 +170,6 @@ describe("SwarmsRoute member-only gate", () => {
     expect(mockSwarmsTab).toHaveBeenCalledWith({
       projectId: "project-1",
       isAuthenticated: true,
-      // Host management on the Clients sub-tab is admin-gated; SwarmsRoute
-      // threads the resolved role through so the panel can hide affordances.
-      viewerRole: "member",
     });
   });
 
