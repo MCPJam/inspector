@@ -115,6 +115,11 @@ beforeEach(() => {
   serverGroupPickerState.onChange = null;
 });
 
+async function pickClient(name: string | RegExp) {
+  fireEvent.click(screen.getByRole("button", { name: /attached clients/i }));
+  fireEvent.click(await screen.findByRole("button", { name }));
+}
+
 describe("SwarmsTab — new journey form server group", () => {
   it("keeps Create disabled until a server group and client are picked", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
@@ -129,7 +134,7 @@ describe("SwarmsTab — new journey form server group", () => {
     });
     expect(createBtn).toBeDisabled();
 
-    fireEvent.click(screen.getByText("Host One"));
+    await pickClient(/host one/i);
     expect(createBtn).toBeDisabled();
 
     fireEvent.click(screen.getByTestId("mock-server-group-picker"));
@@ -144,7 +149,7 @@ describe("SwarmsTab — new journey form server group", () => {
     fireEvent.change(screen.getByLabelText("Goal"), {
       target: { value: "Draw a dog" },
     });
-    fireEvent.click(screen.getByText("Host One"));
+    await pickClient(/host one/i);
     fireEvent.click(screen.getByTestId("mock-server-group-picker"));
     fireEvent.click(screen.getByRole("button", { name: /create journey/i }));
 

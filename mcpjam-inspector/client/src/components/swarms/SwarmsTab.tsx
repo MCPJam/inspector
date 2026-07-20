@@ -24,7 +24,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, usePaginatedQuery } from "convex/react";
-import { Loader2, Plus } from "lucide-react";
+import { Check, ChevronDown, Info, Loader2, Plus, Users } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
@@ -36,7 +36,17 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@mcpjam/design-system/popover";
 import { Textarea } from "@mcpjam/design-system/textarea";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
@@ -76,6 +86,7 @@ import {
   parseSwarmSessionParams,
 } from "@/lib/app-navigation";
 import { getShareableAppOrigin } from "@/lib/chatbox-session";
+import { resolveHostLogoByDisplayName } from "@/lib/chatbox-client-style";
 import { ConvertSwarmSessionDialog } from "@/components/swarms/convert-swarm-session-dialog";
 import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
 import { useProjectServerAttachments } from "@/hooks/useViews";
@@ -769,7 +780,14 @@ export function SwarmsTab({
               }}
             />
 
-            <div className="mb-3 flex items-center justify-between">
+            <div
+              className={cn(
+                "mb-3",
+                journeyFormOpen
+                  ? "space-y-2"
+                  : "flex items-center justify-between",
+              )}
+            >
               <h3 className="text-sm font-semibold">Journeys</h3>
               <NewJourneyButton
                 projectId={projectId}
@@ -1443,6 +1461,7 @@ function NewJourneyButton({
   );
   const [sessionsPerHost, setSessionsPerHost] = useState(2);
   const [maxTurns, setMaxTurns] = useState(6);
+  const [clientsPickerOpen, setClientsPickerOpen] = useState(false);
   // Seed the goal from the agent prefill (or reset to "") whenever the form
   // transitions open. Manual "+ New journey" opens pass goalSeed="".
   useEffect(() => {
@@ -1464,6 +1483,17 @@ function NewJourneyButton({
       }),
     [hosts],
   );
+  const selectedHosts = useMemo(
+    () => sortedHosts.filter((h) => hostIds.includes(h.hostId)),
+    [sortedHosts, hostIds],
+  );
+  const clientsTriggerLabel =
+    selectedHosts.length === 0
+      ? "No clients · pick one"
+      : (selectedHosts[0]?.name ?? "Clients");
+  const clientsExtra =
+    selectedHosts.length > 1 ? selectedHosts.length - 1 : 0;
+
   if (!open) {
     return (
       <Button type="button" size="sm" variant="outline" onClick={() => setOpen(true)}>
@@ -1479,131 +1509,173 @@ function NewJourneyButton({
   return (
     <div
       className={cn(
-        "w-full rounded-xl border border-border/50 bg-card/50 p-4 shadow-sm",
+        "w-full rounded-xl border border-border/50 bg-card/50 p-3 shadow-sm",
         "ring-1 ring-black/[0.03] dark:ring-white/[0.06]",
       )}
     >
-      <div className="mb-3 flex flex-col gap-1.5">
-        <Label htmlFor="swarm-journey-goal">Goal</Label>
+      <div className="mb-2.5 flex flex-col gap-1">
+        <Label htmlFor="swarm-journey-goal" className="text-xs">
+          Goal
+        </Label>
         <Textarea
           id="swarm-journey-goal"
           placeholder="What this persona is trying to accomplish"
           value={goal}
           onChange={(e) => setGoal(e.target.value)}
-          rows={3}
-          className="leading-relaxed"
+          rows={2}
+          className="min-h-[56px] resize-none leading-relaxed"
         />
       </div>
-      <div className="mb-3 divide-y rounded-lg border bg-muted/20">
-        <div className="flex items-start justify-between gap-4 p-3">
-          <div className="min-w-0 space-y-0.5">
-            <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Servers
-            </h3>
-            <p className="text-xs text-muted-foreground">
-              Server group all clients run against for this journey.
-            </p>
-          </div>
-          <div className="shrink-0">
-            <ServerGroupPicker
-              projectId={projectId}
-              value={serverAttachmentId}
-              onChange={(id) => setServerAttachmentId(id)}
-              onClearSelection={() => setServerAttachmentId(null)}
-              emptyTriggerLabel="No server group · pick one"
-              infoText="A named set of MCP servers shared across every client this journey targets — same pattern as eval suites."
-            />
-          </div>
-        </div>
-        <div className="space-y-2 p-3">
-          <div className="space-y-0.5">
-            <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Clients
-            </h3>
-            <p className="text-xs text-muted-foreground">
-              Each selected client fans out into its own sessions.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {hosts.length === 0 ? (
-              <span className="text-xs text-muted-foreground">
-                No clients in this project.
+
+      {/* Compact picker bar — same pill language as SuiteOverviewClientBar. */}
+      <div className="mb-2.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-2">
+        <ServerGroupPicker
+          projectId={projectId}
+          value={serverAttachmentId}
+          onChange={(id) => setServerAttachmentId(id)}
+          onClearSelection={() => setServerAttachmentId(null)}
+          emptyTriggerLabel="No server group · pick one"
+          infoText="A named set of MCP servers shared across every client this journey targets — same pattern as eval suites."
+        />
+
+        <Popover open={clientsPickerOpen} onOpenChange={setClientsPickerOpen}>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              className={cn(
+                "flex h-8 max-w-[260px] shrink-0 items-center gap-1 rounded-full border px-2 text-foreground",
+                "outline-none transition-colors",
+                hostIds.length === 0
+                  ? "border-dashed border-border/60 bg-muted/30 hover:bg-muted/45"
+                  : "border-border/60 bg-muted/40 hover:bg-muted/60",
+              )}
+              aria-label="Attached clients"
+            >
+              {selectedHosts[0] ? (
+                <JourneyHostLogoMark label={selectedHosts[0].name} />
+              ) : (
+                <Users className="size-3.5 shrink-0 text-muted-foreground" />
+              )}
+              <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                {clientsTriggerLabel}
               </span>
-            ) : (
-              sortedHosts.map((h) => {
-                // Compact config chips so the picker shows what each client
-                // brings (model · computer) without opening the editor. Server
-                // count is journey-scoped via the group above, not the host.
-                const meta = [
-                  h.modelId || null,
-                  h.hasComputer ? "computer" : null,
-                ].filter(Boolean);
-                const shared = !isSwarmClient(h);
-                return (
-                  <button
-                    key={h.hostId}
-                    type="button"
-                    onClick={() => toggleHost(h.hostId)}
-                    className={cn(
-                      "flex flex-col items-start gap-0.5 rounded-lg border px-2.5 py-1.5 text-left text-xs",
-                      hostIds.includes(h.hostId)
-                        ? "border-primary bg-primary/10"
-                        : "hover:bg-muted",
-                    )}
-                  >
-                    <span className="flex items-center gap-1.5 font-medium">
-                      {h.name}
-                      {shared ? (
-                        <span
-                          className="rounded-full border border-border/60 px-1 py-0 text-[9px] font-normal text-muted-foreground"
-                          title="Managed in another product surface — still runnable by this journey"
-                        >
-                          shared
-                        </span>
-                      ) : null}
-                    </span>
-                    {meta.length > 0 ? (
-                      <span className="text-[10px] text-muted-foreground">
-                        {meta.join(" · ")}
+              {clientsExtra > 0 ? (
+                <span className="text-[10px] text-muted-foreground">
+                  +{clientsExtra}
+                </span>
+              ) : null}
+              <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent className="w-64 p-1" align="start" sideOffset={4}>
+            <div className="space-y-0.5">
+              <div className="flex items-center justify-between gap-2 px-2 pb-1 pt-0.5">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Clients
+                </span>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      aria-label="What is a client?"
+                      className="rounded-full p-0.5 text-muted-foreground outline-none transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <Info className="size-3" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-[240px]">
+                    <p className="text-xs leading-snug">
+                      Each selected client fans out into its own sessions for
+                      this journey.
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+              {hosts.length === 0 ? (
+                <p className="px-2 py-1.5 text-xs text-muted-foreground">
+                  No clients in this project.
+                </p>
+              ) : (
+                sortedHosts.map((h) => {
+                  const selected = hostIds.includes(h.hostId);
+                  const shared = !isSwarmClient(h);
+                  const meta = [
+                    h.modelId || null,
+                    h.hasComputer ? "computer" : null,
+                  ].filter(Boolean);
+                  return (
+                    <button
+                      key={h.hostId}
+                      type="button"
+                      onClick={() => toggleHost(h.hostId)}
+                      className={cn(
+                        "flex w-full items-center gap-2 rounded py-1.5 pl-2 pr-2 text-left text-sm",
+                        "hover:bg-accent hover:text-accent-foreground",
+                        selected && "bg-accent/50",
+                      )}
+                    >
+                      <Check
+                        className={cn(
+                          "size-3.5 shrink-0",
+                          selected ? "opacity-100" : "opacity-0",
+                        )}
+                      />
+                      <JourneyHostLogoMark label={h.name} />
+                      <span className="min-w-0 flex-1 truncate">
+                        <span className="font-medium">{h.name}</span>
+                        {shared ? (
+                          <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+                            shared
+                          </span>
+                        ) : null}
+                        {meta.length > 0 ? (
+                          <span className="mt-0.5 block truncate text-[10px] text-muted-foreground">
+                            {meta.join(" · ")}
+                          </span>
+                        ) : null}
                       </span>
-                    ) : null}
-                  </button>
-                );
-              })
-            )}
-          </div>
-        </div>
-      </div>
-      <div className="mb-3 flex flex-wrap gap-4">
-        <div className="flex flex-col gap-1">
-          <Label htmlFor="swarm-journey-sessions" className="text-xs">
-            Sessions/host
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </PopoverContent>
+        </Popover>
+
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Label
+            htmlFor="swarm-journey-sessions"
+            className="shrink-0 text-[11px] text-muted-foreground"
+          >
+            Sessions
           </Label>
           <Input
             id="swarm-journey-sessions"
             type="number"
             min={1}
             max={5}
-            className="h-8 w-20"
+            className="h-8 w-14"
             value={sessionsPerHost}
             onChange={(e) => setSessionsPerHost(Number(e.target.value))}
           />
-        </div>
-        <div className="flex flex-col gap-1">
-          <Label htmlFor="swarm-journey-turns" className="text-xs">
-            Max turns
+          <Label
+            htmlFor="swarm-journey-turns"
+            className="ml-1 shrink-0 text-[11px] text-muted-foreground"
+          >
+            Turns
           </Label>
           <Input
             id="swarm-journey-turns"
             type="number"
             min={1}
             max={20}
-            className="h-8 w-20"
+            className="h-8 w-14"
             value={maxTurns}
             onChange={(e) => setMaxTurns(Number(e.target.value))}
           />
         </div>
       </div>
+
       <div className="flex justify-end gap-2">
         <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>
           Cancel
@@ -1640,5 +1712,21 @@ function NewJourneyButton({
         </Button>
       </div>
     </div>
+  );
+}
+
+function JourneyHostLogoMark({ label }: { label: string }) {
+  const logoSrc = resolveHostLogoByDisplayName(label);
+  if (logoSrc) {
+    return (
+      <img
+        src={logoSrc}
+        alt=""
+        className="size-3.5 shrink-0 object-contain"
+      />
+    );
+  }
+  return (
+    <span aria-hidden className="size-3.5 shrink-0 rounded-full bg-muted" />
   );
 }
