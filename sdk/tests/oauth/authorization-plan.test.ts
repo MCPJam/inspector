@@ -182,4 +182,20 @@ describe("resolveAuthorizationPlan", () => {
     expect(plan.blockerDetails[0]?.code).toBe("CIMD_UNSUPPORTED_PROTOCOL");
     expect(plan.blockers[0]).toContain("not supported for protocol version 2025-06-18");
   });
+
+  it("permits explicit CIMD on 2026-07-28 (parity with the auto-select gate)", () => {
+    // 2026-07-28 advertises CIMD (resolveRegistrationStrategies), so explicitly
+    // selecting it must not raise CIMD_UNSUPPORTED_PROTOCOL — otherwise auto and
+    // explicit selection disagree.
+    const plan = resolveAuthorizationPlan({
+      serverUrl: "https://example.com/mcp",
+      authMode: "interactive",
+      protocolVersion: "2026-07-28",
+      registrationStrategy: "cimd",
+    });
+
+    expect(
+      plan.blockerDetails.some((b) => b.code === "CIMD_UNSUPPORTED_PROTOCOL"),
+    ).toBe(false);
+  });
 });

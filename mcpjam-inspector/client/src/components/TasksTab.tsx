@@ -464,9 +464,10 @@ export function TasksTab({
   // Agent bridge: SNAPSHOT-ONLY (no tools). Tasks is a read-only view of a
   // server's long-running tasks (agentTools kind "none") the agent may OBSERVE.
   // Must run before the early return below (rules of hooks). Redacted STATE
-  // only: the selected server, task rows by id/status/created-time, and the
-  // selected task's progress fraction — NEVER a task's input, result, or status
-  // message. `hostedBlocked`, so this only registers where the screen mounts.
+  // only: the selected server and task rows by id/status/created-time — NEVER a
+  // task's input, result, or status message, and NOT the server-wide progress
+  // (it can't be attributed to the selected task). `hostedBlocked`, so this only
+  // registers where the screen mounts.
   useSurfaceAgentBridge({
     surfaceId: "tasks",
     snapshot: () =>
@@ -480,9 +481,6 @@ export function TasksTab({
         selectedTaskId: selectedTaskId || null,
         hasActiveTasks,
         autoRefresh,
-        selectedProgress: progress
-          ? { progress: progress.progress, total: progress.total }
-          : null,
       }),
   });
 

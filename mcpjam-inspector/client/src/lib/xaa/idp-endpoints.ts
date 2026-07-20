@@ -102,18 +102,28 @@ export function getXaaIdpUrls(
  * Confidential CIMD: ask the server for the reflector document URL that
  * publishes ITS client public key. The browser can't hold the private key, so
  * it presents this URL as its client_id and the server signs the
- * client_assertion at /proxy/token. Local-inspector capability only; hosted
- * deliberately has no provider/route. Returns null on failure so the caller
- * can fail closed rather than silently switching to public CIMD.
+ * client_assertion at /proxy/token. Hosted requests are scoped to the active
+ * organization; local keeps its unscoped capability route. Returns null on
+ * failure so the caller can fail closed rather than silently switching to
+ * public CIMD.
  */
 export async function fetchConfidentialCimdClientUrl(
-  signal?: AbortSignal,
+  {
+    organizationId,
+    signal,
+  }: {
+    organizationId?: string | null;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<string | null> {
   // authFetch (not plain fetch): this endpoint is session-protected in local
   // mode (it requires the X-MCP-Session-Auth token), and authFetch also carries
   // the hosted bearer + refresh-retry in hosted mode. A bare fetch would 401
   // locally and silently break confidential CIMD.
-  const url = `${getIssuerBasePath()}/confidential-cimd/client`;
+  const url =
+    HOSTED_MODE && organizationId
+      ? `${getIssuerBasePath()}/o/${encodeURIComponent(organizationId)}/confidential-cimd/client`
+      : `${getIssuerBasePath()}/confidential-cimd/client`;
   try {
     const response = await authFetch(url, { signal });
     if (!response.ok) return null;

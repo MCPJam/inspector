@@ -12,6 +12,7 @@ const BROWSER_DEBUG_CLIENT_NAMES: Record<OAuthProtocolVersion, string> = {
   "2025-03-26": "MCP Inspector Debug Client",
   "2025-06-18": "MCPJam Inspector Debug Client",
   "2025-11-25": "MCPJam Inspector Debug Client",
+  "2026-07-28": "MCPJam Inspector Debug Client",
 };
 
 export function getBrowserDebugDynamicRegistrationMetadata(
