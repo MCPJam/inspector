@@ -86,13 +86,13 @@ function loadSecretKeyPairOrThrow(raw: string): void {
   } catch {
     throw new Error(
       "XAA_CLIENT_PRIVATE_KEY is set but could not be parsed as a private key " +
-        "(expected a PEM, base64-of-PEM, or escaped-newline PEM)."
+        "(expected a PEM, base64-of-PEM, or escaped-newline PEM).",
     );
   }
   if (!isP256PrivateKey(nextPrivate)) {
     throw new Error(
       "XAA_CLIENT_PRIVATE_KEY must be an EC P-256 private key (ES256); other " +
-        "key types cannot produce a valid confidential-CIMD client assertion."
+        "key types cannot produce a valid confidential-CIMD client assertion.",
     );
   }
   setKeyPair(nextPrivate, createPublicKey(nextPrivate));
@@ -165,7 +165,7 @@ export function initXaaClientKeyPair(): void {
 export function getXaaClientPrivateKey(): KeyObject {
   if (!privateKey) {
     throw new Error(
-      "XAA client key not initialized. Call initXaaClientKeyPair() first."
+      "XAA client key not initialized. Call initXaaClientKeyPair() first.",
     );
   }
   return privateKey;
@@ -174,7 +174,7 @@ export function getXaaClientPrivateKey(): KeyObject {
 export function getXaaClientJwks(): { keys: XaaClientJwk[] } {
   if (!jwks) {
     throw new Error(
-      "XAA client key not initialized. Call initXaaClientKeyPair() first."
+      "XAA client key not initialized. Call initXaaClientKeyPair() first.",
     );
   }
   return jwks;

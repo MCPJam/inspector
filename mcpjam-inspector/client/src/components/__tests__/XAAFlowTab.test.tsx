@@ -375,13 +375,15 @@ describe("XAAFlowTab", () => {
     expect(capturedMachineConfig?.clientIdMetadataUrl).toBeUndefined();
   });
 
-  it("a blocked click retries the reflector fetch (transient-failure recovery)", async () => {
+  it("preserves a hosted confidential config after a probe error and retries on run", async () => {
     const user = userEvent.setup();
+    runtimeConfig.hostedMode = true;
     confidentialCimdUrlResult = null; // first fetch fails
     render(
       <XAAFlowTab
         serverConfigs={CONFIDENTIAL_SERVER}
         selectedServerName="staging"
+        organizationId="org_123"
       />
     );
     await waitFor(() =>
@@ -397,6 +399,10 @@ describe("XAAFlowTab", () => {
         vi.mocked(fetchConfidentialCimdClientUrl).mock.calls.length
       ).toBeGreaterThan(callsBefore)
     );
+    expect(capturedServerModalProps.confidentialCimdAvailable).toBe(false);
+    expect(
+      capturedServerModalProps.preserveConfidentialCimdSelection
+    ).toBe(true);
     expect(runAllMock).not.toHaveBeenCalled();
   });
 

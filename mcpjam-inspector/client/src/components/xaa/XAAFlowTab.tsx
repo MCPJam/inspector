@@ -1961,8 +1961,7 @@ export function XAAFlowTab({
           serverModalMode === "edit" &&
           persistedStrategy === "cimd" &&
           selectedServer?.xaaClientAuth === "private_key_jwt" &&
-          (confidentialCimdStatus === "idle" ||
-            confidentialCimdStatus === "loading")
+          confidentialCimdStatus !== "ready"
         }
         onSave={async ({ formData }) => {
           // Await so the modal can keep itself open (and preserve the entered

@@ -14,7 +14,7 @@ const CLIENT_ASSERTION_TTL_S = 5 * 60;
 
 function base64url(input: string | Buffer): string {
   return (typeof input === "string" ? Buffer.from(input) : input).toString(
-    "base64url"
+    "base64url",
   );
 }
 
@@ -33,11 +33,11 @@ export interface SignClientAssertionArgs {
 /** Sign a confidential-CIMD assertion with an explicit P-256 client key. */
 export function signClientAssertionWithKey(
   args: SignClientAssertionArgs,
-  privateKey: KeyObject
+  privateKey: KeyObject,
 ): string {
   if (!isP256PrivateKey(privateKey)) {
     throw new Error(
-      "Confidential-CIMD client assertions require a private EC P-256 key (ES256)."
+      "Confidential-CIMD client assertions require a private EC P-256 key (ES256).",
     );
   }
 
@@ -53,7 +53,7 @@ export function signClientAssertionWithKey(
   };
 
   const signingInput = `${base64url(JSON.stringify(header))}.${base64url(
-    JSON.stringify(payload)
+    JSON.stringify(payload),
   )}`;
   const signature = cryptoSign("sha256", Buffer.from(signingInput), {
     key: privateKey,
