@@ -103,6 +103,7 @@ describe("review-surface snapshots redact and bound", () => {
       viewMode: "table",
       searchQuery: "paste-of-a-secret-token",
       supportFilter: "all",
+      divergingOnly: true,
       loadedSelectedCount: 40,
       totalSelectedCount: 40,
     });
@@ -111,6 +112,9 @@ describe("review-surface snapshots redact and bound", () => {
     expect(snapshot.capabilityRows).toHaveLength(REVIEW_SNAPSHOT_MAX_ITEMS);
     expect(snapshot.comparedHostCount).toBe(40);
     expect(snapshot.capabilityRowCount).toBe(40);
+    // The "Only show differences" toggle is reflected so the agent's view
+    // matches the matrix.
+    expect(snapshot.divergingOnly).toBe(true);
     // The raw field-search text is user input — presence only, never echoed.
     expect(snapshot).not.toHaveProperty("searchQuery");
     expect(snapshot.hasSearchQuery).toBe(true);
@@ -174,7 +178,7 @@ describe("review-surface snapshots redact and bound", () => {
     ]);
   });
 
-  it("tasks: reports id/status/progress, never task payloads", () => {
+  it("tasks: reports id/status, never task payloads or mis-attributed progress", () => {
     const tasks = Array.from({ length: 45 }, (_, i) => ({
       taskId: `task-${i}`,
       status: "working",
@@ -189,16 +193,43 @@ describe("review-surface snapshots redact and bound", () => {
       selectedTaskId: "task-0",
       hasActiveTasks: true,
       autoRefresh: true,
-      selectedProgress: { progress: 2, total: 5 },
     });
     expectNoSecrets(snapshot);
     expect(snapshot.taskCount).toBe(45);
     expect(snapshot.tasks).toHaveLength(REVIEW_SNAPSHOT_MAX_ITEMS);
-    expect(snapshot.selectedProgress).toEqual({ progress: 2, total: 5 });
+    // Server-wide progress can't be attributed to the selected task, so it's
+    // omitted rather than mis-reported.
+    expect(snapshot).not.toHaveProperty("selectedProgress");
     expect(Object.keys(snapshot.tasks[0])).toEqual([
       "taskId",
       "status",
       "createdAt",
     ]);
+  });
+
+  it("tracing: `recent` is globally newest-first across server AND app items", () => {
+    // Server items are OLDER; a single app item is the newest. A naive
+    // concat-then-slice would bury the app item behind the server run.
+    const serverItems = Array.from({ length: 40 }, (_, i) => ({
+      source: "mcp-server" as const,
+      method: "tools/call",
+      direction: "SEND",
+      serverId: `srv-${i}`,
+      serverName: `Server ${i}`,
+      timestamp: "2026-07-18T00:00:00Z",
+    }));
+    const appItems = [
+      {
+        source: "mcp-apps" as const,
+        method: "render",
+        direction: "HOST→UI",
+        serverId: "srv-app",
+        serverName: "App",
+        timestamp: "2026-07-19T12:00:00Z", // newest
+      },
+    ];
+    const snapshot = buildTracingSnapshot({ serverItems, appItems });
+    expect(snapshot.recent[0]?.source).toBe("mcp-apps");
+    expect(snapshot.recent[0]?.timestamp).toBe("2026-07-19T12:00:00Z");
   });
 });
