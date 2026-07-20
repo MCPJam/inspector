@@ -59,6 +59,10 @@ Hover over a badge to see the full list of findings. Tools with no issues show n
 
 Saved requests are stored in your browser's local storage and accessible from the Saved Requests tab.
 
+### Agent visibility
+
+When the Tools tab is open, agents can observe its state through `ui_snapshot_app`: the tool list (names only, up to 30), the currently selected tool and its parameter names, the saved request count, and whether a result is present. Tool execution is handled by the global `ui_execute_tool` — no separate screen tool is needed.
+
 ## Resources
 
 Inspect your MCP server's resources:
