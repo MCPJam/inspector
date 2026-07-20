@@ -68,12 +68,23 @@ export interface SurfaceAgentBridgeOptions {
    * manifest's `hasSnapshotProvider: true` honest.
    */
   snapshot?: () => unknown;
+  /**
+   * Gate registration on a runtime condition (default `true`). A flag-gated
+   * surface passes its flag here so the group/handlers/snapshot register ONLY
+   * while the surface is actually enabled — `ui_snapshot_app` reads the
+   * registry independently of sidebar visibility, so a bridge that registered
+   * regardless would expose a disabled surface. Pass `flag === true` (not the
+   * raw `boolean | undefined`) so a still-loading flag stays unregistered until
+   * it resolves; the effect re-runs and registers when it flips true.
+   */
+  enabled?: boolean;
 }
 
 export function useSurfaceAgentBridge(
   options: SurfaceAgentBridgeOptions,
 ): void {
   const { surfaceId } = options;
+  const enabled = options.enabled ?? true;
   const handlersRef = useRef(options.handlers);
   const snapshotRef = useRef(options.snapshot);
   // Sync the latest closures in a layout effect (every commit, no deps) rather
@@ -89,6 +100,9 @@ export function useSurfaceAgentBridge(
   // tools must be live before the App navigate handler's readiness wait
   // (`waitForUiToolNames`) samples the registry after the route commits.
   useLayoutEffect(() => {
+    // Disabled (or flag still loading): register nothing, so ui_snapshot_app
+    // can't reach a gated surface. The effect re-runs when `enabled` flips.
+    if (!enabled) return;
     const controller = new AbortController();
     const disposers: Array<() => void> = [];
 
@@ -137,5 +151,5 @@ export function useSurfaceAgentBridge(
       controller.abort();
       for (const dispose of disposers) dispose();
     };
-  }, [surfaceId]);
+  }, [surfaceId, enabled]);
 }

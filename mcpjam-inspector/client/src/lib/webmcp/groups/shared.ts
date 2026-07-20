@@ -77,6 +77,27 @@ export function asOptionalString(value: unknown): string | undefined {
 }
 
 /**
+ * Validate an optional `string → string` record argument (resource/prompt
+ * template variables). `undefined` is allowed (no variables); anything that
+ * isn't a flat object of string values is rejected. Shared by the resources
+ * and prompts groups so the shape is validated in exactly one place.
+ */
+export function asStringRecord(
+  value: unknown,
+): { ok: true; record?: Record<string, string> } | { ok: false } {
+  if (value === undefined) return { ok: true };
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return { ok: false };
+  }
+  const record: Record<string, string> = {};
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof raw !== "string") return { ok: false };
+    record[key] = raw;
+  }
+  return { ok: true, record };
+}
+
+/**
  * The playground-scoped command handlers only exist while the playground
  * surface is mounted (`usePlaygroundState` in `PlaygroundTab` on
  * `/playground`). Gate on the HANDLER being registered — not on UI store

@@ -468,6 +468,8 @@ describe("buildUiToolsCatalog", () => {
   it("ui_reset_chat is destructive and dispatches an empty-payload reset", async () => {
     const reset = getTool("ui_reset_chat");
     expect(reset.annotations?.destructiveHint).toBe(true);
+    // Each reset spawns a fresh session, so a retry is not a no-op.
+    expect(reset.annotations?.idempotentHint).toBe(false);
     expect(reset.description).toContain("cannot be undone");
 
     await reset.execute({});

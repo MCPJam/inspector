@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   getPlaygroundAgentControls,
   resolvePlaygroundModelIdentifier,
+  resolveSelectablePlaygroundModel,
   usePlaygroundAgentControlsBridgeStore,
   type PlaygroundAgentControls,
 } from "../playground-agent-controls-bridge";
@@ -25,6 +26,33 @@ describe("resolvePlaygroundModelIdentifier", () => {
   it("returns undefined for an unknown or empty identifier", () => {
     expect(resolvePlaygroundModelIdentifier("nope", MODELS)).toBeUndefined();
     expect(resolvePlaygroundModelIdentifier("   ", MODELS)).toBeUndefined();
+  });
+});
+
+describe("resolveSelectablePlaygroundModel (availability policy)", () => {
+  const LOCKED = [
+    { id: "claude-sonnet-5", name: "Claude Sonnet 5" },
+    {
+      id: "gpt-4.1",
+      name: "GPT-4.1",
+      disabled: true,
+      disabledReason: "Sign in to use this model.",
+    },
+  ];
+
+  it("returns the model for an enabled row", () => {
+    const r = resolveSelectablePlaygroundModel("claude-sonnet-5", LOCKED);
+    expect(r).toEqual({ ok: true, model: LOCKED[0] });
+  });
+
+  it("rejects a disabled row with its reason (no bypass of the picker lock)", () => {
+    const r = resolveSelectablePlaygroundModel("gpt-4.1", LOCKED);
+    expect(r).toEqual({ ok: false, error: "Sign in to use this model." });
+  });
+
+  it("rejects an unknown identifier", () => {
+    const r = resolveSelectablePlaygroundModel("nope", LOCKED);
+    expect(r.ok).toBe(false);
   });
 });
 

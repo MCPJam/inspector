@@ -265,11 +265,13 @@ export function buildPlaygroundUiTools(): UiToolDefinition[] {
       readOnly: false,
       // Irreversible: the conversation is gone. `destructiveHint: true` shows
       // the confirmation pill even in the default approval mode — the pill IS
-      // the confirmation, so the handler performs the reset directly.
+      // the confirmation, so the handler performs the reset directly. Each
+      // reset starts a FRESH chat session, so a retry is not a no-op →
+      // idempotentHint false (an interrupted retry spawns another session).
       annotations: {
         readOnlyHint: false,
         destructiveHint: true,
-        idempotentHint: true,
+        idempotentHint: false,
         openWorldHint: false,
       },
       mayNavigate: true,

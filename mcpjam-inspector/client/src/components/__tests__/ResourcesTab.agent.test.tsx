@@ -94,6 +94,7 @@ beforeEach(() => {
   });
   mockListTemplates.mockResolvedValue([
     { name: "greeting", uriTemplate: "greeting://{name}" },
+    { name: "search", uriTemplate: "search{?q,limit}" },
   ]);
   mockReadResource.mockResolvedValue({
     content: { contents: [{ type: "text", text: SECRET_BODY }] },
@@ -125,6 +126,21 @@ describe("ResourcesTab — agent bridge handler", () => {
       result: { status: "resource_read", uri: "greeting://Ada" },
     });
     expect(mockReadResource).toHaveBeenCalledWith("srv", "greeting://Ada");
+  });
+
+  it("reads a template with only some OPTIONAL query variables supplied", async () => {
+    // search{?q,limit}: RFC 6570 query expansion — optional. The on-screen Read
+    // allows omitting `limit`, so the agent must too (expand drops it).
+    await renderLoaded();
+    const response = await dispatch({
+      type: "readResource",
+      payload: { resource: "search", templateArguments: { q: "mcp" } },
+    });
+    expect(response).toMatchObject({
+      status: "success",
+      result: { status: "resource_read", uri: "search?q=mcp" },
+    });
+    expect(mockReadResource).toHaveBeenCalledWith("srv", "search?q=mcp");
   });
 
   it("rejects a template with missing params as invalid_request (no read)", async () => {

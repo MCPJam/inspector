@@ -1,4 +1,5 @@
 import { Boxes } from "lucide-react";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import type { ServerWithName } from "@/state/app-types";
 import { useServerToolsData } from "@/lib/host-compat/use-host-compat";
 import { HostCompatContent } from "@/components/compat/HostCompatContent";
@@ -47,8 +48,14 @@ export function HostCompatPage({
   // servers are on the matrix and which one's report is open. Must run before
   // the early return below (rules of hooks). Redacted STATE only — server names
   // and selection, never a server's config or the per-host findings.
+  // Gate the provider on the SAME flag as the surface: ui_snapshot_app reads
+  // the registry independent of sidebar visibility, so without this an agent
+  // could observe Compatibility even where the flag is off. `=== true` keeps it
+  // unregistered while the flag is still loading; the bridge re-runs on flip.
+  const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
   useSurfaceAgentBridge({
     surfaceId: "compatibility",
+    enabled: compatibilityEnabled === true,
     snapshot: () =>
       buildCompatibilitySnapshot({
         servers,

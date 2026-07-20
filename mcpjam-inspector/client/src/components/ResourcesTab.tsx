@@ -100,6 +100,31 @@ function extractTemplateParameters(uriTemplate: string): string[] {
   return Array.from(params);
 }
 
+/**
+ * The variables an agent MUST supply to read a template. Only simple `{var}`
+ * and reserved `{+var}` (path) expansions are required; query (`?`/`&`),
+ * fragment (`#`), label (`.`) and path-segment (`/`/`;`) expansions omit
+ * undefined variables cleanly under RFC 6570, so `search{?q,limit}` is readable
+ * with only `q` — matching the on-screen Read flow (`buildParameters()` passes
+ * only non-empty fields and `parseTemplate().expand()` drops the rest).
+ */
+function extractRequiredTemplateParameters(uriTemplate: string): string[] {
+  const params = new Set<string>();
+  const exprRegex = /\{([+#./;?&]?)([^}]+)\}/g;
+  let match;
+
+  while ((match = exprRegex.exec(uriTemplate)) !== null) {
+    const operator = match[1];
+    if (operator !== "" && operator !== "+") continue;
+    match[2].split(",").forEach((v) => {
+      const varName = v.split(":")[0].replace(/\*$/, "").trim();
+      if (varName) params.add(varName);
+    });
+  }
+
+  return Array.from(params);
+}
+
 // RFC 6570 compliant URI template expansion
 function buildUriFromTemplate(
   uriTemplate: string,
@@ -537,8 +562,12 @@ export function ResourcesTab({
         } else {
           const template = templateMatches[0];
           templateUriTemplate = template.uriTemplate;
-          const paramNames = extractTemplateParameters(template.uriTemplate);
-          const missing = paramNames.filter(
+          // Only path variables are required; optional query/fragment/etc.
+          // expansions may be omitted, exactly as the on-screen Read allows.
+          const requiredNames = extractRequiredTemplateParameters(
+            template.uriTemplate,
+          );
+          const missing = requiredNames.filter(
             (name) => !args[name] || args[name].trim() === "",
           );
           if (missing.length > 0) {
@@ -547,21 +576,38 @@ export function ResourcesTab({
               `Template "${template.name}" needs templateArguments for: ${missing.join(", ")}.`,
             );
           }
+          // Pass only the non-empty supplied values, like buildParameters();
+          // expand() drops any omitted optional variable from the URI.
           const provided: Record<string, string> = {};
-          for (const name of paramNames) provided[name] = args[name];
+          for (const name of extractTemplateParameters(template.uriTemplate)) {
+            const val = args[name];
+            if (typeof val === "string" && val.trim() !== "") {
+              provided[name] = val;
+            }
+          }
           uri = buildUriFromTemplate(template.uriTemplate, provided);
           setActiveTab("templates");
           setTemplateOverrides(provided);
           setSelectedTemplate(template.uriTemplate);
         }
 
+        // Claim the read-version for the relevant pane BEFORE awaiting, using
+        // the SAME refs the on-screen Read path bumps. A slower read (this one
+        // or a concurrent UI/agent read) must not commit over a newer selection.
+        const readVersion = templateUriTemplate
+          ? ++templateReadVersionRef.current
+          : ++resourceReadVersionRef.current;
         try {
           // SAME api the Read button uses (readResource → readResourceApi).
           const data = await readResourceApi(serverName, uri);
           const content = data?.content ?? null;
+          // Only commit to the on-screen pane if this is still the newest read
+          // for it; the tool still returns what IT fetched regardless.
           if (templateUriTemplate) {
-            setTemplateContent(content);
-          } else {
+            if (readVersion === templateReadVersionRef.current) {
+              setTemplateContent(content);
+            }
+          } else if (readVersion === resourceReadVersionRef.current) {
             setResourceContent(content);
           }
           const { contentBlocks, truncated } =
@@ -590,7 +636,14 @@ export function ResourcesTab({
     // NAMES+uris (bounded), the current selection, and whether a body was read
     // (presence/size only — never the content, which can be large or secret).
     snapshot: () => {
-      const lastRead = resourceContent ?? templateContent;
+      // Pick the body for the ACTIVE tab: after reading a concrete resource and
+      // then a template, a fixed `resourceContent ?? templateContent` would keep
+      // reporting the stale concrete body while the Templates screen shows the
+      // template one.
+      const lastRead =
+        activeTab === "templates"
+          ? (templateContent ?? resourceContent)
+          : (resourceContent ?? templateContent);
       let lastResultBytes = 0;
       let lastResultTruncated = false;
       if (lastRead) {

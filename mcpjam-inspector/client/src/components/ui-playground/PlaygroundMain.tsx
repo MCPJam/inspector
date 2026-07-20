@@ -179,7 +179,7 @@ import {
 } from "@/components/chat-v2/history/chat-history-prefetch";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
 import {
-  resolvePlaygroundModelIdentifier,
+  resolveSelectablePlaygroundModel,
   usePlaygroundAgentControlsBridgeStore,
 } from "@/components/playground/playground-agent-controls-bridge";
 import { WebApiError } from "@/lib/apis/web/base";
@@ -2735,18 +2735,16 @@ export function PlaygroundMain({
       // Multi-model-aware streaming flag, matching the composer's stop control.
       isGenerating: isStreamingActive,
       selectModel: (identifier) => {
-        const match = resolvePlaygroundModelIdentifier(
+        // Resolves the identifier AND enforces the picker's availability policy
+        // (disabled rows rejected), so the agent can't select a locked model.
+        const resolution = resolveSelectablePlaygroundModel(
           identifier,
           availableModels
         );
-        if (!match) {
-          return {
-            ok: false,
-            error: `Unknown model "${identifier}". It must match an available model's id or display name.`,
-          };
-        }
-        handleSingleModelChange(match);
-        return { ok: true, model: { id: String(match.id), name: match.name } };
+        if (!resolution.ok) return resolution;
+        const { model } = resolution;
+        handleSingleModelChange(model);
+        return { ok: true, model: { id: String(model.id), name: model.name } };
       },
       setSystemPrompt: (prompt) => setSystemPrompt(prompt),
       resetChat: () => handleResetAllChats(),
