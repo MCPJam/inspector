@@ -86,7 +86,11 @@ function main() {
     evidenced += backed + doc;
     total += entries.length;
     perHost.push(
-      `| ${host.label} | \`${host.provenance}\` | ${backed} | ${doc} | ${untestable} | ${entries.length - backed - doc - untestable} |`
+      `| ${host.label} | \`${
+        host.provenance
+      }\` | ${backed} | ${doc} | ${untestable} | ${
+        entries.length - backed - doc - untestable
+      } |`
     );
   }
 
@@ -94,11 +98,15 @@ function main() {
   lines.push("");
   lines.push(
     `**${evidenced} of ${total} capability claims across ${hosts.length} MCP Apps hosts have any recorded evidence` +
-      ` (${Math.round((evidenced / total) * 100)}%).** The rest are values somebody chose that no` +
+      ` (${Math.round(
+        (evidenced / total) * 100
+      )}%).** The rest are values somebody chose that no` +
       " capture has ever confirmed."
   );
   lines.push("");
-  lines.push("| Host | Host provenance | Probed | Vendor doc | Untestable | Assumed |");
+  lines.push(
+    "| Host | Host provenance | Probed | Vendor doc | Untestable | Assumed |"
+  );
   lines.push("| --- | --- | --- | --- | --- | --- |");
   lines.push(...perHost);
   lines.push("");
@@ -124,7 +132,9 @@ function main() {
       host.capabilityVerification ?? {}
     )) {
       if (entry.provenance !== "untestable") continue;
-      untestableRows.push(`| ${host.label} | \`${dimension}\` | ${entry.reason} |`);
+      untestableRows.push(
+        `| ${host.label} | \`${dimension}\` | ${entry.reason} |`
+      );
     }
   }
   if (untestableRows.length === 0) {
