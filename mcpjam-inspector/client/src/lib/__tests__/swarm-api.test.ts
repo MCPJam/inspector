@@ -6,6 +6,7 @@ vi.mock("@/lib/session-token", () => ({
 }));
 
 import {
+  journeySessionRowToThread,
   launchJourneyRun,
   LaunchJourneyRunError,
 } from "@/lib/swarm-api";
@@ -165,24 +166,56 @@ describe("swarm rollup DTO contracts", () => {
     expect(rollup).not.toHaveProperty("totalRuns");
   });
 
-  it("JourneySessionRow (JourneySessionDto) is keyed by `id`, with no personaLabel/messageCount", () => {
+  it("JourneySessionRow (JourneySessionDto) is keyed by `id` and carries Sessions-tab list fields", () => {
     const row: JourneySessionRow = {
       id: "thread-1",
       chatSessionId: "synth_run_host_0",
       projectId: "proj-1",
       hostId: "host-1",
       personaRefId: "persona-1",
+      journeyRunId: "run-1",
+      journeyRefId: "journey-1",
       status: "completed",
       modelId: "anthropic/claude-haiku-4.5",
       startedAt: 1,
       lastActivityAt: 2,
+      messageCount: 4,
+      firstMessagePreview: "hello",
+      personaLabel: "Persona One",
+      visitorDisplayName: "Persona One",
+      synthetic: true,
       readiness: { status: "completed", verdict: "ready", issueCount: 0 },
     };
     // The identifier the viewer + deep-link consume is `id`.
     expect(row.id).toBe("thread-1");
     expect(row).not.toHaveProperty("_id");
-    expect(row).not.toHaveProperty("personaLabel");
-    expect(row).not.toHaveProperty("messageCount");
     expect(row).not.toHaveProperty("personaId");
+    expect(row.messageCount).toBe(4);
+    expect(row.personaLabel).toBe("Persona One");
+    expect(row.journeyRunId).toBe("run-1");
+  });
+
+  it("journeySessionRowToThread maps list rows into ShareUsageThreadList shape", () => {
+    const thread = journeySessionRowToThread(
+      {
+        id: "thread-1",
+        chatSessionId: "synth_1",
+        projectId: "proj-1",
+        hostId: "host-1",
+        personaRefId: "persona-1",
+        startedAt: 10,
+        messageCount: 3,
+        firstMessagePreview: "hi",
+      },
+      "Fallback Name",
+    );
+    expect(thread).toMatchObject({
+      _id: "thread-1",
+      sourceType: "swarm",
+      visitorDisplayName: "Fallback Name",
+      synthetic: true,
+      messageCount: 3,
+      personaLabel: "Fallback Name",
+    });
   });
 });
