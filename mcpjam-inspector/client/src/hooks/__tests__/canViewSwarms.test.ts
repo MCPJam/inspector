@@ -20,26 +20,34 @@ describe("canViewSwarms", () => {
   });
 });
 
-// Regression: WorkOS `user.email` hydrates AFTER auth flips true. The members
-// list can resolve first, so the gate must keep "loading" (not deny) until the
-// viewer's email is available — otherwise a real member flashes access-denied.
+// Regression: WorkOS `user.email` hydrates AFTER Convex auth flips true. The
+// members list can resolve first, so the gate must keep "loading" (not deny)
+// until identity settles — otherwise a real member flashes access-denied.
+//
+// Equally important: Convex guest sessions are also `isAuthenticated` but never
+// get a WorkOS email. Pending must be bounded by `identityLoading`, not by
+// "authenticated && !email", or the Swarms gate spins forever.
 describe("isViewerRolePending", () => {
-  it("is pending while the members list is loading", () => {
-    expect(isViewerRolePending(true, true, "a@b.com")).toBe(true);
+  it("is pending while the identity provider is still hydrating", () => {
+    expect(isViewerRolePending(false, true, undefined)).toBe(true);
+    expect(isViewerRolePending(false, true, "a@b.com")).toBe(true);
   });
 
-  it("is pending when authenticated but the email has not hydrated yet", () => {
-    // The exact interval the TL flagged: members resolved, email still empty.
-    expect(isViewerRolePending(false, true, undefined)).toBe(true);
-    expect(isViewerRolePending(false, true, null)).toBe(true);
-    expect(isViewerRolePending(false, true, "   ")).toBe(true);
+  it("is pending while the members list is loading for a known identity", () => {
+    expect(isViewerRolePending(true, false, "a@b.com")).toBe(true);
   });
 
   it("is resolved once the email hydrates and members are loaded", () => {
-    expect(isViewerRolePending(false, true, "a@b.com")).toBe(false);
+    expect(isViewerRolePending(false, false, "a@b.com")).toBe(false);
   });
 
-  it("is not pending for an unauthenticated viewer (no email expected)", () => {
+  it("is resolved (deny) when identity settled with no email — Convex guests", () => {
+    // Guest sessions flip Convex auth true without ever producing WorkOS email.
+    // Do NOT keep pending forever; callers deny via canViewSwarms(undefined).
     expect(isViewerRolePending(false, false, undefined)).toBe(false);
+    expect(isViewerRolePending(false, false, null)).toBe(false);
+    expect(isViewerRolePending(false, false, "   ")).toBe(false);
+    // Members list is irrelevant without an email to match — don't wait on it.
+    expect(isViewerRolePending(true, false, undefined)).toBe(false);
   });
 });
