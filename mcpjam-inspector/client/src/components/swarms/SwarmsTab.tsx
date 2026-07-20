@@ -29,15 +29,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, usePaginatedQuery } from "convex/react";
-import {
-  Check,
-  ChevronDown,
-  ChevronRight,
-  Info,
-  Loader2,
-  Plus,
-  Users,
-} from "lucide-react";
+import { Check, ChevronDown, Info, Loader2, Plus, Users, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
@@ -74,11 +66,10 @@ import {
   SWARM_QUERIES,
   DEFAULT_PAGE_SIZE,
   swarmAttemptChatSessionId,
-  type GoalScoreRollup,
   type JourneyRun,
+  type JourneyRollup,
   type JourneySessionRow,
   type PersonaTrackRecord,
-  type JourneyRollup,
   type SessionGoalScore,
 } from "@/lib/swarm-api";
 import { formatScore } from "@/components/shared/session-quality/judge-presentation";
@@ -90,7 +81,6 @@ import {
   parseSwarmSessionParams,
 } from "@/lib/app-navigation";
 import { getShareableAppOrigin } from "@/lib/chatbox-session";
-import { resolveHostLogoByDisplayName } from "@/lib/chatbox-client-style";
 import { ConvertSwarmSessionDialog } from "@/components/swarms/convert-swarm-session-dialog";
 import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
 import {
@@ -99,12 +89,30 @@ import {
   type SwarmMatrixSelection,
 } from "@/components/swarms/journey-run-results";
 import {
+  JourneyList,
+  type JourneyListJourney,
+  type JourneyRunSelection,
+} from "@/components/swarms/journey-list";
+import { JourneyHostLogoMark } from "@/components/swarms/journey-host-logo";
+import {
+  formatJourneyRelativeTime,
+  runNumberLabel,
+  runStatusChipClass,
+  runSummaryLine,
+} from "@/components/swarms/journey-run-format";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
+// Re-exported for the goal-score unit test, which imports from `../SwarmsTab`.
+export { goalScoreAvgLabel } from "@/components/swarms/journey-run-format";
+import {
   liveSessionTrace,
   useJourneyRunStream,
 } from "@/components/swarms/use-journey-run-stream";
 import { ViewModeSelector } from "@/components/shared/view-mode-selector";
 import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
-import { useProjectServerAttachments } from "@/hooks/useViews";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
 import type {
@@ -184,14 +192,6 @@ export function SessionGoalScoreBadge({
       {formatScore(gs.score ?? NaN)} · {gs.passed ? "meets goal" : "below threshold"}
     </span>
   );
-}
-
-/** `· goal 78% avg (4 judged)` — used on journey run cards. */
-export function goalScoreAvgLabel(rollup: GoalScoreRollup | undefined): string | null {
-  if (!rollup || rollup.gradedCount === 0 || rollup.avgScore === null) {
-    return null;
-  }
-  return `goal ${formatScore(rollup.avgScore)} avg (${rollup.gradedCount} judged)`;
 }
 
 type Persona = {
@@ -364,6 +364,41 @@ export function SwarmsTab({
   // config, so the human finishes and submits it).
   const [journeyFormOpen, setJourneyFormOpen] = useState(false);
   const [journeyGoalSeed, setJourneyGoalSeed] = useState("");
+
+  // Run detail opened in the right-hand panel. `runSnapshot` seeds the panel
+  // until its own `listJourneyRuns` subscription resolves the run (identical
+  // query args as the journey block, so Convex dedupes the subscription).
+  const [runDetail, setRunDetail] = useState<
+    (JourneyRunSelection & { runSnapshot: JourneyRun }) | null
+  >(null);
+  const openRunDetail = useCallback(
+    (journey: JourneyListJourney, run: JourneyRun, hostId: string | null) => {
+      setRunDetail({
+        journeyId: journey._id,
+        runId: run._id,
+        hostId,
+        runSnapshot: run,
+      });
+    },
+    [],
+  );
+  const closeRunDetail = useCallback(() => setRunDetail(null), []);
+  // Close the panel when the persona changes or its journey disappears.
+  useEffect(() => {
+    setRunDetail(null);
+  }, [selectedPersonaId]);
+  useEffect(() => {
+    if (
+      runDetail &&
+      journeys !== undefined &&
+      !journeys.some((j) => j._id === runDetail.journeyId)
+    ) {
+      setRunDetail(null);
+    }
+  }, [journeys, runDetail]);
+  const detailJourney = runDetail
+    ? (journeys?.find((j) => j._id === runDetail.journeyId) ?? null)
+    : null;
 
   // ── Agent bridge ──────────────────────────────────────────────────────────
   // The swarms tool group + this screen's command handlers and snapshot. Lives
@@ -760,85 +795,129 @@ export function SwarmsTab({
               </div>
             </aside>
 
-            {/* Persona detail + journey cards */}
-            <main className="min-w-0 flex-1 overflow-y-auto">
+            {/* Persona detail + journey blocks; run detail opens on the right */}
+            <main className="min-w-0 flex-1 overflow-hidden">
               {!selectedPersona ? (
                 <JourneyNetworkBackdrop />
               ) : (
-                <div className="mx-auto max-w-3xl px-8 py-6">
-                  <PersonaDetailHeader
-                    persona={selectedPersona}
-                    running={runningSet.has(selectedPersona._id)}
-                    onSave={(patch) => savePersonaField(selectedPersona._id, patch)}
-                    onDelete={async () => {
-                      if (
-                        !window.confirm(
-                          `Delete persona "${selectedPersona.name}"? Its journeys are hidden but historical runs are kept.`,
-                        )
-                      ) {
-                        return;
-                      }
-                      await deletePersona({
-                        personaRefId: selectedPersona._id,
-                      } as any);
-                      setSelectedPersonaId(null);
-                    }}
-                  />
+                (() => {
+                  const personaDetail = (
+                    <>
+                      <PersonaDetailHeader
+                        persona={selectedPersona}
+                        running={runningSet.has(selectedPersona._id)}
+                        onSave={(patch) =>
+                          savePersonaField(selectedPersona._id, patch)
+                        }
+                        onDelete={async () => {
+                          if (
+                            !window.confirm(
+                              `Delete persona "${selectedPersona.name}"? Its journeys are hidden but historical runs are kept.`,
+                            )
+                          ) {
+                            return;
+                          }
+                          await deletePersona({
+                            personaRefId: selectedPersona._id,
+                          } as any);
+                          setSelectedPersonaId(null);
+                        }}
+                      />
 
-                  <div
-                    className={cn(
-                      "mb-3",
-                      journeyFormOpen
-                        ? "space-y-2"
-                        : "flex items-center justify-between",
-                    )}
-                  >
-                    <h3 className="text-sm font-semibold">Journeys</h3>
-                    <NewJourneyButton
-                      projectId={projectId}
-                      hosts={hosts ?? []}
-                      open={journeyFormOpen}
-                      onOpenChange={(o) => {
-                        setJourneyFormOpen(o);
-                        // Drop the agent prefill on close so a later manual open
-                        // starts blank.
-                        if (!o) setJourneyGoalSeed("");
-                      }}
-                      goalSeed={journeyGoalSeed}
-                      onCreate={async (draft) => {
-                        await createJourney({
-                          projectId,
-                          personaRefId: selectedPersona._id,
-                          ...draft,
-                        } as any);
-                      }}
-                    />
-                  </div>
+                      <div
+                        className={cn(
+                          "mb-3",
+                          journeyFormOpen
+                            ? "space-y-2"
+                            : "flex items-center justify-between",
+                        )}
+                      >
+                        <h3 className="text-sm font-semibold">Journeys</h3>
+                        <NewJourneyButton
+                          projectId={projectId}
+                          hosts={hosts ?? []}
+                          open={journeyFormOpen}
+                          onOpenChange={(o) => {
+                            setJourneyFormOpen(o);
+                            // Drop the agent prefill on close so a later manual
+                            // open starts blank.
+                            if (!o) setJourneyGoalSeed("");
+                          }}
+                          goalSeed={journeyGoalSeed}
+                          onCreate={async (draft) => {
+                            await createJourney({
+                              projectId,
+                              personaRefId: selectedPersona._id,
+                              ...draft,
+                            } as any);
+                          }}
+                        />
+                      </div>
 
-                  {journeys === undefined ? (
-                    <div className="text-sm text-muted-foreground">Loading…</div>
-                  ) : journeys.length === 0 ? (
-                    <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-                      No journeys yet. A journey is a goal this persona pursues
-                      across one or more hosts.
-                    </div>
-                  ) : (
-                    <div className="flex flex-col gap-3">
-                      {journeys.map((j) => (
-                        <JourneyCard
-                          key={j._id}
-                          journey={j}
-                          onLaunch={launchJourney}
+                      {journeys === undefined ? (
+                        <div className="text-sm text-muted-foreground">
+                          Loading…
+                        </div>
+                      ) : journeys.length === 0 ? (
+                        <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+                          No journeys yet. A journey is a goal this persona
+                          pursues across one or more hosts.
+                        </div>
+                      ) : (
+                        <JourneyList
+                          journeys={journeys}
                           hosts={hosts ?? []}
                           isAuthenticated={isAuthenticated}
                           projectId={projectId}
+                          onLaunch={launchJourney}
                           initialRunId={deepLink.runId}
-                          initialThreadId={deepLink.threadId}
+                          selection={runDetail}
+                          onOpenRun={openRunDetail}
+                          onCloseRun={closeRunDetail}
                         />
-                      ))}
-                    </div>
-                  )}
-                </div>
+                      )}
+                    </>
+                  );
+
+                  if (!runDetail || !detailJourney) {
+                    return (
+                      <div className="h-full overflow-y-auto">
+                        <div className="mx-auto max-w-3xl px-8 py-6">
+                          {personaDetail}
+                        </div>
+                      </div>
+                    );
+                  }
+                  return (
+                    <ResizablePanelGroup
+                      direction="horizontal"
+                      className="h-full"
+                    >
+                      <ResizablePanel defaultSize={38} minSize={26}>
+                        <div className="h-full overflow-y-auto px-6 py-6">
+                          {personaDetail}
+                        </div>
+                      </ResizablePanel>
+                      <ResizableHandle withHandle />
+                      <ResizablePanel defaultSize={62} minSize={35}>
+                        <RunDetailPanel
+                          key={`${runDetail.runId}:${runDetail.hostId ?? ""}`}
+                          journey={detailJourney}
+                          runId={runDetail.runId}
+                          runSnapshot={runDetail.runSnapshot}
+                          hostId={runDetail.hostId}
+                          hosts={hosts ?? []}
+                          initialThreadId={
+                            deepLink.runId === runDetail.runId
+                              ? deepLink.threadId
+                              : undefined
+                          }
+                          onClose={closeRunDetail}
+                        />
+                      </ResizablePanel>
+                    </ResizablePanelGroup>
+                  );
+                })()
               )}
             </main>
           </>
@@ -847,6 +926,7 @@ export function SwarmsTab({
             <SwarmsSessionsPanel
               projectId={projectId}
               personas={personas ?? []}
+              hosts={hosts ?? []}
               personaRefId={selectedPersonaId}
               onPersonaRefIdChange={setSelectedPersonaId}
               initialThreadId={deepLink.threadId}
@@ -858,324 +938,98 @@ export function SwarmsTab({
   );
 }
 
-// ── run status treatment ─────────────────────────────────────────────────────
-function runStatusChipClass(status: string): string {
-  switch (status) {
-    case "completed":
-      return "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400";
-    case "partial":
-    case "rate_limited":
-      return "bg-muted text-muted-foreground";
-    case "failed":
-      return "bg-red-500/10 text-red-700 dark:text-red-400";
-    case "stale":
-      return "bg-muted text-muted-foreground";
-    default:
-      return "bg-muted text-foreground"; // running
-  }
-}
-
-function formatJourneyRelativeTime(timestamp: number): string {
-  const diff = Date.now() - timestamp;
-  const minutes = Math.floor(diff / 60000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
-  return new Date(timestamp).toLocaleDateString();
-}
-
-function runSummaryLine(r: JourneyRun): string {
-  const parts = [
-    `${r.summary.succeeded}/${r.summary.total} ok`,
-    r.summary.failed > 0 ? `${r.summary.failed} failed` : null,
-    r.summary.rateLimited > 0 ? `${r.summary.rateLimited} rate-limited` : null,
-    goalScoreAvgLabel(r.goalScoreSummary),
-  ].filter(Boolean);
-  return parts.join(" · ");
-}
-
-// ── journey card + runs ──────────────────────────────────────────────────────
-function JourneyCard({
+// ── run detail (right panel): header + sessions matrix + live stream ─────────
+function RunDetailPanel({
   journey,
+  runId,
+  runSnapshot,
+  hostId,
   hosts,
-  isAuthenticated,
-  projectId,
-  initialRunId,
   initialThreadId,
-  onLaunch,
+  onClose,
 }: {
   journey: Journey;
+  runId: string;
+  /** Seed until this panel's own runs subscription resolves the run. */
+  runSnapshot: JourneyRun;
+  hostId: string | null;
   hosts: HostItem[];
-  isAuthenticated: boolean;
-  projectId: string;
-  /** Shared launch coordinator — see SwarmsTab.launchJourney. */
-  onLaunch: (
-    journeyId: string,
-  ) => Promise<
-    { status: "launched"; runId?: string } | { status: "already_launching" }
-  >;
-  /** Deep-link run to auto-open (only the card that owns it reacts). */
-  initialRunId?: string;
-  /** Deep-link session to auto-select inside the opened run. */
   initialThreadId?: string;
+  onClose: () => void;
 }) {
-  const { serverAttachments } = useProjectServerAttachments({
-    isAuthenticated,
-    projectId,
-  });
-  const serverGroupName = journey.serverAttachmentId
-    ? (serverAttachments.find((a) => a._id === journey.serverAttachmentId)
-        ?.name ?? null)
-    : null;
-  // Real Convex pagination (numItems + cursor) over the journey's runs.
-  const {
-    results: runs,
-    status: runsStatus,
-    loadMore,
-  } = usePaginatedQuery(
+  // Same (name, args) as the journey block's subscription — Convex dedupes it —
+  // so a running run keeps updating even though the panel was opened from a
+  // snapshot. Old runs past the first page fall back to the (terminal,
+  // immutable) snapshot.
+  const { results: runs } = usePaginatedQuery(
     SWARM_QUERIES.listJourneyRuns as any,
     { journeyRefId: journey._id } as any,
-    { initialNumItems: DEFAULT_PAGE_SIZE }
+    { initialNumItems: DEFAULT_PAGE_SIZE },
   );
   const rollup = useQuery(
     SWARM_QUERIES.journeyRollup as any,
-    { journeyRefId: journey._id } as any
+    { journeyRefId: journey._id } as any,
   ) as JourneyRollup | undefined;
-
-  const [launching, setLaunching] = useState(false);
-  const [launchError, setLaunchError] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState(false);
-  const [openRunId, setOpenRunId] = useState<string | null>(null);
-
-  // Deep-link restore: expand this journey and open the linked run so
-  // RunSessionsView mounts. Runs once — later user toggling isn't overridden.
-  const appliedInitialRunRef = useRef(false);
-  useEffect(() => {
-    if (appliedInitialRunRef.current || !initialRunId) return;
-    if ((runs as JourneyRun[]).some((r) => r._id === initialRunId)) {
-      appliedInitialRunRef.current = true;
-      setExpanded(true);
-      setOpenRunId(initialRunId);
-    }
-  }, [initialRunId, runs]);
-
-  const hostName = (id: string) =>
-    hosts.find((h) => h.hostId === id)?.name ?? id.slice(0, 8);
-
-  const journeyHostNames = useMemo(
-    () => journey.hostIds.map(hostName),
-    // hostName closes over `hosts`; recompute when either changes.
-    [journey.hostIds, hosts],
-  );
-  const firstHostName = journeyHostNames[0] ?? null;
-  const extraHosts = Math.max(0, journeyHostNames.length - 1);
   const typedRuns = runs as JourneyRun[];
-  const latestRun = typedRuns[0] ?? null;
-  const runCount = rollup?.runCount ?? typedRuns.length;
-  const hasRuns = runCount > 0 || typedRuns.length > 0;
-  const configHint = `${journey.config.sessionsPerHost}/host · ${journey.config.maxTurns} turns`;
-
-  const onRun = async () => {
-    if (launching) return;
-    setLaunchError(null);
-    setLaunching(true);
-    try {
-      // Shared coordinator: same launchKey store as the agent path, so a
-      // concurrent agent launch of this journey dedupes to one paid run.
-      const result = await onLaunch(journey._id);
-      if (result.status === "already_launching") {
-        return; // another launch of this journey is already in flight
-      }
-      toast.success("Journey run started");
-    } catch (e) {
-      // The coordinator retains the key on ANY failure and reuses it on retry,
-      // so the backend dedupes rather than double-spending.
-      setLaunchError(e instanceof Error ? e.message : "Failed to start run");
-    } finally {
-      setLaunching(false);
-    }
-  };
+  const runIndex = typedRuns.findIndex((r) => r._id === runId);
+  const run = (runIndex >= 0 ? typedRuns[runIndex] : null) ?? runSnapshot;
+  const runName =
+    runIndex >= 0
+      ? runNumberLabel(rollup?.runCount ?? typedRuns.length, runIndex)
+      : "Run";
+  const clientCount = run.hostSummaries.length || journey.hostIds.length;
 
   return (
-    <div className="rounded-lg border border-border/60 px-3 py-2.5">
-      <div className="flex items-start gap-1.5">
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border/40 px-4 py-3">
+        <div className="min-w-0">
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm font-medium">
+            <span>{runName}</span>
+            <span
+              className={cn(
+                "rounded-full px-1.5 py-px text-[10px] font-medium capitalize",
+                runStatusChipClass(run.status),
+              )}
+            >
+              {run.status.replace(/_/g, " ")}
+            </span>
+            <span className="min-w-0 truncate font-normal text-muted-foreground">
+              {journey.goal}
+            </span>
+          </p>
+          <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-muted-foreground">
+            <span>
+              {clientCount} client{clientCount === 1 ? "" : "s"} ×{" "}
+              {journey.config.sessionsPerHost} session
+              {journey.config.sessionsPerHost === 1 ? "" : "s"}
+            </span>
+            <span aria-hidden>·</span>
+            <span>{runSummaryLine(run)}</span>
+            <span aria-hidden>·</span>
+            <span>launched {formatJourneyRelativeTime(run.createdAt)}</span>
+          </p>
+        </div>
         <button
           type="button"
-          className={cn(
-            "mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors",
-            "hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
-            !hasRuns && "cursor-default opacity-40 hover:bg-transparent",
-          )}
-          aria-expanded={expanded}
-          aria-label={expanded ? "Hide runs" : "Show runs"}
-          disabled={!hasRuns}
-          onClick={() => setExpanded((v) => !v)}
+          aria-label="Close run detail"
+          className="rounded-md p-1 text-muted-foreground outline-none transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={onClose}
         >
-          {expanded ? (
-            <ChevronDown className="size-3.5" />
-          ) : (
-            <ChevronRight className="size-3.5" />
-          )}
+          <X className="size-4" />
         </button>
-
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-3">
-            <button
-              type="button"
-              className="min-w-0 flex-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
-              disabled={!hasRuns}
-              onClick={() => hasRuns && setExpanded((v) => !v)}
-            >
-              <p className="truncate text-sm font-medium">{journey.goal}</p>
-            </button>
-            <Button
-              type="button"
-              size="sm"
-              className="h-7 shrink-0 px-2.5 text-xs"
-              disabled={launching}
-              onClick={onRun}
-            >
-              {launching ? "Starting…" : "Run"}
-            </Button>
-          </div>
-
-          <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
-            {firstHostName ? (
-              <span className="inline-flex min-w-0 max-w-[160px] items-center gap-1">
-                <JourneyHostLogoMark label={firstHostName} />
-                <span className="truncate font-medium text-foreground/80">
-                  {firstHostName}
-                </span>
-                {extraHosts > 0 ? (
-                  <span className="shrink-0 text-[10px]">+{extraHosts}</span>
-                ) : null}
-              </span>
-            ) : (
-              <span>No clients</span>
-            )}
-            {serverGroupName ? (
-              <>
-                <span aria-hidden>·</span>
-                <span className="truncate">{serverGroupName}</span>
-              </>
-            ) : null}
-            <span aria-hidden>·</span>
-            <span>
-              {runCount} run{runCount === 1 ? "" : "s"}
-            </span>
-            {latestRun ? (
-              <>
-                <span aria-hidden>·</span>
-                <span
-                  className={cn(
-                    "rounded-full px-1.5 py-px text-[10px] font-medium capitalize",
-                    runStatusChipClass(latestRun.status),
-                  )}
-                >
-                  {latestRun.status.replace(/_/g, " ")}
-                </span>
-              </>
-            ) : null}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  aria-label="Journey config"
-                  className="rounded-full p-0.5 text-muted-foreground outline-none transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <Info className="size-3" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="top" className="max-w-[220px]">
-                <p className="text-xs leading-snug">{configHint}</p>
-              </TooltipContent>
-            </Tooltip>
-          </div>
-        </div>
       </div>
-
-      {launchError && (
-        <p className="mt-2 ml-7 rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-xs text-red-600 dark:text-red-400">
-          {launchError}
-        </p>
-      )}
-
-      {expanded && (
-        <div className="mt-2 ml-7 space-y-0.5 border-t border-border/40 pt-2">
-          {typedRuns.length === 0 ? (
-            <p className="px-1 py-1.5 text-[11px] text-muted-foreground">
-              No runs yet.
-            </p>
-          ) : (
-            typedRuns.map((r) => {
-              const isOpen = openRunId === r._id;
-              return (
-                <div key={r._id}>
-                  <button
-                    type="button"
-                    className={cn(
-                      "flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left text-xs outline-none transition-colors",
-                      "hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring",
-                      isOpen && "bg-muted/40",
-                    )}
-                    aria-expanded={isOpen}
-                    aria-label={
-                      isOpen
-                        ? `Hide sessions for run ${r.status}`
-                        : `View sessions for run ${r.status}`
-                    }
-                    onClick={() =>
-                      setOpenRunId((cur) => (cur === r._id ? null : r._id))
-                    }
-                  >
-                    {isOpen ? (
-                      <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
-                    ) : (
-                      <ChevronRight className="size-3 shrink-0 text-muted-foreground" />
-                    )}
-                    <span className="capitalize text-foreground/90">
-                      {r.status.replace(/_/g, " ")}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate text-muted-foreground">
-                      {runSummaryLine(r)}
-                    </span>
-                    <span className="shrink-0 text-[10px] text-muted-foreground">
-                      {formatJourneyRelativeTime(r.createdAt)}
-                    </span>
-                  </button>
-                  {isOpen && (
-                    <RunSessionsView
-                      runId={r._id}
-                      personaRefId={journey.personaRefId}
-                      hosts={hosts}
-                      hostSummaries={r.hostSummaries}
-                      runSummary={r.summary}
-                      runStatus={r.status}
-                      sessionsPerHost={journey.config.sessionsPerHost}
-                      createdAt={r.createdAt}
-                      initialThreadId={
-                        initialRunId === r._id ? initialThreadId : undefined
-                      }
-                    />
-                  )}
-                </div>
-              );
-            })
-          )}
-          {runsStatus === "CanLoadMore" && (
-            <button
-              type="button"
-              className="mt-0.5 px-1.5 text-[11px] font-medium text-primary hover:underline"
-              onClick={() => loadMore(DEFAULT_PAGE_SIZE)}
-            >
-              Load more runs
-            </button>
-          )}
-        </div>
-      )}
+      <div className="min-h-0 flex-1">
+        <RunSessionsView
+          runId={run._id}
+          personaRefId={journey.personaRefId}
+          hosts={hosts}
+          hostSummaries={run.hostSummaries}
+          runStatus={run.status}
+          sessionsPerHost={journey.config.sessionsPerHost}
+          initialHostId={hostId ?? undefined}
+          initialThreadId={initialThreadId}
+        />
+      </div>
     </div>
   );
 }
@@ -1186,10 +1040,9 @@ function RunSessionsView({
   personaRefId,
   hosts,
   hostSummaries,
-  runSummary,
   runStatus,
   sessionsPerHost,
-  createdAt,
+  initialHostId,
   initialThreadId,
 }: {
   runId: string;
@@ -1197,10 +1050,10 @@ function RunSessionsView({
   personaRefId: string;
   hosts: HostItem[];
   hostSummaries: JourneyRun["hostSummaries"];
-  runSummary: JourneyRun["summary"];
   runStatus: JourneyRun["status"];
   sessionsPerHost: number;
-  createdAt: number;
+  /** Matrix drill-in: preselect this host's first session (deferred to `initialThreadId`). */
+  initialHostId?: string;
   /** Deep-link session (`id`) to auto-select once it's on a loaded page. */
   initialThreadId?: string;
 }) {
@@ -1272,6 +1125,39 @@ function RunSessionsView({
     setDetailSession(match);
   }, [initialThreadId, rows]);
 
+  // Matrix drill-in: preselect the clicked host's first session. `initialThreadId`
+  // (an explicit deep-linked session) always wins, so skip when it's present.
+  const appliedInitialHostRef = useRef(false);
+  useEffect(() => {
+    if (appliedInitialHostRef.current || !initialHostId || initialThreadId) {
+      return;
+    }
+    const match = rows.find((s) => s.hostId === initialHostId);
+    if (match) {
+      appliedInitialHostRef.current = true;
+      const sessionIndex = Number(match.chatSessionId.split("_").pop() ?? "0");
+      setSelection({
+        hostId: match.hostId,
+        sessionIndex: Number.isFinite(sessionIndex) ? sessionIndex : 0,
+        chatSessionId: match.chatSessionId,
+      });
+      return;
+    }
+    // No persisted row yet: for a terminal run with attempts on this host,
+    // synthesize the first attempt's cell so the pane opens on that host.
+    if (
+      runStatus !== "running" &&
+      hostSummaries.some((h) => h.hostId === initialHostId && h.total > 0)
+    ) {
+      appliedInitialHostRef.current = true;
+      setSelection({
+        hostId: initialHostId,
+        sessionIndex: 0,
+        chatSessionId: swarmAttemptChatSessionId(runId, initialHostId, 0),
+      });
+    }
+  }, [initialHostId, initialThreadId, rows, runStatus, hostSummaries, runId]);
+
   // Auto-select the first running cell when a live stream starts.
   useEffect(() => {
     if (selection || !streamEnabled) return;
@@ -1292,34 +1178,26 @@ function RunSessionsView({
   }, [selection, streamEnabled, stream.cellStatus, runId]);
 
   return (
-    <div className="mt-2 space-y-3 rounded-lg border bg-muted/20 p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="min-w-0">
-          <p className="text-[12px] font-semibold capitalize text-foreground/90">
-            {String(runStatus).replace(/_/g, " ")}
-            <span className="ml-2 font-normal text-muted-foreground">
-              {runSummary.succeeded}/{runSummary.total} ok
-              {runSummary.failed > 0 ? ` · ${runSummary.failed} failed` : ""}
-            </span>
-          </p>
+    <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto p-4">
+      {stream.connected || stream.error || status === "CanLoadMore" ? (
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
           <p className="text-[10px] text-muted-foreground">
-            {formatJourneyRelativeTime(createdAt)}
-            {stream.connected ? " · live" : null}
-            {stream.error ? ` · stream error: ${stream.error}` : null}
+            {stream.connected ? "live" : null}
+            {stream.error ? `stream error: ${stream.error}` : null}
           </p>
+          {status === "CanLoadMore" ? (
+            <button
+              type="button"
+              className="text-[11px] font-medium text-primary hover:underline"
+              onClick={() => loadMore(DEFAULT_PAGE_SIZE)}
+            >
+              Load more sessions
+            </button>
+          ) : null}
         </div>
-        {status === "CanLoadMore" ? (
-          <button
-            type="button"
-            className="text-[11px] font-medium text-primary hover:underline"
-            onClick={() => loadMore(DEFAULT_PAGE_SIZE)}
-          >
-            Load more sessions
-          </button>
-        ) : null}
-      </div>
+      ) : null}
 
-      <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+      <div className="shrink-0">
         <SwarmSessionsMatrix
           runId={runId}
           hostIds={hostIds}
@@ -1335,6 +1213,8 @@ function RunSessionsView({
             setDetailSession(null);
           }}
         />
+      </div>
+      <div className="flex min-h-[24rem] flex-1 flex-col">
         <SwarmLiveStreamPane
           selection={selection}
           stream={stream}
@@ -1342,6 +1222,7 @@ function RunSessionsView({
           fallbackTrace={fallbackTrace}
           runStatus={String(runStatus)}
           onOpenCompleted={(session) => setDetailSession(session)}
+          fillHeight
         />
       </div>
 
@@ -1922,21 +1803,5 @@ function NewJourneyButton({
         </Button>
       </div>
     </div>
-  );
-}
-
-function JourneyHostLogoMark({ label }: { label: string }) {
-  const logoSrc = resolveHostLogoByDisplayName(label);
-  if (logoSrc) {
-    return (
-      <img
-        src={logoSrc}
-        alt=""
-        className="size-3.5 shrink-0 object-contain"
-      />
-    );
-  }
-  return (
-    <span aria-hidden className="size-3.5 shrink-0 rounded-full bg-muted" />
   );
 }

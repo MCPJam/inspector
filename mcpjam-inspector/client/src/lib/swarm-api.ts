@@ -28,6 +28,8 @@ export const SWARM_QUERIES = {
   listSessionsByProject: "journeyRuns:listSessionsByProject",
   /** Sessions-tab persona filter (narrows the project feed). */
   listSessionsByPersona: "journeyRuns:listSessionsByPersona",
+  /** Sessions-tab metric strip aggregates (project-wide or persona-scoped). */
+  getSwarmSessionMetrics: "journeyRuns:getSwarmSessionMetrics",
   listRunningPersonaRefIds: "journeyRuns:listRunningPersonaRefIds",
 } as const;
 
@@ -132,6 +134,43 @@ export interface JourneySessionRow {
   };
   /** Server-denormalized judge verdict subset (see `swarmJudge.ts` backend). */
   goalScore?: SessionGoalScore;
+}
+
+/**
+ * One daily trend bucket for the Sessions metric strip sparklines. Mirrors
+ * `convex/lib/swarmSessionMetrics.ts` `SwarmSessionMetricsPoint` (hand-kept).
+ */
+export interface SwarmSessionMetricsPoint {
+  dayStartMs: number;
+  sessionCount: number;
+  toolErrorRate: number | null;
+  avgToolCallsPerSession: number | null;
+  latencyP50Ms: number | null;
+  latencyP95Ms: number | null;
+  avgTokensPerSession: number | null;
+}
+
+/**
+ * Aggregated Sessions-tab metrics returned by
+ * `journeyRuns:getSwarmSessionMetrics`. Mirrors the backend `SwarmSessionMetrics`
+ * (hand-kept, two-repo layout). Every average is null-safe: metrics with no
+ * sample come back `null` (rendered as "—"), never a misleading zero.
+ */
+export interface SwarmSessionMetrics {
+  sessionCount: number;
+  analyzedCount: number;
+  truncated: boolean;
+  toolCallCount: number;
+  toolErrorCount: number;
+  toolErrorRate: number | null;
+  sessionsWithToolErrors: number;
+  topFailingTool: { toolName: string; errorCount: number } | null;
+  avgToolCallsPerSession: number | null;
+  latencyP50Ms: number | null;
+  latencyP95Ms: number | null;
+  avgTokensPerSession: number | null;
+  tokenSampleCount: number;
+  trend: SwarmSessionMetricsPoint[];
 }
 
 /**

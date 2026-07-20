@@ -139,7 +139,16 @@ vi.mock("convex/react", () => ({
     }
     if (name === "journeyRuns:listSessionsByProject") {
       return {
-        results: [session],
+        results: [
+          session,
+          {
+            ...session,
+            id: "thread-h2",
+            hostId: "host-2",
+            chatSessionId: "synth_run-1_host-2_0",
+            firstMessagePreview: "hola",
+          },
+        ],
         status: "Exhausted",
         loadMore: vi.fn(),
         isLoading: false,
@@ -220,12 +229,27 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-/** Progressive discovery: expand journey → open a specific run's sessions. */
+/**
+ * Progressive discovery: click Host One's matrix cell (opens the LATEST run,
+ * which the fixtures make `run-fail`/partial), then — for the completed run —
+ * pick it from the run history list. The partial run is already the latest, so
+ * the cell click alone opens it.
+ */
 async function expandJourneyAndOpenRunSessions(
-  runAriaLabel = /view sessions for run completed/i,
+  target: "completed" | "partial" = "completed",
 ) {
-  fireEvent.click(await screen.findByRole("button", { name: /show runs/i }));
-  fireEvent.click(await screen.findByRole("button", { name: runAriaLabel }));
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: /open runs for book a flight on host one/i,
+    }),
+  );
+  if (target === "completed") {
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: /view sessions for run completed/i,
+      }),
+    );
+  }
 }
 
 async function selectFirstDoneCell() {
@@ -259,11 +283,13 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
     await expandJourneyAndOpenRunSessions();
 
     // CONTRACT: the session query is dispatched with the arg name `journeyRunId`
-    // (NOT `runId`) carrying the run's id.
+    // (NOT `runId`) carrying the run's id. The cell click opens the latest run
+    // (run-fail) first, then the run-picker switches to run-1, so assert the
+    // most-recent dispatch.
     await waitFor(() => {
-      const call = paginatedCalls.find(
-        (c) => c.name === "journeyRuns:listSessionsByJourneyRun"
-      );
+      const call = [...paginatedCalls]
+        .reverse()
+        .find((c) => c.name === "journeyRuns:listSessionsByJourneyRun");
       expect(call).toBeTruthy();
       expect(call!.args).toEqual({ journeyRunId: "run-1" });
       // The wrong (old) arg name must not be present.
@@ -302,16 +328,36 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
     });
   });
 
+  it("opens a specific run when its trend segment is clicked", async () => {
+    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    fireEvent.click(screen.getByText("Persona One"));
+
+    // Host One's strip has one segment per run; clicking the completed (run-1)
+    // segment must open THAT run, not the latest.
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: /open run completed .*on host one/i,
+      }),
+    );
+
+    await waitFor(() => {
+      const call = [...paginatedCalls]
+        .reverse()
+        .find((c) => c.name === "journeyRuns:listSessionsByJourneyRun");
+      expect(call).toBeTruthy();
+      expect(call!.args).toEqual({ journeyRunId: "run-1" });
+    });
+  });
+
   it("surfaces failed attempts that never persisted a session transcript", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
     fireEvent.click(screen.getByText("Persona One"));
-    await expandJourneyAndOpenRunSessions(
-      /view sessions for run partial/i,
-    );
+    await expandJourneyAndOpenRunSessions("partial");
 
     const matrix = await screen.findByTestId("swarm-sessions-matrix");
-    expect(within(matrix).getByText("Host Two")).toBeInTheDocument();
-    // Host Two's unpersisted failures surface as Fail cells in the matrix.
+    // One chip per (host, session) — Host Two appears on each of its chips.
+    expect(within(matrix).getAllByText("Host Two").length).toBeGreaterThan(0);
+    // Host Two's unpersisted failures surface as Fail chips.
     const failCells = within(matrix)
       .getAllByTestId("swarm-host-cell")
       .filter((el) => el.getAttribute("data-outcome") === "failed");
@@ -377,6 +423,40 @@ describe("SwarmsTab — top-level Journeys view", () => {
     expect(viewer.getAttribute("data-link")).toContain("persona=persona-1");
     expect(viewer.getAttribute("data-link")).toContain("run=run-1");
     expect(viewer.getAttribute("data-link")).toContain("session=thread-xyz");
+  });
+
+  it("filters the visible list by client (host) without changing the query", async () => {
+    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    openJourneysTab();
+
+    // Both hosts' sessions are listed before filtering.
+    const panel = await screen.findByTestId("swarms-sessions-panel");
+    expect(within(panel).getByText("hello")).toBeInTheDocument();
+    expect(within(panel).getByText("hola")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("swarms-sessions-host-filter"));
+    fireEvent.click(await screen.findByRole("option", { name: "Host Two" }));
+
+    await waitFor(() => {
+      expect(within(panel).queryByText("hello")).toBeNull();
+      expect(within(panel).getByText("hola")).toBeInTheDocument();
+    });
+
+    // Client filtering is client-side: still the project-level query, no new
+    // query name.
+    expect(
+      paginatedCalls.every(
+        (c) =>
+          c.name !== "journeyRuns:listSessionsByHost" &&
+          c.name !== "journeyRuns:listSessionsByClient",
+      ),
+    ).toBe(true);
+
+    fireEvent.click(screen.getByTestId("swarms-sessions-host-filter"));
+    fireEvent.click(await screen.findByRole("option", { name: "All clients" }));
+    await waitFor(() => {
+      expect(within(panel).getByText("hello")).toBeInTheDocument();
+    });
   });
 
   it("narrows to listSessionsByPersona when a persona is selected, and clears back to all", async () => {

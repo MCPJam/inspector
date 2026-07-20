@@ -22,6 +22,8 @@ import {
 import { ShareUsageThreadList } from "@/components/connection/share-usage/ShareUsageThreadList";
 import { ShareUsageThreadDetail } from "@/components/connection/share-usage/ShareUsageThreadDetail";
 import { ConvertSwarmSessionDialog } from "@/components/swarms/convert-swarm-session-dialog";
+import { SwarmSessionsMetricStrip } from "@/components/swarms/swarm-sessions-metric-strip";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 import {
   DEFAULT_PAGE_SIZE,
   SWARM_QUERIES,
@@ -38,12 +40,15 @@ import { getShareableAppOrigin } from "@/lib/chatbox-session";
 export function SwarmsSessionsPanel({
   projectId,
   personas,
+  hosts = [],
   personaRefId,
   onPersonaRefIdChange,
   initialThreadId,
 }: {
   projectId: string;
   personas: ReadonlyArray<{ _id: string; name: string; role?: string }>;
+  /** Project hosts — resolves display names for the host filter. */
+  hosts?: ReadonlyArray<{ hostId: string; name: string }>;
   /** When set, narrows the list to that persona; `null` = all project sessions. */
   personaRefId: string | null;
   onPersonaRefIdChange: (personaRefId: string | null) => void;
@@ -67,7 +72,30 @@ export function SwarmsSessionsPanel({
     initialNumItems: Math.max(DEFAULT_PAGE_SIZE, 25),
   });
 
-  const rows = sessions as JourneySessionRow[];
+  const allRows = sessions as JourneySessionRow[];
+
+  // Host filter — client-side over the loaded pages (there is no per-host
+  // backend query; the persona filter stays server-side as before). "Load
+  // more" keeps paginating the unfiltered list.
+  const [hostFilter, setHostFilter] = useState<string | null>(null);
+  const hostOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const r of allRows) {
+      if (r.hostId && !seen.has(r.hostId)) {
+        seen.set(
+          r.hostId,
+          hosts.find((h) => h.hostId === r.hostId)?.name ?? r.hostId.slice(0, 8),
+        );
+      }
+    }
+    return Array.from(seen, ([hostId, name]) => ({ hostId, name }));
+  }, [allRows, hosts]);
+  const rows = useMemo(
+    () =>
+      hostFilter ? allRows.filter((r) => r.hostId === hostFilter) : allRows,
+    [allRows, hostFilter],
+  );
+
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(
     initialThreadId ?? null,
   );
@@ -80,9 +108,20 @@ export function SwarmsSessionsPanel({
   useEffect(() => {
     if (prevPersonaRef.current === personaRefId) return;
     prevPersonaRef.current = personaRefId;
+    setHostFilter(null);
     setSelectedThreadId(initialThreadId ?? null);
     setSessionToPromote(null);
   }, [personaRefId, initialThreadId]);
+
+  // Drop a selection the host filter just hid — the detail pane must not show
+  // a session missing from the visible list.
+  useEffect(() => {
+    if (!hostFilter || !selectedThreadId) return;
+    if (!rows.some((r) => r.id === selectedThreadId)) {
+      setSelectedThreadId(null);
+      setSessionToPromote(null);
+    }
+  }, [hostFilter, rows, selectedThreadId]);
 
   // Apply deep-link once the matching row appears (may need Load more).
   const appliedInitialRef = useRef(false);
@@ -119,9 +158,11 @@ export function SwarmsSessionsPanel({
         })}`
       : undefined;
 
-  const emptyListCopy = filtered
-    ? "No sessions for this persona yet"
-    : "No swarm sessions yet";
+  const emptyListCopy = hostFilter
+    ? "No loaded sessions for this client"
+    : filtered
+      ? "No sessions for this persona yet"
+      : "No swarm sessions yet";
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="swarms-sessions-panel">
@@ -156,6 +197,30 @@ export function SwarmsSessionsPanel({
               ))}
             </SelectContent>
           </Select>
+          {hostOptions.length > 0 ? (
+            <Select
+              value={hostFilter ?? "all"}
+              onValueChange={(value) =>
+                setHostFilter(value === "all" ? null : value)
+              }
+            >
+              <SelectTrigger
+                data-testid="swarms-sessions-host-filter"
+                className="h-8 w-[min(100%,12rem)] text-xs"
+                aria-label="Filter sessions by client"
+              >
+                <SelectValue placeholder="All clients" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All clients</SelectItem>
+                {hostOptions.map((h) => (
+                  <SelectItem key={h.hostId} value={h.hostId}>
+                    {h.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : null}
         </div>
         <div className="flex items-center gap-2">
           {selectedRow ? (
@@ -181,6 +246,15 @@ export function SwarmsSessionsPanel({
             </Button>
           ) : null}
         </div>
+      </div>
+
+      <div className="shrink-0 px-4 pt-3">
+        <ErrorBoundary fallback={null}>
+          <SwarmSessionsMetricStrip
+            projectId={projectId}
+            personaRefId={personaRefId}
+          />
+        </ErrorBoundary>
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden">

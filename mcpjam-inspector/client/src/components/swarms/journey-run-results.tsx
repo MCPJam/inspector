@@ -99,12 +99,20 @@ function GoalScoreHint({ score }: { score?: SessionGoalScore }) {
   );
 }
 
+/**
+ * One session chip: `<host> #<n> · <outcome>`. Kept `data-testid`
+ * "swarm-host-cell" from the old grid so outcome assertions carry over.
+ */
 export function SwarmHostCell({
+  hostLabel,
+  sessionIndex,
   outcome,
   goalScore,
   selected,
   onSelect,
 }: {
+  hostLabel: string;
+  sessionIndex: number;
   outcome: SwarmMatrixCellOutcome;
   goalScore?: SessionGoalScore;
   selected: boolean;
@@ -117,20 +125,21 @@ export function SwarmHostCell({
       onClick={onSelect}
       data-testid="swarm-host-cell"
       data-outcome={outcome}
+      aria-label={`Open session ${sessionIndex + 1} on ${hostLabel} (${meta.label})`}
       className={cn(
-        "flex min-h-[3.25rem] w-full flex-col items-start justify-center gap-1 rounded-md border px-2.5 py-2 text-left transition-colors",
+        "inline-flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-left text-[11px] transition-colors",
         "hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         selected
           ? "border-primary bg-primary/5"
           : "border-border/50 bg-background/60",
       )}
     >
-      <span className="inline-flex items-center gap-1.5">
-        <span className={cn("size-1.5 rounded-full", meta.dot)} />
-        <span className={cn("text-[11px] font-semibold", meta.text)}>
-          {meta.label}
-        </span>
+      <span className="font-medium text-foreground/80">{hostLabel}</span>
+      <span className="font-mono text-[10px] text-muted-foreground">
+        #{sessionIndex + 1}
       </span>
+      <span className={cn("size-1.5 rounded-full", meta.dot)} />
+      <span className={cn("font-semibold", meta.text)}>{meta.label}</span>
       <GoalScoreHint score={goalScore} />
     </button>
   );
@@ -182,94 +191,68 @@ export function SwarmSessionsMatrix({
   const rows = Math.max(1, sessionsPerHost);
 
   return (
-    <div
-      className="min-w-0 overflow-x-auto rounded-lg border border-border/60"
-      data-testid="swarm-sessions-matrix"
-    >
-      <table className="w-full min-w-[28rem] border-collapse text-left">
-        <thead>
-          <tr className="border-b border-border/50 bg-muted/20">
-            <th className="sticky left-0 z-[1] bg-muted/20 px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Session
-            </th>
-            {hostIds.map((hostId) => (
-              <th
-                key={hostId}
-                className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"
-              >
-                {hostName(hostId)}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {Array.from({ length: rows }, (_, sessionIndex) => (
-            <tr
-              key={sessionIndex}
-              className="border-b border-border/40 last:border-b-0"
-            >
-              <td className="sticky left-0 z-[1] bg-background/95 px-3 py-2 align-middle text-[11px] font-medium text-foreground/80">
-                #{sessionIndex + 1}
-              </td>
-              {hostIds.map((hostId) => {
-                const chatSessionId = swarmAttemptChatSessionId(
-                  runId,
-                  hostId,
-                  sessionIndex,
-                );
-                const convexSession = sessionByChatId.get(chatSessionId);
-                const liveStatus =
-                  stream.cellStatus[swarmCellKey(hostId, sessionIndex)];
-                let outcome = resolveSwarmCellOutcome({
-                  liveStatus,
-                  session: convexSession,
-                  runStatus,
-                });
-                // Unpersisted failures never appear in listSessionsByJourneyRun.
-                // When the host rollup reports failures and this slot has no
-                // Convex row (and isn't live-running), mark Fail so the matrix
-                // matches the run summary.
-                if (
-                  !convexSession &&
-                  (!liveStatus || liveStatus === "pending") &&
-                  runStatus !== "running"
-                ) {
-                  const hs = hostSummaries.find((h) => h.hostId === hostId);
-                  const listed = sessions.filter(
-                    (s) => s.hostId === hostId,
-                  ).length;
-                  const unlistedFailed = hs
-                    ? Math.min(hs.failed, Math.max(0, hs.total - listed))
-                    : 0;
-                  // Fill failed slots from the end of the session index range
-                  // so succeeded rows (usually early indices) stay Done.
-                  if (
-                    unlistedFailed > 0 &&
-                    sessionIndex >= sessionsPerHost - unlistedFailed
-                  ) {
-                    outcome = "failed";
-                  }
+    <div className="min-w-0" data-testid="swarm-sessions-matrix">
+      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        Sessions
+      </p>
+      <div className="flex flex-wrap gap-1.5">
+        {hostIds.flatMap((hostId) =>
+          Array.from({ length: rows }, (_, sessionIndex) => {
+            const chatSessionId = swarmAttemptChatSessionId(
+              runId,
+              hostId,
+              sessionIndex,
+            );
+            const convexSession = sessionByChatId.get(chatSessionId);
+            const liveStatus =
+              stream.cellStatus[swarmCellKey(hostId, sessionIndex)];
+            let outcome = resolveSwarmCellOutcome({
+              liveStatus,
+              session: convexSession,
+              runStatus,
+            });
+            // Unpersisted failures never appear in listSessionsByJourneyRun.
+            // When the host rollup reports failures and this slot has no
+            // Convex row (and isn't live-running), mark Fail so the chips
+            // match the run summary.
+            if (
+              !convexSession &&
+              (!liveStatus || liveStatus === "pending") &&
+              runStatus !== "running"
+            ) {
+              const hs = hostSummaries.find((h) => h.hostId === hostId);
+              const listed = sessions.filter((s) => s.hostId === hostId).length;
+              const unlistedFailed = hs
+                ? Math.min(hs.failed, Math.max(0, hs.total - listed))
+                : 0;
+              // Fill failed slots from the end of the session index range so
+              // succeeded slots (usually early indices) stay Done.
+              if (
+                unlistedFailed > 0 &&
+                sessionIndex >= sessionsPerHost - unlistedFailed
+              ) {
+                outcome = "failed";
+              }
+            }
+            const selected =
+              selection?.hostId === hostId &&
+              selection.sessionIndex === sessionIndex;
+            return (
+              <SwarmHostCell
+                key={`${hostId}:${sessionIndex}`}
+                hostLabel={hostName(hostId)}
+                sessionIndex={sessionIndex}
+                outcome={outcome}
+                goalScore={convexSession?.goalScore}
+                selected={selected}
+                onSelect={() =>
+                  onSelect({ hostId, sessionIndex, chatSessionId })
                 }
-                const selected =
-                  selection?.hostId === hostId &&
-                  selection.sessionIndex === sessionIndex;
-                return (
-                  <td key={hostId} className="px-1.5 py-1.5 align-middle">
-                    <SwarmHostCell
-                      outcome={outcome}
-                      goalScore={convexSession?.goalScore}
-                      selected={selected}
-                      onSelect={() =>
-                        onSelect({ hostId, sessionIndex, chatSessionId })
-                      }
-                    />
-                  </td>
-                );
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
+              />
+            );
+          }),
+        )}
+      </div>
     </div>
   );
 }
@@ -285,6 +268,7 @@ export function SwarmLiveStreamPane({
   fallbackTrace,
   runStatus,
   onOpenCompleted,
+  fillHeight = false,
 }: {
   selection: SwarmMatrixSelection | null;
   stream: JourneyRunStreamState;
@@ -293,6 +277,8 @@ export function SwarmLiveStreamPane({
   runStatus: string;
   /** Open the full ShareUsageThreadDetail for a completed Convex session. */
   onOpenCompleted: (session: JourneySessionRow) => void;
+  /** Fill the parent's height instead of capping the trace viewport. */
+  fillHeight?: boolean;
 }) {
   // Match playground default: Chat while the stream is live.
   const [viewMode, setViewMode] = useState<TraceViewMode>("chat");
@@ -311,7 +297,10 @@ export function SwarmLiveStreamPane({
   if (!selection) {
     return (
       <div
-        className="flex min-h-[12rem] items-center justify-center rounded-lg border border-dashed border-border/50 bg-muted/10 px-4 text-center text-[12px] text-muted-foreground"
+        className={cn(
+          "flex min-h-[12rem] items-center justify-center rounded-lg border border-dashed border-border/50 bg-muted/10 px-4 text-center text-[12px] text-muted-foreground",
+          fillHeight && "h-full",
+        )}
         data-testid="swarm-live-pane-empty"
       >
         Select a cell to watch the live stream
@@ -337,7 +326,10 @@ export function SwarmLiveStreamPane({
 
   return (
     <div
-      className="flex min-h-0 flex-col gap-2 rounded-lg border border-border/60 bg-background/80 p-3"
+      className={cn(
+        "flex min-h-0 flex-col gap-2 rounded-lg border border-border/60 bg-background/80 p-3",
+        fillHeight && "h-full flex-1",
+      )}
       data-testid="swarm-live-pane"
     >
       <div className="flex items-center justify-between gap-2">
@@ -385,7 +377,12 @@ export function SwarmLiveStreamPane({
 
       {/* TraceViewer (fillContent) must be a flex child; otherwise nested
           flex-1 / min-h-0 inside TraceTimeline collapse and paint empty. */}
-      <div className="flex min-h-[14rem] max-h-[min(70vh,36rem)] flex-1 flex-col overflow-hidden rounded-md border border-border/40">
+      <div
+        className={cn(
+          "flex min-h-[14rem] flex-1 flex-col overflow-hidden rounded-md border border-border/40",
+          !fillHeight && "max-h-[min(70vh,36rem)]",
+        )}
+      >
         {displayTrace ? (
           <TraceViewer
             trace={displayTrace}
