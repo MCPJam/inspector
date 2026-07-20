@@ -97,6 +97,20 @@ describe("buildHostsUiTools", () => {
     expect(destructive).toEqual(["ui_delete_host"]);
   });
 
+  it("marks every route-changing tool mayNavigate (delete drops the open host → /servers)", () => {
+    const navigating = buildHostsUiTools()
+      .filter((tool) => tool.mayNavigate === true)
+      .map((tool) => tool.name);
+    // set-servers is the only in-place mutation; the rest select/open/delete a
+    // host and can commit a route change, so they hand off before navigating.
+    expect(navigating).toEqual([
+      "ui_create_host",
+      "ui_open_host_editor",
+      "ui_delete_host",
+      "ui_duplicate_host",
+    ]);
+  });
+
   it("ships no one-shot host-config commit tool (config edits open the editor)", () => {
     const names = buildHostsUiTools().map((t) => t.name);
     expect(names).not.toContain("ui_update_host");

@@ -74,12 +74,15 @@ const {
   deleteHostMock,
   duplicateHostMock,
   setPreviewedHostIdMock,
+  loadState,
 } = vi.hoisted(() => ({
   createHostMock: vi.fn(),
   updateHostServersMock: vi.fn(),
   deleteHostMock: vi.fn(),
   duplicateHostMock: vi.fn(),
   setPreviewedHostIdMock: vi.fn(),
+  // Flip these to exercise the "lists still loading" gate.
+  loadState: { hostsLoading: false, serversUndefined: false },
 }));
 
 vi.mock("react-router", () => ({
@@ -91,7 +94,10 @@ vi.mock("@/hooks/use-previewed-client-id", () => ({
 }));
 
 vi.mock("@/hooks/useClients", () => ({
-  useHostList: () => ({ hosts: [hostA, hostB], isLoading: false }),
+  useHostList: () => ({
+    hosts: loadState.hostsLoading ? [] : [hostA, hostB],
+    isLoading: loadState.hostsLoading,
+  }),
   useHost: ({ hostId }: { hostId: string | null }) => ({
     host: hostId === "host-1" ? hostDetail : null,
     isLoading: false,
@@ -107,11 +113,22 @@ vi.mock("@/hooks/useClients", () => ({
 
 vi.mock("@/hooks/useProjects", () => ({
   useProjectServers: () => ({
-    servers: projectServers,
+    servers: loadState.serversUndefined ? undefined : projectServers,
     serversRecord: {},
-    isLoading: false,
-    hasServers: true,
+    isLoading: loadState.serversUndefined,
+    hasServers: !loadState.serversUndefined,
   }),
+  // Faithful to the real predicate for the ids these tests use: real ids pass,
+  // local/uuid placeholders are skipped.
+  shouldQueryProjectId: (id?: string | null) => {
+    const s = id?.trim().toLowerCase();
+    if (!s) return false;
+    return (
+      !s.startsWith("local_") &&
+      !s.startsWith("project_") &&
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(s)
+    );
+  },
 }));
 
 vi.mock("@/lib/host-compat/use-host-catalog", () => ({
@@ -224,6 +241,8 @@ function renderHosts(props?: {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  loadState.hostsLoading = false;
+  loadState.serversUndefined = false;
   createHostMock.mockResolvedValue({
     hostId: "host-new",
     hostConfigId: "cfg-new",
@@ -312,6 +331,8 @@ describe("HostsTab — agent bridge handlers", () => {
     expect(updateHostServersMock).toHaveBeenCalledWith({
       hostId: "host-1",
       serverIds: ["srv-1", "srv-2"],
+      // Complete replacement also clears optional attachments.
+      optionalServerIds: [],
     });
   });
 
@@ -392,10 +413,46 @@ describe("HostsTab — agent bridge handlers", () => {
           requireToolApproval: true,
           hasSystemPrompt: true,
           systemPromptLength: SYSTEM_PROMPT.length,
+          // Resolved names of the currently-attached servers (srv-1 → Asana),
+          // so an additive set-servers request is buildable from the snapshot.
+          servers: ["Asana"],
+          optionalServers: [],
         },
       },
     });
     // The prompt TEXT must never appear anywhere in the serialized snapshot.
     expect(JSON.stringify(snapshot)).not.toContain("SECRET internal");
+  });
+
+  it("locks the tools for a transient local project id (queries disabled)", async () => {
+    renderHosts({ projectId: "local_pending" });
+    const response = await dispatch({
+      type: "createHost",
+      payload: { name: "Whatever" },
+    });
+    expect(response).toMatchObject({
+      status: "error",
+      error: { code: "unsupported_in_mode" },
+    });
+    expect(createHostMock).not.toHaveBeenCalled();
+    const snapshot = await readSurfaceSnapshot("hosts");
+    expect(snapshot).toMatchObject({ ok: true, data: { gated: true } });
+  });
+
+  it("reports a retryable error while the host lists are still loading", async () => {
+    loadState.hostsLoading = true;
+    renderHosts();
+    const response = await dispatch({
+      type: "deleteHost",
+      payload: { host: "host-2" },
+    });
+    // Retryable, NOT a misleading "no host matches" — the list just isn't in yet.
+    expect(response).toMatchObject({
+      status: "error",
+      error: { code: "execution_failed" },
+    });
+    expect(deleteHostMock).not.toHaveBeenCalled();
+    const snapshot = await readSurfaceSnapshot("hosts");
+    expect(snapshot).toMatchObject({ ok: true, data: { loading: true } });
   });
 });

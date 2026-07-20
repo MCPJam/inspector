@@ -8,7 +8,7 @@ import { ConnectViewHeader } from "./hosts/ConnectViewHeader";
 import { SNAPPY_RAIL } from "./hosts/transition-tokens";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useHost, useHostList, useHostMutations } from "@/hooks/useClients";
-import { useProjectServers } from "@/hooks/useProjects";
+import { useProjectServers, shouldQueryProjectId } from "@/hooks/useProjects";
 import { buildHostComparePath, routePaths } from "@/lib/app-navigation";
 import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -152,12 +152,30 @@ export function HostsTab({
   // surface, so the group can't be mis-scoped. Handlers resolve the host (and
   // server names) from the payload against the live host list / project
   // servers and call the SAME useHostMutations callbacks the UI uses.
-  const agentOperable = isAuthenticated && Boolean(projectId);
+  // Gate on the SAME predicate the host/server queries use, not `Boolean(id)`:
+  // a transient LOCAL project id (UUID / `local_`/`project_` placeholder) is
+  // truthy but skips the project-scoped queries, so the lists stay empty and a
+  // create/lookup would hit an invalid mutation or report a real host as
+  // unknown. `shouldQueryProjectId` keeps the group locked until a real Convex
+  // id is available.
+  const projectReady = isAuthenticated && shouldQueryProjectId(projectId);
+  // Even with a real id, the lists resolve asynchronously: a same-turn call
+  // right after ui_navigate would otherwise snapshot an empty roster or reject
+  // an existing host/server as "no match". Distinguish "still loading"
+  // (retryable) from "genuinely unknown".
+  const agentDataLoading =
+    projectReady && (isHostListLoading || projectServers === undefined);
   const requireAgentOperable = () => {
-    if (!agentOperable) {
+    if (!projectReady) {
       throw createInspectorCommandClientError(
         "unsupported_in_mode",
         "The Hosts tools are locked here — sign in and select a project first.",
+      );
+    }
+    if (agentDataLoading) {
+      throw createInspectorCommandClientError(
+        "execution_failed",
+        "The Hosts data is still loading — try again in a moment.",
       );
     }
   };
@@ -309,7 +327,14 @@ export function HostsTab({
         }
         const serverIds = resolveServerIds(names);
         try {
-          await updateHostServers({ hostId: host.hostId, serverIds });
+          // The tool contract is a COMPLETE replacement ("[] detaches all"), so
+          // clear optional attachments too — otherwise pre-existing optional
+          // servers stay attached and selectable, contradicting the promise.
+          await updateHostServers({
+            hostId: host.hostId,
+            serverIds,
+            optionalServerIds: [],
+          });
           return {
             status: "host_servers_set",
             hostId: host.hostId,
@@ -378,13 +403,29 @@ export function HostsTab({
     // counts only. The system prompt is user content — reported as a boolean +
     // length, NEVER its text. No tokens, no keys, no PII.
     snapshot: () => {
-      if (!agentOperable) {
+      if (!projectReady) {
         return {
           gated: true,
           reason: "Sign in and select a project to use the Hosts tools.",
         };
       }
+      if (agentDataLoading) {
+        return {
+          loading: true,
+          note: "Host and server lists are still loading; ask again in a moment.",
+        };
+      }
       const cfg = focusedHost?.config ?? null;
+      // Resolve attached server IDS → names so the agent can build a correct
+      // COMPLETE list for ui_set_host_servers (which fully replaces). Names
+      // only — same data already surfaced in `projectServers`, no ids/secrets.
+      const serverNameById = new Map(
+        (projectServers ?? []).map((s) => [s._id, s.name] as const),
+      );
+      const namesFor = (ids: string[]) =>
+        ids
+          .map((id) => serverNameById.get(id))
+          .filter((n): n is string => Boolean(n));
       return {
         viewPhase: selectedHostId ? "host" : "servers",
         selectedHostId: selectedHostId ?? null,
@@ -410,6 +451,11 @@ export function HostsTab({
                   cfg.progressiveToolDiscovery ?? null,
                 serverCount: cfg.serverIds.length,
                 optionalServerCount: cfg.optionalServerIds.length,
+                // Resolved names of the currently-attached servers, so an
+                // additive request ("also attach GitHub") can be built into a
+                // complete list from the snapshot alone.
+                servers: namesFor(cfg.serverIds),
+                optionalServers: namesFor(cfg.optionalServerIds),
                 builtInToolCount: cfg.builtInToolIds?.length ?? 0,
                 hasComputer: Boolean(cfg.computer),
                 hasHarness: Boolean(cfg.harness),

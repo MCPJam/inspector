@@ -197,6 +197,11 @@ export function buildHostsUiTools(): UiToolDefinition[] {
         idempotentHint: true,
         openWorldHint: false,
       },
+      // Deleting the currently-open host drops the selection, which navigates
+      // `/hosts/:hostId` → `/servers`. Like create/duplicate/editor, this must
+      // be navigation-capable so a route-bound chat hands off to the side panel
+      // BEFORE the route commits (else the turn's tool output is lost).
+      mayNavigate: true,
       execute: async (args) => {
         const host = asOptionalString(args.host);
         if (!host) {
