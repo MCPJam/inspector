@@ -1,6 +1,6 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProductUpdatesRow } from "../ProductUpdatesRow";
 
 const mockUseConvexAuth = vi.fn();
@@ -46,6 +46,10 @@ vi.mock("../ProductUpdateExpandedPanel", () => ({
 }));
 
 describe("ProductUpdatesRow", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockUseConvexAuth.mockReturnValue({ isAuthenticated: true });
@@ -91,5 +95,20 @@ describe("ProductUpdatesRow", () => {
     fireEvent.click(screen.getByRole("button", { name: "View past updates" }));
     expect(screen.getByText("Active update")).toBeInTheDocument();
     expect(screen.getByText("Old dismissed update")).toBeInTheDocument();
+  });
+
+  it("shows an update when its scheduled publish time arrives", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(Date.UTC(2026, 5, 3, 23, 59, 59)));
+
+    render(<ProductUpdatesRow />);
+
+    expect(screen.getByText("You're all caught up.")).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(1001);
+    });
+
+    expect(screen.getByText("Active update")).toBeInTheDocument();
   });
 });

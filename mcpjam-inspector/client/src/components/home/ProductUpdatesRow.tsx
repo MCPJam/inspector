@@ -100,6 +100,7 @@ export function ProductUpdatesRow() {
   const [showAll, setShowAll] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
   const initRef = useRef(false);
 
   useEffect(() => {
@@ -111,13 +112,32 @@ export function ProductUpdatesRow() {
     });
   }, [isAuthenticated, initialize]);
 
+  useEffect(() => {
+    if (updateState === undefined) return;
+
+    const nextPublishAt = PRODUCT_UPDATES.reduce<number | undefined>(
+      (next, update) => {
+        if (update.archived || update.publishAt <= now) return next;
+        return next === undefined
+          ? update.publishAt
+          : Math.min(next, update.publishAt);
+      },
+      undefined
+    );
+    if (nextPublishAt === undefined) return;
+
+    const timeout = window.setTimeout(
+      () => setNow(Date.now()),
+      Math.max(nextPublishAt - now, 0) + 1
+    );
+    return () => window.clearTimeout(timeout);
+  }, [now, updateState]);
+
   const updates = useMemo(() => {
     if (updateState === undefined) return undefined;
 
     const dismissedSlugs = new Set(updateState.dismissedSlugs);
     const initializedAt = updateState.initializedAt ?? 0;
-    const now = Date.now();
-
     return [...PRODUCT_UPDATES]
       .filter((update) => update.publishAt <= now && !update.archived)
       .sort((a, b) => b.publishAt - a.publishAt)
@@ -129,7 +149,7 @@ export function ProductUpdatesRow() {
           isNew: update.publishAt > initializedAt && !dismissed,
         };
       });
-  }, [updateState]);
+  }, [now, updateState]);
 
   const handleDismiss = useCallback(
     async (slug: string) => {

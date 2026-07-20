@@ -63,7 +63,9 @@ describe("ProductUpdateExpandedPanel", () => {
       />
     );
 
-    expect(container.querySelector("video")).not.toHaveAttribute("controls");
+    const video = container.querySelector("video");
+    expect(video).not.toHaveAttribute("controls");
+    expect(video).toHaveClass("inset-0");
 
     rerender(
       <ProductUpdateExpandedPanel

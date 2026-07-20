@@ -36,11 +36,11 @@ function getPanelLayout(viewWidth: number, viewHeight: number) {
 function ExpandedVideo({ entry }: { entry: ProductUpdateEntry }) {
   if (entry.previewVideoUrl) {
     return (
-      <div className="aspect-video w-full overflow-hidden rounded-lg bg-black">
+      <div className="relative aspect-video w-full overflow-hidden rounded-lg">
         <video
           src={entry.previewVideoUrl}
           poster={entry.videoPosterUrl}
-          className="h-full w-full object-cover"
+          className="absolute inset-0 block h-full w-full object-cover"
           autoPlay
           loop
           muted
