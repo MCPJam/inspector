@@ -6,8 +6,8 @@
  * when run, fans out one single-host session per (host × sessionsPerHost).
  *
  * Top-level views (ViewModeSelector):
- *   - Journeys — persona detail, journey cards, run matrix / live stream
- *   - Sessions — flat chatSessions browser for the selected persona
+ *   - Personas — persona sidebar, journey cards, run matrix / live stream
+ *   - Journeys — flat chatSessions browser with top-bar persona filter
  *     (`listSessionsByPersona` + shared ShareUsageThreadList/Detail)
  *
  * Consumes the project-scoped backend: personas:*, journeys:*, journeyRuns:*.
@@ -305,8 +305,8 @@ export function SwarmsTab({
   );
   type SwarmViewMode = "journeys" | "sessions";
   const SWARM_VIEW_OPTIONS = [
-    { value: "journeys" as const, label: "Journeys" },
-    { value: "sessions" as const, label: "Sessions" },
+    { value: "journeys" as const, label: "Personas" },
+    { value: "sessions" as const, label: "Journeys" },
   ];
   // Session deep-links open the flat Sessions browser; run-only links stay on
   // Journeys so the matrix / live stream can restore.
@@ -705,151 +705,153 @@ export function SwarmsTab({
         </div>
       </div>
       <div className="flex min-h-0 flex-1">
-        {/* Personas */}
-        <aside className="flex w-72 shrink-0 flex-col border-r">
-          <div className="flex items-center justify-between border-b px-4 py-3">
-            <h2 className="text-sm font-semibold">Personas</h2>
-            <NewPersonaDialog
-              onCreate={async (draft) => {
-                const row = await createPersona({ projectId, ...draft } as any);
-                setSelectedPersonaId(row._id);
-              }}
-            />
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            {personas === undefined ? (
-              <div className="p-4 text-sm text-muted-foreground">Loading…</div>
-            ) : personas.length === 0 ? (
-              <div className="p-4 text-sm text-muted-foreground">
-                No personas yet. Create one to get started.
+        {viewMode === "journeys" ? (
+          <>
+            {/* Personas sidebar — Personas tab only */}
+            <aside className="flex w-72 shrink-0 flex-col border-r">
+              <div className="flex items-center justify-between border-b px-4 py-3">
+                <h2 className="text-sm font-semibold">Personas</h2>
+                <NewPersonaDialog
+                  onCreate={async (draft) => {
+                    const row = await createPersona({ projectId, ...draft } as any);
+                    setSelectedPersonaId(row._id);
+                  }}
+                />
               </div>
-            ) : (
-              personas.map((p) => {
-                const selected = p._id === selectedPersonaId;
-                return (
-                  <button
-                    key={p._id}
-                    type="button"
-                    onClick={() => setSelectedPersonaId(p._id)}
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                {personas === undefined ? (
+                  <div className="p-4 text-sm text-muted-foreground">Loading…</div>
+                ) : personas.length === 0 ? (
+                  <div className="p-4 text-sm text-muted-foreground">
+                    No personas yet. Create one to get started.
+                  </div>
+                ) : (
+                  personas.map((p) => {
+                    const selected = p._id === selectedPersonaId;
+                    return (
+                      <button
+                        key={p._id}
+                        type="button"
+                        onClick={() => setSelectedPersonaId(p._id)}
+                        className={cn(
+                          "flex w-full items-center gap-3 border-b px-4 py-3 text-left hover:bg-muted/50",
+                          selected && "bg-muted",
+                        )}
+                      >
+                        <PersonaPixelAvatar
+                          seed={p._id}
+                          shapeIndex={p.avatarShape}
+                          paletteIndex={p.avatarPalette}
+                          size="md"
+                          active={selected}
+                          state={runningSet.has(p._id) ? "running" : "idle"}
+                        />
+                        <span className="flex min-w-0 flex-col items-start gap-0.5">
+                          <span className="truncate text-sm font-medium">
+                            {p.name}
+                          </span>
+                          <span className="truncate text-xs text-muted-foreground">
+                            {p.role}
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </aside>
+
+            {/* Persona detail + journey cards */}
+            <main className="min-w-0 flex-1 overflow-y-auto">
+              {!selectedPersona ? (
+                <JourneyNetworkBackdrop />
+              ) : (
+                <div className="mx-auto max-w-3xl px-8 py-6">
+                  <PersonaDetailHeader
+                    persona={selectedPersona}
+                    running={runningSet.has(selectedPersona._id)}
+                    onSave={(patch) => savePersonaField(selectedPersona._id, patch)}
+                    onDelete={async () => {
+                      if (
+                        !window.confirm(
+                          `Delete persona "${selectedPersona.name}"? Its journeys are hidden but historical runs are kept.`,
+                        )
+                      ) {
+                        return;
+                      }
+                      await deletePersona({
+                        personaRefId: selectedPersona._id,
+                      } as any);
+                      setSelectedPersonaId(null);
+                    }}
+                  />
+
+                  <div
                     className={cn(
-                      "flex w-full items-center gap-3 border-b px-4 py-3 text-left hover:bg-muted/50",
-                      selected && "bg-muted",
+                      "mb-3",
+                      journeyFormOpen
+                        ? "space-y-2"
+                        : "flex items-center justify-between",
                     )}
                   >
-                    <PersonaPixelAvatar
-                      seed={p._id}
-                      shapeIndex={p.avatarShape}
-                      paletteIndex={p.avatarPalette}
-                      size="md"
-                      active={selected}
-                      state={runningSet.has(p._id) ? "running" : "idle"}
+                    <h3 className="text-sm font-semibold">Journeys</h3>
+                    <NewJourneyButton
+                      projectId={projectId}
+                      hosts={hosts ?? []}
+                      open={journeyFormOpen}
+                      onOpenChange={(o) => {
+                        setJourneyFormOpen(o);
+                        // Drop the agent prefill on close so a later manual open
+                        // starts blank.
+                        if (!o) setJourneyGoalSeed("");
+                      }}
+                      goalSeed={journeyGoalSeed}
+                      onCreate={async (draft) => {
+                        await createJourney({
+                          projectId,
+                          personaRefId: selectedPersona._id,
+                          ...draft,
+                        } as any);
+                      }}
                     />
-                    <span className="flex min-w-0 flex-col items-start gap-0.5">
-                      <span className="truncate text-sm font-medium">
-                        {p.name}
-                      </span>
-                      <span className="truncate text-xs text-muted-foreground">
-                        {p.role}
-                      </span>
-                    </span>
-                  </button>
-                );
-              })
-            )}
-          </div>
-        </aside>
+                  </div>
 
-        {viewMode === "sessions" ? (
+                  {journeys === undefined ? (
+                    <div className="text-sm text-muted-foreground">Loading…</div>
+                  ) : journeys.length === 0 ? (
+                    <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+                      No journeys yet. A journey is a goal this persona pursues
+                      across one or more hosts.
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-3">
+                      {journeys.map((j) => (
+                        <JourneyCard
+                          key={j._id}
+                          journey={j}
+                          onLaunch={launchJourney}
+                          hosts={hosts ?? []}
+                          isAuthenticated={isAuthenticated}
+                          projectId={projectId}
+                          initialRunId={deepLink.runId}
+                          initialThreadId={deepLink.threadId}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </main>
+          </>
+        ) : (
           <main className="min-w-0 flex-1 overflow-hidden">
             <SwarmsSessionsPanel
               projectId={projectId}
-              personaRefId={selectedPersona?._id ?? null}
-              personaName={selectedPersona?.name}
-              onClearPersonaFilter={() => setSelectedPersonaId(null)}
+              personas={personas ?? []}
+              personaRefId={selectedPersonaId}
+              onPersonaRefIdChange={setSelectedPersonaId}
               initialThreadId={deepLink.threadId}
             />
-          </main>
-        ) : (
-          /* Journeys for the selected persona */
-          <main className="min-w-0 flex-1 overflow-y-auto">
-            {!selectedPersona ? (
-              <JourneyNetworkBackdrop />
-            ) : (
-              <div className="mx-auto max-w-3xl px-8 py-6">
-                <PersonaDetailHeader
-                  persona={selectedPersona}
-                  running={runningSet.has(selectedPersona._id)}
-                  onSave={(patch) => savePersonaField(selectedPersona._id, patch)}
-                  onDelete={async () => {
-                    if (
-                      !window.confirm(
-                        `Delete persona "${selectedPersona.name}"? Its journeys are hidden but historical runs are kept.`,
-                      )
-                    ) {
-                      return;
-                    }
-                    await deletePersona({
-                      personaRefId: selectedPersona._id,
-                    } as any);
-                    setSelectedPersonaId(null);
-                  }}
-                />
-
-                <div
-                  className={cn(
-                    "mb-3",
-                    journeyFormOpen
-                      ? "space-y-2"
-                      : "flex items-center justify-between",
-                  )}
-                >
-                  <h3 className="text-sm font-semibold">Journeys</h3>
-                  <NewJourneyButton
-                    projectId={projectId}
-                    hosts={hosts ?? []}
-                    open={journeyFormOpen}
-                    onOpenChange={(o) => {
-                      setJourneyFormOpen(o);
-                      // Drop the agent prefill on close so a later manual open
-                      // starts blank.
-                      if (!o) setJourneyGoalSeed("");
-                    }}
-                    goalSeed={journeyGoalSeed}
-                    onCreate={async (draft) => {
-                      await createJourney({
-                        projectId,
-                        personaRefId: selectedPersona._id,
-                        ...draft,
-                      } as any);
-                    }}
-                  />
-                </div>
-
-                {journeys === undefined ? (
-                  <div className="text-sm text-muted-foreground">Loading…</div>
-                ) : journeys.length === 0 ? (
-                  <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-                    No journeys yet. A journey is a goal this persona pursues
-                    across one or more hosts.
-                  </div>
-                ) : (
-                  <div className="flex flex-col gap-3">
-                    {journeys.map((j) => (
-                      <JourneyCard
-                        key={j._id}
-                        journey={j}
-                        onLaunch={launchJourney}
-                        hosts={hosts ?? []}
-                        isAuthenticated={isAuthenticated}
-                        projectId={projectId}
-                        initialRunId={deepLink.runId}
-                        initialThreadId={deepLink.threadId}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
           </main>
         )}
       </div>

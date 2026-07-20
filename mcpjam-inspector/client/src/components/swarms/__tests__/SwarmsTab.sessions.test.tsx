@@ -10,9 +10,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * and assert the actual (name, args) the component dispatches, then assert the
  * row's `id` is what the viewer opens.
  *
- * The top-level Sessions tab defaults to `journeyRuns:listSessionsByProject`
+ * The top-level Journeys tab defaults to `journeyRuns:listSessionsByProject`
  * (`{ projectId }`) and narrows to `listSessionsByPersona` (`{ personaRefId }`)
- * when a persona filter is applied — same `id`-keyed DTO.
+ * when a persona filter is applied via the top bar — same `id`-keyed DTO.
  */
 
 const persona = {
@@ -237,6 +237,20 @@ async function selectFirstDoneCell() {
   fireEvent.click(doneCell!);
 }
 
+function openJourneysTab() {
+  fireEvent.click(
+    within(screen.getByLabelText("Swarm view")).getByRole("button", {
+      name: /^journeys$/i,
+    }),
+  );
+}
+
+async function selectPersonaFilter(name: string) {
+  const filter = await screen.findByTestId("swarms-sessions-persona-filter");
+  fireEvent.click(filter);
+  fireEvent.click(await screen.findByRole("option", { name }));
+}
+
 describe("SwarmsTab — sessions-by-run query contract", () => {
   it("queries listSessionsByJourneyRun with { journeyRunId } and opens the viewer on the row's `id`", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
@@ -337,10 +351,10 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
   });
 });
 
-describe("SwarmsTab — top-level Sessions view", () => {
+describe("SwarmsTab — top-level Journeys view", () => {
   it("defaults to listSessionsByProject and opens the viewer on `id`", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    fireEvent.click(screen.getByRole("button", { name: /^sessions$/i }));
+    openJourneysTab();
 
     await waitFor(() => {
       const call = paginatedCalls.find(
@@ -351,7 +365,9 @@ describe("SwarmsTab — top-level Sessions view", () => {
     });
 
     const panel = await screen.findByTestId("swarms-sessions-panel");
-    expect(within(panel).getByText("All personas")).toBeInTheDocument();
+    expect(
+      within(panel).getByTestId("swarms-sessions-persona-filter"),
+    ).toHaveTextContent("All personas");
 
     // Select via preview text — name appears twice (title + persona badge).
     fireEvent.click(within(panel).getByText("hello"));
@@ -365,9 +381,8 @@ describe("SwarmsTab — top-level Sessions view", () => {
 
   it("narrows to listSessionsByPersona when a persona is selected, and clears back to all", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    fireEvent.click(screen.getByRole("button", { name: /^sessions$/i }));
-    // Sidebar row (role=tester) — not the list-card title which also says Persona One.
-    fireEvent.click(screen.getByText("tester"));
+    openJourneysTab();
+    await selectPersonaFilter("Persona One");
 
     await waitFor(() => {
       const call = paginatedCalls.find(
@@ -377,14 +392,11 @@ describe("SwarmsTab — top-level Sessions view", () => {
       expect(call!.args).toEqual({ personaRefId: "persona-1" });
     });
 
-    const filterChip = await screen.findByTestId(
-      "swarms-sessions-persona-filter",
-    );
-    expect(filterChip).toHaveTextContent("Persona One");
-    fireEvent.click(filterChip);
+    await selectPersonaFilter("All personas");
 
     await waitFor(() => {
-      expect(screen.getByText("All personas")).toBeInTheDocument();
+      const filter = screen.getByTestId("swarms-sessions-persona-filter");
+      expect(filter).toHaveTextContent("All personas");
       const projectCalls = paginatedCalls.filter(
         (c) => c.name === "journeyRuns:listSessionsByProject",
       );

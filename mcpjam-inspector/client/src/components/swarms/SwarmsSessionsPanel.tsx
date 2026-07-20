@@ -1,18 +1,24 @@
 /**
  * Flat Sessions browser for Swarms — list + detail over project `chatSessions`
- * with `sourceType: "swarm"`. Defaults to all personas; selecting a persona in
- * the sidebar (or clearing via "All personas") narrows to
- * `listSessionsByPersona`. Mirrors the Chatboxes Sessions layout.
+ * with `sourceType: "swarm"`. Defaults to all personas; the top-bar persona
+ * picker narrows to `listSessionsByPersona`. Mirrors the Chatboxes Sessions layout.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePaginatedQuery } from "convex/react";
-import { MessageSquare, X } from "lucide-react";
+import { MessageSquare } from "lucide-react";
 import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { Button } from "@mcpjam/design-system/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@mcpjam/design-system/select";
 import { ShareUsageThreadList } from "@/components/connection/share-usage/ShareUsageThreadList";
 import { ShareUsageThreadDetail } from "@/components/connection/share-usage/ShareUsageThreadDetail";
 import { ConvertSwarmSessionDialog } from "@/components/swarms/convert-swarm-session-dialog";
@@ -31,21 +37,21 @@ import { getShareableAppOrigin } from "@/lib/chatbox-session";
 
 export function SwarmsSessionsPanel({
   projectId,
+  personas,
   personaRefId,
-  personaName,
-  onClearPersonaFilter,
+  onPersonaRefIdChange,
   initialThreadId,
 }: {
   projectId: string;
+  personas: ReadonlyArray<{ _id: string; name: string; role?: string }>;
   /** When set, narrows the list to that persona; `null` = all project sessions. */
   personaRefId: string | null;
-  personaName?: string;
-  /** Clear the persona filter back to "all sessions". */
-  onClearPersonaFilter?: () => void;
+  onPersonaRefIdChange: (personaRefId: string | null) => void;
   /** Deep-link session (`chatSessions` `_id`) to preselect. */
   initialThreadId?: string | null;
 }) {
   const filtered = Boolean(personaRefId);
+  const personaName = personas.find((p) => p._id === personaRefId)?.name;
   const queryName = filtered
     ? SWARM_QUERIES.listSessionsByPersona
     : SWARM_QUERIES.listSessionsByProject;
@@ -119,31 +125,37 @@ export function SwarmsSessionsPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="swarms-sessions-panel">
-      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/40 px-4 py-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <p className="truncate text-xs text-muted-foreground">
+      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/40 px-4 py-2.5">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <p className="shrink-0 truncate text-xs text-muted-foreground">
             {status === "LoadingFirstPage"
               ? "Loading sessions…"
               : `${threads.length}${status === "CanLoadMore" ? "+" : ""} session${
                   threads.length === 1 ? "" : "s"
                 }`}
           </p>
-          {filtered && personaName ? (
-            <button
-              type="button"
+          <Select
+            value={personaRefId ?? "all"}
+            onValueChange={(value) =>
+              onPersonaRefIdChange(value === "all" ? null : value)
+            }
+          >
+            <SelectTrigger
               data-testid="swarms-sessions-persona-filter"
-              className="inline-flex max-w-[12rem] items-center gap-1 truncate rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-foreground hover:bg-muted/80"
-              onClick={() => onClearPersonaFilter?.()}
-              title="Clear persona filter"
+              className="h-8 w-[min(100%,12rem)] text-xs"
+              aria-label="Filter sessions by persona"
             >
-              <span className="truncate">{personaName}</span>
-              <X className="size-3 shrink-0 opacity-60" aria-hidden />
-            </button>
-          ) : (
-            <span className="text-[11px] text-muted-foreground/70">
-              All personas
-            </span>
-          )}
+              <SelectValue placeholder="All personas" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All personas</SelectItem>
+              {personas.map((persona) => (
+                <SelectItem key={persona._id} value={persona._id}>
+                  {persona.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         <div className="flex items-center gap-2">
           {selectedRow ? (
@@ -201,8 +213,8 @@ export function SwarmsSessionsPanel({
                     </p>
                     {!filtered && threads.length === 0 ? (
                       <p className="mt-1 text-xs text-muted-foreground/70">
-                        Run a journey to generate sessions, or pick a persona to
-                        filter.
+                        Run a journey to generate sessions, or filter by persona
+                        above.
                       </p>
                     ) : null}
                   </div>
