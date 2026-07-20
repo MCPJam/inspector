@@ -11,6 +11,7 @@ import {
   buildJwtBearerRequest,
   buildXaaMintArgs,
   resolveXaaIssuer,
+  scopeXaaIssuerForAuthorizedProject,
 } from "../xaa-mint.js";
 
 /** Minimal hono Context stub for the issuer derivation. */
@@ -86,6 +87,30 @@ describe("resolveXaaIssuer", () => {
   });
 });
 
+describe("scopeXaaIssuerForAuthorizedProject", () => {
+  it("uses the authorized org scope for signed-in hosted projects", () => {
+    expect(
+      scopeXaaIssuerForAuthorizedProject({
+        issuer: "https://app.mcpjam.com/api/web/xaa",
+        hostedMode: true,
+        organizationId: "org-1",
+        isAnonymous: false,
+      })
+    ).toBe("https://app.mcpjam.com/api/web/xaa/o/org-1");
+  });
+
+  it("uses the visibly anonymous issuer for hosted guest projects", () => {
+    expect(
+      scopeXaaIssuerForAuthorizedProject({
+        issuer: "https://app.mcpjam.com/api/web/xaa",
+        hostedMode: true,
+        organizationId: "org guest",
+        isAnonymous: true,
+      })
+    ).toBe("https://app.mcpjam.com/api/web/xaa/g/org%20guest");
+  });
+});
+
 describe("buildXaaMintArgs", () => {
   const base = {
     issuer: "https://staging.mcpjam.com/api/web/xaa",
@@ -130,6 +155,32 @@ describe("buildXaaMintArgs", () => {
     });
     expect(args.subject).toBe("alice@corp.com");
     expect(args.email).toBe("alice@corp.com");
+  });
+
+  it("threads the authorized CIMD strategy without reading it from the browser", () => {
+    const provider = {
+      getClientIdMetadataUrl: () => "https://app.mcpjam.com/cimd/key",
+      signClientAssertion: () => "assertion",
+    };
+    const args = buildXaaMintArgs({
+      ...base,
+      hostedMode: true,
+      organizationId: "org-1",
+      isAnonymous: false,
+      confidentialCimdProvider: provider,
+      serverConfig: {
+        url: "https://mcp.example.com/mcp",
+        xaaAuthzIssuer: "https://auth.example.com",
+        registrationMode: "cimd",
+        xaaClientAuth: "private_key_jwt",
+      },
+    });
+
+    expect(args.issuer).toBe("https://staging.mcpjam.com/api/web/xaa/o/org-1");
+    expect(args.registrationMode).toBe("cimd");
+    expect(args.xaaClientAuth).toBe("private_key_jwt");
+    expect(args.explicitIssuer).toBe("https://auth.example.com");
+    expect(args.confidentialCimdProvider).toBe(provider);
   });
 });
 

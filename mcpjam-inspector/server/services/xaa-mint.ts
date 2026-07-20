@@ -6,9 +6,16 @@
 import type { Context } from "hono";
 import {
   buildJwtBearerBody,
+  buildXaaJwtBearerRequest,
   buildJwtBearerRequest,
+  DEFAULT_XAA_CLIENT_AUTH,
   getXAAIssuerUrl,
   issueIdJag,
+  normalizeXaaClientAuth,
+  XAA_DEBUG_CLIENT_ID_METADATA_URL,
+  type ConfidentialCimdProvider,
+  type RegistrationMode,
+  type XaaClientAuthMethod,
   type XaaTokenEndpointAuthMethod,
 } from "@mcpjam/sdk";
 import {
@@ -40,6 +47,7 @@ export interface ResolvedServerTarget {
   resource?: string;
   clientId?: string;
   clientSecret?: string;
+  clientIdMetadataDocumentSupported: boolean;
 }
 
 type ResolveServerSecretFn = (args: {
@@ -110,7 +118,11 @@ export async function discoverServerTargetTokenEndpoint(
     allowPathScopedIssuer?: boolean;
   },
   httpsOnly: boolean
-): Promise<{ issuer: string; tokenEndpoint: string }> {
+): Promise<{
+  issuer: string;
+  tokenEndpoint: string;
+  clientIdMetadataDocumentSupported: boolean;
+}> {
   let issuer = args.explicitIssuer;
   if (!issuer && args.resource) {
     issuer = await discoverIssuerFromResourceMetadata(args.resource, httpsOnly);
@@ -206,6 +218,8 @@ export async function discoverServerTargetTokenEndpoint(
         return {
           issuer: verdict.issuer ?? issuer,
           tokenEndpoint: verdict.tokenEndpoint,
+          clientIdMetadataDocumentSupported:
+            verdict.clientIdMetadataDocumentSupported,
         };
       }
     }
@@ -216,6 +230,38 @@ export async function discoverServerTargetTokenEndpoint(
     ErrorCode.NOT_FOUND,
     "Couldn't discover an authorization server. Set the issuer in Configure Server to Test."
   );
+}
+
+async function resolveAuthorizedServerTarget(args: {
+  resource?: string;
+  explicitIssuer?: string;
+  allowPathScopedIssuer?: boolean;
+  httpsOnly: boolean;
+}): Promise<ResolvedServerTarget> {
+  if (!args.explicitIssuer && !args.resource) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "The server has no URL or issuer to discover an authorization server from"
+    );
+  }
+
+  const discovered = await discoverServerTargetTokenEndpoint(
+    {
+      resource: args.resource,
+      explicitIssuer: args.explicitIssuer,
+      allowPathScopedIssuer: args.allowPathScopedIssuer,
+    },
+    args.httpsOnly
+  );
+
+  return {
+    tokenEndpoint: discovered.tokenEndpoint,
+    authzIssuer: discovered.issuer,
+    resource: args.resource,
+    clientIdMetadataDocumentSupported:
+      discovered.clientIdMetadataDocumentSupported,
+  };
 }
 
 // Resolve a server target's secret AND token endpoint entirely server-side.
@@ -252,27 +298,15 @@ export async function resolveServerTarget(deps: {
     clientIp: deps.clientIp,
   });
 
-  if (!resolved.xaaAuthzIssuer && !resolved.serverUrl) {
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      "The server has no URL or issuer to discover an authorization server from"
-    );
-  }
-
-  const discovered = await discoverServerTargetTokenEndpoint(
-    {
-      resource: resolved.serverUrl ?? undefined,
-      explicitIssuer: resolved.xaaAuthzIssuer ?? undefined,
-      allowPathScopedIssuer: resolved.xaaAllowPathScopedIssuer === true,
-    },
-    deps.httpsOnly
-  );
+  const target = await resolveAuthorizedServerTarget({
+    resource: resolved.serverUrl ?? undefined,
+    explicitIssuer: resolved.xaaAuthzIssuer ?? undefined,
+    allowPathScopedIssuer: resolved.xaaAllowPathScopedIssuer === true,
+    httpsOnly: deps.httpsOnly,
+  });
 
   return {
-    tokenEndpoint: discovered.tokenEndpoint,
-    authzIssuer: discovered.issuer,
-    resource: resolved.serverUrl ?? undefined,
+    ...target,
     clientId: resolved.clientId ?? undefined,
     clientSecret: resolved.clientSecret ?? undefined,
   };
@@ -316,8 +350,31 @@ export function getIssuerForRequest(
 export interface XaaMintServerConfig {
   url?: string;
   oauthScopes?: string[];
+  xaaAuthzIssuer?: string;
+  xaaAllowPathScopedIssuer?: boolean;
   xaaSubject?: string;
   xaaEmail?: string;
+  registrationMode?: RegistrationMode;
+  xaaClientAuth?: XaaClientAuthMethod;
+}
+
+export function resolveXaaConnectRegistrationMode(
+  mode: RegistrationMode | undefined
+): "preregistered" | "cimd" | "dcr" {
+  return mode === "cimd" || mode === "dcr" ? mode : "preregistered";
+}
+
+export function scopeXaaIssuerForAuthorizedProject(args: {
+  issuer: string;
+  hostedMode: boolean;
+  organizationId?: string | null;
+  isAnonymous?: boolean;
+}): string {
+  if (!args.hostedMode || !args.organizationId) return args.issuer;
+  const segment = args.isAnonymous ? "g" : "o";
+  return `${args.issuer.replace(/\/+$/, "")}/${segment}/${encodeURIComponent(
+    args.organizationId
+  )}`;
 }
 
 /**
@@ -347,18 +404,31 @@ export function buildXaaMintArgs(args: {
   serverId: string;
   projectId: string;
   bearerToken: string;
-  resolveServerSecret: ResolveServerSecretFn;
+  resolveServerSecret?: ResolveServerSecretFn;
+  organizationId?: string | null;
+  isAnonymous?: boolean;
+  confidentialCimdProvider?: ConfidentialCimdProvider;
 }): Parameters<typeof mintXaaAccessToken>[0] {
   const sc = args.serverConfig;
   return {
     resolveServerSecret: args.resolveServerSecret,
     // Hosted targets are always remote HTTPS; off-hosted allows localhost http.
     httpsOnly: args.hostedMode,
-    issuer: args.issuer,
+    issuer: scopeXaaIssuerForAuthorizedProject({
+      issuer: args.issuer,
+      hostedMode: args.hostedMode,
+      organizationId: args.organizationId,
+      isAnonymous: args.isAnonymous,
+    }),
     serverId: args.serverId,
     projectId: args.projectId,
     bearerToken: args.bearerToken,
     resource: sc.url,
+    explicitIssuer: sc.xaaAuthzIssuer,
+    allowPathScopedIssuer: sc.xaaAllowPathScopedIssuer,
+    registrationMode: sc.registrationMode,
+    xaaClientAuth: sc.xaaClientAuth,
+    confidentialCimdProvider: args.confidentialCimdProvider,
     scope: sc.oauthScopes?.join(" ") || undefined,
     // Mock-login identity: stored override if set, else the XAA IdP mock-login
     // defaults.
@@ -382,18 +452,92 @@ export async function mintXaaAccessToken(args: {
   bearerToken: string;
   /** The protected resource (the MCP server URL). */
   resource?: string;
+  explicitIssuer?: string;
+  allowPathScopedIssuer?: boolean;
+  registrationMode?: RegistrationMode;
+  xaaClientAuth?: XaaClientAuthMethod;
+  confidentialCimdProvider?: ConfidentialCimdProvider;
   scope?: string;
   /** Mock-login subject — already resolved (override or signed-in user). */
   subject: string;
   email?: string;
 }): Promise<{ accessToken: string; tokenEndpoint: string }> {
-  const target = await resolveServerTarget({
-    resolveServerSecret: args.resolveServerSecret,
-    httpsOnly: args.httpsOnly,
-    serverId: args.serverId,
-    projectId: args.projectId,
-    bearerToken: args.bearerToken,
-  });
+  const registrationMode = resolveXaaConnectRegistrationMode(
+    args.registrationMode
+  );
+  if (registrationMode === "dcr") {
+    throw new WebRouteError(
+      400,
+      ErrorCode.FEATURE_NOT_SUPPORTED,
+      "XAA DCR is not supported in Connect yet. Choose pre-registered credentials or CIMD."
+    );
+  }
+
+  let target: ResolvedServerTarget;
+  let clientId: string;
+  let clientSecret: string | undefined;
+  let tokenEndpointAuthMethod: XaaTokenEndpointAuthMethod;
+  let confidentialCimdProvider: ConfidentialCimdProvider | undefined;
+
+  if (registrationMode === "cimd") {
+    target = await resolveAuthorizedServerTarget({
+      resource: args.resource,
+      explicitIssuer: args.explicitIssuer,
+      allowPathScopedIssuer: args.allowPathScopedIssuer,
+      httpsOnly: args.httpsOnly,
+    });
+    if (!target.clientIdMetadataDocumentSupported) {
+      throw new WebRouteError(
+        409,
+        ErrorCode.FEATURE_NOT_SUPPORTED,
+        "The authorization server does not advertise client_id_metadata_document_supported: true. Choose pre-registered credentials or update the authorization server."
+      );
+    }
+
+    const clientAuth =
+      normalizeXaaClientAuth(args.xaaClientAuth) ?? DEFAULT_XAA_CLIENT_AUTH;
+    if (clientAuth === "private_key_jwt") {
+      if (!args.confidentialCimdProvider) {
+        throw new WebRouteError(
+          409,
+          ErrorCode.FEATURE_NOT_SUPPORTED,
+          "Confidential CIMD is not available for this connection. Choose Public client authentication or contact your administrator."
+        );
+      }
+      confidentialCimdProvider = args.confidentialCimdProvider;
+      try {
+        clientId = confidentialCimdProvider.getClientIdMetadataUrl();
+      } catch {
+        throw new WebRouteError(
+          500,
+          ErrorCode.INTERNAL_ERROR,
+          "Could not prepare the confidential CIMD client identity"
+        );
+      }
+      tokenEndpointAuthMethod = "private_key_jwt";
+    } else {
+      clientId = XAA_DEBUG_CLIENT_ID_METADATA_URL;
+      tokenEndpointAuthMethod = "none";
+    }
+  } else {
+    target = await resolveServerTarget({
+      resolveServerSecret: args.resolveServerSecret,
+      httpsOnly: args.httpsOnly,
+      serverId: args.serverId,
+      projectId: args.projectId,
+      bearerToken: args.bearerToken,
+    });
+    if (!target.clientId) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "Client ID is required for pre-registered XAA Connect"
+      );
+    }
+    clientId = target.clientId;
+    clientSecret = target.clientSecret;
+    tokenEndpointAuthMethod = clientSecret ? "client_secret_post" : "none";
+  }
 
   // Pin the grant resource to the resolved server target (its stored URL), so
   // the stored confidential secret is only ever exchanged for the target's own
@@ -408,22 +552,42 @@ export async function mintXaaAccessToken(args: {
     // validates against), NOT its token endpoint.
     audience: target.authzIssuer,
     resource: tokenResource,
-    clientId: target.clientId ?? "",
+    clientId,
     scope: args.scope,
   });
+
+  let tokenRequest: ReturnType<typeof buildXaaJwtBearerRequest>;
+  try {
+    tokenRequest = buildXaaJwtBearerRequest(
+      {
+        tokenEndpoint: target.tokenEndpoint,
+        assertion: idJag.token,
+        clientId,
+        clientSecret,
+        scope: args.scope,
+        resource: tokenResource || undefined,
+        tokenEndpointAuthMethod,
+      },
+      confidentialCimdProvider
+    );
+  } catch (error) {
+    if (registrationMode === "cimd") {
+      throw new WebRouteError(
+        500,
+        ErrorCode.INTERNAL_ERROR,
+        "Could not sign the confidential CIMD token request"
+      );
+    }
+    throw error;
+  }
 
   const proxyResult = await executeOAuthProxy({
     url: target.tokenEndpoint,
     method: "POST",
-    body: buildJwtBearerBody({
-      assertion: idJag.token,
-      clientId: target.clientId,
-      clientSecret: target.clientSecret,
-      scope: args.scope,
-      resource: tokenResource || undefined,
-    }),
+    body: tokenRequest.body,
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
+      ...tokenRequest.headers,
     },
     httpsOnly: args.httpsOnly,
   });

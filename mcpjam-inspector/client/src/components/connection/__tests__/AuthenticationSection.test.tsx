@@ -223,6 +223,59 @@ describe("AuthenticationSection", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows XAA CIMD registration and confidential authentication without credential fields", () => {
+    const retry = vi.fn();
+    render(
+      <AuthenticationSection
+        {...autoProps}
+        authType="xaa"
+        showAuthSettings={true}
+        registrationMode="cimd"
+        xaaClientAuth="private_key_jwt"
+        confidentialCimdStatus="error"
+        confidentialCimdBlockReason="Confidential CIMD could not be loaded."
+        onRetryConfidentialCimd={retry}
+      />,
+    );
+
+    expect(screen.getByText("Registration")).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("combobox")[1]);
+    expect(
+      screen.getByRole("option", { name: "DCR (not supported in Connect)" }),
+    ).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.getByText("Client authentication")).toBeInTheDocument();
+    expect(
+      screen.getByText("Confidential (private_key_jwt)"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByPlaceholderText(
+        "Client ID registered with the server's authorization server",
+      ),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Confidential CIMD could not be loaded."),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides the confidential picker when hosted capability is unavailable for a public CIMD config", () => {
+    render(
+      <AuthenticationSection
+        {...autoProps}
+        authType="xaa"
+        showAuthSettings={true}
+        registrationMode="cimd"
+        xaaClientAuth="none"
+        confidentialCimdStatus="unavailable"
+      />,
+    );
+
+    expect(screen.getByText("Registration")).toBeInTheDocument();
+    expect(screen.queryByText("Client authentication")).not.toBeInTheDocument();
+  });
+
   it("does not show the OAuth plan explainer for a typical automatic OAuth setup", () => {
     render(
       <AuthenticationSection

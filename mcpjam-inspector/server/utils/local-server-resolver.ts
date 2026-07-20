@@ -40,8 +40,10 @@ import {
 import {
   buildXaaMintArgs,
   mintXaaAccessToken,
+  resolveXaaConnectRegistrationMode,
   resolveXaaIssuer,
 } from "../services/xaa-mint.js";
+import { getLocalConfidentialCimdProvider } from "@mcpjam/sdk";
 import type { ConnectionDefaults } from "../../shared/connection-defaults.js";
 import { HOSTED_MODE } from "../config.js";
 
@@ -61,6 +63,8 @@ type LocalAuthorizeServerConfig =
       // are resolved separately via the hardened reveal-secret path at mint time.
       useXaa?: boolean;
       authServerMode?: "mcpjam" | "own";
+      xaaAuthzIssuer?: string;
+      xaaAllowPathScopedIssuer?: boolean;
       xaaSubject?: string;
       xaaEmail?: string;
       // Backend-resolved identity failure: a LEGACY partial per-server
@@ -73,6 +77,7 @@ type LocalAuthorizeServerConfig =
       // compat mirrors). Absent on legacy rows.
       authMethod?: "auto" | "oauth" | "xaa" | "bearer" | "none";
       registrationMode?: "auto" | "preregistered" | "cimd" | "dcr";
+      xaaClientAuth?: "none" | "private_key_jwt";
     }
   | {
       transportType: "stdio";
@@ -106,6 +111,8 @@ export type LocalAuthorizeBatchResult =
   | LocalAuthorizeBatchFailure;
 
 export type LocalAuthorizeBatchResponse = {
+  organizationId?: string | null;
+  isAnonymous?: boolean;
   results: Record<string, LocalAuthorizeBatchResult>;
 };
 
@@ -249,7 +256,12 @@ export async function authorizeBatchLocal(
       stripped[serverId] = result;
     }
   }
-  return { results: stripped };
+  return {
+    organizationId:
+      typeof raw.organizationId === "string" ? raw.organizationId : null,
+    isAnonymous: raw.isAnonymous === true,
+    results: stripped,
+  };
 }
 
 /**
@@ -756,12 +768,16 @@ export async function resolveLocalServerForConnect(
     | undefined;
   if (useXaa && result.serverConfig.transportType === "http") {
     const sc = result.serverConfig;
-    // XAA connect runs on stored pre-registered credentials only; a dynamic
-    // registrationMode (dcr/cimd) applies to the debugger and OAuth flows.
-    if (sc.registrationMode === "dcr" || sc.registrationMode === "cimd") {
-      logger.info(
-        "[XAA connect] registrationMode is dynamic; connect uses stored pre-registered credentials — the mode applies to the debugger and OAuth flows only",
-        { serverId, registrationMode: sc.registrationMode }
+    const registrationMode = resolveXaaConnectRegistrationMode(
+      sc.registrationMode
+    );
+    if (registrationMode === "dcr") {
+      throw new WebRouteError(
+        400,
+        ErrorCode.FEATURE_NOT_SUPPORTED,
+        `Server "${
+          options?.serverDisplayName ?? serverId
+        }" uses XAA DCR, which is not supported in Connect yet. Choose pre-registered credentials or CIMD.`
       );
     }
     // Backend-resolved identity failure (legacy partial per-server
@@ -781,6 +797,10 @@ export async function resolveLocalServerForConnect(
       projectId,
       bearerToken,
       resolveServerSecret: fetchServerClientSecret,
+      confidentialCimdProvider:
+        registrationMode === "cimd" && sc.xaaClientAuth === "private_key_jwt"
+          ? getLocalConfidentialCimdProvider()
+          : undefined,
     });
     // Always mint for XAA, overriding any access token the authorize batch
     // returned. A server converted from OAuth still has a stored OAuth token,

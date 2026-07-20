@@ -112,6 +112,64 @@ describe("useServerForm", () => {
     });
   });
 
+  it("emits public CIMD without stored client credentials", () => {
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setName("Public CIMD server");
+      result.current.setUrl("https://example.com/mcp");
+      result.current.setAuthType("xaa");
+      result.current.setOauthRegistrationMode("cimd");
+      result.current.setXaaClientAuth("none");
+      result.current.setClientId("stale-client");
+      result.current.setClientSecret("stale-secret");
+    });
+
+    expect(result.current.validateForm()).toBeNull();
+    const built = result.current.buildFormData();
+    expect(built).toMatchObject({
+      useXaa: true,
+      registrationMode: "cimd",
+      xaaClientAuth: "none",
+    });
+    expect(built.clientId).toBeUndefined();
+    expect(built.clientSecret).toBeUndefined();
+    expect(built.clearClientSecret).toBeUndefined();
+  });
+
+  it("emits confidential CIMD when the local capability is available", () => {
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setName("Private CIMD server");
+      result.current.setUrl("https://example.com/mcp");
+      result.current.setAuthType("xaa");
+      result.current.setOauthRegistrationMode("cimd");
+      result.current.setXaaClientAuth("private_key_jwt");
+    });
+
+    expect(result.current.confidentialCimdCapability.status).toBe("ready");
+    expect(result.current.authConfigurationBlocksSubmit).toBe(false);
+    expect(result.current.buildFormData()).toMatchObject({
+      registrationMode: "cimd",
+      xaaClientAuth: "private_key_jwt",
+    });
+  });
+
+  it("blocks XAA DCR instead of treating it as preregistration", () => {
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setName("DCR server");
+      result.current.setUrl("https://example.com/mcp");
+      result.current.setAuthType("xaa");
+      result.current.setOauthRegistrationMode("dcr");
+    });
+
+    expect(result.current.validateForm()).toMatch(/not supported in Connect/);
+    expect(result.current.authConfigurationBlocksSubmit).toBe(true);
+  });
+
   it("omits the identity pair entirely when the override fields are untouched (no force-default)", () => {
     const { result } = renderHook(() => useServerForm());
 
@@ -138,6 +196,7 @@ describe("useServerForm", () => {
       useXaa: true,
       useOAuth: false,
       authServerMode: "mcpjam",
+      clientId: "resource-client-id",
       xaaSubject: "stored-sub",
       xaaEmail: "stored@example.com",
       lastConnectionTime: new Date(),
@@ -188,6 +247,7 @@ describe("useServerForm", () => {
       useXaa: true,
       useOAuth: false,
       authServerMode: "mcpjam",
+      oauthFlowProfile: { clientId: "resource-client-id" },
       xaaSubject: "stored-sub",
       xaaEmail: "stored@example.com",
       lastConnectionTime: new Date(),

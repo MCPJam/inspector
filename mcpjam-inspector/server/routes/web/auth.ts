@@ -7,6 +7,7 @@ import {
   type McpProtocolVersion,
 } from "@mcpjam/sdk";
 import type {
+  ConfidentialCimdProvider,
   ElicitationCallback,
   HttpServerConfig,
   RpcLogger,
@@ -28,6 +29,7 @@ import {
   xaaPolicyFromMcpProfile,
   xaaPolicyRequiresConfiguration,
 } from "../../utils/effective-auth.js";
+import type { EffectiveAuthMethod } from "../../utils/effective-auth.js";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config.js";
 import type { RequestLogContext } from "../../utils/log-events.js";
 import {
@@ -52,8 +54,10 @@ import {
 import {
   buildXaaMintArgs,
   mintXaaAccessToken,
+  resolveXaaConnectRegistrationMode,
   resolveXaaIssuer,
 } from "../../services/xaa-mint.js";
+import { confidentialCimdProviderForOrg } from "../../services/xaa-confidential-cimd.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 
 // ── Zod Schemas ──────────────────────────────────────────────────────
@@ -282,6 +286,8 @@ export type ConvexAuthorizeResponse = {
     oauthScopes?: string[];
     xaaSubject?: string;
     xaaEmail?: string;
+    xaaAuthzIssuer?: string;
+    xaaAllowPathScopedIssuer?: boolean;
     // Backend-resolved identity failure: a LEGACY partial per-server
     // override (one member stored) can't resolve an atomic identity, so the
     // backend omits BOTH identity fields and sends this actionable,
@@ -295,6 +301,7 @@ export type ConvexAuthorizeResponse = {
     // compat mirrors). Absent on legacy rows.
     authMethod?: "auto" | "oauth" | "xaa" | "bearer" | "none";
     registrationMode?: "auto" | "preregistered" | "cimd" | "dcr";
+    xaaClientAuth?: "none" | "private_key_jwt";
   };
   internalLogContext?: InternalLogContext;
 };
@@ -335,6 +342,8 @@ export type ConvexBatchAuthorizeResult =
   | ConvexBatchAuthorizeSuccess;
 
 export type ConvexBatchAuthorizeResponse = {
+  organizationId?: string | null;
+  isAnonymous?: boolean;
   results: Record<string, ConvexBatchAuthorizeResult>;
 };
 
@@ -659,7 +668,13 @@ export async function authorizeBatch(
       strippedResults[serverId] = result;
     }
   }
-  return { results: strippedResults };
+  return {
+    organizationId:
+      typeof raw.organizationId === "string" ? raw.organizationId : null,
+    isAnonymous:
+      typeof raw.isAnonymous === "boolean" ? raw.isAnonymous : undefined,
+    results: strippedResults,
+  };
 }
 
 export function toHttpConfig(
@@ -991,6 +1006,45 @@ export async function createAuthorizedManager(
       );
     }
 
+    if (isHttp && effectiveAuth === "xaa") {
+      const registrationMode = resolveXaaConnectRegistrationMode(
+        auth.serverConfig.registrationMode
+      );
+      if (registrationMode === "dcr") {
+        throw new WebRouteError(
+          400,
+          ErrorCode.FEATURE_NOT_SUPPORTED,
+          `Server "${displayServerName}" uses XAA DCR, which is not supported in Connect yet. Choose pre-registered credentials or CIMD.`
+        );
+      }
+      if (
+        registrationMode === "cimd" &&
+        auth.serverConfig.xaaClientAuth === "private_key_jwt"
+      ) {
+        if (batch.isAnonymous !== false) {
+          throw new WebRouteError(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Confidential CIMD requires a signed-in organization member"
+          );
+        }
+        if (!batch.organizationId) {
+          throw new WebRouteError(
+            409,
+            ErrorCode.FEATURE_NOT_SUPPORTED,
+            "Confidential CIMD requires an organization-owned project"
+          );
+        }
+        if (!confidentialCimdProviderForOrg) {
+          throw new WebRouteError(
+            409,
+            ErrorCode.FEATURE_NOT_SUPPORTED,
+            "Confidential CIMD is not enabled on this inspector deployment"
+          );
+        }
+      }
+    }
+
     // Explicit-OAuth server with no stored token: also a synchronous verdict,
     // so it belongs here — leaving it in the concurrent pass let a configured
     // XAA sibling start minting a real token while this one rejected.
@@ -1073,18 +1127,6 @@ export async function createAuthorizedManager(
       const useXaa =
         auth.serverConfig.transportType === "http" && effectiveAuth === "xaa";
       if (useXaa) {
-        // XAA connect runs on stored pre-registered credentials only; a
-        // dynamic registrationMode (dcr/cimd) applies to the debugger and
-        // OAuth flows.
-        if (
-          auth.serverConfig.registrationMode === "dcr" ||
-          auth.serverConfig.registrationMode === "cimd"
-        ) {
-          logger.info(
-            "[XAA connect] registrationMode is dynamic; connect uses stored pre-registered credentials — the mode applies to the debugger and OAuth flows only",
-            { serverId, registrationMode: auth.serverConfig.registrationMode }
-          );
-        }
         // (`xaaIdentityError` is validated batch-wide in PASS 1 — before any
         // sibling server can mint.)
         if (!options?.xaaIssuer) {
@@ -1098,6 +1140,25 @@ export async function createAuthorizedManager(
             `Missing XAA issuer for server "${displayServerName}". This connect surface must pass options.xaaIssuer.`
           );
         }
+        let confidentialCimdProvider: ConfidentialCimdProvider | undefined;
+        if (
+          resolveXaaConnectRegistrationMode(
+            auth.serverConfig.registrationMode
+          ) === "cimd" &&
+          auth.serverConfig.xaaClientAuth === "private_key_jwt"
+        ) {
+          try {
+            confidentialCimdProvider = confidentialCimdProviderForOrg!(
+              batch.organizationId!
+            );
+          } catch {
+            throw new WebRouteError(
+              500,
+              ErrorCode.INTERNAL_ERROR,
+              "Could not prepare the confidential CIMD client identity"
+            );
+          }
+        }
         const mintArgs = buildXaaMintArgs({
           issuer: options.xaaIssuer,
           hostedMode: HOSTED_MODE,
@@ -1106,6 +1167,9 @@ export async function createAuthorizedManager(
           projectId,
           bearerToken,
           resolveServerSecret: fetchServerClientSecret,
+          organizationId: batch.organizationId,
+          isAnonymous: batch.isAnonymous,
+          confidentialCimdProvider,
         });
         try {
           connectToken = (await mintXaaAccessToken(mintArgs)).accessToken;

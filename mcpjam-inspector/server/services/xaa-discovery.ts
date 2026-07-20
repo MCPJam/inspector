@@ -130,6 +130,7 @@ export interface IssuerMismatch {
 export interface DiscoveryVerdict {
   issuer?: string;
   tokenEndpoint?: string;
+  clientIdMetadataDocumentSupported: boolean;
   grantTypesSupported?: string[];
   jwtBearerSupport: GrantSupportStatus;
   jwtBearerDetail: string;
@@ -239,6 +240,8 @@ export function evaluateDiscovery(
   return {
     issuer,
     tokenEndpoint,
+    clientIdMetadataDocumentSupported:
+      metadata.client_id_metadata_document_supported === true,
     grantTypesSupported: grantTypes,
     jwtBearerSupport,
     jwtBearerDetail,
