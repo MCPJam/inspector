@@ -89,7 +89,10 @@ Select **Configure Server to Test** (or **Add Server**), enter the MCP server na
     default.
   - **Confidential (private_key_jwt):** MCPJam holds a private key and signs
     each token request with it, proving it owns the identity. Choose this when
-    your authorization server requires a confidential client.
+    your authorization server requires a confidential client. In the hosted
+    inspector, this option requires you to be signed in with an active
+    organization; MCPJam probes for the capability automatically and blocks
+    Start/Run with a clear message if the requirement is not met.
 - **Open dynamic registration (DCR):** MCPJam registers a client during the
   test. Your authorization server must provide an open registration endpoint.
 
