@@ -55,7 +55,11 @@ export type InspectorCommandType =
   | "openHostEditor"
   | "setHostServers"
   | "deleteHost"
-  | "duplicateHost";
+  | "duplicateHost"
+  | "startComputer"
+  | "hibernateComputer"
+  | "resetComputer"
+  | "deleteComputer";
 
 export const KNOWN_INSPECTOR_COMMAND_TYPES = [
   "navigate",
@@ -87,6 +91,10 @@ export const KNOWN_INSPECTOR_COMMAND_TYPES = [
   "setHostServers",
   "deleteHost",
   "duplicateHost",
+  "startComputer",
+  "hibernateComputer",
+  "resetComputer",
+  "deleteComputer",
 ] as const satisfies readonly InspectorCommandType[];
 
 export interface InspectorCommandError {
@@ -469,6 +477,63 @@ export interface DuplicateHostInspectorCommand {
   timeoutMs?: number;
 }
 
+/**
+ * Computer-screen commands, handled by `ComputerView` while `/computer` is
+ * mounted. Every command acts on the caller's ONE computer for the currently
+ * selected project — there is no target in the payload (the project is resolved
+ * from the surface, never from the agent), so each carries an empty payload.
+ *
+ * The handlers call the SAME gated action hooks the buttons use and respect the
+ * SAME availability + billing gates:
+ * - Computers unavailable here (no data plane / not signed into a project) ⇒
+ *   `unsupported_in_mode` — the tools are inert exactly where the buttons are.
+ * - The daily start cap is enforced server-side on reserve; `startComputer`
+ *   surfaces a cap rejection as `execution_failed` naming the limit, never a
+ *   bypass — mirroring the Open-terminal button, which also just reserves and
+ *   reports the cap.
+ *
+ * The interactive TERMINAL is deliberately NOT a command: opening it mints a
+ * short-lived token and drops a human into a live shell — not an agent action.
+ * The snapshot reports whether a terminal is open, but no tool opens one and no
+ * token ever crosses the transcript.
+ */
+
+/**
+ * Reserve (provision-on-first-use / wake) the project's computer. Billed and
+ * daily-cap-gated: this spins/wakes real infra. Does NOT open the interactive
+ * terminal.
+ */
+export interface StartComputerInspectorCommand {
+  id: string;
+  type: "startComputer";
+  payload?: Record<string, never>;
+  timeoutMs?: number;
+}
+
+/** Manually hibernate the project's computer (pause; state is preserved). */
+export interface HibernateComputerInspectorCommand {
+  id: string;
+  type: "hibernateComputer";
+  payload?: Record<string, never>;
+  timeoutMs?: number;
+}
+
+/** Reset the project's computer to its image — wipes all mutable state. */
+export interface ResetComputerInspectorCommand {
+  id: string;
+  type: "resetComputer";
+  payload?: Record<string, never>;
+  timeoutMs?: number;
+}
+
+/** Tear down the project's computer, deleting all files on it. */
+export interface DeleteComputerInspectorCommand {
+  id: string;
+  type: "deleteComputer";
+  payload?: Record<string, never>;
+  timeoutMs?: number;
+}
+
 export type InspectorCommand =
   | NavigateInspectorCommand
   | SelectServerInspectorCommand
@@ -498,7 +563,11 @@ export type InspectorCommand =
   | OpenHostEditorInspectorCommand
   | SetHostServersInspectorCommand
   | DeleteHostInspectorCommand
-  | DuplicateHostInspectorCommand;
+  | DuplicateHostInspectorCommand
+  | StartComputerInspectorCommand
+  | HibernateComputerInspectorCommand
+  | ResetComputerInspectorCommand
+  | DeleteComputerInspectorCommand;
 
 export interface InspectorCommandSuccessResponse {
   id: string;

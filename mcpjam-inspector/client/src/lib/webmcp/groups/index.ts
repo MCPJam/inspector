@@ -17,6 +17,7 @@ import { buildRegistryUiTools } from "./registry";
 import { buildEvalsUiTools } from "./evals";
 import { buildSwarmsUiTools } from "./swarms";
 import { buildHostsUiTools } from "./hosts";
+import { buildComputerUiTools } from "./computer";
 
 export type { UiToolGroup } from "./types";
 
@@ -26,6 +27,7 @@ export const SURFACE_TOOL_GROUPS: Partial<Record<AppSurfaceId, UiToolGroup>> =
     evals: { surfaceId: "evals", buildTools: buildEvalsUiTools },
     swarms: { surfaceId: "swarms", buildTools: buildSwarmsUiTools },
     hosts: { surfaceId: "hosts", buildTools: buildHostsUiTools },
+    computer: { surfaceId: "computer", buildTools: buildComputerUiTools },
   };
 
 /**

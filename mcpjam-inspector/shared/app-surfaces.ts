@@ -181,14 +181,12 @@ export const APP_SURFACES = [
     purpose:
       "A project's cloud sandbox — the environment that runs STDIO servers, skills, and agent harnesses.",
     userActivities: [
-      "Start or stop the project's computer",
-      "Browse its filesystem and open a terminal",
+      "Start or hibernate the project's computer",
+      "Reset or delete the computer",
+      "Open a terminal (human-only)",
     ],
-    agentTools: {
-      kind: "none",
-      reason:
-        "Tool group planned (start/stop the computer, read its status); tracked in the surface-tools rollout.",
-    },
+    hasSnapshotProvider: true,
+    agentTools: { kind: "group" },
     showInAtlas: true,
   },
   {

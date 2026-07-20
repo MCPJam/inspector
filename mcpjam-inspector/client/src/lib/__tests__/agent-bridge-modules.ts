@@ -23,4 +23,9 @@ export const BRIDGE_MODULES: Record<string, string> = {
   // bridge always registers the literal "hosts" surface id — never a shared
   // state hook — so the group can't be mis-scoped.
   hosts: "client/src/components/HostsTab.tsx",
+  // ComputerView owns the single computer's status + the lifecycle action hooks
+  // (reserve/hibernate/reset/delete) and is the top component where the same
+  // availability + daily-cap gates the buttons use are in scope. Not a shared
+  // hook, so the "computer" group can't be mis-scoped.
+  computer: "client/src/components/computer/ComputerView.tsx",
 };
