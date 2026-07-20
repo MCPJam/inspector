@@ -1,4 +1,5 @@
 import { useMutation, useQuery } from "convex/react";
+import { shouldQueryProjectId } from "./useProjects";
 import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
 import type {
   ChatUiSettings,
@@ -120,14 +121,19 @@ export function useChatboxList({
   isAuthenticated: boolean;
   projectId: string | null;
 }) {
+  // Skip until `projectId` is a real Convex id: a transient LOCAL id (UUID or
+  // `local_`/`project_` placeholder) is truthy but throws an
+  // ArgumentValidationError against `listChatboxes` during project hydration —
+  // the same guard useHostList uses.
+  const enabled = isAuthenticated && shouldQueryProjectId(projectId);
   const chatboxes = useQuery(
     "chatboxes:listChatboxes" as any,
-    isAuthenticated && projectId ? ({ projectId } as any) : "skip",
+    enabled ? ({ projectId } as any) : "skip",
   ) as ChatboxListItem[] | undefined;
 
   return {
     chatboxes,
-    isLoading: isAuthenticated && !!projectId && chatboxes === undefined,
+    isLoading: enabled && chatboxes === undefined,
   };
 }
 

@@ -13,6 +13,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { APP_SURFACES, listAppSurfaces } from "@/shared/app-surfaces";
+import { BRIDGE_MODULES } from "./agent-bridge-modules";
 
 const repoRoot = join(__dirname, "../../../..");
 const HOOK_MODULE =
@@ -22,6 +23,12 @@ const HOOK_MODULE =
  * `snapshotSurfaceId`. Registration is opt-in per caller (the hook backs both
  * the Playground screen and the Evals Record panel's embedded chat), so the
  * screen that claims the id is what matters, not the hook.
+ *
+ * A SECOND convention exists since the surface-tools foundation: a surface
+ * whose component calls `useSurfaceAgentBridge({ surfaceId, snapshot })` is
+ * covered by its `BRIDGE_MODULES` row instead (agent-tool-coverage.test.ts
+ * checks the bridge call itself; here we only accept the row as the claim's
+ * backing).
  */
 const OPT_IN_MODULES: Record<string, string> = {
   playground: "client/src/components/playground/PlaygroundTab.tsx",
@@ -30,12 +37,21 @@ const OPT_IN_MODULES: Record<string, string> = {
 describe("surfaces that claim a snapshot provider register one", () => {
   const flagged = listAppSurfaces().filter((s) => s.hasSnapshotProvider);
 
-  it("every flagged surface has a known opt-in module", () => {
+  it("every flagged surface has a known opt-in or bridge module", () => {
     for (const surface of flagged) {
       expect(
-        OPT_IN_MODULES[surface.id],
-        `${surface.id} claims hasSnapshotProvider but no opt-in module is mapped here`,
+        OPT_IN_MODULES[surface.id] ?? BRIDGE_MODULES[surface.id],
+        `${surface.id} claims hasSnapshotProvider but neither OPT_IN_MODULES nor BRIDGE_MODULES maps it`,
       ).toBeDefined();
+    }
+  });
+
+  it("every bridge module passes its own literal surface id", () => {
+    for (const [surfaceId, modulePath] of Object.entries(BRIDGE_MODULES)) {
+      const source = readFileSync(join(repoRoot, modulePath), "utf-8");
+      expect(source, `${modulePath} must bridge as "${surfaceId}"`).toContain(
+        `surfaceId: "${surfaceId}"`,
+      );
     }
   });
 
@@ -60,7 +76,10 @@ describe("surfaces that claim a snapshot provider register one", () => {
   });
 
   it("no opt-in module is mapped for a surface that does not claim one", () => {
-    for (const surfaceId of Object.keys(OPT_IN_MODULES)) {
+    for (const surfaceId of [
+      ...Object.keys(OPT_IN_MODULES),
+      ...Object.keys(BRIDGE_MODULES),
+    ]) {
       const surface = APP_SURFACES.find((s) => s.id === surfaceId);
       expect(surface, `unknown surface "${surfaceId}"`).toBeDefined();
       expect(

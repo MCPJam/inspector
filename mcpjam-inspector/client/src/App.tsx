@@ -268,7 +268,12 @@ import type {
   SelectServerInspectorCommand,
   SnapshotAppInspectorCommand,
 } from "@/shared/inspector-command.js";
-import { isAppSurfaceId } from "@/shared/app-surfaces";
+import {
+  getAppSurfaceByNavSegment,
+  isAppSurfaceId,
+} from "@/shared/app-surfaces";
+import { waitForUiToolNames } from "./lib/webmcp/ui-tools-readiness";
+import { listSurfaceGroupToolNames } from "./lib/webmcp/groups";
 import {
   readAllSurfaceSnapshots,
   readSurfaceSnapshot,
@@ -1119,31 +1124,49 @@ export function SwarmsRoute() {
     convexProjectId,
     isAuthenticated,
   } = useAppRouteContext();
-  const { user } = useAuth();
+  // WorkOS identity is the membership match key for the *invitee guest*
+  // notice. Convex `isAuthenticated` is also true for anonymous sessions,
+  // which never get a WorkOS `user.email` — but those actors still own a
+  // personal-org project and pass `requireProjectRole('member')` server-side
+  // via userId. Do NOT treat "no WorkOS email" as "not a member".
+  const { user, isLoading: isWorkOsLoading } = useAuth();
+  const isWorkOsSignedIn = !!user;
 
-  // The backend made the entire Swarm surface member-only: personas, journeys,
-  // journeyRuns, session lists and transcript reads all reject a project
-  // **guest**. Mirror that here — resolve the authenticated viewer's project
-  // role and, when they're a guest/non-member, show an access notice INSTEAD of
-  // mounting `SwarmsTab` so none of the member-only queries ever fire.
+  // The backend made Swarm member-only vs project *invitee guests* (role
+  // `guest`): personas/journeys/runs reject that tier. Mirror that for
+  // WorkOS-signed-in viewers by resolving role from the members list.
   //
-  // Only engage for an authenticated viewer on a real (Convex) project. An
-  // unauthenticated / guest-mode local user (no `convexProjectId`) has no
-  // project membership to check and keeps its existing behavior.
-  const roleGateActive = isAuthenticated && !!convexProjectId;
+  // Anonymous Convex guests skip this notice and mount SwarmsTab — they are
+  // owners of their personal-org default project. Unauthenticated local
+  // (no `convexProjectId`) also keeps existing behavior.
+  const roleGateActive =
+    isAuthenticated && !!convexProjectId && isWorkOsSignedIn;
   const { role, isLoading: roleLoading } = useViewerProjectRole({
     isAuthenticated,
     projectId: convexProjectId,
     viewerEmail: user?.email,
+    // Bound the "wait for email" window to WorkOS hydrate — not Convex auth —
+    // so we never spin forever on anonymous sessions.
+    identityLoading: isWorkOsLoading,
   });
 
   if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
     return <ActiveBillingUpsellGate />;
   }
 
+  // Wait for WorkOS before choosing signed-in gate vs anonymous fallthrough,
+  // so a real member never briefly mounts (or gets denied) mid-hydrate.
+  if (isAuthenticated && !!convexProjectId && isWorkOsLoading) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <Loader2 className="size-5 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
   if (roleGateActive) {
-    // Wait for the members list to resolve before deciding, so a guest never
-    // briefly mounts `SwarmsTab` (which would fire the member-only queries).
+    // Wait for members before deciding, so an invitee guest never briefly
+    // mounts `SwarmsTab` (which would fire the member-only queries).
     if (roleLoading) {
       return (
         <div className="flex h-full items-center justify-center">
@@ -1157,7 +1180,7 @@ export function SwarmsRoute() {
         <EmptyState
           icon={Users}
           title="Swarms is available to project members"
-          description="You have guest access to this project. Swarms — personas, journeys and their runs — can only be viewed and run by project members. Ask a project admin to add you as a member to get access."
+          description="Personas, journeys, and their runs can only be viewed and run by project members. Ask a project admin to add you as a member to get access."
         />
       );
     }
@@ -1171,7 +1194,17 @@ export function SwarmsRoute() {
       // Host create/edit/apply/delete on the Clients sub-tab are admin-gated
       // server-side; pass the resolved role so the UI hides those affordances
       // for non-admins (members can still view Swarms + run journeys).
-      viewerRole={role}
+      //
+      // Anonymous Convex guests can't be matched via the email members list.
+      // Backend guest provisioning inserts organizationMembers.role='owner' on
+      // their personal org (mcpjam-backend upsertGuestUserFromIdentity), and
+      // host requireAdminAccess → canManageProjectMembers accepts owner. Mirror
+      // that here so New/Edit/Apply/Delete aren't a 403-on-click lie; writes
+      // still enforce server-side.
+      viewerRole={
+        role ??
+        (isAuthenticated && !isWorkOsSignedIn ? "owner" : undefined)
+      }
     />
   );
 }
@@ -2663,10 +2696,31 @@ export default function App() {
         navigateApp(resolved.path);
         await waitForUiCommit();
 
-        // Report the tab the shell actually landed on, not the requested
-        // one — the gating effects below (feature flags, hosted policy)
-        // can redirect immediately after the navigation commits, and the
-        // caller (SSE bus / WebMCP UI tools) plans its next step from this.
+        // Resolve from where the shell ACTUALLY landed, not the requested tab:
+        // a gating effect (feature flags, hosted policy) can redirect right
+        // after the navigation commits. Using the committed tab means a
+        // redirect away from a group surface won't make us wait 1.5s for tools
+        // that will never register there.
+        const committedTab = pathnameToActiveTab(window.location.pathname);
+
+        // Same-turn advertisement for mount-scoped tool groups: a surface with
+        // `agentTools.kind === "group"` registers its tools in a layout effect
+        // as it mounts, and the chat pipeline drains the registry per POST —
+        // waiting here lets the auto-resume POST after this tool call already
+        // advertise the group, instead of burning a model turn before the
+        // tools appear. The boolean is deliberately ignored: on timeout the
+        // next POST simply re-snapshots whatever is registered by then (the
+        // tools are additive context, not a precondition).
+        const landedSurface = getAppSurfaceByNavSegment(committedTab);
+        if (landedSurface?.agentTools.kind === "group") {
+          await waitForUiToolNames(
+            listSurfaceGroupToolNames(landedSurface.id),
+            1500
+          );
+        }
+
+        // Report the tab the shell actually landed on — the caller (SSE bus /
+        // WebMCP UI tools) plans its next step from this.
         return { activeTab: pathnameToActiveTab(window.location.pathname) };
       }
     );

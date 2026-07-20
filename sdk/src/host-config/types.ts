@@ -281,6 +281,36 @@ export type HostConfigComputerInput = {
   workdir?: string;
 };
 
+/**
+ * Skill selection policy for a host (OpenAI plugin import, PR SDK-2).
+ * Controls which project skills a selection-aware runtime advertises.
+ * Plugin-imported skills are ordinary materialized skill rows and are
+ * selectable by id here exactly like any standalone skill — the UI groups
+ * them by plugin provenance, but there is no separate selection channel.
+ *
+ * Input-side union:
+ *   - absent (`undefined`)          → legacy all-visible behavior.
+ *   - `{ mode: "all-visible" }`     → explicit spelling of the same behavior;
+ *                                     canonicalized to ABSENT (see
+ *                                     `canonicalizeSkillSelection`).
+ *   - `{ mode: "explicit", skillIds }` → only the listed skills;
+ *                                     `skillIds: []` means "explicitly none"
+ *                                     and hashes distinctly from absent.
+ */
+export type HostConfigSkillSelection =
+  | { mode: "all-visible" }
+  | { mode: "explicit"; skillIds: string[] };
+
+/**
+ * Canonical-side skill selection. Only the explicit variant survives
+ * canonicalization — `{ mode: "all-visible" }` collapses to absent so one
+ * runtime behavior has exactly one content-addressed identity.
+ */
+export type CanonicalHostConfigSkillSelection = {
+  mode: "explicit";
+  skillIds: string[];
+};
+
 export type McpToolResultBlobVisibility = {
   enabled?: boolean;
   image?: boolean;
@@ -351,6 +381,14 @@ export type HostConfigInputV2 = {
   // table. undefined OR [] → omitted from the canonical hash so pre-feature
   // rows stay byte-identical; a populated set dedupes + sorts before hashing.
   builtInToolIds?: ReadonlyArray<string>;
+  // Skill selection policy. Absent → legacy all-visible behavior.
+  // `{ mode: "all-visible" }` is the explicit spelling of the same behavior
+  // and canonicalizes to absent; `{ mode: "explicit", skillIds }` (including
+  // an EMPTY skillIds — "explicitly no skills") is preserved and hashes
+  // distinctly from absent. Absence is semantic here. Hosts do NOT carry
+  // plugin-specific fields: plugin component servers attach via `serverIds`
+  // and plugin skills are selectable here by their materialized skill id.
+  skillSelection?: HostConfigSkillSelection;
   // Host/client policy for how MCP tool-result content/resources become
   // model-visible. Optional so absent rows keep their historical hash and
   // runtime defaults can treat the currently implemented image leaves as
@@ -409,6 +447,11 @@ export type CanonicalHostConfigV2 = {
   // Mirrors HostConfigInputV2.builtInToolIds. Optional + omitted when absent or
   // empty so pre-feature rows hash byte-identically; deduped + sorted when set.
   builtInToolIds?: Array<string>;
+  // Mirrors HostConfigInputV2.skillSelection. Only the explicit variant
+  // survives canonicalization (`all-visible` collapses to absent so one
+  // behavior has one content-addressed identity); explicit-empty
+  // (`skillIds: []`) is preserved and hashes distinctly from absent.
+  skillSelection?: CanonicalHostConfigSkillSelection;
   // Mirrors HostConfigInputV2.modelVisibleMcpToolResults. Optional so absent
   // rows hash byte-identically; explicit true/false leaves are real snapshots.
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;

@@ -2220,6 +2220,9 @@ export function createXAAStateMachine(
             ...(manualAuthMethod
               ? { tokenEndpointAuthMethod: manualAuthMethod }
               : {}),
+            ...(manualAuthMethod === "private_key_jwt" && organizationId
+              ? { organizationId }
+              : {}),
             scope: redemptionScope,
             resource: state.resourceUrl || state.serverUrl,
           };

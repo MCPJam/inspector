@@ -2,14 +2,25 @@ import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectMembershipRole } from "../hooks/useProjects";
 
-const { mockSwarmsTab, mockRouteContext, mockViewerRole, mockUseAuth } =
-  vi.hoisted(() => ({
+const {
+  mockSwarmsTab,
+  mockRouteContext,
+  mockViewerRole,
+  mockUseAuth,
+  mockUseViewerProjectRole,
+} = vi.hoisted(() => {
+  const mockViewerRole = {
+    role: undefined as ProjectMembershipRole | undefined,
+    isLoading: false,
+  };
+  return {
     mockSwarmsTab: vi.fn(() => <div>Swarms Tab</div>),
-    mockViewerRole: {
-      role: undefined as ProjectMembershipRole | undefined,
+    mockViewerRole,
+    mockUseAuth: vi.fn(() => ({
+      user: { email: "guest@example.com" },
       isLoading: false,
-    },
-    mockUseAuth: vi.fn(() => ({ user: { email: "guest@example.com" } })),
+    })),
+    mockUseViewerProjectRole: vi.fn(() => mockViewerRole),
     mockRouteContext: {
       billingUiEnabled: true,
       activeTabBillingLocked: false,
@@ -17,7 +28,8 @@ const { mockSwarmsTab, mockRouteContext, mockViewerRole, mockUseAuth } =
       convexProjectId: "project-1" as string | null,
       isAuthenticated: true,
     },
-  }));
+  };
+});
 
 vi.mock("react-router", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react-router")>();
@@ -37,7 +49,7 @@ vi.mock("../hooks/useProjects", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../hooks/useProjects")>();
   return {
     ...actual,
-    useViewerProjectRole: () => mockViewerRole,
+    useViewerProjectRole: (args: unknown) => mockUseViewerProjectRole(args),
   };
 });
 
@@ -84,6 +96,8 @@ describe("SwarmsRoute member-only gate", () => {
   beforeEach(() => {
     mockSwarmsTab.mockClear();
     mockUseAuth.mockClear();
+    mockUseViewerProjectRole.mockClear();
+    mockUseViewerProjectRole.mockImplementation(() => mockViewerRole);
     mockRouteContext.billingUiEnabled = true;
     mockRouteContext.activeTabBillingLocked = false;
     mockRouteContext.activeTabBillingFeature = "chatboxes";
@@ -91,7 +105,25 @@ describe("SwarmsRoute member-only gate", () => {
     mockRouteContext.isAuthenticated = true;
     mockViewerRole.role = undefined;
     mockViewerRole.isLoading = false;
-    mockUseAuth.mockReturnValue({ user: { email: "guest@example.com" } });
+    mockUseAuth.mockReturnValue({
+      user: { email: "guest@example.com" },
+      isLoading: false,
+    });
+  });
+
+  it("bounds role loading to WorkOS identity hydrate, not Convex auth alone", () => {
+    mockUseAuth.mockReturnValue({ user: null, isLoading: true });
+    mockViewerRole.isLoading = true;
+
+    render(<SwarmsRoute />);
+
+    expect(mockUseViewerProjectRole).toHaveBeenCalledWith({
+      isAuthenticated: true,
+      projectId: "project-1",
+      viewerEmail: undefined,
+      identityLoading: true,
+    });
+    expect(screen.queryByText("Swarms Tab")).not.toBeInTheDocument();
   });
 
   it("shows the access notice and does NOT mount SwarmsTab for a guest", () => {
@@ -104,6 +136,27 @@ describe("SwarmsRoute member-only gate", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText("Swarms Tab")).not.toBeInTheDocument();
     expect(mockSwarmsTab).not.toHaveBeenCalled();
+  });
+
+  it("renders SwarmsTab for an anonymous Convex guest (personal-org owner)", () => {
+    // Anonymous guests own a personal-org project and pass backend
+    // requireProjectRole('member') via userId. The email-based members list
+    // can't resolve them — skip the invitee-guest notice, don't spin/deny.
+    mockUseAuth.mockReturnValue({ user: null, isLoading: false });
+    mockViewerRole.role = undefined;
+    mockViewerRole.isLoading = false;
+
+    render(<SwarmsRoute />);
+
+    expect(screen.getByText("Swarms Tab")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Swarms is available to project members"),
+    ).not.toBeInTheDocument();
+    expect(mockSwarmsTab).toHaveBeenCalledWith({
+      projectId: "project-1",
+      isAuthenticated: true,
+      viewerRole: "owner",
+    });
   });
 
   it("renders SwarmsTab for a project member", () => {
@@ -149,7 +202,7 @@ describe("SwarmsRoute member-only gate", () => {
   it("keeps existing behavior (renders SwarmsTab) for an unauthenticated local user", () => {
     mockRouteContext.isAuthenticated = false;
     mockRouteContext.convexProjectId = null;
-    mockUseAuth.mockReturnValue({ user: null });
+    mockUseAuth.mockReturnValue({ user: null, isLoading: false });
 
     render(<SwarmsRoute />);
 

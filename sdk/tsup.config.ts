@@ -32,6 +32,8 @@ export default defineConfig({
     "src/widget-runtime/index.ts",
     // Shared host-compatibility verdict engine (UI / CLI / API / MCP).
     "src/host-compat/index.ts",
+    // Pure OpenAI plugin bundle parser shared with the backend importer.
+    "src/plugin-bundle/index.ts",
   ],
   external: ["@sentry/node"],
   format: ["esm"],

@@ -56,3 +56,36 @@ this contract.
 
 Local development is unaffected. The dev client swaps between `localhost`
 and `127.0.0.1` to get origin separation without operator configuration.
+
+## Organization-derived confidential CIMD (disabled by default)
+
+Hosted confidential CIMD is disabled unless `XAA_CIMD_ORG_MASTER_KEY` is set.
+When enabled, signed-in members receive a stable P-256 client identity derived
+from their organization ID. Guests remain public-CIMD-only. The public
+`/.well-known/oauth/xaa-cimd/:key` reflector is intentionally stateless: its
+URL carries the public JWK, and it needs neither this secret nor an org lookup.
+
+Set the variable only during an explicitly approved non-production or
+production rollout. It must be exactly 32 cryptographically random bytes,
+encoded as unpadded base64url (43 characters); malformed, empty, padded, or
+wrong-sized values make the hosted process fail at startup. For example:
+
+```bash
+openssl rand -base64 32 | tr '+/' '-_' | tr -d '='
+```
+
+Operational constraints:
+
+- Every hosted router replica must eventually use the same master key.
+- Compromise of the master key exposes every organization’s derived client
+  identity; protect it as a high-value deployment secret.
+- Changing the master changes every client ID immediately. Version 1 has no
+  dual-key or grace-period rotation path, so do not rotate it casually.
+- Before production enablement, obtain explicit approval for the secret change,
+  deployment, and deployed Convex authorization checks. Do not run production
+  cross-org or guest smoke tests without separate approval.
+
+Use a local or explicitly approved non-production environment for verification;
+temporary test values must not be persisted into deployment configuration.
+Before expanding beyond debugger use, track KMS-backed signing or stored
+per-organization keys with dual-key rotation.

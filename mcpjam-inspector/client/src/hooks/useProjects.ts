@@ -258,14 +258,21 @@ export function canManageHosts(
 // `role: undefined` while the members list is still loading (or when the viewer
 // isn't found among the active members). Callers should treat `isLoading` as
 // "not yet decided" rather than firing member-only queries.
+//
+// `identityLoading` is the WorkOS (or equivalent) hydrate signal — Convex
+// `isAuthenticated` alone is NOT enough, because guest sessions also flip it
+// true without ever producing a `viewerEmail`.
 export function useViewerProjectRole({
   isAuthenticated,
   projectId,
   viewerEmail,
+  identityLoading = false,
 }: {
   isAuthenticated: boolean;
   projectId: string | null;
   viewerEmail: string | null | undefined;
+  /** True while the identity provider may still produce `viewerEmail`. */
+  identityLoading?: boolean;
 }): { role: ProjectMembershipRole | undefined; isLoading: boolean } {
   const { activeMembers, isLoading } = useProjectMembers({
     isAuthenticated,
@@ -282,25 +289,28 @@ export function useViewerProjectRole({
 
   return {
     role,
-    isLoading: isViewerRolePending(isLoading, isAuthenticated, viewerEmail),
+    isLoading: isViewerRolePending(isLoading, identityLoading, viewerEmail),
   };
 }
 
 /**
- * Is the viewer's project role still "not yet decided"? True while the members
- * list is loading OR while the viewer's identity is still hydrating — WorkOS
- * `user.email` arrives asynchronously AFTER `isAuthenticated` flips true, so if
- * the members list resolves first we'd otherwise report a real member as
- * `{ role: undefined, isLoading: false }` and callers would wrongly deny them.
- * Treat "authenticated but no viewer email yet" as still-loading so the gate
- * shows a spinner, not access-denied, until the identity is available.
+ * Is the viewer's project role still "not yet decided"?
+ *
+ * - Identity still hydrating → pending (avoids flashing access-denied for a
+ *   real member whose WorkOS `user.email` arrives after Convex auth).
+ * - Identity settled with no email → NOT pending. Convex guest sessions are
+ *   authenticated without a WorkOS user; waiting on email forever spun the
+ *   Swarms gate. No email means no matchable membership → deny.
+ * - Identity settled with an email → pending only while the members list loads.
  */
 export function isViewerRolePending(
   membersLoading: boolean,
-  isAuthenticated: boolean,
+  identityLoading: boolean,
   viewerEmail: string | null | undefined
 ): boolean {
-  return membersLoading || (isAuthenticated && !viewerEmail?.trim());
+  if (identityLoading) return true;
+  if (!viewerEmail?.trim()) return false;
+  return membersLoading;
 }
 
 export function useProjectMutations() {

@@ -6,13 +6,48 @@
  * when run, fans out one single-host session per (host × sessionsPerHost).
  *
  * Consumes the project-scoped backend: personas:*, journeys:*, journeyRuns:*.
+ *
+ * ## Agent bridge (v1 scope)
+ *
+ * This is the surface component that calls `useSurfaceAgentBridge` for the
+ * `swarms` tool group (create persona, open journey form, launch run). Two
+ * scoping decisions, both grounded in the actual UI:
+ *
+ * - **Promote-to-eval is OUT of v1.** The promotable session is lazily
+ *   paginated inside `RunSessionsView` (per expanded run) and there is no
+ *   top-level "selected session"; an agent tool couldn't resolve one without a
+ *   large lift of run/session state that would diverge the snapshot from the
+ *   multi-card view. The human uses the in-view "Promote to test case" button.
+ * - **Swarm host CRUD is OUT of v1.** Creating/deleting swarm hosts is admin
+ *   role-gated (`SwarmHostsPanel`, `canManageHosts`); the snapshot still
+ *   surfaces host TARGETS (names) via the journey→hosts mapping.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, usePaginatedQuery } from "convex/react";
+import { Loader2, Plus } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@mcpjam/design-system/dialog";
+import { Input } from "@mcpjam/design-system/input";
+import { Label } from "@mcpjam/design-system/label";
+import { Textarea } from "@mcpjam/design-system/textarea";
 import { toast } from "@/lib/toast";
+import { cn } from "@/lib/utils";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { InlineEditableText } from "@/components/ui/inline-editable-text";
+import { TextareaAutosize } from "@/components/ui/textarea-autosize";
+import { PersonaPixelAvatar } from "@/components/swarms/persona-pixel-avatar";
+import { PersonaAvatarLookPicker } from "@/components/swarms/persona-avatar-look-picker";
+import { JourneyNetworkBackdrop } from "@/components/swarms/journey-network-backdrop";
 import {
   launchJourneyRun,
+  LaunchJourneyRunError,
   SWARM_QUERIES,
   DEFAULT_PAGE_SIZE,
   type GoalScoreRollup,
@@ -48,6 +83,19 @@ import {
   canManageHosts,
   type ProjectMembershipRole,
 } from "@/hooks/useProjects";
+import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
+import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
+import type {
+  CreatePersonaInspectorCommand,
+  LaunchSwarmRunInspectorCommand,
+  OpenJourneyFormInspectorCommand,
+} from "@/shared/inspector-command.js";
+
+// Cap the agent snapshot's list sizes — a redacted STATE overview, never a
+// data dump. Personas/journeys are usually few; the cap just bounds the
+// pathological case.
+const AGENT_SNAPSHOT_MAX_PERSONAS = 30;
+const AGENT_SNAPSHOT_MAX_JOURNEYS = 30;
 
 // Valid readiness enums (mirror `session-readiness.tsx`). The backend
 // denormalizes a WIDE `{ status?: string; verdict?: string }` subset onto the
@@ -150,7 +198,7 @@ export function SessionGoalScoreBadge({
   );
 }
 
-/** `· goal 78% avg (4 judged)` — shared by the run card + persona strip. */
+/** `· goal 78% avg (4 judged)` — used on journey run cards. */
 export function goalScoreAvgLabel(rollup: GoalScoreRollup | undefined): string | null {
   if (!rollup || rollup.gradedCount === 0 || rollup.avgScore === null) {
     return null;
@@ -164,6 +212,9 @@ type Persona = {
   name: string;
   role: string;
   notes: string;
+  /** Optional 8-bit look (Inspector PersonaPixelAvatar). */
+  avatarShape?: number;
+  avatarPalette?: number;
 };
 type Journey = {
   _id: string;
@@ -221,6 +272,30 @@ function usePersonaTrackRecord(personaRefId: string | null) {
   ) as PersonaTrackRecord | undefined;
 }
 
+/**
+ * Owns the `listRunningPersonaRefIds` subscription in isolation so a missing
+ * backend deploy (unknown query) cannot white-screen Swarms — the parent
+ * wraps this in `ErrorBoundary` and keeps an empty running set on failure.
+ */
+function RunningPersonasSubscriber({
+  projectId,
+  onChange,
+}: {
+  projectId: string | null;
+  onChange: (ids: string[]) => void;
+}) {
+  const ids = useQuery(
+    SWARM_QUERIES.listRunningPersonaRefIds as any,
+    projectId ? ({ projectId } as any) : "skip",
+  ) as string[] | undefined;
+
+  useEffect(() => {
+    onChange(ids ?? []);
+  }, [ids, onChange]);
+
+  return null;
+}
+
 export function SwarmsTab({
   projectId,
   isAuthenticated,
@@ -232,6 +307,14 @@ export function SwarmsTab({
   const effectiveProjectId = isAuthenticated ? projectId : null;
   const personas = usePersonas(effectiveProjectId);
   const hosts = useProjectHosts(effectiveProjectId);
+  const [runningPersonaIds, setRunningPersonaIds] = useState<string[]>([]);
+  const runningSet = useMemo(
+    () => new Set(runningPersonaIds),
+    [runningPersonaIds],
+  );
+  const onRunningPersonasChange = useCallback((ids: string[]) => {
+    setRunningPersonaIds(ids);
+  }, []);
   const [swarmView, setSwarmView] = useState<"journeys" | "clients">(
     "journeys",
   );
@@ -246,15 +329,368 @@ export function SwarmsTab({
     () => deepLink.personaRefId ?? null,
   );
   const journeys = useJourneys(selectedPersonaId);
+  // Lifted for the agent snapshot (one subscription).
 
   const createPersona = useMutation("personas:createPersona" as any);
+  const updatePersona = useMutation("personas:updatePersona" as any);
   const deletePersona = useMutation("personas:deletePersona" as any);
   const createJourney = useMutation("journeys:createJourney" as any);
+
+  const savePersonaField = useCallback(
+    async (
+      personaRefId: string,
+      patch: {
+        name?: string;
+        role?: string;
+        notes?: string;
+        avatarShape?: number;
+        avatarPalette?: number;
+      },
+    ) => {
+      try {
+        await updatePersona({ personaRefId, ...patch } as any);
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : "Failed to update persona",
+        );
+        throw error;
+      }
+    },
+    [updatePersona],
+  );
 
   const selectedPersona = useMemo(
     () => personas?.find((p) => p._id === selectedPersonaId) ?? null,
     [personas, selectedPersonaId]
   );
+  // Gate on the VALIDATED persona, not the raw URL-derived id: a copied
+  // /swarms?persona=... deep link opened while signed out (or with a stale id)
+  // must not subscribe getPersonaTrackRecord before the allowed persona list
+  // has loaded and matched — that surfaces backend authorization errors.
+  const trackRecord = usePersonaTrackRecord(
+    selectedPersona ? selectedPersonaId : null,
+  );
+
+  // New-journey form, lifted so `ui_open_journey_form` can open it (the
+  // prefill-over-commit posture — a journey targets hosts + sets fan-out
+  // config, so the human finishes and submits it).
+  const [journeyFormOpen, setJourneyFormOpen] = useState(false);
+  const [journeyGoalSeed, setJourneyGoalSeed] = useState("");
+
+  // ── Agent bridge ──────────────────────────────────────────────────────────
+  // The swarms tool group + this screen's command handlers and snapshot. Lives
+  // HERE in the surface component (SwarmsTab owns personas/journeys and the
+  // launch path and shares no state hook with another surface). Handlers reuse
+  // the EXACT callbacks the buttons use: the createPersona mutation, the
+  // new-journey form, and the launchJourneyRun REST path (with the same
+  // per-launch idempotency key).
+  const agentOperable = isAuthenticated && Boolean(projectId);
+  const requireAgentOperable = () => {
+    if (!agentOperable) {
+      throw createInspectorCommandClientError(
+        "unsupported_in_mode",
+        "Swarms is locked here — sign in and select a project before using the swarm tools.",
+      );
+    }
+  };
+
+  // One idempotency key per (journey) launch, retained verbatim after ANY
+  // unsuccessful response and reused on retry so a network retry can't spawn a
+  // duplicate run (the backend dedupes the reused key). Cleared only after a
+  // confirmed 2xx — mirrors the Run button's `launchKeyRef` semantics.
+  const launchKeysRef = useRef<Map<string, string>>(new Map());
+  const launchingRef = useRef<Set<string>>(new Set());
+
+  // SINGLE per-journey launch coordinator, shared by BOTH the Run button
+  // (JourneyCard) and the agent's ui_launch_swarm_run. Sharing launchKeysRef +
+  // launchingRef is what lets the backend dedupe a concurrent button-click and
+  // agent-launch of the same journey into ONE paid run — two independent key
+  // stores would each mint a key and spawn two runs. Throws LaunchJourneyRunError
+  // (incl. 402) so each caller can shape its own error; the key is retained on
+  // ANY failure and dropped only after a confirmed 2xx.
+  const launchJourney = useCallback(
+    async (
+      journeyId: string,
+    ): Promise<
+      | { status: "launched"; runId?: string }
+      | { status: "already_launching" }
+    > => {
+      if (!projectId) {
+        throw new LaunchJourneyRunError(0, "No project is selected.");
+      }
+      if (launchingRef.current.has(journeyId)) {
+        return { status: "already_launching" };
+      }
+      let launchKey = launchKeysRef.current.get(journeyId);
+      if (!launchKey) {
+        launchKey = crypto.randomUUID();
+        launchKeysRef.current.set(journeyId, launchKey);
+      }
+      launchingRef.current.add(journeyId);
+      try {
+        const result = await launchJourneyRun({
+          journeyId,
+          projectId,
+          launchKey,
+        });
+        launchKeysRef.current.delete(journeyId); // confirmed 2xx
+        return { status: "launched", runId: result.runId };
+      } finally {
+        // Retain the key on failure (handled by the thrown error reaching the
+        // caller); only clear the in-flight marker.
+        launchingRef.current.delete(journeyId);
+      }
+    },
+    [projectId],
+  );
+
+  // Exact (case-insensitive) resolution against the loaded lists — unknown or
+  // ambiguous → invalid_request, never a fuzzy guess.
+  const resolvePersona = (raw: unknown): Persona => {
+    if (typeof raw !== "string" || raw.trim().length === 0) {
+      throw createInspectorCommandClientError(
+        "invalid_request",
+        "Missing required 'persona' string (a persona name or id).",
+      );
+    }
+    const wanted = raw.trim();
+    const wantedLower = wanted.toLowerCase();
+    const matches = (personas ?? []).filter(
+      (p) => p._id === wanted || p.name.toLowerCase() === wantedLower,
+    );
+    if (matches.length === 1) return matches[0];
+    if (matches.length === 0) {
+      throw createInspectorCommandClientError(
+        "invalid_request",
+        `No persona matches "${wanted}". Use a persona name or id from this screen (list them with ui_snapshot_app).`,
+      );
+    }
+    throw createInspectorCommandClientError(
+      "invalid_request",
+      `${matches.length} personas match "${wanted}" — pass the persona id instead (ids are in ui_snapshot_app).`,
+    );
+  };
+
+  const resolveJourney = (raw: unknown): Journey => {
+    if (typeof raw !== "string" || raw.trim().length === 0) {
+      throw createInspectorCommandClientError(
+        "invalid_request",
+        "Missing required 'journey' string (a goal or journey id).",
+      );
+    }
+    if (!selectedPersona) {
+      throw createInspectorCommandClientError(
+        "invalid_request",
+        "Select a persona first — journeys are listed per persona (see ui_snapshot_app).",
+      );
+    }
+    const wanted = raw.trim();
+    const wantedLower = wanted.toLowerCase();
+    const matches = (journeys ?? []).filter(
+      (j) =>
+        j._id === wanted ||
+        j.goal.toLowerCase() === wantedLower ||
+        (j.name ?? "").toLowerCase() === wantedLower,
+    );
+    if (matches.length === 1) return matches[0];
+    if (matches.length === 0) {
+      throw createInspectorCommandClientError(
+        "invalid_request",
+        `No journey matches "${wanted}" for persona "${selectedPersona.name}". Use a journey goal or id from this screen; if the journey belongs to another persona, select that persona first.`,
+      );
+    }
+    throw createInspectorCommandClientError(
+      "invalid_request",
+      `${matches.length} journeys match "${wanted}" — pass the journey id instead (ids are in ui_snapshot_app).`,
+    );
+  };
+
+  const hostTargetName = (id: string) =>
+    hosts?.find((h) => h.hostId === id)?.name ?? id.slice(0, 8);
+
+  useSurfaceAgentBridge({
+    surfaceId: "swarms",
+    handlers: {
+      createPersona: async (command) => {
+        requireAgentOperable();
+        const pid = projectId;
+        if (!pid) {
+          throw createInspectorCommandClientError(
+            "unsupported_in_mode",
+            "No project is selected.",
+          );
+        }
+        const { payload } = command as CreatePersonaInspectorCommand;
+        const name =
+          typeof payload?.name === "string" ? payload.name.trim() : "";
+        const role =
+          typeof payload?.role === "string" ? payload.role.trim() : "";
+        if (!name) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            "Missing required 'name' string.",
+          );
+        }
+        if (!role) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            "Missing required 'role' string.",
+          );
+        }
+        if (payload?.notes !== undefined && typeof payload.notes !== "string") {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            "'notes' must be a string when provided.",
+          );
+        }
+        const notes =
+          typeof payload?.notes === "string" ? payload.notes.trim() : "";
+        // The SAME mutation the New-persona dialog calls; select the new row
+        // just as the dialog's onCreate does.
+        const row = await createPersona({
+          projectId: pid,
+          name,
+          role,
+          notes,
+        } as any);
+        setSelectedPersonaId(row._id);
+        return {
+          status: "persona_created",
+          personaId: row._id,
+          name,
+          note: "The persona is now selected; add a journey with ui_open_journey_form.",
+        };
+      },
+      openJourneyForm: async (command) => {
+        requireAgentOperable();
+        const { payload } = command as OpenJourneyFormInspectorCommand;
+        let persona = selectedPersona;
+        if (payload?.persona !== undefined) {
+          persona = resolvePersona(payload.persona);
+          setSelectedPersonaId(persona._id);
+        }
+        if (!persona) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            "Select or name a persona first — a journey belongs to a persona.",
+          );
+        }
+        if (payload?.goal !== undefined && typeof payload.goal !== "string") {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            "'goal' must be a string when provided.",
+          );
+        }
+        const goal =
+          typeof payload?.goal === "string" ? payload.goal.trim() : "";
+        setJourneyGoalSeed(goal);
+        // The bridge covers the whole Swarms surface incl. the Clients
+        // sub-tab; switch to Journeys so the opened form is actually visible.
+        setSwarmView("journeys");
+        setJourneyFormOpen(true);
+        return {
+          status: "form_opened",
+          personaId: persona._id,
+          ...(goal ? { prefilledGoal: goal } : {}),
+          note: "The user picks the target hosts and fan-out config and submits — no journey is created yet.",
+        };
+      },
+      launchSwarmRun: async (command) => {
+        requireAgentOperable();
+        const pid = projectId;
+        if (!pid) {
+          throw createInspectorCommandClientError(
+            "unsupported_in_mode",
+            "No project is selected.",
+          );
+        }
+        const { payload } = command as LaunchSwarmRunInspectorCommand;
+        const journey = resolveJourney(payload.journey);
+        const jid = journey._id;
+        void pid; // presence already validated above
+        try {
+          // ONE coordinator shared with the Run button — see launchJourney.
+          const result = await launchJourney(jid);
+          if (result.status === "already_launching") {
+            throw createInspectorCommandClientError(
+              "execution_failed",
+              "This journey is already launching — wait for it to start.",
+            );
+          }
+          return {
+            status: "run_requested",
+            journeyId: jid,
+            runId: result.runId,
+            note: "The run fans out in the background; observe it with ui_snapshot_app.",
+          };
+        } catch (e) {
+          if (e instanceof LaunchJourneyRunError) {
+            if (e.status === 402) {
+              throw createInspectorCommandClientError(
+                "execution_failed",
+                `Cannot launch this journey run: ${e.message} Launching spends the organization's swarm quota, which is exhausted — do not retry until it resets or billing is updated.`,
+              );
+            }
+            throw createInspectorCommandClientError(
+              "execution_failed",
+              `Could not launch the journey run: ${e.message}`,
+            );
+          }
+          throw e; // already an InspectorCommandClientError (e.g. already_launching)
+        }
+      },
+    },
+    // Redacted STATE, not payloads: persona/journey names + ids, host target
+    // NAMES, and aggregate counters/scores only — no transcripts, no tokens,
+    // no PII. Per-run session rows stay in the lazily-paginated per-run view.
+    snapshot: () => {
+      if (!agentOperable) {
+        return {
+          gated: true,
+          reason: "Sign in and select a project to use Swarms.",
+        };
+      }
+      return {
+        view: swarmView,
+        canManageHosts: canManage,
+        selectedPersona: selectedPersona
+          ? {
+              id: selectedPersona._id,
+              name: selectedPersona.name,
+              role: selectedPersona.role,
+            }
+          : null,
+        personaCount: personas?.length ?? 0,
+        personas: (personas ?? [])
+          .slice(0, AGENT_SNAPSHOT_MAX_PERSONAS)
+          .map((p) => ({ id: p._id, name: p.name, role: p.role })),
+        journeys: (journeys ?? [])
+          .slice(0, AGENT_SNAPSHOT_MAX_JOURNEYS)
+          .map((j) => ({
+            id: j._id,
+            goal: j.goal,
+            name: j.name ?? null,
+            hostTargets: j.hostIds.map(hostTargetName),
+            sessionsPerHost: j.config.sessionsPerHost,
+            maxTurns: j.config.maxTurns,
+          })),
+        trackRecord:
+          trackRecord && trackRecord.sessionCount > 0
+            ? {
+                runCount: trackRecord.runCount,
+                sessionCount: trackRecord.sessionCount,
+                goalScore: trackRecord.goalScore
+                  ? {
+                      gradedCount: trackRecord.goalScore.gradedCount,
+                      passedCount: trackRecord.goalScore.passedCount,
+                      avgScore: trackRecord.goalScore.avgScore,
+                    }
+                  : null,
+              }
+            : null,
+      };
+    },
+  });
 
   if (!projectId) {
     return (
@@ -266,6 +702,12 @@ export function SwarmsTab({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      <ErrorBoundary fallback={null}>
+        <RunningPersonasSubscriber
+          projectId={effectiveProjectId}
+          onChange={onRunningPersonasChange}
+        />
+      </ErrorBoundary>
       {/* Product sub-nav: Journeys (personas/journeys/runs) vs Clients
           (product-scoped host management). */}
       <div className="flex shrink-0 items-center justify-center border-b px-4 py-2">
@@ -292,7 +734,7 @@ export function SwarmsTab({
           <aside className="flex w-72 shrink-0 flex-col border-r">
         <div className="flex items-center justify-between border-b px-4 py-3">
           <h2 className="text-sm font-semibold">Personas</h2>
-          <NewPersonaButton
+          <NewPersonaDialog
             onCreate={async (draft) => {
               const row = await createPersona({ projectId, ...draft } as any);
               setSelectedPersonaId(row._id);
@@ -307,19 +749,37 @@ export function SwarmsTab({
               No personas yet. Create one to get started.
             </div>
           ) : (
-            personas.map((p) => (
-              <button
-                key={p._id}
-                type="button"
-                onClick={() => setSelectedPersonaId(p._id)}
-                className={`flex w-full flex-col items-start gap-0.5 border-b px-4 py-3 text-left hover:bg-muted/50 ${
-                  p._id === selectedPersonaId ? "bg-muted" : ""
-                }`}
-              >
-                <span className="text-sm font-medium">{p.name}</span>
-                <span className="text-xs text-muted-foreground">{p.role}</span>
-              </button>
-            ))
+            personas.map((p) => {
+              const selected = p._id === selectedPersonaId;
+              return (
+                <button
+                  key={p._id}
+                  type="button"
+                  onClick={() => setSelectedPersonaId(p._id)}
+                  className={cn(
+                    "flex w-full items-center gap-3 border-b px-4 py-3 text-left hover:bg-muted/50",
+                    selected && "bg-muted",
+                  )}
+                >
+                  <PersonaPixelAvatar
+                    seed={p._id}
+                    shapeIndex={p.avatarShape}
+                    paletteIndex={p.avatarPalette}
+                    size="md"
+                    active={selected}
+                    state={runningSet.has(p._id) ? "running" : "idle"}
+                  />
+                  <span className="flex min-w-0 flex-col items-start gap-0.5">
+                    <span className="truncate text-sm font-medium">
+                      {p.name}
+                    </span>
+                    <span className="truncate text-xs text-muted-foreground">
+                      {p.role}
+                    </span>
+                  </span>
+                </button>
+              );
+            })
           )}
         </div>
       </aside>
@@ -327,46 +787,40 @@ export function SwarmsTab({
       {/* Journeys for the selected persona */}
       <main className="min-w-0 flex-1 overflow-y-auto">
         {!selectedPersona ? (
-          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-            Select a persona to see its journeys.
-          </div>
+          <JourneyNetworkBackdrop />
         ) : (
           <div className="mx-auto max-w-3xl px-8 py-6">
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-semibold">{selectedPersona.name}</h2>
-                <p className="text-sm text-muted-foreground">
-                  {selectedPersona.role}
-                </p>
-              </div>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                onClick={async () => {
-                  if (
-                    !window.confirm(
-                      `Delete persona "${selectedPersona.name}"? Its journeys are hidden but historical runs are kept.`
-                    )
-                  ) {
-                    return;
-                  }
-                  await deletePersona({
-                    personaRefId: selectedPersona._id,
-                  } as any);
-                  setSelectedPersonaId(null);
-                }}
-              >
-                Delete persona
-              </Button>
-            </div>
-
-            <PersonaTrackRecordStrip personaRefId={selectedPersona._id} />
+            <PersonaDetailHeader
+              persona={selectedPersona}
+              running={runningSet.has(selectedPersona._id)}
+              onSave={(patch) => savePersonaField(selectedPersona._id, patch)}
+              onDelete={async () => {
+                if (
+                  !window.confirm(
+                    `Delete persona "${selectedPersona.name}"? Its journeys are hidden but historical runs are kept.`,
+                  )
+                ) {
+                  return;
+                }
+                await deletePersona({
+                  personaRefId: selectedPersona._id,
+                } as any);
+                setSelectedPersonaId(null);
+              }}
+            />
 
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-sm font-semibold">Journeys</h3>
               <NewJourneyButton
                 hosts={hosts ?? []}
+                open={journeyFormOpen}
+                onOpenChange={(o) => {
+                  setJourneyFormOpen(o);
+                  // Drop the agent prefill on close so a later manual open
+                  // starts blank.
+                  if (!o) setJourneyGoalSeed("");
+                }}
+                goalSeed={journeyGoalSeed}
                 onCreate={async (draft) => {
                   await createJourney({
                     projectId,
@@ -390,8 +844,8 @@ export function SwarmsTab({
                   <JourneyCard
                     key={j._id}
                     journey={j}
+                    onLaunch={launchJourney}
                     hosts={hosts ?? []}
-                    projectId={projectId}
                     initialRunId={deepLink.runId}
                     initialThreadId={deepLink.threadId}
                   />
@@ -403,24 +857,6 @@ export function SwarmsTab({
       </main>
         </div>
       )}
-    </div>
-  );
-}
-
-// ── persona track record ─────────────────────────────────────────────────────
-function PersonaTrackRecordStrip({ personaRefId }: { personaRefId: string }) {
-  const record = usePersonaTrackRecord(personaRefId);
-  if (!record || record.sessionCount === 0) return null;
-  return (
-    <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border bg-muted/30 px-3 py-2 text-xs">
-      <span className="font-medium text-muted-foreground">Track record</span>
-      <span className="text-muted-foreground">
-        {record.sessionCount} session{record.sessionCount === 1 ? "" : "s"} ·{" "}
-        {record.runCount} run{record.runCount === 1 ? "" : "s"}
-        {goalScoreAvgLabel(record.goalScore)
-          ? ` · ${goalScoreAvgLabel(record.goalScore)}`
-          : ""}
-      </span>
     </div>
   );
 }
@@ -447,13 +883,18 @@ function runStatusClass(status: string): string {
 function JourneyCard({
   journey,
   hosts,
-  projectId,
   initialRunId,
   initialThreadId,
+  onLaunch,
 }: {
   journey: Journey;
   hosts: HostItem[];
-  projectId: string;
+  /** Shared launch coordinator — see SwarmsTab.launchJourney. */
+  onLaunch: (
+    journeyId: string,
+  ) => Promise<
+    { status: "launched"; runId?: string } | { status: "already_launching" }
+  >;
   /** Deep-link run to auto-open (only the card that owns it reacts). */
   initialRunId?: string;
   /** Deep-link session to auto-select inside the opened run. */
@@ -474,9 +915,6 @@ function JourneyCard({
     { journeyRefId: journey._id } as any
   ) as JourneyRollup | undefined;
 
-  // One launch key per click, reused verbatim if the HTTP call is retried so a
-  // network retry can't spawn a duplicate run.
-  const launchKeyRef = useRef<string | null>(null);
   const [launching, setLaunching] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [openRunId, setOpenRunId] = useState<string | null>(null);
@@ -500,26 +938,17 @@ function JourneyCard({
     if (launching) return;
     setLaunchError(null);
     setLaunching(true);
-    if (!launchKeyRef.current) {
-      launchKeyRef.current = crypto.randomUUID();
-    }
     try {
-      await launchJourneyRun({
-        journeyId: journey._id,
-        projectId,
-        launchKey: launchKeyRef.current,
-      });
-      // Accepted (confirmed 2xx {runId}) — the ONLY place we mint a fresh key.
-      launchKeyRef.current = null;
+      // Shared coordinator: same launchKey store as the agent path, so a
+      // concurrent agent launch of this journey dedupes to one paid run.
+      const result = await onLaunch(journey._id);
+      if (result.status === "already_launching") {
+        return; // another launch of this journey is already in flight
+      }
       toast.success("Journey run started");
     } catch (e) {
-      // RETAIN the launch key after ANY unsuccessful response — 4xx, 5xx, OR a
-      // network/transport failure — and reuse it on retry. A 5xx or a dropped
-      // connection can land AFTER the backend already created the run, so
-      // minting a new key would spawn a SECOND run (duplicate spend). The
-      // backend dedupes a reused key to the existing run (or, if the create
-      // never inserted, creates exactly one). The key is cleared only on a
-      // confirmed 2xx above.
+      // The coordinator retains the key on ANY failure and reuses it on retry,
+      // so the backend dedupes rather than double-spending.
       setLaunchError(e instanceof Error ? e.message : "Failed to start run");
     } finally {
       setLaunching(false);
@@ -785,8 +1214,96 @@ function RunSessionsView({
   );
 }
 
-// ── dialogs (minimal inline forms) ───────────────────────────────────────────
-function NewPersonaButton({
+// ── persona detail (evals-style editable header) ─────────────────────────────
+
+function PersonaDetailHeader({
+  persona,
+  running,
+  onSave,
+  onDelete,
+}: {
+  persona: Persona;
+  running: boolean;
+  onSave: (patch: {
+    name?: string;
+    role?: string;
+    notes?: string;
+    avatarShape?: number;
+    avatarPalette?: number;
+  }) => Promise<void>;
+  onDelete: () => Promise<void>;
+}) {
+  const [notes, setNotes] = useState(persona.notes ?? "");
+
+  useEffect(() => {
+    setNotes(persona.notes ?? "");
+  }, [persona._id, persona.notes]);
+
+  const persistNotes = async () => {
+    const next = notes.trim();
+    const prev = (persona.notes ?? "").trim();
+    if (next === prev) return;
+    try {
+      await onSave({ notes: next });
+    } catch {
+      setNotes(persona.notes ?? "");
+    }
+  };
+
+  return (
+    <div className="mb-4 flex items-start justify-between gap-4">
+      <div className="flex min-w-0 flex-1 items-start gap-3">
+        <PersonaAvatarLookPicker
+          seed={persona._id}
+          avatarShape={persona.avatarShape}
+          avatarPalette={persona.avatarPalette}
+          state={running ? "running" : "idle"}
+          onSave={(look) => onSave(look)}
+        />
+        <div className="min-w-0 flex-1">
+          <InlineEditableText
+            value={persona.name}
+            onSave={(name) => onSave({ name })}
+            className="block w-full text-lg font-semibold tracking-tight sm:text-xl"
+            truncate={false}
+          />
+          <InlineEditableText
+            value={persona.role}
+            onSave={(role) => onSave({ role })}
+            className="mt-0.5 block w-full text-sm text-muted-foreground"
+            truncate={false}
+          />
+          <TextareaAutosize
+            aria-label="Notes / personality"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            onBlur={() => void persistNotes()}
+            minRows={1}
+            maxRows={4}
+            placeholder="Add personality notes…"
+            className={cn(
+              "mt-2 min-h-0 resize-none border-0 bg-transparent px-0 py-0 text-sm",
+              "text-muted-foreground shadow-none placeholder:text-muted-foreground/60",
+              "focus-visible:border-0 focus-visible:ring-0",
+            )}
+          />
+        </div>
+      </div>
+      <Button
+        type="button"
+        size="sm"
+        variant="ghost"
+        className="shrink-0 text-muted-foreground hover:text-destructive"
+        onClick={() => void onDelete()}
+      >
+        Delete persona
+      </Button>
+    </div>
+  );
+}
+
+// ── create persona dialog (design-system; replaces the floating raw form) ────
+function NewPersonaDialog({
   onCreate,
 }: {
   onCreate: (draft: {
@@ -799,59 +1316,135 @@ function NewPersonaButton({
   const [name, setName] = useState("");
   const [role, setRole] = useState("");
   const [notes, setNotes] = useState("");
-  if (!open) {
-    return (
-      <Button type="button" size="sm" variant="outline" onClick={() => setOpen(true)}>
-        + New
-      </Button>
-    );
-  }
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!open) {
+      setName("");
+      setRole("");
+      setNotes("");
+      setSaving(false);
+    }
+  }, [open]);
+
+  const handleCreate = async () => {
+    if (!name.trim() || !role.trim()) {
+      toast.error("Name and role are required");
+      return;
+    }
+    setSaving(true);
+    try {
+      await onCreate({
+        name: name.trim(),
+        role: role.trim(),
+        notes: notes.trim() || undefined,
+      });
+      toast.success("Persona created");
+      setOpen(false);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to create persona",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <div className="absolute right-4 top-12 z-10 w-64 rounded-lg border bg-background p-3 shadow-lg">
-      <input
-        className="mb-2 w-full rounded border px-2 py-1 text-sm"
-        placeholder="Name"
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-      />
-      <input
-        className="mb-2 w-full rounded border px-2 py-1 text-sm"
-        placeholder="Role"
-        value={role}
-        onChange={(e) => setRole(e.target.value)}
-      />
-      <textarea
-        className="mb-2 w-full rounded border px-2 py-1 text-sm"
-        placeholder="Notes / personality"
-        value={notes}
-        onChange={(e) => setNotes(e.target.value)}
-      />
-      <div className="flex justify-end gap-2">
-        <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>
-          Cancel
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          disabled={!name.trim() || !role.trim()}
-          onClick={async () => {
-            await onCreate({ name, role, notes });
-            setOpen(false);
-            setName("");
-            setRole("");
-            setNotes("");
-          }}
-        >
-          Create
-        </Button>
-      </div>
-    </div>
+    <>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        onClick={() => setOpen(true)}
+      >
+        <Plus className="mr-1 size-3" />
+        New
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>New persona</DialogTitle>
+            <DialogDescription>
+              A synthetic user who pursues journeys across your clients.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-3 py-1">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="swarm-persona-name">Name</Label>
+              <Input
+                id="swarm-persona-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Test User"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void handleCreate();
+                  }
+                }}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="swarm-persona-role">Role</Label>
+              <Input
+                id="swarm-persona-role"
+                value={role}
+                onChange={(e) => setRole(e.target.value)}
+                placeholder="SWE evaluating the product"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void handleCreate();
+                  }
+                }}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="swarm-persona-notes">Notes / personality</Label>
+              <Textarea
+                id="swarm-persona-notes"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="Background, tone, what they care about…"
+                rows={4}
+                className="leading-relaxed"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setOpen(false)}
+              disabled={saving}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={saving || !name.trim() || !role.trim()}
+              onClick={() => void handleCreate()}
+            >
+              {saving ? (
+                <Loader2 className="mr-1 size-3 animate-spin" />
+              ) : null}
+              Create persona
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
 function NewJourneyButton({
   hosts,
   onCreate,
+  open,
+  onOpenChange,
+  goalSeed,
 }: {
   hosts: HostItem[];
   onCreate: (draft: {
@@ -859,12 +1452,22 @@ function NewJourneyButton({
     hostIds: string[];
     config: { sessionsPerHost: number; maxTurns: number };
   }) => Promise<void>;
+  // Controlled by SwarmsTab so `ui_open_journey_form` can open + prefill it.
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  /** Goal to seed each time the form opens ("" for a manual open). */
+  goalSeed: string;
 }) {
-  const [open, setOpen] = useState(false);
   const [goal, setGoal] = useState("");
   const [hostIds, setHostIds] = useState<string[]>([]);
   const [sessionsPerHost, setSessionsPerHost] = useState(2);
   const [maxTurns, setMaxTurns] = useState(6);
+  // Seed the goal from the agent prefill (or reset to "") whenever the form
+  // transitions open. Manual "+ New journey" opens pass goalSeed="".
+  useEffect(() => {
+    if (open) setGoal(goalSeed);
+  }, [open, goalSeed]);
+  const setOpen = onOpenChange;
   // A journey may target ANY project host, including chatbox/suite-owned ones
   // (the backend validates only project ownership). But surface the Swarms'
   // own clients first and badge the "shared" ones so it's clear which hosts
@@ -883,7 +1486,8 @@ function NewJourneyButton({
   if (!open) {
     return (
       <Button type="button" size="sm" variant="outline" onClick={() => setOpen(true)}>
-        + New journey
+        <Plus className="mr-1 size-3" />
+        New journey
       </Button>
     );
   }
@@ -892,14 +1496,24 @@ function NewJourneyButton({
       prev.includes(id) ? prev.filter((h) => h !== id) : [...prev, id]
     );
   return (
-    <div className="w-full rounded-lg border p-4">
-      <textarea
-        className="mb-3 w-full rounded border px-2 py-1 text-sm"
-        placeholder="Goal — what this persona is trying to accomplish"
-        value={goal}
-        onChange={(e) => setGoal(e.target.value)}
-      />
-      <p className="mb-1 text-xs font-medium">Clients</p>
+    <div
+      className={cn(
+        "w-full rounded-xl border border-border/50 bg-card/50 p-4 shadow-sm",
+        "ring-1 ring-black/[0.03] dark:ring-white/[0.06]",
+      )}
+    >
+      <div className="mb-3 flex flex-col gap-1.5">
+        <Label htmlFor="swarm-journey-goal">Goal</Label>
+        <Textarea
+          id="swarm-journey-goal"
+          placeholder="What this persona is trying to accomplish"
+          value={goal}
+          onChange={(e) => setGoal(e.target.value)}
+          rows={3}
+          className="leading-relaxed"
+        />
+      </div>
+      <p className="mb-1.5 text-xs font-medium">Clients</p>
       <div className="mb-3 flex flex-wrap gap-2">
         {hosts.length === 0 ? (
           <span className="text-xs text-muted-foreground">
@@ -922,11 +1536,12 @@ function NewJourneyButton({
                 key={h.hostId}
                 type="button"
                 onClick={() => toggleHost(h.hostId)}
-                className={`flex flex-col items-start gap-0.5 rounded-lg border px-2.5 py-1.5 text-left text-xs ${
+                className={cn(
+                  "flex flex-col items-start gap-0.5 rounded-lg border px-2.5 py-1.5 text-left text-xs",
                   hostIds.includes(h.hostId)
                     ? "border-primary bg-primary/10"
-                    : "hover:bg-muted"
-                }`}
+                    : "hover:bg-muted",
+                )}
               >
                 <span className="flex items-center gap-1.5 font-medium">
                   {h.name}
@@ -949,29 +1564,35 @@ function NewJourneyButton({
           })
         )}
       </div>
-      <div className="mb-3 flex gap-4 text-xs">
-        <label className="flex items-center gap-1">
-          Sessions/host
-          <input
+      <div className="mb-3 flex flex-wrap gap-4">
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="swarm-journey-sessions" className="text-xs">
+            Sessions/host
+          </Label>
+          <Input
+            id="swarm-journey-sessions"
             type="number"
             min={1}
             max={5}
-            className="w-14 rounded border px-1 py-0.5"
+            className="h-8 w-20"
             value={sessionsPerHost}
             onChange={(e) => setSessionsPerHost(Number(e.target.value))}
           />
-        </label>
-        <label className="flex items-center gap-1">
-          Max turns
-          <input
+        </div>
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="swarm-journey-turns" className="text-xs">
+            Max turns
+          </Label>
+          <Input
+            id="swarm-journey-turns"
             type="number"
             min={1}
             max={20}
-            className="w-14 rounded border px-1 py-0.5"
+            className="h-8 w-20"
             value={maxTurns}
             onChange={(e) => setMaxTurns(Number(e.target.value))}
           />
-        </label>
+        </div>
       </div>
       <div className="flex justify-end gap-2">
         <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>

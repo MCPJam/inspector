@@ -182,6 +182,8 @@ export interface OAuthDynamicRegistrationMetadata {
   grant_types?: string[];
   response_types?: string[];
   token_endpoint_auth_method?: string;
+  /** OIDC / SEP-837 client application type. */
+  application_type?: "native" | "web";
   [key: string]: unknown;
 }
 
@@ -245,6 +247,11 @@ export interface BaseOAuthStateMachineConfig {
 export type RegistrationStrategy2025_03_26 = "dcr" | "preregistered";
 export type RegistrationStrategy2025_06_18 = "dcr" | "preregistered";
 export type RegistrationStrategy2025_11_25 = "cimd" | "dcr" | "preregistered";
+export type RegistrationStrategy2026_07_28 = "cimd" | "dcr" | "preregistered";
 
 // Protocol versions
-export type OAuthProtocolVersion = "2025-03-26" | "2025-06-18" | "2025-11-25";
+export type OAuthProtocolVersion =
+  | "2025-03-26"
+  | "2025-06-18"
+  | "2025-11-25"
+  | "2026-07-28";

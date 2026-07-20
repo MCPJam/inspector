@@ -102,6 +102,39 @@ describe("normalizeSdkEvalHostConfigForWire — stripping", () => {
     );
   });
 
+  it("strips skillSelection from a canonical input (platform-internal skill ids)", async () => {
+    const input = baseInput({
+      skillSelection: { mode: "explicit", skillIds: ["sk-1"] },
+    });
+
+    const out = normalizeSdkEvalHostConfigForWire(input);
+
+    expect((out as Record<string, unknown>).skillSelection).toBeUndefined();
+    // Source untouched.
+    expect(input.skillSelection).toEqual({
+      mode: "explicit",
+      skillIds: ["sk-1"],
+    });
+    // The wire hash is independent of the skill selection the host carried
+    // (external-wire-only strip; platform-owned suites keep it in persisted
+    // HostConfigs).
+    expect(await computeHostConfigHashV2(out)).toBe(
+      await computeHostConfigHashV2(
+        normalizeSdkEvalHostConfigForWire(baseInput())
+      )
+    );
+  });
+
+  it("strips skillSelection from a Host.toJSON() snapshot too", () => {
+    const host = new Host({
+      style: "claude",
+      model: "anthropic/claude-sonnet-4-6",
+      skillSelection: { mode: "explicit", skillIds: [] },
+    });
+    const out = normalizeSdkEvalHostConfigForWire(host.toJSON());
+    expect((out as Record<string, unknown>).skillSelection).toBeUndefined();
+  });
+
   it("strips computer from a Host.toJSON() snapshot too", () => {
     const host = new Host({
       style: "claude",
