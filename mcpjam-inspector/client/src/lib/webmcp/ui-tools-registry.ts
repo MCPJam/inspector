@@ -85,6 +85,18 @@ interface UiToolsRegistryState {
   /** Disposers for native `modelContext` mirrors, keyed by tool name. */
   nativeDisposers: Map<string, () => void>;
   /**
+   * Names registered with `scope: "global"` (the app-wide catalog). Kept as
+   * a parallel set — not on the map values — so `resolve()` and the executor
+   * keep seeing plain `UiToolDefinition`s. Drives snapshot ordering only.
+   */
+  globalNames: Set<string>;
+  /**
+   * Current owner token per registered name. A registration's unregister
+   * closure only tears down while its own token is still the live one, so a
+   * `UiToolDefinition` object shared by two registrars can't be mis-owned.
+   */
+  ownerTokens: Map<string, symbol>;
+  /**
    * Every name ever shipped to the server in a snapshot, unioned at snapshot
    * time and NEVER evicted: a `ui_*` tool call only reaches `onToolCall`
    * when that stream's own snapshot advertised the name, and an in-flight
@@ -98,8 +110,22 @@ interface UiToolsRegistryState {
 
   registerUiTool: (
     def: UiToolDefinition,
-    opts?: { signal?: AbortSignal },
+    opts?: {
+      signal?: AbortSignal;
+      /**
+       * `"global"` = app-wide catalog, `"surface"` (default) = mounted while
+       * a specific surface is. `snapshotForChatBody` emits globals first so
+       * the 64-entry cap can never evict the global catalog in favor of
+       * whichever surface's effect happened to register earlier.
+       */
+      scope?: "global" | "surface";
+    },
   ) => () => void;
+  /**
+   * Unconditional by-name removal, for callers that explicitly own a name.
+   * The closure returned by `registerUiTool` is NOT this: it is ownership-
+   * guarded, a no-op once another registration has replaced the name.
+   */
   unregisterUiTool: (name: string) => void;
   resolve: (name: string) => UiToolDefinition | null;
   snapshotForChatBody: () => UiToolSnapshotEntry[];
@@ -109,6 +135,8 @@ interface UiToolsRegistryState {
 export const useUiToolsRegistry = create<UiToolsRegistryState>((set, get) => ({
   tools: new Map(),
   nativeDisposers: new Map(),
+  globalNames: new Set(),
+  ownerTokens: new Map(),
   shippedNames: new Set(),
 
   registerUiTool: (def, opts) => {
@@ -132,22 +160,53 @@ export const useUiToolsRegistry = create<UiToolsRegistryState>((set, get) => ({
     if (opts?.signal?.aborted) {
       return () => {};
     }
-    if (get().tools.has(def.name)) {
-      // HMR / StrictMode double-mounts re-register the same catalog; replace
-      // (dropping the stale native mirror) instead of throwing.
+    const existing = get().tools.get(def.name);
+    if (existing) {
+      // A LIVE same-name registration means two registrars claim one name:
+      // legitimate re-registration (HMR / StrictMode remounts) runs cleanup
+      // before setup, so no collision exists by the time setup re-registers.
+      // Escalate in the dev server (MODE, not DEV — vitest sets DEV=true and
+      // the warn+replace contract must stay testable); in prod, replace with
+      // a warn so a missed cleanup degrades instead of blanking the tool.
+      if (import.meta.env.MODE === "development") {
+        throw new Error(
+          `[webmcp] UI tool "${def.name}" registered while an earlier ` +
+            `registration is still live (existing: "${existing.description.slice(0, 80)}"; ` +
+            `incoming: "${def.description.slice(0, 80)}"). ` +
+            `Unregister the previous owner first.`,
+        );
+      }
       console.warn(`[webmcp] UI tool "${def.name}" re-registered; replacing.`);
       get().nativeDisposers.get(def.name)?.();
     }
     const dispose = mirrorUiToolToNative(def);
+    // Per-registration ownership token. NOT `def` identity: two registrars can
+    // share the same module-level `UiToolDefinition` object, so a def-identity
+    // guard would let a replaced registration's stale unregister still match
+    // (and delete) the replacement. Each register() call mints a fresh token;
+    // cleanup only fires while its own token is the live one for the name.
+    const ownerToken = Symbol(def.name);
     set((s) => {
       const tools = new Map(s.tools);
       tools.set(def.name, def);
       const nativeDisposers = new Map(s.nativeDisposers);
       if (dispose) nativeDisposers.set(def.name, dispose);
       else nativeDisposers.delete(def.name);
-      return { tools, nativeDisposers };
+      const globalNames = new Set(s.globalNames);
+      if (opts?.scope === "global") globalNames.add(def.name);
+      else globalNames.delete(def.name);
+      const ownerTokens = new Map(s.ownerTokens);
+      ownerTokens.set(def.name, ownerToken);
+      return { tools, nativeDisposers, globalNames, ownerTokens };
     });
-    const unregister = () => get().unregisterUiTool(def.name);
+    const unregister = () => {
+      // Ownership guard: tear down only while OUR registration is still the
+      // live one (checked by token, so a shared def object can't confuse it).
+      // After a warn+replace, the replaced registration's unregister/abort
+      // must not delete the replacement or dispose its native mirror.
+      if (get().ownerTokens.get(def.name) !== ownerToken) return;
+      get().unregisterUiTool(def.name);
+    };
     opts?.signal?.addEventListener("abort", unregister, { once: true });
     return unregister;
   },
@@ -165,7 +224,16 @@ export const useUiToolsRegistry = create<UiToolsRegistryState>((set, get) => ({
       nextTools.delete(name);
       const nextDisposers = new Map(s.nativeDisposers);
       nextDisposers.delete(name);
-      return { tools: nextTools, nativeDisposers: nextDisposers };
+      const nextGlobals = new Set(s.globalNames);
+      nextGlobals.delete(name);
+      const nextOwnerTokens = new Map(s.ownerTokens);
+      nextOwnerTokens.delete(name);
+      return {
+        tools: nextTools,
+        nativeDisposers: nextDisposers,
+        globalNames: nextGlobals,
+        ownerTokens: nextOwnerTokens,
+      };
     });
   },
 
@@ -174,7 +242,17 @@ export const useUiToolsRegistry = create<UiToolsRegistryState>((set, get) => ({
   snapshotForChatBody: () => {
     const out: UiToolSnapshotEntry[] = [];
     let dropped = 0;
-    for (const def of get().tools.values()) {
+    // Globals first, then surface tools, each in insertion order: the
+    // 64-entry cap drops from the tail, and a surface's useLayoutEffect can
+    // register before App's useEffect — pure insertion order could evict the
+    // app-wide catalog on overflow.
+    const { tools, globalNames } = get();
+    const defs = [...tools.values()];
+    const ordered = [
+      ...defs.filter((d) => globalNames.has(d.name)),
+      ...defs.filter((d) => !globalNames.has(d.name)),
+    ];
+    for (const def of ordered) {
       if (out.length >= MAX_SNAPSHOT_ENTRIES) {
         dropped += 1;
         continue;

@@ -33,6 +33,8 @@ export {
 export type {
   HostConfigInputV2,
   CanonicalHostConfigV2,
+  CanonicalHostConfigSkillSelection,
+  HostConfigSkillSelection,
   HostConfigComputer,
   HostConfigMcpProfileV1,
   HostConfigConnectionDefaults,

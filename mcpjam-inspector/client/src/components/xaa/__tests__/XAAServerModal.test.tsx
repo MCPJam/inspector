@@ -487,6 +487,43 @@ describe("XAAServerModal", () => {
     expect(formData.xaaClientAuth).toBe("none");
   });
 
+  it("preserves private_key_jwt when an unrelated edit is saved during capability loading", async () => {
+    const user = userEvent.setup();
+    const server = {
+      name: "confidential",
+      config: { url: "https://old.example.com/mcp" },
+      useXaa: true,
+      registrationMode: "cimd",
+      xaaClientAuth: "private_key_jwt",
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+    } as unknown as ServerWithName;
+    const { onSave } = renderModal({
+      server,
+      confidentialCimdAvailable: false,
+      preserveConfidentialCimdSelection: true,
+    });
+
+    // Loading does not expose the picker, but it must not make an unrelated
+    // server edit downgrade the saved confidential authentication method.
+    expect(
+      screen.queryByLabelText("Client authentication")
+    ).not.toBeInTheDocument();
+    await user.clear(screen.getByLabelText(/Server URL/));
+    await user.type(
+      screen.getByLabelText(/Server URL/),
+      "https://new.example.com/mcp"
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" })
+    );
+
+    const { formData } = onSave.mock.calls[0][0];
+    expect(formData.url).toBe("https://new.example.com/mcp");
+    expect(formData.xaaClientAuth).toBe("private_key_jwt");
+  });
+
   it("prefills the persisted registration strategy when editing", async () => {
     const user = userEvent.setup();
     const server = {

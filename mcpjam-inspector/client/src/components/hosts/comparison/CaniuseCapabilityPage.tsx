@@ -7,6 +7,8 @@ import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { cn } from "@/lib/utils";
 import { bundledHostCompatCatalog } from "@mcpjam/sdk/host-compat";
+import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
+import { buildCaniuseCapabilitySnapshot } from "@/lib/webmcp/review-surface-snapshots";
 import { SupportChip } from "./support-chip";
 import { buildPresetCompareEntries } from "./host-compare-presets";
 import {
@@ -49,6 +51,38 @@ export function CaniuseCapabilityPage({
     () => sortCaniusePresetHosts(presets.hosts),
     [presets.hosts]
   );
+
+  // Agent bridge: SNAPSHOT-ONLY (no tools). This is the `host-compare` surface
+  // on its single-capability permalink route (`capabilities/:slug`), where this
+  // page mounts instead of the full compare view — so it registers the same
+  // `host-compare` provider to keep the manifest's snapshot claim honest here.
+  // Must run before the early return below (rules of hooks). Redacted STATE
+  // only — the capability and each host's support level, never a host config.
+  useSurfaceAgentBridge({
+    surfaceId: "host-compare",
+    snapshot: () =>
+      buildCaniuseCapabilitySnapshot({
+        capabilitySlug: capability?.slug,
+        capabilityLabel: capability?.field.label ?? null,
+        rows: capability
+          ? hosts.flatMap((host) => {
+              const subject = presets.subjects[host.hostId];
+              if (!subject) return [];
+              const level = getCaniuseSupportLevel(
+                capability.field,
+                subject.config
+              );
+              return [
+                {
+                  hostName: subject.hostName,
+                  supportLevel: level,
+                  supportLabel: getCaniuseSupportLabel(level),
+                },
+              ];
+            })
+          : [],
+      }),
+  });
 
   if (!capability) {
     return (

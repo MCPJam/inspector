@@ -22,6 +22,7 @@ export const SWARM_QUERIES = {
   listHosts: "hosts:listHosts",
   listJourneyRuns: "journeyRuns:listJourneyRuns",
   listSessionsByJourneyRun: "journeyRuns:listSessionsByJourneyRun",
+  listRunningPersonaRefIds: "journeyRuns:listRunningPersonaRefIds",
 } as const;
 
 // ── Convex action names (string-keyed calls) ────────────────────────────────

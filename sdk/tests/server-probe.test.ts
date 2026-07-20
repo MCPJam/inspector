@@ -118,6 +118,80 @@ describe("probeMcpServer", () => {
     ]);
   });
 
+  it("uses modern path-insertion AS discovery (no root fallback) for 2026-07-28 + path issuer", async () => {
+    // Regression guard: 2026-07-28 must share the 2025-11-25 AS-metadata
+    // discovery (path insertion, NO root fallback for path-containing issuers).
+    // Before the fix, 2026 fell through to the older branch that adds a root
+    // fallback URL the spec forbids.
+    //
+    // The metadata succeeds ONLY on a modern-branch-exclusive candidate (the
+    // OIDC path-APPENDING URL) and 404s the shared path-insertion URL, so the
+    // loop must advance past the first candidate to where the two branches
+    // diverge: the modern branch tries path-appending next, the old branch
+    // requests the root fallback. This is what makes the guard actually fail
+    // on the un-fixed code — succeeding on path-insertion (candidate #1 in
+    // BOTH branches) would pass either way and guard nothing.
+    const serverUrl = "https://mcp.example.com/mcp";
+    const resourceMetadataUrl =
+      "https://mcp.example.com/.well-known/oauth-protected-resource/mcp";
+    const authServerUrl = "https://auth.example.com/tenant1"; // path-containing
+    const pathInsertionUrl =
+      "https://auth.example.com/.well-known/oauth-authorization-server/tenant1";
+    // Modern-branch-only candidate (OIDC path appending); absent from the old
+    // branch, which would reach the root fallback instead.
+    const pathAppendOidcUrl =
+      "https://auth.example.com/tenant1/.well-known/openid-configuration";
+    const rootFallbackUrl =
+      "https://auth.example.com/.well-known/oauth-authorization-server";
+    const requested: string[] = [];
+
+    const fetchFn: typeof fetch = jest.fn(async (input) => {
+      const url = String(input);
+      requested.push(url);
+      if (url === serverUrl) {
+        return new Response(null, {
+          status: 401,
+          headers: {
+            "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"`,
+          },
+        });
+      }
+      if (url === resourceMetadataUrl) {
+        return jsonResponse({
+          resource: serverUrl,
+          authorization_servers: [authServerUrl],
+        });
+      }
+      if (url === pathAppendOidcUrl) {
+        return jsonResponse({
+          issuer: authServerUrl,
+          authorization_endpoint: `${authServerUrl}/authorize`,
+          token_endpoint: `${authServerUrl}/token`,
+          response_types_supported: ["code"],
+          code_challenge_methods_supported: ["S256"],
+        });
+      }
+      // Everything else (including path-insertion) 404s, forcing the loop to
+      // advance to the branch-divergence point.
+      return jsonResponse({ error: "unexpected" }, 404);
+    }) as typeof fetch;
+
+    const result = await probeMcpServer({
+      url: serverUrl,
+      protocolVersion: "2026-07-28",
+      fetchFn,
+    });
+
+    // Resolved via the modern path-appending candidate...
+    expect(result.oauth.authorizationServerMetadataUrl).toBe(pathAppendOidcUrl);
+    // ...and the shared path-insertion candidate was tried first (proving we
+    // advanced past candidate #1)...
+    expect(requested).toContain(pathInsertionUrl);
+    // ...but the root fallback (old-branch candidate #2) was NEVER requested.
+    // On the un-fixed code this assertion fails.
+    expect(requested).not.toContain(rootFallbackUrl);
+  });
+
   it("retries transient probe failures and preserves attempts across retries", async () => {
     const serverUrl = "https://mcp.example.com/mcp";
     let initializeCalls = 0;

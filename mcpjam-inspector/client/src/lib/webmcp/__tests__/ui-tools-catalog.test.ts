@@ -41,6 +41,12 @@ describe("buildUiToolsCatalog", () => {
 
   it("every tool satisfies the wire contract (name regex, description cap)", () => {
     const catalog = buildUiToolsCatalog();
+    // DELIBERATE catalog change (S7): the global playground catalog grew from
+    // 12 → 16 with the chat-composer tools (ui_select_model /
+    // ui_set_system_prompt / ui_reset_chat / ui_stop_generation). These EXTEND
+    // the always-on playground catalog rather than forming a mount-scoped group
+    // because the playground manifest is kind:"global" — update this exact list
+    // consciously, never as a silent side effect.
     expect(catalog.map((t) => t.name).sort()).toEqual([
       "ui_add_server",
       "ui_connect_server",
@@ -50,10 +56,14 @@ describe("buildUiToolsCatalog", () => {
       "ui_open_playground",
       "ui_open_server_form",
       "ui_remove_server",
+      "ui_reset_chat",
+      "ui_select_model",
       "ui_select_server",
       "ui_select_tool",
       "ui_set_app_context",
+      "ui_set_system_prompt",
       "ui_snapshot_app",
+      "ui_stop_generation",
     ]);
     for (const tool of catalog) {
       expect(isUiToolName(tool.name)).toBe(true);
@@ -85,11 +95,16 @@ describe("buildUiToolsCatalog", () => {
     // and a confirmation buys nothing.
     //   - ui_execute_tool runs an arbitrary third-party MCP tool.
     //   - ui_remove_server deletes configuration chat can't reconstruct.
+    //   - ui_reset_chat (S7) clears the playground conversation — unrecoverable.
     const destructive = buildUiToolsCatalog()
       .filter((t) => t.annotations?.destructiveHint === true)
       .map((t) => t.name)
       .sort();
-    expect(destructive).toEqual(["ui_execute_tool", "ui_remove_server"]);
+    expect(destructive).toEqual([
+      "ui_execute_tool",
+      "ui_remove_server",
+      "ui_reset_chat",
+    ]);
   });
 
   it("marks exactly the tools whose effects escape the browser as open-world", () => {
@@ -391,6 +406,129 @@ describe("buildUiToolsCatalog", () => {
       type: "snapshotApp",
       payload: { surface: "playground" },
     });
+  });
+
+  it("ui_select_model dispatches the identifier and requires it", async () => {
+    const selectModel = getTool("ui_select_model");
+
+    const missing = await selectModel.execute({});
+    expect(missing.isError).toBe(true);
+    expect(executeInspectorCommandMock).not.toHaveBeenCalled();
+
+    await selectModel.execute({ model: "claude-sonnet-5" });
+    expect(dispatchedCommands()[0]).toMatchObject({
+      type: "selectModel",
+      payload: { model: "claude-sonnet-5" },
+    });
+    // idempotent, non-destructive, browser-local.
+    expect(selectModel.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    });
+  });
+
+  it("ui_select_model surfaces an unknown-model rejection as isError", async () => {
+    // The handler validates against the available models and rejects an
+    // unknown one as invalid_request; the tool relays that.
+    executeInspectorCommandMock.mockResolvedValueOnce({
+      id: "x",
+      status: "error",
+      error: { code: "invalid_request", message: 'Unknown model "nope".' },
+    });
+    const result = await getTool("ui_select_model").execute({ model: "nope" });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("invalid_request");
+  });
+
+  it("ui_set_system_prompt forwards free text and accepts the empty (clear) case", async () => {
+    const setPrompt = getTool("ui_set_system_prompt");
+
+    // Missing entirely → error (no dispatch).
+    const missing = await setPrompt.execute({});
+    expect(missing.isError).toBe(true);
+    expect(executeInspectorCommandMock).not.toHaveBeenCalled();
+
+    // Empty string is the explicit "clear" request and must dispatch.
+    await setPrompt.execute({ prompt: "" });
+    expect(dispatchedCommands()[0]).toMatchObject({
+      type: "setSystemPrompt",
+      payload: { prompt: "" },
+    });
+
+    executeInspectorCommandMock.mockClear();
+    await setPrompt.execute({ prompt: "You are a pirate." });
+    expect(dispatchedCommands()[0]).toMatchObject({
+      type: "setSystemPrompt",
+      payload: { prompt: "You are a pirate." },
+    });
+  });
+
+  it("ui_reset_chat is destructive and dispatches an empty-payload reset", async () => {
+    const reset = getTool("ui_reset_chat");
+    expect(reset.annotations?.destructiveHint).toBe(true);
+    // Each reset spawns a fresh session, so a retry is not a no-op.
+    expect(reset.annotations?.idempotentHint).toBe(false);
+    expect(reset.description).toContain("cannot be undone");
+
+    await reset.execute({});
+    expect(dispatchedCommands()[0]).toMatchObject({
+      type: "resetChat",
+      payload: {},
+    });
+  });
+
+  it("ui_stop_generation dispatches a stop and is a non-destructive no-op when idle", async () => {
+    const stop = getTool("ui_stop_generation");
+    expect(stop.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    });
+    expect(stop.description).toContain("no-op");
+
+    await stop.execute({});
+    expect(dispatchedCommands()[0]).toMatchObject({
+      type: "stopGeneration",
+      payload: {},
+    });
+  });
+
+  it("the chat-composer tools auto-open the playground when their handler is absent", async () => {
+    // Same auto-open fallback as ui_select_tool: they reach the playground
+    // chat from any route.
+    for (const [tool, type] of [
+      ["ui_select_model", "selectModel"],
+      ["ui_set_system_prompt", "setSystemPrompt"],
+      ["ui_reset_chat", "resetChat"],
+      ["ui_stop_generation", "stopGeneration"],
+    ] as const) {
+      vi.clearAllMocks();
+      hasInspectorCommandHandlerMock.mockReturnValue(false);
+      executeInspectorCommandMock.mockImplementation(
+        async (command: InspectorCommand) => ({
+          id: command.id,
+          status: "success" as const,
+          result: {},
+        }),
+      );
+
+      const args =
+        type === "selectModel"
+          ? { model: "claude-sonnet-5" }
+          : type === "setSystemPrompt"
+            ? { prompt: "hi" }
+            : {};
+      await getTool(tool).execute(args);
+
+      expect(hasInspectorCommandHandlerMock, tool).toHaveBeenCalledWith(type);
+      expect(dispatchedCommands().map((c) => c.type), tool).toEqual([
+        "openPlayground",
+        type,
+      ]);
+    }
   });
 
   it("ui_snapshot_app works with the playground closed (no gate, no auto-open)", async () => {

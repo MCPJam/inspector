@@ -178,6 +178,10 @@ import {
   prefetchChatHistorySession,
 } from "@/components/chat-v2/history/chat-history-prefetch";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
+import {
+  resolveSelectablePlaygroundModel,
+  usePlaygroundAgentControlsBridgeStore,
+} from "@/components/playground/playground-agent-controls-bridge";
 import { WebApiError } from "@/lib/apis/web/base";
 import { useDirectChatSessionSubscription } from "@/hooks/use-direct-chat-session-subscription";
 import { WidgetSurfaceProvider } from "@/contexts/widget-surface-context";
@@ -2701,6 +2705,68 @@ export function PlaygroundMain({
     },
     [setMultiModelEnabled, setSelectedModel, setSelectedModelIds]
   );
+
+  // Publish the chat composer's controls so the global playground agent tools
+  // (ui_select_model / ui_set_system_prompt / ui_reset_chat /
+  // ui_stop_generation), whose handlers live in the sibling `usePlaygroundState`
+  // subtree, can drive this session. Mirrors the chat-history bridge above:
+  // replace whole on any dependency change, clear to null on unmount. Only
+  // redacted state crosses (model id/name, prompt presence+length, a bounded
+  // history count + last role) — never message text or the prompt itself. The
+  // actions reuse the exact functions the composer controls call.
+  const setAgentControls = usePlaygroundAgentControlsBridgeStore(
+    (s) => s.setControls
+  );
+  useEffect(() => {
+    const lastMessage =
+      messages.length > 0 ? messages[messages.length - 1] : null;
+    setAgentControls({
+      selectedModel: selectedModel
+        ? { id: String(selectedModel.id), name: selectedModel.name }
+        : null,
+      systemPrompt: {
+        present: systemPrompt.trim().length > 0,
+        length: systemPrompt.length,
+      },
+      history: {
+        messageCount: messages.length,
+        lastRole: lastMessage ? (lastMessage.role as string) : null,
+      },
+      // Multi-model-aware streaming flag, matching the composer's stop control.
+      isGenerating: isStreamingActive,
+      selectModel: (identifier) => {
+        // Resolves the identifier AND enforces the picker's availability policy
+        // (disabled rows rejected), so the agent can't select a locked model.
+        const resolution = resolveSelectablePlaygroundModel(
+          identifier,
+          availableModels
+        );
+        if (!resolution.ok) return resolution;
+        const { model } = resolution;
+        handleSingleModelChange(model);
+        return { ok: true, model: { id: String(model.id), name: model.name } };
+      },
+      setSystemPrompt: (prompt) => setSystemPrompt(prompt),
+      resetChat: () => handleResetAllChats(),
+      stopGeneration: () => {
+        if (!isStreamingActive) return { stopped: false };
+        stopActiveChat();
+        return { stopped: true };
+      },
+    });
+    return () => setAgentControls(null);
+  }, [
+    availableModels,
+    handleResetAllChats,
+    handleSingleModelChange,
+    isStreamingActive,
+    messages,
+    selectedModel,
+    setAgentControls,
+    setSystemPrompt,
+    stopActiveChat,
+    systemPrompt,
+  ]);
 
   const handleSelectedModelsChange = useCallback(
     (models: ModelDefinition[]) => {
