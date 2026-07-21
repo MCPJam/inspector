@@ -70,10 +70,18 @@ import {
   type JourneyRollup,
   type JourneySessionRow,
   type PersonaTrackRecord,
-  type SessionGoalScore,
 } from "@/lib/swarm-api";
-import { formatScore } from "@/components/shared/session-quality/judge-presentation";
+// The badge + wide-shape guard live in the shared session-quality module so
+// surfaces rendered inside this subtree can use them without an import cycle.
+// Re-exported here because the goal-score unit test imports from `../SwarmsTab`.
+export {
+  SessionGoalScoreBadge,
+  toSessionGoalScore,
+} from "@/components/shared/session-quality/session-goal-score-badge";
 import { ShareUsageThreadDetail } from "@/components/connection/share-usage/ShareUsageThreadDetail";
+import { JudgesSection } from "@/components/evals/judges-section";
+import { useAvailableModels } from "@/hooks/use-available-models";
+import type { GoalJudgeConfig } from "@/components/shared/session-quality/judge-config";
 import {
   buildEvalsPath,
   buildSwarmSessionPath,
@@ -127,73 +135,6 @@ import type {
 const AGENT_SNAPSHOT_MAX_PERSONAS = 30;
 const AGENT_SNAPSHOT_MAX_JOURNEYS = 30;
 
-// Judge-verdict guard: the backend denormalizes a WIDE `goalScore` subset;
-// validate the status enum + score before rendering so a malformed record
-// degrades to "no badge".
-const GOAL_SCORE_STATUSES = ["running", "completed", "failed"] as const;
-type GoalScoreStatus = (typeof GOAL_SCORE_STATUSES)[number];
-
-export function toSessionGoalScore(raw: JourneySessionRow["goalScore"]):
-  | (SessionGoalScore & { status: GoalScoreStatus })
-  | undefined {
-  if (!raw) return undefined;
-  if (!(GOAL_SCORE_STATUSES as readonly string[]).includes(raw.status ?? "")) {
-    return undefined;
-  }
-  const status = raw.status as GoalScoreStatus;
-  // A completed verdict must carry BOTH a finite score and a boolean passed —
-  // a malformed `passed` must not silently render as "below threshold".
-  if (
-    status === "completed" &&
-    (!Number.isFinite(raw.score) || typeof raw.passed !== "boolean")
-  ) {
-    return undefined;
-  }
-  return { ...raw, status };
-}
-
-/**
- * Per-session judge score badge, rendered next to the readiness badge.
- * completed → "82% · meets goal"; running → "judging…"; failed → "judge
- * unavailable" (never silently hidden — the viewer offers Retry); absent →
- * nothing.
- */
-export function SessionGoalScoreBadge({
-  goalScore,
-}: {
-  goalScore: JourneySessionRow["goalScore"];
-}) {
-  const gs = toSessionGoalScore(goalScore);
-  if (!gs) return null;
-  if (gs.status === "running") {
-    return (
-      <span className="rounded-sm bg-muted/60 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-        judging…
-      </span>
-    );
-  }
-  if (gs.status === "failed") {
-    return (
-      <span
-        className="rounded-sm bg-muted/60 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground"
-        title={gs.error ?? "Judge run failed — open the session to retry"}
-      >
-        judge unavailable
-      </span>
-    );
-  }
-  return (
-    <span
-      className={`rounded-sm px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide ${
-        gs.passed ? "bg-success/50 text-foreground" : "bg-warning/50 text-foreground"
-      }`}
-      title={gs.reason ?? undefined}
-    >
-      {formatScore(gs.score ?? NaN)} · {gs.passed ? "meets goal" : "below threshold"}
-    </span>
-  );
-}
-
 type Persona = {
   _id: string;
   personaId: string;
@@ -213,6 +154,8 @@ type Journey = {
   /** Standalone server group shared across all hosts at launch (suite-like). */
   serverAttachmentId?: string | null;
   config: { sessionsPerHost: number; maxTurns: number };
+  /** Per-journey goal-completion judge config (shared envelope with suites). */
+  judgeConfig?: GoalJudgeConfig;
 };
 type HostItem = {
   hostId: string;
@@ -1526,6 +1469,7 @@ function NewJourneyButton({
     hostIds: string[];
     serverAttachmentId: string;
     config: { sessionsPerHost: number; maxTurns: number };
+    judgeConfig?: GoalJudgeConfig;
   }) => Promise<void>;
   // Controlled by SwarmsTab so `ui_open_journey_form` can open + prefill it.
   open: boolean;
@@ -1541,10 +1485,21 @@ function NewJourneyButton({
   const [sessionsPerHost, setSessionsPerHost] = useState(2);
   const [maxTurns, setMaxTurns] = useState(6);
   const [clientsPickerOpen, setClientsPickerOpen] = useState(false);
+  // Judge config is hidden behind "Advanced" — progressive discovery. Default
+  // undefined = managed defaults (auto-grade off) until the user opts in.
+  const [judgeConfig, setJudgeConfig] = useState<GoalJudgeConfig | undefined>(
+    undefined,
+  );
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const { availableModels } = useAvailableModels({ projectId });
   // Seed the goal from the agent prefill (or reset to "") whenever the form
   // transitions open. Manual "+ New journey" opens pass goalSeed="".
   useEffect(() => {
-    if (open) setGoal(goalSeed);
+    if (open) {
+      setGoal(goalSeed);
+      setJudgeConfig(undefined);
+      setAdvancedOpen(false);
+    }
   }, [open, goalSeed]);
   const setOpen = onOpenChange;
   // A journey may target ANY project host, including chatbox/suite-owned ones
@@ -1767,6 +1722,37 @@ function NewJourneyButton({
         </div>
       </div>
 
+      {/* Advanced → Judge. Hidden by default (progressive discovery); the
+          JudgesSection is the same control the eval suite settings use. */}
+      <div className="mb-2.5 border-t border-border/40 pt-2">
+        <button
+          type="button"
+          onClick={() => setAdvancedOpen((v) => !v)}
+          className="flex items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-foreground"
+          aria-expanded={advancedOpen}
+        >
+          <ChevronDown
+            className={cn(
+              "size-3 transition-transform",
+              advancedOpen && "rotate-180",
+            )}
+          />
+          Advanced
+        </button>
+        {advancedOpen ? (
+          <div className="mt-2">
+            <JudgesSection
+              chrome="bare"
+              value={judgeConfig}
+              onChange={setJudgeConfig}
+              availableModels={availableModels}
+              bareAutoGradeBlurb="Grade every session automatically against this journey's goal. Uses credits. You can also judge any session on demand from its detail view."
+              bareAutoGradeAriaLabel="Auto-grade every session with LLM as Judge"
+            />
+          </div>
+        ) : null}
+      </div>
+
       <div className="flex justify-end gap-2">
         <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>
           Cancel
@@ -1792,11 +1778,13 @@ function NewJourneyButton({
               hostIds,
               serverAttachmentId,
               config: { sessionsPerHost, maxTurns },
+              ...(judgeConfig ? { judgeConfig } : {}),
             });
             setOpen(false);
             setGoal("");
             setHostIds([]);
             setServerAttachmentId(null);
+            setJudgeConfig(undefined);
           }}
         >
           Create journey
