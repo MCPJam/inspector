@@ -521,3 +521,87 @@ const resolved = resolveMatchOptions(
 - [PromptResult Reference](/sdk/reference/prompt-result) - Get tool calls
 - [EvalTest Reference](/sdk/reference/eval-test) - Use in evaluations
 - [Saving Eval Results](/sdk/reference/eval-reporting) - Per-result `matchOptions` on `EvalResultInput`
+
+---
+
+## JSON Schema validators
+
+The SDK exports two JSON Schema validator classes used to validate tool `outputSchema` values. Both are wired in automatically as the default `jsonSchemaValidator` for every `Client` created by `MCPClientManager` and `createManagedMcpClient`, so you do not need to configure them unless you want to customize behavior.
+
+### Why these exist
+
+The upstream MCP v2 client's default validator only accepts JSON Schema 2020-12 and throws on any schema that declares a different dialect via `$schema`. Every MCP TypeScript SDK v1 server that uses zod emits `"$schema": "http://json-schema.org/draft-07/schema#"` on its `outputSchema`, which caused `tools/call` to fail with an "unsupported dialect" error against those servers.
+
+The SDK's dialect-aware validators fix this by routing each schema to the correct engine based on its declared `$schema`:
+
+| Declared `$schema` | Engine used |
+|--------------------|-------------|
+| Absent, or a 2020-12 URI | JSON Schema 2020-12 |
+| A draft-07 URI | JSON Schema draft-07 |
+| Any other value | No validation; a warning is emitted once per dialect |
+
+### DialectAwareJsonSchemaValidator
+
+Ajv-backed validator for Node runtimes. This is the default used by `MCPClientManager` and `createManagedMcpClient`.
+
+```typescript
+import { DialectAwareJsonSchemaValidator } from "@mcpjam/sdk";
+```
+
+```typescript
+new DialectAwareJsonSchemaValidator(options?: DialectAwareJsonSchemaValidatorOptions)
+```
+
+<Note>
+Do not import this class from browser or Cloudflare Workers entry points. Ajv compiles schemas with `new Function`, which is blocked by CSP and unavailable on Cloudflare Workers. Use `CspSafeDialectAwareJsonSchemaValidator` there instead.
+</Note>
+
+### CspSafeDialectAwareJsonSchemaValidator
+
+CSP-safe validator for browser and workerd (Cloudflare Workers) runtimes. Uses `@cfworker/json-schema`, which interprets schemas without `new Function`.
+
+```typescript
+import { CspSafeDialectAwareJsonSchemaValidator } from "@mcpjam/sdk";
+```
+
+```typescript
+new CspSafeDialectAwareJsonSchemaValidator(options?: DialectAwareJsonSchemaValidatorOptions)
+```
+
+### DialectAwareJsonSchemaValidatorOptions
+
+Both classes accept the same options object.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `onUnknownDialect` | `(declaredDialect: string) => void` | `console.warn` once per dialect | Called when a schema declares a dialect other than 2020-12 or draft-07. The schema is not validated and the tool call proceeds normally. Pass a handler to route the diagnostic to your own logger. |
+
+### Customizing the unknown-dialect handler
+
+```typescript
+import { DialectAwareJsonSchemaValidator } from "@mcpjam/sdk";
+
+const validator = new DialectAwareJsonSchemaValidator({
+  onUnknownDialect: (dialect) => {
+    myLogger.warn(`Skipping validation for unsupported dialect: ${dialect}`);
+  },
+});
+```
+
+### Passing a custom validator to createManagedMcpClient
+
+If you construct a client via `createManagedMcpClient`, you can supply your own validator through `clientOptions.jsonSchemaValidator`. A real validator you provide always wins; passing `undefined` keeps the dialect-aware default.
+
+```typescript
+import { createManagedMcpClient, DialectAwareJsonSchemaValidator } from "@mcpjam/sdk";
+
+const client = createManagedMcpClient({
+  clientInfo: { name: "my-app", version: "1.0.0" },
+  clientOptions: {
+    capabilities: {},
+    jsonSchemaValidator: new DialectAwareJsonSchemaValidator({
+      onUnknownDialect: (d) => console.warn("Unknown dialect:", d),
+    }),
+  },
+});
+```
