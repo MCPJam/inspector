@@ -189,6 +189,31 @@ describe("AuthenticationSection", () => {
     ).toBeInTheDocument();
   });
 
+  it("hides preregistered credential inputs for explicit CIMD", () => {
+    render(
+      <AuthenticationSection
+        {...autoProps}
+        authType="xaa"
+        showAuthSettings={true}
+        registrationMode="cimd"
+        clientId="hidden-preregistered-client"
+        clientSecret="hidden-preregistered-secret"
+      />,
+    );
+
+    expect(
+      screen.getByText("Client ID Metadata Documents (CIMD)"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByPlaceholderText(
+        "Client ID registered with the server's authorization server",
+      ),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByPlaceholderText("Optional scopes separated by spaces"),
+    ).toBeInTheDocument();
+  });
+
   it("confirms resetting an uncertain DCR registration", async () => {
     const onRegisterNewXaaDcrClient = vi.fn().mockResolvedValue(undefined);
     render(

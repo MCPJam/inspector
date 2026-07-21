@@ -136,9 +136,23 @@ export function buildXaaConnectDcrFingerprint(args: {
   return createHash("sha256").update(canonical, "utf8").digest("base64url");
 }
 
+function canonicalIssuerIdentity(value: string): string {
+  try {
+    const url = new URL(value);
+    const path = url.pathname.endsWith("/")
+      ? url.pathname.slice(0, -1)
+      : url.pathname;
+    return `${url.protocol}//${url.host}${path}${url.search}${url.hash}`;
+  } catch {
+    const trimmed = value.trim();
+    return trimmed.endsWith("/") ? trimmed.slice(0, -1) : trimmed;
+  }
+}
+
 function reusableRegistration(
   fetched: Awaited<ReturnType<typeof fetchRegistration>>,
-  fingerprint: string
+  fingerprint: string,
+  issuer: string
 ): XaaDcrRegistration | null {
   const { state, clientSecret } = fetched;
   if (
@@ -155,6 +169,16 @@ function reusableRegistration(
     state.clientSecretExpiresAt <= Date.now() + DCR_REUSE_EXPIRY_SKEW_MS
   ) {
     return null;
+  }
+  if (
+    !state.issuer ||
+    canonicalIssuerIdentity(state.issuer) !== canonicalIssuerIdentity(issuer)
+  ) {
+    throw new WebRouteError(
+      409,
+      ErrorCode.VALIDATION_ERROR,
+      'The stored XAA DCR client belongs to a different authorization server issuer. Use "Register a new client" before connecting.'
+    );
   }
   if (state.tokenEndpointAuthMethod !== "none" && !clientSecret) {
     throw new WebRouteError(
@@ -235,11 +259,6 @@ export async function ensureXaaDcrRegistration(
       "The authorization server does not advertise a registration_endpoint. Choose pre-registered credentials or CIMD."
     );
   }
-  // Resolve DNS and apply the same URL/SSRF policy as the eventual POST before
-  // acquiring a lease. A deterministic endpoint-policy failure is pre-send,
-  // so it must not consume the one safe registration attempt.
-  await validateUrl(args.registrationEndpoint, args.httpsOnly);
-
   const normalizedScope = normalizeXaaDcrScope(args.scope);
   const fingerprint = buildXaaConnectDcrFingerprint({
     resource: args.resource,
@@ -247,9 +266,19 @@ export async function ensureXaaDcrRegistration(
     scope: normalizedScope,
   });
   const initial = await fetchRegistration(args);
-  const initialReusable = reusableRegistration(initial, fingerprint);
+  const initialReusable = reusableRegistration(
+    initial,
+    fingerprint,
+    args.issuer
+  );
   if (initialReusable) return initialReusable;
   if (initial.state.status === "uncertain") throw uncertainError();
+
+  // Resolve DNS and apply the same URL/SSRF policy as the eventual POST only
+  // after ruling out a reusable registration. Reconnects never contact the
+  // registration endpoint, so its current reachability must not block minting
+  // with an already-issued client.
+  await validateUrl(args.registrationEndpoint, args.httpsOnly);
 
   const holderId = randomUUID();
   const claim = await dcrBackendPost(args, {
@@ -260,7 +289,11 @@ export async function ensureXaaDcrRegistration(
   if (claim.reason === "uncertain") throw uncertainError();
   if (claim.reason === "registered") {
     const fetched = await fetchRegistration(args);
-    const registration = reusableRegistration(fetched, fingerprint);
+    const registration = reusableRegistration(
+      fetched,
+      fingerprint,
+      args.issuer
+    );
     if (registration) return registration;
     throw new WebRouteError(
       409,
@@ -272,7 +305,11 @@ export async function ensureXaaDcrRegistration(
     for (let attempt = 0; attempt < DCR_POLL_ATTEMPTS; attempt += 1) {
       await delay(DCR_POLL_INTERVAL_MS);
       const fetched = await fetchRegistration(args);
-      const registration = reusableRegistration(fetched, fingerprint);
+      const registration = reusableRegistration(
+        fetched,
+        fingerprint,
+        args.issuer
+      );
       if (registration) return registration;
       if (fetched.state.status === "uncertain") throw uncertainError();
     }

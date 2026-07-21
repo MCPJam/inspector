@@ -830,8 +830,14 @@ export function AuthenticationSection({
               projectDefaultIdentity={projectDefaultIdentity}
               projectId={projectId}
               hostedServerId={hostedServerId}
-              showClientCredentials={registrationMode !== "dcr"}
-              clientIdRequired={registrationMode !== "dcr"}
+              showClientCredentials={
+                registrationMode === "preregistered" ||
+                registrationMode === "auto"
+              }
+              clientIdRequired={
+                registrationMode === "preregistered" ||
+                registrationMode === "auto"
+              }
             />
           </div>
         )}

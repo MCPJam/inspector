@@ -817,9 +817,13 @@ export function useServerForm(
       (authType === "oauth" || authType === "auto") &&
       registrationMode === "preregistered";
     const isXaa = authType === "xaa";
-    // XAA also collects resource-authorization-server client id / secret, so it
-    // shares the preregistered-credential emission path.
-    const usesClientCredentials = shouldUsePreregisteredCredentials || isXaa;
+    // Explicit CIMD resolves its client identity from metadata and must not
+    // emit stale preregistered credentials. DCR still emits its hidden values
+    // so switching strategies does not clear them, while its mint path ignores
+    // them. XAA Auto keeps its existing preregistered behavior.
+    const usesXaaStoredCredentials = isXaa && registrationMode !== "cimd";
+    const usesClientCredentials =
+      shouldUsePreregisteredCredentials || usesXaaStoredCredentials;
     const normalizedClientSecret = clientSecret.trim();
     const hasReplacementClientSecret = normalizedClientSecret.length > 0;
     // A typed replacement always wins over the clear toggle — the backend
@@ -1001,7 +1005,9 @@ export function useServerForm(
   const preregisteredOauthBlocksSubmit =
     type === "http" &&
     ((authType === "oauth" && registrationMode === "preregistered") ||
-      (authType === "xaa" && registrationMode !== "dcr")) &&
+      (authType === "xaa" &&
+        (registrationMode === "preregistered" ||
+          registrationMode === "auto"))) &&
     validateClientId(clientId) !== null;
   const oauthAuthorizationHeaderWarning =
     type === "http" &&

@@ -360,12 +360,72 @@ export interface XaaMintServerConfig {
 type EnsureXaaDcrRegistrationFn = typeof ensureXaaDcrRegistration;
 type FetchXaaDcrAuthorizedTargetFn = typeof fetchXaaDcrAuthorizedTarget;
 
-function redactCredentialFromText(
+function formUrlEncodeCredential(value: string): string {
+  return encodeURIComponent(value)
+    .replace(
+      /[!'()~]/g,
+      (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`
+    )
+    .replace(/%20/g, "+");
+}
+
+/**
+ * Values that an authorization server could reflect after parsing or logging
+ * OAuth client authentication. In particular, client_secret_basic hides the
+ * secret inside a Base64-encoded, form-encoded `client_id:client_secret` pair,
+ * so replacing the raw secret alone is insufficient.
+ */
+function getCredentialRedactionVariants(args: {
+  clientSecret?: string;
+  authorization?: string;
+}): string[] {
+  const variants = new Set<string>();
+  const addEncodedVariants = (value: string | undefined) => {
+    if (!value) return;
+    variants.add(value);
+    variants.add(encodeURIComponent(value));
+    variants.add(formUrlEncodeCredential(value));
+  };
+
+  if (args.clientSecret) {
+    addEncodedVariants(args.clientSecret);
+    variants.add(Buffer.from(args.clientSecret).toString("base64"));
+    variants.add(Buffer.from(args.clientSecret).toString("base64url"));
+  }
+
+  if (args.authorization) {
+    addEncodedVariants(args.authorization);
+    const basicMatch = /^Basic\s+(.+)$/i.exec(args.authorization);
+    if (basicMatch?.[1]) {
+      const payload = basicMatch[1];
+      addEncodedVariants(payload);
+      try {
+        const decodedCredential = Buffer.from(payload, "base64").toString(
+          "utf8"
+        );
+        addEncodedVariants(decodedCredential);
+        variants.add(Buffer.from(decodedCredential).toString("base64url"));
+      } catch {
+        // The generated header is valid Base64, but fail closed to the other
+        // exact variants if that invariant ever changes.
+      }
+    }
+  }
+
+  // Replace compound/header forms before their substrings.
+  return [...variants].sort((a, b) => b.length - a.length);
+}
+
+function redactCredentialsFromText(
   value: string | undefined,
-  credential: string | undefined
+  variants: readonly string[]
 ): string | undefined {
-  if (!value || !credential) return value;
-  return value.split(credential).join("[REDACTED]");
+  if (!value) return value;
+  return variants.reduce(
+    (redacted, credential) =>
+      redacted.split(credential).join("[REDACTED]"),
+    value
+  );
 }
 
 /**
@@ -570,17 +630,21 @@ export async function mintXaaAccessToken(args: {
       !oauthErrorRaw && typeof proxyResult.body === "string"
         ? proxyResult.body.slice(0, 400)
         : undefined;
-    const oauthError = redactCredentialFromText(
+    const credentialVariants = getCredentialRedactionVariants({
+      clientSecret: target.clientSecret,
+      authorization: tokenRequest.headers.Authorization,
+    });
+    const oauthError = redactCredentialsFromText(
       oauthErrorRaw,
-      target.clientSecret
+      credentialVariants
     );
-    const oauthDesc = redactCredentialFromText(
+    const oauthDesc = redactCredentialsFromText(
       oauthDescRaw,
-      target.clientSecret
+      credentialVariants
     );
-    const rawDetail = redactCredentialFromText(
+    const rawDetail = redactCredentialsFromText(
       rawDetailRaw,
-      target.clientSecret
+      credentialVariants
     );
     const detail =
       [oauthError, oauthDesc].filter(Boolean).join(": ") || rawDetail;

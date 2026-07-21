@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { postMock, proxyMock, warnMock, errorMock } = vi.hoisted(() => ({
-  postMock: vi.fn(),
-  proxyMock: vi.fn(),
-  warnMock: vi.fn(),
-  errorMock: vi.fn(),
-}));
+const { postMock, proxyMock, validateMock, warnMock, errorMock } = vi.hoisted(
+  () => ({
+    postMock: vi.fn(),
+    proxyMock: vi.fn(),
+    validateMock: vi.fn(),
+    warnMock: vi.fn(),
+    errorMock: vi.fn(),
+  })
+);
 
 vi.mock("../../utils/server-secrets.js", () => ({
   postToConvexAuthorized: (...args: unknown[]) => postMock(...args),
@@ -13,7 +16,7 @@ vi.mock("../../utils/server-secrets.js", () => ({
 
 vi.mock("../../utils/oauth-proxy.js", () => ({
   executeOAuthProxy: (...args: unknown[]) => proxyMock(...args),
-  validateUrl: vi.fn(async (url: string) => ({ url })),
+  validateUrl: (...args: unknown[]) => validateMock(...args),
 }));
 
 vi.mock("../../utils/logger.js", () => ({
@@ -107,6 +110,8 @@ beforeEach(() => {
   process.env.INSPECTOR_SERVICE_TOKEN = "service-token";
   postMock.mockReset();
   proxyMock.mockReset();
+  validateMock.mockReset();
+  validateMock.mockImplementation(async (url: string) => ({ url }));
   warnMock.mockReset();
   errorMock.mockReset();
   installFreshBackend();
@@ -170,6 +175,56 @@ describe("ensureXaaDcrRegistration", () => {
       clientSecret: "stored-secret",
       tokenEndpointAuthMethod: "client_secret_post",
     });
+    expect(proxyMock).not.toHaveBeenCalled();
+    expect(validateMock).not.toHaveBeenCalled();
+    expect(postMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("reuses a stored registration before validating its registration endpoint", async () => {
+    const fingerprint = buildXaaConnectDcrFingerprint(base);
+    postMock.mockResolvedValue({
+      success: true,
+      state: {
+        ...emptyState,
+        clientId: "stored-client",
+        tokenEndpointAuthMethod: "client_secret_post",
+        issuer: `${base.issuer}/`,
+        fingerprint,
+        status: "registered",
+        clientSecretExpiresAt: Date.now() + 120_000,
+      },
+      clientSecret: "stored-secret",
+    });
+    validateMock.mockRejectedValue(new Error("registration host unavailable"));
+
+    await expect(ensureXaaDcrRegistration(base)).resolves.toMatchObject({
+      clientId: "stored-client",
+      clientSecret: "stored-secret",
+    });
+    expect(validateMock).not.toHaveBeenCalled();
+    expect(proxyMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses to reuse a client registered for a different issuer", async () => {
+    const fingerprint = buildXaaConnectDcrFingerprint(base);
+    postMock.mockResolvedValue({
+      success: true,
+      state: {
+        ...emptyState,
+        clientId: "stored-client",
+        tokenEndpointAuthMethod: "client_secret_post",
+        issuer: "https://previous-issuer.example",
+        fingerprint,
+        status: "registered",
+        clientSecretExpiresAt: Date.now() + 120_000,
+      },
+      clientSecret: "stored-secret",
+    });
+
+    await expect(ensureXaaDcrRegistration(base)).rejects.toThrow(
+      /different authorization server issuer/i
+    );
+    expect(validateMock).not.toHaveBeenCalled();
     expect(proxyMock).not.toHaveBeenCalled();
     expect(postMock).toHaveBeenCalledTimes(1);
   });
@@ -290,50 +345,50 @@ describe("ensureXaaDcrRegistration", () => {
   });
 
   it.each([
-    [429, { error: "slow_down" }, "HTTP 429"],
-    [500, { error: "server_error" }, "HTTP 500"],
-    [200, "not-json", "invalid 2xx"],
-    [201, validRegistrationBody({ client_id: undefined }), "missing client id"],
+    [429, "HTTP 429", { error: "slow_down" }],
+    [500, "HTTP 500", { error: "server_error" }],
+    [200, "invalid 2xx", "not-json"],
+    [201, "missing client id", validRegistrationBody({ client_id: undefined })],
     [
       201,
-      validRegistrationBody({ token_endpoint_auth_method: "private_key_jwt" }),
       "unsupported auth method",
+      validRegistrationBody({ token_endpoint_auth_method: "private_key_jwt" }),
     ],
     [
       201,
+      "contradicted profile",
       validRegistrationBody({
         authorization_grant_profiles_supported: ["another-profile"],
       }),
-      "contradicted profile",
     ],
     [
       201,
+      "contradicted JWT Bearer grant",
       validRegistrationBody({
         grant_types: ["urn:ietf:params:oauth:grant-type:token-exchange"],
       }),
-      "contradicted JWT Bearer grant",
     ],
     [
       201,
-      validRegistrationBody({ token_endpoint_auth_method: "none" }),
       "secret with public method",
+      validRegistrationBody({ token_endpoint_auth_method: "none" }),
     ],
     [
       201,
+      "secret method without secret",
       validRegistrationBody({
         client_secret: undefined,
         token_endpoint_auth_method: "client_secret_basic",
       }),
-      "secret method without secret",
     ],
     [
       201,
+      "expired secret",
       validRegistrationBody({
         client_secret_expires_at: Math.floor(Date.now() / 1000) - 10,
       }),
-      "expired secret",
     ],
-  ])("marks %s %s ambiguous", async (status, body) => {
+  ])("marks %s ambiguous — %s", async (status, _description, body) => {
     proxyMock.mockResolvedValue(proxyResponse(status as number, body));
     await expect(ensureXaaDcrRegistration(base)).rejects.toThrow();
     const actions = postMock.mock.calls.map((call) => call[0].body.action);

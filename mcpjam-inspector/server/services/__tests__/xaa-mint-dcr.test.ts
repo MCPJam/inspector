@@ -161,6 +161,66 @@ describe("XAA Connect DCR mint integration", () => {
     expect((caught as Error).message).toContain("[REDACTED]");
   });
 
+  it("redacts reflected Basic authorization and encoded credential variants", async () => {
+    let reflectedValues: string[] = [];
+    executeProxyMock.mockImplementation(async (request) => {
+      const authorization = request.headers.Authorization as string;
+      const payload = authorization.slice("Basic ".length);
+      const decodedCredential = Buffer.from(payload, "base64").toString(
+        "utf8"
+      );
+      reflectedValues = [
+        authorization,
+        payload,
+        encodeURIComponent(authorization),
+        decodedCredential,
+        encodeURIComponent(decodedCredential),
+      ];
+      return {
+        status: 401,
+        headers: { "content-type": "application/json" },
+        body: {
+          error: "invalid_client",
+          error_description: reflectedValues.join(" | "),
+        },
+      };
+    });
+
+    let caught: unknown;
+    try {
+      await mintXaaAccessToken({
+        resolveServerSecret: vi.fn(),
+        resolveDcrTarget: vi.fn().mockResolvedValue({
+          serverUrl: "https://resource.example/mcp",
+          xaaAuthzIssuer: "https://as.example",
+          xaaAllowPathScopedIssuer: false,
+        }),
+        ensureDcrRegistration: vi.fn().mockResolvedValue({
+          clientId: "dcr client!",
+          clientSecret: "dcr secret+/~value",
+          tokenEndpointAuthMethod: "client_secret_basic",
+        }),
+        registrationMode: "dcr",
+        httpsOnly: true,
+        issuer: "https://inspector.example/api/web/xaa",
+        serverId: "server-1",
+        projectId: "project-1",
+        bearerToken: "user-bearer",
+        subject: "user-1",
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeTruthy();
+    const serialized = JSON.stringify(caught);
+    for (const reflected of reflectedValues) {
+      expect(serialized).not.toContain(reflected);
+    }
+    expect(serialized).not.toContain("dcr secret+/~value");
+    expect((caught as Error).message).toContain("[REDACTED]");
+  });
+
   it("rejects an off-origin registration endpoint under path-scoped relaxation", async () => {
     fetchMetadataMock.mockResolvedValue({
       metadata: {
