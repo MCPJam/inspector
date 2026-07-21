@@ -389,7 +389,9 @@ export function scopeXaaIssuerForAuthorizedProject(args: {
   organizationId?: string | null;
   isAnonymous?: boolean;
 }): string {
-  if (!args.organizationId) return args.issuer;
+  if (!args.organizationId || typeof args.isAnonymous !== "boolean") {
+    return args.issuer;
+  }
   const parsedIssuer = new URL(args.issuer);
   if (!parsedIssuer.pathname.endsWith("/api/web/xaa")) return args.issuer;
   const segment = args.isAnonymous ? "g" : "o";

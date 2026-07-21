@@ -130,6 +130,15 @@ describe("scopeXaaIssuerForAuthorizedProject", () => {
       })
     ).toBe("https://app.mcpjam.com/api/web/xaa/g/org%20guest");
   });
+
+  it("does not imply org membership when actor type is missing", () => {
+    expect(
+      scopeXaaIssuerForAuthorizedProject({
+        issuer: "https://app.mcpjam.com/api/web/xaa",
+        organizationId: "org-1",
+      })
+    ).toBe("https://app.mcpjam.com/api/web/xaa");
+  });
 });
 
 describe("buildXaaMintArgs", () => {
