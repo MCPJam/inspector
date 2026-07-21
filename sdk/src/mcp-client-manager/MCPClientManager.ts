@@ -108,6 +108,7 @@ import {
 import { assertCallToolResult, isCreateTaskResult } from "./result-guards.js";
 import { wrapLegacyClient } from "./managed-mcp-client-factory.js";
 import { resolveVersionNegotiation } from "./version-negotiation.js";
+import { DialectAwareJsonSchemaValidator } from "./dialect-aware-json-schema-validator.js";
 import { isStatelessProtocolVersion } from "./mcp-protocol-version.js";
 import { type ManagedMcpClient } from "./managed-mcp-client.js";
 
@@ -1263,6 +1264,11 @@ export class MCPClientManager {
       );
       const clientOptions: ClientOptions = {
         capabilities: clientCapabilities,
+        // Dialect-aware replacement for the upstream default validator,
+        // which rejects (rather than validates) declared draft-07 schemas
+        // and thereby fails tools/call against every v1-SDK server that
+        // sets an outputSchema.
+        jsonSchemaValidator: new DialectAwareJsonSchemaValidator(),
         ...(supportedProtocolVersions && supportedProtocolVersions.length > 0
           ? { supportedProtocolVersions }
           : {}),

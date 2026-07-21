@@ -16,6 +16,7 @@ import {
   type Implementation,
 } from "@modelcontextprotocol/client";
 import { type ManagedMcpClient } from "./managed-mcp-client.js";
+import { DialectAwareJsonSchemaValidator } from "./dialect-aware-json-schema-validator.js";
 import { OfficialSdkClientAdapter } from "./official-sdk-client-adapter.js";
 import type { McpProtocolVersion } from "./mcp-protocol-version.js";
 import type { RpcLogger } from "./types.js";
@@ -42,7 +43,13 @@ export function createManagedMcpClient(
   if (!args.clientOptions) {
     throw new Error("createManagedMcpClient: `clientOptions` is required");
   }
-  const inner = new Client(args.clientInfo, args.clientOptions);
+  const inner = new Client(args.clientInfo, {
+    // Default to the dialect-aware validator so declared draft-07 schemas
+    // (every v1-SDK server) are validated rather than rejected; an explicit
+    // caller-supplied validator still wins.
+    jsonSchemaValidator: new DialectAwareJsonSchemaValidator(),
+    ...args.clientOptions,
+  });
   return new OfficialSdkClientAdapter(inner);
 }
 

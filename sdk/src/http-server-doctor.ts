@@ -21,6 +21,7 @@ import {
   wrapTransportForLogging,
 } from "./mcp-client-manager/transport-utils.js";
 import { probeMcpServer } from "./server-probe.js";
+import { DialectAwareJsonSchemaValidator } from "./mcp-client-manager/dialect-aware-json-schema-validator.js";
 import type {
   HttpServerConfig,
   MCPPrompt,
@@ -454,6 +455,10 @@ async function connectHttpDoctorClient(
             getDefaultClientCapabilities(),
             config.capabilities
           ),
+      // Validate declared draft-07 schemas instead of rejecting them (the
+      // upstream default is 2020-12-only and fails tools/call for v1-SDK
+      // servers with an outputSchema).
+      jsonSchemaValidator: new DialectAwareJsonSchemaValidator(),
     }
   );
 

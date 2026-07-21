@@ -169,6 +169,10 @@ export {
 } from "./managed-mcp-client.js";
 export { OfficialSdkClientAdapter } from "./official-sdk-client-adapter.js";
 export {
+  DialectAwareJsonSchemaValidator,
+  type DialectAwareJsonSchemaValidatorOptions,
+} from "./dialect-aware-json-schema-validator.js";
+export {
   createManagedMcpClient,
   wrapLegacyClient,
   type CreateManagedMcpClientArgs,
