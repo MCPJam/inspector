@@ -1,10 +1,12 @@
 ---
 title: "Validators"
-description: "API reference for validator functions"
+description: "API reference for validator functions and JSON Schema validators"
 icon: "book"
 ---
 
 The SDK provides 9 boolean validator functions for asserting tool call behavior in tests, plus `evaluateToolCalls` — a richer, configurable matcher that returns structured results.
+
+For JSON Schema validation of tool `outputSchema`, the SDK also exports `DialectAwareJsonSchemaValidator` (Node) and `CspSafeDialectAwareJsonSchemaValidator` (browser/workerd). Jump to [JSON Schema validators](#json-schema-validators).
 
 ## Import
 
