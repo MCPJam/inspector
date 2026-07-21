@@ -28,7 +28,12 @@ const srcsByFile = new Map();
 
 for (const file of mdxFiles) {
   const text = readFileSync(file, "utf8");
-  const srcs = [...text.matchAll(/src="(\/images\/[^"]+)"/g)].map((m) => m[1]);
+  // Tolerate either quote style and whitespace around `=` -- a reference
+  // written as `src='/images/...'` is still a real reference, and missing it
+  // here would either hide a broken path or emit a false "not referenced".
+  const srcs = [...text.matchAll(/src\s*=\s*(["'])(\/images\/[^"']+)\1/g)].map(
+    (m) => m[2],
+  );
   srcsByFile.set(path.relative(DOCS_ROOT, file).split(path.sep).join("/"), srcs);
   for (const src of srcs) {
     const onDisk = path.join(DOCS_ROOT, src.replace(/^\//, ""));

@@ -75,7 +75,8 @@ Filters combine: `--kind ui --tier A` runs only tier A UI entries.
 - Every `page` file exists under `docs/`.
 - Every `output` path is under `docs/images/`.
 - Every `id` is unique across the whole manifest.
-- Every `ui` entry has a `route`; every `terminal` entry has a `command`.
+- Every `ui` entry has a `route` and a `tier` of A|B|C; every `terminal`
+  entry has a `command`.
 - Every entry has alt text that does not contain the word "screenshot" or an
   em-dash.
 - Entries whose `route` still contains `TODO-resolve` produce a warning, not
@@ -171,8 +172,9 @@ same bug by using the "Import Servers from JSON" modal instead of the regular
 
 ## Notes for implementers of the actual capture logic
 
-- All captures render at viewport 1440x900, `deviceScaleFactor: 2`, light
-  theme, English locale.
+- UI captures render at viewport 1440x900, `deviceScaleFactor: 2`, light
+  theme, English locale. (Terminal captures use their own smaller viewport
+  and crop to the rendered terminal window -- see the next note.)
 - Terminal renders use a fixed 800px content width, dark template, and no
   ANSI parsing; the `mcpjam` CLI does not emit color codes, but the rare
   `\r\x1b[K` / `\x1b[2m...\x1b[0m` stderr sequences should be stripped before

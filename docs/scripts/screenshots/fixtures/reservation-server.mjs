@@ -269,8 +269,14 @@ const httpServer = createServer(async (req, res) => {
   res.end(JSON.stringify({ error: "Method not allowed" }));
 });
 
-const shutdown = () => {
+// Close every active transport first: their long-lived SSE responses hold
+// sockets open, and `httpServer.close` alone would wait on those forever.
+const shutdown = async () => {
+  const transports = new Set(sessions.values());
+  sessions.clear();
+  await Promise.allSettled([...transports].map((transport) => transport.close()));
   httpServer.close(() => process.exit(0));
+  httpServer.closeIdleConnections();
 };
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);

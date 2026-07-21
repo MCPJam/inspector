@@ -9,7 +9,7 @@
 // See docs/scripts/screenshots/README.md for the full workflow.
 
 import { readFileSync, existsSync, statSync } from "node:fs";
-import { mkdir, mkdtemp, rename, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rename, writeFile } from "node:fs/promises";
 import { execFile as execFileCb, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { createInterface } from "node:readline/promises";
@@ -908,6 +908,16 @@ async function assertNoVisibleSpinners(page) {
 }
 
 async function captureUi(entry, { browser }) {
+  // Tier C states only exist for a logged-in hosted session. Without a
+  // storage state the navigation still "works" -- it just lands on the
+  // logged-out shell -- so the capture would overwrite the docs image with
+  // the wrong screen and still be reported ok. Fail the entry up front.
+  if (entry.tier === "C" && !STORAGE_STATE) {
+    throw new Error(
+      "tier C requires STORAGE_STATE (run --login first, then set STORAGE_STATE=.screenshot-auth/state.json -- see README.md)",
+    );
+  }
+
   const context = await browser.newContext({
     viewport: { width: 1440, height: 900 },
     deviceScaleFactor: 2,
@@ -1014,8 +1024,13 @@ async function runCliCapture(entry) {
         { cause: err },
       );
     }
-    if (typeof err.stdout === "string" || typeof err.stderr === "string") {
-      return combineOutput(err.stdout ?? "", err.stderr ?? "");
+    // Only a process that actually ran to completion has a numeric exit
+    // code; spawn-level failures (e.g. ENOENT when the CLI isn't built)
+    // reject with a string code and empty stdout/stderr strings attached,
+    // which must not be rendered as a blank-but-"ok" terminal image.
+    if (typeof err.code === "number") {
+      const output = combineOutput(err.stdout ?? "", err.stderr ?? "");
+      if (output.length > 0) return output;
     }
     throw err;
   }
@@ -1146,8 +1161,13 @@ async function runLogin() {
       );
     }
 
-    await mkdir(STORAGE_STATE_DIR, { recursive: true });
+    // Owner-only permissions on both the directory and the file: this is a
+    // live session credential. (Effective on POSIX; on Windows mode bits are
+    // largely a no-op and the gitignore is the real guard.)
+    await mkdir(STORAGE_STATE_DIR, { recursive: true, mode: 0o700 });
+    await chmod(STORAGE_STATE_DIR, 0o700);
     await context.storageState({ path: STORAGE_STATE_OUTPUT_PATH });
+    await chmod(STORAGE_STATE_OUTPUT_PATH, 0o600);
     console.log(`Saved session to ${STORAGE_STATE_OUTPUT_PATH}`);
     console.log(
       "This file is gitignored (.screenshot-auth/) -- never commit it, it is a live session credential.",
@@ -1183,7 +1203,12 @@ async function runCompress(manifest) {
         .png({ compressionLevel: 9, palette: true })
         .toBuffer();
       if (recompressed.length < before) {
-        await writeFile(fullPath, recompressed);
+        // Same temp-then-rename discipline as the capture paths, and in the
+        // same directory so the rename never crosses filesystems: an
+        // interrupted run must not leave a truncated PNG at the final path.
+        const tmpPath = `${fullPath}.tmp`;
+        await writeFile(tmpPath, recompressed);
+        await rename(tmpPath, fullPath);
         after = recompressed.length;
       }
     }
