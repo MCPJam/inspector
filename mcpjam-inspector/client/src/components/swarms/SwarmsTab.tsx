@@ -5,6 +5,11 @@
  * journeys live at the project level; a journey targets one-or-more hosts and,
  * when run, fans out one single-host session per (host × sessionsPerHost).
  *
+ * Top-level views (ViewModeSelector):
+ *   - Personas — persona sidebar, journey cards, run matrix / live stream
+ *   - Journeys — flat chatSessions browser with top-bar persona filter
+ *     (`listSessionsByPersona` + shared ShareUsageThreadList/Detail)
+ *
  * Consumes the project-scoped backend: personas:*, journeys:*, journeyRuns:*.
  *
  * ## Agent bridge (v1 scope)
@@ -24,7 +29,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, usePaginatedQuery } from "convex/react";
-import { Loader2, Plus } from "lucide-react";
+import { Check, ChevronDown, Info, Loader2, Plus, Users, X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
@@ -36,7 +41,17 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@mcpjam/design-system/popover";
 import { Textarea } from "@mcpjam/design-system/textarea";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
@@ -50,24 +65,14 @@ import {
   LaunchJourneyRunError,
   SWARM_QUERIES,
   DEFAULT_PAGE_SIZE,
-  type GoalScoreRollup,
+  swarmAttemptChatSessionId,
   type JourneyRun,
+  type JourneyRollup,
   type JourneySessionRow,
   type PersonaTrackRecord,
-  type JourneyRollup,
   type SessionGoalScore,
 } from "@/lib/swarm-api";
 import { formatScore } from "@/components/shared/session-quality/judge-presentation";
-import {
-  EMPTY_SESSION_FILTER,
-  sessionMatchesFilter,
-  toggleSessionFilter,
-  type SessionFilterState,
-} from "@/lib/session-usage-filters";
-import {
-  SessionReadinessBadge,
-  type SessionReadiness,
-} from "@/components/chatboxes/session-readiness";
 import { ShareUsageThreadDetail } from "@/components/connection/share-usage/ShareUsageThreadDetail";
 import {
   buildEvalsPath,
@@ -77,8 +82,37 @@ import {
 } from "@/lib/app-navigation";
 import { getShareableAppOrigin } from "@/lib/chatbox-session";
 import { ConvertSwarmSessionDialog } from "@/components/swarms/convert-swarm-session-dialog";
+import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
+import {
+  SwarmLiveStreamPane,
+  SwarmSessionsMatrix,
+  type SwarmMatrixSelection,
+} from "@/components/swarms/journey-run-results";
+import {
+  JourneyList,
+  type JourneyListJourney,
+  type JourneyRunSelection,
+} from "@/components/swarms/journey-list";
+import { JourneyHostLogoMark } from "@/components/swarms/journey-host-logo";
+import {
+  formatJourneyRelativeTime,
+  runNumberLabel,
+  runStatusChipClass,
+  runSummaryLine,
+} from "@/components/swarms/journey-run-format";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
+// Re-exported for the goal-score unit test, which imports from `../SwarmsTab`.
+export { goalScoreAvgLabel } from "@/components/swarms/journey-run-format";
+import {
+  liveSessionTrace,
+  useJourneyRunStream,
+} from "@/components/swarms/use-journey-run-stream";
+import { ViewModeSelector } from "@/components/shared/view-mode-selector";
 import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
-import { useProjectServerAttachments } from "@/hooks/useViews";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
 import type {
@@ -93,43 +127,9 @@ import type {
 const AGENT_SNAPSHOT_MAX_PERSONAS = 30;
 const AGENT_SNAPSHOT_MAX_JOURNEYS = 30;
 
-// Valid readiness enums (mirror `session-readiness.tsx`). The backend
-// denormalizes a WIDE `{ status?: string; verdict?: string }` subset onto the
-// session row, so guard it into a well-typed `SessionReadiness` before handing
-// it to the badge instead of an unchecked `as` cast — an unexpected string must
-// degrade to "no badge", not render a bogus pill.
-const READINESS_STATUSES = ["pending", "completed", "partial", "failed"] as const;
-const READINESS_VERDICTS = ["ready", "needs_attention", "not_ready"] as const;
-
-function toSessionReadiness(
-  raw: JourneySessionRow["readiness"],
-): SessionReadiness | undefined {
-  if (!raw) return undefined;
-  const status = (READINESS_STATUSES as readonly string[]).includes(
-    raw.status ?? "",
-  )
-    ? (raw.status as SessionReadiness["status"])
-    : undefined;
-  // Without a valid status the badge has nothing meaningful to show.
-  if (!status) return undefined;
-  const verdict = (READINESS_VERDICTS as readonly string[]).includes(
-    raw.verdict ?? "",
-  )
-    ? (raw.verdict as SessionReadiness["verdict"])
-    : undefined;
-  return {
-    status,
-    ...(verdict ? { verdict } : {}),
-    issueCount:
-      typeof raw.issueCount === "number" && Number.isFinite(raw.issueCount)
-        ? raw.issueCount
-        : 0,
-  };
-}
-
-// Judge-verdict guard, same philosophy as `toSessionReadiness`: the backend
-// denormalizes a WIDE `goalScore` subset; validate the status enum + score
-// before rendering so a malformed record degrades to "no badge".
+// Judge-verdict guard: the backend denormalizes a WIDE `goalScore` subset;
+// validate the status enum + score before rendering so a malformed record
+// degrades to "no badge".
 const GOAL_SCORE_STATUSES = ["running", "completed", "failed"] as const;
 type GoalScoreStatus = (typeof GOAL_SCORE_STATUSES)[number];
 
@@ -192,14 +192,6 @@ export function SessionGoalScoreBadge({
       {formatScore(gs.score ?? NaN)} · {gs.passed ? "meets goal" : "below threshold"}
     </span>
   );
-}
-
-/** `· goal 78% avg (4 judged)` — used on journey run cards. */
-export function goalScoreAvgLabel(rollup: GoalScoreRollup | undefined): string | null {
-  if (!rollup || rollup.gradedCount === 0 || rollup.avgScore === null) {
-    return null;
-  }
-  return `goal ${formatScore(rollup.avgScore)} avg (${rollup.gradedCount} judged)`;
 }
 
 type Persona = {
@@ -311,6 +303,16 @@ export function SwarmsTab({
     () => parseSwarmSessionParams(window.location.search),
     [],
   );
+  type SwarmViewMode = "journeys" | "sessions";
+  const SWARM_VIEW_OPTIONS = [
+    { value: "journeys" as const, label: "Personas" },
+    { value: "sessions" as const, label: "Journeys" },
+  ];
+  // Session deep-links open the flat Sessions browser; run-only links stay on
+  // Journeys so the matrix / live stream can restore.
+  const [viewMode, setViewMode] = useState<SwarmViewMode>(() =>
+    deepLink.threadId ? "sessions" : "journeys",
+  );
   const [selectedPersonaId, setSelectedPersonaId] = useState<string | null>(
     () => deepLink.personaRefId ?? null,
   );
@@ -362,6 +364,41 @@ export function SwarmsTab({
   // config, so the human finishes and submits it).
   const [journeyFormOpen, setJourneyFormOpen] = useState(false);
   const [journeyGoalSeed, setJourneyGoalSeed] = useState("");
+
+  // Run detail opened in the right-hand panel. `runSnapshot` seeds the panel
+  // until its own `listJourneyRuns` subscription resolves the run (identical
+  // query args as the journey block, so Convex dedupes the subscription).
+  const [runDetail, setRunDetail] = useState<
+    (JourneyRunSelection & { runSnapshot: JourneyRun }) | null
+  >(null);
+  const openRunDetail = useCallback(
+    (journey: JourneyListJourney, run: JourneyRun, hostId: string | null) => {
+      setRunDetail({
+        journeyId: journey._id,
+        runId: run._id,
+        hostId,
+        runSnapshot: run,
+      });
+    },
+    [],
+  );
+  const closeRunDetail = useCallback(() => setRunDetail(null), []);
+  // Close the panel when the persona changes or its journey disappears.
+  useEffect(() => {
+    setRunDetail(null);
+  }, [selectedPersonaId]);
+  useEffect(() => {
+    if (
+      runDetail &&
+      journeys !== undefined &&
+      !journeys.some((j) => j._id === runDetail.journeyId)
+    ) {
+      setRunDetail(null);
+    }
+  }, [journeys, runDetail]);
+  const detailJourney = runDetail
+    ? (journeys?.find((j) => j._id === runDetail.journeyId) ?? null)
+    : null;
 
   // ── Agent bridge ──────────────────────────────────────────────────────────
   // The swarms tool group + this screen's command handlers and snapshot. Lives
@@ -689,344 +726,323 @@ export function SwarmsTab({
           onChange={onRunningPersonasChange}
         />
       </ErrorBoundary>
+      <div
+        className="relative shrink-0 border-b border-border/40 px-8 py-2.5"
+        data-testid="swarms-tab-header-chrome"
+      >
+        <div className="flex min-w-0 items-center justify-center">
+          <ViewModeSelector
+            value={viewMode}
+            ariaLabel="Swarm view"
+            onChange={setViewMode}
+            options={SWARM_VIEW_OPTIONS}
+          />
+        </div>
+      </div>
       <div className="flex min-h-0 flex-1">
-        {/* Personas */}
-        <aside className="flex w-72 shrink-0 flex-col border-r">
-          <div className="flex items-center justify-between border-b px-4 py-3">
-            <h2 className="text-sm font-semibold">Personas</h2>
-            <NewPersonaDialog
-              onCreate={async (draft) => {
-                const row = await createPersona({ projectId, ...draft } as any);
-                setSelectedPersonaId(row._id);
-              }}
-            />
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            {personas === undefined ? (
-              <div className="p-4 text-sm text-muted-foreground">Loading…</div>
-            ) : personas.length === 0 ? (
-              <div className="p-4 text-sm text-muted-foreground">
-                No personas yet. Create one to get started.
+        {viewMode === "journeys" ? (
+          <>
+            {/* Personas sidebar — Personas tab only */}
+            <aside className="flex w-72 shrink-0 flex-col border-r">
+              <div className="flex items-center justify-between border-b px-4 py-3">
+                <h2 className="text-sm font-semibold">Personas</h2>
+                <NewPersonaDialog
+                  onCreate={async (draft) => {
+                    const row = await createPersona({ projectId, ...draft } as any);
+                    setSelectedPersonaId(row._id);
+                  }}
+                />
               </div>
-            ) : (
-              personas.map((p) => {
-                const selected = p._id === selectedPersonaId;
-                return (
-                  <button
-                    key={p._id}
-                    type="button"
-                    onClick={() => setSelectedPersonaId(p._id)}
-                    className={cn(
-                      "flex w-full items-center gap-3 border-b px-4 py-3 text-left hover:bg-muted/50",
-                      selected && "bg-muted",
-                    )}
-                  >
-                    <PersonaPixelAvatar
-                      seed={p._id}
-                      shapeIndex={p.avatarShape}
-                      paletteIndex={p.avatarPalette}
-                      size="md"
-                      active={selected}
-                      state={runningSet.has(p._id) ? "running" : "idle"}
-                    />
-                    <span className="flex min-w-0 flex-col items-start gap-0.5">
-                      <span className="truncate text-sm font-medium">
-                        {p.name}
-                      </span>
-                      <span className="truncate text-xs text-muted-foreground">
-                        {p.role}
-                      </span>
-                    </span>
-                  </button>
-                );
-              })
-            )}
-          </div>
-        </aside>
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                {personas === undefined ? (
+                  <div className="p-4 text-sm text-muted-foreground">Loading…</div>
+                ) : personas.length === 0 ? (
+                  <div className="p-4 text-sm text-muted-foreground">
+                    No personas yet. Create one to get started.
+                  </div>
+                ) : (
+                  personas.map((p) => {
+                    const selected = p._id === selectedPersonaId;
+                    return (
+                      <button
+                        key={p._id}
+                        type="button"
+                        onClick={() => setSelectedPersonaId(p._id)}
+                        className={cn(
+                          "flex w-full items-center gap-3 border-b px-4 py-3 text-left hover:bg-muted/50",
+                          selected && "bg-muted",
+                        )}
+                      >
+                        <PersonaPixelAvatar
+                          seed={p._id}
+                          shapeIndex={p.avatarShape}
+                          paletteIndex={p.avatarPalette}
+                          size="md"
+                          state={runningSet.has(p._id) ? "running" : "idle"}
+                        />
+                        <span className="flex min-w-0 flex-col items-start gap-0.5">
+                          <span className="truncate text-sm font-medium">
+                            {p.name}
+                          </span>
+                          <span className="truncate text-xs text-muted-foreground">
+                            {p.role}
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </aside>
 
-        {/* Journeys for the selected persona */}
-        <main className="min-w-0 flex-1 overflow-y-auto">
-        {!selectedPersona ? (
-          <JourneyNetworkBackdrop />
+            {/* Persona detail + journey blocks; run detail opens on the right */}
+            <main className="min-w-0 flex-1 overflow-hidden">
+              {!selectedPersona ? (
+                <JourneyNetworkBackdrop />
+              ) : (
+                (() => {
+                  const personaDetail = (
+                    <>
+                      <PersonaDetailHeader
+                        persona={selectedPersona}
+                        running={runningSet.has(selectedPersona._id)}
+                        onSave={(patch) =>
+                          savePersonaField(selectedPersona._id, patch)
+                        }
+                        onDelete={async () => {
+                          if (
+                            !window.confirm(
+                              `Delete persona "${selectedPersona.name}"? Its journeys are hidden but historical runs are kept.`,
+                            )
+                          ) {
+                            return;
+                          }
+                          await deletePersona({
+                            personaRefId: selectedPersona._id,
+                          } as any);
+                          setSelectedPersonaId(null);
+                        }}
+                      />
+
+                      <div
+                        className={cn(
+                          "mb-3",
+                          journeyFormOpen
+                            ? "space-y-2"
+                            : "flex items-center justify-between",
+                        )}
+                      >
+                        <h3 className="text-sm font-semibold">Journeys</h3>
+                        <NewJourneyButton
+                          projectId={projectId}
+                          hosts={hosts ?? []}
+                          open={journeyFormOpen}
+                          onOpenChange={(o) => {
+                            setJourneyFormOpen(o);
+                            // Drop the agent prefill on close so a later manual
+                            // open starts blank.
+                            if (!o) setJourneyGoalSeed("");
+                          }}
+                          goalSeed={journeyGoalSeed}
+                          onCreate={async (draft) => {
+                            await createJourney({
+                              projectId,
+                              personaRefId: selectedPersona._id,
+                              ...draft,
+                            } as any);
+                          }}
+                        />
+                      </div>
+
+                      {journeys === undefined ? (
+                        <div className="text-sm text-muted-foreground">
+                          Loading…
+                        </div>
+                      ) : journeys.length === 0 ? (
+                        <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+                          No journeys yet. A journey is a goal this persona
+                          pursues across one or more hosts.
+                        </div>
+                      ) : (
+                        <JourneyList
+                          journeys={journeys}
+                          hosts={hosts ?? []}
+                          isAuthenticated={isAuthenticated}
+                          projectId={projectId}
+                          onLaunch={launchJourney}
+                          initialRunId={deepLink.runId}
+                          selection={runDetail}
+                          onOpenRun={openRunDetail}
+                          onCloseRun={closeRunDetail}
+                        />
+                      )}
+                    </>
+                  );
+
+                  if (!runDetail || !detailJourney) {
+                    return (
+                      <div className="h-full overflow-y-auto">
+                        <div className="mx-auto max-w-3xl px-8 py-6">
+                          {personaDetail}
+                        </div>
+                      </div>
+                    );
+                  }
+                  return (
+                    <ResizablePanelGroup
+                      direction="horizontal"
+                      className="h-full"
+                    >
+                      <ResizablePanel defaultSize={38} minSize={26}>
+                        <div className="h-full overflow-y-auto px-6 py-6">
+                          {personaDetail}
+                        </div>
+                      </ResizablePanel>
+                      <ResizableHandle withHandle />
+                      <ResizablePanel defaultSize={62} minSize={35}>
+                        <RunDetailPanel
+                          key={`${runDetail.runId}:${runDetail.hostId ?? ""}`}
+                          journey={detailJourney}
+                          runId={runDetail.runId}
+                          runSnapshot={runDetail.runSnapshot}
+                          hostId={runDetail.hostId}
+                          hosts={hosts ?? []}
+                          initialThreadId={
+                            deepLink.runId === runDetail.runId
+                              ? deepLink.threadId
+                              : undefined
+                          }
+                          onClose={closeRunDetail}
+                        />
+                      </ResizablePanel>
+                    </ResizablePanelGroup>
+                  );
+                })()
+              )}
+            </main>
+          </>
         ) : (
-          <div className="mx-auto max-w-3xl px-8 py-6">
-            <PersonaDetailHeader
-              persona={selectedPersona}
-              running={runningSet.has(selectedPersona._id)}
-              onSave={(patch) => savePersonaField(selectedPersona._id, patch)}
-              onDelete={async () => {
-                if (
-                  !window.confirm(
-                    `Delete persona "${selectedPersona.name}"? Its journeys are hidden but historical runs are kept.`,
-                  )
-                ) {
-                  return;
-                }
-                await deletePersona({
-                  personaRefId: selectedPersona._id,
-                } as any);
-                setSelectedPersonaId(null);
-              }}
+          <main className="min-w-0 flex-1 overflow-hidden">
+            <SwarmsSessionsPanel
+              projectId={projectId}
+              personas={personas ?? []}
+              hosts={hosts ?? []}
+              personaRefId={selectedPersonaId}
+              onPersonaRefIdChange={setSelectedPersonaId}
+              initialThreadId={deepLink.threadId}
             />
-
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-sm font-semibold">Journeys</h3>
-              <NewJourneyButton
-                projectId={projectId}
-                hosts={hosts ?? []}
-                open={journeyFormOpen}
-                onOpenChange={(o) => {
-                  setJourneyFormOpen(o);
-                  // Drop the agent prefill on close so a later manual open
-                  // starts blank.
-                  if (!o) setJourneyGoalSeed("");
-                }}
-                goalSeed={journeyGoalSeed}
-                onCreate={async (draft) => {
-                  await createJourney({
-                    projectId,
-                    personaRefId: selectedPersona._id,
-                    ...draft,
-                  } as any);
-                }}
-              />
-            </div>
-
-            {journeys === undefined ? (
-              <div className="text-sm text-muted-foreground">Loading…</div>
-            ) : journeys.length === 0 ? (
-              <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-                No journeys yet. A journey is a goal this persona pursues across
-                one or more hosts.
-              </div>
-            ) : (
-              <div className="flex flex-col gap-3">
-                {journeys.map((j) => (
-                  <JourneyCard
-                    key={j._id}
-                    journey={j}
-                    onLaunch={launchJourney}
-                    hosts={hosts ?? []}
-                    isAuthenticated={isAuthenticated}
-                    projectId={projectId}
-                    initialRunId={deepLink.runId}
-                    initialThreadId={deepLink.threadId}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
+          </main>
         )}
-      </main>
       </div>
     </div>
   );
 }
 
-// ── run status treatment ─────────────────────────────────────────────────────
-function runStatusClass(status: string): string {
-  switch (status) {
-    case "completed":
-      return "text-emerald-600 dark:text-emerald-400";
-    case "partial":
-      return "text-amber-600 dark:text-amber-400";
-    case "rate_limited":
-      return "text-amber-600 dark:text-amber-400";
-    case "failed":
-      return "text-red-600 dark:text-red-400";
-    case "stale":
-      return "text-muted-foreground";
-    default:
-      return "text-foreground"; // running
-  }
-}
-
-// ── journey card + runs ──────────────────────────────────────────────────────
-function JourneyCard({
+// ── run detail (right panel): header + sessions matrix + live stream ─────────
+function RunDetailPanel({
   journey,
+  runId,
+  runSnapshot,
+  hostId,
   hosts,
-  isAuthenticated,
-  projectId,
-  initialRunId,
   initialThreadId,
-  onLaunch,
+  onClose,
 }: {
   journey: Journey;
+  runId: string;
+  /** Seed until this panel's own runs subscription resolves the run. */
+  runSnapshot: JourneyRun;
+  hostId: string | null;
   hosts: HostItem[];
-  isAuthenticated: boolean;
-  projectId: string;
-  /** Shared launch coordinator — see SwarmsTab.launchJourney. */
-  onLaunch: (
-    journeyId: string,
-  ) => Promise<
-    { status: "launched"; runId?: string } | { status: "already_launching" }
-  >;
-  /** Deep-link run to auto-open (only the card that owns it reacts). */
-  initialRunId?: string;
-  /** Deep-link session to auto-select inside the opened run. */
   initialThreadId?: string;
+  onClose: () => void;
 }) {
-  const { serverAttachments } = useProjectServerAttachments({
-    isAuthenticated,
-    projectId,
-  });
-  const serverGroupName = journey.serverAttachmentId
-    ? (serverAttachments.find((a) => a._id === journey.serverAttachmentId)
-        ?.name ?? null)
-    : null;
-  // Real Convex pagination (numItems + cursor) over the journey's runs.
-  const {
-    results: runs,
-    status: runsStatus,
-    loadMore,
-  } = usePaginatedQuery(
+  // Same (name, args) as the journey block's subscription — Convex dedupes it —
+  // so a running run keeps updating even though the panel was opened from a
+  // snapshot. Old runs past the first page fall back to the (terminal,
+  // immutable) snapshot.
+  const { results: runs } = usePaginatedQuery(
     SWARM_QUERIES.listJourneyRuns as any,
     { journeyRefId: journey._id } as any,
-    { initialNumItems: DEFAULT_PAGE_SIZE }
+    { initialNumItems: DEFAULT_PAGE_SIZE },
   );
   const rollup = useQuery(
     SWARM_QUERIES.journeyRollup as any,
-    { journeyRefId: journey._id } as any
+    { journeyRefId: journey._id } as any,
   ) as JourneyRollup | undefined;
-
-  const [launching, setLaunching] = useState(false);
-  const [launchError, setLaunchError] = useState<string | null>(null);
-  const [openRunId, setOpenRunId] = useState<string | null>(null);
-
-  // Deep-link restore: once this journey's runs load, if the linked run belongs
-  // to THIS card, open it (so RunSessionsView mounts and can select the
-  // session). Runs itself once — later user toggling isn't overridden.
-  const appliedInitialRunRef = useRef(false);
-  useEffect(() => {
-    if (appliedInitialRunRef.current || !initialRunId) return;
-    if ((runs as JourneyRun[]).some((r) => r._id === initialRunId)) {
-      appliedInitialRunRef.current = true;
-      setOpenRunId(initialRunId);
-    }
-  }, [initialRunId, runs]);
-
-  const hostName = (id: string) =>
-    hosts.find((h) => h.hostId === id)?.name ?? id.slice(0, 8);
-
-  const onRun = async () => {
-    if (launching) return;
-    setLaunchError(null);
-    setLaunching(true);
-    try {
-      // Shared coordinator: same launchKey store as the agent path, so a
-      // concurrent agent launch of this journey dedupes to one paid run.
-      const result = await onLaunch(journey._id);
-      if (result.status === "already_launching") {
-        return; // another launch of this journey is already in flight
-      }
-      toast.success("Journey run started");
-    } catch (e) {
-      // The coordinator retains the key on ANY failure and reuses it on retry,
-      // so the backend dedupes rather than double-spending.
-      setLaunchError(e instanceof Error ? e.message : "Failed to start run");
-    } finally {
-      setLaunching(false);
-    }
-  };
+  const typedRuns = runs as JourneyRun[];
+  const runIndex = typedRuns.findIndex((r) => r._id === runId);
+  const run = (runIndex >= 0 ? typedRuns[runIndex] : null) ?? runSnapshot;
+  const runName =
+    runIndex >= 0
+      ? runNumberLabel(rollup?.runCount ?? typedRuns.length, runIndex)
+      : "Run";
+  const clientCount = run.hostSummaries.length || journey.hostIds.length;
 
   return (
-    <div className="rounded-lg border p-4">
-      <div className="flex items-start justify-between gap-3">
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border/40 px-4 py-3">
         <div className="min-w-0">
-          <p className="truncate text-sm font-medium">{journey.goal}</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {serverGroupName ? `${serverGroupName} · ` : null}
-            {journey.hostIds.map(hostName).join(", ")} ·{" "}
-            {journey.config.sessionsPerHost}/host · {journey.config.maxTurns} turns
-          </p>
-          {rollup && rollup.runCount > 0 && (
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              {rollup.runCount} run{rollup.runCount === 1 ? "" : "s"} total
-            </p>
-          )}
-        </div>
-        <Button type="button" size="sm" disabled={launching} onClick={onRun}>
-          {launching ? "Starting…" : "Run journey"}
-        </Button>
-      </div>
-
-      {launchError && (
-        <p className="mt-2 rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-xs text-red-600 dark:text-red-400">
-          {launchError}
-        </p>
-      )}
-
-      {runs.length > 0 && (
-        <div className="mt-3 border-t pt-3">
-          {(runs as JourneyRun[]).map((r) => (
-            <div key={r._id} className="mb-3 last:mb-0">
-              <div className="flex items-center justify-between text-xs">
-                <span className={`font-medium ${runStatusClass(r.status)}`}>
-                  {r.status}
-                </span>
-                <span className="text-muted-foreground">
-                  {r.summary.succeeded}/{r.summary.total} ok
-                  {r.summary.failed > 0 && ` · ${r.summary.failed} failed`}
-                  {r.summary.rateLimited > 0 &&
-                    ` · ${r.summary.rateLimited} rate-limited`}
-                  {goalScoreAvgLabel(r.goalScoreSummary)
-                    ? ` · ${goalScoreAvgLabel(r.goalScoreSummary)}`
-                    : ""}
-                </span>
-              </div>
-              <div className="mt-1 flex flex-wrap items-center gap-2">
-                {r.hostSummaries.map((hs) => (
-                  <span
-                    key={hs.hostId}
-                    className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground"
-                  >
-                    {hostName(hs.hostId)}: {hs.succeeded}/{hs.total}
-                  </span>
-                ))}
-                <button
-                  type="button"
-                  className="text-[11px] font-medium text-primary hover:underline"
-                  onClick={() =>
-                    setOpenRunId((cur) => (cur === r._id ? null : r._id))
-                  }
-                >
-                  {openRunId === r._id ? "Hide sessions" : "View sessions"}
-                </button>
-              </div>
-              {openRunId === r._id && (
-                <RunSessionsView
-                  runId={r._id}
-                  personaRefId={journey.personaRefId}
-                  hosts={hosts}
-                  hostSummaries={r.hostSummaries}
-                  initialThreadId={
-                    initialRunId === r._id ? initialThreadId : undefined
-                  }
-                />
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm font-medium">
+            <span>{runName}</span>
+            <span
+              className={cn(
+                "rounded-full px-1.5 py-px text-[10px] font-medium capitalize",
+                runStatusChipClass(run.status),
               )}
-            </div>
-          ))}
-          {runsStatus === "CanLoadMore" && (
-            <button
-              type="button"
-              className="mt-1 text-[11px] font-medium text-primary hover:underline"
-              onClick={() => loadMore(DEFAULT_PAGE_SIZE)}
             >
-              Load more runs
-            </button>
-          )}
+              {run.status.replace(/_/g, " ")}
+            </span>
+            <span className="min-w-0 truncate font-normal text-muted-foreground">
+              {journey.goal}
+            </span>
+          </p>
+          <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-muted-foreground">
+            <span>
+              {clientCount} client{clientCount === 1 ? "" : "s"} ×{" "}
+              {journey.config.sessionsPerHost} session
+              {journey.config.sessionsPerHost === 1 ? "" : "s"}
+            </span>
+            <span aria-hidden>·</span>
+            <span>{runSummaryLine(run)}</span>
+            <span aria-hidden>·</span>
+            <span>launched {formatJourneyRelativeTime(run.createdAt)}</span>
+          </p>
         </div>
-      )}
+        <button
+          type="button"
+          aria-label="Close run detail"
+          className="rounded-md p-1 text-muted-foreground outline-none transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={onClose}
+        >
+          <X className="size-4" />
+        </button>
+      </div>
+      <div className="min-h-0 flex-1">
+        <RunSessionsView
+          runId={run._id}
+          personaRefId={journey.personaRefId}
+          hosts={hosts}
+          hostSummaries={run.hostSummaries}
+          runStatus={run.status}
+          sessionsPerHost={journey.config.sessionsPerHost}
+          initialHostId={hostId ?? undefined}
+          initialThreadId={initialThreadId}
+        />
+      </div>
     </div>
   );
 }
 
-// ── sessions by host (per run) ───────────────────────────────────────────────
+// ── sessions × hosts matrix + live stream (per run) ──────────────────────────
 function RunSessionsView({
   runId,
   personaRefId,
   hosts,
   hostSummaries,
+  runStatus,
+  sessionsPerHost,
+  initialHostId,
   initialThreadId,
 }: {
   runId: string;
@@ -1034,22 +1050,30 @@ function RunSessionsView({
   personaRefId: string;
   hosts: HostItem[];
   hostSummaries: JourneyRun["hostSummaries"];
+  runStatus: JourneyRun["status"];
+  sessionsPerHost: number;
+  /** Matrix drill-in: preselect this host's first session (deferred to `initialThreadId`). */
+  initialHostId?: string;
   /** Deep-link session (`id`) to auto-select once it's on a loaded page. */
   initialThreadId?: string;
 }) {
-  // Paginated sessions for this run; grouped/filterable by host client-side.
   const {
     results: sessions,
     status,
     loadMore,
   } = usePaginatedQuery(
     SWARM_QUERIES.listSessionsByJourneyRun as any,
-    // Backend arg name is `journeyRunId` (NOT `runId`).
     { journeyRunId: runId } as any,
-    { initialNumItems: DEFAULT_PAGE_SIZE }
+    { initialNumItems: Math.max(DEFAULT_PAGE_SIZE, sessionsPerHost * 4) },
   );
-  const [filter, setFilter] = useState<SessionFilterState>(EMPTY_SESSION_FILTER);
-  const [selected, setSelected] = useState<JourneySessionRow | null>(null);
+
+  const streamEnabled = runStatus === "running";
+  const stream = useJourneyRunStream(runId, streamEnabled);
+
+  const [selection, setSelection] = useState<SwarmMatrixSelection | null>(null);
+  const [detailSession, setDetailSession] = useState<JourneySessionRow | null>(
+    null,
+  );
   const [sessionToPromote, setSessionToPromote] =
     useState<JourneySessionRow | null>(null);
 
@@ -1057,114 +1081,187 @@ function RunSessionsView({
     hosts.find((h) => h.hostId === id)?.name ?? id.slice(0, 8);
 
   const rows = sessions as JourneySessionRow[];
-  const visible = useMemo(
-    () => rows.filter((s) => sessionMatchesFilter(s, filter)),
-    [rows, filter]
+  const hostIds = useMemo(() => {
+    const fromSummary = hostSummaries.map((h) => h.hostId);
+    if (fromSummary.length > 0) return fromSummary;
+    const seen = new Set<string>();
+    for (const s of rows) seen.add(s.hostId);
+    return Array.from(seen);
+  }, [hostSummaries, rows]);
+
+  const convexByChatId = useMemo(() => {
+    const map = new Map<string, JourneySessionRow>();
+    for (const s of rows) map.set(s.chatSessionId, s);
+    return map;
+  }, [rows]);
+
+  const selectedConvex = selection
+    ? (convexByChatId.get(selection.chatSessionId) ?? null)
+    : null;
+
+  const fallbackTrace = useMemo(
+    () =>
+      selection
+        ? liveSessionTrace(stream.sessions[selection.chatSessionId])
+        : null,
+    [selection, stream.sessions],
   );
 
-  // Deep-link restore: auto-select the linked session once it appears on a
-  // loaded page. Runs once. NOTE (remainder): a session on a not-yet-loaded
-  // page won't auto-select until the user pages to it — full cross-page
-  // restore would need the backend list query to accept a session cursor.
+  // Deep-link restore: select the matrix cell for the linked Convex session.
   const appliedInitialThreadRef = useRef(false);
   useEffect(() => {
     if (appliedInitialThreadRef.current || !initialThreadId) return;
     const match = rows.find((s) => s.id === initialThreadId);
-    if (match) {
-      appliedInitialThreadRef.current = true;
-      setSelected(match);
-    }
+    if (!match) return;
+    appliedInitialThreadRef.current = true;
+    const sessionIndex = Number(
+      match.chatSessionId.split("_").pop() ?? "0",
+    );
+    setSelection({
+      hostId: match.hostId,
+      sessionIndex: Number.isFinite(sessionIndex) ? sessionIndex : 0,
+      chatSessionId: match.chatSessionId,
+    });
+    setDetailSession(match);
   }, [initialThreadId, rows]);
 
+  // Matrix drill-in: preselect the clicked host's first session. `initialThreadId`
+  // (an explicit deep-linked session) always wins, so skip when it's present.
+  const appliedInitialHostRef = useRef(false);
+  useEffect(() => {
+    if (appliedInitialHostRef.current || !initialHostId || initialThreadId) {
+      return;
+    }
+    const match = rows.find((s) => s.hostId === initialHostId);
+    if (match) {
+      appliedInitialHostRef.current = true;
+      const sessionIndex = Number(match.chatSessionId.split("_").pop() ?? "0");
+      setSelection({
+        hostId: match.hostId,
+        sessionIndex: Number.isFinite(sessionIndex) ? sessionIndex : 0,
+        chatSessionId: match.chatSessionId,
+      });
+      return;
+    }
+    // No persisted row yet: for a terminal run with attempts on this host,
+    // synthesize the first attempt's cell so the pane opens on that host.
+    if (
+      runStatus !== "running" &&
+      hostSummaries.some((h) => h.hostId === initialHostId && h.total > 0)
+    ) {
+      appliedInitialHostRef.current = true;
+      setSelection({
+        hostId: initialHostId,
+        sessionIndex: 0,
+        chatSessionId: swarmAttemptChatSessionId(runId, initialHostId, 0),
+      });
+    }
+  }, [initialHostId, initialThreadId, rows, runStatus, hostSummaries, runId]);
+
+  // Auto-select the first running cell when a live stream starts.
+  useEffect(() => {
+    if (selection || !streamEnabled) return;
+    const runningEntry = Object.entries(stream.cellStatus).find(
+      ([, status]) => status === "running",
+    );
+    if (!runningEntry) return;
+    const [key] = runningEntry;
+    const [hostId, idxStr] = key.split(":");
+    if (!hostId || idxStr == null) return;
+    const sessionIndex = Number(idxStr);
+    if (!Number.isFinite(sessionIndex)) return;
+    setSelection({
+      hostId,
+      sessionIndex,
+      chatSessionId: swarmAttemptChatSessionId(runId, hostId, sessionIndex),
+    });
+  }, [selection, streamEnabled, stream.cellStatus, runId]);
+
   return (
-    <div className="mt-2 rounded-lg border bg-muted/20 p-2">
-      {/* Host filter chips */}
-      <div className="mb-2 flex flex-wrap gap-1.5">
-        {hostSummaries.map((hs) => (
-          <button
-            key={hs.hostId}
-            type="button"
-            onClick={() =>
-              setFilter((f) => toggleSessionFilter(f, "hostId", hs.hostId))
-            }
-            className={`rounded-full border px-2 py-0.5 text-[11px] ${
-              filter.hostId === hs.hostId
-                ? "border-primary bg-primary/10"
-                : "hover:bg-muted"
-            }`}
-          >
-            {hostName(hs.hostId)}
-          </button>
-        ))}
-      </div>
-
-      {rows.length === 0 ? (
-        <p className="px-1 py-2 text-[11px] text-muted-foreground">
-          No sessions recorded yet for this run.
-        </p>
-      ) : (
-        <div className="flex flex-col divide-y">
-          {visible.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              onClick={() => setSelected(s)}
-              className={`flex items-center justify-between gap-2 px-1 py-1.5 text-left hover:bg-muted/50 ${
-                selected?.id === s.id ? "bg-muted" : ""
-              }`}
-            >
-              <span className="flex min-w-0 flex-col">
-                <span className="truncate text-[11px] font-medium">
-                  {hostName(s.hostId)}
-                </span>
-                <span className="truncate text-[10px] text-muted-foreground">
-                  {s.status ?? "—"}
-                  {s.modelId ? ` · ${s.modelId}` : ""}
-                </span>
-              </span>
-              <SessionGoalScoreBadge goalScore={s.goalScore} />
-              <SessionReadinessBadge readiness={toSessionReadiness(s.readiness)} />
-            </button>
-          ))}
-        </div>
-      )}
-
-      {status === "CanLoadMore" && (
-        <button
-          type="button"
-          className="mt-1 text-[11px] font-medium text-primary hover:underline"
-          onClick={() => loadMore(DEFAULT_PAGE_SIZE)}
-        >
-          Load more sessions
-        </button>
-      )}
-
-      {/* Reuse the existing project-scoped session viewer — do NOT build a new
-          one. `ShareUsageThreadDetail` takes the session row's `id`. */}
-      {selected && (
-        <div className="mt-2">
-          <div className="mb-1 flex justify-end">
+    <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto p-4">
+      {stream.connected || stream.error || status === "CanLoadMore" ? (
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
+          <p className="text-[10px] text-muted-foreground">
+            {stream.connected ? "live" : null}
+            {stream.error ? `stream error: ${stream.error}` : null}
+          </p>
+          {status === "CanLoadMore" ? (
             <button
               type="button"
               className="text-[11px] font-medium text-primary hover:underline"
-              onClick={() => setSessionToPromote(selected)}
+              onClick={() => loadMore(DEFAULT_PAGE_SIZE)}
             >
-              Promote to test case
+              Load more sessions
             </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className="shrink-0">
+        <SwarmSessionsMatrix
+          runId={runId}
+          hostIds={hostIds}
+          hostName={hostName}
+          sessionsPerHost={sessionsPerHost}
+          sessions={rows}
+          hostSummaries={hostSummaries}
+          stream={stream}
+          runStatus={String(runStatus)}
+          selection={selection}
+          onSelect={(sel) => {
+            setSelection(sel);
+            setDetailSession(null);
+          }}
+        />
+      </div>
+      <div className="flex min-h-[24rem] flex-1 flex-col">
+        <SwarmLiveStreamPane
+          selection={selection}
+          stream={stream}
+          convexSession={selectedConvex}
+          fallbackTrace={fallbackTrace}
+          runStatus={String(runStatus)}
+          onOpenCompleted={(session) => setDetailSession(session)}
+          fillHeight
+        />
+      </div>
+
+      {detailSession ? (
+        <div className="space-y-1">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[11px] font-medium text-muted-foreground">
+              Session detail
+            </p>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                className="text-[11px] font-medium text-primary hover:underline"
+                onClick={() => setSessionToPromote(detailSession)}
+              >
+                Promote to test case
+              </button>
+              <button
+                type="button"
+                className="text-[11px] text-muted-foreground hover:underline"
+                onClick={() => setDetailSession(null)}
+              >
+                Close
+              </button>
+            </div>
           </div>
           <div className="h-[420px] overflow-hidden rounded-lg border">
             <ShareUsageThreadDetail
-              threadId={selected.id}
+              threadId={detailSession.id}
               sessionLink={`${getShareableAppOrigin()}${buildSwarmSessionPath({
                 personaRefId,
                 runId,
-                hostId: selected.hostId,
-                threadId: selected.id,
+                hostId: detailSession.hostId,
+                threadId: detailSession.id,
               })}`}
             />
           </div>
         </div>
-      )}
+      ) : null}
 
       <ConvertSwarmSessionDialog
         open={sessionToPromote !== null}
@@ -1443,6 +1540,7 @@ function NewJourneyButton({
   );
   const [sessionsPerHost, setSessionsPerHost] = useState(2);
   const [maxTurns, setMaxTurns] = useState(6);
+  const [clientsPickerOpen, setClientsPickerOpen] = useState(false);
   // Seed the goal from the agent prefill (or reset to "") whenever the form
   // transitions open. Manual "+ New journey" opens pass goalSeed="".
   useEffect(() => {
@@ -1464,6 +1562,17 @@ function NewJourneyButton({
       }),
     [hosts],
   );
+  const selectedHosts = useMemo(
+    () => sortedHosts.filter((h) => hostIds.includes(h.hostId)),
+    [sortedHosts, hostIds],
+  );
+  const clientsTriggerLabel =
+    selectedHosts.length === 0
+      ? "No clients · pick one"
+      : (selectedHosts[0]?.name ?? "Clients");
+  const clientsExtra =
+    selectedHosts.length > 1 ? selectedHosts.length - 1 : 0;
+
   if (!open) {
     return (
       <Button type="button" size="sm" variant="outline" onClick={() => setOpen(true)}>
@@ -1479,131 +1588,185 @@ function NewJourneyButton({
   return (
     <div
       className={cn(
-        "w-full rounded-xl border border-border/50 bg-card/50 p-4 shadow-sm",
+        "w-full rounded-xl border border-border/50 bg-card/50 p-3 shadow-sm",
         "ring-1 ring-black/[0.03] dark:ring-white/[0.06]",
       )}
     >
-      <div className="mb-3 flex flex-col gap-1.5">
-        <Label htmlFor="swarm-journey-goal">Goal</Label>
+      <div className="mb-2.5 flex flex-col gap-1">
+        <Label htmlFor="swarm-journey-goal" className="text-xs">
+          Goal
+        </Label>
         <Textarea
           id="swarm-journey-goal"
           placeholder="What this persona is trying to accomplish"
           value={goal}
           onChange={(e) => setGoal(e.target.value)}
-          rows={3}
-          className="leading-relaxed"
+          rows={2}
+          className="min-h-[56px] resize-none leading-relaxed"
         />
       </div>
-      <div className="mb-3 divide-y rounded-lg border bg-muted/20">
-        <div className="flex items-start justify-between gap-4 p-3">
-          <div className="min-w-0 space-y-0.5">
-            <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Servers
-            </h3>
-            <p className="text-xs text-muted-foreground">
-              Server group all clients run against for this journey.
-            </p>
-          </div>
-          <div className="shrink-0">
-            <ServerGroupPicker
-              projectId={projectId}
-              value={serverAttachmentId}
-              onChange={(id) => setServerAttachmentId(id)}
-              onClearSelection={() => setServerAttachmentId(null)}
-              emptyTriggerLabel="No server group · pick one"
-              infoText="A named set of MCP servers shared across every client this journey targets — same pattern as eval suites."
-            />
-          </div>
-        </div>
-        <div className="space-y-2 p-3">
-          <div className="space-y-0.5">
-            <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Clients
-            </h3>
-            <p className="text-xs text-muted-foreground">
-              Each selected client fans out into its own sessions.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {hosts.length === 0 ? (
-              <span className="text-xs text-muted-foreground">
-                No clients in this project.
+
+      {/* Compact picker bar — same pill language as SuiteOverviewClientBar. */}
+      <div className="mb-2.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-2">
+        <ServerGroupPicker
+          projectId={projectId}
+          value={serverAttachmentId}
+          onChange={(id) => setServerAttachmentId(id)}
+          onClearSelection={() => setServerAttachmentId(null)}
+          emptyTriggerLabel="No server group · pick one"
+          infoText="A named set of MCP servers shared across every client this journey targets — same pattern as eval suites."
+        />
+
+        <Popover open={clientsPickerOpen} onOpenChange={setClientsPickerOpen}>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              className={cn(
+                "flex h-8 max-w-[260px] shrink-0 items-center gap-1 rounded-full border px-2 text-foreground",
+                "outline-none transition-colors",
+                hostIds.length === 0
+                  ? "border-dashed border-border/60 bg-muted/30 hover:bg-muted/45"
+                  : "border-border/60 bg-muted/40 hover:bg-muted/60",
+              )}
+              aria-label="Attached clients"
+            >
+              {selectedHosts[0] ? (
+                <JourneyHostLogoMark label={selectedHosts[0].name} />
+              ) : (
+                <Users className="size-3.5 shrink-0 text-muted-foreground" />
+              )}
+              <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                {clientsTriggerLabel}
               </span>
-            ) : (
-              sortedHosts.map((h) => {
-                // Compact config chips so the picker shows what each client
-                // brings (model · computer) without opening the editor. Server
-                // count is journey-scoped via the group above, not the host.
-                const meta = [
-                  h.modelId || null,
-                  h.hasComputer ? "computer" : null,
-                ].filter(Boolean);
-                const shared = !isSwarmClient(h);
-                return (
-                  <button
-                    key={h.hostId}
-                    type="button"
-                    onClick={() => toggleHost(h.hostId)}
-                    className={cn(
-                      "flex flex-col items-start gap-0.5 rounded-lg border px-2.5 py-1.5 text-left text-xs",
-                      hostIds.includes(h.hostId)
-                        ? "border-primary bg-primary/10"
-                        : "hover:bg-muted",
-                    )}
-                  >
-                    <span className="flex items-center gap-1.5 font-medium">
-                      {h.name}
-                      {shared ? (
-                        <span
-                          className="rounded-full border border-border/60 px-1 py-0 text-[9px] font-normal text-muted-foreground"
-                          title="Managed in another product surface — still runnable by this journey"
-                        >
-                          shared
-                        </span>
-                      ) : null}
-                    </span>
-                    {meta.length > 0 ? (
-                      <span className="text-[10px] text-muted-foreground">
-                        {meta.join(" · ")}
+              {clientsExtra > 0 ? (
+                <span className="text-[10px] text-muted-foreground">
+                  +{clientsExtra}
+                </span>
+              ) : null}
+              <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent
+            className="w-64 p-1"
+            align="start"
+            sideOffset={4}
+            // Multi-select: don't dismiss when focus moves between rows
+            // (Radix otherwise treats the click as "outside" the trigger).
+            onCloseAutoFocus={(e) => e.preventDefault()}
+          >
+            <div className="space-y-0.5" role="group" aria-label="Clients">
+              <div className="flex items-center justify-between gap-2 px-2 pb-1 pt-0.5">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Clients
+                </span>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      aria-label="What is a client?"
+                      className="rounded-full p-0.5 text-muted-foreground outline-none transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <Info className="size-3" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-[240px]">
+                    <p className="text-xs leading-snug">
+                      Pick one or more. Each selected client fans out into its
+                      own sessions for this journey.
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+              {hosts.length === 0 ? (
+                <p className="px-2 py-1.5 text-xs text-muted-foreground">
+                  No clients in this project.
+                </p>
+              ) : (
+                sortedHosts.map((h) => {
+                  const selected = hostIds.includes(h.hostId);
+                  const shared = !isSwarmClient(h);
+                  const meta = [
+                    h.modelId || null,
+                    h.hasComputer ? "computer" : null,
+                  ].filter(Boolean);
+                  return (
+                    <button
+                      key={h.hostId}
+                      type="button"
+                      role="checkbox"
+                      aria-checked={selected}
+                      // Prevent focus steal from closing the multi-select popover
+                      // before the toggle applies (same pattern as evals).
+                      onPointerDown={(e) => e.preventDefault()}
+                      onClick={() => toggleHost(h.hostId)}
+                      className={cn(
+                        "flex w-full items-center gap-2 rounded py-1.5 pl-2 pr-2 text-left text-sm",
+                        "hover:bg-accent hover:text-accent-foreground",
+                        selected && "bg-accent/50",
+                      )}
+                    >
+                      <Check
+                        className={cn(
+                          "size-3.5 shrink-0",
+                          selected ? "opacity-100" : "opacity-0",
+                        )}
+                      />
+                      <JourneyHostLogoMark label={h.name} />
+                      <span className="min-w-0 flex-1 truncate">
+                        <span className="font-medium">{h.name}</span>
+                        {shared ? (
+                          <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+                            shared
+                          </span>
+                        ) : null}
+                        {meta.length > 0 ? (
+                          <span className="mt-0.5 block truncate text-[10px] text-muted-foreground">
+                            {meta.join(" · ")}
+                          </span>
+                        ) : null}
                       </span>
-                    ) : null}
-                  </button>
-                );
-              })
-            )}
-          </div>
-        </div>
-      </div>
-      <div className="mb-3 flex flex-wrap gap-4">
-        <div className="flex flex-col gap-1">
-          <Label htmlFor="swarm-journey-sessions" className="text-xs">
-            Sessions/host
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </PopoverContent>
+        </Popover>
+
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Label
+            htmlFor="swarm-journey-sessions"
+            className="shrink-0 text-[11px] text-muted-foreground"
+          >
+            Sessions
           </Label>
           <Input
             id="swarm-journey-sessions"
             type="number"
             min={1}
             max={5}
-            className="h-8 w-20"
+            className="h-8 w-14"
             value={sessionsPerHost}
             onChange={(e) => setSessionsPerHost(Number(e.target.value))}
           />
-        </div>
-        <div className="flex flex-col gap-1">
-          <Label htmlFor="swarm-journey-turns" className="text-xs">
-            Max turns
+          <Label
+            htmlFor="swarm-journey-turns"
+            className="ml-1 shrink-0 text-[11px] text-muted-foreground"
+          >
+            Turns
           </Label>
           <Input
             id="swarm-journey-turns"
             type="number"
             min={1}
             max={20}
-            className="h-8 w-20"
+            className="h-8 w-14"
             value={maxTurns}
             onChange={(e) => setMaxTurns(Number(e.target.value))}
           />
         </div>
       </div>
+
       <div className="flex justify-end gap-2">
         <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>
           Cancel

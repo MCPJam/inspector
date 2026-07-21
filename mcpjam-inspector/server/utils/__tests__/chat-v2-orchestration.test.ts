@@ -1002,12 +1002,13 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
     expect(entry.description).toContain("Navigate the MCPJam inspector");
   });
 
-  it("drops a same-named MCP server tool with a warn (UI tool wins)", async () => {
+  it("keeps a same-named MCP server tool executable (server tool wins) and omits the UI twin", async () => {
+    const serverExecute = vi.fn();
     const manager = mockManager({
       ui_navigate: {
-        description: "Sneaky third-party tool squatting the ui_ prefix",
+        description: "Server tool that legitimately uses the ui_ prefix",
         _serverId: "server-x",
-        execute: vi.fn(),
+        execute: serverExecute,
       },
       legit_tool: {
         description: "Unrelated server tool",
@@ -1023,10 +1024,69 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
       uiTools,
     });
 
+    // The server's executable tool survives untouched — a connected server
+    // never loses a capability over MCPJam's guessable catalog name.
     const entry = result.allTools["ui_navigate"] as { execute?: unknown };
-    // The UI (no-execute) twin won; the MCP tool's execute is gone.
-    expect(entry.execute).toBeUndefined();
+    expect(entry.execute).toBe(serverExecute);
     expect(result.allTools["legit_tool"]).toBeDefined();
+    // The client-fulfilled twin is gone from the effective set (and thus
+    // from approval classification); the non-colliding UI tool remains.
+    expect(result.effectiveUiTools.map((t) => t.name)).toEqual([
+      "ui_snapshot_app",
+    ]);
+    // The effective UI prompt never mentions the discarded UI tool.
+    expect(result.enhancedSystemPrompt).toContain("MCPJam UI tools");
+    expect(result.enhancedSystemPrompt).toContain("ui_snapshot_app");
+    expect(result.enhancedSystemPrompt).not.toContain("Navigate the MCPJam");
+  });
+
+  it("a non-colliding server ui_* tool coexists with the UI catalog and keeps execute", async () => {
+    const serverExecute = vi.fn();
+    const manager = mockManager({
+      ui_render: {
+        description: "Server-side renderer",
+        _serverId: "server-x",
+        execute: serverExecute,
+      },
+    });
+
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["server-x"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      uiTools,
+    });
+
+    expect(
+      (result.allTools["ui_render"] as { execute?: unknown }).execute
+    ).toBe(serverExecute);
+    // Both UI entries survive: provenance, not the ui_ prefix, decides.
+    expect(result.effectiveUiTools.map((t) => t.name).sort()).toEqual([
+      "ui_navigate",
+      "ui_snapshot_app",
+    ]);
+    expect(
+      (result.allTools["ui_navigate"] as { execute?: unknown }).execute
+    ).toBeUndefined();
+  });
+
+  it("emits no UI prompt section when every UI entry loses its collision", async () => {
+    const manager = mockManager({
+      ui_navigate: { description: "srv", _serverId: "s", execute: vi.fn() },
+      ui_snapshot_app: { description: "srv", _serverId: "s", execute: vi.fn() },
+    });
+
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["s"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      uiTools,
+    });
+
+    expect(result.effectiveUiTools).toEqual([]);
+    expect(result.enhancedSystemPrompt).toBe("Base prompt.");
   });
 
   it("fails closed when a built-in collides with a UI tool", async () => {
@@ -1097,7 +1157,11 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
       uiTools,
     });
     expect(withUiTools.enhancedSystemPrompt).toContain("MCPJam UI tools");
-    expect(withUiTools.enhancedSystemPrompt).toContain("ui_execute_tool");
+    // Guidance only names tools actually in the effective set — the fixture
+    // has ui_snapshot_app but not ui_execute_tool, so the playground
+    // walkthrough sentence must be absent.
+    expect(withUiTools.enhancedSystemPrompt).toContain("ui_snapshot_app");
+    expect(withUiTools.enhancedSystemPrompt).not.toContain("ui_execute_tool");
 
     const withoutUiTools = await prepareChatV2({
       mcpClientManager: manager,

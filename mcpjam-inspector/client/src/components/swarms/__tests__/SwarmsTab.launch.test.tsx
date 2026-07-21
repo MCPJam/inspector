@@ -75,7 +75,7 @@ import { LaunchJourneyRunError } from "@/lib/swarm-api";
 function selectPersonaAndRun() {
   render(<SwarmsTab projectId="proj-1" isAuthenticated />);
   fireEvent.click(screen.getByText("Persona One"));
-  return screen.getByRole("button", { name: "Run journey" });
+  return screen.getByRole("button", { name: "Run" });
 }
 
 beforeEach(() => {

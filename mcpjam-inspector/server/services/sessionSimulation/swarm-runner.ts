@@ -13,6 +13,12 @@ import {
   type PinnedHostExecutionSpec,
   type SwarmAttemptStatus,
 } from "../swarm-agent.js";
+import { JourneyRunStreamHub } from "./swarm-stream-hub.js";
+import type {
+  SwarmStreamEnvelope,
+  SwarmStreamEvent,
+  SwarmStreamPayload,
+} from "../../../shared/swarm-stream-events.js";
 
 /**
  * Swarm (journey-execution) multi-host fan-out runner — PR 3d.
@@ -88,12 +94,21 @@ interface RunningJourneyHandle {
   abort: () => void;
   /** Resolves when the run loop's `finally` has cleared the registry. */
   done: Promise<void>;
+  /** Live SSE multiplex for this run (late-join buffer + subscribers). */
+  hub: JourneyRunStreamHub;
 }
 
 const runningJourneyRuns = new Map<string, RunningJourneyHandle>();
 
 export function getRunningJourneyRunCount(): number {
   return runningJourneyRuns.size;
+}
+
+/** Active run stream hub, if the runner is still in-process. */
+export function getRunningJourneyStreamHub(
+  runId: string
+): JourneyRunStreamHub | undefined {
+  return runningJourneyRuns.get(runId)?.hub;
 }
 
 /**
@@ -148,13 +163,23 @@ export async function startJourneyRun(
   const done = new Promise<void>((resolve) => {
     resolveDone = resolve;
   });
+  const hub = new JourneyRunStreamHub();
   runningJourneyRuns.set(opts.runId, {
     abort: () => controller.abort(),
     done,
+    hub,
   });
   try {
-    await runJourneyFanOut({ ...opts, abortSignal: composed });
+    await runJourneyFanOut({ ...opts, abortSignal: composed, hub });
   } finally {
+    // Terminal multiplex event before unregistering so late SSE clients see it.
+    hub.emit({
+      type: "run_complete",
+      runId: opts.runId,
+      hostId: "",
+      chatSessionId: "",
+      sessionIndex: -1,
+    });
     runningJourneyRuns.delete(opts.runId);
     resolveDone();
   }
@@ -219,8 +244,17 @@ function logEvent(
   logger.info(`[swarm.runner] ${event}`, fields);
 }
 
+function bindSessionEmit(
+  hub: JourneyRunStreamHub,
+  envelope: SwarmStreamEnvelope
+): (payload: SwarmStreamPayload) => void {
+  return (payload) => {
+    hub.emit({ ...envelope, ...payload } as SwarmStreamEvent);
+  };
+}
+
 async function runJourneyFanOut(
-  opts: StartJourneyRunOptions
+  opts: StartJourneyRunOptions & { hub: JourneyRunStreamHub }
 ): Promise<void> {
   const {
     runId,
@@ -234,6 +268,7 @@ async function runJourneyFanOut(
     authHeader,
     managerFactory,
     abortSignal,
+    hub,
   } = opts;
 
   const runStartedAt = Date.now();
@@ -355,6 +390,15 @@ async function runJourneyFanOut(
       const attemptStartedAt = Date.now();
       logEvent("attempt.start", { runId, hostId, sessionIdx, modelId });
 
+      const envelope: SwarmStreamEnvelope = {
+        runId,
+        hostId,
+        chatSessionId,
+        sessionIndex: sessionIdx,
+      };
+      const emit = bindSessionEmit(hub, envelope);
+      emit({ type: "attempt_status", status: "running" });
+
       // Execute the session via the shared core. It owns manager lifecycle +
       // dispose, per-turn persona→drain→persist, browser/widget capture, and
       // failure classification, and NEVER throws (returns a SessionResult).
@@ -407,6 +451,7 @@ async function runJourneyFanOut(
           personaId: personaSnapshot.personaId,
           personaLabel: personaSnapshot.name,
         },
+        emit,
         // No chatbox-scoped side-persistence on the swarm surface (widget /
         // browser-artifact rows are keyed by chatboxId, which swarm has none).
       });
@@ -441,6 +486,13 @@ async function runJourneyFanOut(
               : {}),
           }
         : terminalForOutcome(outcome, errorMessage);
+      emit({
+        type: "attempt_status",
+        status: terminal.status,
+        ...(terminal.errorMessage
+          ? { errorMessage: terminal.errorMessage }
+          : {}),
+      });
       try {
         await reportAttempt(convexHttpUrl, bearer, {
           projectId,
