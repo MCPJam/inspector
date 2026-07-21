@@ -107,6 +107,18 @@ export interface ServerWithName {
    * when registrationMode resolves to "cimd".
    */
   xaaClientAuth?: XaaClientAuthMethod;
+  /** Sanitized shared DCR registration status. Operational fields are never
+   * written into project exports or browser persistence. */
+  xaaDcrClientId?: string;
+  xaaDcrTokenEndpointAuthMethod?:
+    | "client_secret_post"
+    | "client_secret_basic"
+    | "none";
+  xaaDcrIssuer?: string;
+  xaaDcrClientSecretExpiresAt?: number;
+  xaaDcrRegisteredAt?: number;
+  xaaDcrStatus?: "registered" | "registering" | "uncertain";
+  hasXaaDcrRegistration?: boolean;
   /**
    * Canonical auth method (useOAuth/useXaa are its derived compat mirrors).
    * "auto" selects XAA when the server is XAA-configured, OAuth otherwise.

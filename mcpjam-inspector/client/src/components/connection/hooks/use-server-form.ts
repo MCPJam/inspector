@@ -1001,7 +1001,7 @@ export function useServerForm(
   const preregisteredOauthBlocksSubmit =
     type === "http" &&
     ((authType === "oauth" && registrationMode === "preregistered") ||
-      authType === "xaa") &&
+      (authType === "xaa" && registrationMode !== "dcr")) &&
     validateClientId(clientId) !== null;
   const oauthAuthorizationHeaderWarning =
     type === "http" &&
@@ -1069,6 +1069,13 @@ export function useServerForm(
       setXaaIdentityDirty(true);
       setXaaEmail(value);
     },
+    xaaDcrClientId: server?.xaaDcrClientId,
+    xaaDcrTokenEndpointAuthMethod:
+      server?.xaaDcrTokenEndpointAuthMethod,
+    xaaDcrIssuer: server?.xaaDcrIssuer,
+    xaaDcrClientSecretExpiresAt: server?.xaaDcrClientSecretExpiresAt,
+    xaaDcrRegisteredAt: server?.xaaDcrRegisteredAt,
+    xaaDcrStatus: server?.xaaDcrStatus,
     requestTimeout,
     setRequestTimeout,
     inheritedRequestTimeout: projectConnectionDefaults.requestTimeout,

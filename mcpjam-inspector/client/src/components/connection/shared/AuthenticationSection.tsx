@@ -31,6 +31,7 @@ import type {
 import { REGISTRATION_MODE_OPTIONS } from "@/lib/registration-strategy";
 import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
 import { XaaCredentialFields } from "./XaaCredentialFields";
+import { XaaDcrRegistrationStatus } from "./XaaDcrRegistrationStatus";
 
 interface AuthenticationSectionProps {
   serverUrl?: string;
@@ -86,6 +87,16 @@ interface AuthenticationSectionProps {
   autoSelectsXaa?: boolean;
   /** Project default test identity — shown as the override placeholders. */
   projectDefaultIdentity?: { subject: string; email: string } | null;
+  xaaDcrClientId?: string;
+  xaaDcrTokenEndpointAuthMethod?:
+    | "client_secret_post"
+    | "client_secret_basic"
+    | "none";
+  xaaDcrIssuer?: string;
+  xaaDcrClientSecretExpiresAt?: number;
+  xaaDcrRegisteredAt?: number;
+  xaaDcrStatus?: "registered" | "registering" | "uncertain";
+  onRegisterNewXaaDcrClient?: () => Promise<void>;
 }
 
 const PROTOCOL_OPTIONS: Array<{
@@ -142,6 +153,13 @@ export function AuthenticationSection({
   onXaaEmailChange,
   autoSelectsXaa = false,
   projectDefaultIdentity = null,
+  xaaDcrClientId,
+  xaaDcrTokenEndpointAuthMethod,
+  xaaDcrIssuer,
+  xaaDcrClientSecretExpiresAt,
+  xaaDcrRegisteredAt,
+  xaaDcrStatus,
+  onRegisterNewXaaDcrClient,
 }: AuthenticationSectionProps) {
   const [showAdvancedOAuth, setShowAdvancedOAuth] = useState(false);
   // Active host's enterprise-managed authorization policy (ProtocolTab
@@ -746,7 +764,46 @@ export function AuthenticationSection({
 
         {/* Cross-App Access (XAA) Settings */}
         {showAuthSettings && authType === "xaa" && (
-          <div className="px-3 pb-3 pt-3 border-t border-border bg-muted/30">
+          <div className="space-y-3 px-3 pb-3 pt-3 border-t border-border bg-muted/30">
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-foreground">
+                Registration Strategy
+              </label>
+              <Select
+                value={registrationMode}
+                onValueChange={(value: RegistrationMode) =>
+                  onOauthRegistrationModeChange(value)
+                }
+              >
+                <SelectTrigger className="h-10 w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {REGISTRATION_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {registrationMode === "auto" && (
+                <p className="text-xs text-muted-foreground">
+                  Automatic keeps the existing XAA preregistered behavior. DCR
+                  runs only when explicitly selected.
+                </p>
+              )}
+            </div>
+            {registrationMode === "dcr" && (
+              <XaaDcrRegistrationStatus
+                status={xaaDcrStatus}
+                clientId={xaaDcrClientId}
+                issuer={xaaDcrIssuer}
+                registeredAt={xaaDcrRegisteredAt}
+                clientSecretExpiresAt={xaaDcrClientSecretExpiresAt}
+                tokenEndpointAuthMethod={xaaDcrTokenEndpointAuthMethod}
+                onRegisterNewClient={onRegisterNewXaaDcrClient}
+              />
+            )}
             <XaaCredentialFields
               clientId={clientId}
               onClientIdChange={onClientIdChange}
@@ -773,6 +830,8 @@ export function AuthenticationSection({
               projectDefaultIdentity={projectDefaultIdentity}
               projectId={projectId}
               hostedServerId={hostedServerId}
+              showClientCredentials={registrationMode !== "dcr"}
+              clientIdRequired={registrationMode !== "dcr"}
             />
           </div>
         )}

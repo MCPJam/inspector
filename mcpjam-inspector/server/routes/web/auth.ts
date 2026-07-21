@@ -1073,18 +1073,6 @@ export async function createAuthorizedManager(
       const useXaa =
         auth.serverConfig.transportType === "http" && effectiveAuth === "xaa";
       if (useXaa) {
-        // XAA connect runs on stored pre-registered credentials only; a
-        // dynamic registrationMode (dcr/cimd) applies to the debugger and
-        // OAuth flows.
-        if (
-          auth.serverConfig.registrationMode === "dcr" ||
-          auth.serverConfig.registrationMode === "cimd"
-        ) {
-          logger.info(
-            "[XAA connect] registrationMode is dynamic; connect uses stored pre-registered credentials — the mode applies to the debugger and OAuth flows only",
-            { serverId, registrationMode: auth.serverConfig.registrationMode }
-          );
-        }
         // (`xaaIdentityError` is validated batch-wide in PASS 1 — before any
         // sibling server can mint.)
         if (!options?.xaaIssuer) {

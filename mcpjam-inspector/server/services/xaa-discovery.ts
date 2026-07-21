@@ -130,6 +130,7 @@ export interface IssuerMismatch {
 export interface DiscoveryVerdict {
   issuer?: string;
   tokenEndpoint?: string;
+  registrationEndpoint?: string;
   grantTypesSupported?: string[];
   jwtBearerSupport: GrantSupportStatus;
   jwtBearerDetail: string;
@@ -197,6 +198,10 @@ export function evaluateDiscovery(
     typeof metadata.token_endpoint === "string"
       ? metadata.token_endpoint
       : undefined;
+  const registrationEndpoint =
+    typeof metadata.registration_endpoint === "string"
+      ? metadata.registration_endpoint
+      : undefined;
   const grantTypesAdvertised = Array.isArray(metadata.grant_types_supported);
   const grantTypes = grantTypesAdvertised
     ? (metadata.grant_types_supported as unknown[]).filter(
@@ -239,6 +244,7 @@ export function evaluateDiscovery(
   return {
     issuer,
     tokenEndpoint,
+    registrationEndpoint,
     grantTypesSupported: grantTypes,
     jwtBearerSupport,
     jwtBearerDetail,

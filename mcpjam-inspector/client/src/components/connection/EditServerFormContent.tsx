@@ -34,6 +34,7 @@ interface EditServerFormContentProps {
   ) => void;
   /** Project default XAA test identity — shown as override placeholders. */
   projectXaaDefaultIdentity?: { subject: string; email: string } | null;
+  onRegisterNewXaaDcrClient?: () => Promise<void>;
 }
 
 export function EditServerFormContent({
@@ -44,6 +45,7 @@ export function EditServerFormContent({
   mcpProtocolVersionOverride,
   onMcpProtocolVersionOverrideChange,
   projectXaaDefaultIdentity = null,
+  onRegisterNewXaaDcrClient,
 }: EditServerFormContentProps) {
   const hostedUrlPlaceholder = "https://example.com/mcp";
   const [revealingEnv, setRevealingEnv] = useState(false);
@@ -281,6 +283,17 @@ export function EditServerFormContent({
             onXaaEmailChange={formState.setXaaEmail}
             autoSelectsXaa={formState.autoSelectsXaa}
             projectDefaultIdentity={projectXaaDefaultIdentity}
+            xaaDcrClientId={formState.xaaDcrClientId}
+            xaaDcrTokenEndpointAuthMethod={
+              formState.xaaDcrTokenEndpointAuthMethod
+            }
+            xaaDcrIssuer={formState.xaaDcrIssuer}
+            xaaDcrClientSecretExpiresAt={
+              formState.xaaDcrClientSecretExpiresAt
+            }
+            xaaDcrRegisteredAt={formState.xaaDcrRegisteredAt}
+            xaaDcrStatus={formState.xaaDcrStatus}
+            onRegisterNewXaaDcrClient={onRegisterNewXaaDcrClient}
           />
         </div>
       )}

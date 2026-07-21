@@ -756,14 +756,6 @@ export async function resolveLocalServerForConnect(
     | undefined;
   if (useXaa && result.serverConfig.transportType === "http") {
     const sc = result.serverConfig;
-    // XAA connect runs on stored pre-registered credentials only; a dynamic
-    // registrationMode (dcr/cimd) applies to the debugger and OAuth flows.
-    if (sc.registrationMode === "dcr" || sc.registrationMode === "cimd") {
-      logger.info(
-        "[XAA connect] registrationMode is dynamic; connect uses stored pre-registered credentials — the mode applies to the debugger and OAuth flows only",
-        { serverId, registrationMode: sc.registrationMode }
-      );
-    }
     // Backend-resolved identity failure (legacy partial per-server
     // override): a distinct configuration error, surfaced BEFORE any mint.
     // No silent fallback to the demo identity, no silent XAA→OAuth fallback.

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { toast } from "@/lib/toast";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
@@ -182,6 +182,9 @@ export function ServerDetailModal({
   const [toolsLoadError, setToolsLoadError] = useState<string | null>(null);
   const [toolsData, setToolsData] =
     useState<ListToolsResultWithMetadata | null>(null);
+  const resetXaaDcrRegistration = useAction(
+    "servers:resetXaaDcrRegistration" as never
+  ) as unknown as (args: { serverId: string }) => Promise<void>;
 
   const initializationInfo = server.initializationInfo;
   const version = initializationInfo?.serverVersion?.version;
@@ -750,6 +753,18 @@ export function ServerDetailModal({
                     projectId={projectId}
                     hostedServerId={hostedServerId}
                     projectXaaDefaultIdentity={projectXaaDefaultIdentity}
+                    onRegisterNewXaaDcrClient={
+                      hostedServerId
+                        ? async () => {
+                            await resetXaaDcrRegistration({
+                              serverId: hostedServerId,
+                            });
+                            toast.success(
+                              "The stored DCR registration was reset. The next connection will register a new client."
+                            );
+                          }
+                        : undefined
+                    }
                     mcpProtocolVersionOverride={
                       currentMcpProtocolVersionOverride
                     }

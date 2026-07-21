@@ -377,6 +377,45 @@ describe("serversHaveChanged redacted secrets", () => {
   });
 });
 
+describe("XAA DCR runtime serialization boundary", () => {
+  it("hydrates sanitized status but never writes runtime registration state", () => {
+    const hydrated = deserializeServersFromConvex([
+      {
+        name: "dcr-server",
+        enabled: true,
+        useXaa: true,
+        url: "https://example.test/mcp",
+        registrationMode: "dcr",
+        xaaDcrStatus: "registered",
+        xaaDcrClientId: "runtime-client",
+        xaaDcrIssuer: "https://as.example",
+        xaaDcrRegisteredAt: 123,
+        xaaDcrClientSecretExpiresAt: 456,
+        xaaDcrTokenEndpointAuthMethod: "client_secret_post",
+        hasXaaDcrRegistration: true,
+      },
+    ]);
+    expect(hydrated["dcr-server"]).toMatchObject({
+      xaaDcrStatus: "registered",
+      xaaDcrClientId: "runtime-client",
+      hasXaaDcrRegistration: true,
+    });
+
+    for (const serialized of [
+      serializeServersForPersistence(hydrated),
+      serializeServersForSharing(hydrated),
+    ]) {
+      const output = serialized["dcr-server"] as Record<string, unknown>;
+      expect(output.registrationMode).toBe("dcr");
+      expect(Object.keys(output).some((key) => key.startsWith("xaaDcr"))).toBe(
+        false,
+      );
+      expect(output).not.toHaveProperty("hasXaaDcrRegistration");
+      expect(JSON.stringify(output)).not.toContain("runtime-client");
+    }
+  });
+});
+
 describe("project-serialization xaaAuthzIssuer round-trip", () => {
   // The XAA "Configure Server to Test" modal reads the Authorization Server
   // Issuer from server.xaaAuthzIssuer. If serialize/deserialize drops it, the
