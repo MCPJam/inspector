@@ -1,12 +1,13 @@
 /**
- * Header-broker start/revoke client (enterprise harness credential delivery).
+ * Header-broker start/revoke client — the ONLY harness credential delivery
+ * path since COMP-23 (the raw-key `harness-model-credential.ts` client, which
+ * returned a real unmetered key to inject into the sandbox env, was removed).
  *
- * Unlike `harness-model-credential.ts` (which returns a real key to inject into
- * the sandbox env), the broker NEVER hands the inspector a lease. Convex mints
- * it, locks the sandbox's egress to the proxy host, and installs it into E2B's
- * egress header transform — so the lease is injected OUTSIDE the VM and the
- * inspector/sandbox never hold it. We get back only the proxy base URL + runId;
- * the harness CLIs run with DUMMY local creds pointed at that proxy.
+ * The broker NEVER hands the inspector a lease. Convex mints it, locks the
+ * sandbox's egress to the proxy host, and installs it into E2B's egress header
+ * transform — so the lease is injected OUTSIDE the VM and the inspector/sandbox
+ * never hold it. We get back only the proxy base URL + runId; the harness CLIs
+ * run with DUMMY local creds pointed at that proxy.
  *
  * Backed by `convex/http.ts:/web/harness/model-broker/{start,revoke}`.
  */
@@ -54,7 +55,7 @@ export async function startHarnessModelBroker(args: {
   try {
     url = new URL(
       "/web/harness/model-broker/start",
-      getConvexHttpUrl(),
+      getConvexHttpUrl()
     ).toString();
   } catch (err) {
     logger.error("[harness-model-broker] missing endpoint config", err);
@@ -154,7 +155,7 @@ export async function revokeHarnessModelBroker(args: {
   try {
     url = new URL(
       "/web/harness/model-broker/revoke",
-      getConvexHttpUrl(),
+      getConvexHttpUrl()
     ).toString();
   } catch (err) {
     logger.error("[harness-model-broker] missing revoke endpoint config", err);

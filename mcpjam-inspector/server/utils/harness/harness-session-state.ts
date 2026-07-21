@@ -1,6 +1,7 @@
 /**
  * Inspector → Convex client for harness multi-turn continuity (the generic
- * `harnessSessions` lane). Mirrors `harness-model-credential.ts`.
+ * `harnessSessions` lane). Same bearer-authed fetch shape as
+ * `harness-proxy-token-client.ts` / `harness-model-broker.ts`.
  *
  * The lane is keyed server-side by (projectId, harnessId, ownerType, ownerKey);
  * the inspector supplies the owner-identifying fields and the signed-in userId
@@ -157,13 +158,13 @@ async function postSessionState(
   pathSuffix: string,
   bearer: string,
   body: Record<string, unknown>,
-  signal?: AbortSignal,
+  signal?: AbortSignal
 ): Promise<
   { ok: true; payload: any } | { ok: false; status: number; error: string }
 > {
   const url = new URL(
     `/web/harness/session-state/${pathSuffix}`,
-    getConvexHttpUrl(),
+    getConvexHttpUrl()
   ).toString();
   const authorization = bearer.startsWith("Bearer ")
     ? bearer
@@ -230,7 +231,7 @@ export async function claimHarnessSessionState(args: {
       leasedBy: args.leasedBy,
       leaseTtlMs: args.leaseTtlMs,
     },
-    args.signal,
+    args.signal
   );
   if (!res.ok) return res;
   return {
