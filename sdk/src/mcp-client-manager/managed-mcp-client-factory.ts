@@ -44,11 +44,15 @@ export function createManagedMcpClient(
     throw new Error("createManagedMcpClient: `clientOptions` is required");
   }
   const inner = new Client(args.clientInfo, {
-    // Default to the dialect-aware validator so declared draft-07 schemas
-    // (every v1-SDK server) are validated rather than rejected; an explicit
-    // caller-supplied validator still wins.
-    jsonSchemaValidator: new DialectAwareJsonSchemaValidator(),
     ...args.clientOptions,
+    // Default to the dialect-aware validator so declared draft-07 schemas
+    // (every v1-SDK server) are validated rather than rejected. Applied after
+    // the spread with a nullish fallback so a real caller-supplied validator
+    // still wins, but an explicit `jsonSchemaValidator: undefined` does not
+    // silently drop us back to `Client`'s rejecting upstream default.
+    jsonSchemaValidator:
+      args.clientOptions.jsonSchemaValidator ??
+      new DialectAwareJsonSchemaValidator(),
   });
   return new OfficialSdkClientAdapter(inner);
 }
