@@ -41,11 +41,7 @@ import {
   setToolSpanMessageRangesFromResults,
 } from "../live-chat-trace-stream.js";
 import { StreamTurnDriver } from "../stream-turn-driver.js";
-import {
-  getHarnessAdapter,
-  buildBrokerDummyAuth,
-  type HarnessAuth,
-} from "./registry.js";
+import { getHarnessAdapter, buildBrokerDummyAuth } from "./registry.js";
 import type { HarnessV1PermissionMode } from "@ai-sdk/harness";
 import {
   startHarnessModelBroker,
@@ -118,25 +114,6 @@ type ChunkWriter = { write: (chunk: UIMessageChunk) => void };
 export const HARNESS_EMPTY_VISIBLE_OUTPUT_TEXT =
   "The harness completed the turn without returning a visible message.";
 
-/**
- * Resolve the model credential the harness hands to the in-sandbox CLI — from
- * Convex, like every other model key (keys live in Convex; the inspector holds
- * none by design). The CLI makes its own model calls inside the sandbox, so it
- * needs a real credential; we fetch the system **AI Gateway** key via the
- * bearer-authed Convex endpoint and hand it to the adapter as `auth.gateway`.
- * One key serves Claude Code (Anthropic) and Codex (OpenAI).
- *
- * Per-request Gateway attribution tags (`providerOptions.gateway.user/tags`)
- * are NOT plumbed: the harness adapter only forwards env vars to the CLI
- * (AI_GATEWAY_API_KEY / *_BASE_URL), so it can't carry per-call tags. Issuance
- * is instead audited + rate-limited server-side; full per-generation spend
- * ingestion is a follow-up (see the harness plan).
- *
- * Fails closed: the endpoint rejects (harness disabled / not a member /
- * rate-limited / no gateway key) ⇒ we throw here, BEFORE the computer is woken
- * (this is the first step of the turn), so a misconfigured turn never provisions
- * a box.
- */
 /**
  * Build the harness `.mcp.json` — "always-proxy". Every selected, registered
  * server points at MCPJam's own proxy (carrying a signed `X-MCPJam-Proxy-Token`
@@ -520,13 +497,13 @@ export async function runHarnessTurn(
         });
       const isApprovalResume = approvalContinuations.length > 0;
 
-      // Phase timing — log where a turn spends its wall-clock (credential /
-      // claim / box wake / session connect / model stream / finalize) so "takes
-      // forever" can be attributed instead of guessed.
+      // Phase timing — log where a turn spends its wall-clock (claim / box
+      // wake / broker start / session connect / model stream / finalize) so
+      // "takes forever" can be attributed instead of guessed.
       const tStart = Date.now();
-      let tAuth = tStart;
       let tClaim = tStart;
       let tSandbox = tStart;
+      let tBroker = tStart;
       let tConnect = tStart;
       let resumedSession = false;
 
@@ -570,8 +547,6 @@ export async function runHarnessTurn(
             "run harness turns."
         );
       }
-      let auth: HarnessAuth | undefined = undefined;
-      tAuth = Date.now();
 
       // 2. Build the .mcp.json — always-proxy: ensure a per-server tunnel and
       // point every entry at MCPJam's own adapter-http (no upstream creds in the
@@ -780,33 +755,29 @@ export async function runHarnessTurn(
       // inspector never sees the lease. Run the CLI with dummy creds pointed
       // at the returned proxy. Fail-fast on install error (the box is awake
       // but no real credential exists anywhere).
-      {
-        // PRECOMPUTE the run id and record it (+ the computer) BEFORE the POST.
-        // If the backend installs the E2B rule but the response is lost/aborted,
-        // teardown can still revoke by this id (backend keys revoke on runId).
-        brokerRunId = crypto.randomUUID();
-        brokerComputerId = String(computerId);
-        const broker = await startHarnessModelBroker({
-          projectId,
-          computerId: String(computerId),
-          harnessId: harnessAdapter.id,
-          modelId,
-          runId: brokerRunId,
-          ...(executionScope ? { executionScope } : {}),
-          bearer: authHeader,
-          ...(abortSignal ? { signal: abortSignal } : {}),
-        });
-        if (!broker.ok) {
-          // Throws propagate to the turn's outer catch; onFinishEngine frees the
-          // claimed lane (sessionEstablished still false) and revokes the broker
-          // lease (brokerRunId set) if the backend installed before a lost response.
-          throw new Error(broker.error);
-        }
-        auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl);
+      // PRECOMPUTE the run id and record it (+ the computer) BEFORE the POST.
+      // If the backend installs the E2B rule but the response is lost/aborted,
+      // teardown can still revoke by this id (backend keys revoke on runId).
+      brokerRunId = crypto.randomUUID();
+      brokerComputerId = String(computerId);
+      const broker = await startHarnessModelBroker({
+        projectId,
+        computerId: String(computerId),
+        harnessId: harnessAdapter.id,
+        modelId,
+        runId: brokerRunId,
+        ...(executionScope ? { executionScope } : {}),
+        bearer: authHeader,
+        ...(abortSignal ? { signal: abortSignal } : {}),
+      });
+      if (!broker.ok) {
+        // Throws propagate to the turn's outer catch; onFinishEngine frees the
+        // claimed lane (sessionEstablished still false) and revokes the broker
+        // lease (brokerRunId set) if the backend installed before a lost response.
+        throw new Error(broker.error);
       }
-      if (!auth) {
-        throw new Error("harness turn: model auth was not resolved");
-      }
+      const auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl);
+      tBroker = Date.now();
 
       // 4. Assemble the harness over the host's E2B computer.
       const sandbox = createE2BHarnessSandboxProvider({ sandboxId });
@@ -1716,10 +1687,10 @@ export async function runHarnessTurn(
         const tStream = Date.now();
         // Values inlined into the message — this logger drops the 2nd arg.
         logger.info(
-          `[harness][timing] credential=${tAuth - tStart}ms claim=${
-            tClaim - tAuth
-          }ms boxWake=${tSandbox - tClaim}ms sessionConnect=${
-            tConnect - tSandbox
+          `[harness][timing] claim=${tClaim - tStart}ms boxWake=${
+            tSandbox - tClaim
+          }ms brokerStart=${tBroker - tSandbox}ms sessionConnect=${
+            tConnect - tBroker
           }ms modelStream=${tStream - tConnect}ms total=${
             tStream - tStart
           }ms resumed=${resumedSession}`

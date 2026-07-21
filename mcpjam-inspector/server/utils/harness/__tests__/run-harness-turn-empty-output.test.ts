@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 
 const harnessState = vi.hoisted(() => ({
@@ -148,6 +148,10 @@ describe("runHarnessTurn empty output projection", () => {
     harnessState.finalText = "";
     harnessState.session.stop.mockClear();
     harnessState.session.destroy.mockClear();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it("persists a visible assistant fallback when the harness finishes with no renderable parts", async () => {
