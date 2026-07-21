@@ -861,6 +861,77 @@ describe("POST /api/mcp/chat-v2", () => {
     });
   });
 
+  describe("uiTools boundary (agent-route-only)", () => {
+    it("ignores a client uiTools snapshot: 200, no ui_* entry advertised, no UI prompt section", async () => {
+      const { streamText } = await import("ai");
+      manager.getToolsForAiSdk.mockResolvedValue({
+        legit_tool: { description: "Server tool", execute: vi.fn() },
+      });
+
+      const res = await postJson(app, "/api/mcp/chat-v2", {
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: "gpt-4", provider: "openai" },
+        apiKey: "test-key",
+        // Stale snapshot a cached pre-cutover client may still send. The
+        // route must ignore it (never 400) for mixed-version safety.
+        uiTools: [
+          { name: "ui_navigate", description: "Navigate", readOnly: false },
+        ],
+      });
+
+      expect(res.status).toBe(200);
+      const options = vi.mocked(streamText).mock.calls.at(-1)![0] as {
+        tools: Record<string, unknown>;
+        system?: string;
+      };
+      expect(
+        Object.keys(options.tools).filter((name) => /^ui_/.test(name))
+      ).toEqual([]);
+      expect(options.system ?? "").not.toContain("MCPJam UI tools");
+    });
+
+    it("a server tool named ui_navigate stays executable with ordinary approval — never claimed by a stale UI snapshot", async () => {
+      const { streamText } = await import("ai");
+      const serverExecute = vi.fn();
+      manager.getToolsForAiSdk.mockResolvedValue({
+        ui_navigate: {
+          description: "Server-executed tool that uses the ui_ prefix",
+          execute: serverExecute,
+        },
+      });
+
+      const res = await postJson(app, "/api/mcp/chat-v2", {
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: "gpt-4", provider: "openai" },
+        apiKey: "test-key",
+        requireToolApproval: true,
+        uiTools: [
+          { name: "ui_navigate", description: "Stale twin", readOnly: false },
+        ],
+      });
+
+      expect(res.status).toBe(200);
+      const options = vi.mocked(streamText).mock.calls.at(-1)![0] as {
+        tools: Record<string, { execute?: unknown; needsApproval?: unknown }>;
+        system?: string;
+      };
+      // Provenance decides: the manager-origin tool stays executable — it
+      // was never replaced by a no-execute client-fulfilled entry. (The
+      // engine wraps execute for error surfacing, so assert executability
+      // rather than reference identity.)
+      expect(typeof options.tools["ui_navigate"]?.execute).toBe("function");
+      // No MCPJam UI system-prompt section and no UI approval
+      // classification: the tool follows the normal requireToolApproval
+      // flag, which the route threads into the manager's SDK conversion.
+      expect(options.system ?? "").not.toContain("MCPJam UI tools");
+      expect(manager.getToolsForAiSdk).toHaveBeenCalledWith(
+        undefined,
+        expect.objectContaining({ needsApproval: true })
+      );
+      expect(options.tools["ui_navigate"]?.needsApproval).toBeUndefined();
+    });
+  });
+
   describe("error handling", () => {
     it("returns 500 when getToolsForAiSdk fails", async () => {
       manager.getToolsForAiSdk.mockRejectedValue(
