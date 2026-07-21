@@ -1,9 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../native-mirror", () => ({
-  mirrorUiToolToNative: vi.fn(() => null),
-}));
-
 import {
   __resetUiToolExecutorForTests,
   fulfillApprovedUiToolCall,
@@ -32,7 +28,6 @@ describe("handleUiToolCall", () => {
     __resetUiToolExecutorForTests();
     useUiToolsRegistry.setState({
       tools: new Map(),
-      nativeDisposers: new Map(),
       shippedNames: new Set(),
     });
   });

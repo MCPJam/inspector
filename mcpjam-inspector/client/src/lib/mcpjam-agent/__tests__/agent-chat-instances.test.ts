@@ -47,10 +47,6 @@ vi.mock("@/lib/session-token", () => ({
   authFetch: vi.fn(),
 }));
 
-vi.mock("@/lib/webmcp/native-mirror", () => ({
-  mirrorUiToolToNative: vi.fn(() => null),
-}));
-
 const { trackMock } = vi.hoisted(() => ({ trackMock: vi.fn() }));
 vi.mock("@/lib/analytics", () => ({
   track: trackMock,
@@ -102,7 +98,6 @@ describe("agent-chat-instances", () => {
     });
     useUiToolsRegistry.setState({
       tools: new Map(),
-      nativeDisposers: new Map(),
       shippedNames: new Set(),
     });
   });
