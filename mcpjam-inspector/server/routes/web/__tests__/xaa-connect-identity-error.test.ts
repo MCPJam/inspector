@@ -596,7 +596,7 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
     expect(confidentialCimdProviderForOrgMock).toHaveBeenCalledWith("org-1");
     expect(mintXaaAccessTokenMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        issuer: "https://app.mcpjam.com/api/web/xaa",
+        issuer: "https://app.mcpjam.com/api/web/xaa/o/org-1",
         registrationMode: "cimd",
         xaaClientAuth: "private_key_jwt",
         confidentialCimdProvider: expect.any(Object),

@@ -10,6 +10,7 @@ import {
   buildJwtBearerBody,
   buildJwtBearerRequest,
   buildXaaMintArgs,
+  resolveXaaConnectIssuer,
   resolveXaaIssuer,
   scopeXaaIssuerForAuthorizedProject,
 } from "../xaa-mint.js";
@@ -87,23 +88,43 @@ describe("resolveXaaIssuer", () => {
   });
 });
 
+describe("resolveXaaConnectIssuer", () => {
+  it("uses the scoped web issuer surface and its forwarded scheme for an authorized org in local mode", () => {
+    const c = ctxStub("http://localhost:6274/api/mcp/connect", "https");
+    expect(
+      resolveXaaConnectIssuer(c, {
+        hostedMode: false,
+        organizationId: "org-1",
+      })
+    ).toBe("https://localhost:6274/api/web/xaa");
+  });
+
+  it("keeps a genuinely unscoped local connect on the local issuer", () => {
+    const c = ctxStub("http://localhost:6274/api/mcp/connect", "https");
+    expect(
+      resolveXaaConnectIssuer(c, {
+        hostedMode: false,
+        organizationId: null,
+      })
+    ).toBe("http://localhost:6274/api/mcp/xaa");
+  });
+});
+
 describe("scopeXaaIssuerForAuthorizedProject", () => {
-  it("uses the authorized org scope for signed-in hosted projects", () => {
+  it("uses the authorized org scope for signed-in projects", () => {
     expect(
       scopeXaaIssuerForAuthorizedProject({
         issuer: "https://app.mcpjam.com/api/web/xaa",
-        hostedMode: true,
         organizationId: "org-1",
         isAnonymous: false,
       })
     ).toBe("https://app.mcpjam.com/api/web/xaa/o/org-1");
   });
 
-  it("uses the visibly anonymous issuer for hosted guest projects", () => {
+  it("uses the visibly anonymous issuer for guest projects", () => {
     expect(
       scopeXaaIssuerForAuthorizedProject({
         issuer: "https://app.mcpjam.com/api/web/xaa",
-        hostedMode: true,
         organizationId: "org guest",
         isAnonymous: true,
       })
@@ -181,6 +202,20 @@ describe("buildXaaMintArgs", () => {
     expect(args.xaaClientAuth).toBe("private_key_jwt");
     expect(args.explicitIssuer).toBe("https://auth.example.com");
     expect(args.confidentialCimdProvider).toBe(provider);
+  });
+
+  it("scopes a local authorized org without enabling hosted HTTPS policy", () => {
+    const args = buildXaaMintArgs({
+      ...base,
+      issuer: "http://localhost:6274/api/web/xaa",
+      hostedMode: false,
+      organizationId: "org-1",
+      isAnonymous: false,
+      serverConfig: { url: "http://localhost:8788/mcp" },
+    });
+
+    expect(args.issuer).toBe("http://localhost:6274/api/web/xaa/o/org-1");
+    expect(args.httpsOnly).toBe(false);
   });
 });
 

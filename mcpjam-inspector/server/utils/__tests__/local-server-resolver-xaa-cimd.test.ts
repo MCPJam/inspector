@@ -5,7 +5,7 @@ const { localProvider, mintXaaAccessTokenMock, buildXaaMintArgsMock } = vi.hoist
     getClientIdMetadataUrl: vi.fn(() => "https://app.mcpjam.com/cimd/local"),
     signClientAssertion: vi.fn(() => "local-client-assertion"),
   },
-  mintXaaAccessTokenMock: vi.fn(async () => ({
+  mintXaaAccessTokenMock: vi.fn(async (_args: unknown) => ({
     accessToken: "minted-local-token",
     tokenEndpoint: "https://auth.example.com/token",
   })),
@@ -39,7 +39,10 @@ import { resolveLocalServerForConnect } from "../local-server-resolver.js";
 
 const originalConvexHttpUrl = process.env.CONVEX_HTTP_URL;
 const context = {
-  req: { url: "http://localhost:6274/api/mcp/connect" },
+  req: {
+    url: "http://localhost:6274/api/mcp/connect",
+    header: vi.fn(() => undefined),
+  },
   set: vi.fn(),
   get: vi.fn(() => undefined),
 } as any;
@@ -115,6 +118,8 @@ describe("resolveLocalServerForConnect XAA CIMD", () => {
 
     expect(mintXaaAccessTokenMock).toHaveBeenCalledWith(
       expect.objectContaining({
+        issuer: "http://localhost:6274/api/web/xaa/o/org-1",
+        httpsOnly: false,
         registrationMode: "cimd",
         xaaClientAuth: "private_key_jwt",
         confidentialCimdProvider: localProvider,
@@ -136,6 +141,53 @@ describe("resolveLocalServerForConnect XAA CIMD", () => {
     expect(mintXaaAccessTokenMock).toHaveBeenCalledTimes(2);
     expect(mintXaaAccessTokenMock.mock.calls[1]?.[0]).toBe(
       mintXaaAccessTokenMock.mock.calls[0]?.[0]
+    );
+  });
+
+  it("uses the anonymous scoped web issuer for an authorized guest", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        authorizeResponse(
+          { registrationMode: "cimd", xaaClientAuth: "none" },
+          { organizationId: "guest-org", isAnonymous: true }
+        )
+      )
+    );
+
+    await resolveLocalServerForConnect(
+      context,
+      "guest-bearer",
+      "project-1",
+      "server-1"
+    );
+
+    expect(mintXaaAccessTokenMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        issuer: "http://localhost:6274/api/web/xaa/g/guest-org",
+        httpsOnly: false,
+      })
+    );
+  });
+
+  it("keeps a local project without an organization on the unscoped issuer", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => authorizeResponse({ registrationMode: "preregistered" }))
+    );
+
+    await resolveLocalServerForConnect(
+      context,
+      "local-bearer",
+      "project-1",
+      "server-1"
+    );
+
+    expect(mintXaaAccessTokenMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        issuer: "http://localhost:6274/api/mcp/xaa",
+        httpsOnly: false,
+      })
     );
   });
 

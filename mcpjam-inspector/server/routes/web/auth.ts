@@ -53,6 +53,7 @@ import {
 } from "../../utils/server-secrets.js";
 import {
   buildXaaMintArgs,
+  isXaaMintErrorReported,
   mintXaaAccessToken,
   resolveXaaConnectRegistrationMode,
   resolveXaaIssuer,
@@ -1193,11 +1194,13 @@ export async function createAuthorizedManager(
         try {
           connectToken = (await mintXaaAccessToken(mintArgs)).accessToken;
         } catch (error) {
-          logger.error("[XAA connect] mint failed", error, {
-            serverId,
-            serverName: displayServerName,
-            resource: auth.serverConfig.url,
-          });
+          if (!isXaaMintErrorReported(error)) {
+            logger.error("[XAA connect] mint failed", error, {
+              serverId,
+              serverName: displayServerName,
+              resource: auth.serverConfig.url,
+            });
+          }
           throw error;
         }
         // Bounded re-mint: the SDK invokes this once on a 401 and retries; a

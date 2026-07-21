@@ -29,6 +29,25 @@ import { ErrorCode, WebRouteError } from "../routes/web/errors.js";
 import type { ServerClientSecretResult } from "../utils/server-secrets.js";
 import { logger } from "../utils/logger.js";
 
+const XAA_MINT_ERROR_REPORTED = Symbol("xaaMintErrorReported");
+
+function markXaaMintErrorReported(
+  routeError: WebRouteError,
+  cause: unknown
+): WebRouteError {
+  routeError.cause = cause;
+  Object.defineProperty(routeError, XAA_MINT_ERROR_REPORTED, { value: true });
+  return routeError;
+}
+
+export function isXaaMintErrorReported(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    XAA_MINT_ERROR_REPORTED in error
+  );
+}
+
 // Resolved authorization-server target for a server-target run. Every field is
 // pinned server-side from the stored server config; nothing is taken from the
 // request body.
@@ -367,11 +386,12 @@ export function resolveXaaConnectRegistrationMode(
 
 export function scopeXaaIssuerForAuthorizedProject(args: {
   issuer: string;
-  hostedMode: boolean;
   organizationId?: string | null;
   isAnonymous?: boolean;
 }): string {
-  if (!args.hostedMode || !args.organizationId) return args.issuer;
+  if (!args.organizationId) return args.issuer;
+  const parsedIssuer = new URL(args.issuer);
+  if (!parsedIssuer.pathname.endsWith("/api/web/xaa")) return args.issuer;
   const segment = args.isAnonymous ? "g" : "o";
   return `${args.issuer.replace(/\/+$/, "")}/${segment}/${encodeURIComponent(
     args.organizationId
@@ -390,6 +410,28 @@ export function resolveXaaIssuer(c: Context, hostedMode: boolean): string {
     c,
     hostedMode ? "/api/web" : "/api/mcp",
     hostedMode,
+  );
+}
+
+/**
+ * Resolve the issuer surface used by Connect before the authorized project is
+ * scoped below. A local Inspector still uses the membership-gated `/api/web`
+ * issuer when Convex authorization returned an organization; `/api/mcp`
+ * remains the unscoped fallback for a genuinely local project. This choice is
+ * independent from `hostedMode`, which continues to control outbound HTTPS
+ * enforcement. Forwarded-scheme handling follows the selected issuer surface
+ * so the minted `iss` matches that surface's discovery document.
+ */
+export function resolveXaaConnectIssuer(
+  c: Context,
+  args: { hostedMode: boolean; organizationId?: string | null }
+): string {
+  const usesScopedWebIssuer = Boolean(args.organizationId);
+  const usesWebIssuer = args.hostedMode || usesScopedWebIssuer;
+  return getIssuerForRequest(
+    c,
+    usesWebIssuer ? "/api/web" : "/api/mcp",
+    usesWebIssuer,
   );
 }
 
@@ -417,7 +459,6 @@ export function buildXaaMintArgs(args: {
     httpsOnly: args.hostedMode,
     issuer: scopeXaaIssuerForAuthorizedProject({
       issuer: args.issuer,
-      hostedMode: args.hostedMode,
       organizationId: args.organizationId,
       isAnonymous: args.isAnonymous,
     }),
@@ -520,11 +561,12 @@ export async function mintXaaAccessToken(args: {
             authorizationServer: target.authzIssuer,
           }
         );
-        throw new WebRouteError(
+        const routeError = new WebRouteError(
           500,
           ErrorCode.INTERNAL_ERROR,
           "Could not prepare the confidential CIMD client identity"
         );
+        throw markXaaMintErrorReported(routeError, error);
       }
       tokenEndpointAuthMethod = "private_key_jwt";
     } else {
@@ -596,11 +638,12 @@ export async function mintXaaAccessToken(args: {
           clientId,
         }
       );
-      throw new WebRouteError(
+      const routeError = new WebRouteError(
         500,
         ErrorCode.INTERNAL_ERROR,
         "Could not sign the confidential CIMD token request"
       );
+      throw markXaaMintErrorReported(routeError, error);
     }
     throw error;
   }

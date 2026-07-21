@@ -39,9 +39,10 @@ import {
 } from "./server-secrets.js";
 import {
   buildXaaMintArgs,
+  isXaaMintErrorReported,
   mintXaaAccessToken,
+  resolveXaaConnectIssuer,
   resolveXaaConnectRegistrationMode,
-  resolveXaaIssuer,
 } from "../services/xaa-mint.js";
 import { getLocalConfidentialCimdProvider } from "@mcpjam/sdk";
 import type { ConnectionDefaults } from "../../shared/connection-defaults.js";
@@ -800,7 +801,10 @@ export async function resolveLocalServerForConnect(
       });
     }
     const mintArgs = buildXaaMintArgs({
-      issuer: resolveXaaIssuer(c, HOSTED_MODE),
+      issuer: resolveXaaConnectIssuer(c, {
+        hostedMode: HOSTED_MODE,
+        organizationId: result.organizationId,
+      }),
       hostedMode: HOSTED_MODE,
       serverConfig: sc,
       serverId,
@@ -822,11 +826,13 @@ export async function resolveLocalServerForConnect(
       const minted = await mintXaaAccessToken(mintArgs);
       resolvedOauthAccessToken = minted.accessToken;
     } catch (error) {
-      logger.error("[XAA connect] mint failed", error, {
-        serverId,
-        serverName: options?.serverDisplayName ?? serverId,
-        resource: sc.url,
-      });
+      if (!isXaaMintErrorReported(error)) {
+        logger.error("[XAA connect] mint failed", error, {
+          serverId,
+          serverName: options?.serverDisplayName ?? serverId,
+          resource: sc.url,
+        });
+      }
       throw error;
     }
     // Bounded re-mint: the SDK invokes this once on a 401 and retries; a second
