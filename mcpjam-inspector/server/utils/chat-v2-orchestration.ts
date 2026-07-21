@@ -78,11 +78,12 @@ export type AppToolEntry = import("@/shared/chat-v2").AppToolSnapshotEntry;
 /**
  * WebMCP-shaped MCPJam UI tool descriptor as accepted by `prepareChatV2`,
  * already sanitized by {@link validateUiToolEntries}. Mirrors
- * `UiToolSnapshotEntry` in `shared/chat-v2.ts`. Unlike app tools there is no
- * alias indirection: `name` (reserved `ui_` prefix) is the model-facing tool
- * name, fulfilled client-side by `useChat.onToolCall`.
+ * `UiToolSnapshotEntry` in `shared/mcpjam-ui-tools.ts`. Unlike app tools
+ * there is no alias indirection: `name` (reserved `ui_` prefix) is the
+ * model-facing tool name, fulfilled client-side in the browser.
  */
-export type UiToolEntry = import("@/shared/chat-v2").UiToolSnapshotEntry;
+export type UiToolEntry =
+  import("@/shared/mcpjam-ui-tools").UiToolSnapshotEntry;
 export type WidgetModelContextEntry =
   import("@/shared/chat-v2").WidgetModelContextEntry;
 
