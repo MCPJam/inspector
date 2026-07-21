@@ -1746,8 +1746,8 @@ function NewJourneyButton({
               value={judgeConfig}
               onChange={setJudgeConfig}
               availableModels={availableModels}
-              title="Judge"
-              description="Grade each session against this journey's goal."
+              bareAutoGradeBlurb="Grade every session automatically against this journey's goal. Uses credits. You can also judge any session on demand from its detail view."
+              bareAutoGradeAriaLabel="Auto-grade every session with LLM as Judge"
             />
           </div>
         ) : null}

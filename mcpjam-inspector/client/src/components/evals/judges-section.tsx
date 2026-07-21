@@ -40,6 +40,14 @@ interface JudgesSectionProps {
    * (e.g. the suite settings sheet).
    */
   chrome?: "panel" | "bare";
+  /**
+   * Bare-chrome auto-grade row copy. Defaults to the eval-suite phrasing
+   * ("every run / each case's objective"); other products pass their own so
+   * the one shared control reads correctly in context (Swarm journeys grade
+   * "every session against the journey goal"). Ignored in panel chrome.
+   */
+  bareAutoGradeBlurb?: string;
+  bareAutoGradeAriaLabel?: string;
 }
 
 function pruneEmpty(value: EvalJudgeConfig): EvalJudgeConfig | undefined {
@@ -61,6 +69,8 @@ export function JudgesSection({
   title = "LLM as Judge",
   description = "Advisory grading of run results against rubric anchors. Calibrate per suite — scores aren't comparable across domains.",
   chrome = "panel",
+  bareAutoGradeBlurb = "Grade every run automatically against each case’s objective. Uses credits.",
+  bareAutoGradeAriaLabel = "Auto-grade every run with LLM as Judge",
 }: JudgesSectionProps) {
   const isBare = chrome === "bare";
   const gc = value?.goalCompletion;
@@ -132,8 +142,7 @@ export function JudgesSection({
             // repeat the section header. In `panel` chrome there's no outer
             // label, so we keep the sub-heading + description.
             <p className="text-[12px] text-muted-foreground">
-              Grade every run automatically against each case&apos;s
-              objective. Uses credits.
+              {bareAutoGradeBlurb}
             </p>
           ) : (
             <>
@@ -150,9 +159,7 @@ export function JudgesSection({
           checked={sectionOn}
           onCheckedChange={handleMainToggle}
           aria-label={
-            isBare
-              ? "Auto-grade every run with LLM as Judge"
-              : "Enable LLM as Judge for this suite"
+            isBare ? bareAutoGradeAriaLabel : "Enable LLM as Judge for this suite"
           }
         />
       </div>
