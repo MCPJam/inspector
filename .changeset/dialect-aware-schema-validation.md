@@ -1,5 +1,0 @@
----
-"@mcpjam/sdk": patch
----
-
-Validate declared draft-07 tool schemas instead of rejecting them. The upstream v2 client's default validator is 2020-12-only and hard-fails `tools/call` for any tool whose `outputSchema` declares `"$schema": ".../draft-07/schema#"` — which is every MCP TypeScript SDK v1 server built with zod. The spec permits an explicitly declared draft-07 dialect on all protocol versions (2020-12 is only the default when `$schema` is absent), so the SDK now dispatches on the declared `$schema`: absent/2020-12 → a 2020-12 engine, draft-07 → a draft-07 engine, unknown dialects → skipped with a deduped `console.warn` (overridable via `onUnknownDialect`) rather than failing the call. Two runtime flavors share the dispatch core: `DialectAwareJsonSchemaValidator` (Ajv, wired into `MCPClientManager` and `createManagedMcpClient` on Node) and `CspSafeDialectAwareJsonSchemaValidator` (`@cfworker/json-schema`, wired into the HTTP doctor, which ships in the browser/workerd entries where Ajv's `new Function` compilation is unavailable).
