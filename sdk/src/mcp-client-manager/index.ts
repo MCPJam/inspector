@@ -172,6 +172,7 @@ export {
   DialectAwareJsonSchemaValidator,
   type DialectAwareJsonSchemaValidatorOptions,
 } from "./dialect-aware-json-schema-validator.js";
+export { CspSafeDialectAwareJsonSchemaValidator } from "./csp-safe-dialect-aware-json-schema-validator.js";
 export {
   createManagedMcpClient,
   wrapLegacyClient,
