@@ -24,7 +24,7 @@
 import { create } from "zustand";
 import { isUiToolName } from "@/shared/client-fulfilled-tools.js";
 import type { UiToolAnnotations } from "@/shared/client-fulfilled-tools.js";
-import type { UiToolSnapshotEntry } from "@/shared/chat-v2.js";
+import type { UiToolSnapshotEntry } from "@/shared/mcpjam-ui-tools.js";
 
 export interface UiToolResult {
   content: Array<{ type: "text"; text: string }>;
