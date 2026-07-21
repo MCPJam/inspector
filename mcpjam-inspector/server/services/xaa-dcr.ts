@@ -70,11 +70,16 @@ function dcrBackendPost(
   });
 }
 
-async function fetchRegistration(args: DcrBackendArgs): Promise<{
+interface FetchedDcrRegistration {
   state: StoredDcrState;
   clientSecret?: string;
-}> {
-  const body = await dcrBackendPost(args, { action: "get" });
+}
+
+async function fetchRegistration(
+  args: DcrBackendArgs,
+  fingerprint: string
+): Promise<FetchedDcrRegistration> {
+  const body = await dcrBackendPost(args, { action: "get", fingerprint });
   return {
     state: body.state as StoredDcrState,
     ...(typeof body.clientSecret === "string"
@@ -88,7 +93,7 @@ async function fetchRegistration(args: DcrBackendArgs): Promise<{
 export async function fetchXaaDcrAuthorizedTarget(
   args: DcrBackendArgs
 ): Promise<XaaDcrAuthorizedTarget> {
-  const body = await dcrBackendPost(args, { action: "get" });
+  const body = await dcrBackendPost(args, { action: "getTarget" });
   const target = body?.target as Record<string, unknown> | undefined;
   const serverUrl =
     typeof target?.serverUrl === "string" ? target.serverUrl.trim() : "";
@@ -150,7 +155,7 @@ function canonicalIssuerIdentity(value: string): string {
 }
 
 function reusableRegistration(
-  fetched: Awaited<ReturnType<typeof fetchRegistration>>,
+  fetched: FetchedDcrRegistration,
   fingerprint: string,
   issuer: string
 ): XaaDcrRegistration | null {
@@ -159,7 +164,8 @@ function reusableRegistration(
     state.status !== "registered" ||
     state.fingerprint !== fingerprint ||
     !state.clientId ||
-    !state.tokenEndpointAuthMethod
+    !state.tokenEndpointAuthMethod ||
+    state.registeredAt == null
   ) {
     return null;
   }
@@ -199,6 +205,34 @@ function reusableRegistration(
     tokenEndpointAuthMethod: state.tokenEndpointAuthMethod,
     ...(clientSecret ? { clientSecret } : {}),
   };
+}
+
+async function confirmReusableRegistration(
+  args: DcrBackendArgs,
+  fetched: FetchedDcrRegistration,
+  fingerprint: string,
+  issuer: string
+): Promise<XaaDcrRegistration | null> {
+  const registration = reusableRegistration(fetched, fingerprint, issuer);
+  if (!registration) return null;
+
+  const { state } = fetched;
+  const result = await dcrBackendPost(args, {
+    action: "recordReuse",
+    fingerprint,
+    registeredAt: state.registeredAt,
+    clientId: state.clientId,
+    issuer: state.issuer,
+    tokenEndpointAuthMethod: state.tokenEndpointAuthMethod,
+  });
+  if (result.recorded !== true) {
+    throw new WebRouteError(
+      409,
+      ErrorCode.VALIDATION_ERROR,
+      "The shared XAA DCR registration changed while it was being confirmed"
+    );
+  }
+  return registration;
 }
 
 function uncertainError(): WebRouteError {
@@ -265,8 +299,9 @@ export async function ensureXaaDcrRegistration(
     registrationEndpoint: args.registrationEndpoint,
     scope: normalizedScope,
   });
-  const initial = await fetchRegistration(args);
-  const initialReusable = reusableRegistration(
+  const initial = await fetchRegistration(args, fingerprint);
+  const initialReusable = await confirmReusableRegistration(
+    args,
     initial,
     fingerprint,
     args.issuer
@@ -288,8 +323,9 @@ export async function ensureXaaDcrRegistration(
   });
   if (claim.reason === "uncertain") throw uncertainError();
   if (claim.reason === "registered") {
-    const fetched = await fetchRegistration(args);
-    const registration = reusableRegistration(
+    const fetched = await fetchRegistration(args, fingerprint);
+    const registration = await confirmReusableRegistration(
+      args,
       fetched,
       fingerprint,
       args.issuer
@@ -304,8 +340,9 @@ export async function ensureXaaDcrRegistration(
   if (!claim.acquired) {
     for (let attempt = 0; attempt < DCR_POLL_ATTEMPTS; attempt += 1) {
       await delay(DCR_POLL_INTERVAL_MS);
-      const fetched = await fetchRegistration(args);
-      const registration = reusableRegistration(
+      const fetched = await fetchRegistration(args, fingerprint);
+      const registration = await confirmReusableRegistration(
+        args,
         fetched,
         fingerprint,
         args.issuer

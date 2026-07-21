@@ -26,6 +26,7 @@ vi.mock("../../utils/logger.js", () => ({
 import {
   buildXaaConnectDcrFingerprint,
   ensureXaaDcrRegistration,
+  fetchXaaDcrAuthorizedTarget,
   normalizeXaaDcrScope,
 } from "../xaa-dcr.js";
 
@@ -105,6 +106,24 @@ function installFreshBackend() {
   );
 }
 
+function installReusableBackend(
+  state: Record<string, unknown>,
+  clientSecret: string | null,
+  recorded = true
+) {
+  postMock.mockImplementation(
+    async (args: { body: Record<string, unknown> }) => {
+      if (args.body.action === "get") {
+        return { success: true, state, clientSecret };
+      }
+      if (args.body.action === "recordReuse") {
+        return { success: true, recorded };
+      }
+      throw new Error(`unexpected action ${String(args.body.action)}`);
+    }
+  );
+}
+
 beforeEach(() => {
   process.env.CONVEX_HTTP_URL = "https://convex.example";
   process.env.INSPECTOR_SERVICE_TOKEN = "service-token";
@@ -144,6 +163,28 @@ describe("XAA Connect DCR fingerprint", () => {
   });
 });
 
+describe("fetchXaaDcrAuthorizedTarget", () => {
+  it("uses the non-secret target lookup action", async () => {
+    postMock.mockResolvedValue({
+      success: true,
+      target: {
+        serverUrl: base.resource,
+        xaaAuthzIssuer: base.issuer,
+        xaaAllowPathScopedIssuer: true,
+      },
+    });
+
+    await expect(fetchXaaDcrAuthorizedTarget(base)).resolves.toEqual({
+      serverUrl: base.resource,
+      xaaAuthzIssuer: base.issuer,
+      xaaAllowPathScopedIssuer: true,
+    });
+    expect(postMock.mock.calls[0]?.[0].body).toMatchObject({
+      action: "getTarget",
+    });
+  });
+});
+
 describe("ensureXaaDcrRegistration", () => {
   it("fails before registration when persistence infrastructure is unavailable", async () => {
     delete process.env.INSPECTOR_SERVICE_TOKEN;
@@ -156,19 +197,19 @@ describe("ensureXaaDcrRegistration", () => {
 
   it("reuses a matching unexpired registration without a remote POST", async () => {
     const fingerprint = buildXaaConnectDcrFingerprint(base);
-    postMock.mockResolvedValue({
-      success: true,
-      state: {
+    installReusableBackend(
+      {
         ...emptyState,
         clientId: "stored-client",
         tokenEndpointAuthMethod: "client_secret_post",
         issuer: base.issuer,
         fingerprint,
+        registeredAt: 1234,
         status: "registered",
         clientSecretExpiresAt: Date.now() + 120_000,
       },
-      clientSecret: "stored-secret",
-    });
+      "stored-secret"
+    );
 
     await expect(ensureXaaDcrRegistration(base)).resolves.toEqual({
       clientId: "stored-client",
@@ -177,24 +218,36 @@ describe("ensureXaaDcrRegistration", () => {
     });
     expect(proxyMock).not.toHaveBeenCalled();
     expect(validateMock).not.toHaveBeenCalled();
-    expect(postMock).toHaveBeenCalledTimes(1);
+    expect(postMock).toHaveBeenCalledTimes(2);
+    expect(postMock.mock.calls.map((call) => call[0].body.action)).toEqual([
+      "get",
+      "recordReuse",
+    ]);
+    expect(postMock.mock.calls[0]?.[0].body.fingerprint).toBe(fingerprint);
+    expect(postMock.mock.calls[1]?.[0].body).toMatchObject({
+      fingerprint,
+      registeredAt: 1234,
+      clientId: "stored-client",
+      issuer: base.issuer,
+      tokenEndpointAuthMethod: "client_secret_post",
+    });
   });
 
   it("reuses a stored registration before validating its registration endpoint", async () => {
     const fingerprint = buildXaaConnectDcrFingerprint(base);
-    postMock.mockResolvedValue({
-      success: true,
-      state: {
+    installReusableBackend(
+      {
         ...emptyState,
         clientId: "stored-client",
         tokenEndpointAuthMethod: "client_secret_post",
         issuer: `${base.issuer}/`,
         fingerprint,
+        registeredAt: 1234,
         status: "registered",
         clientSecretExpiresAt: Date.now() + 120_000,
       },
-      clientSecret: "stored-secret",
-    });
+      "stored-secret"
+    );
     validateMock.mockRejectedValue(new Error("registration host unavailable"));
 
     await expect(ensureXaaDcrRegistration(base)).resolves.toMatchObject({
@@ -202,6 +255,29 @@ describe("ensureXaaDcrRegistration", () => {
       clientSecret: "stored-secret",
     });
     expect(validateMock).not.toHaveBeenCalled();
+    expect(proxyMock).not.toHaveBeenCalled();
+  });
+
+  it("does not return a stale registration when reuse confirmation loses a race", async () => {
+    const fingerprint = buildXaaConnectDcrFingerprint(base);
+    installReusableBackend(
+      {
+        ...emptyState,
+        clientId: "stored-client",
+        tokenEndpointAuthMethod: "client_secret_post",
+        issuer: base.issuer,
+        fingerprint,
+        registeredAt: 1234,
+        status: "registered",
+        clientSecretExpiresAt: Date.now() + 120_000,
+      },
+      "stored-secret",
+      false
+    );
+
+    await expect(ensureXaaDcrRegistration(base)).rejects.toThrow(
+      /changed while it was being confirmed/i
+    );
     expect(proxyMock).not.toHaveBeenCalled();
   });
 
@@ -215,6 +291,7 @@ describe("ensureXaaDcrRegistration", () => {
         tokenEndpointAuthMethod: "client_secret_post",
         issuer: "https://previous-issuer.example",
         fingerprint,
+        registeredAt: 1234,
         status: "registered",
         clientSecretExpiresAt: Date.now() + 120_000,
       },
@@ -284,6 +361,9 @@ describe("ensureXaaDcrRegistration", () => {
             status: "registered",
           };
           return { success: true, stored: true };
+        }
+        if (args.body.action === "recordReuse") {
+          return { success: true, recorded: true };
         }
         throw new Error(`unexpected action ${String(args.body.action)}`);
       }
