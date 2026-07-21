@@ -993,8 +993,12 @@ export function useServerForm(
       clientId: usesClientCredentials
         ? clientId.trim() || undefined
         : undefined,
+      // Preserve the exact typed value — only the emptiness check is
+      // trim-based (whitespace-only counts as "no replacement"). Trimming
+      // the saved value itself would silently change a secret that
+      // legitimately has leading/trailing whitespace.
       clientSecret: usesClientCredentials
-        ? normalizedClientSecret || undefined
+        ? (hasReplacementClientSecret ? clientSecret : undefined)
         : undefined,
       hasClientSecret: usesClientCredentials ? nextHasClientSecret : undefined,
       clearClientSecret: usesClientCredentials

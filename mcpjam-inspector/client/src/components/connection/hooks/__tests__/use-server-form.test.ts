@@ -1320,6 +1320,24 @@ describe("useServerForm", () => {
     });
   });
 
+  it("preserves leading/trailing whitespace in the saved client secret", () => {
+    // buildFormData() only trims to check whether a replacement was typed
+    // at all (see validateClientSecret above) — it must not trim the value
+    // it actually saves, or a secret that legitimately has surrounding
+    // whitespace gets silently corrupted.
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setType("http");
+      result.current.setAuthType("oauth");
+      result.current.setOauthRegistrationMode("preregistered");
+      result.current.setClientId("client-id");
+      result.current.setClientSecret(" secret ");
+    });
+
+    expect(result.current.buildFormData().clientSecret).toBe(" secret ");
+  });
+
   it("represents a stored client secret without exposing the value", async () => {
     const server = {
       name: "Stored secret server",
