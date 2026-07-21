@@ -1079,6 +1079,16 @@ async function runMcpStdioCapture(entry) {
 }
 
 async function captureTerminal(entry, { browser }) {
+  // Node launching successfully is not enough: with the CLI entry missing,
+  // node itself exits with a numeric code and a module-not-found stack
+  // trace on stderr, which runCliCapture's completed-run check would
+  // happily render over the docs image.
+  if (!existsSync(CLI_ENTRY)) {
+    throw new Error(
+      `built CLI not found at ${CLI_ENTRY} (run: npm run build -w @mcpjam/cli)`,
+    );
+  }
+
   const rawOutput =
     entry.id === "cli-mcp-stdio"
       ? await runMcpStdioCapture(entry)
