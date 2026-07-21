@@ -5,8 +5,11 @@ import {
   type ServerFormOAuthProtocolMode,
 } from "@/shared/types.js";
 import {
+  DEFAULT_XAA_CLIENT_AUTH,
   normalizeRegistrationMode,
+  normalizeXaaClientAuth,
   type RegistrationMode,
+  type XaaClientAuthMethod,
 } from "@/shared/xaa.js";
 import { ServerWithName } from "@/hooks/use-app-state";
 import type { ProjectClientConfig } from "@/lib/client-config";
@@ -14,6 +17,7 @@ import { getEffectiveProjectConnectionDefaults } from "@/lib/client-config";
 import { hasOAuthConfig, getStoredTokens } from "@/lib/oauth/mcp-oauth";
 import { HOSTED_MODE } from "@/lib/config";
 import { XAA_PARTIAL_OVERRIDE_ERROR } from "@/lib/xaa/identity";
+import { useConfidentialCimdCapability } from "@/hooks/use-confidential-cimd-capability";
 
 interface InitialFormValues {
   name: string;
@@ -25,6 +29,7 @@ interface InitialFormValues {
   oauthScopesInput: string;
   oauthProtocolMode: ServerFormOAuthProtocolMode;
   registrationMode: RegistrationMode;
+  xaaClientAuth: XaaClientAuthMethod;
   useCustomClientId: boolean;
   clientId: string;
   clientSecret: string;
@@ -118,6 +123,9 @@ export function useServerForm(
   options?: {
     requireHttps?: boolean;
     projectClientConfig?: ProjectClientConfig;
+    confidentialCimdProbeEnabled?: boolean;
+    organizationId?: string | null;
+    isSignedIn?: boolean;
   }
 ) {
   const [name, setName] = useState("");
@@ -130,6 +138,9 @@ export function useServerForm(
     useState<ServerFormOAuthProtocolMode>(DEFAULT_OAUTH_PROTOCOL_MODE);
   const [registrationMode, setOauthRegistrationMode] =
     useState<RegistrationMode>(DEFAULT_OAUTH_REGISTRATION_MODE);
+  const [xaaClientAuth, setXaaClientAuth] = useState<XaaClientAuthMethod>(
+    DEFAULT_XAA_CLIENT_AUTH
+  );
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [hasStoredClientSecret, setHasStoredClientSecret] = useState(false);
@@ -155,6 +166,12 @@ export function useServerForm(
   // exported setters) marks it dirty; an untouched form omits both keys so
   // the save path preserves the stored values.
   const [xaaIdentityDirty, setXaaIdentityDirty] = useState(false);
+
+  const confidentialCimdCapability = useConfidentialCimdCapability({
+    enabled: options?.confidentialCimdProbeEnabled !== false,
+    organizationId: options?.organizationId,
+    isSignedIn: options?.isSignedIn,
+  });
 
   const [clientIdError, setClientIdError] = useState<string | null>(null);
   const [clientSecretError, setClientSecretError] = useState<string | null>(
@@ -366,6 +383,8 @@ export function useServerForm(
         typeof config.timeout === "number" && Number.isFinite(config.timeout)
           ? String(config.timeout)
           : "";
+      const xaaClientAuthValue =
+        normalizeXaaClientAuth(server.xaaClientAuth) ?? DEFAULT_XAA_CLIENT_AUTH;
       clientCapabilitiesOverrideValue =
         (config.clientCapabilities as Record<string, unknown> | undefined) ??
         (config.capabilities as Record<string, unknown> | undefined);
@@ -380,6 +399,7 @@ export function useServerForm(
       setOauthScopesInput(scopes.join(" "));
       setOauthProtocolMode(protocolModeValue);
       setOauthRegistrationMode(registrationModeValue);
+      setXaaClientAuth(xaaClientAuthValue);
       setHasStoredClientSecret(hasStoredClientSecretValue);
       setClearClientSecret(false);
       setHasStoredBearerToken(hasStoredBearerTokenValue);
@@ -489,6 +509,7 @@ export function useServerForm(
         oauthScopesInput: scopes.join(" "),
         oauthProtocolMode: protocolModeValue,
         registrationMode: registrationModeValue,
+        xaaClientAuth: xaaClientAuthValue,
         useCustomClientId: shouldShowClientCredentials,
         clientId: clientIdValue,
         clientSecret: clientSecretValue,
@@ -516,6 +537,24 @@ export function useServerForm(
       };
     }
   }, [server]);
+
+  const effectiveXaaRegistrationMode =
+    registrationMode === "cimd" || registrationMode === "dcr"
+      ? registrationMode
+      : "preregistered";
+  const wantsConfidentialCimd =
+    authType === "xaa" &&
+    effectiveXaaRegistrationMode === "cimd" &&
+    xaaClientAuth === "private_key_jwt";
+  const confidentialCimdBlockReason = !wantsConfidentialCimd
+    ? null
+    : confidentialCimdCapability.status === "ready"
+    ? null
+    : confidentialCimdCapability.status === "error"
+    ? "Confidential CIMD is selected, but its client identity could not be loaded. Retry, or switch Client authentication to Public."
+    : confidentialCimdCapability.status === "unavailable"
+    ? "Confidential CIMD requires a signed-in organization member and an enabled deployment. Switch to Public or select an organization."
+    : "Preparing the confidential CIMD client identity. Try again in a moment.";
 
   // Validation functions
   const validateClientId = (value: string): string | null => {
@@ -580,6 +619,27 @@ export function useServerForm(
       (xaaSubject.trim() === "") !== (xaaEmail.trim() === "")
     ) {
       return XAA_PARTIAL_OVERRIDE_ERROR;
+    }
+
+    if (authType === "xaa") {
+      if (effectiveXaaRegistrationMode === "dcr") {
+        return "XAA DCR is not supported in Connect yet. Choose pre-registered credentials or CIMD.";
+      }
+      if (
+        effectiveXaaRegistrationMode === "preregistered" &&
+        validateClientId(clientId) !== null
+      ) {
+        return validateClientId(clientId);
+      }
+      if (
+        effectiveXaaRegistrationMode === "preregistered" &&
+        validateClientSecret(clientSecret) !== null
+      ) {
+        return validateClientSecret(clientSecret);
+      }
+      if (confidentialCimdBlockReason) {
+        return confidentialCimdBlockReason;
+      }
     }
 
     return null;
@@ -819,7 +879,9 @@ export function useServerForm(
     const isXaa = authType === "xaa";
     // XAA also collects resource-authorization-server client id / secret, so it
     // shares the preregistered-credential emission path.
-    const usesClientCredentials = shouldUsePreregisteredCredentials || isXaa;
+    const usesClientCredentials =
+      shouldUsePreregisteredCredentials ||
+      (isXaa && effectiveXaaRegistrationMode === "preregistered");
     const normalizedClientSecret = clientSecret.trim();
     const hasReplacementClientSecret = normalizedClientSecret.length > 0;
     // A typed replacement always wins over the clear toggle — the backend
@@ -887,6 +949,10 @@ export function useServerForm(
       // the XAA debugger reads the same per-server field the OAuth flow does.
       registrationMode:
         useOAuth || useXaa || authType === "auto" ? registrationMode : undefined,
+      xaaClientAuth:
+        useXaa && effectiveXaaRegistrationMode === "cimd"
+          ? xaaClientAuth
+          : undefined,
       oauthScopes: scopes.length > 0 ? scopes : undefined,
       clientId: usesClientCredentials
         ? clientId.trim() || undefined
@@ -920,6 +986,7 @@ export function useServerForm(
     setOauthScopesInput("");
     setOauthProtocolMode(DEFAULT_OAUTH_PROTOCOL_MODE);
     setOauthRegistrationMode(DEFAULT_OAUTH_REGISTRATION_MODE);
+    setXaaClientAuth(DEFAULT_XAA_CLIENT_AUTH);
     setClientId("");
     setClientSecret("");
     setHasStoredClientSecret(false);
@@ -967,6 +1034,7 @@ export function useServerForm(
       oauthScopesInput !== iv.oauthScopesInput ||
       oauthProtocolMode !== iv.oauthProtocolMode ||
       registrationMode !== iv.registrationMode ||
+      xaaClientAuth !== iv.xaaClientAuth ||
       useCustomClientId !== iv.useCustomClientId ||
       clientId !== iv.clientId ||
       clientSecret !== iv.clientSecret ||
@@ -1001,8 +1069,16 @@ export function useServerForm(
   const preregisteredOauthBlocksSubmit =
     type === "http" &&
     ((authType === "oauth" && registrationMode === "preregistered") ||
-      authType === "xaa") &&
-    validateClientId(clientId) !== null;
+      (authType === "xaa" &&
+        effectiveXaaRegistrationMode === "preregistered")) &&
+    (validateClientId(clientId) !== null ||
+      validateClientSecret(clientSecret) !== null);
+  const authConfigurationBlocksSubmit =
+    preregisteredOauthBlocksSubmit ||
+    (type === "http" &&
+      authType === "xaa" &&
+      (effectiveXaaRegistrationMode === "dcr" ||
+        confidentialCimdBlockReason !== null));
   const oauthAuthorizationHeaderWarning =
     type === "http" &&
     authType === "oauth" &&
@@ -1014,6 +1090,7 @@ export function useServerForm(
     // Change detection
     hasChanges,
     preregisteredOauthBlocksSubmit,
+    authConfigurationBlocksSubmit,
 
     // Form data
     name,
@@ -1032,6 +1109,11 @@ export function useServerForm(
     setOauthProtocolMode,
     registrationMode,
     setOauthRegistrationMode,
+    xaaClientAuth,
+    setXaaClientAuth,
+    effectiveXaaRegistrationMode,
+    confidentialCimdCapability,
+    confidentialCimdBlockReason,
     clientId,
     setClientId,
     clientSecret,
