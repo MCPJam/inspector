@@ -27,6 +27,7 @@ import {
 import { executeOAuthProxy, fetchOAuthMetadata } from "../utils/oauth-proxy.js";
 import { ErrorCode, WebRouteError } from "../routes/web/errors.js";
 import type { ServerClientSecretResult } from "../utils/server-secrets.js";
+import { logger } from "../utils/logger.js";
 
 // Resolved authorization-server target for a server-target run. Every field is
 // pinned server-side from the stored server config; nothing is taken from the
@@ -507,7 +508,18 @@ export async function mintXaaAccessToken(args: {
       confidentialCimdProvider = args.confidentialCimdProvider;
       try {
         clientId = confidentialCimdProvider.getClientIdMetadataUrl();
-      } catch {
+      } catch (error) {
+        logger.error(
+          "[XAA connect] confidential CIMD client identity resolution failed",
+          error,
+          {
+            serverId: args.serverId,
+            projectId: args.projectId,
+            resource: args.resource,
+            tokenEndpoint: target.tokenEndpoint,
+            authorizationServer: target.authzIssuer,
+          }
+        );
         throw new WebRouteError(
           500,
           ErrorCode.INTERNAL_ERROR,
@@ -572,6 +584,18 @@ export async function mintXaaAccessToken(args: {
     );
   } catch (error) {
     if (registrationMode === "cimd") {
+      logger.error(
+        "[XAA connect] confidential CIMD assertion signing failed",
+        error,
+        {
+          serverId: args.serverId,
+          projectId: args.projectId,
+          resource: tokenResource,
+          tokenEndpoint: target.tokenEndpoint,
+          authorizationServer: target.authzIssuer,
+          clientId,
+        }
+      );
       throw new WebRouteError(
         500,
         ErrorCode.INTERNAL_ERROR,

@@ -259,7 +259,8 @@ export async function authorizeBatchLocal(
   return {
     organizationId:
       typeof raw.organizationId === "string" ? raw.organizationId : null,
-    isAnonymous: raw.isAnonymous === true,
+    isAnonymous:
+      typeof raw.isAnonymous === "boolean" ? raw.isAnonymous : undefined,
     results: stripped,
   };
 }
@@ -273,7 +274,12 @@ export async function authorizeServerLocal(
   bearerToken: string,
   projectId: string,
   serverId: string
-): Promise<LocalAuthorizeBatchSuccess> {
+): Promise<
+  LocalAuthorizeBatchSuccess & {
+    organizationId?: string | null;
+    isAnonymous?: boolean;
+  }
+> {
   const batch = await authorizeBatchLocal(c, bearerToken, projectId, [
     serverId,
   ]);
@@ -292,7 +298,11 @@ export async function authorizeServerLocal(
       result.message
     );
   }
-  return result;
+  return {
+    ...result,
+    organizationId: batch.organizationId,
+    isAnonymous: batch.isAnonymous,
+  };
 }
 
 // Header precedence (lowest → highest) when the resolver merges these
@@ -797,6 +807,8 @@ export async function resolveLocalServerForConnect(
       projectId,
       bearerToken,
       resolveServerSecret: fetchServerClientSecret,
+      organizationId: result.organizationId,
+      isAnonymous: result.isAnonymous,
       confidentialCimdProvider:
         registrationMode === "cimd" && sc.xaaClientAuth === "private_key_jwt"
           ? getLocalConfidentialCimdProvider()

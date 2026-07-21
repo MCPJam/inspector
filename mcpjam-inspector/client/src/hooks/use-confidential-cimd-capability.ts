@@ -18,13 +18,24 @@ export function useConfidentialCimdCapability({
   organizationId?: string | null;
   isSignedIn?: boolean;
 }) {
-  const [status, setStatus] = useState<ConfidentialCimdCapabilityStatus>(
-    HOSTED_MODE ? "idle" : "ready"
-  );
-  const [clientIdMetadataUrl, setClientIdMetadataUrl] = useState<
-    string | undefined
-  >(undefined);
   const [retryVersion, setRetryVersion] = useState(0);
+  const probeKey = JSON.stringify([
+    enabled,
+    Boolean(isSignedIn),
+    organizationId ?? null,
+    retryVersion,
+  ]);
+  const statusForCurrentInputs = (): ConfidentialCimdCapabilityStatus => {
+    if (!HOSTED_MODE) return "ready";
+    if (!enabled) return "idle";
+    if (!isSignedIn || !organizationId) return "unavailable";
+    return "loading";
+  };
+  const [probe, setProbe] = useState<{
+    key: string;
+    status: ConfidentialCimdCapabilityStatus;
+    clientIdMetadataUrl?: string;
+  }>(() => ({ key: probeKey, status: statusForCurrentInputs() }));
   const retry = useCallback(
     () => setRetryVersion((version) => version + 1),
     []
@@ -32,46 +43,55 @@ export function useConfidentialCimdCapability({
 
   useEffect(() => {
     if (!HOSTED_MODE) {
-      setStatus("ready");
-      setClientIdMetadataUrl(undefined);
+      setProbe({ key: probeKey, status: "ready" });
       return;
     }
     if (!enabled) {
-      setStatus("idle");
-      setClientIdMetadataUrl(undefined);
+      setProbe({ key: probeKey, status: "idle" });
       return;
     }
     if (!isSignedIn || !organizationId) {
-      setStatus("unavailable");
-      setClientIdMetadataUrl(undefined);
+      setProbe({ key: probeKey, status: "unavailable" });
       return;
     }
 
     const controller = new AbortController();
-    // Clear synchronously for each org/probe so the previous org's identity
-    // can never be rendered as available while the new request is pending.
-    setClientIdMetadataUrl(undefined);
-    setStatus("loading");
+    setProbe({ key: probeKey, status: "loading" });
     void fetchConfidentialCimdClientUrl({
       organizationId,
       signal: controller.signal,
     }).then((url) => {
       if (controller.signal.aborted) return;
       if (url) {
-        setClientIdMetadataUrl(url);
-        setStatus("ready");
+        setProbe({
+          key: probeKey,
+          status: "ready",
+          clientIdMetadataUrl: url,
+        });
       } else {
-        setStatus("error");
+        setProbe({ key: probeKey, status: "error" });
       }
     });
 
     return () => controller.abort();
-  }, [enabled, isSignedIn, organizationId, retryVersion]);
+  }, [enabled, isSignedIn, organizationId, probeKey]);
+
+  // Effects run after render. Never expose a previous context's ready state
+  // during that render: a key mismatch derives a fail-closed status directly
+  // from the current inputs and withholds the old metadata URL.
+  const currentProbe =
+    probe.key === probeKey
+      ? probe
+      : {
+          key: probeKey,
+          status: statusForCurrentInputs(),
+          clientIdMetadataUrl: undefined,
+        };
 
   return {
-    status,
-    clientIdMetadataUrl,
+    status: currentProbe.status,
+    clientIdMetadataUrl: currentProbe.clientIdMetadataUrl,
     retry,
-    available: status === "ready",
+    available: currentProbe.status === "ready",
   };
 }

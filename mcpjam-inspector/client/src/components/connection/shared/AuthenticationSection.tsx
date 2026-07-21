@@ -779,7 +779,10 @@ export function AuthenticationSection({
                     }
                   }}
                 >
-                  <SelectTrigger className="w-full h-10">
+                  <SelectTrigger
+                    className="w-full h-10"
+                    aria-label="XAA registration"
+                  >
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>

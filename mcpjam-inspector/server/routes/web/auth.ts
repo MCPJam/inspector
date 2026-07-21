@@ -57,7 +57,7 @@ import {
   resolveXaaConnectRegistrationMode,
   resolveXaaIssuer,
 } from "../../services/xaa-mint.js";
-import { confidentialCimdProviderForOrg } from "../../services/xaa-confidential-cimd.js";
+import { getConfidentialCimdProviderForOrg } from "../../services/xaa-confidential-cimd.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 
 // ── Zod Schemas ──────────────────────────────────────────────────────
@@ -951,6 +951,10 @@ export async function createAuthorizedManager(
   // on each server's flow (a re-resolution could drift if the predicate ever
   // gains an input one pass forgets to thread).
   const effectiveAuthByServerId = new Map<string, EffectiveAuthMethod>();
+  let confidentialCimdProviderForOrg: ReturnType<
+    typeof getConfidentialCimdProviderForOrg
+  > = undefined;
+  let confidentialCimdProviderForOrgResolved = false;
   for (const serverId of uniqueServerIds) {
     const auth = batch.results[serverId];
     if (!auth) {
@@ -1034,6 +1038,10 @@ export async function createAuthorizedManager(
             ErrorCode.FEATURE_NOT_SUPPORTED,
             "Confidential CIMD requires an organization-owned project"
           );
+        }
+        if (!confidentialCimdProviderForOrgResolved) {
+          confidentialCimdProviderForOrg = getConfidentialCimdProviderForOrg();
+          confidentialCimdProviderForOrgResolved = true;
         }
         if (!confidentialCimdProviderForOrg) {
           throw new WebRouteError(
@@ -1151,7 +1159,18 @@ export async function createAuthorizedManager(
             confidentialCimdProvider = confidentialCimdProviderForOrg!(
               batch.organizationId!
             );
-          } catch {
+          } catch (error) {
+            logger.error(
+              "[XAA connect] confidential CIMD provider preparation failed",
+              error,
+              {
+                serverId,
+                serverName: displayServerName,
+                resource: auth.serverConfig.url,
+                projectId,
+                organizationId: batch.organizationId,
+              }
+            );
             throw new WebRouteError(
               500,
               ErrorCode.INTERNAL_ERROR,

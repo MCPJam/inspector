@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { localProvider, mintXaaAccessTokenMock } = vi.hoisted(() => ({
+const { localProvider, mintXaaAccessTokenMock, buildXaaMintArgsMock } = vi.hoisted(() => ({
   localProvider: {
     getClientIdMetadataUrl: vi.fn(() => "https://app.mcpjam.com/cimd/local"),
     signClientAssertion: vi.fn(() => "local-client-assertion"),
@@ -9,6 +9,7 @@ const { localProvider, mintXaaAccessTokenMock } = vi.hoisted(() => ({
     accessToken: "minted-local-token",
     tokenEndpoint: "https://auth.example.com/token",
   })),
+  buildXaaMintArgsMock: vi.fn(),
 }));
 
 vi.mock("@mcpjam/sdk", async () => {
@@ -28,6 +29,9 @@ vi.mock("../../services/xaa-mint.js", async (importOriginal) => {
   return {
     ...actual,
     mintXaaAccessToken: mintXaaAccessTokenMock,
+    buildXaaMintArgs: buildXaaMintArgsMock.mockImplementation(
+      actual.buildXaaMintArgs
+    ),
   };
 });
 
@@ -40,9 +44,13 @@ const context = {
   get: vi.fn(() => undefined),
 } as any;
 
-function authorizeResponse(serverConfig: Record<string, unknown>) {
+function authorizeResponse(
+  serverConfig: Record<string, unknown>,
+  context: { organizationId?: unknown; isAnonymous?: unknown } = {}
+) {
   return new Response(
     JSON.stringify({
+      ...context,
       results: {
         "server-1": {
           ok: true,
@@ -69,6 +77,7 @@ describe("resolveLocalServerForConnect XAA CIMD", () => {
   beforeEach(() => {
     process.env.CONVEX_HTTP_URL = "https://example.convex.site";
     mintXaaAccessTokenMock.mockClear();
+    buildXaaMintArgsMock.mockClear();
   });
 
   afterEach(() => {
@@ -84,10 +93,16 @@ describe("resolveLocalServerForConnect XAA CIMD", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
-        authorizeResponse({
-          registrationMode: "cimd",
-          xaaClientAuth: "private_key_jwt",
-        })
+        authorizeResponse(
+          {
+            registrationMode: "cimd",
+            xaaClientAuth: "private_key_jwt",
+          },
+          {
+            organizationId: "org-1",
+            isAnonymous: false,
+          }
+        )
       )
     );
 
@@ -103,6 +118,12 @@ describe("resolveLocalServerForConnect XAA CIMD", () => {
         registrationMode: "cimd",
         xaaClientAuth: "private_key_jwt",
         confidentialCimdProvider: localProvider,
+      })
+    );
+    expect(buildXaaMintArgsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        organizationId: "org-1",
+        isAnonymous: false,
       })
     );
     expect(resolved.config.requestInit.headers.Authorization).toBe(

@@ -137,6 +137,24 @@ describe("useServerForm", () => {
     expect(built.clearClientSecret).toBeUndefined();
   });
 
+  it("rejects a short client secret for pre-registered XAA", () => {
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setName("Pre-registered XAA server");
+      result.current.setUrl("https://example.com/mcp");
+      result.current.setAuthType("xaa");
+      result.current.setOauthRegistrationMode("preregistered");
+      result.current.setClientId("resource-client-id");
+      result.current.setClientSecret("short");
+    });
+
+    expect(result.current.validateForm()).toBe(
+      "Client Secret must be at least 8 characters if provided"
+    );
+    expect(result.current.authConfigurationBlocksSubmit).toBe(true);
+  });
+
   it("emits confidential CIMD when the local capability is available", () => {
     const { result } = renderHook(() => useServerForm());
 

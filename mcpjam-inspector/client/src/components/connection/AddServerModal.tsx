@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { useAuth } from "@workos-inc/authkit-react";
 import { toast } from "@/lib/toast";
 import { normalizeRegistrationMode } from "@/shared/xaa.js";
 import { Button } from "@mcpjam/design-system/button";
@@ -23,7 +24,8 @@ import { AdvancedConnectionSettingsSection } from "./shared/AdvancedConnectionSe
 import { AuthenticationSection } from "./shared/AuthenticationSection";
 import { EnvVarsSection } from "./shared/EnvVarsSection";
 import { HostedConnectionTypeControl } from "./shared/HostedConnectionTypeControl";
-import type { Project } from "@/state/app-types";
+import { findProjectByAnyId, type Project } from "@/state/app-types";
+import { useOptionalSharedAppState } from "@/state/app-state-context";
 
 interface AddServerModalProps {
   isOpen: boolean;
@@ -83,6 +85,26 @@ function createHeaderEntry(key: string, value: string) {
   };
 }
 
+export function resolveAddServerConfidentialCimdContext({
+  organizationId,
+  isSignedIn,
+  activeProjectOrganizationId,
+  hasSignedInUser,
+}: {
+  organizationId?: string | null;
+  isSignedIn?: boolean;
+  activeProjectOrganizationId?: string;
+  hasSignedInUser: boolean;
+}) {
+  return {
+    organizationId:
+      organizationId !== undefined
+        ? organizationId
+        : activeProjectOrganizationId ?? null,
+    isSignedIn: isSignedIn !== undefined ? isSignedIn : hasSignedInUser,
+  };
+}
+
 export function AddServerModal({
   isOpen,
   onClose,
@@ -90,16 +112,29 @@ export function AddServerModal({
   initialData,
   requireHttps,
   projectClientConfig,
-  organizationId = null,
-  isSignedIn = false,
+  organizationId,
+  isSignedIn,
   projectXaaDefaultIdentity = null,
 }: AddServerModalProps) {
+  const appState = useOptionalSharedAppState();
+  const activeProject = findProjectByAnyId(
+    appState?.projects,
+    appState?.activeProjectId,
+  );
+  const { user } = useAuth();
+  const resolvedConfidentialCimdContext =
+    resolveAddServerConfidentialCimdContext({
+      organizationId,
+      isSignedIn,
+      activeProjectOrganizationId: activeProject?.organizationId,
+      hasSignedInUser: Boolean(user),
+    });
   const formState = useServerForm(undefined, {
     requireHttps,
     projectClientConfig,
     confidentialCimdProbeEnabled: isOpen,
-    organizationId,
-    isSignedIn,
+    organizationId: resolvedConfidentialCimdContext.organizationId,
+    isSignedIn: resolvedConfidentialCimdContext.isSignedIn,
   });
   const hostedUrlPlaceholder = "https://example.com/mcp";
   const appReady = useAppReady();

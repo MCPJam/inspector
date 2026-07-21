@@ -88,4 +88,46 @@ describe("useConfidentialCimdCapability in hosted mode", () => {
     expect(result.current.available).toBe(true);
     expect(fetchConfidentialCimdClientUrlMock).toHaveBeenCalledTimes(2);
   });
+
+  it("does not reuse a ready identity across authentication-context changes", async () => {
+    let resolveSecondProbe: ((value: string | null) => void) | undefined;
+    fetchConfidentialCimdClientUrlMock
+      .mockResolvedValueOnce("https://app.mcpjam.com/cimd/org-1")
+      .mockImplementationOnce(
+        () =>
+          new Promise<string | null>((resolve) => {
+            resolveSecondProbe = resolve;
+          })
+      );
+
+    const { result, rerender } = renderHook(
+      (props: { isSignedIn: boolean }) =>
+        useConfidentialCimdCapability({
+          enabled: true,
+          organizationId: "org-1",
+          isSignedIn: props.isSignedIn,
+        }),
+      { initialProps: { isSignedIn: true } }
+    );
+
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    rerender({ isSignedIn: false });
+    expect(result.current).toMatchObject({
+      status: "unavailable",
+      clientIdMetadataUrl: undefined,
+      available: false,
+    });
+
+    rerender({ isSignedIn: true });
+    expect(result.current).toMatchObject({
+      status: "loading",
+      clientIdMetadataUrl: undefined,
+      available: false,
+    });
+
+    act(() =>
+      resolveSecondProbe?.("https://app.mcpjam.com/cimd/org-1-refreshed")
+    );
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+  });
 });

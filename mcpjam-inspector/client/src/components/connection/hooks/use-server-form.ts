@@ -631,6 +631,12 @@ export function useServerForm(
       ) {
         return validateClientId(clientId);
       }
+      if (
+        effectiveXaaRegistrationMode === "preregistered" &&
+        validateClientSecret(clientSecret) !== null
+      ) {
+        return validateClientSecret(clientSecret);
+      }
       if (confidentialCimdBlockReason) {
         return confidentialCimdBlockReason;
       }
@@ -1065,7 +1071,8 @@ export function useServerForm(
     ((authType === "oauth" && registrationMode === "preregistered") ||
       (authType === "xaa" &&
         effectiveXaaRegistrationMode === "preregistered")) &&
-    validateClientId(clientId) !== null;
+    (validateClientId(clientId) !== null ||
+      validateClientSecret(clientSecret) !== null);
   const authConfigurationBlocksSubmit =
     preregisteredOauthBlocksSubmit ||
     (type === "http" &&

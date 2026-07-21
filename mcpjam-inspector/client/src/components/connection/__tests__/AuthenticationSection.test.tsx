@@ -239,7 +239,9 @@ describe("AuthenticationSection", () => {
     );
 
     expect(screen.getByText("Registration")).toBeInTheDocument();
-    fireEvent.click(screen.getAllByRole("combobox")[1]);
+    fireEvent.click(
+      screen.getByRole("combobox", { name: "XAA registration" }),
+    );
     expect(
       screen.getByRole("option", { name: "DCR (not supported in Connect)" }),
     ).toBeInTheDocument();

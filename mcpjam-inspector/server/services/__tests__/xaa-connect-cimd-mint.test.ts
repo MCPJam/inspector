@@ -7,9 +7,15 @@ import {
   type ConfidentialCimdProvider,
 } from "@mcpjam/sdk";
 
-const { executeOAuthProxyMock, fetchOAuthMetadataMock } = vi.hoisted(() => ({
-  executeOAuthProxyMock: vi.fn(),
-  fetchOAuthMetadataMock: vi.fn(),
+const { executeOAuthProxyMock, fetchOAuthMetadataMock, loggerErrorMock } =
+  vi.hoisted(() => ({
+    executeOAuthProxyMock: vi.fn(),
+    fetchOAuthMetadataMock: vi.fn(),
+    loggerErrorMock: vi.fn(),
+  }));
+
+vi.mock("../../utils/logger.js", () => ({
+  logger: { error: loggerErrorMock },
 }));
 
 vi.mock("../../utils/oauth-proxy.js", () => ({
@@ -53,6 +59,7 @@ describe("mintXaaAccessToken Connect client identity", () => {
   beforeEach(() => {
     executeOAuthProxyMock.mockReset();
     fetchOAuthMetadataMock.mockReset();
+    loggerErrorMock.mockReset();
     executeOAuthProxyMock.mockResolvedValue({
       status: 200,
       body: { access_token: "access-1" },
@@ -182,6 +189,70 @@ describe("mintXaaAccessToken Connect client identity", () => {
 
     expect(resolveServerSecret).not.toHaveBeenCalled();
     expect(executeOAuthProxyMock).not.toHaveBeenCalled();
+  });
+
+  it("logs the underlying client-ID failure before returning a generic error", async () => {
+    const underlying = new Error("private key import failed");
+    const provider: ConfidentialCimdProvider = {
+      getClientIdMetadataUrl: vi.fn(() => {
+        throw underlying;
+      }),
+      signClientAssertion: vi.fn(),
+    };
+
+    await expect(
+      mintXaaAccessToken({
+        ...baseArgs,
+        registrationMode: "cimd",
+        xaaClientAuth: "private_key_jwt",
+        confidentialCimdProvider: provider,
+      })
+    ).rejects.toMatchObject({
+      status: 500,
+      message: "Could not prepare the confidential CIMD client identity",
+    });
+
+    expect(loggerErrorMock).toHaveBeenCalledWith(
+      expect.stringContaining("client identity resolution failed"),
+      underlying,
+      expect.objectContaining({
+        serverId: "server-1",
+        projectId: "project-1",
+        resource: "https://mcp.example.com/mcp",
+      })
+    );
+  });
+
+  it("logs the underlying signing failure before returning a generic error", async () => {
+    const underlying = new Error("signing service unavailable");
+    const provider: ConfidentialCimdProvider = {
+      getClientIdMetadataUrl: vi.fn(() => "https://app.mcpjam.com/cimd/key-1"),
+      signClientAssertion: vi.fn(() => {
+        throw underlying;
+      }),
+    };
+
+    await expect(
+      mintXaaAccessToken({
+        ...baseArgs,
+        registrationMode: "cimd",
+        xaaClientAuth: "private_key_jwt",
+        confidentialCimdProvider: provider,
+      })
+    ).rejects.toMatchObject({
+      status: 500,
+      message: "Could not sign the confidential CIMD token request",
+    });
+
+    expect(loggerErrorMock).toHaveBeenCalledWith(
+      expect.stringContaining("assertion signing failed"),
+      underlying,
+      expect.objectContaining({
+        serverId: "server-1",
+        projectId: "project-1",
+        clientId: "https://app.mcpjam.com/cimd/key-1",
+      })
+    );
   });
 
   it("fails before exchange when the authorization server does not advertise CIMD", async () => {

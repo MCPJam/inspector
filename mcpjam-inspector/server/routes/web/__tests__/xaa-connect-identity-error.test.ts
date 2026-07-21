@@ -20,17 +20,29 @@ const {
   mintXaaAccessTokenMock,
   mcpClientManagerMock,
   confidentialCimdProviderForOrgMock,
-} = vi.hoisted(() => ({
-  mintXaaAccessTokenMock: vi.fn(),
-  mcpClientManagerMock: vi.fn(),
-  confidentialCimdProviderForOrgMock: vi.fn(() => ({
+  getConfidentialCimdProviderForOrgMock,
+  loggerErrorMock,
+} = vi.hoisted(() => {
+  const providerForOrg = vi.fn(() => ({
     getClientIdMetadataUrl: () => "https://app.mcpjam.com/cimd/key",
     signClientAssertion: () => "client-assertion",
-  })),
-}));
+  }));
+  return {
+    mintXaaAccessTokenMock: vi.fn(),
+    mcpClientManagerMock: vi.fn(),
+    confidentialCimdProviderForOrgMock: providerForOrg,
+    getConfidentialCimdProviderForOrgMock: vi.fn(() => providerForOrg),
+    loggerErrorMock: vi.fn(),
+  };
+});
 
 vi.mock("../../../services/xaa-confidential-cimd.js", () => ({
-  confidentialCimdProviderForOrg: confidentialCimdProviderForOrgMock,
+  getConfidentialCimdProviderForOrg:
+    getConfidentialCimdProviderForOrgMock,
+}));
+
+vi.mock("../../../utils/logger.js", () => ({
+  logger: { error: loggerErrorMock },
 }));
 
 // Stub the manager (as auth-manager.test.ts does): the real one starts
@@ -88,7 +100,14 @@ describe("createAuthorizedManager — backend-resolved XAA identity error", () =
   beforeEach(() => {
     vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
     mintXaaAccessTokenMock.mockReset();
-    confidentialCimdProviderForOrgMock.mockClear();
+    confidentialCimdProviderForOrgMock.mockReset().mockImplementation(() => ({
+      getClientIdMetadataUrl: () => "https://app.mcpjam.com/cimd/key",
+      signClientAssertion: () => "client-assertion",
+    }));
+    getConfidentialCimdProviderForOrgMock
+      .mockReset()
+      .mockReturnValue(confidentialCimdProviderForOrgMock);
+    loggerErrorMock.mockReset();
   });
 
   afterEach(() => {
@@ -586,6 +605,56 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
     const fetchOrder = vi.mocked(fetch).mock.invocationCallOrder[0];
     expect(fetchOrder).toBeLessThan(
       confidentialCimdProviderForOrgMock.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("logs provider preparation failures without exposing their details", async () => {
+    const underlying = new Error("derived scalar failed");
+    confidentialCimdProviderForOrgMock.mockImplementationOnce(() => {
+      throw underlying;
+    });
+    batchOf(
+      {
+        "srv-private": {
+          ...okBase,
+          serverConfig: {
+            transportType: "http",
+            url: "https://configured.example.com/mcp",
+            authMethod: "xaa",
+            registrationMode: "cimd",
+            xaaClientAuth: "private_key_jwt",
+          },
+        },
+      },
+      { organizationId: "org-1", isAnonymous: false },
+    );
+
+    await expect(
+      createAuthorizedManager(
+        callerContextFromHono(makeContext()),
+        "member-bearer",
+        "project-1",
+        ["srv-private"],
+        30_000,
+        undefined,
+        undefined,
+        { xaaIssuer: "https://app.mcpjam.com/api/web/xaa" },
+      ),
+    ).rejects.toMatchObject({
+      status: 500,
+      message: "Could not prepare the confidential CIMD client identity",
+    });
+
+    expect(loggerErrorMock).toHaveBeenCalledWith(
+      expect.stringContaining("provider preparation failed"),
+      underlying,
+      expect.objectContaining({
+        serverId: "srv-private",
+        serverName: "srv-private",
+        projectId: "project-1",
+        organizationId: "org-1",
+        resource: "https://configured.example.com/mcp",
+      }),
     );
   });
 
