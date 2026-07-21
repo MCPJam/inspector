@@ -263,16 +263,6 @@ describe("ActiveServerSelector", () => {
           useOAuth: true,
           oauthTokens,
         }),
-        "untouched-undefined-http": createServer({
-          name: "untouched-undefined-http",
-          config: httpConfig,
-          useOAuth: undefined,
-        }),
-        "disconnected-http": createServer({
-          name: "disconnected-http",
-          config: httpConfig,
-          connectionStatus: "disconnected",
-        }),
       };
 
       render(
@@ -294,18 +284,10 @@ describe("ActiveServerSelector", () => {
       expect(
         screen.queryByText("opted-out-stored-config"),
       ).not.toBeInTheDocument();
-      // A never-touched HTTP server (useOAuth: false by default, no OAuth
-      // history) must now be selectable — this is the actual #1109 fix.
-      expect(screen.getByText("plain-http")).toBeInTheDocument();
+      expect(screen.queryByText("plain-http")).not.toBeInTheDocument();
       expect(
         screen.queryByText("stdio-with-oauth-state"),
       ).not.toBeInTheDocument();
-      // Same "never touched" rule from a different starting state: useOAuth
-      // was never set at all, not explicitly false.
-      expect(screen.getByText("untouched-undefined-http")).toBeInTheDocument();
-      // The issue specifically asked to see disconnected servers, not just
-      // connected ones.
-      expect(screen.getByText("disconnected-http")).toBeInTheDocument();
     });
   });
 
@@ -649,10 +631,9 @@ describe("ActiveServerSelector", () => {
         url: "http://localhost:3000/mcp",
       } as const;
       const serverConfigs = {
-        // A stdio server is never eligible for the OAuth header regardless
-        // of this fix — a stable "always filtered out" example.
-        "selected-stdio-server": createServer({
-          name: "selected-stdio-server",
+        "selected-plain-http": createServer({
+          name: "selected-plain-http",
+          config: httpConfig,
         }),
         "visible-oauth": createServer({
           name: "visible-oauth",
@@ -666,16 +647,14 @@ describe("ActiveServerSelector", () => {
         <ActiveServerSelector
           {...defaultProps}
           serverConfigs={serverConfigs}
-          selectedServer="selected-stdio-server"
+          selectedServer="selected-plain-http"
           onServerChange={onServerChange}
           showOnlyOAuthServers={true}
           autoSelectFilteredServer={false}
         />,
       );
 
-      expect(
-        screen.queryByText("selected-stdio-server"),
-      ).not.toBeInTheDocument();
+      expect(screen.queryByText("selected-plain-http")).not.toBeInTheDocument();
       expect(screen.getByText("visible-oauth")).toBeInTheDocument();
 
       await new Promise((r) => setTimeout(r, 50));
@@ -690,8 +669,9 @@ describe("ActiveServerSelector", () => {
         url: "http://localhost:3000/mcp",
       } as const;
       const serverConfigs = {
-        "selected-stdio-server": createServer({
-          name: "selected-stdio-server",
+        "selected-plain-http": createServer({
+          name: "selected-plain-http",
+          config: httpConfig,
         }),
         "visible-oauth": createServer({
           name: "visible-oauth",
@@ -705,7 +685,7 @@ describe("ActiveServerSelector", () => {
         <ActiveServerSelector
           {...defaultProps}
           serverConfigs={serverConfigs}
-          selectedServer="selected-stdio-server"
+          selectedServer="selected-plain-http"
           onServerChange={onServerChange}
           showOnlyOAuthServers
           autoSelectFilteredServer
@@ -715,48 +695,6 @@ describe("ActiveServerSelector", () => {
       await waitFor(() => {
         expect(onServerChange).toHaveBeenCalledWith("visible-oauth");
       });
-    });
-
-    it("does not auto-switch away from a previously-invisible server that's now eligible", async () => {
-      // Before the #1109 fix, a never-touched HTTP server was filtered out,
-      // so auto-select would silently swap the user away from it. After the
-      // fix it's a legitimate, visible selection and must be left alone —
-      // this is the auto-select-side proof of the fix, distinct from the
-      // "does it render as a chip" tests above.
-      const onServerChange = vi.fn();
-      const httpConfig = {
-        transportType: "streamableHttp",
-        url: "http://localhost:3000/mcp",
-      } as const;
-      const serverConfigs = {
-        "selected-untouched-http": createServer({
-          name: "selected-untouched-http",
-          config: httpConfig,
-        }),
-        "other-oauth": createServer({
-          name: "other-oauth",
-          config: httpConfig,
-          useOAuth: true,
-          lastConnectionTime: new Date("2024-01-03"),
-        }),
-      };
-
-      render(
-        <ActiveServerSelector
-          {...defaultProps}
-          serverConfigs={serverConfigs}
-          selectedServer="selected-untouched-http"
-          onServerChange={onServerChange}
-          showOnlyOAuthServers
-          autoSelectFilteredServer
-        />,
-      );
-
-      expect(screen.getByText("selected-untouched-http")).toBeInTheDocument();
-
-      await new Promise((r) => setTimeout(r, 50));
-
-      expect(onServerChange).not.toHaveBeenCalled();
     });
 
     it('"when-empty" fills a blank selection with the most recent eligible server', async () => {
@@ -799,8 +737,9 @@ describe("ActiveServerSelector", () => {
         url: "http://localhost:3000/mcp",
       } as const;
       const serverConfigs = {
-        "selected-stdio-server": createServer({
-          name: "selected-stdio-server",
+        "selected-plain-http": createServer({
+          name: "selected-plain-http",
+          config: httpConfig,
         }),
         "visible-oauth": createServer({
           name: "visible-oauth",
@@ -814,7 +753,7 @@ describe("ActiveServerSelector", () => {
         <ActiveServerSelector
           {...defaultProps}
           serverConfigs={serverConfigs}
-          selectedServer="selected-stdio-server"
+          selectedServer="selected-plain-http"
           onServerChange={onServerChange}
           showOnlyOAuthServers
           autoSelectFilteredServer="when-empty"
