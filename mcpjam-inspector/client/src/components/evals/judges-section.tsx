@@ -9,7 +9,10 @@ import {
 } from "@mcpjam/design-system/select";
 import { Switch } from "@mcpjam/design-system/switch";
 import type { ModelDefinition } from "@/shared/types";
-import type { EvalJudgeConfig } from "./types";
+import {
+  MANAGED_DEFAULT_JUDGE_MODEL,
+  type GoalJudgeConfig as EvalJudgeConfig,
+} from "@/components/shared/session-quality/judge-config";
 
 /**
  * Suite-level authoritative judge config. Mirrors the `ValidatorsSection`
@@ -23,8 +26,6 @@ import type { EvalJudgeConfig } from "./types";
  * `run.configSnapshot.judgeConfig` and displays it read-only; this is the
  * one place a user can change the suite contract.
  */
-
-const MANAGED_DEFAULT_JUDGE_MODEL = "openai/gpt-5.4-mini";
 
 interface JudgesSectionProps {
   value: EvalJudgeConfig | undefined;
