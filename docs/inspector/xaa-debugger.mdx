@@ -249,6 +249,33 @@ diagnosing the problem. This may include:
 
 Use the compatibility results after discovery and expand each flow step to inspect the exact request, response, and token claims.
 
+## CIMD in Connect
+
+When you add or edit an XAA-authenticated server in the **Servers tab**, the server configuration form includes the same registration and client authentication options available in the debugger.
+
+### Registration
+
+The **Registration** picker controls how MCPJam identifies itself to the authorization server when connecting:
+
+| Option | Description |
+|--------|-------------|
+| **Pre-registered client** | Enter a client ID (and optional client secret) that you have already registered with the authorization server. |
+| **Client metadata URL (CIMD)** | MCPJam uses a client metadata URL as the client ID. The authorization server must advertise `client_id_metadata_document_supported: true`. |
+| **DCR** | Not supported in Connect. Use pre-registered credentials or CIMD instead. |
+
+### Client authentication (CIMD only)
+
+When **Client metadata URL (CIMD)** is selected, a **Client authentication** picker appears:
+
+| Option | Description |
+|--------|-------------|
+| **Public** | MCPJam presents the metadata URL without proving ownership. No stored secrets are required. |
+| **Confidential (private_key_jwt)** | MCPJam signs each token request with a private key, proving it owns the identity. Requires a signed-in organization member on a deployment with confidential CIMD enabled. |
+
+<Note>
+The **Confidential** option is only selectable when MCPJam has successfully probed for the capability. If the probe fails or the requirement is not met, the form shows a message and blocks saving until you switch to **Public** or resolve the issue with a **Retry**.
+</Note>
+
 ## Related Standards
 
 - [MCP Authorization](https://modelcontextprotocol.io/specification/draft/basic/authorization)
