@@ -4,7 +4,7 @@ import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 
 const rootDir = process.cwd();
-const expectedMcpV2PackageVersion = "2.0.0-alpha.2";
+const expectedMcpV2PackageVersion = "2.0.0-beta.4";
 const expectedMcpV2Packages = [
   "@modelcontextprotocol/client",
   "@modelcontextprotocol/node",
