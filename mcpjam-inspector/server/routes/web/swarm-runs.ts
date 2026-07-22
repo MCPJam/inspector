@@ -19,10 +19,96 @@ import {
   SwarmAgentError,
   type PinnedHostExecutionSpec,
 } from "../../services/swarm-agent.js";
-import { startJourneyRun } from "../../services/sessionSimulation/swarm-runner.js";
+import {
+  getRunningJourneyStreamHub,
+  startJourneyRun,
+} from "../../services/sessionSimulation/swarm-runner.js";
+import type { SwarmStreamEvent } from "../../../shared/swarm-stream-events.js";
 import { logger } from "../../utils/logger.js";
+import { assertBearerToken } from "./errors.js";
 
 const swarmRuns = new Hono();
+
+const sseEncoder = new TextEncoder();
+
+function encodeSseEvent(event: SwarmStreamEvent): Uint8Array {
+  return sseEncoder.encode(`data: ${JSON.stringify(event)}\n\n`);
+}
+
+/**
+ * Multiplexed live stream for one journey run. Late joiners receive the
+ * in-memory ring buffer then live events until `run_complete`.
+ */
+swarmRuns.get("/runs/:runId/stream", async (c) => {
+  assertBearerToken(c);
+  const runId = c.req.param("runId");
+  if (!runId) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "runId required"
+    );
+  }
+
+  const hub = getRunningJourneyStreamHub(runId);
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      if (!hub) {
+        // Run already finished (or never started on this process). Clients
+        // fall back to Convex + blobs for history.
+        try {
+          controller.enqueue(
+            encodeSseEvent({
+              type: "run_complete",
+              runId,
+              hostId: "",
+              chatSessionId: "",
+              sessionIndex: -1,
+            })
+          );
+          controller.close();
+        } catch {
+          // ignore
+        }
+        return;
+      }
+
+      let closed = false;
+      let unsubscribe: (() => void) | undefined;
+      const close = () => {
+        if (closed) return;
+        closed = true;
+        unsubscribe?.();
+        try {
+          controller.close();
+        } catch {
+          // ignore
+        }
+      };
+
+      unsubscribe = hub.subscribe((event) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encodeSseEvent(event));
+          if (event.type === "run_complete") {
+            close();
+          }
+        } catch {
+          close();
+        }
+      });
+
+      c.req.raw.signal.addEventListener("abort", close, { once: true });
+    },
+  });
+
+  return c.body(stream as any, 200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+});
 
 function requireConvexHttpUrl(): string {
   const url = process.env.CONVEX_HTTP_URL;

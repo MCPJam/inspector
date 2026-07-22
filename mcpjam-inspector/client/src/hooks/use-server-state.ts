@@ -97,6 +97,11 @@ import { standardEventProps } from "@/lib/PosthogUtils";
 import { track } from "@/lib/analytics";
 import type { ConnectionDefaults } from "@/shared/connection-defaults";
 
+export interface HostedServerWriteTarget {
+  projectId: string;
+  serverId: string;
+}
+
 /** Skip noisy connect toast while first-run App Builder onboarding is in progress. */
 function shouldSuppressExcalidrawConnectToastForOnboarding(
   serverName: string
@@ -836,7 +841,7 @@ export function useServerState({
   // in saveServerConfigWithoutConnecting reaches it through a ref rather than a
   // dependency (a dep array entry would evaluate before the const initializes).
   const handleRemoveServerRef = useRef<
-    ((serverName: string) => Promise<void>) | null
+    ((serverName: string, options?: { removeFromCloud?: boolean }) => Promise<void>) | null
   >(null);
 
   async function sleep(ms: number): Promise<void> {
@@ -1471,7 +1476,11 @@ export function useServerState({
       // remounts resolve the fallback organization until hydration settles —
       // so a pinned target must win over the refs or the write lands in
       // whatever project happens to be active.
-      target?: { projectId: string; serverId?: string | null }
+      target?: {
+        projectId: string;
+        serverId?: string | null;
+        exactServerId?: boolean;
+      }
     ): Promise<string | undefined> => {
       const latestUseLocalFallback = useLocalFallbackRef.current;
       const latestIsAuthenticated = isAuthenticatedRef.current;
@@ -1538,13 +1547,13 @@ export function useServerState({
       );
 
       // Resolve "does a server with this name already exist?" from the local
-      // snapshot when possible, then fall back to a one-shot Convex query
-      // during loading windows. When no row is visible, the no-secret write
-      // path still uses the backend create-if-missing mutation so the final
-      // decision is atomic.
+      // snapshot when possible, then fall back to a one-shot Convex query.
+      // A loaded snapshot can still be stale, so a miss there is not proof
+      // that this is a new server. When no row is visible after the query, the
+      // no-secret write path still uses the backend create-if-missing mutation
+      // so the final decision is atomic.
       const resolveExistingServer = async (
-        snapshot: RemoteServer[] | undefined,
-        options?: { queryWhenLoaded?: boolean }
+        snapshot: RemoteServer[] | undefined
       ): Promise<RemoteServer | undefined> => {
         // A pinned serverId is authoritative: the row was created before the
         // OAuth redirect and the hosted session validated it. Match by id
@@ -1557,13 +1566,6 @@ export function useServerState({
               remoteServerBelongsToProject(s, latestProjectId);
         const local = snapshot?.find(matches);
         if (local) return local;
-        // The snapshot tracks the ambient active project. For a pinned
-        // target it can describe a different project entirely, so a miss
-        // there proves nothing — always fall through to the one-shot query
-        // against the pinned project.
-        if (!target && snapshot !== undefined && options?.queryWhenLoaded !== true) {
-          return undefined;
-        }
         if (!isUserReadyRef.current) {
           return undefined;
         }
@@ -1583,7 +1585,15 @@ export function useServerState({
         }
       };
 
-      const existingServer = await resolveExistingServer(flatSnapshot);
+      // Existing-server edits from a hosted UI carry the exact authorized row
+      // id. Do not consult a possibly stale name snapshot for those writes:
+      // updating a different/recreated row would silently bind the edit to the
+      // wrong server.
+      const exactServerId =
+        target?.exactServerId && target.serverId ? target.serverId : undefined;
+      const existingServer = exactServerId
+        ? undefined
+        : await resolveExistingServer(flatSnapshot);
 
       const transportType = config?.command ? "stdio" : "http";
       const url =
@@ -1666,9 +1676,10 @@ export function useServerState({
       } as const;
 
       try {
-        if (existingServer) {
+        const serverIdToUpdate = exactServerId ?? existingServer?._id;
+        if (serverIdToUpdate) {
           const updatePayload = {
-            serverId: existingServer._id,
+            serverId: serverIdToUpdate,
             ...payload,
             ...(clientSecret ? { clientSecret } : {}),
             ...(clearClientSecret ? { clearClientSecret: true } : {}),
@@ -1679,7 +1690,7 @@ export function useServerState({
           } else {
             await convexUpdateServer(updatePayload);
           }
-          return existingServer._id;
+          return serverIdToUpdate;
         }
 
         const createPayload = {
@@ -1696,6 +1707,18 @@ export function useServerState({
           primaryError instanceof Error
             ? primaryError.message
             : "Unknown error";
+        // An exact-id edit is known to target an existing row. Falling back to
+        // create-if-missing can return that row's id without applying the
+        // update, which makes the UI report success before Convex rehydrates
+        // the old configuration. Fail closed instead.
+        if (exactServerId) {
+          logger.error("Failed to update exact hosted server", {
+            serverName,
+            serverId: exactServerId,
+            error: primaryErrorMessage,
+          });
+          return undefined;
+        }
         // Best-effort fallback for stale query snapshots:
         // if update failed, try create; if create failed, try update when possible.
         try {
@@ -1712,9 +1735,7 @@ export function useServerState({
           }
           const flatRetry =
             activeProjectServersFlatRef.current ?? activeProjectServersFlat;
-          const retryExisting = await resolveExistingServer(flatRetry, {
-            queryWhenLoaded: true,
-          });
+          const retryExisting = await resolveExistingServer(flatRetry);
           if (retryExisting) {
             const updatePayload = {
               serverId: retryExisting._id,
@@ -3271,6 +3292,10 @@ export function useServerState({
         // so without it a rename reads as a brand-new server and forks a second
         // row. Mirrors handleUpdate's originalServerName argument.
         originalServerName?: string;
+        // Exact hosted row for an existing, same-name edit. The sync path must
+        // update this id or fail; it must never reinterpret the edit as a
+        // create when the project-server subscription is stale.
+        hostedWriteTarget?: HostedServerWriteTarget;
       }
     ) => {
       const validationError = validateForm(formData);
@@ -3376,11 +3401,25 @@ export function useServerState({
         clearOAuthData(serverName);
       }
 
+      const hostedProjectId =
+        options?.hostedWriteTarget?.projectId ?? effectiveActiveProjectId;
+      const activeHostedProjectId =
+        effectiveActiveProjectId && effectiveActiveProjectId !== "none"
+          ? effectiveProjects[effectiveActiveProjectId]?.sharedProjectId ??
+            effectiveActiveProjectId
+          : null;
+      // A pinned hosted write can outlive an OAuth redirect that changes the
+      // ambient project. Convex still updates the pinned row, but this client
+      // state only represents the ambient project, so never inject the saved
+      // config into a different project's server map.
+      const shouldUpdateActiveProjectState =
+        !options?.hostedWriteTarget ||
+        options.hostedWriteTarget.projectId === activeHostedProjectId;
       if (
         isAuthenticated &&
         !useLocalFallback &&
-        effectiveActiveProjectId &&
-        effectiveActiveProjectId !== "none"
+        hostedProjectId &&
+        hostedProjectId !== "none"
       ) {
         try {
           const syncedServerId = await syncServerToConvex(
@@ -3399,7 +3438,13 @@ export function useServerState({
               ...(formData.secretPatch?.headers !== undefined
                 ? { headers: formData.secretPatch.headers }
                 : {}),
-            }
+            },
+            options?.hostedWriteTarget
+              ? {
+                  ...options.hostedWriteTarget,
+                  exactServerId: true,
+                }
+              : undefined
           );
           if (!syncedServerId) {
             logger.error("Failed to sync server to Convex", {
@@ -3425,23 +3470,25 @@ export function useServerState({
         });
       }
 
-      // Drop the old row only once the new one is stored. Removing first meant
-      // a failed save left the rename with neither row — the server was gone
-      // with nothing to retry from. Safe to run after the write: the sync
-      // resolves its row by the NEW name, so removing the OLD name can't touch
-      // it. (The local branch already dropped it via originalServerName; this
-      // still disconnects the old runtime entry and clears its artifacts.)
-      if (isRename && originalServerName) {
-        await handleRemoveServerRef.current?.(originalServerName);
+      if (shouldUpdateActiveProjectState) {
+        // Drop the old local row only once the new one is stored. An exact-ID
+        // hosted rename already renamed the same Convex row, so its cleanup
+        // must not issue a second name-based cloud delete against a stale
+        // snapshot.
+        if (isRename && originalServerName) {
+          await handleRemoveServerRef.current?.(originalServerName, {
+            removeFromCloud: !options?.hostedWriteTarget,
+          });
+        }
+
+        dispatch({
+          type: "UPSERT_SERVER",
+          name: serverName,
+          server: serverEntry,
+        });
+
+        saveOAuthConfigToLocalStorage(formData);
       }
-
-      dispatch({
-        type: "UPSERT_SERVER",
-        name: serverName,
-        server: serverEntry,
-      });
-
-      saveOAuthConfigToLocalStorage(formData);
 
       logger.info("Saved server configuration without connecting", {
         serverName,
@@ -3996,12 +4043,23 @@ export function useServerState({
   );
 
   const handleRemoveServer = useCallback(
-    async (serverName: string) => {
+    async (serverName: string, options?: { removeFromCloud?: boolean }) => {
       logger.info("Removing server", { serverName });
       await handleDisconnect(serverName);
-      await removeServerFromStateAndCloud(serverName);
+      if (options?.removeFromCloud === false) {
+        cleanupServerLocalArtifacts(serverName);
+        dispatch({ type: "REMOVE_SERVER", name: serverName });
+      } else {
+        await removeServerFromStateAndCloud(serverName);
+      }
     },
-    [logger, handleDisconnect, removeServerFromStateAndCloud]
+    [
+      logger,
+      handleDisconnect,
+      cleanupServerLocalArtifacts,
+      dispatch,
+      removeServerFromStateAndCloud,
+    ]
   );
   handleRemoveServerRef.current = handleRemoveServer;
 

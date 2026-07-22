@@ -8,7 +8,7 @@ import {
   type MetricStripPoint,
 } from "./metric-strip-data";
 
-function LatencyTrendMetric({
+export function LatencyTrendMetric({
   p50,
   p95,
   p50Series,
@@ -18,6 +18,8 @@ function LatencyTrendMetric({
   compact,
   layout = "horizontal",
   matrixCell = false,
+  subLabel = "per run",
+  divider,
 }: {
   p50: number | null;
   p95: number | null;
@@ -28,6 +30,10 @@ function LatencyTrendMetric({
   compact?: boolean;
   layout?: "horizontal" | "vertical";
   matrixCell?: boolean;
+  /** Caption under the P50/P95 pair. Defaults to "per run" (evals context). */
+  subLabel?: string;
+  /** Draw the left divider. Defaults to the horizontal-layout behavior. */
+  divider?: boolean;
 }) {
   const valueClass = cn(
     "font-semibold leading-none tabular-nums tracking-tight text-foreground",
@@ -49,7 +55,7 @@ function LatencyTrendMetric({
     <div
       className={cn(
         "flex min-w-0 flex-col justify-between",
-        layout === "horizontal" && "border-l border-border/60",
+        (divider ?? layout === "horizontal") && "border-l border-border/60",
         matrixCell ? "px-2 py-2" : compact ? "px-3 py-2.5" : "px-4 py-3.5",
       )}
       data-testid="metric-strip-latency"
@@ -93,7 +99,7 @@ function LatencyTrendMetric({
         </div>
         {!matrixCell ? (
           <div className="mt-1 text-[10.5px] text-muted-foreground">
-            per run
+            {subLabel}
           </div>
         ) : null}
       </div>
@@ -113,7 +119,7 @@ function LatencyTrendMetric({
   );
 }
 
-function TrendMetric({
+export function TrendMetric({
   label,
   value,
   sub,
@@ -121,6 +127,7 @@ function TrendMetric({
   compact,
   layout = "horizontal",
   matrixCell = false,
+  divider,
 }: {
   label: string;
   value: string;
@@ -129,12 +136,14 @@ function TrendMetric({
   compact?: boolean;
   layout?: "horizontal" | "vertical";
   matrixCell?: boolean;
+  /** Draw the left divider. Defaults to the horizontal-layout behavior. */
+  divider?: boolean;
 }) {
   return (
     <div
       className={cn(
         "flex min-w-0 flex-col justify-between",
-        layout === "horizontal" && "border-l border-border/60",
+        (divider ?? layout === "horizontal") && "border-l border-border/60",
         matrixCell ? "px-2 py-2" : compact ? "px-3 py-2.5" : "px-4 py-3.5",
       )}
     >

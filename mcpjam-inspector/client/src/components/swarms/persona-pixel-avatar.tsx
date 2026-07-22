@@ -427,7 +427,6 @@ export function PersonaPixelAvatar({
   shapeIndex: shapeOverride,
   paletteIndex: paletteOverride,
   size = "md",
-  active = false,
   state = "idle",
   className,
 }: {
@@ -438,9 +437,10 @@ export function PersonaPixelAvatar({
   /** Persisted look override (`personas.avatarPalette`) — mineral. */
   paletteIndex?: number | null;
   size?: "sm" | "md" | "lg";
-  /** Selected / focused — slightly peppier bob. */
-  active?: boolean;
-  /** Activity language: light does the status work. */
+  /**
+   * Activity language. Peppy bob is reserved for `running` / `thinking` so
+   * motion answers "is a journey happening?" — not "is this row selected?".
+   */
   state?: PersonaPixelState;
   className?: string;
 }) {
@@ -457,12 +457,15 @@ export function PersonaPixelAvatar({
   const px = cellPx(size);
   const width = GRID_W * px;
   const height = GRID_H * px;
+  const isBusy = state === "running" || state === "thinking";
 
   return (
     <span
       className={cn(
-        "inline-flex shrink-0 items-end justify-center",
-        active
+        "inline-flex shrink-0 items-end justify-center rounded-sm",
+        // Peppy bob = journey in flight. Idle keeps a gentle bob so the
+        // character feels alive without shouting "working".
+        isBusy
           ? "animate-persona-pixel-bob-active"
           : "animate-persona-pixel-bob",
         className,
@@ -473,6 +476,7 @@ export function PersonaPixelAvatar({
       data-shape={shapeIndex}
       data-palette={paletteIndex}
       data-state={state}
+      data-busy={isBusy ? "true" : "false"}
     >
       <svg
         width={width}

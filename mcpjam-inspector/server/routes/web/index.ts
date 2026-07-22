@@ -17,7 +17,6 @@ import apps from "./apps.js";
 import evals from "./evals.js";
 import oauthWeb from "./oauth.js";
 import serverSecretsWeb from "./server-secrets.js";
-import xaaWeb from "./xaa.js";
 import exporter from "./export.js";
 import guestSession from "./guest-session.js";
 import guestToken from "./guest-token.js";
@@ -87,7 +86,6 @@ web.route("/mcpjam-agent", mcpjamAgent);
 web.route("/apps", apps);
 web.route("/oauth", oauthWeb);
 web.route("/server", serverSecretsWeb);
-web.route("/xaa", xaaWeb);
 web.route("/guest-session", guestSession);
 // Service-token-gated guest minting for the platform MCP worker (anonymous
 // /mcp sessions). Gated inside the router by `x-inspector-service-token`;

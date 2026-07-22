@@ -301,6 +301,7 @@ export {
   getConfidentialCimdReflectorMetadata,
   UNVERIFIED_CONFIDENTIAL_CIMD_CLIENT_NAME,
   evaluateIdJagClientMetadata,
+  getXaaConnectClientMetadata,
   getXaaDebugClientMetadata,
 } from "./oauth/client-identity.js";
 export {
