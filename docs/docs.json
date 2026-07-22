@@ -83,6 +83,11 @@
             "pages": ["inspector/computer"]
           },
           {
+            "group": "Learning",
+            "icon": "graduation-cap",
+            "pages": ["inspector/learning"]
+          },
+          {
             "group": "Embedding",
             "icon": "code",
             "pages": ["inspector/launch-from-code"]
