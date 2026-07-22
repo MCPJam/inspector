@@ -145,11 +145,6 @@ export function buildPlaygroundUiTools(): UiToolDefinition[] {
         idempotentHint: false,
         openWorldHint: true,
       },
-      // Its result comes from a third-party MCP server — externally sourced,
-      // so a browser-native agent should treat it as untrusted. `openWorldHint`
-      // (MCP) doesn't convey that to a WebMCP agent; `untrustedContentHint`
-      // (WebMCP) does. Native mirror only.
-      nativeUntrustedContentHint: true,
       // Auto-opens the playground when its handler isn't mounted — from a
       // non-playground route that is a navigation.
       mayNavigate: true,

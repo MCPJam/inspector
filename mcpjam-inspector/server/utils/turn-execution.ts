@@ -104,6 +104,10 @@ export type DirectTurnOptions = {
   onToolResultChunk?: NonNullable<
     RunDirectChatTurnOptions["traceEvents"]
   >["onToolResultChunk"];
+  /** Direct engine tool-call chunk (swarm / eval SSE). */
+  onToolCallChunk?: NonNullable<
+    RunDirectChatTurnOptions["traceEvents"]
+  >["onToolCallChunk"];
   // TODO(PR 3 — local eval migration): local STREAMING eval still depends on the
   // direct engine's `traceEvents` (`onStepSnapshot`, `onToolResultChunk`) to emit
   // its SSE. Before PR 3 deletes `stream-adapter.ts`, expose normalized
@@ -200,8 +204,17 @@ export async function runUnifiedAssistantTurn(
     onEngineError: opts.onEngineError,
     // PR 3a: only forward `traceEvents` when the caller wired a chunk hook, so
     // callers that don't set it stay byte-identical (no traceEvents object).
-    ...(opts.onToolResultChunk
-      ? { traceEvents: { onToolResultChunk: opts.onToolResultChunk } }
+    ...(opts.onToolResultChunk || opts.onToolCallChunk
+      ? {
+          traceEvents: {
+            ...(opts.onToolCallChunk
+              ? { onToolCallChunk: opts.onToolCallChunk }
+              : {}),
+            ...(opts.onToolResultChunk
+              ? { onToolResultChunk: opts.onToolResultChunk }
+              : {}),
+          },
+        }
       : {}),
   });
   const headless = await consumeDirectChatTurnHeadless(handle);

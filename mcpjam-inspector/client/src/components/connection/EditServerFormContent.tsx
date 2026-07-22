@@ -231,6 +231,11 @@ export function EditServerFormContent({
             onOauthProtocolModeChange={formState.setOauthProtocolMode}
             registrationMode={formState.registrationMode}
             onOauthRegistrationModeChange={formState.setOauthRegistrationMode}
+            xaaClientAuth={formState.xaaClientAuth}
+            onXaaClientAuthChange={formState.setXaaClientAuth}
+            confidentialCimdStatus={formState.confidentialCimdCapability.status}
+            confidentialCimdBlockReason={formState.confidentialCimdBlockReason}
+            onRetryConfidentialCimd={formState.confidentialCimdCapability.retry}
             useCustomClientId={formState.useCustomClientId}
             onUseCustomClientIdChange={(checked) => {
               formState.setUseCustomClientId(checked);
@@ -281,6 +286,14 @@ export function EditServerFormContent({
             onXaaEmailChange={formState.setXaaEmail}
             autoSelectsXaa={formState.autoSelectsXaa}
             projectDefaultIdentity={projectXaaDefaultIdentity}
+            xaaDcrClientId={formState.xaaDcrClientId}
+            xaaDcrTokenEndpointAuthMethod={
+              formState.xaaDcrTokenEndpointAuthMethod
+            }
+            xaaDcrIssuer={formState.xaaDcrIssuer}
+            xaaDcrClientSecretExpiresAt={formState.xaaDcrClientSecretExpiresAt}
+            xaaDcrRegisteredAt={formState.xaaDcrRegisteredAt}
+            xaaDcrStatus={formState.xaaDcrStatus}
           />
         </div>
       )}

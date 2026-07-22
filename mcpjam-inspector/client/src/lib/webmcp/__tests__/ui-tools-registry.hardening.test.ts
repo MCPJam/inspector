@@ -1,13 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mirrorUiToolToNativeMock } = vi.hoisted(() => ({
-  mirrorUiToolToNativeMock: vi.fn(),
-}));
-
-vi.mock("../native-mirror", () => ({
-  mirrorUiToolToNative: mirrorUiToolToNativeMock,
-}));
-
 import {
   useUiToolsRegistry,
   type UiToolDefinition,
@@ -30,8 +22,8 @@ function makeTool(name: string, extra?: Partial<UiToolDefinition>): UiToolDefini
 function resetRegistry() {
   useUiToolsRegistry.setState({
     tools: new Map(),
-    nativeDisposers: new Map(),
     globalNames: new Set(),
+    ownerTokens: new Map(),
     shippedNames: new Set(),
   });
 }
@@ -39,39 +31,32 @@ function resetRegistry() {
 describe("ownership-guarded unregistration", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mirrorUiToolToNativeMock.mockReturnValue(null);
     resetRegistry();
   });
 
   it("a stale unregister closure never removes the replacement", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const disposeA = vi.fn();
-    const disposeB = vi.fn();
-    mirrorUiToolToNativeMock
-      .mockReturnValueOnce(disposeA)
-      .mockReturnValueOnce(disposeB);
     const a = makeTool("ui_navigate");
     const b = makeTool("ui_navigate");
     const unregisterA = useUiToolsRegistry.getState().registerUiTool(a);
     const unregisterB = useUiToolsRegistry.getState().registerUiTool(b);
-    expect(disposeA).toHaveBeenCalledTimes(1); // disposed at replace time
 
     unregisterA(); // stale: B owns the name now — must be a no-op
     expect(useUiToolsRegistry.getState().resolve("ui_navigate")).toBe(b);
-    expect(disposeB).not.toHaveBeenCalled();
+    expect(useUiToolsRegistry.getState().ownerTokens.has("ui_navigate")).toBe(
+      true,
+    );
 
     unregisterB();
     expect(useUiToolsRegistry.getState().resolve("ui_navigate")).toBeNull();
-    expect(disposeB).toHaveBeenCalledTimes(1);
+    expect(useUiToolsRegistry.getState().ownerTokens.has("ui_navigate")).toBe(
+      false,
+    );
     warn.mockRestore();
   });
 
   it("a stale abort never removes the replacement", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const disposeB = vi.fn();
-    mirrorUiToolToNativeMock
-      .mockReturnValueOnce(vi.fn())
-      .mockReturnValueOnce(disposeB);
     const controllerA = new AbortController();
     const a = makeTool("ui_navigate");
     const b = makeTool("ui_navigate");
@@ -82,11 +67,9 @@ describe("ownership-guarded unregistration", () => {
 
     controllerA.abort(); // A's abort fires after B replaced it
     expect(useUiToolsRegistry.getState().resolve("ui_navigate")).toBe(b);
-    expect(disposeB).not.toHaveBeenCalled();
 
     unregisterB();
     expect(useUiToolsRegistry.getState().resolve("ui_navigate")).toBeNull();
-    expect(disposeB).toHaveBeenCalledTimes(1);
     warn.mockRestore();
   });
 
@@ -111,7 +94,6 @@ describe("ownership-guarded unregistration", () => {
 describe("globals-first snapshot ordering", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mirrorUiToolToNativeMock.mockReturnValue(null);
     resetRegistry();
   });
 
@@ -171,7 +153,6 @@ describe("globals-first snapshot ordering", () => {
 describe("waitForUiToolNames", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mirrorUiToolToNativeMock.mockReturnValue(null);
     resetRegistry();
   });
 

@@ -4,41 +4,41 @@
       "releases": [
         {
           "name": "@mcpjam/sdk",
-          "type": "minor"
+          "type": "patch"
         }
       ],
-      "summary": "Add the XAA enterprise-managed authorization policy helpers: `readXaaEnterprisePolicy` (three-state: off / on / invalid), `withXaaEnterprisePolicy`, `withoutXaaEnterprisePolicy`, and the `XAA_ENTERPRISE_POLICY_EXTENSION` / `XAA_ENTERPRISE_POLICY_IDPS` constants. The policy is stored under `hostConfig.mcpProfile.extensions[\"com.mcpjam/enterprise-managed-auth\"]` and marks a host persona as enterprise-managed: every HTTP server connection resolves to XAA by default unless the server's explicit auth method overrides.",
-      "id": "xaa-enterprise-policy"
+      "summary": "Validate declared draft-07 tool schemas instead of rejecting them. The upstream v2 client's default validator is 2020-12-only and hard-fails `tools/call` for any tool whose `outputSchema` declares `\"$schema\": \".../draft-07/schema#\"` — which is every MCP TypeScript SDK v1 server built with zod. The spec permits an explicitly declared draft-07 dialect on all protocol versions (2020-12 is only the default when `$schema` is absent), so the SDK now dispatches on the declared `$schema`: absent/2020-12 → a 2020-12 engine, draft-07 → a draft-07 engine, unknown dialects → skipped with a deduped `console.warn` (overridable via `onUnknownDialect`) rather than failing the call. Two runtime flavors share the dispatch core: `DialectAwareJsonSchemaValidator` (Ajv, wired into `MCPClientManager` and `createManagedMcpClient` on Node) and `CspSafeDialectAwareJsonSchemaValidator` (`@cfworker/json-schema`, wired into the HTTP doctor, which ships in the browser/workerd entries where Ajv's `new Function` compilation is unavailable).",
+      "id": "dialect-aware-schema-validation"
     },
     {
       "releases": [
         {
           "name": "@mcpjam/inspector",
-          "type": "patch"
+          "type": "minor"
         }
       ],
-      "summary": "XAA debugger polish: tighten the IdP bar and surface Run-as chip actions.\n\n- **IdP bar:** the issuer guidance that occupied a two-row block under the card now collapses into an info tooltip next to the hosted-issuer switch, so the assertion-format and hosted-issuer controls stay on the toolbar row. The hosted-issuer and local-URL explanations (including the anonymous test issuer caveat) are unchanged in substance — they moved from always-on prose into the tooltip, and the separate `anonymous-issuer-badge` chip is dropped now that the anonymous caveat reads inline in the hosted-issuer hint.\n- **Run-as chips:** edit and remove are always visible instead of appearing on hover, and each chip gains a dedicated remove button (previously deleting a person meant opening the edit popover first). The chip border/selection ring moved to the wrapper so the select, edit, and remove controls read as one pill. Removal deselects the person if they were selected and closes their edit popover.\n- The existing run-in-progress guard still covers every chip action, and now also covers a chip whose own removal is in flight.",
-      "id": "xaa-idp-bar-and-people-actions"
+      "summary": "Surface and configure the Swarm goal-completion judge.\n\n- The per-session judge badge (`SessionGoalScoreBadge`) moves to the shared `session-quality` module (reusing the eval `ScoreBadge`) and now renders in the Sessions list and run matrix cells; `SwarmJudgeSection` is reachable even for sessions with no transcript.\n- The judge config type/defaults are extracted to a shared `GoalJudgeConfig` (evals re-export the historical `EvalJudgeConfig` names), so the eval `JudgesSection` is reusable.\n- New journeys expose an **Advanced → Judge** disclosure that reuses `JudgesSection` to set the judge model and auto-grade toggle (`journeys:createJourney` carries the config). Pairs with the backend `judgeConfig` snapshot + config-driven auto-run.",
+      "id": "swarm-journey-judge"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/sdk",
-      "type": "minor",
-      "oldVersion": "1.32.1",
+      "type": "patch",
+      "oldVersion": "2.0.0",
       "changesets": [
-        "xaa-enterprise-policy"
+        "dialect-aware-schema-validation"
       ],
-      "newVersion": "1.33.0"
+      "newVersion": "2.0.1"
     },
     {
       "name": "@mcpjam/inspector",
-      "type": "patch",
-      "oldVersion": "2.28.0",
+      "type": "minor",
+      "oldVersion": "2.29.0",
       "changesets": [
-        "xaa-idp-bar-and-people-actions"
+        "swarm-journey-judge"
       ],
-      "newVersion": "2.28.1"
+      "newVersion": "2.30.0"
     },
     {
       "name": "@mcpjam/mcp",

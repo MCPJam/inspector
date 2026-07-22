@@ -78,6 +78,32 @@ const buildProjectServerProjection = (
   ...(server.xaaClientAuth === undefined
     ? {}
     : { xaaClientAuth: server.xaaClientAuth }),
+  ...(server.xaaDcrClientId === undefined
+    ? {}
+    : { xaaDcrClientId: server.xaaDcrClientId }),
+  ...(server.xaaDcrTokenEndpointAuthMethod === undefined
+    ? {}
+    : {
+        xaaDcrTokenEndpointAuthMethod:
+          server.xaaDcrTokenEndpointAuthMethod,
+      }),
+  ...(server.xaaDcrIssuer === undefined
+    ? {}
+    : { xaaDcrIssuer: server.xaaDcrIssuer }),
+  ...(server.xaaDcrClientSecretExpiresAt === undefined
+    ? {}
+    : {
+        xaaDcrClientSecretExpiresAt: server.xaaDcrClientSecretExpiresAt,
+      }),
+  ...(server.xaaDcrRegisteredAt === undefined
+    ? {}
+    : { xaaDcrRegisteredAt: server.xaaDcrRegisteredAt }),
+  ...(server.xaaDcrStatus === undefined
+    ? {}
+    : { xaaDcrStatus: server.xaaDcrStatus }),
+  ...(server.hasXaaDcrRegistration === undefined
+    ? {}
+    : { hasXaaDcrRegistration: server.hasXaaDcrRegistration }),
   ...(server.authMethod === undefined
     ? {}
     : { authMethod: server.authMethod }),

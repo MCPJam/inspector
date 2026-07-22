@@ -4,6 +4,13 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+// NewJourneyButton's Advanced → Judge section pulls the model catalog via
+// useAvailableModels (AppStateProvider-coupled); these tests render SwarmsTab
+// without providers, so stub it to an empty catalog.
+vi.mock("@/hooks/use-available-models", () => ({
+  useAvailableModels: () => ({ availableModels: [] }),
+}));
+
 const persona = {
   _id: "persona-1",
   personaId: "p1",
@@ -15,6 +22,12 @@ const host = {
   hostId: "host-1",
   name: "Host One",
   modelId: "openai/gpt-4o-mini",
+  ownerScope: { type: "journeys" },
+};
+const hostTwo = {
+  hostId: "host-2",
+  name: "Host Two",
+  modelId: "anthropic/claude-haiku-4.5",
   ownerScope: { type: "journeys" },
 };
 
@@ -34,7 +47,7 @@ vi.mock("convex/react", () => ({
       case "journeys:listJourneysByPersona":
         return [];
       case "hosts:listHosts":
-        return [host];
+        return [host, hostTwo];
       default:
         return undefined;
     }
@@ -115,6 +128,15 @@ beforeEach(() => {
   serverGroupPickerState.onChange = null;
 });
 
+async function openClientPicker() {
+  fireEvent.click(screen.getByRole("button", { name: /attached clients/i }));
+}
+
+async function pickClient(name: string | RegExp) {
+  await openClientPicker();
+  fireEvent.click(await screen.findByRole("checkbox", { name }));
+}
+
 describe("SwarmsTab — new journey form server group", () => {
   it("keeps Create disabled until a server group and client are picked", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
@@ -129,7 +151,7 @@ describe("SwarmsTab — new journey form server group", () => {
     });
     expect(createBtn).toBeDisabled();
 
-    fireEvent.click(screen.getByText("Host One"));
+    await pickClient(/host one/i);
     expect(createBtn).toBeDisabled();
 
     fireEvent.click(screen.getByTestId("mock-server-group-picker"));
@@ -144,7 +166,7 @@ describe("SwarmsTab — new journey form server group", () => {
     fireEvent.change(screen.getByLabelText("Goal"), {
       target: { value: "Draw a dog" },
     });
-    fireEvent.click(screen.getByText("Host One"));
+    await pickClient(/host one/i);
     fireEvent.click(screen.getByTestId("mock-server-group-picker"));
     fireEvent.click(screen.getByRole("button", { name: /create journey/i }));
 
@@ -160,5 +182,42 @@ describe("SwarmsTab — new journey form server group", () => {
         }),
       );
     });
+  });
+
+  it("lets you toggle multiple clients without closing the picker", async () => {
+    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    fireEvent.click(screen.getByText("Persona One"));
+    fireEvent.click(screen.getByRole("button", { name: /new journey/i }));
+
+    fireEvent.change(screen.getByLabelText("Goal"), {
+      target: { value: "Draw a dog" },
+    });
+    fireEvent.click(screen.getByTestId("mock-server-group-picker"));
+
+    await openClientPicker();
+    const one = await screen.findByRole("checkbox", { name: /host one/i });
+    const two = await screen.findByRole("checkbox", { name: /host two/i });
+    fireEvent.click(one);
+    fireEvent.click(two);
+
+    expect(one).toHaveAttribute("aria-checked", "true");
+    expect(two).toHaveAttribute("aria-checked", "true");
+    // Trigger reflects multi-select like evals ("Host One +1").
+    expect(
+      screen.getByRole("button", { name: /attached clients/i }),
+    ).toHaveTextContent(/\+1/);
+
+    fireEvent.click(screen.getByRole("button", { name: /create journey/i }));
+    await waitFor(() => {
+      expect(createJourneyMutation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          hostIds: expect.arrayContaining(["host-1", "host-2"]),
+        }),
+      );
+    });
+    const passed = createJourneyMutation.mock.calls[0]![0] as {
+      hostIds: string[];
+    };
+    expect(passed.hostIds).toHaveLength(2);
   });
 });
