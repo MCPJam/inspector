@@ -1266,18 +1266,9 @@ export function useServerState({
         typeof rawHostPin === "string" && isKnownProtocolVersion(rawHostPin)
           ? rawHostPin
           : undefined;
-      const effective = resolveEffectiveMcpProtocolVersion(
-        serverOverride,
-        hostPin
-      );
-      // Lowest-precedence fallback: a pin carried on the server config itself
-      // — e.g. the sessionless 2026 wire era derived from a just-completed
-      // OAuth flow (see `createServerConfig` / `applyTokensFromOAuthFlow`).
-      // Without this the resolver rebuilds `connectionDefaults` purely from
-      // host config and silently drops that pin, so a 2026-only server
-      // reconnects on the default 2025 initialize path. A per-server override
-      // or host default still wins, so an explicit wire pin is never clobbered
-      // by the OAuth-derived one.
+      // A pin carried on the server config itself — e.g. the sessionless 2026
+      // wire era derived from a just-completed OAuth flow (see
+      // `createServerConfig` / `applyTokensFromOAuthFlow`). Server-specific.
       const rawConfigPin =
         "mcpProtocolVersion" in serverConfig
           ? serverConfig.mcpProtocolVersion
@@ -1286,14 +1277,11 @@ export function useServerState({
         typeof rawConfigPin === "string" && isKnownProtocolVersion(rawConfigPin)
           ? rawConfigPin
           : undefined;
-      // Lowest precedence of all: a server whose saved OAuth profile is
-      // 2026-07-28 speaks the sessionless 2026 transport, but `toMCPConfig`
-      // never copies the OAuth mode onto `config` and hosted
-      // `readStoredOAuthConfig` is empty — so without this the wire era is
-      // silently lost on the first OAuth connect/probe and every reconnect,
-      // and a 2026-only server falls back to the 2025 initialize handshake.
-      // Only 2026 (coupled + non-default) is derived; an explicit override,
-      // host default, or config pin above still wins.
+      // A server whose saved OAuth profile is 2026-07-28 speaks the sessionless
+      // 2026 transport, but `toMCPConfig` never copies the OAuth mode onto
+      // `config` and hosted `readStoredOAuthConfig` is empty — so without this
+      // the wire era is silently lost on the first OAuth connect/probe and
+      // every reconnect. Only 2026 (coupled + non-default) is derived.
       const oauthServer = serverName
         ? appStateServersRef.current[serverName]
         : undefined;
@@ -1302,7 +1290,15 @@ export function useServerState({
         oauthServer.oauthFlowProfile?.protocolVersion === "2026-07-28"
           ? "2026-07-28"
           : undefined;
-      const resolvedProtocolVersion = effective ?? configPin ?? oauthProfilePin;
+      // Precedence: every server-specific signal beats the broad host default.
+      // `serverOverride` (explicit per-server wire pin) and `configPin` (an
+      // explicit pin on the config) are the strongest; the OAuth-profile pin
+      // beats the host default too — otherwise a host default of 2025-11-25
+      // would override a server the user explicitly configured for 2026 OAuth
+      // and break the connect. `hostPin` is the weakest: a blanket default
+      // used only when nothing server-specific applies.
+      const resolvedProtocolVersion =
+        serverOverride ?? configPin ?? oauthProfilePin ?? hostPin;
       if (resolvedProtocolVersion !== undefined) {
         defaults.mcpProtocolVersion = resolvedProtocolVersion;
       }
