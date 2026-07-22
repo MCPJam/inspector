@@ -43,16 +43,17 @@ export function isPubliclyReachableUrl(raw: string): boolean {
   if (h.includes(":")) {
     // IPv6 literal (a hostname like "fc.example.com" must NOT hit these).
     if (h === "::1" || h === "::") return false;
-    // Unique-local fc00::/7 (fc/fd) and link-local fe80::/10. The link-local
-    // block is the FULL /10 (first hextet 0xfe80–0xfebf, e.g. fe90:: / feaf::),
-    // not just literal "fe80:" — those addresses are non-routable too.
+    // Unique-local fc00::/7 (fc/fd), link-local fe80::/10, and deprecated
+    // site-local fec0::/10 — none are globally routable. Link-local + site-local
+    // together are the whole fe80::/9 (first hextet 0xfe80–0xfeff, e.g. fe90::,
+    // feaf::, fec0::), so match the full range, not just literal "fe80:".
     const firstHextet = parseInt(h.split(":")[0] || "", 16);
     if (
       h.startsWith("fc") ||
       h.startsWith("fd") ||
-      (firstHextet >= 0xfe80 && firstHextet <= 0xfebf)
+      (firstHextet >= 0xfe80 && firstHextet <= 0xfeff)
     ) {
-      return false; // unique-local / link-local
+      return false; // unique-local / link-local / site-local
     }
     // IPv4-mapped (::ffff:a.b.c.d): judge by the embedded IPv4. `new URL`
     // normalizes the dotted tail to hex (`::ffff:c0a8:101`), so decode both

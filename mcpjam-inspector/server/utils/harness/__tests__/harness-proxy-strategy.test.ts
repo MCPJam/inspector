@@ -48,23 +48,22 @@ describe("isPubliclyReachableUrl", () => {
     expect(isPubliclyReachableUrl("http://[fe80::1]")).toBe(false);
   });
 
-  // #3041 review: link-local is the FULL fe80::/10 (first hextet fe80–febf),
-  // not just the literal "fe80:" prefix — e.g. fe90:: / feaf:: / febf:: are all
-  // non-routable and must not be chosen for direct access.
-  it("rejects the whole fe80::/10 link-local range, not just fe80:", () => {
+  // #3041 review: neither link-local fe80::/10 NOR deprecated site-local
+  // fec0::/10 is globally routable — together they span the whole fe80::/9
+  // (fe80–feff). None may be chosen for direct access.
+  it("rejects the whole fe80::/9 (link-local + site-local), not just fe80:", () => {
     for (const url of [
-      "http://[fe80::1]",
+      "http://[fe80::1]", // link-local
       "http://[fe90::1]",
-      "http://[fea0::1]",
       "http://[feaf:1234::1]",
       "http://[febf::1]",
+      "http://[fec0::1]", // deprecated site-local (RFC 3879) — still non-routable
+      "http://[feff::1]",
     ]) {
       expect(isPubliclyReachableUrl(url), url).toBe(false);
     }
-    // fec0::/10 (deprecated site-local) is OUTSIDE link-local — not caught by
-    // the fe80::/10 block, so it stays "public" (fails routable elsewhere if at
-    // all); the point here is the boundary is exact.
-    expect(isPubliclyReachableUrl("http://[fec0::1]")).toBe(true);
+    // fd00::/8 ULA stays blocked; a global-unicast 2xxx:: address stays public.
+    expect(isPubliclyReachableUrl("http://[2606:4700::1]")).toBe(true);
   });
 
   it("judges IPv4-mapped IPv6 by the embedded IPv4 (both dotted and hex forms)", () => {

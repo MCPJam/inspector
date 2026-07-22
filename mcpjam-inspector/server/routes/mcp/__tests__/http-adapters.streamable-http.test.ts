@@ -193,6 +193,30 @@ describe("Phase 0 transport gate: adapter-http vs a Streamable-HTTP client", () 
     expect(data.id).toBe(null);
   });
 
+  // #3041 re-review: a non-scalar id on an otherwise-VALID request must be
+  // rejected at the gate, not echoed verbatim into a 200 success response.
+  it("rejects a non-scalar id even when the method is valid (NOT a 200)", async () => {
+    const res = await post({ jsonrpc: "2.0", id: {}, method: "tools/list" });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error.code).toBe(-32600);
+    expect(data.id).toBe(null);
+  });
+
+  // #3041 re-review: non-structured `params` (a scalar) is invalid per JSON-RPC.
+  it("rejects non-structured params (scalar) even with a valid method", async () => {
+    const res = await post({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/list",
+      params: 5,
+    });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error.code).toBe(-32600);
+    expect(data.id).toBe(3);
+  });
+
   it("returns NO Mcp-Session-Id header → a Streamable-HTTP client must treat the server as stateless (LIVE-SPIKE UNKNOWN: does Claude Code accept that?)", async () => {
     const res = await post({
       jsonrpc: "2.0",

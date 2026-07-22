@@ -76,9 +76,21 @@ export async function parseAndValidateJsonRpc(
     !!body && typeof body === "object" && !Array.isArray(body)
       ? (body as Record<string, unknown>)
       : null;
+  // A non-scalar `id` or non-structured `params` must be rejected HERE, not just
+  // normalized in the error path: an otherwise-valid request (valid `method`)
+  // with an object/array `id` would otherwise flow to `handleJsonRpc`, which
+  // echoes `id` verbatim into a SUCCESS response — emitting an invalid JSON-RPC
+  // id. `params`, if present, must be structured (object/array) per JSON-RPC 2.0.
   if (
     !obj ||
     (obj.jsonrpc !== undefined && obj.jsonrpc !== "2.0") ||
+    (obj.id !== undefined &&
+      obj.id !== null &&
+      typeof obj.id !== "string" &&
+      typeof obj.id !== "number") ||
+    (obj.params !== undefined &&
+      obj.params !== null &&
+      typeof obj.params !== "object") ||
     typeof obj.method !== "string" ||
     obj.method.length === 0
   ) {

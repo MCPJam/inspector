@@ -174,6 +174,30 @@ describe("/api/web/harness-mcp", () => {
     expect(data.id).toBe(null);
   });
 
+  // #3041 re-review: a non-scalar `id` on an otherwise-VALID request must be
+  // rejected at the gate — else it reaches the bridge and gets echoed verbatim
+  // into a SUCCESS response, emitting an invalid JSON-RPC id.
+  it("rejects a non-scalar id even when the method is valid (NOT a 200)", async () => {
+    const res = await postRaw(
+      JSON.stringify({ jsonrpc: "2.0", id: {}, method: "tools/list" }),
+    );
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error.code).toBe(-32600);
+    expect(data.id).toBe(null);
+  });
+
+  // #3041 re-review: non-structured `params` (a scalar) is invalid per JSON-RPC.
+  it("rejects non-structured params (scalar) even with a valid method", async () => {
+    const res = await postRaw(
+      JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/list", params: 5 }),
+    );
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error.code).toBe(-32600);
+    expect(data.id).toBe(3);
+  });
+
   it("still 202s a real notification (method present, no id)", async () => {
     const res = await postRaw(
       JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
