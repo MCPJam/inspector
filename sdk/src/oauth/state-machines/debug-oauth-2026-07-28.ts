@@ -39,10 +39,7 @@ import {
   resolveDiscoveryResourceIndicator,
   resolveFlowResourceValue,
 } from "./shared/resource-indicator.js";
-import {
-  buildInitializeRequestBody,
-  resolveInitializeProtocolVersion,
-} from "./shared/initialize.js";
+import { buildStatelessVerifyRequestBody } from "./shared/initialize.js";
 import {
   parseBearerAuthenticateParameters,
   parseScopeString,
@@ -77,6 +74,40 @@ const previewResourceValue = (
   flowState: OAuthFlowState,
 ): string | undefined => resolveFlowResourceValue(flowState);
 
+// SEP-2350 (display half): the authorization step shows the scopes requested,
+// any scopes challenged by a later 403 insufficient_scope, and their union —
+// the set a step-up re-authorization would request. The runtime step-up loop
+// itself is a separate track (2R-stepup); this only visualizes the union.
+function buildScopeUnionDetails(
+  flowState: OAuthFlowState,
+): Array<{ label: string; value: any }> {
+  const requested = flowState.requestedScopes ?? [];
+  const challenged = flowState.challengedScopes ?? [];
+  const rows: Array<{ label: string; value: any }> = [];
+  if (requested.length > 0) {
+    rows.push({ label: "requested scopes", value: requested.join(" ") });
+  }
+  if (challenged.length > 0) {
+    const union = Array.from(new Set([...requested, ...challenged]));
+    rows.push({ label: "challenged scopes", value: challenged.join(" ") });
+    rows.push({ label: "scope union", value: union.join(" ") });
+  }
+  return rows;
+}
+
+// SEP-2352 (display half): show the exact issuer the client credentials are
+// bound to (the issuer recorded at discovery, which the RFC 8414 §3.3 check
+// proved equals the AS URL). The storage-write half — keying persisted
+// credentials by issuer and refusing cross-issuer reuse — is a separate track
+// (2R-store).
+function buildIssuerBindingDetails(
+  flowState: OAuthFlowState,
+): Array<{ label: string; value: any }> {
+  const issuer =
+    flowState.recordedIssuer ?? flowState.authorizationServerMetadata?.issuer;
+  return issuer ? [{ label: "bound to issuer", value: issuer }] : [];
+}
+
 /**
  * Build the sequence of actions for the 2026-07-28 OAuth flow
  * This function creates the visual representation of the OAuth flow steps
@@ -96,7 +127,7 @@ export function buildActions_2026_07_28(
       details: flowState.serverUrl
         ? [
             { label: "POST", value: flowState.serverUrl },
-            { label: "method", value: "initialize" },
+            { label: "method", value: "tools/list" },
           ]
         : undefined,
     },
@@ -275,6 +306,13 @@ export function buildActions_2026_07_28(
                   label: "Note",
                   value: "Dynamic client registration (DCR)",
                 },
+                {
+                  label: "Deprecated",
+                  value:
+                    "DCR is deprecated in 2026-07-28 (PR #2858). Prefer CIMD " +
+                    "or a pre-registered client; DCR remains a compatibility " +
+                    "fallback for authorization servers without CIMD support.",
+                },
               ],
             },
             {
@@ -290,6 +328,7 @@ export function buildActions_2026_07_28(
                       label: "client_id",
                       value: flowState.clientId.substring(0, 20) + "...",
                     },
+                    ...buildIssuerBindingDetails(flowState),
                   ]
                 : undefined,
             },
@@ -312,6 +351,7 @@ export function buildActions_2026_07_28(
                       label: "Note",
                       value: "Pre-registered (no DCR needed)",
                     },
+                    ...buildIssuerBindingDetails(flowState),
                   ]
                 : [
                     {
@@ -364,6 +404,7 @@ export function buildActions_2026_07_28(
               label: "resource",
               value: previewResourceValue(flowState) || "",
             },
+            ...buildScopeUnionDetails(flowState),
           ]
         : undefined,
     },
@@ -517,6 +558,57 @@ function buildAuthServerMetadataUrls(authServerUrl: string): string[] {
   return urls;
 }
 
+export type AuthorizationResponseIssuerCheck =
+  | { ok: true }
+  | { ok: false; reason: string };
+
+/**
+ * RFC 9207 authorization-response `iss` validation — a 2026-07-28 requirement.
+ * Four rows:
+ *   1. `iss` present and equals the recorded issuer            → ok
+ *   2. `iss` present and differs                               → reject
+ *   3. `iss` absent but the AS advertised
+ *      `authorization_response_iss_parameter_supported: true`  → reject
+ *   4. `iss` absent and not advertised                         → ok
+ * A present-but-not-advertised `iss` is still validated (rows 1/2): if the AS
+ * sends one, it must be correct. Comparison is exact — no normalization, same
+ * discipline as the RFC 8414 §3.3 issuer check. On a mismatch the caller emits
+ * a fixed diagnostic and MUST NOT surface any server-supplied `error*` callback
+ * parameters.
+ */
+export function validateAuthorizationResponseIssuer(input: {
+  recordedIssuer: string | undefined;
+  returnedIss: string | undefined;
+  issParameterSupported: boolean | undefined;
+}): AuthorizationResponseIssuerCheck {
+  const { recordedIssuer, returnedIss, issParameterSupported } = input;
+
+  if (returnedIss !== undefined && returnedIss !== "") {
+    if (recordedIssuer !== undefined && returnedIss !== recordedIssuer) {
+      return {
+        ok: false,
+        reason:
+          "Authorization response `iss` does not match the issuer this flow " +
+          "started with. Refusing to exchange the authorization code; not " +
+          "displaying any server-supplied error parameters (RFC 9207).",
+      };
+    }
+    return { ok: true };
+  }
+
+  if (issParameterSupported === true) {
+    return {
+      ok: false,
+      reason:
+        "Authorization server advertised " +
+        "`authorization_response_iss_parameter_supported: true` but the " +
+        "callback did not include an `iss` parameter (RFC 9207 requires it).",
+    };
+  }
+
+  return { ok: true };
+}
+
 // Factory function to create the 2026-07-28 state machine
 export const createDebugOAuthStateMachine = (
   config: DebugOAuthStateMachineConfig
@@ -543,11 +635,11 @@ export const createDebugOAuthStateMachine = (
   } = config;
 
   const redirectUri = redirectUrl;
-  // TODO(2026 delta): 2026-07-28 is stateless — no `initialize` handshake. The
-  // idle + authenticated verify steps below still send `initialize` (forked
-  // from 2025-11-25); they should become stateless requests. See the note in
-  // resolveInitializeProtocolVersion. Deferred; behavior is otherwise inherited.
-  const initializeProtocolVersion = resolveInitializeProtocolVersion("2026-07-28");
+  // 2026-07-28 is stateless: there is no `initialize` handshake. The probe and
+  // token-verification steps issue a stateless `tools/list`
+  // (buildStatelessVerifyRequestBody) carrying the `_meta` envelope; this
+  // literal is only the `MCP-Protocol-Version` header value for those requests.
+  const statelessProtocolVersion = "2026-07-28";
   const dynamicRegistrationDefaults = dynamicRegistration ?? {};
   let cimdClientId = clientIdMetadataUrl ?? "";
 
@@ -659,9 +751,13 @@ export const createDebugOAuthStateMachine = (
             const initialRequestHeaders = mergeHeaders(customHeaders, {
               "Content-Type": "application/json",
               Accept: "application/json, text/event-stream",
+              // 2026-07-28 stateless probe headers — no initialize handshake.
+              // Mcp-Name is omitted: tools/list takes no name argument.
+              "MCP-Protocol-Version": statelessProtocolVersion,
+              "Mcp-Method": "tools/list",
             });
-            const initializeRequestBody = buildInitializeRequestBody({
-              protocolVersion: initializeProtocolVersion,
+            const probeRequestBody = buildStatelessVerifyRequestBody({
+              protocolVersion: statelessProtocolVersion,
               authMode,
               clientName: "MCPJam Inspector",
               clientVersion: "1.0.0",
@@ -672,7 +768,7 @@ export const createDebugOAuthStateMachine = (
               method: "POST",
               url: serverUrl,
               headers: initialRequestHeaders,
-              body: initializeRequestBody,
+              body: probeRequestBody,
             };
 
             // Update state with the request
@@ -710,10 +806,12 @@ export const createDebugOAuthStateMachine = (
                 headers: mergeHeaders(customHeaders, {
                   "Content-Type": "application/json",
                   Accept: "application/json, text/event-stream",
+                  "MCP-Protocol-Version": statelessProtocolVersion,
+                  "Mcp-Method": "tools/list",
                 }),
                 body: JSON.stringify(
-                  buildInitializeRequestBody({
-                    protocolVersion: initializeProtocolVersion,
+                  buildStatelessVerifyRequestBody({
+                    protocolVersion: statelessProtocolVersion,
                     authMode,
                     clientName: "MCPJam Inspector",
                     clientVersion: "1.0.0",
@@ -1131,6 +1229,24 @@ export const createDebugOAuthStateMachine = (
                 "Authorization server metadata missing required 'issuer' field"
               );
             }
+
+            // RFC 8414 §3.3 (a 2026-07-28 MUST): the returned `issuer` MUST be
+            // identical to the issuer identifier into which the well-known
+            // string was inserted to build the metadata URL — i.e. the AS URL
+            // the flow started discovery from. Exact string comparison, NO
+            // normalization (a trailing-slash or case difference is a real
+            // finding, not something to paper over). This binds the metadata
+            // document to the issuer and is the anchor every later issuer check
+            // (record_issuer, callback `iss`) trusts.
+            if (authServerMetadata.issuer !== state.authorizationServerUrl) {
+              throw new Error(
+                "Authorization server metadata `issuer` does not match the " +
+                  "authorization server URL it was discovered from " +
+                  `(expected "${state.authorizationServerUrl}", got ` +
+                  `"${authServerMetadata.issuer}"). RFC 8414 §3.3 requires an ` +
+                  "exact match; refusing to continue."
+              );
+            }
             if (!authServerMetadata.authorization_endpoint) {
               throw new Error(
                 "Authorization server metadata missing 'authorization_endpoint'"
@@ -1355,11 +1471,30 @@ export const createDebugOAuthStateMachine = (
                 customHeaders,
               });
 
+              // 2026-07-28 deprecates DCR as a registration mechanism
+              // (PR #2858); surface a warning while still performing it, since
+              // it stays a supported compatibility fallback.
+              const dcrDeprecationLogs = addInfoLog(
+                getCurrentState(),
+                "request_client_registration",
+                "dcr-deprecated",
+                "DCR is deprecated in 2026-07-28",
+                {
+                  Note:
+                    "Dynamic Client Registration (RFC 7591) is deprecated as a " +
+                    "registration mechanism in 2026-07-28 (PR #2858). It remains " +
+                    "a compatibility fallback; prefer CIMD or a pre-registered " +
+                    "client where the authorization server supports it.",
+                },
+                { level: "warning" }
+              );
+
               // Update state with the request
               updateState({
                 currentStep: "request_client_registration",
                 lastRequest: registrationRequest,
                 lastResponse: undefined,
+                infoLogs: dcrDeprecationLogs,
                 httpHistory: [
                   ...(state.httpHistory || []),
                   {
@@ -1645,6 +1780,13 @@ export const createDebugOAuthStateMachine = (
               codeChallenge,
               codeChallengeMethod: "S256",
               state: generateRandomString(16),
+              // RFC 9207: record the issuer the flow is anchored to at the same
+              // moment we mint the PKCE verifier/state. The exact-match check at
+              // discovery already proved `issuer === authorizationServerUrl`, so
+              // recording the metadata `issuer` binds the returned `iss` to the
+              // exact string the flow began with.
+              recordedIssuer: getCurrentState().authorizationServerMetadata
+                ?.issuer,
               infoLogs: pkceInfoLogs,
               isInitiatingAuth: false,
             });
@@ -1703,6 +1845,11 @@ export const createDebugOAuthStateMachine = (
               refreshToken: undefined,
               tokenType: undefined,
               expiresIn: undefined,
+              // Retain the requested scope set (SEP-2350 display half) so a later
+              // step-up challenge can be shown as prior ∪ challenged scopes.
+              requestedScopes: requestedScopeValue
+                ? requestedScopeValue.split(/\s+/).filter(Boolean)
+                : undefined,
               infoLogs: authUrlInfoLogs,
               isInitiatingAuth: false,
             });
@@ -1735,6 +1882,32 @@ export const createDebugOAuthStateMachine = (
 
             if (!state.authorizationServerMetadata?.token_endpoint) {
               throw new Error("Missing token endpoint");
+            }
+
+            // RFC 9207 (2026-07-28): validate the authorization-response issuer
+            // BEFORE touching the token endpoint. On failure, stop the flow with
+            // a fixed diagnostic — never echo attacker-controlled callback
+            // `error*` parameters (the machine deliberately does not read them).
+            //
+            // Scope seam: `issParameterSupported` is deliberately NOT passed
+            // here. That flag drives the "advertised-but-absent iss → reject"
+            // row, which can only be enforced safely once the callback boundary
+            // actually captures `iss` (the 2R-iss track threads it into
+            // `authorizationResponseIss`). Until then, a genuinely-absent `iss`
+            // is indistinguishable from an un-captured one, so enforcing that
+            // row now would hard-fail every AS that advertises iss support.
+            // What IS safe today: reject a PRESENT-but-mismatched `iss`.
+            const issCheck = validateAuthorizationResponseIssuer({
+              recordedIssuer: state.recordedIssuer,
+              returnedIss: state.authorizationResponseIss,
+              issParameterSupported: undefined,
+            });
+            if (!issCheck.ok) {
+              updateState({
+                error: issCheck.reason,
+                isInitiatingAuth: false,
+              });
+              return;
             }
 
             // Build the token request body as an object (will be shown in HTTP history)
@@ -2066,7 +2239,9 @@ export const createDebugOAuthStateMachine = (
             break;
 
           case "received_access_token":
-            // Step 12: Make authenticated MCP request (initialize to establish session)
+            // Step 12: Make an authenticated stateless MCP request to verify the
+            // token. 2026-07-28 has no `initialize`/session handshake, so this is
+            // a plain `tools/list` carrying the `_meta` envelope + bearer token.
             if (!state.serverUrl || !state.accessToken) {
               throw new Error("Missing server URL or access token");
             }
@@ -2078,10 +2253,11 @@ export const createDebugOAuthStateMachine = (
                 Authorization: `Bearer ${state.accessToken}`,
                 "Content-Type": "application/json",
                 Accept: "application/json, text/event-stream",
-                "MCP-Protocol-Version": "2026-07-28",
+                "MCP-Protocol-Version": statelessProtocolVersion,
+                "Mcp-Method": "tools/list",
               },
-              body: buildInitializeRequestBody({
-                protocolVersion: initializeProtocolVersion,
+              body: buildStatelessVerifyRequestBody({
+                protocolVersion: statelessProtocolVersion,
                 authMode,
                 clientName: "MCPJam Inspector",
                 clientVersion: "1.0.0",
@@ -2089,14 +2265,14 @@ export const createDebugOAuthStateMachine = (
               }),
             };
 
-            // Add info log for authenticated initialize request
+            // Add info log for the authenticated stateless verify request
             const authenticatedRequestInfoLogs = addInfoLog(
               getCurrentState(),
               "authenticated_mcp_request",
-              "authenticated-init",
-              "Authenticated MCP Initialize Request",
+              "authenticated-verify",
+              "Authenticated MCP Verify Request (tools/list)",
               {
-                Request: "MCP initialize with OAuth bearer token",
+                Request: "Stateless tools/list with OAuth bearer token",
                 "Protocol Version": "2026-07-28",
                 Client: "MCPJam Inspector v1.0.0",
                 Endpoint: state.serverUrl,
@@ -2125,7 +2301,8 @@ export const createDebugOAuthStateMachine = (
             return;
 
           case "authenticated_mcp_request":
-            // Step 13: Make actual authenticated request to verify token (initialize with auth)
+            // Step 13: Execute the authenticated stateless verify request
+            // (tools/list with the bearer token). No initialize/session step.
             if (!state.serverUrl || !state.accessToken) {
               throw new Error("Missing server URL or access token");
             }
@@ -2137,10 +2314,12 @@ export const createDebugOAuthStateMachine = (
                   Authorization: `Bearer ${state.accessToken}`,
                   "Content-Type": "application/json",
                   Accept: "application/json, text/event-stream",
+                  "MCP-Protocol-Version": statelessProtocolVersion,
+                  "Mcp-Method": "tools/list",
                 }),
                 body: JSON.stringify(
-                  buildInitializeRequestBody({
-                    protocolVersion: initializeProtocolVersion,
+                  buildStatelessVerifyRequestBody({
+                    protocolVersion: statelessProtocolVersion,
                     authMode,
                     clientName: "MCPJam Inspector",
                     clientVersion: "1.0.0",
@@ -2234,7 +2413,7 @@ export const createDebugOAuthStateMachine = (
                     Transport: "Streamable HTTP",
                     "Response Format": "Server-Sent Events (streaming)",
                     "Content-Type": contentType,
-                    Note: "Server returned streaming response. Initialize response delivered via SSE stream.",
+                    Note: "Server returned streaming response. tools/list verify response delivered via SSE stream.",
                     Events: response.body?.events
                       ? `${response.body.events.length} events parsed`
                       : "No events parsed",

@@ -71,6 +71,10 @@ export interface OAuthFlowState {
     code_challenge_methods_supported?: string[];
     // 2025-11-25 additions
     client_id_metadata_document_supported?: boolean;
+    // 2026-07-28 / RFC 9207: when true, the AS promises to return `iss` on the
+    // authorization response, so a missing `iss` on the callback is a hard
+    // failure rather than a not-supported no-op.
+    authorization_response_iss_parameter_supported?: boolean;
   };
 
   // Client Registration
@@ -87,6 +91,17 @@ export interface OAuthFlowState {
   authorizationUrl?: string;
   authorizationCode?: string;
   state?: string;
+  // 2026-07-28 (RFC 9207): the AS issuer recorded at discovery time, stamped
+  // alongside the PKCE verifier so the callback leg can validate the returned
+  // `iss` against the exact issuer the flow began with (no re-derivation).
+  recordedIssuer?: string;
+  // The `iss` value returned on the authorization callback, if any. Populated
+  // by the callback boundary; the machine validates it against recordedIssuer.
+  authorizationResponseIss?: string;
+  // The scope set requested when the authorization request was built. Retained
+  // so a step-up challenge can be displayed as the union of prior-requested and
+  // challenged scopes (SEP-2350, display half).
+  requestedScopes?: string[];
 
   // Tokens
   accessToken?: string;
