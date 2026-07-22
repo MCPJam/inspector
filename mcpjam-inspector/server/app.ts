@@ -19,6 +19,7 @@ import cliAuthRoutes from "./routes/cli-auth/index.js";
 import relayRoutes, { relayBodyLimit } from "./routes/relay.js";
 import { registerXaaClientMetadataRoute } from "./routes/xaa-client-metadata.js";
 import { registerXaaConfidentialCimdRoute } from "./routes/xaa-confidential-cimd.js";
+import { createXaaWebRouter } from "./routes/web/xaa.js";
 import workosAuthkitRoutes from "./routes/workos-authkit.js";
 import { MCPClientManager } from "@mcpjam/sdk";
 import { initElicitationCallback } from "./routes/mcp/elicitation.js";
@@ -241,6 +242,9 @@ export async function createHonoApp() {
     // Mirror of server/index.ts — both entries share mountHostedOpenRoutes.
     mountHostedOpenRoutes(app);
   }
+  // Construct after loadInspectorEnv() so hosted confidential CIMD observes
+  // Inspector dotenv configuration and malformed configured keys fail startup.
+  app.route("/api/web/xaa", createXaaWebRouter());
   app.route("/api/web", webRoutes);
   // Computer terminal WebSocket + file upload (Project Computers). Registered
   // directly on the root app because the WS upgrade handler comes from

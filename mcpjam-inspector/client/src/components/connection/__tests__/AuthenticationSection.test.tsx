@@ -72,12 +72,12 @@ describe("AuthenticationSection", () => {
         onClientSecretChange={vi.fn()}
         clientIdError={null}
         clientSecretError={null}
-      />,
+      />
     );
 
     await userEvent.click(screen.getByRole("combobox"));
     expect(
-      screen.queryByText("Cross-App Access (XAA)"),
+      screen.queryByText("Cross-App Access (XAA)")
     ).not.toBeInTheDocument();
   });
 
@@ -105,7 +105,7 @@ describe("AuthenticationSection", () => {
         onClientSecretChange={vi.fn()}
         clientIdError={null}
         clientSecretError={null}
-      />,
+      />
     );
 
     await userEvent.click(screen.getByRole("combobox"));
@@ -136,7 +136,7 @@ describe("AuthenticationSection", () => {
         onClientSecretChange={vi.fn()}
         clientIdError={null}
         clientSecretError={null}
-      />,
+      />
     );
 
     expect(screen.getByText("Cross-App Access (XAA)")).toBeInTheDocument();
@@ -170,22 +170,22 @@ describe("AuthenticationSection", () => {
         xaaDcrIssuer="https://as.example"
         xaaDcrRegisteredAt={Date.now()}
         xaaDcrTokenEndpointAuthMethod="client_secret_post"
-      />,
+      />
     );
 
     expect(
-      screen.getByText("Dynamic Client Registration (DCR)"),
+      screen.getByText("Dynamic Client Registration (DCR)")
     ).toBeInTheDocument();
     expect(screen.getByText("Registered client.")).toBeInTheDocument();
     expect(screen.getByText("dynamic-client")).toBeInTheDocument();
     expect(screen.getByText("https://as.example")).toBeInTheDocument();
     expect(
       screen.queryByPlaceholderText(
-        "Client ID registered with the server's authorization server",
-      ),
+        "Client ID registered with the server's authorization server"
+      )
     ).not.toBeInTheDocument();
     expect(
-      screen.getByPlaceholderText("Optional scopes separated by spaces"),
+      screen.getByPlaceholderText("Optional scopes separated by spaces")
     ).toBeInTheDocument();
   });
 
@@ -198,19 +198,19 @@ describe("AuthenticationSection", () => {
         registrationMode="cimd"
         clientId="hidden-preregistered-client"
         clientSecret="hidden-preregistered-secret"
-      />,
+      />
     );
 
     expect(
-      screen.getByText("Client ID Metadata Documents (CIMD)"),
+      screen.getByText("Client ID Metadata Documents (CIMD)")
     ).toBeInTheDocument();
     expect(
       screen.queryByPlaceholderText(
-        "Client ID registered with the server's authorization server",
-      ),
+        "Client ID registered with the server's authorization server"
+      )
     ).not.toBeInTheDocument();
     expect(
-      screen.getByPlaceholderText("Optional scopes separated by spaces"),
+      screen.getByPlaceholderText("Optional scopes separated by spaces")
     ).toBeInTheDocument();
   });
 
@@ -224,21 +224,21 @@ describe("AuthenticationSection", () => {
         registrationMode="dcr"
         xaaDcrStatus="uncertain"
         onRegisterNewXaaDcrClient={onRegisterNewXaaDcrClient}
-      />,
+      />
     );
 
     expect(screen.getByText(/outcome is uncertain/i)).toBeInTheDocument();
     await userEvent.click(
-      screen.getByRole("button", { name: "Register a new client" }),
+      screen.getByRole("button", { name: "Register a new client" })
     );
     expect(
-      screen.getByText(/another remote client may be created/i),
+      screen.getByText(/another remote client may be created/i)
     ).toBeInTheDocument();
     await userEvent.click(
-      screen.getByRole("button", { name: "Register a new client" }),
+      screen.getByRole("button", { name: "Register a new client" })
     );
     await waitFor(() =>
-      expect(onRegisterNewXaaDcrClient).toHaveBeenCalledTimes(1),
+      expect(onRegisterNewXaaDcrClient).toHaveBeenCalledTimes(1)
     );
   });
 
@@ -261,7 +261,7 @@ describe("AuthenticationSection", () => {
         xaaDcrStatus="registered"
         xaaDcrTokenEndpointAuthMethod="client_secret_post"
         xaaDcrClientSecretExpiresAt={Date.now() - 1}
-      />,
+      />
     );
     expect(screen.getByText(/credential has expired/i)).toBeInTheDocument();
   });
@@ -299,15 +299,15 @@ describe("AuthenticationSection", () => {
     await userEvent.click(trigger);
     expect(screen.getByRole("option", { name: "Auto" })).toBeInTheDocument();
     expect(
-      screen.getByRole("option", { name: "No Authentication" }),
+      screen.getByRole("option", { name: "No Authentication" })
     ).toBeInTheDocument();
     expect(
       screen.queryByText(
-        "Cross-App Access when configured — otherwise connects without credentials, then OAuth if required",
-      ),
+        "Cross-App Access when configured — otherwise connects without credentials, then OAuth if required"
+      )
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByText("Connect without credentials"),
+      screen.queryByText("Connect without credentials")
     ).not.toBeInTheDocument();
   });
 
@@ -325,7 +325,7 @@ describe("AuthenticationSection", () => {
     await userEvent.click(screen.getByRole("combobox"));
     expect(screen.getByRole("option", { name: "Auto" })).toBeInTheDocument();
     expect(
-      screen.queryByText("Cross-App Access (XAA)"),
+      screen.queryByText("Cross-App Access (XAA)")
     ).not.toBeInTheDocument();
   });
 
@@ -334,7 +334,7 @@ describe("AuthenticationSection", () => {
     render(<AuthenticationSection {...autoProps} autoSelectsXaa={false} />);
 
     expect(
-      screen.getByText("Anonymous first, then OAuth if required."),
+      screen.getByText("Anonymous first, then OAuth if required.")
     ).toBeInTheDocument();
   });
 
@@ -343,8 +343,63 @@ describe("AuthenticationSection", () => {
     render(<AuthenticationSection {...autoProps} autoSelectsXaa={true} />);
 
     expect(
-      screen.getByText("Uses Cross-App Access for this server."),
+      screen.getByText("Uses Cross-App Access for this server.")
     ).toBeInTheDocument();
+  });
+
+  it("shows XAA CIMD registration and confidential authentication without credential fields", () => {
+    const retry = vi.fn();
+    render(
+      <AuthenticationSection
+        {...autoProps}
+        authType="xaa"
+        showAuthSettings={true}
+        registrationMode="cimd"
+        xaaClientAuth="private_key_jwt"
+        confidentialCimdStatus="error"
+        confidentialCimdBlockReason="Confidential CIMD could not be loaded."
+        onRetryConfidentialCimd={retry}
+      />
+    );
+
+    expect(screen.getByText("Registration Strategy")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("combobox", { name: "XAA registration" }));
+    expect(
+      screen.getByRole("option", {
+        name: "Dynamic Client Registration (DCR)",
+      })
+    ).not.toBeDisabled();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.getByText("Client authentication")).toBeInTheDocument();
+    expect(
+      screen.getByText("Confidential (private_key_jwt)")
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByPlaceholderText(
+        "Client ID registered with the server's authorization server"
+      )
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Confidential CIMD could not be loaded.")
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides the confidential picker when hosted capability is unavailable for a public CIMD config", () => {
+    render(
+      <AuthenticationSection
+        {...autoProps}
+        authType="xaa"
+        showAuthSettings={true}
+        registrationMode="cimd"
+        xaaClientAuth="none"
+        confidentialCimdStatus="unavailable"
+      />
+    );
+
+    expect(screen.getByText("Registration Strategy")).toBeInTheDocument();
+    expect(screen.queryByText("Client authentication")).not.toBeInTheDocument();
   });
 
   it("does not show the OAuth plan explainer for a typical automatic OAuth setup", () => {
@@ -370,16 +425,20 @@ describe("AuthenticationSection", () => {
         onClientSecretChange={vi.fn()}
         clientIdError={null}
         clientSecretError={null}
-      />,
+      />
     );
 
     expect(
-      screen.queryByText(/Uses the SDK planner to resolve pre-registered credentials/i),
+      screen.queryByText(
+        /Uses the SDK planner to resolve pre-registered credentials/i
+      )
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByText("Automatic order: pre-registered -> CIMD -> DCR"),
+      screen.queryByText("Automatic order: pre-registered -> CIMD -> DCR")
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /advanced settings/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /advanced settings/i })
+    ).toBeInTheDocument();
   });
 
   it("masks the bearer token but allows revealing it", () => {
@@ -405,7 +464,7 @@ describe("AuthenticationSection", () => {
         onClientSecretChange={vi.fn()}
         clientIdError={null}
         clientSecretError={null}
-      />,
+      />
     );
 
     const input = screen.getByPlaceholderText("Enter your bearer token");
@@ -441,20 +500,21 @@ describe("AuthenticationSection", () => {
         onClientSecretChange={vi.fn()}
         clientIdError={null}
         clientSecretError={null}
-      />,
+      />
     );
 
     expect(
-      screen.queryByText(/Pre-registered OAuth requires a client ID/i),
+      screen.queryByText(/Pre-registered OAuth requires a client ID/i)
     ).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /advanced settings/i }));
 
     const clientIdLabel = screen.getByText("Client ID");
     expect(clientIdLabel.textContent).toMatch(/\*/);
-    expect(
-      screen.getByPlaceholderText("Your OAuth Client ID"),
-    ).toHaveAttribute("aria-required", "true");
+    expect(screen.getByPlaceholderText("Your OAuth Client ID")).toHaveAttribute(
+      "aria-required",
+      "true"
+    );
   });
 
   it("shows manual scope and credential overrides when expanded", () => {
@@ -480,7 +540,7 @@ describe("AuthenticationSection", () => {
         onClientSecretChange={vi.fn()}
         clientIdError={null}
         clientSecretError={null}
-      />,
+      />
     );
 
     fireEvent.click(screen.getByRole("button", { name: /advanced settings/i }));
@@ -513,13 +573,13 @@ describe("AuthenticationSection", () => {
         onClientSecretChange={vi.fn()}
         clientIdError={null}
         clientSecretError={null}
-      />,
+      />
     );
 
     fireEvent.click(screen.getByRole("button", { name: /advanced settings/i }));
 
     expect(
-      screen.getByText("Client ID Metadata Documents (CIMD)"),
+      screen.getByText("Client ID Metadata Documents (CIMD)")
     ).toBeInTheDocument();
   });
 
@@ -557,7 +617,7 @@ describe("AuthenticationSection", () => {
     fireEvent.click(screen.getByRole("button", { name: /advanced settings/i }));
 
     expect(
-      screen.getByPlaceholderText("Enter a new value to replace."),
+      screen.getByPlaceholderText("Enter a new value to replace.")
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Clear" }));
@@ -566,7 +626,7 @@ describe("AuthenticationSection", () => {
     rerender(<AuthenticationSection {...props} clearClientSecret={true} />);
 
     expect(
-      screen.getByText("Saved client secret will be removed when you save."),
+      screen.getByText("Saved client secret will be removed when you save.")
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Undo" }));
     expect(onUndoClearClientSecret).toHaveBeenCalledTimes(1);
@@ -579,14 +639,10 @@ describe("AuthenticationSection", () => {
 
     // No always-on replace box while the saved secret is hidden.
     expect(
-      screen.queryByPlaceholderText("Enter a new value to replace."),
+      screen.queryByPlaceholderText("Enter a new value to replace.")
     ).not.toBeInTheDocument();
-    expect(
-      screen.getByText(/A client secret is saved/i),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Reveal" }),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/A client secret is saved/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reveal" })).toBeInTheDocument();
   });
 
   it("reveals the saved secret into an editable box that replaces on edit", async () => {
@@ -598,14 +654,14 @@ describe("AuthenticationSection", () => {
       <AuthenticationSection
         {...hostedSecretProps}
         onClientSecretChange={onClientSecretChange}
-      />,
+      />
     );
 
     fireEvent.click(screen.getByRole("button", { name: /advanced settings/i }));
     fireEvent.click(screen.getByRole("button", { name: "Reveal" }));
 
     const input = (await screen.findByTestId(
-      "revealed-client-secret",
+      "revealed-client-secret"
     )) as HTMLInputElement;
     expect(input.value).toBe("sk-stored-secret");
 
@@ -615,8 +671,8 @@ describe("AuthenticationSection", () => {
     fireEvent.click(screen.getByRole("button", { name: "Hide" }));
     await waitFor(() =>
       expect(
-        screen.queryByTestId("revealed-client-secret"),
-      ).not.toBeInTheDocument(),
+        screen.queryByTestId("revealed-client-secret")
+      ).not.toBeInTheDocument()
     );
   });
 
@@ -652,11 +708,11 @@ describe("AuthenticationSection", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reveal" }));
 
     const input = (await screen.findByTestId(
-      "revealed-client-secret",
+      "revealed-client-secret"
     )) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "sk-new-secret" } });
     expect(screen.getByTestId("client-secret-state")).toHaveTextContent(
-      "sk-new-secret",
+      "sk-new-secret"
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Clear" }));
@@ -671,22 +727,24 @@ describe("AuthenticationSection", () => {
     });
 
     const { rerender } = render(
-      <AuthenticationSection {...hostedSecretProps} />,
+      <AuthenticationSection {...hostedSecretProps} />
     );
 
     fireEvent.click(screen.getByRole("button", { name: /advanced settings/i }));
     fireEvent.click(screen.getByRole("button", { name: "Reveal" }));
 
     const input = (await screen.findByTestId(
-      "revealed-client-secret",
+      "revealed-client-secret"
     )) as HTMLInputElement;
     expect(input.value).toBe("sk-stored-secret");
 
     rerender(
-      <AuthenticationSection {...hostedSecretProps} hostedServerId="server-2" />,
+      <AuthenticationSection {...hostedSecretProps} hostedServerId="server-2" />
     );
 
-    expect(screen.queryByTestId("revealed-client-secret")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("revealed-client-secret")
+    ).not.toBeInTheDocument();
     expect(screen.getByText(/A client secret is saved/i)).toBeInTheDocument();
   });
 });

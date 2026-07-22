@@ -7,6 +7,7 @@ import {
   type McpProtocolVersion,
 } from "@mcpjam/sdk";
 import type {
+  ConfidentialCimdProvider,
   ElicitationCallback,
   HttpServerConfig,
   RpcLogger,
@@ -28,6 +29,7 @@ import {
   xaaPolicyFromMcpProfile,
   xaaPolicyRequiresConfiguration,
 } from "../../utils/effective-auth.js";
+import type { EffectiveAuthMethod } from "../../utils/effective-auth.js";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config.js";
 import type { RequestLogContext } from "../../utils/log-events.js";
 import {
@@ -51,9 +53,12 @@ import {
 } from "../../utils/server-secrets.js";
 import {
   buildXaaMintArgs,
+  isXaaMintErrorReported,
   mintXaaAccessToken,
+  resolveXaaConnectRegistrationMode,
   resolveXaaIssuer,
 } from "../../services/xaa-mint.js";
+import { getConfidentialCimdProviderForOrg } from "../../services/xaa-confidential-cimd.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 
 // ── Zod Schemas ──────────────────────────────────────────────────────
@@ -282,6 +287,8 @@ export type ConvexAuthorizeResponse = {
     oauthScopes?: string[];
     xaaSubject?: string;
     xaaEmail?: string;
+    xaaAuthzIssuer?: string;
+    xaaAllowPathScopedIssuer?: boolean;
     // Backend-resolved identity failure: a LEGACY partial per-server
     // override (one member stored) can't resolve an atomic identity, so the
     // backend omits BOTH identity fields and sends this actionable,
@@ -295,6 +302,7 @@ export type ConvexAuthorizeResponse = {
     // compat mirrors). Absent on legacy rows.
     authMethod?: "auto" | "oauth" | "xaa" | "bearer" | "none";
     registrationMode?: "auto" | "preregistered" | "cimd" | "dcr";
+    xaaClientAuth?: "none" | "private_key_jwt";
   };
   internalLogContext?: InternalLogContext;
 };
@@ -335,6 +343,8 @@ export type ConvexBatchAuthorizeResult =
   | ConvexBatchAuthorizeSuccess;
 
 export type ConvexBatchAuthorizeResponse = {
+  organizationId?: string | null;
+  isAnonymous?: boolean;
   results: Record<string, ConvexBatchAuthorizeResult>;
 };
 
@@ -659,7 +669,13 @@ export async function authorizeBatch(
       strippedResults[serverId] = result;
     }
   }
-  return { results: strippedResults };
+  return {
+    organizationId:
+      typeof raw.organizationId === "string" ? raw.organizationId : null,
+    isAnonymous:
+      typeof raw.isAnonymous === "boolean" ? raw.isAnonymous : undefined,
+    results: strippedResults,
+  };
 }
 
 export function toHttpConfig(
@@ -936,6 +952,10 @@ export async function createAuthorizedManager(
   // on each server's flow (a re-resolution could drift if the predicate ever
   // gains an input one pass forgets to thread).
   const effectiveAuthByServerId = new Map<string, EffectiveAuthMethod>();
+  let confidentialCimdProviderForOrg: ReturnType<
+    typeof getConfidentialCimdProviderForOrg
+  > = undefined;
+  let confidentialCimdProviderForOrgResolved = false;
   for (const serverId of uniqueServerIds) {
     const auth = batch.results[serverId];
     if (!auth) {
@@ -946,7 +966,11 @@ export async function createAuthorizedManager(
       );
     }
     if (!auth.ok) {
-      throw new WebRouteError(auth.status, auth.code as ErrorCode, auth.message);
+      throw new WebRouteError(
+        auth.status,
+        auth.code as ErrorCode,
+        auth.message
+      );
     }
     const displayServerName = serverNamesById?.[serverId] ?? serverId;
     const effectiveAuth = resolveEffectiveAuthMethod(
@@ -982,13 +1006,53 @@ export async function createAuthorizedManager(
     // would mask this actionable 400 behind the caller-contract 500. Gated on
     // the same XAA selection the mint pass uses. No silent fallback to the
     // demo identity, no silent XAA→OAuth fallback.
-    if (isHttp && effectiveAuth === "xaa" && auth.serverConfig.xaaIdentityError) {
+    if (
+      isHttp &&
+      effectiveAuth === "xaa" &&
+      auth.serverConfig.xaaIdentityError
+    ) {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
         auth.serverConfig.xaaIdentityError,
         { serverId, serverName: displayServerName }
       );
+    }
+
+    if (isHttp && effectiveAuth === "xaa") {
+      const registrationMode = resolveXaaConnectRegistrationMode(
+        auth.serverConfig.registrationMode
+      );
+      if (
+        registrationMode === "cimd" &&
+        auth.serverConfig.xaaClientAuth === "private_key_jwt"
+      ) {
+        if (batch.isAnonymous !== false) {
+          throw new WebRouteError(
+            403,
+            ErrorCode.FORBIDDEN,
+            "Confidential CIMD requires a signed-in organization member"
+          );
+        }
+        if (!batch.organizationId) {
+          throw new WebRouteError(
+            409,
+            ErrorCode.FEATURE_NOT_SUPPORTED,
+            "Confidential CIMD requires an organization-owned project"
+          );
+        }
+        if (!confidentialCimdProviderForOrgResolved) {
+          confidentialCimdProviderForOrg = getConfidentialCimdProviderForOrg();
+          confidentialCimdProviderForOrgResolved = true;
+        }
+        if (!confidentialCimdProviderForOrg) {
+          throw new WebRouteError(
+            409,
+            ErrorCode.FEATURE_NOT_SUPPORTED,
+            "Confidential CIMD is not enabled on this inspector deployment"
+          );
+        }
+      }
     }
 
     // Explicit-OAuth server with no stored token: also a synchronous verdict,
@@ -1086,6 +1150,36 @@ export async function createAuthorizedManager(
             `Missing XAA issuer for server "${displayServerName}". This connect surface must pass options.xaaIssuer.`
           );
         }
+        let confidentialCimdProvider: ConfidentialCimdProvider | undefined;
+        if (
+          resolveXaaConnectRegistrationMode(
+            auth.serverConfig.registrationMode
+          ) === "cimd" &&
+          auth.serverConfig.xaaClientAuth === "private_key_jwt"
+        ) {
+          try {
+            confidentialCimdProvider = confidentialCimdProviderForOrg!(
+              batch.organizationId!
+            );
+          } catch (error) {
+            logger.error(
+              "[XAA connect] confidential CIMD provider preparation failed",
+              error,
+              {
+                serverId,
+                serverName: displayServerName,
+                resource: auth.serverConfig.url,
+                projectId,
+                organizationId: batch.organizationId,
+              }
+            );
+            throw new WebRouteError(
+              500,
+              ErrorCode.INTERNAL_ERROR,
+              "Could not prepare the confidential CIMD client identity"
+            );
+          }
+        }
         const mintArgs = buildXaaMintArgs({
           issuer: options.xaaIssuer,
           hostedMode: HOSTED_MODE,
@@ -1094,15 +1188,20 @@ export async function createAuthorizedManager(
           projectId,
           bearerToken,
           resolveServerSecret: fetchServerClientSecret,
+          organizationId: batch.organizationId,
+          isAnonymous: batch.isAnonymous,
+          confidentialCimdProvider,
         });
         try {
           connectToken = (await mintXaaAccessToken(mintArgs)).accessToken;
         } catch (error) {
-          logger.error("[XAA connect] mint failed", error, {
-            serverId,
-            serverName: displayServerName,
-            resource: auth.serverConfig.url,
-          });
+          if (!isXaaMintErrorReported(error)) {
+            logger.error("[XAA connect] mint failed", error, {
+              serverId,
+              serverName: displayServerName,
+              resource: auth.serverConfig.url,
+            });
+          }
           throw error;
         }
         // Bounded re-mint: the SDK invokes this once on a 401 and retries; a
@@ -1117,7 +1216,9 @@ export async function createAuthorizedManager(
             );
           }
           reMinted = true;
-          return { accessToken: (await mintXaaAccessToken(mintArgs)).accessToken };
+          return {
+            accessToken: (await mintXaaAccessToken(mintArgs)).accessToken,
+          };
         };
       }
 
@@ -1187,8 +1288,7 @@ export async function createAuthorizedManager(
                         caller.mcpjamOrganizationId
                           ? {
                               workosUserId: caller.workosUserId,
-                              mcpjamOrganizationId:
-                                caller.mcpjamOrganizationId,
+                              mcpjamOrganizationId: caller.mcpjamOrganizationId,
                             }
                           : undefined,
                     })

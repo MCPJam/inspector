@@ -127,6 +127,7 @@ import cliAuthRoutes from "./routes/cli-auth/index";
 import relayRoutes, { relayBodyLimit } from "./routes/relay";
 import { registerXaaClientMetadataRoute } from "./routes/xaa-client-metadata";
 import { registerXaaConfidentialCimdRoute } from "./routes/xaa-confidential-cimd";
+import { createXaaWebRouter } from "./routes/web/xaa";
 import workosAuthkitRoutes from "./routes/workos-authkit";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
@@ -364,6 +365,9 @@ if (!HOSTED_MODE) {
   // Mirror of server/app.ts — both entries share mountHostedOpenRoutes.
   mountHostedOpenRoutes(app);
 }
+// Construct after loadInspectorEnv() so hosted confidential CIMD observes
+// Inspector dotenv configuration and malformed configured keys fail startup.
+app.route("/api/web/xaa", createXaaWebRouter());
 app.route("/api/web", webRoutes);
 // Computer terminal WebSocket (Project Computers). Registered directly on
 // the root app because the upgrade handler comes from `createNodeWebSocket`;

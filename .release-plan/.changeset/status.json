@@ -3,36 +3,12 @@
     {
       "releases": [
         {
-          "name": "@mcpjam/cli",
-          "type": "patch"
-        },
-        {
-          "name": "@mcpjam/widget-react",
+          "name": "@mcpjam/sdk",
           "type": "patch"
         }
       ],
-      "summary": "Align with the `@mcpjam/sdk` v2 (`@modelcontextprotocol` beta.4) migration.",
-      "id": "cli-widget-sdk-v2-alignment"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        }
-      ],
-      "summary": "Elicitation mode/serverId passthrough and elicitation-aware tool timeouts. Additive: existing callbacks and call sites are unaffected.\n\n- `ElicitationCallbackRequest` gains optional `serverId`, `mode` (`\"form\" | \"url\"`, absent ⇒ form), `url`, and `elicitationId`, so a global elicitation callback can tell which server asked, render URL-mode consent (MCP 2025-11-25), and correlate the server-chosen elicitation id. Form mode keeps reading `requestedSchema ?? schema`.\n- `ElicitationManager.applyToClient` takes an optional third argument carrying the `elicitation` client capability actually advertised on the wire, and rejects elicitations whose mode was not declared with JSON-RPC `-32602` per spec (bare `{}` ≡ form-only; `{form:{},url:{}}` allows both). Mode-vs-declaration semantics come from upstream's own `getSupportedElicitationModes`, so they cannot drift from what the upstream `Client` enforces. New `hasPendingForServer(serverId)` reports whether an elicitation handler is currently in flight.\n- New `MCPClientManagerOptions.elicitationTimeoutExtensionMs` (default 10 minutes, exported as `DEFAULT_ELICITATION_TIMEOUT_EXTENSION_MS`). When a server has an elicitation handler, `executeTool` no longer lets the per-request timeout kill a tool call that is merely blocked on a human: the base timeout is enforced by a watchdog that only accumulates time while no elicitation is pending, while total time spent suspended across all elicitations in the call is capped by the extension. A genuinely hung server still dies at its base timeout. Aborts are timeout-shaped (`SdkError` / `SdkErrorCode.RequestTimeout`) and never classified as retryable. Servers without an elicitation handler are a pure passthrough.\n- New `ElicitationMode` and `DeclaredElicitationCapability` type exports.",
-      "id": "elicitation-modes-and-timeouts"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        }
-      ],
-      "summary": "HostConfig standalone-skill selection contract. Additive optional field; every existing HostConfig canonicalizes and hashes byte-identically.\n\n- `HostConfigInputV2` gains optional `skillSelection?: { mode: \"all-visible\" } | { mode: \"explicit\"; skillIds: string[] }`, threaded through the canonical form, public `HostJson`/`HostInit`, templates, and parity fixtures. Hosts carry NO plugin-specific fields — plugin component servers attach via ordinary `serverIds`, and plugin-imported skills are ordinary materialized skill rows selectable by id through `skillSelection`.\n- Canonicalization: explicit `skillIds` deduped + sorted; `{ mode: \"all-visible\" }` canonicalizes to absent (single content-addressed identity per behavior); explicit-empty `skillIds: []` is preserved and hashes distinctly from absent (absence is semantic).\n- External SDK eval wire normalization strips `skillSelection` (explicit skill ids are platform-internal, not portable); platform-owned suites keep it in persisted HostConfigs.\n- `schemaVersion` stays 2. New parity fixture vectors cover the added semantics for backend consumption.",
-      "id": "hostconfig-plugin-attachment"
+      "summary": "Validate declared draft-07 tool schemas instead of rejecting them. The upstream v2 client's default validator is 2020-12-only and hard-fails `tools/call` for any tool whose `outputSchema` declares `\"$schema\": \".../draft-07/schema#\"` — which is every MCP TypeScript SDK v1 server built with zod. The spec permits an explicitly declared draft-07 dialect on all protocol versions (2020-12 is only the default when `$schema` is absent), so the SDK now dispatches on the declared `$schema`: absent/2020-12 → a 2020-12 engine, draft-07 → a draft-07 engine, unknown dialects → skipped with a deduped `console.warn` (overridable via `onUnknownDialect`) rather than failing the call. Two runtime flavors share the dispatch core: `DialectAwareJsonSchemaValidator` (Ajv, wired into `MCPClientManager` and `createManagedMcpClient` on Node) and `CspSafeDialectAwareJsonSchemaValidator` (`@cfworker/json-schema`, wired into the HTTP doctor, which ships in the browser/workerd entries where Ajv's `new Function` compilation is unavailable).",
+      "id": "dialect-aware-schema-validation"
     },
     {
       "releases": [
@@ -41,69 +17,28 @@
           "type": "minor"
         }
       ],
-      "summary": "Inspector feature batch since the last release:\n\n- WebMCP agent tool surfaces: hosts, computer, chatboxes, swarms, evals, registry, primitives (resources/prompts/tools), playground, plus surface tool-group foundation and outcome telemetry.\n- The in-app agent acts only through the UI: app map from surface manifests, per-turn location, cross-screen observation, and annotation-gated `ui_*` approval.\n- Swarm journeys: live SSE streaming, evals-style matrix, journey-scoped server groups, persona avatars, and anonymous personal-org access.\n- Dynamic model catalog served in hosted mode and to the client, with guests un-gated.\n- Hosted elicitation: form dialog, URL consent, gating, and `-32042` surfacing, plus the client-capability toggle.\n- User-facing \"Hosts\" → \"Clients\" rename and assorted fixes (sidebar sign-in in local/npx, Connect nav overlap, tri-selector active state, logger copy button, upload-quota enforcement).",
-      "id": "inspector-unreleased-batch"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        }
-      ],
-      "summary": "New `@mcpjam/sdk/plugin-bundle` export: a pure, source-adapter-independent parser for OpenAI plugin bundles. Additive: no existing exports change.\n\n- `parsePluginBundle(source)` consumes the abstract `PluginFileSource` interface (no filesystem, no archive libraries, zero Node builtins) and returns the normalized manifest, skills, MCP server configs, app metadata, assets, unsupported components, setup requirements, and validation warnings.\n- Accepts all three MCP config shapes (direct server map, `mcp_servers`, `mcpServers`) and normalizes to one discriminated stdio/http union; `${PLUGIN_ROOT}`-style placeholders are preserved verbatim, never substituted.\n- Full archive-path defense (absolute paths, `..` traversal, NUL bytes, duplicate/case-fold collisions, symlink markers, length/depth/count limits) with stable issue codes; hostile bundles fail before any file content is read.\n- Deterministic bundle/manifest/component hashing via the SDK's existing portable `crypto.subtle` helpers — identical across Node and browser, listing-order independent.\n- Secret hygiene: env/header requirement names only; literal values are dropped with warnings. Unknown/extension fields and oauth metadata are recursively sanitized at every depth (secret-looking keys AND secret-looking string values are dropped before anything reaches a stored DTO or hash input), `${PLUGIN_ROOT}` templates are only preserved when the value is a pure path template, and hostile deeply-nested values fail with a stable `VALUE_TOO_DEEP` code instead of a stack overflow.",
-      "id": "plugin-bundle-parser"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "major"
-        }
-      ],
-      "summary": "Migrate to `@modelcontextprotocol` v2 (beta.4) and route modern connections through the official Client (Phase 1A/1B/1C).\n\nBREAKING:\n- Modern (non-legacy) connections now go through the upstream official `Client` rather than the in-house preview path.\n- The stateless preview client has been removed.\n- Version negotiation is resolved via `resolveVersionNegotiation` (pin → versionNegotiation).\n- MCP error codes are centralized, including the renumbered 2026-07-28 codes.",
-      "id": "sdk-v2-beta4-migration"
+      "summary": "Surface and configure the Swarm goal-completion judge.\n\n- The per-session judge badge (`SessionGoalScoreBadge`) moves to the shared `session-quality` module (reusing the eval `ScoreBadge`) and now renders in the Sessions list and run matrix cells; `SwarmJudgeSection` is reachable even for sessions with no transcript.\n- The judge config type/defaults are extracted to a shared `GoalJudgeConfig` (evals re-export the historical `EvalJudgeConfig` names), so the eval `JudgesSection` is reusable.\n- New journeys expose an **Advanced → Judge** disclosure that reuses `JudgesSection` to set the judge model and auto-grade toggle (`journeys:createJourney` carries the config). Pairs with the backend `judgeConfig` snapshot + config-driven auto-run.",
+      "id": "swarm-journey-judge"
     }
   ],
   "releases": [
     {
-      "name": "@mcpjam/cli",
-      "type": "patch",
-      "oldVersion": "3.15.1",
-      "changesets": [
-        "cli-widget-sdk-v2-alignment"
-      ],
-      "newVersion": "3.15.2"
-    },
-    {
-      "name": "@mcpjam/widget-react",
-      "type": "patch",
-      "oldVersion": "0.1.2",
-      "changesets": [
-        "cli-widget-sdk-v2-alignment"
-      ],
-      "newVersion": "0.1.3"
-    },
-    {
       "name": "@mcpjam/sdk",
-      "type": "major",
-      "oldVersion": "1.33.0",
+      "type": "patch",
+      "oldVersion": "2.0.0",
       "changesets": [
-        "elicitation-modes-and-timeouts",
-        "hostconfig-plugin-attachment",
-        "plugin-bundle-parser",
-        "sdk-v2-beta4-migration"
+        "dialect-aware-schema-validation"
       ],
-      "newVersion": "2.0.0"
+      "newVersion": "2.0.1"
     },
     {
       "name": "@mcpjam/inspector",
       "type": "minor",
-      "oldVersion": "2.28.1",
+      "oldVersion": "2.29.0",
       "changesets": [
-        "inspector-unreleased-batch"
+        "swarm-journey-judge"
       ],
-      "newVersion": "2.29.0"
+      "newVersion": "2.30.0"
     },
     {
       "name": "@mcpjam/mcp",

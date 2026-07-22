@@ -39,9 +39,12 @@ import {
 } from "./server-secrets.js";
 import {
   buildXaaMintArgs,
+  isXaaMintErrorReported,
   mintXaaAccessToken,
-  resolveXaaIssuer,
+  resolveXaaConnectIssuer,
+  resolveXaaConnectRegistrationMode,
 } from "../services/xaa-mint.js";
+import { getLocalConfidentialCimdProvider } from "@mcpjam/sdk";
 import type { ConnectionDefaults } from "../../shared/connection-defaults.js";
 import { HOSTED_MODE } from "../config.js";
 
@@ -61,6 +64,8 @@ type LocalAuthorizeServerConfig =
       // are resolved separately via the hardened reveal-secret path at mint time.
       useXaa?: boolean;
       authServerMode?: "mcpjam" | "own";
+      xaaAuthzIssuer?: string;
+      xaaAllowPathScopedIssuer?: boolean;
       xaaSubject?: string;
       xaaEmail?: string;
       // Backend-resolved identity failure: a LEGACY partial per-server
@@ -73,6 +78,7 @@ type LocalAuthorizeServerConfig =
       // compat mirrors). Absent on legacy rows.
       authMethod?: "auto" | "oauth" | "xaa" | "bearer" | "none";
       registrationMode?: "auto" | "preregistered" | "cimd" | "dcr";
+      xaaClientAuth?: "none" | "private_key_jwt";
     }
   | {
       transportType: "stdio";
@@ -106,6 +112,8 @@ export type LocalAuthorizeBatchResult =
   | LocalAuthorizeBatchFailure;
 
 export type LocalAuthorizeBatchResponse = {
+  organizationId?: string | null;
+  isAnonymous?: boolean;
   results: Record<string, LocalAuthorizeBatchResult>;
 };
 
@@ -249,7 +257,13 @@ export async function authorizeBatchLocal(
       stripped[serverId] = result;
     }
   }
-  return { results: stripped };
+  return {
+    organizationId:
+      typeof raw.organizationId === "string" ? raw.organizationId : null,
+    isAnonymous:
+      typeof raw.isAnonymous === "boolean" ? raw.isAnonymous : undefined,
+    results: stripped,
+  };
 }
 
 /**
@@ -261,7 +275,12 @@ export async function authorizeServerLocal(
   bearerToken: string,
   projectId: string,
   serverId: string
-): Promise<LocalAuthorizeBatchSuccess> {
+): Promise<
+  LocalAuthorizeBatchSuccess & {
+    organizationId?: string | null;
+    isAnonymous?: boolean;
+  }
+> {
   const batch = await authorizeBatchLocal(c, bearerToken, projectId, [
     serverId,
   ]);
@@ -280,7 +299,11 @@ export async function authorizeServerLocal(
       result.message
     );
   }
-  return result;
+  return {
+    ...result,
+    organizationId: batch.organizationId,
+    isAnonymous: batch.isAnonymous,
+  };
 }
 
 // Header precedence (lowest → highest) when the resolver merges these
@@ -756,23 +779,40 @@ export async function resolveLocalServerForConnect(
     | undefined;
   if (useXaa && result.serverConfig.transportType === "http") {
     const sc = result.serverConfig;
+    const registrationMode = resolveXaaConnectRegistrationMode(
+      sc.registrationMode
+    );
     // Backend-resolved identity failure (legacy partial per-server
     // override): a distinct configuration error, surfaced BEFORE any mint.
     // No silent fallback to the demo identity, no silent XAA→OAuth fallback.
     if (sc.xaaIdentityError) {
-      throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, sc.xaaIdentityError, {
-        serverId,
-        serverName: options?.serverDisplayName ?? null,
-      });
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        sc.xaaIdentityError,
+        {
+          serverId,
+          serverName: options?.serverDisplayName ?? null,
+        }
+      );
     }
     const mintArgs = buildXaaMintArgs({
-      issuer: resolveXaaIssuer(c, HOSTED_MODE),
+      issuer: resolveXaaConnectIssuer(c, {
+        hostedMode: HOSTED_MODE,
+        organizationId: result.organizationId,
+      }),
       hostedMode: HOSTED_MODE,
       serverConfig: sc,
       serverId,
       projectId,
       bearerToken,
       resolveServerSecret: fetchServerClientSecret,
+      organizationId: result.organizationId,
+      isAnonymous: result.isAnonymous,
+      confidentialCimdProvider:
+        registrationMode === "cimd" && sc.xaaClientAuth === "private_key_jwt"
+          ? getLocalConfidentialCimdProvider()
+          : undefined,
     });
     // Always mint for XAA, overriding any access token the authorize batch
     // returned. A server converted from OAuth still has a stored OAuth token,
@@ -782,11 +822,13 @@ export async function resolveLocalServerForConnect(
       const minted = await mintXaaAccessToken(mintArgs);
       resolvedOauthAccessToken = minted.accessToken;
     } catch (error) {
-      logger.error("[XAA connect] mint failed", error, {
-        serverId,
-        serverName: options?.serverDisplayName ?? serverId,
-        resource: sc.url,
-      });
+      if (!isXaaMintErrorReported(error)) {
+        logger.error("[XAA connect] mint failed", error, {
+          serverId,
+          serverName: options?.serverDisplayName ?? serverId,
+          resource: sc.url,
+        });
+      }
       throw error;
     }
     // Bounded re-mint: the SDK invokes this once on a 401 and retries; a second
@@ -1189,7 +1231,7 @@ export async function executeLocalServerConnect(
     mcpClientManager,
     serverDisplayName,
     serverId,
-    { logPrefix: "connect-inspection" },
+    { logPrefix: "connect-inspection" }
   );
   void persistConnectInspection({
     convexBearer: bearer,

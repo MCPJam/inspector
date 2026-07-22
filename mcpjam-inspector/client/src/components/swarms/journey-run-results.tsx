@@ -6,7 +6,7 @@ import {
   type JourneySessionRow,
   type SessionGoalScore,
 } from "@/lib/swarm-api";
-import { formatScore } from "@/components/shared/session-quality/judge-presentation";
+import { SessionGoalScoreBadge } from "@/components/shared/session-quality/session-goal-score-badge";
 import { TraceViewer } from "@/components/evals/trace-viewer";
 import {
   TraceViewModeTabs,
@@ -89,16 +89,6 @@ export function resolveSwarmCellOutcome(args: {
   return "pending";
 }
 
-function GoalScoreHint({ score }: { score?: SessionGoalScore }) {
-  if (score?.score == null) return null;
-  return (
-    <span className="text-[10px] tabular-nums text-muted-foreground">
-      {formatScore(score.score)}
-      {score.passed != null ? (score.passed ? " · pass" : " · miss") : ""}
-    </span>
-  );
-}
-
 /**
  * One session chip: `<host> #<n> · <outcome>`. Kept `data-testid`
  * "swarm-host-cell" from the old grid so outcome assertions carry over.
@@ -140,7 +130,7 @@ export function SwarmHostCell({
       </span>
       <span className={cn("size-1.5 rounded-full", meta.dot)} />
       <span className={cn("font-semibold", meta.text)}>{meta.label}</span>
-      <GoalScoreHint score={goalScore} />
+      <SessionGoalScoreBadge goalScore={goalScore} />
     </button>
   );
 }

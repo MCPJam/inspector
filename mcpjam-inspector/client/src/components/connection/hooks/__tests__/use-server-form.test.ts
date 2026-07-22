@@ -148,12 +148,76 @@ describe("useServerForm", () => {
     });
 
     expect(result.current.preregisteredOauthBlocksSubmit).toBe(false);
+    expect(result.current.validateForm()).toBeNull();
+    expect(result.current.authConfigurationBlocksSubmit).toBe(false);
     expect(result.current.buildFormData()).toMatchObject({
       useXaa: true,
       registrationMode: "dcr",
       clientId: "stored-preregistered-client",
       clientSecret: "stored-preregistered-secret",
       hasClientSecret: true,
+    });
+  });
+
+  it("emits public CIMD without stored client credentials", () => {
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setName("Public CIMD server");
+      result.current.setUrl("https://example.com/mcp");
+      result.current.setAuthType("xaa");
+      result.current.setOauthRegistrationMode("cimd");
+      result.current.setXaaClientAuth("none");
+      result.current.setClientId("stale-client");
+      result.current.setClientSecret("stale-secret");
+    });
+
+    expect(result.current.validateForm()).toBeNull();
+    const built = result.current.buildFormData();
+    expect(built).toMatchObject({
+      useXaa: true,
+      registrationMode: "cimd",
+      xaaClientAuth: "none",
+    });
+    expect(built.clientId).toBeUndefined();
+    expect(built.clientSecret).toBeUndefined();
+    expect(built.clearClientSecret).toBeUndefined();
+  });
+
+  it("rejects a short client secret for pre-registered XAA", () => {
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setName("Pre-registered XAA server");
+      result.current.setUrl("https://example.com/mcp");
+      result.current.setAuthType("xaa");
+      result.current.setOauthRegistrationMode("preregistered");
+      result.current.setClientId("resource-client-id");
+      result.current.setClientSecret("short");
+    });
+
+    expect(result.current.validateForm()).toBe(
+      "Client Secret must be at least 8 characters if provided"
+    );
+    expect(result.current.authConfigurationBlocksSubmit).toBe(true);
+  });
+
+  it("emits confidential CIMD when the local capability is available", () => {
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setName("Private CIMD server");
+      result.current.setUrl("https://example.com/mcp");
+      result.current.setAuthType("xaa");
+      result.current.setOauthRegistrationMode("cimd");
+      result.current.setXaaClientAuth("private_key_jwt");
+    });
+
+    expect(result.current.confidentialCimdCapability.status).toBe("ready");
+    expect(result.current.authConfigurationBlocksSubmit).toBe(false);
+    expect(result.current.buildFormData()).toMatchObject({
+      registrationMode: "cimd",
+      xaaClientAuth: "private_key_jwt",
     });
   });
 
@@ -183,6 +247,7 @@ describe("useServerForm", () => {
       useXaa: true,
       useOAuth: false,
       authServerMode: "mcpjam",
+      clientId: "resource-client-id",
       xaaSubject: "stored-sub",
       xaaEmail: "stored@example.com",
       lastConnectionTime: new Date(),
@@ -233,6 +298,7 @@ describe("useServerForm", () => {
       useXaa: true,
       useOAuth: false,
       authServerMode: "mcpjam",
+      oauthFlowProfile: { clientId: "resource-client-id" },
       xaaSubject: "stored-sub",
       xaaEmail: "stored@example.com",
       lastConnectionTime: new Date(),

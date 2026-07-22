@@ -1,130 +1,39 @@
-diff --git a/.changeset/cli-widget-sdk-v2-alignment.md b/.changeset/cli-widget-sdk-v2-alignment.md
+diff --git a/.changeset/dialect-aware-schema-validation.md b/.changeset/dialect-aware-schema-validation.md
 deleted file mode 100644
-index 70beaea03..000000000
---- a/.changeset/cli-widget-sdk-v2-alignment.md
+index 35734d183..000000000
+--- a/.changeset/dialect-aware-schema-validation.md
 +++ /dev/null
-@@ -1,6 +0,0 @@
+@@ -1,5 +0,0 @@
 ----
--"@mcpjam/cli": patch
--"@mcpjam/widget-react": patch
+-"@mcpjam/sdk": patch
 ----
 -
--Align with the `@mcpjam/sdk` v2 (`@modelcontextprotocol` beta.4) migration.
-diff --git a/.changeset/elicitation-modes-and-timeouts.md b/.changeset/elicitation-modes-and-timeouts.md
+-Validate declared draft-07 tool schemas instead of rejecting them. The upstream v2 client's default validator is 2020-12-only and hard-fails `tools/call` for any tool whose `outputSchema` declares `"$schema": ".../draft-07/schema#"` — which is every MCP TypeScript SDK v1 server built with zod. The spec permits an explicitly declared draft-07 dialect on all protocol versions (2020-12 is only the default when `$schema` is absent), so the SDK now dispatches on the declared `$schema`: absent/2020-12 → a 2020-12 engine, draft-07 → a draft-07 engine, unknown dialects → skipped with a deduped `console.warn` (overridable via `onUnknownDialect`) rather than failing the call. Two runtime flavors share the dispatch core: `DialectAwareJsonSchemaValidator` (Ajv, wired into `MCPClientManager` and `createManagedMcpClient` on Node) and `CspSafeDialectAwareJsonSchemaValidator` (`@cfworker/json-schema`, wired into the HTTP doctor, which ships in the browser/workerd entries where Ajv's `new Function` compilation is unavailable).
+diff --git a/.changeset/swarm-journey-judge.md b/.changeset/swarm-journey-judge.md
 deleted file mode 100644
-index 8c41a46f7..000000000
---- a/.changeset/elicitation-modes-and-timeouts.md
+index 6461d8a27..000000000
+--- a/.changeset/swarm-journey-judge.md
 +++ /dev/null
-@@ -1,10 +0,0 @@
-----
--"@mcpjam/sdk": minor
-----
--
--Elicitation mode/serverId passthrough and elicitation-aware tool timeouts. Additive: existing callbacks and call sites are unaffected.
--
--- `ElicitationCallbackRequest` gains optional `serverId`, `mode` (`"form" | "url"`, absent ⇒ form), `url`, and `elicitationId`, so a global elicitation callback can tell which server asked, render URL-mode consent (MCP 2025-11-25), and correlate the server-chosen elicitation id. Form mode keeps reading `requestedSchema ?? schema`.
--- `ElicitationManager.applyToClient` takes an optional third argument carrying the `elicitation` client capability actually advertised on the wire, and rejects elicitations whose mode was not declared with JSON-RPC `-32602` per spec (bare `{}` ≡ form-only; `{form:{},url:{}}` allows both). Mode-vs-declaration semantics come from upstream's own `getSupportedElicitationModes`, so they cannot drift from what the upstream `Client` enforces. New `hasPendingForServer(serverId)` reports whether an elicitation handler is currently in flight.
--- New `MCPClientManagerOptions.elicitationTimeoutExtensionMs` (default 10 minutes, exported as `DEFAULT_ELICITATION_TIMEOUT_EXTENSION_MS`). When a server has an elicitation handler, `executeTool` no longer lets the per-request timeout kill a tool call that is merely blocked on a human: the base timeout is enforced by a watchdog that only accumulates time while no elicitation is pending, while total time spent suspended across all elicitations in the call is capped by the extension. A genuinely hung server still dies at its base timeout. Aborts are timeout-shaped (`SdkError` / `SdkErrorCode.RequestTimeout`) and never classified as retryable. Servers without an elicitation handler are a pure passthrough.
--- New `ElicitationMode` and `DeclaredElicitationCapability` type exports.
-diff --git a/.changeset/hostconfig-plugin-attachment.md b/.changeset/hostconfig-plugin-attachment.md
-deleted file mode 100644
-index 314fbdfdc..000000000
---- a/.changeset/hostconfig-plugin-attachment.md
-+++ /dev/null
-@@ -1,10 +0,0 @@
-----
--"@mcpjam/sdk": minor
-----
--
--HostConfig standalone-skill selection contract. Additive optional field; every existing HostConfig canonicalizes and hashes byte-identically.
--
--- `HostConfigInputV2` gains optional `skillSelection?: { mode: "all-visible" } | { mode: "explicit"; skillIds: string[] }`, threaded through the canonical form, public `HostJson`/`HostInit`, templates, and parity fixtures. Hosts carry NO plugin-specific fields — plugin component servers attach via ordinary `serverIds`, and plugin-imported skills are ordinary materialized skill rows selectable by id through `skillSelection`.
--- Canonicalization: explicit `skillIds` deduped + sorted; `{ mode: "all-visible" }` canonicalizes to absent (single content-addressed identity per behavior); explicit-empty `skillIds: []` is preserved and hashes distinctly from absent (absence is semantic).
--- External SDK eval wire normalization strips `skillSelection` (explicit skill ids are platform-internal, not portable); platform-owned suites keep it in persisted HostConfigs.
--- `schemaVersion` stays 2. New parity fixture vectors cover the added semantics for backend consumption.
-diff --git a/.changeset/inspector-unreleased-batch.md b/.changeset/inspector-unreleased-batch.md
-deleted file mode 100644
-index acf0f4170..000000000
---- a/.changeset/inspector-unreleased-batch.md
-+++ /dev/null
-@@ -1,12 +0,0 @@
+@@ -1,9 +0,0 @@
 ----
 -"@mcpjam/inspector": minor
 ----
 -
--Inspector feature batch since the last release:
+-Surface and configure the Swarm goal-completion judge.
 -
--- WebMCP agent tool surfaces: hosts, computer, chatboxes, swarms, evals, registry, primitives (resources/prompts/tools), playground, plus surface tool-group foundation and outcome telemetry.
--- The in-app agent acts only through the UI: app map from surface manifests, per-turn location, cross-screen observation, and annotation-gated `ui_*` approval.
--- Swarm journeys: live SSE streaming, evals-style matrix, journey-scoped server groups, persona avatars, and anonymous personal-org access.
--- Dynamic model catalog served in hosted mode and to the client, with guests un-gated.
--- Hosted elicitation: form dialog, URL consent, gating, and `-32042` surfacing, plus the client-capability toggle.
--- User-facing "Hosts" → "Clients" rename and assorted fixes (sidebar sign-in in local/npx, Connect nav overlap, tri-selector active state, logger copy button, upload-quota enforcement).
-diff --git a/.changeset/plugin-bundle-parser.md b/.changeset/plugin-bundle-parser.md
-deleted file mode 100644
-index 0dab61047..000000000
---- a/.changeset/plugin-bundle-parser.md
-+++ /dev/null
-@@ -1,11 +0,0 @@
-----
--"@mcpjam/sdk": minor
-----
--
--New `@mcpjam/sdk/plugin-bundle` export: a pure, source-adapter-independent parser for OpenAI plugin bundles. Additive: no existing exports change.
--
--- `parsePluginBundle(source)` consumes the abstract `PluginFileSource` interface (no filesystem, no archive libraries, zero Node builtins) and returns the normalized manifest, skills, MCP server configs, app metadata, assets, unsupported components, setup requirements, and validation warnings.
--- Accepts all three MCP config shapes (direct server map, `mcp_servers`, `mcpServers`) and normalizes to one discriminated stdio/http union; `${PLUGIN_ROOT}`-style placeholders are preserved verbatim, never substituted.
--- Full archive-path defense (absolute paths, `..` traversal, NUL bytes, duplicate/case-fold collisions, symlink markers, length/depth/count limits) with stable issue codes; hostile bundles fail before any file content is read.
--- Deterministic bundle/manifest/component hashing via the SDK's existing portable `crypto.subtle` helpers — identical across Node and browser, listing-order independent.
--- Secret hygiene: env/header requirement names only; literal values are dropped with warnings. Unknown/extension fields and oauth metadata are recursively sanitized at every depth (secret-looking keys AND secret-looking string values are dropped before anything reaches a stored DTO or hash input), `${PLUGIN_ROOT}` templates are only preserved when the value is a pure path template, and hostile deeply-nested values fail with a stable `VALUE_TOO_DEEP` code instead of a stack overflow.
-diff --git a/.changeset/sdk-v2-beta4-migration.md b/.changeset/sdk-v2-beta4-migration.md
-deleted file mode 100644
-index 407258acf..000000000
---- a/.changeset/sdk-v2-beta4-migration.md
-+++ /dev/null
-@@ -1,11 +0,0 @@
-----
--"@mcpjam/sdk": major
-----
--
--Migrate to `@modelcontextprotocol` v2 (beta.4) and route modern connections through the official Client (Phase 1A/1B/1C).
--
--BREAKING:
--- Modern (non-legacy) connections now go through the upstream official `Client` rather than the in-house preview path.
--- The stateless preview client has been removed.
--- Version negotiation is resolved via `resolveVersionNegotiation` (pin → versionNegotiation).
--- MCP error codes are centralized, including the renumbered 2026-07-28 codes.
-diff --git a/cli/package.json b/cli/package.json
-index 8cbf9effc..5984411d9 100644
---- a/cli/package.json
-+++ b/cli/package.json
-@@ -1,6 +1,6 @@
- {
-   "name": "@mcpjam/cli",
--  "version": "3.15.1",
-+  "version": "3.15.2",
-   "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
-   "type": "module",
-   "main": "dist/index.js",
-@@ -17,7 +17,7 @@
-     "prepublishOnly": "npm run build"
-   },
-   "dependencies": {
--    "@mcpjam/sdk": "^1.32.1",
-+    "@mcpjam/sdk": "^2.0.0",
-     "@modelcontextprotocol/server": "2.0.0-beta.4",
-     "commander": "^12.1.0",
-     "posthog-node": "^5.24.10",
+-- The per-session judge badge (`SessionGoalScoreBadge`) moves to the shared `session-quality` module (reusing the eval `ScoreBadge`) and now renders in the Sessions list and run matrix cells; `SwarmJudgeSection` is reachable even for sessions with no transcript.
+-- The judge config type/defaults are extracted to a shared `GoalJudgeConfig` (evals re-export the historical `EvalJudgeConfig` names), so the eval `JudgesSection` is reusable.
+-- New journeys expose an **Advanced → Judge** disclosure that reuses `JudgesSection` to set the judge model and auto-grade toggle (`journeys:createJourney` carries the config). Pairs with the backend `judgeConfig` snapshot + config-driven auto-run.
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 7d30db6e5..809166595 100644
+index 809166595..bb55d039d 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.28.1",
-+  "version": "2.29.0",
+-  "version": "2.29.0",
++  "version": "2.30.0",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
@@ -132,33 +41,21 @@ index 7d30db6e5..809166595 100644
      "@hookform/resolvers": "^3.10.0",
      "@lezer/highlight": "^1.2.3",
      "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^1.33.0",
-+    "@mcpjam/sdk": "^2.0.0",
+-    "@mcpjam/sdk": "^2.0.0",
++    "@mcpjam/sdk": "^2.0.1",
      "@modelcontextprotocol/client": "2.0.0-beta.4",
      "@modelcontextprotocol/ext-apps": "^1.7.4",
      "@openrouter/ai-sdk-provider": "^2.0.2",
 diff --git a/package-lock.json b/package-lock.json
-index b1ce2944c..bbdef246d 100644
+index 117cea299..b4d0c8fb3 100644
 --- a/package-lock.json
 +++ b/package-lock.json
-@@ -58,9 +58,9 @@
-     },
-     "cli": {
-       "name": "@mcpjam/cli",
--      "version": "3.15.1",
-+      "version": "3.15.2",
-       "dependencies": {
--        "@mcpjam/sdk": "^1.32.1",
-+        "@mcpjam/sdk": "^2.0.0",
-         "@modelcontextprotocol/server": "2.0.0-beta.4",
-         "commander": "^12.1.0",
-         "posthog-node": "^5.24.10",
 @@ -340,7 +340,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.28.1",
-+      "version": "2.29.0",
+-      "version": "2.29.0",
++      "version": "2.30.0",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
@@ -166,8 +63,8 @@ index b1ce2944c..bbdef246d 100644
          "@hookform/resolvers": "^3.10.0",
          "@lezer/highlight": "^1.2.3",
          "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^1.33.0",
-+        "@mcpjam/sdk": "^2.0.0",
+-        "@mcpjam/sdk": "^2.0.0",
++        "@mcpjam/sdk": "^2.0.1",
          "@modelcontextprotocol/client": "2.0.0-beta.4",
          "@modelcontextprotocol/ext-apps": "^1.7.4",
          "@openrouter/ai-sdk-provider": "^2.0.2",
@@ -782,55 +679,20 @@ index b1ce2944c..bbdef246d 100644
      },
      "sdk": {
        "name": "@mcpjam/sdk",
--      "version": "1.33.0",
-+      "version": "2.0.0",
+-      "version": "2.0.0",
++      "version": "2.0.1",
        "license": "MIT",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^3.0.101",
-@@ -37398,11 +37412,11 @@
-     },
-     "widget-react": {
-       "name": "@mcpjam/widget-react",
--      "version": "0.1.2",
-+      "version": "0.1.3",
-       "license": "MIT",
-       "dependencies": {
-         "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^1.30.0",
-+        "@mcpjam/sdk": "^2.0.0",
-         "@modelcontextprotocol/client": "2.0.0-beta.4",
-         "@modelcontextprotocol/ext-apps": "^1.7.4",
-         "lucide-react": "^0.525.0",
 diff --git a/sdk/package.json b/sdk/package.json
-index 26af6f0fc..2533ecfc2 100644
+index 7cd95acf2..0b8360d30 100644
 --- a/sdk/package.json
 +++ b/sdk/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/sdk",
--  "version": "1.33.0",
-+  "version": "2.0.0",
+-  "version": "2.0.0",
++  "version": "2.0.1",
    "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
    "type": "module",
    "main": "dist/index.js",
-diff --git a/widget-react/package.json b/widget-react/package.json
-index c475d355f..1cb498f35 100644
---- a/widget-react/package.json
-+++ b/widget-react/package.json
-@@ -1,6 +1,6 @@
- {
-   "name": "@mcpjam/widget-react",
--  "version": "0.1.2",
-+  "version": "0.1.3",
-   "description": "Interactive MCP-Apps / OpenAI-Apps widget runtime (React) for MCPJam. Tier B: the renderer that satisfies @mcpjam/chat-ui's renderWidget seam.",
-   "license": "MIT",
-   "type": "module",
-@@ -34,7 +34,7 @@
-   },
-   "dependencies": {
-     "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^1.30.0",
-+    "@mcpjam/sdk": "^2.0.0",
-     "@modelcontextprotocol/client": "2.0.0-beta.4",
-     "@modelcontextprotocol/ext-apps": "^1.7.4",
-     "lucide-react": "^0.525.0",

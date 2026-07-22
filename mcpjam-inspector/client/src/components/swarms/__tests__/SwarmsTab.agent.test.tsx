@@ -10,6 +10,13 @@
  */
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// NewJourneyButton's Advanced → Judge section pulls the model catalog via
+// useAvailableModels (AppStateProvider-coupled); these tests render SwarmsTab
+// without providers, so stub it to an empty catalog.
+vi.mock("@/hooks/use-available-models", () => ({
+  useAvailableModels: () => ({ availableModels: [] }),
+}));
 import { executeInspectorCommand } from "@/lib/inspector-command-handlers";
 import { readSurfaceSnapshot } from "@/lib/webmcp/surface-snapshot-registry";
 import type {

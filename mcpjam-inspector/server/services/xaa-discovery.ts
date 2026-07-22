@@ -92,7 +92,7 @@ function isParseableUrl(value: string): boolean {
  * callers can fall back to another discovery path.
  */
 export function extractAuthorizationServer(
-  metadata: Record<string, unknown>,
+  metadata: Record<string, unknown>
 ): string | undefined {
   const servers = metadata.authorization_servers;
   if (!Array.isArray(servers)) {
@@ -131,6 +131,7 @@ export interface DiscoveryVerdict {
   issuer?: string;
   tokenEndpoint?: string;
   registrationEndpoint?: string;
+  clientIdMetadataDocumentSupported: boolean;
   grantTypesSupported?: string[];
   jwtBearerSupport: GrantSupportStatus;
   jwtBearerDetail: string;
@@ -190,7 +191,7 @@ function isOriginPrefix(advertised: string, requested: string): boolean {
  */
 export function evaluateDiscovery(
   metadata: Record<string, unknown>,
-  context: { requestedIssuer: string; metadataUrl: string },
+  context: { requestedIssuer: string; metadataUrl: string }
 ): DiscoveryVerdict {
   const issuer =
     typeof metadata.issuer === "string" ? metadata.issuer : undefined;
@@ -205,7 +206,7 @@ export function evaluateDiscovery(
   const grantTypesAdvertised = Array.isArray(metadata.grant_types_supported);
   const grantTypes = grantTypesAdvertised
     ? (metadata.grant_types_supported as unknown[]).filter(
-        (g): g is string => typeof g === "string",
+        (g): g is string => typeof g === "string"
       )
     : undefined;
 
@@ -245,6 +246,8 @@ export function evaluateDiscovery(
     issuer,
     tokenEndpoint,
     registrationEndpoint,
+    clientIdMetadataDocumentSupported:
+      metadata.client_id_metadata_document_supported === true,
     grantTypesSupported: grantTypes,
     jwtBearerSupport,
     jwtBearerDetail,

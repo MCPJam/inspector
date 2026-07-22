@@ -6,9 +6,16 @@
 import type { Context } from "hono";
 import {
   buildJwtBearerBody,
+  buildXaaJwtBearerRequest,
   buildJwtBearerRequest,
+  DEFAULT_XAA_CLIENT_AUTH,
   getXAAIssuerUrl,
   issueIdJag,
+  normalizeXaaClientAuth,
+  XAA_DEBUG_CLIENT_ID_METADATA_URL,
+  type ConfidentialCimdProvider,
+  type RegistrationMode,
+  type XaaClientAuthMethod,
   type XaaTokenEndpointAuthMethod,
 } from "@mcpjam/sdk";
 import {
@@ -29,6 +36,26 @@ import {
 } from "../utils/oauth-proxy.js";
 import { ErrorCode, WebRouteError } from "../routes/web/errors.js";
 import type { ServerClientSecretResult } from "../utils/server-secrets.js";
+import { logger } from "../utils/logger.js";
+
+const XAA_MINT_ERROR_REPORTED = Symbol("xaaMintErrorReported");
+
+function markXaaMintErrorReported(
+  routeError: WebRouteError,
+  cause: unknown
+): WebRouteError {
+  routeError.cause = cause;
+  Object.defineProperty(routeError, XAA_MINT_ERROR_REPORTED, { value: true });
+  return routeError;
+}
+
+export function isXaaMintErrorReported(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    XAA_MINT_ERROR_REPORTED in error
+  );
+}
 
 // Resolved authorization-server target for a server-target run. Every field is
 // pinned server-side from the stored server config; nothing is taken from the
@@ -51,6 +78,7 @@ export interface ResolvedServerTarget {
   clientId?: string;
   clientSecret?: string;
   tokenEndpointAuthMethod?: XaaTokenEndpointAuthMethod;
+  clientIdMetadataDocumentSupported: boolean;
 }
 
 type ResolveServerSecretFn = (args: {
@@ -125,6 +153,7 @@ export async function discoverServerTargetTokenEndpoint(
   issuer: string;
   tokenEndpoint: string;
   registrationEndpoint?: string;
+  clientIdMetadataDocumentSupported: boolean;
 }> {
   let issuer = args.explicitIssuer;
   if (!issuer && args.resource) {
@@ -182,7 +211,10 @@ export async function discoverServerTargetTokenEndpoint(
       const tokenEndpointEscapesOrigin =
         originPrefixOptIn &&
         verdict.tokenEndpoint != null &&
-        !isSameOrigin(verdict.tokenEndpoint, verdict.issuerMismatch!.advertised);
+        !isSameOrigin(
+          verdict.tokenEndpoint,
+          verdict.issuerMismatch!.advertised
+        );
       const registrationEndpointEscapesOrigin =
         originPrefixOptIn &&
         verdict.registrationEndpoint != null &&
@@ -200,12 +232,12 @@ export async function discoverServerTargetTokenEndpoint(
         const hint = tokenEndpointEscapesOrigin
           ? `The path-scoped authorization server's token endpoint ("${verdict.tokenEndpoint}") is on a different origin than its issuer ("${advertised}"); refusing to send the client secret off-origin.`
           : registrationEndpointEscapesOrigin
-            ? `The path-scoped authorization server's registration endpoint ("${verdict.registrationEndpoint}") is on a different origin than its issuer ("${advertised}"); refusing dynamic registration off-origin.`
+          ? `The path-scoped authorization server's registration endpoint ("${verdict.registrationEndpoint}") is on a different origin than its issuer ("${advertised}"); refusing dynamic registration off-origin.`
           : schemeOnly
-            ? "Only the scheme differs — the authorization server is likely behind a TLS-terminating proxy but advertises an http:// issuer."
-            : originPrefix
-              ? "The advertised issuer is the same-origin root of the requested URL — a multi-tenant, path-scoped authorization server. Enable \"Path-scoped authorization server\" in the server's XAA settings to allow this."
-              : "Set the server's Authorization Server issuer to the advertised value (or fix the server URL).";
+          ? "Only the scheme differs — the authorization server is likely behind a TLS-terminating proxy but advertises an http:// issuer."
+          : originPrefix
+          ? 'The advertised issuer is the same-origin root of the requested URL — a multi-tenant, path-scoped authorization server. Enable "Path-scoped authorization server" in the server\'s XAA settings to allow this.'
+          : "Set the server's Authorization Server issuer to the advertised value (or fix the server URL).";
         throw new WebRouteError(
           409,
           ErrorCode.VALIDATION_ERROR,
@@ -239,6 +271,8 @@ export async function discoverServerTargetTokenEndpoint(
           ...(verdict.registrationEndpoint
             ? { registrationEndpoint: verdict.registrationEndpoint }
             : {}),
+          clientIdMetadataDocumentSupported:
+            verdict.clientIdMetadataDocumentSupported,
         };
       }
     }
@@ -249,6 +283,41 @@ export async function discoverServerTargetTokenEndpoint(
     ErrorCode.NOT_FOUND,
     "Couldn't discover an authorization server. Set the issuer in Configure Server to Test."
   );
+}
+
+async function resolveAuthorizedServerTarget(args: {
+  resource?: string;
+  explicitIssuer?: string;
+  allowPathScopedIssuer?: boolean;
+  httpsOnly: boolean;
+}): Promise<ResolvedServerTarget> {
+  if (!args.explicitIssuer && !args.resource) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "The server has no URL or issuer to discover an authorization server from"
+    );
+  }
+
+  const discovered = await discoverServerTargetTokenEndpoint(
+    {
+      resource: args.resource,
+      explicitIssuer: args.explicitIssuer,
+      allowPathScopedIssuer: args.allowPathScopedIssuer,
+    },
+    args.httpsOnly
+  );
+
+  return {
+    tokenEndpoint: discovered.tokenEndpoint,
+    ...(discovered.registrationEndpoint
+      ? { registrationEndpoint: discovered.registrationEndpoint }
+      : {}),
+    authzIssuer: discovered.issuer,
+    resource: args.resource,
+    clientIdMetadataDocumentSupported:
+      discovered.clientIdMetadataDocumentSupported,
+  };
 }
 
 // Resolve a server target's secret AND token endpoint entirely server-side.
@@ -285,30 +354,15 @@ export async function resolveServerTarget(deps: {
     clientIp: deps.clientIp,
   });
 
-  if (!resolved.xaaAuthzIssuer && !resolved.serverUrl) {
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      "The server has no URL or issuer to discover an authorization server from"
-    );
-  }
-
-  const discovered = await discoverServerTargetTokenEndpoint(
-    {
-      resource: resolved.serverUrl ?? undefined,
-      explicitIssuer: resolved.xaaAuthzIssuer ?? undefined,
-      allowPathScopedIssuer: resolved.xaaAllowPathScopedIssuer === true,
-    },
-    deps.httpsOnly
-  );
+  const target = await resolveAuthorizedServerTarget({
+    resource: resolved.serverUrl ?? undefined,
+    explicitIssuer: resolved.xaaAuthzIssuer ?? undefined,
+    allowPathScopedIssuer: resolved.xaaAllowPathScopedIssuer === true,
+    httpsOnly: deps.httpsOnly,
+  });
 
   return {
-    tokenEndpoint: discovered.tokenEndpoint,
-    ...(discovered.registrationEndpoint
-      ? { registrationEndpoint: discovered.registrationEndpoint }
-      : {}),
-    authzIssuer: discovered.issuer,
-    resource: resolved.serverUrl ?? undefined,
+    ...target,
     clientId: resolved.clientId ?? undefined,
     clientSecret: resolved.clientSecret ?? undefined,
   };
@@ -352,13 +406,38 @@ export function getIssuerForRequest(
 export interface XaaMintServerConfig {
   url?: string;
   oauthScopes?: string[];
+  xaaAuthzIssuer?: string;
+  xaaAllowPathScopedIssuer?: boolean;
   xaaSubject?: string;
   xaaEmail?: string;
-  registrationMode?: "auto" | "preregistered" | "cimd" | "dcr";
+  registrationMode?: RegistrationMode;
+  xaaClientAuth?: XaaClientAuthMethod;
 }
 
 type EnsureXaaDcrRegistrationFn = typeof ensureXaaDcrRegistration;
 type FetchXaaDcrAuthorizedTargetFn = typeof fetchXaaDcrAuthorizedTarget;
+
+export function resolveXaaConnectRegistrationMode(
+  mode: RegistrationMode | undefined
+): "preregistered" | "cimd" | "dcr" {
+  return mode === "cimd" || mode === "dcr" ? mode : "preregistered";
+}
+
+export function scopeXaaIssuerForAuthorizedProject(args: {
+  issuer: string;
+  organizationId?: string | null;
+  isAnonymous?: boolean;
+}): string {
+  if (!args.organizationId || typeof args.isAnonymous !== "boolean") {
+    return args.issuer;
+  }
+  const parsedIssuer = new URL(args.issuer);
+  if (!parsedIssuer.pathname.endsWith("/api/web/xaa")) return args.issuer;
+  const segment = args.isAnonymous ? "g" : "o";
+  return `${args.issuer.replace(/\/+$/, "")}/${segment}/${encodeURIComponent(
+    args.organizationId
+  )}`;
+}
 
 function formUrlEncodeCredential(value: string): string {
   return encodeURIComponent(value)
@@ -422,8 +501,7 @@ function redactCredentialsFromText(
 ): string | undefined {
   if (!value) return value;
   return variants.reduce(
-    (redacted, credential) =>
-      redacted.split(credential).join("[REDACTED]"),
+    (redacted, credential) => redacted.split(credential).join("[REDACTED]"),
     value
   );
 }
@@ -439,7 +517,29 @@ export function resolveXaaIssuer(c: Context, hostedMode: boolean): string {
   return getIssuerForRequest(
     c,
     hostedMode ? "/api/web" : "/api/mcp",
-    hostedMode,
+    hostedMode
+  );
+}
+
+/**
+ * Resolve the issuer surface used by Connect before the authorized project is
+ * scoped below. A local Inspector still uses the membership-gated `/api/web`
+ * issuer when Convex authorization returned an organization; `/api/mcp`
+ * remains the unscoped fallback for a genuinely local project. This choice is
+ * independent from `hostedMode`, which continues to control outbound HTTPS
+ * enforcement. Forwarded-scheme handling follows the selected issuer surface
+ * so the minted `iss` matches that surface's discovery document.
+ */
+export function resolveXaaConnectIssuer(
+  c: Context,
+  args: { hostedMode: boolean; organizationId?: string | null }
+): string {
+  const usesScopedWebIssuer = Boolean(args.organizationId);
+  const usesWebIssuer = args.hostedMode || usesScopedWebIssuer;
+  return getIssuerForRequest(
+    c,
+    usesWebIssuer ? "/api/web" : "/api/mcp",
+    usesWebIssuer
   );
 }
 
@@ -455,9 +555,12 @@ export function buildXaaMintArgs(args: {
   serverId: string;
   projectId: string;
   bearerToken: string;
-  resolveServerSecret: ResolveServerSecretFn;
+  resolveServerSecret?: ResolveServerSecretFn;
   ensureDcrRegistration?: EnsureXaaDcrRegistrationFn;
   resolveDcrTarget?: FetchXaaDcrAuthorizedTargetFn;
+  organizationId?: string | null;
+  isAnonymous?: boolean;
+  confidentialCimdProvider?: ConfidentialCimdProvider;
 }): Parameters<typeof mintXaaAccessToken>[0] {
   const sc = args.serverConfig;
   return {
@@ -467,17 +570,25 @@ export function buildXaaMintArgs(args: {
     resolveDcrTarget: args.resolveDcrTarget ?? fetchXaaDcrAuthorizedTarget,
     // Hosted targets are always remote HTTPS; off-hosted allows localhost http.
     httpsOnly: args.hostedMode,
-    issuer: args.issuer,
+    issuer: scopeXaaIssuerForAuthorizedProject({
+      issuer: args.issuer,
+      organizationId: args.organizationId,
+      isAnonymous: args.isAnonymous,
+    }),
     serverId: args.serverId,
     projectId: args.projectId,
     bearerToken: args.bearerToken,
     resource: sc.url,
+    explicitIssuer: sc.xaaAuthzIssuer,
+    allowPathScopedIssuer: sc.xaaAllowPathScopedIssuer,
+    registrationMode: sc.registrationMode,
+    xaaClientAuth: sc.xaaClientAuth,
+    confidentialCimdProvider: args.confidentialCimdProvider,
     scope: sc.oauthScopes?.join(" ") || undefined,
     // Mock-login identity: stored override if set, else the XAA IdP mock-login
     // defaults.
     subject: sc.xaaSubject || "user-12345",
     email: sc.xaaEmail || "demo.user@example.com",
-    registrationMode: sc.registrationMode,
   };
 }
 
@@ -498,14 +609,26 @@ export async function mintXaaAccessToken(args: {
   bearerToken: string;
   /** The protected resource (the MCP server URL). */
   resource?: string;
+  explicitIssuer?: string;
+  allowPathScopedIssuer?: boolean;
+  registrationMode?: RegistrationMode;
+  xaaClientAuth?: XaaClientAuthMethod;
+  confidentialCimdProvider?: ConfidentialCimdProvider;
   scope?: string;
   /** Mock-login subject — already resolved (override or signed-in user). */
   subject: string;
   email?: string;
-  registrationMode?: "auto" | "preregistered" | "cimd" | "dcr";
 }): Promise<{ accessToken: string; tokenEndpoint: string }> {
+  const registrationMode = resolveXaaConnectRegistrationMode(
+    args.registrationMode
+  );
   let target: ResolvedServerTarget;
-  if (args.registrationMode === "dcr") {
+  let clientId: string;
+  let clientSecret: string | undefined;
+  let tokenEndpointAuthMethod: XaaTokenEndpointAuthMethod;
+  let confidentialCimdProvider: ConfidentialCimdProvider | undefined;
+
+  if (registrationMode === "dcr") {
     if (!args.resolveDcrTarget || !args.ensureDcrRegistration) {
       throw new WebRouteError(
         400,
@@ -529,17 +652,16 @@ export async function mintXaaAccessToken(args: {
     // Validate the token endpoint before DCR can create a remote client. The
     // registration endpoint is independently validated inside ensureDcr.
     await validateUrl(discovered.tokenEndpoint, args.httpsOnly);
-    const registration: XaaDcrRegistration =
-      await args.ensureDcrRegistration({
-        bearerToken: args.bearerToken,
-        projectId: args.projectId,
-        serverId: args.serverId,
-        resource: storedTarget.serverUrl,
-        registrationEndpoint: discovered.registrationEndpoint ?? "",
-        issuer: discovered.issuer,
-        scope: args.scope,
-        httpsOnly: args.httpsOnly,
-      });
+    const registration: XaaDcrRegistration = await args.ensureDcrRegistration({
+      bearerToken: args.bearerToken,
+      projectId: args.projectId,
+      serverId: args.serverId,
+      resource: storedTarget.serverUrl,
+      registrationEndpoint: discovered.registrationEndpoint ?? "",
+      issuer: discovered.issuer,
+      scope: args.scope,
+      httpsOnly: args.httpsOnly,
+    });
     target = {
       tokenEndpoint: discovered.tokenEndpoint,
       ...(discovered.registrationEndpoint
@@ -552,10 +674,65 @@ export async function mintXaaAccessToken(args: {
         ? { clientSecret: registration.clientSecret }
         : {}),
       tokenEndpointAuthMethod: registration.tokenEndpointAuthMethod,
+      clientIdMetadataDocumentSupported:
+        discovered.clientIdMetadataDocumentSupported,
     };
+    clientId = registration.clientId;
+    clientSecret = registration.clientSecret;
+    tokenEndpointAuthMethod = registration.tokenEndpointAuthMethod;
+  } else if (registrationMode === "cimd") {
+    target = await resolveAuthorizedServerTarget({
+      resource: args.resource,
+      explicitIssuer: args.explicitIssuer,
+      allowPathScopedIssuer: args.allowPathScopedIssuer,
+      httpsOnly: args.httpsOnly,
+    });
+    if (!target.clientIdMetadataDocumentSupported) {
+      throw new WebRouteError(
+        409,
+        ErrorCode.FEATURE_NOT_SUPPORTED,
+        "The authorization server does not advertise client_id_metadata_document_supported: true. Choose pre-registered credentials or update the authorization server."
+      );
+    }
+
+    const clientAuth =
+      normalizeXaaClientAuth(args.xaaClientAuth) ?? DEFAULT_XAA_CLIENT_AUTH;
+    if (clientAuth === "private_key_jwt") {
+      if (!args.confidentialCimdProvider) {
+        throw new WebRouteError(
+          409,
+          ErrorCode.FEATURE_NOT_SUPPORTED,
+          "Confidential CIMD is not available for this connection. Choose Public client authentication or contact your administrator."
+        );
+      }
+      confidentialCimdProvider = args.confidentialCimdProvider;
+      try {
+        clientId = confidentialCimdProvider.getClientIdMetadataUrl();
+      } catch (error) {
+        logger.error(
+          "[XAA connect] confidential CIMD client identity resolution failed",
+          error,
+          {
+            serverId: args.serverId,
+            projectId: args.projectId,
+            resource: args.resource,
+            tokenEndpoint: target.tokenEndpoint,
+            authorizationServer: target.authzIssuer,
+          }
+        );
+        const routeError = new WebRouteError(
+          500,
+          ErrorCode.INTERNAL_ERROR,
+          "Could not prepare the confidential CIMD client identity"
+        );
+        throw markXaaMintErrorReported(routeError, error);
+      }
+      tokenEndpointAuthMethod = "private_key_jwt";
+    } else {
+      clientId = XAA_DEBUG_CLIENT_ID_METADATA_URL;
+      tokenEndpointAuthMethod = "none";
+    }
   } else {
-    // Keep `auto`, preregistered, and the existing CIMD behavior unchanged.
-    // DCR is intentionally enabled only by an explicit DCR selection.
     target = await resolveServerTarget({
       resolveServerSecret: args.resolveServerSecret,
       httpsOnly: args.httpsOnly,
@@ -563,6 +740,16 @@ export async function mintXaaAccessToken(args: {
       projectId: args.projectId,
       bearerToken: args.bearerToken,
     });
+    if (!target.clientId) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "Client ID is required for pre-registered XAA Connect"
+      );
+    }
+    clientId = target.clientId;
+    clientSecret = target.clientSecret;
+    tokenEndpointAuthMethod = clientSecret ? "client_secret_post" : "none";
   }
 
   // Pin the grant resource to the resolved server target (its stored URL), so
@@ -578,26 +765,55 @@ export async function mintXaaAccessToken(args: {
     // validates against), NOT its token endpoint.
     audience: target.authzIssuer,
     resource: tokenResource,
-    clientId: target.clientId ?? "",
+    clientId,
     scope: args.scope,
   });
 
-  let tokenRequest: ReturnType<typeof buildJwtBearerRequest>;
+  let tokenRequest: ReturnType<typeof buildXaaJwtBearerRequest>;
   try {
-    tokenRequest = buildJwtBearerRequest({
-      assertion: idJag.token,
-      clientId: target.clientId,
-      clientSecret: target.clientSecret,
-      scope: args.scope,
-      resource: tokenResource || undefined,
-      tokenEndpointAuthMethod: target.tokenEndpointAuthMethod,
-    });
-  } catch (error) {
-    throw new WebRouteError(
-      409,
-      ErrorCode.VALIDATION_ERROR,
-      error instanceof Error ? error.message : "Invalid XAA client credentials"
+    tokenRequest = buildXaaJwtBearerRequest(
+      {
+        tokenEndpoint: target.tokenEndpoint,
+        assertion: idJag.token,
+        clientId,
+        clientSecret,
+        scope: args.scope,
+        resource: tokenResource || undefined,
+        tokenEndpointAuthMethod,
+      },
+      confidentialCimdProvider
     );
+  } catch (error) {
+    if (registrationMode === "cimd") {
+      logger.error(
+        "[XAA connect] confidential CIMD assertion signing failed",
+        error,
+        {
+          serverId: args.serverId,
+          projectId: args.projectId,
+          resource: tokenResource,
+          tokenEndpoint: target.tokenEndpoint,
+          authorizationServer: target.authzIssuer,
+          clientId,
+        }
+      );
+      const routeError = new WebRouteError(
+        500,
+        ErrorCode.INTERNAL_ERROR,
+        "Could not sign the confidential CIMD token request"
+      );
+      throw markXaaMintErrorReported(routeError, error);
+    }
+    if (registrationMode === "dcr") {
+      throw new WebRouteError(
+        409,
+        ErrorCode.VALIDATION_ERROR,
+        error instanceof Error
+          ? error.message
+          : "Invalid XAA DCR client credentials"
+      );
+    }
+    throw error;
   }
 
   const proxyResult = await executeOAuthProxy({
@@ -651,9 +867,9 @@ export async function mintXaaAccessToken(args: {
     throw new WebRouteError(
       502,
       ErrorCode.SERVER_UNREACHABLE,
-      `XAA token exchange (jwt-bearer grant) was rejected by the authorization server at ${target.tokenEndpoint} (HTTP ${proxyResult.status})${
-        detail ? ` — ${detail}` : ""
-      }`,
+      `XAA token exchange (jwt-bearer grant) was rejected by the authorization server at ${
+        target.tokenEndpoint
+      } (HTTP ${proxyResult.status})${detail ? ` — ${detail}` : ""}`,
       { status: proxyResult.status }
     );
   }
