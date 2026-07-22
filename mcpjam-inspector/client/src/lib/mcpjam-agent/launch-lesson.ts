@@ -45,13 +45,14 @@ const NO_PROJECT_SENTINEL = "none";
 // previous chat instance survives in the hoisted instance map and is
 // recoverable from Recent Chats.
 //
-// Two layers, read in-memory-first:
-//   - In-memory module var: dedups repeat clicks within this tab even when
-//     localStorage is disabled or full (the persisted layer can't write).
-//   - localStorage: survives reload and is visible to other tabs, because the
-//     panel store also persists `activeSessionId` there — so re-clicking the
-//     same tour after a refresh refocuses instead of minting a duplicate that
-//     re-autosubmits the whole lesson.
+// Two layers, read persisted-first:
+//   - localStorage: the cross-tab source of truth, kept in step with the panel
+//     store's own localStorage-persisted `activeSessionId`. Reading it first
+//     means re-clicking a tour after a reload — or in another tab that adopted
+//     the session — refocuses the live session instead of minting a duplicate
+//     that re-autosubmits the whole lesson.
+//   - In-memory module var: fallback for when localStorage is disabled or full
+//     (can't be written or read), so repeat clicks still dedup within this tab.
 // A genuinely concurrent cross-tab race (two tabs clicking the SAME tour within
 // the same tick) can still mint twice — the persisted value and the panel's
 // in-memory state are read at slightly different times. That is the same
@@ -67,10 +68,7 @@ interface LastLaunch {
 
 let inMemoryLastLaunch: LastLaunch | null = null;
 
-function readLastLaunch(): LastLaunch | null {
-  // In-memory first: this tab's own last launch, always available even with
-  // storage disabled. Fall back to the persisted value for reload/other-tab.
-  if (inMemoryLastLaunch) return inMemoryLastLaunch;
+function readPersistedLastLaunch(): LastLaunch | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = window.localStorage.getItem(LAST_LAUNCH_KEY);
@@ -88,6 +86,12 @@ function readLastLaunch(): LastLaunch | null {
   } catch {
     return null;
   }
+}
+
+function readLastLaunch(): LastLaunch | null {
+  // Persisted (cross-tab, panel-synced) first; in-memory only as a fallback
+  // when storage is unavailable or has no valid entry.
+  return readPersistedLastLaunch() ?? inMemoryLastLaunch;
 }
 
 function writeLastLaunch(value: LastLaunch): void {
@@ -152,12 +156,18 @@ export function launchLessonSession({
 
   // Pre-seed the recents title so the Recent Chats pill reads "Tour: <title>"
   // instead of the first 50 chars of the lesson prompt (the thread's submit
-  // keeps an existing title when present).
-  appendRecentMcpjamAgentSession({
-    id: sessionId,
-    title: `Tour: ${tour.title}`,
-    ts: Date.now(),
-  });
+  // keeps an existing title when present). This is cosmetic and reads
+  // localStorage unguarded (`loadRecentMcpjamAgentSessions`), which can throw
+  // where storage access is denied — never let it abort the launch.
+  try {
+    appendRecentMcpjamAgentSession({
+      id: sessionId,
+      title: `Tour: ${tour.title}`,
+      ts: Date.now(),
+    });
+  } catch {
+    // Recents pill just won't show this session's friendly title.
+  }
 
   panel.setActiveSession(sessionId, resolvedProjectId);
   panel.setOpen(true);

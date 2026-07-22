@@ -173,8 +173,11 @@ describe("launchLessonSession", () => {
     expect(useAgentPanelStore.getState().activeSessionId).toBe("sess-1");
   });
 
+  // NOTE: jsdom's window.localStorage/sessionStorage do NOT route through
+  // Storage.prototype, so spying the prototype is a no-op. Spy the instances.
+
   it("still activates the session when sessionStorage.setItem throws", () => {
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    vi.spyOn(window.sessionStorage, "setItem").mockImplementation(() => {
       throw new Error("quota");
     });
     const ok = launchLessonSession({ tour: TOUR, projectId: "proj-1" });
@@ -182,14 +185,12 @@ describe("launchLessonSession", () => {
     expect(useAgentPanelStore.getState().activeSessionId).toBe("sess-1");
   });
 
-  it("dedups a same-tab repeat click even when localStorage is unavailable", () => {
-    // Storage fully disabled: the persisted layer can't record the launch, so
-    // dedup must fall back to the in-memory record.
-    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
-      throw new Error("disabled");
-    });
-    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
-      throw new Error("disabled");
+  it("dedups a same-tab repeat click when localStorage cannot persist", () => {
+    // Quota-full / write-disabled: the persisted layer reads empty and can't
+    // write, so dedup must come from the in-memory fallback.
+    vi.spyOn(window.localStorage, "getItem").mockReturnValue(null);
+    vi.spyOn(window.localStorage, "setItem").mockImplementation(() => {
+      throw new Error("quota");
     });
 
     launchLessonSession({ tour: TOUR, projectId: "proj-1" });
@@ -197,6 +198,21 @@ describe("launchLessonSession", () => {
 
     expect(ok).toBe(true);
     expect(generateIdMock).toHaveBeenCalledTimes(1); // no duplicate session
+    expect(useAgentPanelStore.getState().activeSessionId).toBe("sess-1");
+  });
+
+  it("still launches when localStorage access throws (denied/privacy mode)", () => {
+    // Every localStorage op throws — including the unguarded getItem inside
+    // loadRecentMcpjamAgentSessions. The launch must survive it.
+    vi.spyOn(window.localStorage, "getItem").mockImplementation(() => {
+      throw new Error("denied");
+    });
+    vi.spyOn(window.localStorage, "setItem").mockImplementation(() => {
+      throw new Error("denied");
+    });
+
+    const ok = launchLessonSession({ tour: TOUR, projectId: "proj-1" });
+    expect(ok).toBe(true);
     expect(useAgentPanelStore.getState().activeSessionId).toBe("sess-1");
   });
 });
