@@ -1,0 +1,80 @@
+---
+title: "Learning"
+description: "Step-by-step articles and guided tours that teach MCP concepts by driving the inspector UI"
+icon: "graduation-cap"
+---
+
+The Learning tab is a self-paced curriculum for understanding MCP and the MCPJam inspector. It is organized into groups of modules — reading articles and interactive guided tours — that you can work through at your own pace and mark complete as you go.
+
+## Overview
+
+Open the Learning tab from the sidebar. The landing page shows all module groups with a progress bar for each group and an overall completion count in the header.
+
+Each row shows:
+
+- The module title and a short description
+- An estimated reading or tour time
+- A checkbox to mark the module complete
+- A **Guided** badge and play icon for guided tours (see below), or a chevron for reading modules
+
+Clicking a reading module opens an in-tab article or interactive diagram. Clicking a guided tour opens the MCPJam agent side panel and starts the tour automatically.
+
+## Reading modules
+
+Reading modules are in-tab articles and interactive diagrams. The current groups are:
+
+| Group | What it covers |
+|-------|---------------|
+| **Getting started** | Why MCP exists, what problems it solves, and how it compares to APIs and CLI tools |
+| **The Protocol** | The main primitives MCP servers expose: tools, resources, and prompts |
+| **MCP Apps** | How MCP Apps (ext-apps) work and how they differ from plain MCP servers |
+| **Apps SDK** | How to build ChatGPT apps with the Apps SDK |
+
+## Guided tours
+
+Guided tours are hands-on walkthroughs where the MCPJam agent drives the real inspector UI alongside you. Selecting a tour opens the agent side panel with the lesson prompt as the first message. The agent then navigates to the relevant screens, narrates each step, and prefills forms — but always hands the final, consequential click back to you.
+
+The five tours cover the core inspector workflow:
+
+| Tour | What you learn | Estimated time |
+|------|---------------|----------------|
+| **Connect your first MCP server** | Add a server over HTTP or STDIO and verify its tools appear | ~3 min |
+| **Run a tool in the Playground** | Chat with a model and watch it call one of your server's tools | ~4 min |
+| **Create and run an eval suite** | Build a test suite for your server's tools and score a run | ~5 min |
+| **Simulate users with Swarms** | Create a persona and a journey to stress-test your server | ~5 min |
+| **Package servers into a Host** | Bundle your connected servers into a named, reusable Host | ~4 min |
+
+### How guided tours work
+
+When you select a tour:
+
+1. The MCPJam agent side panel opens with the tour prompt as the first visible message.
+2. The agent takes a snapshot of your current app state so the tour adapts to what you already have set up.
+3. The agent navigates to the relevant tab, narrates each screen, and prefills any forms.
+4. For any action that submits data, runs a model call, or spends quota, the agent stops and tells you exactly what to click — it never takes that final step for you.
+5. When the tour is done, the agent recaps what you learned and reminds you to go back to the Learning tab and check the tour off as complete.
+
+<Note>
+Guided tours require an active project. If you are not signed in or do not have a project selected, the tour will not launch.
+</Note>
+
+### Destructive and billable actions
+
+The agent follows the same approval rules as the rest of the MCPJam agent:
+
+- Actions that spend model tokens, run eval iterations, or launch swarm runs are always gated — the agent asks before proceeding.
+- Destructive actions (those that cannot be undone) always pause for your approval, regardless of the **Tool approval** toggle setting.
+
+See [MCPJam Agent panel](/inspector/home#mcpjam-agent-panel) for details on the approval model.
+
+### Re-opening a tour
+
+If you close the side panel mid-tour and click the same tour again, the panel re-opens to the existing session rather than starting a new one. Clicking a different tour always starts a fresh session.
+
+## Tracking progress
+
+- **Checkbox** — Click the checkbox on any row to toggle it complete or incomplete. This is the only way to mark a module done; guided tours do not auto-complete when the agent finishes.
+- **Progress bar** — Each group shows a progress bar and a completed/total count.
+- **Header totals** — The page header shows the total number of tracks and lessons, including guided tours.
+
+Progress is stored in your browser's local storage and is not synced across devices.
