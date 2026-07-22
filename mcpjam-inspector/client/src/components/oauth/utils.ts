@@ -90,23 +90,9 @@ export const deriveOAuthProfileFromServer = (
 
   const stored = readStoredOAuthCredentials(server.name);
 
-  // Bridge the two-union seam: the OAuth debugger tracks its own protocol
-  // version, separate from the wire `mcpProtocolVersion`. When a server is
-  // explicitly pinned to the 2026-07-28 wire era and the user has not chosen
-  // an OAuth profile version, default the OAuth flow to the 2026-07-28 machine
-  // so the debugger models the era the connection actually negotiates.
-  const explicitProfileVersion = server.oauthFlowProfile?.protocolVersion;
-  const protocolVersion =
-    !explicitProfileVersion &&
-    (httpConfig as { mcpProtocolVersion?: string }).mcpProtocolVersion ===
-      "2026-07-28"
-      ? "2026-07-28"
-      : baseProfile.protocolVersion;
-
   return {
     ...EMPTY_OAUTH_TEST_PROFILE,
     ...baseProfile,
-    protocolVersion,
     serverUrl: baseProfile.serverUrl || toUrlString(httpConfig.url),
     clientId: baseProfile.clientId || clientIdFromConfig || stored.clientId,
     clientSecret: baseProfile.clientSecret || clientSecretFromConfig,

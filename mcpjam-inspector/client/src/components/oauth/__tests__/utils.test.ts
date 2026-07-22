@@ -66,35 +66,19 @@ describe("deriveOAuthProfileFromServer stored-credential fallback", () => {
     expect(profile.scopes).toBe("");
   });
 
-  it("defaults the OAuth profile to 2026-07-28 when the server is wire-pinned to it and no OAuth version is set", () => {
+  it("keeps an explicit 2026-07-28 OAuth profile version", () => {
     const profile = deriveOAuthProfileFromServer(
       httpServer({
-        config: {
-          url: new URL("http://localhost:8787/mcp"),
-          mcpProtocolVersion: "2026-07-28",
-        } as ServerWithName["config"],
-      }),
-    );
-    expect(profile.protocolVersion).toBe("2026-07-28");
-  });
-
-  it("keeps an explicit OAuth profile version over the wire pin", () => {
-    const profile = deriveOAuthProfileFromServer(
-      httpServer({
-        config: {
-          url: new URL("http://localhost:8787/mcp"),
-          mcpProtocolVersion: "2026-07-28",
-        } as ServerWithName["config"],
         oauthFlowProfile: {
           serverUrl: "http://localhost:8787/mcp",
           clientId: "",
           clientSecret: "",
           scopes: "",
           customHeaders: [],
-          protocolVersion: "2025-11-25",
+          protocolVersion: "2026-07-28",
         } as ServerWithName["oauthFlowProfile"],
       }),
     );
-    expect(profile.protocolVersion).toBe("2025-11-25");
+    expect(profile.protocolVersion).toBe("2026-07-28");
   });
 });
