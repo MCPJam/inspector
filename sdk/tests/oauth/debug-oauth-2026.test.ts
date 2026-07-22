@@ -330,6 +330,32 @@ describe("debug-oauth-2026-07-28 machine — 2M-a spec steps", () => {
     expect(getState().error).toMatch(/RFC 9207/);
   });
 
+  it("logs a token-verified info entry for a tools/list verify result", async () => {
+    const getState = await driveOnce(
+      {
+        currentStep: "authenticated_mcp_request",
+        accessToken: "test-access-token",
+      },
+      jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: { "content-type": "application/json" },
+        body: {
+          jsonrpc: "2.0",
+          id: 2,
+          result: { tools: [{ name: "a" }, { name: "b" }] },
+        },
+      }),
+    );
+    expect(getState().currentStep).toBe("complete");
+    const verified = (getState().infoLogs ?? []).find(
+      (l) => l.id === "mcp-token-verified",
+    );
+    expect(verified).toBeDefined();
+    expect(verified?.data?.["Tools listed"]).toBe(2);
+  });
+
   it("post-token verification is a stateless tools/list, never initialize", async () => {
     const getState = await driveOnce(
       {

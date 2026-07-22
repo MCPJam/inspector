@@ -2448,6 +2448,29 @@ export const createDebugOAuthStateMachine = (
                   "MCP Server Information",
                   protocolInfo
                 );
+              } else if (mcpResponse?.result) {
+                // 2026-07-28 stateless verify: the request is `tools/list`, so a
+                // successful result has no `initialize` protocolVersion/serverInfo
+                // to report — it simply proves the bearer token is accepted.
+                // Surface that (with a tool count when present) instead of
+                // logging nothing.
+                const toolCount = Array.isArray(mcpResponse.result.tools)
+                  ? mcpResponse.result.tools.length
+                  : undefined;
+                mcpInfoLogs = addInfoLog(
+                  getCurrentState(),
+                  "authenticated_mcp_request",
+                  "mcp-token-verified",
+                  "Access token verified (tools/list)",
+                  {
+                    Transport: "Streamable HTTP",
+                    "Response Format": "JSON",
+                    Result: "Bearer token accepted; tools/list succeeded",
+                    ...(toolCount !== undefined
+                      ? { "Tools listed": toolCount }
+                      : {}),
+                  }
+                );
               }
 
               updateState({
