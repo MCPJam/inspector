@@ -1265,8 +1265,25 @@ export function useServerState({
         serverOverride,
         hostPin
       );
-      if (effective !== undefined) {
-        defaults.mcpProtocolVersion = effective;
+      // Lowest-precedence fallback: a pin carried on the server config itself
+      // — e.g. the sessionless 2026 wire era derived from a just-completed
+      // OAuth flow (see `createServerConfig` / `applyTokensFromOAuthFlow`).
+      // Without this the resolver rebuilds `connectionDefaults` purely from
+      // host config and silently drops that pin, so a 2026-only server
+      // reconnects on the default 2025 initialize path. A per-server override
+      // or host default still wins, so an explicit wire pin is never clobbered
+      // by the OAuth-derived one.
+      const rawConfigPin =
+        "mcpProtocolVersion" in serverConfig
+          ? serverConfig.mcpProtocolVersion
+          : undefined;
+      const configPin: McpProtocolVersion | undefined =
+        typeof rawConfigPin === "string" && isKnownProtocolVersion(rawConfigPin)
+          ? rawConfigPin
+          : undefined;
+      const resolvedProtocolVersion = effective ?? configPin;
+      if (resolvedProtocolVersion !== undefined) {
+        defaults.mcpProtocolVersion = resolvedProtocolVersion;
       }
       // Enterprise-managed authorization policy from the active host's
       // mcpProfile. Sent only when validly ON; an `invalid` stored policy
