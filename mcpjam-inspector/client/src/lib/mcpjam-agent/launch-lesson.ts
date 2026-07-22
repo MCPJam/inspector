@@ -44,7 +44,49 @@ const NO_PROJECT_SENTINEL = "none";
 // the tour. Clicking a *different* tour intentionally mints a new session; the
 // previous chat instance survives in the hoisted instance map and is
 // recoverable from Recent Chats.
-let lastLaunch: { tourId: string; sessionId: string } | null = null;
+//
+// Persisted to localStorage (not just a module var) because the panel store
+// persists `activeSessionId` across reloads and tabs — a module-scoped record
+// would be lost on refresh, so re-clicking the same tour after a reload would
+// mint a duplicate and re-autosubmit the whole lesson. localStorage is shared
+// across tabs and survives reload, keeping the dedup in step with the panel.
+const LAST_LAUNCH_KEY = "mcpjam:agent-tour-last-launch:v1";
+
+interface LastLaunch {
+  tourId: string;
+  sessionId: string;
+  projectId: string;
+}
+
+function readLastLaunch(): LastLaunch | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(LAST_LAUNCH_KEY);
+    if (!raw) return null;
+    const p = JSON.parse(raw) as Partial<LastLaunch>;
+    if (
+      p &&
+      typeof p.tourId === "string" &&
+      typeof p.sessionId === "string" &&
+      typeof p.projectId === "string"
+    ) {
+      return { tourId: p.tourId, sessionId: p.sessionId, projectId: p.projectId };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function writeLastLaunch(value: LastLaunch): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(LAST_LAUNCH_KEY, JSON.stringify(value));
+  } catch {
+    // Quota/disabled storage — dedup degrades to per-turn only; a duplicate
+    // session is the worst case, not data loss.
+  }
+}
 
 export function launchLessonSession({
   tour,
@@ -69,16 +111,19 @@ export function launchLessonSession({
   }
 
   const panel = useAgentPanelStore.getState();
+  const lastLaunch = readLastLaunch();
 
   if (
     lastLaunch?.tourId === tour.id &&
+    lastLaunch.projectId === resolvedProjectId &&
     panel.activeSessionId === lastLaunch.sessionId &&
     panel.activeSessionProjectId === resolvedProjectId
   ) {
-    // Same tour AND same project — the session is still valid, just bring the
-    // panel back into view. If the project changed since, fall through and mint
-    // a fresh session scoped to it (else the panel's project gate shows the
-    // empty hero).
+    // Same tour AND same project, and that session is still the active panel
+    // session — just bring the panel back into view. If the project changed or
+    // the panel moved on to a different session, fall through and mint a fresh
+    // session scoped to the current project (else the panel's project gate
+    // shows the empty hero, or we'd re-seed over a live chat).
     panel.setOpen(true);
     return true;
   }
@@ -111,11 +156,16 @@ export function launchLessonSession({
     prompt_length: tour.agentPrompt.length,
   });
 
-  lastLaunch = { tourId: tour.id, sessionId };
+  writeLastLaunch({ tourId: tour.id, sessionId, projectId: resolvedProjectId });
   return true;
 }
 
 /** Test-only: clears the same-tour refocus memory between cases. */
 export function __resetLaunchLessonForTests(): void {
-  lastLaunch = null;
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(LAST_LAUNCH_KEY);
+  } catch {
+    // ignore
+  }
 }

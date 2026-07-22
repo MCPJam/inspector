@@ -148,7 +148,7 @@ Walk me through, in order:
 2. Snapshot my state so we can use my actual connected server(s). If I have none, detour and help me connect one first.
 3. Take me to Hosts and explain what I'm looking at.
 4. Walk me through creating a host: suggest a clear name and tell me exactly what to click to create it (creating the host, and later attaching servers, are commits I'll make myself — describe the values to use rather than doing it for me).
-5. Once the host exists, open its editor and show me where I attach my connected server(s) and where I'd adjust its config (model, system prompt, behavior).
+5. Once the host exists, open its editor and show me where I'd adjust its config — model, system prompt, and behavior. Then explain that servers are selected project-wide (not inside this editor): take me to the Servers tab and show me how to include my connected server(s) so the host can use them.
 6. Recap what the Host lets me do and what I'd change next.
 `),
   },

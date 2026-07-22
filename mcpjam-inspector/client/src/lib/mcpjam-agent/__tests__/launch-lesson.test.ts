@@ -156,6 +156,23 @@ describe("launchLessonSession", () => {
     expect(state.isOpen).toBe(true); // re-opened
   });
 
+  it("persists the last-launch record so dedup survives a reload", () => {
+    launchLessonSession({ tour: TOUR, projectId: "proj-1" });
+    // The refocus guard reads from localStorage, not a module var, so a reload
+    // (module re-eval, other tab) that keeps the panel's persisted
+    // activeSessionId still dedups.
+    expect(
+      window.localStorage.getItem("mcpjam:agent-tour-last-launch:v1"),
+    ).not.toBeNull();
+
+    // Simulate a reload: the panel store still holds the persisted session,
+    // but there is no in-memory launch state to rely on.
+    const ok = launchLessonSession({ tour: TOUR, projectId: "proj-1" });
+    expect(ok).toBe(true);
+    expect(generateIdMock).toHaveBeenCalledTimes(1); // still no duplicate
+    expect(useAgentPanelStore.getState().activeSessionId).toBe("sess-1");
+  });
+
   it("still activates the session when sessionStorage.setItem throws", () => {
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
       throw new Error("quota");
