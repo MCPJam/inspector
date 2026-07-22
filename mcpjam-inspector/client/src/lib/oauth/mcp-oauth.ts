@@ -11,6 +11,7 @@ import {
   exchangeAuthorization,
   fetchToken,
   getBrowserDebugDynamicRegistrationMetadata,
+  getSupportedRegistrationStrategies,
   EMPTY_OAUTH_FLOW_STATE,
   projectOAuthTraceSnapshot,
   resolveAuthorizationPlan,
@@ -462,7 +463,8 @@ function loadOAuthFlowSession(
       !parsed.state ||
       (parsed.protocolVersion !== "2025-03-26" &&
         parsed.protocolVersion !== "2025-06-18" &&
-        parsed.protocolVersion !== "2025-11-25")
+        parsed.protocolVersion !== "2025-11-25" &&
+        parsed.protocolVersion !== "2026-07-28")
     ) {
       return undefined;
     }
@@ -883,7 +885,11 @@ function buildAutomaticAuthorizationDecisionReason(
         ? "The authorization server advertised client_id_metadata_document_supported, so automatic mode preferred CIMD over DCR."
         : "The authorization server advertised client_id_metadata_document_supported.";
     case "dcr":
-      if (plan.protocolVersion !== "2025-11-25") {
+      if (
+        !getSupportedRegistrationStrategies(plan.protocolVersion).includes(
+          "cimd"
+        )
+      ) {
         return `CIMD is not available for protocol version ${plan.protocolVersion}, so automatic mode used DCR.`;
       }
 
@@ -1014,13 +1020,15 @@ export function readStoredOAuthConfig(
         parsed?.protocolMode === "auto" ||
         parsed?.protocolMode === "2025-03-26" ||
         parsed?.protocolMode === "2025-06-18" ||
-        parsed?.protocolMode === "2025-11-25"
+        parsed?.protocolMode === "2025-11-25" ||
+        parsed?.protocolMode === "2026-07-28"
           ? parsed.protocolMode
           : undefined,
       protocolVersion:
         parsed?.protocolVersion === "2025-03-26" ||
         parsed?.protocolVersion === "2025-06-18" ||
-        parsed?.protocolVersion === "2025-11-25"
+        parsed?.protocolVersion === "2025-11-25" ||
+        parsed?.protocolVersion === "2026-07-28"
           ? parsed.protocolVersion
           : undefined,
       registrationMode:

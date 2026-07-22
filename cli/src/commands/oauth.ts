@@ -19,6 +19,7 @@ import {
 } from "../lib/server-config.js";
 import {
   VALID_PROTOCOL_VERSIONS,
+  CIMD_PROTOCOL_VERSIONS,
   VALID_REGISTRATION_STRATEGIES,
   VALID_AUTH_MODES,
 } from "../lib/oauth-enums.js";
@@ -122,7 +123,7 @@ export function buildOAuthLoginDebugOutcome(options: {
 
 export interface OAuthCommandOptions {
   url: string;
-  protocolVersion?: "2025-03-26" | "2025-06-18" | "2025-11-25";
+  protocolVersion?: "2025-03-26" | "2025-06-18" | "2025-11-25" | "2026-07-28";
   registration?: "cimd" | "dcr" | "preregistered";
   authMode?: "headless" | "interactive" | "client_credentials";
   clientId?: string;
@@ -157,7 +158,7 @@ export function registerOAuthCommands(program: Command): void {
     .requiredOption("--url <url>", "MCP server URL")
     .option(
       "--protocol-version <version>",
-      "OAuth protocol override: 2025-03-26, 2025-06-18, or 2025-11-25",
+      "OAuth protocol override: 2025-03-26, 2025-06-18, 2025-11-25, or 2026-07-28",
     )
     .option(
       "--registration <strategy>",
@@ -315,7 +316,7 @@ export function registerOAuthCommands(program: Command): void {
     .requiredOption("--url <url>", "MCP server URL")
     .requiredOption(
       "--protocol-version <version>",
-      "OAuth protocol version: 2025-03-26, 2025-06-18, or 2025-11-25",
+      "OAuth protocol version: 2025-03-26, 2025-06-18, 2025-11-25, or 2026-07-28",
     )
     .requiredOption(
       "--registration <strategy>",
@@ -563,7 +564,7 @@ export function buildOAuthConformanceConfig(
   }
 
   if (
-    protocolVersion !== "2025-11-25" &&
+    !CIMD_PROTOCOL_VERSIONS.has(protocolVersion) &&
     registrationStrategy === "cimd"
   ) {
     throw usageError(
@@ -689,7 +690,7 @@ export function buildOAuthLoginConfig(
   if (
     protocolVersion !== undefined &&
     registrationStrategy === "cimd" &&
-    protocolVersion !== "2025-11-25"
+    !CIMD_PROTOCOL_VERSIONS.has(protocolVersion)
   ) {
     throw usageError(
       `CIMD registration is not supported for protocol version ${protocolVersion}.`,
@@ -896,9 +897,9 @@ function assertValidUrl(value: string, label: string): void {
 
 function parseProtocolVersion(
   value: string,
-): "2025-03-26" | "2025-06-18" | "2025-11-25" {
+): "2025-03-26" | "2025-06-18" | "2025-11-25" | "2026-07-28" {
   if (VALID_PROTOCOL_VERSIONS.has(value)) {
-    return value as "2025-03-26" | "2025-06-18" | "2025-11-25";
+    return value as "2025-03-26" | "2025-06-18" | "2025-11-25" | "2026-07-28";
   }
 
   throw usageError(
@@ -908,7 +909,7 @@ function parseProtocolVersion(
 
 function parseRequiredProtocolVersion(
   value: string | undefined,
-): "2025-03-26" | "2025-06-18" | "2025-11-25" {
+): "2025-03-26" | "2025-06-18" | "2025-11-25" | "2026-07-28" {
   if (!value) {
     throw usageError(
       "--protocol-version is required for oauth conformance flows.",

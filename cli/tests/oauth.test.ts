@@ -260,6 +260,17 @@ test("buildOAuthConformanceConfig rejects unsupported combinations", () => {
   );
 });
 
+test("buildOAuthConformanceConfig accepts CIMD for the 2026-07-28 protocol", () => {
+  const config = buildOAuthConformanceConfig({
+    url: "https://example.com/mcp",
+    protocolVersion: "2026-07-28",
+    registration: "cimd",
+  });
+
+  assert.equal(config.registrationStrategy, "cimd");
+  assert.equal(config.auth?.mode, "interactive");
+});
+
 test("buildOAuthConformanceConfig rejects an invalid redirectUrl", () => {
   assert.throws(
     () =>

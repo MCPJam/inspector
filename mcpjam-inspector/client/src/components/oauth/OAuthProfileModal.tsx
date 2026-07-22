@@ -354,6 +354,9 @@ export function OAuthProfileModal({
                       <SelectItem value="2025-11-25" className="text-xs">
                         2025-11-25 (Latest)
                       </SelectItem>
+                      <SelectItem value="2026-07-28" className="text-xs">
+                        2026-07-28 (Draft)
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
