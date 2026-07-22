@@ -74,10 +74,28 @@ export function writeTourSystemPrompt(
 /**
  * The system prompt for a tour session, or null for any non-tour session.
  * Called from the agent transport's `body()` on every POST.
+ *
+ * Reading promotes the entry to the front so an actively posting session
+ * can't be evicted by `MAX_ENTRIES` newer launches (true MRU, not FIFO).
+ * Guarded so the common case — already at the front — costs no write.
  */
 export function readTourSystemPrompt(sessionId: string): string | null {
-  const entry = load().find((e) => e.sessionId === sessionId);
-  return entry ? entry.systemPrompt : null;
+  const entries = load();
+  const index = entries.findIndex((e) => e.sessionId === sessionId);
+  if (index < 0) return null;
+  const entry = entries[index];
+  if (index > 0 && typeof window !== "undefined") {
+    try {
+      entries.splice(index, 1);
+      window.localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify([entry, ...entries]),
+      );
+    } catch {
+      // Promotion is best-effort; returning the prompt is still correct.
+    }
+  }
+  return entry.systemPrompt;
 }
 
 /** Test-only: clears the registry between cases. */

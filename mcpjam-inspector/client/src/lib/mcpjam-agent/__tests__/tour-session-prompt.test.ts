@@ -48,6 +48,31 @@ describe("tour-session-prompt", () => {
     expect(readTourSystemPrompt("sess-13")).toBe("prompt 13");
   });
 
+  it("promotes an entry on read so an active session survives eviction", () => {
+    for (let i = 1; i <= 12; i++) {
+      writeTourSystemPrompt(`sess-${i}`, {
+        tourId: "tour-a",
+        systemPrompt: `prompt ${i}`,
+      });
+    }
+    // sess-1 is oldest; a POST-time read promotes it to the front...
+    expect(readTourSystemPrompt("sess-1")).toBe("prompt 1");
+    // ...so the next launch evicts sess-2 instead.
+    writeTourSystemPrompt("sess-13", {
+      tourId: "tour-a",
+      systemPrompt: "prompt 13",
+    });
+    expect(readTourSystemPrompt("sess-1")).toBe("prompt 1");
+    expect(readTourSystemPrompt("sess-2")).toBeNull();
+  });
+
+  it("does not rewrite storage when the entry is already at the front", () => {
+    writeTourSystemPrompt("sess-1", { tourId: "tour-a", systemPrompt: "p" });
+    const setItem = vi.spyOn(window.localStorage, "setItem");
+    expect(readTourSystemPrompt("sess-1")).toBe("p");
+    expect(setItem).not.toHaveBeenCalled();
+  });
+
   it("returns null (not a throw) on corrupt stored JSON", () => {
     window.localStorage.setItem(STORAGE_KEY, "{not json");
     expect(readTourSystemPrompt("sess-1")).toBeNull();
