@@ -198,6 +198,12 @@ export function OAuthProfileModal({
       url: validated.trimmedUrl,
       headers: Object.keys(headerMap).length ? headerMap : undefined,
       useOAuth: true,
+      // Carry the chosen OAuth protocol version onto the connection form so
+      // `toMCPConfig` stamps the sessionless 2026 wire era on the saved/synced
+      // server config. Without this, hosted chat/eval/backend connects — which
+      // forward host/per-server MCP pins, not the OAuth profile — fall back to
+      // the 2025 initialize path for a 2026-only server.
+      oauthProtocolMode: draft.protocolVersion,
       oauthScopes: scopesArray,
       clientId: validated.trimmedClientId || undefined,
       clientSecret: validated.trimmedClientSecret || undefined,
