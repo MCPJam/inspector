@@ -286,6 +286,14 @@ export function EditServerFormContent({
             onXaaEmailChange={formState.setXaaEmail}
             autoSelectsXaa={formState.autoSelectsXaa}
             projectDefaultIdentity={projectXaaDefaultIdentity}
+            xaaDcrClientId={formState.xaaDcrClientId}
+            xaaDcrTokenEndpointAuthMethod={
+              formState.xaaDcrTokenEndpointAuthMethod
+            }
+            xaaDcrIssuer={formState.xaaDcrIssuer}
+            xaaDcrClientSecretExpiresAt={formState.xaaDcrClientSecretExpiresAt}
+            xaaDcrRegisteredAt={formState.xaaDcrRegisteredAt}
+            xaaDcrStatus={formState.xaaDcrStatus}
           />
         </div>
       )}

@@ -144,7 +144,7 @@ describe("mintXaaAccessToken Connect client identity", () => {
 
   it("emits a confidential client assertion verifiable by the reflected public key", async () => {
     const provider = createDerivedConfidentialCimdProviderFactory(
-      Buffer.alloc(32, 7),
+      Buffer.alloc(32, 7)
     )("org-1");
 
     await mintXaaAccessToken({
@@ -170,8 +170,8 @@ describe("mintXaaAccessToken Connect client identity", () => {
           key: createPublicKey({ key: publicJwk!, format: "jwk" }),
           dsaEncoding: "ieee-p1363",
         },
-        Buffer.from(signature, "base64url"),
-      ),
+        Buffer.from(signature, "base64url")
+      )
     ).toBe(true);
   });
 
@@ -184,7 +184,7 @@ describe("mintXaaAccessToken Connect client identity", () => {
         registrationMode: "cimd",
         xaaClientAuth: "private_key_jwt",
         resolveServerSecret,
-      }),
+      })
     ).rejects.toMatchObject({ status: 409 });
 
     expect(resolveServerSecret).not.toHaveBeenCalled();
@@ -270,22 +270,6 @@ describe("mintXaaAccessToken Connect client identity", () => {
       })
     ).rejects.toMatchObject({ status: 409 });
 
-    expect(executeOAuthProxyMock).not.toHaveBeenCalled();
-  });
-
-  it("rejects DCR before secret resolution, discovery, or exchange", async () => {
-    const resolveServerSecret = vi.fn();
-
-    await expect(
-      mintXaaAccessToken({
-        ...baseArgs,
-        registrationMode: "dcr",
-        resolveServerSecret,
-      })
-    ).rejects.toMatchObject({ status: 400 });
-
-    expect(resolveServerSecret).not.toHaveBeenCalled();
-    expect(fetchOAuthMetadataMock).not.toHaveBeenCalled();
     expect(executeOAuthProxyMock).not.toHaveBeenCalled();
   });
 });

@@ -1,16 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { localProvider, mintXaaAccessTokenMock, buildXaaMintArgsMock } = vi.hoisted(() => ({
-  localProvider: {
-    getClientIdMetadataUrl: vi.fn(() => "https://app.mcpjam.com/cimd/local"),
-    signClientAssertion: vi.fn(() => "local-client-assertion"),
-  },
-  mintXaaAccessTokenMock: vi.fn(async (_args: unknown) => ({
-    accessToken: "minted-local-token",
-    tokenEndpoint: "https://auth.example.com/token",
-  })),
-  buildXaaMintArgsMock: vi.fn(),
-}));
+const { localProvider, mintXaaAccessTokenMock, buildXaaMintArgsMock } =
+  vi.hoisted(() => ({
+    localProvider: {
+      getClientIdMetadataUrl: vi.fn(() => "https://app.mcpjam.com/cimd/local"),
+      signClientAssertion: vi.fn(() => "local-client-assertion"),
+    },
+    mintXaaAccessTokenMock: vi.fn(async (_args: unknown) => ({
+      accessToken: "minted-local-token",
+      tokenEndpoint: "https://auth.example.com/token",
+    })),
+    buildXaaMintArgsMock: vi.fn(),
+  }));
 
 vi.mock("@mcpjam/sdk", async () => {
   const actual = await vi.importActual<typeof import("@mcpjam/sdk")>(
@@ -173,7 +174,9 @@ describe("resolveLocalServerForConnect XAA CIMD", () => {
   it("keeps a local project without an organization on the unscoped issuer", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => authorizeResponse({ registrationMode: "preregistered" }))
+      vi.fn(async () =>
+        authorizeResponse({ registrationMode: "preregistered" })
+      )
     );
 
     await resolveLocalServerForConnect(
@@ -191,20 +194,21 @@ describe("resolveLocalServerForConnect XAA CIMD", () => {
     );
   });
 
-  it("rejects DCR before minting", async () => {
+  it("passes explicit DCR through to the shared mint", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => authorizeResponse({ registrationMode: "dcr" }))
     );
 
-    await expect(
-      resolveLocalServerForConnect(
-        context,
-        "local-bearer",
-        "project-1",
-        "server-1"
-      )
-    ).rejects.toMatchObject({ status: 400, code: "FEATURE_NOT_SUPPORTED" });
-    expect(mintXaaAccessTokenMock).not.toHaveBeenCalled();
+    await resolveLocalServerForConnect(
+      context,
+      "local-bearer",
+      "project-1",
+      "server-1"
+    );
+
+    expect(mintXaaAccessTokenMock).toHaveBeenCalledWith(
+      expect.objectContaining({ registrationMode: "dcr" })
+    );
   });
 });

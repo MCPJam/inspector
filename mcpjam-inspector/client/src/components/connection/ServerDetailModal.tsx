@@ -186,7 +186,6 @@ export function ServerDetailModal({
   const [toolsLoadError, setToolsLoadError] = useState<string | null>(null);
   const [toolsData, setToolsData] =
     useState<ListToolsResultWithMetadata | null>(null);
-
   const initializationInfo = server.initializationInfo;
   const version = initializationInfo?.serverVersion?.version;
 
@@ -600,8 +599,7 @@ export function ServerDetailModal({
     }
   };
 
-  const tabTriggerClass =
-    "min-w-0 flex-1 px-1.5 text-xs sm:px-2 sm:text-sm";
+  const tabTriggerClass = "min-w-0 flex-1 px-1.5 text-xs sm:px-2 sm:text-sm";
   const isConfigurationTab = activeTab === "configuration";
 
   const handleConfigurationSubmit = (event: FormEvent<HTMLFormElement>) => {

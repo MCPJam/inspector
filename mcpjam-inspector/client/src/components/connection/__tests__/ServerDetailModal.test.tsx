@@ -38,6 +38,7 @@ vi.mock("@/lib/analytics", () => ({
 vi.mock("convex/react", () => ({
   useQuery: (...args: unknown[]) => mockUseQuery(...args),
   useMutation: () => mockSetProjectServerConfig,
+  useAction: () => vi.fn(),
 }));
 
 vi.mock("sonner", () => ({

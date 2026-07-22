@@ -37,8 +37,7 @@ const {
 });
 
 vi.mock("../../../services/xaa-confidential-cimd.js", () => ({
-  getConfidentialCimdProviderForOrg:
-    getConfidentialCimdProviderForOrgMock,
+  getConfidentialCimdProviderForOrg: getConfidentialCimdProviderForOrgMock,
 }));
 
 vi.mock("../../../utils/logger.js", () => ({
@@ -61,8 +60,9 @@ vi.mock("@mcpjam/sdk", async () => {
   };
 });
 vi.mock("../../../services/xaa-mint.js", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("../../../services/xaa-mint.js")>();
+  const actual = await importOriginal<
+    typeof import("../../../services/xaa-mint.js")
+  >();
   return {
     ...actual,
     mintXaaAccessToken: mintXaaAccessTokenMock,
@@ -143,7 +143,7 @@ describe("createAuthorizedManager — backend-resolved XAA identity error", () =
             },
           },
         }),
-      } as unknown as Response),
+      } as unknown as Response)
     );
 
     await expect(
@@ -155,8 +155,8 @@ describe("createAuthorizedManager — backend-resolved XAA identity error", () =
         30_000,
         undefined,
         undefined,
-        { xaaIssuer: "https://app.mcpjam.com/api/web" },
-      ),
+        { xaaIssuer: "https://app.mcpjam.com/api/web" }
+      )
     ).rejects.toMatchObject({
       status: 400,
       code: "VALIDATION_ERROR",
@@ -195,7 +195,7 @@ describe("createAuthorizedManager — backend-resolved XAA identity error", () =
             },
           },
         }),
-      } as unknown as Response),
+      } as unknown as Response)
     );
 
     // No options.xaaIssuer (eval/registration surfaces don't thread it). The
@@ -211,8 +211,8 @@ describe("createAuthorizedManager — backend-resolved XAA identity error", () =
         30_000,
         undefined,
         undefined,
-        {},
-      ),
+        {}
+      )
     ).rejects.toMatchObject({
       status: 400,
       code: "VALIDATION_ERROR",
@@ -238,7 +238,7 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
 
   function batchOf(
     results: Record<string, unknown>,
-    context: { organizationId?: string | null; isAnonymous?: boolean } = {},
+    context: { organizationId?: string | null; isAnonymous?: boolean } = {}
   ) {
     vi.stubGlobal(
       "fetch",
@@ -246,7 +246,7 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
         ok: true,
         status: 200,
         json: async () => ({ ...context, results }),
-      } as unknown as Response),
+      } as unknown as Response)
     );
   }
 
@@ -298,8 +298,8 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
         {
           xaaIssuer: "https://app.mcpjam.com/api/web",
           xaaPolicy: { idp: "mcpjam" },
-        },
-      ),
+        }
+      )
     ).rejects.toMatchObject({
       status: 409,
       code: "XAA_CONNECTION_NOT_CONFIGURED",
@@ -343,8 +343,8 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
         30_000,
         undefined,
         undefined,
-        { xaaIssuer: "https://app.mcpjam.com/api/web" },
-      ),
+        { xaaIssuer: "https://app.mcpjam.com/api/web" }
+      )
     ).rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR" });
 
     expect(mintXaaAccessTokenMock).not.toHaveBeenCalled();
@@ -383,8 +383,8 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
         30_000,
         undefined,
         undefined,
-        { xaaIssuer: "https://app.mcpjam.com/api/web" },
-      ),
+        { xaaIssuer: "https://app.mcpjam.com/api/web" }
+      )
     ).rejects.toMatchObject({
       status: 401,
       code: "UNAUTHORIZED",
@@ -394,7 +394,7 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
     expect(mintXaaAccessTokenMock).not.toHaveBeenCalled();
   });
 
-  it("rejects XAA DCR batch-wide before any sibling mint starts", async () => {
+  it("allows XAA DCR alongside CIMD in the same batch", async () => {
     batchOf({
       "srv-cimd": {
         ...okBase,
@@ -417,20 +417,24 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
       },
     });
 
-    await expect(
-      createAuthorizedManager(
-        callerContextFromHono(makeContext()),
-        "bearer-token",
-        "project-1",
-        ["srv-cimd", "srv-dcr"],
-        30_000,
-        undefined,
-        undefined,
-        { xaaIssuer: "https://app.mcpjam.com/api/web/xaa" },
-      ),
-    ).rejects.toMatchObject({ status: 400 });
+    await createAuthorizedManager(
+      callerContextFromHono(makeContext()),
+      "bearer-token",
+      "project-1",
+      ["srv-cimd", "srv-dcr"],
+      30_000,
+      undefined,
+      undefined,
+      { xaaIssuer: "https://app.mcpjam.com/api/web/xaa" }
+    );
 
-    expect(mintXaaAccessTokenMock).not.toHaveBeenCalled();
+    expect(mintXaaAccessTokenMock).toHaveBeenCalledTimes(2);
+    expect(mintXaaAccessTokenMock).toHaveBeenCalledWith(
+      expect.objectContaining({ registrationMode: "cimd" })
+    );
+    expect(mintXaaAccessTokenMock).toHaveBeenCalledWith(
+      expect.objectContaining({ registrationMode: "dcr" })
+    );
   });
 
   it("rejects a guest confidential-CIMD config before derivation or mint", async () => {
@@ -447,7 +451,7 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
           },
         },
       },
-      { organizationId: "org-1", isAnonymous: true },
+      { organizationId: "org-1", isAnonymous: true }
     );
 
     await expect(
@@ -459,8 +463,8 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
         30_000,
         undefined,
         undefined,
-        { xaaIssuer: "https://app.mcpjam.com/api/web/xaa" },
-      ),
+        { xaaIssuer: "https://app.mcpjam.com/api/web/xaa" }
+      )
     ).rejects.toMatchObject({ status: 403 });
 
     expect(confidentialCimdProviderForOrgMock).not.toHaveBeenCalled();
@@ -481,7 +485,7 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
           },
         },
       },
-      { organizationId: null, isAnonymous: false },
+      { organizationId: null, isAnonymous: false }
     );
 
     await expect(
@@ -493,8 +497,8 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
         30_000,
         undefined,
         undefined,
-        { xaaIssuer: "https://app.mcpjam.com/api/web/xaa" },
-      ),
+        { xaaIssuer: "https://app.mcpjam.com/api/web/xaa" }
+      )
     ).rejects.toMatchObject({ status: 409 });
 
     expect(confidentialCimdProviderForOrgMock).not.toHaveBeenCalled();
@@ -515,7 +519,7 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
           },
         },
       },
-      { organizationId: "org-1" },
+      { organizationId: "org-1" }
     );
 
     await expect(
@@ -527,8 +531,8 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
         30_000,
         undefined,
         undefined,
-        { xaaIssuer: "https://app.mcpjam.com/api/web/xaa" },
-      ),
+        { xaaIssuer: "https://app.mcpjam.com/api/web/xaa" }
+      )
     ).rejects.toMatchObject({ status: 403 });
 
     expect(confidentialCimdProviderForOrgMock).not.toHaveBeenCalled();
@@ -545,7 +549,7 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
           message: "You do not have access to this project",
         },
       },
-      { organizationId: "target-org", isAnonymous: false },
+      { organizationId: "target-org", isAnonymous: false }
     );
 
     await expect(
@@ -557,8 +561,8 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
         30_000,
         undefined,
         undefined,
-        { xaaIssuer: "https://app.mcpjam.com/api/web/xaa" },
-      ),
+        { xaaIssuer: "https://app.mcpjam.com/api/web/xaa" }
+      )
     ).rejects.toMatchObject({ status: 403, code: "FORBIDDEN" });
 
     expect(confidentialCimdProviderForOrgMock).not.toHaveBeenCalled();
@@ -579,7 +583,7 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
           },
         },
       },
-      { organizationId: "org-1", isAnonymous: false },
+      { organizationId: "org-1", isAnonymous: false }
     );
 
     await createAuthorizedManager(
@@ -590,7 +594,7 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
       30_000,
       undefined,
       undefined,
-      { xaaIssuer: "https://app.mcpjam.com/api/web/xaa" },
+      { xaaIssuer: "https://app.mcpjam.com/api/web/xaa" }
     );
 
     expect(confidentialCimdProviderForOrgMock).toHaveBeenCalledWith("org-1");
@@ -600,11 +604,11 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
         registrationMode: "cimd",
         xaaClientAuth: "private_key_jwt",
         confidentialCimdProvider: expect.any(Object),
-      }),
+      })
     );
     const fetchOrder = vi.mocked(fetch).mock.invocationCallOrder[0];
     expect(fetchOrder).toBeLessThan(
-      confidentialCimdProviderForOrgMock.mock.invocationCallOrder[0],
+      confidentialCimdProviderForOrgMock.mock.invocationCallOrder[0]
     );
   });
 
@@ -626,7 +630,7 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
           },
         },
       },
-      { organizationId: "org-1", isAnonymous: false },
+      { organizationId: "org-1", isAnonymous: false }
     );
 
     await expect(
@@ -638,8 +642,8 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
         30_000,
         undefined,
         undefined,
-        { xaaIssuer: "https://app.mcpjam.com/api/web/xaa" },
-      ),
+        { xaaIssuer: "https://app.mcpjam.com/api/web/xaa" }
+      )
     ).rejects.toMatchObject({
       status: 500,
       message: "Could not prepare the confidential CIMD client identity",
@@ -654,7 +658,7 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
         projectId: "project-1",
         organizationId: "org-1",
         resource: "https://configured.example.com/mcp",
-      }),
+      })
     );
   });
 
@@ -683,7 +687,7 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
       {
         xaaIssuer: "https://app.mcpjam.com/api/web",
         xaaPolicy: { idp: "mcpjam" },
-      },
+      }
     );
 
     expect(mintXaaAccessTokenMock).toHaveBeenCalledTimes(1);

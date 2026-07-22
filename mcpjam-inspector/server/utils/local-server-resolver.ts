@@ -782,23 +782,19 @@ export async function resolveLocalServerForConnect(
     const registrationMode = resolveXaaConnectRegistrationMode(
       sc.registrationMode
     );
-    if (registrationMode === "dcr") {
-      throw new WebRouteError(
-        400,
-        ErrorCode.FEATURE_NOT_SUPPORTED,
-        `Server "${
-          options?.serverDisplayName ?? serverId
-        }" uses XAA DCR, which is not supported in Connect yet. Choose pre-registered credentials or CIMD.`
-      );
-    }
     // Backend-resolved identity failure (legacy partial per-server
     // override): a distinct configuration error, surfaced BEFORE any mint.
     // No silent fallback to the demo identity, no silent XAA→OAuth fallback.
     if (sc.xaaIdentityError) {
-      throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, sc.xaaIdentityError, {
-        serverId,
-        serverName: options?.serverDisplayName ?? null,
-      });
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        sc.xaaIdentityError,
+        {
+          serverId,
+          serverName: options?.serverDisplayName ?? null,
+        }
+      );
     }
     const mintArgs = buildXaaMintArgs({
       issuer: resolveXaaConnectIssuer(c, {
@@ -1235,7 +1231,7 @@ export async function executeLocalServerConnect(
     mcpClientManager,
     serverDisplayName,
     serverId,
-    { logPrefix: "connect-inspection" },
+    { logPrefix: "connect-inspection" }
   );
   void persistConnectInspection({
     convexBearer: bearer,

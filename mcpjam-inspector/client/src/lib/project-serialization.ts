@@ -312,6 +312,38 @@ export function deserializeServersFromConvex(
     if (xaaClientAuth !== undefined) {
       server.xaaClientAuth = xaaClientAuth;
     }
+    if (typeof serverData.xaaDcrClientId === "string") {
+      server.xaaDcrClientId = serverData.xaaDcrClientId;
+    }
+    if (
+      serverData.xaaDcrTokenEndpointAuthMethod === "client_secret_post" ||
+      serverData.xaaDcrTokenEndpointAuthMethod === "client_secret_basic" ||
+      serverData.xaaDcrTokenEndpointAuthMethod === "none"
+    ) {
+      server.xaaDcrTokenEndpointAuthMethod =
+        serverData.xaaDcrTokenEndpointAuthMethod;
+    }
+    if (typeof serverData.xaaDcrIssuer === "string") {
+      server.xaaDcrIssuer = serverData.xaaDcrIssuer;
+    }
+    if (typeof serverData.xaaDcrClientSecretExpiresAt === "number") {
+      server.xaaDcrClientSecretExpiresAt =
+        serverData.xaaDcrClientSecretExpiresAt;
+    }
+    if (typeof serverData.xaaDcrRegisteredAt === "number") {
+      server.xaaDcrRegisteredAt = serverData.xaaDcrRegisteredAt;
+    }
+    if (
+      serverData.xaaDcrStatus === "registered" ||
+      serverData.xaaDcrStatus === "registering" ||
+      serverData.xaaDcrStatus === "uncertain"
+    ) {
+      server.xaaDcrStatus = serverData.xaaDcrStatus;
+    }
+    if (serverData.hasXaaDcrRegistration !== undefined) {
+      server.hasXaaDcrRegistration =
+        serverData.hasXaaDcrRegistration === true;
+    }
     const authMethod = normalizeAuthMethod(serverData.authMethod);
     if (authMethod !== undefined) {
       server.authMethod = authMethod;

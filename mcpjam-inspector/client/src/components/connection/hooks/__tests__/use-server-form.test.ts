@@ -112,6 +112,53 @@ describe("useServerForm", () => {
     });
   });
 
+  it("does not require or emit preregistered credentials for explicit XAA CIMD", () => {
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setName("XAA CIMD server");
+      result.current.setUrl("https://example.com/mcp");
+      result.current.setAuthType("xaa");
+      result.current.setOauthRegistrationMode("cimd");
+      result.current.setClientId("stale-preregistered-client");
+      result.current.setClientSecret("stale-preregistered-secret");
+    });
+
+    expect(result.current.preregisteredOauthBlocksSubmit).toBe(false);
+    expect(result.current.buildFormData()).toMatchObject({
+      useXaa: true,
+      registrationMode: "cimd",
+      clientId: undefined,
+      clientSecret: undefined,
+      hasClientSecret: undefined,
+      clearClientSecret: undefined,
+    });
+  });
+
+  it("retains hidden preregistered credentials for explicit XAA DCR", () => {
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setName("XAA DCR server");
+      result.current.setUrl("https://example.com/mcp");
+      result.current.setAuthType("xaa");
+      result.current.setOauthRegistrationMode("dcr");
+      result.current.setClientId("stored-preregistered-client");
+      result.current.setClientSecret("stored-preregistered-secret");
+    });
+
+    expect(result.current.preregisteredOauthBlocksSubmit).toBe(false);
+    expect(result.current.validateForm()).toBeNull();
+    expect(result.current.authConfigurationBlocksSubmit).toBe(false);
+    expect(result.current.buildFormData()).toMatchObject({
+      useXaa: true,
+      registrationMode: "dcr",
+      clientId: "stored-preregistered-client",
+      clientSecret: "stored-preregistered-secret",
+      hasClientSecret: true,
+    });
+  });
+
   it("emits public CIMD without stored client credentials", () => {
     const { result } = renderHook(() => useServerForm());
 
@@ -172,20 +219,6 @@ describe("useServerForm", () => {
       registrationMode: "cimd",
       xaaClientAuth: "private_key_jwt",
     });
-  });
-
-  it("blocks XAA DCR instead of treating it as preregistration", () => {
-    const { result } = renderHook(() => useServerForm());
-
-    act(() => {
-      result.current.setName("DCR server");
-      result.current.setUrl("https://example.com/mcp");
-      result.current.setAuthType("xaa");
-      result.current.setOauthRegistrationMode("dcr");
-    });
-
-    expect(result.current.validateForm()).toMatch(/not supported in Connect/);
-    expect(result.current.authConfigurationBlocksSubmit).toBe(true);
   });
 
   it("omits the identity pair entirely when the override fields are untouched (no force-default)", () => {

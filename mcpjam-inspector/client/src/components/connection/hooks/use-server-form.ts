@@ -287,9 +287,7 @@ export function useServerForm(
         // Keep runtime token metadata available for preregistered reconnects,
         // but only surface credential fields from saved client configuration.
         clientIdValue = storedTokens?.client_id || savedClientId;
-        clientSecretValue = hasStoredClientSecretValue
-          ? ""
-          : savedClientSecret;
+        clientSecretValue = hasStoredClientSecretValue ? "" : savedClientSecret;
 
         protocolModeValue = normalizeOauthProtocolMode(
           typeof oauthConfig.protocolMode === "string"
@@ -622,9 +620,6 @@ export function useServerForm(
     }
 
     if (authType === "xaa") {
-      if (effectiveXaaRegistrationMode === "dcr") {
-        return "XAA DCR is not supported in Connect yet. Choose pre-registered credentials or CIMD.";
-      }
       if (
         effectiveXaaRegistrationMode === "preregistered" &&
         validateClientId(clientId) !== null
@@ -877,19 +872,19 @@ export function useServerForm(
       (authType === "oauth" || authType === "auto") &&
       registrationMode === "preregistered";
     const isXaa = authType === "xaa";
-    // XAA also collects resource-authorization-server client id / secret, so it
-    // shares the preregistered-credential emission path.
+    // Explicit CIMD resolves its client identity from metadata and must not
+    // emit stale preregistered credentials. DCR still emits its hidden values
+    // so switching strategies does not clear them, while its mint path ignores
+    // them. XAA Auto keeps its existing preregistered behavior.
+    const usesXaaStoredCredentials = isXaa && registrationMode !== "cimd";
     const usesClientCredentials =
-      shouldUsePreregisteredCredentials ||
-      (isXaa && effectiveXaaRegistrationMode === "preregistered");
+      shouldUsePreregisteredCredentials || usesXaaStoredCredentials;
     const normalizedClientSecret = clientSecret.trim();
     const hasReplacementClientSecret = normalizedClientSecret.length > 0;
     // A typed replacement always wins over the clear toggle — the backend
     // rejects payloads that try to do both at once.
     const submittedClearClientSecret =
-      usesClientCredentials &&
-      clearClientSecret &&
-      !hasReplacementClientSecret;
+      usesClientCredentials && clearClientSecret && !hasReplacementClientSecret;
     const nextHasClientSecret =
       usesClientCredentials &&
       !submittedClearClientSecret &&
@@ -943,12 +938,18 @@ export function useServerForm(
       authMethod: authType,
       ...(clearXaaConfig ? { clearXaaConfig } : {}),
       authServerMode:
-        authType === "xaa" ? "mcpjam" : useXaa ? server?.authServerMode : undefined,
+        authType === "xaa"
+          ? "mcpjam"
+          : useXaa
+          ? server?.authServerMode
+          : undefined,
       oauthProtocolMode: useOAuth ? oauthProtocolMode : undefined,
       // The unified registration mode rides with every authorization flow —
       // the XAA debugger reads the same per-server field the OAuth flow does.
       registrationMode:
-        useOAuth || useXaa || authType === "auto" ? registrationMode : undefined,
+        useOAuth || useXaa || authType === "auto"
+          ? registrationMode
+          : undefined,
       xaaClientAuth:
         useXaa && effectiveXaaRegistrationMode === "cimd"
           ? xaaClientAuth
@@ -1070,15 +1071,15 @@ export function useServerForm(
     type === "http" &&
     ((authType === "oauth" && registrationMode === "preregistered") ||
       (authType === "xaa" &&
-        effectiveXaaRegistrationMode === "preregistered")) &&
+        (registrationMode === "preregistered" ||
+          registrationMode === "auto"))) &&
     (validateClientId(clientId) !== null ||
       validateClientSecret(clientSecret) !== null);
   const authConfigurationBlocksSubmit =
     preregisteredOauthBlocksSubmit ||
     (type === "http" &&
       authType === "xaa" &&
-      (effectiveXaaRegistrationMode === "dcr" ||
-        confidentialCimdBlockReason !== null));
+      confidentialCimdBlockReason !== null);
   const oauthAuthorizationHeaderWarning =
     type === "http" &&
     authType === "oauth" &&
@@ -1151,6 +1152,12 @@ export function useServerForm(
       setXaaIdentityDirty(true);
       setXaaEmail(value);
     },
+    xaaDcrClientId: server?.xaaDcrClientId,
+    xaaDcrTokenEndpointAuthMethod: server?.xaaDcrTokenEndpointAuthMethod,
+    xaaDcrIssuer: server?.xaaDcrIssuer,
+    xaaDcrClientSecretExpiresAt: server?.xaaDcrClientSecretExpiresAt,
+    xaaDcrRegisteredAt: server?.xaaDcrRegisteredAt,
+    xaaDcrStatus: server?.xaaDcrStatus,
     requestTimeout,
     setRequestTimeout,
     inheritedRequestTimeout: projectConnectionDefaults.requestTimeout,
