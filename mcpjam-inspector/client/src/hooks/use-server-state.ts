@@ -779,8 +779,10 @@ function getConnectionTransport(serverConfig: MCPServerConfig): string {
  * revalidation effect so the "which version" answer can't drift between
  * "what we connect with" and "when we re-test".
  *
- * Precedence: explicit per-server override → explicit config pin → the 2026
- * era implied by the server's saved OAuth profile → host default.
+ * Precedence: explicit per-server override → explicit pin on the config being
+ * connected → explicit pin on the canonical stored `server.config` (recovers
+ * the pin when a caller passes a rebuilt URL-only config) → the 2026 era
+ * implied by the server's saved OAuth profile → host default.
  */
 function resolveEffectiveWireProtocolVersion(input: {
   serverConfig: MCPServerConfig | undefined;
@@ -789,20 +791,34 @@ function resolveEffectiveWireProtocolVersion(input: {
   hostPin: McpProtocolVersion | undefined;
 }): McpProtocolVersion | undefined {
   const { serverConfig, server, serverOverride, hostPin } = input;
-  const rawConfigPin =
-    serverConfig && "mcpProtocolVersion" in serverConfig
-      ? serverConfig.mcpProtocolVersion
+  const readConfigPin = (
+    config: MCPServerConfig | undefined
+  ): McpProtocolVersion | undefined => {
+    const raw =
+      config && "mcpProtocolVersion" in config
+        ? config.mcpProtocolVersion
+        : undefined;
+    return typeof raw === "string" && isKnownProtocolVersion(raw)
+      ? raw
       : undefined;
-  const configPin: McpProtocolVersion | undefined =
-    typeof rawConfigPin === "string" && isKnownProtocolVersion(rawConfigPin)
-      ? rawConfigPin
-      : undefined;
+  };
+  const configPin = readConfigPin(serverConfig);
+  // Fall back to the canonical stored config so a probe/reconnect that was
+  // handed a slim URL-only config (which drops the pin) still recovers the
+  // wire era the server was saved with.
+  const canonicalConfigPin = readConfigPin(server?.config);
   const oauthProfilePin: McpProtocolVersion | undefined =
     server?.useOAuth === true &&
     server.oauthFlowProfile?.protocolVersion === "2026-07-28"
       ? "2026-07-28"
       : undefined;
-  return serverOverride ?? configPin ?? oauthProfilePin ?? hostPin;
+  return (
+    serverOverride ??
+    configPin ??
+    canonicalConfigPin ??
+    oauthProfilePin ??
+    hostPin
+  );
 }
 
 function countRecordKeys(value: unknown): number {
@@ -3010,12 +3026,12 @@ export function useServerState({
             serverId: hostedServerId ?? null,
             serverName: formData.name,
           };
-          const serverConfig = {
-            url: formData.url,
-            ...(formData.headers && Object.keys(formData.headers).length > 0
-              ? { requestInit: { headers: formData.headers } }
-              : {}),
-          } satisfies HttpServerConfig;
+          // Reuse the canonical config from `toMCPConfig` (which carries the
+          // 2026 `mcpProtocolVersion` stamp) rather than rebuilding a URL-only
+          // config that drops the wire era — otherwise this first stored-cred
+          // probe runs the 2025 initialize handshake against a sessionless
+          // server and fails before OAuth can start.
+          const serverConfig: MCPServerConfig = mcpConfig;
           logger.info("Connecting with synced OAuth credentials", {
             serverName: formData.name,
           });

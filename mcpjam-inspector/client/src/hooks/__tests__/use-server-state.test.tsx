@@ -914,6 +914,42 @@ describe("useServerState OAuth callback failures", () => {
     expect(toastSuccess).toHaveBeenCalledWith("Connected to demo-server!");
   });
 
+  it("preserves the 2026 wire pin through the stored-credential probe and CONNECT_SUCCESS", async () => {
+    // Regression: handleConnect must not rebuild a URL-only config that drops
+    // the OAuth-derived 2026 pin, and CONNECT_SUCCESS must persist the pinned
+    // config (not a slim one) so later reconnects keep the wire era.
+    testConnectionMock.mockResolvedValueOnce({ success: true, initInfo: null });
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+
+    await act(async () => {
+      await result.current.handleConnect({
+        name: "demo-server",
+        type: "http",
+        url: "https://example.com/mcp",
+        useOAuth: true,
+        oauthProtocolMode: "2026-07-28",
+      } as any);
+    });
+
+    // Blocker 1: the probe carries the 2026 wire era.
+    const probeArgs = testConnectionMock.mock.calls[0];
+    expect(probeArgs?.[0]).toEqual(
+      expect.objectContaining({ mcpProtocolVersion: "2026-07-28" }),
+    );
+    expect(probeArgs?.[2]?.connectionDefaults?.mcpProtocolVersion).toBe(
+      "2026-07-28",
+    );
+
+    // Blocker 2: CONNECT_SUCCESS persists the pinned canonical config.
+    const successCall = dispatch.mock.calls.find(
+      ([action]) => action?.type === "CONNECT_SUCCESS",
+    );
+    expect(successCall?.[0]?.config).toEqual(
+      expect.objectContaining({ mcpProtocolVersion: "2026-07-28" }),
+    );
+  });
+
   it("imports debugger-applied OAuth tokens before reconnecting in hosted mode", async () => {
     mockHostedMode.mockReturnValue(true);
     reconnectServerMock.mockResolvedValueOnce({
