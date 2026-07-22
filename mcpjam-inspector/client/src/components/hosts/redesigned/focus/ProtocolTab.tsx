@@ -26,13 +26,25 @@ import {
 import type { HostAttentionIssue } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
 
-type HostProtocolDropdownValue = "latest" | "rc";
+/**
+ * "auto" is the UI-only sentinel for "no pin stored" — it maps to
+ * `mcpProfile.mcpProtocolVersion === undefined`, NOT to a wire literal.
+ * Deliberately not labelled with a version number: absence means the SDK
+ * picks the version at connect time, so hardcoding "2025-11-25" into the
+ * label would go stale the moment the SDK's default moves (the sequenced
+ * Phase-5 `versionNegotiation: 'auto'` activation) without anything in
+ * this file changing. Contrast the per-server dropdown in
+ * `AdvancedConnectionSettingsSection`, where "Latest (2025-11-25)" is
+ * correct because that control writes the explicit literal and reserves
+ * "Client default" for inheritance.
+ */
+type HostProtocolDropdownValue = "auto" | "rc";
 
 const HOST_PROTOCOL_OPTIONS: Array<{
   value: HostProtocolDropdownValue;
   label: string;
 }> = [
-  { value: "latest", label: "Latest (2025-11-25)" },
+  { value: "auto", label: "Automatic" },
   { value: "rc", label: "2026 RC (2026-07-28)" },
 ];
 
@@ -457,11 +469,11 @@ export function ProtocolTab({
     applyParsedToDraft: applyJsonToDraft,
     onDraftChange,
   });
-  // Stored stateful literals (legacy carry-over) collapse to "Latest"
+  // Stored stateful literals (legacy carry-over) collapse to "Automatic"
   // since they route to the same code path; saving normalizes back to
   // undefined.
   const selectedDropdownValue: HostProtocolDropdownValue =
-    draft.mcpProfile?.mcpProtocolVersion === "2026-07-28" ? "rc" : "latest";
+    draft.mcpProfile?.mcpProtocolVersion === "2026-07-28" ? "rc" : "auto";
 
   // Dropdown handler. Writes through to `draft.mcpProfile.mcpProtocolVersion`
   // directly (parallel to the JSON editor's applyJsonToDraft path) so the
@@ -547,7 +559,7 @@ export function ProtocolTab({
         <div className="flex items-center gap-3">
           <span
             className="text-[12px] font-medium"
-            title="Latest: current stable MCP wire version (2025-11-25). 2026 RC: MCPJam's current 2026-07-28 stateless preview over Streamable HTTP POST."
+            title="Automatic: store no pin — MCPJam picks the wire version at connect time. 2026 RC: MCPJam's current 2026-07-28 stateless preview over Streamable HTTP POST."
           >
             {fProtocolVersion.label}
           </span>
@@ -559,7 +571,7 @@ export function ProtocolTab({
             disabled={readOnly}
           >
             <SelectTrigger className="h-9 text-xs">
-              <SelectValue placeholder="Latest" />
+              <SelectValue placeholder="Automatic" />
             </SelectTrigger>
             <SelectContent>
               {HOST_PROTOCOL_OPTIONS.map((opt) => (
@@ -570,6 +582,16 @@ export function ProtocolTab({
             </SelectContent>
           </Select>
         </div>
+        {/* Spells out what the selection actually stores. "Automatic" is the
+            absence of a pin, which is invisible in the JSON editor below (the
+            key is simply omitted) — without this line the only way to tell
+            "Automatic" from a pinned 2025 literal is to know the tri-state
+            convention. */}
+        <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
+          {selectedDropdownValue === "auto"
+            ? "No version pinned — MCPJam negotiates the wire version at connect time. A server's own protocol override still wins."
+            : "Pinned to 2026-07-28 for every server on this client. The server must offer it at connect time; there is no fallback to 2025. A server's own protocol override still wins."}
+        </p>
         {showPolicyToggle && (
         <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
           <div className="min-w-0">
