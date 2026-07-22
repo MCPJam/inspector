@@ -100,7 +100,6 @@ interface AuthenticationSectionProps {
   xaaDcrClientSecretExpiresAt?: number;
   xaaDcrRegisteredAt?: number;
   xaaDcrStatus?: "registered" | "registering" | "uncertain";
-  onRegisterNewXaaDcrClient?: () => Promise<void>;
 }
 
 const PROTOCOL_OPTIONS: Array<{
@@ -168,7 +167,6 @@ export function AuthenticationSection({
   xaaDcrClientSecretExpiresAt,
   xaaDcrRegisteredAt,
   xaaDcrStatus,
-  onRegisterNewXaaDcrClient,
 }: AuthenticationSectionProps) {
   const [showAdvancedOAuth, setShowAdvancedOAuth] = useState(false);
   // Active host's enterprise-managed authorization policy (ProtocolTab
@@ -791,9 +789,19 @@ export function AuthenticationSection({
           <div className="px-3 pb-3 pt-3 border-t border-border bg-muted/30 space-y-3">
             <div className="grid gap-3 md:grid-cols-2">
               <div className="space-y-2">
-                <label className="block text-sm font-medium text-foreground">
-                  Registration Strategy
-                </label>
+                <div className="flex items-center gap-1 text-sm font-medium text-foreground">
+                  <span>Registration Strategy</span>
+                  {effectiveXaaRegistrationMode === "dcr" && (
+                    <XaaDcrRegistrationStatus
+                      status={xaaDcrStatus}
+                      clientId={xaaDcrClientId}
+                      issuer={xaaDcrIssuer}
+                      registeredAt={xaaDcrRegisteredAt}
+                      clientSecretExpiresAt={xaaDcrClientSecretExpiresAt}
+                      tokenEndpointAuthMethod={xaaDcrTokenEndpointAuthMethod}
+                    />
+                  )}
+                </div>
                 <Select
                   value={registrationMode}
                   onValueChange={(value: RegistrationMode) =>
@@ -854,17 +862,6 @@ export function AuthenticationSection({
                 )}
             </div>
 
-            {effectiveXaaRegistrationMode === "dcr" && (
-              <XaaDcrRegistrationStatus
-                status={xaaDcrStatus}
-                clientId={xaaDcrClientId}
-                issuer={xaaDcrIssuer}
-                registeredAt={xaaDcrRegisteredAt}
-                clientSecretExpiresAt={xaaDcrClientSecretExpiresAt}
-                tokenEndpointAuthMethod={xaaDcrTokenEndpointAuthMethod}
-                onRegisterNewClient={onRegisterNewXaaDcrClient}
-              />
-            )}
             {effectiveXaaRegistrationMode === "cimd" &&
               xaaClientAuth === "private_key_jwt" &&
               confidentialCimdBlockReason && (

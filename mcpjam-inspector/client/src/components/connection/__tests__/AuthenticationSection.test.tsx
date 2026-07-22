@@ -142,7 +142,7 @@ describe("AuthenticationSection", () => {
     expect(screen.getByText("Cross-App Access (XAA)")).toBeInTheDocument();
   });
 
-  it("shows explicit DCR status while keeping preregistered inputs hidden", () => {
+  it("shows explicit DCR status while keeping preregistered inputs hidden", async () => {
     render(
       <AuthenticationSection
         serverUrl="https://example.com/mcp"
@@ -176,9 +176,20 @@ describe("AuthenticationSection", () => {
     expect(
       screen.getByText("Dynamic Client Registration (DCR)")
     ).toBeInTheDocument();
-    expect(screen.getByText("Registered client.")).toBeInTheDocument();
-    expect(screen.getByText("dynamic-client")).toBeInTheDocument();
-    expect(screen.getByText("https://as.example")).toBeInTheDocument();
+    expect(screen.queryByText("Registered client.")).not.toBeInTheDocument();
+    expect(screen.queryByText("dynamic-client")).not.toBeInTheDocument();
+    expect(screen.queryByText("https://as.example")).not.toBeInTheDocument();
+
+    await userEvent.hover(
+      screen.getByRole("button", { name: "DCR registration details" })
+    );
+    expect(
+      (await screen.findAllByText("Registered client.")).length
+    ).toBeGreaterThan(0);
+    expect(
+      (await screen.findAllByText("dynamic-client")).length
+    ).toBeGreaterThan(0);
+    expect(screen.getAllByText("https://as.example").length).toBeGreaterThan(0);
     expect(
       screen.queryByPlaceholderText(
         "Client ID registered with the server's authorization server"
@@ -214,8 +225,7 @@ describe("AuthenticationSection", () => {
     ).toBeInTheDocument();
   });
 
-  it("confirms resetting an uncertain DCR registration", async () => {
-    const onRegisterNewXaaDcrClient = vi.fn().mockResolvedValue(undefined);
+  it("keeps an uncertain DCR outcome in the strategy tooltip", async () => {
     render(
       <AuthenticationSection
         {...autoProps}
@@ -223,47 +233,64 @@ describe("AuthenticationSection", () => {
         showAuthSettings={true}
         registrationMode="dcr"
         xaaDcrStatus="uncertain"
-        onRegisterNewXaaDcrClient={onRegisterNewXaaDcrClient}
       />
     );
 
-    expect(screen.getByText(/outcome is uncertain/i)).toBeInTheDocument();
-    await userEvent.click(
-      screen.getByRole("button", { name: "Register a new client" })
+    expect(screen.queryByText(/outcome is uncertain/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /register.*client/i })
+    ).not.toBeInTheDocument();
+
+    await userEvent.hover(
+      screen.getByRole("button", { name: "DCR registration details" })
     );
     expect(
-      screen.getByText(/another remote client may be created/i)
-    ).toBeInTheDocument();
-    await userEvent.click(
-      screen.getByRole("button", { name: "Register a new client" })
-    );
-    await waitFor(() =>
-      expect(onRegisterNewXaaDcrClient).toHaveBeenCalledTimes(1)
-    );
+      (await screen.findAllByText(/outcome is uncertain/i)).length
+    ).toBeGreaterThan(0);
   });
 
-  it("renders not-registered, in-progress, and expired DCR variants", () => {
+  it("renders not-registered, in-progress, and expired DCR tooltip variants", async () => {
     const props = {
       ...autoProps,
       authType: "xaa" as const,
       showAuthSettings: true,
       registrationMode: "dcr" as const,
     };
-    const { rerender } = render(<AuthenticationSection {...props} />);
-    expect(screen.getByText(/not registered/i)).toBeInTheDocument();
+    const variants = [
+      {
+        expected: /not registered/i,
+        element: <AuthenticationSection {...props} />,
+      },
+      {
+        expected: /registration in progress/i,
+        element: (
+          <AuthenticationSection {...props} xaaDcrStatus="registering" />
+        ),
+      },
+      {
+        expected: /credential has expired/i,
+        element: (
+          <AuthenticationSection
+            {...props}
+            xaaDcrStatus="registered"
+            xaaDcrTokenEndpointAuthMethod="client_secret_post"
+            xaaDcrClientSecretExpiresAt={Date.now() - 1}
+          />
+        ),
+      },
+    ];
 
-    rerender(<AuthenticationSection {...props} xaaDcrStatus="registering" />);
-    expect(screen.getByText(/registration in progress/i)).toBeInTheDocument();
-
-    rerender(
-      <AuthenticationSection
-        {...props}
-        xaaDcrStatus="registered"
-        xaaDcrTokenEndpointAuthMethod="client_secret_post"
-        xaaDcrClientSecretExpiresAt={Date.now() - 1}
-      />
-    );
-    expect(screen.getByText(/credential has expired/i)).toBeInTheDocument();
+    for (const variant of variants) {
+      const view = render(variant.element);
+      expect(screen.queryByText(variant.expected)).not.toBeInTheDocument();
+      await userEvent.hover(
+        screen.getByRole("button", { name: "DCR registration details" })
+      );
+      expect(
+        (await screen.findAllByText(variant.expected)).length
+      ).toBeGreaterThan(0);
+      view.unmount();
+    }
   });
 
   const autoProps = {
