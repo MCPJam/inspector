@@ -80,7 +80,7 @@
           {
             "group": "Computer",
             "icon": "monitor",
-            "pages": ["inspector/computer"]
+            "pages": ["inspector/computer", "inspector/codex-host"]
           },
           {
             "group": "Embedding",

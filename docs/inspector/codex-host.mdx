@@ -1,0 +1,77 @@
+---
+title: "Codex host"
+description: "Run OpenAI's Codex coding agent inside your project Computer — what it does, its v1 limits, and which models it runs."
+icon: "terminal"
+---
+
+The **Codex host** runs OpenAI's [Codex](https://openai.com/codex) coding agent
+against your MCP servers, inside your project's [Computer](/inspector/computer).
+It's one of two real coding-agent hosts in MCPJam — the other is the Claude Code
+host — as opposed to the emulated hosts (Claude, ChatGPT, Cursor, …) that
+simulate a host's identity for widget testing.
+
+Create one from the host picker and select a Codex preset. Because Codex runs in
+a Computer, the first turn provisions or wakes the machine (this counts against
+the [daily start cap](/inspector/computer)); after that it resumes quickly.
+
+## Which models it runs
+
+The Codex host runs the **gpt-5 family only** (`openai/gpt-5`, `openai/gpt-5-mini`,
+`openai/gpt-5-nano`, …). The default preset uses `openai/gpt-5-nano`.
+
+<Warning>
+  If you set a Codex host to a non-gpt-5 model, the turn is **rejected before it
+  runs** rather than silently falling back to Codex's own default — you'll get a
+  clear message asking you to pick a gpt-5 model. This is deliberate: it keeps
+  the host honest about which model actually answered.
+</Warning>
+
+## What it can do
+
+- Run tasks in the Computer using its built-in tools — a shell (`bash`), file
+  editing, and web search.
+- **File changes are surfaced in the transcript** as they happen, so you can see
+  exactly what the agent created or edited.
+- Persist the conversation to the project transcript like any other host.
+
+## v1 limitations
+
+The Codex host ships with a deliberately narrow capability set. Each limit below
+is enforced by a **pre-flight check** — a configuration the host can't honor is
+rejected up front with an actionable message, never a silent degrade or a stuck
+turn.
+
+| Capability | Codex host (v1) | What to do instead |
+|---|---|---|
+| Attached **MCP servers** | ❌ Not supported | Run those servers on a **Claude Code host** |
+| **Skills** | ❌ Not supported | Use a Claude Code host for skills |
+| **Interactive tool approval** | ❌ Not supported (runs allow-all) | Leave *require tool approval* off on Codex hosts |
+
+<Note>
+  **Why no MCP servers yet?** This is an upstream Codex limitation, not an MCPJam
+  gap: the Codex runtime doesn't expose MCP-server tools to the model in the
+  execution mode it runs, so a delivered server would connect but its tools would
+  never reach the model. Rather than let servers appear connected while doing
+  nothing, MCPJam blocks the combination and points you to a Claude Code host,
+  which delivers MCP servers normally. See
+  [Host compatibility](/inspector/host-compat) for the full matrix.
+</Note>
+
+<Warning>
+  Because Codex runs **allow-all**, it cannot pause mid-turn to ask you to
+  approve a tool call. Don't rely on tool approval as a safety gate on a Codex
+  host — if you need per-call approval, use a Claude Code host.
+</Warning>
+
+## If a turn is refused
+
+All three limits above, plus the model check, produce the same honest outcome:
+the turn is rejected **before streaming starts**, with a message explaining what
+to change (remove the servers or run them on Claude Code, turn off tool approval,
+or pick a gpt-5 model). You'll never see a half-finished answer or an endless
+spinner for these cases — the host tells you what's wrong so you can fix the
+configuration and try again.
+
+For Computer lifecycle behavior a Codex turn depends on — provisioning, waking,
+sleeping, the daily start cap, and resets — see the [Computer](/inspector/computer)
+page.

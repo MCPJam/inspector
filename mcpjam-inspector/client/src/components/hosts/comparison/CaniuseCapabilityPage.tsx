@@ -3,6 +3,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { ChevronLeft } from "lucide-react";
 import { getChatboxHostLogo } from "@/lib/chatbox-client-style";
 import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
+import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { cn } from "@/lib/utils";
@@ -33,13 +34,17 @@ export function CaniuseCapabilityPage({
   const capability = getCaniuseCapabilityBySlug(capabilitySlug);
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
+  const codexEnabled = useCodexHostEnabled();
   const catalogState = useHostCatalog();
   const compareCatalog = catalogState.catalog ?? bundledHostCompatCatalog();
   const excludedPresetTemplateIds = useMemo(() => {
     const excluded = new Set<string>();
     if (!claudeCodeEnabled) excluded.add("claude-code");
+    // Mirror the four sibling surfaces (e.g. HostConfigCompareView): hide the
+    // Codex preset while its launch flag is off, or it leaks onto this page.
+    if (!codexEnabled) excluded.add("codex");
     return excluded;
-  }, [claudeCodeEnabled]);
+  }, [claudeCodeEnabled, codexEnabled]);
   const presets = useMemo(
     () =>
       buildPresetCompareEntries(compareCatalog, {
