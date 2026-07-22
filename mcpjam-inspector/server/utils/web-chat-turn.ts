@@ -251,10 +251,12 @@ export function stripUiContextModelParts(
 /**
  * Per-tool approval policy for this turn's `ui_*` tools, from the VALIDATED
  * snapshot's MCP annotations — never from the raw name, which a third-party
- * server could spoof. Consumed by the MCPJam loop's approval gate (see
- * `toolCallNeedsApproval` in mcpjam-stream-handler); the BYOK `streamText`
- * path gets the same policy baked into each tool's `needsApproval` by
- * `buildUiTools`.
+ * server could spoof. Must be fed prepareChatV2's `effectiveUiTools` (the
+ * post-collision set), not the raw snapshot: a server-executed `ui_*` tool
+ * that won its name collision follows ordinary approval semantics. Consumed
+ * by the MCPJam loop's approval gate (see `toolCallNeedsApproval` in
+ * mcpjam-stream-handler); the BYOK `streamText` path gets the same policy
+ * baked into each tool's `needsApproval` by `buildUiTools`.
  */
 function uiToolApprovalsFrom(
   uiTools: UiToolEntry[] | undefined,
@@ -336,6 +338,7 @@ export async function streamWebChatTurn(
     scrubMessages,
     progressivePlan,
     discoveryState,
+    effectiveUiTools,
   } = prepared;
 
   /**
@@ -602,7 +605,7 @@ export async function streamWebChatTurn(
       serverIds: persist.selectedServerIds,
       requireToolApproval: persist.requireToolApproval,
       uiToolApprovals: uiToolApprovalsFrom(
-        prepare.uiTools,
+        effectiveUiTools,
         persist.requireToolApproval
       ),
       modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
@@ -667,7 +670,7 @@ export async function streamWebChatTurn(
     selectedServers: persist.selectedServerIds,
     requireToolApproval: persist.requireToolApproval,
     uiToolApprovals: uiToolApprovalsFrom(
-        prepare.uiTools,
+        effectiveUiTools,
         persist.requireToolApproval
       ),
     modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,

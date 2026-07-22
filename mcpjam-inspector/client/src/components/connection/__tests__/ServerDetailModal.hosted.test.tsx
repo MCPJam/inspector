@@ -27,6 +27,7 @@ vi.mock("@/lib/analytics", () => ({
 vi.mock("convex/react", () => ({
   useQuery: () => undefined,
   useMutation: () => vi.fn(),
+  useAction: () => vi.fn(),
 }));
 
 vi.mock("sonner", () => ({

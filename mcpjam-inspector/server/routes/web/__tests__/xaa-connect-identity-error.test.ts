@@ -16,9 +16,32 @@ vi.mock("@axiomhq/js", () => ({
 
 // Spy on the mint so the test can prove the identity error blocks the mint
 // BEFORE it starts (no ID-JAG issuance, no token-endpoint exchange).
-const { mintXaaAccessTokenMock, mcpClientManagerMock } = vi.hoisted(() => ({
-  mintXaaAccessTokenMock: vi.fn(),
-  mcpClientManagerMock: vi.fn(),
+const {
+  mintXaaAccessTokenMock,
+  mcpClientManagerMock,
+  confidentialCimdProviderForOrgMock,
+  getConfidentialCimdProviderForOrgMock,
+  loggerErrorMock,
+} = vi.hoisted(() => {
+  const providerForOrg = vi.fn(() => ({
+    getClientIdMetadataUrl: () => "https://app.mcpjam.com/cimd/key",
+    signClientAssertion: () => "client-assertion",
+  }));
+  return {
+    mintXaaAccessTokenMock: vi.fn(),
+    mcpClientManagerMock: vi.fn(),
+    confidentialCimdProviderForOrgMock: providerForOrg,
+    getConfidentialCimdProviderForOrgMock: vi.fn(() => providerForOrg),
+    loggerErrorMock: vi.fn(),
+  };
+});
+
+vi.mock("../../../services/xaa-confidential-cimd.js", () => ({
+  getConfidentialCimdProviderForOrg: getConfidentialCimdProviderForOrgMock,
+}));
+
+vi.mock("../../../utils/logger.js", () => ({
+  logger: { error: loggerErrorMock },
 }));
 
 // Stub the manager (as auth-manager.test.ts does): the real one starts
@@ -37,8 +60,9 @@ vi.mock("@mcpjam/sdk", async () => {
   };
 });
 vi.mock("../../../services/xaa-mint.js", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("../../../services/xaa-mint.js")>();
+  const actual = await importOriginal<
+    typeof import("../../../services/xaa-mint.js")
+  >();
   return {
     ...actual,
     mintXaaAccessToken: mintXaaAccessTokenMock,
@@ -76,6 +100,14 @@ describe("createAuthorizedManager — backend-resolved XAA identity error", () =
   beforeEach(() => {
     vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
     mintXaaAccessTokenMock.mockReset();
+    confidentialCimdProviderForOrgMock.mockReset().mockImplementation(() => ({
+      getClientIdMetadataUrl: () => "https://app.mcpjam.com/cimd/key",
+      signClientAssertion: () => "client-assertion",
+    }));
+    getConfidentialCimdProviderForOrgMock
+      .mockReset()
+      .mockReturnValue(confidentialCimdProviderForOrgMock);
+    loggerErrorMock.mockReset();
   });
 
   afterEach(() => {
@@ -111,7 +143,7 @@ describe("createAuthorizedManager — backend-resolved XAA identity error", () =
             },
           },
         }),
-      } as unknown as Response),
+      } as unknown as Response)
     );
 
     await expect(
@@ -123,8 +155,8 @@ describe("createAuthorizedManager — backend-resolved XAA identity error", () =
         30_000,
         undefined,
         undefined,
-        { xaaIssuer: "https://app.mcpjam.com/api/web" },
-      ),
+        { xaaIssuer: "https://app.mcpjam.com/api/web" }
+      )
     ).rejects.toMatchObject({
       status: 400,
       code: "VALIDATION_ERROR",
@@ -163,7 +195,7 @@ describe("createAuthorizedManager — backend-resolved XAA identity error", () =
             },
           },
         }),
-      } as unknown as Response),
+      } as unknown as Response)
     );
 
     // No options.xaaIssuer (eval/registration surfaces don't thread it). The
@@ -179,8 +211,8 @@ describe("createAuthorizedManager — backend-resolved XAA identity error", () =
         30_000,
         undefined,
         undefined,
-        {},
-      ),
+        {}
+      )
     ).rejects.toMatchObject({
       status: 400,
       code: "VALIDATION_ERROR",
@@ -196,6 +228,7 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
     vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
     mintXaaAccessTokenMock.mockReset();
     mintXaaAccessTokenMock.mockResolvedValue({ accessToken: "minted-token" });
+    confidentialCimdProviderForOrgMock.mockClear();
   });
 
   afterEach(() => {
@@ -203,14 +236,17 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
     vi.unstubAllGlobals();
   });
 
-  function batchOf(results: Record<string, unknown>) {
+  function batchOf(
+    results: Record<string, unknown>,
+    context: { organizationId?: string | null; isAnonymous?: boolean } = {}
+  ) {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
         ok: true,
         status: 200,
-        json: async () => ({ results }),
-      } as unknown as Response),
+        json: async () => ({ ...context, results }),
+      } as unknown as Response)
     );
   }
 
@@ -262,8 +298,8 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
         {
           xaaIssuer: "https://app.mcpjam.com/api/web",
           xaaPolicy: { idp: "mcpjam" },
-        },
-      ),
+        }
+      )
     ).rejects.toMatchObject({
       status: 409,
       code: "XAA_CONNECTION_NOT_CONFIGURED",
@@ -307,8 +343,8 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
         30_000,
         undefined,
         undefined,
-        { xaaIssuer: "https://app.mcpjam.com/api/web" },
-      ),
+        { xaaIssuer: "https://app.mcpjam.com/api/web" }
+      )
     ).rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR" });
 
     expect(mintXaaAccessTokenMock).not.toHaveBeenCalled();
@@ -347,8 +383,8 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
         30_000,
         undefined,
         undefined,
-        { xaaIssuer: "https://app.mcpjam.com/api/web" },
-      ),
+        { xaaIssuer: "https://app.mcpjam.com/api/web" }
+      )
     ).rejects.toMatchObject({
       status: 401,
       code: "UNAUTHORIZED",
@@ -356,6 +392,274 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
     });
 
     expect(mintXaaAccessTokenMock).not.toHaveBeenCalled();
+  });
+
+  it("allows XAA DCR alongside CIMD in the same batch", async () => {
+    batchOf({
+      "srv-cimd": {
+        ...okBase,
+        serverConfig: {
+          transportType: "http",
+          url: "https://configured.example.com/mcp",
+          authMethod: "xaa",
+          registrationMode: "cimd",
+          xaaClientAuth: "none",
+        },
+      },
+      "srv-dcr": {
+        ...okBase,
+        serverConfig: {
+          transportType: "http",
+          url: "https://dcr.example.com/mcp",
+          authMethod: "xaa",
+          registrationMode: "dcr",
+        },
+      },
+    });
+
+    await createAuthorizedManager(
+      callerContextFromHono(makeContext()),
+      "bearer-token",
+      "project-1",
+      ["srv-cimd", "srv-dcr"],
+      30_000,
+      undefined,
+      undefined,
+      { xaaIssuer: "https://app.mcpjam.com/api/web/xaa" }
+    );
+
+    expect(mintXaaAccessTokenMock).toHaveBeenCalledTimes(2);
+    expect(mintXaaAccessTokenMock).toHaveBeenCalledWith(
+      expect.objectContaining({ registrationMode: "cimd" })
+    );
+    expect(mintXaaAccessTokenMock).toHaveBeenCalledWith(
+      expect.objectContaining({ registrationMode: "dcr" })
+    );
+  });
+
+  it("rejects a guest confidential-CIMD config before derivation or mint", async () => {
+    batchOf(
+      {
+        "srv-private": {
+          ...okBase,
+          serverConfig: {
+            transportType: "http",
+            url: "https://configured.example.com/mcp",
+            authMethod: "xaa",
+            registrationMode: "cimd",
+            xaaClientAuth: "private_key_jwt",
+          },
+        },
+      },
+      { organizationId: "org-1", isAnonymous: true }
+    );
+
+    await expect(
+      createAuthorizedManager(
+        callerContextFromHono(makeContext()),
+        "guest-bearer",
+        "project-1",
+        ["srv-private"],
+        30_000,
+        undefined,
+        undefined,
+        { xaaIssuer: "https://app.mcpjam.com/api/web/xaa" }
+      )
+    ).rejects.toMatchObject({ status: 403 });
+
+    expect(confidentialCimdProviderForOrgMock).not.toHaveBeenCalled();
+    expect(mintXaaAccessTokenMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects confidential CIMD on a project without an organization", async () => {
+    batchOf(
+      {
+        "srv-private": {
+          ...okBase,
+          serverConfig: {
+            transportType: "http",
+            url: "https://configured.example.com/mcp",
+            authMethod: "xaa",
+            registrationMode: "cimd",
+            xaaClientAuth: "private_key_jwt",
+          },
+        },
+      },
+      { organizationId: null, isAnonymous: false }
+    );
+
+    await expect(
+      createAuthorizedManager(
+        callerContextFromHono(makeContext()),
+        "member-bearer",
+        "project-without-org",
+        ["srv-private"],
+        30_000,
+        undefined,
+        undefined,
+        { xaaIssuer: "https://app.mcpjam.com/api/web/xaa" }
+      )
+    ).rejects.toMatchObject({ status: 409 });
+
+    expect(confidentialCimdProviderForOrgMock).not.toHaveBeenCalled();
+    expect(mintXaaAccessTokenMock).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the authorization backend omits actor type", async () => {
+    batchOf(
+      {
+        "srv-private": {
+          ...okBase,
+          serverConfig: {
+            transportType: "http",
+            url: "https://configured.example.com/mcp",
+            authMethod: "xaa",
+            registrationMode: "cimd",
+            xaaClientAuth: "private_key_jwt",
+          },
+        },
+      },
+      { organizationId: "org-1" }
+    );
+
+    await expect(
+      createAuthorizedManager(
+        callerContextFromHono(makeContext()),
+        "member-bearer",
+        "project-1",
+        ["srv-private"],
+        30_000,
+        undefined,
+        undefined,
+        { xaaIssuer: "https://app.mcpjam.com/api/web/xaa" }
+      )
+    ).rejects.toMatchObject({ status: 403 });
+
+    expect(confidentialCimdProviderForOrgMock).not.toHaveBeenCalled();
+    expect(mintXaaAccessTokenMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects cross-project access before derivation or mint", async () => {
+    batchOf(
+      {
+        "srv-private": {
+          ok: false,
+          status: 403,
+          code: "FORBIDDEN",
+          message: "You do not have access to this project",
+        },
+      },
+      { organizationId: "target-org", isAnonymous: false }
+    );
+
+    await expect(
+      createAuthorizedManager(
+        callerContextFromHono(makeContext()),
+        "wrong-project-bearer",
+        "target-project",
+        ["srv-private"],
+        30_000,
+        undefined,
+        undefined,
+        { xaaIssuer: "https://app.mcpjam.com/api/web/xaa" }
+      )
+    ).rejects.toMatchObject({ status: 403, code: "FORBIDDEN" });
+
+    expect(confidentialCimdProviderForOrgMock).not.toHaveBeenCalled();
+    expect(mintXaaAccessTokenMock).not.toHaveBeenCalled();
+  });
+
+  it("derives a confidential provider only after project authorization", async () => {
+    batchOf(
+      {
+        "srv-private": {
+          ...okBase,
+          serverConfig: {
+            transportType: "http",
+            url: "https://configured.example.com/mcp",
+            authMethod: "xaa",
+            registrationMode: "cimd",
+            xaaClientAuth: "private_key_jwt",
+          },
+        },
+      },
+      { organizationId: "org-1", isAnonymous: false }
+    );
+
+    await createAuthorizedManager(
+      callerContextFromHono(makeContext()),
+      "member-bearer",
+      "project-1",
+      ["srv-private"],
+      30_000,
+      undefined,
+      undefined,
+      { xaaIssuer: "https://app.mcpjam.com/api/web/xaa" }
+    );
+
+    expect(confidentialCimdProviderForOrgMock).toHaveBeenCalledWith("org-1");
+    expect(mintXaaAccessTokenMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        issuer: "https://app.mcpjam.com/api/web/xaa/o/org-1",
+        registrationMode: "cimd",
+        xaaClientAuth: "private_key_jwt",
+        confidentialCimdProvider: expect.any(Object),
+      })
+    );
+    const fetchOrder = vi.mocked(fetch).mock.invocationCallOrder[0];
+    expect(fetchOrder).toBeLessThan(
+      confidentialCimdProviderForOrgMock.mock.invocationCallOrder[0]
+    );
+  });
+
+  it("logs provider preparation failures without exposing their details", async () => {
+    const underlying = new Error("derived scalar failed");
+    confidentialCimdProviderForOrgMock.mockImplementationOnce(() => {
+      throw underlying;
+    });
+    batchOf(
+      {
+        "srv-private": {
+          ...okBase,
+          serverConfig: {
+            transportType: "http",
+            url: "https://configured.example.com/mcp",
+            authMethod: "xaa",
+            registrationMode: "cimd",
+            xaaClientAuth: "private_key_jwt",
+          },
+        },
+      },
+      { organizationId: "org-1", isAnonymous: false }
+    );
+
+    await expect(
+      createAuthorizedManager(
+        callerContextFromHono(makeContext()),
+        "member-bearer",
+        "project-1",
+        ["srv-private"],
+        30_000,
+        undefined,
+        undefined,
+        { xaaIssuer: "https://app.mcpjam.com/api/web/xaa" }
+      )
+    ).rejects.toMatchObject({
+      status: 500,
+      message: "Could not prepare the confidential CIMD client identity",
+    });
+
+    expect(loggerErrorMock).toHaveBeenCalledWith(
+      expect.stringContaining("provider preparation failed"),
+      underlying,
+      expect.objectContaining({
+        serverId: "srv-private",
+        serverName: "srv-private",
+        projectId: "project-1",
+        organizationId: "org-1",
+        resource: "https://configured.example.com/mcp",
+      })
+    );
   });
 
   it("still mints when the whole batch is valid", async () => {
@@ -383,7 +687,7 @@ describe("createAuthorizedManager — batch-wide validation before any mint", ()
       {
         xaaIssuer: "https://app.mcpjam.com/api/web",
         xaaPolicy: { idp: "mcpjam" },
-      },
+      }
     );
 
     expect(mintXaaAccessTokenMock).toHaveBeenCalledTimes(1);

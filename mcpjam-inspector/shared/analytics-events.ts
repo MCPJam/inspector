@@ -168,6 +168,8 @@ export const ANALYTICS_EVENTS = {
   mcpjam_agent_resume: { source: "client" },
   mcpjam_agent_submit: { source: "client" },
   mcpjam_agent_suggested_prompt: { source: "client" },
+  mcpjam_agent_tour_launch_skipped: { source: "client" },
+  mcpjam_agent_tour_launched: { source: "client" },
   move_server_to_project_clicked: { source: "client" },
   oauth_debugger_error_boundary: { source: "client" },
   oauth_flow_tab_next_step_button_clicked: { source: "client" },

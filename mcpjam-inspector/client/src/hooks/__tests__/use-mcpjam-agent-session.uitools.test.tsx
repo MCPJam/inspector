@@ -94,10 +94,6 @@ vi.mock("@/lib/apis/web/chat-history-api", () => ({
   getChatHistoryDetail: vi.fn(async () => null),
 }));
 
-vi.mock("@/lib/webmcp/native-mirror", () => ({
-  mirrorUiToolToNative: vi.fn(() => null),
-}));
-
 import { useMcpjamAgentSession } from "../use-mcpjam-agent-session";
 import { __resetAgentChatInstancesForTests } from "@/lib/mcpjam-agent/agent-chat-instances";
 import {
@@ -135,7 +131,6 @@ describe("useMcpjamAgentSession — WebMCP UI tools", () => {
     __resetAgentChatInstancesForTests();
     useUiToolsRegistry.setState({
       tools: new Map(),
-      nativeDisposers: new Map(),
       shippedNames: new Set(),
     });
   });

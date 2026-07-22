@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { useAuth } from "@workos-inc/authkit-react";
 import { toast } from "@/lib/toast";
 import { normalizeRegistrationMode } from "@/shared/xaa.js";
 import { Button } from "@mcpjam/design-system/button";
@@ -23,7 +24,8 @@ import { AdvancedConnectionSettingsSection } from "./shared/AdvancedConnectionSe
 import { AuthenticationSection } from "./shared/AuthenticationSection";
 import { EnvVarsSection } from "./shared/EnvVarsSection";
 import { HostedConnectionTypeControl } from "./shared/HostedConnectionTypeControl";
-import type { Project } from "@/state/app-types";
+import { findProjectByAnyId, type Project } from "@/state/app-types";
+import { useOptionalSharedAppState } from "@/state/app-state-context";
 
 interface AddServerModalProps {
   isOpen: boolean;
@@ -32,6 +34,8 @@ interface AddServerModalProps {
   initialData?: Partial<ServerFormData>;
   requireHttps?: boolean;
   projectClientConfig?: Project["clientConfig"];
+  organizationId?: string | null;
+  isSignedIn?: boolean;
   /** Project default XAA test identity — shown as override placeholders. */
   projectXaaDefaultIdentity?: { subject: string; email: string } | null;
 }
@@ -81,6 +85,26 @@ function createHeaderEntry(key: string, value: string) {
   };
 }
 
+export function resolveAddServerConfidentialCimdContext({
+  organizationId,
+  isSignedIn,
+  activeProjectOrganizationId,
+  hasSignedInUser,
+}: {
+  organizationId?: string | null;
+  isSignedIn?: boolean;
+  activeProjectOrganizationId?: string;
+  hasSignedInUser: boolean;
+}) {
+  return {
+    organizationId:
+      organizationId !== undefined
+        ? organizationId
+        : activeProjectOrganizationId ?? null,
+    isSignedIn: isSignedIn !== undefined ? isSignedIn : hasSignedInUser,
+  };
+}
+
 export function AddServerModal({
   isOpen,
   onClose,
@@ -88,11 +112,29 @@ export function AddServerModal({
   initialData,
   requireHttps,
   projectClientConfig,
+  organizationId,
+  isSignedIn,
   projectXaaDefaultIdentity = null,
 }: AddServerModalProps) {
+  const appState = useOptionalSharedAppState();
+  const activeProject = findProjectByAnyId(
+    appState?.projects,
+    appState?.activeProjectId,
+  );
+  const { user } = useAuth();
+  const resolvedConfidentialCimdContext =
+    resolveAddServerConfidentialCimdContext({
+      organizationId,
+      isSignedIn,
+      activeProjectOrganizationId: activeProject?.organizationId,
+      hasSignedInUser: Boolean(user),
+    });
   const formState = useServerForm(undefined, {
     requireHttps,
     projectClientConfig,
+    confidentialCimdProbeEnabled: isOpen,
+    organizationId: resolvedConfidentialCimdContext.organizationId,
+    isSignedIn: resolvedConfidentialCimdContext.isSignedIn,
   });
   const hostedUrlPlaceholder = "https://example.com/mcp";
   const appReady = useAppReady();
@@ -162,6 +204,39 @@ export function AddServerModal({
         if (initialData.hasClientSecret) {
           formState.setHasStoredClientSecret(true);
         }
+      } else if (initialData.useXaa || initialData.authMethod === "xaa") {
+        formState.setAuthType("xaa");
+        formState.setShowAuthSettings(true);
+        formState.setOauthRegistrationMode(
+          normalizeOauthRegistrationMode(initialData.registrationMode) ??
+            "auto",
+        );
+        formState.setXaaClientAuth(
+          initialData.xaaClientAuth === "private_key_jwt"
+            ? "private_key_jwt"
+            : "none",
+        );
+        formState.setUseCustomClientId(
+          initialData.registrationMode === "preregistered" ||
+            initialData.registrationMode === "auto" ||
+            initialData.registrationMode == null,
+        );
+        if (initialData.oauthScopes?.length) {
+          formState.setOauthScopesInput(initialData.oauthScopes.join(" "));
+        }
+        if (initialData.clientId) formState.setClientId(initialData.clientId);
+        if (initialData.clientSecret) {
+          formState.setClientSecret(initialData.clientSecret);
+        }
+        if (initialData.hasClientSecret) {
+          formState.setHasStoredClientSecret(true);
+        }
+        formState.setXaaAuthzIssuer(initialData.xaaAuthzIssuer ?? "");
+        formState.setXaaAllowPathScopedIssuer(
+          initialData.xaaAllowPathScopedIssuer === true,
+        );
+        formState.setXaaSubject(initialData.xaaSubject ?? "");
+        formState.setXaaEmail(initialData.xaaEmail ?? "");
       } else if (initialData.headers) {
         const authorizationHeader = getAuthorizationHeaderValue(
           initialData.headers,
@@ -403,6 +478,17 @@ export function AddServerModal({
               onOauthRegistrationModeChange={
                 formState.setOauthRegistrationMode
               }
+              xaaClientAuth={formState.xaaClientAuth}
+              onXaaClientAuthChange={formState.setXaaClientAuth}
+              confidentialCimdStatus={
+                formState.confidentialCimdCapability.status
+              }
+              confidentialCimdBlockReason={
+                formState.confidentialCimdBlockReason
+              }
+              onRetryConfidentialCimd={
+                formState.confidentialCimdCapability.retry
+              }
               useCustomClientId={formState.useCustomClientId}
               onUseCustomClientIdChange={(checked) => {
                 formState.setUseCustomClientId(checked);
@@ -509,7 +595,7 @@ export function AddServerModal({
             <Button
               type="submit"
               disabled={
-                formState.preregisteredOauthBlocksSubmit || isAppBootstrapping
+                formState.authConfigurationBlocksSubmit || isAppBootstrapping
               }
               title={isAppBootstrapping ? appReadyMessage ?? undefined : undefined}
               onClick={() => {
