@@ -65,11 +65,14 @@ export interface BuiltInToolContext {
   /** Optional chat session, used by Convex for idempotency namespacing. */
   chatSessionId?: string;
   /**
-   * True when the acting identity is a guest. Computer-backed tools are not
-   * advertised to guests (the backend also omits `computer` from guest
-   * runtime configs, and rejects guests at reserve — this is the middle of
-   * three layers). Defaults to false for surfaces that pre-authenticate
-   * non-guest actors (eval runners, sessionSimulation).
+   * True when the acting identity is a guest (share-link / chatbox visitor
+   * rather than a project member). This gates the workspace (`mcpjam_*`) tools,
+   * which are NOT advertised to guests. It does NOT gate bash: bash keys off an
+   * attached `computer`, not guest status, so a guest WITH a computer attached
+   * still gets it — the backend accepts guest bearers on `/computers/reserve`
+   * and contains cost via the guest daily start cap and the idle-delete sweep
+   * (see the bash branch in `resolveHostTools`). Defaults to false for surfaces
+   * that pre-authenticate non-guest actors (eval runners, sessionSimulation).
    */
   isGuest?: boolean;
   /**
