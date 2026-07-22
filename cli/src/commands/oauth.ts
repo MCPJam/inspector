@@ -812,20 +812,30 @@ export function summarizeOAuthLoginCommandInput(
 export function buildOAuthLoginSnapshotConfig(
   config: Pick<
     OAuthLoginConfig,
-    "serverUrl" | "customHeaders" | "stepTimeout" | "client" | "auth"
+    | "serverUrl"
+    | "customHeaders"
+    | "stepTimeout"
+    | "client"
+    | "auth"
+    | "protocolVersion"
   >,
   result?: OAuthLoginResult,
 ): MCPServerConfig {
+  // Pin the sessionless 2026 wire era so the server-doctor snapshot probes via
+  // the stateless path, not the default 2025 initialize handshake. Prefer the
+  // negotiated version from the result, but fall back to the requested
+  // `--protocol-version` so a 2026 login that THROWS before returning a result
+  // (e.g. during initial 2026 discovery/probe) still records a 2026-pinned
+  // snapshot instead of a misleading 2025 probe.
+  const snapshotProtocolVersion =
+    result?.protocolVersion ?? config.protocolVersion;
   const baseConfig: MCPServerConfig = {
     url: config.serverUrl,
     ...(config.customHeaders
       ? { requestInit: { headers: config.customHeaders } }
       : {}),
     timeout: config.stepTimeout ?? 30_000,
-    // A 2026 login authenticated against a sessionless server; pin the wire
-    // era so the recorded server-doctor snapshot probes via the stateless
-    // path, not the default 2025 initialize handshake.
-    ...(result?.protocolVersion === "2026-07-28"
+    ...(snapshotProtocolVersion === "2026-07-28"
       ? { mcpProtocolVersion: "2026-07-28" as const }
       : {}),
   };

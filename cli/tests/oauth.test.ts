@@ -286,6 +286,20 @@ test("buildOAuthLoginSnapshotConfig pins the 2026-07-28 stateless wire era", () 
   assert.equal((snapshotConfig as any).mcpProtocolVersion, "2026-07-28");
 });
 
+test("buildOAuthLoginSnapshotConfig falls back to the requested 2026 protocol when the login throws before a result", () => {
+  const config = buildOAuthConformanceConfig({
+    url: "https://example.com/mcp",
+    protocolVersion: "2026-07-28",
+    registration: "cimd",
+    authMode: "interactive",
+  });
+
+  // No result — mirrors `runOAuthLogin` throwing during 2026 discovery.
+  const snapshotConfig = buildOAuthLoginSnapshotConfig(config, undefined);
+
+  assert.equal((snapshotConfig as any).mcpProtocolVersion, "2026-07-28");
+});
+
 test("buildOAuthConformanceConfig accepts CIMD for the 2026-07-28 protocol", () => {
   const config = buildOAuthConformanceConfig({
     url: "https://example.com/mcp",
