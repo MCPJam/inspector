@@ -15,10 +15,11 @@ This page covers how to pick a version. Automatic per-server version detection i
 
 ## Where the setting lives
 
-There are two places to set a version, and they layer:
+There are three places to set a version, and they layer:
 
 1. **Client → MCP Protocol** — the _host default_ applied to every server attached to that Client.
-2. **Server card → Edit → Advanced settings → Protocol version** — a _per-server override_ that wins over the host default.
+2. **Add Server modal → Connection overrides → Protocol version** — a _per-server override_ set at add time (available when adding a server to a shared project).
+3. **Server card → Edit → Advanced settings → Protocol version** — a _per-server override_ that wins over the host default.
 
 Use the host default when you want every server in a Client to speak the same version. Use per-server overrides when you're testing a mix — for example, a stable 2025-11-25 server alongside one you're upgrading to the 2026 RC.
 
