@@ -1205,7 +1205,12 @@ export function useServerState({
       // reaches the connect payload — without this argument, the host
       // default wins and per-server overrides are silently dropped (the
       // bug PR #2257 review flagged).
-      serverId?: string
+      serverId?: string,
+      // Server name, used only to derive the sessionless 2026 wire era from
+      // the server's saved OAuth profile when nothing higher-precedence pins
+      // it. Every connect/probe/reconnect path funnels through this resolver,
+      // so deriving here covers them all in one place.
+      serverName?: string
     ) => {
       const defaults: ConnectionDefaults = {};
       if ("url" in serverConfig) {
@@ -1281,7 +1286,23 @@ export function useServerState({
         typeof rawConfigPin === "string" && isKnownProtocolVersion(rawConfigPin)
           ? rawConfigPin
           : undefined;
-      const resolvedProtocolVersion = effective ?? configPin;
+      // Lowest precedence of all: a server whose saved OAuth profile is
+      // 2026-07-28 speaks the sessionless 2026 transport, but `toMCPConfig`
+      // never copies the OAuth mode onto `config` and hosted
+      // `readStoredOAuthConfig` is empty — so without this the wire era is
+      // silently lost on the first OAuth connect/probe and every reconnect,
+      // and a 2026-only server falls back to the 2025 initialize handshake.
+      // Only 2026 (coupled + non-default) is derived; an explicit override,
+      // host default, or config pin above still wins.
+      const oauthServer = serverName
+        ? appStateServersRef.current[serverName]
+        : undefined;
+      const oauthProfilePin: McpProtocolVersion | undefined =
+        oauthServer?.useOAuth === true &&
+        oauthServer.oauthFlowProfile?.protocolVersion === "2026-07-28"
+          ? "2026-07-28"
+          : undefined;
+      const resolvedProtocolVersion = effective ?? configPin ?? oauthProfilePin;
       if (resolvedProtocolVersion !== undefined) {
         defaults.mcpProtocolVersion = resolvedProtocolVersion;
       }
@@ -1388,7 +1409,8 @@ export function useServerState({
           connectionDefaults: buildResolverConnectionDefaults(
             serverConfig,
             activeMcpProfile,
-            resolved.serverId
+            resolved.serverId,
+            serverName
           ),
         });
       }
@@ -1410,37 +1432,18 @@ export function useServerState({
       assertClientConfigSynced();
       const resolved = tryResolveProjectServer(serverName);
       if (resolved) {
-        const withDefaults = withProjectConnectionDefaults(
+        const configWithDefaults = withProjectConnectionDefaults(
           serverConfig,
           resolved.serverId
         );
-        // Centralized OAuth wire-era derivation for every reconnect path
-        // (token-apply, OAuth completion, hosted callback, saved-profile
-        // reconnect). A server whose saved OAuth profile is 2026-07-28 speaks
-        // the sessionless 2026 transport, but `toMCPConfig` never copies the
-        // OAuth mode onto `config`, and hosted `readStoredOAuthConfig` is
-        // empty — so without this the resolver has no pin to honor and the
-        // reconnect falls back to the 2025 initialize handshake. Stamp it here
-        // (lowest precedence: an already-present config pin, or a per-server
-        // override / host default in the resolver, still wins).
-        const oauthServer = appStateServersRef.current[serverName];
-        const alreadyPinned =
-          "mcpProtocolVersion" in withDefaults &&
-          Boolean(withDefaults.mcpProtocolVersion);
-        const configWithDefaults: MCPServerConfig =
-          !alreadyPinned &&
-          "url" in withDefaults &&
-          oauthServer?.useOAuth === true &&
-          oauthServer.oauthFlowProfile?.protocolVersion === "2026-07-28"
-            ? ({
-                ...withDefaults,
-                mcpProtocolVersion: "2026-07-28",
-              } as HttpServerConfig)
-            : withDefaults;
+        // The 2026 wire era (from the server's saved OAuth profile) is derived
+        // inside `buildResolverConnectionDefaults` via `serverName`, so it
+        // covers this reconnect path and the connect/probe paths uniformly.
         const connectionDefaults = buildResolverConnectionDefaults(
           configWithDefaults,
           activeMcpProfile,
-          resolved.serverId
+          resolved.serverId,
+          serverName
         );
         const effectiveProtocolVersion = connectionDefaults?.mcpProtocolVersion;
         const result = await reconnectServer(
@@ -3647,8 +3650,9 @@ export function useServerState({
       // Preserve an explicit wire protocol pin across the token-apply
       // reconnect. Rebuilding as `{ url }` alone drops it. (The 2026 era
       // derived from the OAuth profile is applied centrally in
-      // `guardedReconnectServer` for every reconnect path, so it is not
-      // repeated here — an explicit config pin still wins there.)
+      // `buildResolverConnectionDefaults`, which every connect/probe/reconnect
+      // path funnels through, so it is not repeated here — an explicit config
+      // pin still wins there.)
       const existingConfig = appStateServersRef.current[serverName]?.config;
       const existingWireVersion =
         existingConfig && "mcpProtocolVersion" in existingConfig
