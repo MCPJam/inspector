@@ -48,9 +48,9 @@ describe("isPubliclyReachableUrl", () => {
     expect(isPubliclyReachableUrl("http://[fe80::1]")).toBe(false);
   });
 
-  // #3041 review: neither link-local fe80::/10 NOR deprecated site-local
-  // fec0::/10 is globally routable — together they span the whole fe80::/9
-  // (fe80–feff). None may be chosen for direct access.
+  // #3041 review: link-local fe80::/10 and deprecated site-local fec0::/10 are
+  // both NON-routable (RFC 3879 for site-local); together they span the whole
+  // fe80::/9 (fe80–feff). None may be chosen for direct access.
   it("rejects the whole fe80::/9 (link-local + site-local), not just fe80:", () => {
     for (const url of [
       "http://[fe80::1]", // link-local
