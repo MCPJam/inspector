@@ -17,6 +17,8 @@ import {
   resolveLocalOrgMaxSteps,
   type RunLocalOrgChatTurnHeadlessOptions,
 } from "../../utils/org-model-stream-handler.js";
+import type { DirectChatTurnTraceEvents } from "../../utils/direct-chat-turn.js";
+import type { SwarmStreamPayload } from "../../../shared/swarm-stream-events.js";
 import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
 import {
   resolveTurnRuntime,
@@ -586,6 +588,11 @@ export interface SyntheticHostSessionAdapter {
     connectedServerIds: string[];
     promptIndex: number;
   }): Promise<void>;
+  /**
+   * Optional live SSE emitter (swarm). Envelope (runId/hostId/chatSessionId/
+   * sessionIndex) is bound by the caller — this only receives payloads.
+   */
+  emit?(payload: SwarmStreamPayload): void;
 }
 
 export async function runSyntheticHostSession(
@@ -603,6 +610,7 @@ export async function runSyntheticHostSession(
     nextPersonaTurn,
     persist,
     onTurnPersisted,
+    emit,
   } = adapter;
   const {
     modelDefinition,
@@ -758,8 +766,17 @@ export async function runSyntheticHostSession(
       ? resolveWebAuthorizedHarnessStrategy()
       : undefined;
 
+    emit?.({ type: "session_start" });
+
     for (let turn = 0; turn < maxTurns; turn++) {
-      if (abortSignal?.aborted) return { outcome: "failed" };
+      if (abortSignal?.aborted) {
+        emit?.({
+          type: "session_complete",
+          status: "failed",
+          errorMessage: "aborted",
+        });
+        return { outcome: "failed" };
+      }
 
       const next = await nextPersonaTurn(lastTranscript);
 
@@ -777,6 +794,12 @@ export async function runSyntheticHostSession(
       // (same per-turn hygiene as the eval runners).
       browser.setActivePromptIndex(turn);
       await browser.dismissCarriedWidget();
+
+      emit?.({
+        type: "turn_start",
+        turnIndex: turn,
+        prompt: next.message,
+      });
 
       const {
         history: updatedHistory,
@@ -800,13 +823,75 @@ export async function runSyntheticHostSession(
         // prepareAdvertisedTools hook hides them until a widget is mounted.
         tools: { ...prepared.allTools, ...browser.computerWidgetTools },
         hooks: {
-          onToolCall: (event) => browser!.noteToolCallInput(event),
-          onToolResult: (event) => browser!.handleEngineToolResult(event),
+          onToolCall: (event) => {
+            browser!.noteToolCallInput(event);
+            const args =
+              event.input &&
+              typeof event.input === "object" &&
+              !Array.isArray(event.input)
+                ? (event.input as Record<string, unknown>)
+                : { value: event.input };
+            emit?.({
+              type: "tool_call",
+              toolName: event.toolName,
+              toolCallId: event.toolCallId,
+              args,
+            });
+          },
+          onToolResult: (event) => {
+            void browser!.handleEngineToolResult(event);
+            emit?.({
+              type: "tool_result",
+              toolCallId: event.toolCallId,
+              result: event.output,
+            });
+          },
           ...(browser.prepareAdvertisedTools
             ? { prepareAdvertisedTools: browser.prepareAdvertisedTools }
             : {}),
-          onToolResultChunk: (chunk) =>
-            browser!.handleDirectToolResultChunk(chunk),
+          onToolResultChunk: async (chunk) => {
+            await browser!.handleDirectToolResultChunk(chunk);
+            emit?.({
+              type: "tool_result",
+              toolCallId: chunk.toolCallId,
+              result: chunk.output,
+            });
+          },
+          onToolCallChunk: (chunk) => {
+            emit?.({
+              type: "tool_call",
+              toolName: chunk.toolName,
+              toolCallId: chunk.toolCallId,
+              args: chunk.input,
+            });
+          },
+          ...(emit
+            ? {
+                onLiveTextDelta: (content: string) => {
+                  emit({ type: "text_delta", content });
+                },
+                onStepFinish: (event: {
+                  stepIndex: number;
+                  turnUsage?: {
+                    inputTokens?: number;
+                    outputTokens?: number;
+                  };
+                }) => {
+                  emit({
+                    type: "step_finish",
+                    stepNumber: event.stepIndex,
+                    ...(event.turnUsage
+                      ? {
+                          usage: {
+                            inputTokens: event.turnUsage.inputTokens ?? 0,
+                            outputTokens: event.turnUsage.outputTokens ?? 0,
+                          },
+                        }
+                      : {}),
+                  });
+                },
+              }
+            : {}),
         },
         progressivePlan: prepared.progressivePlan,
         discoveryState: prepared.discoveryState,
@@ -842,6 +927,8 @@ export async function runSyntheticHostSession(
           ? { journeyRunId: persist.journeyRunId }
           : {}),
       });
+
+      emit?.({ type: "turn_finish", turnIndex: turn });
       // Track the first turn's modelSource for the per-session persist
       // calls. modelSource is stable across turns within a session because
       // chatbox modelId is pinned by `fetchChatboxRuntimeConfig` at start.
@@ -992,6 +1079,7 @@ export async function runSyntheticHostSession(
       });
     }
 
+    emit?.({ type: "session_complete", status: "succeeded" });
     return { outcome: "succeeded" };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -1002,6 +1090,11 @@ export async function runSyntheticHostSession(
     // breach (stop the WHOLE run). The chatbox runner ignores it for
     // rate-limited outcomes, so this is a safe additive change.
     if (classifyTurnFailure(message) === "rate_limited") {
+      emit?.({
+        type: "session_complete",
+        status: "rate_limited",
+        errorMessage: message,
+      });
       return { outcome: "rate_limited", errorMessage: message };
     }
     logger.warn("[sessionSimulation.runner] session failed", {
@@ -1009,6 +1102,11 @@ export async function runSyntheticHostSession(
       chatSessionId,
       personaId: persist.personaId,
       error: message,
+    });
+    emit?.({
+      type: "session_complete",
+      status: "failed",
+      errorMessage: message,
     });
     return { outcome: "failed", errorMessage: message };
   } finally {
@@ -1334,10 +1432,19 @@ export interface DrainAssistantTurnHooks {
   /** Engine branches (`/stream`, `/stream/org`): MCPJamHandlerOptions pass-throughs. */
   onToolCall?: MCPJamHandlerOptions["onToolCall"];
   onToolResult?: MCPJamHandlerOptions["onToolResult"];
+  /** Live text deltas (hosted + direct). Swarm SSE / eval sinks use this. */
+  onLiveTextDelta?: MCPJamHandlerOptions["onLiveTextDelta"];
+  /** Per-step settle (hosted + direct). Swarm SSE / eval sinks use this. */
+  onStepFinish?: MCPJamHandlerOptions["onStepFinish"];
   /** All branches: per-step advertised-tool narrowing. */
   prepareAdvertisedTools?: MCPJamHandlerOptions["prepareAdvertisedTools"];
   /** Local AI-SDK branch: awaited per-tool-result render hook. */
   onToolResultChunk?: RunLocalOrgChatTurnHeadlessOptions["onToolResultChunk"];
+  /**
+   * Local AI-SDK branch: tool-call chunk (via `traceEvents.onToolCallChunk`).
+   * Hosted engines use {@link onToolCall} instead.
+   */
+  onToolCallChunk?: DirectChatTurnTraceEvents["onToolCallChunk"];
 }
 
 /**
@@ -1510,6 +1617,13 @@ export async function drainAssistantTurn(
       ...(hooks?.onToolResultChunk
         ? { onToolResultChunk: hooks.onToolResultChunk }
         : {}),
+      ...(hooks?.onToolCallChunk
+        ? { onToolCallChunk: hooks.onToolCallChunk }
+        : {}),
+      ...(hooks?.onLiveTextDelta
+        ? { onLiveTextDelta: hooks.onLiveTextDelta }
+        : {}),
+      ...(hooks?.onStepFinish ? { onStepFinish: hooks.onStepFinish } : {}),
       onEngineError: captureEngineError,
     });
 
@@ -1616,6 +1730,10 @@ export async function drainAssistantTurn(
     ...(synthesisRunId ? { synthesisRunId } : {}),
     ...(hooks?.onToolCall ? { onToolCall: hooks.onToolCall } : {}),
     ...(hooks?.onToolResult ? { onToolResult: hooks.onToolResult } : {}),
+    ...(hooks?.onLiveTextDelta
+      ? { onLiveTextDelta: hooks.onLiveTextDelta }
+      : {}),
+    ...(hooks?.onStepFinish ? { onStepFinish: hooks.onStepFinish } : {}),
     ...(hooks?.prepareAdvertisedTools
       ? { prepareAdvertisedTools: hooks.prepareAdvertisedTools }
       : {}),

@@ -33,6 +33,7 @@ import {
   appendRecentMcpjamAgentSession,
   loadRecentMcpjamAgentSessions,
 } from "@/components/mcpjam-agent/recent-sessions";
+import { pendingAgentPromptKey } from "@/lib/mcpjam-agent/pending-prompt";
 
 export interface McpjamAgentThreadProps {
   sessionId: string;
@@ -81,7 +82,7 @@ export function McpjamAgentThread({
     if (typeof window === "undefined") return null;
     try {
       const raw = window.sessionStorage.getItem(
-        `mcpjam:agent-pending:${sessionId}`
+        pendingAgentPromptKey(sessionId)
       );
       if (!raw) return null;
       const parsed = JSON.parse(raw) as unknown;
@@ -159,8 +160,8 @@ export function McpjamAgentThread({
     if (typeof window === "undefined") return;
     let raw: string | null = null;
     try {
-      raw = window.sessionStorage.getItem(`mcpjam:agent-pending:${sessionId}`);
-      window.sessionStorage.removeItem(`mcpjam:agent-pending:${sessionId}`);
+      raw = window.sessionStorage.getItem(pendingAgentPromptKey(sessionId));
+      window.sessionStorage.removeItem(pendingAgentPromptKey(sessionId));
     } catch {
       raw = null;
     }

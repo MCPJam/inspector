@@ -46,6 +46,7 @@ vi.mock("../runner.js", async () => {
 import {
   startJourneyRun,
   shutdownRunningJourneyRuns,
+  getRunningJourneyStreamHub,
   MAX_CONCURRENT_HOSTS,
 } from "../swarm-runner.js";
 
@@ -672,6 +673,52 @@ describe("swarm single-host runner — heartbeat", () => {
       expect(heartbeatJourneyRunMock.mock.calls.length).toBe(countAtFinish);
     } finally {
       vi.useRealTimers();
+    }
+  });
+});
+
+describe("swarm runner — live stream emit", () => {
+  it("publishes attempt_status, session payloads, and run_complete on the hub", async () => {
+    const seen: string[] = [];
+    let releaseSession!: () => void;
+    const sessionGate = new Promise<void>((resolve) => {
+      releaseSession = resolve;
+    });
+
+    runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
+      expect(typeof adapter.emit).toBe("function");
+      adapter.emit({ type: "session_start" });
+      adapter.emit({ type: "text_delta", content: "hi" });
+      await sessionGate;
+      return { outcome: "succeeded" };
+    });
+
+    const runPromise = startJourneyRun(baseOpts({ sessionsPerHost: 1 }));
+
+    // Wait until the hub is registered and the attempt has been claimed.
+    let hub = getRunningJourneyStreamHub("run-1");
+    for (let i = 0; i < 50 && !hub; i++) {
+      await Promise.resolve();
+      hub = getRunningJourneyStreamHub("run-1");
+    }
+    expect(hub).toBeDefined();
+    hub!.subscribe((e) => seen.push(e.type));
+
+    releaseSession();
+    await runPromise;
+
+    expect(seen).toContain("attempt_status");
+    expect(seen).toContain("session_start");
+    expect(seen).toContain("text_delta");
+    expect(seen).toContain("run_complete");
+    expect(getRunningJourneyStreamHub("run-1")).toBeUndefined();
+  });
+
+  it("wires emit on the adapter for every session", async () => {
+    await startJourneyRun(baseOpts({ sessionsPerHost: 2 }));
+    expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(2);
+    for (const call of runSyntheticHostSessionMock.mock.calls) {
+      expect(typeof (call[0] as { emit?: unknown }).emit).toBe("function");
     }
   });
 });

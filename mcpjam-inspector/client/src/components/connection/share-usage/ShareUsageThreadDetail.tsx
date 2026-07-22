@@ -398,6 +398,25 @@ export function ShareUsageThreadDetail({
   }
 
   if (!adaptedTrace || adaptedTrace.messages.length === 0) {
+    // A swarm session with no persisted transcript (a failed or empty attempt)
+    // must still expose the on-demand judge entry point — the verdict grades
+    // the journey goal, not the transcript. Render a minimal shell with the
+    // judge section instead of a dead-end "No messages" message.
+    if (thread.sourceType === "swarm") {
+      return (
+        <div className="flex h-full flex-col">
+          {thread.synthetic === true && thread.readiness ? (
+            <SessionInsightBar readiness={thread.readiness} />
+          ) : null}
+          <SwarmJudgeSection threadId={threadId} goalScore={thread.goalScore} />
+          <div className="flex flex-1 items-center justify-center">
+            <p className="text-sm text-muted-foreground">
+              No messages in this session
+            </p>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="flex h-full items-center justify-center">
         <p className="text-sm text-muted-foreground">No messages in thread</p>

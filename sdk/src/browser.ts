@@ -133,6 +133,7 @@ export {
   XAA_DEBUG_CLIENT_ID_METADATA_URL,
   evaluateIdJagClientMetadata,
   getBrowserDebugDynamicRegistrationMetadata,
+  getXaaConnectClientMetadata,
   getXaaDebugClientMetadata,
 } from "./oauth/client-identity.js";
 export type {
