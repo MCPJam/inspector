@@ -3,12 +3,16 @@ import { Hono } from "hono";
 import { mkdtempSync, rmSync } from "fs";
 import os from "os";
 import path from "path";
-import xaaWeb, { readXaaCimdOrgMasterKey } from "../xaa.js";
+import {
+  createXaaWebRouter,
+  readXaaCimdOrgMasterKey,
+} from "../xaa.js";
 import { createXaaRouter } from "../../mcp/xaa.js";
 import { bearerAuthMiddleware } from "../../../middleware/bearer-auth.js";
 import { guestRateLimitMiddleware } from "../../../middleware/guest-rate-limit.js";
 import { ErrorCode, WebRouteError } from "../errors.js";
 import { initXAAIdpKeyPair, resetXAAIdpKeyPairForTests } from "@mcpjam/sdk";
+import { getConfidentialCimdProviderForOrg } from "../../../services/xaa-confidential-cimd.js";
 
 function decodeJwtPayload(token: string): Record<string, any> {
   const [, payload] = token.split(".");
@@ -27,7 +31,7 @@ describe("web xaa routes", () => {
     initXAAIdpKeyPair();
 
     app = new Hono();
-    app.route("/api/web/xaa", xaaWeb);
+    app.route("/api/web/xaa", createXaaWebRouter());
   });
 
   afterEach(() => {
@@ -659,6 +663,31 @@ describe("hosted confidential CIMD master-key configuration", () => {
     const encoded = Buffer.alloc(32, 7).toString("base64url");
     expect(encoded).toHaveLength(43);
     expect(readXaaCimdOrgMasterKey(encoded)).toEqual(Buffer.alloc(32, 7));
+  });
+
+  it("rejects a non-canonical base64url spelling of the same 32 bytes", () => {
+    const canonical = Buffer.alloc(32, 0).toString("base64url");
+    const nonCanonical = `${canonical.slice(0, -1)}B`;
+    expect(Buffer.from(nonCanonical, "base64url")).toEqual(Buffer.alloc(32, 0));
+    expect(() => readXaaCimdOrgMasterKey(nonCanonical)).toThrow(
+      "canonical unpadded base64url"
+    );
+  });
+
+  it("resolves the provider from environment populated after module import", () => {
+    const original = process.env.XAA_CIMD_ORG_MASTER_KEY;
+    process.env.XAA_CIMD_ORG_MASTER_KEY = Buffer.alloc(32, 9).toString(
+      "base64url",
+    );
+    try {
+      expect(getConfidentialCimdProviderForOrg()).toBeTypeOf("function");
+    } finally {
+      if (original === undefined) {
+        delete process.env.XAA_CIMD_ORG_MASTER_KEY;
+      } else {
+        process.env.XAA_CIMD_ORG_MASTER_KEY = original;
+      }
+    }
   });
 
   it.each(["", "not-base64", `${"A".repeat(44)}=`, "A".repeat(42)])(

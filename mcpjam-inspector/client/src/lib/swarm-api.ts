@@ -12,6 +12,8 @@
  */
 
 import { authFetch } from "@/lib/session-token";
+import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
+import type { SwarmStreamEvent } from "@/shared/swarm-stream-events";
 
 // ── Convex query names (string-keyed reads) ─────────────────────────────────
 export const SWARM_QUERIES = {
@@ -22,6 +24,12 @@ export const SWARM_QUERIES = {
   listHosts: "hosts:listHosts",
   listJourneyRuns: "journeyRuns:listJourneyRuns",
   listSessionsByJourneyRun: "journeyRuns:listSessionsByJourneyRun",
+  /** Flat Sessions-tab default: all swarm sessions in the project. */
+  listSessionsByProject: "journeyRuns:listSessionsByProject",
+  /** Sessions-tab persona filter (narrows the project feed). */
+  listSessionsByPersona: "journeyRuns:listSessionsByPersona",
+  /** Sessions-tab metric strip aggregates (project-wide or persona-scoped). */
+  getSwarmSessionMetrics: "journeyRuns:getSwarmSessionMetrics",
   listRunningPersonaRefIds: "journeyRuns:listRunningPersonaRefIds",
 } as const;
 
@@ -95,9 +103,9 @@ export interface JourneyRun {
 /**
  * A single synthetic session row — the backend `JourneySessionDto` returned by
  * `journeyRuns:listSessionsBy*` page items. The row identifier is `id`
- * (`s._id` under the hood); there is NO `personaLabel` / `messageCount`.
- * `readiness` is the server-denormalized WIDE subset the readiness badge reads
- * (`session-readiness.tsx`).
+ * (`s._id` under the hood). List-card fields (`messageCount`, previews,
+ * persona labels) power the Swarms Sessions tab; `readiness` /
+ * `goalScore` are the server-denormalized subsets the badges read.
  */
 export interface JourneySessionRow {
   /** `s._id` — the id `ShareUsageThreadDetail` opens + the deep-link threadId. */
@@ -106,10 +114,18 @@ export interface JourneySessionRow {
   projectId: string;
   hostId: string;
   personaRefId?: string;
+  /** Parent journey run — required for `buildSwarmSessionPath` deep links. */
+  journeyRunId?: string;
+  journeyRefId?: string;
   status?: string;
   modelId?: string;
   startedAt: number;
   lastActivityAt?: number;
+  messageCount?: number;
+  firstMessagePreview?: string;
+  personaLabel?: string;
+  visitorDisplayName?: string;
+  synthetic?: boolean;
   /** Server-denormalized readiness subset (see `session-readiness.tsx`). */
   readiness?: {
     status?: string;
@@ -118,6 +134,75 @@ export interface JourneySessionRow {
   };
   /** Server-denormalized judge verdict subset (see `swarmJudge.ts` backend). */
   goalScore?: SessionGoalScore;
+}
+
+/**
+ * One daily trend bucket for the Sessions metric strip sparklines. Mirrors
+ * `convex/lib/swarmSessionMetrics.ts` `SwarmSessionMetricsPoint` (hand-kept).
+ */
+export interface SwarmSessionMetricsPoint {
+  dayStartMs: number;
+  sessionCount: number;
+  toolErrorRate: number | null;
+  avgToolCallsPerSession: number | null;
+  latencyP50Ms: number | null;
+  latencyP95Ms: number | null;
+  avgTokensPerSession: number | null;
+}
+
+/**
+ * Aggregated Sessions-tab metrics returned by
+ * `journeyRuns:getSwarmSessionMetrics`. Mirrors the backend `SwarmSessionMetrics`
+ * (hand-kept, two-repo layout). Every average is null-safe: metrics with no
+ * sample come back `null` (rendered as "—"), never a misleading zero.
+ */
+export interface SwarmSessionMetrics {
+  sessionCount: number;
+  analyzedCount: number;
+  truncated: boolean;
+  toolCallCount: number;
+  toolErrorCount: number;
+  toolErrorRate: number | null;
+  sessionsWithToolErrors: number;
+  topFailingTool: { toolName: string; errorCount: number } | null;
+  avgToolCallsPerSession: number | null;
+  latencyP50Ms: number | null;
+  latencyP95Ms: number | null;
+  avgTokensPerSession: number | null;
+  tokenSampleCount: number;
+  trend: SwarmSessionMetricsPoint[];
+}
+
+/**
+ * Map a journey session list row into the shape `ShareUsageThreadList` /
+ * chatbox Sessions cards expect. Swarm sessions are always synthetic for
+ * badge purposes even if an older row omitted the flag.
+ */
+export function journeySessionRowToThread(
+  row: JourneySessionRow,
+  fallbackPersonaName?: string,
+): SharedChatThread {
+  const displayName =
+    row.visitorDisplayName ??
+    row.personaLabel ??
+    fallbackPersonaName ??
+    "Swarm session";
+  return {
+    _id: row.id,
+    sourceType: "swarm",
+    chatSessionId: row.chatSessionId,
+    visitorDisplayName: displayName,
+    modelId: row.modelId,
+    messageCount: row.messageCount ?? 0,
+    firstMessagePreview: row.firstMessagePreview,
+    startedAt: row.startedAt,
+    lastActivityAt: row.lastActivityAt ?? row.startedAt,
+    synthetic: row.synthetic ?? true,
+    personaId: row.personaRefId,
+    personaLabel: row.personaLabel ?? fallbackPersonaName,
+    readiness: row.readiness as SharedChatThread["readiness"] | undefined,
+    goalScore: row.goalScore,
+  };
 }
 
 /**
@@ -273,4 +358,90 @@ export async function launchJourneyRun(
     );
   }
   return { runId };
+}
+
+/**
+ * Subscribe to the multiplexed SSE stream for a journey run. Events are
+ * scoped by `chatSessionId` / `hostId` / `sessionIndex`. Resolves when the
+ * stream ends (`run_complete` or disconnect).
+ */
+export async function streamJourneyRun(
+  runId: string,
+  onEvent: (event: SwarmStreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const response = await authFetch(
+    `/api/web/swarm/runs/${encodeURIComponent(runId)}/stream`,
+    {
+      method: "GET",
+      headers: { Accept: "text/event-stream" },
+      signal,
+    },
+  );
+
+  if (!response.ok) {
+    let message = `Failed to stream journey run (${response.status})`;
+    try {
+      const body = (await response.json()) as { message?: string; error?: string };
+      if (typeof body.message === "string" && body.message.length > 0) {
+        message = body.message;
+      } else if (typeof body.error === "string" && body.error.length > 0) {
+        message = body.error;
+      }
+    } catch {
+      // ignore
+    }
+    throw new Error(message);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error("No response body for swarm run stream");
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const emitSseLine = (line: string) => {
+    const trimmedLine = line.trim();
+    if (!trimmedLine.startsWith("data: ")) return;
+    const data = trimmedLine.slice(6).trim();
+    if (!data || data === "[DONE]") return;
+    try {
+      onEvent(JSON.parse(data) as SwarmStreamEvent);
+    } catch {
+      // ignore malformed lines
+    }
+  };
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        emitSseLine(line);
+      }
+    }
+    buffer += decoder.decode();
+    for (const line of buffer.split("\n")) {
+      emitSseLine(line);
+    }
+  } finally {
+    try {
+      reader.releaseLock?.();
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/** Deterministic attempt chatSessionId — matches the swarm runner claim key. */
+export function swarmAttemptChatSessionId(
+  runId: string,
+  hostId: string,
+  sessionIndex: number,
+): string {
+  return `synth_${runId}_${hostId}_${sessionIndex}`;
 }

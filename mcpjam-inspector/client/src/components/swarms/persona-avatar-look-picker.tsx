@@ -106,7 +106,6 @@ export function PersonaAvatarLookPicker({
             shapeIndex={avatarShape}
             paletteIndex={avatarPalette}
             size="lg"
-            active
             state={state}
           />
         </button>
@@ -118,7 +117,6 @@ export function PersonaAvatarLookPicker({
             shapeIndex={shapeIndex}
             paletteIndex={paletteIndex}
             size="lg"
-            active
             state={state}
           />
           <div className="flex w-full items-center justify-between gap-2">

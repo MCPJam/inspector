@@ -78,6 +78,7 @@ import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { ServersLoadingSkeleton } from "@mcpjam/design-system/servers-loading-skeleton";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
+import { useAuth } from "@workos-inc/authkit-react";
 import type {
   ProjectServerConfigDto,
   ProjectServerConfigInput,
@@ -588,6 +589,7 @@ export function ServersTab({
   const hostsConnectAddServerSlot = useContext(HostsConnectAddServerSlotContext);
   const viewPhase = useHostsConnectViewPhase();
   const { isAuthenticated } = useConvexAuth();
+  const { user: signedInUser } = useAuth();
 
   // Auto-connect the previewed host's REQUIRED servers once per host scope.
   // Mirrors the wiring on the host builder + Playground so /servers, /hosts,
@@ -2009,6 +2011,8 @@ export function ServersTab({
           handleConnectServer(formData);
         }}
         projectClientConfig={selectedProject?.clientConfig}
+        organizationId={selectedProject?.organizationId ?? null}
+        isSignedIn={Boolean(signedInUser)}
         projectXaaDefaultIdentity={
           selectedProject?.xaaTestDefaults?.defaultIdentity ?? null
         }
@@ -2036,6 +2040,8 @@ export function ServersTab({
           projectClientConfig={selectedProject?.clientConfig}
           projectId={hostedProjectId}
           hostedServerId={detailModalHostedServerId}
+          organizationId={selectedProject?.organizationId ?? null}
+          isSignedIn={Boolean(signedInUser)}
           // The tab now mounts under ActiveMcpProfileProvider (see the
           // root wrapper), which is the source for general host-profile
           // reads (e.g. the auth section's enterprise-policy guidance).

@@ -41,23 +41,13 @@ import {
   setToolSpanMessageRangesFromResults,
 } from "../live-chat-trace-stream.js";
 import { StreamTurnDriver } from "../stream-turn-driver.js";
-import {
-  getHarnessAdapter,
-  buildBrokerDummyAuth,
-  type HarnessAuth,
-} from "./registry.js";
+import { getHarnessAdapter, buildBrokerDummyAuth } from "./registry.js";
 import type { HarnessV1PermissionMode } from "@ai-sdk/harness";
 import {
   startHarnessModelBroker,
   revokeHarnessModelBroker,
 } from "./harness-model-broker.js";
-
-/** Inspector-side gate for E2B header-broker credential delivery. Default OFF —
- *  until enabled, harness runs use the existing client-lease path unchanged, so
- *  this PR is safe to merge dark. Requires the backend broker routes + flags. */
-function harnessBrokerDeliveryEnabled(): boolean {
-  return process.env.MCPJAM_HARNESS_BROKER_DELIVERY === "true";
-}
+import { harnessBrokerDeliveryEnabled } from "./harness-flags.js";
 import {
   emitError,
   emitFinish,
@@ -124,25 +114,6 @@ type ChunkWriter = { write: (chunk: UIMessageChunk) => void };
 export const HARNESS_EMPTY_VISIBLE_OUTPUT_TEXT =
   "The harness completed the turn without returning a visible message.";
 
-/**
- * Resolve the model credential the harness hands to the in-sandbox CLI — from
- * Convex, like every other model key (keys live in Convex; the inspector holds
- * none by design). The CLI makes its own model calls inside the sandbox, so it
- * needs a real credential; we fetch the system **AI Gateway** key via the
- * bearer-authed Convex endpoint and hand it to the adapter as `auth.gateway`.
- * One key serves Claude Code (Anthropic) and Codex (OpenAI).
- *
- * Per-request Gateway attribution tags (`providerOptions.gateway.user/tags`)
- * are NOT plumbed: the harness adapter only forwards env vars to the CLI
- * (AI_GATEWAY_API_KEY / *_BASE_URL), so it can't carry per-call tags. Issuance
- * is instead audited + rate-limited server-side; full per-generation spend
- * ingestion is a follow-up (see the harness plan).
- *
- * Fails closed: the endpoint rejects (harness disabled / not a member /
- * rate-limited / no gateway key) ⇒ we throw here, BEFORE the computer is woken
- * (this is the first step of the turn), so a misconfigured turn never provisions
- * a box.
- */
 /**
  * Build the harness `.mcp.json` — "always-proxy". Every selected, registered
  * server points at MCPJam's own proxy (carrying a signed `X-MCPJam-Proxy-Token`
@@ -526,13 +497,13 @@ export async function runHarnessTurn(
         });
       const isApprovalResume = approvalContinuations.length > 0;
 
-      // Phase timing — log where a turn spends its wall-clock (credential /
-      // claim / box wake / session connect / model stream / finalize) so "takes
-      // forever" can be attributed instead of guessed.
+      // Phase timing — log where a turn spends its wall-clock (claim / box
+      // wake / broker start / session connect / model stream / finalize) so
+      // "takes forever" can be attributed instead of guessed.
       const tStart = Date.now();
-      let tAuth = tStart;
       let tClaim = tStart;
       let tSandbox = tStart;
+      let tBroker = tStart;
       let tConnect = tStart;
       let resumedSession = false;
 
@@ -559,33 +530,23 @@ export async function runHarnessTurn(
         );
       }
 
-      // 1. Resolve the model credential. CLIENT path: fetch the gateway key from
-      // Convex FIRST — fail-fast before resolveHarnessSandbox wakes the box, so a
-      // misconfigured turn never touches it. BROKER path: the lease is installed
-      // into E2B's egress transform AFTER the sandbox id is known (step 3b) and
-      // the CLI runs with dummy creds, so auth is deferred.
-      const useBroker = harnessBrokerDeliveryEnabled();
-      // Secure Guest Harness Enablement — a host-funded swarm guest must NEVER
-      // run via the client-lease path (that would return a raw model lease to
-      // the guest's inspector session). Broker delivery installs the lease into
-      // the E2B egress transform OUTSIDE the VM, so require it and fail closed
-      // when it's off for a swarm-scoped turn.
-      if (executionScope?.kind === "swarm" && !useBroker) {
+      // 1. Credential delivery gate. BROKER-ONLY (COMP-23): the lease is
+      // installed into E2B's egress transform AFTER the sandbox id is known
+      // (step 3b) and the CLI runs with dummy creds — the inspector never
+      // holds a model credential. The raw-key client path (resolveAuth →
+      // /web/harness/model-credential) was removed because it spent the
+      // system AI Gateway key with zero metering. With the kill switch off,
+      // EVERY scope fails closed here (guests were already broker-only —
+      // this now covers members too); the chat-v2 routes surface the same
+      // condition pre-stream via checkHarnessRuntimeAvailable.
+      if (!harnessBrokerDeliveryEnabled()) {
         throw new Error(
-          "Guest harness requires broker credential delivery " +
-            "(MCPJAM_HARNESS_BROKER_DELIVERY=true) — refusing to start a " +
-            "host-funded harness turn without it."
+          "Harness runs require broker credential delivery, but it is " +
+            "disabled on this server (MCPJAM_HARNESS_BROKER_DELIVERY=false). " +
+            "There is no fallback credential path — re-enable the broker to " +
+            "run harness turns."
         );
       }
-      let auth: HarnessAuth | undefined = useBroker
-        ? undefined
-        : await harnessAdapter.resolveAuth({
-            projectId,
-            modelId,
-            bearer: authHeader,
-            ...(abortSignal ? { signal: abortSignal } : {}),
-          });
-      tAuth = Date.now();
 
       // 2. Build the .mcp.json — always-proxy: ensure a per-server tunnel and
       // point every entry at MCPJam's own adapter-http (no upstream creds in the
@@ -788,38 +749,35 @@ export async function runHarnessTurn(
       });
       tSandbox = Date.now();
 
-      // 3b. BROKER delivery: the sandbox id is now known, so have Convex mint the
-      // lease, lock the sandbox's egress to the proxy, and install the lease into
-      // E2B's egress transform — the inspector never sees the lease. Run the CLI
-      // with dummy creds pointed at the returned proxy. Fail-fast on install
-      // error (the box is awake but no real credential exists anywhere).
-      if (useBroker) {
-        // PRECOMPUTE the run id and record it (+ the computer) BEFORE the POST.
-        // If the backend installs the E2B rule but the response is lost/aborted,
-        // teardown can still revoke by this id (backend keys revoke on runId).
-        brokerRunId = crypto.randomUUID();
-        brokerComputerId = String(computerId);
-        const broker = await startHarnessModelBroker({
-          projectId,
-          computerId: String(computerId),
-          harnessId: harnessAdapter.id,
-          modelId,
-          runId: brokerRunId,
-          ...(executionScope ? { executionScope } : {}),
-          bearer: authHeader,
-          ...(abortSignal ? { signal: abortSignal } : {}),
-        });
-        if (!broker.ok) {
-          // Throws propagate to the turn's outer catch; onFinishEngine frees the
-          // claimed lane (sessionEstablished still false) and revokes the broker
-          // lease (brokerRunId set) if the backend installed before a lost response.
-          throw new Error(broker.error);
-        }
-        auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl);
+      // 3b. BROKER delivery (the only credential path): the sandbox id is now
+      // known, so have Convex mint the lease, lock the sandbox's egress to the
+      // proxy, and install the lease into E2B's egress transform — the
+      // inspector never sees the lease. Run the CLI with dummy creds pointed
+      // at the returned proxy. Fail-fast on install error (the box is awake
+      // but no real credential exists anywhere).
+      // PRECOMPUTE the run id and record it (+ the computer) BEFORE the POST.
+      // If the backend installs the E2B rule but the response is lost/aborted,
+      // teardown can still revoke by this id (backend keys revoke on runId).
+      brokerRunId = crypto.randomUUID();
+      brokerComputerId = String(computerId);
+      const broker = await startHarnessModelBroker({
+        projectId,
+        computerId: String(computerId),
+        harnessId: harnessAdapter.id,
+        modelId,
+        runId: brokerRunId,
+        ...(executionScope ? { executionScope } : {}),
+        bearer: authHeader,
+        ...(abortSignal ? { signal: abortSignal } : {}),
+      });
+      if (!broker.ok) {
+        // Throws propagate to the turn's outer catch; onFinishEngine frees the
+        // claimed lane (sessionEstablished still false) and revokes the broker
+        // lease (brokerRunId set) if the backend installed before a lost response.
+        throw new Error(broker.error);
       }
-      if (!auth) {
-        throw new Error("harness turn: model auth was not resolved");
-      }
+      const auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl);
+      tBroker = Date.now();
 
       // 4. Assemble the harness over the host's E2B computer.
       const sandbox = createE2BHarnessSandboxProvider({ sandboxId });
@@ -1729,10 +1687,10 @@ export async function runHarnessTurn(
         const tStream = Date.now();
         // Values inlined into the message — this logger drops the 2nd arg.
         logger.info(
-          `[harness][timing] credential=${tAuth - tStart}ms claim=${
-            tClaim - tAuth
-          }ms boxWake=${tSandbox - tClaim}ms sessionConnect=${
-            tConnect - tSandbox
+          `[harness][timing] claim=${tClaim - tStart}ms boxWake=${
+            tSandbox - tClaim
+          }ms brokerStart=${tBroker - tSandbox}ms sessionConnect=${
+            tConnect - tBroker
           }ms modelStream=${tStream - tConnect}ms total=${
             tStream - tStart
           }ms resumed=${resumedSession}`

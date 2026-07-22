@@ -1,9 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../native-mirror", () => ({
-  mirrorUiToolToNative: vi.fn(() => null),
-}));
-
 const { trackMock } = vi.hoisted(() => ({
   trackMock: vi.fn(),
 }));
@@ -54,7 +50,6 @@ describe("ui-tool-executor outcome telemetry", () => {
     __resetUiToolExecutorForTests();
     useUiToolsRegistry.setState({
       tools: new Map(),
-      nativeDisposers: new Map(),
       shippedNames: new Set(),
     });
   });
@@ -413,7 +408,6 @@ describe("ui-tool-executor outcome telemetry", () => {
       // wasShipped/unavailable branch, which must claim the id.
       useUiToolsRegistry.setState({
         tools: new Map(),
-        nativeDisposers: new Map(),
         shippedNames: new Set(["ui_navigate"]),
       });
       const addToolOutput = vi.fn();
