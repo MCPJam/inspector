@@ -58,6 +58,10 @@ import {
   markAgentTurnStarted,
   claimAgentTurnCompletion,
 } from "../agent-chat-instances";
+import {
+  __resetTourSystemPromptsForTests,
+  writeTourSystemPrompt,
+} from "../tour-session-prompt";
 import { __resetUiToolExecutorForTests } from "@/lib/webmcp/ui-tool-executor";
 import {
   AGENT_PANEL_STORAGE_KEY,
@@ -90,6 +94,7 @@ describe("agent-chat-instances", () => {
     mockState.lastTransportOptions = null;
     __resetAgentChatInstancesForTests();
     __resetUiToolExecutorForTests();
+    __resetTourSystemPromptsForTests();
     window.localStorage.removeItem(AGENT_PANEL_STORAGE_KEY);
     useAgentPanelStore.setState({
       isOpen: false,
@@ -123,6 +128,23 @@ describe("agent-chat-instances", () => {
     });
     config.projectId = "p2";
     expect(mockState.lastTransportOptions.body().projectId).toBe("p2");
+  });
+
+  it("body carries the tour system prompt for tour sessions only", () => {
+    writeTourSystemPrompt("tour-sess", {
+      tourId: "tour-a",
+      systemPrompt: "You are running tour A.",
+    });
+
+    getOrCreateAgentChat("tour-sess");
+    expect(mockState.lastTransportOptions.body().systemPrompt).toBe(
+      "You are running tour A.",
+    );
+
+    // Non-tour sessions must not grow a systemPrompt field — the route treats
+    // its absence as "identity prompt only".
+    getOrCreateAgentChat("plain-sess");
+    expect(mockState.lastTransportOptions.body().systemPrompt).toBeUndefined();
   });
 
   it("evicts only idle, detached instances beyond the cap", () => {

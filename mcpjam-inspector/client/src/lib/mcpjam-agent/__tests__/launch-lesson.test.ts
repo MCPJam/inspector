@@ -22,6 +22,10 @@ import {
   launchLessonSession,
 } from "../launch-lesson";
 import { pendingAgentPromptKey } from "../pending-prompt";
+import {
+  __resetTourSystemPromptsForTests,
+  readTourSystemPrompt,
+} from "../tour-session-prompt";
 import { useAgentPanelStore } from "@/stores/agent-panel/agent-panel-store";
 import { loadRecentMcpjamAgentSessions } from "@/components/mcpjam-agent/recent-sessions";
 
@@ -33,11 +37,15 @@ const TOUR: GuidedTourConcept = {
   icon: Cable,
   category: "Guided tour",
   estimatedMinutes: 5,
-  agentPrompt: "Give me a tour of evals.",
+  agentSystemPrompt: "You are running the evals tour.",
 };
+
+// What the launch autosubmits as the visible first message.
+const STARTER_TEXT = `Start the tour: ${TOUR.title}`;
 
 beforeEach(() => {
   __resetLaunchLessonForTests();
+  __resetTourSystemPromptsForTests();
   idCounter.n = 0;
   generateIdMock.mockClear();
   window.sessionStorage.clear();
@@ -60,9 +68,13 @@ describe("launchLessonSession", () => {
 
     const raw = window.sessionStorage.getItem(pendingAgentPromptKey("sess-1"));
     expect(JSON.parse(raw as string)).toEqual({
-      text: TOUR.agentPrompt,
+      text: STARTER_TEXT,
       fresh: true,
     });
+
+    // The tour instructions ride in the per-session system prompt, not the
+    // visible message.
+    expect(readTourSystemPrompt("sess-1")).toBe(TOUR.agentSystemPrompt);
 
     const state = useAgentPanelStore.getState();
     expect(state.activeSessionId).toBe("sess-1");
@@ -104,7 +116,7 @@ describe("launchLessonSession", () => {
     expect(pendingAtActivation).not.toBeNull();
     expect(pendingAtActivation).not.toBe("UNSET");
     expect(JSON.parse(pendingAtActivation as string)).toEqual({
-      text: TOUR.agentPrompt,
+      text: STARTER_TEXT,
       fresh: true,
     });
   });
