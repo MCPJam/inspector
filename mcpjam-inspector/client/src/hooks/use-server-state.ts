@@ -87,7 +87,6 @@ import { resolveEffectiveClientCapabilities } from "@/lib/effective-client";
 import { EXCALIDRAW_SERVER_NAME } from "@/lib/excalidraw-quick-connect";
 import { readOnboardingState } from "@/lib/onboarding-state";
 import {
-  resolveEffectiveMcpProtocolVersion,
   type HostConfigDtoV2,
   type McpProtocolVersion,
 } from "@/lib/client-config-v2";
@@ -772,6 +771,40 @@ function getConnectionTransport(serverConfig: MCPServerConfig): string {
   return "unknown";
 }
 
+/**
+ * The single source of truth for a connection's effective wire protocol
+ * version. Every server-specific signal beats the broad host default; the
+ * host default is a blanket setting used only when nothing server-specific
+ * applies. Used by both the connect resolver and the connected-server
+ * revalidation effect so the "which version" answer can't drift between
+ * "what we connect with" and "when we re-test".
+ *
+ * Precedence: explicit per-server override → explicit config pin → the 2026
+ * era implied by the server's saved OAuth profile → host default.
+ */
+function resolveEffectiveWireProtocolVersion(input: {
+  serverConfig: MCPServerConfig | undefined;
+  server: ServerWithName | undefined;
+  serverOverride: McpProtocolVersion | undefined;
+  hostPin: McpProtocolVersion | undefined;
+}): McpProtocolVersion | undefined {
+  const { serverConfig, server, serverOverride, hostPin } = input;
+  const rawConfigPin =
+    serverConfig && "mcpProtocolVersion" in serverConfig
+      ? serverConfig.mcpProtocolVersion
+      : undefined;
+  const configPin: McpProtocolVersion | undefined =
+    typeof rawConfigPin === "string" && isKnownProtocolVersion(rawConfigPin)
+      ? rawConfigPin
+      : undefined;
+  const oauthProfilePin: McpProtocolVersion | undefined =
+    server?.useOAuth === true &&
+    server.oauthFlowProfile?.protocolVersion === "2026-07-28"
+      ? "2026-07-28"
+      : undefined;
+  return serverOverride ?? configPin ?? oauthProfilePin ?? hostPin;
+}
+
 function countRecordKeys(value: unknown): number {
   return value && typeof value === "object" && !Array.isArray(value)
     ? Object.keys(value).length
@@ -1266,39 +1299,14 @@ export function useServerState({
         typeof rawHostPin === "string" && isKnownProtocolVersion(rawHostPin)
           ? rawHostPin
           : undefined;
-      // A pin carried on the server config itself — e.g. the sessionless 2026
-      // wire era derived from a just-completed OAuth flow (see
-      // `createServerConfig` / `applyTokensFromOAuthFlow`). Server-specific.
-      const rawConfigPin =
-        "mcpProtocolVersion" in serverConfig
-          ? serverConfig.mcpProtocolVersion
-          : undefined;
-      const configPin: McpProtocolVersion | undefined =
-        typeof rawConfigPin === "string" && isKnownProtocolVersion(rawConfigPin)
-          ? rawConfigPin
-          : undefined;
-      // A server whose saved OAuth profile is 2026-07-28 speaks the sessionless
-      // 2026 transport, but `toMCPConfig` never copies the OAuth mode onto
-      // `config` and hosted `readStoredOAuthConfig` is empty — so without this
-      // the wire era is silently lost on the first OAuth connect/probe and
-      // every reconnect. Only 2026 (coupled + non-default) is derived.
-      const oauthServer = serverName
-        ? appStateServersRef.current[serverName]
-        : undefined;
-      const oauthProfilePin: McpProtocolVersion | undefined =
-        oauthServer?.useOAuth === true &&
-        oauthServer.oauthFlowProfile?.protocolVersion === "2026-07-28"
-          ? "2026-07-28"
-          : undefined;
-      // Precedence: every server-specific signal beats the broad host default.
-      // `serverOverride` (explicit per-server wire pin) and `configPin` (an
-      // explicit pin on the config) are the strongest; the OAuth-profile pin
-      // beats the host default too — otherwise a host default of 2025-11-25
-      // would override a server the user explicitly configured for 2026 OAuth
-      // and break the connect. `hostPin` is the weakest: a blanket default
-      // used only when nothing server-specific applies.
-      const resolvedProtocolVersion =
-        serverOverride ?? configPin ?? oauthProfilePin ?? hostPin;
+      const resolvedProtocolVersion = resolveEffectiveWireProtocolVersion({
+        serverConfig,
+        server: serverName
+          ? appStateServersRef.current[serverName]
+          : undefined,
+        serverOverride,
+        hostPin,
+      });
       if (resolvedProtocolVersion !== undefined) {
         defaults.mcpProtocolVersion = resolvedProtocolVersion;
       }
@@ -2268,12 +2276,16 @@ export function useServerState({
         typeof rawOverride === "string" && isKnownProtocolVersion(rawOverride)
           ? rawOverride
           : undefined;
-      const resolvedPin = resolveEffectiveMcpProtocolVersion(
+      // Same precedence as the connect resolver (shared helper) so the
+      // "did the effective version change?" decision matches what we would
+      // actually connect with — including the config pin and the 2026 era
+      // implied by the server's OAuth profile, not just override/host default.
+      const effective = resolveEffectiveWireProtocolVersion({
+        serverConfig: server.config,
+        server,
         serverOverride,
-        hostPin
-      );
-      // Gate removed — stateless-mcp-enabled goes permanent 2026-05-27.
-      const effective: McpProtocolVersion | undefined = resolvedPin;
+        hostPin,
+      });
 
       const seenBefore = lastAppliedProtocolVersionRef.current.has(name);
       const previous = lastAppliedProtocolVersionRef.current.get(name);
