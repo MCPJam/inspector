@@ -43,12 +43,9 @@ import {
   prepareChatV2,
   validateAppToolEntries,
   AppToolValidationError,
-  validateUiToolEntries,
-  UiToolValidationError,
   validateWidgetModelContextEntries,
   WidgetModelContextValidationError,
 } from "../../utils/chat-v2-orchestration";
-import { classifyUiToolApprovals } from "@/shared/client-fulfilled-tools";
 import {
   formatProviderOverloadError,
   isProviderOverloadError,
@@ -614,32 +611,12 @@ chatV2.post("/", async (c) => {
       throw error;
     }
 
-    // WebMCP UI tools: same boundary treatment as appTools. Chatbox-bound
-    // turns (owner preview persists as `sourceType: "chatbox"`) never accept
-    // them — ui_* tools drive the inspector UI, which is not part of the
-    // chatbox surface, so a stale or tampered client snapshot must not
-    // re-advertise them here.
-    let validatedUiTools;
-    if (!isChatboxSession) {
-      try {
-        validatedUiTools = validateUiToolEntries(body.uiTools);
-      } catch (error) {
-        if (error instanceof UiToolValidationError) {
-          return c.json({ error: error.message }, 400);
-        }
-        throw error;
-      }
-    }
-
-    // Per-tool `ui_*` approval policy for this turn. The BYOK `streamText`
-    // path reads it off each tool's `needsApproval` (set by `buildUiTools`);
-    // the MCPJam/org loops re-implement approval on top of a proxied stream,
-    // so they need the classification passed explicitly or destructive UI
-    // tools would execute unconfirmed whenever `requireToolApproval` is off.
-    const uiToolApprovals = classifyUiToolApprovals(
-      validatedUiTools,
-      requireToolApproval === true,
-    );
+    // `body.uiTools` is intentionally ignored here, not rejected: MCPJam UI
+    // tools are agent-route-only (server/routes/web/mcpjam-agent.ts), but
+    // cached pre-cutover clients may still send the field. Without a
+    // validated snapshot no MCPJam UI approval/free-name classification
+    // exists on this route — an MCP server tool named `ui_*` is a normal
+    // executable tool with ordinary approval semantics.
 
     let validatedWidgetModelContext;
     try {
@@ -755,7 +732,6 @@ chatV2.post("/", async (c) => {
             }
           : {}),
         appTools: validatedAppTools,
-        uiTools: validatedUiTools,
       });
     } catch (error) {
       // prepareChatV2 throws on Anthropic validation errors — return 400.
@@ -858,7 +834,6 @@ chatV2.post("/", async (c) => {
         mcpClientManager,
         selectedServers,
         requireToolApproval,
-        uiToolApprovals,
         modelVisibleMcpToolResults,
         ...(resolvedExecution.harness
           ? {
@@ -1077,7 +1052,6 @@ chatV2.post("/", async (c) => {
         selectedServers,
         serverIds: hostConfigServerIds,
         requireToolApproval,
-        uiToolApprovals,
         modelVisibleMcpToolResults,
         abortSignal: inboundAbortSignalOrg,
         onConversationComplete,

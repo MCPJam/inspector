@@ -6,8 +6,6 @@ import {
   isHarnessId,
   patchClaudeCodeHarnessBootstrap,
   registeredHarnessIds,
-  toAnthropicGatewayBaseUrl,
-  toOpenAiCompatGatewayBaseUrl,
 } from "../registry";
 
 describe("harness registry", () => {
@@ -75,30 +73,9 @@ describe("harness registry", () => {
     expect(toNativeModel?.("anthropic/claude-haiku-4.5")).toBeUndefined();
   });
 
-  it("normalizes the gateway base URL per wire protocol", () => {
-    // Claude Code's CLI joins `${ANTHROPIC_BASE_URL}/v1/messages` itself, so a
-    // /v1-suffixed base yields …/v1/v1/messages → live-gateway 404 on every
-    // model call. Its base must be the bare origin.
-    expect(toAnthropicGatewayBaseUrl("https://ai-gateway.vercel.sh/v1")).toBe(
-      "https://ai-gateway.vercel.sh"
-    );
-    expect(toAnthropicGatewayBaseUrl("https://ai-gateway.vercel.sh/v1/")).toBe(
-      "https://ai-gateway.vercel.sh"
-    );
-    expect(toAnthropicGatewayBaseUrl("https://ai-gateway.vercel.sh")).toBe(
-      "https://ai-gateway.vercel.sh"
-    );
-    // Codex's CLI treats OPENAI_BASE_URL as an OpenAI-compatible /v1 root.
-    expect(toOpenAiCompatGatewayBaseUrl("https://ai-gateway.vercel.sh")).toBe(
-      "https://ai-gateway.vercel.sh/v1"
-    );
-    expect(
-      toOpenAiCompatGatewayBaseUrl("https://ai-gateway.vercel.sh/v1")
-    ).toBe("https://ai-gateway.vercel.sh/v1");
-    expect(
-      toOpenAiCompatGatewayBaseUrl("https://ai-gateway.vercel.sh/v1/")
-    ).toBe("https://ai-gateway.vercel.sh/v1");
-  });
+  // The per-protocol gateway base-URL normalizers were removed with the
+  // raw-key credential path (COMP-23) — the broker's proxyBaseUrl arrives
+  // already protocol-correct from the backend.
 
   it("supportsModel: Claude Code runs anything, Codex only gpt-5", () => {
     const cc = getHarnessAdapter("claude-code");
@@ -188,9 +165,7 @@ const toUserMessage = (text) => ({
     // distinct trailing msg.result (the real final answer) after any earlier
     // fallback fired.
     expect(bridge?.content).toContain("let lastEmittedFallbackText");
-    expect(bridge?.content).toContain(
-      "normalized === lastEmittedFallbackText"
-    );
+    expect(bridge?.content).toContain("normalized === lastEmittedFallbackText");
     expect(bridge?.content).not.toContain("emittedAssistantTextFallbacks");
     // Gateway compat: the CLI must omit output_config.effort (the gateway's
     // Anthropic-compat schema 400s on it).

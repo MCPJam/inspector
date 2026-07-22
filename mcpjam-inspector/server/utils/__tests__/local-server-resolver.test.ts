@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  authorizeBatchLocal,
   executeLocalServerConnect,
   parseConnectionDefaults,
   resolveLocalServerForConnect,
@@ -7,6 +8,44 @@ import {
 } from "../local-server-resolver.js";
 
 const ORIGINAL_CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL;
+
+describe("authorizeBatchLocal actor metadata parsing", () => {
+  const context = { set: vi.fn(), get: vi.fn(() => undefined) } as any;
+
+  beforeEach(() => {
+    process.env.CONVEX_HTTP_URL = "https://example.convex.site";
+  });
+
+  afterEach(() => {
+    if (ORIGINAL_CONVEX_HTTP_URL === undefined) {
+      delete process.env.CONVEX_HTTP_URL;
+    } else {
+      process.env.CONVEX_HTTP_URL = ORIGINAL_CONVEX_HTTP_URL;
+    }
+    vi.unstubAllGlobals();
+  });
+
+  it.each([
+    [true, true],
+    [false, false],
+    ["false", undefined],
+    [null, undefined],
+  ])("parses isAnonymous=%j as %j", async (raw, expected) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ isAnonymous: raw, results: {} }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      )
+    );
+
+    await expect(
+      authorizeBatchLocal(context, "bearer", "project-1", [])
+    ).resolves.toMatchObject({ isAnonymous: expected });
+  });
+});
 
 const httpHostedOAuthAuth = {
   ok: true as const,

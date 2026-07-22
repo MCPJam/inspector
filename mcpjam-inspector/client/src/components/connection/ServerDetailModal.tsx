@@ -78,6 +78,8 @@ interface ServerDetailModalProps {
   projectClientConfig?: Project["clientConfig"];
   projectId?: string | null;
   hostedServerId?: string | null;
+  organizationId?: string | null;
+  isSignedIn?: boolean;
   /**
    * Host-default outbound MCP wire mode resolved from the surrounding
    * client's hostConfig.mcpProfile. Kept as an explicit prop (PROP-FIRST,
@@ -172,6 +174,8 @@ export function ServerDetailModal({
   projectClientConfig,
   projectId = null,
   hostedServerId = null,
+  organizationId = null,
+  isSignedIn = false,
   hostDefaultMcpProtocolVersion,
   projectXaaDefaultIdentity = null,
 }: ServerDetailModalProps) {
@@ -407,6 +411,9 @@ export function ServerDetailModal({
 
   const formState = useServerForm(server, {
     projectClientConfig,
+    confidentialCimdProbeEnabled: isOpen,
+    organizationId,
+    isSignedIn,
   });
   const trimmedName = formState.name.trim();
   const isDuplicateServerName =
@@ -787,7 +794,7 @@ export function ServerDetailModal({
                     isSaving ||
                     isReconnecting ||
                     (!formState.hasChanges && !isConnected) ||
-                    formState.preregisteredOauthBlocksSubmit
+                    formState.authConfigurationBlocksSubmit
                   }
                   size="sm"
                 >

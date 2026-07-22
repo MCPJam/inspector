@@ -23,7 +23,8 @@ import {
   resolveAuthorizationPlan,
 } from "@mcpjam/sdk/browser";
 import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
-import type { RegistrationMode } from "@/shared/xaa.js";
+import type { RegistrationMode, XaaClientAuthMethod } from "@/shared/xaa.js";
+import type { ConfidentialCimdCapabilityStatus } from "@/hooks/use-confidential-cimd-capability";
 import type {
   ServerFormAuthType,
   ServerFormOAuthProtocolMode,
@@ -53,6 +54,11 @@ interface AuthenticationSectionProps {
   onOauthRegistrationModeChange: (
     value: RegistrationMode,
   ) => void;
+  xaaClientAuth?: XaaClientAuthMethod;
+  onXaaClientAuthChange?: (value: XaaClientAuthMethod) => void;
+  confidentialCimdStatus?: ConfidentialCimdCapabilityStatus;
+  confidentialCimdBlockReason?: string | null;
+  onRetryConfidentialCimd?: () => void;
   useCustomClientId: boolean;
   onUseCustomClientIdChange: (value: boolean) => void;
   clientId: string;
@@ -118,6 +124,11 @@ export function AuthenticationSection({
   onOauthProtocolModeChange,
   registrationMode,
   onOauthRegistrationModeChange,
+  xaaClientAuth = "none",
+  onXaaClientAuthChange,
+  confidentialCimdStatus = "idle",
+  confidentialCimdBlockReason = null,
+  onRetryConfidentialCimd,
   useCustomClientId,
   onUseCustomClientIdChange,
   clientId,
@@ -283,6 +294,14 @@ export function AuthenticationSection({
     : (visibleRevealedClientSecret ?? "");
   const showClientCredentials =
     registrationMode === "preregistered" || useCustomClientId;
+  const effectiveXaaRegistrationMode =
+    registrationMode === "cimd" || registrationMode === "dcr"
+      ? registrationMode
+      : "preregistered";
+  const showXaaClientCredentials =
+    effectiveXaaRegistrationMode === "preregistered";
+  const showXaaClientAuthPicker =
+    confidentialCimdStatus === "ready" || xaaClientAuth === "private_key_jwt";
   const effectiveOauthProtocolMode =
     oauthProtocolMode === "auto" ? "2025-11-25" : oauthProtocolMode;
   const oauthPlan =
@@ -746,11 +765,105 @@ export function AuthenticationSection({
 
         {/* Cross-App Access (XAA) Settings */}
         {showAuthSettings && authType === "xaa" && (
-          <div className="px-3 pb-3 pt-3 border-t border-border bg-muted/30">
+          <div className="px-3 pb-3 pt-3 border-t border-border bg-muted/30 space-y-3">
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-foreground">
+                  Registration
+                </label>
+                <Select
+                  value={effectiveXaaRegistrationMode}
+                  onValueChange={(value: RegistrationMode) => {
+                    if (value === "preregistered" || value === "cimd") {
+                      onOauthRegistrationModeChange(value);
+                    }
+                  }}
+                >
+                  <SelectTrigger
+                    className="w-full h-10"
+                    aria-label="XAA registration"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="preregistered">
+                      Pre-registered client
+                    </SelectItem>
+                    <SelectItem value="cimd">
+                      Client metadata URL (CIMD)
+                    </SelectItem>
+                    <SelectItem value="dcr" disabled>
+                      DCR (not supported in Connect)
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {effectiveXaaRegistrationMode === "cimd" &&
+                showXaaClientAuthPicker && (
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-foreground">
+                      Client authentication
+                    </label>
+                    <Select
+                      value={xaaClientAuth}
+                      onValueChange={(value: XaaClientAuthMethod) =>
+                        onXaaClientAuthChange?.(value)
+                      }
+                    >
+                      <SelectTrigger className="w-full h-10">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Public</SelectItem>
+                        <SelectItem
+                          value="private_key_jwt"
+                          disabled={
+                            confidentialCimdStatus !== "ready" &&
+                            xaaClientAuth !== "private_key_jwt"
+                          }
+                        >
+                          Confidential (private_key_jwt)
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+            </div>
+
+            {effectiveXaaRegistrationMode === "dcr" && (
+              <p className="text-xs text-destructive">
+                XAA DCR is not supported in Connect yet. Choose pre-registered
+                credentials or CIMD.
+              </p>
+            )}
+            {effectiveXaaRegistrationMode === "cimd" &&
+              xaaClientAuth === "private_key_jwt" &&
+              confidentialCimdBlockReason && (
+                <div className="flex items-start justify-between gap-3">
+                  <p className="text-xs text-destructive">
+                    {confidentialCimdBlockReason}
+                  </p>
+                  {confidentialCimdStatus === "error" &&
+                    onRetryConfidentialCimd && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-7 shrink-0 px-2 text-xs"
+                        onClick={onRetryConfidentialCimd}
+                      >
+                        Retry
+                      </Button>
+                    )}
+                </div>
+              )}
             <XaaCredentialFields
               clientId={clientId}
               onClientIdChange={onClientIdChange}
               clientIdError={clientIdError}
+              clientIdRequired={showXaaClientCredentials}
+              showClientCredentials={showXaaClientCredentials}
               clientSecret={clientSecret}
               onClientSecretChange={onClientSecretChange}
               hasStoredClientSecret={hasStoredClientSecret}

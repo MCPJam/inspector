@@ -295,8 +295,9 @@ describe("web routes — chat-v2 hosted mode", () => {
     expect(persistArgs.hostConfig).toBeUndefined();
   });
 
-  it("validates uiTools on direct turns but strips them from chatbox-bound turns", async () => {
+  it("ignores a client uiTools snapshot on direct AND chatbox turns (agent-route-only, never rejected)", async () => {
     const { app, token } = createWebTestApp();
+    // Non-empty/stale snapshot a cached pre-cutover client may still send.
     const uiTools = [
       { name: "ui_navigate", description: "Navigate", readOnly: false },
     ];
@@ -309,20 +310,18 @@ describe("web routes — chat-v2 hosted mode", () => {
       uiTools,
     };
 
-    // Direct hosted chat: the snapshot crosses the validation boundary and
-    // reaches prepareChatV2.
+    // Direct hosted chat: the field is dropped at the boundary — never
+    // validated (a malformed snapshot must not 400 the turn) and never
+    // forwarded into prepareChatV2.
     const direct = await postJson(app, "/api/web/chat-v2", baseBody, token);
     expect(direct.status).toBe(200);
-    expect(validateUiToolEntriesMock).toHaveBeenCalledWith(uiTools);
-    // The route forwards the validator's return value (the mock yields []).
-    expect(prepareChatV2Mock).toHaveBeenLastCalledWith(
-      expect.objectContaining({ uiTools: [] })
-    );
-    const directValidateCalls = validateUiToolEntriesMock.mock.calls.length;
+    expect(validateUiToolEntriesMock).not.toHaveBeenCalled();
+    // streamWebChatTurn's uiTools plumbing stays (the agent route uses it),
+    // so the key exists — but this route never populates the snapshot.
+    let prepareArgs = prepareChatV2Mock.mock.calls.at(-1)![0];
+    expect(prepareArgs.uiTools).toBeUndefined();
 
-    // Chatbox-bound turn: ui_* tools drive the inspector UI, which is not
-    // part of the chatbox surface — the snapshot is ignored wholesale (not
-    // even validated), so a stale/tampered client can't re-advertise them.
+    // Chatbox-bound turn: same silent-ignore treatment.
     const chatbox = await postJson(
       app,
       "/api/web/chat-v2",
@@ -330,12 +329,9 @@ describe("web routes — chat-v2 hosted mode", () => {
       token
     );
     expect(chatbox.status).toBe(200);
-    expect(validateUiToolEntriesMock.mock.calls.length).toBe(
-      directValidateCalls
-    );
-    expect(prepareChatV2Mock).toHaveBeenLastCalledWith(
-      expect.objectContaining({ uiTools: undefined })
-    );
+    expect(validateUiToolEntriesMock).not.toHaveBeenCalled();
+    prepareArgs = prepareChatV2Mock.mock.calls.at(-1)![0];
+    expect(prepareArgs.uiTools).toBeUndefined();
   });
 
   // PR3: host-bound direct session (Playground previewing a saved host).
