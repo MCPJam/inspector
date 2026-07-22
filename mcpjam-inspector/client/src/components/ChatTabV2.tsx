@@ -329,6 +329,11 @@ export function ChatTabV2({
   const hostedOrgModelConfig = useHostedOrgModelConfig({
     projectId: effectiveHostedProjectId,
     organizationId: modelConfigOrganizationId,
+    // Chatbox surfaces resolve their model from the chatbox row
+    // (executionConfig.modelId), and share-link guests aren't members of the
+    // host's project — so the project-scoped config query would throw and crash
+    // the page. Skip it whenever we're inside a chatbox.
+    disabled: Boolean(hostedChatboxId),
   });
   const { serversById, serversByName } = useProjectServers({
     isAuthenticated: isConvexAuthenticated,

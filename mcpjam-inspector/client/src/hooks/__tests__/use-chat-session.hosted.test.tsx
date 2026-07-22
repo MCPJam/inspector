@@ -24,6 +24,10 @@ const mockState = vi.hoisted(() => ({
   setSelectedModelId: vi.fn(),
   useSharedChatWidgetCapture: vi.fn(),
   latestOnData: undefined as ((part: unknown) => void) | undefined,
+  latestOnToolCall: undefined as
+    | ((options: { toolCall: unknown }) => Promise<void> | void)
+    | undefined,
+  addToolOutput: vi.fn(),
   convexAuth: {
     isAuthenticated: true,
     isLoading: false,
@@ -228,16 +232,21 @@ vi.mock("@ai-sdk/react", async () => {
         id,
         transport,
         onData,
+        onToolCall,
       }: {
         id: string;
         transport: {
           sendMessages: (options: any) => Promise<unknown>;
         };
         onData?: (part: unknown) => void;
+        onToolCall?: (options: {
+          toolCall: unknown;
+        }) => Promise<void> | void;
       }) => {
         const latchedIdRef = React.useRef(id);
         const latchedTransportRef = React.useRef(transport);
         mockState.latestOnData = onData;
+        mockState.latestOnToolCall = onToolCall;
 
         if (latchedIdRef.current !== id) {
           latchedIdRef.current = id;
@@ -272,6 +281,7 @@ vi.mock("@ai-sdk/react", async () => {
           error: undefined,
           setMessages: mockState.setMessages,
           addToolApprovalResponse: mockState.addToolApprovalResponse,
+          addToolOutput: mockState.addToolOutput,
         };
       }
     ),
@@ -323,6 +333,8 @@ describe("useChatSession hosted mode", () => {
     mockState.getGuestBearerToken.mockResolvedValue("guest-token");
     mockState.selectedModelId = "anthropic/claude-haiku-4.5";
     mockState.latestOnData = undefined;
+    mockState.latestOnToolCall = undefined;
+    mockState.addToolOutput.mockReset();
     vi.mocked(generateId).mockReset();
     vi.mocked(generateId).mockReturnValue("chat-session-id");
     useTrafficLogStore.getState().clear();
@@ -429,7 +441,11 @@ describe("useChatSession hosted mode", () => {
     unmount();
   });
 
-  it("ships WebMCP ui_* tools on direct chats but never on chatbox sessions", async () => {
+  it("never ships WebMCP ui_* tools from the generic hook", async () => {
+    // MCPJam UI tools are agent-surface-only: even with a non-empty internal
+    // registry, the generic chat body must not carry a `uiTools` field on any
+    // surface. The only sender is agent-chat-instances.ts
+    // (/api/web/mcpjam-agent).
     const unregister = useUiToolsRegistry.getState().registerUiTool({
       name: "ui_navigate",
       description: "Navigate the MCPJam inspector",
@@ -439,7 +455,7 @@ describe("useChatSession hosted mode", () => {
       }),
     });
     try {
-      // Direct hosted chat (no chatbox scope): the snapshot ships.
+      // Direct hosted chat: no uiTools field.
       const direct = renderHook(() =>
         useChatSession({
           selectedServers: ["server-1"],
@@ -449,14 +465,11 @@ describe("useChatSession hosted mode", () => {
           },
         })
       );
-      expect(lastTransportOptions.body().uiTools).toEqual([
-        expect.objectContaining({ name: "ui_navigate" }),
-      ]);
+      expect(lastTransportOptions.body()).not.toHaveProperty("uiTools");
       direct.unmount();
 
-      // Chatbox session (published/share-link or owner preview): the turn
-      // renders the end-user chatbox surface — inspector-driving tools are
-      // omitted entirely, not sent as an empty list.
+      // Chatbox session (published/share-link or owner preview): same —
+      // the field is absent entirely, not sent as an empty list.
       const chatbox = renderHook(() =>
         useChatSession({
           selectedServers: ["server-1"],
@@ -470,6 +483,51 @@ describe("useChatSession hosted mode", () => {
       );
       expect(lastTransportOptions.body()).not.toHaveProperty("uiTools");
       chatbox.unmount();
+    } finally {
+      unregister();
+    }
+  });
+
+  it("does not claim a server-origin ui_* tool call in the generic hook", async () => {
+    // Provenance boundary regression: an MCP server may legitimately expose a
+    // tool named `ui_server_action`. Even when the internal MCPJam UI registry
+    // holds a same-named entry, the generic hook's onToolCall must NOT execute
+    // it in the browser or synthesize a tool output — the call falls through
+    // to the server's execute path like any other MCP tool.
+    const uiExecute = vi.fn(async () => ({
+      content: [{ type: "text" as const, text: "{}" }],
+    }));
+    const unregister = useUiToolsRegistry.getState().registerUiTool({
+      name: "ui_server_action",
+      description: "Registry twin that must not claim the server call",
+      readOnly: false,
+      execute: uiExecute,
+    });
+    try {
+      const { unmount } = renderHook(() =>
+        useChatSession({
+          selectedServers: ["server-1"],
+          hostedContext: {
+            projectId: "project-1",
+            selectedServerIds: ["server-id-1"],
+          },
+        })
+      );
+      expect(mockState.latestOnToolCall).toBeDefined();
+
+      await act(async () => {
+        await mockState.latestOnToolCall?.({
+          toolCall: {
+            toolName: "ui_server_action",
+            toolCallId: "tool-call-ui-1",
+            input: {},
+          },
+        });
+      });
+
+      expect(uiExecute).not.toHaveBeenCalled();
+      expect(mockState.addToolOutput).not.toHaveBeenCalled();
+      unmount();
     } finally {
       unregister();
     }

@@ -18,8 +18,6 @@ import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import {
   validateAppToolEntries,
   AppToolValidationError,
-  validateUiToolEntries,
-  UiToolValidationError,
   validateWidgetModelContextEntries,
   WidgetModelContextValidationError,
 } from "../../utils/chat-v2-orchestration.js";
@@ -505,25 +503,11 @@ chatV2.post("/", async (c) => {
       throw error;
     }
 
-    // WebMCP UI tools: same boundary treatment as appTools. Chatbox-bound
-    // turns never accept them — ui_* tools drive the inspector UI, which is
-    // not part of the published/preview chatbox surface, so a stale or
-    // tampered client snapshot must not re-advertise them here.
-    let validatedUiTools;
-    if (!isChatboxSession) {
-      try {
-        validatedUiTools = validateUiToolEntries(body.uiTools);
-      } catch (error) {
-        if (error instanceof UiToolValidationError) {
-          throw new WebRouteError(
-            400,
-            ErrorCode.VALIDATION_ERROR,
-            error.message
-          );
-        }
-        throw error;
-      }
-    }
+    // `body.uiTools` is intentionally ignored here, not rejected: MCPJam UI
+    // tools are agent-route-only (server/routes/web/mcpjam-agent.ts), but
+    // cached pre-cutover clients may still send the field. MCP server tools
+    // whose names happen to match `ui_*` come from MCPClientManager and stay
+    // ordinary executable tools.
 
     let validatedWidgetModelContext;
     try {
@@ -586,7 +570,6 @@ chatV2.post("/", async (c) => {
               }
             : {}),
           appTools: validatedAppTools,
-          uiTools: validatedUiTools,
           widgetModelContext: validatedWidgetModelContext,
           ...(builtInTools ? { builtInTools } : {}),
           ...(cloudSkillsEnabled

@@ -23,7 +23,8 @@ import {
   resolveAuthorizationPlan,
 } from "@mcpjam/sdk/browser";
 import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
-import type { RegistrationMode } from "@/shared/xaa.js";
+import type { RegistrationMode, XaaClientAuthMethod } from "@/shared/xaa.js";
+import type { ConfidentialCimdCapabilityStatus } from "@/hooks/use-confidential-cimd-capability";
 import type {
   ServerFormAuthType,
   ServerFormOAuthProtocolMode,
@@ -31,6 +32,7 @@ import type {
 import { REGISTRATION_MODE_OPTIONS } from "@/lib/registration-strategy";
 import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
 import { XaaCredentialFields } from "./XaaCredentialFields";
+import { XaaDcrRegistrationStatus } from "./XaaDcrRegistrationStatus";
 
 interface AuthenticationSectionProps {
   serverUrl?: string;
@@ -50,9 +52,12 @@ interface AuthenticationSectionProps {
   oauthProtocolMode: ServerFormOAuthProtocolMode;
   onOauthProtocolModeChange: (value: ServerFormOAuthProtocolMode) => void;
   registrationMode: RegistrationMode;
-  onOauthRegistrationModeChange: (
-    value: RegistrationMode,
-  ) => void;
+  onOauthRegistrationModeChange: (value: RegistrationMode) => void;
+  xaaClientAuth?: XaaClientAuthMethod;
+  onXaaClientAuthChange?: (value: XaaClientAuthMethod) => void;
+  confidentialCimdStatus?: ConfidentialCimdCapabilityStatus;
+  confidentialCimdBlockReason?: string | null;
+  onRetryConfidentialCimd?: () => void;
   useCustomClientId: boolean;
   onUseCustomClientIdChange: (value: boolean) => void;
   clientId: string;
@@ -86,6 +91,15 @@ interface AuthenticationSectionProps {
   autoSelectsXaa?: boolean;
   /** Project default test identity — shown as the override placeholders. */
   projectDefaultIdentity?: { subject: string; email: string } | null;
+  xaaDcrClientId?: string;
+  xaaDcrTokenEndpointAuthMethod?:
+    | "client_secret_post"
+    | "client_secret_basic"
+    | "none";
+  xaaDcrIssuer?: string;
+  xaaDcrClientSecretExpiresAt?: number;
+  xaaDcrRegisteredAt?: number;
+  xaaDcrStatus?: "registered" | "registering" | "uncertain";
 }
 
 const PROTOCOL_OPTIONS: Array<{
@@ -118,6 +132,11 @@ export function AuthenticationSection({
   onOauthProtocolModeChange,
   registrationMode,
   onOauthRegistrationModeChange,
+  xaaClientAuth = "none",
+  onXaaClientAuthChange,
+  confidentialCimdStatus = "idle",
+  confidentialCimdBlockReason = null,
+  onRetryConfidentialCimd,
   useCustomClientId,
   onUseCustomClientIdChange,
   clientId,
@@ -142,6 +161,12 @@ export function AuthenticationSection({
   onXaaEmailChange,
   autoSelectsXaa = false,
   projectDefaultIdentity = null,
+  xaaDcrClientId,
+  xaaDcrTokenEndpointAuthMethod,
+  xaaDcrIssuer,
+  xaaDcrClientSecretExpiresAt,
+  xaaDcrRegisteredAt,
+  xaaDcrStatus,
 }: AuthenticationSectionProps) {
   const [showAdvancedOAuth, setShowAdvancedOAuth] = useState(false);
   // Active host's enterprise-managed authorization policy (ProtocolTab
@@ -233,7 +258,7 @@ export function AuthenticationSection({
       setRevealError(
         error instanceof Error
           ? error.message
-          : "Failed to reveal client secret",
+          : "Failed to reveal client secret"
       );
     } finally {
       setIsRevealingClientSecret(false);
@@ -280,9 +305,17 @@ export function AuthenticationSection({
   // revealed value; once the user starts editing it tracks their replacement.
   const secretFieldValue = isReplacingSecret
     ? clientSecret
-    : (visibleRevealedClientSecret ?? "");
+    : visibleRevealedClientSecret ?? "";
   const showClientCredentials =
     registrationMode === "preregistered" || useCustomClientId;
+  const effectiveXaaRegistrationMode =
+    registrationMode === "cimd" || registrationMode === "dcr"
+      ? registrationMode
+      : "preregistered";
+  const showXaaClientCredentials =
+    effectiveXaaRegistrationMode === "preregistered";
+  const showXaaClientAuthPicker =
+    confidentialCimdStatus === "ready" || xaaClientAuth === "private_key_jwt";
   const effectiveOauthProtocolMode =
     oauthProtocolMode === "auto" ? "2025-11-25" : oauthProtocolMode;
   const oauthPlan =
@@ -308,7 +341,7 @@ export function AuthenticationSection({
               registrationMode === "preregistered" &&
               clientId.trim() === "" &&
               blocker.code === "PREREGISTERED_MISSING_CLIENT_ID"
-            ),
+            )
         )
       : [];
   const showOauthPlanBanner =
@@ -351,14 +384,13 @@ export function AuthenticationSection({
                   ? "Host policy: enterprise-managed — uses Cross-App Access for this server."
                   : "Host policy: enterprise-managed — fails to connect until an XAA client registration is added or an explicit method overrides."
                 : autoSelectsXaa
-                  ? "Uses Cross-App Access for this server."
-                  : "Anonymous first, then OAuth if required."}
+                ? "Uses Cross-App Access for this server."
+                : "Anonymous first, then OAuth if required."}
             </p>
           )}
           {hostPolicyEnterpriseManaged && authType !== "auto" && (
             <p className="text-xs text-muted-foreground/80">
-              Overrides the host&apos;s enterprise-managed authorization
-              policy.
+              Overrides the host&apos;s enterprise-managed authorization policy.
             </p>
           )}
         </div>
@@ -402,10 +434,14 @@ export function AuthenticationSection({
               <button
                 type="button"
                 aria-label={
-                  isBearerTokenVisible ? "Hide bearer token" : "Show bearer token"
+                  isBearerTokenVisible
+                    ? "Hide bearer token"
+                    : "Show bearer token"
                 }
                 title={
-                  isBearerTokenVisible ? "Hide bearer token" : "Show bearer token"
+                  isBearerTokenVisible
+                    ? "Hide bearer token"
+                    : "Show bearer token"
                 }
                 onClick={() => setIsBearerTokenVisible((prev) => !prev)}
                 className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground/60 transition-colors hover:text-foreground cursor-pointer"
@@ -494,13 +530,9 @@ export function AuthenticationSection({
                     </label>
                     <Select
                       value={registrationMode}
-                      onValueChange={(
-                        value: RegistrationMode,
-                      ) => {
+                      onValueChange={(value: RegistrationMode) => {
                         onOauthRegistrationModeChange(value);
-                        onUseCustomClientIdChange(
-                          value === "preregistered",
-                        );
+                        onUseCustomClientIdChange(value === "preregistered");
                       }}
                     >
                       <SelectTrigger className="w-full h-10">
@@ -566,7 +598,9 @@ export function AuthenticationSection({
                         data-1p-ignore
                         data-lpignore="true"
                         data-form-type="other"
-                        className={`h-10 ${clientIdError ? "border-red-500" : ""}`}
+                        className={`h-10 ${
+                          clientIdError ? "border-red-500" : ""
+                        }`}
                       />
                       {clientIdError && (
                         <p className="text-xs text-red-500">{clientIdError}</p>
@@ -655,7 +689,9 @@ export function AuthenticationSection({
                               data-1p-ignore
                               data-lpignore="true"
                               data-form-type="other"
-                              className={`h-10 pr-16 font-mono ${clientSecretError ? "border-red-500" : ""}`}
+                              className={`h-10 pr-16 font-mono ${
+                                clientSecretError ? "border-red-500" : ""
+                              }`}
                             />
                             <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
                               <button
@@ -686,7 +722,9 @@ export function AuthenticationSection({
                                 aria-label="Copy client secret"
                                 title="Copy client secret"
                                 onClick={() =>
-                                  void handleCopyRevealedSecret(secretFieldValue)
+                                  void handleCopyRevealedSecret(
+                                    secretFieldValue
+                                  )
                                 }
                                 className="p-1 text-muted-foreground/50 transition-colors hover:text-foreground cursor-pointer"
                               >
@@ -725,7 +763,9 @@ export function AuthenticationSection({
                           data-1p-ignore
                           data-lpignore="true"
                           data-form-type="other"
-                          className={`h-10 ${clientSecretError ? "border-red-500" : ""}`}
+                          className={`h-10 ${
+                            clientSecretError ? "border-red-500" : ""
+                          }`}
                         />
                       )}
                       {clientSecretError && (
@@ -746,11 +786,109 @@ export function AuthenticationSection({
 
         {/* Cross-App Access (XAA) Settings */}
         {showAuthSettings && authType === "xaa" && (
-          <div className="px-3 pb-3 pt-3 border-t border-border bg-muted/30">
+          <div className="px-3 pb-3 pt-3 border-t border-border bg-muted/30 space-y-3">
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="space-y-2">
+                <div className="flex items-center gap-1 text-sm font-medium text-foreground">
+                  <span>Registration Strategy</span>
+                  {effectiveXaaRegistrationMode === "dcr" && (
+                    <XaaDcrRegistrationStatus
+                      status={xaaDcrStatus}
+                      clientId={xaaDcrClientId}
+                      issuer={xaaDcrIssuer}
+                      registeredAt={xaaDcrRegisteredAt}
+                      clientSecretExpiresAt={xaaDcrClientSecretExpiresAt}
+                      tokenEndpointAuthMethod={xaaDcrTokenEndpointAuthMethod}
+                    />
+                  )}
+                </div>
+                <Select
+                  value={registrationMode}
+                  onValueChange={(value: RegistrationMode) =>
+                    onOauthRegistrationModeChange(value)
+                  }
+                >
+                  <SelectTrigger
+                    className="w-full h-10"
+                    aria-label="XAA registration"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {REGISTRATION_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {registrationMode === "auto" && (
+                  <p className="text-xs text-muted-foreground">
+                    Automatic keeps the existing XAA preregistered behavior. DCR
+                    runs only when explicitly selected.
+                  </p>
+                )}
+              </div>
+
+              {effectiveXaaRegistrationMode === "cimd" &&
+                showXaaClientAuthPicker && (
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-foreground">
+                      Client authentication
+                    </label>
+                    <Select
+                      value={xaaClientAuth}
+                      onValueChange={(value: XaaClientAuthMethod) =>
+                        onXaaClientAuthChange?.(value)
+                      }
+                    >
+                      <SelectTrigger className="w-full h-10">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Public</SelectItem>
+                        <SelectItem
+                          value="private_key_jwt"
+                          disabled={
+                            confidentialCimdStatus !== "ready" &&
+                            xaaClientAuth !== "private_key_jwt"
+                          }
+                        >
+                          Confidential (private_key_jwt)
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+            </div>
+
+            {effectiveXaaRegistrationMode === "cimd" &&
+              xaaClientAuth === "private_key_jwt" &&
+              confidentialCimdBlockReason && (
+                <div className="flex items-start justify-between gap-3">
+                  <p className="text-xs text-destructive">
+                    {confidentialCimdBlockReason}
+                  </p>
+                  {confidentialCimdStatus === "error" &&
+                    onRetryConfidentialCimd && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-7 shrink-0 px-2 text-xs"
+                        onClick={onRetryConfidentialCimd}
+                      >
+                        Retry
+                      </Button>
+                    )}
+                </div>
+              )}
             <XaaCredentialFields
               clientId={clientId}
               onClientIdChange={onClientIdChange}
               clientIdError={clientIdError}
+              clientIdRequired={showXaaClientCredentials}
+              showClientCredentials={showXaaClientCredentials}
               clientSecret={clientSecret}
               onClientSecretChange={onClientSecretChange}
               hasStoredClientSecret={hasStoredClientSecret}
