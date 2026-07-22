@@ -966,7 +966,11 @@ export async function createAuthorizedManager(
       );
     }
     if (!auth.ok) {
-      throw new WebRouteError(auth.status, auth.code as ErrorCode, auth.message);
+      throw new WebRouteError(
+        auth.status,
+        auth.code as ErrorCode,
+        auth.message
+      );
     }
     const displayServerName = serverNamesById?.[serverId] ?? serverId;
     const effectiveAuth = resolveEffectiveAuthMethod(
@@ -1002,7 +1006,11 @@ export async function createAuthorizedManager(
     // would mask this actionable 400 behind the caller-contract 500. Gated on
     // the same XAA selection the mint pass uses. No silent fallback to the
     // demo identity, no silent XAA→OAuth fallback.
-    if (isHttp && effectiveAuth === "xaa" && auth.serverConfig.xaaIdentityError) {
+    if (
+      isHttp &&
+      effectiveAuth === "xaa" &&
+      auth.serverConfig.xaaIdentityError
+    ) {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
@@ -1015,13 +1023,6 @@ export async function createAuthorizedManager(
       const registrationMode = resolveXaaConnectRegistrationMode(
         auth.serverConfig.registrationMode
       );
-      if (registrationMode === "dcr") {
-        throw new WebRouteError(
-          400,
-          ErrorCode.FEATURE_NOT_SUPPORTED,
-          `Server "${displayServerName}" uses XAA DCR, which is not supported in Connect yet. Choose pre-registered credentials or CIMD.`
-        );
-      }
       if (
         registrationMode === "cimd" &&
         auth.serverConfig.xaaClientAuth === "private_key_jwt"
@@ -1215,7 +1216,9 @@ export async function createAuthorizedManager(
             );
           }
           reMinted = true;
-          return { accessToken: (await mintXaaAccessToken(mintArgs)).accessToken };
+          return {
+            accessToken: (await mintXaaAccessToken(mintArgs)).accessToken,
+          };
         };
       }
 
@@ -1285,8 +1288,7 @@ export async function createAuthorizedManager(
                         caller.mcpjamOrganizationId
                           ? {
                               workosUserId: caller.workosUserId,
-                              mcpjamOrganizationId:
-                                caller.mcpjamOrganizationId,
+                              mcpjamOrganizationId: caller.mcpjamOrganizationId,
                             }
                           : undefined,
                     })
