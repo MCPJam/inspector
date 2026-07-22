@@ -61,6 +61,11 @@ export type SkillsFetchFailure = {
  * (or, for skills-incapable runtimes like Codex, not at all) — advertising the
  * emulated tools there would be a prompt/tool mismatch.
  *
+ * Guests: a plain share-link/chatbox guest still gets no skill tools, but a
+ * guest WITH a computer attached (`hasComputer`) does — they can already run
+ * bash in the sandbox, so cloud skills let them drive advanced testing and
+ * automation there too. A computer-less guest stays gated out.
+ *
  * Two footguns this check must not regress on:
  *  - `provider` is REQUIRED for the model check: bare hosted ids
  *    (`gpt-5-nano` + `openai`) only canonicalize to their prefixed form with
@@ -75,6 +80,7 @@ export type SkillsFetchFailure = {
  */
 export function shouldEnableCloudSkillTools(args: {
   isGuest: boolean;
+  hasComputer: boolean;
   harness: string | undefined;
   modelId: string;
   provider?: string;
@@ -83,7 +89,10 @@ export function shouldEnableCloudSkillTools(args: {
   const willRunHarness =
     args.harness !== undefined &&
     isHostedCatalogModel(args.modelId, args.provider);
-  return !args.isGuest && !willRunHarness && args.hasProjectId;
+  // Guests are allowed only when they have a computer/VM attached (they can
+  // already run bash there); non-guest members are unaffected.
+  const actorAllowed = !args.isGuest || args.hasComputer;
+  return actorAllowed && !willRunHarness && args.hasProjectId;
 }
 
 function errMessage(err: unknown): string {
