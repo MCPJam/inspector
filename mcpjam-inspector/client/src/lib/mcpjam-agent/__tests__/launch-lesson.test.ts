@@ -181,4 +181,22 @@ describe("launchLessonSession", () => {
     expect(ok).toBe(true);
     expect(useAgentPanelStore.getState().activeSessionId).toBe("sess-1");
   });
+
+  it("dedups a same-tab repeat click even when localStorage is unavailable", () => {
+    // Storage fully disabled: the persisted layer can't record the launch, so
+    // dedup must fall back to the in-memory record.
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("disabled");
+    });
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("disabled");
+    });
+
+    launchLessonSession({ tour: TOUR, projectId: "proj-1" });
+    const ok = launchLessonSession({ tour: TOUR, projectId: "proj-1" });
+
+    expect(ok).toBe(true);
+    expect(generateIdMock).toHaveBeenCalledTimes(1); // no duplicate session
+    expect(useAgentPanelStore.getState().activeSessionId).toBe("sess-1");
+  });
 });

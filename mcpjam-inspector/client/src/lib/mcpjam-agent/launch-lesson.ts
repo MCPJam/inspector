@@ -45,11 +45,18 @@ const NO_PROJECT_SENTINEL = "none";
 // previous chat instance survives in the hoisted instance map and is
 // recoverable from Recent Chats.
 //
-// Persisted to localStorage (not just a module var) because the panel store
-// persists `activeSessionId` across reloads and tabs — a module-scoped record
-// would be lost on refresh, so re-clicking the same tour after a reload would
-// mint a duplicate and re-autosubmit the whole lesson. localStorage is shared
-// across tabs and survives reload, keeping the dedup in step with the panel.
+// Two layers, read in-memory-first:
+//   - In-memory module var: dedups repeat clicks within this tab even when
+//     localStorage is disabled or full (the persisted layer can't write).
+//   - localStorage: survives reload and is visible to other tabs, because the
+//     panel store also persists `activeSessionId` there — so re-clicking the
+//     same tour after a refresh refocuses instead of minting a duplicate that
+//     re-autosubmits the whole lesson.
+// A genuinely concurrent cross-tab race (two tabs clicking the SAME tour within
+// the same tick) can still mint twice — the persisted value and the panel's
+// in-memory state are read at slightly different times. That is the same
+// cross-tab semantics the panel store itself has; a distributed claim/lock is
+// not worth it for a tutorial launch whose only cost is a duplicate chat.
 const LAST_LAUNCH_KEY = "mcpjam:agent-tour-last-launch:v1";
 
 interface LastLaunch {
@@ -58,7 +65,12 @@ interface LastLaunch {
   projectId: string;
 }
 
+let inMemoryLastLaunch: LastLaunch | null = null;
+
 function readLastLaunch(): LastLaunch | null {
+  // In-memory first: this tab's own last launch, always available even with
+  // storage disabled. Fall back to the persisted value for reload/other-tab.
+  if (inMemoryLastLaunch) return inMemoryLastLaunch;
   if (typeof window === "undefined") return null;
   try {
     const raw = window.localStorage.getItem(LAST_LAUNCH_KEY);
@@ -79,12 +91,14 @@ function readLastLaunch(): LastLaunch | null {
 }
 
 function writeLastLaunch(value: LastLaunch): void {
+  inMemoryLastLaunch = value;
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(LAST_LAUNCH_KEY, JSON.stringify(value));
   } catch {
-    // Quota/disabled storage — dedup degrades to per-turn only; a duplicate
-    // session is the worst case, not data loss.
+    // Quota/disabled storage — the in-memory layer still dedups within this
+    // tab; only cross-reload/cross-tab dedup is lost. Worst case is a
+    // duplicate session, not data loss.
   }
 }
 
@@ -160,8 +174,9 @@ export function launchLessonSession({
   return true;
 }
 
-/** Test-only: clears the same-tour refocus memory between cases. */
+/** Test-only: clears both refocus-memory layers between cases. */
 export function __resetLaunchLessonForTests(): void {
+  inMemoryLastLaunch = null;
   if (typeof window === "undefined") return;
   try {
     window.localStorage.removeItem(LAST_LAUNCH_KEY);
