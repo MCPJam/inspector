@@ -104,7 +104,7 @@ Walk me through, in order:
 1. In a couple of sentences, what evals are for in MCPJam — testing that a model uses my MCP server's tools correctly.
 2. Check my current state. I need a connected MCP server to eval against; if I don't have one, help me connect one first.
 3. Take me to the evals area and explain what I'm looking at.
-4. Open the form to create a new eval suite and prefill it with a sensible example based on the tools my connected server actually exposes: a suite name, a test prompt a real user might ask, and the tool(s) you expect the model to call. Explain what each field means, especially how expected tool calls are judged.
+4. Open the create-suite dialog and prefill the suite name for me. The test prompts and expected tool calls are mine to fill in — walk me through a good first test case based on the tools my server actually exposes (a prompt a real user might ask, and the tool you'd expect the model to call), and explain how expected tool calls are judged.
 5. If there's a way to generate test cases automatically, mention it and what it costs before suggesting it.
 6. Stop before running anything. Tell me exactly which button to press to save and run the suite, warn me that running it calls a real model, and let me decide.
 7. If I choose to run it, explain how to read the results — what a pass and a fail look like, and what I'd change to fix a failing test.
@@ -126,8 +126,8 @@ Walk me through, in order:
 1. In a couple of sentences, what Swarms are — synthetic user personas that run through journeys against my server — and why that's useful.
 2. Snapshot my state. Swarms need a connected server; if I don't have one, detour and help me connect one first.
 3. Take me to Swarms and explain the pieces: personas and journeys.
-4. Explain what a persona is, then prefill one that fits my server.
-5. Explain what a journey is, then prefill one that this persona would plausibly attempt with my server's tools.
+4. Explain what a persona is and suggest a good starter persona for my server — a name, a role, and a note or two. Creating it is a quick form; tell me exactly what to enter rather than creating it for me.
+5. Explain what a journey is, then open the new-journey form and prefill the goal text for a task this persona would plausibly attempt with my server's tools. Picking the host and how many sessions is mine to choose — walk me through those.
 6. Explain that launching a swarm run consumes run quota and model calls. Stop before launching — hand me the launch button and let me decide.
 `),
   },
@@ -146,10 +146,10 @@ Give me a hands-on guided tour of Hosts in the MCPJam inspector (about 4 minutes
 Walk me through, in order:
 1. In a couple of sentences, what a Host is — a named bundle of MCP servers exposed together to a client — and when I'd want one.
 2. Snapshot my state so we can use my actual connected server(s). If I have none, detour and help me connect one first.
-3. Take me to Hosts and open the host editor.
-4. Prefill a new host: give it a clear name and attach my connected server(s). Explain each part as you fill it in.
-5. Explain what I'll be able to do with the Host once it exists.
-6. Stop and hand me the create/save button — tell me exactly what to click to finish.
+3. Take me to Hosts and explain what I'm looking at.
+4. Walk me through creating a host: suggest a clear name and tell me exactly what to click to create it (creating the host, and later attaching servers, are commits I'll make myself — describe the values to use rather than doing it for me).
+5. Once the host exists, open its editor and show me where I attach my connected server(s) and where I'd adjust its config (model, system prompt, behavior).
+6. Recap what the Host lets me do and what I'd change next.
 `),
   },
 ];

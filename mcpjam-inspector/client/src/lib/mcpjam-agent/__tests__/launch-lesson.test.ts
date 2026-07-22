@@ -121,6 +121,29 @@ describe("launchLessonSession", () => {
     );
   });
 
+  it("treats the \"none\" sentinel as no project (skips, no session scoped to it)", () => {
+    const ok = launchLessonSession({ tour: TOUR, projectId: "none" });
+    expect(ok).toBe(false);
+    expect(generateIdMock).not.toHaveBeenCalled();
+    expect(useAgentPanelStore.getState().activeSessionId).toBeNull();
+    expect(trackMock).toHaveBeenCalledWith(
+      "mcpjam_agent_tour_launch_skipped",
+      expect.objectContaining({ reason: "no_project_id" }),
+    );
+  });
+
+  it("mints a fresh session when the same tour is re-clicked under a different project", () => {
+    launchLessonSession({ tour: TOUR, projectId: "proj-A" });
+    // Project switched since the first launch.
+    const ok = launchLessonSession({ tour: TOUR, projectId: "proj-B" });
+
+    expect(ok).toBe(true);
+    expect(generateIdMock).toHaveBeenCalledTimes(2); // NOT a refocus
+    const state = useAgentPanelStore.getState();
+    expect(state.activeSessionId).toBe("sess-2");
+    expect(state.activeSessionProjectId).toBe("proj-B");
+  });
+
   it("refocuses (no duplicate session) when the same tour is re-clicked while active", () => {
     launchLessonSession({ tour: TOUR, projectId: "proj-1" });
     useAgentPanelStore.setState({ isOpen: false }); // user closed the panel

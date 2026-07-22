@@ -43,6 +43,9 @@ describe("LearningLandingPage — guided tours", () => {
       .closest("button") as HTMLElement;
     expect(within(row).getByText("Guided")).toBeInTheDocument();
     expect(within(row).getByText(/~5 min/)).toBeInTheDocument();
+    // Play icon (lucide) instead of the reading rows' chevron.
+    expect(row.querySelector(".lucide-play")).toBeTruthy();
+    expect(row.querySelector(".lucide-chevron-right")).toBeNull();
   });
 
   it("selecting a guided row calls onSelect with the tour id", () => {

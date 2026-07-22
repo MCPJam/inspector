@@ -29,10 +29,14 @@ interface LaunchLessonOptions {
    * get a non-null synthetic id, so this is populated for them too; it must be
    * the same value the panel is scoped to (`AgentSidePanel`'s `projectId`
    * prop), or the panel's project-match gate would show the empty hero instead
-   * of the seeded thread.
+   * of the seeded thread. The `"none"` sentinel (and null/empty) count as "no
+   * project" and take the skip path.
    */
   projectId: string | null;
 }
+
+/** The no-project sentinel `activeProjectId` can carry, alongside null. */
+const NO_PROJECT_SENTINEL = "none";
 
 // Remembers the most recent launch so a double-click (or re-clicking the same
 // tour while its session is still active) refocuses that session instead of
@@ -46,7 +50,13 @@ export function launchLessonSession({
   tour,
   projectId,
 }: LaunchLessonOptions): boolean {
-  if (!projectId) {
+  // Normalize the no-project states ("none" is truthy but not a real project)
+  // to null so the skip path and session scoping agree. Guest ids (synthetic
+  // UUID / local_ / project_) are real projects and pass through untouched.
+  const resolvedProjectId =
+    projectId && projectId !== NO_PROJECT_SENTINEL ? projectId : null;
+
+  if (!resolvedProjectId) {
     // Without a project id the panel-mount GC (AgentSidePanelMount) would clear
     // the session pointer immediately — same rationale as maybeHandoffToPanel's
     // null-project skip. Rare in practice: guests have a synthetic id.
@@ -62,9 +72,13 @@ export function launchLessonSession({
 
   if (
     lastLaunch?.tourId === tour.id &&
-    panel.activeSessionId === lastLaunch.sessionId
+    panel.activeSessionId === lastLaunch.sessionId &&
+    panel.activeSessionProjectId === resolvedProjectId
   ) {
-    // Same tour, session still active — just bring the panel back into view.
+    // Same tour AND same project — the session is still valid, just bring the
+    // panel back into view. If the project changed since, fall through and mint
+    // a fresh session scoped to it (else the panel's project gate shows the
+    // empty hero).
     panel.setOpen(true);
     return true;
   }
@@ -86,7 +100,7 @@ export function launchLessonSession({
     ts: Date.now(),
   });
 
-  panel.setActiveSession(sessionId, projectId);
+  panel.setActiveSession(sessionId, resolvedProjectId);
   panel.setOpen(true);
 
   track("mcpjam_agent_tour_launched", {
