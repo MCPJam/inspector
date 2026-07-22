@@ -45,19 +45,20 @@ const NO_PROJECT_SENTINEL = "none";
 // previous chat instance survives in the hoisted instance map and is
 // recoverable from Recent Chats.
 //
-// Two layers, read persisted-first:
-//   - localStorage: the cross-tab source of truth, kept in step with the panel
-//     store's own localStorage-persisted `activeSessionId`. Reading it first
-//     means re-clicking a tour after a reload — or in another tab that adopted
-//     the session — refocuses the live session instead of minting a duplicate
-//     that re-autosubmits the whole lesson.
-//   - In-memory module var: fallback for when localStorage is disabled or full
-//     (can't be written or read), so repeat clicks still dedup within this tab.
+// The refocus guard keeps two dedup records and trusts neither by priority —
+// it asks which one (if any) identifies the panel's CURRENTLY active session:
+//   - localStorage: the cross-tab record, kept in step with the panel store's
+//     own localStorage-persisted `activeSessionId`. Fresh across tabs/reloads,
+//     but can go stale in-tab when a write fails (reads still return the old
+//     value).
+//   - In-memory module var: fresh in this tab even when storage is disabled or
+//     write-blocked, but blind to what other tabs did.
+// Because either can be stale in some failure mode, we refocus only when one of
+// them matches `panel.activeSessionId` — the authoritative "what's open now".
 // A genuinely concurrent cross-tab race (two tabs clicking the SAME tour within
-// the same tick) can still mint twice — the persisted value and the panel's
-// in-memory state are read at slightly different times. That is the same
-// cross-tab semantics the panel store itself has; a distributed claim/lock is
-// not worth it for a tutorial launch whose only cost is a duplicate chat.
+// the same tick) can still mint twice — that is the same cross-tab semantics
+// the panel store itself has; a distributed claim/lock is not worth it for a
+// tutorial launch whose only cost is a duplicate chat.
 const LAST_LAUNCH_KEY = "mcpjam:agent-tour-last-launch:v1";
 
 interface LastLaunch {
@@ -86,12 +87,6 @@ function readPersistedLastLaunch(): LastLaunch | null {
   } catch {
     return null;
   }
-}
-
-function readLastLaunch(): LastLaunch | null {
-  // Persisted (cross-tab, panel-synced) first; in-memory only as a fallback
-  // when storage is unavailable or has no valid entry.
-  return readPersistedLastLaunch() ?? inMemoryLastLaunch;
 }
 
 function writeLastLaunch(value: LastLaunch): void {
@@ -129,19 +124,25 @@ export function launchLessonSession({
   }
 
   const panel = useAgentPanelStore.getState();
-  const lastLaunch = readLastLaunch();
+
+  // Does this dedup record describe the session the panel currently has open,
+  // for this tour and project? Only then is refocusing correct.
+  const identifiesActiveSession = (record: LastLaunch | null): boolean =>
+    record !== null &&
+    record.tourId === tour.id &&
+    record.projectId === resolvedProjectId &&
+    record.sessionId === panel.activeSessionId &&
+    panel.activeSessionProjectId === resolvedProjectId;
 
   if (
-    lastLaunch?.tourId === tour.id &&
-    lastLaunch.projectId === resolvedProjectId &&
-    panel.activeSessionId === lastLaunch.sessionId &&
-    panel.activeSessionProjectId === resolvedProjectId
+    identifiesActiveSession(readPersistedLastLaunch()) ||
+    identifiesActiveSession(inMemoryLastLaunch)
   ) {
-    // Same tour AND same project, and that session is still the active panel
-    // session — just bring the panel back into view. If the project changed or
-    // the panel moved on to a different session, fall through and mint a fresh
-    // session scoped to the current project (else the panel's project gate
-    // shows the empty hero, or we'd re-seed over a live chat).
+    // The tour's session is still the active panel session — just bring the
+    // panel back into view. If the project changed or the panel moved on to a
+    // different session, fall through and mint a fresh session scoped to the
+    // current project (else the panel's project gate shows the empty hero, or
+    // we'd re-seed over a live chat).
     panel.setOpen(true);
     return true;
   }

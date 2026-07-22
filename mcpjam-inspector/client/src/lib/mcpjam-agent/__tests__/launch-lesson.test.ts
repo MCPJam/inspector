@@ -201,6 +201,26 @@ describe("launchLessonSession", () => {
     expect(useAgentPanelStore.getState().activeSessionId).toBe("sess-1");
   });
 
+  it("refocuses via the in-memory record when a stale persisted record lingers (writes failing)", () => {
+    // A prior record is readable in localStorage, but writes now fail — so the
+    // fresh launch only updates the in-memory record. Re-clicking must refocus
+    // via in-memory rather than trust the stale persisted record and duplicate.
+    window.localStorage.setItem(
+      "mcpjam:agent-tour-last-launch:v1",
+      JSON.stringify({ tourId: TOUR.id, sessionId: "stale", projectId: "proj-1" }),
+    );
+    vi.spyOn(window.localStorage, "setItem").mockImplementation(() => {
+      throw new Error("quota");
+    });
+
+    launchLessonSession({ tour: TOUR, projectId: "proj-1" }); // mints sess-1
+    const ok = launchLessonSession({ tour: TOUR, projectId: "proj-1" });
+
+    expect(ok).toBe(true);
+    expect(generateIdMock).toHaveBeenCalledTimes(1); // refocused, not duplicated
+    expect(useAgentPanelStore.getState().activeSessionId).toBe("sess-1");
+  });
+
   it("still launches when localStorage access throws (denied/privacy mode)", () => {
     // Every localStorage op throws — including the unguarded getItem inside
     // loadRecentMcpjamAgentSessions. The launch must survive it.
