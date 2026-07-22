@@ -42,9 +42,29 @@ describe("isPubliclyReachableUrl", () => {
   it("applies IPv6 ULA/link-local prefixes only to IPv6 literals, not hostnames", () => {
     expect(isPubliclyReachableUrl("https://fc.example.com")).toBe(true);
     expect(isPubliclyReachableUrl("https://fdn.example.com")).toBe(true);
+    expect(isPubliclyReachableUrl("https://fe90.example.com")).toBe(true);
     expect(isPubliclyReachableUrl("http://[fc00::1]")).toBe(false);
     expect(isPubliclyReachableUrl("http://[fd12:3456::1]")).toBe(false);
     expect(isPubliclyReachableUrl("http://[fe80::1]")).toBe(false);
+  });
+
+  // #3041 review: link-local is the FULL fe80::/10 (first hextet fe80–febf),
+  // not just the literal "fe80:" prefix — e.g. fe90:: / feaf:: / febf:: are all
+  // non-routable and must not be chosen for direct access.
+  it("rejects the whole fe80::/10 link-local range, not just fe80:", () => {
+    for (const url of [
+      "http://[fe80::1]",
+      "http://[fe90::1]",
+      "http://[fea0::1]",
+      "http://[feaf:1234::1]",
+      "http://[febf::1]",
+    ]) {
+      expect(isPubliclyReachableUrl(url), url).toBe(false);
+    }
+    // fec0::/10 (deprecated site-local) is OUTSIDE link-local — not caught by
+    // the fe80::/10 block, so it stays "public" (fails routable elsewhere if at
+    // all); the point here is the boundary is exact.
+    expect(isPubliclyReachableUrl("http://[fec0::1]")).toBe(true);
   });
 
   it("judges IPv4-mapped IPv6 by the embedded IPv4 (both dotted and hex forms)", () => {
