@@ -154,7 +154,7 @@ describe("oauth conformance unit checks", () => {
       body: { error: "invalid_token" },
     });
 
-    await runInvalidTokenCheck({
+    const result = await runInvalidTokenCheck({
       ...(baseNegativeInput as any),
       config: {
         ...baseNegativeInput.config,
@@ -167,6 +167,11 @@ describe("oauth conformance unit checks", () => {
     expect(request.body.method).toBe("tools/list");
     expect(request.headers["Mcp-Method"]).toBe("tools/list");
     expect(request.headers["MCP-Protocol-Version"]).toBe("2026-07-28");
+    // The 401 must still classify as a passing invalid-token check.
+    expect(result).toMatchObject({
+      step: "oauth_invalid_token",
+      status: "passed",
+    });
   });
 
   it("passes when the authorization endpoint rejects a mismatched redirect_uri", async () => {

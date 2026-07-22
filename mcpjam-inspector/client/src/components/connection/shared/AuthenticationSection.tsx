@@ -106,6 +106,7 @@ const PROTOCOL_OPTIONS: Array<{
   value: ServerFormOAuthProtocolMode;
   label: string;
 }> = [
+  { value: "2026-07-28", label: "2026-07-28 (Draft)" },
   { value: "2025-11-25", label: "2025-11-25 (Latest)" },
   { value: "2025-06-18", label: "2025-06-18" },
   { value: "2025-03-26", label: "2025-03-26 (Legacy)" },
