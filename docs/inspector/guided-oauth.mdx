@@ -27,6 +27,22 @@ The OAuth Debugger provides comprehensive tooling for testing OAuth implementati
 - **Sequence Diagram** - Visual representation of the OAuth flow synchronized with your progress, showing the exact resource value the flow sends
 - **Export Capabilities** - Copy logs in guide or raw format for debugging and documentation
 
+### 2026-07-28 protocol behaviors
+
+When you select **2026-07-28** as the protocol version in the OAuth Debugger, the flow differs from earlier versions in several user-visible ways:
+
+- **Stateless connectivity probe.** The initial unauthenticated probe and the post-token verification step both send a stateless `tools/list` request (with `MCP-Protocol-Version: 2026-07-28` and `Mcp-Method: tools/list` headers, plus the `_meta` envelope) instead of an `initialize` handshake. A successful verify logs **"Access token verified (tools/list)"** with a tool count when the server returns one.
+
+- **Strict issuer validation (RFC 8414 §3.3).** After fetching AS metadata, the debugger checks that the returned `issuer` field exactly matches the discovery URL. A mismatch stops the flow with an error — no normalization or trailing-slash tolerance is applied. Ensure your AS metadata `issuer` matches the URL you enter in the debugger.
+
+- **Authorization-response issuer check (RFC 9207).** The debugger records the issuer at discovery time and validates the `iss` parameter on the authorization callback before exchanging the code. If a present `iss` does not match the recorded issuer, the flow stops with a fixed diagnostic and does not surface any server-supplied `error*` callback parameters.
+
+- **DCR deprecation warning.** If the flow uses Dynamic Client Registration, the debugger logs a warning that DCR is deprecated in 2026-07-28 and recommends CIMD or a pre-registered client. DCR still works as a compatibility fallback.
+
+- **Issuer binding on client credentials.** The sequence diagram shows a **"bound to issuer"** row on the client-credentials step, confirming which issuer the credentials are scoped to.
+
+- **Scope union display.** The authorization step in the sequence diagram shows the requested scopes, any scopes challenged by a later `403 insufficient_scope`, and their union — the set a step-up re-authorization would request.
+
 ### Resource indicator warnings
 
 When the server's Protected Resource Metadata (PRM) advertises a `resource` identifier that does not fully satisfy RFC 9728 — for example, a same-origin resource on a different path than the transport endpoint — the debugger logs a warning at the `received_resource_metadata` step and continues the flow. The warning includes the advertised value, the server URL, and whether strict MCP clients (such as Quick OAuth or the official MCP SDK) will refuse to connect.
