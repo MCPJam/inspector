@@ -822,6 +822,12 @@ export function buildOAuthLoginSnapshotConfig(
       ? { requestInit: { headers: config.customHeaders } }
       : {}),
     timeout: config.stepTimeout ?? 30_000,
+    // A 2026 login authenticated against a sessionless server; pin the wire
+    // era so the recorded server-doctor snapshot probes via the stateless
+    // path, not the default 2025 initialize handshake.
+    ...(result?.protocolVersion === "2026-07-28"
+      ? { mcpProtocolVersion: "2026-07-28" as const }
+      : {}),
   };
   if (!result) {
     return baseConfig;

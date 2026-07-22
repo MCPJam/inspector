@@ -260,6 +260,32 @@ test("buildOAuthConformanceConfig rejects unsupported combinations", () => {
   );
 });
 
+test("buildOAuthLoginSnapshotConfig pins the 2026-07-28 stateless wire era", () => {
+  const config = buildOAuthConformanceConfig({
+    url: "https://example.com/mcp",
+    protocolVersion: "2026-07-28",
+    registration: "cimd",
+    authMode: "interactive",
+  });
+
+  const snapshotConfig = buildOAuthLoginSnapshotConfig(config, {
+    completed: true,
+    serverUrl: "https://example.com/mcp",
+    protocolVersion: "2026-07-28",
+    registrationStrategy: "cimd",
+    protocolMode: "2026-07-28",
+    registrationMode: "cimd",
+    authMode: "interactive",
+    redirectUrl: "https://app.example.com/callback",
+    currentStep: "complete",
+    credentials: { accessToken: "access-token", clientId: "client-id" },
+    state: { currentStep: "complete", httpHistory: [], infoLogs: [] } as any,
+  } as any);
+
+  assert.equal("url" in snapshotConfig, true);
+  assert.equal((snapshotConfig as any).mcpProtocolVersion, "2026-07-28");
+});
+
 test("buildOAuthConformanceConfig accepts CIMD for the 2026-07-28 protocol", () => {
   const config = buildOAuthConformanceConfig({
     url: "https://example.com/mcp",

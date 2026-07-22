@@ -3604,24 +3604,32 @@ export function useServerState({
       });
       localStorage.removeItem(`mcp-tokens-${serverName}`);
 
-      // Preserve the existing server's wire protocol pin across the
-      // token-apply reconnect. Rebuilding as `{ url }` alone drops it, so a
-      // server pinned to the sessionless 2026 era (no initialize handshake)
-      // would be reconnected through the default stateful path and the fresh
-      // token would look unusable. Sourced from the wire config, not the OAuth
-      // profile version — the two are independent (the OAuth flow version does
-      // not dictate the MCP wire era).
-      const existingConfig = appStateServersRef.current[serverName]?.config;
+      // Preserve the wire protocol era across the token-apply reconnect.
+      // Rebuilding as `{ url }` alone drops it, so a server on the sessionless
+      // 2026 era (no initialize handshake) would be reconnected through the
+      // default stateful path and the fresh token would look unusable.
+      //
+      // An explicit wire pin on the server config always wins. Absent one, a
+      // just-completed 2026 OAuth flow is sufficient evidence the server
+      // speaks the 2026 wire era — 2026 OAuth and the 2026 stateless transport
+      // ship together, and the flow only succeeds against such a server. This
+      // is NOT a general OAuth→wire coupling: only 2026 (non-default, coupled)
+      // fills in, and only when the connection carries no wire pin of its own.
+      const existingServer = appStateServersRef.current[serverName];
+      const existingConfig = existingServer?.config;
       const existingWireVersion =
         existingConfig && "mcpProtocolVersion" in existingConfig
           ? existingConfig.mcpProtocolVersion
           : undefined;
+      const oauthFlowWireVersion =
+        existingServer?.oauthFlowProfile?.protocolVersion === "2026-07-28"
+          ? ("2026-07-28" as const)
+          : undefined;
+      const wireVersion = existingWireVersion ?? oauthFlowWireVersion;
 
       const serverConfig = {
         url: serverUrl,
-        ...(existingWireVersion
-          ? { mcpProtocolVersion: existingWireVersion }
-          : {}),
+        ...(wireVersion ? { mcpProtocolVersion: wireVersion } : {}),
       } satisfies HttpServerConfig;
 
       dispatch({
