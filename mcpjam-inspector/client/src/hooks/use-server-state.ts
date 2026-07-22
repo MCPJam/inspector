@@ -3604,8 +3604,24 @@ export function useServerState({
       });
       localStorage.removeItem(`mcp-tokens-${serverName}`);
 
+      // Preserve the existing server's wire protocol pin across the
+      // token-apply reconnect. Rebuilding as `{ url }` alone drops it, so a
+      // server pinned to the sessionless 2026 era (no initialize handshake)
+      // would be reconnected through the default stateful path and the fresh
+      // token would look unusable. Sourced from the wire config, not the OAuth
+      // profile version — the two are independent (the OAuth flow version does
+      // not dictate the MCP wire era).
+      const existingConfig = appStateServersRef.current[serverName]?.config;
+      const existingWireVersion =
+        existingConfig && "mcpProtocolVersion" in existingConfig
+          ? existingConfig.mcpProtocolVersion
+          : undefined;
+
       const serverConfig = {
         url: serverUrl,
+        ...(existingWireVersion
+          ? { mcpProtocolVersion: existingWireVersion }
+          : {}),
       } satisfies HttpServerConfig;
 
       dispatch({
