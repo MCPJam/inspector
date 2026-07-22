@@ -6,10 +6,6 @@ import { renderHook } from "@testing-library/react";
 import { StrictMode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/webmcp/native-mirror", () => ({
-  mirrorUiToolToNative: vi.fn(() => null),
-}));
-
 // A fake group for "evals" so the group-registration path is exercisable
 // while the real SURFACE_TOOL_GROUPS map is still empty.
 vi.mock("../groups", () => ({
@@ -99,7 +95,6 @@ describe("useSurfaceAgentBridge", () => {
     vi.clearAllMocks();
     useUiToolsRegistry.setState({
       tools: new Map(),
-      nativeDisposers: new Map(),
       globalNames: new Set(),
       shippedNames: new Set(),
     });

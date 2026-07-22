@@ -51,8 +51,6 @@ import { SidebarUser } from "@/components/sidebar/sidebar-user";
 import { SidebarContextSwitcher } from "@/components/sidebar/sidebar-context-switcher";
 import { SidebarTrialCountdown } from "@/components/sidebar/sidebar-trial-countdown";
 import { ShareProjectDialog } from "@/components/project/ShareProjectDialog";
-//World Cup 2026 TODO remove after the tournament (see world-cup-ball.tsx)
-import { WorldCupBall } from "@/components/world-cup-ball";
 import { useUpdateNotification } from "@/hooks/useUpdateNotification";
 import { Button } from "@mcpjam/design-system/button";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
@@ -738,8 +736,6 @@ export function MCPSidebar({
                   alt="MCP Jam"
                   className="h-4 w-auto"
                 />
-                {/*World Cup 2026, TODO remove after the tournament */}
-                <WorldCupBall className="ml-1.5" />
               </button>
             ) : state === "expanded" ? (
               <div className="relative isolate w-full">
@@ -762,8 +758,6 @@ export function MCPSidebar({
                     alt="MCP Jam"
                     className="h-4 w-auto"
                   />
-                  {/*World Cup 2026, TODO remove after the tournament */}
-                  <WorldCupBall className="ml-1.5" />
                 </button>
                 <SidebarTrigger
                   className={cn(

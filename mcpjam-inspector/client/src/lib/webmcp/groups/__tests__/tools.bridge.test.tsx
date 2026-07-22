@@ -8,10 +8,6 @@
 import { renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/webmcp/native-mirror", () => ({
-  mirrorUiToolToNative: vi.fn(() => null),
-}));
-
 import { useUiToolsRegistry } from "../../ui-tools-registry";
 import { useSurfaceAgentBridge } from "../../use-surface-agent-bridge";
 import {
@@ -25,7 +21,6 @@ describe("tools surface — snapshot-only bridge path", () => {
   beforeEach(() => {
     useUiToolsRegistry.setState({
       tools: new Map(),
-      nativeDisposers: new Map(),
       globalNames: new Set(),
       shippedNames: new Set(),
     });

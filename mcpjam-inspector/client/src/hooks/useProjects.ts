@@ -68,6 +68,16 @@ export interface RemoteServer {
   // schema + `servers:getProjectServers` query to persist/return it for hosted
   // round-trip, mirroring xaaIdentityAssertionFormat.
   xaaClientAuth?: string;
+  xaaDcrClientId?: string;
+  xaaDcrTokenEndpointAuthMethod?:
+    | "client_secret_post"
+    | "client_secret_basic"
+    | "none";
+  xaaDcrIssuer?: string;
+  xaaDcrClientSecretExpiresAt?: number;
+  xaaDcrRegisteredAt?: number;
+  xaaDcrStatus?: "registered" | "registering" | "uncertain";
+  hasXaaDcrRegistration?: boolean;
   authMethod?: string;
   createdAt: number;
   updatedAt: number;

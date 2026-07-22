@@ -100,9 +100,8 @@ const ROUTE_ELEMENTS: Record<
   // exercise the hosted-OAuth callback path via `/hosts` rather
   // than this route directly.
   chatboxes: { element: <ChatboxesRoute /> },
-  // `/swarms` — agent Swarm surface (Publish / Personas / Sessions) over
-  // the same host-backed chatbox as `/chatboxes`. Same billing feature +
-  // `sandboxes-enabled` flag.
+  // `/swarms` — project-scoped Persona → Journey → Run surface (`SwarmsTab`)
+  // with Journeys + Sessions views. Same billing feature as chatboxes.
   swarms: { element: <SwarmsRoute /> },
   playground: { element: <PlaygroundRoute /> },
   support: { element: <SupportRoute /> },

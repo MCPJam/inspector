@@ -17,7 +17,6 @@ import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
 import type { HarnessV1PermissionMode } from "@ai-sdk/harness";
 import { asSchema } from "ai";
 import { type Harness } from "@mcpjam/sdk/host-config/internal";
-import { fetchHarnessModelCredential } from "./harness-model-credential.js";
 import {
   parseHarnessToolName,
   serializeHarnessMcpJson,
@@ -32,18 +31,17 @@ import {
  *  match `HARNESS_IDS` at runtime too. */
 export type HarnessId = Harness;
 
-/** Auth the inspector hands an adapter. CLIENT path uses `gateway` (real key
- *  from Convex). BROKER path uses dummy `anthropic`/`openaiCompatible` creds
- *  pointed at the model proxy — the REAL lease is injected by E2B OUTSIDE the VM,
- *  so these placeholders only satisfy the CLI's auth env. All-optional so a single
- *  value type is accepted by both `createClaudeCode` and `createCodex`. */
+/** Auth the inspector hands an adapter — BROKER-ONLY (COMP-23): dummy
+ *  `anthropic`/`openaiCompatible` creds pointed at the model proxy. The REAL
+ *  lease is injected by E2B OUTSIDE the VM, so these placeholders only satisfy
+ *  the CLI's auth env. (The `gateway` variant carried the raw AI Gateway key on
+ *  the retired client path — removed; the inspector never holds a real model
+ *  credential.) All-optional so a single value type is accepted by both
+ *  `createClaudeCode` and `createCodex`. */
 export type HarnessAuth = {
-  gateway?: { apiKey: string; baseUrl?: string };
   anthropic?: { apiKey: string; authToken: string; baseUrl: string };
   openaiCompatible?: { apiKey: string; baseUrl: string };
 };
-/** @deprecated use HarnessAuth — kept for existing references. */
-export type HarnessGatewayAuth = HarnessAuth;
 
 /** Placeholder credential value handed to the in-sandbox CLI on the broker path.
  *  It is never used for auth (the proxy ignores VM-supplied Authorization/
@@ -146,18 +144,14 @@ export type HarnessRuntimeAdapter = {
   /** Native-tool name used to surface this runtime's `file-change` stream parts
    *  as a synthetic tool call. Undefined ⇒ the runtime doesn't emit file-change. */
   fileChangeToolName?: string;
-  /** Fetch the model credential for this harness from Convex (member-gated). */
-  resolveAuth(args: {
-    projectId: string;
-    modelId: string;
-    bearer: string;
-    signal?: AbortSignal;
-  }): Promise<HarnessGatewayAuth>;
   /** Construct the harness adapter (already cast to the server's HarnessAgent
-   *  boundary type) for the given host model + resolved auth. */
+   *  boundary type) for the given host model + broker dummy auth. (The
+   *  per-adapter `resolveAuth` credential fetch was removed in COMP-23 —
+   *  credentials are broker-delivered outside the VM; see
+   *  `buildBrokerDummyAuth`.) */
   createHarness(args: {
     modelId: string;
-    auth: HarnessGatewayAuth;
+    auth: HarnessAuth;
   }): HarnessAgentAdapter;
   /** The harness's native built-in tools as a normalized, display-only catalog.
    *  No auth/sandbox needed — read straight from the constructed adapter's
@@ -485,62 +479,13 @@ function memoizedBuiltinTools(
   };
 }
 
-/** Shared credential resolver — both harnesses fetch the same member-gated AI
- *  Gateway key from Convex and map it to `auth.gateway`. SECURITY: a `baseUrl`
- *  is always passed so the adapter never falls back to the host env for the
- *  gateway base URL (see `MCPJAM_GATEWAY_BASE_URL`). Each adapter supplies a
- *  `normalizeBaseUrl` because one Convex-issued URL can't serve both wire
- *  protocols (see the normalizers below). */
-async function resolveGatewayAuth(
-  args: {
-    projectId: string;
-    modelId: string;
-    bearer: string;
-    signal?: AbortSignal;
-  },
-  normalizeBaseUrl: (baseUrl: string) => string
-): Promise<HarnessGatewayAuth> {
-  const result = await fetchHarnessModelCredential({
-    projectId: args.projectId,
-    modelId: args.modelId,
-    bearer: args.bearer,
-    ...(args.signal ? { signal: args.signal } : {}),
-  });
-  if (!result.ok) {
-    throw new Error(result.error);
-  }
-  return {
-    gateway: {
-      apiKey: result.credential.apiKey,
-      // Always present: prefer the Convex-issued base URL, else the expected
-      // Gateway default — never undefined (which would let the adapter read the
-      // host env for the base URL).
-      baseUrl: normalizeBaseUrl(
-        result.credential.baseUrl ?? MCPJAM_GATEWAY_BASE_URL
-      ),
-    },
-  };
-}
-
-/** The expected AI Gateway base URL. Used as the fail-safe default so an adapter
- *  can never resolve the gateway base URL from the host environment. Adapters
- *  normalize it per wire protocol before use. */
-const MCPJAM_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh/v1";
-
-/** Claude Code's CLI speaks the Anthropic protocol and joins
- *  `${ANTHROPIC_BASE_URL}/v1/messages` itself, so its gateway base must be the
- *  bare origin — a `/v1`-suffixed base yields `…/v1/v1/messages`, which the
- *  live gateway 404s on every model call. */
-export function toAnthropicGatewayBaseUrl(baseUrl: string): string {
-  return baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
-}
-
-/** Codex's CLI treats `OPENAI_BASE_URL` as an OpenAI-compatible `/v1` root
- *  (`/chat/completions` etc. live directly under it), so ensure the suffix. */
-export function toOpenAiCompatGatewayBaseUrl(baseUrl: string): string {
-  const trimmed = baseUrl.replace(/\/+$/, "");
-  return trimmed.endsWith("/v1") ? trimmed : `${trimmed}/v1`;
-}
+// The shared `resolveGatewayAuth` credential resolver (and its per-protocol
+// base-URL normalizers) lived here until COMP-23: it fetched the raw system AI
+// Gateway key from Convex's /web/harness/model-credential — spend that
+// bypassed all metering. Credentials are now broker-delivered: Convex installs
+// a short-lived lease into E2B's egress transform (outside the VM) and the CLI
+// runs with `buildBrokerDummyAuth` placeholders pointed at the metered model
+// proxy, which normalizes its own per-protocol proxyBaseUrl.
 
 const claudeCodeAdapter: HarnessRuntimeAdapter = {
   id: "claude-code",
@@ -561,7 +506,6 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   // Claude Code does not emit file-change stream parts.
   fileChangeToolName: undefined,
   listBuiltinTools: memoizedBuiltinTools(() => createClaudeCode()),
-  resolveAuth: (args) => resolveGatewayAuth(args, toAnthropicGatewayBaseUrl),
   toNativeModel: toClaudeCodeModel,
   // The CLI runs any Anthropic model we map into its native id shape; other
   // providers are left to the runtime default rather than blocked in preflight.
@@ -617,7 +561,6 @@ const codexAdapter: HarnessRuntimeAdapter = {
   // originate from a model-callable tool); we render them as this native tool.
   fileChangeToolName: "fileChange",
   listBuiltinTools: memoizedBuiltinTools(() => createCodex()),
-  resolveAuth: (args) => resolveGatewayAuth(args, toOpenAiCompatGatewayBaseUrl),
   toNativeModel: toCodexModel,
   // Codex only runs the gpt-5 family it maps; anything else would silently fall
   // back to Codex's default model, so the preflight rejects it.
@@ -626,9 +569,9 @@ const codexAdapter: HarnessRuntimeAdapter = {
   parseToolName: (rawToolName) => ({ toolName: rawToolName }),
   createHarness({ modelId, auth }) {
     const nativeModel = toCodexModel(modelId);
-    // Same dual-`ai` boundary cast as Claude Code. `auth.gateway` is accepted by
-    // createCodex (CodexAuthOptions.gateway) — we always pass an explicit
-    // baseUrl so it never reads the host env for it.
+    // Same dual-`ai` boundary cast as Claude Code. `auth.openaiCompatible` is
+    // accepted by createCodex — the broker dummy auth always carries an
+    // explicit baseUrl so the CLI never reads the host env for it.
     return createCodex({
       ...(nativeModel ? { model: nativeModel } : {}),
       auth,
