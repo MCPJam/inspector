@@ -28,11 +28,11 @@ its own MCP client, its real tool-approval behavior — not a simulation of it.
    neither the sandbox nor your browser ever holds a real model credential,
    and the CLI runs with dummy creds pointed at MCPJam's model proxy.
    With the switch unset (today's default) a member turn instead takes the
-   legacy **client-lease** path, which hands a real Gateway credential to the
-   sandbox and is **not metered** — the reason GA is blocked on COMP-23. That
-   path is itself gated on the backend (`MCPJAM_HARNESS_ALLOW_ENV_CREDENTIAL`),
-   so with every flag unset the turn fails closed rather than leaking; the
-   unmetered spend only happens where that backend flag is on.
+   legacy **client-lease** path, which is gated in turn by the backend's
+   `MCPJAM_HARNESS_ALLOW_ENV_CREDENTIAL`. Unset — the current production
+   state — the credential endpoint returns non-2xx and the turn fails closed.
+   Enabled, it hands a real Gateway credential to the sandbox and the spend
+   is **not metered**; that combination is why GA is blocked on COMP-23.
    Host-funded swarm (guest) turns never take that path at all: they fail
    closed when the broker is off.
 4. **MCP delivery.** Selected MCP servers are written into the session's
@@ -72,10 +72,14 @@ can't honor are disabled in the UI rather than silently ignored.
   `HARNESS_MODEL_LEASE_SECRET` on Convex). See
   `mcpjam-backend/docs/harness-broker-rollout.md`.
   **This is not optional in practice:** on `main` the flag defaults to *off*
-  (`harnessBrokerDeliveryEnabled()` is `=== "true"`), and a member turn with
-  it off silently uses the unmetered client-lease path. **After COMP-23** the
-  switch inverts to a default-on kill switch (`!== "false"`) and the broker
-  becomes the only credential path.
+  (`harnessBrokerDeliveryEnabled()` is `=== "true"`), which drops a member
+  turn onto the legacy client-lease path. What that path does depends on the
+  backend's own enablement flag (`MCPJAM_HARNESS_ALLOW_ENV_CREDENTIAL`):
+  unset — today's production default — the credential endpoint returns
+  non-2xx and the turn **fails closed**; enabled, it hands a real Gateway key
+  to the sandbox **unmetered**. **After COMP-23** the switch inverts to a
+  default-on kill switch (`!== "false"`) and the broker becomes the only
+  credential path.
 - An **MCPJam-provided model** on the host.
 - A signed-in **project member** (guests run only via host-funded swarms,
   capped and broker-only).
@@ -90,20 +94,25 @@ can't honor are disabled in the UI rather than silently ignored.
   empty-wallet rejections apply before the stream starts.
   **Today, on `main`, do not rely on this.** Only credential *issuance* is
   audited and rate-limited; per-generation spend ingestion is still follow-up
-  work, and a member turn on the legacy client-lease path spends MCPJam's
-  gateway key with no `llmUsageRecord`, no credit consumption, and no spend
-  cap. This is the GA blocker tracked in `docs/comp-15-ga-readiness.md`.
+  work. A member turn that reaches the legacy client-lease path — broker
+  delivery off *and* the backend's `MCPJAM_HARNESS_ALLOW_ENV_CREDENTIAL` on —
+  spends MCPJam's gateway key with no `llmUsageRecord`, no credit
+  consumption, and no spend cap. (With that backend flag unset, as in
+  production today, the turn fails closed instead.) This is the GA blocker
+  tracked in `docs/comp-15-ga-readiness.md`.
 
 ## Failure modes you may see
 
 None of these fall back to the emulated engine — a turn that says it ran the
-real runtime did. All fail closed except one: broker delivery off on a member
-turn, which silently degrades to the unmetered client-lease path until
-COMP-23 lands (first row below).
+real runtime did. All fail closed except one combination: broker delivery off
+on a member turn *while the backend credential flag is enabled*, which runs
+unmetered instead of erroring (first two rows below). With both flags at
+their current defaults the turn fails closed.
 
 | Condition | What you see |
 |---|---|
-| Broker delivery disabled — member turn | **No error today** — the turn silently falls back to the unmetered client-lease path. **After COMP-23:** pre-flight error naming `MCPJAM_HARNESS_BROKER_DELIVERY`. |
+| Broker delivery disabled — member turn, backend credential flag unset (production default) | In-turn error from the credential endpoint (non-2xx → the turn throws). Fails closed; nothing is spent. |
+| Broker delivery disabled — member turn, backend credential flag enabled | **No error** — the turn runs on the client-lease path with a real Gateway key in the sandbox and no metering. This is the combination COMP-23 removes. |
 | Broker delivery disabled — host-funded swarm (guest) turn | Fail-closed error naming `MCPJAM_HARNESS_BROKER_DELIVERY=true`, raised in-turn by `run-harness-turn`. |
 | Computers data plane not configured | Pre-flight error naming the data plane requirement. |
 | Model not MCPJam-provided / not runnable | Pre-flight error asking you to pick an eligible model. |

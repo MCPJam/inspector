@@ -67,9 +67,9 @@ broker flags set (`MCPJAM_HARNESS_MODEL_PROXY_ENABLED=true`,
 
 **Coverage caveat:** the inspector-side switch
 `MCPJAM_HARNESS_BROKER_DELIVERY=true` was **not** set in this run, and on
-`main` it defaults to off. Whatever ran here therefore exercised the
-**client-lease** path, not broker delivery. Broker-path behavior is covered by
-tests on `feat/comp-23-broker-delivery` (below), not by this local run.
+`main` it defaults to off — so **nothing here exercised broker delivery**,
+whatever else it covered. Broker-path behavior is covered by tests on
+`feat/comp-23-broker-delivery` (below), not by this local run.
 
 Rows 1–6 require selecting the Claude Code host, which is gated to
 `@mcpjam.com` accounts by the `claude-code-host-enabled` PostHog flag — the
@@ -106,9 +106,13 @@ failure (backend flags off → 403, spend limit → 429 with top-up hint),
 computer wake failure, E2B connect failure, sandbox death (session reset
 message on the next turn).
 
-Not an error surface, and the reason for the GA block: broker delivery off on
-a **member** turn produces no error at all on `main` — it takes the unmetered
-client-lease path.
+The reason for the GA block, stated precisely: broker delivery off on a
+**member** turn falls to the client-lease path, and what happens next is the
+backend's `MCPJAM_HARNESS_ALLOW_ENV_CREDENTIAL` flag's call. Unset (the
+audited production state, §3) the credential endpoint returns non-2xx and the
+turn fails closed — nothing leaks, nothing spends. Enabled, there is no error
+surface at all: the turn runs unmetered on MCPJam's key. COMP-23 removes the
+path so the combination can't arise.
 
 Computer-view states: `error` status chip + `lastError` text, start-limit
 dialog, billing pause notice (COMP-7), usage meter (server-driven allowance).
