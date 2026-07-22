@@ -10,16 +10,17 @@
  *
  * Rules are driven by the adapter's declared CAPABILITIES (requiresComputer,
  * approval surfaces, MCP support), not hardcoded per-harness — so a new harness
- * gets the right gates for free. Only the cheap synchronous checks live here;
- * the MODEL CREDENTIAL (a Convex network call) stays an in-turn fail-closed
- * backstop, as do expensive runtime failures (computer wake, E2B connect).
+ * gets the right gates for free. Only the cheap synchronous checks live here —
+ * including the inspector-side BROKER DELIVERY kill switch (an env read), the
+ * only credential path since COMP-23. The backend broker/proxy flags (a network
+ * call away) stay in-turn fail-closed backstops, as do expensive runtime
+ * failures (computer wake, E2B connect).
  */
 import { isComputersDataPlaneConfigured } from "../computers/control-plane-client.js";
+import { harnessBrokerDeliveryEnabled } from "./harness-flags.js";
 import { getHarnessAdapter, type HarnessId } from "./registry.js";
 
-export type HarnessAvailability =
-  | { ok: true }
-  | { ok: false; reason: string };
+export type HarnessAvailability = { ok: true } | { ok: false; reason: string };
 
 export function checkHarnessRuntimeAvailable(args: {
   /** The harness this host runs — selects the capability set. */
@@ -53,6 +54,20 @@ export function checkHarnessRuntimeAvailable(args: {
 }): HarnessAvailability {
   const adapter = getHarnessAdapter(args.harnessId);
   const name = adapter.displayName;
+
+  // Broker delivery is the ONLY credential path (COMP-23) — with the kill
+  // switch off, no harness turn can obtain model access, so fail here with one
+  // clear pre-stream error instead of a raw mid-turn throw.
+  if (!harnessBrokerDeliveryEnabled()) {
+    return {
+      ok: false,
+      reason:
+        `the ${name} harness delivers model credentials via the broker, ` +
+        "and broker delivery is disabled on this server " +
+        "(MCPJAM_HARNESS_BROKER_DELIVERY=false) — re-enable it to run " +
+        "harness turns",
+    };
+  }
 
   if (args.xaaEnterprisePolicyOn) {
     return {

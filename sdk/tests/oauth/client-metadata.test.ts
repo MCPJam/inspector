@@ -1,9 +1,30 @@
 import { createOAuthStateMachine } from "../../src/oauth/state-machines/factory.js";
 import { EMPTY_OAUTH_FLOW_STATE } from "../../src/oauth/state-machines/types.js";
+import {
+  ID_JAG_GRANT_PROFILE,
+  JWT_BEARER_GRANT,
+  TOKEN_EXCHANGE_GRANT,
+  getXaaConnectClientMetadata,
+} from "../../src/oauth/client-identity.js";
 
 const EXPECTED_LOGO_URI = "https://www.mcpjam.com/mcp_jam_2row.png";
 const REDIRECT_URI = "https://app.mcpjam.com/oauth/callback/debug";
 const REGISTRATION_ENDPOINT = "https://auth.example.com/register";
+
+describe("XAA Connect client metadata", () => {
+  it("derives the ID-JAG profile without authorization-code fields", () => {
+    const metadata = getXaaConnectClientMetadata({ scope: "read write" });
+    expect(metadata).toMatchObject({
+      client_name: "MCPJam Connect",
+      authorization_grant_profiles_supported: [ID_JAG_GRANT_PROFILE],
+      grant_types: [TOKEN_EXCHANGE_GRANT, JWT_BEARER_GRANT],
+      token_endpoint_auth_method: "client_secret_post",
+      scope: "read write",
+    });
+    expect(metadata).not.toHaveProperty("redirect_uris");
+    expect(metadata).not.toHaveProperty("response_types");
+  });
+});
 
 const CASES = [
   {
