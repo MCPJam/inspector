@@ -1410,10 +1410,33 @@ export function useServerState({
       assertClientConfigSynced();
       const resolved = tryResolveProjectServer(serverName);
       if (resolved) {
-        const configWithDefaults = withProjectConnectionDefaults(
+        const withDefaults = withProjectConnectionDefaults(
           serverConfig,
           resolved.serverId
         );
+        // Centralized OAuth wire-era derivation for every reconnect path
+        // (token-apply, OAuth completion, hosted callback, saved-profile
+        // reconnect). A server whose saved OAuth profile is 2026-07-28 speaks
+        // the sessionless 2026 transport, but `toMCPConfig` never copies the
+        // OAuth mode onto `config`, and hosted `readStoredOAuthConfig` is
+        // empty — so without this the resolver has no pin to honor and the
+        // reconnect falls back to the 2025 initialize handshake. Stamp it here
+        // (lowest precedence: an already-present config pin, or a per-server
+        // override / host default in the resolver, still wins).
+        const oauthServer = appStateServersRef.current[serverName];
+        const alreadyPinned =
+          "mcpProtocolVersion" in withDefaults &&
+          Boolean(withDefaults.mcpProtocolVersion);
+        const configWithDefaults: MCPServerConfig =
+          !alreadyPinned &&
+          "url" in withDefaults &&
+          oauthServer?.useOAuth === true &&
+          oauthServer.oauthFlowProfile?.protocolVersion === "2026-07-28"
+            ? ({
+                ...withDefaults,
+                mcpProtocolVersion: "2026-07-28",
+              } as HttpServerConfig)
+            : withDefaults;
         const connectionDefaults = buildResolverConnectionDefaults(
           configWithDefaults,
           activeMcpProfile,
@@ -3621,32 +3644,22 @@ export function useServerState({
       });
       localStorage.removeItem(`mcp-tokens-${serverName}`);
 
-      // Preserve the wire protocol era across the token-apply reconnect.
-      // Rebuilding as `{ url }` alone drops it, so a server on the sessionless
-      // 2026 era (no initialize handshake) would be reconnected through the
-      // default stateful path and the fresh token would look unusable.
-      //
-      // An explicit wire pin on the server config always wins. Absent one, a
-      // just-completed 2026 OAuth flow is sufficient evidence the server
-      // speaks the 2026 wire era — 2026 OAuth and the 2026 stateless transport
-      // ship together, and the flow only succeeds against such a server. This
-      // is NOT a general OAuth→wire coupling: only 2026 (non-default, coupled)
-      // fills in, and only when the connection carries no wire pin of its own.
-      const existingServer = appStateServersRef.current[serverName];
-      const existingConfig = existingServer?.config;
+      // Preserve an explicit wire protocol pin across the token-apply
+      // reconnect. Rebuilding as `{ url }` alone drops it. (The 2026 era
+      // derived from the OAuth profile is applied centrally in
+      // `guardedReconnectServer` for every reconnect path, so it is not
+      // repeated here — an explicit config pin still wins there.)
+      const existingConfig = appStateServersRef.current[serverName]?.config;
       const existingWireVersion =
         existingConfig && "mcpProtocolVersion" in existingConfig
           ? existingConfig.mcpProtocolVersion
           : undefined;
-      const oauthFlowWireVersion =
-        existingServer?.oauthFlowProfile?.protocolVersion === "2026-07-28"
-          ? ("2026-07-28" as const)
-          : undefined;
-      const wireVersion = existingWireVersion ?? oauthFlowWireVersion;
 
       const serverConfig = {
         url: serverUrl,
-        ...(wireVersion ? { mcpProtocolVersion: wireVersion } : {}),
+        ...(existingWireVersion
+          ? { mcpProtocolVersion: existingWireVersion }
+          : {}),
       } satisfies HttpServerConfig;
 
       dispatch({
