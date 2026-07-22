@@ -54,6 +54,22 @@ Every server attached to this Client now connects with that version unless it ha
 
 ## Overriding a single server
 
+You can set the per-server protocol version either when adding a server or when editing an existing one.
+
+### At add time (shared projects)
+
+When adding a server to a shared project, the **Connection overrides** section of the Add Server modal includes a **Protocol version** picker. The 2026 RC option is only shown for HTTP servers.
+
+1. Click **Add server** in the **Servers** tab.
+2. Fill in the server details.
+3. Expand **Connection overrides**.
+4. Pick **Client default**, **Latest (2025-11-25)**, or **2026 RC (2026-07-28)** from the **Protocol version** dropdown.
+5. Submit the form.
+
+The pin is applied once the server is created and the connection is established.
+
+### After adding (edit flow)
+
 1. Go to the **Servers** tab.
 2. Click the three dots on the server card → **Edit** (or open **View server info** → **Edit**).
 3. Expand **Advanced settings**.
