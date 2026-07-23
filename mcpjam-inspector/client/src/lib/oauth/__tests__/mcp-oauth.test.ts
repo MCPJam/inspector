@@ -219,16 +219,20 @@ function createFetchFromRequestExecutor(
 // A real authorization server returns the exact `state` the client issued, and
 // the 2R-iss callback gate now enforces it. Echo the state persisted by
 // initiateOAuth for the pending server so callback tests mirror real requests.
-// Returns null when no session was stored (the no-session fallback path).
+// Prefers the flow-session state; on the no-session fallback path it falls back
+// to the durable issued-state key (which F6 recovery reads). Returns null only
+// when neither is present.
 const issuedCallbackState = (): string | null => {
   const serverName = localStorage.getItem("mcp-oauth-pending");
   if (!serverName) return null;
   try {
     const raw = localStorage.getItem(`mcp-oauth-flow-state-${serverName}`);
-    return raw ? (JSON.parse(raw).state?.state ?? null) : null;
+    const fromSession = raw ? (JSON.parse(raw).state?.state ?? null) : null;
+    if (fromSession) return fromSession;
   } catch {
-    return null;
+    // fall through to the durable key
   }
+  return localStorage.getItem(`mcp-oauth-issued-state-${serverName}`);
 };
 
 describe("mcp-oauth", () => {
@@ -2003,6 +2007,8 @@ describe("mcp-oauth", () => {
 
     const seedAsanaCallback = (discoveryState: any) => {
       localStorage.setItem("mcp-oauth-pending", "asana");
+      // Durable issued state (F6 recovery reads this on the no-session path).
+      localStorage.setItem("mcp-oauth-issued-state-asana", "asana-issued-state");
       localStorage.setItem(
         "mcp-serverUrl-asana",
         "https://mcp.asana.com/v2/mcp"
@@ -2042,19 +2048,40 @@ describe("mcp-oauth", () => {
       expect(mockExchangeAuthorization).not.toHaveBeenCalled();
     });
 
-    it("fails closed on the no-session fallback when the callback returns a state (review F6)", async () => {
-      // seedAsanaCallback omits the flow session, so there is no issued `state`
-      // to compare. A returned state must fail closed rather than redeem a code
-      // whose CSRF state is unverifiable.
-      seedAsanaCallback(createAsanaDiscoveryState());
-
+    it("fails closed on the no-session fallback for a mismatched OR omitted state (review F6)", async () => {
       const { handleOAuthCallback } = await import("../mcp-oauth");
-      const callbackResult = await handleOAuthCallback("oauth-code", {
+
+      // Durable issued state is recovered ("asana-issued-state"); a mismatched
+      // callback state must be rejected before redemption.
+      seedAsanaCallback(createAsanaDiscoveryState());
+      const mismatched = await handleOAuthCallback("oauth-code", {
         callbackState: "attacker-supplied-state",
       });
+      expect(mismatched.success).toBe(false);
+      expect(mismatched.error).toContain("state");
+      expect(mockExchangeAuthorization).not.toHaveBeenCalled();
 
-      expect(callbackResult.success).toBe(false);
-      expect(callbackResult.error).toContain("state");
+      // An OMITTED callback state is equally unverifiable — every machine issues
+      // a state — so it must also fail closed, not slip through.
+      seedAsanaCallback(createAsanaDiscoveryState());
+      const omitted = await handleOAuthCallback("oauth-code", {});
+      expect(omitted.success).toBe(false);
+      expect(omitted.error).toContain("state");
+      expect(mockExchangeAuthorization).not.toHaveBeenCalled();
+    });
+
+    it("fails closed on the no-session fallback when the issued state cannot be recovered (review F6)", async () => {
+      seedAsanaCallback(createAsanaDiscoveryState());
+      // Simulate the durable issued state also being lost.
+      localStorage.removeItem("mcp-oauth-issued-state-asana");
+
+      const { handleOAuthCallback } = await import("../mcp-oauth");
+      const result = await handleOAuthCallback("oauth-code", {
+        callbackState: "asana-issued-state",
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("state");
       expect(mockExchangeAuthorization).not.toHaveBeenCalled();
     });
 
