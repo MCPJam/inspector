@@ -15,10 +15,11 @@ This page covers how to pick a version. Automatic per-server version detection i
 
 ## Where the setting lives
 
-There are two places to set a version, and they layer:
+There are three places to set a version, and they layer:
 
 1. **Client → MCP Protocol** — the _host default_ applied to every server attached to that Client.
-2. **Server card → Edit → Advanced settings → Protocol version** — a _per-server override_ that wins over the host default.
+2. **Add Server modal → Connection overrides → Protocol version** — a _per-server override_ set at add time (available when adding a server to a shared project).
+3. **Server card → Edit → Advanced settings → Protocol version** — a _per-server override_ that wins over the host default.
 
 Use the host default when you want every server in a Client to speak the same version. Use per-server overrides when you're testing a mix — for example, a stable 2025-11-25 server alongside one you're upgrading to the 2026 RC.
 
@@ -52,6 +53,22 @@ The 2026 RC applies the stateless model across transports. MCPJam's initial prev
 Every server attached to this Client now connects with that version unless it has its own per-server override.
 
 ## Overriding a single server
+
+You can set the per-server protocol version either when adding a server or when editing an existing one.
+
+### At add time (shared projects)
+
+When adding a server to a shared project, the **Connection overrides** section of the Add Server modal includes a **Protocol version** picker. The 2026 RC option is only shown for HTTP servers.
+
+1. Click **Add server** in the **Servers** tab.
+2. Fill in the server details.
+3. Expand **Connection overrides**.
+4. Pick **Client default**, **Latest (2025-11-25)**, or **2026 RC (2026-07-28)** from the **Protocol version** dropdown.
+5. Submit the form.
+
+The pin is applied once the server is created and the connection is established.
+
+### After adding (edit flow)
 
 1. Go to the **Servers** tab.
 2. Click the three dots on the server card → **Edit** (or open **View server info** → **Edit**).

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { toast } from "@/lib/toast";
 import { normalizeRegistrationMode } from "@/shared/xaa.js";
@@ -38,6 +38,15 @@ interface AddServerModalProps {
   isSignedIn?: boolean;
   /** Project default XAA test identity — shown as override placeholders. */
   projectXaaDefaultIdentity?: { subject: string; email: string } | null;
+  /**
+   * Shared (hosted) project id. When present, the Connection-overrides
+   * section shows the per-server MCP protocol-version picker; the chosen
+   * pin rides `ServerFormData.mcpProtocolVersionOverride` and the caller
+   * persists it on the project layer once the hosted server row exists.
+   * Absent (local-only / CLI contexts) the picker stays hidden — there is
+   * no project row to bind the override to.
+   */
+  projectId?: string | null;
 }
 
 function normalizeOauthProtocolMode(
@@ -115,6 +124,7 @@ export function AddServerModal({
   organizationId,
   isSignedIn,
   projectXaaDefaultIdentity = null,
+  projectId = null,
 }: AddServerModalProps) {
   const appState = useOptionalSharedAppState();
   const activeProject = findProjectByAnyId(
@@ -136,6 +146,15 @@ export function AddServerModal({
     organizationId: resolvedConfidentialCimdContext.organizationId,
     isSignedIn: resolvedConfidentialCimdContext.isSignedIn,
   });
+  // Per-server MCP wire-version pin. Lives OUTSIDE `useServerForm` on
+  // purpose: the edit flow persists this on the project layer via
+  // `projectServerConfig:setConfig` (see `ServerDetailModal`), never through
+  // the server-save payload, so the shared form hook must not start
+  // emitting it. Here it rides the one-shot `ServerFormData` and the add
+  // path applies it once the hosted server row exists.
+  const [mcpProtocolVersionOverride, setMcpProtocolVersionOverride] = useState<
+    ServerFormData["mcpProtocolVersionOverride"]
+  >(undefined);
   const hostedUrlPlaceholder = "https://example.com/mcp";
   const appReady = useAppReady();
   const appReadyMessage = useAppReadyMessage();
@@ -281,6 +300,7 @@ export function AddServerModal({
 
   const handleClose = () => {
     formState.resetForm();
+    setMcpProtocolVersionOverride(undefined);
     onClose();
   };
 
@@ -322,9 +342,15 @@ export function AddServerModal({
       return;
     }
 
-    const finalFormData = formState.buildFormData();
+    const finalFormData: ServerFormData = {
+      ...formState.buildFormData(),
+      ...(mcpProtocolVersionOverride !== undefined
+        ? { mcpProtocolVersionOverride }
+        : {}),
+    };
     onSubmit(finalFormData);
     formState.resetForm();
+    setMcpProtocolVersionOverride(undefined);
     onClose();
   };
 
@@ -566,6 +592,10 @@ export function AddServerModal({
             clientCapabilitiesOverrideError={
               formState.clientCapabilitiesOverrideError
             }
+            showMcpProtocolVersionOverride={Boolean(projectId)}
+            mcpProtocolVersionOverride={mcpProtocolVersionOverride}
+            onMcpProtocolVersionOverrideChange={setMcpProtocolVersionOverride}
+            transportKind={formState.type === "http" ? "http" : "stdio"}
             {...(formState.type === "http"
               ? {
                   customHeaders: formState.customHeaders,

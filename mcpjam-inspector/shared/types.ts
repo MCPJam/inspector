@@ -746,6 +746,15 @@ export interface ServerFormData {
   clearXaaConfig?: boolean;
   oauthProtocolMode?: ServerFormOAuthProtocolMode;
   /**
+   * Per-server MCP wire-version pin chosen at ADD time (the edit flow writes
+   * it directly through `projectServerConfig:setConfig` instead of the form
+   * payload). Persisted on the project layer
+   * (`projectServerRefs.mcpProtocolVersionOverride`), NOT on the server's own
+   * config blob — the add flow applies it once the hosted server row exists,
+   * then reconnects. Undefined = inherit host default / SDK default.
+   */
+  mcpProtocolVersionOverride?: import("@mcpjam/sdk/browser").McpProtocolVersion;
+  /**
    * Unified client-registration mode (Client↔AS leg) shared by the OAuth
    * flows and the XAA debugger: how this server's client establishes its
    * identity at the authorization server. "auto" resolves to a concrete

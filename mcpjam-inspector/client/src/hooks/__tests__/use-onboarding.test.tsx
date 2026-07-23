@@ -20,7 +20,20 @@ const mockState = vi.hoisted(() => ({
   markOnboardingShownMutation: vi.fn().mockResolvedValue(undefined),
   detectEnvironment: vi.fn(() => "test"),
   detectPlatform: vi.fn(() => "web"),
+  // Toggled per-test so the provisioning gate can be exercised in both hosted
+  // and local modes. Read live via the getter in the config mock below.
+  hostedMode: false,
 }));
+
+vi.mock("@/lib/config", async (importActual) => {
+  const actual = await importActual<typeof import("@/lib/config")>();
+  return {
+    ...actual,
+    get HOSTED_MODE() {
+      return mockState.hostedMode;
+    },
+  };
+});
 
 vi.mock("convex/react", () => ({
   useQuery: () => mockState.convexUser,
@@ -65,6 +78,7 @@ describe("useOnboarding", () => {
     vi.clearAllMocks();
     localStorage.clear();
     mockState.convexUser = undefined;
+    mockState.hostedMode = false;
   });
 
   it("auto-connects Excalidraw for a fresh first run", async () => {
@@ -86,7 +100,31 @@ describe("useOnboarding", () => {
     });
   });
 
-  it("waits for project provisioning before auto-connecting Excalidraw", async () => {
+  it("auto-connects Excalidraw in local mode even without a provisioned project", async () => {
+    // In local/non-hosted mode the active project is a local record and
+    // Excalidraw connects as a runtime server, so onboarding must not block on
+    // a Convex-synced project — otherwise guests on deployments that can't
+    // authenticate them hang on an infinite spinner. See issue #3352.
+    const onConnect = vi.fn();
+    renderHook(() =>
+      useOnboarding({
+        servers: {},
+        onConnect,
+        isSignedInWithWorkOs: false,
+        isWorkOsAuthLoading: false,
+        isProjectProvisioned: false,
+      })
+    );
+
+    await waitFor(() => {
+      expect(onConnect).toHaveBeenCalledWith(EXCALIDRAW_SERVER_CONFIG);
+    });
+  });
+
+  it("waits for project provisioning before auto-connecting Excalidraw in hosted mode", async () => {
+    // Hosted mode stores each server on the Convex project, so the first-run
+    // connect must wait for that project to provision.
+    mockState.hostedMode = true;
     const onConnect = vi.fn();
     const { rerender } = renderHook(
       ({ isProjectProvisioned }: { isProjectProvisioned: boolean }) =>
