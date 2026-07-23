@@ -9,11 +9,13 @@ import type {
   OAuthStateMachine,
   OAuthProtocolVersion,
   BaseOAuthStateMachineConfig,
+  OAuthRequestExecutor,
   RegistrationStrategy2025_03_26,
   RegistrationStrategy2025_06_18,
   RegistrationStrategy2025_11_25,
   RegistrationStrategy2026_07_28,
 } from "./types.js";
+import { assertOutboundOAuthUrlAllowed } from "../ssrf-guard.js";
 
 import {
   createDebugOAuthStateMachine as create2025_03_26,
@@ -45,6 +47,13 @@ export interface OAuthStateMachineFactoryConfig extends BaseOAuthStateMachineCon
     | RegistrationStrategy2025_06_18
     | RegistrationStrategy2025_11_25
     | RegistrationStrategy2026_07_28;
+  /**
+   * Permit outbound OAuth metadata fetches to loopback hosts (local-dev
+   * reflectors). Defaults to `true` so localhost dev flows keep working; the
+   * SSRF guard still blocks LAN/link-local/reserved destinations regardless.
+   * Set `false` for strict public-host enforcement.
+   */
+  allowLoopbackMetadataFetch?: boolean;
 }
 
 /**
@@ -79,7 +88,22 @@ export interface OAuthStateMachineFactoryConfig extends BaseOAuthStateMachineCon
 export function createOAuthStateMachine(
   config: OAuthStateMachineFactoryConfig,
 ): OAuthStateMachine {
-  const { protocolVersion, ...baseConfig } = config;
+  const {
+    protocolVersion,
+    allowLoopbackMetadataFetch,
+    ...rest
+  } = config;
+
+  // SSRF guard (shared hardening, all machines at once): every machine hands
+  // untrusted metadata URLs (PRM pointer, AS metadata, CIMD) to this executor.
+  // Validate the destination before the fetch runs — blocking private/reserved
+  // hosts — with an explicit loopback opt-in for local dev.
+  const allowLoopback = allowLoopbackMetadataFetch ?? true;
+  const guardedExecutor: OAuthRequestExecutor = async (request) => {
+    assertOutboundOAuthUrlAllowed(request.url, { allowLoopback });
+    return rest.requestExecutor(request);
+  };
+  const baseConfig = { ...rest, requestExecutor: guardedExecutor };
 
   switch (protocolVersion) {
     case "2025-03-26":
