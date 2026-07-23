@@ -49,6 +49,9 @@ const {
 }));
 
 vi.mock("convex/react", () => ({
+  // useChatSession resolves the Convex client to submit elicitation answers
+  // straight to the rendezvous table (the blocked replica isn't addressable).
+  useConvex: () => ({ mutation: vi.fn().mockResolvedValue({ ok: true }) }),
   useConvexAuth: () => mockConvexAuthState,
 }));
 
@@ -74,6 +77,10 @@ vi.mock("posthog-js/react", () => ({
     capture: mockPosthogCapture,
   }),
   useFeatureFlagEnabled: () => false,
+}));
+
+vi.mock("@/lib/analytics", () => ({
+  track: (...args: unknown[]) => mockPosthogCapture(...args),
 }));
 
 vi.mock("@/lib/apis/web/servers-api", () => ({

@@ -267,7 +267,7 @@ function RunGroupItem({
       <button
         type="button"
         onClick={onSelect}
-        title={`${group.label} · ${rate ?? "—"}% · ${group.hostCount} host${group.hostCount > 1 ? "s" : ""} · ${formatRelativeTime(group.timestamp)}`}
+        title={`${group.label} · ${rate ?? "—"}% · ${group.hostCount} client${group.hostCount > 1 ? "s" : ""} · ${formatRelativeTime(group.timestamp)}`}
         className={cn(
           "flex h-9 w-9 items-center justify-center rounded-md transition-colors",
           active ? "bg-primary/10 ring-1 ring-primary/40" : "hover:bg-muted",
@@ -290,7 +290,7 @@ function RunGroupItem({
           <button
             type="button"
             onClick={onToggleExpand}
-            title={expanded ? "Hide host runs" : "Show host runs"}
+            title={expanded ? "Hide client runs" : "Show client runs"}
             className="flex w-7 shrink-0 items-center justify-center rounded-l-md text-muted-foreground hover:bg-muted hover:text-foreground"
           >
             <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", expanded && "rotate-90")} />
@@ -319,7 +319,7 @@ function RunGroupItem({
           </div>
           <div className="mt-1 flex items-center gap-2">
             <span className="text-[11px] text-muted-foreground">
-              {group.hostCount} host{group.hostCount > 1 ? "s" : ""}
+              {group.hostCount} client{group.hostCount > 1 ? "s" : ""}
             </span>
             {delta != null && delta !== 0 ? (
               <span

@@ -6,10 +6,6 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../native-mirror", () => ({
-  mirrorUiToolToNative: vi.fn(() => null),
-}));
-
 import {
   createUiAwareApprovalResponseHandler,
   fulfillOrphanedDeferredUiToolCalls,
@@ -65,7 +61,6 @@ describe("createUiAwareApprovalResponseHandler", () => {
     __resetUiToolExecutorForTests();
     useUiToolsRegistry.setState({
       tools: new Map(),
-      nativeDisposers: new Map(),
       shippedNames: new Set(),
     });
   });
@@ -177,7 +172,6 @@ describe("fulfillOrphanedDeferredUiToolCalls", () => {
     __resetUiToolExecutorForTests();
     useUiToolsRegistry.setState({
       tools: new Map(),
-      nativeDisposers: new Map(),
       shippedNames: new Set(),
     });
   });

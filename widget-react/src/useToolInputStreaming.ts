@@ -16,7 +16,6 @@ import {
   useLayoutEffect,
 } from "react";
 import type { AppBridge } from "@modelcontextprotocol/ext-apps/app-bridge";
-import type { CallToolResult } from "@modelcontextprotocol/client";
 // Re-exported from the WidgetHost contract module so this cluster file stays
 // free of `@/lib/client-styles` (Tier-B guard).
 import type { ResolvedMcpAppsCapabilities } from "./widget-host";
@@ -476,7 +475,11 @@ export function useToolInputStreaming({
     const outputKey = `${toolCallId}:${serialized}`;
     if (lastToolOutputRef.current === outputKey) return;
     lastToolOutputRef.current = outputKey;
-    bridge.sendToolResult(toolOutput as CallToolResult);
+    // Apps-compat seam (§1D): cast to the bridge's own CallToolResult
+    // (ext-apps v1-sdk peer) rather than the v2 client's nominal type.
+    bridge.sendToolResult(
+      toolOutput as Parameters<typeof bridge.sendToolResult>[0],
+    );
   }, [isReady, toolCallId, toolOutput, toolState, bridgeRef, reinitCount]);
 
   // 7. Tool error/cancellation delivery

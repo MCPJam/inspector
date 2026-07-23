@@ -41,14 +41,29 @@ describe("buildUiToolsCatalog", () => {
 
   it("every tool satisfies the wire contract (name regex, description cap)", () => {
     const catalog = buildUiToolsCatalog();
+    // DELIBERATE catalog change (S7): the global playground catalog grew from
+    // 12 → 16 with the chat-composer tools (ui_select_model /
+    // ui_set_system_prompt / ui_reset_chat / ui_stop_generation). These EXTEND
+    // the always-on playground catalog rather than forming a mount-scoped group
+    // because the playground manifest is kind:"global" — update this exact list
+    // consciously, never as a silent side effect.
     expect(catalog.map((t) => t.name).sort()).toEqual([
+      "ui_add_server",
+      "ui_connect_server",
+      "ui_disconnect_server",
       "ui_execute_tool",
       "ui_navigate",
       "ui_open_playground",
+      "ui_open_server_form",
+      "ui_remove_server",
+      "ui_reset_chat",
+      "ui_select_model",
       "ui_select_server",
       "ui_select_tool",
       "ui_set_app_context",
+      "ui_set_system_prompt",
       "ui_snapshot_app",
+      "ui_stop_generation",
     ]);
     for (const tool of catalog) {
       expect(isUiToolName(tool.name)).toBe(true);
@@ -57,6 +72,171 @@ describe("buildUiToolsCatalog", () => {
       expect(typeof tool.execute).toBe("function");
     }
     expect(getTool("ui_snapshot_app").readOnly).toBe(true);
+  });
+
+  it("every tool annotates readOnly/destructive/openWorld explicitly", () => {
+    // An absent `destructiveHint` reads as DESTRUCTIVE, so an unannotated
+    // tool would gate on every call rather than execute silently — safe, but
+    // wrong. Curated entries state their policy instead of inheriting it.
+    for (const tool of buildUiToolsCatalog()) {
+      const annotations = tool.annotations;
+      expect(annotations, `${tool.name} must annotate`).toBeDefined();
+      expect(typeof annotations?.readOnlyHint).toBe("boolean");
+      expect(typeof annotations?.destructiveHint).toBe("boolean");
+      expect(typeof annotations?.openWorldHint).toBe("boolean");
+      // The wire carries both; the validator 400s if they disagree.
+      expect(annotations?.readOnlyHint).toBe(tool.readOnly);
+    }
+  });
+
+  it("gates exactly the irreversible tools as destructive", () => {
+    // These confirm even with the approval toggle off. Everything else is
+    // additive or reversible: the user watches it happen in their own app,
+    // and a confirmation buys nothing.
+    //   - ui_execute_tool runs an arbitrary third-party MCP tool.
+    //   - ui_remove_server deletes configuration chat can't reconstruct.
+    //   - ui_reset_chat (S7) clears the playground conversation — unrecoverable.
+    const destructive = buildUiToolsCatalog()
+      .filter((t) => t.annotations?.destructiveHint === true)
+      .map((t) => t.name)
+      .sort();
+    expect(destructive).toEqual([
+      "ui_execute_tool",
+      "ui_remove_server",
+      "ui_reset_chat",
+    ]);
+  });
+
+  it("marks exactly the tools whose effects escape the browser as open-world", () => {
+    const openWorld = buildUiToolsCatalog()
+      .filter((t) => t.annotations?.openWorldHint === true)
+      .map((t) => t.name)
+      .sort();
+    expect(openWorld).toEqual([
+      "ui_connect_server",
+      "ui_disconnect_server",
+      "ui_execute_tool",
+    ]);
+  });
+
+  it("ui_add_server is additive, not destructive", () => {
+    // It refuses to overwrite an existing server (the handler rejects a
+    // duplicate name), which is what keeps it non-destructive.
+    const addServer = getTool("ui_add_server");
+    expect(addServer.annotations?.destructiveHint).toBe(false);
+    expect(addServer.description).toContain("already exists");
+  });
+
+  it("ui_add_server navigates to Connect, then dispatches the draft without connecting", async () => {
+    await getTool("ui_add_server").execute({
+      name: "Excalidraw",
+      url: "https://example.com/mcp",
+    });
+    // Land on Connect first, so the new server appears where the user is
+    // looking rather than silently behind another screen.
+    expect(dispatchedCommands()[0]).toMatchObject({
+      type: "navigate",
+      payload: { target: "/servers" },
+    });
+    expect(dispatchedCommands()[1]).toMatchObject({
+      type: "addServer",
+      payload: { draft: { name: "Excalidraw", url: "https://example.com/mcp" } },
+    });
+    // Adding never connects: connecting is a separate, visible step that can
+    // report authorization_required.
+    expect(dispatchedCommands().some((c) => c.type === "connectServer")).toBe(
+      false,
+    );
+  });
+
+  it("ui_add_server requires a name", async () => {
+    const result = await getTool("ui_add_server").execute({});
+    expect(result.isError).toBe(true);
+    expect(executeInspectorCommandMock).not.toHaveBeenCalled();
+  });
+
+  it("ui_add_server passes stdio args through as a list", async () => {
+    // Pre-separated, because the form's parser splits on whitespace with no
+    // quote handling.
+    await getTool("ui_add_server").execute({
+      name: "local",
+      transport: "stdio",
+      command: "npx",
+      args: ["-y", "pkg", "--flag", "a b"],
+    });
+    const addServer = dispatchedCommands().find((c) => c.type === "addServer");
+    expect(addServer).toMatchObject({
+      payload: { draft: { args: ["-y", "pkg", "--flag", "a b"] } },
+    });
+  });
+
+  it("ui_add_server never carries env or headers (secrets don't cross the transcript)", async () => {
+    await getTool("ui_add_server").execute({
+      name: "x",
+      transport: "stdio",
+      command: "npx",
+      env: { SECRET: "shh" },
+    } as never);
+    const addServer = dispatchedCommands().find((c) => c.type === "addServer");
+    expect(JSON.stringify(addServer)).not.toContain("SECRET");
+    expect(JSON.stringify(addServer)).not.toContain("env");
+  });
+
+  it("ui_open_server_form navigates to Connect first when its handler is absent", async () => {
+    // The command only exists while Connect is mounted — its modal state and
+    // billing gate are that screen's own.
+    hasInspectorCommandHandlerMock.mockReturnValue(false);
+    await getTool("ui_open_server_form").execute({ name: "X" });
+    expect(dispatchedCommands()[0]).toMatchObject({
+      type: "navigate",
+      payload: { target: "/servers" },
+    });
+    expect(dispatchedCommands()[1]).toMatchObject({ type: "openServerForm" });
+  });
+
+  it("ui_open_server_form opens a blank form when given no prefill", async () => {
+    // A no-arg open must not error — the form is there for the user to fill.
+    hasInspectorCommandHandlerMock.mockReturnValue(true);
+    await getTool("ui_open_server_form").execute({});
+    const open = dispatchedCommands().find((c) => c.type === "openServerForm");
+    expect(open).toMatchObject({ type: "openServerForm", payload: {} });
+    expect((open as any).payload.draft).toBeUndefined();
+  });
+
+  it("connect/disconnect/remove navigate to Connect first, then dispatch", async () => {
+    // The premise of the surface is that the user watches you work; a mutation
+    // that lands silently on another screen breaks it.
+    for (const [tool, type] of [
+      ["ui_connect_server", "connectServer"],
+      ["ui_disconnect_server", "disconnectServer"],
+      ["ui_remove_server", "removeServer"],
+    ] as const) {
+      vi.clearAllMocks();
+      hasInspectorCommandHandlerMock.mockReturnValue(true);
+      executeInspectorCommandMock.mockResolvedValue({
+        id: "c",
+        status: "success",
+        result: { ok: true },
+      });
+
+      const missing = await getTool(tool).execute({});
+      expect(missing.isError, tool).toBe(true);
+      expect(executeInspectorCommandMock).not.toHaveBeenCalled();
+
+      await getTool(tool).execute({ serverName: "everything" });
+      expect(dispatchedCommands()[0], tool).toMatchObject({
+        type: "navigate",
+        payload: { target: "/servers" },
+      });
+      expect(dispatchedCommands()[1], tool).toMatchObject({
+        type,
+        payload: { serverName: "everything" },
+      });
+    }
+  });
+
+  it("does not advertise ui_navigate as idempotent (navigation adds history)", () => {
+    expect(getTool("ui_navigate").annotations?.idempotentHint).toBe(false);
   });
 
   it("ui_navigate dispatches valid targets and errors on missing/unknown ones", async () => {
@@ -200,21 +380,165 @@ describe("buildUiToolsCatalog", () => {
     expect(getTool("ui_execute_tool").description).toContain("REALLY runs");
   });
 
-  it("ui_snapshot_app dispatches a playground snapshot when the playground is open", async () => {
+  it("ui_snapshot_app asks for the whole app by default", async () => {
     await getTool("ui_snapshot_app").execute({});
+    expect(dispatchedCommands()[0]).toMatchObject({
+      type: "snapshotApp",
+      payload: {},
+    });
+    // No hardcoded surface: the app-level handler decides what's readable.
+    expect((dispatchedCommands()[0] as any).payload.surface).toBeUndefined();
+  });
+
+  it("ui_snapshot_app forwards an explicit surface", async () => {
+    await getTool("ui_snapshot_app").execute({ surface: "playground" });
     expect(dispatchedCommands()[0]).toMatchObject({
       type: "snapshotApp",
       payload: { surface: "playground" },
     });
   });
 
-  it("ui_snapshot_app errors without mutating UI state when the playground is closed (honors readOnly)", async () => {
-    // readOnly tools must not auto-open the playground; with the handler
-    // absent, snapshot returns an error and dispatches nothing.
-    hasInspectorCommandHandlerMock.mockReturnValue(false);
-    const result = await getTool("ui_snapshot_app").execute({});
-    expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("ui_open_playground");
+  it("ui_select_model dispatches the identifier and requires it", async () => {
+    const selectModel = getTool("ui_select_model");
+
+    const missing = await selectModel.execute({});
+    expect(missing.isError).toBe(true);
     expect(executeInspectorCommandMock).not.toHaveBeenCalled();
+
+    await selectModel.execute({ model: "claude-sonnet-5" });
+    expect(dispatchedCommands()[0]).toMatchObject({
+      type: "selectModel",
+      payload: { model: "claude-sonnet-5" },
+    });
+    // idempotent, non-destructive, browser-local.
+    expect(selectModel.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    });
+  });
+
+  it("ui_select_model surfaces an unknown-model rejection as isError", async () => {
+    // The handler validates against the available models and rejects an
+    // unknown one as invalid_request; the tool relays that.
+    executeInspectorCommandMock.mockResolvedValueOnce({
+      id: "x",
+      status: "error",
+      error: { code: "invalid_request", message: 'Unknown model "nope".' },
+    });
+    const result = await getTool("ui_select_model").execute({ model: "nope" });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("invalid_request");
+  });
+
+  it("ui_set_system_prompt forwards free text and accepts the empty (clear) case", async () => {
+    const setPrompt = getTool("ui_set_system_prompt");
+
+    // Missing entirely → error (no dispatch).
+    const missing = await setPrompt.execute({});
+    expect(missing.isError).toBe(true);
+    expect(executeInspectorCommandMock).not.toHaveBeenCalled();
+
+    // Empty string is the explicit "clear" request and must dispatch.
+    await setPrompt.execute({ prompt: "" });
+    expect(dispatchedCommands()[0]).toMatchObject({
+      type: "setSystemPrompt",
+      payload: { prompt: "" },
+    });
+
+    executeInspectorCommandMock.mockClear();
+    await setPrompt.execute({ prompt: "You are a pirate." });
+    expect(dispatchedCommands()[0]).toMatchObject({
+      type: "setSystemPrompt",
+      payload: { prompt: "You are a pirate." },
+    });
+  });
+
+  it("ui_reset_chat is destructive and dispatches an empty-payload reset", async () => {
+    const reset = getTool("ui_reset_chat");
+    expect(reset.annotations?.destructiveHint).toBe(true);
+    // Each reset spawns a fresh session, so a retry is not a no-op.
+    expect(reset.annotations?.idempotentHint).toBe(false);
+    expect(reset.description).toContain("cannot be undone");
+
+    await reset.execute({});
+    expect(dispatchedCommands()[0]).toMatchObject({
+      type: "resetChat",
+      payload: {},
+    });
+  });
+
+  it("ui_stop_generation dispatches a stop and is a non-destructive no-op when idle", async () => {
+    const stop = getTool("ui_stop_generation");
+    expect(stop.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    });
+    expect(stop.description).toContain("no-op");
+
+    await stop.execute({});
+    expect(dispatchedCommands()[0]).toMatchObject({
+      type: "stopGeneration",
+      payload: {},
+    });
+  });
+
+  it("the chat-composer tools auto-open the playground when their handler is absent", async () => {
+    // Same auto-open fallback as ui_select_tool: they reach the playground
+    // chat from any route.
+    for (const [tool, type] of [
+      ["ui_select_model", "selectModel"],
+      ["ui_set_system_prompt", "setSystemPrompt"],
+      ["ui_reset_chat", "resetChat"],
+      ["ui_stop_generation", "stopGeneration"],
+    ] as const) {
+      vi.clearAllMocks();
+      hasInspectorCommandHandlerMock.mockReturnValue(false);
+      executeInspectorCommandMock.mockImplementation(
+        async (command: InspectorCommand) => ({
+          id: command.id,
+          status: "success" as const,
+          result: {},
+        }),
+      );
+
+      const args =
+        type === "selectModel"
+          ? { model: "claude-sonnet-5" }
+          : type === "setSystemPrompt"
+            ? { prompt: "hi" }
+            : {};
+      await getTool(tool).execute(args);
+
+      expect(hasInspectorCommandHandlerMock, tool).toHaveBeenCalledWith(type);
+      expect(dispatchedCommands().map((c) => c.type), tool).toEqual([
+        "openPlayground",
+        type,
+      ]);
+    }
+  });
+
+  it("ui_snapshot_app works with the playground closed (no gate, no auto-open)", async () => {
+    // It reads whatever IS open. It must still never mount a surface to
+    // observe it — that's what keeps `readOnlyHint` (and its approval
+    // exemption) honest.
+    hasInspectorCommandHandlerMock.mockReturnValue(false);
+    executeInspectorCommandMock.mockResolvedValue({
+      id: "c1",
+      status: "success",
+      result: { activeTab: "servers", surfaces: {} },
+    });
+
+    const result = await getTool("ui_snapshot_app").execute({});
+
+    expect(result.isError).toBeFalsy();
+    expect(dispatchedCommands()[0]).toMatchObject({ type: "snapshotApp" });
+    // Never an open/navigate command.
+    expect(
+      dispatchedCommands().some((c) => c.type === "openPlayground"),
+    ).toBe(false);
   });
 });

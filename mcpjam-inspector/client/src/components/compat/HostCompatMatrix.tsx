@@ -5,11 +5,19 @@ import {
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
 import type { ServerWithName } from "@/state/app-types";
-import { buildHostCompatProfiles } from "@/lib/host-compat/profiles";
+import { getHostProfiles } from "@/lib/host-compat/profiles";
+import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { useHostCompatReports } from "@/lib/host-compat/use-host-compat";
 import type { HostCompatReport } from "@/lib/host-compat/types";
-import { VERDICT_META } from "@/components/compat/verdict-meta";
+import {
+  COMPAT_DISPLAY_META,
+  getCompatDisplayLabel,
+  getCompatDisplayStatus,
+} from "@/components/compat/verdict-meta";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
+import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
+import { filterProfilesByFeatureFlags } from "@/lib/host-compat/feature-visibility";
 
 type HostColumn = {
   id: string;
@@ -28,7 +36,7 @@ export type ColumnSummary = { works: number; loaded: number };
  */
 export function summarizeColumn(
   perServerReports: Array<HostCompatReport[] | undefined>,
-  hostId: string,
+  hostId: string
 ): ColumnSummary {
   let works = 0;
   let loaded = 0;
@@ -63,7 +71,7 @@ function MatrixRow({
   onReports: (name: string, reports: HostCompatReport[]) => void;
   onRemove: (name: string) => void;
 }) {
-  const { reports } = useHostCompatReports(server);
+  const { reports, analysisStatus } = useHostCompatReports(server);
 
   const byHost = useMemo(() => {
     const m = new Map<string, HostCompatReport>();
@@ -110,21 +118,27 @@ function MatrixRow({
         </button>
       </td>
       {hosts.map((h) => {
-        const verdict = byHost.get(h.id)?.verdict ?? "unknown";
-        const meta = VERDICT_META[verdict];
+        const report = byHost.get(h.id);
+        const status =
+          analysisStatus === "ready" && report
+            ? getCompatDisplayStatus(report)
+            : null;
+        const meta = status ? COMPAT_DISPLAY_META[status] : null;
         return (
           <td key={h.id} className="px-2 py-2 text-center">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span
-                  className={`inline-block h-2 w-2 rounded-full ${meta.dot}`}
-                  aria-label={`${meta.label} on ${h.label}`}
-                />
-              </TooltipTrigger>
-              <TooltipContent side="top" variant="muted">
-                {h.label}: {meta.label}
-              </TooltipContent>
-            </Tooltip>
+            {meta ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span
+                    className={`inline-block h-2 w-2 rounded-full ${meta.dot}`}
+                    aria-label={`${getCompatDisplayLabel(report!) ?? ""} on ${h.label}`}
+                  />
+                </TooltipTrigger>
+                <TooltipContent side="top" variant="muted">
+                  {h.label}: {getCompatDisplayLabel(report!) ?? ""}
+                </TooltipContent>
+              </Tooltip>
+            ) : null}
           </td>
         );
       })}
@@ -148,27 +162,35 @@ export function HostCompatMatrix({
   onSelectServer: (name: string) => void;
 }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
+  const claudeCodeEnabled = useClaudeCodeHostEnabled();
+  const codexEnabled = useCodexHostEnabled();
+  // Live catalog so the column set matches the per-row verdicts (which also
+  // recompute on catalogState via useHostCompatReports).
+  const catalogState = useHostCatalog();
   const hosts = useMemo<HostColumn[]>(
     () =>
-      buildHostCompatProfiles().map((p) => ({
+      filterProfilesByFeatureFlags(getHostProfiles(catalogState?.catalog), {
+        claudeCode: claudeCodeEnabled,
+        codex: codexEnabled,
+      }).map((p) => ({
         id: p.id,
         label: p.label,
         logoSrc: p.logoSrc,
         logoSrcByTheme: p.logoSrcByTheme,
       })),
-    [],
+    [catalogState, claudeCodeEnabled, codexEnabled]
   );
 
   const [byServer, setByServer] = useState<Record<string, HostCompatReport[]>>(
-    {},
+    {}
   );
   const handleReports = useCallback(
     (name: string, reports: HostCompatReport[]) => {
       setByServer((prev) =>
-        prev[name] === reports ? prev : { ...prev, [name]: reports },
+        prev[name] === reports ? prev : { ...prev, [name]: reports }
       );
     },
-    [],
+    []
   );
   const handleRemove = useCallback((name: string) => {
     setByServer((prev) => {
@@ -189,22 +211,24 @@ export function HostCompatMatrix({
             <th className="sticky left-0 z-10 bg-muted/30 px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
               Server
             </th>
-            {hosts.map((h) => (
-              <th key={h.id} className="px-2 py-2 text-center">
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <img
-                      src={h.logoSrcByTheme?.[themeMode] ?? h.logoSrc}
-                      alt={h.label}
-                      className="mx-auto h-4 w-4 rounded-[3px] object-contain"
-                    />
-                  </TooltipTrigger>
-                  <TooltipContent side="top" variant="muted">
-                    {h.label}
-                  </TooltipContent>
-                </Tooltip>
-              </th>
-            ))}
+            {hosts.map((h) => {
+              return (
+                <th key={h.id} className="px-2 py-2 text-center">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <img
+                        src={h.logoSrcByTheme?.[themeMode] ?? h.logoSrc}
+                        alt={h.label}
+                        className="mx-auto h-4 w-4 rounded-[3px] object-contain"
+                      />
+                    </TooltipTrigger>
+                    <TooltipContent side="top" variant="muted">
+                      <div>{h.label}</div>
+                    </TooltipContent>
+                  </Tooltip>
+                </th>
+              );
+            })}
           </tr>
         </thead>
         <tbody>
@@ -223,7 +247,7 @@ export function HostCompatMatrix({
         <tfoot>
           <tr className="border-t border-border/50">
             <td className="sticky left-0 z-10 bg-background px-3 py-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-              Works
+              Supported
             </td>
             {hosts.map((h) => {
               const { works, loaded } = summarizeColumn(perServerReports, h.id);

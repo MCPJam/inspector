@@ -12,8 +12,7 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "./ui/resizable";
-import posthog from "posthog-js";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { OAuthProfileModal } from "./oauth/OAuthProfileModal";
 import { type OAuthTestProfile } from "@/lib/oauth/profile";
 import { OAuthFlowLogger } from "./oauth/OAuthFlowLogger";
@@ -29,6 +28,10 @@ export interface OAuthTokensFromFlow {
   expiresIn?: number;
   clientId?: string;
   clientSecret?: string;
+  // AS URL discovered during the debugger flow. Forwarded to the hosted
+  // backend so it can refresh without re-discovering against a resource it
+  // can't reach itself (e.g. localhost).
+  authorizationServerUrl?: string;
 }
 
 declare global {
@@ -84,11 +87,15 @@ const isHttpServer = (server?: ServerWithName) =>
 interface OAuthFlowTabProps {
   serverConfigs: Record<string, ServerWithName>;
   selectedServerName: string;
+  hasHeaderServers?: boolean;
+  areServersHydrated?: boolean;
   onSelectServer: (serverName: string) => void;
+  // Resolves false when the save failed (the hook toasts the reason), so
+  // callers can keep the modal open instead of treating every call as saved.
   onSaveServerConfig?: (
     formData: ServerFormData,
-    options?: { oauthProfile?: OAuthTestProfile },
-  ) => void;
+    options?: { oauthProfile?: OAuthTestProfile; originalServerName?: string },
+  ) => void | boolean | Promise<void | boolean>;
   onConnectWithTokens?: (
     serverName: string,
     tokens: OAuthTokensFromFlow,
@@ -110,6 +117,8 @@ interface OAuthFlowTabProps {
 export const OAuthFlowTab = ({
   serverConfigs,
   selectedServerName,
+  hasHeaderServers = false,
+  areServersHydrated = true,
   onSelectServer,
   onSaveServerConfig,
   onConnectWithTokens,
@@ -117,6 +126,15 @@ export const OAuthFlowTab = ({
   openProfileModalSignal,
 }: OAuthFlowTabProps) => {
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  // "edit" opens the modal prefilled with the selected server; "add" opens it
+  // blank so a new target can be saved without touching the current one.
+  const [profileModalMode, setProfileModalMode] = useState<"edit" | "add">(
+    "edit",
+  );
+  const openProfileModal = useCallback((mode: "edit" | "add") => {
+    setProfileModalMode(mode);
+    setIsProfileModalOpen(true);
+  }, []);
 
   // Open the modal when the shell bumps the signal (header "Add Server"). Skip
   // the initial value so it doesn't pop open on mount.
@@ -124,8 +142,10 @@ export const OAuthFlowTab = ({
   useEffect(() => {
     if (openProfileModalSignal === prevOpenSignalRef.current) return;
     prevOpenSignalRef.current = openProfileModalSignal;
-    setIsProfileModalOpen(true);
-  }, [openProfileModalSignal]);
+    // The header button reads "Add Server" — open blank, not prefilled with
+    // the current selection.
+    openProfileModal("add");
+  }, [openProfileModalSignal, openProfileModal]);
   const [pendingServerSelection, setPendingServerSelection] = useState<
     string | null
   >(null);
@@ -165,10 +185,19 @@ export const OAuthFlowTab = ({
   }, [pendingServerSelection, serverConfigs, onSelectServer]);
 
   useEffect(() => {
+    // On a hard reload, the project server query resolves after this tab first
+    // mounts. Do not mistake that loading gap for an empty project. If an
+    // eligible server then appears in the header, also close any dialog opened
+    // by the earlier empty state.
+    if (!areServersHydrated) return;
+    if (hasHeaderServers) {
+      setIsProfileModalOpen(false);
+      return;
+    }
     if (httpServerCount === 0) {
       setIsProfileModalOpen(true);
     }
-  }, [httpServerCount]);
+  }, [areServersHydrated, hasHeaderServers, httpServerCount]);
 
   const profile = useMemo(
     () => deriveOAuthProfileFromServer(activeServer),
@@ -306,10 +335,8 @@ export const OAuthFlowTab = ({
   }, [oauthStateMachine]);
 
   const handleAdvance = useCallback(async () => {
-    posthog.capture("oauth_flow_tab_next_step_button_clicked", {
+    track("oauth_flow_tab_next_step_button_clicked", {
       location: "oauth_flow_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
       currentStep: oauthFlowState.currentStep,
       protocolVersion,
       registrationStrategy,
@@ -369,6 +396,7 @@ export const OAuthFlowTab = ({
       expiresIn: oauthFlowState.expiresIn,
       clientId: oauthFlowState.clientId,
       clientSecret: oauthFlowState.clientSecret,
+      authorizationServerUrl: oauthFlowState.authorizationServerUrl,
     }),
     [
       oauthFlowState.accessToken,
@@ -377,6 +405,7 @@ export const OAuthFlowTab = ({
       oauthFlowState.expiresIn,
       oauthFlowState.clientId,
       oauthFlowState.clientSecret,
+      oauthFlowState.authorizationServerUrl,
     ],
   );
 
@@ -544,10 +573,8 @@ export const OAuthFlowTab = ({
   }, [oauthStateMachine, updateOAuthFlowState]);
 
   useEffect(() => {
-    posthog.capture("oauth_flow_tab_viewed", {
+    track("oauth_flow_tab_viewed", {
       location: "oauth_flow_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
     });
   }, []);
 
@@ -567,7 +594,7 @@ export const OAuthFlowTab = ({
                 protocolVersion={protocolVersion}
                 focusedStep={focusedStep}
                 hasProfile={hasProfile}
-                onConfigure={() => setIsProfileModalOpen(true)}
+                onConfigure={() => openProfileModal("edit")}
               />
             </ResizablePanel>
 
@@ -605,7 +632,8 @@ export const OAuthFlowTab = ({
                     : undefined,
                 }}
                 actions={{
-                  onConfigure: () => setIsProfileModalOpen(true),
+                  onConfigure: () => openProfileModal("edit"),
+                  onAddServer: () => openProfileModal("add"),
                   onReset: hasProfile ? () => resetOAuthFlow() : undefined,
                   // Hide Continue button when showing Connect/Refresh buttons
                   onContinue:
@@ -641,7 +669,8 @@ export const OAuthFlowTab = ({
             protocolVersion={protocolVersion}
             focusedStep={focusedStep}
             hasProfile={false}
-            onConfigure={() => setIsProfileModalOpen(true)}
+            showConfigurePrompt={areServersHydrated && !hasHeaderServers}
+            onConfigure={() => openProfileModal("edit")}
           />
         )}
       </div>
@@ -657,10 +686,21 @@ export const OAuthFlowTab = ({
       <OAuthProfileModal
         open={isProfileModalOpen}
         onOpenChange={setIsProfileModalOpen}
-        server={activeServer}
+        server={profileModalMode === "add" ? undefined : activeServer}
         existingServerNames={Object.keys(serverConfigs)}
-        onSave={({ formData, profile: savedProfile }) => {
-          onSaveServerConfig?.(formData, { oauthProfile: savedProfile });
+        onSave={async ({ formData, profile: savedProfile }) => {
+          // Await and check the result: a failed save must not close the modal,
+          // reset the flow, or move the selection onto a server that was never
+          // written. The hook already toasted the reason, so throw a generic
+          // message for the modal's inline error.
+          const saved = await onSaveServerConfig?.(formData, {
+            oauthProfile: savedProfile,
+            originalServerName:
+              profileModalMode === "add" ? undefined : activeServer?.name,
+          });
+          if (saved === false) {
+            throw new Error("Could not save the server. Please try again.");
+          }
           setPendingServerSelection(formData.name);
           resetOAuthFlow(formData.url);
         }}

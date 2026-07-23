@@ -32,6 +32,8 @@ import {
 import { verifyHarnessProxyToken } from "../../utils/harness/harness-proxy-token";
 import { rpcLogBus } from "../../services/rpc-log-bus";
 import { logger } from "../../utils/logger";
+import { resolveXaaIssuer } from "../../services/xaa-mint.js";
+import { HOSTED_MODE } from "../../config.js";
 
 const harnessMcp = new Hono();
 
@@ -162,6 +164,14 @@ async function handle(c: any) {
         undefined,
         undefined,
         {
+          // Per-server XAA works on the harness proxy (configured servers
+          // mint instead of 500ing). KNOWN LIMITATION: the host's
+          // enterprise-managed POLICY is NOT enforced here — the harness
+          // token's claims carry projectId/serverId but not the host, so an
+          // unconfigured `auto` server on a policy host takes the discover
+          // ladder in a harness turn instead of 409ing. Fix by threading the
+          // host policy (or hostId) into the harness token claims.
+          xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
           // Publish the sandbox's MCP traffic into the in-process rpc-log bus
           // so a live harness turn ON THIS INSTANCE can forward it into the
           // Playground Logs panel (see bridgeHarnessRpcLogsToCollector), and

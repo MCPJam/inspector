@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useConvexAuth } from "convex/react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@mcpjam/design-system/dialog";
@@ -37,6 +37,13 @@ type CreateSuiteDialogProps = {
   onSubmit: (payload: CreateSuitePayload) => Promise<void>;
   hostsEnabled?: boolean;
   projectId?: string | null;
+  /**
+   * Name prefill applied when the dialog OPENS (the agent's
+   * `ui_open_eval_suite_form` prefill-over-commit path). Name only, on
+   * purpose: everything else in the form is the user's to pick. The user
+   * can still edit or clear it before submitting.
+   */
+  initialName?: string | null;
 };
 
 export function CreateSuiteDialog({
@@ -45,6 +52,7 @@ export function CreateSuiteDialog({
   onSubmit,
   hostsEnabled = false,
   projectId = null,
+  initialName = null,
 }: CreateSuiteDialogProps) {
   const [name, setName] = useState("");
   const [hostAttachments, setHostAttachments] = useState<
@@ -69,14 +77,22 @@ export function CreateSuiteDialog({
     shouldFetchDefaults ? projectId : null,
   );
 
+  const wasOpenRef = useRef(false);
   useEffect(() => {
+    const justOpened = open && !wasOpenRef.current;
+    wasOpenRef.current = open;
     if (!open) {
       setName("");
       setHostAttachments([]);
       setServerAttachmentId(null);
       setIsSaving(false);
+    } else if (justOpened && initialName) {
+      // Applied ONLY on the closed→open transition. A parent that changes
+      // initialName while the dialog is open must not clobber the user's
+      // edits, so this deliberately does not re-apply on initialName change.
+      setName(initialName);
     }
-  }, [open]);
+  }, [open, initialName]);
 
   useEffect(() => {
     if (!shouldFetchDefaults) return;
@@ -107,11 +123,11 @@ export function CreateSuiteDialog({
     if (name.trim().length === 0) return "Add a suite name first.";
     if (attachmentsRequired && serverAttachmentId === null) {
       return hostAttachments.length === 0
-        ? "Attach a server and at least one host first."
+        ? "Attach a server and at least one client first."
         : "Pick a server group first.";
     }
     if (attachmentsRequired && hostAttachments.length === 0) {
-      return "Attach at least one host first.";
+      return "Attach at least one client first.";
     }
     return null;
   })();
@@ -184,10 +200,10 @@ export function CreateSuiteDialog({
               <div className="space-y-2 p-3">
                 <div className="space-y-0.5">
                   <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    Hosts
+                    Clients
                   </h3>
                   <p className="text-xs text-muted-foreground">
-                    Each attached host fans out into its own run.
+                    Each attached client fans out into its own run.
                   </p>
                 </div>
                 <ClientAttachmentsEditor

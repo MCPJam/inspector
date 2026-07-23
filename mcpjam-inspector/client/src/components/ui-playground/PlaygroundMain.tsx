@@ -23,6 +23,10 @@ import {
 import type { CSSProperties, ReactNode } from "react";
 import { Braces, Loader2, Trash2 } from "lucide-react";
 import {
+  ElicitationRequestDialog,
+  UrlElicitationRequiredDialog,
+} from "@/components/elicitation/ElicitationRequestDialog";
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -87,8 +91,7 @@ import {
 import { DEFAULT_HOST_STYLE, type ChatUiOverride } from "@/lib/client-styles";
 import { detectUiTypeFromTool } from "@/lib/mcp-ui/mcp-apps-utils";
 import { PRESET_DEVICE_CONFIGS } from "@/components/shared/ClientContextHeader";
-import { usePostHog } from "posthog-js/react";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
 import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-overlay";
@@ -104,6 +107,7 @@ import {
   type HostDetail,
 } from "@/hooks/useClients";
 import {
+  DEFAULT_SEEDED_HOST_MODEL_ID,
   emptyHostConfigInputV2,
   gateMcpToolResultImageRenderingByModelVisibility,
 } from "@/lib/client-config-v2";
@@ -174,6 +178,10 @@ import {
   prefetchChatHistorySession,
 } from "@/components/chat-v2/history/chat-history-prefetch";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
+import {
+  resolveSelectablePlaygroundModel,
+  usePlaygroundAgentControlsBridgeStore,
+} from "@/components/playground/playground-agent-controls-bridge";
 import { WebApiError } from "@/lib/apis/web/base";
 import { useDirectChatSessionSubscription } from "@/hooks/use-direct-chat-session-subscription";
 import { WidgetSurfaceProvider } from "@/contexts/widget-surface-context";
@@ -474,7 +482,6 @@ export function PlaygroundMain({
   recorder,
 }: PlaygroundMainProps) {
   const { signUp } = useAuth();
-  const posthog = usePostHog();
   const clearLogs = useTrafficLogStore((s) => s.clear);
 
   // Chat-history coordination — Playground equivalent of ChatTabV2's history
@@ -749,6 +756,9 @@ export function PlaygroundMain({
     toolsMetadata,
     toolServerMap,
     tokenUsage,
+    mcpToolsTokenCount,
+    mcpToolsTokenCountLoading,
+    mcpToolsTokenCountErrors,
     resetChat,
     startChatWithMessages,
     liveTraceEnvelope,
@@ -768,6 +778,12 @@ export function PlaygroundMain({
     resumedVersion,
     restoredToolRenderOverrides,
     status,
+    authHeaders,
+    pendingElicitations,
+    respondToElicitation,
+    elicitationResponding,
+    urlElicitationRequired,
+    dismissUrlElicitationRequired,
   } = useChatSession({
     selectedServers,
     directVisibility: pendingDirectVisibility,
@@ -1062,7 +1078,9 @@ export function PlaygroundMain({
     createPlaygroundHost({
       projectId: multiHostProjectId,
       name: "MCPJam",
-      input: emptyHostConfigInputV2(),
+      // Pin a cheap default model — see HostOverlayBar's seed for why a
+      // modelless default host breaks synthetic/swarm runs.
+      input: emptyHostConfigInputV2({ modelId: DEFAULT_SEEDED_HOST_MODEL_ID }),
     })
       .then(({ hostId }) => {
         setPreviewedHostId(hostId);
@@ -2688,6 +2706,68 @@ export function PlaygroundMain({
     [setMultiModelEnabled, setSelectedModel, setSelectedModelIds]
   );
 
+  // Publish the chat composer's controls so the global playground agent tools
+  // (ui_select_model / ui_set_system_prompt / ui_reset_chat /
+  // ui_stop_generation), whose handlers live in the sibling `usePlaygroundState`
+  // subtree, can drive this session. Mirrors the chat-history bridge above:
+  // replace whole on any dependency change, clear to null on unmount. Only
+  // redacted state crosses (model id/name, prompt presence+length, a bounded
+  // history count + last role) — never message text or the prompt itself. The
+  // actions reuse the exact functions the composer controls call.
+  const setAgentControls = usePlaygroundAgentControlsBridgeStore(
+    (s) => s.setControls
+  );
+  useEffect(() => {
+    const lastMessage =
+      messages.length > 0 ? messages[messages.length - 1] : null;
+    setAgentControls({
+      selectedModel: selectedModel
+        ? { id: String(selectedModel.id), name: selectedModel.name }
+        : null,
+      systemPrompt: {
+        present: systemPrompt.trim().length > 0,
+        length: systemPrompt.length,
+      },
+      history: {
+        messageCount: messages.length,
+        lastRole: lastMessage ? (lastMessage.role as string) : null,
+      },
+      // Multi-model-aware streaming flag, matching the composer's stop control.
+      isGenerating: isStreamingActive,
+      selectModel: (identifier) => {
+        // Resolves the identifier AND enforces the picker's availability policy
+        // (disabled rows rejected), so the agent can't select a locked model.
+        const resolution = resolveSelectablePlaygroundModel(
+          identifier,
+          availableModels
+        );
+        if (!resolution.ok) return resolution;
+        const { model } = resolution;
+        handleSingleModelChange(model);
+        return { ok: true, model: { id: String(model.id), name: model.name } };
+      },
+      setSystemPrompt: (prompt) => setSystemPrompt(prompt),
+      resetChat: () => handleResetAllChats(),
+      stopGeneration: () => {
+        if (!isStreamingActive) return { stopped: false };
+        stopActiveChat();
+        return { stopped: true };
+      },
+    });
+    return () => setAgentControls(null);
+  }, [
+    availableModels,
+    handleResetAllChats,
+    handleSingleModelChange,
+    isStreamingActive,
+    messages,
+    selectedModel,
+    setAgentControls,
+    setSystemPrompt,
+    stopActiveChat,
+    systemPrompt,
+  ]);
+
   const handleSelectedModelsChange = useCallback(
     (models: ModelDefinition[]) => {
       const nextSelectedModels = models.slice(0, 3);
@@ -2802,10 +2882,8 @@ export function PlaygroundMain({
       request: Omit<BroadcastChatTurnRequest, "id">,
       captureProps?: Record<string, unknown>
     ) => {
-      posthog.capture("app_builder_send_message", {
+      track("app_builder_send_message", {
         location: "app_builder_tab",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
         model_id: selectedModel?.id ?? null,
         model_name: selectedModel?.name ?? null,
         model_provider: selectedModel?.provider ?? null,
@@ -2821,7 +2899,6 @@ export function PlaygroundMain({
     },
     [
       isMultiModelMode,
-      posthog,
       resolvedSelectedModels.length,
       selectedModel?.id,
       selectedModel?.name,
@@ -2935,10 +3012,8 @@ export function PlaygroundMain({
   const shouldShowUpsell = disableForAuthentication && !isAuthLoading;
   const showMultiModelStarterPrompts = !shouldShowUpsell && !isAuthLoading;
   const handleSignUp = () => {
-    posthog.capture("sign_up_button_clicked", {
+    track("sign_up_button_clicked", {
       location: "app_builder_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
     });
     signUp();
   };
@@ -3222,9 +3297,12 @@ export function PlaygroundMain({
       isPreparingServerForSend,
     tokenUsage,
     selectedServers,
-    mcpToolsTokenCount: null,
-    mcpToolsTokenCountLoading: false,
-    connectedOrConnectingServerConfigs: { [serverName]: { name: serverName } },
+    mcpToolsTokenCount,
+    mcpToolsTokenCountLoading,
+    mcpToolsTokenCountErrors,
+    connectedOrConnectingServerConfigs: Object.fromEntries(
+      selectedServers.map((name) => [name, { name }])
+    ),
     systemPromptTokenCount: null,
     systemPromptTokenCountLoading: false,
     mcpPromptResults,
@@ -3243,6 +3321,15 @@ export function PlaygroundMain({
     onReconnectServer: playgroundServerSelectorProps?.onReconnect,
     onDisconnectServer: playgroundServerSelectorProps?.onDisconnect,
     onAddServer: playgroundServerSelectorProps?.onConnect,
+    voiceInputContext: convexProjectId
+      ? {
+          projectId: convexProjectId,
+          ...(hostedSelectedServerIds.length > 0
+            ? { selectedServerIds: hostedSelectedServerIds }
+            : {}),
+        }
+      : undefined,
+    voiceInputAuthHeaders: authHeaders,
   };
 
   // Check if widget should take over the full container
@@ -4061,6 +4148,21 @@ export function PlaygroundMain({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {/*
+        Playground had no elicitation UI at all — a server that asked for input
+        here would block until the request timed out with no way to answer.
+      */}
+      <ElicitationRequestDialog
+        key={pendingElicitations[0]?.rendezvousId ?? "none"}
+        request={pendingElicitations[0] ?? null}
+        onRespond={respondToElicitation}
+        loading={elicitationResponding}
+      />
+      <UrlElicitationRequiredDialog
+        key={urlElicitationRequired[0]?.toolCallId ?? "no-url-required"}
+        event={urlElicitationRequired[0] ?? null}
+        onDismiss={dismissUrlElicitationRequired}
+      />
     </WidgetSurfaceProvider>
   );
 }

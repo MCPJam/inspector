@@ -18,9 +18,9 @@ import {
   type ProviderTokens,
 } from "@/hooks/use-ai-provider-keys";
 import { cn } from "@/lib/utils";
-import { ModelDefinition, isMCPJamProvidedModel } from "@/shared/types";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
-import posthog from "posthog-js";
+import { ModelDefinition } from "@/shared/types";
+import { isMCPJamProvidedModelMenuItem } from "@/components/chat-v2/shared/model-helpers";
+import { track } from "@/lib/analytics";
 import {
   Tooltip,
   TooltipContent,
@@ -347,7 +347,7 @@ export function EvalRunner({
   const stepCompletion = useMemo(() => {
     // Check that all selected models have credentials
     const allModelsHaveCredentials = selectedModels.every((model) => {
-      const isJam = isMCPJamProvidedModel(model.id);
+      const isJam = isMCPJamProvidedModelMenuItem(model);
       return isJam || hasToken(model.provider as keyof ProviderTokens);
     });
 
@@ -473,10 +473,8 @@ export function EvalRunner({
   };
 
   const handleGenerateTests = async () => {
-    posthog.capture("eval_generate_tests_button_clicked", {
+    track("eval_generate_tests_button_clicked", {
       location: "eval_runner",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
       step: currentStep,
     });
 
@@ -520,10 +518,8 @@ export function EvalRunner({
   };
 
   const handleGenerateNegativeTests = async () => {
-    posthog.capture("eval_generate_negative_tests_button_clicked", {
+    track("eval_generate_negative_tests_button_clicked", {
       location: "eval_runner",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
       step: currentStep,
     });
 
@@ -603,7 +599,7 @@ export function EvalRunner({
     // Collect API keys for all selected models
     const modelApiKeys: Record<string, string> = {};
     for (const model of selectedModels) {
-      if (!isMCPJamProvidedModel(model.id)) {
+      if (!isMCPJamProvidedModelMenuItem(model)) {
         const key = getToken(model.provider as keyof ProviderTokens);
         if (!key) {
           toast.error(
@@ -702,10 +698,8 @@ export function EvalRunner({
       }
 
       // Track suite created
-      posthog.capture("eval_suite_created", {
+      track("eval_suite_created", {
         location: "eval_runner",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
         suite_id: result.suiteId,
         num_test_cases: validTestTemplates.length,
         num_models: selectedModels.length,
@@ -941,23 +935,16 @@ export function EvalRunner({
                   variant={nextVariant}
                   onClick={() => {
                     if (currentStep < WIZARD_STEPS.length - 1) {
-                      posthog.capture("eval_setup_next_step_button_clicked", {
+                      track("eval_setup_next_step_button_clicked", {
                         location: "eval_runner",
-                        platform: detectPlatform(),
-                        environment: detectEnvironment(),
                         step: currentStep,
                       });
                       handleNext();
                     } else {
-                      posthog.capture(
-                        "eval_setup_start_eval_run_button_clicked",
-                        {
-                          location: "eval_runner",
-                          platform: detectPlatform(),
-                          environment: detectEnvironment(),
-                          step: currentStep,
-                        },
-                      );
+                      track("eval_setup_start_eval_run_button_clicked", {
+                        location: "eval_runner",
+                        step: currentStep,
+                      });
                       void handleSubmit();
                     }
                   }}
@@ -983,18 +970,14 @@ export function EvalRunner({
             variant={nextVariant}
             onClick={() => {
               if (currentStep < WIZARD_STEPS.length - 1) {
-                posthog.capture("eval_setup_next_step_button_clicked", {
+                track("eval_setup_next_step_button_clicked", {
                   location: "eval_runner",
-                  platform: detectPlatform(),
-                  environment: detectEnvironment(),
                   step: currentStep,
                 });
                 handleNext();
               } else {
-                posthog.capture("eval_setup_start_eval_run_button_clicked", {
+                track("eval_setup_start_eval_run_button_clicked", {
                   location: "eval_runner",
-                  platform: detectPlatform(),
-                  environment: detectEnvironment(),
                   step: currentStep,
                 });
                 void handleSubmit();

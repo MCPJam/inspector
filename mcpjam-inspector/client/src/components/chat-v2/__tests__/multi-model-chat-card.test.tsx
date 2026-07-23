@@ -31,6 +31,13 @@ const mockTraceViewer = vi.fn();
 const mockModelCompareCardHeader = vi.fn();
 
 const mockUseChatSession = {
+  // Elicitation surface (hosted). These suites never elicit, but the shape
+  // must match the hook's contract or the dialog crashes on undefined.
+  pendingElicitations: [],
+  respondToElicitation: vi.fn(),
+  elicitationResponding: false,
+  urlElicitationRequired: [],
+  dismissUrlElicitationRequired: vi.fn(),
   messages: [],
   setMessages: vi.fn(),
   sendMessage: vi.fn(),

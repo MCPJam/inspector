@@ -12,8 +12,7 @@ import {
   type SkillsSource,
 } from "@/lib/apis/mcp-skills-api";
 import type { SkillListItem, SkillResult } from "./skill-types";
-import { usePostHog } from "posthog-js/react";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 
 interface SkillsPopoverSectionProps {
   onSkillSelected: (skillResult: SkillResult) => void;
@@ -37,7 +36,6 @@ export function SkillsPopoverSection({
   onOpenUploadDialog,
   skillsSource,
 }: SkillsPopoverSectionProps) {
-  const posthog = usePostHog();
   const [skills, setSkills] = useState<SkillListItem[]>([]);
   const [loadingSkillName, setLoadingSkillName] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -70,9 +68,9 @@ export function SkillsPopoverSection({
       try {
         setLoadingSkillName(skill.name);
         const fullSkill = await getSkill(skill.name, skillsSource);
-        posthog.capture("skill_injected", {
+        track("skill_injected", {
+          location: "chat_input_skills_popover",
           skill_name: skill.name,
-          ...standardEventProps("chat_input_skills_popover"),
         });
         // Stamp the source onto the result so later file reads (expanding the
         // card) stay pinned to the project it was selected from.

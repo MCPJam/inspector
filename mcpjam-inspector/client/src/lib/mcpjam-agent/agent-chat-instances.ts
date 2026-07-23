@@ -22,12 +22,13 @@ import {
   lastAssistantMessageIsCompleteWithApprovalResponses,
   lastAssistantMessageIsCompleteWithToolCalls,
 } from "ai";
-import posthog from "posthog-js";
+import { track } from "@/lib/analytics";
 import { authFetch } from "@/lib/session-token";
 import { useUiToolsRegistry } from "@/lib/webmcp/ui-tools-registry";
 import { handleUiToolCall } from "@/lib/webmcp/ui-tool-executor";
 import { createUiAwareApprovalResponseHandler } from "@/lib/webmcp/ui-tool-approval";
 import { useAgentPanelStore } from "@/stores/agent-panel/agent-panel-store";
+import { readTourSystemPrompt } from "./tour-session-prompt";
 import type { ModelDefinition } from "@/shared/types";
 
 const AGENT_API_PATH = "/api/web/mcpjam-agent";
@@ -75,9 +76,36 @@ export interface AgentChatConfig {
   requireToolApproval: boolean;
 }
 
+/**
+ * Turn lifecycle shared by every surface attached to this session's Chat.
+ * Timing and attribution live here, NOT in a per-hook ref, so a turn started
+ * on one surface (e.g. Home) and finishing after a hand-off to another (the
+ * side panel) still reports the correct duration — and is emitted exactly
+ * once. `seq` increments per submit; `lastEmittedSeq` is the dedupe marker.
+ */
+export interface AgentTurnLifecycle {
+  startedAt: number | null;
+  seq: number;
+  lastEmittedSeq: number;
+  model: string | null;
+  provider: string | null;
+  /** 1-based turn index snapshotted at submit (survives surface hand-off). */
+  messageIndex: number;
+  /**
+   * Id of the last message BEFORE this turn was submitted. Completion only
+   * attributes tool counts / usage to an assistant message whose id differs
+   * from this — so an error that fires before the turn produced its own
+   * assistant message can't inherit the PREVIOUS turn's tools. `null` when
+   * the session had no messages yet.
+   */
+  boundaryMessageId: string | null;
+}
+
 export interface AgentChatEntry {
   chat: Chat<UIMessage>;
   config: AgentChatConfig;
+  /** Cross-surface turn timing/attribution — see AgentTurnLifecycle. */
+  turn: AgentTurnLifecycle;
   /**
    * UI-tool-aware approval responses for this instance: Approve on a `ui_*`
    * part executes in the browser and ships the result; Deny and non-UI
@@ -113,7 +141,8 @@ function maybeHandoffToPanel(config: AgentChatConfig, toolName: string): void {
   if (!config.projectId) {
     // The panel's project-mismatch GC (AgentSidePanelMount) would clear a
     // null-project pointer immediately — skip rather than flicker.
-    posthog.capture("mcpjam_agent_panel_handoff_skipped", {
+    track("mcpjam_agent_panel_handoff_skipped", {
+      location: "mcpjam_agent",
       session_id: config.chatSessionId,
       tool_name: toolName,
       reason: "no_project_id",
@@ -122,7 +151,8 @@ function maybeHandoffToPanel(config: AgentChatConfig, toolName: string): void {
   }
   panel.setActiveSession(config.chatSessionId, config.projectId);
   panel.setOpen(true);
-  posthog.capture("mcpjam_agent_panel_handoff", {
+  track("mcpjam_agent_panel_handoff", {
+    location: "mcpjam_agent",
     from_surface: "home",
     session_id: config.chatSessionId,
     tool_name: toolName,
@@ -144,6 +174,59 @@ function evictIdleInstances(excludeKey: string): void {
       instances.delete(key);
     }
   }
+}
+
+/**
+ * Mark a new turn started on the shared entry: bumps `seq` and snapshots the
+ * start time + model/provider AT SUBMIT, so a config change mid-stream can't
+ * misattribute the completion. No-op if the entry is gone.
+ */
+export function markAgentTurnStarted(
+  chatSessionId: string,
+  attribution: {
+    model: string | null;
+    provider: string | null;
+    messageIndex: number;
+    boundaryMessageId: string | null;
+  },
+): void {
+  const entry = instances.get(chatSessionId);
+  if (!entry) return;
+  entry.turn.seq += 1;
+  entry.turn.startedAt = Date.now();
+  entry.turn.model = attribution.model;
+  entry.turn.provider = attribution.provider;
+  entry.turn.messageIndex = attribution.messageIndex;
+  entry.turn.boundaryMessageId = attribution.boundaryMessageId;
+}
+
+/**
+ * Claim the current turn's completion for emission. Returns the submit-time
+ * snapshot exactly once per turn — the first surface to observe the terminal
+ * status edge wins; a second observer (e.g. a post-handoff panel watching the
+ * same shared Chat) gets `null` and must not emit. `null` also when no entry
+ * exists. Clears `startedAt` so a stray later edge can't double-count.
+ */
+export function claimAgentTurnCompletion(chatSessionId: string): {
+  startedAt: number | null;
+  model: string | null;
+  provider: string | null;
+  messageIndex: number;
+  boundaryMessageId: string | null;
+} | null {
+  const entry = instances.get(chatSessionId);
+  if (!entry) return null;
+  if (entry.turn.lastEmittedSeq === entry.turn.seq) return null;
+  entry.turn.lastEmittedSeq = entry.turn.seq;
+  const snapshot = {
+    startedAt: entry.turn.startedAt,
+    model: entry.turn.model,
+    provider: entry.turn.provider,
+    messageIndex: entry.turn.messageIndex,
+    boundaryMessageId: entry.turn.boundaryMessageId,
+  };
+  entry.turn.startedAt = null;
+  return snapshot;
 }
 
 export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
@@ -178,6 +261,13 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
         // contract as `useChatSession`). The server validates again in
         // `validateUiToolEntries`.
         uiTools: useUiToolsRegistry.getState().snapshotForChatBody(),
+        // Guided-tour instructions for this session, if any (the route
+        // prepends body.systemPrompt to the agent identity prompt). Read at
+        // POST time so the tour context survives reloads and Recent Chats
+        // resume. Constant per session, so the system-prompt prefix stays
+        // cache-stable; `undefined` is dropped at serialization, leaving
+        // non-tour bodies unchanged.
+        systemPrompt: readTourSystemPrompt(chatSessionId) ?? undefined,
       }),
     }),
     // WebMCP UI tools are no-execute server-side; the stream pauses until
@@ -197,6 +287,8 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
           maybeHandoffToPanel(config, toolName);
         },
         requireToolApproval: config.requireToolApproval,
+        // Duplicate detection is per chat session — this instance's key.
+        telemetryScope: chatSessionId,
       });
     },
     // Resume the turn automatically once every tool call has an output —
@@ -224,9 +316,24 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
     onNavigationToolCall: (toolName) => {
       maybeHandoffToPanel(config, toolName);
     },
+    // Keeps reload-approved calls in this session's duplicate ring.
+    telemetryScope: chatSessionId,
   });
 
-  const entry: AgentChatEntry = { chat, config, handleToolApprovalResponse };
+  const entry: AgentChatEntry = {
+    chat,
+    config,
+    handleToolApprovalResponse,
+    turn: {
+      startedAt: null,
+      seq: 0,
+      lastEmittedSeq: 0,
+      model: null,
+      provider: null,
+      messageIndex: 0,
+      boundaryMessageId: null,
+    },
+  };
   instances.set(chatSessionId, entry);
   evictIdleInstances(chatSessionId);
   return entry;

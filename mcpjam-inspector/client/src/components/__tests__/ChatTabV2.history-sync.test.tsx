@@ -1,6 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { errorToastMessage } from "@/test/utils";
 import { ChatTabV2 } from "../ChatTabV2";
 
 const mockToastError = vi.hoisted(() => vi.fn());
@@ -61,6 +62,9 @@ vi.mock("@workos-inc/authkit-react", () => ({
 }));
 
 vi.mock("convex/react", () => ({
+  // useChatSession resolves the Convex client to submit elicitation answers
+  // straight to the rendezvous table (the blocked replica isn't addressable).
+  useConvex: () => ({ mutation: vi.fn().mockResolvedValue({ ok: true }) }),
   useConvexAuth: () => ({
     isAuthenticated: true,
     isLoading: false,
@@ -86,6 +90,10 @@ vi.mock("posthog-js/react", () => ({
   }),
   useFeatureFlagEnabled: (...args: unknown[]) =>
     mockUseFeatureFlagEnabled(...args),
+}));
+
+vi.mock("@/lib/analytics", () => ({
+  track: vi.fn(),
 }));
 
 vi.mock("sonner", () => ({
@@ -318,6 +326,13 @@ vi.mock("@/components/evals/live-trace-raw-empty", () => ({
 }));
 
 const mockUseChatSession = {
+  // Elicitation surface (hosted). These suites never elicit, but the shape
+  // must match the hook's contract or the dialog crashes on undefined.
+  pendingElicitations: [],
+  respondToElicitation: vi.fn(),
+  elicitationResponding: false,
+  urlElicitationRequired: [],
+  dismissUrlElicitationRequired: vi.fn(),
   messages: [
     {
       id: "1",
@@ -704,7 +719,9 @@ describe("ChatTabV2 history sync", () => {
     );
     expect(mockUseChatSession.syncResumedVersion).toHaveBeenCalledWith(null);
     expect(mockToastError).toHaveBeenCalledWith(
-      "This chat changed elsewhere. This reply stayed local, and your next send will continue in a new thread.",
+      errorToastMessage(
+        "This chat changed elsewhere. This reply stayed local, and your next send will continue in a new thread.",
+      ),
       { duration: Infinity }
     );
   });

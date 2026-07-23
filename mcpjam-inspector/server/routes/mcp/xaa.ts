@@ -1,26 +1,38 @@
 import { Hono } from "hono";
-import type { MiddlewareHandler } from "hono";
+import type { Context, MiddlewareHandler } from "hono";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { z } from "zod";
 import {
   DEFAULT_NEGATIVE_TEST_MODE,
   isNegativeTestMode,
   NEGATIVE_TEST_MODES,
   NEGATIVE_TEST_MODE_DETAILS,
+  isPolicyDependentNegativeTestMode,
   XAA_IDP_KID,
   type NegativeTestDiff,
   type NegativeTestMode,
 } from "../../../shared/xaa.js";
 import {
   getXAAIdpJwks,
+  handleXaaAuthenticate,
+  handleXaaJsonTokenExchange,
+  handleXaaTokenExchangeGrant,
   initXAAIdpKeyPair,
-} from "../../services/xaa-idp-keypair.js";
-import {
-  issueIdJag,
+  issueAccessToken,
+  issueAuthorizationCode,
   issueMockIdToken,
   issueNegativeIdJag,
-} from "../../services/xaa-idjag-signer.js";
+  verifyXaaJwt,
+  buildXaaJwtBearerRequest,
+  getLocalConfidentialCimdProvider,
+  ID_JAG_TOKEN_TYPE,
+  TOKEN_EXCHANGE_GRANT,
+  XAA_ACCESS_TOKEN_TYP,
+  XAA_CODE_JWT_TYP,
+  type ConfidentialCimdProvider,
+} from "@mcpjam/sdk";
+import { createHash } from "crypto";
 import {
-  buildJwtBearerBody,
   getIssuerForRequest,
   resolveServerTarget,
 } from "../../services/xaa-mint.js";
@@ -37,16 +49,20 @@ import {
 import { WebRouteError } from "../web/errors.js";
 import {
   fetchServerClientSecret,
-  fetchXaaResourceAppSecret,
 } from "../../utils/server-secrets.js";
 import type {
   ServerClientSecretResult,
-  XaaResourceAppSecretResult,
 } from "../../utils/server-secrets.js";
 import { logger } from "../../utils/logger.js";
+import { getClientIp as getTrustedClientIp } from "../../utils/client-ip.js";
+import { CORS_ORIGINS, MCPJAM_HOSTED_ORIGIN } from "../../config.js";
 
 const HEALTH_CHECK_TIMEOUT_MS = 10_000;
 const NEGATIVE_TEST_CASE_TIMEOUT_MS = 8_000;
+const TOKEN_NO_STORE_HEADERS = {
+  "Cache-Control": "no-store",
+  Pragma: "no-cache",
+} as const;
 
 // Hard per-host daily cap on negative-test runs. This is a server-side
 // backstop independent of the client-side "passed a positive run" gate: even
@@ -72,19 +88,317 @@ function checkNegativeTestHostCap(host: string): boolean {
   return true;
 }
 
+// Path-segment allowlist for the org-scoped issuer. The segment is embedded
+// into the ID-JAG `iss`, so it must be validated before URL-embedding. Convex
+// org ids are opaque strings; real ones fit [A-Za-z0-9_-], and anything else
+// is rejected rather than normalized.
+const ORG_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+type XaaResult<T> = { ok: true; value: T } | { ok: false; response: Response };
+
+function xaaSuccess<T>(value: T): XaaResult<T> {
+  return { ok: true, value };
+}
+
+function xaaFailure(response: Response): XaaResult<never> {
+  return { ok: false, response };
+}
+
+// Single source of truth for what a legal org path segment looks like, shared
+// by the well-known routes, the gated mint routes, and the hosted-issuer
+// forward so they can never validate org ids differently.
+function isValidOrgId(value: unknown): value is string {
+  return typeof value === "string" && ORG_ID_RE.test(value);
+}
+
+// Validates the `:orgId` route param without relying on Response class identity.
+function validateOrgSegment(c: Context): XaaResult<string> {
+  const orgId = c.req.param("orgId");
+  if (!isValidOrgId(orgId)) {
+    return xaaFailure(
+      toJsonError("Invalid organization id in issuer path", {
+        status: 400,
+        code: "VALIDATION_ERROR",
+      })
+    );
+  }
+  return xaaSuccess(orgId);
+}
+
+// ── Mock OIDC IdP (authorization_code + userinfo) ─────────────────────────
+// Best-effort per-IP sliding-window cap on the public OIDC endpoints that sign
+// something (/token, /authorize/confirm). X-Forwarded-For is client-spoofable
+// so this only slows casual abuse, not a determined attacker — acceptable for
+// a flag-gated mock IdP that only signs low-value mock tokens. The map is
+// bounded so a spoofed-key flood can't exhaust memory.
+const OIDC_RATE_LIMIT_PER_MIN = 60;
+const OIDC_RATE_WINDOW_MS = 60 * 1000;
+const OIDC_RATE_MAX_KEYS = 10_000;
+const oidcIpCounters = new Map<
+  string,
+  { count: number; windowStart: number }
+>();
+
+function checkOidcIpCap(ip: string): boolean {
+  const now = Date.now();
+  // Bound the map: prune expired windows, and if it's still oversized (an
+  // active spoofed-key flood where every window is fresh) drop everything so
+  // memory can't grow without limit.
+  if (oidcIpCounters.size >= OIDC_RATE_MAX_KEYS) {
+    for (const [key, value] of oidcIpCounters) {
+      if (now - value.windowStart >= OIDC_RATE_WINDOW_MS) {
+        oidcIpCounters.delete(key);
+      }
+    }
+    if (oidcIpCounters.size >= OIDC_RATE_MAX_KEYS) {
+      oidcIpCounters.clear();
+    }
+  }
+  const existing = oidcIpCounters.get(ip);
+  if (!existing || now - existing.windowStart >= OIDC_RATE_WINDOW_MS) {
+    oidcIpCounters.set(ip, { count: 1, windowStart: now });
+    return true;
+  }
+  if (existing.count >= OIDC_RATE_LIMIT_PER_MIN) {
+    return false;
+  }
+  existing.count += 1;
+  return true;
+}
+
+// The client IP for rate limiting / the backend's per-IP guest quota. Uses the
+// shared trusted-edge resolver (cf-connecting-ip → x-real-ip → x-forwarded-for
+// → socket) rather than trusting the raw first x-forwarded-for hop, which a
+// caller can spoof to rotate past a per-IP cap. Returns null when there is no
+// proxy in front (local desktop): a no-proxy deployment has no public DoS
+// surface, and bucketing every local request under one key would self-DoS
+// legitimate bursts (test loops, batch mints).
+const getClientIp = getTrustedClientIp;
+
+// Reject cross-site browser POSTs to the state-changing OIDC endpoints. A
+// legitimate caller is either our own interstitial form (same-origin Origin)
+// or a relying party's server-to-server token call (no Origin header). Only a
+// cross-site browser request carries a foreign Origin — blocking it stops a
+// third-party page from driving /authorize/confirm (open redirect) or /token
+// (unauthenticated ID-JAG mint) against the user's issuer.
+// `allowedOrigins` are exact first-party UI origins accepted in addition to
+// same-host: the dev proxy rewrites Host but not Origin, so the debugger's own
+// browser POST to /token would otherwise fail the same-host comparison.
+function rejectCrossOriginPost(
+  c: Context,
+  allowedOrigins: string[]
+): Response | null {
+  const origin = c.req.header("origin");
+  if (!origin) return null;
+  let parsedOrigin: URL;
+  try {
+    parsedOrigin = new URL(origin);
+  } catch {
+    return oauthError(403, "access_denied", "Invalid Origin header");
+  }
+  if (
+    parsedOrigin.host !== new URL(c.req.url).host &&
+    !allowedOrigins.includes(parsedOrigin.origin)
+  ) {
+    return oauthError(403, "access_denied", "Cross-origin request rejected");
+  }
+  return null;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function oauthError(
+  status: number,
+  error: string,
+  description: string
+): Response {
+  return Response.json(
+    { error, error_description: description },
+    { status, headers: TOKEN_NO_STORE_HEADERS }
+  );
+}
+
+interface AuthorizeParams {
+  clientId: string;
+  redirectUri: string;
+  state?: string;
+  nonce?: string;
+  scope?: string;
+  codeChallenge?: string;
+  subject?: string;
+  email?: string;
+}
+
+// Shared validation for GET /authorize and POST /authorize/confirm — the
+// confirm form round-trips the same values, and nothing hidden is trusted
+// more than the original query. Returns an error string on failure.
+function parseAuthorizeParams(
+  raw: Record<string, string | undefined>
+): AuthorizeParams | { error: string } {
+  const clientId = raw.client_id?.trim();
+  if (!clientId || clientId.length > 256) {
+    return { error: "client_id is required" };
+  }
+  const redirectUri = raw.redirect_uri?.trim();
+  if (!redirectUri || redirectUri.length > 2048) {
+    return { error: "redirect_uri is required" };
+  }
+  let parsedRedirect: URL;
+  try {
+    parsedRedirect = new URL(redirectUri);
+  } catch {
+    return { error: "redirect_uri is not a valid URL" };
+  }
+  if (
+    parsedRedirect.protocol !== "https:" &&
+    parsedRedirect.protocol !== "http:"
+  ) {
+    return { error: "redirect_uri must be http(s)" };
+  }
+  if (parsedRedirect.hash) {
+    return { error: "redirect_uri must not contain a fragment" };
+  }
+  if ((raw.response_type ?? "code") !== "code") {
+    return { error: "Only response_type=code is supported" };
+  }
+  const codeChallenge = raw.code_challenge?.trim() || undefined;
+  const codeChallengeMethod = raw.code_challenge_method?.trim() || undefined;
+  if (codeChallenge) {
+    if (codeChallenge.length > 256) {
+      return { error: "code_challenge is too long" };
+    }
+    if (codeChallengeMethod !== "S256") {
+      return { error: "Only code_challenge_method=S256 is supported" };
+    }
+  } else if (codeChallengeMethod) {
+    // A method without a challenge would otherwise mint a non-PKCE code under
+    // a PKCE-looking request, which redeems with no verifier — reject it.
+    return { error: "code_challenge_method requires code_challenge" };
+  }
+  for (const field of [
+    "state",
+    "nonce",
+    "scope",
+    "subject",
+    "email",
+  ] as const) {
+    const value = raw[field];
+    if (value !== undefined && value.length > 512) {
+      return { error: `${field} is too long` };
+    }
+  }
+  return {
+    clientId,
+    redirectUri,
+    state: raw.state || undefined,
+    nonce: raw.nonce || undefined,
+    scope: raw.scope || undefined,
+    codeChallenge,
+    subject: raw.subject?.trim() || undefined,
+    email: raw.email?.trim() || undefined,
+  };
+}
+
+// Self-contained interstitial: shows who is asking (client_id) and where the
+// browser will be sent (redirect host), with an editable mock identity. It
+// NEVER auto-redirects — the explicit click plus the visible destination host
+// is the open-redirect mitigation for a public authorize endpoint. Every
+// echoed value is HTML-escaped.
+function renderAuthorizePage(args: {
+  confirmUrl: string;
+  params: AuthorizeParams;
+}): string {
+  const { confirmUrl, params } = args;
+  const redirectHost = new URL(params.redirectUri).host;
+  const hidden = (name: string, value: string | undefined) =>
+    value
+      ? `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(
+          value
+        )}" />`
+      : "";
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MCPJam test sign-in</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f5f5f5; margin: 0; display: flex; min-height: 100vh; align-items: center; justify-content: center; }
+    .card { background: #fff; border: 1px solid #e2e2e2; border-radius: 12px; padding: 32px; max-width: 26rem; width: 100%; box-shadow: 0 4px 16px rgba(0,0,0,.06); }
+    h1 { font-size: 1.1rem; margin: 0 0 8px; }
+    p { font-size: .85rem; color: #555; margin: 0 0 16px; line-height: 1.45; }
+    label { display: block; font-size: .75rem; font-weight: 600; color: #333; margin: 12px 0 4px; }
+    input[type="text"], input[type="email"] { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #ccc; border-radius: 8px; font-size: .9rem; }
+    button { margin-top: 20px; width: 100%; padding: 10px; border: 0; border-radius: 8px; background: #111; color: #fff; font-size: .9rem; font-weight: 600; cursor: pointer; }
+    code { background: #f0f0f0; border-radius: 4px; padding: 1px 4px; font-size: .8rem; }
+    .warn { font-size: .75rem; color: #777; margin-top: 14px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>MCPJam test identity provider</h1>
+    <p>
+      <code>${escapeHtml(params.clientId)}</code> is asking to sign you in.
+      Continuing sends the browser to
+      <strong>${escapeHtml(redirectHost)}</strong> with a sign-in code for the
+      identity below.
+    </p>
+    <form method="POST" action="${escapeHtml(confirmUrl)}">
+      ${hidden("client_id", params.clientId)}
+      ${hidden("redirect_uri", params.redirectUri)}
+      ${hidden("state", params.state)}
+      ${hidden("nonce", params.nonce)}
+      ${hidden("scope", params.scope)}
+      ${hidden("code_challenge", params.codeChallenge)}
+      ${params.codeChallenge ? hidden("code_challenge_method", "S256") : ""}
+      <input type="hidden" name="response_type" value="code" />
+      <label for="subject">Subject (sub)</label>
+      <input type="text" id="subject" name="subject" value="${escapeHtml(
+        params.subject || "user-12345"
+      )}" />
+      <label for="email">Email</label>
+      <input type="email" id="email" name="email" value="${escapeHtml(
+        params.email || "demo.user@example.com"
+      )}" />
+      <button type="submit">Continue to ${escapeHtml(redirectHost)}</button>
+    </form>
+    <p class="warn">
+      This is a mock IdP for testing — anyone can sign in as any identity.
+      Never trust it with real users or production data.
+    </p>
+  </div>
+</body>
+</html>`;
+}
+
 const authenticateSchema = z.object({
   userId: z.string().trim().min(1).optional(),
   email: z.string().trim().email().optional(),
   audience: z.string().trim().min(1).optional(),
+  resourceClientId: z.string().trim().min(1).optional(),
+  // Input axis: which identity assertion format to mint (default "oidc").
+  assertionFormat: z.enum(["oidc", "saml"]).optional(),
 });
 
 const tokenExchangeSchema = z.object({
   identityAssertion: z.string().trim().min(1),
   audience: z.string().trim().min(1),
-  resource: z.string().trim().min(1),
+  resource: z.string().trim().min(1).optional(),
   clientId: z.string().trim().min(1),
   scope: z.string().trim().min(1).optional(),
   negativeTestMode: z.string().trim().optional(),
+  // Input axis: how to decode `identityAssertion` (default "oidc").
+  assertionFormat: z.enum(["oidc", "saml"]).optional(),
+  // Output axis: mint a saml-nameid `sub_id` when "saml-nameid". Independent
+  // of the input axis (default "oauth-sub").
+  subjectIdFormat: z.enum(["oauth-sub", "saml-nameid"]).optional(),
 });
 
 const discoverAsSchema = z
@@ -100,43 +414,98 @@ const healthCheckSchema = z.object({
   url: z.string().trim().min(1),
 });
 
+// `private_key_jwt` is confidential CIMD: an injected provider signs the
+// client_assertion (the reflector publishes its matching key). Both /proxy/token
+// and the negative-test scorecard redeem through buildXaaJwtBearerRequest, which
+// delegates that signing to the provider, so both accept the same methods. Each
+// route still rejects `private_key_jwt` when no provider is configured.
+const tokenEndpointAuthMethodSchema = z.enum([
+  "client_secret_post",
+  "client_secret_basic",
+  "none",
+  "private_key_jwt",
+]);
+
+type TokenEndpointAuthMethod = z.infer<typeof tokenEndpointAuthMethodSchema>;
+
+function tokenEndpointAuthValidationError(input: {
+  // `private_key_jwt` is handled correctly by the checks below — it needs a
+  // client_id (its iss/sub) and no secret.
+  tokenEndpointAuthMethod?: TokenEndpointAuthMethod;
+  clientId?: string;
+  clientSecret?: string;
+}): string | undefined {
+  const { tokenEndpointAuthMethod, clientId, clientSecret } = input;
+  if (
+    (tokenEndpointAuthMethod === "client_secret_post" ||
+      tokenEndpointAuthMethod === "client_secret_basic") &&
+    !clientSecret
+  ) {
+    return `${tokenEndpointAuthMethod} requires a client secret`;
+  }
+  if (tokenEndpointAuthMethod && !clientId) {
+    return `${tokenEndpointAuthMethod} requires a client id`;
+  }
+  return undefined;
+}
+
 const negativeTestsSchema = z
   .object({
     audience: z.string().trim().min(1),
     resource: z.string().trim().min(1),
     subject: z.string().trim().min(1).optional(),
+    // The subject's email, minted into the ID-JAG next to `subject`. Optional,
+    // but a hosted run needs the full identity pair: its evaluator matches both
+    // claims exactly and denies the rest outright.
+    email: z.string().trim().min(1).optional(),
     clientId: z.string().trim().min(1).optional(),
     scope: z.string().trim().min(1).optional(),
     tokenEndpoint: z.string().trim().min(1).optional(),
     clientSecret: z.string().trim().min(1).optional(),
+    tokenEndpointAuthMethod: tokenEndpointAuthMethodSchema.optional(),
     headers: z.record(z.string(), z.string()).optional(),
-    registrationId: z.string().trim().min(1).optional(),
     serverId: z.string().trim().min(1).optional(),
     projectId: z.string().trim().min(1).optional(),
+    // Hosted confidential CIMD resolves its org-bound signing key from this
+    // body field. It is authorized independently; never trust it as identity.
+    organizationId: z.string().trim().min(1).optional(),
+    // Hosted split: a local inspector asks the hosted issuer to MINT the 11
+    // broken assertions only (right `iss`, hosted's key) and return the tokens,
+    // then redeems each locally so a confidential client's secret / CIMD key
+    // never leaves the machine. Mint-only skips target resolution and firing.
+    mintOnly: z.boolean().optional(),
   })
-  .refine(
-    (data) => data.registrationId || data.serverId || data.tokenEndpoint,
-    {
-      message: "tokenEndpoint, registrationId, or serverId is required",
-    }
-  );
+  .refine((data) => data.mintOnly || data.serverId || data.tokenEndpoint, {
+    message: "tokenEndpoint or serverId is required",
+  });
 
 type NegativeCaseOutcome = {
   mode: NegativeTestMode;
   label: string;
   expectedFailure: string;
-  // What the authorization server did with the deliberately-broken assertion.
+  // What the authorization server did with the scorecard assertion.
   outcome: "rejected" | "accepted" | "timeout" | "error";
-  // pass = the AS correctly rejected the broken assertion; fail = the AS
-  // issued a token for it (a real security finding); unknown = couldn't tell.
-  verdict: "pass" | "fail" | "unknown";
+  // pass = the AS correctly rejected a structurally invalid assertion; fail =
+  // the AS issued a token for it (a real security finding); policy = either
+  // result can be valid under local policy; unknown = couldn't tell.
+  verdict: "pass" | "fail" | "policy" | "unknown";
   status?: number;
   detail?: string;
   // What the broken assertion changed vs. a valid one, for the scorecard diff.
   diff?: NegativeTestDiff;
 };
 
-// The 11 deliberately-broken modes (everything except the happy-path "valid").
+// A minted broken assertion plus the header/payload the diff is built from.
+// The transport shape of the hosted mint-only response, and the per-case value
+// of a mintOverride map. header/payload are plain records so a value decoded
+// from the wire and one straight off the local signer are interchangeable.
+type MintedNegativeCase = {
+  token: string;
+  header: Record<string, unknown>;
+  payload: Record<string, unknown>;
+};
+
+// The 11 scorecard modes (everything except the happy-path "valid").
 const NEGATIVE_CASE_MODES: NegativeTestMode[] = NEGATIVE_TEST_MODES.filter(
   (mode): mode is NegativeTestMode => mode !== "valid"
 );
@@ -173,15 +542,19 @@ function buildNegativeDiff(
         sent: show(payload.aud),
         expected: expected.audience,
       };
-    case "expired":
-      return {
-        field: "exp",
-        sent: `${new Date(Number(payload.exp) * 1000).toISOString()} (past)`,
-        expected: "a time in the future",
-      };
+    case "expired": {
+      // `exp` can now arrive over the wire (the hosted mint response), so a
+      // missing/garbage value must degrade to a label rather than throw on
+      // `new Date(NaN)` — a throw would drop this case to an "error" verdict.
+      const expSeconds = Number(payload.exp);
+      const sent = Number.isFinite(expSeconds)
+        ? `${new Date(expSeconds * 1000).toISOString()} (past)`
+        : "a time in the past";
+      return { field: "exp", sent, expected: "a time in the future" };
+    }
     case "missing_claims":
       return {
-        field: "sub, resource",
+        field: "sub, jti",
         sent: "(omitted)",
         expected: "both present",
       };
@@ -238,41 +611,44 @@ const proxyTokenSchema = z
     assertion: z.string().trim().min(1),
     clientId: z.string().trim().min(1).optional(),
     clientSecret: z.string().trim().min(1).optional(),
+    // How to authenticate at the token endpoint. Absent = legacy body-post
+    // behavior; only the methods the debugger can actually redeem.
+    tokenEndpointAuthMethod: tokenEndpointAuthMethodSchema.optional(),
     scope: z.string().trim().min(1).optional(),
     resource: z.string().trim().min(1).optional(),
     headers: z.record(z.string(), z.string()).optional(),
-    // Registration-backed runs: the server resolves the stored secret and
-    // forces the outbound URL to the registration's stored token endpoint.
-    registrationId: z.string().trim().min(1).optional(),
     // Server-target runs: the server resolves the stored secret AND discovers
     // the token endpoint from the server's own config (clientId/url/issuer
     // are all pinned server-side).
     serverId: z.string().trim().min(1).optional(),
     projectId: z.string().trim().min(1).optional(),
+    // Only organization-derived confidential CIMD uses this selector. It is
+    // separately authorized against the bearer token before key derivation.
+    organizationId: z.string().trim().min(1).optional(),
   })
-  .refine(
-    (data) => data.registrationId || data.serverId || data.tokenEndpoint,
-    {
-      message: "tokenEndpoint, registrationId, or serverId is required",
-    }
-  );
+  .refine((data) => data.serverId || data.tokenEndpoint, {
+    message: "tokenEndpoint or serverId is required",
+  });
 
 interface CreateXaaRouterOptions {
   issuerBasePath: "/api/mcp" | "/api/web";
   httpsOnlyProxy: boolean;
+  // Optional Node-side credential capability for confidential CIMD. Local
+  // inspector injects the SDK's filesystem-backed provider; hosted deliberately
+  // omits it so the web tier does not become a shared OAuth client/key store.
+  confidentialCimdProvider?: ConfidentialCimdProvider;
+  // Hosted confidential-CIMD capability. The caller must be authorized for an
+  // org before this factory is invoked; its provider still binds signing to
+  // that org's derived client_id as defense in depth.
+  confidentialCimdProviderForOrg?: (
+    organizationId: string
+  ) => ConfidentialCimdProvider;
   // When behind a TLS-terminating proxy (hosted mode), the issuer scheme must
   // be reconstructed from X-Forwarded-Proto because c.req.url is http://
   // internally. Leave false for local (no proxy) so the header can't be
   // spoofed into advertising https for a plain-http localhost run.
   trustForwardedHeaders?: boolean;
   protectedMiddlewares?: MiddlewareHandler[];
-  // Resolves a registered resource app's client secret + stored token
-  // endpoint server-side, using the caller's bearer to read Convex. When
-  // absent, registration-backed proxy requests are rejected.
-  resolveRegistrationSecret?: (args: {
-    registrationId: string;
-    bearerToken: string;
-  }) => Promise<XaaResourceAppSecretResult>;
   // Resolves a server target's confidential client secret + non-secret config
   // (clientId/url/issuer) server-side, using the caller's bearer to read
   // Convex. When absent, server-target proxy requests are rejected.
@@ -280,13 +656,32 @@ interface CreateXaaRouterOptions {
     serverId: string;
     projectId: string;
     bearerToken: string;
+    clientIp?: string | null;
   }) => Promise<ServerClientSecretResult>;
+  // Confirms the caller may mint under a scoped issuer path before minting.
+  // Two flavors, selected by issuerKind: "org" (/o/:orgId/...) requires org
+  // membership and always rejects guests; "anonymous" (/g/:orgId/...) is the
+  // visibly separate anonymous test issuer, bound to the caller's own
+  // personal org (guests included). When absent, neither scoped route family
+  // is registered — the local router has no org concept.
+  authorizeOrgIssuer?: (args: {
+    organizationId: string;
+    bearerToken: string;
+    issuerKind: "org" | "anonymous";
+    clientIp?: string | null;
+  }) => Promise<void>;
+  // LOCAL-only: when a mint request carries `issuerMode: "hosted"`, forward it
+  // server-to-server to this hosted origin so the token is signed by the key
+  // the hosted JWKS serves and carries a publicly discoverable `iss`. The
+  // origin is config, never derived from the request. The hosted router never
+  // sets this — hosted IS the hosted issuer and ignores `issuerMode`.
+  forwardHostedIssuer?: { origin: string };
+  // Exact first-party UI origins additionally accepted by the state-changing
+  // OIDC endpoints' cross-origin guard. Needed because the dev proxy rewrites
+  // Host (changeOrigin) but not Origin, so the debugger's own browser POST to
+  // /token would read as cross-site under a pure same-host check.
+  allowedBrowserOrigins?: string[];
 }
-
-type ParsedJwtPayload = {
-  sub?: string;
-  email?: string;
-};
 
 function toJsonError(
   message: string,
@@ -320,26 +715,6 @@ function parseRequest<T>(schema: z.ZodSchema<T>, data: unknown): T {
   return parsed.data;
 }
 
-function decodeJwtPayloadUnsafe(token: string): ParsedJwtPayload {
-  const parts = token.split(".");
-  if (parts.length !== 3) {
-    throw new Error("Identity assertion must be a JWT");
-  }
-
-  try {
-    const payload = JSON.parse(
-      Buffer.from(parts[1], "base64url").toString("utf-8")
-    ) as ParsedJwtPayload;
-    return payload;
-  } catch (error) {
-    throw new Error(
-      `Identity assertion payload is not valid JSON (${
-        error instanceof Error ? error.message : String(error)
-      })`
-    );
-  }
-}
-
 function resolveNegativeTestMode(value?: string): NegativeTestMode {
   if (!value) {
     return DEFAULT_NEGATIVE_TEST_MODE;
@@ -356,6 +731,22 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
   const router = new Hono();
   const protectedMiddlewares = options.protectedMiddlewares ?? [];
   const trustForwardedHeaders = options.trustForwardedHeaders ?? false;
+  const authorizeOrgIssuer = options.authorizeOrgIssuer;
+  const allowedBrowserOrigins = options.allowedBrowserOrigins ?? [];
+  const confidentialCimdProvider = options.confidentialCimdProvider;
+  const confidentialCimdProviderForOrg =
+    options.confidentialCimdProviderForOrg;
+
+  if (confidentialCimdProvider && confidentialCimdProviderForOrg) {
+    throw new Error(
+      "XAA router cannot use both a static and organization-derived confidential CIMD provider"
+    );
+  }
+  if (confidentialCimdProviderForOrg && !authorizeOrgIssuer) {
+    throw new Error(
+      "organization-derived confidential CIMD requires authorizeOrgIssuer"
+    );
+  }
 
   if (protectedMiddlewares.length > 0) {
     router.use("/authenticate", ...protectedMiddlewares);
@@ -364,34 +755,525 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     router.use("/discover-as", ...protectedMiddlewares);
     router.use("/health-check", ...protectedMiddlewares);
     router.use("/negative-tests", ...protectedMiddlewares);
+    if (authorizeOrgIssuer) {
+      router.use("/o/:orgId/authenticate", ...protectedMiddlewares);
+      router.use("/o/:orgId/token-exchange", ...protectedMiddlewares);
+      router.use("/o/:orgId/negative-tests", ...protectedMiddlewares);
+      if (confidentialCimdProviderForOrg) {
+        router.use(
+          "/o/:orgId/confidential-cimd/client",
+          ...protectedMiddlewares
+        );
+      }
+      router.use("/g/:orgId/authenticate", ...protectedMiddlewares);
+      router.use("/g/:orgId/token-exchange", ...protectedMiddlewares);
+      router.use("/g/:orgId/negative-tests", ...protectedMiddlewares);
+    }
   }
 
-  router.get("/.well-known/jwks.json", (c) => {
+  const HOSTED_FORWARD_TIMEOUT_MS = 15_000;
+
+  // Server-to-server relay of a mint request to the hosted issuer. The local
+  // server is a pure relay: the caller's bearer is forwarded verbatim (only
+  // to the fixed config origin, never to an AS or MCP server) and the hosted
+  // side's middleware + Convex membership check remain the real authz. The
+  // upstream response body/status surface unchanged so hosted 401/403/429
+  // stay explainable in the debugger.
+  const forwardToHostedIssuer = async (
+    c: Context,
+    path: "/authenticate" | "/token-exchange" | "/negative-tests",
+    body: Record<string, unknown>,
+    opts?: { mintOnly?: boolean }
+  ): Promise<Response> => {
+    const origin = options.forwardHostedIssuer!.origin;
+    const authHeader = c.req.header("authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return toJsonError(
+        "Minting through the hosted issuer requires signing in",
+        { status: 401, code: "UNAUTHORIZED" }
+      );
+    }
+
+    const {
+      issuerMode: _issuerMode,
+      issuerKind,
+      organizationId,
+      ...forwardBody
+    } = body;
+    // Fail closed: the hosted issuer must be the caller's membership-gated
+    // org-scoped issuer (or, for issuerKind "anonymous", their personal-org
+    // anonymous test issuer under /g/). Falling back to the unscoped issuer
+    // (mintable by anyone) would silently mint a forgeable token under the
+    // wrong `iss`, so a missing/invalid org is rejected rather than quietly
+    // downgraded.
+    if (!isValidOrgId(organizationId)) {
+      return toJsonError(
+        "Hosted issuer minting requires an active organization",
+        { status: 400, code: "VALIDATION_ERROR" }
+      );
+    }
+    if (issuerKind !== undefined && issuerKind !== "anonymous") {
+      return toJsonError("issuerKind must be omitted or 'anonymous'", {
+        status: 400,
+        code: "VALIDATION_ERROR",
+      });
+    }
+    const scopedSegment =
+      issuerKind === "anonymous"
+        ? `/g/${organizationId}`
+        : `/o/${organizationId}`;
+
+    // Mint-only (the confidential split): hosted signs the broken assertions
+    // and returns them; the redemption stays local. Strip everything the
+    // redemption owns before it leaves the machine — above all the client
+    // secret, which must never reach hosted; the endpoint/headers/serverId are
+    // redemption-side too and hosted has no use for them.
+    let outboundBody: Record<string, unknown> = forwardBody;
+    if (opts?.mintOnly) {
+      const {
+        clientSecret: _clientSecret,
+        tokenEndpoint: _tokenEndpoint,
+        headers: _headers,
+        serverId: _serverId,
+        projectId: _projectId,
+        ...mintBody
+      } = forwardBody;
+      outboundBody = { ...mintBody, mintOnly: true };
+    }
+
+    return relayToHostedIssuer(`${origin}/api/web/xaa${scopedSegment}${path}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: authHeader,
+      },
+      body: JSON.stringify(outboundBody),
+    });
+  };
+
+  // The fetch/relay half of the hosted-issuer forward: POSTs to the fixed
+  // hosted URL and surfaces the upstream response verbatim (status, JSON body,
+  // auth-relevant headers) so hosted 401/403/429 stay explainable rather than
+  // collapsing into a generic 502.
+  const relayToHostedIssuer = async (
+    url: string,
+    init: { method: "POST"; headers: Record<string, string>; body: string }
+  ): Promise<Response> => {
+    let upstream: Response;
+    try {
+      upstream = await fetch(url, {
+        ...init,
+        signal: AbortSignal.timeout(HOSTED_FORWARD_TIMEOUT_MS),
+      });
+    } catch (error) {
+      const isTimeout =
+        error instanceof Error &&
+        (error.name === "TimeoutError" || error.name === "AbortError");
+      return toJsonError(
+        isTimeout
+          ? `The hosted issuer did not respond within ${HOSTED_FORWARD_TIMEOUT_MS}ms`
+          : `Failed to reach the hosted issuer: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+        { status: isTimeout ? 504 : 502, code: "SERVER_UNREACHABLE" }
+      );
+    }
+
+    const upstreamText = await upstream.text();
+    let upstreamJson: unknown = null;
+    if (upstreamText) {
+      try {
+        upstreamJson = JSON.parse(upstreamText);
+      } catch {
+        // non-JSON body; handled below
+      }
+    }
+
+    // Preserve auth-relevant upstream headers so a hosted challenge survives
+    // the relay instead of being silently dropped.
+    const relayHeaders: Record<string, string> = {
+      "cache-control": "no-store",
+      pragma: "no-cache",
+    };
+    for (const name of ["www-authenticate", "retry-after"]) {
+      const value = upstream.headers.get(name);
+      if (value) relayHeaders[name] = value;
+    }
+
+    // Forward the hosted status verbatim. The normal case (incl. hosted's
+    // own {code,message} error envelopes) is JSON and passes through. A
+    // non-JSON/empty body still keeps the real status, so a hosted 401/403/429
+    // is never masked as a 502 "unreachable" outage.
+    if (upstreamJson !== null && typeof upstreamJson === "object") {
+      return Response.json(upstreamJson, {
+        status: upstream.status,
+        headers: relayHeaders,
+      });
+    }
+    if (upstream.ok) {
+      return toJsonError("The hosted issuer returned a non-JSON response", {
+        status: 502,
+        code: "SERVER_UNREACHABLE",
+      });
+    }
+    const message =
+      upstreamText.trim().slice(0, 300) ||
+      `The hosted issuer returned HTTP ${upstream.status}`;
+    return Response.json(
+      {
+        code:
+          upstream.status >= 500 ? "SERVER_UNREACHABLE" : "HOSTED_ISSUER_ERROR",
+        message,
+        error: message,
+      },
+      { status: upstream.status, headers: relayHeaders }
+    );
+  };
+
+  // Reads the body (Hono caches it, so the handler's own c.req.json() still
+  // works) and returns the forwarded Response when the request opts into the
+  // hosted issuer; null means "mint locally as usual".
+  const maybeForwardHostedIssuer = async (
+    c: Context,
+    path: "/authenticate" | "/token-exchange" | "/negative-tests"
+  ): Promise<Response | null> => {
+    if (!options.forwardHostedIssuer) return null;
+    const body = await c.req.json().catch(() => null);
+    if (
+      !body ||
+      typeof body !== "object" ||
+      (body as Record<string, unknown>).issuerMode !== "hosted"
+    ) {
+      return null;
+    }
+    return forwardToHostedIssuer(c, path, body as Record<string, unknown>);
+  };
+
+  // Confidential hosted split: ask the hosted issuer to MINT the 11 broken
+  // assertions (mint-only, no secret sent) and hand them back as a
+  // mode→assertion map plus the canonical issuer, for local redemption. Any
+  // hosted failure is surfaced verbatim as a Response.
+  const mintNegativeViaHosted = async (
+    c: Context,
+    body: Record<string, unknown>
+  ): Promise<
+    XaaResult<{
+      mints: Map<NegativeTestMode, MintedNegativeCase>;
+      issuer: string;
+    }>
+  > => {
+    const relayed = await forwardToHostedIssuer(c, "/negative-tests", body, {
+      mintOnly: true,
+    });
+    if (!relayed.ok) return xaaFailure(relayed);
+
+    let payload: unknown;
+    try {
+      payload = await relayed.json();
+    } catch {
+      return xaaFailure(
+        toJsonError("The hosted issuer returned a malformed mint response", {
+          status: 502,
+          code: "SERVER_UNREACHABLE",
+        })
+      );
+    }
+
+    const rawMints = (payload as { mints?: unknown })?.mints;
+    const issuer = (payload as { issuer?: unknown })?.issuer;
+    if (!Array.isArray(rawMints) || typeof issuer !== "string") {
+      return xaaFailure(
+        toJsonError("The hosted issuer returned no minted assertions", {
+          status: 502,
+          code: "SERVER_UNREACHABLE",
+        })
+      );
+    }
+
+    const mints = new Map<NegativeTestMode, MintedNegativeCase>();
+    for (const entry of rawMints) {
+      // Membership in NEGATIVE_CASE_MODES, not isNegativeTestMode: the latter
+      // also accepts "valid", which would let a skewed response substitute a
+      // valid assertion for a required negative one and still satisfy the
+      // count check below.
+      if (
+        entry &&
+        typeof entry === "object" &&
+        NEGATIVE_CASE_MODES.includes(
+          (entry as { mode?: unknown }).mode as NegativeTestMode
+        ) &&
+        typeof (entry as { token?: unknown }).token === "string"
+      ) {
+        const e = entry as {
+          mode: NegativeTestMode;
+          token: string;
+          header?: Record<string, unknown>;
+          payload?: Record<string, unknown>;
+        };
+        mints.set(e.mode, {
+          token: e.token,
+          header: e.header ?? {},
+          payload: e.payload ?? {},
+        });
+      }
+    }
+    // Every required case must be present — checked by membership, not count,
+    // so a response that swaps one negative mode for a duplicate or an
+    // unexpected one can't satisfy the guard. Failing the whole run here is
+    // clearer than letting a short map surface as scattered per-case errors.
+    const missing = NEGATIVE_CASE_MODES.filter((mode) => !mints.has(mode));
+    if (missing.length > 0) {
+      return xaaFailure(
+        toJsonError(
+          `The hosted issuer did not mint every scorecard case (missing: ${missing.join(
+            ", "
+          )})`,
+          { status: 502, code: "SERVER_UNREACHABLE" }
+        )
+      );
+    }
+    return xaaSuccess({ mints, issuer });
+  };
+
+  // Hosted-issuer forward for the standards-track /token endpoint. The RFC
+  // 8693 form body must stay spec-pure, so the opt-in rides transport headers
+  // (x-mcpjam-issuer-mode / x-mcpjam-organization-id) instead of body fields;
+  // they are consumed here and never forwarded upstream. Without this, a local
+  // run that promised the hosted issuer would mint an ID-JAG with the local
+  // `iss`, which a remote AS can't discover.
+  const maybeForwardHostedTokenGrant = async (
+    c: Context
+  ): Promise<Response | null> => {
+    if (!options.forwardHostedIssuer) return null;
+    if (c.req.header("x-mcpjam-issuer-mode") !== "hosted") return null;
+    // This path signs (via the hosted issuer) before handleToken runs, so it
+    // must apply the same guards handleToken would: the cross-origin CSRF
+    // check and the per-IP cap. Otherwise a page or client could drive
+    // unbounded hosted signing requests through the local relay.
+    const crossOrigin = rejectCrossOriginPost(c, allowedBrowserOrigins);
+    if (crossOrigin) return crossOrigin;
+    const ip = getClientIp(c);
+    if (ip && !checkOidcIpCap(ip)) {
+      return oauthError(429, "temporarily_unavailable", "Too many requests");
+    }
+    const authHeader = c.req.header("authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return oauthError(
+        401,
+        "invalid_client",
+        "Minting through the hosted issuer requires signing in"
+      );
+    }
+    // Fail closed on the org, same as forwardToHostedIssuer: the unscoped
+    // hosted /token refuses this grant, and downgrading would mint under the
+    // wrong `iss`.
+    const organizationId = c.req.header("x-mcpjam-organization-id");
+    if (!isValidOrgId(organizationId)) {
+      return oauthError(
+        400,
+        "invalid_request",
+        "Hosted issuer minting requires an active organization"
+      );
+    }
+    // Anonymous test issuer opt-in rides the same transport-header channel
+    // as the hosted opt-in (the RFC 8693 form body stays spec-pure).
+    const issuerKindHeader = c.req.header("x-mcpjam-issuer-kind");
+    if (issuerKindHeader !== undefined && issuerKindHeader !== "anonymous") {
+      return oauthError(
+        400,
+        "invalid_request",
+        "x-mcpjam-issuer-kind must be omitted or 'anonymous'"
+      );
+    }
+    const scopedSegment =
+      issuerKindHeader === "anonymous"
+        ? `/g/${organizationId}`
+        : `/o/${organizationId}`;
+    const body = await c.req.text();
+    // This relay forwards nothing implicitly; the issuer-mode/organization-id
+    // opt-in headers stay consumed here.
+    return relayToHostedIssuer(
+      `${options.forwardHostedIssuer.origin}/api/web/xaa${scopedSegment}/token`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: authHeader,
+        },
+        body,
+      }
+    );
+  };
+
+  const unscopedIssuer = (c: Context): string =>
+    getIssuerForRequest(c, options.issuerBasePath, trustForwardedHeaders);
+
+  // Gate for the org-scoped mint routes: validate the path segment (it is
+  // embedded into the ID-JAG `iss`), require a bearer, and confirm org
+  // membership via the backend. Returns the validated orgId, or the error
+  // Response to send. Fail-closed: any backend failure blocks the mint.
+  const requireScopedIssuer = async (
+    c: Context,
+    issuerKind: "org" | "anonymous"
+  ): Promise<XaaResult<string>> => {
+    const orgIdResult = validateOrgSegment(c);
+    if (!orgIdResult.ok) return orgIdResult;
+    const orgId = orgIdResult.value;
+    const authHeader = c.req.header("authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return xaaFailure(
+        toJsonError(
+          issuerKind === "anonymous"
+            ? "Minting under the anonymous test issuer requires a session"
+            : "Minting under an organization issuer requires signing in",
+          { status: 401, code: "UNAUTHORIZED" }
+        )
+      );
+    }
+    try {
+      await authorizeOrgIssuer!({
+        organizationId: orgId,
+        bearerToken: authHeader.slice("Bearer ".length),
+        issuerKind,
+        clientIp: getClientIp(c),
+      });
+    } catch (error) {
+      if (error instanceof WebRouteError) {
+        return xaaFailure(
+          toJsonError(error.message, {
+            status: error.status,
+            code: error.code,
+            details: error.details,
+          })
+        );
+      }
+      logger.error("[XAA Org Issuer] authorization failed", error);
+      return xaaFailure(
+        toJsonError("Couldn't authorize the organization issuer", {
+          status: 500,
+          code: "INTERNAL_ERROR",
+        })
+      );
+    }
+    return xaaSuccess(orgId);
+  };
+  const requireScopedOrg = (c: Context) => requireScopedIssuer(c, "org");
+  const requireScopedAnonymousOrg = (c: Context) =>
+    requireScopedIssuer(c, "anonymous");
+
+  // `/proxy/token` has no org path segment, so confidential-CIMD requests
+  // repeat the same fail-closed membership check the `/o/:orgId` routes use.
+  // The body org id is only a selector; Convex remains the authorization
+  // authority and must approve it before any derived key is constructed.
+  const authorizeOrgForConfidentialCimd = async (
+    c: Context,
+    organizationId: string
+  ): Promise<Response | undefined> => {
+    if (!isValidOrgId(organizationId)) {
+      return toJsonError("Invalid organization id", {
+        status: 400,
+        code: "VALIDATION_ERROR",
+      });
+    }
+    const authHeader = c.req.header("authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return toJsonError("Missing or invalid bearer token", {
+        status: 401,
+        code: "UNAUTHORIZED",
+      });
+    }
+    try {
+      await authorizeOrgIssuer!({
+        organizationId,
+        bearerToken: authHeader.slice("Bearer ".length),
+        issuerKind: "org",
+        clientIp: getClientIp(c),
+      });
+    } catch (error) {
+      if (error instanceof WebRouteError) {
+        return toJsonError(error.message, {
+          status: error.status,
+          code: error.code,
+          details: error.details,
+        });
+      }
+      logger.error("[XAA Confidential CIMD] organization authorization failed", error);
+      return toJsonError("Couldn't authorize the organization", {
+        status: 500,
+        code: "INTERNAL_ERROR",
+      });
+    }
+    return undefined;
+  };
+
+  const resolveDerivedConfidentialCimdProvider = (
+    organizationId: string,
+    clientId?: string
+  ): ConfidentialCimdProvider | Response => {
+    const provider = confidentialCimdProviderForOrg!(organizationId);
+    if (
+      clientId !== undefined &&
+      clientId !== provider.getClientIdMetadataUrl()
+    ) {
+      return toJsonError(
+        "client_id does not match this organization's confidential CIMD client",
+        { status: 400, code: "VALIDATION_ERROR" }
+      );
+    }
+    return provider;
+  };
+
+  const serveJwks = (c: Context) => {
     initXAAIdpKeyPair();
     return c.json(getXAAIdpJwks(), 200, {
       "Cache-Control": "public, max-age=300",
     });
-  });
+  };
 
-  router.get("/.well-known/openid-configuration", (c) => {
+  const serveOpenidConfiguration = (
+    c: Context,
+    issuer: string,
+    // Whether THIS surface's /token serves the standard token-exchange grant.
+    // Unscoped hosted refuses it (public token exchange would launder the
+    // org-membership gate through the public /authorize mock sign-in), so its
+    // doc must not advertise it — advertise only what is served.
+    oidc: {
+      tokenExchangeAtToken: boolean;
+      // The /g/ anonymous test issuer stamps its kind into the discovery
+      // document so a RAS can only trust it by EXPLICIT allowlisting —
+      // assertions minted under it prove control of an anonymous session,
+      // not IdP-assured identity.
+      anonymousTestIssuer?: boolean;
+    }
+  ) => {
     initXAAIdpKeyPair();
-    const issuer = getIssuerForRequest(
-      c,
-      options.issuerBasePath,
-      trustForwardedHeaders
-    );
 
     return c.json(
       {
         issuer,
         jwks_uri: `${issuer}/.well-known/jwks.json`,
-        authorization_endpoint: `${issuer}/authenticate`,
-        token_endpoint: `${issuer}/token-exchange`,
-        response_types_supported: ["id_token"],
+        authorization_endpoint: `${issuer}/authorize`,
+        token_endpoint: `${issuer}/token`,
+        userinfo_endpoint: `${issuer}/userinfo`,
+        response_types_supported: ["code"],
         subject_types_supported: ["public"],
         grant_types_supported: [
-          "urn:ietf:params:oauth:grant-type:token-exchange",
+          "authorization_code",
+          ...(oidc.tokenExchangeAtToken ? [TOKEN_EXCHANGE_GRANT] : []),
         ],
+        ...(oidc.tokenExchangeAtToken
+          ? {
+              identity_chaining_requested_token_types_supported: [
+                ID_JAG_TOKEN_TYPE,
+              ],
+            }
+          : {}),
+        ...(oidc.anonymousTestIssuer
+          ? { "mcpjam:issuer_kind": "anonymous-test" }
+          : {}),
+        code_challenge_methods_supported: ["S256"],
+        scopes_supported: ["openid", "profile", "email"],
+        claims_supported: ["sub", "email", "email_verified"],
         token_endpoint_auth_methods_supported: ["none", "client_secret_post"],
         id_token_signing_alg_values_supported: ["RS256"],
       },
@@ -400,102 +1282,124 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         "Cache-Control": "public, max-age=300",
       }
     );
-  });
+  };
 
-  router.post("/authenticate", async (c) => {
+  router.get("/.well-known/jwks.json", (c) => serveJwks(c));
+
+  if (confidentialCimdProvider) {
+    // Hand the browser the reflector URL for the injected local client. The
+    // browser holds no key; it presents the URL as client_id and /proxy/token
+    // delegates signing to the same provider. Hosted has no provider, so this
+    // capability route is absent there.
+    //
+    // The origin is the provider default (the hosted reflector,
+    // XAA_CONFIDENTIAL_CIMD_ORIGIN), NOT this local request's origin: the local
+    // inspector routinely targets a CLOUD authorization server (issuerMode
+    // "hosted"), which could never fetch a http://localhost client_id. The
+    // hosted reflector is stateless and serves whichever public key the URL
+    // encodes — including this local provider's — so a remote AS can reach it,
+    // exactly as `mcpjam xaa run` publishes its local key by default.
+    router.get("/confidential-cimd/client", (c) => {
+      const clientIdMetadataUrl =
+        confidentialCimdProvider.getClientIdMetadataUrl();
+      // The URL encodes the current provider key. Never pair a cached client_id
+      // with an assertion produced after local key rotation.
+      c.header("Cache-Control", "no-store");
+      return c.json({ clientIdMetadataUrl });
+    });
+  }
+
+  if (confidentialCimdProviderForOrg && authorizeOrgIssuer) {
+    // This is an authenticated capability endpoint, not the public reflector.
+    // It hands an authorized org member the URL whose embedded public JWK the
+    // existing `/.well-known/oauth/xaa-cimd/:key` reflector serves to the AS.
+    router.get("/o/:orgId/confidential-cimd/client", async (c) => {
+      const orgIdResult = await requireScopedOrg(c);
+      if (!orgIdResult.ok) return orgIdResult.response;
+      const provider = resolveDerivedConfidentialCimdProvider(
+        orgIdResult.value
+      );
+      if (provider instanceof Response) return provider;
+      c.header("Cache-Control", "no-store");
+      return c.json({
+        clientIdMetadataUrl: provider.getClientIdMetadataUrl(),
+      });
+    });
+  }
+
+  // Unscoped hosted /token refuses public token exchange (see handleToken);
+  // its doc must not advertise it. Local (no org gate available) serves it.
+  const unscopedTokenExchangeAtToken = !authorizeOrgIssuer;
+
+  router.get("/.well-known/openid-configuration", (c) =>
+    serveOpenidConfiguration(c, unscopedIssuer(c), {
+      tokenExchangeAtToken: unscopedTokenExchangeAtToken,
+    })
+  );
+
+  // Thin adapter over the shared mint core: zod parsing and the server's
+  // error-body shape stay here; the core owns defaults, minting, and the
+  // response body (which must stay byte-identical for hosted forwarding).
+  const handleAuthenticate = async (c: Context, issuer: string) => {
     try {
       const body = await c.req.json();
-      const { userId, email, audience } = parseRequest(
-        authenticateSchema,
-        body
-      );
-      const issuer = getIssuerForRequest(
-        c,
-        options.issuerBasePath,
-        trustForwardedHeaders
-      );
-      const subject = userId || "user-12345";
-      const resolvedEmail = email || "demo.user@example.com";
-      const issued = issueMockIdToken({
+      const parsed = parseRequest(authenticateSchema, body);
+      const result = handleXaaAuthenticate({
         issuer,
-        subject,
-        email: resolvedEmail,
-        audience,
+        userId: parsed.userId,
+        email: parsed.email,
+        audience: parsed.audience,
+        resourceClientId: parsed.resourceClientId,
+        assertionFormat: parsed.assertionFormat,
       });
 
-      return c.json({
-        id_token: issued.token,
-        token_type: "Bearer",
-        expires_in: Math.max(
-          0,
-          Math.floor((issued.expiresAt - Date.now()) / 1000)
-        ),
-        user: {
-          sub: subject,
-          email: resolvedEmail,
-        },
-      });
+      return c.json(
+        result.body,
+        result.status as ContentfulStatusCode,
+        TOKEN_NO_STORE_HEADERS
+      );
     } catch (error) {
       return toJsonError(
         error instanceof Error ? error.message : "Invalid authenticate request",
         { status: 400, code: "VALIDATION_ERROR" }
       );
     }
+  };
+
+  router.post("/authenticate", async (c) => {
+    const forwarded = await maybeForwardHostedIssuer(c, "/authenticate");
+    if (forwarded) return forwarded;
+    return handleAuthenticate(c, unscopedIssuer(c));
   });
 
-  router.post("/token-exchange", async (c) => {
+  // Thin adapter over the shared mint core: zod parsing + negative-test-mode
+  // resolution stay here; the core decodes the assertion (unverified — this
+  // route exists to mint intentionally broken assertions), mints, and owns
+  // the response body. A malformed assertion or one without a subject throws
+  // and maps to the server's 400 shape.
+  const handleTokenExchange = async (c: Context, issuer: string) => {
     try {
       const body = await c.req.json();
       const parsed = parseRequest(tokenExchangeSchema, body);
       const negativeTestMode = resolveNegativeTestMode(parsed.negativeTestMode);
-      const issuer = getIssuerForRequest(
-        c,
-        options.issuerBasePath,
-        trustForwardedHeaders
-      );
-      const identityPayload = decodeJwtPayloadUnsafe(parsed.identityAssertion);
-      const subject = identityPayload.sub || "user-12345";
-      // Carry the ID token's email into the ID-JAG (spec RECOMMENDED) so the
-      // Resource AS can use it for subject resolution / JIT provisioning.
-      const email =
-        typeof identityPayload.email === "string"
-          ? identityPayload.email
-          : undefined;
 
-      const issued =
-        negativeTestMode === "valid"
-          ? issueIdJag({
-              issuer,
-              subject,
-              email,
-              audience: parsed.audience,
-              resource: parsed.resource,
-              clientId: parsed.clientId,
-              scope: parsed.scope,
-            })
-          : issueNegativeIdJag(
-              {
-                issuer,
-                subject,
-                email,
-                audience: parsed.audience,
-                resource: parsed.resource,
-                clientId: parsed.clientId,
-                scope: parsed.scope,
-              },
-              negativeTestMode
-            );
-
-      return c.json({
-        id_jag: issued.token,
-        token_type: "N_A",
-        issued_token_type: "urn:ietf:params:oauth:token-type:jwt",
-        expires_in: Math.max(
-          0,
-          Math.floor((issued.expiresAt - Date.now()) / 1000)
-        ),
-        negative_test_mode: negativeTestMode,
+      const result = handleXaaJsonTokenExchange({
+        issuer,
+        identityAssertion: parsed.identityAssertion,
+        audience: parsed.audience,
+        resource: parsed.resource,
+        clientId: parsed.clientId,
+        scope: parsed.scope,
+        negativeTestMode,
+        assertionFormat: parsed.assertionFormat,
+        subjectIdFormat: parsed.subjectIdFormat,
       });
+
+      return c.json(
+        result.body,
+        result.status as ContentfulStatusCode,
+        TOKEN_NO_STORE_HEADERS
+      );
     } catch (error) {
       return toJsonError(
         error instanceof Error
@@ -504,12 +1408,43 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         { status: 400, code: "VALIDATION_ERROR" }
       );
     }
+  };
+
+  router.post("/token-exchange", async (c) => {
+    const forwarded = await maybeForwardHostedIssuer(c, "/token-exchange");
+    if (forwarded) return forwarded;
+    return handleTokenExchange(c, unscopedIssuer(c));
   });
 
   router.post("/proxy/token", async (c) => {
     try {
       const body = await c.req.json();
       const parsed = parseRequest(proxyTokenSchema, body);
+      const authMethod = parsed.tokenEndpointAuthMethod;
+      let resolvedConfidentialCimdProvider = confidentialCimdProvider;
+
+      if (
+        authMethod === "private_key_jwt" &&
+        confidentialCimdProviderForOrg
+      ) {
+        if (parsed.serverId) {
+          return toJsonError(
+            "Organization-derived confidential CIMD does not support serverId targets",
+            { status: 400, code: "VALIDATION_ERROR" }
+          );
+        }
+        if (!parsed.organizationId) {
+          return toJsonError(
+            "organizationId is required for hosted confidential CIMD",
+            { status: 400, code: "VALIDATION_ERROR" }
+          );
+        }
+        const authorizationError = await authorizeOrgForConfidentialCimd(
+          c,
+          parsed.organizationId
+        );
+        if (authorizationError) return authorizationError;
+      }
 
       let url: string;
       let clientId = parsed.clientId;
@@ -535,63 +1470,73 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           serverId: parsed.serverId,
           projectId: parsed.projectId,
           bearerToken: authHeader.slice("Bearer ".length),
+          clientIp: getClientIp(c),
         });
         url = resolved.tokenEndpoint;
         clientId = resolved.clientId;
-        clientSecret = resolved.clientSecret;
-        extraHeaders = undefined;
-      } else if (parsed.registrationId) {
-        if (!options.resolveRegistrationSecret) {
-          return toJsonError(
-            "Registration-backed runs are not available on this instance",
-            { status: 400, code: "VALIDATION_ERROR" }
-          );
-        }
-
-        const authHeader = c.req.header("authorization");
-        if (!authHeader?.startsWith("Bearer ")) {
-          return toJsonError("Missing or invalid bearer token", {
-            status: 401,
-            code: "UNAUTHORIZED",
-          });
-        }
-
-        const resolved = await options.resolveRegistrationSecret({
-          registrationId: parsed.registrationId,
-          bearerToken: authHeader.slice("Bearer ".length),
-        });
-
-        if (!resolved.tokenEndpoint) {
-          return toJsonError("The registration has no stored token endpoint", {
-            status: 400,
-            code: "VALIDATION_ERROR",
-          });
-        }
-
-        // The stored secret is only ever posted to the registration's stored
-        // token endpoint. Client-supplied tokenEndpoint/headers/clientSecret
-        // are discarded so a caller can't redirect the secret elsewhere.
-        url = resolved.tokenEndpoint;
-        clientId = resolved.targetClientId ?? parsed.clientId;
         clientSecret = resolved.clientSecret;
         extraHeaders = undefined;
       } else {
         url = parsed.tokenEndpoint as string;
       }
 
-      const result = await executeOAuthProxy({
-        url,
-        method: "POST",
-        body: buildJwtBearerBody({
+      // The shared helper already handles private_key_jwt correctly: it needs a
+      // client_id (its iss/sub) and no secret. RFC 6749 §2.3.1: client_id is
+      // required for post/basic; none and private_key_jwt need one too.
+      const authValidationError = tokenEndpointAuthValidationError({
+        tokenEndpointAuthMethod: authMethod,
+        clientId,
+        clientSecret,
+      });
+      if (authValidationError) {
+        return toJsonError(authValidationError, {
+          status: 400,
+          code: "VALIDATION_ERROR",
+        });
+      }
+      if (authMethod === "private_key_jwt" && confidentialCimdProviderForOrg) {
+        const provider = resolveDerivedConfidentialCimdProvider(
+          parsed.organizationId!,
+          clientId
+        );
+        if (provider instanceof Response) return provider;
+        resolvedConfidentialCimdProvider = provider;
+      }
+      if (
+        authMethod === "private_key_jwt" &&
+        !resolvedConfidentialCimdProvider
+      ) {
+        return toJsonError(
+          "private_key_jwt is not available on this inspector deployment",
+          { status: 400, code: "VALIDATION_ERROR" }
+        );
+      }
+
+      // Method-aware client auth. The generated Authorization value carries
+      // the secret — it is passed only to the outbound proxy call and must
+      // never be copied into logs, history, or error payloads. It is merged
+      // AFTER extraHeaders so a caller-supplied header can't replace it.
+      const jwtBearerRequest = buildXaaJwtBearerRequest(
+        {
           assertion: parsed.assertion,
+          tokenEndpoint: url,
           clientId,
           clientSecret,
           scope: parsed.scope,
           resource: parsed.resource,
-        }),
+          tokenEndpointAuthMethod: authMethod,
+        },
+        resolvedConfidentialCimdProvider
+      );
+
+      const result = await executeOAuthProxy({
+        url,
+        method: "POST",
+        body: jwtBearerRequest.body,
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
           ...(extraHeaders || {}),
+          ...jwtBearerRequest.headers,
         },
         httpsOnly: options.httpsOnlyProxy,
       });
@@ -610,6 +1555,7 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         return toJsonError(error.message, {
           status: error.status,
           code: error.code,
+          details: error.details,
         });
       }
 
@@ -756,7 +1702,17 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
   // Negative-test scorecard: fire each deliberately-broken ID-JAG mode at the
   // user's authorization server and report whether the server correctly
   // rejected it (pass) or wrongly issued a token (fail — a real finding).
-  router.post("/negative-tests", async (c) => {
+  //
+  // `mintOverride` (the hosted split) supplies each case's assertion from the
+  // hosted issuer instead of minting locally, so the token carries a
+  // discoverable `iss` while the confidential secret / CIMD key stays here for
+  // the redemption. Absent → mint locally, as an ordinary local-issuer run.
+  const handleNegativeTests = async (
+    c: Context,
+    issuer: string,
+    mintOverride?: Map<NegativeTestMode, MintedNegativeCase>,
+    organizationId?: string
+  ) => {
     let parsed;
     try {
       parsed = parseRequest(negativeTestsSchema, await c.req.json());
@@ -769,6 +1725,59 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       );
     }
 
+    // Mint-only (the hosted half of the split): sign all 11 broken assertions
+    // with this issuer's key and return them, without resolving a target or
+    // firing. Every mode is a deliberate mutation of an otherwise-valid
+    // assertion, so these tokens are not usable credentials — strictly less
+    // than the valid ID-JAGs any authed caller can already mint via
+    // /token-exchange.
+    if (parsed.mintOnly) {
+      const subject = parsed.subject || "user-12345";
+      const resolvedClientId = parsed.clientId || "mcpjam-debugger";
+      const mints: Array<{ mode: NegativeTestMode } & MintedNegativeCase> = [];
+      for (const mode of NEGATIVE_CASE_MODES) {
+        try {
+          const issued = issueNegativeIdJag(
+            {
+              issuer,
+              subject,
+              email: parsed.email,
+              audience: parsed.audience,
+              resource: parsed.resource,
+              clientId: resolvedClientId,
+              scope: parsed.scope,
+            },
+            mode
+          );
+          mints.push({
+            mode,
+            token: issued.token,
+            header: issued.header,
+            payload: issued.payload,
+          });
+        } catch (error) {
+          return toJsonError(
+            error instanceof Error ? error.message : "Failed to mint ID-JAG",
+            { status: 500, code: "MINT_FAILED" }
+          );
+        }
+      }
+      // `issuer` travels back so the local redeemer's diff shows the real
+      // (hosted) expected `iss` for the wrong_issuer case, not its own.
+      return c.json({ mints, issuer });
+    }
+
+    if (
+      parsed.serverId &&
+      parsed.tokenEndpointAuthMethod === "private_key_jwt" &&
+      confidentialCimdProviderForOrg
+    ) {
+      return toJsonError(
+        "Organization-derived confidential CIMD does not support serverId targets",
+        { status: 400, code: "VALIDATION_ERROR" }
+      );
+    }
+
     // Resolve the authorization-server target. Registration-backed runs
     // resolve the stored secret + endpoint server-side (same hardening as
     // /proxy/token); the client-supplied endpoint/headers/secret are ignored.
@@ -776,6 +1785,8 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
     let clientId = parsed.clientId;
     let clientSecret = parsed.clientSecret;
     let extraHeaders = parsed.headers;
+    let tokenEndpointAuthMethod = parsed.tokenEndpointAuthMethod;
+    let resolvedConfidentialCimdProvider = confidentialCimdProvider;
 
     try {
       if (parsed.serverId) {
@@ -796,41 +1807,13 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           serverId: parsed.serverId,
           projectId: parsed.projectId,
           bearerToken: authHeader.slice("Bearer ".length),
+          clientIp: getClientIp(c),
         });
         tokenEndpoint = resolved.tokenEndpoint;
         clientId = resolved.clientId;
         clientSecret = resolved.clientSecret;
         extraHeaders = undefined;
-      } else if (parsed.registrationId) {
-        if (!options.resolveRegistrationSecret) {
-          return toJsonError(
-            "Registration-backed runs are not available on this instance",
-            { status: 400, code: "VALIDATION_ERROR" }
-          );
-        }
-        const authHeader = c.req.header("authorization");
-        if (!authHeader?.startsWith("Bearer ")) {
-          return toJsonError("Missing or invalid bearer token", {
-            status: 401,
-            code: "UNAUTHORIZED",
-          });
-        }
-        const resolved = await options.resolveRegistrationSecret({
-          registrationId: parsed.registrationId,
-          bearerToken: authHeader.slice("Bearer ".length),
-        });
-        if (!resolved.tokenEndpoint) {
-          // mcpjam-issuer-only registration: there is no external auth server
-          // to fire broken assertions at.
-          return toJsonError(
-            "Negative tests require a registration with its own auth server",
-            { status: 400, code: "VALIDATION_ERROR" }
-          );
-        }
-        tokenEndpoint = resolved.tokenEndpoint;
-        clientId = resolved.targetClientId ?? parsed.clientId;
-        clientSecret = resolved.clientSecret;
-        extraHeaders = undefined;
+        tokenEndpointAuthMethod = undefined;
       } else {
         tokenEndpoint = parsed.tokenEndpoint as string;
       }
@@ -839,9 +1822,48 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         return toJsonError(error.message, {
           status: error.status,
           code: error.code,
+          details: error.details,
         });
       }
       throw error;
+    }
+
+    const authValidationError = tokenEndpointAuthValidationError({
+      tokenEndpointAuthMethod,
+      clientId,
+      clientSecret,
+    });
+    if (authValidationError) {
+      return toJsonError(authValidationError, {
+        status: 400,
+        code: "VALIDATION_ERROR",
+      });
+    }
+    if (
+      tokenEndpointAuthMethod === "private_key_jwt" &&
+      confidentialCimdProviderForOrg
+    ) {
+      if (!organizationId) {
+        return toJsonError(
+          "private_key_jwt is not available on this inspector deployment",
+          { status: 400, code: "VALIDATION_ERROR" }
+        );
+      }
+      const provider = resolveDerivedConfidentialCimdProvider(
+        organizationId,
+        clientId
+      );
+      if (provider instanceof Response) return provider;
+      resolvedConfidentialCimdProvider = provider;
+    }
+    if (
+      tokenEndpointAuthMethod === "private_key_jwt" &&
+      !resolvedConfidentialCimdProvider
+    ) {
+      return toJsonError(
+        "private_key_jwt is not available on this inspector deployment",
+        { status: 400, code: "VALIDATION_ERROR" }
+      );
     }
 
     // Validate the outbound URL once (every case hits the same endpoint) and
@@ -872,12 +1894,9 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       );
     }
 
-    const issuer = getIssuerForRequest(
-      c,
-      options.issuerBasePath,
-      trustForwardedHeaders
-    );
     const subject = parsed.subject || "user-12345";
+
+    const effectiveScope = parsed.scope;
 
     const runCase = async (
       mode: NegativeTestMode
@@ -887,24 +1906,48 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       let token: string;
       let diff: NegativeTestDiff | undefined;
       try {
-        const issued = issueNegativeIdJag(
-          {
-            issuer,
-            subject,
-            audience: parsed.audience,
-            resource: parsed.resource,
-            clientId: resolvedClientId,
-            scope: parsed.scope,
-          },
-          mode
-        );
-        token = issued.token;
-        diff = buildNegativeDiff(mode, issued.header, issued.payload, {
+        // Hosted split: the assertion was already signed by the hosted issuer;
+        // reuse it (and its header/payload) rather than minting a second one
+        // here under the local `iss`. Local runs mint inline.
+        //
+        // Minted alongside `subject`: a hosted evaluator matches BOTH claims
+        // exactly, so omitting the email gets every case denied on identity
+        // before the intended mutation is ever evaluated — the whole scorecard
+        // would read green without testing anything. The mutation modes rely on
+        // it too (missing_claims drops it, unknown_sub rewrites it).
+        let minted: MintedNegativeCase;
+        if (mintOverride) {
+          const fromHosted = mintOverride.get(mode);
+          // No silent local fallback: a mode the hosted issuer didn't return
+          // would otherwise be minted under the local `iss` and get rejected
+          // for issuer mismatch — a false "pass". Fail the case instead.
+          if (!fromHosted) {
+            throw new Error(
+              "The hosted issuer did not return an assertion for this case"
+            );
+          }
+          minted = fromHosted;
+        } else {
+          minted = issueNegativeIdJag(
+            {
+              issuer,
+              subject,
+              email: parsed.email,
+              audience: parsed.audience,
+              resource: parsed.resource,
+              clientId: resolvedClientId,
+              scope: effectiveScope,
+            },
+            mode
+          );
+        }
+        token = minted.token;
+        diff = buildNegativeDiff(mode, minted.header, minted.payload, {
           audience: parsed.audience,
           resource: parsed.resource,
           clientId: resolvedClientId,
           subject,
-          scope: parsed.scope,
+          scope: effectiveScope,
           issuer,
         });
       } catch (error) {
@@ -919,13 +1962,39 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
         };
       }
 
-      const form = new URLSearchParams();
-      form.set("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer");
-      form.set("assertion", token);
-      if (clientId) form.set("client_id", clientId);
-      if (clientSecret) form.set("client_secret", clientSecret);
-      if (parsed.scope) form.set("scope", parsed.scope);
-      form.set("resource", parsed.resource);
+      // Signs a fresh client_assertion per case for confidential CIMD
+      // (private_key_jwt); a no-op for the other methods. `aud` is the
+      // unnormalized endpoint — the same string the positive flow signs over,
+      // so an AS that compares it strictly can't reject a case for the wrong
+      // reason and make a broken assertion look correctly refused.
+      let jwtBearerRequest: ReturnType<typeof buildXaaJwtBearerRequest>;
+      try {
+        jwtBearerRequest = buildXaaJwtBearerRequest(
+          {
+            assertion: token,
+            tokenEndpoint,
+            clientId,
+            clientSecret,
+            scope: effectiveScope,
+            resource: parsed.resource,
+            tokenEndpointAuthMethod,
+          },
+          resolvedConfidentialCimdProvider
+        );
+      } catch (error) {
+        return {
+          mode,
+          label: details.label,
+          expectedFailure: details.expectedFailure,
+          outcome: "error",
+          verdict: "unknown",
+          diff,
+          detail:
+            error instanceof Error
+              ? error.message
+              : "Failed to build the token request",
+        };
+      }
 
       try {
         const response = await fetch(validated.toString(), {
@@ -934,8 +2003,9 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
             "Content-Type": "application/x-www-form-urlencoded",
             "User-Agent": "MCP-Inspector/1.0",
             ...(extraHeaders || {}),
+            ...jwtBearerRequest.headers,
           },
-          body: form.toString(),
+          body: new URLSearchParams(jwtBearerRequest.body).toString(),
           redirect: options.httpsOnlyProxy ? "manual" : "follow",
           signal: AbortSignal.timeout(NEGATIVE_TEST_CASE_TIMEOUT_MS),
         });
@@ -951,20 +2021,24 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
           response.status >= 200 &&
           response.status < 300 &&
           typeof body?.access_token === "string";
+        const policyDependent = isPolicyDependentNegativeTestMode(mode);
 
         return {
           mode,
           label: details.label,
           expectedFailure: details.expectedFailure,
           outcome: accepted ? "accepted" : "rejected",
-          verdict: accepted ? "fail" : "pass",
+          verdict: policyDependent ? "policy" : accepted ? "fail" : "pass",
           status: response.status,
-          detail: accepted
-            ? `The auth server returned HTTP ${response.status} with an access token for this broken assertion. ` +
-              `This test ${details.description.charAt(0).toLowerCase()}${details.description.slice(1)} ` +
-              `${details.expectedFailure} Because a token was issued instead, a malformed or unauthorized ` +
-              `assertion would be accepted in production.`
-            : undefined,
+          detail:
+            accepted && !policyDependent
+              ? `The auth server returned HTTP ${response.status} with an access token for this broken assertion. ` +
+                `This test ${details.description
+                  .charAt(0)
+                  .toLowerCase()}${details.description.slice(1)} ` +
+                `${details.expectedFailure} Because a token was issued instead, a malformed or unauthorized ` +
+                `assertion would be accepted in production.`
+              : undefined,
           diff,
         };
       } catch (error) {
@@ -996,7 +2070,547 @@ export function createXaaRouter(options: CreateXaaRouterOptions): Hono {
       results,
       failures: results.filter((r) => r.verdict === "fail").length,
     });
+  };
+
+  // Forwarding matters most here: negative tests mint AND fire in one
+  // endpoint, so a local mint would carry the local `iss` and a strict AS
+  // would reject every case for issuer mismatch — a scorecard that "passes"
+  // without testing anything.
+  //
+  // Three paths on a hosted-issuer run:
+  //   - public / pre-registered: hosted mints AND fires (no local secret
+  //     needed) — full relay, unchanged.
+  //   - confidential (a client secret, or private_key_jwt CIMD): hosted mints
+  //     only, we redeem locally, so the secret / CIMD signing key never leaves
+  //     the machine.
+  //   - not hosted: mint and fire locally.
+  router.post("/negative-tests", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const isHosted =
+      Boolean(options.forwardHostedIssuer) &&
+      body &&
+      typeof body === "object" &&
+      (body as Record<string, unknown>).issuerMode === "hosted";
+
+    if (isHosted) {
+      const b = body as Record<string, unknown>;
+      const isConfidential =
+        typeof b.clientSecret === "string" ||
+        b.tokenEndpointAuthMethod === "private_key_jwt";
+      if (isConfidential) {
+        const minted = await mintNegativeViaHosted(c, b);
+        if (!minted.ok) return minted.response;
+        return handleNegativeTests(c, minted.value.issuer, minted.value.mints);
+      }
+      return forwardToHostedIssuer(c, "/negative-tests", b);
+    }
+
+    return handleNegativeTests(c, unscopedIssuer(c));
   });
+
+  // Org-scoped issuer surface: the same mock IdP under /o/:orgId, where the
+  // path segment becomes part of `iss` and minting requires org membership.
+  // The well-known documents stay public — remote authorization servers fetch
+  // them unauthenticated — and serve the same global JWKS (one signing key;
+  // containment comes from gating the mint, not from key separation). Each
+  // org-scoped issuer is modeled as a single-tenant issuer: `iss` alone
+  // identifies the tenant, so ID-JAGs carry no `tenant` claim.
+  if (authorizeOrgIssuer) {
+    const scopedIssuer = (c: Context, orgId: string): string =>
+      `${unscopedIssuer(c)}/o/${orgId}`;
+
+    router.get("/o/:orgId/.well-known/jwks.json", (c) => {
+      const orgIdResult = validateOrgSegment(c);
+      if (!orgIdResult.ok) return orgIdResult.response;
+      return serveJwks(c);
+    });
+
+    router.get("/o/:orgId/.well-known/openid-configuration", (c) => {
+      const orgIdResult = validateOrgSegment(c);
+      if (!orgIdResult.ok) return orgIdResult.response;
+      // The scoped /token serves token exchange (bearer + membership gated).
+      return serveOpenidConfiguration(c, scopedIssuer(c, orgIdResult.value), {
+        tokenExchangeAtToken: true,
+      });
+    });
+
+    router.post("/o/:orgId/authenticate", async (c) => {
+      const orgIdResult = await requireScopedOrg(c);
+      if (!orgIdResult.ok) return orgIdResult.response;
+      return handleAuthenticate(c, scopedIssuer(c, orgIdResult.value));
+    });
+
+    router.post("/o/:orgId/token-exchange", async (c) => {
+      const orgIdResult = await requireScopedOrg(c);
+      if (!orgIdResult.ok) return orgIdResult.response;
+      return handleTokenExchange(c, scopedIssuer(c, orgIdResult.value));
+    });
+
+    router.post("/o/:orgId/negative-tests", async (c) => {
+      const orgIdResult = await requireScopedOrg(c);
+      if (!orgIdResult.ok) return orgIdResult.response;
+      return handleNegativeTests(
+        c,
+        scopedIssuer(c, orgIdResult.value),
+        undefined,
+        orgIdResult.value
+      );
+    });
+
+    // Anonymous test issuer surface: the same mock IdP under /g/:orgId, in a
+    // VISIBLY separate namespace from the membership-gated /o/ issuers. Its
+    // discovery document carries "mcpjam:issuer_kind": "anonymous-test", so a
+    // RAS accepts it only by explicit allowlisting — assertions minted here
+    // prove control of an anonymous session (guest bound to their own
+    // personal org via the backend's requirePersonalOrgOwnership), not
+    // IdP-assured identity. Never enterprise-managed-authorization
+    // conformance.
+    const anonymousScopedIssuer = (c: Context, orgId: string): string =>
+      `${unscopedIssuer(c)}/g/${orgId}`;
+
+    router.get("/g/:orgId/.well-known/jwks.json", (c) => {
+      const orgIdResult = validateOrgSegment(c);
+      if (!orgIdResult.ok) return orgIdResult.response;
+      return serveJwks(c);
+    });
+
+    router.get("/g/:orgId/.well-known/openid-configuration", (c) => {
+      const orgIdResult = validateOrgSegment(c);
+      if (!orgIdResult.ok) return orgIdResult.response;
+      return serveOpenidConfiguration(
+        c,
+        anonymousScopedIssuer(c, orgIdResult.value),
+        {
+          tokenExchangeAtToken: true,
+          anonymousTestIssuer: true,
+        }
+      );
+    });
+
+    router.post("/g/:orgId/authenticate", async (c) => {
+      const orgIdResult = await requireScopedAnonymousOrg(c);
+      if (!orgIdResult.ok) return orgIdResult.response;
+      return handleAuthenticate(c, anonymousScopedIssuer(c, orgIdResult.value));
+    });
+
+    router.post("/g/:orgId/token-exchange", async (c) => {
+      const orgIdResult = await requireScopedAnonymousOrg(c);
+      if (!orgIdResult.ok) return orgIdResult.response;
+      return handleTokenExchange(
+        c,
+        anonymousScopedIssuer(c, orgIdResult.value)
+      );
+    });
+
+    router.post("/g/:orgId/negative-tests", async (c) => {
+      const orgIdResult = await requireScopedAnonymousOrg(c);
+      if (!orgIdResult.ok) return orgIdResult.response;
+      return handleNegativeTests(
+        c,
+        anonymousScopedIssuer(c, orgIdResult.value)
+      );
+    });
+  }
+
+  // ── Mock OIDC IdP: real authorization_code flow + userinfo ──────────────
+  // Lets external services (e.g. Scalekit Full Stack Auth) configure MCPJam
+  // as a discovery-driven test OIDC IdP. Always registered. All four endpoints
+  // are public front-channel/RP surfaces — every state-changing one is guarded
+  // (foreign-Origin CSRF reject, S256 PKCE, per-IP rate limit, typ
+  // segregation). The token-exchange grant on /token issues ID-JAGs, so it
+  // inherits the same gate as the surface's mint endpoints: local = open,
+  // org-scoped = bearer + membership, unscoped hosted = refused (otherwise the
+  // public /authorize mock sign-in chained into a public token exchange would
+  // launder the org-membership gate). A bare block keeps the handler closures
+  // scoped without an enclosing conditional.
+  {
+    const readForm = async (
+      c: Context
+    ): Promise<Record<string, string> | null> => {
+      try {
+        const formData = await c.req.formData();
+        const entries: Record<string, string> = {};
+        formData.forEach((value, key) => {
+          entries[key] = String(value);
+        });
+        return entries;
+      } catch {
+        return null;
+      }
+    };
+
+    const handleAuthorize = (c: Context, issuer: string) => {
+      const query: Record<string, string | undefined> = {
+        client_id: c.req.query("client_id"),
+        redirect_uri: c.req.query("redirect_uri"),
+        response_type: c.req.query("response_type"),
+        state: c.req.query("state"),
+        nonce: c.req.query("nonce"),
+        scope: c.req.query("scope"),
+        code_challenge: c.req.query("code_challenge"),
+        code_challenge_method: c.req.query("code_challenge_method"),
+      };
+      const parsed = parseAuthorizeParams(query);
+      if ("error" in parsed) {
+        // Never redirect on a validation failure — the redirect_uri may be
+        // the invalid part. A plain error page is the safe terminal.
+        return c.html(
+          `<!DOCTYPE html><html><body><h1>Invalid authorization request</h1><p>${escapeHtml(
+            parsed.error
+          )}</p></body></html>`,
+          400
+        );
+      }
+      return c.html(
+        renderAuthorizePage({
+          confirmUrl: `${issuer}/authorize/confirm`,
+          params: parsed,
+        }),
+        200,
+        { "Cache-Control": "no-store" }
+      );
+    };
+
+    const handleAuthorizeConfirm = async (c: Context, issuer: string) => {
+      // The confirm POST issues a code and 302s to redirect_uri, so it must be
+      // driven by our own interstitial, never a cross-site auto-submit (which
+      // would make this a POST-triggered open redirector).
+      const crossOrigin = rejectCrossOriginPost(c, allowedBrowserOrigins);
+      if (crossOrigin) return crossOrigin;
+      const ip = getClientIp(c);
+      if (ip && !checkOidcIpCap(ip)) {
+        return oauthError(429, "temporarily_unavailable", "Too many requests");
+      }
+      const form = await readForm(c);
+      if (!form) {
+        return oauthError(
+          400,
+          "invalid_request",
+          "Body must be application/x-www-form-urlencoded"
+        );
+      }
+      const parsed = parseAuthorizeParams(form);
+      if ("error" in parsed) {
+        return c.html(
+          `<!DOCTYPE html><html><body><h1>Invalid authorization request</h1><p>${escapeHtml(
+            parsed.error
+          )}</p></body></html>`,
+          400
+        );
+      }
+
+      const issued = issueAuthorizationCode({
+        issuer,
+        subject: parsed.subject || "user-12345",
+        email: parsed.email || "demo.user@example.com",
+        clientId: parsed.clientId,
+        redirectUri: parsed.redirectUri,
+        nonce: parsed.nonce,
+        codeChallenge: parsed.codeChallenge,
+      });
+
+      const redirect = new URL(parsed.redirectUri);
+      redirect.searchParams.set("code", issued.token);
+      if (parsed.state) {
+        redirect.searchParams.set("state", parsed.state);
+      }
+      return c.redirect(redirect.toString(), 302);
+    };
+
+    const handleAuthorizationCodeGrant = (
+      issuer: string,
+      form: Record<string, string>
+    ): Response => {
+      const { code, redirect_uri: redirectUri, client_id: clientId } = form;
+      if (!code || !redirectUri || !clientId) {
+        return oauthError(
+          400,
+          "invalid_request",
+          "code, redirect_uri and client_id are required"
+        );
+      }
+
+      let payload: Record<string, unknown>;
+      try {
+        payload = verifyXaaJwt(code, { issuer, typ: XAA_CODE_JWT_TYP });
+      } catch (error) {
+        return oauthError(
+          400,
+          "invalid_grant",
+          error instanceof Error ? error.message : "Invalid code"
+        );
+      }
+      if (
+        payload.client_id !== clientId ||
+        payload.redirect_uri !== redirectUri
+      ) {
+        return oauthError(
+          400,
+          "invalid_grant",
+          "client_id and redirect_uri must match the authorization request"
+        );
+      }
+      // PKCE: enforced when the code carries a challenge, allowed absent for
+      // the plain mock flow.
+      if (typeof payload.code_challenge === "string") {
+        const verifier = form.code_verifier;
+        if (!verifier) {
+          return oauthError(
+            400,
+            "invalid_grant",
+            "code_verifier is required for a PKCE authorization code"
+          );
+        }
+        const computed = createHash("sha256")
+          .update(verifier)
+          .digest("base64url");
+        if (computed !== payload.code_challenge) {
+          return oauthError(
+            400,
+            "invalid_grant",
+            "code_verifier does not match the code_challenge"
+          );
+        }
+      }
+
+      const subject = String(payload.sub ?? "user-12345");
+      const email = String(payload.email ?? "demo.user@example.com");
+      const idToken = issueMockIdToken({
+        issuer,
+        subject,
+        email,
+        audience: clientId,
+        nonce: typeof payload.nonce === "string" ? payload.nonce : undefined,
+      });
+      const accessToken = issueAccessToken({
+        issuer,
+        subject,
+        email,
+        clientId,
+      });
+
+      return Response.json(
+        {
+          id_token: idToken.token,
+          access_token: accessToken.token,
+          token_type: "Bearer",
+          expires_in: Math.max(
+            0,
+            Math.floor((accessToken.expiresAt - Date.now()) / 1000)
+          ),
+          scope: "openid profile email",
+        },
+        { headers: TOKEN_NO_STORE_HEADERS }
+      );
+    };
+
+    // Thin adapter over the shared RFC 8693 core. The core owns the whole
+    // grant contract — OAuth-shaped errors, the saml2 subject-token branch,
+    // and the `subject_id_format` mock extension.
+    const handleTokenExchangeGrant = (
+      issuer: string,
+      form: Record<string, string>
+    ): Response => {
+      const result = handleXaaTokenExchangeGrant(issuer, form);
+      return Response.json(result.body, {
+        status: result.status,
+        headers: TOKEN_NO_STORE_HEADERS,
+      });
+    };
+
+    // gateTokenExchange: null = allowed; a Response = OAuth-shaped rejection.
+    // It applies only to the token-exchange grant — the authorization_code
+    // branch is untouched.
+    const handleToken = async (
+      c: Context,
+      issuer: string,
+      gateTokenExchange: () => Promise<Response | null>
+    ): Promise<Response> => {
+      // A relying party's token call is server-to-server (no Origin). Block a
+      // cross-site browser POST so a third-party page can't chain the public
+      // /authorize mock sign-in into an unauthenticated ID-JAG mint.
+      const crossOrigin = rejectCrossOriginPost(c, allowedBrowserOrigins);
+      if (crossOrigin) return crossOrigin;
+      const ip = getClientIp(c);
+      if (ip && !checkOidcIpCap(ip)) {
+        return oauthError(429, "temporarily_unavailable", "Too many requests");
+      }
+      const form = await readForm(c);
+      if (!form) {
+        return oauthError(
+          400,
+          "invalid_request",
+          "Body must be application/x-www-form-urlencoded"
+        );
+      }
+
+      if (form.grant_type === "authorization_code") {
+        return handleAuthorizationCodeGrant(issuer, form);
+      }
+      if (form.grant_type === TOKEN_EXCHANGE_GRANT) {
+        const rejection = await gateTokenExchange();
+        if (rejection) return rejection;
+        return handleTokenExchangeGrant(issuer, form);
+      }
+      return oauthError(
+        400,
+        "unsupported_grant_type",
+        "Supported grant types: authorization_code" +
+          (unscopedTokenExchangeAtToken || c.req.param("orgId")
+            ? `, ${TOKEN_EXCHANGE_GRANT}`
+            : "")
+      );
+    };
+
+    const handleUserinfo = (c: Context, issuer: string): Response => {
+      const authHeader = c.req.header("authorization");
+      const token = authHeader?.startsWith("Bearer ")
+        ? authHeader.slice("Bearer ".length)
+        : undefined;
+      if (!token) {
+        return new Response(null, {
+          status: 401,
+          headers: { "WWW-Authenticate": "Bearer" },
+        });
+      }
+      let payload: Record<string, unknown>;
+      try {
+        payload = verifyXaaJwt(token, { issuer, typ: XAA_ACCESS_TOKEN_TYP });
+      } catch {
+        return new Response(null, {
+          status: 401,
+          headers: { "WWW-Authenticate": 'Bearer error="invalid_token"' },
+        });
+      }
+      return Response.json(
+        {
+          sub: payload.sub,
+          email: payload.email,
+          email_verified: true,
+        },
+        { headers: TOKEN_NO_STORE_HEADERS }
+      );
+    };
+
+    // Unscoped surface. Token exchange is served locally (no org gate exists)
+    // and refused on unscoped hosted.
+    router.get("/authorize", (c) => handleAuthorize(c, unscopedIssuer(c)));
+    router.post("/authorize/confirm", (c) =>
+      handleAuthorizeConfirm(c, unscopedIssuer(c))
+    );
+    router.post("/token", async (c) => {
+      const forwarded = await maybeForwardHostedTokenGrant(c);
+      if (forwarded) return forwarded;
+      return handleToken(c, unscopedIssuer(c), async () =>
+        unscopedTokenExchangeAtToken
+          ? null
+          : oauthError(
+              400,
+              "unsupported_grant_type",
+              "Standard token exchange is only served under an organization-scoped issuer (…/o/<orgId>/token)"
+            )
+      );
+    });
+    router.get("/userinfo", (c) => handleUserinfo(c, unscopedIssuer(c)));
+
+    // Org-scoped surface: public front-channel endpoints (anyone can sign in
+    // as anyone — it's a test IdP), but the token-exchange grant requires the
+    // caller to be a member of the org, mapped to OAuth-shaped errors.
+    if (authorizeOrgIssuer) {
+      const scopedIssuerFromParam = (c: Context): XaaResult<string> => {
+        const orgId = c.req.param("orgId");
+        if (!orgId || !ORG_ID_RE.test(orgId)) {
+          return xaaFailure(
+            oauthError(400, "invalid_request", "Invalid organization id")
+          );
+        }
+        return xaaSuccess(`${unscopedIssuer(c)}/o/${orgId}`);
+      };
+
+      router.get("/o/:orgId/authorize", (c) => {
+        const issuerResult = scopedIssuerFromParam(c);
+        if (!issuerResult.ok) return issuerResult.response;
+        return handleAuthorize(c, issuerResult.value);
+      });
+      router.post("/o/:orgId/authorize/confirm", (c) => {
+        const issuerResult = scopedIssuerFromParam(c);
+        if (!issuerResult.ok) return issuerResult.response;
+        return handleAuthorizeConfirm(c, issuerResult.value);
+      });
+      router.post("/o/:orgId/token", (c) => {
+        const issuerResult = scopedIssuerFromParam(c);
+        if (!issuerResult.ok) return issuerResult.response;
+        return handleToken(c, issuerResult.value, async () => {
+          const orgIdResult = await requireScopedOrg(c);
+          if (orgIdResult.ok) return null;
+          // Map the gate's JSON error shape onto OAuth token-endpoint errors.
+          const status = orgIdResult.response.status;
+          return oauthError(
+            status,
+            status === 401
+              ? "invalid_client"
+              : status === 403
+              ? "access_denied"
+              : "invalid_request",
+            "Token exchange under an organization issuer requires an org member's bearer token"
+          );
+        });
+      });
+      router.get("/o/:orgId/userinfo", (c) => {
+        const issuerResult = scopedIssuerFromParam(c);
+        if (!issuerResult.ok) return issuerResult.response;
+        return handleUserinfo(c, issuerResult.value);
+      });
+
+      // Anonymous test issuer (/g/): same public front-channel endpoints;
+      // the token-exchange grant is gated to the caller's own personal org
+      // (guest sessions included) via the anonymous authorize flavor.
+      const anonymousIssuerFromParam = (c: Context): XaaResult<string> => {
+        const orgId = c.req.param("orgId");
+        if (!orgId || !ORG_ID_RE.test(orgId)) {
+          return xaaFailure(
+            oauthError(400, "invalid_request", "Invalid organization id")
+          );
+        }
+        return xaaSuccess(`${unscopedIssuer(c)}/g/${orgId}`);
+      };
+
+      router.get("/g/:orgId/authorize", (c) => {
+        const issuerResult = anonymousIssuerFromParam(c);
+        if (!issuerResult.ok) return issuerResult.response;
+        return handleAuthorize(c, issuerResult.value);
+      });
+      router.post("/g/:orgId/authorize/confirm", (c) => {
+        const issuerResult = anonymousIssuerFromParam(c);
+        if (!issuerResult.ok) return issuerResult.response;
+        return handleAuthorizeConfirm(c, issuerResult.value);
+      });
+      router.post("/g/:orgId/token", (c) => {
+        const issuerResult = anonymousIssuerFromParam(c);
+        if (!issuerResult.ok) return issuerResult.response;
+        return handleToken(c, issuerResult.value, async () => {
+          const orgIdResult = await requireScopedAnonymousOrg(c);
+          if (orgIdResult.ok) return null;
+          // Map the gate's JSON error shape onto OAuth token-endpoint errors.
+          const status = orgIdResult.response.status;
+          return oauthError(
+            status,
+            status === 401
+              ? "invalid_client"
+              : status === 403
+              ? "access_denied"
+              : "invalid_request",
+            "Token exchange under the anonymous test issuer requires the owner's session bearer"
+          );
+        });
+      });
+      router.get("/g/:orgId/userinfo", (c) => {
+        const issuerResult = anonymousIssuerFromParam(c);
+        if (!issuerResult.ok) return issuerResult.response;
+        return handleUserinfo(c, issuerResult.value);
+      });
+    }
+  }
 
   return router;
 }
@@ -1006,10 +2620,19 @@ const xaa = createXaaRouter({
   // Local dev allows plain-http loopback targets (e.g. a localhost
   // xaa-mcp-server). The hosted router keeps httpsOnlyProxy: true.
   httpsOnlyProxy: false,
-  // Server-target / registration runs resolve the confidential secret from
-  // Convex using the caller's bearer; works locally when the user is signed in.
-  resolveRegistrationSecret: (args) => fetchXaaResourceAppSecret(args),
+  // Local-only client identity shared with `mcpjam xaa run`. Hosted omits this
+  // provider and therefore owns no confidential-CIMD private key.
+  confidentialCimdProvider: getLocalConfidentialCimdProvider(),
+  // Server-target runs resolve the confidential secret from Convex using the
+  // caller's bearer; works locally when the user is signed in.
   resolveServerSecret: (args) => fetchServerClientSecret(args),
+  // Opt-in per request (issuerMode: "hosted"): mint via app.mcpjam.com so a
+  // cloud AS can discover the issuer — no tunnel needed for the common
+  // local-MCP-server + remote-AS setup.
+  forwardHostedIssuer: { origin: MCPJAM_HOSTED_ORIGIN },
+  // The debugger drives /token from the browser through the dev proxy, whose
+  // Origin doesn't match the rewritten Host.
+  allowedBrowserOrigins: CORS_ORIGINS,
 });
 
 export default xaa;

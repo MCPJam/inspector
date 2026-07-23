@@ -39,7 +39,10 @@ vi.mock("@mcpjam/sdk/model-factory", async () => {
   };
 });
 
-import { runLocalOrgChatTurnHeadless } from "../org-model-stream-handler.js";
+import {
+  formatLocalStreamError,
+  runLocalOrgChatTurnHeadless,
+} from "../org-model-stream-handler.js";
 
 const PROVIDER = { providerKey: "openai" } as never;
 const MESSAGES: ModelMessage[] = [{ role: "user", content: "hi" }];
@@ -198,6 +201,37 @@ describe("runLocalOrgChatTurnHeadless", () => {
     expect(runDirectChatTurnMock).not.toHaveBeenCalled();
   });
 
+  it("allows a turn whose only tools are client-fulfilled (no execute)", async () => {
+    // Approving one of these is resolved by the BROWSER shipping a result —
+    // it never needs the server-side resume this guard exists to demand.
+    stubEngineTurn({ responseMessages: [] });
+    await runLocalOrgChatTurnHeadless(
+      baseOptions({
+        requireToolApproval: true,
+        tools: { ui_execute_tool: { description: "no execute here" } },
+      }),
+    );
+    expect(runDirectChatTurnMock).toHaveBeenCalled();
+  });
+
+  it("still guards a server-executed tool that merely LOOKS client-fulfilled", async () => {
+    // A real MCP server tool named `ui_foo` matches the namespace regex while
+    // still having an `execute`. Exempting on the name alone would run it here
+    // without the approval support the guard demands — the same reason the
+    // client dispatches on registry membership, not the `ui_` prefix.
+    await expect(
+      runLocalOrgChatTurnHeadless(
+        baseOptions({
+          requireToolApproval: true,
+          tools: {
+            ui_foo: { description: "impostor", execute: async () => ({}) },
+          },
+        }),
+      ),
+    ).rejects.toThrow(/Tool approval is not supported/i);
+    expect(runDirectChatTurnMock).not.toHaveBeenCalled();
+  });
+
   it("throws config/allowlist failures instead of returning an error stream", async () => {
     assertOrgModelAllowedMock.mockImplementation(() => {
       throw new Error("model not allowed for this org");
@@ -231,5 +265,48 @@ describe("runLocalOrgChatTurnHeadless", () => {
     expect(captured.options.traceEvents?.onToolResultChunk).toBe(
       onToolResultChunk,
     );
+  });
+});
+
+describe("formatLocalStreamError", () => {
+  it("does not JSON-serialize unknown thrown objects into client-visible errors", () => {
+    const result = formatLocalStreamError({
+      url: "https://internal.example.test/proxy",
+      headers: { authorization: "Bearer secret-token" },
+      requestMetadata: { lease: "lease-secret" },
+    });
+
+    expect(result).toBe("[object Object]");
+    expect(result).not.toContain("internal.example.test");
+    expect(result).not.toContain("secret-token");
+    expect(result).not.toContain("lease-secret");
+  });
+
+  it("still surfaces known-safe message fields from object-like errors", () => {
+    expect(formatLocalStreamError({ error: { message: "upstream failed" } })).toBe(
+      "upstream failed"
+    );
+  });
+
+  it("does not serialize nested data/value objects into client details", () => {
+    const fromData = formatLocalStreamError({
+      statusCode: 500,
+      data: { apiKey: "sk-secret", requestId: "internal-42" },
+    });
+    expect(fromData).not.toContain("sk-secret");
+    expect(fromData).not.toContain("internal-42");
+
+    const fromValue = formatLocalStreamError({
+      value: { authorization: "Bearer lease-secret" },
+    });
+    expect(fromValue).not.toContain("lease-secret");
+  });
+
+  it("surfaces provider string body fields as details", () => {
+    const result = formatLocalStreamError({
+      message: "bad request",
+      responseBody: "provider says: invalid model",
+    });
+    expect(result).toContain("provider says: invalid model");
   });
 });

@@ -1,4 +1,6 @@
 import { HOSTED_MODE } from "@/lib/config";
+import { MCPJAM_HOSTED_APP_ORIGIN } from "@/lib/oauth/constants";
+import { authFetch } from "@/lib/session-token";
 
 export interface XaaIdpUrls {
   issuerBaseUrl: string;
@@ -11,6 +13,63 @@ function getIssuerBasePath(): string {
 }
 
 /**
+ * Org-scoped issuer path segment, e.g. `/o/<orgId>`. Hosted-only: the local
+ * router has no org concept, so a missing org (or local mode) yields "" and
+ * every caller falls back to the unscoped issuer. Signed-in hosted users
+ * should always prefer the scoped issuer — minting under it is gated on org
+ * membership, unlike the legacy unscoped issuer.
+ */
+export function getOrgScopedIssuerSegment(
+  organizationId?: string | null,
+  issuerKind: "org" | "anonymous" = "org",
+): string {
+  if (!HOSTED_MODE || !organizationId) return "";
+  // "anonymous" = the /g/ anonymous test issuer (guest sessions, bound to
+  // the personal org; a RAS must explicitly allowlist it).
+  return issuerKind === "anonymous"
+    ? `/g/${organizationId}`
+    : `/o/${organizationId}`;
+}
+
+/**
+ * The hosted issuer a LOCAL run advertises when the "Use hosted issuer"
+ * opt-in is on: minting is forwarded server-to-server to app.mcpjam.com, so
+ * the token's `iss` (and the JWKS a remote AS fetches) live on the hosted
+ * origin regardless of this build's mode. Signed-in users mint under their
+ * org-scoped issuer; without an org the legacy unscoped issuer applies.
+ * These URLs are constructed, not fetched — hosted CORS blocks a local
+ * browser from reading the hosted discovery doc directly.
+ */
+// The LOCAL server relays hosted-issuer mints to its MCPJAM_HOSTED_ORIGIN
+// (server env), and we advertise THAT issuer's discovery/JWKS URLs — so the
+// client must resolve the same origin, not a hardcoded one. Read
+// VITE_MCPJAM_HOSTED_ORIGIN, defaulting to app.mcpjam.com exactly like the
+// server; set both together when pointing at a staging/self-hosted origin,
+// otherwise the advertised URLs would name a different key than signs the token.
+const HOSTED_ISSUER_ORIGIN =
+  (import.meta.env.VITE_MCPJAM_HOSTED_ORIGIN as string | undefined)?.replace(
+    /\/+$/,
+    "",
+  ) || MCPJAM_HOSTED_APP_ORIGIN;
+
+export function getHostedXaaIdpUrls(
+  organizationId?: string | null,
+  issuerKind: "org" | "anonymous" = "org",
+): XaaIdpUrls {
+  const segment = organizationId
+    ? issuerKind === "anonymous"
+      ? `/g/${organizationId}`
+      : `/o/${organizationId}`
+    : "";
+  const issuerBaseUrl = `${HOSTED_ISSUER_ORIGIN}/api/web/xaa${segment}`;
+  return {
+    issuerBaseUrl,
+    openidConfigUrl: `${issuerBaseUrl}/.well-known/openid-configuration`,
+    jwksUrl: `${issuerBaseUrl}/.well-known/jwks.json`,
+  };
+}
+
+/**
  * Resolve the MCPJam-as-IdP endpoints the user pastes into their own
  * authorization server, derived from the browser origin. This is a synchronous
  * best-effort guess used for the initial render and as a fallback — in local
@@ -18,9 +77,12 @@ function getIssuerBasePath(): string {
  * that actually mints the ID-JAG `iss`, so prefer `fetchXaaIdpUrls` when an
  * accurate value matters (registration, issuer-trust comparisons).
  */
-export function getXaaIdpUrls(): XaaIdpUrls {
+export function getXaaIdpUrls(
+  organizationId?: string | null,
+  issuerKind: "org" | "anonymous" = "org",
+): XaaIdpUrls {
   const origin = typeof window === "undefined" ? "" : window.location.origin;
-  const issuerBaseUrl = `${origin}${getIssuerBasePath()}`;
+  const issuerBaseUrl = `${origin}${getIssuerBasePath()}${getOrgScopedIssuerSegment(organizationId, issuerKind)}`;
   return {
     issuerBaseUrl,
     openidConfigUrl: `${issuerBaseUrl}/.well-known/openid-configuration`,
@@ -36,10 +98,50 @@ export function getXaaIdpUrls(): XaaIdpUrls {
  * (browser on :5173, backend on :6274). Falls back to null on any failure;
  * callers should default to `getXaaIdpUrls()` then.
  */
+/**
+ * Confidential CIMD: ask the server for the reflector document URL that
+ * publishes ITS client public key. The browser can't hold the private key, so
+ * it presents this URL as its client_id and the server signs the
+ * client_assertion at /proxy/token. Hosted requests are scoped to the active
+ * organization; local keeps its unscoped capability route. Returns null on
+ * failure so the caller can fail closed rather than silently switching to
+ * public CIMD.
+ */
+export async function fetchConfidentialCimdClientUrl(
+  {
+    organizationId,
+    signal,
+  }: {
+    organizationId?: string | null;
+    signal?: AbortSignal;
+  } = {},
+): Promise<string | null> {
+  // authFetch (not plain fetch): this endpoint is session-protected in local
+  // mode (it requires the X-MCP-Session-Auth token), and authFetch also carries
+  // the hosted bearer + refresh-retry in hosted mode. A bare fetch would 401
+  // locally and silently break confidential CIMD.
+  const url =
+    HOSTED_MODE && organizationId
+      ? `${getIssuerBasePath()}/o/${encodeURIComponent(organizationId)}/confidential-cimd/client`
+      : `${getIssuerBasePath()}/confidential-cimd/client`;
+  try {
+    const response = await authFetch(url, { signal });
+    if (!response.ok) return null;
+    const body = (await response.json()) as { clientIdMetadataUrl?: unknown };
+    return typeof body.clientIdMetadataUrl === "string"
+      ? body.clientIdMetadataUrl
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchXaaIdpUrls(
   signal?: AbortSignal,
+  organizationId?: string | null,
+  issuerKind: "org" | "anonymous" = "org",
 ): Promise<XaaIdpUrls | null> {
-  const { openidConfigUrl } = getXaaIdpUrls();
+  const { openidConfigUrl } = getXaaIdpUrls(organizationId, issuerKind);
   try {
     const response = await fetch(openidConfigUrl, { signal });
     if (!response.ok) {

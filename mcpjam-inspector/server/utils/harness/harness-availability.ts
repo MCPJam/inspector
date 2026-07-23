@@ -10,16 +10,17 @@
  *
  * Rules are driven by the adapter's declared CAPABILITIES (requiresComputer,
  * approval surfaces, MCP support), not hardcoded per-harness — so a new harness
- * gets the right gates for free. Only the cheap synchronous checks live here;
- * the MODEL CREDENTIAL (a Convex network call) stays an in-turn fail-closed
- * backstop, as do expensive runtime failures (computer wake, E2B connect).
+ * gets the right gates for free. Only the cheap synchronous checks live here —
+ * including the inspector-side BROKER DELIVERY kill switch (an env read), the
+ * only credential path since COMP-23. The backend broker/proxy flags (a network
+ * call away) stay in-turn fail-closed backstops, as do expensive runtime
+ * failures (computer wake, E2B connect).
  */
 import { isComputersDataPlaneConfigured } from "../computers/control-plane-client.js";
+import { harnessBrokerDeliveryEnabled } from "./harness-flags.js";
 import { getHarnessAdapter, type HarnessId } from "./registry.js";
 
-export type HarnessAvailability =
-  | { ok: true }
-  | { ok: false; reason: string };
+export type HarnessAvailability = { ok: true } | { ok: false; reason: string };
 
 export function checkHarnessRuntimeAvailable(args: {
   /** The harness this host runs — selects the capability set. */
@@ -38,17 +39,55 @@ export function checkHarnessRuntimeAvailable(args: {
    *  model the runtime can't actually run (e.g. a non-gpt-5 model on Codex) is
    *  rejected instead of silently falling back to the runtime's default. */
   modelId: string;
+  /**
+   * Whether the host's enterprise-managed authorization policy is on. The
+   * harness reaches MCP servers through the signed-proxy route
+   * (`routes/web/harness-mcp.ts`), whose Convex-minted token carries only
+   * `{projectId, serverId}` — no host — so that route CANNOT resolve or
+   * enforce the policy, and an unregistered `auto` server would silently
+   * take the discover/OAuth path instead of failing closed. Rather than let
+   * a harness turn bypass enforcement, reject the combination here. Lifting
+   * this requires threading the policy through the harness proxy token
+   * claims (a hand-mirrored Convex↔inspector contract — separate PR).
+   */
+  xaaEnterprisePolicyOn?: boolean;
 }): HarnessAvailability {
   const adapter = getHarnessAdapter(args.harnessId);
   const name = adapter.displayName;
+
+  // Broker delivery is the ONLY credential path (COMP-23) — with the kill
+  // switch off, no harness turn can obtain model access, so fail here with one
+  // clear pre-stream error instead of a raw mid-turn throw.
+  if (!harnessBrokerDeliveryEnabled()) {
+    return {
+      ok: false,
+      reason:
+        `the ${name} harness delivers model credentials via the broker, ` +
+        "and broker delivery is disabled on this server " +
+        "(MCPJAM_HARNESS_BROKER_DELIVERY=false) — re-enable it to run " +
+        "harness turns",
+    };
+  }
+
+  if (args.xaaEnterprisePolicyOn) {
+    return {
+      ok: false,
+      reason:
+        `the ${name} harness can't run on an enterprise-managed host yet — ` +
+        "the harness reaches MCP servers through a signed proxy that can't " +
+        "carry the host's authorization policy, so a turn could bypass it. " +
+        "Turn off enterprise-managed authorization on this host, or use the " +
+        "emulated engine",
+    };
+  }
 
   if (adapter.requiresComputer && !isComputersDataPlaneConfigured()) {
     return {
       ok: false,
       reason:
-        `the ${name} harness needs a computer, but the computers data plane ` +
-        "is not configured (need CONVEX_HTTP_URL, COMPUTERS_DATA_PLANE_SECRET, " +
-        "and E2B_API_KEY)",
+        `the ${name} harness needs a computer, but this server is not a ` +
+        "computers data plane (deployed servers bootstrap credentials from " +
+        "INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md)",
     };
   }
 

@@ -19,8 +19,8 @@ export const SEVERITY_CLASS: Record<GroupFinding["severity"], string> = {
 };
 
 export const CATEGORY_LABEL: Record<GroupFinding["category"], string> = {
-  host_divergence: "Host divergence",
-  all_hosts_failed: "All hosts failed",
+  host_divergence: "Client divergence",
+  all_hosts_failed: "All clients failed",
   tool_path_divergence: "Tool path",
   efficiency_divergence: "Efficiency",
   environment_failure: "Environment",
@@ -28,7 +28,7 @@ export const CATEGORY_LABEL: Record<GroupFinding["category"], string> = {
 
 export const ATTRIBUTION_LABEL: Record<GroupFinding["attribution"], string> = {
   server_design: "Server design",
-  host_prompt: "Host prompt",
+  host_prompt: "Client prompt",
   model_behavior: "Model behavior",
   test_design: "Test design",
   environment: "Environment",
@@ -40,7 +40,7 @@ export function buildGroupFixPrompt(
   result: RunGroupQualityResult,
 ): string {
   const lines: string[] = [];
-  lines.push(`# Cross-host eval finding: ${finding.title}`);
+  lines.push(`# Cross-client eval finding: ${finding.title}`);
   lines.push("");
   lines.push(`Overall: ${result.summary}`);
   lines.push("");
@@ -49,7 +49,7 @@ export function buildGroupFixPrompt(
     `Likely cause (attribution): ${ATTRIBUTION_LABEL[finding.attribution]} (confidence: ${finding.confidence})`,
   );
   if (finding.affectedHosts.length > 0) {
-    lines.push(`Affected host(s): ${finding.affectedHosts.join(", ")}`);
+    lines.push(`Affected client(s): ${finding.affectedHosts.join(", ")}`);
   }
   if (finding.baselineHosts.length > 0) {
     lines.push(`Compared against: ${finding.baselineHosts.join(", ")}`);
@@ -66,7 +66,7 @@ export function buildGroupFixPrompt(
   lines.push(`Recommendation: ${finding.recommendation}`);
   lines.push("");
   lines.push(
-    "Using the attribution above, modify the MCP server, the test case, or the host configuration to close this cross-host gap.",
+    "Using the attribution above, modify the MCP server, the test case, or the client configuration to close this cross-client gap.",
   );
   return lines.join("\n");
 }

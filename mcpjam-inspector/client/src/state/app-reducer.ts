@@ -64,8 +64,49 @@ const buildProjectServerProjection = (
   ...(server.xaaAuthzIssuer === undefined
     ? {}
     : { xaaAuthzIssuer: server.xaaAuthzIssuer }),
+  ...(server.xaaAllowPathScopedIssuer === undefined
+    ? {}
+    : { xaaAllowPathScopedIssuer: server.xaaAllowPathScopedIssuer }),
   ...(server.xaaSubject === undefined ? {} : { xaaSubject: server.xaaSubject }),
   ...(server.xaaEmail === undefined ? {} : { xaaEmail: server.xaaEmail }),
+  ...(server.xaaIdentityAssertionFormat === undefined
+    ? {}
+    : { xaaIdentityAssertionFormat: server.xaaIdentityAssertionFormat }),
+  ...(server.registrationMode === undefined
+    ? {}
+    : { registrationMode: server.registrationMode }),
+  ...(server.xaaClientAuth === undefined
+    ? {}
+    : { xaaClientAuth: server.xaaClientAuth }),
+  ...(server.xaaDcrClientId === undefined
+    ? {}
+    : { xaaDcrClientId: server.xaaDcrClientId }),
+  ...(server.xaaDcrTokenEndpointAuthMethod === undefined
+    ? {}
+    : {
+        xaaDcrTokenEndpointAuthMethod:
+          server.xaaDcrTokenEndpointAuthMethod,
+      }),
+  ...(server.xaaDcrIssuer === undefined
+    ? {}
+    : { xaaDcrIssuer: server.xaaDcrIssuer }),
+  ...(server.xaaDcrClientSecretExpiresAt === undefined
+    ? {}
+    : {
+        xaaDcrClientSecretExpiresAt: server.xaaDcrClientSecretExpiresAt,
+      }),
+  ...(server.xaaDcrRegisteredAt === undefined
+    ? {}
+    : { xaaDcrRegisteredAt: server.xaaDcrRegisteredAt }),
+  ...(server.xaaDcrStatus === undefined
+    ? {}
+    : { xaaDcrStatus: server.xaaDcrStatus }),
+  ...(server.hasXaaDcrRegistration === undefined
+    ? {}
+    : { hasXaaDcrRegistration: server.hasXaaDcrRegistration }),
+  ...(server.authMethod === undefined
+    ? {}
+    : { authMethod: server.authMethod }),
   ...(server.hasClientSecret === undefined
     ? {}
     : { hasClientSecret: server.hasClientSecret }),
@@ -165,6 +206,12 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         // Hosted project OAuth can succeed without browser-side tokens.
         // Preserve explicit auth mode when the dispatch provides it.
         useOAuth: shouldUseOAuth,
+        // Keep the OAuth profile consistent with the just-saved form so a
+        // 2026→2025 downgrade doesn't leave a stale 2026 profile that the
+        // wire-version resolver would revive on the next reconnect.
+        ...(action.oauthFlowProfile
+          ? { oauthFlowProfile: action.oauthFlowProfile }
+          : {}),
       });
       return {
         ...state,

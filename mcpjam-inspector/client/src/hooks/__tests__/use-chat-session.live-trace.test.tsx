@@ -59,6 +59,15 @@ vi.mock("@/lib/config", () => ({
 vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
   buildAvailableModels: vi.fn(() => [mcpJamModel]),
   getDefaultModel: vi.fn(() => mcpJamModel),
+  isMCPJamProvidedModelMenuItem: vi.fn((model: { id: string }) =>
+    String(model.id).includes("/")
+  ),
+}));
+
+// The hosted-model catalog hook fetches `/api/mcp/models` for everyone now;
+// stub it so it doesn't run a real fetch in this hook test.
+vi.mock("@/hooks/use-hosted-model-catalog", () => ({
+  useHostedModelCatalog: () => ({ hostedCatalog: [], status: "fallback" }),
 }));
 
 vi.mock("@/hooks/use-ai-provider-keys", () => ({
@@ -118,6 +127,9 @@ vi.mock("@workos-inc/authkit-react", () => ({
 }));
 
 vi.mock("convex/react", () => ({
+  // useChatSession resolves the Convex client to submit elicitation answers
+  // straight to the rendezvous table (the blocked replica isn't addressable).
+  useConvex: () => ({ mutation: vi.fn().mockResolvedValue({ ok: true }) }),
   useConvexAuth: () => mockState.convexAuth,
   // useChatSession reads the credit balance (to lock free models at 0
   // credits); no balance in these tests → outOfCredits resolves false.

@@ -228,7 +228,7 @@ export function HostFocusDialog({
               ) : (
                 <Save className="size-3" />
               )}
-              Save host
+              Save client
             </Button>
             <kbd className="ml-1 hidden rounded border border-border bg-muted px-1 py-0.5 font-mono text-[9.5px] text-muted-foreground sm:inline">
               esc

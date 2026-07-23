@@ -3,6 +3,7 @@ import { generateId } from "ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatSession } from "../use-chat-session";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
+import { useUiToolsRegistry } from "@/lib/webmcp/ui-tools-registry";
 
 const mockState = vi.hoisted(() => ({
   sendMessage: vi.fn(),
@@ -13,6 +14,7 @@ const mockState = vi.hoisted(() => ({
   buildServerRequest: vi.fn(),
   getAccessToken: vi.fn(async () => "access-token"),
   getGuestBearerToken: vi.fn(async () => "guest-token"),
+  getCachedGuestSession: vi.fn(() => null),
   hasToken: vi.fn(() => false),
   getToken: vi.fn(() => ""),
   getOpenRouterSelectedModels: vi.fn(() => []),
@@ -22,6 +24,10 @@ const mockState = vi.hoisted(() => ({
   setSelectedModelId: vi.fn(),
   useSharedChatWidgetCapture: vi.fn(),
   latestOnData: undefined as ((part: unknown) => void) | undefined,
+  latestOnToolCall: undefined as
+    | ((options: { toolCall: unknown }) => Promise<void> | void)
+    | undefined,
+  addToolOutput: vi.fn(),
   convexAuth: {
     isAuthenticated: true,
     isLoading: false,
@@ -85,6 +91,10 @@ const gatedGoogleModel = {
 
 vi.mock("@/lib/config", () => ({
   HOSTED_MODE: true,
+}));
+
+vi.mock("@/hooks/use-hosted-model-catalog", () => ({
+  useHostedModelCatalog: () => ({ hostedCatalog: [], status: "fallback" }),
 }));
 
 vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
@@ -161,6 +171,7 @@ vi.mock("@/lib/session-token", () => ({
 
 vi.mock("@/lib/guest-session", () => ({
   getGuestBearerToken: mockState.getGuestBearerToken,
+  getCachedGuestSession: mockState.getCachedGuestSession,
 }));
 
 vi.mock("@/lib/apis/web/context", () => ({
@@ -203,6 +214,9 @@ vi.mock("@workos-inc/authkit-react", () => ({
 }));
 
 vi.mock("convex/react", () => ({
+  // useChatSession resolves the Convex client to submit elicitation answers
+  // straight to the rendezvous table (the blocked replica isn't addressable).
+  useConvex: () => ({ mutation: vi.fn().mockResolvedValue({ ok: true }) }),
   useConvexAuth: () => mockState.convexAuth,
   // useChatSession reads the credit balance (to lock free models at 0
   // credits); no balance in these tests → outOfCredits resolves false.
@@ -218,16 +232,21 @@ vi.mock("@ai-sdk/react", async () => {
         id,
         transport,
         onData,
+        onToolCall,
       }: {
         id: string;
         transport: {
           sendMessages: (options: any) => Promise<unknown>;
         };
         onData?: (part: unknown) => void;
+        onToolCall?: (options: {
+          toolCall: unknown;
+        }) => Promise<void> | void;
       }) => {
         const latchedIdRef = React.useRef(id);
         const latchedTransportRef = React.useRef(transport);
         mockState.latestOnData = onData;
+        mockState.latestOnToolCall = onToolCall;
 
         if (latchedIdRef.current !== id) {
           latchedIdRef.current = id;
@@ -262,6 +281,7 @@ vi.mock("@ai-sdk/react", async () => {
           error: undefined,
           setMessages: mockState.setMessages,
           addToolApprovalResponse: mockState.addToolApprovalResponse,
+          addToolOutput: mockState.addToolOutput,
         };
       }
     ),
@@ -313,9 +333,31 @@ describe("useChatSession hosted mode", () => {
     mockState.getGuestBearerToken.mockResolvedValue("guest-token");
     mockState.selectedModelId = "anthropic/claude-haiku-4.5";
     mockState.latestOnData = undefined;
+    mockState.latestOnToolCall = undefined;
+    mockState.addToolOutput.mockReset();
     vi.mocked(generateId).mockReset();
     vi.mocked(generateId).mockReturnValue("chat-session-id");
     useTrafficLogStore.getState().clear();
+  });
+
+  it("announces the hosted-elicitation handshake", async () => {
+    // The server registers its elicitation callback (and therefore advertises
+    // the capability) ONLY when it sees this. Catalog hosts already declare
+    // elicitation, so a client that doesn't announce would be left hanging on a
+    // prompt it can't render — this field is the rollout gate.
+    renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: ["server-id-1"],
+        },
+      })
+    );
+
+    expect(lastTransportOptions.body()).toMatchObject({
+      hostedElicitationVersion: 1,
+    });
   });
 
   it("includes chatSessionId in the hosted transport body", async () => {
@@ -397,6 +439,98 @@ describe("useChatSession hosted mode", () => {
       surface: "preview",
     });
     unmount();
+  });
+
+  it("never ships WebMCP ui_* tools from the generic hook", async () => {
+    // MCPJam UI tools are agent-surface-only: even with a non-empty internal
+    // registry, the generic chat body must not carry a `uiTools` field on any
+    // surface. The only sender is agent-chat-instances.ts
+    // (/api/web/mcpjam-agent).
+    const unregister = useUiToolsRegistry.getState().registerUiTool({
+      name: "ui_navigate",
+      description: "Navigate the MCPJam inspector",
+      readOnly: false,
+      execute: async () => ({
+        content: [{ type: "text" as const, text: "{}" }],
+      }),
+    });
+    try {
+      // Direct hosted chat: no uiTools field.
+      const direct = renderHook(() =>
+        useChatSession({
+          selectedServers: ["server-1"],
+          hostedContext: {
+            projectId: "project-1",
+            selectedServerIds: ["server-id-1"],
+          },
+        })
+      );
+      expect(lastTransportOptions.body()).not.toHaveProperty("uiTools");
+      direct.unmount();
+
+      // Chatbox session (published/share-link or owner preview): same —
+      // the field is absent entirely, not sent as an empty list.
+      const chatbox = renderHook(() =>
+        useChatSession({
+          selectedServers: ["server-1"],
+          hostedContext: {
+            projectId: "project-1",
+            selectedServerIds: ["server-id-1"],
+            chatboxId: "cbx_test",
+            accessVersion: 1,
+          },
+        })
+      );
+      expect(lastTransportOptions.body()).not.toHaveProperty("uiTools");
+      chatbox.unmount();
+    } finally {
+      unregister();
+    }
+  });
+
+  it("does not claim a server-origin ui_* tool call in the generic hook", async () => {
+    // Provenance boundary regression: an MCP server may legitimately expose a
+    // tool named `ui_server_action`. Even when the internal MCPJam UI registry
+    // holds a same-named entry, the generic hook's onToolCall must NOT execute
+    // it in the browser or synthesize a tool output — the call falls through
+    // to the server's execute path like any other MCP tool.
+    const uiExecute = vi.fn(async () => ({
+      content: [{ type: "text" as const, text: "{}" }],
+    }));
+    const unregister = useUiToolsRegistry.getState().registerUiTool({
+      name: "ui_server_action",
+      description: "Registry twin that must not claim the server call",
+      readOnly: false,
+      execute: uiExecute,
+    });
+    try {
+      const { unmount } = renderHook(() =>
+        useChatSession({
+          selectedServers: ["server-1"],
+          hostedContext: {
+            projectId: "project-1",
+            selectedServerIds: ["server-id-1"],
+          },
+        })
+      );
+      expect(mockState.latestOnToolCall).toBeDefined();
+
+      await act(async () => {
+        await mockState.latestOnToolCall?.({
+          toolCall: {
+            toolName: "ui_server_action",
+            toolCallId: "tool-call-ui-1",
+            input: {},
+          },
+        });
+      });
+
+      expect(uiExecute).not.toHaveBeenCalled();
+      expect(mockState.addToolOutput).not.toHaveBeenCalled();
+      unmount();
+    } finally {
+      unregister();
+    }
   });
 
   it("uses organization provider config to expose BYOK hosted models", async () => {
@@ -778,7 +912,7 @@ describe("useChatSession hosted mode", () => {
     );
   });
 
-  it("keeps only the three premium hosted models disabled for anonymous hosted viewers", async () => {
+  it("leaves all hosted models enabled for anonymous hosted viewers (guests un-gated)", async () => {
     mockState.convexAuth.isAuthenticated = false;
     mockState.getAccessToken.mockRejectedValue(new Error("LoginRequiredError"));
 
@@ -806,49 +940,16 @@ describe("useChatSession hosted mode", () => {
       "openai/gpt-4o-mini",
       "anthropic/claude-haiku-4.5",
     ]);
-    expect(
-      result.current.availableModels.find(
-        (model) => model.id === "anthropic/claude-haiku-4.5"
-      )?.disabled
-    ).toBeUndefined();
-    expect(
-      result.current.availableModels.find(
-        (model) => model.id === "anthropic/claude-opus-4.6"
-      )
-    ).toMatchObject({
-      disabled: true,
-      disabledReason: "Sign in to use MCPJam provided models",
-    });
-    expect(
-      result.current.availableModels.find(
-        (model) => model.id === "google/gemini-3.1-pro-preview"
-      )
-    ).toMatchObject({
-      disabled: true,
-      disabledReason: "Sign in to use MCPJam provided models",
-    });
-    expect(
-      result.current.availableModels.find(
-        (model) => model.id === "openai/gpt-5.4-pro"
-      )
-    ).toMatchObject({
-      disabled: true,
-      disabledReason: "Sign in to use MCPJam provided models",
-    });
-    expect(
-      result.current.availableModels.find(
-        (model) => model.id === "qwen/qwen3.6-plus"
-      )?.disabled
-    ).toBeUndefined();
-    expect(
-      result.current.availableModels.find(
-        (model) => model.id === "openai/gpt-4o-mini"
-      )?.disabled
-    ).toBeUndefined();
+    // Guests are no longer model-curated: NO hosted model is locked with the
+    // "Sign in" reason. Anonymous hosted users are still funnelled to sign in
+    // by the input-level disableForAuthentication gate, not per-model locks.
+    for (const model of result.current.availableModels) {
+      expect(model.disabled).toBeUndefined();
+    }
     unmount();
   });
 
-  it("falls back when an anonymous hosted viewer has a gated model persisted", async () => {
+  it("keeps a formerly-gated persisted model selected for an anonymous hosted viewer", async () => {
     mockState.convexAuth.isAuthenticated = false;
     mockState.getAccessToken.mockRejectedValue(new Error("LoginRequiredError"));
     mockState.selectedModelId = "google/gemini-3.1-pro-preview";
@@ -869,7 +970,10 @@ describe("useChatSession hosted mode", () => {
       expect(result.current.disableForAuthentication).toBe(false);
     });
 
-    expect(result.current.selectedModel.id).toBe("qwen/qwen3.6-plus");
+    // No longer gated → the persisted model stays selected (no fallback).
+    expect(result.current.selectedModel.id).toBe(
+      "google/gemini-3.1-pro-preview"
+    );
     unmount();
   });
   it("treats anonymous shared-chat viewers as guest users", async () => {
@@ -892,11 +996,15 @@ describe("useChatSession hosted mode", () => {
       expect(result.current.disableForAuthentication).toBe(false);
     });
 
+    // Every hosted model is now enabled for a guest shared-chat viewer.
     expect(
       result.current.availableModels
         .filter((model) => !model.disabled)
         .map((model) => model.id)
     ).toEqual([
+      "anthropic/claude-opus-4.6",
+      "google/gemini-3.1-pro-preview",
+      "openai/gpt-5.4-pro",
       "qwen/qwen3.6-plus",
       "openai/gpt-4o-mini",
       "anthropic/claude-haiku-4.5",

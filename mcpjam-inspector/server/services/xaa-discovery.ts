@@ -92,7 +92,7 @@ function isParseableUrl(value: string): boolean {
  * callers can fall back to another discovery path.
  */
 export function extractAuthorizationServer(
-  metadata: Record<string, unknown>,
+  metadata: Record<string, unknown>
 ): string | undefined {
   const servers = metadata.authorization_servers;
   if (!Array.isArray(servers)) {
@@ -116,11 +116,22 @@ export interface IssuerMismatch {
   requested: string;
   advertised: string;
   schemeOnly: boolean;
+  /**
+   * The advertised issuer is a same-origin path-prefix ancestor of the
+   * requested URL (e.g. requested https://env.example.com/resources/res_x,
+   * advertised https://env.example.com). The shape of multi-tenant
+   * authorization servers that scope endpoints under a path while issuing
+   * from the origin root — acceptable only under the per-server
+   * path-scoped-issuer opt-in.
+   */
+  originPrefix: boolean;
 }
 
 export interface DiscoveryVerdict {
   issuer?: string;
   tokenEndpoint?: string;
+  registrationEndpoint?: string;
+  clientIdMetadataDocumentSupported: boolean;
   grantTypesSupported?: string[];
   jwtBearerSupport: GrantSupportStatus;
   jwtBearerDetail: string;
@@ -152,6 +163,27 @@ function fullIdentity(value: string): string {
   }
 }
 
+// True when `advertised` is the origin root or a path-prefix ancestor of
+// `requested` on the SAME origin (scheme + host + port). Segment-aware:
+// /resources is an ancestor of /resources/res_x but not of /resources-evil.
+function isOriginPrefix(advertised: string, requested: string): boolean {
+  let adv: URL;
+  let req: URL;
+  try {
+    adv = new URL(advertised);
+    req = new URL(requested);
+  } catch {
+    return false;
+  }
+  if (adv.origin !== req.origin) return false;
+  const advPath = stripTrailingSlash(adv.pathname);
+  const reqPath = stripTrailingSlash(req.pathname);
+  if (advPath === reqPath) return false;
+  return advPath === "" || advPath === "/"
+    ? reqPath.length > 0
+    : reqPath.startsWith(`${advPath}/`);
+}
+
 /**
  * Turn fetched authorization-server metadata into the verdicts the runner
  * renders: jwt-bearer grant support (pass/warn/fail), token-endpoint presence,
@@ -159,7 +191,7 @@ function fullIdentity(value: string): string {
  */
 export function evaluateDiscovery(
   metadata: Record<string, unknown>,
-  context: { requestedIssuer: string; metadataUrl: string },
+  context: { requestedIssuer: string; metadataUrl: string }
 ): DiscoveryVerdict {
   const issuer =
     typeof metadata.issuer === "string" ? metadata.issuer : undefined;
@@ -167,10 +199,14 @@ export function evaluateDiscovery(
     typeof metadata.token_endpoint === "string"
       ? metadata.token_endpoint
       : undefined;
+  const registrationEndpoint =
+    typeof metadata.registration_endpoint === "string"
+      ? metadata.registration_endpoint
+      : undefined;
   const grantTypesAdvertised = Array.isArray(metadata.grant_types_supported);
   const grantTypes = grantTypesAdvertised
     ? (metadata.grant_types_supported as unknown[]).filter(
-        (g): g is string => typeof g === "string",
+        (g): g is string => typeof g === "string"
       )
     : undefined;
 
@@ -202,12 +238,16 @@ export function evaluateDiscovery(
       // Same host/path, different scheme → almost always a proxy that
       // terminates TLS but advertises an http:// issuer.
       schemeOnly: hostAndPath(issuer) === hostAndPath(context.requestedIssuer),
+      originPrefix: isOriginPrefix(issuer, context.requestedIssuer),
     };
   }
 
   return {
     issuer,
     tokenEndpoint,
+    registrationEndpoint,
+    clientIdMetadataDocumentSupported:
+      metadata.client_id_metadata_document_supported === true,
     grantTypesSupported: grantTypes,
     jwtBearerSupport,
     jwtBearerDetail,

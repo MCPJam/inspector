@@ -71,6 +71,14 @@ const mockCustomProvidersState = {
   customProviders: [],
   getCustomProviderByName: mockGetCustomProviderByName,
 };
+const mockSharedAppState: any = {
+  projects: {},
+  activeProjectId: "local-project",
+  servers: {},
+  selectedServer: "",
+  selectedMultipleServers: [],
+  isMultiSelectMode: false,
+};
 
 async function resolveConfig<T>(value: T | (() => T | Promise<T>)) {
   return typeof value === "function"
@@ -92,6 +100,10 @@ function getTransportRequests() {
 
 vi.mock("@/lib/config", () => ({
   HOSTED_MODE: false,
+}));
+
+vi.mock("@/hooks/use-hosted-model-catalog", () => ({
+  useHostedModelCatalog: () => ({ hostedCatalog: [], status: "fallback" }),
 }));
 
 vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
@@ -134,6 +146,11 @@ vi.mock("@/hooks/use-persisted-model", () => ({
   }),
 }));
 
+vi.mock("@/state/app-state-context", () => ({
+  useOptionalSharedAppState: () => mockSharedAppState,
+  useSharedAppState: () => mockSharedAppState,
+}));
+
 vi.mock("@/lib/ollama-utils", () => ({
   detectOllamaModels: vi.fn(async () => ({
     isRunning: false,
@@ -157,6 +174,7 @@ vi.mock("@/lib/session-token", () => ({
 
 vi.mock("@/lib/guest-session", () => ({
   getGuestBearerToken: (...args: unknown[]) => mockGetGuestBearerToken(...args),
+  getCachedGuestSession: vi.fn(() => null),
 }));
 
 vi.mock("@/hooks/useSharedChatWidgetCapture", () => ({
@@ -170,6 +188,9 @@ vi.mock("@workos-inc/authkit-react", () => ({
 }));
 
 vi.mock("convex/react", () => ({
+  // useChatSession resolves the Convex client to submit elicitation answers
+  // straight to the rendezvous table (the blocked replica isn't addressable).
+  useConvex: () => ({ mutation: vi.fn().mockResolvedValue({ ok: true }) }),
   useConvexAuth: () => mockConvexAuth,
   // useChatSession reads the credit balance (to lock free models at 0
   // credits); no balance in these tests → outOfCredits resolves false.
@@ -279,6 +300,9 @@ describe("useChatSession minimal mode parity", () => {
     mockConvexAuth.isLoading = false;
     mockModelState.availableModels = [baseModel];
     mockModelState.selectedModelId = "gpt-4";
+    mockSharedAppState.projects = {};
+    mockSharedAppState.activeProjectId = "local-project";
+    mockSharedAppState.servers = {};
     mockGetSessionAuthHeaders.mockReturnValue({});
     mockGetAccessToken.mockResolvedValue(null);
     mockGetGuestBearerToken.mockReset();
@@ -845,7 +869,7 @@ describe("useChatSession minimal mode parity", () => {
     expect(useMCPJamLimitDialogStore.getState().intent).toBeNull();
   });
 
-  it("keeps only the three premium MCPJam models gated on the unauthenticated non-hosted path", async () => {
+  it("leaves all MCPJam models enabled on the unauthenticated non-hosted path (guests un-gated)", async () => {
     mockModelState.availableModels = [
       baseModel,
       gatedMcpJamModel,
@@ -884,28 +908,10 @@ describe("useChatSession minimal mode parity", () => {
       "openai/gpt-5-mini",
       "anthropic/claude-haiku-4.5",
     ]);
-    expect(
-      result.current.availableModels.find((model) => model.id === "gpt-4")
-        ?.disabled
-    ).toBeUndefined();
-    expect(
-      result.current.availableModels.find(
-        (model) => model.id === "openai/gpt-5.4-pro"
-      )
-    ).toMatchObject({
-      disabled: true,
-      disabledReason: "Sign in to use MCPJam provided models",
-    });
-    expect(
-      result.current.availableModels.find(
-        (model) => model.id === "openai/gpt-5-mini"
-      )?.disabled
-    ).toBeUndefined();
-    expect(
-      result.current.availableModels.find(
-        (model) => model.id === "anthropic/claude-haiku-4.5"
-      )?.disabled
-    ).toBeUndefined();
+    // Guests un-gated: no MCPJam model carries the "Sign in" lock anymore.
+    for (const model of result.current.availableModels) {
+      expect(model.disabled).toBeUndefined();
+    }
     expect(result.current.selectedModel.id).toBe("openai/gpt-5-mini");
     expect(mockAuthFetch).not.toHaveBeenCalled();
   });
@@ -913,6 +919,11 @@ describe("useChatSession minimal mode parity", () => {
   it("uses org config and the org-aware route for BYOK in non-hosted local dev", async () => {
     mockModelState.selectedModelId = orgAnthropicModel.id;
     mockGetAccessToken.mockResolvedValue(null);
+    mockSharedAppState.servers = {
+      "server-1": {
+        config: { url: "https://mcp.example.com/sse" },
+      },
+    };
 
     const { result } = renderHook(() =>
       useChatSession({
@@ -966,6 +977,105 @@ describe("useChatSession minimal mode parity", () => {
     expect(mockAuthFetch).not.toHaveBeenCalled();
   });
 
+  it("uses the local MCP route for org BYOK when a selected server is local-only", async () => {
+    mockModelState.selectedModelId = orgAnthropicModel.id;
+    mockGetAccessToken.mockResolvedValue(null);
+    mockSharedAppState.servers = {
+      "server-1": {
+        config: { command: "npx", args: ["local-mcp-server"] },
+      },
+    };
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedOrgModelConfig: {
+          providers: [
+            {
+              providerKey: "anthropic",
+              enabled: true,
+              hasSecret: true,
+            },
+          ],
+        },
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: [],
+        },
+      })
+    );
+
+    await waitFor(() => {
+      expect(result.current.isAuthReady).toBe(true);
+    });
+
+    expect(result.current.selectedModel.id).toBe(orgAnthropicModel.id);
+
+    await act(async () => {
+      await result.current.sendMessage({ text: "hello" });
+    });
+
+    const transport = getUsedTransport();
+    expect(transport.options.api).toBe("/api/mcp/chat-v2");
+    expect(transport.requests[0]).toMatchObject({
+      model: orgAnthropicModel,
+      projectId: "project-1",
+      selectedServers: ["server-1"],
+      localMcpRuntimeRequired: true,
+    });
+    expect(transport.requests[0]).not.toHaveProperty("apiKey");
+    expect(transport.requests[0]).not.toHaveProperty("selectedServerIds");
+    expect(mockWindowFetch).toHaveBeenCalledWith(
+      "/api/mcp/chat-v2",
+      expect.objectContaining({
+        headers: { Authorization: "Bearer guest-token" },
+      })
+    );
+    expect(mockAuthFetch).not.toHaveBeenCalled();
+  });
+
+  it("fails closed to the local MCP route when a selected server's config is unresolved", async () => {
+    mockModelState.selectedModelId = orgAnthropicModel.id;
+    mockGetAccessToken.mockResolvedValue(null);
+    // "server-1" is selected but absent from app state (not yet loaded / name
+    // mismatch). Routing to the cloud here would reproduce the "STDIO servers
+    // are not supported" failure if it turns out to be a stdio server.
+    mockSharedAppState.servers = {};
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedOrgModelConfig: {
+          providers: [
+            {
+              providerKey: "anthropic",
+              enabled: true,
+              hasSecret: true,
+            },
+          ],
+        },
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: [],
+        },
+      })
+    );
+
+    await waitFor(() => {
+      expect(result.current.isAuthReady).toBe(true);
+    });
+
+    await act(async () => {
+      await result.current.sendMessage({ text: "hello" });
+    });
+
+    const transport = getUsedTransport();
+    expect(transport.options.api).toBe("/api/mcp/chat-v2");
+    expect(transport.requests[0]).toMatchObject({
+      localMcpRuntimeRequired: true,
+    });
+  });
+
   it("falls back to local provider keys when non-hosted org config is empty", async () => {
     mockModelState.availableModels = [baseModel];
     mockModelState.selectedModelId = baseModel.id;
@@ -1000,7 +1110,7 @@ describe("useChatSession minimal mode parity", () => {
     });
   });
 
-  it("keeps an initialModelId authoritative even when that model is guest-locked", async () => {
+  it("keeps an initialModelId authoritative (now guest-allowed, no lock or auth gate)", async () => {
     mockModelState.availableModels = [
       baseModel,
       gatedMcpJamModel,
@@ -1026,13 +1136,11 @@ describe("useChatSession minimal mode parity", () => {
       expect(result.current.selectedModel.id).toBe("openai/gpt-5.4-pro");
     });
 
-    expect(result.current.selectedModel).toMatchObject({
-      id: "openai/gpt-5.4-pro",
-      disabled: true,
-      disabledReason: "Sign in to use MCPJam provided models",
-    });
-    expect(result.current.isAuthReady).toBe(false);
-    expect(result.current.disableForAuthentication).toBe(true);
+    // The pinned model resolves from availableModels and is no longer locked;
+    // being guest-allowed, it needs no sign-in on the non-hosted path.
+    expect(result.current.selectedModel.disabled).toBeUndefined();
+    expect(result.current.isAuthReady).toBe(true);
+    expect(result.current.disableForAuthentication).toBe(false);
   });
 
   it("creates a locked placeholder when initialModelId is missing from availableModels", async () => {
@@ -1060,15 +1168,16 @@ describe("useChatSession minimal mode parity", () => {
       expect(result.current.selectedModel.id).toBe("openai/gpt-5.4-pro");
     });
 
+    // A pinned model absent from availableModels still resolves to a
+    // placeholder so the id is honored; but as a guest-allowed model it no
+    // longer gates the chat behind sign-in.
     expect(result.current.selectedModel).toMatchObject({
       id: "openai/gpt-5.4-pro",
       name: "openai/gpt-5.4-pro",
       provider: "openai",
-      disabled: true,
-      disabledReason: "Sign in to use MCPJam provided models",
     });
-    expect(result.current.isAuthReady).toBe(false);
-    expect(result.current.disableForAuthentication).toBe(true);
+    expect(result.current.isAuthReady).toBe(true);
+    expect(result.current.disableForAuthentication).toBe(false);
   });
 
   it("uses the latest selectedServers on the next non-hosted send without changing chatSessionId", async () => {

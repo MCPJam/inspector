@@ -23,7 +23,7 @@ afterEach(() => {
 
 function mockFetch(impl: (url: string, init: RequestInit) => Response) {
   globalThis.fetch = vi.fn(async (url: any, init: any) =>
-    impl(String(url), init as RequestInit),
+    impl(String(url), init as RequestInit)
   ) as unknown as typeof fetch;
 }
 
@@ -31,28 +31,28 @@ describe("buildBrokerDummyAuth", () => {
   it("claude-code → dummy anthropic auth pointed at the proxy (no real key)", () => {
     const auth = buildBrokerDummyAuth(
       "claude-code",
-      "https://harness-model.mcpjam.com/web/harness/model-proxy/anthropic",
+      "https://harness-model.mcpjam.com/web/harness/model-proxy/anthropic"
     );
     expect(auth.anthropic?.baseUrl).toBe(
-      "https://harness-model.mcpjam.com/web/harness/model-proxy/anthropic",
+      "https://harness-model.mcpjam.com/web/harness/model-proxy/anthropic"
     );
     expect(auth.anthropic?.authToken).toBeTruthy();
     expect(auth.anthropic?.apiKey).toBe("");
-    expect(auth.gateway).toBeUndefined();
+    // (HarnessAuth has no `gateway` variant since COMP-23 — the raw-key path
+    // is gone at the type level.)
     expect(auth.openaiCompatible).toBeUndefined();
   });
 
   it("codex → dummy openaiCompatible auth pointed at the proxy", () => {
     const auth = buildBrokerDummyAuth(
       "codex",
-      "https://harness-model.mcpjam.com/web/harness/model-proxy/openai/v1",
+      "https://harness-model.mcpjam.com/web/harness/model-proxy/openai/v1"
     );
     expect(auth.openaiCompatible?.baseUrl).toBe(
-      "https://harness-model.mcpjam.com/web/harness/model-proxy/openai/v1",
+      "https://harness-model.mcpjam.com/web/harness/model-proxy/openai/v1"
     );
     expect(auth.openaiCompatible?.apiKey).toBeTruthy();
     expect(auth.anthropic).toBeUndefined();
-    expect(auth.gateway).toBeUndefined();
   });
 });
 
@@ -82,7 +82,7 @@ describe("startHarnessModelBroker", () => {
     });
 
     expect(seenUrl).toBe(
-      "https://convex.example.com/web/harness/model-broker/start",
+      "https://convex.example.com/web/harness/model-broker/start"
     );
     expect(seenBody).toEqual({
       projectId: "p1",
@@ -134,7 +134,7 @@ describe("startHarnessModelBroker", () => {
 
   it("fails closed on a non-2xx response", async () => {
     mockFetch(() =>
-      Response.json({ ok: false, error: "nope" }, { status: 403 }),
+      Response.json({ ok: false, error: "nope" }, { status: 403 })
     );
     const result = await startHarnessModelBroker({
       projectId: "p1",

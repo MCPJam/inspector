@@ -19,6 +19,11 @@ export interface RemoteProject {
   organizationId: string;
   visibility?: ProjectVisibility;
   ownerId: string;
+  /** Admin-controlled default synthetic identity for the MCPJam test IdP
+   * (atomic pair). Absent when the project has no default. */
+  xaaTestDefaults?: {
+    defaultIdentity: { subject: string; email: string };
+  };
   createdAt: number;
   updatedAt: number;
 }
@@ -44,6 +49,8 @@ export interface RemoteServer {
   useOAuth?: boolean;
   oauthScopes?: string[];
   clientId?: string;
+  oauthProtocolVersion?: string;
+  oauthRegistrationStrategy?: string;
   hasClientSecret?: boolean;
   hasEnv?: boolean;
   hasHeaders?: boolean;
@@ -55,6 +62,23 @@ export interface RemoteServer {
   authServerMode?: "mcpjam" | "own";
   xaaSubject?: string;
   xaaEmail?: string;
+  xaaIdentityAssertionFormat?: string;
+  registrationMode?: string;
+  // CIMD client authentication ("none" | "private_key_jwt"). Requires the Convex
+  // schema + `servers:getProjectServers` query to persist/return it for hosted
+  // round-trip, mirroring xaaIdentityAssertionFormat.
+  xaaClientAuth?: string;
+  xaaDcrClientId?: string;
+  xaaDcrTokenEndpointAuthMethod?:
+    | "client_secret_post"
+    | "client_secret_basic"
+    | "none";
+  xaaDcrIssuer?: string;
+  xaaDcrClientSecretExpiresAt?: number;
+  xaaDcrRegisteredAt?: number;
+  xaaDcrStatus?: "registered" | "registering" | "uncertain";
+  hasXaaDcrRegistration?: boolean;
+  authMethod?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -215,6 +239,88 @@ export function useProjectMembers({
     isLoading,
     hasPendingMembers: pendingMembers.length > 0,
   };
+}
+
+// The Swarms surface (personas / journeys / journeyRuns) is *member-only* on
+// the backend: every persona/journey/run query rejects a project **guest**.
+// Mirror that gate in the UI so a guest never fires the (now-erroring)
+// member-only queries. A viewer may access Swarms only when they hold a
+// resolved member-or-above role; a guest — or any unresolved role — is denied.
+export function canViewSwarms(
+  role: ProjectMembershipRole | undefined
+): boolean {
+  return role === "owner" || role === "admin" || role === "member";
+}
+
+// Host create / update / delete are ADMIN-gated server-side (`hosts.ts`
+// `requireAdminAccess` → project role 'admin', which owner+admin resolve to).
+// Mirror that in the UI so a member — who CAN view Swarms — never sees a
+// New/Edit/Apply/Delete affordance that would 403 on click. An unresolved
+// role denies (fail-closed).
+export function canManageHosts(
+  role: ProjectMembershipRole | undefined
+): boolean {
+  return role === "owner" || role === "admin";
+}
+
+// Resolve the *current viewer's* project-membership role for a project, reusing
+// the same members-list signal `ProjectSettingsTab` keys off. Returns
+// `role: undefined` while the members list is still loading (or when the viewer
+// isn't found among the active members). Callers should treat `isLoading` as
+// "not yet decided" rather than firing member-only queries.
+//
+// `identityLoading` is the WorkOS (or equivalent) hydrate signal — Convex
+// `isAuthenticated` alone is NOT enough, because guest sessions also flip it
+// true without ever producing a `viewerEmail`.
+export function useViewerProjectRole({
+  isAuthenticated,
+  projectId,
+  viewerEmail,
+  identityLoading = false,
+}: {
+  isAuthenticated: boolean;
+  projectId: string | null;
+  viewerEmail: string | null | undefined;
+  /** True while the identity provider may still produce `viewerEmail`. */
+  identityLoading?: boolean;
+}): { role: ProjectMembershipRole | undefined; isLoading: boolean } {
+  const { activeMembers, isLoading } = useProjectMembers({
+    isAuthenticated,
+    projectId,
+  });
+
+  const role = useMemo(() => {
+    const email = viewerEmail?.trim().toLowerCase();
+    if (!email) return undefined;
+    return activeMembers.find(
+      (member) => member.email.toLowerCase() === email
+    )?.role;
+  }, [activeMembers, viewerEmail]);
+
+  return {
+    role,
+    isLoading: isViewerRolePending(isLoading, identityLoading, viewerEmail),
+  };
+}
+
+/**
+ * Is the viewer's project role still "not yet decided"?
+ *
+ * - Identity still hydrating → pending (avoids flashing access-denied for a
+ *   real member whose WorkOS `user.email` arrives after Convex auth).
+ * - Identity settled with no email → NOT pending. Convex guest sessions are
+ *   authenticated without a WorkOS user; waiting on email forever spun the
+ *   Swarms gate. No email means no matchable membership → deny.
+ * - Identity settled with an email → pending only while the members list loads.
+ */
+export function isViewerRolePending(
+  membersLoading: boolean,
+  identityLoading: boolean,
+  viewerEmail: string | null | undefined
+): boolean {
+  if (identityLoading) return true;
+  if (!viewerEmail?.trim()) return false;
+  return membersLoading;
 }
 
 export function useProjectMutations() {

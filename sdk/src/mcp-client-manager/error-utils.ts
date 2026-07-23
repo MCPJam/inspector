@@ -58,6 +58,41 @@ export function isMethodUnavailableError(
 }
 
 /**
+ * Errors this SDK raises deliberately as a final verdict — they must never be
+ * retried, however their message reads.
+ *
+ * The elicitation-aware tool timeout raises a timeout-shaped `SdkError`
+ * ("Request timed out ..."), and {@link isRetryableTransientError} classifies
+ * any error whose message mentions "timeout"/"timed out" as a retryable
+ * transient. Retrying a budget we just declared exhausted is exactly wrong,
+ * so the watchdog marks its error here and the retry classifier checks first.
+ *
+ * A WeakSet, not a property on the error. A string-keyed marker was readable —
+ * and forgeable — through the prototype chain: any error inheriting a truthy
+ * `__mcpjamNonRetryable` (including via prototype pollution) would have
+ * silently suppressed legitimate retries. Set membership can't be inherited,
+ * and nothing gets stamped onto errors we don't own.
+ */
+const nonRetryableErrors = new WeakSet<object>();
+
+/**
+ * Marks an error as never-retryable and returns it.
+ */
+export function markNonRetryableError<T extends object>(error: T): T {
+  nonRetryableErrors.add(error);
+  return error;
+}
+
+/**
+ * Whether an error was explicitly marked as never-retryable.
+ */
+export function isNonRetryableMarkedError(error: unknown): boolean {
+  return typeof error === "object" && error !== null
+    ? nonRetryableErrors.has(error)
+    : false;
+}
+
+/**
  * Formats an error for display in error messages.
  *
  * @param error - The error to format

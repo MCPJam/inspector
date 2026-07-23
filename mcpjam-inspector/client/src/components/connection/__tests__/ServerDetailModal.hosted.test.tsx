@@ -20,9 +20,14 @@ vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => false,
 }));
 
+vi.mock("@/lib/analytics", () => ({
+  track: vi.fn(),
+}));
+
 vi.mock("convex/react", () => ({
   useQuery: () => undefined,
   useMutation: () => vi.fn(),
+  useAction: () => vi.fn(),
 }));
 
 vi.mock("sonner", () => ({

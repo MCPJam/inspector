@@ -14,15 +14,16 @@ import {
   SquareSlash,
   MessageCircleQuestionIcon,
   GraduationCap,
-  Box,
+  Network,
+  PackageOpen,
   LayoutGrid,
   GitBranch,
   UserPlus,
   ShieldCheck,
   Loader2,
 } from "lucide-react";
-import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { useFeatureFlagEnabled } from "posthog-js/react";
+import { track } from "@/lib/analytics";
 
 import { NavMain } from "@/components/sidebar/nav-main";
 import {
@@ -50,8 +51,6 @@ import { SidebarUser } from "@/components/sidebar/sidebar-user";
 import { SidebarContextSwitcher } from "@/components/sidebar/sidebar-context-switcher";
 import { SidebarTrialCountdown } from "@/components/sidebar/sidebar-trial-countdown";
 import { ShareProjectDialog } from "@/components/project/ShareProjectDialog";
-//World Cup 2026 TODO remove after the tournament (see world-cup-ball.tsx)
-import { WorldCupBall } from "@/components/world-cup-ball";
 import { useUpdateNotification } from "@/hooks/useUpdateNotification";
 import { Button } from "@mcpjam/design-system/button";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
@@ -87,6 +86,8 @@ interface NavItem {
   icon: React.ComponentType<{ className?: string }>;
   disabled?: boolean;
   disabledTooltip?: string;
+  /** Optional pill shown next to the label, e.g. "New" */
+  badge?: string;
   /** Only show this item when the named feature flag is enabled */
   featureFlag?: string;
   /** Hide this item when the named feature flag is enabled */
@@ -206,9 +207,16 @@ const navigationSections: NavSection[] = [
     id: "mcp-apps",
     items: [
       {
-        title: "Swarms",
+        title: "Chatbox",
         url: "/chatboxes",
-        icon: Box,
+        icon: PackageOpen,
+        featureFlag: "sandboxes-enabled",
+        billingFeature: "chatboxes",
+      },
+      {
+        title: "Swarms",
+        url: "/swarms",
+        icon: Network,
         featureFlag: "sandboxes-enabled",
         billingFeature: "chatboxes",
       },
@@ -272,6 +280,7 @@ const navigationSections: NavSection[] = [
         title: "XAA Debugger",
         url: "/xaa-flow",
         icon: ShieldCheck,
+        badge: "New",
         featureFlag: "xaa",
       },
     ],
@@ -376,21 +385,32 @@ const hostedNavigationSections =
   getHostedNavigationSections(navigationSections);
 
 /**
- * Enable the hosted Skills nav item. `getHostedNavigationSections` runs at
- * module load (no hooks) and marks Skills disabled by default; hosted skills are
- * a **project-membership** resource (authored in Convex, available even without
- * a Computer), so for any hosted member we flip it to enabled. Access is
- * enforced server-side, not by this nav state.
+ * Resolve the hosted Skills nav item against the `skills-enabled` PostHog flag.
+ * `getHostedNavigationSections` runs at module load (no hooks) and marks Skills
+ * disabled by default. Hosted skills are a **project-membership** resource
+ * (authored in Convex, available even without a Computer), but are gated behind
+ * the flag until QA completes:
+ *   - flag on  ⇒ flip the item to enabled (access is still enforced server-side);
+ *   - flag off ⇒ drop the item entirely, rather than leave it grayed with the
+ *     "local only" tooltip, which would misrepresent why it's unavailable.
  */
-function enableHostedSkillsNav(sections: NavSection[]): NavSection[] {
-  return sections.map((section) => ({
-    ...section,
-    items: section.items.map((item) =>
-      normalizeHostedHashTab(item.url.replace(/^[#/]+/, "")) === "skills"
-        ? { ...item, disabled: false, disabledTooltip: undefined }
-        : item,
-    ),
-  }));
+export function resolveHostedSkillsNav(
+  sections: NavSection[],
+  enabled: boolean
+): NavSection[] {
+  return sections
+    .map((section) => ({
+      ...section,
+      items: section.items.flatMap((item) => {
+        const isSkills =
+          normalizeHostedHashTab(item.url.replace(/^[#/]+/, "")) === "skills";
+        if (!isSkills) return [item];
+        return enabled
+          ? [{ ...item, disabled: false, disabledTooltip: undefined }]
+          : [];
+      }),
+    }))
+    .filter((section) => section.items.length > 0);
 }
 
 interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
@@ -576,7 +596,6 @@ export function MCPSidebar({
   onBeforeSignOut,
   ...props
 }: MCPSidebarProps) {
-  const posthog = usePostHog();
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
@@ -585,6 +604,9 @@ export function MCPSidebar({
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
+  // Hosted Cloud Skills nav is gated until QA completes; fail-closed (absent /
+  // loading flag ⇒ hidden). See `useSkillsEnabled`.
+  const skillsEnabled = useFeatureFlagEnabled("skills-enabled");
   const { isAuthenticated, isLoading: isConvexAuthLoading } = useConvexAuth();
   const { user, isLoading: isWorkOsAuthLoading } = useAuth();
   // Until WorkOS + Convex resolve the session we don't yet know guest-vs-authed
@@ -638,8 +660,8 @@ export function MCPSidebar({
   const handleNavClick = (url: string) => {
     if (onNavigate && /^[#/]/.test(url)) {
       const section = url.replace(/^[#/]+/, "");
-      posthog.capture("sidebar_nav_clicked", {
-        ...standardEventProps("mcp_sidebar"),
+      track("sidebar_nav_clicked", {
+        location: "mcp_sidebar",
         section,
       });
       onNavigate(section);
@@ -673,7 +695,7 @@ export function MCPSidebar({
   const hubNavHash = "#servers";
   const visibleNavigationSections = filterByFeatureFlags(
     HOSTED_MODE
-      ? enableHostedSkillsNav(hostedNavigationSections)
+      ? resolveHostedSkillsNav(hostedNavigationSections, skillsEnabled === true)
       : navigationSections,
     featureFlags
   );
@@ -714,8 +736,6 @@ export function MCPSidebar({
                   alt="MCP Jam"
                   className="h-4 w-auto"
                 />
-                {/*World Cup 2026, TODO remove after the tournament */}
-                <WorldCupBall className="ml-1.5" />
               </button>
             ) : state === "expanded" ? (
               <div className="relative isolate w-full">
@@ -738,8 +758,6 @@ export function MCPSidebar({
                     alt="MCP Jam"
                     className="h-4 w-auto"
                   />
-                  {/*World Cup 2026, TODO remove after the tournament */}
-                  <WorldCupBall className="ml-1.5" />
                 </button>
                 <SidebarTrigger
                   className={cn(

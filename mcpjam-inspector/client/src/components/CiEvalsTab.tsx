@@ -56,6 +56,8 @@ import { SdkEvalQuickstart } from "./evals/sdk-eval-quickstart";
 import { TraceViewer } from "./evals/trace-viewer";
 import { isExploreSuite } from "./evals/constants";
 import { HOSTED_MODE } from "@/lib/config";
+import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
+import { buildCiEvalsSnapshot } from "@/lib/webmcp/review-surface-snapshots";
 import { useProjectServers } from "@/hooks/useViews";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 import type { EvalRoute } from "@/lib/eval-route-types";
@@ -131,14 +133,33 @@ export function CiEvalsTab({
     organizationId: null,
   });
 
+  // The CI tab is a lens over CI-active suites: SDK-registered ones (even
+  // before their first run) plus any suite CI has actually reported into
+  // (suite.lastSdkRunAt is the durable server-side signal — backfilled, so
+  // mixed suites whose sdk runs fell out of the recent-runs window still
+  // qualify). Playground-only suites live in the Evaluate tab.
   const visibleSuites = useMemo(
-    () => queries.sortedSuites.filter((entry) => !isExploreSuite(entry.suite)),
+    () =>
+      queries.sortedSuites.filter(
+        (entry) =>
+          !isExploreSuite(entry.suite) &&
+          (entry.suite.source === "sdk" ||
+            entry.suite.lastSdkRunAt != null),
+      ),
     [queries.sortedSuites],
   );
   const hasVisibleSuites = visibleSuites.length > 0;
 
+  // Commit rail groups CI runs only — playground runs on mixed suites would
+  // otherwise flood it as "manual" pseudo-commit groups.
   const commitGroups = useMemo(
-    () => groupRunsByCommit(visibleSuites),
+    () =>
+      groupRunsByCommit(
+        visibleSuites.map((entry) => ({
+          ...entry,
+          recentRuns: entry.recentRuns.filter((run) => run.source === "sdk"),
+        })),
+      ),
     [visibleSuites],
   );
 
@@ -439,6 +460,39 @@ export function CiEvalsTab({
   }, [commitBreadcrumbContext]);
 
   const isRunDetailView = route.type === "run-detail";
+
+  // Agent bridge: SNAPSHOT-ONLY (no tools). CI Evals is a read-only review of
+  // results CI already produced (agentTools kind "none"); the agent may OBSERVE
+  // it. This bridge lives in CiEvalsTab's OWN component with the literal
+  // "ci-evals" id — NEVER in the shared eval hooks EvalsTab also uses, which
+  // would register under the wrong surface. Redacted STATE only: suite names,
+  // commit SHAs, and pass/fail COUNTS — never a test's prompt or model output.
+  useSurfaceAgentBridge({
+    surfaceId: "ci-evals",
+    snapshot: () =>
+      buildCiEvalsSnapshot({
+        routeType: route.type,
+        sidebarMode,
+        selectedSuiteId,
+        selectedSuiteName: selectedSuite?.name ?? null,
+        selectedCommitSha,
+        suites: visibleSuites.map((entry) => ({
+          name: entry.suite.name,
+          source: entry.suite.source ?? "unknown",
+          latestResult:
+            entry.latestRun?.result ?? entry.latestRun?.status ?? null,
+        })),
+        commits: commitGroups.map((group) => ({
+          shortSha: group.shortSha,
+          branch: group.branch,
+          status: group.status,
+          total: group.summary.total,
+          passed: group.summary.passed,
+          failed: group.summary.failed,
+          running: group.summary.running,
+        })),
+      }),
+  });
 
   return (
     <EvalTabGate

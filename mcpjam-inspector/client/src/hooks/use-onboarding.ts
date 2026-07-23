@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useMutation } from "convex/react";
-import { usePostHog } from "posthog-js/react";
+import { track } from "@/lib/analytics";
 import { toast } from "@/lib/toast";
 import type { OnboardingPhase } from "@/lib/onboarding-state";
 import {
@@ -14,6 +14,7 @@ import {
   EXCALIDRAW_SERVER_NAME,
 } from "@/lib/excalidraw-quick-connect";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { HOSTED_MODE } from "@/lib/config";
 import type { ServerFormData } from "@/shared/types.js";
 import type { ServerWithName } from "@/hooks/use-app-state";
 
@@ -103,7 +104,6 @@ export function useOnboarding({
   canPersistRemoteOnboarding = false,
   isProjectProvisioned = true,
 }: UseOnboardingOptions): UseOnboardingReturn {
-  const posthog = usePostHog();
   const markOnboardingAsShownMutation = useMutation(
     "users:markOnboardingShown" as any,
   );
@@ -197,7 +197,14 @@ export function useOnboarding({
   useEffect(() => {
     if (isWorkOsAuthLoading || isSignedInWithWorkOs) return;
     if (didAutoConnectRef.current) return;
-    if (!isProjectProvisioned) return;
+    // Hosted mode stores each server on the Convex project, so the first-run
+    // connect must wait for that project to provision. In local/non-hosted
+    // mode the active project is a local record and Excalidraw connects as a
+    // runtime server, so requiring a Convex-synced project here would strand
+    // first-run guests on an infinite spinner on any deployment that can't
+    // authenticate the guest (e.g. the open-source shared Convex deployment,
+    // where guest auth is never trusted). See issue #3352.
+    if (HOSTED_MODE && !isProjectProvisioned) return;
 
     if (hasRemoteOnboardingState) {
       if (hasSeenOnboarding) return;
@@ -225,11 +232,17 @@ export function useOnboarding({
     if (!didTrackFirstRun.current) {
       didTrackFirstRun.current = true;
       markOnboardingStarted();
-      posthog.capture("onboarding_first_run_eligible", trackingProps);
+      track("onboarding_first_run_eligible", {
+        location: "onboarding",
+        ...trackingProps,
+      });
     }
     setConnectError(null);
     onConnect(EXCALIDRAW_SERVER_CONFIG);
-    posthog.capture("onboarding_connect_excalidraw_auto", trackingProps);
+    track("onboarding_connect_excalidraw_auto", {
+      location: "onboarding",
+      ...trackingProps,
+    });
   }, [
     phase,
     servers,
@@ -239,7 +252,6 @@ export function useOnboarding({
     hasRemoteOnboardingState,
     hasSeenOnboarding,
     onConnect,
-    posthog,
     trackingProps,
   ]);
 
@@ -250,13 +262,17 @@ export function useOnboarding({
     if (excalidrawServer?.connectionStatus === "connected") {
       setPhase("connected_guided");
       setConnectError(null);
-      posthog.capture("onboarding_connect_excalidraw_success", trackingProps);
+      track("onboarding_connect_excalidraw_success", {
+        location: "onboarding",
+        ...trackingProps,
+      });
     } else if (excalidrawServer?.lastError) {
       setPhase("connect_error");
       setConnectError(
         excalidrawServer.lastError || "Failed to connect to Excalidraw",
       );
-      posthog.capture("onboarding_connect_excalidraw_error", {
+      track("onboarding_connect_excalidraw_error", {
+        location: "onboarding",
         ...trackingProps,
         error: excalidrawServer.lastError,
       });
@@ -266,15 +282,18 @@ export function useOnboarding({
   const connectExcalidraw = useCallback(() => {
     setPhase("connecting_excalidraw");
     setConnectError(null);
-    posthog.capture("onboarding_connect_excalidraw_clicked", trackingProps);
+    track("onboarding_connect_excalidraw_clicked", {
+      location: "onboarding",
+      ...trackingProps,
+    });
     onConnect(EXCALIDRAW_SERVER_CONFIG);
-  }, [onConnect, posthog, trackingProps]);
+  }, [onConnect, trackingProps]);
 
   const completeOnboarding = useCallback(() => {
     persistCompletedState();
     setPhase("completed");
-    posthog.capture("onboarding_completed", trackingProps);
-  }, [persistCompletedState, posthog, trackingProps]);
+    track("onboarding_completed", { location: "onboarding", ...trackingProps });
+  }, [persistCompletedState, trackingProps]);
 
   const retryConnect = useCallback(() => {
     setPhase("connecting_excalidraw");

@@ -6,12 +6,9 @@ import {
 } from "ai";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { createLlmModel } from "../../utils/chat-helpers";
-import {
-  getCanonicalModelId,
-  isMCPJamGuestAllowedModel,
-  isMCPJamProvidedModel,
-} from "@/shared/types";
+import { getCanonicalModelId } from "@/shared/types";
 import type { ModelProvider } from "@/shared/types";
+import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import { getClientIp } from "../../utils/client-ip.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
@@ -46,8 +43,6 @@ import {
   prepareChatV2,
   validateAppToolEntries,
   AppToolValidationError,
-  validateUiToolEntries,
-  UiToolValidationError,
   validateWidgetModelContextEntries,
   WidgetModelContextValidationError,
 } from "../../utils/chat-v2-orchestration";
@@ -55,7 +50,11 @@ import {
   formatProviderOverloadError,
   isProviderOverloadError,
 } from "../../utils/provider-error-normalization";
-import { describeError, describeAsSlug } from "@mcpjam/sdk";
+import {
+  describeError,
+  describeAsSlug,
+  readXaaEnterprisePolicy,
+} from "@mcpjam/sdk";
 import { type LiveChatTraceUsage } from "@/shared/live-chat-trace";
 import { isAbortError } from "@/shared/abort-errors";
 import {
@@ -562,22 +561,12 @@ chatV2.post("/", async (c) => {
     // org/BYOK below even after they passed the harness preflight.
     const isMcpJamProvidedModel = Boolean(
       modelDefinition.id &&
-        isMCPJamProvidedModel(modelDefinition.id, modelDefinition.provider)
+        isHostedCatalogModel(modelDefinition.id, modelDefinition.provider)
     );
-    if (
-      isMcpJamProvidedModel &&
-      modelDefinition.id &&
-      !requestAuthHeader &&
-      !isMCPJamGuestAllowedModel(modelDefinition.id, modelDefinition.provider)
-    ) {
-      return c.json(
-        {
-          error:
-            "This MCPJam model is not available for guest access. Sign in to continue.",
-        },
-        403,
-      );
-    }
+    // Guests may use any hosted model — model curation for guests is gone;
+    // the backend enforces spend caps (a soft postpaid guard), not an
+    // allowlist. A guest MCPJam-model request still gets its bearer minted
+    // lazily below (resolveMcpJamAuthHeader).
     let mcpJamAuthHeader = requestAuthHeader;
     const resolveMcpJamAuthHeader = async () => {
       if (mcpJamAuthHeader || !isMcpJamProvidedModel) return mcpJamAuthHeader;
@@ -622,16 +611,12 @@ chatV2.post("/", async (c) => {
       throw error;
     }
 
-    // WebMCP UI tools: same boundary treatment as appTools.
-    let validatedUiTools;
-    try {
-      validatedUiTools = validateUiToolEntries(body.uiTools);
-    } catch (error) {
-      if (error instanceof UiToolValidationError) {
-        return c.json({ error: error.message }, 400);
-      }
-      throw error;
-    }
+    // `body.uiTools` is intentionally ignored here, not rejected: MCPJam UI
+    // tools are agent-route-only (server/routes/web/mcpjam-agent.ts), but
+    // cached pre-cutover clients may still send the field. Without a
+    // validated snapshot no MCPJam UI approval/free-name classification
+    // exists on this route — an MCP server tool named `ui_*` is a normal
+    // executable tool with ordinary approval semantics.
 
     let validatedWidgetModelContext;
     try {
@@ -655,7 +640,7 @@ chatV2.post("/", async (c) => {
         hasSelectedMcpServers: (selectedServers?.length ?? 0) > 0,
         // Provider-aware: a bare model id (no creator prefix) needs the provider
         // to resolve its canonical id, else a hosted MCPJam model is misjudged.
-        modelEligible: isMCPJamProvidedModel(
+        modelEligible: isHostedCatalogModel(
           String(modelDefinition.id),
           modelDefinition.provider,
         ),
@@ -665,6 +650,14 @@ chatV2.post("/", async (c) => {
           String(modelDefinition.id),
           modelDefinition.provider,
         ),
+        // Fail closed rather than let a harness turn bypass the host's
+        // enterprise-managed policy: the harness proxy token carries no
+        // host, so that route can't enforce it (see the flag's docstring).
+        // Read from the server-resolved host config, never the body.
+        xaaEnterprisePolicyOn:
+          readXaaEnterprisePolicy(
+            (hostRuntimeConfig as { mcpProfile?: unknown } | null)?.mcpProfile,
+          ).kind !== "off",
       });
       if (!availability.ok) {
         return c.json(
@@ -739,7 +732,6 @@ chatV2.post("/", async (c) => {
             }
           : {}),
         appTools: validatedAppTools,
-        uiTools: validatedUiTools,
       });
     } catch (error) {
       // prepareChatV2 throws on Anthropic validation errors — return 400.
@@ -948,19 +940,28 @@ chatV2.post("/", async (c) => {
       const modelId = String(modelDefinition.id);
       const inboundAbortSignalOrg = c.req.raw.signal as AbortSignal | undefined;
       warnIfChatAbortSignalMissing(inboundAbortSignalOrg, "mcp/chat-v2");
-      const runtime: OrgProviderRuntime = isLocalRuntimeEligible(providerKey)
-        ? await resolveOrgProviderRuntime(
-            body.projectId,
-            providerKey,
-            modelId,
-            {
-              authHeader: requestAuthHeader,
-              chatboxId: bodyChatboxId,
-              accessVersion: bodyAccessVersion,
-              serverIds: hostConfigServerIds,
-            },
-          )
-        : { runtimeLocation: "cloud", providerKey };
+      // When a selected MCP server is local-only (stdio / localhost / private
+      // IP), the tool loop must run in THIS inspector process — only it can
+      // reach that server. Force the CLOUD runtime so the org key stays in
+      // Convex and the model call is proxied through /stream/org; the tool loop
+      // still executes locally against the local MCP connection. Without this,
+      // a local-eligible provider would resolve to the "local" runtime and pull
+      // the org key onto this machine, which org BYOK must never do.
+      const localMcpRuntimeRequired = body.localMcpRuntimeRequired === true;
+      const runtime: OrgProviderRuntime =
+        !localMcpRuntimeRequired && isLocalRuntimeEligible(providerKey)
+          ? await resolveOrgProviderRuntime(
+              body.projectId,
+              providerKey,
+              modelId,
+              {
+                authHeader: requestAuthHeader,
+                chatboxId: bodyChatboxId,
+                accessVersion: bodyAccessVersion,
+                serverIds: hostConfigServerIds,
+              }
+            )
+          : { runtimeLocation: "cloud", providerKey };
       const onConversationComplete = chatSessionId
         ? async (
             fullHistory: ModelMessage[],
@@ -1114,7 +1115,10 @@ chatV2.post("/", async (c) => {
     return streamDirectChatWithLiveTrace({
       llmModel,
       modelId: String(modelDefinition.id),
-      provider: modelDefinition.provider,
+      // Server-side model definitions always carry a concrete provider (the
+      // widened `string` branch on ModelDefinition.provider is a client
+      // catalog concern), so narrowing back to ModelProvider here is safe.
+      provider: modelDefinition.provider as ModelProvider,
       messageHistory: [...scrubbedModelMessages],
       systemPrompt: effectiveEnhancedSystemPrompt,
       temperature: resolvedTemperature,

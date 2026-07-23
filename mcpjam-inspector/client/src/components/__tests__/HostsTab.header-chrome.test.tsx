@@ -17,6 +17,33 @@ vi.mock("@/hooks/use-previewed-client-id", () => ({
 vi.mock("@/hooks/useClients", () => ({
   useHost: vi.fn(() => ({ host: null, isLoading: false })),
   useHostList: vi.fn(() => ({ hosts: [], isLoading: false })),
+  // Added with the agent tool group (S4): HostsTab now reads the host
+  // mutations to back its bridge handlers.
+  useHostMutations: vi.fn(() => ({
+    createHost: vi.fn(),
+    updateHost: vi.fn(),
+    updateHostServers: vi.fn(),
+    deleteHost: vi.fn(),
+    duplicateHost: vi.fn(),
+  })),
+}));
+
+vi.mock("@/hooks/useProjects", () => ({
+  useProjectServers: vi.fn(() => ({
+    servers: [],
+    serversRecord: {},
+    isLoading: false,
+    hasServers: false,
+  })),
+}));
+
+vi.mock("@/lib/host-compat/use-host-catalog", () => ({
+  useHostCatalog: vi.fn(() => ({
+    status: "loading",
+    catalog: null,
+    version: null,
+    source: null,
+  })),
 }));
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({

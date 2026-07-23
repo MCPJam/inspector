@@ -42,6 +42,7 @@ import {
 } from "./middleware/session-auth";
 import { originValidationMiddleware } from "./middleware/origin-validation";
 import { securityHeadersMiddleware } from "./middleware/security-headers";
+import { startHostedModelCatalogRefresh } from "./services/hosted-model-catalog";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup";
@@ -51,7 +52,9 @@ import { requestLogContextMiddleware } from "./middleware/request-log-context";
 import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url";
 import { createComputerTerminalWsHandler } from "./routes/web/computer-terminal";
 import { createComputerUploadHandler } from "./routes/web/computer-upload";
+import { initComputersStartup } from "./utils/computers/remote-data-plane";
 import { registerSelfFetch } from "./utils/self-app";
+import { shutdownAnalytics } from "./utils/analytics";
 
 const sysLogger = getSystemLogger("process");
 
@@ -114,13 +117,22 @@ function logBox(content: string, title?: string) {
 // Import routes and services
 import mcpRoutes from "./routes/mcp/index";
 import appsRoutes from "./routes/apps/index";
+import {
+  applyHostedPartition,
+  mountHostedOpenRoutes,
+} from "./middleware/hosted-partition";
 import webRoutes from "./routes/web/index";
 import v1Routes from "./routes/v1/index";
 import cliAuthRoutes from "./routes/cli-auth/index";
+import relayRoutes, { relayBodyLimit } from "./routes/relay";
+import { registerXaaClientMetadataRoute } from "./routes/xaa-client-metadata";
+import { registerXaaConfidentialCimdRoute } from "./routes/xaa-confidential-cimd";
+import { createXaaWebRouter } from "./routes/web/xaa";
 import workosAuthkitRoutes from "./routes/workos-authkit";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
 import { shutdownRunningSimulations } from "./services/sessionSimulation/runner";
+import { shutdownRunningJourneyRuns } from "./services/sessionSimulation/swarm-runner";
 import {
   isScheduledEvalsWorkerEnabled,
   startScheduledEvalsWorker,
@@ -134,7 +146,7 @@ import {
   CANIUSE_LANDING_HOSTS,
 } from "./config";
 import "./types/hono"; // Type extensions
-import { initXAAIdpKeyPair } from "./services/xaa-idp-keypair";
+import { initXAAIdpKeyPair, setXaaIdpLogger } from "@mcpjam/sdk";
 
 // Utility function to extract MCP server config from environment variables
 function getMCPConfigFromEnv() {
@@ -233,10 +245,22 @@ warnOnConvexDevMisconfiguration(loadedEnv);
 
 // Generate session token for API authentication
 generateSessionToken();
+setXaaIdpLogger(appLogger);
 initXAAIdpKeyPair();
+
+// Warm the hosted-model catalog (seed ∪ backend /v1/models) so billing
+// dispatch classifies newly-added hosted models correctly. Memoized.
+startHostedModelCatalogRefresh();
 
 startGuestAuthProvisioningInBackground();
 startLocalBrowserRenderingSetupInBackground();
+// Mirror of the call in server/app.ts::createHonoApp — both production
+// entries must wire this up. Memoized, so it's harmless if a process ever
+// ran both. Kicked off here so it overlaps route setup; AWAITED before
+// `serve()` below — synchronous gates (harness pre-flight, evals) read
+// `isComputersDataPlaneConfigured()`, which is only truthful once the
+// credential bootstrap has resolved.
+const computersStartup = initComputersStartup();
 const app = new Hono().onError((err, c) => {
   appLogger.error("Unhandled error:", err);
 
@@ -290,27 +314,11 @@ app.use("*", securityHeadersMiddleware);
 // 2. Origin validation (blocks CSRF/DNS rebinding)
 app.use("*", originValidationMiddleware);
 
-// 3. Hosted mode partition blocks legacy API families (health endpoints exempt).
+// 3. Hosted mode partition blocks legacy API families (health + public
+// catalog exempt). Shared with server/app.ts via applyHostedPartition — keep
+// the allowlist in middleware/hosted-partition.ts, not inline here.
 if (HOSTED_MODE) {
-  app.use("/api/session-token", (c) =>
-    strictModeResponse(c, "/api/session-token")
-  );
-  app.use("/api/mcp", (c, next) => {
-    if (c.req.path === "/api/mcp/health") return next();
-    return strictModeResponse(c, "/api/mcp/*");
-  });
-  app.use("/api/mcp/*", (c, next) => {
-    if (c.req.path === "/api/mcp/health") return next();
-    return strictModeResponse(c, "/api/mcp/*");
-  });
-  app.use("/api/apps", (c, next) => {
-    if (c.req.path === "/api/apps/health") return next();
-    return strictModeResponse(c, "/api/apps/*");
-  });
-  app.use("/api/apps/*", (c, next) => {
-    if (c.req.path === "/api/apps/health") return next();
-    return strictModeResponse(c, "/api/apps/*");
-  });
+  applyHostedPartition(app);
 }
 
 // 4. Session authentication (blocks unauthorized API requests)
@@ -340,7 +348,8 @@ app.use(
 
 // 1MB JSON cap for /api/web/*, with a carve-out for the computer file-upload
 // route (multipart blobs; it applies its own higher bodyLimit at the mount
-// site below). See `webBodyLimit`.
+// site below) and a larger cap for base64 audio transcription bodies. See
+// `webBodyLimit`.
 app.use("/api/web/*", webBodyLimit());
 
 // Typed event logging context (matches app.ts)
@@ -351,22 +360,14 @@ if (!HOSTED_MODE) {
   app.route("/api/apps", appsRoutes);
   app.route("/api/mcp", mcpRoutes);
 } else {
-  // Health endpoints always available, even when legacy API families are disabled.
-  app.get("/api/mcp/health", (c) =>
-    c.json({
-      service: "MCP API",
-      status: "ready",
-      timestamp: new Date().toISOString(),
-    })
-  );
-  app.get("/api/apps/health", (c) =>
-    c.json({
-      service: "Apps API",
-      status: "ready",
-      timestamp: new Date().toISOString(),
-    })
-  );
+  // Only the hosted-open paths (health + public model catalog) are mounted;
+  // the rest of /api/mcp and /api/apps stays 410'd by applyHostedPartition.
+  // Mirror of server/app.ts — both entries share mountHostedOpenRoutes.
+  mountHostedOpenRoutes(app);
 }
+// Construct after loadInspectorEnv() so hosted confidential CIMD observes
+// Inspector dotenv configuration and malformed configured keys fail startup.
+app.route("/api/web/xaa", createXaaWebRouter());
 app.route("/api/web", webRoutes);
 // Computer terminal WebSocket (Project Computers). Registered directly on
 // the root app because the upgrade handler comes from `createNodeWebSocket`;
@@ -425,6 +426,22 @@ registerSelfFetch((request) => app.fetch(request));
 // set. Mirror of the mount in server/app.ts::createHonoApp — both
 // production entries must wire this up.
 app.route("/api/cli/auth", cliAuthRoutes);
+
+// Same-origin PostHog reverse proxy (ad-blocker resilience). Deliberately
+// OUTSIDE /api so it bypasses session auth (analytics flows before any
+// session exists), and mounted before the production static/SPA fallback,
+// whose catch-all only skips /api/* and would otherwise swallow /relay GETs
+// with index.html. Mirror of the mount in server/app.ts::createHonoApp —
+// both production entries must wire this up.
+app.use("/relay/*", relayBodyLimit());
+app.route("/relay", relayRoutes);
+
+// XAA Client ID Metadata Document. Also deliberately OUTSIDE /api (the
+// target authorization server fetches it anonymously) and mounted before
+// the production static/SPA fallback. Mirror of the mount in
+// server/app.ts::createHonoApp — both production entries must wire this up.
+registerXaaClientMetadataRoute(app);
+registerXaaConfidentialCimdRoute(app);
 
 // Fallback for clients that post to "/sse/message" instead of the rewritten proxy messages URL.
 // We resolve the upstream messages endpoint via sessionId and forward with any injected auth.
@@ -665,6 +682,11 @@ const hostname = isDocker ? "0.0.0.0" : "127.0.0.1";
 
 appLogger.info(`🎵 MCPJam: http://127.0.0.1:${displayPort}`);
 
+// Readiness gate: computers credential bootstrap + data-plane discovery must
+// resolve before the first request — see initComputersStartup. Bounded (~11s
+// worst case, sub-second typical) and never throws.
+await computersStartup;
+
 // Start the Hono server
 const server = serve({
   fetch: app.fetch,
@@ -731,8 +753,14 @@ async function shutdown() {
     // status so the dialog/UI doesn't see a stuck "running" run. Bounded
     // by an internal timeout; the outer `forceExitTimer` still wins.
     await shutdownRunningSimulations();
+    // Abort active swarm (journey-execution) runs — stops each run's heartbeat
+    // and lets in-flight sessions report a terminal attempt. Bounded internally.
+    await shutdownRunningJourneyRuns();
     await tunnelManager.closeAll();
     server.close();
+    // Flush queued server-side analytics (bounded internally; forceExitTimer
+    // is the backstop). Billing/funnel events must not die in the queue.
+    await shutdownAnalytics();
     await appLogger.flush();
     clearTimeout(forceExitTimer);
     process.exit(0);

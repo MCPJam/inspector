@@ -1,4 +1,5 @@
 import type { XAAFlowStep } from "./types";
+import type { IdentityAssertionFormat } from "@/shared/xaa.js";
 
 /**
  * Phases group the debugger's fine-grained machine steps onto the four
@@ -41,17 +42,21 @@ export const XAA_PHASES: Record<XAAPhaseKey, XAAPhaseInfo> = {
     blurb:
       "Setup that runs before XAA proper. The Agent asks the MCP Server which Authorization Server protects it, then looks up where that server hands out tokens. The XAA spec assumes the Agent already knows this, so it's numbered Phase 0 — and skipped entirely when you've pre-configured the Authorization Server. The Authorization Server's issuer found here is reused later so the grant is addressed to the right server. (Uses the standard OAuth discovery specs, RFC 9728 and 8414.)",
   },
+  // The sso/token_exchange copy is format-NEUTRAL: the identity assertion may
+  // be an OIDC ID token or a SAML assertion (per-server preset), and phase
+  // headers render once regardless of format. Format-specific wording lives
+  // in the per-step SAML overrides below.
   sso: {
-    title: "Sign in and get an ID token",
+    title: "Sign in and get an identity assertion",
     specStep: 1,
     blurb:
-      "The user logs in at their IdP — the identity provider, i.e. the company login — and the Agent comes away with an ID token: proof of who the user is. This happens once per session and isn't tied to any MCP server yet. In this debugger MCPJam plays the IdP, so the login is simulated.",
+      "The user logs in at their IdP — the identity provider, i.e. the company login — and the Agent comes away with an identity assertion (an OIDC ID token or a SAML assertion): proof of who the user is. This happens once per session and isn't tied to any MCP server yet. In this debugger MCPJam plays the IdP, so the login is simulated.",
   },
   token_exchange: {
-    title: "Exchange the ID token for an ID-JAG",
+    title: "Exchange the identity assertion for an ID-JAG",
     specStep: 2,
     blurb:
-      "The Agent hands the ID token back to the IdP and gets an ID-JAG in return — a short-lived grant that means “this user, for this one MCP server.” The Agent tells the IdP which Authorization Server the grant is for (the one found in Phase 0). The ID token itself never travels any further. (On the wire this is an RFC 8693 token exchange.)",
+      "The Agent hands the identity assertion back to the IdP and gets an ID-JAG in return — a short-lived grant that means “this user, for this one MCP server.” The Agent tells the IdP which Authorization Server the grant is for (the one found in Phase 0). The identity assertion itself never travels any further. (On the wire this is an RFC 8693 token exchange.)",
   },
   jwt_bearer: {
     title: "Exchange the ID-JAG for an access token",
@@ -85,6 +90,10 @@ export const XAA_STEP_ORDER: XAAFlowStep[] = [
   "received_resource_metadata",
   "discover_authz_metadata",
   "received_authz_metadata",
+  "request_client_registration",
+  "received_client_credentials",
+  "fetch_client_metadata_document",
+  "received_client_metadata",
   "user_authentication",
   "received_identity_assertion",
   "token_exchange_request",
@@ -141,19 +150,60 @@ export const XAA_STEP_METADATA: Record<XAAFlowStep, XAAStepInfo> = {
       "If discovery fails, the Authorization Server's issuer or its metadata URL is usually misconfigured.",
     ],
   },
-  user_authentication: {
-    title: "Sign In at the IdP",
+  request_client_registration: {
+    title: "Register a Client at the Authorization Server",
     summary:
-      "The user signs in at the IdP and the Agent receives an ID token — proof of who the user is. MCPJam fakes the IdP here.",
+      "Open Dynamic Client Registration: the Agent asks the Authorization Server to create a client for the XAA grant types, without an initial access token. (RFC 7591.)",
+    phase: "bootstrap",
+    teachableMoments: [
+      "The XAA spec assumes the client is already registered — registration is setup, not part of the grant. This step automates that setup when the server allows open registration.",
+      "A 401/403 here means open registration wasn't accepted; the server may still support DCR behind an initial access token.",
+      "The registration created here is real and may persist at the Authorization Server after this session ends.",
+    ],
+  },
+  received_client_credentials: {
+    title: "Client Registered",
+    summary:
+      "The Authorization Server created the client. MCPJam keeps its credentials in memory for this browser session only.",
+    phase: "bootstrap",
+    teachableMoments: [
+      "The minted client_id now flows into the ID-JAG and the token request — the whole rest of the flow runs as this client.",
+      "Whether the server actually enabled the JWT Bearer grant for this client is proven later, at redemption.",
+    ],
+  },
+  fetch_client_metadata_document: {
+    title: "Request Client Metadata Document",
+    summary:
+      "CIMD: the client_id is a URL to MCPJam's hosted metadata document. The debugger fetches and validates it — the Authorization Server does its own fetch later.",
+    phase: "bootstrap",
+    teachableMoments: [
+      "With CIMD there's nothing to register: the Authorization Server learns about the client by fetching the URL the client_id points at.",
+      "This fetch is only the debugger's preflight. Whether the Authorization Server accepts the URL identity is proven at JWT Bearer redemption.",
+      "The Authorization Server must advertise client_id_metadata_document_supported before a client may attempt this flow.",
+    ],
+  },
+  received_client_metadata: {
+    title: "Client Metadata Document Received",
+    summary:
+      "The hosted document validated: its client_id equals its URL and it declares the XAA grants. The URL is now this run's client_id.",
+    phase: "bootstrap",
+    teachableMoments: [
+      "CIMD without a key-based auth method is a public client — anyone can present this URL. The Authorization Server accepts the identity, it doesn't authenticate it.",
+    ],
+  },
+  user_authentication: {
+    title: "Simulate sign-in at MCPJam IdP",
+    summary:
+      "MCPJam simulates the user signing in at its identity provider.",
     phase: "sso",
     teachableMoments: [
       "This login just proves who the user is — it isn't tied to any MCP server yet.",
     ],
   },
   received_identity_assertion: {
-    title: "ID Token Ready",
+    title: "ID token issued by MCPJam IdP",
     summary:
-      "The Agent holds the ID token, ready to trade it for an ID-JAG. The ID token itself never leaves the IdP.",
+      "MCPJam's identity provider gives the Agent an ID token.",
     phase: "sso",
     teachableMoments: [
       "The ID token is only used to get the next token — it's never sent to the Authorization Server or the MCP Server.",
@@ -162,7 +212,7 @@ export const XAA_STEP_METADATA: Record<XAAFlowStep, XAAStepInfo> = {
   token_exchange_request: {
     title: "Exchange the ID Token for an ID-JAG",
     summary:
-      "The Agent trades the ID token back to the IdP for an ID-JAG — a grant scoped to one MCP Server. A test mode can deliberately break it here.",
+      "The Agent trades the ID token back to the IdP for an ID-JAG — a grant scoped to one MCP Server. On the happy path this is a standard RFC 8693 form POST to the IdP's /token endpoint; a test mode instead uses MCPJam's mint endpoint to forge a deliberately broken grant.",
     phase: "token_exchange",
     teachableMoments: [
       "The Agent tells the IdP which Authorization Server the grant is for — that becomes the grant's audience.",
@@ -226,16 +276,73 @@ export const XAA_STEP_METADATA: Record<XAAFlowStep, XAAStepInfo> = {
   },
 };
 
-export function getXAAStepInfo(step: XAAFlowStep): XAAStepInfo {
-  return (
-    XAA_STEP_METADATA[step] ?? {
-      title: step,
-      summary: "No additional information available for this step.",
+// SAML overrides for the identity-leg steps (input axis, D6). Titles,
+// summaries, and (where the base copy says "ID token") teachable moments are
+// overridden so a SAML run reads accurately; phase membership is shared. OIDC
+// (the default) renders the base metadata unchanged.
+const XAA_SAML_STEP_OVERRIDES: Partial<
+  Record<XAAFlowStep, Pick<XAAStepInfo, "title" | "summary" | "teachableMoments">>
+> = {
+  user_authentication: {
+    title: "Simulate SAML sign-in at MCPJam IdP",
+    summary:
+      "MCPJam simulates the user signing in at its identity provider and issues a signed SAML assertion. This is a mock — there is no real SAML redirect, AuthnRequest, or ACS round-trip.",
+  },
+  received_identity_assertion: {
+    title: "SAML assertion issued by MCPJam IdP",
+    summary:
+      "MCPJam's identity provider gives the Agent a signed SAML 2.0 assertion.",
+    teachableMoments: [
+      "The SAML assertion is only used to get the next token — it's never sent to the Authorization Server or the MCP Server.",
+    ],
+  },
+  token_exchange_request: {
+    title: "Exchange the SAML Assertion for an ID-JAG",
+    summary:
+      "The Agent trades the SAML assertion back to the IdP for an ID-JAG — a grant scoped to one MCP Server. On the happy path this is a standard RFC 8693 form POST to the IdP's /token endpoint (subject_token_type urn:ietf:params:oauth:token-type:saml2); a test mode instead uses MCPJam's mint endpoint to forge a deliberately broken grant.",
+  },
+};
+
+export function getXAAStepInfo(
+  step: XAAFlowStep,
+  format?: IdentityAssertionFormat
+): XAAStepInfo {
+  const base = XAA_STEP_METADATA[step] ?? {
+    title: step,
+    summary: "No additional information available for this step.",
+  };
+  if (format === "saml") {
+    const override = XAA_SAML_STEP_OVERRIDES[step];
+    if (override) {
+      return { ...base, ...override };
     }
-  );
+  }
+  return base;
 }
 
 export function getXAAStepIndex(step: XAAFlowStep): number {
   const index = XAA_STEP_ORDER.indexOf(step);
   return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+}
+
+// Request step → the received step that presents its response. Presentation
+// pairing only: the machine records each exchange as ONE httpHistory entry
+// tagged with the request step; the logger renders the response half under the
+// paired card. Steps absent here (inspect_id_jag, skips) never split.
+const XAA_RECEIVED_STEP_FOR_REQUEST: Partial<Record<XAAFlowStep, XAAFlowStep>> =
+  {
+    discover_resource_metadata: "received_resource_metadata",
+    discover_authz_metadata: "received_authz_metadata",
+    request_client_registration: "received_client_credentials",
+    fetch_client_metadata_document: "received_client_metadata",
+    user_authentication: "received_identity_assertion",
+    token_exchange_request: "received_id_jag",
+    jwt_bearer_request: "received_access_token",
+    authenticated_mcp_request: "complete",
+  };
+
+export function getXAAReceivedStepForRequest(
+  step: XAAFlowStep
+): XAAFlowStep | undefined {
+  return XAA_RECEIVED_STEP_FOR_REQUEST[step];
 }

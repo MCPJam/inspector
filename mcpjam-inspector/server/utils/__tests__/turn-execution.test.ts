@@ -12,6 +12,11 @@ vi.mock("../direct-chat-turn", () => ({
   runDirectChatTurn: (...args: unknown[]) => runDirectChatTurnMock(...args),
   consumeDirectChatTurnHeadless: (...args: unknown[]) =>
     consumeDirectChatTurnHeadlessMock(...args),
+  // The facade stamps the direct engine's response messages with mcp-tool-origin
+  // metadata (parity with the hosted engine). Identity here — these tests use
+  // tool-less messages where stamping is a no-op — so the assertions still see
+  // the raw response slice.
+  stampMcpToolOriginProviderOptions: (messages: unknown[]) => messages,
 }));
 
 // eslint-disable-next-line import/first
@@ -202,5 +207,59 @@ describe("runUnifiedAssistantTurn", () => {
     expect(runDirectChatTurnMock).toHaveBeenCalledWith(
       expect.objectContaining({ onEngineError }),
     );
+  });
+
+  it("direct: maps onToolResultChunk into the engine's traceEvents (browser render hook)", async () => {
+    runDirectChatTurnMock.mockReturnValue({ handle: true });
+    consumeDirectChatTurnHeadlessMock.mockResolvedValue({
+      messages: [],
+      steps: [],
+      totalUsage: {},
+      finishReason: "stop",
+      spans: [],
+      turnTrace: { spans: [], usage: {} },
+      aborted: false,
+    });
+    const onToolResultChunk = vi.fn();
+
+    await runUnifiedAssistantTurn({
+      runtime: { kind: "direct", llmModel: {}, modelId: "m1" },
+      streamSink: "none",
+      messages: [userMsg],
+      systemPrompt: "sys",
+      tools: {},
+      onToolResultChunk,
+    } as never);
+
+    const passed = runDirectChatTurnMock.mock.calls[0][0];
+    expect(passed.traceEvents).toEqual({ onToolResultChunk });
+  });
+
+  it("direct: onToolResultChunk is inert for callers that don't set it (no traceEvents)", async () => {
+    runDirectChatTurnMock.mockReturnValue({ handle: true });
+    consumeDirectChatTurnHeadlessMock.mockResolvedValue({
+      messages: [asstMsg],
+      steps: [],
+      totalUsage: {},
+      finishReason: "stop",
+      spans: [],
+      turnTrace: { spans: [], usage: {} },
+      aborted: false,
+    });
+
+    const res = await runUnifiedAssistantTurn({
+      runtime: { kind: "direct", llmModel: {}, modelId: "m1" },
+      streamSink: "none",
+      messages: [userMsg],
+      systemPrompt: "sys",
+      tools: {},
+    } as never);
+
+    const passed = runDirectChatTurnMock.mock.calls[0][0];
+    // No chunk hook → no traceEvents object forwarded at all.
+    expect(passed.traceEvents).toBeUndefined();
+    // …and the existing result contract is unchanged.
+    expect(res.messages).toEqual([userMsg, asstMsg]);
+    expect(res.newMessages).toEqual([asstMsg]);
   });
 });

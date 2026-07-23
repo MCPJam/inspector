@@ -10,10 +10,10 @@
  *
  * Auth mirrors the terminal WebSocket (routes/web/computer-terminal.ts):
  *   - The browser mints a ~60s Convex terminal token and sends it as
- *     `Authorization: Bearer <jwt>` (a `?token=` query fallback is kept one
- *     release for stale tabs open across a deploy — headers stay out of
- *     access/proxy logs, query strings don't).
- *   - We verify it LOCALLY (shared HS256 secret) → `computerId`, then exchange
+ *     `Authorization: Bearer <jwt>` — headers stay out of access/proxy logs,
+ *     query strings don't. No `?token=` fallback.
+ *   - We verify its RS256 signature against the backend-published JWKS
+ *     (`/computers/terminal-jwks`, short-cached) → `computerId`, then exchange
  *     it for the vendor sandbox id via the secret-gated `/computers/sandbox-info`
  *     control-plane route. The browser never sees vendor ids or credentials.
  *
@@ -35,14 +35,12 @@ import { verifyComputerTerminalToken } from "../../utils/computers/terminal-toke
 import {
   getComputerSandboxInfo,
   isComputersDataPlaneConfigured,
+  reserveUploadBytes,
 } from "../../utils/computers/control-plane-client.js";
+import { confineToHome } from "../../utils/computers/path-confine.js";
 import { logger } from "../../utils/logger.js";
 import { classifyError } from "../../utils/error-classify.js";
 
-/** The box home. The client may request a specific destination dir (the Shell's
- *  cwd — e.g. the harness session workdir `/home/user/claude-code-<id>`); we
- *  confine any requested dir under this root and fall back to `UPLOAD_ROOT`. */
-const HOME_ROOT = "/home/user";
 /** Fallback destination when the client provides no (or an invalid) target dir
  *  — e.g. a plain computer host, or the Shell opened before any harness turn. */
 const UPLOAD_ROOT = "/home/user/uploads";
@@ -68,20 +66,13 @@ export interface ComputerUploadDeps {
 
 /** Resolve the destination directory. The client passes the Shell's cwd (the
  *  harness workdir) so uploads land where the user is actually working, not in a
- *  detached bucket. We confine it under the box home and reject traversal; any
- *  missing/invalid value falls back to `UPLOAD_ROOT`. This is hygiene, not a
- *  trust boundary — the terminal token already grants full shell write access —
- *  but it keeps the endpoint from being a write-anywhere primitive and avoids
- *  footguns like a stray dir landing files in `/etc`. */
+ *  detached bucket. We confine it under the box home (shared `confineToHome`);
+ *  any missing/invalid/escaping value falls back to `UPLOAD_ROOT`. This is
+ *  hygiene, not a trust boundary — the terminal token already grants full shell
+ *  write access — but it keeps the endpoint from being a write-anywhere
+ *  primitive and avoids footguns like a stray dir landing files in `/etc`. */
 function resolveUploadDir(requested: string | undefined): string {
-  if (!requested || requested.length > MAX_DIR_LEN) return UPLOAD_ROOT;
-  if (!requested.startsWith("/")) return UPLOAD_ROOT;
-  const normalized = posix.normalize(requested).replace(/\/+$/, "");
-  if (normalized !== HOME_ROOT && !normalized.startsWith(`${HOME_ROOT}/`)) {
-    return UPLOAD_ROOT;
-  }
-  if (normalized.split("/").includes("..")) return UPLOAD_ROOT;
-  return normalized;
+  return confineToHome(requested, { maxLen: MAX_DIR_LEN }) ?? UPLOAD_ROOT;
 }
 
 /** Turn a user-supplied filename into a safe, collision-free basename. Strips
@@ -91,7 +82,8 @@ function resolveUploadDir(requested: string | undefined): string {
 function safeUploadName(rawName: string): string {
   const base = posix.basename(rawName || "");
   const cleaned = base.replace(/[^\w.\- ]/g, "_").trim();
-  const safe = cleaned && cleaned !== "." && cleaned !== ".." ? cleaned : "file";
+  const safe =
+    cleaned && cleaned !== "." && cleaned !== ".." ? cleaned : "file";
   return `${randomUUID().slice(0, 8)}-${safe}`;
 }
 
@@ -110,11 +102,9 @@ export function createComputerUploadHandler(deps: ComputerUploadDeps = {}) {
 
     // ── auth: terminal token → computerId → vendor sandbox id ──────────────
     const authHeader = c.req.header("authorization") ?? "";
-    const bearer = /^bearer\s+/i.test(authHeader)
+    const token = /^bearer\s+/i.test(authHeader)
       ? authHeader.replace(/^bearer\s+/i, "").trim()
       : "";
-    // `?token=` fallback: remove after one release (see header comment).
-    const token = bearer || c.req.query("token") || "";
     const claims = await verifyComputerTerminalToken(token);
     if (!claims) {
       return c.json(
@@ -122,15 +112,31 @@ export function createComputerUploadHandler(deps: ComputerUploadDeps = {}) {
         401
       );
     }
-    const info = await getComputerSandboxInfo({ computerId: claims.computerId });
+    const info = await getComputerSandboxInfo({
+      computerId: claims.computerId,
+    });
     if (!info.ok) {
       return c.json(
         { ok: false, error: `Computer unavailable: ${info.error}` },
         503
       );
     }
+    // Defense-in-depth: see computer-terminal.ts for why this re-checks the
+    // row's current owner/project against the token's claims.
+    if (
+      info.value.ownerUserId !== claims.userId ||
+      info.value.projectId !== claims.projectId
+    ) {
+      return c.json(
+        { ok: false, error: "Invalid or expired terminal token." },
+        401
+      );
+    }
     if (!info.value.providerComputerId) {
-      return c.json({ ok: false, error: "Computer is still provisioning." }, 503);
+      return c.json(
+        { ok: false, error: "Computer is still provisioning." },
+        503
+      );
     }
     const sandboxId = info.value.providerComputerId;
 
@@ -159,7 +165,9 @@ export function createComputerUploadHandler(deps: ComputerUploadDeps = {}) {
         return c.json(
           {
             ok: false,
-            error: `File "${f.name}" exceeds the ${MAX_FILE_BYTES / 1024 / 1024} MB per-file limit.`,
+            error: `File "${f.name}" exceeds the ${
+              MAX_FILE_BYTES / 1024 / 1024
+            } MB per-file limit.`,
           },
           413
         );
@@ -170,6 +178,41 @@ export function createComputerUploadHandler(deps: ComputerUploadDeps = {}) {
       return c.json(
         { ok: false, error: "Upload exceeds the total size limit." },
         413
+      );
+    }
+
+    // Cumulative-upload quota: reserve the bytes on the Convex row BEFORE
+    // writing (atomic check-and-increment, so concurrent uploads can't both slip
+    // past the cap). Over quota → 413, write nothing. Any OTHER failure fails
+    // OPEN with a loud log: the quota is an anti-abuse/hygiene control, not the
+    // tenant-isolation boundary (that's the terminal token), and the per-file /
+    // total / count caps above still bound this single request. A 404 here means
+    // the route isn't deployed yet (older backend) — we already confirmed the
+    // computer exists via getComputerSandboxInfo — so it too fails open during a
+    // staged rollout rather than blocking uploads.
+    const reservation = await reserveUploadBytes({
+      computerId: claims.computerId,
+      bytes: totalBytes,
+    });
+    if (!reservation.ok) {
+      if (reservation.status === 413) {
+        return c.json(
+          {
+            ok: false,
+            error:
+              reservation.error ||
+              "Upload would exceed this computer's storage quota.",
+          },
+          413
+        );
+      }
+      logger.warn(
+        "[computer-upload] quota reserve unavailable — allowing upload",
+        {
+          computerId: claims.computerId,
+          status: reservation.status,
+          error: reservation.error,
+        }
       );
     }
 

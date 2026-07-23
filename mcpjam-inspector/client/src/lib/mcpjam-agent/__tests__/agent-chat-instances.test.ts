@@ -47,19 +47,21 @@ vi.mock("@/lib/session-token", () => ({
   authFetch: vi.fn(),
 }));
 
-vi.mock("@/lib/webmcp/native-mirror", () => ({
-  mirrorUiToolToNative: vi.fn(() => null),
+const { trackMock } = vi.hoisted(() => ({ trackMock: vi.fn() }));
+vi.mock("@/lib/analytics", () => ({
+  track: trackMock,
 }));
 
-vi.mock("posthog-js", () => ({
-  default: { capture: vi.fn() },
-}));
-
-import posthog from "posthog-js";
 import {
   __resetAgentChatInstancesForTests,
   getOrCreateAgentChat,
+  markAgentTurnStarted,
+  claimAgentTurnCompletion,
 } from "../agent-chat-instances";
+import {
+  __resetTourSystemPromptsForTests,
+  writeTourSystemPrompt,
+} from "../tour-session-prompt";
 import { __resetUiToolExecutorForTests } from "@/lib/webmcp/ui-tool-executor";
 import {
   AGENT_PANEL_STORAGE_KEY,
@@ -92,6 +94,7 @@ describe("agent-chat-instances", () => {
     mockState.lastTransportOptions = null;
     __resetAgentChatInstancesForTests();
     __resetUiToolExecutorForTests();
+    __resetTourSystemPromptsForTests();
     window.localStorage.removeItem(AGENT_PANEL_STORAGE_KEY);
     useAgentPanelStore.setState({
       isOpen: false,
@@ -100,7 +103,6 @@ describe("agent-chat-instances", () => {
     });
     useUiToolsRegistry.setState({
       tools: new Map(),
-      nativeDisposers: new Map(),
       shippedNames: new Set(),
     });
   });
@@ -126,6 +128,23 @@ describe("agent-chat-instances", () => {
     });
     config.projectId = "p2";
     expect(mockState.lastTransportOptions.body().projectId).toBe("p2");
+  });
+
+  it("body carries the tour system prompt for tour sessions only", () => {
+    writeTourSystemPrompt("tour-sess", {
+      tourId: "tour-a",
+      systemPrompt: "You are running tour A.",
+    });
+
+    getOrCreateAgentChat("tour-sess");
+    expect(mockState.lastTransportOptions.body().systemPrompt).toBe(
+      "You are running tour A.",
+    );
+
+    // Non-tour sessions must not grow a systemPrompt field — the route treats
+    // its absence as "identity prompt only".
+    getOrCreateAgentChat("plain-sess");
+    expect(mockState.lastTransportOptions.body().systemPrompt).toBeUndefined();
   });
 
   it("evicts only idle, detached instances beyond the cap", () => {
@@ -291,7 +310,7 @@ describe("agent-chat-instances", () => {
       });
       expect(useAgentPanelStore.getState().activeSessionProjectId).toBe("p1");
       expect((entry.chat as any).addToolOutput).toHaveBeenCalled();
-      expect(posthog.capture).toHaveBeenCalledWith(
+      expect(trackMock).toHaveBeenCalledWith(
         "mcpjam_agent_panel_handoff",
         expect.objectContaining({ session_id: "s-home" })
       );
@@ -335,12 +354,99 @@ describe("agent-chat-instances", () => {
       await fireNavigate(entry);
 
       expect(useAgentPanelStore.getState().isOpen).toBe(false);
-      expect(posthog.capture).toHaveBeenCalledWith(
+      expect(trackMock).toHaveBeenCalledWith(
         "mcpjam_agent_panel_handoff_skipped",
         expect.objectContaining({ reason: "no_project_id" })
       );
       expect(def.execute).toHaveBeenCalled();
       expect((entry.chat as any).addToolOutput).toHaveBeenCalled();
+    });
+  });
+
+
+  describe("turn lifecycle (shared across surfaces)", () => {
+    it("claims a completion exactly once — a second observer gets null", () => {
+      getOrCreateAgentChat("t1");
+      markAgentTurnStarted("t1", {
+        model: "m",
+        provider: "p",
+        messageIndex: 1,
+        boundaryMessageId: null,
+      });
+
+      const first = claimAgentTurnCompletion("t1");
+      expect(first).not.toBeNull();
+      expect(first).toMatchObject({ model: "m", provider: "p" });
+      expect(typeof first!.startedAt).toBe("number");
+
+      // A post-hand-off surface observing the same edge must stay silent.
+      expect(claimAgentTurnCompletion("t1")).toBeNull();
+    });
+
+    it("carries submit-time attribution + message index even if config changes mid-turn", () => {
+      const entry = getOrCreateAgentChat("t2");
+      markAgentTurnStarted("t2", {
+        model: "gpt",
+        provider: "openai",
+        messageIndex: 4,
+        boundaryMessageId: "prev-msg",
+      });
+      // Simulate a config swap during streaming.
+      entry.config.model = { id: "claude", provider: "anthropic" } as never;
+      const claim = claimAgentTurnCompletion("t2");
+      expect(claim).toMatchObject({
+        model: "gpt",
+        provider: "openai",
+        messageIndex: 4,
+        boundaryMessageId: "prev-msg",
+      });
+    });
+
+    it("a fresh submit re-arms the claim for the next turn", () => {
+      getOrCreateAgentChat("t3");
+      markAgentTurnStarted("t3", {
+        model: null,
+        provider: null,
+        messageIndex: 1,
+        boundaryMessageId: null,
+      });
+      expect(claimAgentTurnCompletion("t3")).not.toBeNull();
+      expect(claimAgentTurnCompletion("t3")).toBeNull();
+      markAgentTurnStarted("t3", {
+        model: null,
+        provider: null,
+        messageIndex: 2,
+        boundaryMessageId: null,
+      });
+      expect(claimAgentTurnCompletion("t3")).toMatchObject({ messageIndex: 2 });
+    });
+
+    it("claim on an unknown session is null, never throws", () => {
+      expect(claimAgentTurnCompletion("nope")).toBeNull();
+      expect(() =>
+        markAgentTurnStarted("nope", {
+          model: null,
+          provider: null,
+          messageIndex: 0,
+          boundaryMessageId: null,
+        }),
+      ).not.toThrow();
+    });
+
+    it("a hand-off surface can claim once even with no local status edge", () => {
+      // Original surface submits (bumps seq) then unmounts WITHOUT emitting —
+      // the completion is still claimable exactly once by whoever attaches.
+      getOrCreateAgentChat("t4");
+      markAgentTurnStarted("t4", {
+        model: "m",
+        provider: "p",
+        messageIndex: 3,
+        boundaryMessageId: "boundary-1",
+      });
+      const adopted = claimAgentTurnCompletion("t4");
+      expect(adopted).toMatchObject({ messageIndex: 3, model: "m" });
+      // No second emission from any other observer.
+      expect(claimAgentTurnCompletion("t4")).toBeNull();
     });
   });
 });

@@ -6,7 +6,11 @@ import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useEnvironments } from "@/hooks/useComputerEnvironments";
 import { toast } from "sonner";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
-import { compareRunsBySequence } from "./helpers";
+import {
+  compareRunsBySequence,
+  getLatestRunMetricSource,
+  getRunMetricSource,
+} from "./helpers";
 import { SuiteHeader } from "./suite-header";
 import { SuiteHeroStats } from "./suite-hero-stats";
 import { RunOverview } from "./run-overview";
@@ -636,10 +640,10 @@ export function SuiteIterationsView({
         hostAttachments: attachments,
       });
       toast.success(
-        attachments.length === 0 ? "Hosts cleared" : "Hosts updated"
+        attachments.length === 0 ? "Clients cleared" : "Clients updated"
       );
     } catch (error) {
-      toast.error(getBillingErrorMessage(error, "Failed to update hosts"));
+      toast.error(getBillingErrorMessage(error, "Failed to update clients"));
       console.error("Failed to update host attachments:", error);
       throw error;
     }
@@ -842,7 +846,7 @@ export function SuiteIterationsView({
       caseGroupsForSelectedRun={caseGroupsForSelectedRun}
       onExportTraces={projectId ? () => setTracesExportOpen(true) : undefined}
       currentSuiteJudgeConfig={suite.judgeConfig ?? null}
-      source={suite.source}
+      source={getRunMetricSource(selectedRunDetails, suite.source)}
       runDetailSortBy={effectiveRunDetailSortBy}
       onSortChange={effectiveRunDetailSortChange}
       serverNames={suite.environment?.servers || []}
@@ -1129,7 +1133,10 @@ export function SuiteIterationsView({
                           runTrendData={runTrendData}
                           modelStats={modelStats}
                           testCaseCount={cases.length}
-                          isSDK={suite.source === "sdk"}
+                          isSDK={
+                            getLatestRunMetricSource(runs, suite.source) ===
+                            "sdk"
+                          }
                           onRunClick={handleRunClick}
                           onReplayLatestRun={
                             onReplayRun

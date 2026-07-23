@@ -28,9 +28,9 @@ export function HostIndexPage({
     setDeletingId(host.hostId);
     try {
       await deleteHost({ hostId: host.hostId });
-      toast.success(`Host "${host.name}" deleted`);
+      toast.success(`Client "${host.name}" deleted`);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to delete host";
+      const msg = err instanceof Error ? err.message : "Failed to delete client";
       if (msg.includes("consumer")) {
         toast.error(
           `${msg} — use force delete or remove dependent chatboxes/evals first`,
@@ -47,10 +47,10 @@ export function HostIndexPage({
     setDuplicatingId(host.hostId);
     try {
       const { hostId } = await duplicateHost({ hostId: host.hostId });
-      toast.success(`Host duplicated`);
+      toast.success(`Client duplicated`);
       onSelectHost(hostId);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to duplicate host");
+      toast.error(err instanceof Error ? err.message : "Failed to duplicate client");
     } finally {
       setDuplicatingId(null);
     }
@@ -68,7 +68,7 @@ export function HostIndexPage({
     <div className="flex h-full flex-col gap-6 p-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Hosts</h1>
+          <h1 className="text-2xl font-bold">Clients</h1>
           <p className="text-sm text-muted-foreground">
             Named configurations combining a model, system prompt, and server
             selection.
@@ -76,19 +76,19 @@ export function HostIndexPage({
         </div>
         <Button onClick={() => setShowCreate(true)}>
           <Plus className="mr-2 h-4 w-4" />
-          New Host
+          New Client
         </Button>
       </div>
 
       {hosts.length === 0 ? (
         <EmptyState
           icon={Server}
-          title="No hosts yet"
-          description="Create a named host to reuse across Chat, Swarms, and Evals."
+          title="No clients yet"
+          description="Create a named client to reuse across Chat, Swarms, and Evals."
         >
           <Button onClick={() => setShowCreate(true)}>
             <Plus className="mr-2 h-4 w-4" />
-            New Host
+            New Client
           </Button>
         </EmptyState>
       ) : (

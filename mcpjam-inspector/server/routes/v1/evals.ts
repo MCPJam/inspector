@@ -21,6 +21,8 @@ import { z } from "zod";
 import { ConvexHttpClient } from "convex/browser";
 import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { createAuthorizedManager, callerContextFromHono } from "../web/auth.js";
+import { resolveXaaIssuer } from "../../services/xaa-mint.js";
+import { HOSTED_MODE } from "../../config.js";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import {
   RunEvalsRequestSchema,
@@ -62,10 +64,17 @@ import { v1Error, v1PageJson, v1Resource } from "./envelope.js";
 import { synthesizeServerBody } from "./adapter.js";
 import {
   getCanonicalModelId,
-  isMCPJamProvidedModel,
-  isModelSupported,
+  hostedModelDefinitionsFromSnapshot,
   SUPPORTED_MODELS,
 } from "@/shared/types";
+import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
+
+// BYOK statics + the hosted snapshot — hosted display rows were removed from
+// SUPPORTED_MODELS, so provider derivation / suggestions read both.
+const MODEL_LOOKUP = [
+  ...SUPPORTED_MODELS,
+  ...hostedModelDefinitionsFromSnapshot(),
+];
 
 const evals = new Hono();
 
@@ -415,14 +424,14 @@ export function assertInlineTestModelsValid(
     const provider = test.provider.trim().toLowerCase();
     if (OPEN_MODEL_PROVIDERS.has(provider)) continue;
     const canonical = getCanonicalModelId(test.model, test.provider);
-    if (isMCPJamProvidedModel(canonical, test.provider)) continue;
+    if (isHostedCatalogModel(canonical, test.provider)) continue;
     if (modelApiKeys?.[test.provider] ?? modelApiKeys?.[provider]) continue;
-    if (isModelSupported(canonical)) continue;
+    if (MODEL_LOOKUP.some((model) => String(model.id) === canonical)) continue;
 
-    const hostedIds = SUPPORTED_MODELS.filter(
+    const hostedIds = MODEL_LOOKUP.filter(
       (m) =>
-        m.provider.toLowerCase() === provider &&
-        isMCPJamProvidedModel(String(m.id), m.provider)
+        String(m.provider).toLowerCase() === provider &&
+        isHostedCatalogModel(String(m.id), m.provider)
     ).map((m) => String(m.id));
     throw new WebRouteError(
       400,
@@ -983,7 +992,7 @@ function hostConfigDtoToInput(dto: any): Record<string, unknown> {
  */
 function providerForModelId(modelId: string): string | undefined {
   if (modelId.includes("/")) return modelId.split("/")[0];
-  const match = SUPPORTED_MODELS.find(
+  const match = MODEL_LOOKUP.find(
     (m) => String(m.id) === modelId || String(m.id).endsWith(`/${modelId}`)
   );
   return match ? String(match.provider) : undefined;
@@ -1393,7 +1402,13 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
       WEB_CALL_TIMEOUT_MS,
       undefined,
       undefined,
-      { serverNames }
+      {
+        serverNames,
+        // v1 eval API has no host-persona input — no enterprise policy to
+        // enforce; the issuer makes per-server XAA servers mint instead of
+        // failing with 'Missing XAA issuer'.
+        xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
+      }
     );
 
     let prepared: PreparedEvalRun;
@@ -1509,7 +1524,13 @@ evals.post("/projects/:projectId/eval-suites", async (c) => {
     WEB_CALL_TIMEOUT_MS,
     undefined,
     undefined,
-    { serverNames }
+    {
+        serverNames,
+        // v1 eval API has no host-persona input — no enterprise policy to
+        // enforce; the issuer makes per-server XAA servers mint instead of
+        // failing with 'Missing XAA issuer'.
+        xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
+      }
   );
 
   // Author-only is fully synchronous: the manager is only needed to resolve
@@ -2410,7 +2431,13 @@ evals.post(
       WEB_CALL_TIMEOUT_MS,
       undefined,
       undefined,
-      { serverNames }
+      {
+        serverNames,
+        // v1 eval API has no host-persona input — no enterprise policy to
+        // enforce; the issuer makes per-server XAA servers mint instead of
+        // failing with 'Missing XAA issuer'.
+        xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
+      }
     );
 
     // A caseMix only counts when it requests at least one case (a bucket > 0).

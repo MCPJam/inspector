@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import { Loader2, Save } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { useConvexAuth } from "convex/react";
-import { usePostHog } from "posthog-js/react";
 import { ReactFlowProvider } from "@xyflow/react";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Tooltip,
@@ -37,6 +36,7 @@ import {
 import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { RedesignedHostCanvas } from "./canvas/RedesignedHostCanvas";
+import { parseHostVerifyTabParam } from "../host-verify-deep-link";
 import { buildRedesignedHostCanvas } from "./canvas/canvasBuilder";
 import { HostFocusPanel } from "./focus/HostFocusPanel";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
@@ -70,7 +70,7 @@ export function HostBuilderViewRedesigned({
   projectId,
 }: HostBuilderViewRedesignedProps) {
   const navigate = useNavigate();
-  const posthog = usePostHog();
+  const location = useLocation();
   const { isAuthenticated } = useConvexAuth();
   const { host } = useHost({
     isAuthenticated,
@@ -98,6 +98,11 @@ export function HostBuilderViewRedesigned({
     tab: "behavior",
     selectedServerId: null,
   });
+  const requestedFocusTab = useMemo(
+    () => parseHostVerifyTabParam(location.search),
+    [location.search]
+  );
+  const appliedFocusTabRef = useRef<string | null>(null);
   // Diff snapshot — populated for ONE render after a host switch so the
   // canvas can mark changed leaves/fields. Cleared after the flash
   // duration so subsequent in-place edits don't keep re-firing the
@@ -158,8 +163,8 @@ export function HostBuilderViewRedesigned({
     if (capturedBuilderHostIdRef.current === hostId) return;
     capturedBuilderHostIdRef.current = hostId;
     try {
-      posthog.capture("client_builder_viewed", {
-        ...standardEventProps("client_builder"),
+      track("client_builder_viewed", {
+        location: "client_builder",
         client_id: hostId,
       });
     } catch {
@@ -184,6 +189,18 @@ export function HostBuilderViewRedesigned({
         : null,
     [host]
   );
+
+  useEffect(() => {
+    if (!requestedFocusTab) return;
+    const applyKey = `${hostId}:${requestedFocusTab}`;
+    if (appliedFocusTabRef.current === applyKey) return;
+    appliedFocusTabRef.current = applyKey;
+    setFocusState({
+      open: true,
+      tab: requestedFocusTab,
+      selectedServerId: null,
+    });
+  }, [hostId, requestedFocusTab]);
 
   const isDirty = useMemo(() => {
     if (!host || !draftConfig || !savedConfig) return false;
@@ -341,16 +358,16 @@ export function HostBuilderViewRedesigned({
         name: draftName,
         input: draftConfig,
       });
-      // The freshly persisted snapshot id arrives via the Convex
+      // The freshly persisted config id arrives via the Convex
       // subscription on the next tick; don't include it in this toast
-      // because `host?.config?.id` is still the *previous* snapshot here.
-      toast.success("Snapshot saved");
+      // because `host?.config?.id` is still the *previous* saved config here.
+      toast.success("Client saved");
       // Telemetry is best-effort: a posthog throw must not bubble into the
-      // shared catch and surface "Failed to save host" after the snapshot
+      // shared catch and surface "Failed to save host" after the config
       // has already been persisted.
       try {
-        posthog.capture("client_config_saved", {
-          ...standardEventProps("client_builder"),
+        track("client_config_saved", {
+          location: "client_builder",
           client_id: hostId,
           client_config_id: hostConfigId,
           server_count: draftConfig.serverIds?.length ?? 0,
@@ -360,11 +377,11 @@ export function HostBuilderViewRedesigned({
         // swallow — analytics must not block the success path
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to save host");
+      toast.error(err instanceof Error ? err.message : "Failed to save client");
     } finally {
       setIsSaving(false);
     }
-  }, [hostId, draftName, draftConfig, savedConfig, updateHost, posthog]);
+  }, [hostId, draftName, draftConfig, savedConfig, updateHost]);
 
   const handleAddServer = useCallback(
     async (formData: ServerFormData) => {
@@ -432,51 +449,16 @@ export function HostBuilderViewRedesigned({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
-      <div className="relative shrink-0 border-b border-border/40 px-8 py-2.5">
-        <div className="flex min-w-0 items-center justify-end gap-2 sm:gap-3">
-          {/* Host/Compare sub-nav sits inline beside Save — a single header
-              row instead of a second segmented bar stacked over the canvas. */}
-          <HostSectionTabs
-            value="host"
-            hostEnabled
-            onSelect={(next) => {
-              if (next === "compare") navigate("/host-compare");
-            }}
-          />
-          <Tooltip>
-            <TooltipTrigger asChild>
-              {/* Span wrapper: a disabled <button> swallows pointer events,
-                  so the tooltip must hang off an always-interactive parent. */}
-              <span className="inline-flex shrink-0">
-                <Button
-                  size="sm"
-                  onClick={() => void handleSave()}
-                  disabled={!canSave}
-                  variant={isDirty ? "default" : "ghost"}
-                  className={
-                    isDirty
-                      ? "shrink-0"
-                      : "shrink-0 text-muted-foreground hover:text-foreground disabled:opacity-40"
-                  }
-                >
-                  {isSaving ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : (
-                    <Save className="size-4" />
-                  )}
-                  {isDirty ? "Save host" : "Saved"}
-                </Button>
-              </span>
-            </TooltipTrigger>
-            {saveDisabledReason ? (
-              <TooltipContent side="bottom" variant="muted">
-                {saveDisabledReason}
-              </TooltipContent>
-            ) : null}
-          </Tooltip>
-        </div>
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <div className="pointer-events-auto">
+      <div className="@container relative shrink-0 border-b border-border/40 px-4 py-2.5 md:px-8">
+        {/* 3-column grid mirrors the Servers view (ConnectViewHeader): the
+            centered selector and the right-side controls each own a column so
+            they can never overlap. The switch is gated on the header's own
+            width via `@container` (not the viewport) so it stacks correctly
+            when the sidebar is open and the container — not the window — is
+            narrow. Below the container breakpoint it stacks into one column. */}
+        <div className="flex flex-col items-stretch gap-2 @2xl:grid @2xl:grid-cols-[1fr_auto_1fr] @2xl:items-center @2xl:gap-3">
+          <div className="hidden @2xl:block" aria-hidden="true" />
+          <div className="flex min-w-0 justify-center">
             <ViewModeSelector
               value="host"
               ariaLabel="Connect view"
@@ -493,7 +475,7 @@ export function HostBuilderViewRedesigned({
               }}
               options={[
                 { value: "servers", label: "Servers" },
-                { value: "host", label: "Host" },
+                { value: "host", label: "Client" },
                 // "Compare" is reached from the inline Host|Compare pill, not
                 // this primary nav — keep it out so it isn't duplicated.
                 ...(computersEnabled
@@ -501,6 +483,50 @@ export function HostBuilderViewRedesigned({
                   : []),
               ]}
             />
+          </div>
+          <div className="flex min-w-0 flex-wrap items-center justify-center gap-2 @2xl:justify-end sm:gap-3">
+            {/* Host/Compare sub-nav sits inline beside Save — a single header
+                row instead of a second segmented bar stacked over the canvas.
+                `flex-wrap` lets the pill + Save drop to their own line rather
+                than overlap if the column is ever squeezed. */}
+            <HostSectionTabs
+              value="host"
+              hostEnabled
+              onSelect={(next) => {
+                if (next === "compare") navigate("/host-compare");
+              }}
+            />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                {/* Span wrapper: a disabled <button> swallows pointer events,
+                    so the tooltip must hang off an always-interactive parent. */}
+                <span className="inline-flex shrink-0">
+                  <Button
+                    size="sm"
+                    onClick={() => void handleSave()}
+                    disabled={!canSave}
+                    variant={isDirty ? "default" : "ghost"}
+                    className={
+                      isDirty
+                        ? "shrink-0"
+                        : "shrink-0 text-muted-foreground hover:text-foreground disabled:opacity-40"
+                    }
+                  >
+                    {isSaving ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <Save className="size-4" />
+                    )}
+                    {isDirty ? "Save client" : "Saved"}
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              {saveDisabledReason ? (
+                <TooltipContent side="bottom" variant="muted">
+                  {saveDisabledReason}
+                </TooltipContent>
+              ) : null}
+            </Tooltip>
           </div>
         </div>
       </div>
@@ -557,6 +583,7 @@ export function HostBuilderViewRedesigned({
                     focusSubKey={focusState.focusSubKey}
                     hostDisplayName={draftName}
                     onHostDisplayNameChange={setDraftName}
+                    themeMode={themeMode}
                     draft={draftConfig}
                     onDraftChange={(updater) =>
                       setDraftConfig((prev) => (prev ? updater(prev) : prev))

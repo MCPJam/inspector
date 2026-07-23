@@ -34,8 +34,11 @@ vi.mock("@/components/notifications/NotificationsPanel", () => ({
   NotificationsPanelContent: () => <div data-testid="notifications-panel" />,
 }));
 
+// Represent local/npx mode (VITE_MCPJAM_HOSTED_MODE unset). The sidebar
+// sign-in affordance is intentionally mode-agnostic — a guest must see it in
+// both hosted and local, since the header sign-in is hidden on the Home route.
 vi.mock("@/lib/config", () => ({
-  HOSTED_MODE: true,
+  HOSTED_MODE: false,
 }));
 
 vi.mock("@/hooks/useProfilePicture", () => ({
@@ -111,7 +114,7 @@ describe("SidebarUser", () => {
     window.isElectron = false;
   });
 
-  it("renders sign-in button when unauthenticated in hosted mode", () => {
+  it("renders sign-in button when unauthenticated", () => {
     render(<SidebarUser />);
     expect(screen.getByText("Sign in")).toBeDefined();
     const signInButton = screen.getByRole("button", { name: "Sign in" });

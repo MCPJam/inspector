@@ -23,17 +23,48 @@ export {
   evaluateMarketHosts,
 } from "./market-hosts.js";
 export {
+  bundledHostCompatCatalog,
+  buildHostProfilesFromCatalog,
+  getCatalogHost,
+  getCatalogHosts,
+  getCatalogTemplate,
+  getTemplateMcpAppsCapabilities,
+  hydrateHostCompatCatalog,
+  type EvaluateMarketHostsOptions,
+  type HostCompatCatalog,
+  type HostCompatCatalogHost,
+} from "./catalog.js";
+export {
+  hostConfigFieldsToImageSupport,
+  imageSupportToHostConfigFields,
+} from "./image-support.js";
+export {
+  hostCompatCatalogSchema,
+  hostCompatCatalogEnvelopeSchema,
+  mcpAppsCapabilitiesSchema,
+  SUPPORTED_CATALOG_SCHEMA_VERSION,
+  type HostCompatCatalogEnvelope,
+} from "./catalog-schema.js";
+export {
+  fetchHostCompatCatalog,
+  type FetchHostCompatCatalogOptions,
+  type FetchHostCompatCatalogResult,
+} from "./catalog-fetch.js";
+export {
   MCP_APPS_FULL,
   MCP_APPS_CHATGPT,
   MCP_APPS_MISTRAL,
   MCP_APPS_CURSOR,
   MCP_APPS_GOOSE,
   MCP_APPS_COPILOT,
+  MCP_APPS_SLACK,
+  MCP_APPS_VSCODE,
   MCP_APPS_NO_CLAIMS,
 } from "./capabilities.js";
 export {
   scanWidgetSource,
   scanWidgetMeta,
+  scanWidgetPermissionNames,
   type WidgetCapabilityNeed,
   type WidgetUsage,
 } from "./widget-scan.js";
@@ -58,4 +89,7 @@ export type {
   HostCompatReport,
   ServerRequirements,
   HostCompatProfile,
+  ImagePlacement,
+  ImageSourceSupport,
+  HostImageSupport,
 } from "./types.js";

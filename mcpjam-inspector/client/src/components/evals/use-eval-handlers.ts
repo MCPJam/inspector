@@ -1,8 +1,7 @@
 import { useCallback, useState } from "react";
 import { useConvex } from "convex/react";
 import { toast } from "sonner";
-import posthog from "posthog-js";
-import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import {
   buildCiEvalsPath,
@@ -499,10 +498,8 @@ export function useEvalHandlers({
 
         const result = await response.json().catch(() => null);
 
-        posthog.capture("eval_suite_run_started", {
+        track("eval_suite_run_started", {
           location: "ci_evals_tab",
-          platform: detectPlatform(),
-          environment: detectEnvironment(),
           suite_id: suite._id,
           num_test_cases: executionContext.testCases.length,
           num_tests: executionContext.tests.length,
@@ -598,7 +595,7 @@ export function useEvalHandlers({
           await handleReplayRun(suite, rerunEligibility.replayableLatestRun);
           return;
         }
-        toast.error("Attach a host to this suite before running it.");
+        toast.error("Attach a client to this suite before running it.");
         return;
       }
 
@@ -744,10 +741,8 @@ export function useEvalHandlers({
 
         // Track suite run started (once per fan-out batch; per-host
         // multiplicity is captured in the iteration data).
-        posthog.capture("eval_suite_run_started", {
+        track("eval_suite_run_started", {
           location: "evals_tab",
-          platform: detectPlatform(),
-          environment: detectEnvironment(),
           suite_id: suite._id,
           num_test_cases: executionContext.testCases.length,
           num_tests: executionContext.tests.length,
@@ -756,10 +751,8 @@ export function useEvalHandlers({
           num_hosts: runPlans.length,
         });
 
-        posthog.capture("eval_suite_run_start_requests_completed", {
+        track("eval_suite_run_start_requests_completed", {
           location: "evals_tab",
-          platform: detectPlatform(),
-          environment: detectEnvironment(),
           suite_id: suite._id,
           num_test_cases: executionContext.testCases.length,
           num_tests: executionContext.tests.length,
@@ -773,7 +766,7 @@ export function useEvalHandlers({
         if (failures.length === 0) {
           toast.success(
             runPlans.length > 1
-              ? `All ${runPlans.length} host runs started.`
+              ? `All ${runPlans.length} client runs started.`
               : "Eval run started!",
           );
 
@@ -806,17 +799,17 @@ export function useEvalHandlers({
           }
         } else if (failures.length < runPlans.length) {
           const failedHostNames = failures
-            .map((failure) => failure.plan.hostName ?? "(unnamed host)")
+            .map((failure) => failure.plan.hostName ?? "(unnamed client)")
             .join(", ");
           toast.error(
-            `${failures.length} of ${runPlans.length} host runs failed: ${failedHostNames}`,
+            `${failures.length} of ${runPlans.length} client runs failed: ${failedHostNames}`,
           );
         } else {
           // All failed — surface the first error for actionable detail.
           const firstError = failures[0]?.reason;
           throw firstError instanceof Error
             ? firstError
-            : new Error(String(firstError ?? "All host runs failed"));
+            : new Error(String(firstError ?? "All client runs failed"));
         }
       } catch (error) {
         console.error("Failed to rerun evals:", error);
@@ -891,7 +884,7 @@ export function useEvalHandlers({
       );
 
       if (suiteServers.length === 0) {
-        toast.error("Attach a host to this suite before running it.");
+        toast.error("Attach a client to this suite before running it.");
         return null;
       }
 
@@ -976,10 +969,8 @@ export function useEvalHandlers({
 
         const runResults = await Promise.all(
           preparedRuns.map(async (preparedRun) => {
-            posthog.capture("eval_test_case_run_started", {
+            track("eval_test_case_run_started", {
               location: options?.location ?? "test_case_list_sidebar",
-              platform: detectPlatform(),
-              environment: detectEnvironment(),
               suite_id: suite._id,
               test_case_id: testCase._id,
               model: preparedRun.modelValue,
@@ -1000,10 +991,8 @@ export function useEvalHandlers({
                     ? Math.max(completedAt - startedAt, 0)
                     : 0;
 
-                posthog.capture("eval_test_case_run_completed", {
+                track("eval_test_case_run_completed", {
                   location: options?.location ?? "test_case_list_sidebar",
-                  platform: detectPlatform(),
-                  environment: detectEnvironment(),
                   suite_id: suite._id,
                   test_case_id: testCase._id,
                   model: preparedRun.modelValue,
@@ -1133,8 +1122,10 @@ export function useEvalHandlers({
   );
 
   // Confirm deletion - actually performs the deletion
-  const confirmDelete = useCallback(async () => {
-    if (!suiteToDelete || deletingSuiteId) return;
+  // Returns whether the delete actually committed (agent tooling propagates a
+  // real failure from this; the UI dialog ignores the return).
+  const confirmDelete = useCallback(async (): Promise<boolean> => {
+    if (!suiteToDelete || deletingSuiteId) return false;
 
     setDeletingSuiteId(suiteToDelete._id);
 
@@ -1148,9 +1139,11 @@ export function useEvalHandlers({
       }
 
       setSuiteToDelete(null);
+      return true;
     } catch (error) {
       console.error("Failed to delete suite:", error);
       toast.error(getBillingErrorMessage(error, "Failed to delete test suite"));
+      return false;
     } finally {
       setDeletingSuiteId(null);
     }
@@ -1176,10 +1169,8 @@ export function useEvalHandlers({
 
         // Track suite duplicated
         if (newSuite && newSuite._id) {
-          posthog.capture("eval_suite_duplicated", {
+          track("eval_suite_duplicated", {
             location: "evals_tab",
-            platform: detectPlatform(),
-            environment: detectEnvironment(),
             original_suite_id: suite._id,
             new_suite_id: newSuite._id,
           });
@@ -1296,10 +1287,8 @@ export function useEvalHandlers({
   const directDeleteTestCase = useCallback(
     async (testCaseId: string) => {
       await mutations.deleteTestCaseMutation({ testCaseId });
-      posthog.capture("eval_test_case_deleted", {
+      track("eval_test_case_deleted", {
         location: "evals_tab_batch",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
         suite_id: selectedSuiteId ?? null,
         test_case_id: testCaseId,
       });
@@ -1317,10 +1306,8 @@ export function useEvalHandlers({
       await mutations.deleteTestCaseMutation({
         testCaseId: testCaseToDelete.id,
       });
-      posthog.capture("eval_test_case_deleted", {
+      track("eval_test_case_deleted", {
         location: "evals_tab",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
         suite_id: selectedSuiteId ?? null,
         test_case_id: testCaseToDelete.id,
       });
@@ -1374,10 +1361,8 @@ export function useEvalHandlers({
 
         // Track test case duplicated
         if (newTestCase && newTestCase._id) {
-          posthog.capture("eval_test_case_duplicated", {
+          track("eval_test_case_duplicated", {
             location: "evals_tab",
-            platform: detectPlatform(),
-            environment: detectEnvironment(),
             suite_id: suiteId,
             original_test_case_id: testCaseId,
             new_test_case_id: newTestCase._id,
@@ -1482,10 +1467,8 @@ export function useEvalHandlers({
         });
 
         if (outcome.apiReturnedTests === 0) {
-          posthog.capture("eval_generate_tests_completed", {
+          track("eval_generate_tests_completed", {
             location: "evals_tab",
-            platform: detectPlatform(),
-            environment: detectEnvironment(),
             suite_id: suiteId,
             generated_count: 0,
             api_returned_tests: 0,
@@ -1500,10 +1483,8 @@ export function useEvalHandlers({
           postOptions?.suite != null;
 
         if (outcome.createdCount > 0) {
-          posthog.capture("eval_tests_generated_from_sidebar", {
+          track("eval_tests_generated_from_sidebar", {
             location: "test_case_list_sidebar",
-            platform: detectPlatform(),
-            environment: detectEnvironment(),
             suite_id: suiteId,
             generated_count: outcome.createdCount,
             auto_ran: Boolean(
@@ -1512,10 +1493,8 @@ export function useEvalHandlers({
           });
         }
 
-        posthog.capture("eval_generate_tests_completed", {
+        track("eval_generate_tests_completed", {
           location: "evals_tab",
-          platform: detectPlatform(),
-          environment: detectEnvironment(),
           suite_id: suiteId,
           generated_count: outcome.createdCount,
           api_returned_tests: outcome.apiReturnedTests,
@@ -1572,10 +1551,8 @@ export function useEvalHandlers({
         // bounded when backend errors include user input or random ids.
         const rawMessage =
           error instanceof Error ? error.message : String(error);
-        posthog.capture("eval_generate_tests_completed", {
+        track("eval_generate_tests_completed", {
           location: "evals_tab",
-          platform: detectPlatform(),
-          environment: detectEnvironment(),
           suite_id: suiteId,
           generated_count: 0,
           success: false,

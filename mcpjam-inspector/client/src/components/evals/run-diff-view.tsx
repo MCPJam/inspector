@@ -149,7 +149,10 @@ function RunDiffLoaded({
     [diff.cases]
   );
 
-  const metricLabel = diff.suite.source === "sdk" ? "Pass rate" : "Accuracy";
+  const metricLabel =
+    (diff.compareRun.source ?? diff.suite.source) === "sdk"
+      ? "Pass rate"
+      : "Accuracy";
 
   const summaryMetrics = useMemo(
     () =>

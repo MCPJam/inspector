@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
 import { Hono } from "hono";
 
 // The heavy chat-turn machinery is stubbed: the companion endpoint never
@@ -110,8 +110,8 @@ beforeEach(() => {
   streamWebChatTurn.mockClear();
 });
 
-describe("POST /api/web/mcpjam-agent ambient project context", () => {
-  it("augments the prepare prompt with the chat's project id but persists the original", async () => {
+describe("POST /api/web/mcpjam-agent system prompt", () => {
+  it("prepends the agent identity to prepare but persists the user's own prompt", async () => {
     const app = makeApp();
     const response = await app.request("/api/web/mcpjam-agent", {
       method: "POST",
@@ -134,47 +134,85 @@ describe("POST /api/web/mcpjam-agent ambient project context", () => {
       prepare: { systemPrompt?: string };
       persist: { systemPrompt?: string };
     };
-    // The model is told which project it's looking at, so the platform
-    // worker's tools (whose omitted `project` means "most recently
-    // updated") get the chat's project passed explicitly.
     expect(args.prepare.systemPrompt).toContain("Be terse.");
-    expect(args.prepare.systemPrompt).toContain('project: "proj_ambient"');
+    expect(args.prepare.systemPrompt).toContain("MCPJam in-app assistant");
+    // No ambient project id: the platform tools that needed it are gone, and
+    // a per-request value here would break the cacheable prefix.
+    expect(args.prepare.systemPrompt).not.toContain("proj_ambient");
     // The persisted prompt stays the user's own configuration.
     expect(args.persist.systemPrompt).toBe("Be terse.");
   });
 
-  it("omits the workspace section when the platform server failed preflight", async () => {
-    managerState.listTools.mockImplementation(async (serverId: unknown) => {
-      if (serverId === MCPJAM_PLATFORM_SERVER_ID) {
-        throw new Error("issuer mismatch");
-      }
-      return { tools: [] };
+  describe("with MCPJAM_AGENT_PLATFORM_TOOLS=1", () => {
+    beforeEach(() => {
+      process.env.MCPJAM_AGENT_PLATFORM_TOOLS = "1";
+    });
+    afterEach(() => {
+      delete process.env.MCPJAM_AGENT_PLATFORM_TOOLS;
     });
 
-    const app = makeApp();
-    const response = await app.request("/api/web/mcpjam-agent", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: "Bearer user-token",
-      },
-      body: JSON.stringify({
-        messages: [{ role: "user", parts: [{ type: "text", text: "hi" }] }],
-        model: { id: "anthropic/claude-haiku-4.5" },
-        chatSessionId: "session_1",
-        projectId: "proj_ambient",
-        systemPrompt: "Be terse.",
-      }),
+    it("augments the prepare prompt with the chat's project id but persists the original", async () => {
+      const app = makeApp();
+      const response = await app.request("/api/web/mcpjam-agent", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: "Bearer user-token",
+        },
+        body: JSON.stringify({
+          messages: [{ role: "user", parts: [{ type: "text", text: "hi" }] }],
+          model: { id: "anthropic/claude-haiku-4.5" },
+          chatSessionId: "session_1",
+          projectId: "proj_ambient",
+          systemPrompt: "Be terse.",
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      const args = streamWebChatTurn.mock.calls[0]![0] as unknown as {
+        prepare: { systemPrompt?: string };
+        persist: { systemPrompt?: string };
+      };
+      // The model is told which project it's looking at, so the platform
+      // worker's tools (whose omitted `project` means "most recently
+      // updated") get the chat's project passed explicitly.
+      expect(args.prepare.systemPrompt).toContain('project: "proj_ambient"');
+      expect(args.persist.systemPrompt).toBe("Be terse.");
     });
 
-    expect(response.status).toBe(200);
-    const args = streamWebChatTurn.mock.calls[0]![0] as unknown as {
-      prepare: { systemPrompt?: string; selectedServerIds: string[] };
-    };
-    // Degraded turn: no platform tools advertised, so no instructions
-    // about them either.
-    expect(args.prepare.selectedServerIds).toEqual(["mcpjam-docs"]);
-    expect(args.prepare.systemPrompt).toBe("Be terse.");
+    it("omits the workspace section when the platform server failed preflight", async () => {
+      managerState.listTools.mockImplementation(async (serverId: unknown) => {
+        if (serverId === MCPJAM_PLATFORM_SERVER_ID) {
+          throw new Error("issuer mismatch");
+        }
+        return { tools: [] };
+      });
+
+      const app = makeApp();
+      const response = await app.request("/api/web/mcpjam-agent", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: "Bearer user-token",
+        },
+        body: JSON.stringify({
+          messages: [{ role: "user", parts: [{ type: "text", text: "hi" }] }],
+          model: { id: "anthropic/claude-haiku-4.5" },
+          chatSessionId: "session_1",
+          projectId: "proj_ambient",
+          systemPrompt: "Be terse.",
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      const args = streamWebChatTurn.mock.calls[0]![0] as unknown as {
+        prepare: { systemPrompt?: string; selectedServerIds: string[] };
+      };
+      // Degraded turn: no platform tools advertised, so no instructions
+      // about them either.
+      expect(args.prepare.selectedServerIds).toEqual(["mcpjam-docs"]);
+      expect(args.prepare.systemPrompt).not.toContain("Workspace context");
+    });
   });
 });
 

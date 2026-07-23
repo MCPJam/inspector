@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ServerWithName } from "@/state/app-types";
 
 const mockListTools = vi.fn();
@@ -43,9 +43,9 @@ describe("useServerToolsData", () => {
       ({ s }: { s: ServerWithName | null }) => useServerToolsData(s),
       { initialProps: { s: null as ServerWithName | null } },
     );
-    expect(result.current).toBeNull();
+    expect(result.current).toEqual({ data: null, status: "idle" });
     rerender({ s: disconnected("s1") });
-    expect(result.current).toBeNull();
+    expect(result.current).toEqual({ data: null, status: "idle" });
     expect(mockListTools).not.toHaveBeenCalled();
   });
 
@@ -53,7 +53,7 @@ describe("useServerToolsData", () => {
     const data = { tools: [] };
     mockListTools.mockResolvedValue(data);
     const { result } = renderHook(() => useServerToolsData(connected("s1")));
-    await waitFor(() => expect(result.current).toBe(data));
+    await waitFor(() => expect(result.current).toEqual({ data, status: "ready" }));
     expect(mockListTools).toHaveBeenCalledWith({ serverId: "s1" });
   });
 
@@ -64,24 +64,27 @@ describe("useServerToolsData", () => {
       ({ s }: { s: ServerWithName }) => useServerToolsData(s),
       { initialProps: { s: connected("a") } },
     );
-    await waitFor(() => expect(result.current).toBe(a));
+    await waitFor(() => expect(result.current.data).toBe(a));
 
     // Switch to b whose fetch never resolves: the effect must clear to null
     // immediately, never leave server a's tools showing under server b.
     mockListTools.mockReturnValueOnce(new Promise(() => {}));
     rerender({ s: connected("b") });
-    expect(result.current).toBeNull();
+    expect(result.current).toEqual({ data: null, status: "loading" });
   });
 
   it("retries on failure up to the max attempts, then stops", async () => {
     vi.useFakeTimers();
     mockListTools.mockRejectedValue(new Error("boom"));
-    renderHook(() => useServerToolsData(connected("s1")));
+    const { result } = renderHook(() => useServerToolsData(connected("s1")));
     // Attempt 0 fires synchronously on mount.
     expect(mockListTools).toHaveBeenCalledTimes(1);
     // Flush the rejection + backoff timers for the two retries.
-    await vi.runAllTimersAsync();
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
     expect(mockListTools).toHaveBeenCalledTimes(3); // TOOLS_FETCH_MAX_ATTEMPTS
+    expect(result.current).toEqual({ data: null, status: "failed" });
     // Restoration is handled by afterEach, so an early throw above can't leave
     // fake timers active for the next test.
   });

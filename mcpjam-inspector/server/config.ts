@@ -86,6 +86,44 @@ export const WEB_CONNECT_TIMEOUT_MS = 10_000;
 export const WEB_CALL_TIMEOUT_MS = 30_000;
 export const WEB_STREAM_TIMEOUT_MS = 120_000;
 
+// ── Hosted elicitation (MCP 2025-11-25) ─────────────────────────────────────
+// An elicitation blocks a `tools/call` on a HUMAN, so these are human-scale.
+// They do not extend how long a *server* may take to respond: the SDK's
+// elicitation-aware timeout only stops the clock while an elicitation is
+// pending (see `elicitationTimeoutExtensionMs`), so a hung server still dies
+// at WEB_STREAM_TIMEOUT_MS of its own activity.
+
+/** How long the user has to answer a form before we resolve `{action:"cancel"}`. */
+export const ELICITATION_FORM_TTL_MS = 5 * 60_000;
+/** How long the user has to consent to (or decline) opening a URL. */
+export const ELICITATION_URL_CONSENT_TTL_MS = 2 * 60_000;
+/** Convex rendezvous poll cadence while a tool call is blocked. */
+export const ELICITATION_POLL_INTERVAL_MS = 1_000;
+/** Jitter added per poll so replicas don't synchronize (scheduled-evals idiom). */
+export const ELICITATION_POLL_JITTER_MS = 250;
+/** Consecutive poll transport failures tolerated before resolving `cancel`. */
+export const ELICITATION_POLL_MAX_FAILURES = 5;
+/**
+ * Deadline for a single Convex service-route call (poll/ack/cancel). These are
+ * tiny reads/writes; anything slower is a stall. Unbounded, a hung Convex would
+ * park the poll loop forever — the tool call would outlive its TTL and
+ * end-of-stream cleanup would block behind it.
+ */
+export const ELICITATION_SERVICE_ROUTE_TIMEOUT_MS = 10_000;
+/**
+ * Total suspended-time budget granted to ONE tool call across all of its
+ * sequential elicitations. Slack over the longest single TTL so a form answered
+ * at the last second still lands.
+ */
+export const ELICITATION_TIMEOUT_EXTENSION_MS = ELICITATION_FORM_TTL_MS + 30_000;
+
+// Hosted app origin the LOCAL inspector server forwards XAA hosted-issuer
+// mint requests to (server-to-server; hosted CORS blocks the browser from
+// calling it directly). Override for staging. Never derived from a request.
+export const MCPJAM_HOSTED_ORIGIN =
+  process.env.MCPJAM_HOSTED_ORIGIN?.replace(/\/+$/, "") ||
+  "https://app.mcpjam.com";
+
 // Allowed hosts for token delivery in hosted mode (comma-separated)
 // These hosts will be allowed to receive session tokens in addition to localhost
 export const ALLOWED_HOSTS = process.env.MCPJAM_ALLOWED_HOSTS

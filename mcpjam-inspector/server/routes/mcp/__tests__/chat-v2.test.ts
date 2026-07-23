@@ -184,9 +184,17 @@ vi.mock("@/shared/types", async () => {
   return {
     ...actual,
     isGPT5Model: vi.fn().mockReturnValue(false),
-    isMCPJamProvidedModel: vi.fn().mockReturnValue(false),
   };
 });
+
+// Hosted-model classification moved behind the catalog service; the route keys
+// billing dispatch on isHostedCatalogModel. Default false — tests that exercise
+// the MCPJam path override it explicitly.
+vi.mock("../../../services/hosted-model-catalog.js", () => ({
+  isHostedCatalogModel: vi.fn().mockReturnValue(false),
+  startHostedModelCatalogRefresh: vi.fn(),
+  refreshHostedModelCatalog: vi.fn(),
+}));
 
 vi.mock("../../../utils/guest-auth.js", () => ({
   getProductionGuestAuthHeader: vi
@@ -243,7 +251,9 @@ describe("POST /api/mcp/chat-v2", () => {
 
   describe("MCPJam model classification", () => {
     it("classifies the model PROVIDER-AWARE (bare hosted ids must canonicalize)", async () => {
-      const { isMCPJamProvidedModel } = await import("@/shared/types");
+      const { isHostedCatalogModel } = await import(
+        "../../../services/hosted-model-catalog.js"
+      );
 
       await postAuthenticatedJson({
         messages: [{ role: "user", content: "hi" }],
@@ -254,7 +264,7 @@ describe("POST /api/mcp/chat-v2", () => {
       // here would treat a bare hosted id as non-MCPJam and route it into
       // org/BYOK after it passed preflight (same class of bug as the
       // streamWebChatTurn dispatch).
-      expect(vi.mocked(isMCPJamProvidedModel)).toHaveBeenCalledWith(
+      expect(vi.mocked(isHostedCatalogModel)).toHaveBeenCalledWith(
         "gpt-5-nano",
         "openai"
       );
@@ -851,6 +861,77 @@ describe("POST /api/mcp/chat-v2", () => {
     });
   });
 
+  describe("uiTools boundary (agent-route-only)", () => {
+    it("ignores a client uiTools snapshot: 200, no ui_* entry advertised, no UI prompt section", async () => {
+      const { streamText } = await import("ai");
+      manager.getToolsForAiSdk.mockResolvedValue({
+        legit_tool: { description: "Server tool", execute: vi.fn() },
+      });
+
+      const res = await postJson(app, "/api/mcp/chat-v2", {
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: "gpt-4", provider: "openai" },
+        apiKey: "test-key",
+        // Stale snapshot a cached pre-cutover client may still send. The
+        // route must ignore it (never 400) for mixed-version safety.
+        uiTools: [
+          { name: "ui_navigate", description: "Navigate", readOnly: false },
+        ],
+      });
+
+      expect(res.status).toBe(200);
+      const options = vi.mocked(streamText).mock.calls.at(-1)![0] as {
+        tools: Record<string, unknown>;
+        system?: string;
+      };
+      expect(
+        Object.keys(options.tools).filter((name) => /^ui_/.test(name))
+      ).toEqual([]);
+      expect(options.system ?? "").not.toContain("MCPJam UI tools");
+    });
+
+    it("a server tool named ui_navigate stays executable with ordinary approval — never claimed by a stale UI snapshot", async () => {
+      const { streamText } = await import("ai");
+      const serverExecute = vi.fn();
+      manager.getToolsForAiSdk.mockResolvedValue({
+        ui_navigate: {
+          description: "Server-executed tool that uses the ui_ prefix",
+          execute: serverExecute,
+        },
+      });
+
+      const res = await postJson(app, "/api/mcp/chat-v2", {
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: "gpt-4", provider: "openai" },
+        apiKey: "test-key",
+        requireToolApproval: true,
+        uiTools: [
+          { name: "ui_navigate", description: "Stale twin", readOnly: false },
+        ],
+      });
+
+      expect(res.status).toBe(200);
+      const options = vi.mocked(streamText).mock.calls.at(-1)![0] as {
+        tools: Record<string, { execute?: unknown; needsApproval?: unknown }>;
+        system?: string;
+      };
+      // Provenance decides: the manager-origin tool stays executable — it
+      // was never replaced by a no-execute client-fulfilled entry. (The
+      // engine wraps execute for error surfacing, so assert executability
+      // rather than reference identity.)
+      expect(typeof options.tools["ui_navigate"]?.execute).toBe("function");
+      // No MCPJam UI system-prompt section and no UI approval
+      // classification: the tool follows the normal requireToolApproval
+      // flag, which the route threads into the manager's SDK conversion.
+      expect(options.system ?? "").not.toContain("MCPJam UI tools");
+      expect(manager.getToolsForAiSdk).toHaveBeenCalledWith(
+        undefined,
+        expect.objectContaining({ needsApproval: true })
+      );
+      expect(options.tools["ui_navigate"]?.needsApproval).toBeUndefined();
+    });
+  });
+
   describe("error handling", () => {
     it("returns 500 when getToolsForAiSdk fails", async () => {
       manager.getToolsForAiSdk.mockRejectedValue(
@@ -1255,8 +1336,10 @@ describe("POST /api/mcp/chat-v2", () => {
 
   describe("MCPJam model persistence", () => {
     beforeEach(async () => {
-      const { isMCPJamProvidedModel } = await import("@/shared/types");
-      vi.mocked(isMCPJamProvidedModel).mockReturnValue(true);
+      const { isHostedCatalogModel } = await import(
+        "../../../services/hosted-model-catalog.js"
+      );
+      vi.mocked(isHostedCatalogModel).mockReturnValue(true);
       process.env.CONVEX_HTTP_URL = "https://test-convex.example.com";
     });
 
@@ -1816,35 +1899,67 @@ describe("POST /api/mcp/chat-v2", () => {
       }
     });
 
+    // Guests are no longer model-curated (the backend enforces spend caps, not
+    // an allowlist), so these formerly-gated premium models now pass through
+    // and get a guest bearer minted server-side — no 403.
     it.each([
       { id: "openai/gpt-5.4-pro", provider: "openai" },
       { id: "anthropic/claude-opus-4.6", provider: "anthropic" },
       { id: "google/gemini-3.1-pro-preview", provider: "google" },
     ])(
-      "rejects gated MCPJam guest model $id before fetching guest auth",
+      "mints a guest token for formerly-gated MCPJam model $id (no rejection)",
       async ({ id, provider }) => {
         const { getProductionGuestAuthHeader } = await import(
           "../../../utils/guest-auth.js"
         );
 
         const originalFetch = global.fetch;
-        global.fetch = vi.fn();
+        global.fetch = vi
+          .fn()
+          .mockImplementation(async (input: Parameters<typeof fetch>[0]) => {
+            const url = String(input);
+            if (url === "https://test-convex.example.com/stream") {
+              return createSseResponse([
+                {
+                  type: "finish",
+                  finishReason: "stop",
+                  messageMetadata: {
+                    inputTokens: 1,
+                    outputTokens: 1,
+                    totalTokens: 2,
+                  },
+                },
+              ]);
+            }
+            if (url === "https://test-convex.example.com/ingest-chat") {
+              return new Response(null, { status: 200 });
+            }
+            throw new Error(`Unexpected fetch URL: ${url}`);
+          });
 
         try {
           const res = await postJson(app, "/api/mcp/chat-v2", {
             messages: [{ role: "user", content: "Hello" }],
             model: { id, provider },
           });
-          const { status, data } = await expectJson<ErrorResponse>(res);
+          expect(res.status).toBe(200);
+          await lastStreamExecution;
 
-          expect(status).toBe(403);
-          expect(data.error).toBe(
-            "This MCPJam model is not available for guest access. Sign in to continue."
+          // The guest bearer is minted (the path a 403 used to short-circuit).
+          expect(vi.mocked(getProductionGuestAuthHeader)).toHaveBeenCalled();
+          const streamCall = vi
+            .mocked(global.fetch)
+            .mock.calls.find(([url]) => String(url).endsWith("/stream"));
+          expect(streamCall).toBeDefined();
+          // …and that minted bearer must actually be SENT on the upstream
+          // /stream call, not merely resolved — otherwise the guest request
+          // would reach Convex unauthenticated.
+          const streamHeaders = new Headers(
+            (streamCall?.[1] as RequestInit | undefined)?.headers,
           );
-          expect(
-            vi.mocked(getProductionGuestAuthHeader)
-          ).not.toHaveBeenCalled();
-          expect(global.fetch).not.toHaveBeenCalled();
+          expect(streamHeaders.get("authorization")).toBe(
+            "Bearer guest-test-token",
+          );
         } finally {
           global.fetch = originalFetch;
         }
@@ -1854,8 +1969,10 @@ describe("POST /api/mcp/chat-v2", () => {
 
   describe("Org BYOK Convex routing", () => {
     beforeEach(async () => {
-      const { isMCPJamProvidedModel } = await import("@/shared/types");
-      vi.mocked(isMCPJamProvidedModel).mockReturnValue(false);
+      const { isHostedCatalogModel } = await import(
+        "../../../services/hosted-model-catalog.js"
+      );
+      vi.mocked(isHostedCatalogModel).mockReturnValue(false);
       process.env.CONVEX_HTTP_URL = "https://test-convex.example.com";
     });
 
@@ -1987,13 +2104,88 @@ describe("POST /api/mcp/chat-v2", () => {
         global.fetch = originalFetch;
       }
     });
+
+    it("forces the cloud /stream/org proxy for local-only MCP even with a local-eligible provider", async () => {
+      // A `custom:` provider is local-runtime-eligible, so without the flag this
+      // chat resolves + runs the model locally (see the test above). When a
+      // selected MCP server is local-only, `localMcpRuntimeRequired` must force
+      // the CLOUD runtime so the org key stays in Convex and the model call is
+      // proxied through /stream/org — the tool loop still runs locally against
+      // the local MCP connection.
+      const originalFetch = global.fetch;
+      const fetchMock = vi.fn().mockImplementation(async (input, init) => {
+        const url = String(input);
+        if (url === "https://test-convex.example.com/stream/org") {
+          const headers = new Headers(
+            (init as RequestInit | undefined)?.headers
+          );
+          expect(headers.get("X-Inspector-Service-Token")).toBeNull();
+          expect(headers.get("Authorization")).toBe(
+            "Bearer signed-in-test-token"
+          );
+          const body = JSON.parse(String((init as RequestInit).body ?? "{}"));
+          expect(body).toMatchObject({
+            projectId: "project-1",
+            providerKey: "custom:local-one",
+          });
+          return createSseResponse([
+            {
+              type: "finish",
+              finishReason: "stop",
+              messageMetadata: {
+                inputTokens: 1,
+                outputTokens: 1,
+                totalTokens: 2,
+              },
+            },
+          ]);
+        }
+        throw new Error(`Unexpected fetch URL: ${url}`);
+      });
+      global.fetch = fetchMock;
+
+      try {
+        const res = await postAuthenticatedJson({
+          messages: [{ role: "user", content: "Hello" }],
+          model: {
+            id: "custom:local-one:m-1",
+            provider: "custom",
+            customProviderName: "local-one",
+          },
+          projectId: "project-1",
+          selectedServers: ["server-1"],
+          selectedServerIds: ["server-1"],
+          localMcpRuntimeRequired: true,
+        });
+
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+        // Cloud proxy hit; the local-runtime resolve path is never taken, so
+        // the org key never leaves Convex.
+        expect(
+          fetchMock.mock.calls.some(
+            ([input]) =>
+              String(input) === "https://test-convex.example.com/stream/org"
+          )
+        ).toBe(true);
+        expect(
+          fetchMock.mock.calls.some(([input]) =>
+            String(input).includes("/stream/org/resolve")
+          )
+        ).toBe(false);
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
   });
 
   describe("unresolved tool calls from aborted requests (MCPJam models)", () => {
     beforeEach(async () => {
       // Enable MCPJam model path
-      const { isMCPJamProvidedModel } = await import("@/shared/types");
-      vi.mocked(isMCPJamProvidedModel).mockReturnValue(true);
+      const { isHostedCatalogModel } = await import(
+        "../../../services/hosted-model-catalog.js"
+      );
+      vi.mocked(isHostedCatalogModel).mockReturnValue(true);
 
       // Set required env var
       process.env.CONVEX_HTTP_URL = "https://test-convex.example.com";

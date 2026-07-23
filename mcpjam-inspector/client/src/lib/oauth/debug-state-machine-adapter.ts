@@ -106,6 +106,7 @@ export function createDebugRequestExecutor(): OAuthRequestExecutor {
           ...request.headers,
         },
         body: serializeProxyBody(request.body, request.headers),
+        ...(request.redirect ? { redirect: request.redirect } : {}),
       }),
     });
 
@@ -219,9 +220,14 @@ export function createInspectorOAuthStateMachine(
     hasClientSecret: Boolean(explicitClientSecret) || Boolean(hasClientSecret),
     redirectUrl: getDebugRedirectUrl(),
     requestExecutor: createDebugRequestExecutor(),
-    scheduleAutoAdvance: (fn, delayMs) => {
-      window.setTimeout(fn, delayMs);
-    },
+    // One step per "Continue" click: `scheduleAutoAdvance` is intentionally not
+    // provided. The SDK state machines call it via optional chaining, so when
+    // it is absent each `proceedToNextStep()` stops at the next step instead of
+    // chaining a prepare → send → receive burst (or the multi-hop CIMD
+    // sequence) on a single click. This lets users inspect every request and
+    // response individually — the "prepare" stop even shows the pending request
+    // before it is sent. To restore bundled stepping, schedule `fn` on a timer
+    // here again, e.g. `scheduleAutoAdvance: (fn, delayMs) => window.setTimeout(fn, delayMs)`.
     // Profile credentials are authoritative when configured: the stored
     // `mcp-client-*` record can hold a stale DCR-registered client id, and it
     // never holds a secret — without the explicit secret the machine resolves

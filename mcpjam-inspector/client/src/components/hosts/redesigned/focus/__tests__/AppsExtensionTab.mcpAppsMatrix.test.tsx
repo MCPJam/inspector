@@ -10,7 +10,10 @@ import {
   emptyHostConfigInputV2,
   type HostConfigInputV2,
 } from "@/lib/client-config-v2";
-import { seedFromHostTemplate } from "@/lib/client-templates";
+import {
+  bundledHostCompatCatalog,
+  getCatalogTemplate,
+} from "@mcpjam/sdk/host-compat";
 import { AppsExtensionTab } from "../AppsExtensionTab";
 
 /**
@@ -85,8 +88,8 @@ describe("AppsExtensionTab — McpAppsCapabilityMatrix", () => {
     const cluster = screen.getByTestId("mcp-apps-dimension-availableDisplayModes");
     for (const mode of ["inline", "fullscreen", "pip"] as const) {
       const button = within(cluster).getByRole("button", { name: mode });
-      // Selected modes use the elevated background class.
-      expect(button.className).toMatch(/bg-foreground/);
+      // Selected modes use the same primary color as the adjacent switches.
+      expect(button.className).toMatch(/bg-primary/);
     }
   });
 
@@ -324,7 +327,12 @@ describe("AppsExtensionTab — master-toggle round-trip", () => {
 
   it("toggling Mistral MCP App support off then on restores the normalized MCP UI extension", async () => {
     const user = userEvent.setup();
-    const { draftRef } = renderMatrix(seedFromHostTemplate("mistral"));
+    const mistralTemplate = getCatalogTemplate(
+      bundledHostCompatCatalog(),
+      "mistral",
+    );
+    if (!mistralTemplate) throw new Error("Missing Mistral catalog template");
+    const { draftRef } = renderMatrix(mistralTemplate);
     const original = JSON.parse(
       JSON.stringify(draftRef.current.clientCapabilities ?? {}),
     );

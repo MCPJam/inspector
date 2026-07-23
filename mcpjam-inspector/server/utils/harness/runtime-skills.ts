@@ -21,8 +21,13 @@
 import {
   convexListSkillsForRuntime,
   convexListSkillsForRuntimeExecution,
+  convexListSkillFilesForRuntime,
+  convexListSkillFilesForRuntimeExecution,
+  normalizeProvenance,
   type CloudSkillRuntimeItem,
+  type CloudSkillRuntimeFile,
 } from "../computers/convex-skills-client.js";
+import type { PinnableSkill } from "../../../shared/skill-types.js";
 import type { ExecutionScope } from "../execution-scope.js";
 import { logger } from "../logger.js";
 
@@ -51,7 +56,7 @@ export type FetchRuntimeSkillsResult =
 export async function fetchRuntimeSkills(
   bearer: string,
   projectId: string,
-  executionScope?: ExecutionScope,
+  executionScope?: ExecutionScope
 ): Promise<FetchRuntimeSkillsResult> {
   try {
     const skills = executionScope
@@ -62,6 +67,42 @@ export async function fetchRuntimeSkills(
     logger.warn("[runtime-skills] fetch failed; preserving prior skill state", {
       error: error instanceof Error ? error.message : String(error),
     });
+    return { ok: false };
+  }
+}
+
+export type RuntimeSkillFile = CloudSkillRuntimeFile;
+
+export type FetchRuntimeSkillFilesResult =
+  | { ok: true; files: RuntimeSkillFile[] }
+  | { ok: false };
+
+/**
+ * Fetch every visible skill's supporting files (with download URLs) for harness
+ * materialization. Tri-state: `{ ok: false }` on ANY failure (never throws,
+ * never returns `[]` to mean "failed"). This distinction is LOAD-BEARING —
+ * `materializeSkillFiles` prunes on-box files absent from the returned set, so a
+ * failure surfaced as an empty array would delete every delivered skill's files.
+ * The caller MUST skip materialization on `{ ok: false }`. Scoped vs member
+ * query mirrors {@link fetchRuntimeSkills}.
+ */
+export async function fetchRuntimeSkillFiles(
+  bearer: string,
+  projectId: string,
+  executionScope?: ExecutionScope
+): Promise<FetchRuntimeSkillFilesResult> {
+  try {
+    const files = executionScope
+      ? await convexListSkillFilesForRuntimeExecution(bearer, executionScope)
+      : await convexListSkillFilesForRuntime(bearer, projectId);
+    return { ok: true, files };
+  } catch (error) {
+    logger.warn(
+      "[runtime-skills] file fetch failed; skipping materialization",
+      {
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return { ok: false };
   }
 }
@@ -86,6 +127,23 @@ export function skillsFingerprint(skills: RuntimeSkill[]): string {
     h = Math.imul(h, 0x01000193);
   }
   return (h >>> 0).toString(16);
+}
+
+/**
+ * Map a runtime skill to the shared {@link PinnableSkill} contract — the shape
+ * both the eval snapshot factory and a future `mcp-server` catalog adapter
+ * consume. `contentHash` is the runtime item's `aggregateHash` (the drift key
+ * that already folds in supporting files); provenance is normalized off the
+ * wire-tolerant DTO field.
+ */
+export function toPinnableSkill(s: CloudSkillRuntimeItem): PinnableSkill {
+  return {
+    name: s.name,
+    description: s.description,
+    content: s.content,
+    contentHash: s.aggregateHash,
+    provenance: normalizeProvenance(s.provenance),
+  };
 }
 
 /** Adapter-agnostic payload — semantic, unmodified descriptions. */
@@ -122,7 +180,7 @@ export function toYamlDoubleQuoted(value: string): string {
  * stays valid frontmatter. Other adapters must NOT use this.
  */
 export function claudeCodeSafeSkills(
-  skills: RuntimeSkill[],
+  skills: RuntimeSkill[]
 ): HarnessSkillPayload[] {
   return skills.map((s) => ({
     name: s.name,

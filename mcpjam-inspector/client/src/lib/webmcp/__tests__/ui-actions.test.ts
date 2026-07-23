@@ -1,12 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { InspectorCommand } from "@/shared/inspector-command.js";
 
-const { executeInspectorCommandMock } = vi.hoisted(() => ({
+const { executeInspectorCommandMock, trackMock } = vi.hoisted(() => ({
   executeInspectorCommandMock: vi.fn(),
+  trackMock: vi.fn(),
 }));
 
 vi.mock("@/lib/inspector-command-handlers", () => ({
   executeInspectorCommand: executeInspectorCommandMock,
+}));
+
+vi.mock("@/lib/analytics", () => ({
+  track: trackMock,
 }));
 
 import {
@@ -58,6 +63,29 @@ describe("ui-actions (local mode)", () => {
         expect(unknown.reason).toContain("playground");
       }
       expect(resolveUiNavigationTarget("   ")).toMatchObject({ ok: false });
+    });
+
+    it("emits reason unknown with the constant segment, never the target text", () => {
+      resolveUiNavigationTarget("bogus-page");
+      expect(trackMock).toHaveBeenCalledWith(
+        "ui_navigation_rejected",
+        expect.objectContaining({ segment: "unrecognized", reason: "unknown" }),
+      );
+
+      trackMock.mockClear();
+      // Model-supplied free text (could echo anything) must not reach props.
+      const secretish = "sk-super-secret-token-value";
+      resolveUiNavigationTarget(secretish);
+      const [, props] = trackMock.mock.calls[0];
+      expect((props as { segment: string }).segment).toBe("unrecognized");
+      expect(JSON.stringify(props)).not.toContain(secretish);
+      expect((props as { reason: string }).reason).toBe("unknown");
+    });
+
+    it("emits no rejection event for accepted or empty targets", () => {
+      resolveUiNavigationTarget("playground");
+      resolveUiNavigationTarget("   ");
+      expect(trackMock).not.toHaveBeenCalled();
     });
   });
 

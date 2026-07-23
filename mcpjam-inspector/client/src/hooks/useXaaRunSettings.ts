@@ -13,26 +13,62 @@ const RUN_SETTINGS_KEY = "mcpjam-xaa-run-settings/v1";
 // once, on first load (mirrors profile.ts XAA_PROFILE_STORAGE_KEY).
 const LEGACY_PROFILE_KEY = "mcpjam-xaa-debugger-profile/v1";
 
+/** Which issuer mints the mock ID token + ID-JAG on a local run. "hosted"
+ * routes the mint through app.mcpjam.com so a cloud authorization server can
+ * discover/validate the issuer — no tunnel needed. Meaningless on hosted
+ * builds (hosted IS the hosted issuer). */
+export type XaaIssuerMode = "local" | "hosted";
+
 export interface XaaRunSettings {
   userId: string;
   email: string;
   negativeTestMode: NegativeTestMode;
+  issuerMode: XaaIssuerMode;
+  /** Selected test identity ("Run as" person) per project — keyed by project
+   * id so switching projects never clears another project's selection. Values
+   * are testIdentities row ids; a stale id (person deleted) resolves to no
+   * selection at read time. */
+  selectedPersonIdByProject: Record<string, string>;
 }
 
 export const DEFAULT_XAA_RUN_SETTINGS: XaaRunSettings = {
   userId: "user-12345",
   email: "demo.user@example.com",
   negativeTestMode: DEFAULT_NEGATIVE_TEST_MODE,
+  issuerMode: "local",
+  selectedPersonIdByProject: {},
 };
 
 function sanitizeMode(value: unknown): NegativeTestMode {
   return isNegativeTestMode(value) ? value : DEFAULT_NEGATIVE_TEST_MODE;
 }
 
+function sanitizeIssuerMode(value: unknown): XaaIssuerMode {
+  return value === "hosted" ? "hosted" : "local";
+}
+
 function readString(value: unknown, fallback: string): string {
   return typeof value === "string" && value.trim().length > 0
     ? value
     : fallback;
+}
+
+/** Keep only string→non-empty-string entries; anything else resets to {}. */
+function sanitizePersonMap(value: unknown): Record<string, string> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return {};
+  }
+  const map: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (
+      key.trim().length > 0 &&
+      typeof entry === "string" &&
+      entry.trim().length > 0
+    ) {
+      map[key] = entry;
+    }
+  }
+  return map;
 }
 
 // One-time read, consumed only inside the lazy useState initializer below —
@@ -48,6 +84,10 @@ function loadInitialRunSettings(): XaaRunSettings {
         userId: readString(parsed.userId, DEFAULT_XAA_RUN_SETTINGS.userId),
         email: readString(parsed.email, DEFAULT_XAA_RUN_SETTINGS.email),
         negativeTestMode: sanitizeMode(parsed.negativeTestMode),
+        issuerMode: sanitizeIssuerMode(parsed.issuerMode),
+        selectedPersonIdByProject: sanitizePersonMap(
+          parsed.selectedPersonIdByProject,
+        ),
       };
     }
 
@@ -58,6 +98,8 @@ function loadInitialRunSettings(): XaaRunSettings {
         userId: readString(legacy.userId, DEFAULT_XAA_RUN_SETTINGS.userId),
         email: readString(legacy.email, DEFAULT_XAA_RUN_SETTINGS.email),
         negativeTestMode: sanitizeMode(legacy.negativeTestMode),
+        issuerMode: "local",
+        selectedPersonIdByProject: {},
       };
       try {
         localStorage.setItem(RUN_SETTINGS_KEY, JSON.stringify(migrated));
@@ -114,19 +156,49 @@ export function useXaaRunSettings() {
     [],
   );
 
+  const setIssuerMode = useCallback((mode: XaaIssuerMode) => {
+    setSettings((current) => ({
+      ...current,
+      issuerMode: sanitizeIssuerMode(mode),
+    }));
+  }, []);
+
+  const setSelectedPersonId = useCallback(
+    (projectId: string, personId: string | null) => {
+      const key = projectId.trim();
+      if (!key) return;
+      setSettings((current) => {
+        const map = { ...current.selectedPersonIdByProject };
+        if (personId && personId.trim().length > 0) {
+          map[key] = personId;
+        } else {
+          delete map[key];
+        }
+        return { ...current, selectedPersonIdByProject: map };
+      });
+    },
+    [],
+  );
+
   return useMemo(
     () => ({
       userId: settings.userId,
       email: settings.email,
       negativeTestMode: settings.negativeTestMode,
+      issuerMode: settings.issuerMode,
+      selectedPersonIdByProject: settings.selectedPersonIdByProject,
       isDefaultIdentity: isDefaultIdentity(settings),
       setNegativeTestMode,
       setIdentity,
+      setIssuerMode,
+      setSelectedPersonId,
     }),
     [
       settings,
       setNegativeTestMode,
       setIdentity,
+      setIssuerMode,
+      setSelectedPersonId,
     ],
   );
 }

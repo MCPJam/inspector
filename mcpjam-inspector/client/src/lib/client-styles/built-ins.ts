@@ -278,10 +278,9 @@ export const CLAUDE_HOST_STYLE: HostStyleDefinition = {
 // label, logo, and a CLI spinner busy-state instead of the claude.ai
 // mascot. Mirrors how CODEX_HOST_STYLE borrows ChatGPT's surface.
 //
-// Capabilities reuse Claude's preset here, but the "claude-code" template
-// (`client-templates.ts`) overrides hostCapabilities to `{}` since the CLI
-// renders no MCP Apps — the style preset is just the fallback if a host
-// ever clears that override.
+// Capabilities reuse Claude's preset here, but the catalog host definition
+// overrides host app capabilities since the CLI renders no MCP Apps — the style
+// preset is just the fallback if a host ever clears that override.
 export const CLAUDE_CODE_HOST_STYLE: HostStyleDefinition = {
   id: "claude-code",
   mcp: {
@@ -533,7 +532,7 @@ export const COPILOT_HOST_STYLE: HostStyleDefinition = {
 
 /**
  * OpenAI Codex host style. Codex itself is a CLI tool (no widget
- * rendering — see the Codex template in `client-templates.ts` which
+ * rendering — see the Codex catalog host definition, which
  * advertises `elicitation`-only client capabilities), so this entry is
  * a playground stand-in rather than a faithful clone of a real Codex
  * surface. We mirror ChatGPT's MCP profile because Codex is OpenAI-
@@ -632,8 +631,8 @@ export const VSCODE_HOST_STYLE: HostStyleDefinition = {
 /**
  * AWS Bedrock AgentCore host style. AgentCore is a server-side agent
  * runtime that permits only text-based MCP servers — it does not render
- * MCP Apps widgets (analogous to the Codex CLI; see the AgentCore template
- * in `client-templates.ts`, which advertises `elicitation`-only client
+ * MCP Apps widgets (analogous to the Codex CLI; see the AgentCore catalog host
+ * definition, which advertises `elicitation`-only client
  * capabilities). This entry is therefore a playground stand-in, not a
  * faithful clone of a real rendering surface.
  *

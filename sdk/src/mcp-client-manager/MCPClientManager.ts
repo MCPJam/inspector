@@ -9,11 +9,12 @@ import {
   type LoggingLevel,
   SSEClientTransport,
   type ServerCapabilities,
-  StdioClientTransport,
   StreamableHTTPClientTransport,
   type Transport,
   type RequestOptions,
 } from "@modelcontextprotocol/client";
+// beta.4 moved the Node stdio client transport to the `/stdio` subpath.
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 import type {
   MCPClientManagerConfig,
@@ -50,6 +51,7 @@ import type { MCPServerReplayConfig } from "../eval-reporting-types.js";
 
 import {
   DEFAULT_CLIENT_VERSION,
+  DEFAULT_ELICITATION_TIMEOUT_EXTENSION_MS,
   DEFAULT_TIMEOUT,
   HTTP_CONNECT_TIMEOUT,
 } from "./constants.js";
@@ -80,6 +82,8 @@ import {
   type NotificationHandler,
 } from "./notification-handlers.js";
 import { ElicitationManager } from "./elicitation.js";
+import type { DeclaredElicitationCapability } from "./elicitation.js";
+import { createElicitationTimeoutSuspension } from "./elicitation-timeout.js";
 import {
   TaskStatusNotificationMethod,
   listTasks as tasksListTasks,
@@ -102,87 +106,12 @@ import {
   normalizeClientCapabilities,
 } from "./capabilities.js";
 import { assertCallToolResult, isCreateTaskResult } from "./result-guards.js";
-import {
-  createManagedMcpClient,
-  wrapLegacyClient,
-} from "./managed-mcp-client-factory.js";
-import {
-  isStatelessProtocolVersion,
-  type McpProtocolVersion,
-} from "./mcp-protocol-version.js";
-import {
-  StatelessRequiresHttpTransport,
-  type ManagedMcpClient,
-  type ManagedMcpClientConnectOptions,
-  type ManagedMcpClientNotificationHandler,
-  type ManagedMcpClientNotificationMethod,
-  type ManagedMcpClientRequestHandler,
-  type ManagedMcpClientRequestMethod,
-} from "./managed-mcp-client.js";
+import { wrapLegacyClient } from "./managed-mcp-client-factory.js";
+import { resolveVersionNegotiation } from "./version-negotiation.js";
+import { DialectAwareJsonSchemaValidator } from "./dialect-aware-json-schema-validator.js";
+import { isStatelessProtocolVersion } from "./mcp-protocol-version.js";
+import { type ManagedMcpClient } from "./managed-mcp-client.js";
 
-/**
- * Temporary `ManagedMcpClient` slotted into `state.client` between the
- * early "construct + apply handlers" site and the
- * `connectViaHttp(protocolVersion: stateless)` branch that builds the real
- * preview client. Notification + elicitation handlers registered on
- * this stub are re-applied to the real client after construction; if
- * any RPC method is called against the stub we throw loudly to surface
- * the wiring bug.
- */
-function createPendingStatelessClientStub(): ManagedMcpClient {
-  const handlers = {
-    notifications: new Map<
-      ManagedMcpClientNotificationMethod,
-      ManagedMcpClientNotificationHandler
-    >(),
-    requests: new Map<
-      ManagedMcpClientRequestMethod,
-      ManagedMcpClientRequestHandler
-    >(),
-  };
-  const fail = (method: string) => {
-    throw new Error(
-      `MCPClientManager: ${method}() called on pending stateless client stub. This indicates a wiring bug — the real StatelessMcpHttpPreviewClient should have replaced the stub inside connectViaHttp before any RPC.`
-    );
-  };
-  return {
-    async connect(_t, _o?: ManagedMcpClientConnectOptions) {
-      // Accepted but no-op; the real preview client's connect() runs
-      // inside connectViaHttp before any RPC fires.
-    },
-    async close() {},
-    getServerCapabilities: () => undefined,
-    getServerVersion: () => undefined,
-    getInstructions: () => undefined,
-    listTools: () => fail("listTools"),
-    callTool: () => fail("callTool"),
-    request: () => fail("request"),
-    listResources: () => fail("listResources"),
-    readResource: () => fail("readResource"),
-    listResourceTemplates: () => fail("listResourceTemplates"),
-    listPrompts: () => fail("listPrompts"),
-    getPrompt: () => fail("getPrompt"),
-    ping: () => fail("ping"),
-    subscribeResource: () => fail("subscribeResource"),
-    unsubscribeResource: () => fail("unsubscribeResource"),
-    setLoggingLevel: async () => {
-      // Tolerate the manager's eager setLoggingLevel("debug") fire-and-
-      // forget at the end of connectClient — by the time it lands the
-      // stub may still be the active client. No-op until the real
-      // preview client replaces it; the post-connect guard at
-      // setLoggingLevel inside this manager prevents repeat calls.
-    },
-    setNotificationHandler: (method, handler) => {
-      handlers.notifications.set(method, handler);
-    },
-    setRequestHandler: (method, handler) => {
-      handlers.requests.set(method, handler);
-    },
-    removeRequestHandler: (method) => {
-      handlers.requests.delete(method);
-    },
-  };
-}
 
 /**
  * Manages multiple MCP server connections with support for tools, resources,
@@ -248,6 +177,7 @@ export class MCPClientManager {
   private readonly defaultProgressHandler?: ProgressHandler;
   private readonly defaultRetryPolicy: RetryPolicy;
   private readonly lazyConnect: boolean;
+  private readonly elicitationTimeoutExtensionMs: number;
 
   // Progress token counter for uniqueness
   private progressTokenCounter = 0;
@@ -278,6 +208,11 @@ export class MCPClientManager {
     this.defaultProgressHandler = options.progressHandler;
     this.defaultRetryPolicy = normalizeRetryPolicy(options.retryPolicy);
     this.lazyConnect = options.lazyConnect ?? false;
+    this.elicitationTimeoutExtensionMs = Math.max(
+      0,
+      options.elicitationTimeoutExtensionMs ??
+        DEFAULT_ELICITATION_TIMEOUT_EXTENSION_MS
+    );
 
     // Start connecting to all configured servers (unless replay/trace-repair use explicit connect)
     if (!this.lazyConnect) {
@@ -745,7 +680,11 @@ export class MCPClientManager {
           request.task.ttl !== undefined ? { ttl: request.task.ttl } : {};
         const result = await client.request(
           { method: "tools/call", params: callParams },
-          { ...mergedOptions, task: taskValue }
+          // TODO(Phase 6 / io.modelcontextprotocol/tasks): beta.4 removed the
+          // `task` field from RequestOptions (tasks moved to the extension).
+          // Cast to keep this legacy task-augmented path compiling until Phase 6
+          // rebuilds it on the new extension shape.
+          { ...mergedOptions, task: taskValue } as RequestOptions
         );
         if (!isCreateTaskResult(result)) {
           throw new TypeError(
@@ -760,7 +699,11 @@ export class MCPClientManager {
         };
       }
 
-      return client.callTool(callParams, mergedOptions);
+      return this.withElicitationTimeoutSuspension(
+        serverId,
+        mergedOptions,
+        (callOptions) => client.callTool(callParams, callOptions)
+      );
     };
 
     return this.runRetriedOperation(
@@ -1030,7 +973,11 @@ export class MCPClientManager {
     const state = this.liveClientStates.get(serverId);
     const client = state?.client;
     if (client && this.hasNegotiatedElicitation(state)) {
-      this.elicitationManager.applyToClient(serverId, client);
+      this.elicitationManager.applyToClient(
+        serverId,
+        client,
+        this.negotiatedElicitationCapability(state)
+      );
     }
   }
 
@@ -1046,7 +993,11 @@ export class MCPClientManager {
         this.elicitationManager.getGlobalCallback() &&
         this.hasNegotiatedElicitation(state)
       ) {
-        this.elicitationManager.applyToClient(serverId, client);
+        this.elicitationManager.applyToClient(
+          serverId,
+          client,
+          this.negotiatedElicitationCapability(state)
+        );
       } else {
         this.elicitationManager.removeFromClient(client);
       }
@@ -1060,7 +1011,11 @@ export class MCPClientManager {
     this.elicitationManager.setGlobalCallback(callback);
     for (const [serverId, state] of this.liveClientStates.entries()) {
       if (state.client && this.hasNegotiatedElicitation(state)) {
-        this.elicitationManager.applyToClient(serverId, state.client);
+        this.elicitationManager.applyToClient(
+          serverId,
+          state.client,
+          this.negotiatedElicitationCapability(state)
+        );
       }
     }
   }
@@ -1076,7 +1031,11 @@ export class MCPClientManager {
         this.elicitationManager.getHandler(serverId) &&
         this.hasNegotiatedElicitation(state)
       ) {
-        this.elicitationManager.applyToClient(serverId, state.client);
+        this.elicitationManager.applyToClient(
+          serverId,
+          state.client,
+          this.negotiatedElicitationCapability(state)
+        );
       } else {
         this.elicitationManager.removeFromClient(state.client);
       }
@@ -1300,41 +1259,32 @@ export class MCPClientManager {
         (!wantsStateless && resolvedProtocolVersion !== undefined
           ? [resolvedProtocolVersion]
           : undefined);
+      const versionNegotiation = resolveVersionNegotiation(
+        resolvedProtocolVersion
+      );
       const clientOptions: ClientOptions = {
         capabilities: clientCapabilities,
+        // Dialect-aware replacement for the upstream default validator,
+        // which rejects (rather than validates) declared draft-07 schemas
+        // and thereby fails tools/call against every v1-SDK server that
+        // sets an outputSchema.
+        jsonSchemaValidator: new DialectAwareJsonSchemaValidator(),
         ...(supportedProtocolVersions && supportedProtocolVersions.length > 0
           ? { supportedProtocolVersions }
           : {}),
+        ...(versionNegotiation ? { versionNegotiation } : {}),
       };
 
-      // Legacy path: construct upstream `Client` early at this site so
-      // the existing notification/elicitation/error wiring keeps
-      // working. Wrap in the adapter immediately so `state.client` is
-      // always `ManagedMcpClient`. Stateless preview defers
-      // construction until HTTP auth is resolved (see
-      // `connectViaHttp`), so the upstream Client is never created on
-      // that path.
-      let managedClient: ManagedMcpClient;
-      let upstreamClient: Client | undefined;
-      if (!wantsStateless) {
-        upstreamClient = new Client(
-          resolvedClientInfo as { name: string; version: string },
-          clientOptions
-        );
-        managedClient = wrapLegacyClient(upstreamClient);
-      } else {
-        // Stateless preview gate: must be HTTP. The connectViaHttp path
-        // builds + assigns the preview client when this branch is taken.
-        if (this.isStdioConfig(config)) {
-          throw new StatelessRequiresHttpTransport("stdio");
-        }
-        // Temporary placeholder — overwritten inside `connectViaHttp`
-        // once we have the resolved URL / headers / auth. Keep
-        // `managedClient` unassigned until then by using a tagged stub
-        // that fails loudly if any caller tries to use it before
-        // construction.
-        managedClient = createPendingStatelessClientStub();
-      }
+      // Both eras go through the official upstream `Client`, constructed
+      // early here so the notification / elicitation / error wiring
+      // attaches once and stays. A modern (2026-07-28) pin is a
+      // `versionNegotiation` on `clientOptions` (above), not a branch to a
+      // second client implementation.
+      const upstreamClient = new Client(
+        resolvedClientInfo as { name: string; version: string },
+        clientOptions
+      );
+      const managedClient: ManagedMcpClient = wrapLegacyClient(upstreamClient);
       client = managedClient;
 
       // Apply handlers (no-ops for the stateless stub; rewired after
@@ -1343,8 +1293,15 @@ export class MCPClientManager {
       if (this.defaultProgressHandler) {
         applyProgressHandler(serverId, client, this.defaultProgressHandler);
       }
-      if ((clientCapabilities as Record<string, unknown>).elicitation != null) {
-        this.elicitationManager.applyToClient(serverId, client);
+      const declaredElicitation = (
+        clientCapabilities as Record<string, unknown>
+      ).elicitation;
+      if (declaredElicitation != null) {
+        this.elicitationManager.applyToClient(
+          serverId,
+          client,
+          declaredElicitation as DeclaredElicitationCapability
+        );
       }
 
       if (config.onError) {
@@ -1371,24 +1328,7 @@ export class MCPClientManager {
           client,
           config,
           timeout,
-          state,
-          {
-            protocolVersion: resolvedProtocolVersion,
-            // Pass the resolved clientInfo so the stateless preview can
-            // emit it in `_meta.io.modelcontextprotocol/clientInfo`
-            // without re-resolving from manager defaults.
-            clientInfo: resolvedClientInfo as {
-              name: string;
-              version: string;
-            },
-            // When the wire mode is stateless, the caller below
-            // replaces `client` and the upstream Client (if any) is
-            // discarded. Pass the slot so `connectViaHttp` can reassign.
-            assignClient: (next: ManagedMcpClient) => {
-              client = next;
-              state.client = next;
-            },
-          }
+          state
         );
       }
 
@@ -1475,18 +1415,7 @@ export class MCPClientManager {
     client: ManagedMcpClient,
     config: HttpServerConfig,
     timeout: number,
-    state: LiveClientState,
-    wireOpts?: {
-      /**
-       * Resolved per-server `mcpProtocolVersion` pin (already validated
-       * by `isKnownProtocolVersion` at the trust boundary). Absent OR
-       * stateful → legacy path; stateless (per
-       * `isStatelessProtocolVersion`) → preview path.
-       */
-      protocolVersion?: McpProtocolVersion;
-      clientInfo: { name: string; version: string };
-      assignClient: (next: ManagedMcpClient) => void;
-    }
+    state: LiveClientState
   ): Promise<Transport | undefined> {
     const url = new URL(config.url);
 
@@ -1547,211 +1476,6 @@ export class MCPClientManager {
     );
     const preferSSE = config.preferSSE ?? url.pathname.endsWith("/sse");
 
-    // Stateless preview branch. The preview owns fetch end-to-end and
-    // cannot be re-shaped after construction (per
-    // `upstream_v2alpha_extension_points`), so it must be built HERE —
-    // after auth / requestInit / 401 wiring is resolved. Streamable
-    // HTTP POST only; legacy SSE / preferSSE is rejected up-front.
-    if (
-      wireOpts?.protocolVersion !== undefined &&
-      isStatelessProtocolVersion(wireOpts.protocolVersion) &&
-      wireOpts.assignClient
-    ) {
-      if (preferSSE) {
-        throw new StatelessRequiresHttpTransport("sse");
-      }
-      // Build a header bag from the resolved `requestInit.headers` so
-      // the preview's own-fetch sees the same statics legacy would.
-      // `Authorization` is set by `getAccessToken` when a token source
-      // (`accessToken` / `authProvider` / `refreshToken`) is configured,
-      // so strip it from the static set in that case to avoid double-set
-      // and to keep the OAuth refresh path single-source. But when no
-      // token source is configured, callers can carry custom auth
-      // (non-Bearer schemes, API keys, etc.) on `requestInit.headers
-      // .Authorization`; the legacy `buildRequestInit` path preserves
-      // that header verbatim, and the stateless preview MUST behave the
-      // same way or static-auth setups break entirely in stateless mode.
-      const hasTokenSource =
-        effectiveAccessToken !== undefined || effectiveAuthProvider != null;
-      const staticHeaders: Record<string, string> = {};
-      const ri = requestInit as
-        | { headers?: HeadersInit | undefined }
-        | undefined;
-      if (ri?.headers) {
-        // `RequestInit.headers` accepts three shapes per the Fetch
-        // standard: `Headers`, `Record<string, string>`, AND
-        // `[string, string][]` (tuple-array form). Iterating with
-        // `Object.entries` on the tuple-array form would walk numeric
-        // indices and store arrays as header values, producing
-        // malformed outbound headers and silently dropping the
-        // intended auth/custom headers — a stateless-only regression
-        // because `StreamableHTTPClientTransport` normalizes via
-        // `new Headers(init)` on the legacy path. Funnel all three
-        // shapes through the `Headers` constructor here for the same
-        // normalization.
-        const normalized = new Headers(ri.headers);
-        normalized.forEach((v, k) => {
-          if (hasTokenSource && k.toLowerCase() === "authorization") return;
-          staticHeaders[k] = v;
-        });
-      }
-      // Resolve the access token at send-time so OAuth refresh stays
-      // single-source. Upstream HTTP transport adapts both shapes
-      // automatically; we have to duplicate that logic here because the
-      // preview owns its own fetch.
-      //
-      // - `AuthProvider` (lower-case `token()`): returns the current
-      //   token, may refresh internally. `onUnauthorized` is the refresh
-      //   hook on 401.
-      // - `OAuthClientProvider` (`tokens()` + `saveTokens()`): returns
-      //   cached only; running `auth(provider, { serverUrl })` from
-      //   upstream performs the actual refresh exchange and writes the
-      //   new tokens back via `saveTokens()`. Calling `tokens()` alone
-      //   (the original implementation here) would have shipped the
-      //   first request unauthenticated for refresh-token providers
-      //   because nothing populates the cache up-front.
-      // `UnauthorizedContext` shape mirrors `@modelcontextprotocol/client`'s
-      // exported interface. Typed here as a structural alias rather than
-      // imported because the import would be unused on non-stateless
-      // code paths and would pull the auth module into bundles that
-      // don't need it.
-      type UnauthorizedContextShape = {
-        response: Response;
-        serverUrl: URL;
-        fetchFn: typeof fetch;
-      };
-      const isAuthProvider = (
-        p: unknown
-      ): p is {
-        token: () => Promise<string | undefined>;
-        onUnauthorized?: (ctx: UnauthorizedContextShape) => Promise<void>;
-      } => !!p && typeof (p as { token?: unknown }).token === "function";
-      const isOAuthClientProvider = (
-        p: unknown
-      ): p is {
-        tokens: () =>
-          | { access_token?: string }
-          | undefined
-          | Promise<{ access_token?: string } | undefined>;
-      } => !!p && typeof (p as { tokens?: unknown }).tokens === "function";
-      const refreshOAuthTokens = async (): Promise<string | undefined> => {
-        if (!isOAuthClientProvider(effectiveAuthProvider)) return undefined;
-        // Lazy import to avoid pulling the auth helper into bundles that
-        // never construct a stateless OAuth client.
-        const { auth } = await import("@modelcontextprotocol/client");
-        try {
-          await auth(effectiveAuthProvider as never, { serverUrl: url });
-        } catch {
-          // `auth()` failures (refresh denied, network) surface as the
-          // original 401 at the call site; we don't want to throw here
-          // because the manager handles 401 explicitly.
-          return undefined;
-        }
-        return (await effectiveAuthProvider.tokens())?.access_token;
-      };
-      // Mutable holder so a successful `on401` refresh persists across
-      // requests. Without this, `getAccessToken` would keep returning
-      // the original `effectiveAccessToken` (captured at connect time)
-      // and every request after a refresh would ship the stale token,
-      // 401 again, refresh again — an infinite refresh loop that
-      // hammers the auth server and burns the user's token quota.
-      // For `AuthProvider` / `OAuthClientProvider` the provider itself
-      // owns the cache, so this holder is only consulted for the
-      // static-`accessToken` + `onUnauthorized` configuration.
-      const tokenHolder: { current: string | undefined } = {
-        current: effectiveAccessToken,
-      };
-      const getAccessToken = async (): Promise<string | undefined> => {
-        if (isAuthProvider(effectiveAuthProvider)) {
-          return await effectiveAuthProvider.token();
-        }
-        if (isOAuthClientProvider(effectiveAuthProvider)) {
-          const cached = (await effectiveAuthProvider.tokens())?.access_token;
-          if (cached) return cached;
-          // First call with a refresh-token provider: cache is empty,
-          // run the OAuth flow to populate it before the first request.
-          return await refreshOAuthTokens();
-        }
-        return tokenHolder.current;
-      };
-      const on401 = async (response: Response): Promise<string | undefined> => {
-        if (config.onUnauthorized) {
-          const refreshed = await config.onUnauthorized({
-            serverId,
-            error: new MCPAuthError("HTTP 401 on stateless preview", 401),
-          });
-          // Persist the refreshed token so subsequent requests use it
-          // instead of re-triggering the 401 / refresh cycle.
-          if (refreshed.accessToken) {
-            tokenHolder.current = refreshed.accessToken;
-          }
-          return refreshed.accessToken;
-        }
-        if (isAuthProvider(effectiveAuthProvider)) {
-          // Build the full `UnauthorizedContext` upstream consumers
-          // expect — providers read `WWW-Authenticate` off `response`
-          // for resource metadata and use `fetchFn` to honor the
-          // transport's configured fetch. Passing `{}` here (the prior
-          // behavior) made any provider that touched these fields
-          // crash with a TypeError on every 401.
-          await effectiveAuthProvider.onUnauthorized?.({
-            response,
-            serverUrl: new URL(url),
-            fetchFn: fetch.bind(globalThis),
-          });
-          return await effectiveAuthProvider.token();
-        }
-        if (isOAuthClientProvider(effectiveAuthProvider)) {
-          return await refreshOAuthTokens();
-        }
-        return undefined;
-      };
-      const rpcLogger = this.resolveRpcLogger(config);
-      const previewClient = createManagedMcpClient({
-        mcpProtocolVersion: wireOpts.protocolVersion,
-        clientInfo: wireOpts.clientInfo,
-        transportKind: "http",
-        preview: {
-          url,
-          staticHeaders,
-          getAccessToken,
-          on401,
-          rpcLogger,
-          serverId,
-        },
-      });
-      await previewClient.connect(undefined as never, { timeout });
-      // Swap the active client in the manager's state. Notification /
-      // elicitation handlers re-applied on the new client so they
-      // route to the preview adapter.
-      wireOpts.assignClient(previewClient);
-      this.notificationManager.applyToClient(serverId, previewClient);
-      if (this.defaultProgressHandler) {
-        applyProgressHandler(
-          serverId,
-          previewClient,
-          this.defaultProgressHandler
-        );
-      }
-      const elicitationCaps = (
-        this.buildCapabilities(serverId, config) as Record<string, unknown>
-      ).elicitation;
-      if (elicitationCaps != null) {
-        this.elicitationManager.applyToClient(serverId, previewClient);
-      }
-      if (config.onError) {
-        previewClient.onerror = (error) => config.onError?.(error);
-      }
-      previewClient.onclose = () => {
-        if (this.liveClientStates.get(serverId) === state) {
-          this.clearClosedPendingConnectionState(serverId, state);
-        }
-      };
-      // Stateless has no Transport object; return undefined to signal
-      // that. Caller already widened the return type to
-      // `Transport | undefined`.
-      return undefined;
-    }
 
     let streamableError: unknown;
 
@@ -2191,6 +1915,70 @@ export class MCPClientManager {
     return mergedOptions;
   }
 
+  /**
+   * Runs a tool call under an elicitation-aware timeout budget.
+   *
+   * The request timeout is a *server* budget. A tool call blocked because the
+   * server asked the user a question is not hung, so its clock stops while an
+   * elicitation is pending — but a genuinely hung server must still die at the
+   * base timeout, and a human who never answers must not block forever.
+   *
+   * Mechanics (see `elicitation-timeout.ts` for the budget accounting):
+   *  - No elicitation handler for this server ⇒ pure passthrough, no watchdog,
+   *    no behavior change whatsoever.
+   *  - Otherwise the upstream hard timeout is **overridden** to
+   *    `base + extension` to move it out of the way (`withTimeout` only
+   *    *injects* a timeout when unset, so a plain merge would not take), and
+   *    the real budget is enforced locally by the watchdog.
+   *  - The watchdog's signal is composed with the caller's — the AI SDK
+   *    forwards its own `abortSignal` into these request options and it must
+   *    keep working.
+   */
+  private async withElicitationTimeoutSuspension<T>(
+    serverId: string,
+    options: RequestOptions,
+    run: (options: RequestOptions) => Promise<T>
+  ): Promise<T> {
+    if (!this.elicitationManager.hasHandler(serverId)) {
+      return run(options);
+    }
+
+    const baseTimeoutMs =
+      options.timeout ??
+      this.registeredServers.get(serverId)?.timeout ??
+      this.defaultTimeout;
+    const pendingSequenceAtStart = this.elicitationManager.getPendingSequence();
+
+    const suspension = createElicitationTimeoutSuspension({
+      serverId,
+      baseTimeoutMs,
+      extensionMs: this.elicitationTimeoutExtensionMs,
+      callerSignal: options.signal,
+      // Age-bound the check with this call's OWN elicitation budget. Without
+      // it, a handler that never settles (e.g. its `tools/call` was aborted by
+      // this very watchdog, so its `finally` never ran) would pin the server
+      // "pending" for the process lifetime and silently pause the clock of
+      // every later call — unbounded timeouts, with nothing in the logs.
+      // An entry older than this budget would have blown it anyway.
+      hasPending: () =>
+        this.elicitationManager.hasPendingForServer(
+          serverId,
+          this.elicitationTimeoutExtensionMs,
+          pendingSequenceAtStart,
+        ),
+    });
+
+    try {
+      return await run({
+        ...options,
+        timeout: suspension.timeoutMs,
+        signal: suspension.signal,
+      });
+    } finally {
+      suspension.dispose();
+    }
+  }
+
   private buildCapabilities(
     serverId: string,
     config: MCPServerConfig
@@ -2219,10 +2007,23 @@ export class MCPClientManager {
   }
 
   private hasNegotiatedElicitation(state?: LiveClientState): boolean {
+    return this.negotiatedElicitationCapability(state) != null;
+  }
+
+  /**
+   * The `elicitation` client capability actually advertised to this server on
+   * the wire, for `applyToClient` to enforce declared modes against.
+   */
+  private negotiatedElicitationCapability(
+    state?: LiveClientState
+  ): DeclaredElicitationCapability {
     const capabilities = state?.initializedClientCapabilities as
       | Record<string, unknown>
       | undefined;
-    return capabilities?.elicitation != null;
+    const elicitation = capabilities?.elicitation;
+    return elicitation != null
+      ? (elicitation as DeclaredElicitationCapability)
+      : undefined;
   }
 
   private resolveRpcLogger(config: MCPServerConfig): RpcLogger | undefined {

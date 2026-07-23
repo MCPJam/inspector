@@ -32,10 +32,7 @@ import {
   type McpUiResourceCsp,
   type McpUiResourcePermissions,
 } from "@modelcontextprotocol/ext-apps/app-bridge";
-import type {
-  CallToolResult,
-  ContentBlock,
-} from "@modelcontextprotocol/client";
+import type { ContentBlock } from "@modelcontextprotocol/client";
 // Framework-free runtime helpers shared with the inspector + eval harness.
 import {
   registerHostBridgeHandlers,
@@ -104,6 +101,23 @@ const SAFE_OPEN_IN_APP_PROTOCOLS = new Set(["http:", "https:"]);
 function toSafeOpenInAppUrl(value: string): string | null {
   try {
     const parsed = new URL(value);
+    return SAFE_OPEN_IN_APP_PROTOCOLS.has(parsed.protocol) ? parsed.href : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A widget-supplied `ui/download-file` `resource_link` may only target http(s):
+ * that gate is what keeps `javascript:`/`data:`/`file:` URLs out of the
+ * `window.open` the host performs on the widget's behalf. Resolves relative URIs
+ * against the host document. Returns the absolute href when allowed, else null —
+ * a single predicate shared by the pre-prompt reject and the download loop so
+ * the two can't drift apart and silently weaken the gate.
+ */
+function toSafeDownloadLinkUrl(uri: string): string | null {
+  try {
+    const parsed = new URL(uri, window.location.href);
     return SAFE_OPEN_IN_APP_PROTOCOLS.has(parsed.protocol) ? parsed.href : null;
   } catch {
     return null;
@@ -327,6 +341,19 @@ export interface MCPAppsRendererProps {
    * collapse the inline view).
    */
   onRequestTeardown?: (toolCallId: string, displayWidgetId?: string) => void;
+  /**
+   * Ask the host to confirm a widget-initiated `ui/download-file` before the
+   * download runs (SEP-1865: host SHOULD confirm). Resolve `true` to proceed,
+   * `false` to deny (the widget then receives a JSON-RPC "Download denied by
+   * user" error). When omitted, downloads proceed unprompted — so embedders of
+   * the published package keep the prior behavior.
+   */
+  onConfirmDownload?: (info: {
+    kind: "resource" | "resource_link";
+    filename?: string;
+    mimeType?: string;
+    uri?: string;
+  }) => Promise<boolean>;
   /** Whether the server is offline (for using cached content) */
   isOffline?: boolean;
   /** URL to cached widget HTML for offline rendering */
@@ -676,6 +703,7 @@ export function MCPAppsRendererSurface({
   onModelContextUpdate,
   onAppSupportedDisplayModesChange,
   onRequestTeardown,
+  onConfirmDownload,
   isOffline,
   cachedWidgetHtmlUrl,
   liveFetchPreferred,
@@ -1478,6 +1506,7 @@ export function MCPAppsRendererSurface({
   const onRequestPipRef = useRef(onRequestPip);
   const onExitPipRef = useRef(onExitPip);
   const onRequestTeardownRef = useRef(onRequestTeardown);
+  const onConfirmDownloadRef = useRef(onConfirmDownload);
   const setDisplayModeRef = useRef(setDisplayMode);
   const isPlaygroundActiveRef = useRef(isPlaygroundActive);
   const playgroundDeviceTypeRef = useRef(playgroundDeviceType);
@@ -2932,6 +2961,7 @@ export function MCPAppsRendererSurface({
     onAppSupportedDisplayModesChangeRef.current =
       onAppSupportedDisplayModesChange;
     onRequestTeardownRef.current = onRequestTeardown;
+    onConfirmDownloadRef.current = onConfirmDownload;
   }, [
     onSendFollowUp,
     onCallTool,
@@ -2951,6 +2981,7 @@ export function MCPAppsRendererSurface({
     onModelContextUpdate,
     onAppSupportedDisplayModesChange,
     onRequestTeardown,
+    onConfirmDownload,
   ]);
 
   // Adapter: bind the renderer's refs / state setters / store callbacks to the
@@ -3032,10 +3063,13 @@ export function MCPAppsRendererSurface({
             if (!onCallToolRef.current) {
               throw new Error("Tool calls not supported");
             }
+            // Apps-compat seam (§1D): the host returns a v2-client
+            // CallToolResult; the bridge's onCallTool expects its own nominal
+            // type (ext-apps v1-sdk peer). Erase across the version boundary.
             return (await onCallToolRef.current(
               name,
               invocationInput
-            )) as CallToolResult;
+            )) as never;
           },
           onAppToolInvocation: (update) => {
             onAppToolInvocationChangeRef.current?.(update);
@@ -3203,7 +3237,60 @@ export function MCPAppsRendererSurface({
           onDownloadFile: async ({ contents }) => {
             // SEP-1865 `ui/download-file`: the host mediates the download
             // since the iframe sandbox blocks direct anchor-clicks. Blob +
-            // object-URL anchor (no confirmation prompt yet — follow-up).
+            // object-URL anchor.
+            //
+            // Confirmation runs BEFORE the try/catch below. Per the ext-apps
+            // `App.downloadFile` contract, a user cancellation / host denial
+            // resolves `{ isError: true }` (the widget's documented
+            // `if (result.isError)` path) — a throw is reserved for
+            // transport/timeout, so a denial must RETURN isError, not throw, or
+            // the widget skips its denial handling and may surface an unhandled
+            // rejection. When the host supplies no confirmer, downloads proceed
+            // unprompted (back-compat for other embedders of the package).
+            const confirmDownload = onConfirmDownloadRef.current;
+            if (confirmDownload) {
+              for (const item of contents) {
+                let info: {
+                  kind: "resource" | "resource_link";
+                  filename?: string;
+                  mimeType?: string;
+                  uri?: string;
+                };
+                if (item.type === "resource" && item.resource) {
+                  const res = item.resource as {
+                    uri: string;
+                    mimeType?: string;
+                  };
+                  info = {
+                    kind: "resource",
+                    filename: res.uri.split("/").pop() || undefined,
+                    mimeType: res.mimeType,
+                    uri: res.uri,
+                  };
+                } else if (item.type === "resource_link") {
+                  const link = item as { uri: string; mimeType?: string };
+                  // Reject a non-http(s) resource_link up front, before
+                  // prompting — the download loop below enforces the same
+                  // scheme gate, so prompting for a link we'll refuse anyway
+                  // would show the user a misleading confirmation.
+                  if (toSafeDownloadLinkUrl(link.uri) === null) {
+                    return { isError: true };
+                  }
+                  info = {
+                    kind: "resource_link",
+                    filename: link.uri.split("/").pop() || undefined,
+                    mimeType: link.mimeType,
+                    uri: link.uri,
+                  };
+                } else {
+                  continue;
+                }
+                const approved = await confirmDownload(info);
+                if (!approved) {
+                  return { isError: true };
+                }
+              }
+            }
             try {
               for (const item of contents) {
                 if (item.type === "resource" && item.resource) {
@@ -3241,14 +3328,15 @@ export function MCPAppsRendererSurface({
                   }
                 } else if (item.type === "resource_link") {
                   const link = item as { uri: string };
-                  // Refuse navigations that aren't a browser-fetchable scheme.
-                  const parsed = new URL(link.uri, window.location.href);
-                  if (!["http:", "https:"].includes(parsed.protocol)) {
+                  // Refuse navigations that aren't a browser-fetchable scheme
+                  // (shared gate with the pre-prompt check above).
+                  const safeHref = toSafeDownloadLinkUrl(link.uri);
+                  if (safeHref === null) {
                     throw new Error(
-                      `Unsupported download URI protocol: ${parsed.protocol}`
+                      `Unsupported download URI: ${link.uri}`
                     );
                   }
-                  window.open(parsed.href, "_blank", "noopener,noreferrer");
+                  window.open(safeHref, "_blank", "noopener,noreferrer");
                 }
               }
               return {};
@@ -3438,6 +3526,17 @@ export function MCPAppsRendererSurface({
         appToolsBridgeIdRef.current = null;
         setAppToolsBridgeIdState(null);
       }
+      // SEP-1865: the host MUST send `ui/resource-teardown` before tearing the
+      // view down (so it can flush/persist), and SHOULD wait for the ack. We
+      // send the teardown request — the outbound message is posted before
+      // close() — but deliberately DO NOT await the ack: this cleanup also runs
+      // when the widget is reloaded/replaced, and the outer sandbox-proxy
+      // iframe is reused for the next resource. Keeping this (now stale) bridge
+      // subscribed while a replacement bridge attaches to the SAME proxy window
+      // would let both answer the new widget's JSON-RPC (duplicate `ui/initialize`
+      // / stale responses). Detaching synchronously is the only way to guarantee
+      // the stale transport stops handling messages before the new one starts;
+      // the ack, if it arrives, lands after close() and is harmlessly dropped.
       if (isReadyRef.current) {
         bridge.teardownResource({}).catch(() => {});
       }

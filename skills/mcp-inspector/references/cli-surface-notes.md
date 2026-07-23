@@ -99,6 +99,46 @@ If a higher-priority surface contradicts a lower-priority summary, trust the hig
   - host display modes, host context changes, or postMessage bridge behavior
 - Treat a pass as evidence that the server advertises an MCP Apps surface with plausible resource wiring. Do not describe it as full SEP-1865 conformance.
 
+### `xaa run`
+
+- Drives the full Cross-App Access (ID-JAG) chain: MCPJam is both the
+  self-issuing IdP (local key pair) and the client; the authorization server
+  and MCP server are under test. See `references/xaa-id-jag-interpretation.md`
+  for the interpretation rules.
+- Result shape (top level): `completed`, `issuer`, `registration`,
+  `authzServerIssuer`, `tokenEndpoint`, `authorizationServerCapabilities`,
+  `idJag`, `redemption`, `mcp`, `steps`, and optional `error`; negative/baseline
+  runs also carry `negativeProbe`.
+- `steps[]` names are CLI projections. `mint_id_jag` = the RFC 8693
+  token-exchange request; `redeem_id_jag` = the RFC 7523 JWT-bearer request;
+  discovery steps keep their RFC 9728 / RFC 8414 names. A step is `ok` only on a
+  2xx with no transport error.
+- `verify_issuer_publication` is a **local prerequisite**, not a target check:
+  it confirms `--issuer-base-url` publishes the CLI's own signing key. A failure
+  here, or a bare connection error with an empty/publication-only `steps` array,
+  is issuer setup, not a server finding.
+- `idJag.verified` is the CLI verifying its own mint against its own issuer. It
+  is not evidence that the authorization server validated the assertion; the
+  AS's behavior is in `redemption`.
+- `authorizationServerCapabilities.*` and `mcp.xaaExtension` are three-valued
+  evidence (`advertised` / `not_advertised` / `unknown`). Advertisement is
+  evidence; the token-endpoint response (`redemption.tokenIssued`) is the
+  verdict. `unknown` (key absent) is weaker than `not_advertised` (key present
+  without the value).
+- `registration` is secret-free by construction — a DCR-minted client secret
+  never enters the result. `registration.warnings[]` codes: `public_client`
+  (posture note), `profile_metadata_not_echoed` / `grant_types_not_echoed`
+  (RFC 7591 MAY-ignore, informational), `missing_no_store` (RFC 7591 MUST for
+  credential responses, real `low` compliance finding).
+- Tokens, assertions, secrets, and the ID-JAG string are always `[REDACTED]`,
+  including secrets a token endpoint reflects into an error body. A `[REDACTED]`
+  value is intentional masking, not missing data.
+- Exit `0` only when `completed` is true; `1` otherwise, including local
+  issuer-setup failures. The JSON result is on stdout; progress and advisory
+  notes are on stderr; `--quiet` suppresses the notes.
+- The CLI does not run the tampered-ID-JAG negative scorecard; that is
+  Inspector-UI only. Do not imply a single `xaa run` tested rejection behavior.
+
 ### `tools list`
 
 - The command returns:

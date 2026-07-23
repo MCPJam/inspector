@@ -7,7 +7,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
-import { useAuth } from "@workos-inc/authkit-react";
 import { AdvancedConnectionSettingsSection } from "./shared/AdvancedConnectionSettingsSection";
 import { AuthenticationSection } from "./shared/AuthenticationSection";
 import { EnvVarsSection } from "./shared/EnvVarsSection";
@@ -33,6 +32,8 @@ interface EditServerFormContentProps {
   onMcpProtocolVersionOverrideChange?: (
     mode: McpProtocolVersion | undefined
   ) => void;
+  /** Project default XAA test identity — shown as override placeholders. */
+  projectXaaDefaultIdentity?: { subject: string; email: string } | null;
 }
 
 export function EditServerFormContent({
@@ -42,8 +43,8 @@ export function EditServerFormContent({
   hostedServerId = null,
   mcpProtocolVersionOverride,
   onMcpProtocolVersionOverrideChange,
+  projectXaaDefaultIdentity = null,
 }: EditServerFormContentProps) {
-  const { user: signedInUser } = useAuth();
   const hostedUrlPlaceholder = "https://example.com/mcp";
   const [revealingEnv, setRevealingEnv] = useState(false);
   const [revealingHeaders, setRevealingHeaders] = useState(false);
@@ -228,8 +229,13 @@ export function EditServerFormContent({
             onOauthScopesChange={formState.setOauthScopesInput}
             oauthProtocolMode={formState.oauthProtocolMode}
             onOauthProtocolModeChange={formState.setOauthProtocolMode}
-            oauthRegistrationMode={formState.oauthRegistrationMode}
+            registrationMode={formState.registrationMode}
             onOauthRegistrationModeChange={formState.setOauthRegistrationMode}
+            xaaClientAuth={formState.xaaClientAuth}
+            onXaaClientAuthChange={formState.setXaaClientAuth}
+            confidentialCimdStatus={formState.confidentialCimdCapability.status}
+            confidentialCimdBlockReason={formState.confidentialCimdBlockReason}
+            onRetryConfidentialCimd={formState.confidentialCimdCapability.retry}
             useCustomClientId={formState.useCustomClientId}
             onUseCustomClientIdChange={(checked) => {
               formState.setUseCustomClientId(checked);
@@ -270,11 +276,24 @@ export function EditServerFormContent({
             hostedServerId={hostedServerId}
             xaaAuthzIssuer={formState.xaaAuthzIssuer}
             onXaaAuthzIssuerChange={formState.setXaaAuthzIssuer}
+            xaaAllowPathScopedIssuer={formState.xaaAllowPathScopedIssuer}
+            onXaaAllowPathScopedIssuerChange={
+              formState.setXaaAllowPathScopedIssuer
+            }
             xaaSubject={formState.xaaSubject}
             onXaaSubjectChange={formState.setXaaSubject}
             xaaEmail={formState.xaaEmail}
             onXaaEmailChange={formState.setXaaEmail}
-            signedInEmail={signedInUser?.email}
+            autoSelectsXaa={formState.autoSelectsXaa}
+            projectDefaultIdentity={projectXaaDefaultIdentity}
+            xaaDcrClientId={formState.xaaDcrClientId}
+            xaaDcrTokenEndpointAuthMethod={
+              formState.xaaDcrTokenEndpointAuthMethod
+            }
+            xaaDcrIssuer={formState.xaaDcrIssuer}
+            xaaDcrClientSecretExpiresAt={formState.xaaDcrClientSecretExpiresAt}
+            xaaDcrRegisteredAt={formState.xaaDcrRegisteredAt}
+            xaaDcrStatus={formState.xaaDcrStatus}
           />
         </div>
       )}

@@ -36,6 +36,10 @@ import {
 } from "./shared/pkce.js";
 import { buildResourceMetadataUrl } from "./shared/urls.js";
 import {
+  resolveDiscoveryResourceIndicator,
+  resolveFlowResourceValue,
+} from "./shared/resource-indicator.js";
+import {
   buildInitializeRequestBody,
   resolveInitializeProtocolVersion,
 } from "./shared/initialize.js";
@@ -49,6 +53,10 @@ import {
   normalizeRegisteredClientAuthMethod,
   resolvePreregisteredClientAuthMethod,
 } from "./shared/client-auth.js";
+import {
+  buildDynamicClientRegistrationRequest,
+  executeDynamicClientRegistration,
+} from "./shared/dynamic-client-registration.js";
 import { discoverOAuthProtectedResourceMetadata } from "../browser-auth.js";
 
 // Re-export types for backward compatibility
@@ -60,6 +68,12 @@ export interface DebugOAuthStateMachineConfig
   extends BaseOAuthStateMachineConfig {
   registrationStrategy?: RegistrationStrategy2025_06_18; // dcr | preregistered only
 }
+
+// Sequence-diagram previews must show the resource value the flow actually
+// sends (the decision persisted at PRM discovery), not the raw server URL.
+const previewResourceValue = (
+  flowState: OAuthFlowState,
+): string | undefined => resolveFlowResourceValue(flowState);
 
 /**
  * Build the sequence of actions for the 2025-06-18 OAuth flow
@@ -237,7 +251,7 @@ export function buildActions_2025_06_18(
               label: "method",
               value: flowState.codeChallengeMethod || "S256",
             },
-            { label: "resource", value: flowState.serverUrl || "—" },
+            { label: "resource", value: previewResourceValue(flowState) || "—" },
             { label: "Protocol", value: "2025-06-18" },
           ]
         : undefined,
@@ -256,7 +270,7 @@ export function buildActions_2025_06_18(
               value:
                 flowState.codeChallenge?.substring(0, 12) + "..." || "S256",
             },
-            { label: "resource", value: flowState.serverUrl || "" },
+            { label: "resource", value: previewResourceValue(flowState) || "" },
           ]
         : undefined,
     },
@@ -310,7 +324,7 @@ export function buildActions_2025_06_18(
       details: flowState.codeVerifier
         ? [
             { label: "grant_type", value: "authorization_code" },
-            { label: "resource", value: flowState.serverUrl || "" },
+            { label: "resource", value: previewResourceValue(flowState) || "" },
           ]
         : undefined,
     },
@@ -414,6 +428,7 @@ export const createDebugOAuthStateMachine = (
     authMode,
     hasClientSecret = false,
     strictConformance = false,
+    resourceIndicatorEnforcement = "warn",
     registrationStrategy = "dcr", // Default to DCR for 2025-06-18
   } = config;
 
@@ -432,6 +447,14 @@ export const createDebugOAuthStateMachine = (
 
   // Helper to get current state (use getState if provided, otherwise use initial state)
   const getCurrentState = () => (getState ? getState() : initialState);
+
+  // The resource indicator is decided once at PRM discovery and persisted as
+  // state.resourceIndicator (see resource-policy.ts). Reading through this
+  // helper keeps every request site — authorization URL, token body, token
+  // POST — on the identical value, and re-evaluates lazily for flows seeded
+  // past the discovery step.
+  const resolveResourceParameter = (): string =>
+    resolveFlowResourceValue(getCurrentState(), serverUrl);
 
   const executeRequest = (url: string, options: RequestInit = {}) =>
     requestExecutor({
@@ -846,22 +869,28 @@ export const createDebugOAuthStateMachine = (
               const authorizationServerUrl =
                 resourceMetadata.authorization_servers?.[0] || serverUrl;
 
-              // Add info log for Authorization Servers
-              const infoLogs = addInfoLog(
-                state,
-                "received_resource_metadata",
-                "authorization-servers",
-                "Authorization Servers",
-                {
-                  Resource: resourceMetadata.resource,
-                  "Authorization Servers":
-                    resourceMetadata.authorization_servers,
-                },
-              );
+              // The response card is the complete protected-resource metadata.
+              // Keep existing logs only for distinct findings, such as a
+              // resource identifier mismatch below.
+              const existingInfoLogs = state.infoLogs ?? [];
+
+              // Resolve the resource indicator ONCE (rejecting/warning per
+              // the surface's enforcement mode); every later request and
+              // preview site reads state.resourceIndicator instead of
+              // re-deriving it.
+              const { resourceIndicator, infoLogs } =
+                resolveDiscoveryResourceIndicator({
+                  state,
+                  fallbackServerUrl: serverUrl,
+                  prmResource: resourceMetadata.resource,
+                  enforcement: resourceIndicatorEnforcement,
+                  infoLogs: existingInfoLogs,
+                });
 
               updateState({
                 currentStep: "received_resource_metadata",
                 resourceMetadata,
+                resourceIndicator,
                 resourceMetadataUrl:
                   lastAttempt?.request?.url || state.resourceMetadataUrl,
                 authorizationServerUrl,
@@ -1039,42 +1068,6 @@ export const createDebugOAuthStateMachine = (
             const supportedMethods =
               authServerMetadata.code_challenge_methods_supported || [];
 
-            // Add info log for Authorization Server Metadata
-            const metadata: Record<string, any> = {
-              Issuer: authServerMetadata.issuer,
-              "Authorization Endpoint":
-                authServerMetadata.authorization_endpoint,
-              "Token Endpoint": authServerMetadata.token_endpoint,
-            };
-
-            if (authServerMetadata.registration_endpoint) {
-              metadata["Registration Endpoint"] =
-                authServerMetadata.registration_endpoint;
-            }
-            if (authServerMetadata.code_challenge_methods_supported) {
-              metadata["PKCE Methods"] =
-                authServerMetadata.code_challenge_methods_supported;
-            }
-            if (authServerMetadata.grant_types_supported) {
-              metadata["Grant Types"] =
-                authServerMetadata.grant_types_supported;
-            }
-            if (authServerMetadata.response_types_supported) {
-              metadata["Response Types"] =
-                authServerMetadata.response_types_supported;
-            }
-            if (authServerMetadata.scopes_supported) {
-              metadata["Scopes"] = authServerMetadata.scopes_supported;
-            }
-
-            const infoLogs = addInfoLog(
-              getCurrentState(),
-              "received_authorization_server_metadata",
-              "as-metadata",
-              "Authorization Server Metadata",
-              metadata,
-            );
-
             if (!supportedMethods.includes("S256")) {
               console.warn(
                 "Authorization server may not support S256 PKCE method. Supported methods:",
@@ -1086,7 +1079,6 @@ export const createDebugOAuthStateMachine = (
                 authorizationServerMetadata: authServerMetadata,
                 lastResponse: authServerResponseData,
                 httpHistory: updatedHistoryFinal,
-                infoLogs,
                 error:
                   "Warning: Authorization server may not support S256 PKCE method",
                 isInitiatingAuth: false,
@@ -1097,7 +1089,6 @@ export const createDebugOAuthStateMachine = (
                 authorizationServerMetadata: authServerMetadata,
                 lastResponse: authServerResponseData,
                 httpHistory: updatedHistoryFinal,
-                infoLogs,
                 isInitiatingAuth: false,
               });
             }
@@ -1170,33 +1161,14 @@ export const createDebugOAuthStateMachine = (
                 supportedScopes: scopesSupported,
               });
 
-              const clientMetadata: Record<string, any> = {
-                ...dynamicRegistrationDefaults,
-                redirect_uris:
-                  dynamicRegistrationDefaults.redirect_uris ?? [redirectUri],
-                grant_types: dynamicRegistrationDefaults.grant_types ?? [
-                  "authorization_code",
-                  "refresh_token",
-                ],
-                response_types:
-                  dynamicRegistrationDefaults.response_types ?? ["code"],
-                token_endpoint_auth_method:
-                  dynamicRegistrationDefaults.token_endpoint_auth_method ??
-                  "none",
-              };
-
-              if (requestedScopeValue) {
-                clientMetadata.scope = requestedScopeValue;
-              }
-
-              const registrationRequest = {
-                method: "POST",
-                url: state.authorizationServerMetadata.registration_endpoint,
-                headers: mergeHeadersForAuthServer(customHeaders, {
-                  "Content-Type": "application/json",
-                }),
-                body: clientMetadata,
-              };
+              const registrationRequest = buildDynamicClientRegistrationRequest({
+                registrationEndpoint:
+                  state.authorizationServerMetadata.registration_endpoint,
+                redirectUri,
+                dynamicRegistrationDefaults,
+                scope: requestedScopeValue,
+                customHeaders,
+              });
 
               // Update state with the request
               updateState({
@@ -1254,7 +1226,7 @@ export const createDebugOAuthStateMachine = (
             }
             break;
 
-          case "request_client_registration":
+          case "request_client_registration": {
             // Step 6: Dynamic Client Registration (RFC 7591)
             if (!state.authorizationServerMetadata?.registration_endpoint) {
               throw new Error("No registration endpoint available");
@@ -1264,172 +1236,39 @@ export const createDebugOAuthStateMachine = (
               throw new Error("No client metadata in request");
             }
 
-            try {
-              // Make actual POST request to registration endpoint via backend proxy
-              const response = await executeRequest(
-                state.authorizationServerMetadata.registration_endpoint,
-                {
-                  method: "POST",
-                  headers: mergeHeadersForAuthServer(customHeaders, {
-                    "Content-Type": "application/json",
-                  }),
-                  body: JSON.stringify(state.lastRequest.body),
-                },
-              );
+            // Execute the exact request recorded in lastRequest so the
+            // displayed request and the executed request cannot drift.
+            const dcr = await executeDynamicClientRegistration({
+              request: state.lastRequest,
+              requestExecutor,
+              httpHistory: state.httpHistory,
+            });
 
-              const registrationResponseData = {
-                status: response.status,
-                statusText: response.statusText,
-                headers: response.headers,
-                body: response.body,
-              };
-
-              // Update the last history entry with the response
-              const updatedHistoryReg = [...(state.httpHistory || [])];
-              if (updatedHistoryReg.length > 0) {
-                const lastEntry =
-                  updatedHistoryReg[updatedHistoryReg.length - 1];
-                lastEntry.response = registrationResponseData;
-                lastEntry.duration =
-                  Date.now() - (lastEntry.timestamp || Date.now());
-              }
-
-              if (!response.ok) {
-                // Registration failed - could be server doesn't support DCR or request was invalid
-                const registrationError = `Dynamic Client Registration failed (${response.status}).`;
-
-                // Update state with error but continue with fallback
-                updateState({
-                  lastResponse: registrationResponseData,
-                  httpHistory: updatedHistoryReg,
-                  error: registrationError,
-                });
-
-                if (strictConformance) {
-                  return;
-                }
-
-                const fallbackClient =
-                  await loadFallbackPreregisteredClient(
-                    `Dynamic Client Registration failed (${response.status}); using pre-registered client credentials.`,
-                  );
-
-                if (!fallbackClient) {
-                  updateState({
-                    error:
-                      `${registrationError} Configure a pre-registered client or enable DCR on the authorization server.`,
-                    isInitiatingAuth: false,
-                  });
-                  return;
-                }
-
-                updateState({
-                  currentStep: "received_client_credentials",
-                  clientId: fallbackClient.clientId,
-                  clientSecret: fallbackClient.clientSecret,
-                  tokenEndpointAuthMethod:
-                    fallbackClient.tokenEndpointAuthMethod,
-                  infoLogs: fallbackClient.infoLogs,
-                  error: undefined,
-                  isInitiatingAuth: false,
-                });
-              } else {
-                // Registration successful
-                const clientInfo = response.body;
-                if (
-                  strictConformance &&
-                  typeof clientInfo?.client_id !== "string"
-                ) {
-                  updateState({
-                    lastResponse: registrationResponseData,
-                    httpHistory: updatedHistoryReg,
-                    error:
-                      "Dynamic Client Registration response is missing a client_id.",
-                    isInitiatingAuth: false,
-                  });
-                  return;
-                }
-
-                // Add info log for DCR
-                const dcrInfo: Record<string, any> = {
-                  "Client ID": clientInfo.client_id,
-                  "Client Name": clientInfo.client_name,
-                  "Token Auth Method":
-                    clientInfo.token_endpoint_auth_method || "none",
-                  "Redirect URIs": clientInfo.redirect_uris,
-                  "Grant Types": clientInfo.grant_types,
-                  "Response Types": clientInfo.response_types,
-                };
-
-                if (clientInfo.client_secret) {
-                  dcrInfo["Client Secret"] =
-                    clientInfo.client_secret.substring(0, 20) + "...";
-                  dcrInfo["Note"] =
-                    "Server issued client_secret - this will be used in token requests";
-                }
-
-                const infoLogs = addInfoLog(
-                  getCurrentState(),
-                  "received_client_credentials",
-                  "dcr",
-                  "Dynamic Client Registration",
-                  dcrInfo,
-                );
-
-                updateState({
-                  currentStep: "received_client_credentials",
-                  clientId: clientInfo.client_id,
-                  clientSecret: clientInfo.client_secret,
-                  tokenEndpointAuthMethod:
-                    normalizeRegisteredClientAuthMethod(clientInfo),
-                  lastResponse: registrationResponseData,
-                  httpHistory: updatedHistoryReg,
-                  infoLogs,
-                  error: undefined,
-                  isInitiatingAuth: false,
-                });
-              }
-            } catch (error) {
-              // Capture the error but continue with fallback
-              const errorResponse = {
-                status: 0,
-                statusText: "Network Error",
-                headers: {},
-                body: {
-                  error: error instanceof Error ? error.message : String(error),
-                },
-              };
-
-              const updatedHistoryError = [...(state.httpHistory || [])];
-              if (updatedHistoryError.length > 0) {
-                const lastEntry =
-                  updatedHistoryError[updatedHistoryError.length - 1];
-                lastEntry.response = errorResponse;
-                lastEntry.duration =
-                  Date.now() - (lastEntry.timestamp || Date.now());
-              }
-
-              const registrationError = `Client registration failed: ${error instanceof Error ? error.message : String(error)}`;
-
+            if (dcr.status !== "registered") {
+              // Update state with error but continue with fallback
               updateState({
-                lastResponse: errorResponse,
-                httpHistory: updatedHistoryError,
-                error: registrationError,
+                lastResponse: dcr.response,
+                httpHistory: dcr.httpHistory,
+                error: dcr.error,
               });
 
               if (strictConformance) {
+                // A 2xx-but-unusable registration body previously reached the
+                // strict missing-client_id path, which cleared isInitiatingAuth.
+                // Preserve that so a failed strict run isn't left "initiating".
+                if (dcr.status === "invalid_response") {
+                  updateState({ isInitiatingAuth: false });
+                }
                 return;
               }
 
-              const fallbackClient =
-                await loadFallbackPreregisteredClient(
-                  "Client registration failed; using pre-registered client credentials.",
-                );
+              const fallbackClient = await loadFallbackPreregisteredClient(
+                dcr.fallbackNote,
+              );
 
               if (!fallbackClient) {
                 updateState({
-                  error:
-                    `${registrationError}. Configure a pre-registered client or enable DCR on the authorization server.`,
+                  error: dcr.errorWithFallbackHint,
                   isInitiatingAuth: false,
                 });
                 return;
@@ -1445,8 +1284,44 @@ export const createDebugOAuthStateMachine = (
                 error: undefined,
                 isInitiatingAuth: false,
               });
+              break;
             }
+
+            // Registration successful
+            if (strictConformance && dcr.missingClientId) {
+              updateState({
+                lastResponse: dcr.response,
+                httpHistory: dcr.httpHistory,
+                error:
+                  "Dynamic Client Registration response is missing a client_id.",
+                isInitiatingAuth: false,
+              });
+              return;
+            }
+
+            const infoLogs = addInfoLog(
+              getCurrentState(),
+              "received_client_credentials",
+              "dcr",
+              "Dynamic Client Registration",
+              dcr.infoLogData,
+            );
+
+            updateState({
+              currentStep: "received_client_credentials",
+              clientId: dcr.credentials.clientId,
+              clientSecret: dcr.credentials.clientSecret,
+              tokenEndpointAuthMethod: normalizeRegisteredClientAuthMethod(
+                dcr.clientInfo,
+              ),
+              lastResponse: dcr.response,
+              httpHistory: dcr.httpHistory,
+              infoLogs,
+              error: undefined,
+              isInitiatingAuth: false,
+            });
             break;
+          }
 
           case "received_client_credentials":
             // Step 7: Generate PKCE parameters
@@ -1464,7 +1339,7 @@ export const createDebugOAuthStateMachine = (
               {
                 code_challenge: codeChallenge,
                 method: "S256",
-                resource: state.serverUrl || "Unknown",
+                resource: resolveResourceParameter() || "Unknown",
               },
             );
 
@@ -1500,8 +1375,9 @@ export const createDebugOAuthStateMachine = (
             );
             authUrl.searchParams.set("code_challenge_method", "S256");
             authUrl.searchParams.set("state", state.state || "");
-            if (state.serverUrl) {
-              authUrl.searchParams.set("resource", state.serverUrl);
+            const authResourceParam = resolveResourceParameter();
+            if (authResourceParam) {
+              authUrl.searchParams.set("resource", authResourceParam);
             }
 
             const requestedScopeValue = resolveRequestedScopeValue({
@@ -1586,8 +1462,9 @@ export const createDebugOAuthStateMachine = (
               tokenRequestBodyObj.code_verifier = state.codeVerifier;
             }
 
-            if (state.serverUrl) {
-              tokenRequestBodyObj.resource = state.serverUrl;
+            const tokenBodyResourceParam = resolveResourceParameter();
+            if (tokenBodyResourceParam) {
+              tokenRequestBodyObj.resource = tokenBodyResourceParam;
             }
 
             const tokenRequest = {
@@ -1656,8 +1533,9 @@ export const createDebugOAuthStateMachine = (
               });
 
               // Add resource parameter if available
-              if (state.serverUrl) {
-                tokenRequestBody.set("resource", state.serverUrl);
+              const tokenResourceParam = resolveResourceParameter();
+              if (tokenResourceParam) {
+                tokenRequestBody.set("resource", tokenResourceParam);
               }
 
               // Make the token request via backend proxy. The client-auth

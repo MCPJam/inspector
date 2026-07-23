@@ -14,8 +14,9 @@ import {
   deriveServerRequirements,
   evaluateHostCompat,
   evaluateMarketHosts,
+  type HostCompatCatalog,
 } from "@mcpjam/sdk/host-compat";
-import { PROFILE_BY_ID } from "./profiles";
+import { getHostProfiles, PROFILE_BY_ID } from "./profiles";
 import type { WidgetUsage } from "./widget-scan";
 import type {
   ConnectionFacts,
@@ -31,6 +32,7 @@ export { deriveServerRequirements, evaluateHostCompat };
 export type HostCompatEvaluation = {
   requirements: ServerRequirements;
   reports: HostCompatReport[];
+  analysisStatus?: "analyzing" | "ready" | "failed";
 };
 
 /**
@@ -42,15 +44,21 @@ export function evaluateAllHosts(
   toolsData?: ListToolsResultWithMetadata | null,
   widgetUsage?: WidgetUsage,
   connectionFacts?: ConnectionFacts,
+  // Live-fetched catalog (useHostCatalog). Omitted/null = bundled fallback.
+  catalog?: HostCompatCatalog | null
 ): HostCompatEvaluation {
   const { requirements, reports } = evaluateMarketHosts(toolsData, {
     widgetUsage,
     connectionFacts,
+    catalog: catalog ?? undefined,
   });
+  const profileById = catalog
+    ? Object.fromEntries(getHostProfiles(catalog).map((p) => [p.id, p]))
+    : PROFILE_BY_ID;
   return {
     requirements,
     reports: reports.map((r) => {
-      const profile = PROFILE_BY_ID[r.hostId];
+      const profile = profileById[r.hostId];
       return {
         ...r,
         logoSrc: profile?.logoSrc ?? "",

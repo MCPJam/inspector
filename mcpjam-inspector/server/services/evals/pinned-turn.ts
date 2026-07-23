@@ -13,6 +13,7 @@
  * transcript and verdict exactly as it does for model turns.
  */
 
+import type { ModelMessage } from "ai";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import type { ToolCall, ToolErrorRecord } from "@/shared/eval-matching";
 import type { PinnedToolCall } from "@/shared/steps";
@@ -71,6 +72,51 @@ export interface PinnedTurnResult {
   iterationError?: string;
   /** Human-readable one-line outcome for the synthesized assistant message. */
   summary: string;
+}
+
+/**
+ * Everything a pinned turn contributes to an iteration, derived once from the
+ * pinned spec + `runPinnedTurn`'s result. Engine-agnostic: the local and
+ * hosted step handlers apply the same accounting to their own acc shapes
+ * (local's rich acc vs hosted's narrow one), so the semantics — message
+ * shapes, phantom-call suppression, error classification — live here and
+ * cannot drift between paths.
+ */
+export interface PinnedTurnAccounting {
+  /** The synthesized user line, `Pinned tool call: <tool> on "<server>"`.
+   *  Doubles as the SSE `turn_start` prompt. */
+  prompt: string;
+  userMessage: ModelMessage;
+  /** Assistant message carrying the one-line outcome summary. Plain TEXT by
+   *  contract: hosted injects this pair into the `/stream` input history,
+   *  which only round-trips untouched for text-only messages. */
+  assistantMessage: ModelMessage;
+  summary: string;
+  /** [] when no MCP call happened (not-connected / no tool selected). */
+  toolCalls: ToolCall[];
+  toolErrors: ToolErrorRecord[];
+  /** Set ⇒ fatal setup failure (server not connected). */
+  iterationError?: string;
+  setupFailure: boolean;
+}
+
+export function buildPinnedTurnAccounting(
+  pinned: PinnedToolCall,
+  result: PinnedTurnResult
+): PinnedTurnAccounting {
+  const prompt = `Pinned tool call: ${pinned.toolName} on "${pinned.serverName}"`;
+  return {
+    prompt,
+    userMessage: { role: "user", content: prompt },
+    assistantMessage: { role: "assistant", content: result.summary },
+    summary: result.summary,
+    toolCalls: result.toolCall ? [result.toolCall] : [],
+    toolErrors: result.toolError ? [result.toolError] : [],
+    ...(result.iterationError
+      ? { iterationError: result.iterationError }
+      : {}),
+    setupFailure: result.iterationError !== undefined,
+  };
 }
 
 /**

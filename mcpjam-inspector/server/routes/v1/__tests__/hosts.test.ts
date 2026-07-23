@@ -58,6 +58,13 @@ vi.mock("convex/browser", () => ({
 }));
 
 import v1Routes from "../index.js";
+import {
+  bundledHostCompatCatalog,
+  getCatalogTemplate,
+  SUPPORTED_CATALOG_SCHEMA_VERSION,
+  type HostCompatCatalog,
+} from "@mcpjam/sdk/host-compat";
+import { logger } from "../../../utils/logger.js";
 
 function makeApp(): Hono {
   const app = new Hono();
@@ -106,11 +113,34 @@ function mockQuery(map: Record<string, unknown>) {
   );
 }
 
+function clone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function catalogEnvelope(catalog: HostCompatCatalog) {
+  return {
+    schemaVersion: SUPPORTED_CATALOG_SCHEMA_VERSION,
+    version: 99,
+    contentHash: "test-hash",
+    publishedAt: 1,
+    catalog,
+  };
+}
+
+function createdHostInput(): Record<string, unknown> {
+  const call = convexMutationMock.mock.calls.find(
+    ([fn]) => fn === "hosts:createHost"
+  );
+  if (!call) throw new Error("hosts:createHost was not called");
+  return (call[1] as { input: Record<string, unknown> }).input;
+}
+
 describe("v1 host routes", () => {
   const originalEnv = {
     CONVEX_URL: process.env.CONVEX_URL,
     CONVEX_HTTP_URL: process.env.CONVEX_HTTP_URL,
   };
+  let warnSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -119,13 +149,16 @@ describe("v1 host routes", () => {
     // Default: the bearer is neither a guest token nor an `sk_` key, so the
     // middleware treats it as a WorkOS JWT and passes it through to Convex.
     validateGuestTokenMock.mockResolvedValue({ valid: false });
+    warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     for (const [key, value] of Object.entries(originalEnv)) {
       if (value) process.env[key] = value;
       else delete process.env[key];
     }
+    warnSpy.mockRestore();
   });
 
   describe("auth", () => {
@@ -207,6 +240,135 @@ describe("v1 host routes", () => {
         name: "Alpha",
         input: { modelId: "gpt-4o-mini" },
       });
+    });
+
+    it("creates a template host from the live backend catalog first", async () => {
+      const catalog = clone(bundledHostCompatCatalog());
+      catalog.hostsById.claude = {
+        ...catalog.hostsById.claude,
+        modelId: "backend/claude-live",
+        hostContext: {
+          ...(catalog.hostsById.claude.hostContext as Record<string, unknown>),
+          backendOnly: true,
+        },
+      };
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(catalogEnvelope(catalog)), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      convexMutationMock.mockResolvedValue({ hostId: "h1" });
+      mockQuery({ "hosts:getHost": DETAIL_ROW });
+
+      const res = await request("POST", "/api/v1/projects/p1/hosts", {
+        body: { name: "Claude", template: "claude", theme: "light" },
+      });
+
+      expect(res.status).toBe(201);
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://convex-http.example.com/public/host-catalog",
+        expect.objectContaining({ method: "GET" })
+      );
+      expect(createdHostInput()).toMatchObject({
+        hostStyle: "claude",
+        modelId: "backend/claude-live",
+        hostContext: expect.objectContaining({
+          theme: "light",
+          backendOnly: true,
+        }),
+      });
+    });
+
+    it("accepts template ids that exist only in the live backend catalog", async () => {
+      const catalog = clone(bundledHostCompatCatalog());
+      catalog.hostsById["future-host"] = {
+        ...catalog.hostsById.claude,
+        id: "future-host",
+        label: "Future Host",
+        hostStyle: "future-host",
+        modelId: "backend/future-host",
+      };
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          new Response(JSON.stringify(catalogEnvelope(catalog)), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          })
+        )
+      );
+      convexMutationMock.mockResolvedValue({ hostId: "h1" });
+      mockQuery({ "hosts:getHost": DETAIL_ROW });
+
+      const res = await request("POST", "/api/v1/projects/p1/hosts", {
+        body: { name: "Future Host", template: "future-host" },
+      });
+
+      expect(res.status).toBe(201);
+      expect(createdHostInput()).toMatchObject({
+        hostStyle: "future-host",
+        modelId: "backend/future-host",
+      });
+    });
+
+    it("falls back to the bundled SDK catalog when the backend catalog is unavailable", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(new Response("unavailable", { status: 503 }))
+      );
+      convexMutationMock.mockResolvedValue({ hostId: "h1" });
+      mockQuery({ "hosts:getHost": DETAIL_ROW });
+      const fallbackTemplate = getCatalogTemplate(
+        bundledHostCompatCatalog(),
+        "mistral"
+      );
+
+      const res = await request("POST", "/api/v1/projects/p1/hosts", {
+        body: { name: "Mistral", template: "mistral" },
+      });
+
+      expect(res.status).toBe(201);
+      expect(createdHostInput()).toMatchObject({
+        hostStyle: "mistral",
+        modelId: fallbackTemplate?.modelId,
+        modelVisibleMcpToolResults:
+          fallbackTemplate?.modelVisibleMcpToolResults,
+        mcpToolResultImageRendering:
+          fallbackTemplate?.mcpToolResultImageRendering,
+      });
+      expect(warnSpy).toHaveBeenCalledWith(
+        "[host-catalog] v1 host template fallback",
+        expect.objectContaining({ reason: "unavailable" })
+      );
+    });
+
+    it("falls back to the bundled SDK catalog when CONVEX_HTTP_URL is missing", async () => {
+      delete process.env.CONVEX_HTTP_URL;
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+      convexMutationMock.mockResolvedValue({ hostId: "h1" });
+      mockQuery({ "hosts:getHost": DETAIL_ROW });
+      const fallbackTemplate = getCatalogTemplate(
+        bundledHostCompatCatalog(),
+        "mistral"
+      );
+
+      const res = await request("POST", "/api/v1/projects/p1/hosts", {
+        body: { name: "Mistral", template: "mistral" },
+      });
+
+      expect(res.status).toBe(201);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(createdHostInput()).toMatchObject({
+        hostStyle: "mistral",
+        modelId: fallbackTemplate?.modelId,
+      });
+      expect(warnSpy).toHaveBeenCalledWith(
+        "[host-catalog] v1 host template fallback",
+        expect.objectContaining({ reason: "missing_convex_http_url" })
+      );
     });
 
     it("rejects a body with neither template nor config (400)", async () => {

@@ -119,7 +119,7 @@ describe("SuiteInsightsCollapsible scope adaptivity", () => {
     renderWithProviders(<SuiteInsightsCollapsible runs={runs} />);
     expect(screen.getByText("Run insights")).toBeInTheDocument();
     expect(screen.getByText("RUN-INSIGHTS-SUMMARY")).toBeInTheDocument();
-    expect(screen.queryByText("Cross-host insights")).not.toBeInTheDocument();
+    expect(screen.queryByText("Cross-client insights")).not.toBeInTheDocument();
   });
 
   it("shows the latest completed run's insights when no run is selected", () => {
@@ -144,7 +144,7 @@ describe("SuiteInsightsCollapsible scope adaptivity", () => {
     renderWithProviders(
       <SuiteInsightsCollapsible runs={runs} groupScope={scope} />,
     );
-    expect(screen.getByText("Cross-host insights")).toBeInTheDocument();
+    expect(screen.getByText("Cross-client insights")).toBeInTheDocument();
     expect(
       screen.getByText("Copilot diverged from ChatGPT on cart flows."),
     ).toBeInTheDocument();
@@ -161,7 +161,7 @@ describe("SuiteInsightsCollapsible scope adaptivity", () => {
     expect(
       screen.queryByText("Copilot skipped add_to_cart"),
     ).not.toBeInTheDocument();
-    fireEvent.click(screen.getByText("Show 1 cross-host finding"));
+    fireEvent.click(screen.getByText("Show 1 cross-client finding"));
     expect(screen.getByText("Copilot skipped add_to_cart")).toBeInTheDocument();
 
     fireEvent.click(
@@ -169,7 +169,7 @@ describe("SuiteInsightsCollapsible scope adaptivity", () => {
     );
     const text = copySpy.mock.calls[0][0] as string;
     expect(text).toContain("Model behavior");
-    expect(text).toContain("Affected host(s): Copilot");
+    expect(text).toContain("Affected client(s): Copilot");
     expect(text).toContain("Strengthen the add_to_cart tool description.");
   });
 
@@ -179,7 +179,7 @@ describe("SuiteInsightsCollapsible scope adaptivity", () => {
       <SuiteInsightsCollapsible runs={runs} groupScope={scope} />,
     );
     expect(
-      screen.getByText(/once every host in this group has finished/i),
+      screen.getByText(/once every client in this group has finished/i),
     ).toBeInTheDocument();
   });
 

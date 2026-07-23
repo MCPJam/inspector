@@ -4,11 +4,20 @@ import type { HostCompatReport } from "@/lib/host-compat/types";
 import type { ServerWithName } from "@/state/app-types";
 
 // Two-host registry keeps the rendered grid small and assertions tractable.
-vi.mock("@/lib/host-compat/profiles", () => ({
-  buildHostCompatProfiles: () => [
+vi.mock("@/lib/host-compat/profiles", () => {
+  const profiles = [
     { id: "claude", label: "Claude", logoSrc: "/claude.png" },
     { id: "codex", label: "Codex", logoSrc: "/codex.svg" },
-  ],
+  ];
+  return {
+    buildHostCompatProfiles: () => profiles,
+    getHostProfiles: () => profiles,
+  };
+});
+
+// The matrix consults the live catalog for its columns; stay on bundled here.
+vi.mock("@/lib/host-compat/use-host-catalog", () => ({
+  useHostCatalog: () => null,
 }));
 
 // Canned per-server verdicts (defined inside the factory — vi.mock is hoisted).
@@ -40,6 +49,14 @@ vi.mock("@/lib/host-compat/use-host-compat", () => {
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: (selector: (s: { themeMode: string }) => unknown) =>
     selector({ themeMode: "light" }),
+}));
+
+vi.mock("@/hooks/useClaudeCodeHostEnabled", () => ({
+  useClaudeCodeHostEnabled: () => true,
+}));
+
+vi.mock("@/hooks/useCodexHostEnabled", () => ({
+  useCodexHostEnabled: () => true,
 }));
 
 import { HostCompatMatrix, summarizeColumn } from "../HostCompatMatrix";

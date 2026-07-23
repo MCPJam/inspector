@@ -34,12 +34,15 @@ export type {
   ElicitationHandler,
   ElicitationCallback,
   ElicitationCallbackRequest,
+  ElicitationMode,
   ElicitResult,
   ProgressHandler,
   ProgressEvent,
   RpcLogger,
   RpcLogEvent,
 } from "./types.js";
+export type { DeclaredElicitationCapability } from "./elicitation.js";
+export { DEFAULT_ELICITATION_TIMEOUT_EXTENSION_MS } from "./constants.js";
 
 // Types - Tool execution
 export type {
@@ -166,17 +169,15 @@ export {
 } from "./managed-mcp-client.js";
 export { OfficialSdkClientAdapter } from "./official-sdk-client-adapter.js";
 export {
-  StatelessMcpHttpPreviewClient,
-  LATEST_STATELESS_PROTOCOL_VERSION,
-  type StatelessMcpHttpPreviewClientOptions,
-  type DiscoverResult,
-} from "./stateless-mcp-http-preview-client.js";
+  DialectAwareJsonSchemaValidator,
+  type DialectAwareJsonSchemaValidatorOptions,
+} from "./dialect-aware-json-schema-validator.js";
+export { CspSafeDialectAwareJsonSchemaValidator } from "./csp-safe-dialect-aware-json-schema-validator.js";
 export {
   createManagedMcpClient,
   wrapLegacyClient,
   type CreateManagedMcpClientArgs,
   type McpProtocolVersion,
-  type TransportKind,
 } from "./managed-mcp-client-factory.js";
 export {
   MCP_PROTOCOL_VERSIONS,

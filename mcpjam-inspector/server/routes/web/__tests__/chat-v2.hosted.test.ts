@@ -295,6 +295,45 @@ describe("web routes — chat-v2 hosted mode", () => {
     expect(persistArgs.hostConfig).toBeUndefined();
   });
 
+  it("ignores a client uiTools snapshot on direct AND chatbox turns (agent-route-only, never rejected)", async () => {
+    const { app, token } = createWebTestApp();
+    // Non-empty/stale snapshot a cached pre-cutover client may still send.
+    const uiTools = [
+      { name: "ui_navigate", description: "Navigate", readOnly: false },
+    ];
+    const baseBody = {
+      projectId: "project-1",
+      selectedServerIds: ["server-1"],
+      chatSessionId: "chat-session-1",
+      messages: [{ role: "user", content: "hi" }],
+      model: { id: "openai/gpt-5-mini", provider: "openai", name: "GPT-5 Mini" },
+      uiTools,
+    };
+
+    // Direct hosted chat: the field is dropped at the boundary — never
+    // validated (a malformed snapshot must not 400 the turn) and never
+    // forwarded into prepareChatV2.
+    const direct = await postJson(app, "/api/web/chat-v2", baseBody, token);
+    expect(direct.status).toBe(200);
+    expect(validateUiToolEntriesMock).not.toHaveBeenCalled();
+    // streamWebChatTurn's uiTools plumbing stays (the agent route uses it),
+    // so the key exists — but this route never populates the snapshot.
+    let prepareArgs = prepareChatV2Mock.mock.calls.at(-1)![0];
+    expect(prepareArgs.uiTools).toBeUndefined();
+
+    // Chatbox-bound turn: same silent-ignore treatment.
+    const chatbox = await postJson(
+      app,
+      "/api/web/chat-v2",
+      { ...baseBody, chatboxId: "cbx_1", accessVersion: 1, surface: "preview" },
+      token
+    );
+    expect(chatbox.status).toBe(200);
+    expect(validateUiToolEntriesMock).not.toHaveBeenCalled();
+    prepareArgs = prepareChatV2Mock.mock.calls.at(-1)![0];
+    expect(prepareArgs.uiTools).toBeUndefined();
+  });
+
   // PR3: host-bound direct session (Playground previewing a saved host).
   it("a direct session with hostId fetches the authoritative host runtime-config and routes through", async () => {
     const { app, token } = createWebTestApp();
@@ -343,6 +382,78 @@ describe("web routes — chat-v2 hosted mode", () => {
     );
 
     expect(response.status).not.toBe(200);
+    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+  });
+
+  it("host-bound turn reads the enterprise-auth policy server-authoritatively — an invalid stored policy 409s regardless of the body", async () => {
+    const { app, token } = createWebTestApp();
+    fetchHostRuntimeConfigMock.mockResolvedValue({
+      ok: true,
+      config: {
+        selectedServerIds: ["server-1"],
+        mcpProfile: {
+          profileVersion: 1,
+          extensions: {
+            "com.mcpjam/enterprise-managed-auth": { idp: "okta" },
+          },
+        },
+      },
+    });
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        hostId: "host-1",
+        chatSessionId: "chat-host-policy",
+        messages: [{ role: "user", content: "preview request" }],
+        model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic", name: "Haiku" },
+        // The body says nothing about the policy — the stored host config is
+        // authoritative, so the unsupported idp fails the turn closed.
+      },
+      token
+    );
+
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as {
+      code?: string;
+      message?: string;
+      details?: { reason?: string };
+    };
+    expect(body.code).toBe("VALIDATION_ERROR");
+    expect(body.message).toContain("unsupported enterprise-managed");
+    expect(body.details?.reason).toBe("xaa_policy_invalid");
+    expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+  });
+
+  it("ad-hoc turn strictly validates a body-supplied enterprise-auth policy", async () => {
+    const { app, token } = createWebTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        projectId: "project-1",
+        selectedServerIds: ["server-1"],
+        chatSessionId: "chat-adhoc-policy",
+        messages: [{ role: "user", content: "preview request" }],
+        model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic", name: "Haiku" },
+        xaaPolicy: { idp: "okta" },
+      },
+      token
+    );
+
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as {
+      code?: string;
+      message?: string;
+      details?: { reason?: string };
+    };
+    expect(body.code).toBe("VALIDATION_ERROR");
+    expect(body.message).toContain("Unsupported enterprise-managed");
+    expect(body.details?.reason).toBe("xaa_policy_invalid");
     expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
   });
 

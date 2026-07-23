@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Columns2, X } from "lucide-react";
-import { usePostHog } from "posthog-js/react";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
+import type { ClientAnalyticsEventName } from "@/shared/analytics-events";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Popover,
@@ -79,7 +79,7 @@ function sameHostIdOrder(left: string[], right: string[]): boolean {
 }
 
 function compactHostLabel(name: string): string {
-  if (!name) return "Host";
+  if (!name) return "Client";
   return name;
 }
 
@@ -208,15 +208,11 @@ export function MultiHostPicker({
   // client enters compare; removing back to one client exits.
   // `multiHostEnabled` is derived from `nextIds.length > 1` instead
   // of being driven by a separate toggle.
-  const posthog = usePostHog();
   const captureCompare = useCallback(
-    (event: string, props?: Record<string, unknown>) => {
-      posthog?.capture(event, {
-        ...standardEventProps("playground_multi_host_picker"),
-        ...props,
-      });
+    (event: ClientAnalyticsEventName, props?: Record<string, unknown>) => {
+      track(event, { location: "playground_multi_host_picker", ...props });
     },
-    [posthog],
+    [],
   );
 
   const handleHostRowToggle = (hostId: string) => {
@@ -288,7 +284,7 @@ export function MultiHostPicker({
         </TooltipTrigger>
         <TooltipContent {...PLAYGROUND_HEADER_TOOLTIP}>
           <p className="font-medium">
-            {isActiveCompareMode ? "Hosts" : "Compare hosts"}
+            {isActiveCompareMode ? "Clients" : "Compare clients"}
           </p>
           {isActiveCompareMode ? (
             <p className="text-xs font-light text-muted-foreground">
@@ -298,7 +294,7 @@ export function MultiHostPicker({
             </p>
           ) : (
             <p className="text-xs font-light text-muted-foreground">
-              Run multiple hosts side by side
+              Run multiple clients side by side
             </p>
           )}
         </TooltipContent>
@@ -306,12 +302,12 @@ export function MultiHostPicker({
 
       <PopoverContent align="start" className="w-[280px] p-0" sideOffset={8}>
         <Command shouldFilter={true}>
-          <CommandInput placeholder="Search hosts" />
+          <CommandInput placeholder="Search clients" />
 
           {effectiveSelectedHostIds.length > 1 ? (
             <div
               className="flex flex-wrap gap-1 border-b px-2.5 py-1.5"
-              title="First chip is the lead host. Click a chip to promote it."
+              title="First chip is the lead client. Click a chip to promote it."
               data-testid="multi-host-chip-strip"
             >
               {effectiveSelectedHostIds.map((hostId, index) => {
@@ -359,11 +355,11 @@ export function MultiHostPicker({
           ) : null}
 
           <CommandList className="max-h-[min(320px,45vh)]">
-            <CommandEmpty>No matching hosts.</CommandEmpty>
+            <CommandEmpty>No matching clients.</CommandEmpty>
 
             {!canUseMultiHost ? (
               <div className="px-2.5 py-2 text-[11px] text-muted-foreground">
-                Add a second host to start comparing.
+                Add a second client to start comparing.
               </div>
             ) : null}
 
@@ -373,7 +369,7 @@ export function MultiHostPicker({
                 !isSelected && selectedLimitReached;
               const isDisabled = isLimitedOut;
               const disabledReason = isLimitedOut
-                ? `You can compare up to ${maxSelectedHosts} hosts at once`
+                ? `You can compare up to ${maxSelectedHosts} clients at once`
                 : undefined;
 
               const row = (

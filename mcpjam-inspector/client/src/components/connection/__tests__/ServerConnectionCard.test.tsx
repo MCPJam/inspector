@@ -22,6 +22,10 @@ vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => false,
 }));
 
+vi.mock("@/lib/analytics", () => ({
+  track: vi.fn(),
+}));
+
 // Mock the APIs
 vi.mock("@/lib/apis/mcp-tools-api", () => ({
   listTools: vi.fn().mockResolvedValue({ tools: [], toolsMetadata: {} }),
@@ -249,10 +253,8 @@ describe("ServerConnectionCard", () => {
 
       expect(screen.getByText("Authorizing in browser...")).toBeInTheDocument();
       expect(
-        screen.getByText(
-          "Complete sign-in in the browser. Inspector will resume automatically."
-        )
-      ).toBeInTheDocument();
+        screen.queryByText(/Complete sign-in in the browser/),
+      ).not.toBeInTheDocument();
     });
 
     it("shows failed status with retry count", () => {

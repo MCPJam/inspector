@@ -2,6 +2,8 @@
  * Shared types for OAuth state machines
  */
 
+import type { ResourceIndicatorDecision } from "../resource-policy.js";
+
 export type MaybePromise<T> = T | Promise<T>;
 
 export type OAuthAuthMode =
@@ -53,6 +55,10 @@ export interface OAuthFlowState {
     resource_signing_alg_values_supported?: string[];
     scopes_supported?: string[];
   };
+  // The resource-indicator decision resolved once at PRM discovery
+  // (resource-policy.ts). Every later request/preview site reads this value
+  // instead of re-deriving it.
+  resourceIndicator?: ResourceIndicatorDecision;
   authorizationServerUrl?: string;
   authorizationServerMetadata?: {
     issuer: string;
@@ -65,6 +71,10 @@ export interface OAuthFlowState {
     code_challenge_methods_supported?: string[];
     // 2025-11-25 additions
     client_id_metadata_document_supported?: boolean;
+    // 2026-07-28 / RFC 9207: when true, the AS promises to return `iss` on the
+    // authorization response, so a missing `iss` on the callback is a hard
+    // failure rather than a not-supported no-op.
+    authorization_response_iss_parameter_supported?: boolean;
   };
 
   // Client Registration
@@ -81,6 +91,17 @@ export interface OAuthFlowState {
   authorizationUrl?: string;
   authorizationCode?: string;
   state?: string;
+  // 2026-07-28 (RFC 9207): the AS issuer recorded at discovery time, stamped
+  // alongside the PKCE verifier so the callback leg can validate the returned
+  // `iss` against the exact issuer the flow began with (no re-derivation).
+  recordedIssuer?: string;
+  // The `iss` value returned on the authorization callback, if any. Populated
+  // by the callback boundary; the machine validates it against recordedIssuer.
+  authorizationResponseIss?: string;
+  // The scope set requested when the authorization request was built. Retained
+  // so a step-up challenge can be displayed as the union of prior-requested and
+  // challenged scopes (SEP-2350, display half).
+  requestedScopes?: string[];
 
   // Tokens
   accessToken?: string;
@@ -142,6 +163,10 @@ export interface OAuthHttpRequest {
   url: string;
   headers: Record<string, string>;
   body?: any;
+  /** Redirect handling for executors that proxy this request. Hosted
+   * (httpsOnly) proxy execution always uses "manual"; otherwise an explicit
+   * value is honored and omission preserves the historical "follow". */
+  redirect?: "follow" | "manual";
 }
 
 export interface OAuthHttpResponse {
@@ -172,6 +197,8 @@ export interface OAuthDynamicRegistrationMetadata {
   grant_types?: string[];
   response_types?: string[];
   token_endpoint_auth_method?: string;
+  /** OIDC / SEP-837 client application type. */
+  application_type?: "native" | "web";
   [key: string]: unknown;
 }
 
@@ -221,12 +248,25 @@ export interface BaseOAuthStateMachineConfig {
   customHeaders?: Record<string, string>;
   authMode?: OAuthAuthMode;
   strictConformance?: boolean;
+  // What to do at PRM discovery when the advertised resource indicator is not
+  // `valid`: the debugger defaults to "warn" (log and continue with the
+  // advertised value so real server behavior stays observable); connect-like
+  // surfaces pass "reject" to reject unsafe/unparseable values while retaining
+  // interoperability with same-origin servers; conformance passes
+  // "reject-rfc9728" to additionally reject HTTP and strict-binding gaps.
+  // Orthogonal to `strictConformance`, which governs registration strictness.
+  resourceIndicatorEnforcement?: "warn" | "reject" | "reject-rfc9728";
 }
 
 // Registration strategies
 export type RegistrationStrategy2025_03_26 = "dcr" | "preregistered";
 export type RegistrationStrategy2025_06_18 = "dcr" | "preregistered";
 export type RegistrationStrategy2025_11_25 = "cimd" | "dcr" | "preregistered";
+export type RegistrationStrategy2026_07_28 = "cimd" | "dcr" | "preregistered";
 
 // Protocol versions
-export type OAuthProtocolVersion = "2025-03-26" | "2025-06-18" | "2025-11-25";
+export type OAuthProtocolVersion =
+  | "2025-03-26"
+  | "2025-06-18"
+  | "2025-11-25"
+  | "2026-07-28";

@@ -101,6 +101,8 @@ export interface UiAwareApprovalHandlerDeps {
   addToolApprovalResponse: (response: { id: string; approved: boolean }) => void;
   addToolOutput: HandleUiToolCallOptions["addToolOutput"];
   onNavigationToolCall?: (toolName: string) => void;
+  /** Duplicate-detection scope (the chat's session id) — survives reloads. */
+  telemetryScope?: string;
 }
 
 export function createUiAwareApprovalResponseHandler(
@@ -116,7 +118,13 @@ export function createUiAwareApprovalResponseHandler(
       // Settle first: the server's denial machinery supplies the result,
       // and a later duplicate approve event must not be able to execute a
       // call the user explicitly rejected.
-      settleDeniedUiToolCall(located.toolCallId);
+      settleDeniedUiToolCall(located.toolCallId, {
+        toolName: located.toolName,
+        input: located.input,
+        ...(deps.telemetryScope !== undefined
+          ? { telemetryScope: deps.telemetryScope }
+          : {}),
+      });
       deps.addToolApprovalResponse({ id, approved: false });
       return;
     }
@@ -127,6 +135,9 @@ export function createUiAwareApprovalResponseHandler(
       // authoritative anyway.
       input: located.input,
       addToolOutput: deps.addToolOutput,
+      ...(deps.telemetryScope !== undefined
+        ? { telemetryScope: deps.telemetryScope }
+        : {}),
       ...(deps.onNavigationToolCall
         ? { onNavigationToolCall: deps.onNavigationToolCall }
         : {}),
@@ -146,13 +157,19 @@ export function fulfillOrphanedDeferredUiToolCalls(deps: {
   addToolOutput: HandleUiToolCallOptions["addToolOutput"];
   onNavigationToolCall?: (toolName: string) => void;
 }): void {
-  for (const { toolCallId, toolName, input } of listDeferredUiToolCalls()) {
+  for (const {
+    toolCallId,
+    toolName,
+    input,
+    telemetryScope,
+  } of listDeferredUiToolCalls()) {
     const part = findPartByToolCallId(deps.messages, toolCallId);
     if (!part || part.state !== "input-available") continue;
     void fulfillApprovedUiToolCall({
       toolCallId,
       toolName,
       input,
+      ...(telemetryScope !== undefined ? { telemetryScope } : {}),
       addToolOutput: deps.addToolOutput,
       ...(deps.onNavigationToolCall
         ? { onNavigationToolCall: deps.onNavigationToolCall }

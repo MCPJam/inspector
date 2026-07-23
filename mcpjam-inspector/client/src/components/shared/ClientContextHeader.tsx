@@ -15,8 +15,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { usePostHog } from "posthog-js/react";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
+import type { ClientAnalyticsEventName } from "@/shared/analytics-events";
 import {
   Clock,
   Cpu,
@@ -105,7 +105,7 @@ function HeaderTooltipBody({
       <p className="font-medium">{label}</p>
       {leadHostHint ? (
         <p className="text-[10px] text-muted-foreground">
-          Editing lead host: {leadHostHint}
+          Editing lead client: {leadHostHint}
         </p>
       ) : null}
     </>
@@ -147,15 +147,11 @@ export function ClientContextHeader({
   const widthInputId = useId();
   const heightInputId = useId();
 
-  const posthog = usePostHog();
   const captureToolbar = useCallback(
-    (event: string, props?: Record<string, unknown>) => {
-      posthog?.capture(event, {
-        ...standardEventProps("host_context_header"),
-        ...props,
-      });
+    (event: ClientAnalyticsEventName, props?: Record<string, unknown>) => {
+      track(event, { location: "host_context_header", ...props });
     },
-    [posthog]
+    []
   );
 
   const deviceType = useUIPlaygroundStore((state) => state.deviceType);
@@ -290,7 +286,7 @@ export function ClientContextHeader({
             {...PLAYGROUND_HEADER_TOOLTIP}
             className="max-w-none whitespace-nowrap"
           >
-            These are temporary overrides applied to your current host.
+            These are temporary overrides applied to your current client.
           </TooltipContent>
         </Tooltip>
 
@@ -575,7 +571,7 @@ export function ClientContextHeader({
             >
               <Settings2 className="h-3.5 w-3.5" />
               <span className="whitespace-nowrap @max-[700px]/playground-header:sr-only">
-                Host Context
+                Client Context
               </span>
             </Button>
           </TooltipTrigger>

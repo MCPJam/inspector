@@ -98,6 +98,16 @@ export {
   selectResourceURL,
   startAuthorization,
 } from "./oauth/browser-auth.js";
+export {
+  canonicalizeResourceUrl,
+  evaluateResourceIndicator,
+  resolveResourceIndicatorValue,
+} from "./oauth/resource-policy.js";
+export type {
+  ResourceIndicatorDecision,
+  ResourceIndicatorSource,
+  ResourceIndicatorStatus,
+} from "./oauth/resource-policy.js";
 export type {
   OAuthClientInformation,
   OAuthClientInformationFull,
@@ -111,9 +121,24 @@ export type {
 
 export {
   DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
+  ID_JAG_GRANT_PROFILE,
+  ID_JAG_TOKEN_TYPE,
+  ID_TOKEN_TOKEN_TYPE,
+  SAML2_TOKEN_TYPE,
+  JWT_BEARER_GRANT,
   MCPJAM_CLIENT_URI,
   MCPJAM_LOGO_URI,
+  TOKEN_EXCHANGE_GRANT,
+  XAA_DEBUG_IDP_CLIENT_ID,
+  XAA_DEBUG_CLIENT_ID_METADATA_URL,
+  evaluateIdJagClientMetadata,
   getBrowserDebugDynamicRegistrationMetadata,
+  getXaaConnectClientMetadata,
+  getXaaDebugClientMetadata,
+} from "./oauth/client-identity.js";
+export type {
+  IdJagClientMetadataEvaluation,
+  IdJagMetadataEvidence,
 } from "./oauth/client-identity.js";
 export {
   resolveAuthorizationPlan,
@@ -163,6 +188,102 @@ export {
   getStepInfo,
   getStepIndex,
 } from "./oauth/state-machines/shared/step-metadata.js";
+export {
+  buildDynamicClientRegistrationRequest,
+  executeDynamicClientRegistration,
+} from "./oauth/state-machines/shared/dynamic-client-registration.js";
+export type {
+  DynamicClientRegistrationCredentials,
+  DynamicClientRegistrationOutcome,
+} from "./oauth/state-machines/shared/dynamic-client-registration.js";
+export {
+  validateClientIdMetadataUrl,
+  isLoopbackClientMetadataUrl,
+  isLoopbackHost,
+} from "./oauth/state-machines/shared/client-id-metadata.js";
+export {
+  decodeJWT,
+  decodeJWTParts,
+  formatJWTTimestamp,
+} from "./oauth/state-machines/shared/jwt.js";
+export type { DecodedJwtParts } from "./oauth/state-machines/shared/jwt.js";
+// Pure XAA/ID-JAG primitives (single source of truth). Exported directly from
+// constants.js — the ./xaa/index.js barrel is node-only (crypto/fs mint).
+export {
+  XAA_IDP_KID,
+  NEGATIVE_TEST_MODES,
+  DEFAULT_NEGATIVE_TEST_MODE,
+  isNegativeTestMode,
+  IDENTITY_ASSERTION_FORMATS,
+  DEFAULT_IDENTITY_ASSERTION_FORMAT,
+  normalizeIdentityAssertionFormat,
+  SUBJECT_IDENTIFIER_FORMATS,
+  DEFAULT_SUBJECT_IDENTIFIER_FORMAT,
+  normalizeSubjectIdentifierFormat,
+  XAA_CLIENT_AUTH_METHODS,
+  DEFAULT_XAA_CLIENT_AUTH,
+  normalizeXaaClientAuth,
+} from "./xaa/constants.js";
+export type {
+  NegativeTestMode,
+  IdentityAssertionFormat,
+  SubjectIdentifierFormat,
+  XaaClientAuthMethod,
+} from "./xaa/constants.js";
+// Shared client-registration vocabulary (single source of truth for OAuth
+// flows AND the XAA debugger's Client↔Resource-AS leg).
+export {
+  REGISTRATION_STRATEGIES,
+  DEFAULT_REGISTRATION_STRATEGY,
+  DEFAULT_REGISTRATION_MODE,
+  AUTH_METHODS,
+  normalizeRegistrationStrategy,
+  normalizeRegistrationMode,
+  normalizeAuthMethod,
+} from "./registration.js";
+export type {
+  RegistrationStrategy,
+  RegistrationMode,
+  AuthMethod,
+} from "./registration.js";
+export {
+  NEGATIVE_TEST_MODE_DETAILS,
+  isPolicyDependentNegativeTestMode,
+} from "./xaa/negative-test-modes.js";
+// Pure XAA discovery + MCP-initialize helpers (browser+node safe, no I/O).
+export {
+  canonicalizeMcpResource,
+  buildProtectedResourceMetadataCandidates,
+  buildAuthorizationServerMetadataCandidates,
+  buildIssuerPublicationCandidates,
+  XAA_AS_METADATA_NAMES,
+} from "./xaa/discovery.js";
+export {
+  buildMcpInitializeRequest,
+  evaluateMcpInitializeResponse,
+  mcpInitializeExtensionEvidence,
+  MCP_INIT_ID,
+  MCP_PROTOCOL_VERSION,
+  XAA_MCP_EXTENSION,
+} from "./xaa/mcp-init.js";
+export type {
+  McpInitializeRequest,
+  XaaCapabilityEvidence,
+} from "./xaa/mcp-init.js";
+export {
+  readXaaEnterprisePolicy,
+  withXaaEnterprisePolicy,
+  withoutXaaEnterprisePolicy,
+  XAA_ENTERPRISE_POLICY_EXTENSION,
+  XAA_ENTERPRISE_POLICY_IDPS,
+} from "./xaa/enterprise-policy.js";
+export type {
+  XaaEnterprisePolicy,
+  XaaEnterprisePolicyIdp,
+  XaaEnterprisePolicyState,
+} from "./xaa/enterprise-policy.js";
+// XAA flow-core types + capability preflight (browser-safe engine primitives).
+export * from "./xaa/state-machines/index.js";
 export { EMPTY_OAUTH_FLOW_STATE } from "./oauth/state-machines/types.js";
 export type {
   HttpHistoryEntry,
@@ -179,6 +300,7 @@ export type {
   RegistrationStrategy2025_03_26,
   RegistrationStrategy2025_06_18,
   RegistrationStrategy2025_11_25,
+  RegistrationStrategy2026_07_28,
 } from "./oauth/state-machines/types.js";
 
 // MCP conformance transport support — pure predicate, safe for the browser.

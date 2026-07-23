@@ -9,6 +9,15 @@ import type {
 } from "@/shared/eval-matching";
 import type { TraceEnvelope, TraceMessage } from "./trace-viewer-adapter";
 import type { EvalStepStatusEntry } from "./eval-stream-reducer";
+// The judge config envelope is product-neutral and shared with Swarms; the
+// canonical definition lives in the shared session-quality module. Aliased +
+// re-exported under the historical Eval* names so eval call sites are unchanged.
+import type {
+  GoalJudgeConfig as EvalJudgeConfig,
+  GoalJudgeConfigOverride as EvalJudgeConfigOverride,
+  GoalJudgeRunOverride as EvalJudgeRunOverride,
+} from "@/components/shared/session-quality/judge-config";
+export type { EvalJudgeConfig, EvalJudgeConfigOverride, EvalJudgeRunOverride };
 
 /**
  * Host identity an eval run executed against. Hand-mirrored from the Convex
@@ -124,6 +133,11 @@ export type EvalSuite = {
   updatedAt: number;
   latestRunId?: string;
   source?: "ui" | "sdk";
+  /**
+   * Epoch ms of the newest CI (SDK-ingested) run — the durable server-side
+   * "suite has CI runs" signal (backfilled). The CI tab scopes on this.
+   */
+  lastSdkRunAt?: number;
   runCounter?: number;
   defaultPassCriteria?: {
     minimumPassRate: number;
@@ -251,44 +265,15 @@ export type EvalCase = {
   /** Pinned tool call for widget_probe cases. */
   probeConfig?: import("@/shared/probe-config").ProbeConfig;
   lastMessageRun?: string | null;
+  /**
+   * Epoch ms of the last SDK-ingest write to this case's definition.
+   * Present ⇒ the case is synced from CI and manual edits may be
+   * overwritten by the next CI report.
+   */
+  lastSdkWriteAt?: number;
   _creationTime?: number; // Convex auto field
 };
 
-/**
- * Suite-level judge config envelope. Currently carries goalCompletion only;
- * the envelope shape is forward-compatible with additional judges (refusal
- * judge, future serverQuality move-here, etc.) without a second pass on
- * the type surface.
- */
-export type EvalJudgeConfig = {
-  goalCompletion?: {
-    enabled?: boolean;
-    judgeModel?: string;
-    threshold?: number;
-    /**
-     * When true, the judge fires automatically as each run completes
-     * (matches the dominant industry pattern — most eval platforms run
-     * scorers inline with the eval rather than on-demand). Default off
-     * so suites preserve the cost-conscious V1 behavior until they opt in.
-     */
-    autoRun?: boolean;
-  };
-};
-
-/** Per-case judge override. Opt-out only in V1. */
-export type EvalJudgeConfigOverride = {
-  goalCompletion?: {
-    enabled?: boolean;
-  };
-};
-
-/** Per-run exploration override; persists on the run for transparency. */
-export type EvalJudgeRunOverride = {
-  goalCompletion?: {
-    judgeModel?: string;
-    threshold?: number;
-  };
-};
 
 export type EvalIteration = {
   _id: string;

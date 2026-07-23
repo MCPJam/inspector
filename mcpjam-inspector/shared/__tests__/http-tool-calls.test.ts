@@ -497,7 +497,7 @@ describe("executeToolCallsFromMessages", () => {
   });
 
   describe("multiple tool calls", () => {
-    it("executes multiple tool calls in sequence", async () => {
+    it("starts multiple tool calls in call order", async () => {
       const executionOrder: string[] = [];
       const tools = {
         tool_a: {
@@ -538,6 +538,214 @@ describe("executeToolCallsFromMessages", () => {
 
       expect(executionOrder).toEqual(["a", "b"]);
       expect(messages).toHaveLength(3);
+    });
+
+    it("executes tool calls within a step in parallel by default (HP-6)", async () => {
+      // tool_a only resolves when tool_b runs. Sequential execution would
+      // deadlock here (tool_b never starts until tool_a resolves); parallel
+      // execution completes.
+      let releaseA!: () => void;
+      const tools = {
+        tool_a: {
+          execute: () =>
+            new Promise<string>((resolve) => {
+              releaseA = () => resolve("a result");
+            }),
+        },
+        tool_b: {
+          execute: async () => {
+            releaseA();
+            return "b result";
+          },
+        },
+      };
+
+      const messages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-a",
+              toolName: "tool_a",
+              input: {},
+            },
+            {
+              type: "tool-call",
+              toolCallId: "call-b",
+              toolName: "tool_b",
+              input: {},
+            },
+          ],
+        },
+      ] as unknown as ModelMessage[];
+
+      const newMessages = await executeToolCallsFromMessages(messages, {
+        tools,
+      });
+
+      // Results stay in call order even though tool_b finished first.
+      expect(newMessages).toHaveLength(2);
+      expect((newMessages[0] as any).content[0].toolCallId).toBe("call-a");
+      expect((newMessages[1] as any).content[0].toolCallId).toBe("call-b");
+      expect(messages).toHaveLength(3);
+      expect((messages[1] as any).content[0].toolCallId).toBe("call-a");
+      expect((messages[2] as any).content[0].toolCallId).toBe("call-b");
+    });
+
+    it("isolates per-call failures in parallel execution", async () => {
+      let releaseSlow!: () => void;
+      const tools = {
+        slow_ok: {
+          execute: () =>
+            new Promise<string>((resolve) => {
+              releaseSlow = () => resolve("slow ok");
+            }),
+        },
+        fast_fail: {
+          execute: async () => {
+            releaseSlow();
+            throw new Error("fast one failed");
+          },
+        },
+      };
+
+      const messages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-slow",
+              toolName: "slow_ok",
+              input: {},
+            },
+            {
+              type: "tool-call",
+              toolCallId: "call-fail",
+              toolName: "fast_fail",
+              input: {},
+            },
+          ],
+        },
+      ] as unknown as ModelMessage[];
+
+      const newMessages = await executeToolCallsFromMessages(messages, {
+        tools,
+      });
+
+      expect(newMessages).toHaveLength(2);
+      expect((newMessages[0] as any).content[0].toolCallId).toBe("call-slow");
+      expect((newMessages[0] as any).content[0].output).toEqual({
+        type: "text",
+        value: "slow ok",
+      });
+      expect((newMessages[1] as any).content[0].toolCallId).toBe("call-fail");
+      expect((newMessages[1] as any).content[0].output.type).toBe(
+        "error-text"
+      );
+      expect((newMessages[1] as any).content[0].output.value).toBe(
+        "fast one failed"
+      );
+    });
+
+    it("runs strictly sequentially when parallelToolExecution is false", async () => {
+      const events: string[] = [];
+      const tools = {
+        tool_a: {
+          execute: async () => {
+            events.push("a:start");
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            events.push("a:end");
+            return "a";
+          },
+        },
+        tool_b: {
+          execute: async () => {
+            events.push("b:start");
+            return "b";
+          },
+        },
+      };
+
+      const messages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-a",
+              toolName: "tool_a",
+              input: {},
+            },
+            {
+              type: "tool-call",
+              toolCallId: "call-b",
+              toolName: "tool_b",
+              input: {},
+            },
+          ],
+        },
+      ] as unknown as ModelMessage[];
+
+      await executeToolCallsFromMessages(messages, {
+        tools,
+        parallelToolExecution: false,
+      });
+
+      // tool_b must not start until tool_a fully resolved.
+      expect(events).toEqual(["a:start", "a:end", "b:start"]);
+    });
+
+    it("propagates an abort from one parallel call without persisting sibling results", async () => {
+      const controller = new AbortController();
+      let releaseSlow!: () => void;
+      const tools = {
+        slow_ok: {
+          execute: () =>
+            new Promise<string>((resolve) => {
+              releaseSlow = () => resolve("slow ok");
+            }),
+        },
+        aborter: {
+          execute: async () => {
+            controller.abort();
+            releaseSlow();
+            return "resolved after abort";
+          },
+        },
+      };
+
+      const messages = [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-slow",
+              toolName: "slow_ok",
+              input: {},
+            },
+            {
+              type: "tool-call",
+              toolCallId: "call-abort",
+              toolName: "aborter",
+              input: {},
+            },
+          ],
+        },
+      ] as unknown as ModelMessage[];
+
+      await expect(
+        executeToolCallsFromMessages(messages, {
+          tools,
+          abortSignal: controller.signal,
+        })
+      ).rejects.toMatchObject({ name: "AbortError" });
+
+      // Neither the aborted call nor its sibling persisted a result.
+      expect(messages).toHaveLength(1);
+      expect(messages[0].role).toBe("assistant");
     });
   });
 

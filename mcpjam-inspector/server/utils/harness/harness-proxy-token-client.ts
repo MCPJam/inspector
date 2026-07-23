@@ -1,10 +1,10 @@
 /**
  * Fetch per-server harness MCP proxy tokens from Convex — the same bearer-authed
- * channel the harness already uses for `model-credential` and `session-state`.
+ * channel the harness already uses for `session-state` and the model broker.
  *
  * Convex MINTS the tokens (it knows the authenticated user, so identity is
  * authoritative and baked in) and checks per-server access; the inspector only
- * verifies + forwards. Mirrors `harness-model-credential.ts`.
+ * verifies + forwards.
  *
  * Backed by `convex/http.ts:/web/harness/mcp-proxy-token`.
  */

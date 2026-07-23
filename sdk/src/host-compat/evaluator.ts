@@ -38,28 +38,128 @@ const formatToolNames = (names: string[]): string => {
   return rest > 0 ? `${shown.join(", ")} +${rest} more` : shown.join(", ");
 };
 
+const SANDBOX_PERMISSION_LABELS: Record<string, string> = {
+  camera: "Camera",
+  microphone: "Microphone",
+  geolocation: "Location",
+  clipboardWrite: "Clipboard",
+};
+
+const sandboxPermissionLabel = (name: string): string =>
+  `${SANDBOX_PERMISSION_LABELS[name] ?? name} access`;
+
+const sandboxPermissionSentenceLabel = (name: string): string => {
+  const label = sandboxPermissionLabel(name);
+  return `${label.slice(0, 1).toLowerCase()}${label.slice(1)}`;
+};
+
+const joinPermissionLabels = (names: string[]): string => {
+  const labels = names.map(sandboxPermissionSentenceLabel);
+  if (labels.length <= 1) return labels[0] ?? "sandbox access";
+  if (labels.length === 2) return `${labels[0]} and ${labels[1]}`;
+  return `${labels.slice(0, -1).join(", ")}, and ${labels[labels.length - 1]}`;
+};
+
+function unsupportedSandboxPermissionNames(
+  requirements: ServerRequirements,
+  profile: HostCompatProfile
+): string[] | undefined {
+  const requested = requirements.widgetUsage?.sandboxPermissionNames;
+  if (!requested?.length) return undefined;
+
+  // An explicit capability=false is authoritative, even if a stale or
+  // inconsistent allowlist happens to contain a permission.
+  if (profile.capabilities?.sandboxPermissions === false) {
+    return requested;
+  }
+
+  // An allowlist is exact. In particular, {} means no permissions are
+  // supported; it is not equivalent to missing catalog data.
+  if (profile.sandboxPermissionAllow) {
+    return requested.filter(
+      (permission) => profile.sandboxPermissionAllow?.[permission] !== true
+    );
+  }
+
+  return undefined;
+}
+
 /**
  * Per-capability finding copy, keyed by the same dimensions the L1 scan
  * detects. A finding fires only when (a) the widget needs the capability and
- * (b) the host's matrix lacks it. `degraded` for real functional loss, `info`
- * for cosmetic.
+ * (b) the host's matrix lacks positive confirmation. Explicit `false` profile
+ * values are reported as unsupported; missing values remain not verified.
  */
 const CAPABILITY_CHECKS: ReadonlyArray<{
   key: WidgetCapabilityNeed;
   severity: CompatFinding["severity"];
-  title: string;
-  api: string;
-  consequence: string;
+  subject: string;
+  request: string;
+  unsupportedObject: string;
 }> = [
-  { key: "serverTools", severity: "degraded", title: "Server tool calls won't work", api: "tools/call", consequence: "its interactive actions won't reach the server" },
-  { key: "serverResources", severity: "degraded", title: "Resource reads won't work", api: "resources/read", consequence: "it won't get the MCP resources it fetches" },
-  { key: "message", severity: "degraded", title: "Follow-up messages won't work", api: "ui/message", consequence: "it can't send follow-up chat messages" },
-  { key: "updateModelContext", severity: "degraded", title: "Model-context updates won't work", api: "ui/update-model-context", consequence: "it can't push state into the model's context" },
-  { key: "openLinks", severity: "degraded", title: "Links won't open", api: "ui/open-link", consequence: "its external links won't open" },
-  { key: "downloadFile", severity: "degraded", title: "Downloads won't work", api: "ui/download-file", consequence: "its export/download won't work" },
-  { key: "sandboxPermissions", severity: "degraded", title: "Device permissions denied", api: "sandbox permissions", consequence: "the camera/mic/geo/clipboard access it requests won't be granted" },
-  { key: "cspFrameDomains", severity: "degraded", title: "Nested iframes blocked", api: "csp.frameDomains", consequence: "the nested iframes it declares won't load" },
-  { key: "logging", severity: "info", title: "Widget logs dropped", api: "notifications/message", consequence: "its log messages won't surface" },
+  {
+    key: "serverTools",
+    severity: "degraded",
+    subject: "Interactive tool calls",
+    request: "uses interactive tool calls",
+    unsupportedObject: "them",
+  },
+  {
+    key: "serverResources",
+    severity: "degraded",
+    subject: "Resource reads",
+    request: "reads additional resources",
+    unsupportedObject: "resource reads",
+  },
+  {
+    key: "message",
+    severity: "degraded",
+    subject: "Follow-up messages",
+    request: "sends follow-up messages",
+    unsupportedObject: "them",
+  },
+  {
+    key: "updateModelContext",
+    severity: "degraded",
+    subject: "Model context updates",
+    request: "updates the model context",
+    unsupportedObject: "model context updates",
+  },
+  {
+    key: "openLinks",
+    severity: "degraded",
+    subject: "External links",
+    request: "opens external links",
+    unsupportedObject: "them",
+  },
+  {
+    key: "downloadFile",
+    severity: "degraded",
+    subject: "File downloads",
+    request: "downloads files",
+    unsupportedObject: "file downloads",
+  },
+  {
+    key: "sandboxPermissions",
+    severity: "degraded",
+    subject: "Widget sandbox permissions",
+    request: "uses sandbox permissions",
+    unsupportedObject: "them",
+  },
+  {
+    key: "cspFrameDomains",
+    severity: "degraded",
+    subject: "Embedded content",
+    request: "loads nested iframes",
+    unsupportedObject: "nested iframes",
+  },
+  {
+    key: "logging",
+    severity: "info",
+    subject: "Widget logs",
+    request: "sends logs",
+    unsupportedObject: "them",
+  },
 ];
 
 /** Worst-wins ordering for verdict aggregation across lanes. */
@@ -81,12 +181,14 @@ const PROVENANCE_RANK: Record<CompatProvenance, number> = {
 /** Weakest provenance among a lane's findings, falling back to the host baseline. */
 function weakestProvenance(
   findings: CompatFinding[],
-  fallback: CompatProvenance,
+  fallback: CompatProvenance
 ): CompatProvenance {
   return findings.reduce<CompatProvenance>(
     (weak, f) =>
-      PROVENANCE_RANK[f.provenance] < PROVENANCE_RANK[weak] ? f.provenance : weak,
-    fallback,
+      PROVENANCE_RANK[f.provenance] < PROVENANCE_RANK[weak]
+        ? f.provenance
+        : weak,
+    fallback
   );
 }
 
@@ -99,7 +201,7 @@ function laneVerdict(
   findings: CompatFinding[],
   lane: CompatLane,
   unknown: boolean,
-  baseProvenance: CompatProvenance,
+  baseProvenance: CompatProvenance
 ): CompatLaneVerdict {
   const laneFindings = findings.filter((f) => f.lane === lane);
   const hasBlocker = laneFindings.some((f) => f.severity === "blocker");
@@ -107,16 +209,19 @@ function laneVerdict(
   const verdict: CompatVerdict = hasBlocker
     ? "blocked"
     : hasDegraded
-      ? "degraded"
-      : unknown
-        ? "unknown"
-        : "works";
-  return { verdict, provenance: weakestProvenance(laneFindings, baseProvenance) };
+    ? "degraded"
+    : unknown
+    ? "unknown"
+    : "works";
+  return {
+    verdict,
+    provenance: weakestProvenance(laneFindings, baseProvenance),
+  };
 }
 
 export function evaluateHostCompat(
   requirements: ServerRequirements,
-  profile: HostCompatProfile,
+  profile: HostCompatProfile
 ): HostCompatReport {
   const findings: CompatFinding[] = [];
 
@@ -124,9 +229,7 @@ export function evaluateHostCompat(
     // 1. Render failures: widgets whose bridge this host can't render.
     const unrenderable = [
       ...(profile.rendersMcpApps ? [] : requirements.widgets.mcpAppsOnly),
-      ...(profile.rendersOpenAiApps
-        ? []
-        : requirements.widgets.openaiAppsOnly),
+      ...(profile.rendersOpenAiApps ? [] : requirements.widgets.openaiAppsOnly),
       ...(profile.rendersMcpApps || profile.rendersOpenAiApps
         ? []
         : requirements.widgets.dual),
@@ -136,15 +239,15 @@ export function evaluateHostCompat(
       profile.rendersMcpApps && !profile.rendersOpenAiApps
         ? "Declare an MCP Apps template (`_meta.ui.resourceUri`) alongside the OpenAI one."
         : !profile.rendersMcpApps && profile.rendersOpenAiApps
-          ? "Declare an OpenAI Apps template (`openai/outputTemplate`) alongside the MCP Apps one."
-          : undefined; // host renders neither (CLI) — nothing to declare.
+        ? "Declare an OpenAI Apps template (`openai/outputTemplate`) alongside the MCP Apps one."
+        : undefined; // host renders neither (CLI) — nothing to declare.
 
     // App-only widgets have no text fallback: unrenderable = unusable tool.
     const blockedAppOnly = unrenderable.filter((name) =>
-      requirements.appOnlyWidgets.includes(name),
+      requirements.appOnlyWidgets.includes(name)
     );
     const degradedFallback = unrenderable.filter(
-      (name) => !requirements.appOnlyWidgets.includes(name),
+      (name) => !requirements.appOnlyWidgets.includes(name)
     );
 
     if (blockedAppOnly.length > 0) {
@@ -154,8 +257,14 @@ export function evaluateHostCompat(
         severity: "blocker",
         code: "app_only_unrenderable",
         tools: blockedAppOnly,
-        title: `${count} app-only tool${count === 1 ? "" : "s"} unusable`,
-        detail: `${formatToolNames(blockedAppOnly)} ${count === 1 ? "is" : "are"} app-only (hidden from the model, no text fallback) and need${count === 1 ? "s" : ""} a UI ${profile.label} can't render — so ${count === 1 ? "it's" : "they're"} dead here.`,
+        title: `${
+          count === 1 ? "Interactive tool" : `${count} interactive tools`
+        } unavailable`,
+        detail: `${formatToolNames(blockedAppOnly)} only ${
+          count === 1 ? "works" : "work"
+        } inside a widget. ${profile.label} does not render ${
+          count === 1 ? "it" : "them"
+        }.`,
         remediation,
         provenance: profile.provenance,
       });
@@ -167,8 +276,14 @@ export function evaluateHostCompat(
         severity: "degraded",
         code: "widget_text_fallback",
         tools: degradedFallback,
-        title: `${count} widget${count === 1 ? "" : "s"} fall back to text`,
-        detail: `${formatToolNames(degradedFallback)} declare${count === 1 ? "s" : ""} a UI ${profile.label} won't render — users get the plain-text result instead.`,
+        title: `${
+          count === 1 ? "Interactive view" : `${count} interactive views`
+        } unavailable`,
+        detail: `${formatToolNames(degradedFallback)} provide${
+          count === 1 ? "s" : ""
+        } an interactive view. ${
+          profile.label
+        } shows the plain-text result instead.`,
         remediation,
         provenance: profile.provenance,
       });
@@ -178,8 +293,62 @@ export function evaluateHostCompat(
     //    a capability (from the L1 scan) the host lacks.
     if (profile.capabilities && requirements.widgetUsage) {
       for (const check of CAPABILITY_CHECKS) {
-        const tools = requirements.widgetUsage[check.key];
-        if (tools && tools.length > 0 && profile.capabilities[check.key] !== true) {
+        const permissionNames =
+          check.key === "sandboxPermissions"
+            ? requirements.widgetUsage.sandboxPermissionNames
+            : undefined;
+        const unsupportedPermissions =
+          check.key === "sandboxPermissions"
+            ? unsupportedSandboxPermissionNames(requirements, profile)
+            : undefined;
+        const hasExactSandboxResult =
+          check.key === "sandboxPermissions" &&
+          permissionNames !== undefined &&
+          (unsupportedPermissions !== undefined ||
+            profile.capabilities[check.key] === false);
+        const unsupported = hasExactSandboxResult
+          ? (unsupportedPermissions?.length ?? 0) > 0
+          : profile.capabilities[check.key] !== true;
+        const tools =
+          check.key === "sandboxPermissions" &&
+          unsupportedPermissions !== undefined &&
+          requirements.widgetUsage.sandboxPermissionTools
+            ? Array.from(
+                new Set(
+                  unsupportedPermissions.flatMap(
+                    (permission) =>
+                      requirements.widgetUsage?.sandboxPermissionTools?.[
+                        permission
+                      ] ?? []
+                  )
+                )
+              )
+            : requirements.widgetUsage[check.key];
+        if (tools && tools.length > 0 && unsupported) {
+          const explicitlyUnsupported =
+            hasExactSandboxResult || profile.capabilities[check.key] === false;
+          const supportLabel = explicitlyUnsupported
+            ? "unsupported"
+            : "not verified";
+          const sandboxPermissionCopy =
+            check.key === "sandboxPermissions" && unsupportedPermissions?.length
+              ? {
+                  title:
+                    unsupportedPermissions.length === 1
+                      ? `${sandboxPermissionLabel(
+                          unsupportedPermissions[0]
+                        )} unavailable`
+                      : "Widget sandbox permissions unsupported",
+                  detail:
+                    unsupportedPermissions.length === 1
+                      ? `This widget requests ${sandboxPermissionSentenceLabel(
+                          unsupportedPermissions[0]
+                        )}. ${profile.label} does not support it.`
+                      : `This widget requests ${joinPermissionLabels(
+                          unsupportedPermissions
+                        )}. ${profile.label} does not support them.`,
+                }
+              : undefined;
           findings.push({
             lane: "apps",
             severity: check.severity,
@@ -188,8 +357,16 @@ export function evaluateHostCompat(
             // Copy: `tools` is the shared `widgetUsage[key]` array — don't let a
             // finding alias (and let a surface mutate) the requirements object.
             tools: [...tools],
-            title: check.title,
-            detail: `${formatToolNames(tools)} need \`${check.api}\`, which ${profile.label} doesn't support — ${check.consequence}.`,
+            title:
+              sandboxPermissionCopy?.title ??
+              `${check.subject} ${
+                supportLabel === "unsupported" ? "unavailable" : "not confirmed"
+              }`,
+            detail:
+              sandboxPermissionCopy?.detail ??
+              (supportLabel === "unsupported"
+                ? `This widget ${check.request}. ${profile.label} does not support ${check.unsupportedObject}.`
+                : `This widget ${check.request}. Support is not confirmed for ${profile.label}.`),
             provenance: profile.provenance,
           });
         }
@@ -213,12 +390,16 @@ export function evaluateHostCompat(
       severity: "info",
       code: "protocol_version_mismatch",
       title: "Protocol version differs",
-      detail: `This server negotiated MCP \`${serverVersion}\`; ${profile.label} advertises ${hostVersions
+      detail: `This server uses MCP \`${serverVersion}\`. ${
+        profile.label
+      } supports ${hostVersions
         .map((v) => `\`${v}\``)
         .join(
-          ", ",
-        )}. The host may negotiate a shared version — but if the server can't speak one of these, the connection won't establish.`,
-      remediation: `Confirm the server also supports ${hostVersions.length === 1 ? "this version" : "one of these versions"}.`,
+          ", "
+        )}. The connection works only if both support a shared version.`,
+      remediation: `Check that the server supports ${
+        hostVersions.length === 1 ? "this version" : "one of these versions"
+      }.`,
       provenance: profile.provenance,
     });
   }
@@ -227,7 +408,7 @@ export function evaluateHostCompat(
     findings,
     "apps",
     requirements.unknownDimensions.length > 0,
-    profile.provenance,
+    profile.provenance
   );
   // A server-lane finding (today: a protocol-version difference) means we can't
   // confirm the host will accept this server — it MAY negotiate a shared
@@ -238,7 +419,7 @@ export function evaluateHostCompat(
     findings,
     "server",
     serverHasFinding,
-    profile.provenance,
+    profile.provenance
   );
   const verdict =
     VERDICT_RANK[apps.verdict] >= VERDICT_RANK[server.verdict]
@@ -248,6 +429,7 @@ export function evaluateHostCompat(
   return {
     hostId: profile.id,
     hostLabel: profile.label,
+    verifiedAt: profile.verifiedAt,
     verdict,
     provenance: profile.provenance,
     lanes: { apps, server },
@@ -282,16 +464,16 @@ export interface EvaluateAllHostsOptions {
 export function evaluateAllHosts(
   toolsData: HostCompatToolsInput | null | undefined,
   profiles: HostCompatProfile[],
-  options?: EvaluateAllHostsOptions,
+  options?: EvaluateAllHostsOptions
 ): HostCompatEvaluation {
   const requirements = deriveServerRequirements(
     toolsData,
     options?.widgetUsage,
-    options?.connectionFacts,
+    options?.connectionFacts
   );
   if (options?.toolsTruncated) {
     requirements.unknownDimensions.push(
-      "tool list incomplete — pagination truncated, later tools/widgets not evaluated",
+      "tool list incomplete — pagination truncated, later tools/widgets not evaluated"
     );
   }
   return {

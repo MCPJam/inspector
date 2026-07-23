@@ -3,11 +3,18 @@ import {
   SUPPORTED_MODELS,
   type ModelDefinition,
   type ModelProvider,
+  hostedModelDefinitionsFromSnapshot,
   isMCPJamProvidedModel,
   Model,
 } from "@/shared/types";
 import type { CustomProvider } from "@mcpjam/sdk/browser";
 import type { OrgModelProvider } from "@/hooks/use-org-model-config";
+// Provider display name + title-casing live in the centralized provider
+// registry; imported for local use and re-exported so existing importers work.
+import {
+  getProviderDisplayName,
+  titleCaseProviderKey,
+} from "@/lib/provider-registry";
 
 export function parseModelAliases(
   aliasString: string,
@@ -27,6 +34,13 @@ export function buildAvailableModels(params: {
   ollamaModels: ModelDefinition[];
   getAzureBaseUrl: () => string;
   customProviders: CustomProvider[];
+  /**
+   * The hosted ("free") model source. When provided (the backend catalog),
+   * it replaces the static `SUPPORTED_MODELS.filter(isMCPJamProvidedModel)`
+   * subset; BYOK-key-derived models still come from `SUPPORTED_MODELS`. Absent
+   * → the pre-catalog static behavior (keeps un-wired callers + tests working).
+   */
+  hostedCatalog?: ModelDefinition[];
 }): ModelDefinition[] {
   const {
     hasToken,
@@ -35,6 +49,7 @@ export function buildAvailableModels(params: {
     isOllamaRunning,
     ollamaModels,
     customProviders,
+    hostedCatalog,
   } = params;
 
   const providerHasKey: Record<string, boolean> = {
@@ -52,10 +67,14 @@ export function buildAvailableModels(params: {
     meta: false,
   } as const;
 
-  const cloud = SUPPORTED_MODELS.filter((m) => {
-    if (isMCPJamProvidedModel(m.id)) return true;
+  const hosted = hostedCatalog ?? hostedModelDefinitionsFromSnapshot();
+  // BYOK models the user has a key for — hosted ids handled by `hosted` above,
+  // so exclude them here to avoid duplicates when a static model is both.
+  const byok = SUPPORTED_MODELS.filter((m) => {
+    if (isMCPJamProvidedModel(String(m.id))) return false;
     return providerHasKey[m.provider];
   });
+  const cloud = [...hosted, ...byok];
 
   const openRouterModels: ModelDefinition[] = providerHasKey.openrouter
     ? getOpenRouterSelectedModels().map((id) => ({
@@ -118,11 +137,15 @@ export function isOrgProviderAvailable(
  * so hosted local-runtime Ollama providers appear in the model picker.
  */
 export function buildAvailableModelsFromOrgConfig(
-  orgConfig: OrgVisibleConfig | undefined
+  orgConfig: OrgVisibleConfig | undefined,
+  /** Hosted ("free") source; see `buildAvailableModels`. */
+  hostedCatalog?: ModelDefinition[]
 ): ModelDefinition[] {
+  const hosted = hostedCatalog ?? hostedModelDefinitionsFromSnapshot();
+
   if (!orgConfig?.providers) {
-    // No org config loaded yet — return only MCPJam-provided models
-    return SUPPORTED_MODELS.filter((m) => isMCPJamProvidedModel(String(m.id)));
+    // No org config loaded yet — return only MCPJam-provided (hosted) models
+    return hosted;
   }
 
   // Determine which provider keys are available. Ollama is skipped — it never
@@ -134,11 +157,13 @@ export function buildAvailableModelsFromOrgConfig(
     if (p.hasSecret) availableProviderKeys.add(p.providerKey);
   }
 
-  // Always include MCPJam-provided models
-  const models: ModelDefinition[] = SUPPORTED_MODELS.filter((m) => {
-    if (isMCPJamProvidedModel(String(m.id))) return true;
+  // Hosted models plus the org-key-derived provider models (hosted ids excluded
+  // from the latter so a static model that is both isn't duplicated).
+  const orgKeyModels = SUPPORTED_MODELS.filter((m) => {
+    if (isMCPJamProvidedModel(String(m.id))) return false;
     return availableProviderKeys.has(m.provider);
   });
+  const models: ModelDefinition[] = [...hosted, ...orgKeyModels];
 
   // OpenRouter: include selectedModels from org config
   const openRouterConfig = orgConfig.providers.find(
@@ -223,47 +248,9 @@ export function compactModelLabel(name: string | undefined | null): string {
   return name.replace(/\s*\(Free\)\s*$/i, "").trim() || name;
 }
 
-/** Display name for a provider group key (handles `custom:<slug>`). */
-export function getProviderDisplayName(groupKey: string): string {
-  if (groupKey.startsWith("custom:")) {
-    return groupKey.slice("custom:".length);
-  }
-
-  switch (groupKey) {
-    case "azure":
-      return "Azure OpenAI";
-    case "bedrock":
-      return "Amazon Bedrock";
-    case "anthropic":
-      return "Anthropic";
-    case "openai":
-      return "OpenAI";
-    case "deepseek":
-      return "DeepSeek";
-    case "google":
-      return "Google AI";
-    case "mistral":
-      return "Mistral AI";
-    case "ollama":
-      return "Ollama";
-    case "meta":
-      return "Meta";
-    case "xai":
-      return "xAI";
-    case "openrouter":
-      return "OpenRouter";
-    case "moonshotai":
-      return "Moonshot AI";
-    case "z-ai":
-      return "Zhipu AI";
-    case "minimax":
-      return "MiniMax";
-    case "qwen":
-      return "Qwen";
-    default:
-      return groupKey;
-  }
-}
+// Re-exported from the centralized provider registry (imported at top) so
+// existing importers of these names keep working.
+export { getProviderDisplayName, titleCaseProviderKey };
 
 /** Logo lookup name — collapses `custom:<slug>` to `custom`. */
 export function getLogoProvider(groupKey: string): string {
@@ -275,6 +262,8 @@ export interface ModelMenuItem {
   name: string;
   provider: string;
   customProviderName?: string;
+  /** Set by the backend catalog source; see `ModelDefinition.hosted`. */
+  hosted?: boolean;
 }
 
 const OWN_PROVIDER_SOURCES = new Set([
@@ -286,9 +275,15 @@ const OWN_PROVIDER_SOURCES = new Set([
 ]);
 
 export function isMCPJamProvidedModelMenuItem(model: ModelMenuItem): boolean {
+  // The catalog-sourced `hosted` flag is authoritative — a catalog-only model
+  // (not in the static list) still classifies as MCPJam-provided.
+  if (model.hosted === true) {
+    return true;
+  }
   if (OWN_PROVIDER_SOURCES.has(model.provider)) {
     return false;
   }
+  // Back-compat for static-derived items that carry no `hosted` flag.
   return isMCPJamProvidedModel(String(model.id));
 }
 

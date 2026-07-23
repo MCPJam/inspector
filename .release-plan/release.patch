@@ -1,282 +1,39 @@
-diff --git a/.changeset/add-claude-sonnet-5-model.md b/.changeset/add-claude-sonnet-5-model.md
+diff --git a/.changeset/dialect-aware-schema-validation.md b/.changeset/dialect-aware-schema-validation.md
 deleted file mode 100644
-index fae774505..000000000
---- a/.changeset/add-claude-sonnet-5-model.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": minor
-----
--
--Add Claude Sonnet 5 as a supported model.
-diff --git a/.changeset/eval-iterations-bar-remaining.md b/.changeset/eval-iterations-bar-remaining.md
-deleted file mode 100644
-index 4c36bff17..000000000
---- a/.changeset/eval-iterations-bar-remaining.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Show remaining (not used) eval iterations in the credit balance card's progress bar, matching the monthly team credits row.
-diff --git a/.changeset/gate-xaa-auth-option.md b/.changeset/gate-xaa-auth-option.md
-deleted file mode 100644
-index 2009beb95..000000000
---- a/.changeset/gate-xaa-auth-option.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Gate the Cross-App Access (XAA) authentication option behind the `xaa` feature flag.
-diff --git a/.changeset/guest-auth-windows-npx-einval.md b/.changeset/guest-auth-windows-npx-einval.md
-deleted file mode 100644
-index 765ad07a9..000000000
---- a/.changeset/guest-auth-windows-npx-einval.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Fix an EINVAL crash on Windows (`npx.cmd`) when provisioning the Convex environment for guest auth.
-diff --git a/.changeset/harness-guest-execution-scope.md b/.changeset/harness-guest-execution-scope.md
-deleted file mode 100644
-index f9e5dbd9d..000000000
---- a/.changeset/harness-guest-execution-scope.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": minor
-----
--
--Thread `executionScope` through the guest Claude Code harness path, enabling guest-owned execution controls for the harness chat surface.
-diff --git a/.changeset/harness-mcp-traffic-in-playground-logs.md b/.changeset/harness-mcp-traffic-in-playground-logs.md
-deleted file mode 100644
-index a8f774ba1..000000000
---- a/.changeset/harness-mcp-traffic-in-playground-logs.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": minor
-----
--
--Surface harness MCP traffic in the Playground Logs panel.
-diff --git a/.changeset/harness-provider-dispatch-fail-closed.md b/.changeset/harness-provider-dispatch-fail-closed.md
-deleted file mode 100644
-index 64c8fdcf4..000000000
---- a/.changeset/harness-provider-dispatch-fail-closed.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Make harness chat dispatch provider-aware and fail closed on invalid chatbox config, and correctly gate cloud-skills tools.
-diff --git a/.changeset/harness-proxy-computer-upload-hardening.md b/.changeset/harness-proxy-computer-upload-hardening.md
-deleted file mode 100644
-index f5bc5b64a..000000000
---- a/.changeset/harness-proxy-computer-upload-hardening.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Harden the harness proxy and computer upload endpoints: enforce body-size limits, scope terminal tokens more tightly, and fix proxy-strategy edge cases (4 findings from the harness proxy security review).
-diff --git a/.changeset/host-compare-default-codex-claude-code.md b/.changeset/host-compare-default-codex-claude-code.md
-deleted file mode 100644
-index 3a654d363..000000000
---- a/.changeset/host-compare-default-codex-claude-code.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Default Host Compare to Codex and Claude Code.
-diff --git a/.changeset/host-compatibility-caniuse-polish.md b/.changeset/host-compatibility-caniuse-polish.md
-deleted file mode 100644
-index 55ac65531..000000000
---- a/.changeset/host-compatibility-caniuse-polish.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Polish the Host Compatibility (caniuse.dev-style) view: table/list toggle, match counts, and a mobile-optimized layout.
-diff --git a/.changeset/hosts-save-button-disabled-reason.md b/.changeset/hosts-save-button-disabled-reason.md
-deleted file mode 100644
-index fbc84ccf1..000000000
---- a/.changeset/hosts-save-button-disabled-reason.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Explain why the Save button is disabled when editing a host, instead of leaving it disabled with no indication of what's missing.
-diff --git a/.changeset/model-visible-mcp-images.md b/.changeset/model-visible-mcp-images.md
-deleted file mode 100644
-index 4ef6b1d87..000000000
---- a/.changeset/model-visible-mcp-images.md
-+++ /dev/null
-@@ -1,10 +0,0 @@
-----
--"@mcpjam/sdk": minor
--"@mcpjam/inspector": minor
-----
--
--Expose MCP tool-returned images through host-config-controlled model output.
--
--Adds model-visible conversion for direct image blocks, embedded image resources, and linked image resources behind the structured host config policy `modelVisibleMcpToolResults`. Also preserves the policy through Host JSON normalization and caps image conversion by per-image size, image count, linked resource reads, and aggregate decoded bytes.
--
--Adds host-config-controlled UI rendering for MCP tool-returned images via the structured `mcpToolResultImageRendering` policy, with `inline`, `collapsed`, and `none` placement plus independent direct image, embedded image resource, and linked image resource switches. The inspector can render supported tool-returned images for humans while keeping raw MCP JSON available.
-diff --git a/.changeset/oauth-debugger-preregistered-client-secret.md b/.changeset/oauth-debugger-preregistered-client-secret.md
-deleted file mode 100644
-index 41285975e..000000000
---- a/.changeset/oauth-debugger-preregistered-client-secret.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Fix the OAuth Debugger dropping the `client_secret` for pre-registered clients during the authorization flow.
-diff --git a/.changeset/oauth-debugger-token-exchange-client-secret.md b/.changeset/oauth-debugger-token-exchange-client-secret.md
-deleted file mode 100644
-index c4d973717..000000000
---- a/.changeset/oauth-debugger-token-exchange-client-secret.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Send the configured `client_secret` in the OAuth Debugger's token exchange request.
-diff --git a/.changeset/oauth-scope-autofill-fix.md b/.changeset/oauth-scope-autofill-fix.md
-deleted file mode 100644
-index c6ce98e77..000000000
---- a/.changeset/oauth-scope-autofill-fix.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Stop browser autofill from clobbering OAuth scope fields in the connection and profile forms.
-diff --git a/.changeset/org-leave-from-access-restricted.md b/.changeset/org-leave-from-access-restricted.md
-deleted file mode 100644
-index ac18e3b43..000000000
---- a/.changeset/org-leave-from-access-restricted.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": minor
-----
--
--Let organization members leave the organization directly from the access-restricted screen.
-diff --git a/.changeset/remove-default-host-config-project-settings.md b/.changeset/remove-default-host-config-project-settings.md
-deleted file mode 100644
-index d6d45e8d5..000000000
---- a/.changeset/remove-default-host-config-project-settings.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Remove the Default Host Config section from project settings.
-diff --git a/.changeset/sdk-oauth-authorization-header-client-secret.md b/.changeset/sdk-oauth-authorization-header-client-secret.md
-deleted file mode 100644
-index 7c4f1c43c..000000000
---- a/.changeset/sdk-oauth-authorization-header-client-secret.md
+index 35734d183..000000000
+--- a/.changeset/dialect-aware-schema-validation.md
 +++ /dev/null
 @@ -1,5 +0,0 @@
 ----
 -"@mcpjam/sdk": patch
 ----
 -
--Send `client_secret_basic` credentials via an `Authorization: Basic` header instead of the request body during OAuth token exchange, matching RFC 6749 §2.3.1. Applies to pre-registered clients across all three debug OAuth state machine versions (2025-03-26, 2025-06-18, 2025-11-25).
-diff --git a/.changeset/sidebar-notifications-popover-stays-open.md b/.changeset/sidebar-notifications-popover-stays-open.md
+-Validate declared draft-07 tool schemas instead of rejecting them. The upstream v2 client's default validator is 2020-12-only and hard-fails `tools/call` for any tool whose `outputSchema` declares `"$schema": ".../draft-07/schema#"` — which is every MCP TypeScript SDK v1 server built with zod. The spec permits an explicitly declared draft-07 dialect on all protocol versions (2020-12 is only the default when `$schema` is absent), so the SDK now dispatches on the declared `$schema`: absent/2020-12 → a 2020-12 engine, draft-07 → a draft-07 engine, unknown dialects → skipped with a deduped `console.warn` (overridable via `onUnknownDialect`) rather than failing the call. Two runtime flavors share the dispatch core: `DialectAwareJsonSchemaValidator` (Ajv, wired into `MCPClientManager` and `createManagedMcpClient` on Node) and `CspSafeDialectAwareJsonSchemaValidator` (`@cfworker/json-schema`, wired into the HTTP doctor, which ships in the browser/workerd entries where Ajv's `new Function` compilation is unavailable).
+diff --git a/.changeset/swarm-journey-judge.md b/.changeset/swarm-journey-judge.md
 deleted file mode 100644
-index 4af3b7223..000000000
---- a/.changeset/sidebar-notifications-popover-stays-open.md
+index 6461d8a27..000000000
+--- a/.changeset/swarm-journey-judge.md
 +++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Keep the notifications popover open when it's opened from the account menu.
-diff --git a/.changeset/sidebar-world-cup-ball.md b/.changeset/sidebar-world-cup-ball.md
-deleted file mode 100644
-index 2762220c0..000000000
---- a/.changeset/sidebar-world-cup-ball.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Add a World Cup soccer ball next to the sidebar logo.
-diff --git a/.changeset/webmcp-catalog-policy-polish.md b/.changeset/webmcp-catalog-policy-polish.md
-deleted file mode 100644
-index be57fd891..000000000
---- a/.changeset/webmcp-catalog-policy-polish.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Clarify prefill-vs-execute wording in the WebMCP UI tools catalog, add a `fill` device type, and document the UI-tool policy defaults.
-diff --git a/.changeset/webmcp-expose-ui-tools-to-agents.md b/.changeset/webmcp-expose-ui-tools-to-agents.md
-deleted file mode 100644
-index e6e3a0efb..000000000
---- a/.changeset/webmcp-expose-ui-tools-to-agents.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
+@@ -1,9 +0,0 @@
 ----
 -"@mcpjam/inspector": minor
 ----
 -
--Expose Inspector UI tools to chat agents over WebMCP, letting the agent call app-native UI actions (navigation, tool execution) during a conversation.
-diff --git a/.changeset/webmcp-keep-agent-alive-on-navigation.md b/.changeset/webmcp-keep-agent-alive-on-navigation.md
-deleted file mode 100644
-index 3997b61d9..000000000
---- a/.changeset/webmcp-keep-agent-alive-on-navigation.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
+-Surface and configure the Swarm goal-completion judge.
 -
--Keep the chat agent's conversation alive when a WebMCP UI tool navigates the page, instead of dropping the in-flight session.
-diff --git a/.changeset/webmcp-ui-tool-approval-gating.md b/.changeset/webmcp-ui-tool-approval-gating.md
-deleted file mode 100644
-index a8d0c9e3a..000000000
---- a/.changeset/webmcp-ui-tool-approval-gating.md
-+++ /dev/null
-@@ -1,5 +0,0 @@
-----
--"@mcpjam/inspector": minor
-----
--
--Add approval gating for WebMCP UI tools: the chat agent must get user confirmation before executing a UI tool. Off by default and toggleable per chatbox.
+-- The per-session judge badge (`SessionGoalScoreBadge`) moves to the shared `session-quality` module (reusing the eval `ScoreBadge`) and now renders in the Sessions list and run matrix cells; `SwarmJudgeSection` is reachable even for sessions with no transcript.
+-- The judge config type/defaults are extracted to a shared `GoalJudgeConfig` (evals re-export the historical `EvalJudgeConfig` names), so the eval `JudgesSection` is reusable.
+-- New journeys expose an **Advanced → Judge** disclosure that reuses `JudgesSection` to set the judge model and auto-grade toggle (`journeys:createJourney` carries the config). Pairs with the backend `judgeConfig` snapshot + config-driven auto-run.
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index ee9b4da8c..af0319f85 100644
+index 809166595..bb55d039d 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.22.1",
-+  "version": "2.23.0",
+-  "version": "2.29.0",
++  "version": "2.30.0",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
@@ -284,51 +41,658 @@ index ee9b4da8c..af0319f85 100644
      "@hookform/resolvers": "^3.10.0",
      "@lezer/highlight": "^1.2.3",
      "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^1.27.0",
-+    "@mcpjam/sdk": "^1.28.0",
-     "@modelcontextprotocol/client": "2.0.0-alpha.2",
-     "@modelcontextprotocol/ext-apps": "^1.7.2",
+-    "@mcpjam/sdk": "^2.0.0",
++    "@mcpjam/sdk": "^2.0.1",
+     "@modelcontextprotocol/client": "2.0.0-beta.4",
+     "@modelcontextprotocol/ext-apps": "^1.7.4",
      "@openrouter/ai-sdk-provider": "^2.0.2",
 diff --git a/package-lock.json b/package-lock.json
-index 96f9166c7..f20cab218 100644
+index 117cea299..b4d0c8fb3 100644
 --- a/package-lock.json
 +++ b/package-lock.json
-@@ -327,7 +327,7 @@
+@@ -340,7 +340,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.22.1",
-+      "version": "2.23.0",
+-      "version": "2.29.0",
++      "version": "2.30.0",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
-@@ -360,7 +360,7 @@
+@@ -373,7 +373,7 @@
          "@hookform/resolvers": "^3.10.0",
          "@lezer/highlight": "^1.2.3",
          "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^1.27.0",
-+        "@mcpjam/sdk": "^1.28.0",
-         "@modelcontextprotocol/client": "2.0.0-alpha.2",
-         "@modelcontextprotocol/ext-apps": "^1.7.2",
+-        "@mcpjam/sdk": "^2.0.0",
++        "@mcpjam/sdk": "^2.0.1",
+         "@modelcontextprotocol/client": "2.0.0-beta.4",
+         "@modelcontextprotocol/ext-apps": "^1.7.4",
          "@openrouter/ai-sdk-provider": "^2.0.2",
-@@ -37020,7 +37020,7 @@
+@@ -881,7 +881,7 @@
+       "version": "0.9.31",
+       "resolved": "https://registry.npmjs.org/@acemir/cssom/-/cssom-0.9.31.tgz",
+       "integrity": "sha512-ZnR3GSaH+/vJ0YlHau21FjfLYjMpYVIzTD8M8vIEQvIGxeOXyXdzCI140rrCY862p/C/BbzWsjc1dgnM9mkoTA==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/@adobe/css-tools": {
+@@ -1700,7 +1700,7 @@
+       "version": "4.1.2",
+       "resolved": "https://registry.npmjs.org/@asamuzakjp/css-color/-/css-color-4.1.2.tgz",
+       "integrity": "sha512-NfBUvBaYgKIuq6E/RBLY1m0IohzNHAYyaJGuTK79Z23uNwmz2jl1mPsC5ZxCCxylinKhT1Amn5oNTlx1wN8cQg==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@csstools/css-calc": "^3.0.0",
+@@ -1714,7 +1714,7 @@
+       "version": "11.3.5",
+       "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-11.3.5.tgz",
+       "integrity": "sha512-NxVFwLAnrd9i7KUBxC4DrUhmgjzOs+1Qm50D3oF1/oL+r1NpZ4gA7xvG0/zJ8evR7zIKn4vLf7qTNduWFtCrRw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "BlueOak-1.0.0",
+       "engines": {
+         "node": "20 || >=22"
+@@ -1724,7 +1724,7 @@
+       "version": "6.8.1",
+       "resolved": "https://registry.npmjs.org/@asamuzakjp/dom-selector/-/dom-selector-6.8.1.tgz",
+       "integrity": "sha512-MvRz1nCqW0fsy8Qz4dnLIvhOlMzqDVBabZx6lH+YywFDdjXhMY37SmpV1XFX3JzG5GWHn63j6HX6QPr3lZXHvQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@asamuzakjp/nwsapi": "^2.3.9",
+@@ -1738,7 +1738,7 @@
+       "version": "11.3.5",
+       "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-11.3.5.tgz",
+       "integrity": "sha512-NxVFwLAnrd9i7KUBxC4DrUhmgjzOs+1Qm50D3oF1/oL+r1NpZ4gA7xvG0/zJ8evR7zIKn4vLf7qTNduWFtCrRw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "BlueOak-1.0.0",
+       "engines": {
+         "node": "20 || >=22"
+@@ -1748,7 +1748,7 @@
+       "version": "2.3.9",
+       "resolved": "https://registry.npmjs.org/@asamuzakjp/nwsapi/-/nwsapi-2.3.9.tgz",
+       "integrity": "sha512-n8GuYSrI9bF7FFZ/SjhwevlHc8xaVlb/7HmHelnc/PZXBD2ZR49NnN9sMMuDdEGPeeRQ5d0hqlSlEpgCX3Wl0Q==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/@aws-crypto/crc32": {
+@@ -2938,7 +2938,7 @@
+       "version": "6.0.2",
+       "resolved": "https://registry.npmjs.org/@csstools/color-helpers/-/color-helpers-6.0.2.tgz",
+       "integrity": "sha512-LMGQLS9EuADloEFkcTBR3BwV/CGHV7zyDxVRtVDTwdI2Ca4it0CCVTT9wCkxSgokjE5Ho41hEPgb8OEUwoXr6Q==",
+-      "devOptional": true,
++      "dev": true,
+       "funding": [
+         {
+           "type": "github",
+@@ -2958,7 +2958,7 @@
+       "version": "3.2.0",
+       "resolved": "https://registry.npmjs.org/@csstools/css-calc/-/css-calc-3.2.0.tgz",
+       "integrity": "sha512-bR9e6o2BDB12jzN/gIbjHa5wLJ4UjD1CB9pM7ehlc0ddk6EBz+yYS1EV2MF55/HUxrHcB/hehAyt5vhsA3hx7w==",
+-      "devOptional": true,
++      "dev": true,
+       "funding": [
+         {
+           "type": "github",
+@@ -2982,7 +2982,7 @@
+       "version": "4.1.0",
+       "resolved": "https://registry.npmjs.org/@csstools/css-color-parser/-/css-color-parser-4.1.0.tgz",
+       "integrity": "sha512-U0KhLYmy2GVj6q4T3WaAe6NPuFYCPQoE3b0dRGxejWDgcPp8TP7S5rVdM5ZrFaqu4N67X8YaPBw14dQSYx3IyQ==",
+-      "devOptional": true,
++      "dev": true,
+       "funding": [
+         {
+           "type": "github",
+@@ -3010,7 +3010,7 @@
+       "version": "4.0.0",
+       "resolved": "https://registry.npmjs.org/@csstools/css-parser-algorithms/-/css-parser-algorithms-4.0.0.tgz",
+       "integrity": "sha512-+B87qS7fIG3L5h3qwJ/IFbjoVoOe/bpOdh9hAjXbvx0o8ImEmUsGXN0inFOnk2ChCFgqkkGFQ+TpM5rbhkKe4w==",
+-      "devOptional": true,
++      "dev": true,
+       "funding": [
+         {
+           "type": "github",
+@@ -3033,7 +3033,7 @@
+       "version": "1.1.3",
+       "resolved": "https://registry.npmjs.org/@csstools/css-syntax-patches-for-csstree/-/css-syntax-patches-for-csstree-1.1.3.tgz",
+       "integrity": "sha512-SH60bMfrRCJF3morcdk57WklujF4Jr/EsQUzqkarfHXEFcAR1gg7fS/chAE922Sehgzc1/+Tz5H3Ypa1HiEKrg==",
+-      "devOptional": true,
++      "dev": true,
+       "funding": [
+         {
+           "type": "github",
+@@ -3058,7 +3058,7 @@
+       "version": "4.0.0",
+       "resolved": "https://registry.npmjs.org/@csstools/css-tokenizer/-/css-tokenizer-4.0.0.tgz",
+       "integrity": "sha512-QxULHAm7cNu72w97JUNCBFODFaXpbDg+dP8b/oWFAZ2MTRppA3U00Y2L1HqaS4J6yBqxwa/Y3nMBaxVKbB/NsA==",
+-      "devOptional": true,
++      "dev": true,
+       "funding": [
+         {
+           "type": "github",
+@@ -5298,7 +5298,7 @@
+       "version": "1.15.0",
+       "resolved": "https://registry.npmjs.org/@exodus/bytes/-/bytes-1.15.0.tgz",
+       "integrity": "sha512-UY0nlA+feH81UGSHv92sLEPLCeZFjXOuHhrIo0HQydScuQc8s0A7kL/UdgwgDq8g8ilksmuoF35YVTNphV2aBQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": "^20.19.0 || ^22.12.0 || >=24.0.0"
+@@ -6822,7 +6822,7 @@
+       "version": "0.3.11",
+       "resolved": "https://registry.npmjs.org/@jridgewell/source-map/-/source-map-0.3.11.tgz",
+       "integrity": "sha512-ZMp1V8ZFcPG5dIWnQLr3NSI1MiCU7UETdS/A0G8V/XWHvJv3ZsFqutJn1Y5RPmAPX6F3BiE397OqveU/9NCuIA==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@jridgewell/gen-mapping": "^0.3.5",
+@@ -9003,7 +9003,7 @@
+       "version": "1.59.1",
+       "resolved": "https://registry.npmjs.org/@playwright/test/-/test-1.59.1.tgz",
+       "integrity": "sha512-PG6q63nQg5c9rIi4/Z5lR5IVF7yU5MqmKaPOe0HSc0O2cX1fPi96sUQu5j7eo4gKCkB2AnNGoWt7y4/Xx3Kcqg==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "Apache-2.0",
+       "dependencies": {
+         "playwright": "1.59.1"
+@@ -14326,6 +14326,7 @@
+       "version": "19.2.14",
+       "resolved": "https://registry.npmjs.org/@types/react/-/react-19.2.14.tgz",
+       "integrity": "sha512-ilcTH/UniCkMdtexkoCN0bI7pMcJDvmQFPvuPvmEaYA/NSfFTAgdUSLAoVjaRJm7+6PvcM+q1zYOwS4wTYMF9w==",
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "csstype": "^3.2.2"
+@@ -14335,7 +14336,7 @@
+       "version": "19.2.3",
+       "resolved": "https://registry.npmjs.org/@types/react-dom/-/react-dom-19.2.3.tgz",
+       "integrity": "sha512-jp2L/eY6fn+KgVVQAOqYItbF0VY/YApe5Mz2F0aykSO8gx31bYCZyvSeYxCHKvzHG5eZjc+zyaS5BrBWya2+kQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "peerDependencies": {
+         "@types/react": "^19.2.0"
+@@ -16877,7 +16878,7 @@
+       "version": "1.0.3",
+       "resolved": "https://registry.npmjs.org/bidi-js/-/bidi-js-1.0.3.tgz",
+       "integrity": "sha512-RKshQI1R3YQ+n9YJz2QQ147P66ELpa1FQEg20Dk8oW9t2KgLbpDLLp9aGZ7y8WHSshDknG0bknqGw5/tyCs5tw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "require-from-string": "^2.0.2"
+@@ -17099,7 +17100,7 @@
+       "version": "1.1.2",
+       "resolved": "https://registry.npmjs.org/buffer-from/-/buffer-from-1.1.2.tgz",
+       "integrity": "sha512-E+XQCRwSbaaiChtv6k6Dwgc+bx+Bs6vuKJHHl5kox/BaKbhiXzqQOwK4cO22yElGp2OCmjwVhT3HmxgyPGnJfQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/bundle-name": {
+@@ -18212,7 +18213,7 @@
+       "version": "3.2.1",
+       "resolved": "https://registry.npmjs.org/css-tree/-/css-tree-3.2.1.tgz",
+       "integrity": "sha512-X7sjQzceUhu1u7Y/ylrRZFU2FS6LRiFVp6rKLPg23y3x3c3DOKAwuXGDp+PAGjh6CSnCjYeAul8pcT8bAl+lSA==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "mdn-data": "2.27.1",
+@@ -18233,7 +18234,7 @@
+       "version": "5.3.7",
+       "resolved": "https://registry.npmjs.org/cssstyle/-/cssstyle-5.3.7.tgz",
+       "integrity": "sha512-7D2EPVltRrsTkhpQmksIu+LxeWAIEk6wRDMJ1qljlv+CKHJM+cJLlfhWIzNA44eAsHXSNe3+vO6DW1yCYx8SuQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@asamuzakjp/css-color": "^4.1.1",
+@@ -18249,7 +18250,7 @@
+       "version": "11.3.5",
+       "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-11.3.5.tgz",
+       "integrity": "sha512-NxVFwLAnrd9i7KUBxC4DrUhmgjzOs+1Qm50D3oF1/oL+r1NpZ4gA7xvG0/zJ8evR7zIKn4vLf7qTNduWFtCrRw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "BlueOak-1.0.0",
+       "engines": {
+         "node": "20 || >=22"
+@@ -18820,7 +18821,7 @@
+       "version": "6.0.1",
+       "resolved": "https://registry.npmjs.org/data-urls/-/data-urls-6.0.1.tgz",
+       "integrity": "sha512-euIQENZg6x8mj3fO6o9+fOW8MimUI4PpD/fZBhJfeioZVy9TUpM4UY7KjQNVZFlqwJ0UdzRDzkycB997HEq1BQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "whatwg-mimetype": "^5.0.0",
+@@ -18834,7 +18835,7 @@
+       "version": "5.0.0",
+       "resolved": "https://registry.npmjs.org/whatwg-mimetype/-/whatwg-mimetype-5.0.0.tgz",
+       "integrity": "sha512-sXcNcHOC51uPGF0P/D4NVtrkjSU2fNsm9iog4ZvZJsL3rjoDAzXZhkm2MWt1y+PUdggKAYVoMAIYcs78wJ51Cw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=20"
+@@ -18931,7 +18932,7 @@
+       "version": "10.6.0",
+       "resolved": "https://registry.npmjs.org/decimal.js/-/decimal.js-10.6.0.tgz",
+       "integrity": "sha512-YpgQiITW3JXGntzdUmyUR1V812Hn8T1YVXhCu+wO3OpS4eU9l4YdD3qjyiKdV6mvV29zapkMeD390UVEf2lkUg==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/decimal.js-light": {
+@@ -20308,6 +20309,7 @@
+       "version": "0.1.13",
+       "resolved": "https://registry.npmjs.org/encoding/-/encoding-0.1.13.tgz",
+       "integrity": "sha512-ETBauow1T35Y/WZMkio9jiM0Z5xjHHmJ4XmjZOq1l/dXz3lr2sRn87nJy20RupqSh1F2m3HHPSp8ShIPQJrJ3A==",
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "dependencies": {
+@@ -20318,6 +20320,7 @@
+       "version": "0.6.3",
+       "resolved": "https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.6.3.tgz",
+       "integrity": "sha512-4fCk79wshMdzMp2rH06qWrJE4iolqLhCUH+OiuIgU++RB0+94NlDL81atO7GX55uUKueo0txHNtvEyI6D7WdMw==",
++      "dev": true,
+       "license": "MIT",
+       "optional": true,
+       "dependencies": {
+@@ -23099,7 +23102,7 @@
+       "version": "6.0.0",
+       "resolved": "https://registry.npmjs.org/html-encoding-sniffer/-/html-encoding-sniffer-6.0.0.tgz",
+       "integrity": "sha512-CV9TW3Y3f8/wT0BRFc1/KAVQ3TUHiXmaAb6VW9vtiMFf7SLoMd1PdAc4W3KFOFETBJUb90KatHqlsZMWV+R9Gg==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@exodus/bytes": "^1.6.0"
+@@ -23166,7 +23169,7 @@
+       "version": "7.0.2",
+       "resolved": "https://registry.npmjs.org/http-proxy-agent/-/http-proxy-agent-7.0.2.tgz",
+       "integrity": "sha512-T1gkAiYYDWYx3V5Bmyu7HcfcvL7mUrTWiM6yOfa3PIphViJ/gFPbvidQ+veqSOHci/PxBcDabeUNCzpOODJZig==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "agent-base": "^7.1.0",
+@@ -23180,7 +23183,7 @@
+       "version": "7.1.4",
+       "resolved": "https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz",
+       "integrity": "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">= 14"
+@@ -23993,7 +23996,7 @@
+       "version": "1.0.1",
+       "resolved": "https://registry.npmjs.org/is-potential-custom-element-name/-/is-potential-custom-element-name-1.0.1.tgz",
+       "integrity": "sha512-bCYeRA2rVibKZd+s2625gGnGF/t7DSqDs4dP7CrLA1m7jKWz6pps0LpYLJN8Q64HtmPKJ1hrN3nzPNKFEKOUiQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/is-promise": {
+@@ -25396,7 +25399,7 @@
+       "version": "27.4.0",
+       "resolved": "https://registry.npmjs.org/jsdom/-/jsdom-27.4.0.tgz",
+       "integrity": "sha512-mjzqwWRD9Y1J1KUi7W97Gja1bwOOM5Ug0EZ6UDK3xS7j7mndrkwozHtSblfomlzyB4NepioNt+B2sOSzczVgtQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "@acemir/cssom": "^0.9.28",
+@@ -25436,7 +25439,7 @@
+       "version": "7.1.4",
+       "resolved": "https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz",
+       "integrity": "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">= 14"
+@@ -25446,7 +25449,7 @@
+       "version": "7.0.6",
+       "resolved": "https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-7.0.6.tgz",
+       "integrity": "sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "agent-base": "^7.1.2",
+@@ -25460,7 +25463,7 @@
+       "version": "8.20.0",
+       "resolved": "https://registry.npmjs.org/ws/-/ws-8.20.0.tgz",
+       "integrity": "sha512-sAt8BhgNbzCtgGbt2OxmpuryO63ZoDk/sqaB/znQm94T4fCEsy/yV+7CdC1kJhOU9lboAEU7R3kquuycDoibVA==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=10.0.0"
+@@ -25855,7 +25858,7 @@
+       "version": "1.32.0",
+       "resolved": "https://registry.npmjs.org/lightningcss/-/lightningcss-1.32.0.tgz",
+       "integrity": "sha512-NXYBzinNrblfraPGyrbPoD19C1h9lfI/1mzgWYvXUTe414Gz/X1FD2XBZSZM7rRTrMA8JL3OtAaGifrIKhQ5yQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MPL-2.0",
+       "dependencies": {
+         "detect-libc": "^2.0.3"
+@@ -25888,6 +25891,7 @@
+       "cpu": [
+         "arm64"
+       ],
++      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -25908,6 +25912,7 @@
+       "cpu": [
+         "arm64"
+       ],
++      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -25928,6 +25933,7 @@
+       "cpu": [
+         "x64"
+       ],
++      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -25948,6 +25954,7 @@
+       "cpu": [
+         "x64"
+       ],
++      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -25968,6 +25975,7 @@
+       "cpu": [
+         "arm"
+       ],
++      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -25988,6 +25996,7 @@
+       "cpu": [
+         "arm64"
+       ],
++      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -26008,6 +26017,7 @@
+       "cpu": [
+         "arm64"
+       ],
++      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -26028,6 +26038,7 @@
+       "cpu": [
+         "x64"
+       ],
++      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -26048,6 +26059,7 @@
+       "cpu": [
+         "x64"
+       ],
++      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -26068,6 +26080,7 @@
+       "cpu": [
+         "arm64"
+       ],
++      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -26088,6 +26101,7 @@
+       "cpu": [
+         "x64"
+       ],
++      "dev": true,
+       "license": "MPL-2.0",
+       "optional": true,
+       "os": [
+@@ -27006,7 +27020,7 @@
+       "version": "2.27.1",
+       "resolved": "https://registry.npmjs.org/mdn-data/-/mdn-data-2.27.1.tgz",
+       "integrity": "sha512-9Yubnt3e8A0OKwxYSXyhLymGW4sCufcLG6VdiDdUGVkPhpqLxlvP5vl1983gQjJl3tqbrM731mjaZaP68AgosQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "CC0-1.0"
+     },
+     "node_modules/media-typer": {
+@@ -29757,7 +29771,7 @@
+       "version": "8.0.0",
+       "resolved": "https://registry.npmjs.org/parse5/-/parse5-8.0.0.tgz",
+       "integrity": "sha512-9m4m5GSgXjL4AjumKzq1Fgfp3Z8rsvjRNbnkVwfu2ImRqE5D0LnY2QfDen18FSY9C573YU5XxSapdHZTZ2WolA==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "entities": "^6.0.0"
+@@ -30673,7 +30687,7 @@
+       "version": "2.3.1",
+       "resolved": "https://registry.npmjs.org/punycode/-/punycode-2.3.1.tgz",
+       "integrity": "sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=6"
+@@ -32096,7 +32110,7 @@
+       "version": "7.8.2",
+       "resolved": "https://registry.npmjs.org/rxjs/-/rxjs-7.8.2.tgz",
+       "integrity": "sha512-dhKf903U/PQZY6boNNtAGdWbG85WAbjT/1xYoZIC7FAY0yWapOBQVsVrDl58W86//e1VpMNBtRV4MaXfdMySFA==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "Apache-2.0",
+       "dependencies": {
+         "tslib": "^2.1.0"
+@@ -32188,7 +32202,7 @@
+       "version": "6.0.0",
+       "resolved": "https://registry.npmjs.org/saxes/-/saxes-6.0.0.tgz",
+       "integrity": "sha512-xAg7SOnEhrm5zI3puOOKyy1OMcMlIJZYNJY7xLBwSze0UjhPLnWfj2GF2EpT0jmzaJKIWKHLsaSSajf35bcYnA==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "ISC",
+       "dependencies": {
+         "xmlchars": "^2.2.0"
+@@ -32862,7 +32876,7 @@
+       "version": "0.6.1",
+       "resolved": "https://registry.npmjs.org/source-map/-/source-map-0.6.1.tgz",
+       "integrity": "sha512-UjgapumWlbMhkBgzT7Ykc5YXUT46F0iKu8SGXq0bcwP5dz/h0Plj6enJqjz1Zbq2l5WaqYnrVbwWOWMyF3F47g==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "BSD-3-Clause",
+       "engines": {
+         "node": ">=0.10.0"
+@@ -32881,7 +32895,7 @@
+       "version": "0.5.21",
+       "resolved": "https://registry.npmjs.org/source-map-support/-/source-map-support-0.5.21.tgz",
+       "integrity": "sha512-uBHU3L3czsIyYXKX88fdrGovxdSCoTGDRZ6SYXtSRxLZUzHg5P/66Ht6uoUlHu9EZod+inXhKo3qQgwXUT/y1w==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "buffer-from": "^1.0.0",
+@@ -33578,7 +33592,7 @@
+       "version": "3.2.4",
+       "resolved": "https://registry.npmjs.org/symbol-tree/-/symbol-tree-3.2.4.tgz",
+       "integrity": "sha512-9QNk5KwDF+Bvz+PyObkmSYjI5ksVUYtjW7AU22r2NKcfLJcXp96hkDWU3+XndOsUb+AQ9QhfzfCT2O+CNWT5Tw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/synckit": {
+@@ -33725,7 +33739,7 @@
+       "version": "5.46.1",
+       "resolved": "https://registry.npmjs.org/terser/-/terser-5.46.1.tgz",
+       "integrity": "sha512-vzCjQO/rgUuK9sf8VJZvjqiqiHFaZLnOiimmUuOKODxWL8mm/xua7viT7aqX7dgPY60otQjUotzFMmCB4VdmqQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "BSD-2-Clause",
+       "dependencies": {
+         "@jridgewell/source-map": "^0.3.3",
+@@ -33809,7 +33823,7 @@
+       "version": "2.20.3",
+       "resolved": "https://registry.npmjs.org/commander/-/commander-2.20.3.tgz",
+       "integrity": "sha512-GpVkmM8vF2vQUkj2LvZmD35JxeJOLCwJ9cUkugyk2nuhbv3+mJvpLYYt+0+USMxE+oj+ey/lJEnhZw75x/OMcQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/test-exclude": {
+@@ -34067,7 +34081,7 @@
+       "version": "7.0.28",
+       "resolved": "https://registry.npmjs.org/tldts/-/tldts-7.0.28.tgz",
+       "integrity": "sha512-+Zg3vWhRUv8B1maGSTFdev9mjoo8Etn2Ayfs4cnjlD3CsGkxXX4QyW3j2WJ0wdjYcYmy7Lx2RDsZMhgCWafKIw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "tldts-core": "^7.0.28"
+@@ -34080,7 +34094,7 @@
+       "version": "7.0.28",
+       "resolved": "https://registry.npmjs.org/tldts-core/-/tldts-core-7.0.28.tgz",
+       "integrity": "sha512-7W5Efjhsc3chVdFhqtaU0KtK32J37Zcr9RKtID54nG+tIpcY79CQK/veYPODxtD/LJ4Lue66jvrQzIX2Z2/pUQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/tmp": {
+@@ -34184,7 +34198,7 @@
+       "version": "6.0.1",
+       "resolved": "https://registry.npmjs.org/tough-cookie/-/tough-cookie-6.0.1.tgz",
+       "integrity": "sha512-LktZQb3IeoUWB9lqR5EWTHgW/VTITCXg4D21M+lvybRVdylLrRMnqaIONLVb5mav8vM19m44HIcGq4qASeu2Qw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "BSD-3-Clause",
+       "dependencies": {
+         "tldts": "^7.0.5"
+@@ -34197,7 +34211,7 @@
+       "version": "6.0.0",
+       "resolved": "https://registry.npmjs.org/tr46/-/tr46-6.0.0.tgz",
+       "integrity": "sha512-bLVMLPtstlZ4iMQHpFHTR7GAGj2jxi8Dg0s2h2MafAE4uSWF98FC/3MomU51iQAMf8/qDUbKWf5GxuvvVcXEhw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "punycode": "^2.3.1"
+@@ -34545,7 +34559,7 @@
+       "version": "4.21.0",
+       "resolved": "https://registry.npmjs.org/tsx/-/tsx-4.21.0.tgz",
+       "integrity": "sha512-5C1sg4USs1lfG0GFb2RLXsdpXqBSEhAaA/0kPL01wxzpMqLILNxIxIOKiILz+cdg/pLnOUxFYOR5yhHU666wbw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "esbuild": "~0.27.0",
+@@ -34728,7 +34742,7 @@
+       "version": "5.9.3",
+       "resolved": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
+       "integrity": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "Apache-2.0",
+       "bin": {
+         "tsc": "bin/tsc",
+@@ -35741,7 +35755,7 @@
+       "version": "5.0.0",
+       "resolved": "https://registry.npmjs.org/w3c-xmlserializer/-/w3c-xmlserializer-5.0.0.tgz",
+       "integrity": "sha512-o8qghlI8NZHU1lLPrpi2+Uq7abh4GGPpYANlalzWxyWteJOCsr/P+oPBA49TOLu5FTZO4d3F9MnWJfiMo4BkmA==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "xml-name-validator": "^5.0.0"
+@@ -35817,7 +35831,7 @@
+       "version": "8.0.1",
+       "resolved": "https://registry.npmjs.org/webidl-conversions/-/webidl-conversions-8.0.1.tgz",
+       "integrity": "sha512-BMhLD/Sw+GbJC21C/UgyaZX41nPt8bUTg+jWyDeg7e7YN4xOM05YPSIXceACnXVtqyEw/LMClUQMtMZ+PGGpqQ==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "BSD-2-Clause",
+       "engines": {
+         "node": ">=20"
+@@ -35922,7 +35936,7 @@
+       "version": "4.0.0",
+       "resolved": "https://registry.npmjs.org/whatwg-mimetype/-/whatwg-mimetype-4.0.0.tgz",
+       "integrity": "sha512-QaKxh0eNIi2mE9p2vEdzfagOKHCcj1pJ56EEHGQOVxp8r9/iszLUUV7v89x9O1p/T+NlTM5W7jW6+cz4Fq1YVg==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=18"
+@@ -35932,7 +35946,7 @@
+       "version": "15.1.0",
+       "resolved": "https://registry.npmjs.org/whatwg-url/-/whatwg-url-15.1.0.tgz",
+       "integrity": "sha512-2ytDk0kiEj/yu90JOAp44PVPUkO9+jVhyf+SybKlRHSDlvOOZhdPIrr7xTH64l4WixO2cP+wQIcgujkGBPPz6g==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "tr46": "^6.0.0",
+@@ -36803,7 +36817,7 @@
+       "version": "5.0.0",
+       "resolved": "https://registry.npmjs.org/xml-name-validator/-/xml-name-validator-5.0.0.tgz",
+       "integrity": "sha512-EvGK8EJ3DhaHfbRlETOWAS5pO9MZITeauHKJyb8wyajUfQUenkIg2MvLDTZ4T/TgIcm3HU0TFBgWWboAZ30UHg==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "Apache-2.0",
+       "engines": {
+         "node": ">=18"
+@@ -36823,7 +36837,7 @@
+       "version": "2.2.0",
+       "resolved": "https://registry.npmjs.org/xmlchars/-/xmlchars-2.2.0.tgz",
+       "integrity": "sha512-JZnDKK8B0RCDw84FNdDAIpZK+JuJw+s7Lz8nksI7SIuU3UXJJslUthsi+uWBUYOwPFwW7W7PRLRfUKpxjtjFCw==",
+-      "devOptional": true,
++      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/xpath": {
+@@ -37040,7 +37054,7 @@
      },
      "sdk": {
        "name": "@mcpjam/sdk",
--      "version": "1.27.0",
-+      "version": "1.28.0",
+-      "version": "2.0.0",
++      "version": "2.0.1",
        "license": "MIT",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^3.0.101",
 diff --git a/sdk/package.json b/sdk/package.json
-index 33046d757..9714c5f2f 100644
+index 7cd95acf2..0b8360d30 100644
 --- a/sdk/package.json
 +++ b/sdk/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/sdk",
--  "version": "1.27.0",
-+  "version": "1.28.0",
+-  "version": "2.0.0",
++  "version": "2.0.1",
    "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
    "type": "module",
    "main": "dist/index.js",

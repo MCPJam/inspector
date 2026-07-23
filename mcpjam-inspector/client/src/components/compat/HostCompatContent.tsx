@@ -10,20 +10,19 @@ import {
   Wrench,
 } from "lucide-react";
 import { useNavigate } from "react-router";
-import { usePostHog } from "posthog-js/react";
 import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@mcpjam/design-system/tooltip";
 import type { ServerWithName } from "@/state/app-types";
 import type { ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";
 import { evaluateAllHosts } from "@/lib/host-compat/engine";
-import { useWidgetUsage } from "@/lib/host-compat/use-widget-usage";
+import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
+import { useWidgetUsageState } from "@/lib/host-compat/use-widget-usage";
 import { ConformanceGate } from "@/components/compat/ConformanceGate";
-import { VERDICT_META } from "@/components/compat/verdict-meta";
+import {
+  COMPAT_DISPLAY_META,
+  getCompatDisplayLabel,
+  getCompatDisplayStatus,
+} from "@/components/compat/verdict-meta";
 import {
   LiveRenderRow,
   useLiveRenders,
@@ -31,37 +30,19 @@ import {
 import type {
   CompatFinding,
   CompatLane,
-  CompatProvenance,
   HostCompatReport,
 } from "@/lib/host-compat/types";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { routePaths } from "@/lib/app-navigation";
 import { useHostMutations } from "@/hooks/useClients";
+import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import {
-  HOST_TEMPLATES,
-  seedFromHostTemplate,
-  type HostTemplateId,
-} from "@/lib/client-templates";
-
-/** Compat profile ids (`claude`, `chatgpt`, …) are the same string literals
- * as the host template ids, so a verdict maps to a template with no lookup
- * table — but we still gate on the catalog so a profile id that ever drifts
- * away from a real template silently hides its CTA instead of crashing. */
-const COMPAT_TEMPLATE_LABEL = new Map<string, string>(
-  HOST_TEMPLATES.map((t) => [t.id, t.label])
-);
-
-const isHostTemplateId = (id: string): id is HostTemplateId =>
-  COMPAT_TEMPLATE_LABEL.has(id);
-
-const PROVENANCE_LABEL: Record<CompatProvenance, string> = {
-  observed: "Observed from a live run",
-  "vendor-doc": "Verified from vendor docs",
-  probe: "Probe-captured from a real host",
-  assumed: "Best-effort preset — unverified",
-};
+import { cloneHostTemplateInput } from "@/lib/client-config-v2";
+import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
+import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
+import { filterReportsByFeatureFlags } from "@/lib/host-compat/feature-visibility";
+import type { ToolsDataStatus } from "@/lib/host-compat/use-host-compat";
 
 const FINDING_ICON: Record<
   CompatFinding["severity"],
@@ -88,6 +69,7 @@ const LANE_LABEL: Record<CompatLane, string> = {
 export function HostCompatContent({
   server,
   toolsData,
+  toolsLoadStatus,
   projectId,
   serverId,
   onClose,
@@ -95,6 +77,7 @@ export function HostCompatContent({
 }: {
   server: ServerWithName;
   toolsData?: ListToolsResultWithMetadata | null;
+  toolsLoadStatus?: ToolsDataStatus;
   /**
    * Analytics surface this report is rendered on — keeps the host-creation
    * funnel honest (the standalone page must not tag its views/CTAs as modal).
@@ -110,17 +93,54 @@ export function HostCompatContent({
   /** Close the detail modal before we navigate to the playground. */
   onClose?: () => void;
 }) {
-  const widgetUsage = useWidgetUsage(server.name, toolsData);
+  const widgetScan = useWidgetUsageState(server.name, toolsData);
+  const widgetUsage = widgetScan.usage;
+  const resolvedToolsLoadStatus =
+    toolsLoadStatus ??
+    (toolsData
+      ? "ready"
+      : server.connectionStatus === "connected"
+      ? "loading"
+      : "idle");
+  const analysisStatus =
+    server.connectionStatus === "connected" &&
+    (resolvedToolsLoadStatus === "loading" ||
+      widgetScan.status === "idle" ||
+      widgetScan.status === "loading")
+      ? "analyzing"
+      : server.connectionStatus === "connected" &&
+        (resolvedToolsLoadStatus === "failed" || widgetScan.status === "failed")
+      ? "failed"
+      : "ready";
+  const analysisReady = analysisStatus === "ready";
   const protocolVersion = server.initializationInfo?.protocolVersion;
+  // Live catalog in the deps: verdicts render from the bundled catalog first,
+  // then recompute when the live fetch lands.
+  const catalogState = useHostCatalog();
   const { requirements, reports } = useMemo(
-    () => evaluateAllHosts(toolsData, widgetUsage, { protocolVersion }),
-    [toolsData, widgetUsage, protocolVersion]
+    () =>
+      evaluateAllHosts(
+        toolsData,
+        widgetUsage,
+        { protocolVersion },
+        catalogState?.catalog
+      ),
+    [toolsData, widgetUsage, protocolVersion, catalogState]
+  );
+  const claudeCodeEnabled = useClaudeCodeHostEnabled();
+  const codexEnabled = useCodexHostEnabled();
+  const visibleReports = useMemo(
+    () =>
+      filterReportsByFeatureFlags(reports, {
+        claudeCode: claudeCodeEnabled,
+        codex: codexEnabled,
+      }),
+    [reports, claudeCodeEnabled, codexEnabled]
   );
 
   // Tier-2: render the server's widget live in each host's emulation.
   const live = useLiveRenders(server.name, requirements);
 
-  const posthog = usePostHog();
   const navigate = useNavigate();
   const { createHost } = useHostMutations();
   const [, setPreviewedHostId] = usePreviewedHostId(projectId ?? null);
@@ -141,15 +161,14 @@ export function HostCompatContent({
   useEffect(() => {
     if (viewedServerRef.current === server.name) return;
     viewedServerRef.current = server.name;
-    posthog.capture("host_compat_tab_viewed", {
-      ...standardEventProps(source),
+    track("host_compat_tab_viewed", {
+      location: source,
       server_name: server.name,
-      host_count: reports.length,
+      host_count: visibleReports.length,
     });
     // Intentionally keyed on server.name only — reports churn as tools load,
     // but this is a once-per-server view signal, not a verdict snapshot.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [server.name]);
+  }, [server.name, source, visibleReports.length]);
 
   // The CTA that turns a verdict into a host: create a host from the
   // matching template with THIS server attached, select it, and jump to the
@@ -158,11 +177,22 @@ export function HostCompatContent({
   const canCreateHosts = Boolean(projectId && serverId);
   const handleTestInHost = async (report: HostCompatReport) => {
     const templateId = report.hostId;
-    if (!projectId || !serverId || !isHostTemplateId(templateId)) return;
-    const label = COMPAT_TEMPLATE_LABEL.get(templateId) ?? report.hostLabel;
+    if (!projectId || !serverId) return;
+    const catalog =
+      catalogState.status === "live" ? catalogState.catalog : null;
+    const template = catalog
+      ? getCatalogTemplate(catalog, templateId)
+      : undefined;
+    if (!template) {
+      toast.error("Could not load live client templates");
+      return;
+    }
+    const label =
+      (catalog ? getCatalogHost(catalog, templateId)?.label : undefined) ??
+      report.hostLabel;
 
-    posthog.capture("compat_cta_clicked", {
-      ...standardEventProps(source),
+    track("compat_cta_clicked", {
+      location: source,
       template_id: templateId,
       host_label: report.hostLabel,
       verdict: report.verdict,
@@ -171,7 +201,7 @@ export function HostCompatContent({
 
     setCreatingTemplateId(templateId);
     try {
-      const seed = seedFromHostTemplate(templateId, { theme: themeMode });
+      const seed = cloneHostTemplateInput(template, { themeMode });
       const { hostId, hostConfigId } = await createHost({
         projectId,
         name: label,
@@ -182,8 +212,8 @@ export function HostCompatContent({
       // creates. Best-effort: a posthog throw must not surface a failure
       // toast after the host already exists.
       try {
-        posthog.capture("client_created", {
-          ...standardEventProps("compat_cta"),
+        track("client_created", {
+          location: "compat_cta",
           via: "compat_report",
           template_id: templateId,
           client_id: hostId,
@@ -209,17 +239,33 @@ export function HostCompatContent({
     <div className="pb-4">
       <ConformanceGate server={server} />
 
-      <p className="pb-1 text-[11px] text-muted-foreground">
-        Static checks from connect-time data · best-effort host profiles
-        {requirements.unknownDimensions.length > 0
-          ? ` · incomplete (${requirements.unknownDimensions.join(", ")})`
-          : ""}
-      </p>
+      {analysisStatus === "analyzing" ? (
+        <div className="mb-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          Checking server compatibility…
+        </div>
+      ) : analysisStatus === "failed" ? (
+        <p className="mb-2 text-[11px] text-muted-foreground">
+          Couldn’t complete compatibility checks. Host status is unavailable.
+        </p>
+      ) : (
+        <p className="pb-1 text-[11px] text-muted-foreground">
+          Compatibility checks based on this server’s tools and widgets.
+        </p>
+      )}
 
       <div className="divide-y divide-border/50">
-        {reports.map((report) => {
-          const verdict = VERDICT_META[report.verdict];
-          const hasFindings = report.findings.length > 0;
+        {visibleReports.map((report) => {
+          const displayStatus = analysisReady
+            ? getCompatDisplayStatus(report)
+            : null;
+          const displayMeta = displayStatus
+            ? {
+                ...COMPAT_DISPLAY_META[displayStatus],
+                label: getCompatDisplayLabel(report) ?? "",
+              }
+            : null;
+          const hasFindings = analysisReady && report.findings.length > 0;
           const isOpen = expandedHostId === report.hostId;
           const summary = hasFindings
             ? `${report.findings[0].title}${
@@ -228,6 +274,10 @@ export function HostCompatContent({
                   : ""
               }`
             : "";
+          const canCreateFromLiveTemplate =
+            catalogState.status === "live" &&
+            getCatalogTemplate(catalogState.catalog, report.hostId) !==
+              undefined;
           return (
             <div key={report.hostId} className="py-2.5 first:pt-1.5">
               <div className="flex items-center gap-2">
@@ -239,24 +289,17 @@ export function HostCompatContent({
                 <span className="text-sm font-medium text-foreground">
                   {report.hostLabel}
                 </span>
-                <Tooltip>
-                  <TooltipTrigger asChild>
+                {displayMeta ? (
+                  <span
+                    className={`inline-flex flex-shrink-0 items-center gap-1.5 text-xs ${displayMeta.text}`}
+                    aria-label={displayMeta.label}
+                  >
                     <span
-                      className={`inline-flex flex-shrink-0 items-center gap-1.5 text-xs ${verdict.text}`}
-                      aria-label={
-                        report.verdict === "works" ? verdict.label : undefined
-                      }
-                    >
-                      <span
-                        className={`h-1.5 w-1.5 rounded-full ${verdict.dot}`}
-                      />
-                      {report.verdict !== "works" && verdict.label}
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" variant="muted">
-                    {PROVENANCE_LABEL[report.provenance]}
-                  </TooltipContent>
-                </Tooltip>
+                      className={`h-1.5 w-1.5 rounded-full ${displayMeta.dot}`}
+                    />
+                    {displayMeta.label}
+                  </span>
+                ) : null}
 
                 {hasFindings ? (
                   <button
@@ -280,33 +323,41 @@ export function HostCompatContent({
                   {live.available &&
                     report.rendersWidgets &&
                     live.widgetTool && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
+                        disabled={live.runningHostId !== null}
+                        onClick={() => live.run(report)}
+                      >
+                        {live.runningHostId === report.hostId ? (
+                          <>
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                            Rendering…
+                          </>
+                        ) : (
+                          <>
+                            <MonitorPlay className="h-3 w-3" />
+                            Run live
+                          </>
+                        )}
+                      </Button>
+                    )}
+                  {canCreateHosts && (
                     <Button
                       size="sm"
                       variant="ghost"
                       className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
-                      disabled={live.runningHostId !== null}
-                      onClick={() => live.run(report)}
-                    >
-                      {live.runningHostId === report.hostId ? (
-                        <>
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                          Rendering…
-                        </>
-                      ) : (
-                        <>
-                          <MonitorPlay className="h-3 w-3" />
-                          Run live
-                        </>
-                      )}
-                    </Button>
-                  )}
-                  {canCreateHosts && isHostTemplateId(report.hostId) && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
-                      disabled={creatingTemplateId !== null}
+                      disabled={
+                        creatingTemplateId !== null ||
+                        !canCreateFromLiveTemplate
+                      }
                       onClick={() => handleTestInHost(report)}
+                      title={
+                        canCreateFromLiveTemplate
+                          ? "Test in client"
+                          : "Live client template unavailable"
+                      }
                     >
                       {creatingTemplateId === report.hostId ? (
                         <>
@@ -335,23 +386,30 @@ export function HostCompatContent({
                       (f) => f.lane === lane
                     );
                     if (laneFindings.length === 0) return null;
-                    const laneDot = VERDICT_META[report.lanes[lane].verdict].dot;
+                    const laneStatus = getCompatDisplayStatus({
+                      verdict: report.lanes[lane].verdict,
+                      findings: laneFindings,
+                    });
+                    const laneLabel = laneStatus
+                      ? getCompatDisplayLabel({
+                          verdict: report.lanes[lane].verdict,
+                          findings: laneFindings,
+                        })
+                      : null;
                     return (
                       <div key={lane}>
                         <div className="mb-1 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                          <span
-                            className={`h-1 w-1 rounded-full ${laneDot}`}
-                          />
+                          {laneStatus ? (
+                            <span
+                              className={`h-1 w-1 rounded-full ${COMPAT_DISPLAY_META[laneStatus].dot}`}
+                            />
+                          ) : null}
                           {LANE_LABEL[lane]}
+                          {laneLabel ? ` · ${laneLabel}` : ""}
                         </div>
                         <ul className="space-y-1.5">
                           {laneFindings.map((finding, index) => {
                             const icon = FINDING_ICON[finding.severity];
-                            // Phase 1: a finding's provenance equals the host
-                            // baseline, so this badge stays hidden. It surfaces
-                            // when a Tier-2 live run stamps `observed`.
-                            const showProvenance =
-                              finding.provenance !== report.provenance;
                             return (
                               <li key={index} className="flex gap-2 text-xs">
                                 <icon.Icon
@@ -361,13 +419,8 @@ export function HostCompatContent({
                                   <span className="font-medium text-foreground">
                                     {finding.title}
                                   </span>
-                                  {showProvenance && (
-                                    <span className="ml-1.5 rounded bg-muted px-1 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                                      {finding.provenance}
-                                    </span>
-                                  )}
                                   <span className="text-muted-foreground">
-                                    {" — "}
+                                    {": "}
                                     {finding.detail}
                                   </span>
                                   {finding.remediation && (

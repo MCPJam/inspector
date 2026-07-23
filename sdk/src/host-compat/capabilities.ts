@@ -119,6 +119,56 @@ export const MCP_APPS_COPILOT: McpAppsCapabilities = frozen({
   widgetDisplayModeRequests: "accept",
 });
 
+/** Slackbot — probe-captured from Slackbot's `ui/initialize` (2026-06-24). No
+ * updateModelContext / message / downloadFile; no pip. Mirrors the slack host
+ * template's `mcpAppsOverrides` in `seed-host-template.ts`. */
+export const MCP_APPS_SLACK: McpAppsCapabilities = frozen({
+  availableDisplayModes: ["inline", "fullscreen"],
+  toolInputPartial: false,
+  toolCancelled: false,
+  hostContextChanged: false,
+  resourceTeardown: false,
+  toolInfo: true,
+  openLinks: true,
+  serverTools: true,
+  serverResources: true,
+  logging: true,
+  updateModelContext: false,
+  message: false,
+  sandboxPermissions: false,
+  cspFrameDomains: false,
+  cspBaseUriDomains: false,
+  resourcePrefersBorder: false,
+  downloadFile: false,
+  requestTeardown: false,
+  widgetDisplayModeRequests: "accept",
+});
+
+/** VS Code (GitHub Copilot chat panel) — from the VS Code client template
+ * (`VSCODE_HOST_STYLE.mcp.mcpAppsCapabilities` in built-ins.ts): full surface
+ * minus updateModelContext + message. */
+export const MCP_APPS_VSCODE: McpAppsCapabilities = frozen({
+  availableDisplayModes: ["inline", "fullscreen", "pip"],
+  toolInputPartial: true,
+  toolCancelled: true,
+  hostContextChanged: true,
+  resourceTeardown: true,
+  toolInfo: true,
+  openLinks: true,
+  serverTools: true,
+  serverResources: true,
+  logging: true,
+  updateModelContext: false,
+  message: false,
+  sandboxPermissions: true,
+  cspFrameDomains: true,
+  cspBaseUriDomains: true,
+  resourcePrefersBorder: true,
+  downloadFile: true,
+  requestTeardown: true,
+  widgetDisplayModeRequests: "accept",
+});
+
 /** Spec-default "no claims" — every advertise key off. Fallback baseline. */
 export const MCP_APPS_NO_CLAIMS: McpAppsCapabilities = frozen({
   availableDisplayModes: ["inline"],

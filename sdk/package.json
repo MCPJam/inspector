@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/sdk",
-  "version": "1.28.0",
+  "version": "2.0.1",
   "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
   "type": "module",
   "main": "dist/index.js",
@@ -81,6 +81,11 @@
       "types": "./dist/host-compat/index.d.ts",
       "import": "./dist/host-compat/index.js",
       "default": "./dist/host-compat/index.js"
+    },
+    "./plugin-bundle": {
+      "types": "./dist/plugin-bundle/index.d.ts",
+      "import": "./dist/plugin-bundle/index.js",
+      "default": "./dist/plugin-bundle/index.js"
     }
   },
   "files": [
@@ -91,12 +96,15 @@
     "bundle:chatgpt-runtime": "node scripts/bundle-chatgpt-apps-runtime.mjs",
     "bundle:mcp-apps-runtime": "node scripts/bundle-mcp-apps-openai-compatible-runtime.mjs",
     "bundle:runtimes": "npm run bundle:chatgpt-runtime && npm run bundle:mcp-apps-runtime",
+    "generate:host-catalog-fallback": "tsx scripts/generate-host-catalog-fallback.ts",
+    "check:host-catalog-fallback": "tsx scripts/generate-host-catalog-fallback.ts --check",
+    "check:host-catalog-fallback:remote": "node --import tsx scripts/check-host-catalog-fallback-remote.ts",
     "dev": "tsup --watch",
     "sentry:sourcemaps": "sentry-cli sourcemaps inject ./dist && sentry-cli sourcemaps upload --release=@mcpjam/sdk@$(node -p \"require('./package.json').version\") --org=mcpjam-gh --project=mcpjam-sdk ./dist",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:packaging": "npm run build && node --input-type=module -e \"await import('@mcpjam/sdk'); await import('@mcpjam/sdk/browser'); await import('@mcpjam/sdk/worker'); await import('@mcpjam/sdk/operations'); await import('@mcpjam/sdk/skill-reference'); await import('@mcpjam/sdk/model-factory'); await import('@mcpjam/sdk/matchers'); await import('@mcpjam/sdk/predicates'); await import('@mcpjam/sdk/host-config'); const w = await import('@mcpjam/sdk/widget-runtime'); for (const n of ['getToolVisibility','isVisibleToModelOnly','isVisibleToAppOnly','LoggingTransport','buildOuterAllowAttribute','buildOuterSandboxAttribute','resolveIframeSandboxPolicy','createHostAppBridge','registerHostBridgeHandlers']) { if (typeof w[n] !== 'function') { throw new Error('missing widget-runtime export: ' + n); } } if (w['DEFAULT_IFRAME_SANDBOX'] === undefined) { throw new Error('missing widget-runtime export: DEFAULT_IFRAME_SANDBOX'); } const p = await import('@mcpjam/sdk/platform'); for (const n of ['PlatformApiClient','PlatformApiError','buildShowServersPayload','resolveProject','listProjectsOperation','listProjectServersOperation','showServersOperation','checkHostCompatibilityOperation','createTunnelOperation','closeTunnelOperation']) { if (p[n] === undefined) { throw new Error('missing platform export: ' + n); } } const m = await import('@mcpjam/sdk/host-config/internal'); for (const n of ['canonicalizeHostConfigV2','computeHostConfigHashV2','isAppOnlyTool','filterAppOnlyTools','applyVisibilityPolicyAndCountSignals','extractHostExecutionPolicy','buildHostIterationMetadata','resolveOpenAiCompatForHostConfig','readOpenAiCompatOverride','compatPresetForHostStyle','normalizeSdkEvalHostConfigForWire']) { if (typeof m[n] !== 'function') { throw new Error('missing export: ' + n); } } const pub = await import('@mcpjam/sdk/public-api'); for (const n of ['isV1ErrorCode','mapInternalCode','v1ErrorBody','v1Page','classifyRuntimeError']) { if (typeof pub[n] !== 'function') { throw new Error('missing public-api export: ' + n); } } for (const n of ['V1_ERROR_CODES','V1_ERROR_STATUS','INTERNAL_TO_V1_CODE']) { if (pub[n] === undefined) { throw new Error('missing public-api export: ' + n); } } const hc = await import('@mcpjam/sdk/host-compat'); for (const n of ['deriveServerRequirements','evaluateHostCompat','evaluateAllHosts','buildMarketHostProfiles','evaluateMarketHosts','scanWidgetUsage','detectHostCompatBridgeFromMeta','scanWidgetSource','scanWidgetMeta']) { if (typeof hc[n] !== 'function') { throw new Error('missing host-compat export: ' + n); } } if (hc['HostCompatBridge'] === undefined) { throw new Error('missing host-compat export: HostCompatBridge'); } for (const n of ['MCP_APPS_FULL','MCP_APPS_CHATGPT','MCP_APPS_MISTRAL','MCP_APPS_CURSOR','MCP_APPS_GOOSE','MCP_APPS_COPILOT','MCP_APPS_NO_CLAIMS']) { if (typeof hc[n] !== 'object') { throw new Error('missing host-compat capability export: ' + n); } }\"",
+    "test:packaging": "npm run build && node --input-type=module -e \"await import('@mcpjam/sdk'); await import('@mcpjam/sdk/browser'); await import('@mcpjam/sdk/worker'); await import('@mcpjam/sdk/operations'); await import('@mcpjam/sdk/skill-reference'); await import('@mcpjam/sdk/model-factory'); await import('@mcpjam/sdk/matchers'); await import('@mcpjam/sdk/predicates'); await import('@mcpjam/sdk/host-config'); const w = await import('@mcpjam/sdk/widget-runtime'); for (const n of ['getToolVisibility','isVisibleToModelOnly','isVisibleToAppOnly','LoggingTransport','buildOuterAllowAttribute','buildOuterSandboxAttribute','resolveIframeSandboxPolicy','createHostAppBridge','registerHostBridgeHandlers']) { if (typeof w[n] !== 'function') { throw new Error('missing widget-runtime export: ' + n); } } if (w['DEFAULT_IFRAME_SANDBOX'] === undefined) { throw new Error('missing widget-runtime export: DEFAULT_IFRAME_SANDBOX'); } const p = await import('@mcpjam/sdk/platform'); for (const n of ['PlatformApiClient','PlatformApiError','buildShowServersPayload','resolveProject','listProjectsOperation','listProjectServersOperation','showServersOperation','checkHostCompatibilityOperation','createTunnelOperation','closeTunnelOperation']) { if (p[n] === undefined) { throw new Error('missing platform export: ' + n); } } const m = await import('@mcpjam/sdk/host-config/internal'); for (const n of ['canonicalizeHostConfigV2','computeHostConfigHashV2','isAppOnlyTool','filterAppOnlyTools','applyVisibilityPolicyAndCountSignals','extractHostExecutionPolicy','buildHostIterationMetadata','resolveOpenAiCompatForHostConfig','readOpenAiCompatOverride','compatPresetForHostStyle','normalizeSdkEvalHostConfigForWire']) { if (typeof m[n] !== 'function') { throw new Error('missing export: ' + n); } } const pub = await import('@mcpjam/sdk/public-api'); for (const n of ['isV1ErrorCode','mapInternalCode','v1ErrorBody','v1Page','classifyRuntimeError']) { if (typeof pub[n] !== 'function') { throw new Error('missing public-api export: ' + n); } } for (const n of ['V1_ERROR_CODES','V1_ERROR_STATUS','INTERNAL_TO_V1_CODE']) { if (pub[n] === undefined) { throw new Error('missing public-api export: ' + n); } } const hc = await import('@mcpjam/sdk/host-compat'); for (const n of ['deriveServerRequirements','evaluateHostCompat','evaluateAllHosts','buildMarketHostProfiles','evaluateMarketHosts','scanWidgetUsage','detectHostCompatBridgeFromMeta','scanWidgetSource','scanWidgetMeta','bundledHostCompatCatalog','buildHostProfilesFromCatalog','fetchHostCompatCatalog','hostConfigFieldsToImageSupport','imageSupportToHostConfigFields']) { if (typeof hc[n] !== 'function') { throw new Error('missing host-compat export: ' + n); } } if (hc['HostCompatBridge'] === undefined) { throw new Error('missing host-compat export: HostCompatBridge'); } for (const n of ['MCP_APPS_FULL','MCP_APPS_CHATGPT','MCP_APPS_MISTRAL','MCP_APPS_CURSOR','MCP_APPS_GOOSE','MCP_APPS_COPILOT','MCP_APPS_SLACK','MCP_APPS_VSCODE','MCP_APPS_NO_CLAIMS']) { if (typeof hc[n] !== 'object') { throw new Error('missing host-compat capability export: ' + n); } } for (const n of ['hostCompatCatalogSchema','hostCompatCatalogEnvelopeSchema','mcpAppsCapabilitiesSchema']) { if (hc[n] === undefined) { throw new Error('missing host-compat schema export: ' + n); } } const pb = await import('@mcpjam/sdk/plugin-bundle'); for (const n of ['parsePluginBundle','containsRootPlaceholder']) { if (typeof pb[n] !== 'function') { throw new Error('missing plugin-bundle export: ' + n); } } for (const n of ['DEFAULT_PLUGIN_BUNDLE_LIMITS','PLUGIN_ISSUE_CODES','PLUGIN_MANIFEST_DIR','PLUGIN_MANIFEST_PATH','PLUGIN_ROOT_PLACEHOLDERS','PluginBundleError','MCP_CONFIG_PATH']) { if (pb[n] === undefined) { throw new Error('missing plugin-bundle export: ' + n); } } for (const n of ['normalizeBundlePath','validateBundleEntries','parseYamlLite','caseFoldPath','PluginIssueCollector','sha256HexBytes','computeAggregateHash']) { if (pb[n] !== undefined) { throw new Error('plugin-bundle should not re-export internal helper: ' + n); } }\"",
     "lint": "eslint src tests",
     "lint:fix": "eslint src tests --fix",
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
@@ -117,9 +125,9 @@
   "license": "MIT",
   "devDependencies": {
     "@eslint/js": "^9.39.2",
-    "@modelcontextprotocol/node": "2.0.0-alpha.2",
+    "@modelcontextprotocol/node": "2.0.0-beta.4",
     "@modelcontextprotocol/sdk": "^1.26.0",
-    "@modelcontextprotocol/server": "2.0.0-alpha.2",
+    "@modelcontextprotocol/server": "2.0.0-beta.4",
     "@modelcontextprotocol/server-everything": "^2026.1.26",
     "@sentry/cli": "^2.58.4",
     "@sentry/node": "^8.55.0",
@@ -128,6 +136,7 @@
     "@types/node": "^20.11.0",
     "@typescript-eslint/eslint-plugin": "^8.53.1",
     "@typescript-eslint/parser": "^8.53.1",
+    "esbuild": "^0.27.0",
     "eslint": "^9.39.2",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-prettier": "^5.5.5",
@@ -135,6 +144,7 @@
     "prettier": "^3.8.0",
     "ts-jest": "^29.1.2",
     "tsup": "^8.0.1",
+    "tsx": "^4.21.0",
     "typescript": "^5.3.3",
     "typescript-eslint": "^8.53.1",
     "vitest": "^3.2.4"
@@ -149,12 +159,16 @@
     "@ai-sdk/openai": "^2.0.32",
     "@ai-sdk/xai": "^2.0.29",
     "@cfworker/json-schema": "^4.1.1",
-    "@modelcontextprotocol/client": "2.0.0-alpha.2",
-    "@modelcontextprotocol/ext-apps": "^1.7.2",
+    "@modelcontextprotocol/client": "2.0.0-beta.4",
+    "@modelcontextprotocol/ext-apps": "^1.7.4",
     "@openrouter/ai-sdk-provider": "^2.2.0",
+    "@xmldom/xmldom": "^0.8.13",
     "ai": "^6.0.141",
+    "ajv": "^8.17.1",
     "ollama-ai-provider-v2": "^1.5.2",
     "posthog-node": "^5.24.10",
+    "xml-crypto": "^6.1.2",
+    "xpath": "^0.0.34",
     "zod": "^4.1.12"
   },
   "peerDependencies": {

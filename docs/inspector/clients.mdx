@@ -31,6 +31,8 @@ These map directly to fields the inspector sends during the standard MCP `initia
 - **Supported protocol versions** — The ordered list of MCP protocol versions the client advertises. The first entry is sent as `protocolVersion`; the rest form the accept-set. Useful for testing how your server handles older or newer clients.
 - **`clientInfo`** — The `name`, `version`, and any additional fields sent in `initialize.params.clientInfo`. Set this to match a real host's identifier when you want your server to take a host-specific code path.
 - **Client capabilities** — The capabilities object sent in `initialize` (sampling, roots, elicitation, experimental, etc.). Enable or disable each one to test what your server does when a capability is missing.
+- **Advertise EMA support by default** — Toggle in the **MCP Protocol** settings card that adds the `io.modelcontextprotocol/enterprise-managed-authorization` extension to the stored `clientCapabilities`. When on, the extension appears in the MCP Protocol JSON editor and host-card capability chips. This controls the stored baseline only — XAA-configured connections always advertise the extension at connect time regardless of this setting.
+- **Elicitation** — Toggle in the **MCP Protocol** settings card that controls the top-level `clientCapabilities.elicitation` key. When off, the key is absent. When on, the inspector advertises `{ form: {} }`, signalling that the client can handle elicitation requests from the server. An optional **URL mode** sub-checkbox (visible only when Elicitation is on) adds `{ url: {} }` to the elicitation object, indicating the client can also handle requests to open a URL. Enabling this before server-side elicitation support is active is safe — it is a no-op rather than a break.
 - **Request timeout** — Per-request timeout in milliseconds applied to all MCP calls (`tools/call`, `resources/read`, etc.). Lower it to verify your server handles cancellation correctly; raise it for long-running tools.
 - **Default headers** — Headers attached to every HTTP-transport request. Useful for auth tokens, tenant IDs, or anything else your server expects upstream.
 
@@ -45,6 +47,7 @@ These settings control how the model interacts with tools during a chat session.
 - **Require tool approval** — When on, the model pauses before each tool call so you can approve or deny it manually.
 - **Respect tool visibility** — Controls whether the inspector honors the SEP-1865 `_meta.ui.visibility` field. When on (the default for all templates except Cursor), tools whose visibility is `["app"]` are hidden from the model's tool list. When off, every tool flows to the model regardless of visibility, matching hosts that don't yet implement visibility filtering (for example, real Cursor as of version 3.4.20).
 - **Progressive tools** — Three-state toggle (`On` / `Off` / `Auto`). When on, the inspector injects `search_mcp_tools` and `load_mcp_tools` meta-tools instead of sending the full tool catalog upfront, reducing context usage for large tool sets. `Auto` lets the backend decide based on catalog size.
+- **Built-in tools** — A checkbox list of host-managed built-in tools (for example, `web_search`) that the model can use on each turn. Selected tool IDs are forwarded with the chat request so the server can resolve them alongside your MCP server tools. This section only appears when the deployment has a populated built-in tool catalog; it is hidden otherwise.
 
 ### MCP App settings (SEP-1865)
 
@@ -109,8 +112,15 @@ Once saved, a Client shows up in the picker at the top of every consumer:
 - **Chat** — Drives the model, system prompt, attached servers, and connection settings for the conversation.
 - **Chatboxes** — Same as Chat, but persisted as a saved chatbox configuration.
 - **Evals** — Every test run inside an Eval uses the selected Client, so results are reproducible across teammates.
+- **Swarms** — Journeys in the Swarms surface can target any project client, including standalone ones.
 
 Switching the active Client in any of these views swaps the entire configuration in place. There's no separate "apply" step.
+
+### Standalone clients (Swarms-managed)
+
+Some clients are **standalone** — they are owned by the Swarms surface and have no Chatbox or publish surface. If you select a standalone client in the Chatboxes tab, the tab shows a **"Managed by Swarms"** notice instead of a chatbox. The client picker stays visible so you can switch to a publishable client.
+
+Standalone clients do not appear as options in the Chatboxes client picker dropdown. If you need a client for both Chatboxes and Swarms journeys, create a regular client from the Connect tab instead of from Swarms → Clients.
 
 ## Server attachments
 
@@ -170,11 +180,11 @@ Append `?hosts=<id1>,<id2>` to the `/host-compare` URL to pre-select a specific 
 /host-compare?hosts=host-abc,host-def
 ```
 
-The URL updates automatically as you toggle hosts on or off. When all live hosts are selected (the default), the `?hosts` parameter is omitted so shared links stay clean.
+The URL updates automatically as you toggle hosts on or off. When the default selection (ChatGPT and Claude presets, in that order) is active, the `?hosts` parameter is omitted so shared links stay clean.
 
 ### Compare from the Eval Playground
 
-In the Eval Playground, the **Hosts** row next to **+ Attach host** includes a **Compare** button. When two or more hosts are attached to the suite, clicking **Compare** opens the Compare view with exactly those hosts pre-selected. The button is disabled (with a tooltip) when fewer than two hosts are attached.
+In the Eval Playground, the **Clients** row next to **+ Attach client** includes a **Compare** button. When two or more clients are attached to the suite, clicking **Compare** opens the Compare view with exactly those clients pre-selected. The button is disabled (with a tooltip) when fewer than two clients are attached.
 
 ## Best practices
 

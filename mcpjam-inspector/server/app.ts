@@ -16,6 +16,10 @@ import appsRoutes from "./routes/apps/index.js";
 import webRoutes from "./routes/web/index.js";
 import v1Routes from "./routes/v1/index.js";
 import cliAuthRoutes from "./routes/cli-auth/index.js";
+import relayRoutes, { relayBodyLimit } from "./routes/relay.js";
+import { registerXaaClientMetadataRoute } from "./routes/xaa-client-metadata.js";
+import { registerXaaConfidentialCimdRoute } from "./routes/xaa-confidential-cimd.js";
+import { createXaaWebRouter } from "./routes/web/xaa.js";
 import workosAuthkitRoutes from "./routes/workos-authkit.js";
 import { MCPClientManager } from "@mcpjam/sdk";
 import { initElicitationCallback } from "./routes/mcp/elicitation.js";
@@ -52,19 +56,28 @@ import {
   loadInspectorEnv,
   warnOnConvexDevMisconfiguration,
 } from "./env.js";
+import { startHostedModelCatalogRefresh } from "./services/hosted-model-catalog.js";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync.js";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup.js";
 import { fetchRemoteGuestJwks } from "./utils/guest-session-source.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy.js";
-import { initXAAIdpKeyPair } from "./services/xaa-idp-keypair.js";
+import { initXAAIdpKeyPair, setXaaIdpLogger } from "@mcpjam/sdk";
 import { requestLogContextMiddleware } from "./middleware/request-log-context.js";
+import {
+  applyHostedPartition,
+  mountHostedOpenRoutes,
+} from "./middleware/hosted-partition.js";
 import { registerSelfFetch } from "./utils/self-app.js";
 import { getInspectorFrontendUrl } from "./utils/inspector-frontend-url.js";
+import { initComputersStartup } from "./utils/computers/remote-data-plane.js";
+import { createNodeWebSocket } from "@hono/node-ws";
+import { createComputerTerminalWsHandler } from "./routes/web/computer-terminal.js";
+import { createComputerUploadHandler } from "./routes/web/computer-upload.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-export function createHonoApp() {
+export async function createHonoApp() {
   // Load environment variables early so route handlers can read CONVEX_HTTP_URL
   const loadedEnv = loadInspectorEnv(__dirname);
   warnOnConvexDevMisconfiguration(loadedEnv);
@@ -77,19 +90,37 @@ export function createHonoApp() {
 
   // Generate session token for API authentication
   generateSessionToken();
+  setXaaIdpLogger(appLogger);
   initXAAIdpKeyPair();
+
+  // Warm the hosted-model catalog (seed ∪ backend /v1/models) so billing
+  // dispatch classifies newly-added hosted models correctly. Memoized.
+  startHostedModelCatalogRefresh();
 
   startGuestAuthProvisioningInBackground();
   startLocalBrowserRenderingSetupInBackground();
+  // Mirror of the call in server/index.ts — both production entries must
+  // wire this up so the Electron/embedded path also gets a working Computer
+  // tab. Memoized, so it's harmless if a process ever ran both. AWAITED (the
+  // factory is async for exactly this): synchronous gates read
+  // `isComputersDataPlaneConfigured()`, which is only truthful once the
+  // credential bootstrap has resolved — no requests before that.
+  await initComputersStartup();
 
   const app = new Hono();
+  // Computer terminal WebSocket support (Project Computers). Mirror of
+  // server/index.ts — the Electron/embedded entry must wire the SAME upgrade
+  // handler so the Computer tab's Shell + drag-and-drop upload work here too.
+  // `injectWebSocket` is returned to the caller (src/main.ts) to attach to the
+  // node server, exactly as server/index.ts calls it on its own server.
+  const { upgradeWebSocket, injectWebSocket } = createNodeWebSocket({ app });
   const strictModeResponse = (c: any, path: string) =>
     c.json(
       {
         code: "FEATURE_NOT_SUPPORTED",
         message: `${path} is disabled in hosted mode`,
       },
-      410,
+      410
     );
   const isElectron = process.env.ELECTRON_APP === "true";
   const isProduction = process.env.NODE_ENV === "production";
@@ -130,7 +161,7 @@ export function createHonoApp() {
           timestamp: new Date().toISOString(),
         });
       },
-    },
+    }
   );
 
   // Initialize elicitation callback immediately so tasks/result calls work
@@ -162,27 +193,11 @@ export function createHonoApp() {
   // 2. Origin validation (blocks CSRF/DNS rebinding)
   app.use("*", originValidationMiddleware);
 
-  // 3. Hosted mode partition blocks legacy API families (health endpoints exempt).
+  // 3. Hosted mode partition blocks legacy API families (health + public
+  // catalog exempt). Shared with server/index.ts via applyHostedPartition —
+  // keep the allowlist in middleware/hosted-partition.ts, not inline here.
   if (HOSTED_MODE) {
-    app.use("/api/session-token", (c) =>
-      strictModeResponse(c, "/api/session-token"),
-    );
-    app.use("/api/mcp", (c, next) => {
-      if (c.req.path === "/api/mcp/health") return next();
-      return strictModeResponse(c, "/api/mcp/*");
-    });
-    app.use("/api/mcp/*", (c, next) => {
-      if (c.req.path === "/api/mcp/health") return next();
-      return strictModeResponse(c, "/api/mcp/*");
-    });
-    app.use("/api/apps", (c, next) => {
-      if (c.req.path === "/api/apps/health") return next();
-      return strictModeResponse(c, "/api/apps/*");
-    });
-    app.use("/api/apps/*", (c, next) => {
-      if (c.req.path === "/api/apps/health") return next();
-      return strictModeResponse(c, "/api/apps/*");
-    });
+    applyHostedPartition(app);
   }
 
   // 4. Session authentication (blocks unauthorized API requests)
@@ -200,7 +215,7 @@ export function createHonoApp() {
       "*",
       logger((message) => {
         appLogger.info(scrubTokenFromUrl(message));
-      }),
+      })
     );
   }
   app.use(
@@ -208,11 +223,12 @@ export function createHonoApp() {
     cors({
       origin: CORS_ORIGINS,
       credentials: true,
-    }),
+    })
   );
 
   // Hosted web APIs enforce a 1MB max JSON body — except the cloud-skills
-  // folder upload, which is multipart and bounded by the service caps. See
+  // folder upload, which is multipart and bounded by the service caps. Audio
+  // transcription gets its own larger cap inside the helper. See
   // `webBodyLimit`.
   app.use("/api/web/*", webBodyLimit());
 
@@ -221,23 +237,38 @@ export function createHonoApp() {
     app.route("/api/apps", appsRoutes);
     app.route("/api/mcp", mcpRoutes);
   } else {
-    // Health endpoints always available, even when legacy API families are disabled.
-    app.get("/api/mcp/health", (c) =>
-      c.json({
-        service: "MCP API",
-        status: "ready",
-        timestamp: new Date().toISOString(),
-      }),
-    );
-    app.get("/api/apps/health", (c) =>
-      c.json({
-        service: "Apps API",
-        status: "ready",
-        timestamp: new Date().toISOString(),
-      }),
-    );
+    // Only the hosted-open paths (health + public model catalog) are mounted;
+    // the rest of /api/mcp and /api/apps stays 410'd by applyHostedPartition.
+    // Mirror of server/index.ts — both entries share mountHostedOpenRoutes.
+    mountHostedOpenRoutes(app);
   }
+  // Construct after loadInspectorEnv() so hosted confidential CIMD observes
+  // Inspector dotenv configuration and malformed configured keys fail startup.
+  app.route("/api/web/xaa", createXaaWebRouter());
   app.route("/api/web", webRoutes);
+  // Computer terminal WebSocket + file upload (Project Computers). Registered
+  // directly on the root app because the WS upgrade handler comes from
+  // `createNodeWebSocket`; the upload route carries its own 30MB bodyLimit (the
+  // global /api/web/* 1MB cap excludes this path). Mirror of the mount in
+  // server/index.ts — both production entries must wire this up, else the
+  // Electron/embedded entry 404s these paths. When computers aren't configured
+  // the handlers return a clean 503 (not a raw 404).
+  app.get(
+    "/api/web/computers/terminal",
+    createComputerTerminalWsHandler(upgradeWebSocket)
+  );
+  app.post(
+    "/api/web/computers/upload",
+    bodyLimit({
+      maxSize: 30 * 1024 * 1024,
+      onError: (c) =>
+        c.json(
+          { ok: false, error: "Upload exceeds the 30MB request limit." },
+          413
+        ),
+    }),
+    createComputerUploadHandler()
+  );
 
   // Hosted public API (v1). Same 1MB JSON cap as /api/web; the canonical
   // resource-oriented routes wrap the same core helpers and emit the v1
@@ -253,9 +284,9 @@ export function createHonoApp() {
             code: "VALIDATION_ERROR",
             message: "Request body exceeds 1MB limit",
           },
-          400,
+          400
         ),
-    }),
+    })
   );
   app.route("/api/v1", v1Routes);
 
@@ -269,6 +300,22 @@ export function createHonoApp() {
   // set. Mirror of the mount in server/index.ts — both production entries
   // must wire this up.
   app.route("/api/cli/auth", cliAuthRoutes);
+
+  // Same-origin PostHog reverse proxy (ad-blocker resilience). Deliberately
+  // OUTSIDE /api so it bypasses session auth (analytics flows before any
+  // session exists), and mounted before the static/SPA fallback, whose
+  // catch-all only skips /api/* and would otherwise swallow /relay GETs
+  // with index.html. Mirror of the mount in server/index.ts — both
+  // production entries must wire this up.
+  app.use("/relay/*", relayBodyLimit());
+  app.route("/relay", relayRoutes);
+
+  // XAA Client ID Metadata Document. Also deliberately OUTSIDE /api (the
+  // target authorization server fetches it anonymously) and mounted before
+  // the static/SPA fallback. Mirror of the mount in server/index.ts — both
+  // production entries must wire this up.
+  registerXaaClientMetadataRoute(app);
+  registerXaaConfidentialCimdRoute(app);
 
   // Health check
   app.get("/health", (c) => {
@@ -293,7 +340,7 @@ export function createHonoApp() {
             "Cache-Control": "no-store",
             "Content-Type": "application/json",
           },
-        },
+        }
       );
     }
 
@@ -319,7 +366,7 @@ export function createHonoApp() {
 
     if (!isAllowedHost(host, ALLOWED_HOSTS, HOSTED_MODE)) {
       appLogger.warn(
-        `[Security] Token request denied - Host not allowed: ${host}`,
+        `[Security] Token request denied - Host not allowed: ${host}`
       );
       return c.json({ error: "Token only available via allowed hosts" }, 403);
     }
@@ -372,7 +419,7 @@ export function createHonoApp() {
         } else {
           // Host not allowed - no token (security measure)
           appLogger.warn(
-            `[Security] Token not injected - Host not allowed: ${host}`,
+            `[Security] Token not injected - Host not allowed: ${host}`
           );
           const warningScript = `<script>console.error("MCPJam: Access via allowed host required for full functionality");</script>`;
           html = html.replace("</head>", `${warningScript}</head>`);
@@ -402,8 +449,9 @@ export function createHonoApp() {
           })
         ) {
           try {
-            const { session, setCookies } =
-              await mintGuestSessionForDocument(c);
+            const { session, setCookies } = await mintGuestSessionForDocument(
+              c
+            );
             if (session && session.expiresAt > Date.now()) {
               const bootstrapScript = buildGuestBootstrapScript(session);
               html = html.replace("</head>", `${bootstrapScript}</head>`);
@@ -414,7 +462,7 @@ export function createHonoApp() {
           } catch (error) {
             appLogger.warn(
               "[guest-bootstrap] document mint failed; serving without blob",
-              { error: error instanceof Error ? error.message : String(error) },
+              { error: error instanceof Error ? error.message : String(error) }
             );
           }
         }
@@ -451,5 +499,7 @@ export function createHonoApp() {
   // client (see utils/self-app.ts) — their /api/v1 calls skip the network.
   registerSelfFetch((request) => app.fetch(request));
 
-  return app;
+  // Return `injectWebSocket` alongside the app so the caller (src/main.ts) can
+  // attach the WS upgrade handler to its node server — same as server/index.ts.
+  return { app, injectWebSocket };
 }

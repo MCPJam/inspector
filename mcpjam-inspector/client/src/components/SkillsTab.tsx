@@ -17,9 +17,10 @@ import {
   Code,
   Eye,
   Globe,
+  Pencil,
+  Laptop,
 } from "lucide-react";
-import { usePostHog } from "posthog-js/react";
-import { standardEventProps } from "@/lib/PosthogUtils";
+import { track } from "@/lib/analytics";
 import { EmptyState } from "./ui/empty-state";
 import {
   listSkills,
@@ -39,6 +40,7 @@ import type {
   SkillFileContent,
 } from "@/shared/skill-types";
 import { SkillUploadDialog } from "./chat-v2/chat-input/skills/skill-upload-dialog";
+import { SkillEditDialog } from "./skills/SkillEditDialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -63,7 +65,6 @@ export function SkillsTab({
   projectId,
   computersEnabled,
 }: SkillsTabProps = {}) {
-  const posthog = usePostHog();
   // Skills data source. Hosted mode has no local FS, so it's always cloud.
   // Locally, when the Computer feature is on, the user can toggle Local⇄Cloud.
   const showSourceToggle = !HOSTED_MODE && !!computersEnabled && !!projectId;
@@ -88,6 +89,7 @@ export function SkillsTab({
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
   const [fetchingSkills, setFetchingSkills] = useState(false);
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [skillToDelete, setSkillToDelete] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -232,8 +234,8 @@ export function SkillsTab({
     setIsDeleting(true);
     try {
       await deleteSkill(skillToDelete, skillsSource);
-      posthog.capture("skill_deleted", {
-        ...standardEventProps("skills_tab"),
+      track("skill_deleted", {
+        location: "skills_tab",
         skill_name: skillToDelete,
       });
       // Refresh skills list
@@ -270,8 +272,8 @@ export function SkillsTab({
     if (!projectId || !selectedItem) return;
     try {
       await promoteSkill(selectedItem.name, projectId);
-      posthog.capture("skill_promoted", {
-        ...standardEventProps("skills_tab"),
+      track("skill_promoted", {
+        location: "skills_tab",
         skill_name: selectedItem.name,
       });
       await fetchSkills();
@@ -285,8 +287,8 @@ export function SkillsTab({
     setSelectedFilePath("SKILL.md");
     setRawMode(false);
     setDescriptionExpanded(false);
-    posthog.capture("skill_viewed", {
-      ...standardEventProps("skills_tab"),
+    track("skill_viewed", {
+      location: "skills_tab",
       skill_name: name,
     });
     fetchFileContent(name, "SKILL.md");
@@ -438,6 +440,16 @@ export function SkillsTab({
                             : "Local"}
                         </Badge>
                       )}
+                      {selectedItem?.provenance === "computer-adopted" && (
+                        <Badge
+                          variant="outline"
+                          className="text-[10px] tracking-wide flex-shrink-0 gap-1 border-sky-500/40 bg-sky-500/10 text-sky-600 dark:text-sky-400"
+                          title="Synced up from a skill installed on your Computer"
+                        >
+                          <Laptop className="h-3 w-3" />
+                          From your computer
+                        </Badge>
+                      )}
                       {selectedFilePath === "SKILL.md" ? (
                         <span
                           className="text-xs text-muted-foreground/60 font-mono truncate"
@@ -501,6 +513,18 @@ export function SkillsTab({
                       </Button>
                     )}
                     {selectedItem?.origin === "cloud" &&
+                      selectedFilePath === "SKILL.md" && (
+                        <Button
+                          onClick={() => setIsEditDialogOpen(true)}
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                          title="Edit skill"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                      )}
+                    {selectedItem?.origin === "cloud" &&
                       selectedItem.sharing === "user" && (
                         <Button
                           onClick={handlePromote}
@@ -554,6 +578,22 @@ export function SkillsTab({
         onOpenChange={setIsUploadDialogOpen}
         onSkillCreated={handleSkillCreated}
         source={skillsSource}
+      />
+
+      {/* Edit Dialog (cloud skills only) */}
+      <SkillEditDialog
+        open={isEditDialogOpen}
+        onOpenChange={setIsEditDialogOpen}
+        skill={selectedSkill}
+        skillId={selectedItem?.skillId}
+        source={skillsSource}
+        onSaved={async (updated) => {
+          setSelectedSkill(updated);
+          await fetchSkills();
+          if (selectedSkillName) {
+            await fetchFileContent(selectedSkillName, "SKILL.md");
+          }
+        }}
       />
 
       {/* Delete Confirmation Dialog */}

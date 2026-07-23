@@ -3,216 +3,12 @@
     {
       "releases": [
         {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "Add Claude Sonnet 5 as a supported model.",
-      "id": "add-claude-sonnet-5-model"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Show remaining (not used) eval iterations in the credit balance card's progress bar, matching the monthly team credits row.",
-      "id": "eval-iterations-bar-remaining"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Gate the Cross-App Access (XAA) authentication option behind the `xaa` feature flag.",
-      "id": "gate-xaa-auth-option"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Fix an EINVAL crash on Windows (`npx.cmd`) when provisioning the Convex environment for guest auth.",
-      "id": "guest-auth-windows-npx-einval"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "Thread `executionScope` through the guest Claude Code harness path, enabling guest-owned execution controls for the harness chat surface.",
-      "id": "harness-guest-execution-scope"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "Surface harness MCP traffic in the Playground Logs panel.",
-      "id": "harness-mcp-traffic-in-playground-logs"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Make harness chat dispatch provider-aware and fail closed on invalid chatbox config, and correctly gate cloud-skills tools.",
-      "id": "harness-provider-dispatch-fail-closed"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Harden the harness proxy and computer upload endpoints: enforce body-size limits, scope terminal tokens more tightly, and fix proxy-strategy edge cases (4 findings from the harness proxy security review).",
-      "id": "harness-proxy-computer-upload-hardening"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Default Host Compare to Codex and Claude Code.",
-      "id": "host-compare-default-codex-claude-code"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Polish the Host Compatibility (caniuse.dev-style) view: table/list toggle, match counts, and a mobile-optimized layout.",
-      "id": "host-compatibility-caniuse-polish"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Explain why the Save button is disabled when editing a host, instead of leaving it disabled with no indication of what's missing.",
-      "id": "hosts-save-button-disabled-reason"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "Expose MCP tool-returned images through host-config-controlled model output.\n\nAdds model-visible conversion for direct image blocks, embedded image resources, and linked image resources behind the structured host config policy `modelVisibleMcpToolResults`. Also preserves the policy through Host JSON normalization and caps image conversion by per-image size, image count, linked resource reads, and aggregate decoded bytes.\n\nAdds host-config-controlled UI rendering for MCP tool-returned images via the structured `mcpToolResultImageRendering` policy, with `inline`, `collapsed`, and `none` placement plus independent direct image, embedded image resource, and linked image resource switches. The inspector can render supported tool-returned images for humans while keeping raw MCP JSON available.",
-      "id": "model-visible-mcp-images"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Fix the OAuth Debugger dropping the `client_secret` for pre-registered clients during the authorization flow.",
-      "id": "oauth-debugger-preregistered-client-secret"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Send the configured `client_secret` in the OAuth Debugger's token exchange request.",
-      "id": "oauth-debugger-token-exchange-client-secret"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Stop browser autofill from clobbering OAuth scope fields in the connection and profile forms.",
-      "id": "oauth-scope-autofill-fix"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "Let organization members leave the organization directly from the access-restricted screen.",
-      "id": "org-leave-from-access-restricted"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Remove the Default Host Config section from project settings.",
-      "id": "remove-default-host-config-project-settings"
-    },
-    {
-      "releases": [
-        {
           "name": "@mcpjam/sdk",
           "type": "patch"
         }
       ],
-      "summary": "Send `client_secret_basic` credentials via an `Authorization: Basic` header instead of the request body during OAuth token exchange, matching RFC 6749 §2.3.1. Applies to pre-registered clients across all three debug OAuth state machine versions (2025-03-26, 2025-06-18, 2025-11-25).",
-      "id": "sdk-oauth-authorization-header-client-secret"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Keep the notifications popover open when it's opened from the account menu.",
-      "id": "sidebar-notifications-popover-stays-open"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Add a World Cup soccer ball next to the sidebar logo.",
-      "id": "sidebar-world-cup-ball"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Clarify prefill-vs-execute wording in the WebMCP UI tools catalog, add a `fill` device type, and document the UI-tool policy defaults.",
-      "id": "webmcp-catalog-policy-polish"
+      "summary": "Validate declared draft-07 tool schemas instead of rejecting them. The upstream v2 client's default validator is 2020-12-only and hard-fails `tools/call` for any tool whose `outputSchema` declares `\"$schema\": \".../draft-07/schema#\"` — which is every MCP TypeScript SDK v1 server built with zod. The spec permits an explicitly declared draft-07 dialect on all protocol versions (2020-12 is only the default when `$schema` is absent), so the SDK now dispatches on the declared `$schema`: absent/2020-12 → a 2020-12 engine, draft-07 → a draft-07 engine, unknown dialects → skipped with a deduped `console.warn` (overridable via `onUnknownDialect`) rather than failing the call. Two runtime flavors share the dispatch core: `DialectAwareJsonSchemaValidator` (Ajv, wired into `MCPClientManager` and `createManagedMcpClient` on Node) and `CspSafeDialectAwareJsonSchemaValidator` (`@cfworker/json-schema`, wired into the HTTP doctor, which ships in the browser/workerd entries where Ajv's `new Function` compilation is unavailable).",
+      "id": "dialect-aware-schema-validation"
     },
     {
       "releases": [
@@ -221,71 +17,28 @@
           "type": "minor"
         }
       ],
-      "summary": "Expose Inspector UI tools to chat agents over WebMCP, letting the agent call app-native UI actions (navigation, tool execution) during a conversation.",
-      "id": "webmcp-expose-ui-tools-to-agents"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Keep the chat agent's conversation alive when a WebMCP UI tool navigates the page, instead of dropping the in-flight session.",
-      "id": "webmcp-keep-agent-alive-on-navigation"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "Add approval gating for WebMCP UI tools: the chat agent must get user confirmation before executing a UI tool. Off by default and toggleable per chatbox.",
-      "id": "webmcp-ui-tool-approval-gating"
+      "summary": "Surface and configure the Swarm goal-completion judge.\n\n- The per-session judge badge (`SessionGoalScoreBadge`) moves to the shared `session-quality` module (reusing the eval `ScoreBadge`) and now renders in the Sessions list and run matrix cells; `SwarmJudgeSection` is reachable even for sessions with no transcript.\n- The judge config type/defaults are extracted to a shared `GoalJudgeConfig` (evals re-export the historical `EvalJudgeConfig` names), so the eval `JudgesSection` is reusable.\n- New journeys expose an **Advanced → Judge** disclosure that reuses `JudgesSection` to set the judge model and auto-grade toggle (`journeys:createJourney` carries the config). Pairs with the backend `judgeConfig` snapshot + config-driven auto-run.",
+      "id": "swarm-journey-judge"
     }
   ],
   "releases": [
     {
-      "name": "@mcpjam/inspector",
-      "type": "minor",
-      "oldVersion": "2.22.1",
+      "name": "@mcpjam/sdk",
+      "type": "patch",
+      "oldVersion": "2.0.0",
       "changesets": [
-        "add-claude-sonnet-5-model",
-        "eval-iterations-bar-remaining",
-        "gate-xaa-auth-option",
-        "guest-auth-windows-npx-einval",
-        "harness-guest-execution-scope",
-        "harness-mcp-traffic-in-playground-logs",
-        "harness-provider-dispatch-fail-closed",
-        "harness-proxy-computer-upload-hardening",
-        "host-compare-default-codex-claude-code",
-        "host-compatibility-caniuse-polish",
-        "hosts-save-button-disabled-reason",
-        "model-visible-mcp-images",
-        "oauth-debugger-preregistered-client-secret",
-        "oauth-debugger-token-exchange-client-secret",
-        "oauth-scope-autofill-fix",
-        "org-leave-from-access-restricted",
-        "remove-default-host-config-project-settings",
-        "sidebar-notifications-popover-stays-open",
-        "sidebar-world-cup-ball",
-        "webmcp-catalog-policy-polish",
-        "webmcp-expose-ui-tools-to-agents",
-        "webmcp-keep-agent-alive-on-navigation",
-        "webmcp-ui-tool-approval-gating"
+        "dialect-aware-schema-validation"
       ],
-      "newVersion": "2.23.0"
+      "newVersion": "2.0.1"
     },
     {
-      "name": "@mcpjam/sdk",
+      "name": "@mcpjam/inspector",
       "type": "minor",
-      "oldVersion": "1.27.0",
+      "oldVersion": "2.29.0",
       "changesets": [
-        "model-visible-mcp-images",
-        "sdk-oauth-authorization-header-client-secret"
+        "swarm-journey-judge"
       ],
-      "newVersion": "1.28.0"
+      "newVersion": "2.30.0"
     },
     {
       "name": "@mcpjam/mcp",

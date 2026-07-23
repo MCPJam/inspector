@@ -37,6 +37,10 @@ import {
   OrgProviderConfigError,
   type OrgProviderResolvedConfig,
 } from "@mcpjam/sdk/model-factory";
+import {
+  isClientFulfilledToolName,
+  type UiToolApprovalClassification,
+} from "@/shared/client-fulfilled-tools";
 import type { PersistedTurnTrace } from "./chat-ingestion";
 import { handleMCPJamFreeChatModel } from "./mcpjam-stream-handler.js";
 import { logger } from "./logger.js";
@@ -79,8 +83,8 @@ export interface OrgModelHandlerOptions {
   selectedServers?: string[];
   serverIds?: string[];
   requireToolApproval?: boolean;
-  /** Read-only ui_* names exempt from the approval gate (see MCPJam loop). */
-  approvalFreeUiToolNames?: ReadonlySet<string>;
+  /** Per-tool ui_* approval policy (see `classifyUiToolApprovals`). */
+  uiToolApprovals?: UiToolApprovalClassification;
   /** Host/client policy for eligible MCP tool-result content/resources. */
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   /**
@@ -140,16 +144,76 @@ export interface OrgModelHandlerOptions {
 // Helpers shared between local and hosted handlers
 // ---------------------------------------------------------------------------
 
-function formatLocalStreamError(error: unknown): string {
+function readErrorString(value: unknown, key: string): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = (value as Record<string, unknown>)[key];
+  return typeof candidate === "string" && candidate.trim()
+    ? candidate
+    : undefined;
+}
+
+function readErrorNumber(value: unknown, key: string): number | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = (value as Record<string, unknown>)[key];
+  return typeof candidate === "number" && Number.isFinite(candidate)
+    ? candidate
+    : undefined;
+}
+
+function stringifyErrorObject(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (value instanceof Error) return value.message;
+  if (value && typeof value === "object") {
+    const direct =
+      readErrorString(value, "message") ||
+      readErrorString(value, "error") ||
+      readErrorString(value, "details");
+    if (direct) return direct;
+
+    const nested = (value as Record<string, unknown>).error;
+    const nestedMessage =
+      readErrorString(nested, "message") ||
+      readErrorString(nested, "error") ||
+      readErrorString(nested, "details");
+    if (nestedMessage) return nestedMessage;
+  }
+  return String(value);
+}
+
+function readLocalStreamErrorFields(error: unknown): {
+  message: string;
+  statusCode?: number;
+  responseBody?: string;
+} {
+  const message = stringifyErrorObject(error);
+  if (!error || typeof error !== "object") return { message };
+
+  const statusCode =
+    readErrorNumber(error, "statusCode") || readErrorNumber(error, "status");
+  // Only surface STRING body fields the provider SDK populates with its own
+  // error text. Never JSON-stringify arbitrary `data`/`value` objects into the
+  // client-visible details: those can carry request payloads, headers, or the
+  // scoped credential, which is exactly what this helper exists to withhold.
+  const responseBody =
+    readErrorString(error, "responseBody") ||
+    readErrorString(error, "responseText") ||
+    readErrorString(error, "body");
+
+  return { message, statusCode, responseBody };
+}
+
+export function formatLocalStreamError(error: unknown): string {
   if (error instanceof OrgProviderConfigError) {
     return JSON.stringify({ code: error.code, message: error.message });
   }
-  if (!(error instanceof Error)) return String(error);
-  const statusCode = (error as any).statusCode as number | undefined;
-  const responseBody = (error as any).responseBody as string | undefined;
+  const { message, statusCode, responseBody } =
+    readLocalStreamErrorFields(error);
   if (
     isProviderOverloadError({
-      message: error.message,
+      message,
       statusCode,
       responseBody,
     })
@@ -174,9 +238,9 @@ function formatLocalStreamError(error: unknown): string {
     });
   }
   if (responseBody && typeof responseBody === "string") {
-    return JSON.stringify({ message: error.message, details: responseBody });
+    return JSON.stringify({ message, details: responseBody });
   }
-  return error.message;
+  return message;
 }
 
 // ---------------------------------------------------------------------------
@@ -237,6 +301,42 @@ export interface OrgLocalModelHandlerOptions {
   synthesisRunId?: string;
 }
 
+/**
+ * Whether this local-runtime turn hits the approval gap the handler cannot
+ * serve, and must fail loudly instead.
+ *
+ * The gap is SERVER-EXECUTED tools: approving one resumes the turn by running
+ * it here, and that resume path has never been supported (or tested) on the
+ * local org runtime.
+ *
+ * Client-fulfilled tools (`ui_*`, `app_*`) don't need it. Their approval is
+ * emitted natively by `streamText` from the per-tool `needsApproval` that
+ * `buildUiTools` set, and an approval is resolved by the BROWSER executing the
+ * tool and supplying the result via `addToolOutput` — the engine only has to
+ * accept a history that already contains the output. That is the same path
+ * route 4 (personal BYOK) drives through this very engine today, so refusing
+ * it here would break the UI-only agent surface for local-runtime orgs while
+ * protecting nothing.
+ */
+function hasUnsupportedLocalApprovalGate(
+  tools: ToolSet,
+  requireToolApproval: boolean | undefined
+): boolean {
+  if (!requireToolApproval) return false;
+  return Object.entries(tools).some(([name, tool]) => {
+    if (!isClientFulfilledToolName(name)) return true;
+    // Name is necessary but NOT sufficient. A real MCP server tool called
+    // `ui_foo` matches the namespace regex while still having an `execute`,
+    // and exempting it on the name alone would let it run here without the
+    // approval support this guard exists to demand. Same reason the client
+    // dispatches on registry membership rather than the `ui_` prefix: the
+    // property that matters is "the browser fulfills this", and only the
+    // missing `execute` actually proves it.
+    return typeof (tool as { execute?: unknown } | undefined)?.execute ===
+      "function";
+  });
+}
+
 export function handleLocalOrgChatModel(
   options: OrgLocalModelHandlerOptions
 ): Response {
@@ -254,7 +354,7 @@ export function handleLocalOrgChatModel(
     onLiveTextDelta,
   } = options;
 
-  if (requireToolApproval && Object.keys(tools).length > 0) {
+  if (hasUnsupportedLocalApprovalGate(tools, requireToolApproval)) {
     const stream = createUIMessageStream({
       onError: (error) => formatLocalStreamError(error),
       onFinish: async () => {
@@ -430,7 +530,7 @@ export function handleLocalOrgChatModel(
  * caller-supplied ceiling AND preserve the legacy default. Route 4 and eval
  * headless still get the engine default (20) because they omit the option.
  */
-function resolveLocalOrgMaxSteps(maxSteps: number | undefined): number {
+export function resolveLocalOrgMaxSteps(maxSteps: number | undefined): number {
   return typeof maxSteps === "number" &&
     Number.isFinite(maxSteps) &&
     maxSteps > 0
@@ -546,7 +646,7 @@ export async function runLocalOrgChatTurnHeadless(
   const { provider, modelId, messages, systemPrompt, temperature, tools } =
     options;
 
-  if (options.requireToolApproval && Object.keys(tools).length > 0) {
+  if (hasUnsupportedLocalApprovalGate(tools, options.requireToolApproval)) {
     throw new Error(
       "Tool approval is not supported for local-runtime org providers yet. Disable tool approval or switch this provider to cloud runtime."
     );
@@ -628,7 +728,14 @@ export async function runLocalOrgChatTurnHeadless(
   };
 }
 
-async function postLocalUsage(params: {
+/**
+ * Post a local-runtime BYOK usage record to Convex's
+ * `/stream/org/local-usage` writeback endpoint. Exported so the shared
+ * {@link resolveTurnRuntime} adapter can emit the byte-identical request the
+ * SSE/headless local handlers do — the body shape is the source of truth for
+ * per-run BYOK spend attribution, so it must never drift between call sites.
+ */
+export async function postLocalUsage(params: {
   projectId: string;
   providerKey: string;
   model: string;
@@ -649,6 +756,12 @@ async function postLocalUsage(params: {
    * "all spend for synthesisRunId X" in one hop. Omitted for real chat.
    */
   synthesisRunId?: string;
+  /**
+   * Journey run id for swarm (journey-execution) synthetic sessions. Mutually
+   * exclusive with `synthesisRunId`; the backend stamps it onto the same
+   * `llmUsageRecord` so per-journey-run spend rolls up in one query.
+   */
+  journeyRunId?: string;
 }): Promise<void> {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
   if (!convexHttpUrl) return;
@@ -686,6 +799,9 @@ async function postLocalUsage(params: {
           : {}),
         ...(params.synthesisRunId
           ? { synthesisRunId: params.synthesisRunId }
+          : {}),
+        ...(params.journeyRunId
+          ? { journeyRunId: params.journeyRunId }
           : {}),
       }),
       signal: controller.signal,
@@ -728,7 +844,7 @@ export async function handleHostedOrgChatModel(
     mcpClientManager: options.mcpClientManager,
     selectedServers: options.selectedServers,
     requireToolApproval: options.requireToolApproval,
-    approvalFreeUiToolNames: options.approvalFreeUiToolNames,
+    uiToolApprovals: options.uiToolApprovals,
     modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
     ...(options.approvalMode !== undefined
       ? { approvalMode: options.approvalMode }

@@ -44,17 +44,21 @@ import { validateToolOutput } from "@/lib/schema-utils";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import { isNormalizedError } from "@mcpjam/sdk/browser";
 import { WebApiError } from "@/lib/apis/web/base";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
-import { usePostHog } from "posthog-js/react";
+import { track } from "@/lib/analytics";
 import { useQuery } from "convex/react";
 import { stripConvexReservedKeys } from "@/lib/convex-args";
 import { useToolQualityEnabled } from "@/hooks/useToolQualityEnabled";
 import type { ConnectionStatus } from "@/state/app-types";
 import type { ToolQualityInfo } from "./tools/ToolItem";
 import type { McpToolResultImageRenderingPolicy } from "@/lib/client-config-v2";
+import { boundedJsonByteLength } from "@/lib/webmcp/bounded-size";
+import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 
 type ToolMap = Record<string, Tool>;
 type FormField = ToolFormField;
+
+/** Cap the list of tools the snapshot enumerates (names only). */
+const TOOLS_SNAPSHOT_MAX_ITEMS = 30;
 
 // Shape returned by the backend tool-quality lint query (string-named). The
 // inspector renders these purely as neutral per-tool quality badges.
@@ -90,6 +94,16 @@ export type DialogElicitation = {
   message: string;
   schema?: Record<string, unknown>;
   timestamp: string;
+  /**
+   * Identity of the server requesting information (MCP spec MUST: the client
+   * must make it clear which server is asking). Optional and additive: local
+   * surfaces that don't yet plumb it through fall back to a generic header.
+   *
+   * `serverId` is the immutable, locally-assigned identifier — the trusted
+   * anchor. `serverName` is a server-supplied display label and is NOT trusted.
+   */
+  serverId?: string;
+  serverName?: string;
 };
 
 function normalizeElicitationContent(
@@ -130,7 +144,6 @@ export function ToolsTab({
   mcpToolResultImageRendering,
 }: ToolsTabProps) {
   const logger = useLogger("ToolsTab");
-  const posthog = usePostHog();
   const [tools, setTools] = useState<ToolMap>({});
   const [selectedTool, setSelectedTool] = useState<string>("");
   const [formFields, setFormFields] = useState<FormField[]>([]);
@@ -380,10 +393,8 @@ export function ToolsTab({
   }, [selectedTool, tools]);
 
   useEffect(() => {
-    posthog.capture("tools_tab_viewed", {
+    track("tools_tab_viewed", {
       location: "tools_tab",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
     });
   }, []);
 
@@ -752,6 +763,41 @@ export function ToolsTab({
         timestamp: activeElicitation.timestamp,
       }
     : null;
+
+  // Agent bridge: SNAPSHOT-ONLY. Tool EXECUTION is already covered by the
+  // global ui_execute_tool, so this surface adds no tool of its own — a
+  // ui_run_server_tool would just duplicate it (the plan drops it). It registers
+  // only a redacted snapshot so the agent can OBSERVE this screen. Must run
+  // before any early return (rules of hooks). Redacted STATE, not payloads: the
+  // selected server, the tool NAMES (bounded), the current selection + its
+  // parameter FIELD NAMES (never the values), and whether a result exists
+  // (presence/size only, never the content).
+  useSurfaceAgentBridge({
+    surfaceId: "tools",
+    snapshot: () => {
+      // Bounded: never fully serialize a huge tool result just to size it.
+      const { bytes: lastResultBytes, truncated: lastResultTruncated } = result
+        ? boundedJsonByteLength(result)
+        : { bytes: 0, truncated: false };
+      const names = Object.keys(tools);
+      return {
+        selectedServer: serverName ?? null,
+        connected: isServerConnected,
+        activeTab,
+        toolCount: names.length,
+        tools: names.slice(0, TOOLS_SNAPSHOT_MAX_ITEMS),
+        selectedTool: selectedTool || null,
+        selectedToolParameterNames: formFields.map((f) => f.name),
+        savedRequestCount: savedRequests.length,
+        lastToolName: lastToolName ?? null,
+        lastResult: {
+          present: Boolean(result),
+          approxSizeBytes: lastResultBytes,
+          ...(lastResultTruncated ? { approxSizeCapped: true } : {}),
+        },
+      };
+    },
+  });
 
   if (!serverConfig) {
     return (

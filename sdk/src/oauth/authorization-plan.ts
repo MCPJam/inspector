@@ -1,7 +1,9 @@
 import { DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL } from "./client-identity.js";
 import {
   canonicalizeResourceUrl,
-} from "./state-machines/shared/urls.js";
+  evaluateResourceIndicator,
+  type ResourceIndicatorDecision,
+} from "./resource-policy.js";
 import { resolvePreregisteredClientAuthMethod } from "./state-machines/shared/client-auth.js";
 import type {
   OAuthAuthMode,
@@ -11,12 +13,16 @@ import type {
   RegistrationStrategy2025_11_25,
 } from "./state-machines/types.js";
 
+/** @deprecated Use {@link RegistrationStrategy} from `@mcpjam/sdk` — the
+ * shared vocabulary for OAuth and XAA. Structurally identical. */
 export type OAuthRegistrationStrategy =
   | RegistrationStrategy2025_03_26
   | RegistrationStrategy2025_06_18
   | RegistrationStrategy2025_11_25;
 
 export type OAuthProtocolMode = "auto" | OAuthProtocolVersion;
+/** @deprecated Use {@link RegistrationMode} from `@mcpjam/sdk` — the shared
+ * vocabulary for OAuth and XAA. Structurally identical. */
 export type OAuthRegistrationMode = "auto" | OAuthRegistrationStrategy;
 
 export interface AuthorizationDiscoverySnapshot {
@@ -78,7 +84,13 @@ export interface ResolvedAuthorizationPlan {
   blockers: string[];
   warnings: string[];
   capabilities: AuthorizationPlanCapabilities;
+  // Always the canonicalized server URL (kept stable for existing consumers).
   canonicalResource?: string;
+  // The resolved resource-indicator decision, present only when a discovery
+  // snapshot with Protected Resource Metadata was provided. This is the value
+  // the flow will actually send; `canonicalResource` remains the
+  // server-URL-derived best guess.
+  resourceIndicator?: ResourceIndicatorDecision;
   clientIdMetadataUrl?: string;
   summary: string;
 }
@@ -176,7 +188,7 @@ export function resolveRegistrationStrategies(
   }
 
   if (
-    protocolVersion === "2025-11-25" &&
+    (protocolVersion === "2025-11-25" || protocolVersion === "2026-07-28") &&
     authServerMetadata?.client_id_metadata_document_supported === true
   ) {
     strategies.push("cimd");
@@ -273,7 +285,7 @@ export function resolveAuthorizationPlan(
     }
   } else if (registrationMode === "cimd") {
     registrationStrategy = "cimd";
-    if (protocolVersion !== "2025-11-25") {
+    if (protocolVersion !== "2025-11-25" && protocolVersion !== "2026-07-28") {
       pushBlocker(
         "CIMD_UNSUPPORTED_PROTOCOL",
         `CIMD registration is not supported for protocol version ${protocolVersion}.`,
@@ -355,6 +367,15 @@ export function resolveAuthorizationPlan(
     capabilities,
     ...(input.serverUrl
       ? { canonicalResource: canonicalizeResourceUrl(input.serverUrl) }
+      : {}),
+    ...(input.serverUrl &&
+    typeof input.discovery?.resourceMetadata?.resource === "string"
+      ? {
+          resourceIndicator: evaluateResourceIndicator({
+            serverUrl: input.serverUrl,
+            prmResource: input.discovery.resourceMetadata.resource,
+          }),
+        }
       : {}),
     ...((registrationStrategy === "cimd" ||
       registrationMode === "cimd") && clientIdMetadataUrl

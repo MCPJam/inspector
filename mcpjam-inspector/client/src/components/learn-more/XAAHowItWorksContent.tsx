@@ -1,0 +1,476 @@
+import { useState } from "react";
+import { CheckCircle2, ExternalLink, HelpCircle, Play } from "lucide-react";
+
+const xaaVideoUrl =
+  "https://outstanding-fennec-304.convex.cloud/api/storage/b3a2592b-ab5f-42df-ad2c-db4fa2f39172";
+
+const registrationMethods = [
+  {
+    name: "Pre-registered client",
+    description:
+      "Register MCPJam in your authorization server first, then enter the client ID and optional client secret it gives you.",
+  },
+  {
+    name: "Client metadata URL (CIMD)",
+    description:
+      "MCPJam uses a client metadata URL as the client ID. Your authorization server must advertise CIMD support. The Client authentication control chooses whether MCPJam proves it owns that identity:",
+    options: [
+      {
+        name: "Public (no client auth)",
+        description:
+          "Your authorization server takes the metadata URL at face value. Nothing proves MCPJam owns that identity. This is the default.",
+      },
+      {
+        name: "Confidential (private_key_jwt)",
+        description:
+          "MCPJam holds a private key and signs each token request with it, proving it owns the identity. Choose this when your authorization server requires a confidential client.",
+      },
+    ],
+  },
+  {
+    name: "Open dynamic registration (DCR)",
+    description:
+      "MCPJam registers a client during the test. Your authorization server must provide an open registration endpoint.",
+  },
+];
+
+const identityAssertionFormats = [
+  {
+    name: "OIDC ID token",
+    description:
+      "MCPJam mints an OIDC ID token as the identity assertion. This is the default.",
+  },
+  {
+    name: "SAML assertion",
+    description:
+      "MCPJam mints a signed SAML 2.0 assertion, and the ID-JAG carries a saml-nameid subject identifier so a SAML-federated server can resolve the user.",
+  },
+];
+
+const claims = [
+  ["iss", "MCPJam's test identity provider"],
+  ["sub / email", "The test user's identity"],
+  ["aud", "The authorization server receiving the ID-JAG"],
+  ["resource", "The MCP server the access is for"],
+  ["client_id", "The client identity used in the test"],
+  ["jti / iat / exp", "Replay protection and token lifetime"],
+  ["scope", "The requested permissions"],
+];
+
+const strictNegativeTests = [
+  "Bad Signature",
+  "Wrong Audience",
+  "Expired",
+  "Missing Claims",
+  "Invalid typ Header",
+  "Wrong Issuer",
+  "Resource Mismatch",
+  "Client ID Mismatch",
+  "Unknown kid",
+];
+
+const policyProbes = ["Unknown Subject", "Scope Denial"];
+
+function GuideImage({
+  src,
+  alt,
+  className = "",
+  imageClassName = "",
+}: {
+  src: string;
+  alt: string;
+  className?: string;
+  imageClassName?: string;
+}) {
+  return (
+    <a
+      href={src}
+      target="_blank"
+      rel="noreferrer"
+      title="Open full-size image"
+      className={`block overflow-hidden rounded-md ${className}`}
+    >
+      <img
+        src={src}
+        alt={alt}
+        className={`h-auto w-full object-contain ${imageClassName}`}
+      />
+    </a>
+  );
+}
+
+function SectionHeading({
+  number,
+  title,
+  description,
+}: {
+  number: string;
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="mb-6 flex gap-4">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
+        {number}
+      </div>
+      <div>
+        <h3 className="text-xl font-semibold leading-8">{title}</h3>
+        <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">
+          {description}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function XAAVideoThumbnail() {
+  const [playing, setPlaying] = useState(false);
+
+  if (playing) {
+    return (
+      <div className="relative aspect-video overflow-hidden rounded-lg border bg-black shadow-sm">
+        <video
+          src={xaaVideoUrl}
+          className="h-full w-full object-cover"
+          autoPlay
+          controls
+          playsInline
+          preload="metadata"
+          title="Cross-App Access video"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setPlaying(true)}
+        aria-label="Play Cross-App Access video"
+        className="group relative mx-auto block aspect-video w-full overflow-hidden rounded-lg border bg-muted shadow-sm"
+      >
+        <img
+          src="/xaa-guide/xaa-video-thumbnail.png"
+          alt="XAA Debugger video thumbnail"
+          className="h-full w-full object-cover"
+        />
+        <span className="absolute inset-0 flex items-center justify-center bg-black/20 transition-colors group-hover:bg-black/35">
+          <span className="flex h-14 w-14 items-center justify-center rounded-full bg-white/95 shadow-lg">
+            <Play className="ml-1 h-7 w-7 fill-black text-black" />
+          </span>
+        </span>
+      </button>
+    </div>
+  );
+}
+
+export function XAAHowItWorksContent({
+  title,
+  docsUrl,
+}: {
+  title: string;
+  docsUrl?: string;
+}) {
+  return (
+    <div className="px-6 pb-10 sm:px-10">
+      <div className="border-b pb-10 pt-4">
+        <div>
+          <div className="flex flex-col justify-center gap-5">
+            <div className="flex items-start justify-between gap-4">
+              <h2
+                id="learn-more-panel-title"
+                className="text-4xl font-bold leading-tight"
+              >
+                {title}
+              </h2>
+              {docsUrl && (
+                <a
+                  href={docsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-1 flex shrink-0 items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  Docs
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+              )}
+            </div>
+            <p className="text-base leading-7 text-muted-foreground">
+              The XAA Debugger tests an MCP server and its authorization setup.
+              MCPJam acts as both the test identity provider that signs the ID
+              token and ID-JAG, and the client/agent that uses them to request
+              access.
+            </p>
+          </div>
+          <div className="mt-8">
+            <XAAVideoThumbnail />
+          </div>
+        </div>
+      </div>
+
+      <section className="border-b py-10">
+        <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(260px,360px)]">
+          <SectionHeading
+            number="1"
+            title="Trust MCPJam's identity provider"
+            description="Before running the test, give your authorization server the MCPJam identity provider values it requires. You can copy all three from the XAA Flow header."
+          />
+          <GuideImage
+            src="/xaa-guide/xaa-flow-header.png"
+            alt="XAA Flow header with issuer, OpenID configuration, and JWKS URLs"
+            className="mx-auto max-w-xs"
+          />
+        </div>
+
+        <div className="mt-8 grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+          <div>
+            <h4 className="font-semibold">Local and hosted issuers</h4>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+              If MCPJam is running locally and your authorization server is in
+              the cloud, turn on <strong>Use hosted issuer</strong>. A cloud
+              server cannot reach an issuer URL on your machine.
+            </p>
+          </div>
+          <GuideImage
+            src="/xaa-guide/xaa-hosted-issuer-toggle.png"
+            alt="Use hosted issuer toggle"
+          />
+        </div>
+
+        <div className="mt-8">
+          <h4 className="font-semibold">Other header controls</h4>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">
+            The header also holds an <strong>Identity assertion</strong> toggle
+            (OIDC / SAML) and <strong>Run as</strong> (the simulated identity).
+            Both are covered in step 2.
+          </p>
+        </div>
+      </section>
+
+      <section className="border-b py-10">
+        <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,1fr)_420px]">
+          <div className="space-y-6">
+            <SectionHeading
+              number="2"
+              title="Add your MCP server"
+              description="Select Configure Server to Test (or Add Server), enter the MCP server name and URL, then choose how MCPJam identifies itself to the authorization server."
+            />
+
+            <div>
+              <h4 className="font-semibold">Registration method</h4>
+              <div className="mt-3 divide-y border-y">
+                {registrationMethods.map((method) => (
+                  <div key={method.name} className="py-4">
+                    <p className="text-sm font-medium">{method.name}</p>
+                    <p className="mt-1 text-sm leading-5 text-muted-foreground">
+                      {method.description}
+                    </p>
+                    {method.options && (
+                      <div className="mt-3 space-y-3 border-l pl-4">
+                        {method.options.map((option) => (
+                          <div key={option.name}>
+                            <p className="text-sm font-medium">{option.name}</p>
+                            <p className="mt-1 text-sm leading-5 text-muted-foreground">
+                              {option.description}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <h4 className="font-semibold">Identity assertion</h4>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                Choose the protocol MCPJam's identity provider uses to
+                authenticate users.
+              </p>
+              <div className="mt-3 space-y-3 border-l pl-4">
+                {identityAssertionFormats.map((format) => (
+                  <div key={format.name}>
+                    <p className="text-sm font-medium">{format.name}</p>
+                    <p className="mt-1 text-sm leading-5 text-muted-foreground">
+                      {format.description}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <h4 className="font-semibold">Scopes</h4>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                Enter optional permissions separated by spaces. MCPJam includes
+                them when requesting the ID-JAG and access token.
+              </p>
+            </div>
+          </div>
+          <GuideImage
+            src="/xaa-guide/xaa-configure-server.png"
+            alt="Configure Server to Test form"
+          />
+        </div>
+
+        <div className="mt-10 grid items-start gap-8 lg:grid-cols-[420px_minmax(0,1fr)]">
+          <GuideImage
+            src="/xaa-guide/xaa-advanced.png"
+            alt="Advanced XAA server settings"
+          />
+          <div>
+            <h4 className="font-semibold">Advanced settings</h4>
+            <div className="mt-4 space-y-4 text-sm leading-6">
+              <div>
+                <p className="font-medium text-foreground">
+                  Authorization Server Issuer
+                </p>
+                <p className="mt-1 text-muted-foreground">
+                  Leave it blank to use the authorization server MCPJam
+                  discovers from the MCP server. Enter a URL to use a different
+                  authorization server.
+                </p>
+              </div>
+              <div>
+                <p className="font-medium text-foreground">
+                  Path-scoped authorization server
+                </p>
+                <p className="mt-1 text-muted-foreground">
+                  Keep this off for normal RFC 8414 behavior. Turn it on only
+                  when the discovered URL and metadata issuer differ on the
+                  same origin.
+                </p>
+              </div>
+              <div>
+                <p className="font-medium text-foreground">
+                  Simulated identity
+                </p>
+                <p className="mt-1 text-muted-foreground">
+                  Choose the user MCPJam puts in the ID token. Leave the fields
+                  blank to use a built-in demo user (user-12345 /
+                  demo.user@example.com).
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="border-b py-10">
+        <div className="space-y-8">
+          <div>
+            <SectionHeading
+              number="3"
+              title="Inspect the ID-JAG"
+              description="Before sending the ID-JAG, MCPJam shows exactly what it created and checks whether each value looks correct or broken."
+            />
+            <h4 className="font-semibold">What you can inspect</h4>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+              The inspector decodes the complete signed assertion before it is
+              sent to the authorization server.
+            </p>
+            <div className="mt-5 divide-y border-y text-sm">
+              <div className="py-3">
+                <p className="font-medium">Header</p>
+                <p className="mt-1 text-muted-foreground">
+                  Shows <code>alg</code>, <code>typ</code>, and <code>kid</code>
+                  : how the ID-JAG is signed, what kind of token it is, and
+                  which published key the authorization server should use.
+                </p>
+              </div>
+              <div className="py-3">
+                <p className="font-medium">Payload</p>
+                <p className="mt-1 text-muted-foreground">
+                  Carries the user, client, authorization-server, and MCP-server
+                  bindings listed below.
+                </p>
+              </div>
+              <div className="py-3">
+                <p className="font-medium">Signature</p>
+                <p className="mt-1 text-muted-foreground">
+                  The final signed JWT segment. Use <strong>Copy JWT</strong> to
+                  copy the complete assertion, including its header, payload,
+                  and signature.
+                </p>
+              </div>
+            </div>
+          </div>
+          <div>
+            <GuideImage
+              src="/xaa-guide/xaa-id-jag.png"
+              alt="ID-JAG Inspector with claims, header, payload, and signature"
+            />
+            <h5 className="mt-6 text-sm font-semibold">Payload claims</h5>
+            <div className="mt-3 divide-y border-y">
+              {claims.map(([claim, meaning]) => (
+                <div
+                  key={claim}
+                  className="grid grid-cols-[120px_minmax(0,1fr)] gap-4 py-3 text-sm"
+                >
+                  <code className="text-xs font-semibold text-foreground">
+                    {claim}
+                  </code>
+                  <span className="text-muted-foreground">{meaning}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="border-b py-10">
+        <div className="grid items-start gap-8 lg:grid-cols-[minmax(480px,620px)_minmax(0,1fr)]">
+          <GuideImage
+            src="/xaa-guide/xaa-neg-score-2.png"
+            alt="Negative-test scorecard showing invalid ID-JAGs rejected"
+          />
+          <div>
+            <SectionHeading
+              number="4"
+              title="Run negative tests"
+              description="Checks that your authorization server rejects broken ID-JAGs."
+            />
+            <p className="text-sm leading-6 text-muted-foreground">
+              Run a successful flow first, then select{" "}
+              <strong>Run negative tests</strong>. A strict check passes when
+              the authorization server rejects the broken assertion. The MCP
+              server is not called during these checks.
+            </p>
+            <div className="mt-6 grid gap-x-6 gap-y-3 sm:grid-cols-2">
+              {strictNegativeTests.map((test) => (
+                <div key={test} className="flex items-center gap-2 text-sm">
+                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                  <span>{test}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-6 border-t pt-5">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Policy probes
+              </p>
+              <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                No pass or fail here. Your server can accept or reject an
+                unknown user, and can trim the scopes it grants. Just confirm
+                the result is what you expect.
+              </p>
+              <div className="mt-3 grid gap-x-6 gap-y-3 sm:grid-cols-2">
+                {policyProbes.map((test) => (
+                  <div key={test} className="flex items-center gap-2 text-sm">
+                    <HelpCircle className="h-4 w-4 shrink-0 text-amber-600" />
+                    <span>{test}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <p className="mt-6 text-xs text-muted-foreground">
+              These are targeted security and policy checks, not a full
+              conformance test.
+            </p>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
