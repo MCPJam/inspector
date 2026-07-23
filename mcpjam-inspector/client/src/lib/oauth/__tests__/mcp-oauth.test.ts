@@ -2042,6 +2042,22 @@ describe("mcp-oauth", () => {
       expect(mockExchangeAuthorization).not.toHaveBeenCalled();
     });
 
+    it("fails closed on the no-session fallback when the callback returns a state (review F6)", async () => {
+      // seedAsanaCallback omits the flow session, so there is no issued `state`
+      // to compare. A returned state must fail closed rather than redeem a code
+      // whose CSRF state is unverifiable.
+      seedAsanaCallback(createAsanaDiscoveryState());
+
+      const { handleOAuthCallback } = await import("../mcp-oauth");
+      const callbackResult = await handleOAuthCallback("oauth-code", {
+        callbackState: "attacker-supplied-state",
+      });
+
+      expect(callbackResult.success).toBe(false);
+      expect(callbackResult.error).toContain("state");
+      expect(mockExchangeAuthorization).not.toHaveBeenCalled();
+    });
+
     it("rejects PRM metadata that omits its required resource during callback completion", async () => {
       const asana = createAsanaDiscoveryState();
       delete asana.resourceMetadata.resource;

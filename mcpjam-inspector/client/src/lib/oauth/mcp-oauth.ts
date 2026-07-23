@@ -3344,11 +3344,23 @@ export async function handleOAuthCallback(
       fetchFn,
       oauthConfig.customHeaders
     );
-    // 2R-iss: validate the RFC 9207 `iss` against the discovered issuer before
-    // redeeming on this no-stored-session fallback. There is no persisted
-    // request `state` on this path, so CSRF `state` is enforced only on the
-    // resume path (which has the stored session); pass `expectedState:
-    // undefined` here.
+    // 2R-iss / review F6: this no-stored-session fallback has no persisted
+    // request `state` to compare against (the session that held it is gone).
+    // If the AS nevertheless returned a `state`, the flow issued one and we
+    // cannot verify it here — FAIL CLOSED rather than redeem a code whose CSRF
+    // `state` is unchecked. (A separate persistence key wouldn't help: the
+    // fallback fires exactly when that storage was lost/cleared.) When no state
+    // was returned there is nothing to verify; proceed to the `iss` check.
+    if (options.callbackState) {
+      localStorage.removeItem("mcp-oauth-pending");
+      return {
+        success: false,
+        error:
+          "OAuth `state` could not be verified — the authorization flow session was not found, so the callback state cannot be matched to an issued value (possible CSRF). Please retry the connection.",
+        serverName,
+      };
+    }
+    // Validate the RFC 9207 `iss` against the discovered issuer before redeeming.
     const fallbackIssuerMetadata = discoveryState.authorizationServerMetadata as
       | {
           issuer?: string;
