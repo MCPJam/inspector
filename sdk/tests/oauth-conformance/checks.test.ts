@@ -6,6 +6,11 @@ import {
   runInvalidRedirectCheck,
 } from "../../src/oauth-conformance/checks/oauth-negative.js";
 import { runTokenFormatCheck } from "../../src/oauth-conformance/checks/oauth-token-format.js";
+import {
+  runResourceMetadataChallengeCheck,
+  runStaleSessionRejectionCheck,
+  runUnauthenticatedChallengeCheck,
+} from "../../src/oauth-conformance/checks/oauth-server-obligations.js";
 
 const baseNegativeInput = {
   config: {
@@ -397,6 +402,323 @@ describe("oauth conformance unit checks", () => {
       error: {
         message: expect.stringContaining("expires_in"),
       },
+    });
+  });
+});
+
+// ── Server-side spec obligations (HP-17 findings 3/4/5) ────────────────
+
+const baseObligationInput = {
+  config: {
+    serverUrl: "https://mcp.example.com",
+    protocolVersion: "2025-11-25",
+    auth: { mode: "headless" },
+  },
+  state: {
+    accessToken: "valid-access-token",
+  },
+};
+
+const BEARER_WITH_METADATA =
+  'Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource"';
+
+describe("oauth server obligation checks", () => {
+  // Finding 4 — unauthenticated request → 401 + Bearer challenge, never 500.
+  describe("unauthenticated challenge", () => {
+    it("sends no Authorization header on the probe", async () => {
+      const trackedRequest = jest.fn().mockImplementation(async (request) => {
+        expect(request.headers.Authorization).toBeUndefined();
+        expect(request.method).toBe("POST");
+        expect(request.url).toBe("https://mcp.example.com");
+        return {
+          ok: false,
+          status: 401,
+          statusText: "Unauthorized",
+          headers: { "www-authenticate": BEARER_WITH_METADATA },
+          body: { error: "unauthorized" },
+        };
+      });
+
+      const result = await runUnauthenticatedChallengeCheck({
+        ...(baseObligationInput as any),
+        trackedRequest,
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_unauthenticated_challenge",
+        status: "passed",
+      });
+    });
+
+    it("fails when the server returns 500 instead of 401", async () => {
+      const result = await runUnauthenticatedChallengeCheck({
+        ...(baseObligationInput as any),
+        trackedRequest: jest.fn().mockResolvedValue({
+          ok: false,
+          status: 500,
+          statusText: "Internal Server Error",
+          headers: {},
+          body: "boom",
+        }),
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_unauthenticated_challenge",
+        status: "failed",
+        error: { message: expect.stringContaining("instead of 401") },
+      });
+    });
+
+    it("fails when a 401 omits the Bearer challenge", async () => {
+      const result = await runUnauthenticatedChallengeCheck({
+        ...(baseObligationInput as any),
+        trackedRequest: jest.fn().mockResolvedValue({
+          ok: false,
+          status: 401,
+          statusText: "Unauthorized",
+          headers: {},
+          body: { error: "unauthorized" },
+        }),
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_unauthenticated_challenge",
+        status: "failed",
+        error: { message: expect.stringContaining("without a WWW-Authenticate Bearer challenge") },
+      });
+    });
+
+    it("fails when the server accepts an unauthenticated request", async () => {
+      const result = await runUnauthenticatedChallengeCheck({
+        ...(baseObligationInput as any),
+        trackedRequest: jest.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          headers: {},
+          body: { jsonrpc: "2.0", result: {} },
+        }),
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_unauthenticated_challenge",
+        status: "failed",
+        error: { message: expect.stringContaining("expected HTTP 401, received 200") },
+      });
+    });
+
+    it("turns transport errors into failed checks", async () => {
+      const result = await runUnauthenticatedChallengeCheck({
+        ...(baseObligationInput as any),
+        trackedRequest: jest.fn().mockRejectedValue(new Error("timeout")),
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_unauthenticated_challenge",
+        status: "failed",
+        error: { message: "Unauthenticated MCP request failed: timeout" },
+      });
+    });
+  });
+
+  // Finding 3 — Bearer challenge must carry an absolute resource_metadata URL.
+  describe("resource metadata challenge", () => {
+    it("passes when the challenge advertises an absolute resource_metadata URL", async () => {
+      const result = await runResourceMetadataChallengeCheck({
+        ...(baseObligationInput as any),
+        trackedRequest: jest.fn().mockResolvedValue({
+          ok: false,
+          status: 401,
+          statusText: "Unauthorized",
+          headers: { "www-authenticate": BEARER_WITH_METADATA },
+          body: undefined,
+        }),
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_resource_metadata_challenge",
+        status: "passed",
+      });
+    });
+
+    it("fails when the challenge omits resource_metadata", async () => {
+      const result = await runResourceMetadataChallengeCheck({
+        ...(baseObligationInput as any),
+        trackedRequest: jest.fn().mockResolvedValue({
+          ok: false,
+          status: 401,
+          statusText: "Unauthorized",
+          headers: { "www-authenticate": 'Bearer error="invalid_token"' },
+          body: undefined,
+        }),
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_resource_metadata_challenge",
+        status: "failed",
+        error: { message: expect.stringContaining("omitted the resource_metadata parameter") },
+      });
+    });
+
+    it("fails when resource_metadata is a relative URL", async () => {
+      const result = await runResourceMetadataChallengeCheck({
+        ...(baseObligationInput as any),
+        trackedRequest: jest.fn().mockResolvedValue({
+          ok: false,
+          status: 401,
+          statusText: "Unauthorized",
+          headers: {
+            "www-authenticate":
+              'Bearer resource_metadata="/.well-known/oauth-protected-resource"',
+          },
+          body: undefined,
+        }),
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_resource_metadata_challenge",
+        status: "failed",
+        error: { message: expect.stringContaining("must be an absolute http(s) URL") },
+      });
+    });
+
+    it("skips when there is no challenge to inspect", async () => {
+      const result = await runResourceMetadataChallengeCheck({
+        ...(baseObligationInput as any),
+        trackedRequest: jest.fn().mockResolvedValue({
+          ok: false,
+          status: 401,
+          statusText: "Unauthorized",
+          headers: {},
+          body: undefined,
+        }),
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_resource_metadata_challenge",
+        status: "skipped",
+      });
+    });
+  });
+
+  // Finding 5 — stale Mcp-Session-Id → 4xx (404 preferred), never 500.
+  describe("stale session rejection", () => {
+    it("sends a valid bearer token with an unknown Mcp-Session-Id", async () => {
+      const trackedRequest = jest.fn().mockImplementation(async (request) => {
+        expect(request.headers.Authorization).toBe("Bearer valid-access-token");
+        expect(request.headers["Mcp-Session-Id"]).toBeDefined();
+        expect(request.body).toMatchObject({ method: "tools/list" });
+        return {
+          ok: false,
+          status: 404,
+          statusText: "Not Found",
+          headers: {},
+          body: { error: "session not found" },
+        };
+      });
+
+      const result = await runStaleSessionRejectionCheck({
+        ...(baseObligationInput as any),
+        trackedRequest,
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_stale_session_rejection",
+        status: "passed",
+      });
+      expect(result.error).toBeUndefined();
+    });
+
+    it("fails when the server crashes with a 500 on a stale session", async () => {
+      const result = await runStaleSessionRejectionCheck({
+        ...(baseObligationInput as any),
+        trackedRequest: jest.fn().mockResolvedValue({
+          ok: false,
+          status: 500,
+          statusText: "Internal Server Error",
+          headers: {},
+          body: "stack trace",
+        }),
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_stale_session_rejection",
+        status: "failed",
+        error: { message: expect.stringContaining("instead of a 4xx") },
+      });
+    });
+
+    it("passes a non-404 4xx but records it as evidence only", async () => {
+      const result = await runStaleSessionRejectionCheck({
+        ...(baseObligationInput as any),
+        trackedRequest: jest.fn().mockResolvedValue({
+          ok: false,
+          status: 400,
+          statusText: "Bad Request",
+          headers: {},
+          body: { error: "bad session" },
+        }),
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_stale_session_rejection",
+        status: "passed",
+        error: { message: expect.stringContaining("prefers 404") },
+      });
+    });
+
+    it("skips when the server accepts an unknown session id", async () => {
+      const result = await runStaleSessionRejectionCheck({
+        ...(baseObligationInput as any),
+        trackedRequest: jest.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          headers: {},
+          body: { jsonrpc: "2.0", result: { tools: [] } },
+        }),
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_stale_session_rejection",
+        status: "skipped",
+        error: { message: expect.stringContaining("does not appear to enforce session state") },
+      });
+    });
+
+    it("skips on the stateless 2026-07-28 transport", async () => {
+      const trackedRequest = jest.fn();
+      const result = await runStaleSessionRejectionCheck({
+        ...(baseObligationInput as any),
+        config: {
+          ...baseObligationInput.config,
+          protocolVersion: "2026-07-28",
+        },
+        trackedRequest,
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_stale_session_rejection",
+        status: "skipped",
+        error: { message: expect.stringContaining("stateless") },
+      });
+      expect(trackedRequest).not.toHaveBeenCalled();
+    });
+
+    it("skips when no access token is available", async () => {
+      const trackedRequest = jest.fn();
+      const result = await runStaleSessionRejectionCheck({
+        ...(baseObligationInput as any),
+        state: {},
+        trackedRequest,
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_stale_session_rejection",
+        status: "skipped",
+        error: { message: expect.stringContaining("No access token") },
+      });
+      expect(trackedRequest).not.toHaveBeenCalled();
     });
   });
 });

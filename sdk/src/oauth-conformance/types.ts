@@ -22,7 +22,11 @@ export type OAuthConformanceCheckId =
   | "oauth_invalid_authorize_redirect"
   | "oauth_invalid_token"
   | "oauth_invalid_redirect"
-  | "oauth_token_format";
+  | "oauth_token_format"
+  // Server-side spec obligations (HP-17 findings 3/4/5).
+  | "oauth_unauthenticated_challenge"
+  | "oauth_resource_metadata_challenge"
+  | "oauth_stale_session_rejection";
 
 /** A step in a conformance result: either a real flow step or a post-flow check. */
 export type ConformanceStepId = OAuthFlowStep | OAuthConformanceCheckId;
@@ -77,6 +81,30 @@ export const CONFORMANCE_CHECK_METADATA: Record<
       "Validate that the successful token response includes the expected access token fields.",
     teachableMoments: [
       "Token responses should include a usable bearer token, token type, and expiration metadata.",
+    ],
+  },
+  oauth_unauthenticated_challenge: {
+    title: "OAuth Check: Unauthenticated Request Challenge",
+    summary:
+      "Send an unauthenticated MCP request and confirm the server answers with HTTP 401 and a WWW-Authenticate Bearer challenge, never a 500.",
+    teachableMoments: [
+      "A protected resource must reject unauthenticated requests with 401 and a Bearer challenge (RFC 6750 §3), not a server error.",
+    ],
+  },
+  oauth_resource_metadata_challenge: {
+    title: "OAuth Check: Resource Metadata URL in Challenge",
+    summary:
+      "Confirm the WWW-Authenticate Bearer challenge advertises an absolute resource_metadata URL so clients can discover protected-resource metadata.",
+    teachableMoments: [
+      "RFC 9728 §5.1 requires the Bearer challenge to carry an absolute resource_metadata URL; a relative or missing value breaks discovery.",
+    ],
+  },
+  oauth_stale_session_rejection: {
+    title: "OAuth Check: Stale Session Rejection",
+    summary:
+      "Send an authenticated request carrying an unknown Mcp-Session-Id and confirm the server rejects it with a 4xx, never a 500.",
+    teachableMoments: [
+      "The Streamable HTTP transport requires a stale or unknown session id to fail with a clean 4xx (404 preferred), not crash the server with a 500.",
     ],
   },
 };
