@@ -16,6 +16,7 @@ import {
   projectOAuthTraceSnapshot,
   resolveAuthorizationPlan,
   runOAuthStateMachine,
+  validateAuthorizationResponseIssuer,
 } from "@mcpjam/sdk/browser";
 import type {
   AuthorizationDiscoverySnapshot,
@@ -3077,9 +3078,55 @@ export async function completeHostedOAuthCallback(
 /**
  * Handles OAuth callback and completes the flow
  */
+/**
+ * 2R-iss — era-agnostic callback security gate. Validates the CSRF `state` and
+ * the RFC 9207 authorization-response `iss` from the redirect BEFORE the code
+ * is redeemed. Runs on every protocol era: RFC 9207's local-policy row permits
+ * validating a present `iss` regardless of version, and validating `state` is
+ * always sound. On failure the caller must reject WITHOUT touching the token
+ * endpoint and WITHOUT echoing attacker-controlled callback `error*` values.
+ */
+export function evaluateCallbackSecurity(input: {
+  callbackState: string | null | undefined;
+  callbackIss: string | null | undefined;
+  /** The `state` this flow issued on the authorization request, if any. */
+  expectedState: string | undefined;
+  /** The exact issuer recorded when the AS metadata was validated. */
+  recordedIssuer: string | undefined;
+  /** Whether the AS advertised `authorization_response_iss_parameter_supported`. */
+  issParameterSupported: boolean | undefined;
+}): { ok: true } | { ok: false; error: string } {
+  // CSRF: if this flow issued a `state`, the callback MUST return it exactly.
+  if (input.expectedState && input.callbackState !== input.expectedState) {
+    return {
+      ok: false,
+      error:
+        "OAuth `state` mismatch — the callback did not return the value this flow issued (possible CSRF). Authorization was not completed.",
+    };
+  }
+  const issCheck = validateAuthorizationResponseIssuer({
+    recordedIssuer: input.recordedIssuer,
+    returnedIss: input.callbackIss ?? undefined,
+    issParameterSupported: input.issParameterSupported,
+  });
+  if (!issCheck.ok) {
+    return {
+      ok: false,
+      error: `OAuth issuer validation failed (RFC 9207): ${issCheck.reason}. Authorization was not completed.`,
+    };
+  }
+  return { ok: true };
+}
+
 export async function handleOAuthCallback(
   authorizationCode: string,
-  options: { onTraceUpdate?: (trace: OAuthTrace) => void } = {}
+  options: {
+    onTraceUpdate?: (trace: OAuthTrace) => void;
+    // 2R-iss: CSRF `state` and RFC 9207 `iss` captured from the callback URL at
+    // the callback boundary and validated here before code redemption.
+    callbackState?: string | null;
+    callbackIss?: string | null;
+  } = {}
 ): Promise<OAuthResult & { serverName?: string }> {
   // Get pending server name from localStorage (needed before creating interceptor)
   const serverName = localStorage.getItem("mcp-oauth-pending");
@@ -3118,6 +3165,24 @@ export async function handleOAuthCallback(
     clearOAuthTraceSession(serverName);
 
     if (storedSession) {
+      // 2R-iss: validate CSRF `state` + RFC 9207 `iss` before redeeming the
+      // code. Reject without touching the token endpoint on any mismatch.
+      const security = evaluateCallbackSecurity({
+        callbackState: options.callbackState,
+        callbackIss: options.callbackIss,
+        expectedState: storedSession.state.state,
+        recordedIssuer:
+          storedSession.state.recordedIssuer ??
+          storedSession.state.authorizationServerMetadata?.issuer,
+        issParameterSupported:
+          storedSession.state.authorizationServerMetadata
+            ?.authorization_response_iss_parameter_supported,
+      });
+      if (!security.ok) {
+        clearOAuthFlowSession(serverName);
+        localStorage.removeItem("mcp-oauth-pending");
+        return { success: false, error: security.error, serverName };
+      }
       let state = cloneFlowState(storedSession.state);
       const updateState = (updates: Partial<OAuthFlowState>) => {
         state = { ...state, ...updates };
@@ -3270,6 +3335,29 @@ export async function handleOAuthCallback(
       fetchFn,
       oauthConfig.customHeaders
     );
+    // 2R-iss: validate the RFC 9207 `iss` against the discovered issuer before
+    // redeeming on this no-stored-session fallback. There is no persisted
+    // request `state` on this path, so CSRF `state` is enforced only on the
+    // resume path (which has the stored session); pass `expectedState:
+    // undefined` here.
+    const fallbackIssuerMetadata = discoveryState.authorizationServerMetadata as
+      | {
+          issuer?: string;
+          authorization_response_iss_parameter_supported?: boolean;
+        }
+      | undefined;
+    const fallbackSecurity = evaluateCallbackSecurity({
+      callbackState: options.callbackState,
+      callbackIss: options.callbackIss,
+      expectedState: undefined,
+      recordedIssuer: fallbackIssuerMetadata?.issuer,
+      issParameterSupported:
+        fallbackIssuerMetadata?.authorization_response_iss_parameter_supported,
+    });
+    if (!fallbackSecurity.ok) {
+      localStorage.removeItem("mcp-oauth-pending");
+      return { success: false, error: fallbackSecurity.error, serverName };
+    }
     completeOAuthTraceStep(callbackTrace, "received_authorization_code", {
       message: "Callback state restored.",
       details: {

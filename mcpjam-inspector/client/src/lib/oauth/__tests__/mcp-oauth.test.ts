@@ -216,6 +216,21 @@ function createFetchFromRequestExecutor(
   };
 }
 
+// A real authorization server returns the exact `state` the client issued, and
+// the 2R-iss callback gate now enforces it. Echo the state persisted by
+// initiateOAuth for the pending server so callback tests mirror real requests.
+// Returns null when no session was stored (the no-session fallback path).
+const issuedCallbackState = (): string | null => {
+  const serverName = localStorage.getItem("mcp-oauth-pending");
+  if (!serverName) return null;
+  try {
+    const raw = localStorage.getItem(`mcp-oauth-flow-state-${serverName}`);
+    return raw ? (JSON.parse(raw).state?.state ?? null) : null;
+  } catch {
+    return null;
+  }
+};
+
 describe("mcp-oauth", () => {
   let authFetch: ReturnType<typeof vi.fn>;
 
@@ -1494,7 +1509,9 @@ describe("mcp-oauth", () => {
       });
       expect(initiateResult.success).toBe(true);
 
-      const callbackResult = await handleOAuthCallback("oauth-code");
+      const callbackResult = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+      });
 
       expect(callbackResult.success).toBe(true);
       expect(callbackResult.serverName).toBe("asana");
@@ -1562,7 +1579,9 @@ describe("mcp-oauth", () => {
       // Exercise the callback path that performs the exchange directly; the
       // state-machine path already owns separate resource persistence tests.
       localStorage.removeItem(`mcp-oauth-flow-state-${serverName}`);
-      const callbackResult = await handleOAuthCallback("oauth-code");
+      const callbackResult = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+      });
       expect(callbackResult.success, callbackResult.error).toBe(true);
       expect(callbackResult.oauthResourceUrl).toBe(advertisedResource);
       expect(
@@ -1685,7 +1704,9 @@ describe("mcp-oauth", () => {
       );
 
       const { handleOAuthCallback } = await import("../mcp-oauth");
-      const callbackResult = await handleOAuthCallback("oauth-code");
+      const callbackResult = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+      });
 
       expect(callbackResult.success).toBe(true);
       expect(localStorage.getItem("mcp-verifier-asana")).toBeNull();
@@ -1907,7 +1928,9 @@ describe("mcp-oauth", () => {
       );
 
       const { handleOAuthCallback } = await import("../mcp-oauth");
-      const callbackResult = await handleOAuthCallback("oauth-code");
+      const callbackResult = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+      });
 
       expect(callbackResult.success).toBe(false);
       expect(callbackResult.error).not.toBe("Code verifier not found");
@@ -1952,7 +1975,9 @@ describe("mcp-oauth", () => {
       );
 
       const { handleOAuthCallback } = await import("../mcp-oauth");
-      const callbackResult = await handleOAuthCallback("oauth-code");
+      const callbackResult = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+      });
 
       expect(callbackResult.success).toBe(true);
       expect(browserFetch).not.toHaveBeenCalled();
@@ -2006,7 +2031,9 @@ describe("mcp-oauth", () => {
       });
 
       const { handleOAuthCallback } = await import("../mcp-oauth");
-      const callbackResult = await handleOAuthCallback("oauth-code");
+      const callbackResult = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+      });
 
       expect(callbackResult.success).toBe(false);
       expect(callbackResult.error).toContain(
@@ -2021,7 +2048,9 @@ describe("mcp-oauth", () => {
       seedAsanaCallback(asana);
 
       const { handleOAuthCallback } = await import("../mcp-oauth");
-      const callbackResult = await handleOAuthCallback("oauth-code");
+      const callbackResult = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+      });
 
       expect(callbackResult.success).toBe(false);
       expect(callbackResult.error).toContain('missing its required "resource"');
@@ -2069,7 +2098,9 @@ describe("mcp-oauth", () => {
       );
 
       const { handleOAuthCallback } = await import("../mcp-oauth");
-      const callbackResult = await handleOAuthCallback("oauth-code");
+      const callbackResult = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+      });
 
       expect(callbackResult.success).toBe(true);
       expect(browserFetch).not.toHaveBeenCalled();
@@ -2138,7 +2169,9 @@ describe("mcp-oauth", () => {
       );
 
       const { handleOAuthCallback } = await import("../mcp-oauth");
-      const callbackResult = await handleOAuthCallback("oauth-code");
+      const callbackResult = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+      });
 
       expect(callbackResult.success).toBe(true);
       expect(browserFetch).not.toHaveBeenCalled();
@@ -2606,5 +2639,80 @@ describe("createServerConfig wire-era pin", () => {
     expect(
       (config as { mcpProtocolVersion?: string }).mcpProtocolVersion,
     ).toBeUndefined();
+  });
+});
+
+describe("evaluateCallbackSecurity (2R-iss callback gate)", () => {
+  const base = {
+    callbackState: "s-123",
+    callbackIss: "https://as.example.com",
+    expectedState: "s-123",
+    recordedIssuer: "https://as.example.com",
+    issParameterSupported: true as boolean | undefined,
+  };
+
+  it("passes when state and iss both match", async () => {
+    const { evaluateCallbackSecurity } = await import("../mcp-oauth");
+    expect(evaluateCallbackSecurity(base)).toEqual({ ok: true });
+  });
+
+  it("rejects a state mismatch (CSRF) before touching iss", async () => {
+    const { evaluateCallbackSecurity } = await import("../mcp-oauth");
+    const result = evaluateCallbackSecurity({
+      ...base,
+      callbackState: "attacker-state",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/state.*mismatch|CSRF/i);
+  });
+
+  it("rejects when an expected state was issued but the callback returns none", async () => {
+    const { evaluateCallbackSecurity } = await import("../mcp-oauth");
+    const result = evaluateCallbackSecurity({ ...base, callbackState: null });
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects a present-but-mismatched iss (RFC 9207)", async () => {
+    const { evaluateCallbackSecurity } = await import("../mcp-oauth");
+    const result = evaluateCallbackSecurity({
+      ...base,
+      callbackIss: "https://evil.example.com",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/issuer|RFC 9207/i);
+  });
+
+  it("rejects an absent iss when the AS advertised iss support", async () => {
+    const { evaluateCallbackSecurity } = await import("../mcp-oauth");
+    const result = evaluateCallbackSecurity({
+      ...base,
+      callbackIss: null,
+      issParameterSupported: true,
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("allows an absent iss when the AS did not advertise iss support", async () => {
+    const { evaluateCallbackSecurity } = await import("../mcp-oauth");
+    expect(
+      evaluateCallbackSecurity({
+        ...base,
+        callbackIss: null,
+        issParameterSupported: undefined,
+      }),
+    ).toEqual({ ok: true });
+  });
+
+  it("skips the state check on the no-session fallback (no expected state)", async () => {
+    const { evaluateCallbackSecurity } = await import("../mcp-oauth");
+    expect(
+      evaluateCallbackSecurity({
+        callbackState: "whatever",
+        callbackIss: "https://as.example.com",
+        expectedState: undefined,
+        recordedIssuer: "https://as.example.com",
+        issParameterSupported: undefined,
+      }),
+    ).toEqual({ ok: true });
   });
 });

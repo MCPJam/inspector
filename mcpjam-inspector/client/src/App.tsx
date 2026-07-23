@@ -1738,6 +1738,8 @@ export default function App() {
     const code = urlParams.get("code");
     const error = urlParams.get("error");
     const state = urlParams.get("state");
+    // 2R-iss: RFC 9207 issuer identification from the callback URL.
+    const iss = urlParams.get("iss");
 
     let cancelled = false;
     setHostedOAuthHandling(true);
@@ -1832,6 +1834,8 @@ export default function App() {
         })()
       : handleOAuthCallback(code, {
           onTraceUpdate: handleLiveOAuthTrace,
+          callbackState: state,
+          callbackIss: iss,
         });
 
     completeCallback

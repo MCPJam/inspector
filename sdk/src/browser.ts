@@ -169,6 +169,13 @@ export type {
   ProbeTransportResult,
 } from "./server-probe.js";
 export { runOAuthStateMachine } from "./oauth/state-machines/runner.js";
+// RFC 9207 authorization-response `iss` validation. Era-agnostic (validating a
+// present `iss` is permitted on every version), so the browser callback gate
+// reuses it across 2025/2026 flows.
+export {
+  validateAuthorizationResponseIssuer,
+  type AuthorizationResponseIssuerCheck,
+} from "./oauth/state-machines/debug-oauth-2026-07-28.js";
 export type {
   OAuthAuthorizationRequestResult,
   OAuthStateMachineRunConfig,
