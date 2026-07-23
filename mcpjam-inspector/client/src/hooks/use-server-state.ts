@@ -1259,7 +1259,13 @@ export function useServerState({
       // the server's saved OAuth profile when nothing higher-precedence pins
       // it. Every connect/probe/reconnect path funnels through this resolver,
       // so deriving here covers them all in one place.
-      serverName?: string
+      serverName?: string,
+      // Authoritative pending server entry (a form save in flight). When
+      // supplied it REPLACES the stored app-state lookup for the config/profile
+      // fallbacks, so a form that downgrades 2026→2025 (an intentionally
+      // unpinned config) does not resurrect the stale stored 2026 pin/profile.
+      // Reconnects omit it and fall back to the stored entry as before.
+      authoritativeServerEntry?: ServerWithName
     ) => {
       const defaults: ConnectionDefaults = {};
       if ("url" in serverConfig) {
@@ -1317,9 +1323,11 @@ export function useServerState({
           : undefined;
       const resolvedProtocolVersion = resolveEffectiveWireProtocolVersion({
         serverConfig,
-        server: serverName
-          ? appStateServersRef.current[serverName]
-          : undefined,
+        // An in-flight authoritative form save wins over the stale stored
+        // entry, so a 2026→2025 downgrade doesn't recover the old pin/profile.
+        server:
+          authoritativeServerEntry ??
+          (serverName ? appStateServersRef.current[serverName] : undefined),
         serverOverride,
         hostPin,
       });
@@ -1410,7 +1418,14 @@ export function useServerState({
   );
 
   const guardedTestConnection = useCallback(
-    async (serverConfig: MCPServerConfig, serverName: string) => {
+    async (
+      serverConfig: MCPServerConfig,
+      serverName: string,
+      // The authoritative pending server entry when this probe is part of a
+      // form save (handleConnect). Threaded into the resolver so wire-era
+      // resolution reads the new config/profile, not the stale stored one.
+      authoritativeServerEntry?: ServerWithName
+    ) => {
       assertClientConfigSynced();
       // Opt into the resolver path when both projectId and a Convex serverId
       // are populated in the API context; otherwise fall back to legacy
@@ -1430,7 +1445,8 @@ export function useServerState({
             serverConfig,
             activeMcpProfile,
             resolved.serverId,
-            serverName
+            serverName,
+            authoritativeServerEntry
           ),
         });
       }
@@ -3037,7 +3053,8 @@ export function useServerState({
           });
           const storedCredentialResult = await guardedTestConnection(
             withProjectConnectionDefaults(serverConfig),
-            formData.name
+            formData.name,
+            serverEntryForSave
           );
           if (isStaleOp(formData.name, token)) return;
           if (storedCredentialResult.success) {
@@ -3176,7 +3193,8 @@ export function useServerState({
               );
               const connectionResult = await guardedTestConnection(
                 withProjectConnectionDefaults(oauthServerConfig),
-                formData.name
+                formData.name,
+                serverEntryForSave
               );
               if (isStaleOp(formData.name, token)) return;
               if (connectionResult.success) {
@@ -3246,7 +3264,8 @@ export function useServerState({
         const effectiveConfig = withProjectConnectionDefaults(mcpConfig);
         const result = await guardedTestConnection(
           effectiveConfig,
-          formData.name
+          formData.name,
+          serverEntryForSave
         );
         if (isStaleOp(formData.name, token)) return;
         if (result.success) {
