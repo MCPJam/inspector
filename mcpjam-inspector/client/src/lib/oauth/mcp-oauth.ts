@@ -36,6 +36,7 @@ import type {
 } from "@mcpjam/sdk/browser";
 import type { HttpServerConfig } from "@mcpjam/sdk/browser";
 import { generateRandomString } from "./pkce";
+import { readIssuerKeyed, writeIssuerKeyed } from "./issuer-keyed-storage";
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE, SANITIZE_OAUTH_TRACES } from "@/lib/config";
 import {
@@ -1943,27 +1944,57 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     };
   }
 
-  private readStoredClientInformation(): Record<string, any> | undefined {
-    const stored = localStorage.getItem(`mcp-client-${this.serverName}`);
-    let storedJson: unknown;
-    try {
-      storedJson = stored ? JSON.parse(stored) : undefined;
-    } catch {
-      return undefined;
-    }
-    if (!storedJson || typeof storedJson !== "object") {
-      return undefined;
-    }
-    const storedClientInformation = Object.fromEntries(
-      Object.entries(storedJson).filter(([key]) => key !== "client_secret")
+  /**
+   * The exact authorization-server issuer for the active flow, sourced
+   * best-effort so client-info/token storage can be BOUND to it (SEP-2352):
+   * persisted discovery first, then the in-flight OAuth session's recorded
+   * issuer. Undefined only before any AS discovery has resolved — in which
+   * case storage stays unkeyed and is promoted on the next issuer-stamped save.
+   */
+  private currentIssuer(): string | undefined {
+    const discovery = this.discoveryState();
+    const fromDiscovery =
+      (
+        discovery?.authorizationServerMetadata as
+          | { issuer?: string }
+          | undefined
+      )?.issuer ?? discovery?.authorizationServerUrl;
+    if (fromDiscovery) return fromDiscovery;
+    const session = loadOAuthFlowSession(this.serverName);
+    return (
+      session?.state.recordedIssuer ??
+      session?.state.authorizationServerMetadata?.issuer
     );
-    if ("client_secret" in storedJson) {
+  }
+
+  private readStoredClientInformation(): Record<string, any> | undefined {
+    const raw = localStorage.getItem(`mcp-client-${this.serverName}`);
+    const issuer = this.currentIssuer();
+    const { value } = readIssuerKeyed<Record<string, any>>(
+      raw,
+      issuer,
+      (parsed) =>
+        parsed && typeof parsed === "object"
+          ? (parsed as Record<string, any>)
+          : undefined
+    );
+    if (!value || typeof value !== "object") {
+      return undefined;
+    }
+    // Defense-in-depth: a client_secret must never persist on disk. If a legacy
+    // record still carries one, strip and re-persist (keyed when the issuer is
+    // known, else unkeyed until the next issuer-stamped save promotes it).
+    if ("client_secret" in value) {
+      const stripped = Object.fromEntries(
+        Object.entries(value).filter(([key]) => key !== "client_secret")
+      );
       localStorage.setItem(
         `mcp-client-${this.serverName}`,
-        JSON.stringify(storedClientInformation)
+        JSON.stringify(issuer ? writeIssuerKeyed(raw, issuer, stripped) : stripped)
       );
+      return stripped;
     }
-    return storedClientInformation;
+    return value;
   }
 
   private async loadStoredClientSecret(): Promise<string | undefined> {
@@ -2055,9 +2086,19 @@ export class MCPOAuthProvider implements OAuthClientProvider {
             )
           )
         : clientInformation;
+    // SEP-2352: bind the registration to the exact issuer that granted it.
+    // When the issuer is resolved, persist issuer-keyed (a later AS change then
+    // gets its own bucket — an AS-A client id is never reused for AS B). Before
+    // any AS discovery, store unkeyed; the next issuer-stamped save promotes it.
+    const issuer = this.currentIssuer();
+    const raw = localStorage.getItem(`mcp-client-${this.serverName}`);
     localStorage.setItem(
       `mcp-client-${this.serverName}`,
-      JSON.stringify(clientInformationToStore)
+      JSON.stringify(
+        issuer
+          ? writeIssuerKeyed(raw, issuer, clientInformationToStore)
+          : clientInformationToStore
+      )
     );
   }
 
@@ -2407,24 +2448,42 @@ function readStoredClientInformation(
   serverName: string
 ): StoredOAuthClientInformation {
   try {
-    const stored = localStorage.getItem(`mcp-client-${serverName}`);
-    if (!stored) {
+    const raw = localStorage.getItem(`mcp-client-${serverName}`);
+    // No issuer context at this call site (bootstrap reads) — default to the
+    // active issuer's bucket (or a legacy unkeyed value).
+    const { value, legacyUnbound } = readIssuerKeyed<Record<string, unknown>>(
+      raw,
+      undefined,
+      (parsed) =>
+        parsed && typeof parsed === "object"
+          ? (parsed as Record<string, unknown>)
+          : undefined
+    );
+    if (!value || typeof value !== "object") {
       return {};
     }
-
-    const parsed = JSON.parse(stored) as StoredOAuthClientInformation;
-    if (parsed && typeof parsed === "object" && "client_secret" in parsed) {
+    // Purge a secret lingering in a legacy (unkeyed) record. Keyed saves
+    // already strip, so only the legacy form needs in-place sanitization.
+    if (legacyUnbound && "client_secret" in value) {
       const sanitized = Object.fromEntries(
-        Object.entries(parsed).filter(([key]) => key !== "client_secret")
+        Object.entries(value).filter(([key]) => key !== "client_secret")
       );
       localStorage.setItem(
         `mcp-client-${serverName}`,
         JSON.stringify(sanitized)
       );
+      return {
+        client_id:
+          typeof sanitized.client_id === "string"
+            ? (sanitized.client_id as string)
+            : undefined,
+      };
     }
     return {
       client_id:
-        typeof parsed.client_id === "string" ? parsed.client_id : undefined,
+        typeof value.client_id === "string"
+          ? (value.client_id as string)
+          : undefined,
     };
   } catch {
     return {};
@@ -2541,31 +2600,39 @@ export async function initiateOAuth(
     // Store custom client id if provided, so it can be retrieved during callback.
     // Client secrets are stored in the encrypted backend server-secret table.
     if (options.clientId) {
-      const existingClientInfo = localStorage.getItem(
-        `mcp-client-${options.serverName}`
+      const raw = localStorage.getItem(`mcp-client-${options.serverName}`);
+      // Read the existing value (active-issuer bucket or legacy) via the
+      // issuer-keyed reader so we merge into — not mangle — a v2 record.
+      const { value: existingValue } = readIssuerKeyed<Record<string, unknown>>(
+        raw,
+        undefined,
+        (parsed) =>
+          parsed && typeof parsed === "object"
+            ? (parsed as Record<string, unknown>)
+            : undefined
       );
-      let existingJsonRaw: any = {};
-      if (existingClientInfo) {
-        try {
-          existingJsonRaw = JSON.parse(existingClientInfo);
-        } catch {
-          existingJsonRaw = {};
+      const merged: Record<string, unknown> = {
+        ...(existingValue ?? {}),
+        client_id: options.clientId,
+      };
+      delete merged.client_secret;
+      // Preserve issuer-keying when a bound record already exists; otherwise
+      // store unkeyed (no issuer resolved at initiate) — promoted on the next
+      // issuer-stamped save.
+      let activeIssuer: string | undefined;
+      try {
+        const parsedRaw = raw ? (JSON.parse(raw) as { v?: number; activeIssuer?: string }) : undefined;
+        if (parsedRaw?.v === 2 && typeof parsedRaw.activeIssuer === "string") {
+          activeIssuer = parsedRaw.activeIssuer;
         }
+      } catch {
+        /* legacy/corrupt — store unkeyed */
       }
-      const existingJson = Object.fromEntries(
-        Object.entries(existingJsonRaw).filter(
-          ([key]) => key !== "client_secret"
-        )
-      );
-
-      const updatedClientInfo: any = { ...existingJson };
-      if (options.clientId) {
-        updatedClientInfo.client_id = options.clientId;
-      }
-
       localStorage.setItem(
         `mcp-client-${options.serverName}`,
-        JSON.stringify(updatedClientInfo)
+        JSON.stringify(
+          activeIssuer ? writeIssuerKeyed(raw, activeIssuer, merged) : merged
+        )
       );
     }
 
