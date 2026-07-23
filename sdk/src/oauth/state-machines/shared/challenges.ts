@@ -79,12 +79,13 @@ export interface InsufficientScopeChallenge {
  * quote) into the Bearer parse. Tokenize quote-aware, group segments into
  * challenges (a segment that starts with `<scheme> <rest>` opens a new
  * challenge; a bare `key=value` segment continues the current one), and return
- * only the Bearer challenge's auth-params (last one wins), re-prefixed so the
- * delegated `Bearer …` parser reads exactly those.
+ * the parsed auth-params of EVERY Bearer challenge — the caller selects the
+ * applicable one (an `insufficient_scope` challenge must not be hidden by a
+ * later realm-only Bearer under last-challenge-wins).
  */
-function selectBearerChallenge(header?: string): string | undefined {
+function parseBearerChallenges(header?: string): Array<Record<string, string>> {
   if (!header) {
-    return undefined;
+    return [];
   }
 
   // Split on commas that are not inside a double-quoted string.
@@ -121,17 +122,21 @@ function selectBearerChallenge(header?: string): string | undefined {
     }
   }
 
-  // Last Bearer challenge wins (mirrors last-value-wins param parsing).
-  const bearer = challenges.filter((c) => c.scheme === "bearer").pop();
-  return bearer ? `Bearer ${bearer.params.join(", ")}` : undefined;
+  return challenges
+    .filter((c) => c.scheme === "bearer")
+    .map((c) => parseBearerAuthenticateParameters(`Bearer ${c.params.join(", ")}`));
 }
 
 export function parseInsufficientScopeChallenge(
   header?: string,
 ): InsufficientScopeChallenge {
-  const params = parseBearerAuthenticateParameters(
-    selectBearerChallenge(header),
-  );
+  const bearerChallenges = parseBearerChallenges(header);
+  // Select the insufficient_scope challenge among ALL Bearer challenges — a
+  // later realm-only Bearer must not hide an earlier insufficient_scope one.
+  const params =
+    bearerChallenges.find((p) => p.error === "insufficient_scope") ??
+    bearerChallenges[0] ??
+    {};
   const isInsufficientScope = params.error === "insufficient_scope";
   return {
     isInsufficientScope,

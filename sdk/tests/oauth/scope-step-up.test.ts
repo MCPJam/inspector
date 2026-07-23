@@ -63,6 +63,15 @@ describe("parseInsufficientScopeChallenge (RFC 6750 / SEP-2350)", () => {
     expect(c.challengedScopes).toBeUndefined();
   });
 
+  it("does not let a later realm-only Bearer hide an earlier insufficient_scope", () => {
+    // Reviewer repro: last-Bearer-wins would return isInsufficientScope=false.
+    const c = parseInsufficientScopeChallenge(
+      'Bearer error="insufficient_scope", scope="admin", Bearer realm="fallback"',
+    );
+    expect(c.isInsufficientScope).toBe(true);
+    expect(c.challengedScopes).toEqual(["admin"]);
+  });
+
   it("is not fooled by a fabricated challenge hidden inside a quoted value", () => {
     // The quoted realm contains a comma and a fake `Bearer error=…`; quote-aware
     // splitting keeps it as one Basic auth-param, so no insufficient_scope.
