@@ -10,7 +10,7 @@ The OAuth conformance module runs real OAuth handshakes against your MCP server 
 
 - **Each MCP client exercises OAuth slightly differently.** Passing conformance means your server works for all of them.
 - **OAuth bugs are silent.** A valid-looking token can be rejected by MCP authentication downstream. Users see "failed to connect" with no context. `--verify-tools` catches this.
-- **3 registration strategies x 3 protocol versions x 3 auth modes** = 27 possible flow combinations. The suite runner covers the matrix in one invocation.
+- **3 registration strategies x 4 protocol versions x 3 auth modes** = 36 possible flow combinations. The suite runner covers the matrix in one invocation.
 - **CI-ready output.** `--reporter junit-xml` for dashboards. Exit 0/1/2 for scripts.
 
 ## Quick start
