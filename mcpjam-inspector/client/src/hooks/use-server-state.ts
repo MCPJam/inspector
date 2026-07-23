@@ -3065,6 +3065,7 @@ export function useServerState({
               config: serverConfig,
               tokens: undefined,
               useOAuth: true,
+              oauthFlowProfile: serverEntryForSave.oauthFlowProfile,
             });
             // An Auto server may have connected without credentials — don't
             // claim OAuth happened when it didn't.
@@ -3206,6 +3207,7 @@ export function useServerState({
                   tokens: undefined,
                   useOAuth: true,
                   oauthTrace: oauthResult.oauthTrace,
+                  oauthFlowProfile: serverEntryForSave.oauthFlowProfile,
                 });
                 toast.success("Connected successfully with OAuth!");
                 storeInitInfo(formData.name, connectionResult.initInfo).catch(
@@ -3274,6 +3276,7 @@ export function useServerState({
             name: formData.name,
             config: mcpConfig,
             useOAuth: formData.useOAuth ?? false,
+            oauthFlowProfile: serverEntryForSave.oauthFlowProfile,
           });
           // Env now persists on the Convex server doc via syncServerToConvex;
           // no localStorage write needed. The resolver returns env in the

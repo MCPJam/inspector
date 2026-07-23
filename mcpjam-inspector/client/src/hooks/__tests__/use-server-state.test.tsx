@@ -1027,6 +1027,11 @@ describe("useServerState OAuth callback failures", () => {
       ([action]) => action?.type === "CONNECT_SUCCESS",
     );
     expect(successCall?.[0]?.config?.mcpProtocolVersion).not.toBe("2026-07-28");
+    // The profile must also be refreshed so a later reconnect's OAuth-profile
+    // fallback doesn't revive 2026 from stale state.
+    expect(successCall?.[0]?.oauthFlowProfile?.protocolVersion).not.toBe(
+      "2026-07-28",
+    );
   });
 
   it("imports debugger-applied OAuth tokens before reconnecting in hosted mode", async () => {

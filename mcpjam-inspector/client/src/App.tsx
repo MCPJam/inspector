@@ -2611,6 +2611,10 @@ export default function App() {
     activeMcpProfile,
     hostedServerIdsByName,
     projectServerConfigDto?.overrides,
+    // The hosted protocol-version map now derives the OAuth-era pin from each
+    // server's config/OAuth profile, so it must recompute when server state
+    // changes (e.g. a modal-saved 2026 profile or a persisted config pin).
+    appState.servers,
   ]);
   useApiContext({
     projectId: convexProjectId,
