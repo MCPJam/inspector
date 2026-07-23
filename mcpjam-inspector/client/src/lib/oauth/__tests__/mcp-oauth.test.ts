@@ -1920,6 +1920,49 @@ describe("mcp-oauth", () => {
       expect(raw).toContain("client-for-as-b");
     });
 
+    it("ignores a stale envelope activeIssuer in favor of the discovered issuer (review F4/F5)", async () => {
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      // Seed a v2 envelope whose activeIssuer still points at AS A.
+      localStorage.setItem(
+        "mcp-client-stale-issuer",
+        JSON.stringify({
+          v: 2,
+          activeIssuer: "https://as-a.example.com",
+          byIssuer: {
+            "https://as-a.example.com": { client_id: "client-for-as-a" },
+          },
+        })
+      );
+      const provider = new MCPOAuthProvider(
+        "stale-issuer",
+        "https://mcp.example.com/sse"
+      );
+      // Discovery has since moved to AS B.
+      await provider.saveDiscoveryState({
+        ...createDiscoveryState(),
+        authorizationServerUrl: "https://as-b.example.com",
+        authorizationServerMetadata: { issuer: "https://as-b.example.com" },
+      } as any);
+
+      // The stale AS-A credential must NOT be returned for AS B, even though it
+      // is the envelope's activeIssuer bucket.
+      expect(await provider.clientInformation()).toBeUndefined();
+
+      // A save keys to the discovered issuer (AS B), leaving AS A's bucket
+      // intact rather than overwriting it.
+      await provider.saveClientInformation({ client_id: "client-for-as-b" });
+      const raw = JSON.parse(
+        localStorage.getItem("mcp-client-stale-issuer") || "{}"
+      );
+      expect(raw.byIssuer["https://as-b.example.com"].client_id).toBe(
+        "client-for-as-b"
+      );
+      expect(raw.byIssuer["https://as-a.example.com"].client_id).toBe(
+        "client-for-as-a"
+      );
+      expect(raw.activeIssuer).toBe("https://as-b.example.com");
+    });
+
     it("preserves the original callback error and verifier when registry token exchange fails", async () => {
       authFetch.mockImplementationOnce(async (input: RequestInfo | URL) => {
         const url =

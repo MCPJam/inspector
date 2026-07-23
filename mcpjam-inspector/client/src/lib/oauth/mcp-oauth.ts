@@ -1952,19 +1952,9 @@ export class MCPOAuthProvider implements OAuthClientProvider {
    * case storage stays unkeyed and is promoted on the next issuer-stamped save.
    */
   private currentIssuer(): string | undefined {
-    const discovery = this.discoveryState();
-    const fromDiscovery =
-      (
-        discovery?.authorizationServerMetadata as
-          | { issuer?: string }
-          | undefined
-      )?.issuer ?? discovery?.authorizationServerUrl;
-    if (fromDiscovery) return fromDiscovery;
-    const session = loadOAuthFlowSession(this.serverName);
-    return (
-      session?.state.recordedIssuer ??
-      session?.state.authorizationServerMetadata?.issuer
-    );
+    // Delegate to the standalone resolver so the provider and the bootstrap
+    // reads/writes share one issuer-resolution rule (no drift).
+    return resolveStoredIssuer(this.serverName, this.serverUrl);
   }
 
   private readStoredClientInformation(): Record<string, any> | undefined {
@@ -2190,27 +2180,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   }
 
   discoveryState(): OAuthDiscoveryState | undefined {
-    const stored = localStorage.getItem(
-      getDiscoveryStorageKey(this.serverName)
-    );
-    if (!stored) {
-      return undefined;
-    }
-
-    try {
-      const parsed = JSON.parse(stored) as Partial<StoredOAuthDiscoveryState>;
-      if (
-        parsed?.serverUrl !== this.serverUrl ||
-        typeof parsed.discoveryState !== "object" ||
-        parsed.discoveryState === null
-      ) {
-        return undefined;
-      }
-
-      return parsed.discoveryState;
-    } catch {
-      return undefined;
-    }
+    return loadStoredDiscoveryState(this.serverName, this.serverUrl);
   }
 
   async saveDiscoveryState(discoveryState: OAuthDiscoveryState) {
@@ -2444,16 +2414,78 @@ function createMCPOAuthProvider(input: {
   );
 }
 
+/**
+ * Standalone twin of `MCPOAuthProvider.discoveryState()` — reads the persisted
+ * discovery state for a server, validating the stored `serverUrl` when the
+ * caller can supply it.
+ */
+function loadStoredDiscoveryState(
+  serverName: string,
+  serverUrl?: string
+): OAuthDiscoveryState | undefined {
+  const stored = localStorage.getItem(getDiscoveryStorageKey(serverName));
+  if (!stored) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(stored) as Partial<StoredOAuthDiscoveryState>;
+    if (
+      (serverUrl !== undefined && parsed?.serverUrl !== serverUrl) ||
+      typeof parsed.discoveryState !== "object" ||
+      parsed.discoveryState === null
+    ) {
+      return undefined;
+    }
+    return parsed.discoveryState;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Standalone twin of `MCPOAuthProvider.currentIssuer()` — resolve the exact
+ * authorization-server issuer this server's flow is bound to (persisted
+ * discovery first, then the in-flight session's recorded issuer). Returns
+ * undefined before any AS is resolved; callers must NOT fall back to a stored
+ * envelope's `activeIssuer`, which may be a stale AS after a PRM change.
+ */
+function resolveStoredIssuer(
+  serverName: string,
+  serverUrl?: string
+): string | undefined {
+  const discovery = loadStoredDiscoveryState(serverName, serverUrl);
+  const fromDiscovery =
+    (discovery?.authorizationServerMetadata as { issuer?: string } | undefined)
+      ?.issuer ?? discovery?.authorizationServerUrl;
+  if (fromDiscovery) {
+    return fromDiscovery;
+  }
+  const session = loadOAuthFlowSession(serverName);
+  return (
+    session?.state.recordedIssuer ??
+    session?.state.authorizationServerMetadata?.issuer
+  );
+}
+
 function readStoredClientInformation(
-  serverName: string
+  serverName: string,
+  serverUrl?: string
 ): StoredOAuthClientInformation {
   try {
     const raw = localStorage.getItem(`mcp-client-${serverName}`);
-    // No issuer context at this call site (bootstrap reads) — default to the
-    // active issuer's bucket (or a legacy unkeyed value).
+    // Bind the read to the exact resolved issuer. Without a resolved issuer we
+    // must NOT fall back to the envelope's `activeIssuer` bucket: after a PRM
+    // change that bucket is a different AS's credential, and returning it here
+    // would let it override the provider's exact-issuer lookup as a bootstrapped
+    // `customClientId` (SEP-2352). The provider's own issuer-keyed
+    // `clientInformation()` supplies the client once discovery resolves.
+    const issuer = resolveStoredIssuer(serverName, serverUrl);
+    if (!issuer) {
+      return {};
+    }
     const { value, legacyUnbound } = readIssuerKeyed<Record<string, unknown>>(
       raw,
-      undefined,
+      issuer,
       (parsed) =>
         parsed && typeof parsed === "object"
           ? (parsed as Record<string, unknown>)
@@ -2601,11 +2633,18 @@ export async function initiateOAuth(
     // Client secrets are stored in the encrypted backend server-secret table.
     if (options.clientId) {
       const raw = localStorage.getItem(`mcp-client-${options.serverName}`);
-      // Read the existing value (active-issuer bucket or legacy) via the
-      // issuer-keyed reader so we merge into — not mangle — a v2 record.
+      // Key the write to the CURRENT resolved issuer (discovery has run by the
+      // time initiate persists a configured client id). Using the envelope's
+      // previous `activeIssuer` would write the configured id into AS A's bucket
+      // after a PRM change to AS B, overwriting A and leaving no B bucket
+      // (SEP-2352). Before any AS is resolved, store unkeyed — promoted on the
+      // next issuer-stamped save.
+      const issuer = resolveStoredIssuer(options.serverName, options.serverUrl);
+      // Merge into the SAME issuer's existing record (not the active-issuer
+      // bucket) so we neither mangle a v2 record nor inherit another AS's fields.
       const { value: existingValue } = readIssuerKeyed<Record<string, unknown>>(
         raw,
-        undefined,
+        issuer,
         (parsed) =>
           parsed && typeof parsed === "object"
             ? (parsed as Record<string, unknown>)
@@ -2616,22 +2655,10 @@ export async function initiateOAuth(
         client_id: options.clientId,
       };
       delete merged.client_secret;
-      // Preserve issuer-keying when a bound record already exists; otherwise
-      // store unkeyed (no issuer resolved at initiate) — promoted on the next
-      // issuer-stamped save.
-      let activeIssuer: string | undefined;
-      try {
-        const parsedRaw = raw ? (JSON.parse(raw) as { v?: number; activeIssuer?: string }) : undefined;
-        if (parsedRaw?.v === 2 && typeof parsedRaw.activeIssuer === "string") {
-          activeIssuer = parsedRaw.activeIssuer;
-        }
-      } catch {
-        /* legacy/corrupt — store unkeyed */
-      }
       localStorage.setItem(
         `mcp-client-${options.serverName}`,
         JSON.stringify(
-          activeIssuer ? writeIssuerKeyed(raw, activeIssuer, merged) : merged
+          issuer ? writeIssuerKeyed(raw, issuer, merged) : merged
         )
       );
     }
