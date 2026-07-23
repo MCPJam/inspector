@@ -1,4 +1,11 @@
-import { useCallback, useContext, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Card } from "@mcpjam/design-system/card";
@@ -79,10 +86,12 @@ import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { ServersLoadingSkeleton } from "@mcpjam/design-system/servers-loading-skeleton";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
-import type {
-  ProjectServerConfigDto,
-  ProjectServerConfigInput,
+import {
+  applyMcpProtocolVersionOverride,
+  type ProjectServerConfigDto,
+  type ProjectServerConfigInput,
 } from "@/lib/project-server-config";
+import type { McpProtocolVersion } from "@/lib/client-config-v2";
 import {
   resetAutoConnectAttempts,
   useAutoConnectProjectServers,
@@ -1306,6 +1315,68 @@ export function ServersTab({
     [focusLoggerOnServer, onReconnect, isAppBootstrapping, appReadyMessage]
   );
 
+  // Protocol pin chosen in the Add Server modal. The pin is persisted on
+  // the project layer (`projectServerConfig` overrides) keyed by the hosted
+  // server row's `_id` — which doesn't exist until the add flow's Convex
+  // sync lands. Stash the (name, version) pair here and let the effect
+  // below apply it once the hosted row appears in `remoteServersByName`,
+  // then reconnect so the pin actually takes effect on the wire (mirrors
+  // the edit flow's save→reconnect behavior in `ServerDetailModal`).
+  const [pendingAddProtocolPin, setPendingAddProtocolPin] = useState<{
+    serverName: string;
+    version: McpProtocolVersion;
+  } | null>(null);
+  // Guards double-fire while the async apply is in flight (the effect
+  // re-runs on every reactive update of the DTO / server list).
+  const isApplyingAddProtocolPinRef = useRef(false);
+  useEffect(() => {
+    if (!pendingAddProtocolPin) return;
+    if (isApplyingAddProtocolPinRef.current) return;
+    if (!sharedProjectIdForHostScope) return;
+    // Wait for BOTH the hosted server row and the config DTO to hydrate —
+    // `applyMcpProtocolVersionOverride` replaces the whole (serverIds,
+    // overrides) pair, so writing against a still-loading DTO would wipe
+    // other servers' overrides. `null` (no row yet) is a valid baseline.
+    if (projectServerConfigDto === undefined) return;
+    const serverId = remoteServersByName[pendingAddProtocolPin.serverName]?._id;
+    if (!serverId) return;
+    const { serverName, version } = pendingAddProtocolPin;
+    isApplyingAddProtocolPinRef.current = true;
+    void (async () => {
+      try {
+        await applyMcpProtocolVersionOverride({
+          projectId: sharedProjectIdForHostScope,
+          serverId,
+          current: projectServerConfigDto,
+          next: version,
+          setConfig: setProjectServerConfigMutation,
+        });
+        // Reconnect so the just-saved pin governs the live connection.
+        // Non-interactive on purpose: the add flow may already be running
+        // an OAuth escalation; don't stack a second interactive flow.
+        await handleReconnectServer(serverName, {
+          allowInteractiveOAuthFlow: false,
+        });
+      } catch (err) {
+        toast.error(
+          err instanceof Error
+            ? `Server added, but saving its protocol version failed: ${err.message}`
+            : "Server added, but saving its protocol version failed."
+        );
+      } finally {
+        isApplyingAddProtocolPinRef.current = false;
+        setPendingAddProtocolPin(null);
+      }
+    })();
+  }, [
+    pendingAddProtocolPin,
+    sharedProjectIdForHostScope,
+    projectServerConfigDto,
+    remoteServersByName,
+    setProjectServerConfigMutation,
+    handleReconnectServer,
+  ]);
+
   const clearPendingQuickConnectIfMatches = useCallback(
     (serverName: string) => {
       if (pendingQuickConnect?.serverName !== serverName) {
@@ -2008,6 +2079,15 @@ export function ServersTab({
           track("connecting_server", {
             location: "servers_tab",
           });
+          // The wire-version pin can't be written until the hosted server
+          // row exists — stash it and let the watcher effect apply it once
+          // the Convex sync surfaces the row, then reconnect with the pin.
+          if (formData.mcpProtocolVersionOverride) {
+            setPendingAddProtocolPin({
+              serverName: formData.name,
+              version: formData.mcpProtocolVersionOverride,
+            });
+          }
           handleConnectServer(formData);
         }}
         projectClientConfig={selectedProject?.clientConfig}
@@ -2016,6 +2096,7 @@ export function ServersTab({
         projectXaaDefaultIdentity={
           selectedProject?.xaaTestDefaults?.defaultIdentity ?? null
         }
+        projectId={sharedProjectIdForHostScope}
       />
 
       {/* JSON Import Modal */}
