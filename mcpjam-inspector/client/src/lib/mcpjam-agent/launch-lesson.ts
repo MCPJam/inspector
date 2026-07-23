@@ -4,12 +4,14 @@ import { appendRecentMcpjamAgentSession } from "@/components/mcpjam-agent/recent
 import { useAgentPanelStore } from "@/stores/agent-panel/agent-panel-store";
 import { track } from "@/lib/analytics";
 import { writePendingAgentPrompt } from "./pending-prompt";
+import { writeTourSystemPrompt } from "./tour-session-prompt";
 
 /**
- * Launches a Learning-tab guided tour: mints a fresh agent chat session seeded
- * with the tour's prompt and opens the always-mounted agent side panel to it.
- * `McpjamAgentThread` consumes the seeded prompt and autosubmits it on mount,
- * so the agent begins the tour on its own.
+ * Launches a Learning-tab guided tour: mints a fresh agent chat session, stows
+ * the tour's instructions in the per-session system-prompt registry, seeds a
+ * short "Start the tour: …" first message, and opens the always-mounted agent
+ * side panel to it. `McpjamAgentThread` consumes the seeded message and
+ * autosubmits it on mount, so the agent begins the tour on its own.
  *
  * This deliberately replicates the side panel's own session-start
  * (`AgentSidePanel.handleSessionStart`) and the home→panel handoff
@@ -149,11 +151,19 @@ export function launchLessonSession({
 
   const sessionId = generateId();
 
+  // The tour's instructions ride in the request system prompt (the agent
+  // transport's body() re-reads this registry on every POST of the session);
+  // the visible, autosubmitted first message stays short and natural.
+  writeTourSystemPrompt(sessionId, {
+    tourId: tour.id,
+    systemPrompt: tour.agentSystemPrompt,
+  });
+
   // Order matters: write the pending prompt BEFORE setActiveSession (which
   // mounts the thread) so the thread's synchronous optimistic-bubble peek sees
   // it, then setActiveSession before setOpen to match the handoff and avoid a
   // one-frame hero flash in the opening panel.
-  writePendingAgentPrompt(sessionId, tour.agentPrompt);
+  writePendingAgentPrompt(sessionId, `Start the tour: ${tour.title}`);
 
   // Pre-seed the recents title so the Recent Chats pill reads "Tour: <title>"
   // instead of the first 50 chars of the lesson prompt (the thread's submit
@@ -178,7 +188,7 @@ export function launchLessonSession({
     tour_id: tour.id,
     session_id: sessionId,
     estimated_minutes: tour.estimatedMinutes,
-    prompt_length: tour.agentPrompt.length,
+    prompt_length: tour.agentSystemPrompt.length,
   });
 
   writeLastLaunch({ tourId: tour.id, sessionId, projectId: resolvedProjectId });

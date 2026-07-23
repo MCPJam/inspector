@@ -28,6 +28,7 @@ import { useUiToolsRegistry } from "@/lib/webmcp/ui-tools-registry";
 import { handleUiToolCall } from "@/lib/webmcp/ui-tool-executor";
 import { createUiAwareApprovalResponseHandler } from "@/lib/webmcp/ui-tool-approval";
 import { useAgentPanelStore } from "@/stores/agent-panel/agent-panel-store";
+import { readTourSystemPrompt } from "./tour-session-prompt";
 import type { ModelDefinition } from "@/shared/types";
 
 const AGENT_API_PATH = "/api/web/mcpjam-agent";
@@ -260,6 +261,13 @@ export function getOrCreateAgentChat(chatSessionId: string): AgentChatEntry {
         // contract as `useChatSession`). The server validates again in
         // `validateUiToolEntries`.
         uiTools: useUiToolsRegistry.getState().snapshotForChatBody(),
+        // Guided-tour instructions for this session, if any (the route
+        // prepends body.systemPrompt to the agent identity prompt). Read at
+        // POST time so the tour context survives reloads and Recent Chats
+        // resume. Constant per session, so the system-prompt prefix stays
+        // cache-stable; `undefined` is dropped at serialization, leaving
+        // non-tour bodies unchanged.
+        systemPrompt: readTourSystemPrompt(chatSessionId) ?? undefined,
       }),
     }),
     // WebMCP UI tools are no-execute server-side; the stream pauses until
