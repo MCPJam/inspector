@@ -70,10 +70,30 @@ export interface InsufficientScopeChallenge {
  * (e.g. `invalid_token`) return `isInsufficientScope: false` so callers do not
  * mistake a plain 401 re-auth for a scope step-up.
  */
+/**
+ * A `WWW-Authenticate` header may list several challenges (RFC 7235 §4.1), e.g.
+ * `Basic realm="x", Bearer error="insufficient_scope"`. The underlying parser
+ * only reads a header that STARTS with `Bearer`, so isolate the Bearer
+ * challenge first — from the last `Bearer ` token, whose auth-params run to the
+ * end of the header — before delegating.
+ */
+function selectBearerChallenge(header?: string): string | undefined {
+  if (!header) {
+    return undefined;
+  }
+  if (/^\s*Bearer\s/i.test(header)) {
+    return header;
+  }
+  const match = header.match(/(?:^|[,\s])(Bearer\s+.*)$/i);
+  return match ? match[1] : undefined;
+}
+
 export function parseInsufficientScopeChallenge(
   header?: string,
 ): InsufficientScopeChallenge {
-  const params = parseBearerAuthenticateParameters(header);
+  const params = parseBearerAuthenticateParameters(
+    selectBearerChallenge(header),
+  );
   const isInsufficientScope = params.error === "insufficient_scope";
   return {
     isInsufficientScope,
@@ -106,7 +126,13 @@ export function resolveStepUpAction(input: {
   attempt: number;
   maxRetries?: number;
 }): StepUpAction {
-  const maxRetries = input.maxRetries ?? 1;
+  // Guard the exported boundary against a non-finite/negative bound (e.g.
+  // Infinity), which would make `attempt < maxRetries` always true and defeat
+  // the loop protection. A non-integer or negative value falls back to 1.
+  const maxRetries =
+    Number.isInteger(input.maxRetries) && (input.maxRetries as number) >= 0
+      ? (input.maxRetries as number)
+      : 1;
   switch (input.authMode) {
     case "m2m":
       return "throw";

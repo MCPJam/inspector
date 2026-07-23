@@ -44,6 +44,14 @@ describe("parseInsufficientScopeChallenge (RFC 6750 / SEP-2350)", () => {
     );
     expect(parseInsufficientScopeChallenge("").isInsufficientScope).toBe(false);
   });
+
+  it("finds the Bearer challenge when another scheme is listed first", () => {
+    const c = parseInsufficientScopeChallenge(
+      'Basic realm="x", Bearer error="insufficient_scope", scope="read write"',
+    );
+    expect(c.isInsufficientScope).toBe(true);
+    expect(c.challengedScopes).toEqual(["read", "write"]);
+  });
 });
 
 describe("resolveStepUpAction (§10.5 policy split, bounded retry)", () => {
@@ -64,6 +72,23 @@ describe("resolveStepUpAction (§10.5 policy split, bounded retry)", () => {
     expect(
       resolveStepUpAction({ authMode: "interactive", attempt: 2, maxRetries: 2 }),
     ).toBe("throw");
+  });
+
+  it("stays bounded when given a non-finite maxRetries (Infinity)", () => {
+    expect(
+      resolveStepUpAction({
+        authMode: "interactive",
+        attempt: 1,
+        maxRetries: Infinity,
+      }),
+    ).toBe("throw");
+    expect(
+      resolveStepUpAction({
+        authMode: "interactive",
+        attempt: 0,
+        maxRetries: Infinity,
+      }),
+    ).toBe("reauthorize");
   });
 
   it("never opens a browser for M2M", () => {

@@ -42,6 +42,20 @@ describe("requested-scopes persistence (2R-stepup, §10.2#4)", () => {
     expect(readRequestedScopes(SERVER, asA)).toBeUndefined();
   });
 
+  it("returns nothing when no issuer is supplied (no activeIssuer fallback)", () => {
+    persistRequestedScopes(SERVER, asA, ["read", "write"]);
+    // A read/step-up before issuer discovery must not reuse the active bucket.
+    expect(readRequestedScopes(SERVER, undefined)).toBeUndefined();
+    expect(stepUpScopeUnion(SERVER, undefined, ["admin"])).toEqual(["admin"]);
+  });
+
+  it("never reuses a legacy unkeyed scope record for any issuer", () => {
+    // A pre-migration record has no issuer binding; it must not be unioned in.
+    localStorage.setItem(`mcp-scopes-${SERVER}`, JSON.stringify(["legacy"]));
+    expect(readRequestedScopes(SERVER, asA)).toBeUndefined();
+    expect(stepUpScopeUnion(SERVER, asA, ["admin"])).toEqual(["admin"]);
+  });
+
   it("unions persisted scopes with a 403 challenge for the step-up request", () => {
     persistRequestedScopes(SERVER, asA, ["read", "write"]);
     expect(stepUpScopeUnion(SERVER, asA, ["write", "admin"])).toEqual([

@@ -49,15 +49,24 @@ export function readRequestedScopes(
   serverName: string,
   issuer: string | undefined,
 ): string[] | undefined {
+  // Never fall back to the envelope's `activeIssuer` (readIssuerKeyed's
+  // no-issuer default) or to a legacy unkeyed record here: a step-up before
+  // issuer discovery, or after an AS switch, must not union another AS's
+  // scopes into the re-authorization (SEP-2352). Only an exact issuer-bound
+  // record is reusable.
+  if (!issuer) {
+    return undefined;
+  }
   const store = getStore();
   if (!store) {
     return undefined;
   }
-  return readIssuerKeyed<string[]>(
+  const read = readIssuerKeyed<string[]>(
     store.getItem(storageKey(serverName)),
     issuer,
     parseLegacyScopes,
-  ).value;
+  );
+  return read.legacyUnbound ? undefined : read.value;
 }
 
 /**
@@ -78,12 +87,17 @@ export function persistRequestedScopes(
   if (normalized.length === 0) {
     return;
   }
-  const next = writeIssuerKeyed<string[]>(
-    store.getItem(storageKey(serverName)),
-    issuer,
-    normalized,
-  );
-  store.setItem(storageKey(serverName), JSON.stringify(next));
+  try {
+    const next = writeIssuerKeyed<string[]>(
+      store.getItem(storageKey(serverName)),
+      issuer,
+      normalized,
+    );
+    store.setItem(storageKey(serverName), JSON.stringify(next));
+  } catch {
+    // Best-effort persistence: a full/unavailable store (quota, private mode)
+    // must not abort the OAuth flow — the step-up simply unions less history.
+  }
 }
 
 /**
