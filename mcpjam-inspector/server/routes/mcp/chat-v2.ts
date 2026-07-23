@@ -705,6 +705,15 @@ chatV2.post("/", async (c) => {
         : null,
     );
 
+    // COMP-16: the host-configured computer working directory — the SAME
+    // `computer.workdir` the bash tool runs in — threaded into the harness path
+    // so its Shell roots under the same directory. Server-resolved config only.
+    const computerWorkdir = (
+      hostRuntimeConfig as { computer?: { workdir?: unknown } } | undefined
+    )?.computer?.workdir;
+    const harnessComputerWorkdir =
+      typeof computerWorkdir === "string" ? computerWorkdir : undefined;
+
     let prepared;
     try {
       prepared = await prepareChatV2({
@@ -857,6 +866,10 @@ chatV2.post("/", async (c) => {
         // Server-executed built-ins forwarded separately so the harness path
         // can hand them to HarnessAgent (MCP-server tools arrive via .mcp.json).
         ...(builtInTools ? { builtInTools } : {}),
+        // COMP-16: root the harness Shell at the configured working directory.
+        ...(harnessComputerWorkdir
+          ? { computerWorkdir: harnessComputerWorkdir }
+          : {}),
         projectId: body.projectId,
         // Phase 3: thread the runtime-config execution scope into the harness
         // path (sandbox reserve, skills, broker, session-state, commit).
