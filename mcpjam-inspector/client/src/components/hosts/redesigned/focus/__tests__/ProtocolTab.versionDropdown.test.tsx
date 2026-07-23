@@ -59,21 +59,51 @@ function Harness({ initial }: { initial: HostConfigInputV2 }) {
  * and inheritance has its own "Client default" entry.
  */
 describe("ProtocolTab protocol-version dropdown", () => {
-  it("offers Automatic and 2026 RC, and never a versioned 'Latest' label", async () => {
+  it("offers Automatic plus every known protocol version, newest first", async () => {
     const user = userEvent.setup();
     render(<Harness initial={emptyHostConfigInputV2()} />);
 
     await user.click(screen.getByRole("combobox"));
 
     expect(
-      await screen.findByRole("option", { name: "Automatic" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("option", { name: "2026 RC (2026-07-28)" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("option", { name: /Latest/i }),
-    ).not.toBeInTheDocument();
+      (await screen.findAllByRole("option")).map((o) => o.textContent),
+    ).toEqual([
+      "Automatic",
+      "2026 RC (2026-07-28)",
+      "Latest (2025-11-25)",
+      "2025-06-18",
+      "2025-03-26",
+    ]);
+  });
+
+  it("pins 'Latest' to the newest non-stateless version, not a hardcoded date", async () => {
+    const user = userEvent.setup();
+    render(<Harness initial={emptyHostConfigInputV2()} />);
+
+    await user.click(screen.getByRole("combobox"));
+
+    // Exactly one option may carry the Latest marker, and it must be the
+    // newest stateful revision — 2026-07-28 is stateless, so it is the RC.
+    const latest = screen.getAllByRole("option").filter((o) =>
+      /^Latest \(/.test(o.textContent ?? ""),
+    );
+    expect(latest).toHaveLength(1);
+    expect(latest[0].textContent).toBe("Latest (2025-11-25)");
+  });
+
+  it("writes the exact literal for a non-RC version", async () => {
+    const user = userEvent.setup();
+    render(<Harness initial={emptyHostConfigInputV2()} />);
+
+    await user.click(screen.getByRole("combobox"));
+    await user.click(screen.getByRole("option", { name: "Latest (2025-11-25)" }));
+
+    // A stateful pin is not cosmetic: it narrows the initialize accept-list.
+    expect(screen.getByTestId("pin").textContent).toBe("2025-11-25");
+
+    await user.click(screen.getByRole("combobox"));
+    await user.click(screen.getByRole("option", { name: "2025-06-18" }));
+    expect(screen.getByTestId("pin").textContent).toBe("2025-06-18");
   });
 
   it("defaults an unpinned host to Automatic and stores no pin", () => {
@@ -99,14 +129,28 @@ describe("ProtocolTab protocol-version dropdown", () => {
     expect(screen.getByTestId("pin").textContent).toBe("<undefined>");
   });
 
-  it("collapses a legacy stateful pin onto Automatic", () => {
+  it("shows a stored legacy pin as itself instead of collapsing it", () => {
     const initial = emptyHostConfigInputV2({
       mcpProfile: { profileVersion: 1, mcpProtocolVersion: "2025-06-18" },
     } as Partial<HostConfigInputV2>);
     render(<Harness initial={initial} />);
 
-    // Legacy literals route through the same stateful path, so the control
-    // shows Automatic rather than inventing a third option for them.
+    // Previously every non-RC literal rendered as the single unpinned entry,
+    // so a genuinely pinned host misreported itself as unpinned.
+    expect(screen.getByRole("combobox")).toHaveTextContent("2025-06-18");
+  });
+
+  it("falls back to Automatic only for values outside the known set", () => {
+    const initial = emptyHostConfigInputV2({
+      mcpProfile: {
+        profileVersion: 1,
+        mcpProtocolVersion: "DRAFT-2027-zzz",
+      },
+    } as unknown as Partial<HostConfigInputV2>);
+    render(<Harness initial={initial} />);
+
+    // No option exists for an unknown literal; Radix would render a blank
+    // trigger if we handed it an unmatched value.
     expect(screen.getByRole("combobox")).toHaveTextContent("Automatic");
   });
 
