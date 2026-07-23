@@ -33,13 +33,14 @@ export interface LearningConcept extends LearningModuleBase {
 
 /**
  * A guided tour — selecting it launches the MCPJam agent in the side panel
- * seeded with `agentPrompt`, rather than opening an in-tab article. Has no
+ * with `agentSystemPrompt` riding in the request system prompt (plus a short
+ * autosubmitted first message), rather than opening an in-tab article. Has no
  * `totalSteps` (the tour isn't a fixed step sequence); the union makes that
  * absence explicit instead of a lying `0`. See `guided-tour-lessons.ts`.
  */
 export interface GuidedTourConcept extends LearningModuleBase {
   kind: "guided";
-  agentPrompt: string;
+  agentSystemPrompt: string;
 }
 
 export type LearningModule = LearningConcept | GuidedTourConcept;
