@@ -135,6 +135,22 @@ export function isPrivateHost(hostname: string): boolean {
   return isDisallowedIpAddress(host);
 }
 
+/**
+ * True for an IPv4-mapped/compatible IPv6 literal whose embedded address is
+ * loopback (127.0.0.0/8), e.g. `::ffff:127.0.0.1` or `::ffff:7f00:1`. Used so
+ * the loopback opt-in treats a mapped-loopback host consistently with a plain
+ * `127.0.0.1`/`::1`; mapped LAN/link-local addresses stay blocked via
+ * `isPrivateHost`.
+ */
+function isMappedLoopbackHost(hostname: string): boolean {
+  const h = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  const dotted = h.match(/^::(?:ffff:)?(\d{1,3})\.\d{1,3}\.\d{1,3}\.\d{1,3}$/);
+  if (dotted) return parseInt(dotted[1], 10) === 127;
+  const hex = h.match(/^::(?:ffff:)?([0-9a-f]{1,4}):[0-9a-f]{1,4}$/);
+  if (hex) return parseInt(hex[1], 16) >> 8 === 127;
+  return false;
+}
+
 /** Thrown when an outbound OAuth metadata fetch targets a blocked host. */
 export class OAuthOutboundUrlBlockedError extends Error {
   readonly url: string;
@@ -180,7 +196,7 @@ export function assertOutboundOAuthUrlAllowed(
   }
 
   const host = url.hostname;
-  if (isLoopbackHost(host)) {
+  if (isLoopbackHost(host) || isMappedLoopbackHost(host)) {
     if (options.allowLoopback === true) {
       return url;
     }

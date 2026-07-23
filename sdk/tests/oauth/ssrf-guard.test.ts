@@ -90,6 +90,28 @@ describe("assertOutboundOAuthUrlAllowed", () => {
       assertOutboundOAuthUrlAllowed("http://localhost/register"),
     ).toThrow(OAuthOutboundUrlBlockedError);
   });
+
+  it("treats IPv4-mapped loopback consistently with plain loopback", () => {
+    // Mapped loopback is allowed under the opt-in, like 127.0.0.1 / ::1 …
+    for (const url of [
+      "http://[::ffff:127.0.0.1]/register",
+      "http://[::ffff:7f00:1]/register",
+    ]) {
+      expect(() =>
+        assertOutboundOAuthUrlAllowed(url, { allowLoopback: true }),
+      ).not.toThrow();
+      // … and blocked without it.
+      expect(() => assertOutboundOAuthUrlAllowed(url)).toThrow(
+        OAuthOutboundUrlBlockedError,
+      );
+    }
+    // The carve-out is loopback-only: mapped LAN stays blocked even with opt-in.
+    expect(() =>
+      assertOutboundOAuthUrlAllowed("http://[::ffff:10.0.0.1]/register", {
+        allowLoopback: true,
+      }),
+    ).toThrow(OAuthOutboundUrlBlockedError);
+  });
 });
 
 describe("factory wraps every machine's executor with the SSRF guard", () => {
