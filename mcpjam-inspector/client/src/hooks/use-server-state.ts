@@ -784,7 +784,7 @@ function getConnectionTransport(serverConfig: MCPServerConfig): string {
  * the pin when a caller passes a rebuilt URL-only config) → the 2026 era
  * implied by the server's saved OAuth profile → host default.
  */
-function resolveEffectiveWireProtocolVersion(input: {
+export function resolveEffectiveWireProtocolVersion(input: {
   serverConfig: MCPServerConfig | undefined;
   server: ServerWithName | undefined;
   serverOverride: McpProtocolVersion | undefined;
@@ -3690,23 +3690,29 @@ export function useServerState({
       });
       localStorage.removeItem(`mcp-tokens-${serverName}`);
 
-      // Preserve an explicit wire protocol pin across the token-apply
-      // reconnect. Rebuilding as `{ url }` alone drops it. (The 2026 era
-      // derived from the OAuth profile is applied centrally in
-      // `buildResolverConnectionDefaults`, which every connect/probe/reconnect
-      // path funnels through, so it is not repeated here — an explicit config
-      // pin still wins there.)
-      const existingConfig = appStateServersRef.current[serverName]?.config;
+      // Stamp the wire era on the config PERSISTED by CONNECT_SUCCESS.
+      // `buildResolverConnectionDefaults` covers the immediate reconnect's wire
+      // negotiation, but the persisted config is what hosted chat/eval/backend
+      // read later (they don't consult the OAuth profile), so it must carry the
+      // pin itself. An explicit stored pin wins; otherwise a just-completed
+      // 2026 OAuth flow is authoritative evidence of the sessionless era (this
+      // is a flow completion, not a form save, so there is no downgrade
+      // ambiguity — the profile reflects the flow that just ran).
+      const existingServer = appStateServersRef.current[serverName];
+      const existingConfig = existingServer?.config;
       const existingWireVersion =
         existingConfig && "mcpProtocolVersion" in existingConfig
           ? existingConfig.mcpProtocolVersion
           : undefined;
+      const oauthFlowWireVersion =
+        existingServer?.oauthFlowProfile?.protocolVersion === "2026-07-28"
+          ? ("2026-07-28" as const)
+          : undefined;
+      const wireVersion = existingWireVersion ?? oauthFlowWireVersion;
 
       const serverConfig = {
         url: serverUrl,
-        ...(existingWireVersion
-          ? { mcpProtocolVersion: existingWireVersion }
-          : {}),
+        ...(wireVersion ? { mcpProtocolVersion: wireVersion } : {}),
       } satisfies HttpServerConfig;
 
       dispatch({

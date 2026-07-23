@@ -213,10 +213,6 @@ export function ProtocolVersionSelector({
                         OIDC <code>application_type</code> sent on Dynamic Client
                         Registration (SEP-837)
                       </li>
-                      <li>
-                        RFC 9207 <code>iss</code> validation before code
-                        redemption
-                      </li>
                     </ul>
                   </div>
                 ) : value === "2025-11-25" ? (

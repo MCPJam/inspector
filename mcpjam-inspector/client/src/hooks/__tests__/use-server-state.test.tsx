@@ -854,6 +854,39 @@ describe("useServerState OAuth callback failures", () => {
     });
   });
 
+  it("persists the 2026 wire pin on a first-time OAuth completion with no prior config pin", async () => {
+    // Regression: applyTokensFromOAuthFlow must stamp the persisted config from
+    // the completed OAuth profile, or hosted connects (which read config pins,
+    // not the OAuth profile) keep using the 2025 initialize path.
+    reconnectServerMock.mockResolvedValueOnce({ success: true, initInfo: null });
+    const appState = createAppState();
+    for (const bucket of [appState.projects.default.servers, appState.servers]) {
+      (bucket["demo-server"] as any).oauthFlowProfile = {
+        serverUrl: "https://example.com/mcp",
+        clientId: "",
+        clientSecret: "",
+        scopes: "",
+        customHeaders: [],
+        protocolVersion: "2026-07-28",
+      };
+    }
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, appState);
+
+    await act(async () => {
+      await result.current.handleConnectWithTokensFromOAuthFlow(
+        "demo-server",
+        { accessToken: "access-token", clientId: "client-id" },
+        "https://example.com/mcp",
+      );
+    });
+
+    const successCall = dispatch.mock.calls.find(
+      ([action]) => action?.type === "CONNECT_SUCCESS",
+    );
+    expect(successCall?.[0]?.config?.mcpProtocolVersion).toBe("2026-07-28");
+  });
+
   it("imports debugger-applied OAuth tokens before reconnecting a synced server", async () => {
     reconnectServerMock.mockResolvedValueOnce({
       success: true,
