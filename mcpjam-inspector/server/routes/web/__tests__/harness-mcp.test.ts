@@ -56,7 +56,12 @@ const post = (serverId: string, headers: Record<string, string> = {}) =>
   app.request(`/api/web/harness-mcp/${serverId}`, {
     method: "POST",
     headers: { "content-type": "application/json", ...headers },
-    body: JSON.stringify({ id: 1, method: "tools/list", params: {} }),
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+      params: {},
+    }),
   });
 
 describe("/api/web/harness-mcp", () => {
@@ -82,6 +87,122 @@ describe("/api/web/harness-mcp", () => {
     expect(data.jsonrpc).toBe("2.0");
     expect(data.result.tools).toEqual([{ name: "echo" }]);
     expect(mockManager.listTools).toHaveBeenCalledWith("srv-a");
+  });
+
+  const postRaw = (bodyText: string) =>
+    app.request(`/api/web/harness-mcp/srv-a`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "X-MCPJam-Proxy-Token": webToken("srv-a"),
+      },
+      body: bodyText,
+    });
+
+  it("returns a JSON-RPC -32700 parse error for garbage bytes (NOT 202)", async () => {
+    const res = await postRaw("this is not json {{{");
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data).toEqual({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32700, message: "Parse error" },
+    });
+  });
+
+  it("returns a JSON-RPC -32600 invalid request when method is missing (NOT 202)", async () => {
+    const res = await postRaw(JSON.stringify({ id: 7, params: {} }));
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error.code).toBe(-32600);
+    expect(data.id).toBe(7);
+  });
+
+  it("returns -32600 for non-object JSON bodies (null, arrays, scalars)", async () => {
+    for (const bodyText of ["null", "[]", '"hi"', "42"]) {
+      const res = await postRaw(bodyText);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error.code).toBe(-32600);
+      expect(data.id).toBe(null);
+    }
+  });
+
+  // #3041 review: a JSON-RPC batch (top-level array) is not a supported MCP
+  // message (MCP 2025-06-18 removed batching; the bridge handles one request).
+  it("returns -32600 with id null for a JSON-RPC batch array (NOT 202)", async () => {
+    const res = await postRaw(
+      JSON.stringify([{ jsonrpc: "2.0", id: 1, method: "tools/list" }]),
+    );
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error.code).toBe(-32600);
+    expect(data.id).toBe(null);
+  });
+
+  // #3041 review: a PRESENT but wrong `jsonrpc` version is malformed → -32600.
+  it("returns -32600 for a present but invalid `jsonrpc` version", async () => {
+    const res = await postRaw(
+      JSON.stringify({ jsonrpc: "1.0", id: 5, method: "tools/list" }),
+    );
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error.code).toBe(-32600);
+    expect(data.id).toBe(5);
+  });
+
+  // ...but an ABSENT `jsonrpc` is tolerated (spec-lenient tunneled clients):
+  // a valid method still forwards through the bridge, it is NOT rejected.
+  it("tolerates an absent `jsonrpc` when the method is valid (forwards, no -32600)", async () => {
+    const res = await postRaw(
+      JSON.stringify({ id: 8, method: "tools/list", params: {} }),
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.result.tools).toEqual([{ name: "echo" }]);
+  });
+
+  // #3041 review: an invalid `id` (object/array) must be normalized to null in
+  // the error response so it stays valid JSON-RPC the client can parse.
+  it("normalizes a non-scalar id to null in the error response", async () => {
+    const res = await postRaw(
+      JSON.stringify({ jsonrpc: "2.0", id: { bad: 1 }, params: {} }),
+    );
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error.code).toBe(-32600);
+    expect(data.id).toBe(null);
+  });
+
+  // #3041 re-review: a non-scalar `id` on an otherwise-VALID request must be
+  // rejected at the gate — else it reaches the bridge and gets echoed verbatim
+  // into a SUCCESS response, emitting an invalid JSON-RPC id.
+  it("rejects a non-scalar id even when the method is valid (NOT a 200)", async () => {
+    const res = await postRaw(
+      JSON.stringify({ jsonrpc: "2.0", id: {}, method: "tools/list" }),
+    );
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error.code).toBe(-32600);
+    expect(data.id).toBe(null);
+  });
+
+  // #3041 re-review: non-structured `params` (a scalar) is invalid per JSON-RPC.
+  it("rejects non-structured params (scalar) even with a valid method", async () => {
+    const res = await postRaw(
+      JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/list", params: 5 }),
+    );
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error.code).toBe(-32600);
+    expect(data.id).toBe(3);
+  });
+
+  it("still 202s a real notification (method present, no id)", async () => {
+    const res = await postRaw(
+      JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+    );
+    expect(res.status).toBe(202);
   });
 
   it("wires an rpcLogger that publishes the sandbox's MCP traffic to the rpc-log bus", async () => {
