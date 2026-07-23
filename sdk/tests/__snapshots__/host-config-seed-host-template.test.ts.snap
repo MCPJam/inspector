@@ -3454,61 +3454,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "local-network-access": "'src'",
           },
           "csp": {
-            "cspDirectives": {
-              "base-uri": [
-                "'self'",
-              ],
-              "connect-src": [
-                "'self'",
-                "https://api.openai.com",
-                "https://api.anthropic.com",
-                "https://cdn.jsdelivr.net",
-              ],
-              "default-src": [
-                "'none'",
-              ],
-              "font-src": [
-                "'self'",
-                "https://cdn.jsdelivr.net",
-              ],
-              "frame-src": [
-                "'none'",
-              ],
-              "img-src": [
-                "'self'",
-                "data:",
-                "https://cdn.jsdelivr.net",
-              ],
-              "media-src": [
-                "'self'",
-                "data:",
-                "https://cdn.jsdelivr.net",
-              ],
-              "object-src": [
-                "'none'",
-              ],
-              "script-src": [
-                "'self'",
-                "'unsafe-inline'",
-                "https://cdn.jsdelivr.net",
-              ],
-              "style-src": [
-                "'self'",
-                "'unsafe-inline'",
-                "https://cdn.jsdelivr.net",
-              ],
-            },
             "mode": "declared",
-            "restrictTo": {
-              "connectDomains": [
-                "https://api.openai.com",
-                "https://api.anthropic.com",
-                "https://cdn.jsdelivr.net",
-              ],
-              "resourceDomains": [
-                "https://cdn.jsdelivr.net",
-              ],
-            },
           },
           "permissions": {
             "allow": {
@@ -3740,61 +3686,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "local-network-access": "'src'",
           },
           "csp": {
-            "cspDirectives": {
-              "base-uri": [
-                "'self'",
-              ],
-              "connect-src": [
-                "'self'",
-                "https://api.openai.com",
-                "https://api.anthropic.com",
-                "https://cdn.jsdelivr.net",
-              ],
-              "default-src": [
-                "'none'",
-              ],
-              "font-src": [
-                "'self'",
-                "https://cdn.jsdelivr.net",
-              ],
-              "frame-src": [
-                "'none'",
-              ],
-              "img-src": [
-                "'self'",
-                "data:",
-                "https://cdn.jsdelivr.net",
-              ],
-              "media-src": [
-                "'self'",
-                "data:",
-                "https://cdn.jsdelivr.net",
-              ],
-              "object-src": [
-                "'none'",
-              ],
-              "script-src": [
-                "'self'",
-                "'unsafe-inline'",
-                "https://cdn.jsdelivr.net",
-              ],
-              "style-src": [
-                "'self'",
-                "'unsafe-inline'",
-                "https://cdn.jsdelivr.net",
-              ],
-            },
             "mode": "declared",
-            "restrictTo": {
-              "connectDomains": [
-                "https://api.openai.com",
-                "https://api.anthropic.com",
-                "https://cdn.jsdelivr.net",
-              ],
-              "resourceDomains": [
-                "https://cdn.jsdelivr.net",
-              ],
-            },
           },
           "permissions": {
             "allow": {

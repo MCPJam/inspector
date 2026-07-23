@@ -1724,40 +1724,10 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           compatRuntime: { openaiApps: false },
           sandbox: {
             csp: {
+              // The captured OpenAI, Anthropic, and jsDelivr entries were
+              // granted to the host-probe resource because it declared them;
+              // they are not a global VS Code allowlist.
               mode: "declared",
-              restrictTo: {
-                connectDomains: [
-                  "https://api.openai.com",
-                  "https://api.anthropic.com",
-                  "https://cdn.jsdelivr.net",
-                ],
-                resourceDomains: ["https://cdn.jsdelivr.net"],
-              },
-              cspDirectives: {
-                "default-src": ["'none'"],
-                "script-src": [
-                  "'self'",
-                  "'unsafe-inline'",
-                  "https://cdn.jsdelivr.net",
-                ],
-                "style-src": [
-                  "'self'",
-                  "'unsafe-inline'",
-                  "https://cdn.jsdelivr.net",
-                ],
-                "connect-src": [
-                  "'self'",
-                  "https://api.openai.com",
-                  "https://api.anthropic.com",
-                  "https://cdn.jsdelivr.net",
-                ],
-                "img-src": ["'self'", "data:", "https://cdn.jsdelivr.net"],
-                "font-src": ["'self'", "https://cdn.jsdelivr.net"],
-                "media-src": ["'self'", "data:", "https://cdn.jsdelivr.net"],
-                "frame-src": ["'none'"],
-                "object-src": ["'none'"],
-                "base-uri": ["'self'"],
-              },
             },
             permissions: {
               mode: "custom",

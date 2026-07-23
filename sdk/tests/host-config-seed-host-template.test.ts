@@ -274,6 +274,7 @@ describe("seedHostTemplate", () => {
       "allow-downloads",
       "allow-forms",
     ]);
+    expect(profile?.apps?.sandbox?.csp).toEqual({ mode: "declared" });
   });
 
   it("emptyHostConfigInputV2 deep-clones inputs (no aliasing)", () => {

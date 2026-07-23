@@ -1942,39 +1942,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           sandbox: {
             csp: {
               mode: "declared",
-              restrictTo: {
-                connectDomains: [
-                  "https://api.openai.com",
-                  "https://api.anthropic.com",
-                  "https://cdn.jsdelivr.net",
-                ],
-                resourceDomains: ["https://cdn.jsdelivr.net"],
-              },
-              cspDirectives: {
-                "default-src": ["'none'"],
-                "script-src": [
-                  "'self'",
-                  "'unsafe-inline'",
-                  "https://cdn.jsdelivr.net",
-                ],
-                "style-src": [
-                  "'self'",
-                  "'unsafe-inline'",
-                  "https://cdn.jsdelivr.net",
-                ],
-                "connect-src": [
-                  "'self'",
-                  "https://api.openai.com",
-                  "https://api.anthropic.com",
-                  "https://cdn.jsdelivr.net",
-                ],
-                "img-src": ["'self'", "data:", "https://cdn.jsdelivr.net"],
-                "font-src": ["'self'", "https://cdn.jsdelivr.net"],
-                "media-src": ["'self'", "data:", "https://cdn.jsdelivr.net"],
-                "frame-src": ["'none'"],
-                "object-src": ["'none'"],
-                "base-uri": ["'self'"],
-              },
             },
             permissions: {
               mode: "custom",
