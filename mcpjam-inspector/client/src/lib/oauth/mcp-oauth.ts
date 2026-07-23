@@ -2765,6 +2765,7 @@ export async function completeHostedOAuthCallback(
   authorizationCode: string,
   options: {
     callbackState?: string | null;
+    callbackIss?: string | null;
     onTraceUpdate?: (trace: OAuthTrace) => void;
     authorizationHeader?: string | null;
   } = {}
@@ -2867,6 +2868,13 @@ export async function completeHostedOAuthCallback(
       typeof options.callbackState === "string"
         ? options.callbackState.trim()
         : "";
+    // RFC 9207 authorization-response `iss`. The hosted flow redeems the code
+    // server-side and the browser has no local session/recorded issuer for it,
+    // so the backend performs the exact-match validation; thread the value into
+    // the completion request so it CAN (client-side validation isn't possible
+    // here). Empty string omitted below.
+    const callbackIss =
+      typeof options.callbackIss === "string" ? options.callbackIss.trim() : "";
     if (!context.sessionId && !legacyCodeVerifier) {
       throw new Error("Code verifier not found");
     }
@@ -2937,6 +2945,7 @@ export async function completeHostedOAuthCallback(
           projectId: context.projectId,
           serverId: context.serverId,
           code: authorizationCode,
+          ...(callbackIss ? { iss: callbackIss } : {}),
           oauthResourceUrl,
           ...(context.sessionId
             ? {

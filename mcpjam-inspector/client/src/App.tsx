@@ -1828,6 +1828,7 @@ export default function App() {
 
           return completeHostedOAuthCallback(callbackContext, code, {
             callbackState: state,
+            callbackIss: iss,
             onTraceUpdate: handleLiveOAuthTrace,
             authorizationHeader,
           });

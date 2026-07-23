@@ -63,6 +63,7 @@ describe("mcp-oauth hosted callback sessions", () => {
       "oauth-code",
       {
         callbackState: "oauth-state-1",
+        callbackIss: "https://auth.asana.com",
       }
     );
 
@@ -84,6 +85,8 @@ describe("mcp-oauth hosted callback sessions", () => {
       projectId: "ws_1",
       serverId: "srv_asana",
       code: "oauth-code",
+      // RFC 9207 iss threaded through for backend exact-match validation.
+      iss: "https://auth.asana.com",
       oauthResourceUrl: "https://mcp.asana.com/sse",
       state: "oauth-state-1",
       sessionId: "hosted-session-1",

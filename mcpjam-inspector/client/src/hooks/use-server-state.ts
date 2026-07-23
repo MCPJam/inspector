@@ -2518,6 +2518,7 @@ export function useServerState({
         const result = isHostedProjectCallback
           ? await completeHostedOAuthCallback(hostedCallbackContext, code, {
               callbackState: state,
+              callbackIss: iss,
               onTraceUpdate: handleLiveOAuthTrace,
             })
           : await handleOAuthCallback(code, {
