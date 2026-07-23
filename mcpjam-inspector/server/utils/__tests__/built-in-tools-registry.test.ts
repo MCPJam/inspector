@@ -101,12 +101,42 @@ describe("resolveHostTools — computer-backed bash", () => {
     expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
   });
 
-  it("advertises bash to guest actors too (cost is contained backend-side)", () => {
+  it("skips bash for an anonymous guest on the personal-project path (backend rejects the reserve)", () => {
     const tools = resolveHostTools(
       { builtInToolIds: [BASH_TOOL_NAME, WEB_SEARCH_TOOL_NAME], computer },
       { ...ctx, isGuest: true }
     );
+    expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
+  });
+
+  it("advertises bash to a guest ONLY on a host-funded swarm executionScope", () => {
+    const tools = resolveHostTools(
+      { builtInToolIds: [BASH_TOOL_NAME, WEB_SEARCH_TOOL_NAME], computer },
+      {
+        ...ctx,
+        isGuest: true,
+        executionScope: {
+          kind: "swarm",
+          swarmId: "swarm-1",
+          accessVersion: 1,
+          projectId: "project-1",
+          workspaceId: "ws-1",
+        },
+      }
+    );
     expect(Object.keys(tools ?? {})).toContain(BASH_TOOL_NAME);
+  });
+
+  it("skips bash for a guest on a project-scoped executionScope (not host-funded)", () => {
+    const tools = resolveHostTools(
+      { builtInToolIds: [BASH_TOOL_NAME, WEB_SEARCH_TOOL_NAME], computer },
+      {
+        ...ctx,
+        isGuest: true,
+        executionScope: { kind: "project", projectId: "project-1" },
+      }
+    );
+    expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
   });
 
   it("does NOT advertise bash off the computer alone — the id must be granted", () => {
