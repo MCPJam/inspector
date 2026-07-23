@@ -37,6 +37,91 @@ type HostThemeMode = "light" | "dark";
 /** Fallback when no appVersion is provided (only the mcpjam template reads it). */
 const DEFAULT_SEED_APP_VERSION = "0.0.0";
 
+// Captured from Visual Studio Code 1.130.0's ui/initialize hostContext on
+// 2026-07-23. VS Code intentionally sends references to its own workbench
+// custom properties rather than resolved colors.
+const VSCODE_HOST_STYLE_VARIABLES: Record<string, string> = {
+  "--color-background-primary": "var(--vscode-editor-background)",
+  "--color-background-secondary": "var(--vscode-sideBar-background)",
+  "--color-background-tertiary": "var(--vscode-activityBar-background)",
+  "--color-background-inverse": "var(--vscode-editor-foreground)",
+  "--color-background-ghost": "transparent",
+  "--color-background-info": "var(--vscode-inputValidation-infoBackground)",
+  "--color-background-danger": "var(--vscode-inputValidation-errorBackground)",
+  "--color-background-success":
+    "var(--vscode-diffEditor-insertedTextBackground)",
+  "--color-background-warning":
+    "var(--vscode-inputValidation-warningBackground)",
+  "--color-background-disabled":
+    "var(--vscode-editor-inactiveSelectionBackground)",
+  "--color-text-primary": "var(--vscode-foreground)",
+  "--color-text-secondary": "var(--vscode-descriptionForeground)",
+  "--color-text-tertiary": "var(--vscode-disabledForeground)",
+  "--color-text-inverse": "var(--vscode-editor-background)",
+  "--color-text-ghost": "var(--vscode-descriptionForeground)",
+  "--color-text-info": "var(--vscode-textLink-foreground)",
+  "--color-text-danger": "var(--vscode-errorForeground)",
+  "--color-text-success": "var(--vscode-testing-iconPassed)",
+  "--color-text-warning": "var(--vscode-editorWarning-foreground)",
+  "--color-text-disabled": "var(--vscode-disabledForeground)",
+  "--color-border-primary": "var(--vscode-widget-border)",
+  "--color-border-secondary": "var(--vscode-editorWidget-border)",
+  "--color-border-tertiary": "var(--vscode-panel-border)",
+  "--color-border-inverse": "var(--vscode-foreground)",
+  "--color-border-ghost": "transparent",
+  "--color-border-info": "var(--vscode-inputValidation-infoBorder)",
+  "--color-border-danger": "var(--vscode-inputValidation-errorBorder)",
+  "--color-border-success": "var(--vscode-testing-iconPassed)",
+  "--color-border-warning": "var(--vscode-inputValidation-warningBorder)",
+  "--color-border-disabled": "var(--vscode-disabledForeground)",
+  "--color-ring-primary": "var(--vscode-focusBorder)",
+  "--color-ring-secondary": "var(--vscode-focusBorder)",
+  "--color-ring-inverse": "var(--vscode-focusBorder)",
+  "--color-ring-info": "var(--vscode-inputValidation-infoBorder)",
+  "--color-ring-danger": "var(--vscode-inputValidation-errorBorder)",
+  "--color-ring-success": "var(--vscode-testing-iconPassed)",
+  "--color-ring-warning": "var(--vscode-inputValidation-warningBorder)",
+  "--font-sans": "var(--vscode-font-family)",
+  "--font-mono": "var(--vscode-editor-font-family)",
+  "--font-weight-normal": "normal",
+  "--font-weight-medium": "500",
+  "--font-weight-semibold": "600",
+  "--font-weight-bold": "bold",
+  "--font-text-xs-size": "10px",
+  "--font-text-sm-size": "11px",
+  "--font-text-md-size": "13px",
+  "--font-text-lg-size": "14px",
+  "--font-heading-xs-size": "16px",
+  "--font-heading-sm-size": "18px",
+  "--font-heading-md-size": "20px",
+  "--font-heading-lg-size": "24px",
+  "--font-heading-xl-size": "32px",
+  "--font-heading-2xl-size": "40px",
+  "--font-heading-3xl-size": "48px",
+  "--font-text-xs-line-height": "1.5",
+  "--font-text-sm-line-height": "1.5",
+  "--font-text-md-line-height": "1.5",
+  "--font-text-lg-line-height": "1.5",
+  "--font-heading-xs-line-height": "1.25",
+  "--font-heading-sm-line-height": "1.25",
+  "--font-heading-md-line-height": "1.25",
+  "--font-heading-lg-line-height": "1.25",
+  "--font-heading-xl-line-height": "1.25",
+  "--font-heading-2xl-line-height": "1.25",
+  "--font-heading-3xl-line-height": "1.25",
+  "--border-radius-xs": "2px",
+  "--border-radius-sm": "3px",
+  "--border-radius-md": "4px",
+  "--border-radius-lg": "6px",
+  "--border-radius-xl": "8px",
+  "--border-radius-full": "9999px",
+  "--border-width-regular": "1px",
+  "--shadow-hairline": "0 0 0 1px var(--vscode-widget-shadow)",
+  "--shadow-sm": "0 1px 2px 0 var(--vscode-widget-shadow)",
+  "--shadow-md": "0 4px 6px -1px var(--vscode-widget-shadow)",
+  "--shadow-lg": "0 10px 15px -3px var(--vscode-widget-shadow)",
+};
+
 // Verbatim from a real claude.ai ui/initialize response. Kept out of the
 // template entry for readability. Updating these keeps the Claude template
 // in lockstep with what real claude.ai publishes to MCP App views.
@@ -1559,7 +1644,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     id: "vscode",
     label: "VS Code",
     description:
-      "Visual Studio Code chat panel (GitHub Copilot). MCP UI extension on, no message/updateModelContext.",
+      "Visual Studio Code 1.130 chat panel. Inline MCP Apps with tasks, model-context updates, downloads, and a VS Code webview sandbox.",
     seed: (opts) => {
       const base = emptyHostConfigInputV2({
         hostStyle: "vscode",
@@ -1570,70 +1655,148 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         modelId: "anthropic/claude-sonnet-4.5",
         temperature: 0.7,
         requireToolApproval: false,
-        // VS Code, like Cursor, doesn't yet implement SEP-1865 visibility
-        // filtering — leave it off to mirror that. Best-effort: no live VS
-        // Code probe yet, so capability values are inherited from Cursor's.
+        // The 1.130 probe did not exercise SEP-1865 visibility filtering, so
+        // preserve the existing product default instead of inventing support.
         respectToolVisibility: false,
       });
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
-      // VS Code is the editor Cursor forks (Cursor's own clientInfo.name is
-      // "cursor-vscode"). Its MCP client declares the UI extension plus
-      // elicitation and roots, same shape as Cursor. Keep the SDK-default
-      // UI extension entry and layer those on top. Values inherited from
-      // Cursor's probe pending a dedicated VS Code capture.
+      // Verbatim base-MCP initialize capabilities from VS Code 1.130.0.
       base.clientCapabilities = {
-        ...base.clientCapabilities,
-        elicitation: { form: {} },
         roots: { listChanged: true },
+        sampling: {},
+        elicitation: { form: {}, url: {} },
+        tasks: {
+          list: {},
+          cancel: {},
+          requests: {
+            sampling: { createMessage: {} },
+            elicitation: { create: {} },
+          },
+        },
+        extensions: {
+          "io.modelcontextprotocol/ui": {
+            mimeTypes: ["text/html;profile=mcp-app"],
+          },
+        },
       };
-      // hostCapabilities: mirror Cursor's subset (VS Code shares the editor
-      // base). No `updateModelContext` / `message`; `listChanged: false`
-      // markers kept explicit so apps gating on them know VS Code doesn't
-      // forward those notifications.
+      // Exact non-sandbox portion of ui/initialize.hostCapabilities. The
+      // profile matrix is the runtime source of truth; this legacy field keeps
+      // Node-only consumers and exported configs faithful to the raw capture.
       base.hostCapabilitiesOverride = {
         openLinks: {},
-        serverTools: { listChanged: false },
-        serverResources: { listChanged: false },
+        serverTools: { listChanged: true },
+        serverResources: { listChanged: true },
         logging: {},
+        updateModelContext: {
+          audio: {},
+          image: {},
+          resourceLink: {},
+          resource: {},
+          structuredContent: {},
+        },
+        downloadFile: {},
       };
-      // Per-resource environment context. Inherits Cursor's editor-surface
-      // shape; `containerDimensions` is a placeholder pending a VS Code
-      // probe. Inline-only — VS Code renders MCP UI in the chat panel
-      // without fullscreen / pip modes.
+      // Stable host-context fields from the capture. `toolCall`, webview
+      // origin, navigator details, and resize deltas are per session and are
+      // intentionally not persisted.
       base.hostContext = {
         theme,
         displayMode: "inline",
         availableDisplayModes: ["inline"],
-        containerDimensions: { width: 649, maxHeight: 800 },
-        locale: "en-US",
-        timeZone: "America/Los_Angeles",
-        userAgent: "vscode",
+        containerDimensions: { width: 494, maxHeight: 720 },
+        locale: "en-us",
         platform: "desktop",
+        deviceCapabilities: { touch: false, hover: true },
+        styles: {
+          variables: VSCODE_HOST_STYLE_VARIABLES,
+        },
       };
       base.mcpProfile = {
         profileVersion: 1,
         initialize: {
-          // Base MCP protocol clientInfo. Not probed — "Visual Studio Code"
-          // matches VS Code's product identity (Cursor reports the forked
-          // "cursor-vscode"); refine when a live capture lands.
-          clientInfo: { name: "Visual Studio Code", version: "1.105.0" },
+          supportedProtocolVersions: ["2025-11-25"],
+          clientInfo: { name: "Visual Studio Code", version: "1.130.0" },
         },
         apps: {
           uiInitialize: {
-            // hostInfo sent in `ui/initialize`. Apps branching on
-            // `hostInfo.name === "Visual Studio Code"` need this. Not probed.
-            hostInfo: { name: "Visual Studio Code", version: "1.105.0" },
+            hostInfo: { name: "Visual Studio Code", version: "1.130.0" },
           },
+          compatRuntime: { openaiApps: false },
           sandbox: {
             csp: {
-              // Honor the view's declared CSP — no host-side restrictTo (see
-              // the Claude template for the full intersection-trap rationale).
               mode: "declared",
+              restrictTo: {
+                connectDomains: [
+                  "https://api.openai.com",
+                  "https://api.anthropic.com",
+                  "https://cdn.jsdelivr.net",
+                ],
+                resourceDomains: ["https://cdn.jsdelivr.net"],
+              },
+              cspDirectives: {
+                "default-src": ["'none'"],
+                "script-src": [
+                  "'self'",
+                  "'unsafe-inline'",
+                  "https://cdn.jsdelivr.net",
+                ],
+                "style-src": [
+                  "'self'",
+                  "'unsafe-inline'",
+                  "https://cdn.jsdelivr.net",
+                ],
+                "connect-src": [
+                  "'self'",
+                  "https://api.openai.com",
+                  "https://api.anthropic.com",
+                  "https://cdn.jsdelivr.net",
+                ],
+                "img-src": ["'self'", "data:", "https://cdn.jsdelivr.net"],
+                "font-src": ["'self'", "https://cdn.jsdelivr.net"],
+                "media-src": ["'self'", "data:", "https://cdn.jsdelivr.net"],
+                "frame-src": ["'none'"],
+                "object-src": ["'none'"],
+                "base-uri": ["'self'"],
+              },
             },
             permissions: {
               mode: "custom",
               allow: { clipboardWrite: true },
             },
+            sandboxAttrs: [
+              "allow-pointer-lock",
+              "allow-downloads",
+              "allow-forms",
+            ],
+            // VS Code's bare `allow="feature;"` directives use the iframe
+            // source-origin default. Spell it explicitly for our builder.
+            allowFeatures: {
+              "cross-origin-isolated": "'src'",
+              autoplay: "'src'",
+              "local-network-access": "'src'",
+              "clipboard-read": "'src'",
+            },
+          },
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline"],
+            toolInputPartial: false,
+            toolCancelled: false,
+            hostContextChanged: true,
+            resourceTeardown: false,
+            toolInfo: false,
+            openLinks: true,
+            serverTools: true,
+            serverResources: true,
+            logging: true,
+            updateModelContext: true,
+            message: false,
+            sandboxPermissions: true,
+            cspFrameDomains: false,
+            cspBaseUriDomains: false,
+            resourcePrefersBorder: false,
+            downloadFile: true,
+            requestTeardown: false,
+            widgetDisplayModeRequests: "decline",
           },
         },
       };

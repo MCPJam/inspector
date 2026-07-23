@@ -13,6 +13,7 @@ import {
   PERPLEXITY_HOST_STYLE,
   SLACK_HOST_STYLE,
   SPEC_DEFAULT_HOST_CAPABILITIES,
+  VSCODE_HOST_STYLE,
   findHostStyle,
   getHostCapabilitiesForStyle,
   getHostStyleOrDefault,
@@ -35,6 +36,7 @@ describe("host-styles registry", () => {
     expect(findHostStyle("n8n")).toBe(N8N_HOST_STYLE);
     expect(findHostStyle("perplexity")).toBe(PERPLEXITY_HOST_STYLE);
     expect(findHostStyle("notion")).toBe(NOTION_HOST_STYLE);
+    expect(findHostStyle("vscode")).toBe(VSCODE_HOST_STYLE);
   });
 
   it("returns undefined for unknown ids", () => {
@@ -62,6 +64,7 @@ describe("host-styles registry", () => {
     expect(isKnownHostStyleId("n8n")).toBe(true);
     expect(isKnownHostStyleId("perplexity")).toBe(true);
     expect(isKnownHostStyleId("notion")).toBe(true);
+    expect(isKnownHostStyleId("vscode")).toBe(true);
     expect(isKnownHostStyleId("unknown")).toBe(false);
     expect(isKnownHostStyleId(42)).toBe(false);
     expect(isKnownHostStyleId(null)).toBe(false);
@@ -189,6 +192,23 @@ describe("host-styles registry", () => {
       serverTools: {},
       serverResources: {},
       logging: {},
+    });
+  });
+
+  it("keeps VS Code 1.130 host capabilities faithful to the raw probe", () => {
+    expect(getHostCapabilitiesForStyle("vscode")).toEqual({
+      openLinks: {},
+      serverTools: { listChanged: true },
+      serverResources: { listChanged: true },
+      logging: {},
+      updateModelContext: {
+        audio: {},
+        image: {},
+        resourceLink: {},
+        resource: {},
+        structuredContent: {},
+      },
+      downloadFile: {},
     });
   });
 

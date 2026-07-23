@@ -144,29 +144,29 @@ export const MCP_APPS_SLACK: McpAppsCapabilities = frozen({
   widgetDisplayModeRequests: "accept",
 });
 
-/** VS Code (GitHub Copilot chat panel) — from the VS Code client template
- * (`VSCODE_HOST_STYLE.mcp.mcpAppsCapabilities` in built-ins.ts): full surface
- * minus updateModelContext + message. */
+/** VS Code 1.130.0 — captured from a live VS Code MCP Apps host probe on
+ * 2026-07-23. Advertises inline-only display, typed updateModelContext,
+ * downloadFile, and host-context changes; no message or teardown surfaces. */
 export const MCP_APPS_VSCODE: McpAppsCapabilities = frozen({
-  availableDisplayModes: ["inline", "fullscreen", "pip"],
-  toolInputPartial: true,
-  toolCancelled: true,
+  availableDisplayModes: ["inline"],
+  toolInputPartial: false,
+  toolCancelled: false,
   hostContextChanged: true,
-  resourceTeardown: true,
-  toolInfo: true,
+  resourceTeardown: false,
+  toolInfo: false,
   openLinks: true,
   serverTools: true,
   serverResources: true,
   logging: true,
-  updateModelContext: false,
+  updateModelContext: true,
   message: false,
   sandboxPermissions: true,
-  cspFrameDomains: true,
-  cspBaseUriDomains: true,
-  resourcePrefersBorder: true,
+  cspFrameDomains: false,
+  cspBaseUriDomains: false,
+  resourcePrefersBorder: false,
   downloadFile: true,
-  requestTeardown: true,
-  widgetDisplayModeRequests: "accept",
+  requestTeardown: false,
+  widgetDisplayModeRequests: "decline",
 });
 
 /** Spec-default "no claims" — every advertise key off. Fallback baseline. */

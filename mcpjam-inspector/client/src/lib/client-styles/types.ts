@@ -116,14 +116,19 @@ export interface HostMcpProfile {
   mcpAppsCapabilities: ResolvedMcpAppsCapabilities;
   /**
    * Preset-only advertisement nuances merged into the matrix-derived
-   * `HostCapabilities` by `buildHostCapabilities`. Currently used by
-   * Cursor to set `serverTools.listChanged: false` /
-   * `serverResources.listChanged: false` — sub-field detail the M365-grain
-   * matrix doesn't model. NOT user-editable; presets carry their own
-   * quirks here and the resolver applies them only to keys the matrix
-   * already advertised.
+   * `HostCapabilities` by `buildHostCapabilities`. Used for sub-field detail
+   * the M365-grain matrix doesn't model, such as Cursor/VS Code listChanged
+   * values. NOT user-editable; presets carry their own quirks here and the
+   * resolver applies them only to keys the matrix already advertised.
    */
   hostCapabilitiesAugment?: Partial<Omit<McpUiHostCapabilities, "sandbox">>;
+  /**
+   * Preset-only exact replacements applied after `hostCapabilitiesAugment`.
+   * Use when a host advertises a typed sub-capability set that must replace,
+   * rather than extend, the matrix-derived default (for example VS Code's
+   * updateModelContext set, which deliberately omits `text`).
+   */
+  hostCapabilitiesReplacement?: Partial<Omit<McpUiHostCapabilities, "sandbox">>;
   resolveStyleVariables: (theme: HostThemeMode) => McpUiStyles;
   /** Inline @font-face / @import CSS injected into MCP App iframes. */
   fontCss: string;

@@ -441,8 +441,12 @@ export function resolveEffectiveHostCapabilities(args: {
       profile: args.profile,
       hostStyle: args.hostStyle,
     });
-    const augment = findHostStyle(args.hostStyle)?.mcp.hostCapabilitiesAugment;
-    return buildHostCapabilities(matrix, augment);
+    const style = findHostStyle(args.hostStyle)?.mcp;
+    return buildHostCapabilities(
+      matrix,
+      style?.hostCapabilitiesAugment,
+      style?.hostCapabilitiesReplacement
+    );
   }
   // 2. Legacy override path — strip-then-return semantics preserved from
   // pre-matrix behavior so configs with `hostCapabilitiesOverride` set but

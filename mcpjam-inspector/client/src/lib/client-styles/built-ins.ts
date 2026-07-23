@@ -88,6 +88,7 @@ import {
   MCP_APPS_COPILOT,
   MCP_APPS_GOOSE,
   MCP_APPS_NO_CLAIMS,
+  MCP_APPS_VSCODE,
 } from "@mcpjam/sdk/host-compat";
 
 /**
@@ -578,41 +579,32 @@ export const CODEX_HOST_STYLE: HostStyleDefinition = {
 };
 
 /**
- * Visual Studio Code host style (GitHub Copilot Chat MCP client). VS Code
- * is the editor Cursor itself forks — Cursor's `clientInfo.name` is
- * literally "cursor-vscode" and its chat panel mirrors "VS Code / Cursor's
- * standard editor surface" (see cursor-client-context.ts). So VS Code
- * reuses Cursor's chrome base verbatim (platform, font, style variables,
- * chat background, shine indicator); only the label, picker description,
- * and logo are VS Code-specific.
- *
- * Capability surface mirrors Cursor's MCP Apps subset — VS Code renders
- * MCP UI resources (`text/html;profile=mcp-app`) inline in the chat panel
- * but, like Cursor, does not surface `updateModelContext` / `message`
- * back-channels for widgets. Treat as a best-effort mock until a live VS
- * Code probe lands (no captured `ui/initialize` yet — values inherited
- * from Cursor's probe).
+ * Visual Studio Code 1.130.0 host style, captured from a live MCP base
+ * initialize + MCP Apps ui/initialize probe on 2026-07-23. VS Code supplies
+ * its semantic widget variables from the persisted hostContext; Cursor's
+ * neutral editor palette remains only the inspector-shell fallback.
  */
 export const VSCODE_HOST_STYLE: HostStyleDefinition = {
   id: "vscode",
   mcp: {
-    // VS Code advertises the MCP UI extension (`text/html;profile=mcp-app`),
-    // same as Cursor.
     protocolOverride: UIType.MCP_APPS,
     platform: CURSOR_PLATFORM,
     fontCss: CURSOR_FONT_CSS,
-    // Inherited from Cursor's probe (VS Code shares the editor base). No
-    // `updateModelContext` / `message`; carry the `listChanged: false`
-    // markers as a preset-only augment so apps gating on `listChanged: true`
-    // know they aren't forwarded.
-    mcpAppsCapabilities: {
-      ...MCP_APPS_FULL_SURFACE,
-      updateModelContext: false,
-      message: false,
-    },
+    mcpAppsCapabilities: MCP_APPS_VSCODE as ResolvedMcpAppsCapabilities,
     hostCapabilitiesAugment: {
-      serverTools: { listChanged: false },
-      serverResources: { listChanged: false },
+      serverTools: { listChanged: true },
+      serverResources: { listChanged: true },
+    },
+    // The matrix's generic updateModelContext default is `{ text: {} }`.
+    // VS Code's capture advertises this exact typed set instead, with no text.
+    hostCapabilitiesReplacement: {
+      updateModelContext: {
+        audio: {},
+        image: {},
+        resourceLink: {},
+        resource: {},
+        structuredContent: {},
+      },
     },
     resolveStyleVariables: getCursorStyleVariables,
   },
