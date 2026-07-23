@@ -82,7 +82,12 @@ The MCPJam Agent is a persistent chat panel that lets you ask questions about do
 
 ### What the agent can do
 
-The agent acts by driving the inspector UI directly — every action it takes is visible on your screen as it happens. It uses the documentation and web search to answer knowledge questions, and navigates or operates the app on your behalf through UI actions.
+The agent behaves differently depending on whether you're asking it to **do** something or asking a **product question**:
+
+- **DO requests** ("take me to X", "add a server", "run this tool") — the agent drives the UI immediately and shows you the result rather than describing the steps.
+- **Product questions** ("how do I…", "what does X do", "can I…") — the agent searches the MCPJam documentation first and answers from it. If it can carry the answer out in the app, it offers to do so and waits for your confirmation before acting.
+
+If the documentation doesn't cover something, the agent says so rather than guessing. For questions unrelated to MCPJam, it uses web search.
 
 | Capability | What it does |
 |------------|-------------|
