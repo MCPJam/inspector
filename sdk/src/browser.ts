@@ -176,6 +176,7 @@ export {
   assertOutboundOAuthUrlAllowed,
   isPrivateHost,
   isDisallowedIpAddress,
+  isLoopbackOAuthUrl,
   OAuthOutboundUrlBlockedError,
 } from "./oauth/ssrf-guard.js";
 export type {

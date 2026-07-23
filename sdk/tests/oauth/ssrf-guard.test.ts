@@ -1,6 +1,7 @@
 import {
   assertOutboundOAuthUrlAllowed,
   isDisallowedIpAddress,
+  isLoopbackOAuthUrl,
   isPrivateHost,
   OAuthOutboundUrlBlockedError,
 } from "../../src/oauth/ssrf-guard.js";
@@ -40,6 +41,27 @@ describe("isDisallowedIpAddress / isPrivateHost (RFC 6890)", () => {
     expect(isPrivateHost("localhost")).toBe(true);
     expect(isPrivateHost("api.localhost")).toBe(true);
     expect(isPrivateHost("mcp.example.com")).toBe(false);
+  });
+});
+
+describe("isLoopbackOAuthUrl (exact-origin loopback allowance)", () => {
+  it("is true only for loopback server URLs", () => {
+    for (const url of [
+      "http://localhost:8000/mcp",
+      "http://127.0.0.1:3000/sse",
+      "http://[::1]/mcp",
+      "http://[::ffff:127.0.0.1]/mcp",
+    ]) {
+      expect(isLoopbackOAuthUrl(url)).toBe(true);
+    }
+    for (const url of [
+      "https://mcp.example.com/sse",
+      "http://10.0.0.1/mcp", // LAN is not loopback
+      undefined,
+      "not a url",
+    ]) {
+      expect(isLoopbackOAuthUrl(url)).toBe(false);
+    }
   });
 });
 
@@ -122,7 +144,10 @@ describe("factory wraps every machine's executor with the SSRF guard", () => {
   const REDIRECT_URI = "http://127.0.0.1:3333/callback";
   const SERVER_URL = "https://mcp.example.com/mcp";
 
-  const buildAtRegistration = (registrationEndpoint: string) => {
+  const buildAtRegistration = (
+    registrationEndpoint: string,
+    extra: { allowLoopbackMetadataFetch?: boolean } = {},
+  ) => {
     const inner = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -156,6 +181,7 @@ describe("factory wraps every machine's executor with the SSRF guard", () => {
       redirectUrl: REDIRECT_URI,
       requestExecutor: inner,
       dynamicRegistration: { client_name: "Test Client" },
+      ...extra,
     });
     return { machine, inner };
   };
@@ -196,5 +222,15 @@ describe("factory wraps every machine's executor with the SSRF guard", () => {
     // allowLoopbackMetadataFetch defaults to false → the hostile-loopback
     // fetch never reaches the executor.
     expect(inner).not.toHaveBeenCalled();
+  });
+
+  it("allows a loopback registration fetch when the caller opts in (configured loopback server)", async () => {
+    const { machine, inner } = buildAtRegistration(
+      "http://127.0.0.1:8080/register",
+      { allowLoopbackMetadataFetch: true },
+    );
+    await advance(machine);
+    const urls = inner.mock.calls.map((c) => c[0].url);
+    expect(urls).toContain("http://127.0.0.1:8080/register");
   });
 });

@@ -159,6 +159,25 @@ function isMappedLoopbackHost(hostname: string): boolean {
   return false;
 }
 
+/**
+ * True when a URL's host is loopback (`localhost`, `127.0.0.0/8`, `::1`, or an
+ * IPv4-mapped loopback). Callers derive the loopback opt-in from the
+ * USER-CONFIGURED server URL: a localhost MCP server legitimately needs loopback
+ * metadata fetches, while a public/remote server must never be allowed to steer
+ * one at the user's own loopback (exact-origin allowance, not a global toggle).
+ */
+export function isLoopbackOAuthUrl(rawUrl: string | undefined): boolean {
+  if (!rawUrl) {
+    return false;
+  }
+  try {
+    const host = new URL(rawUrl).hostname;
+    return isLoopbackHost(host) || isMappedLoopbackHost(host);
+  } catch {
+    return false;
+  }
+}
+
 /** Thrown when an outbound OAuth metadata fetch targets a blocked host. */
 export class OAuthOutboundUrlBlockedError extends Error {
   readonly url: string;
