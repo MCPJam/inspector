@@ -13,6 +13,30 @@ you close the terminal, and wakes on next use.
 Open it from the **Computer** tab. The first time you open the terminal, MCPJam
 provisions the machine; after that it resumes in about a second.
 
+## Chat attachments
+
+When the previewed host has a computer attached and you are signed in, files you
+attach in the chat composer are uploaded into the computer's filesystem at
+**`/home/user/attachments/`** in addition to being sent inline to the model.
+A short note is appended to your message so the model — and any MCP server
+running on the computer — can reference the files by path:
+
+```
+[Attachments uploaded to the computer — use the bash tool to read them]
+- report.csv: /home/user/attachments/ab12cd34-report.csv
+```
+
+If the upload fails (for example, because the daily start cap is reached or the
+storage quota is exceeded), the send is **aborted** and the composer is left
+intact — your message and attachments are never sent without the files landing
+on the computer first.
+
+<Note>
+  This only applies when the host config attaches a personal computer and you
+  are signed in. Guest sessions and hosts without a computer attached keep the
+  existing inline-only behavior.
+</Note>
+
 ## Agent tools
 
 When the **Computer** tab is open, agents have access to four tools for managing

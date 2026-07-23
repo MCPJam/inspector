@@ -63,7 +63,8 @@ function normalizeOauthProtocolMode(
 ): ServerFormOAuthProtocolMode {
   return value === "2025-03-26" ||
     value === "2025-06-18" ||
-    value === "2025-11-25"
+    value === "2025-11-25" ||
+    value === "2026-07-28"
     ? value
     : DEFAULT_OAUTH_PROTOCOL_MODE;
 }

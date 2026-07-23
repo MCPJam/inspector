@@ -1645,7 +1645,12 @@ export function useChatSession(
   // Convex server ids resolved by the hosted preflight (`hostedEnsureServerIds`)
   // in `sendMessage`, consumed once by the (synchronous) transport body so the
   // hosted send carries real ids for ad-hoc/App servers, not display names.
-  const resolvedHostedServerIdsRef = useRef<string[] | null>(null);
+  // Carries the NAMES snapshot the ids were resolved from, so a selection
+  // change during the async preflight can't pair stale ids with fresh names.
+  const resolvedHostedServersRef = useRef<{
+    serverIds: string[];
+    serverNames: string[];
+  } | null>(null);
 
   const transport = useMemo(() => {
     const shouldUseOrgAwareChatApi =
@@ -1695,12 +1700,12 @@ export function useChatSession(
       // Prefer ids resolved by the `sendMessage` preflight (ad-hoc/App servers
       // persisted to real Convex ids); consume once. Fall back to the
       // pre-resolved selection for surfaces without a preflight (e.g. chatbox).
-      const preflightServerIds = resolvedHostedServerIdsRef.current;
-      resolvedHostedServerIdsRef.current = null;
+      const preflight = resolvedHostedServersRef.current;
+      resolvedHostedServersRef.current = null;
       const hostedServerBatch = buildResolvedServerBatchRequest({
         projectId: hostedProjectId,
-        serverIds: preflightServerIds ?? hostedSelectedServerIds,
-        serverNames: selectedServers,
+        serverIds: preflight?.serverIds ?? hostedSelectedServerIds,
+        serverNames: preflight?.serverNames ?? selectedServers,
         accessScope: "chat_v2",
         ...(isHostedDirectChat &&
         hostedOAuthTokens &&
@@ -2389,17 +2394,24 @@ export function useChatSession(
         // visible toast (callers fire-and-forget, so don't reject).
         const usesWebEngine =
           HOSTED_MODE || selectedModelUsesOrgRuntime || hostedRequiresWebChatApi;
+        // Snapshot the selection ONCE: the resolved ids must ride with the
+        // names they were resolved from, even if the user edits the selection
+        // while the preflight is in flight.
+        const serverNamesSnapshot = selectedServers;
         if (
           usesWebEngine &&
           hostedEnsureServerIds &&
-          selectedServers.length > 0
+          serverNamesSnapshot.length > 0
         ) {
           try {
-            const resolved = await hostedEnsureServerIds(selectedServers);
-            resolvedHostedServerIdsRef.current = resolved.map((r) => r.serverId);
+            const resolved = await hostedEnsureServerIds(serverNamesSnapshot);
+            resolvedHostedServersRef.current = {
+              serverIds: resolved.map((r) => r.serverId),
+              serverNames: serverNamesSnapshot,
+            };
           } catch (error) {
             pendingWidgetModelContextRef.current = undefined;
-            resolvedHostedServerIdsRef.current = null;
+            resolvedHostedServersRef.current = null;
             toast.error(
               error instanceof Error
                 ? error.message
@@ -2417,7 +2429,7 @@ export function useChatSession(
           }
         } catch (error) {
           pendingWidgetModelContextRef.current = undefined;
-          resolvedHostedServerIdsRef.current = null;
+          resolvedHostedServersRef.current = null;
           throw error;
         }
       })();
@@ -2938,11 +2950,17 @@ export function useChatSession(
     HOSTED_MODE ||
     hostedRequiresWebChatApi ||
     (selectedModelUsesOrgRuntime && !localMcpRuntimeRequired);
+  // When the surface provides a send-time resolver (`ensureServerIds`), the
+  // preflight resolves ad-hoc/App server names → Convex ids at send, so a
+  // pre-resolved id per selected server is NOT required up front — requiring
+  // it would keep submit blocked forever for servers the preflight exists to
+  // persist (they only get ids once a send runs).
   const hostedContextNotReady =
     orgOrHostedContextRequired &&
     (!hostedProjectId ||
       (selectedServerIdsRequired &&
         selectedServers.length > 0 &&
+        !hostedEnsureServerIds &&
         hostedSelectedServerIds.length !== selectedServers.length));
   const isStreaming = status === "streaming" || status === "submitted";
 

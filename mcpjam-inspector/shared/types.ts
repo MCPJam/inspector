@@ -695,7 +695,8 @@ export type ServerFormOAuthProtocolMode =
   | "auto"
   | "2025-03-26"
   | "2025-06-18"
-  | "2025-11-25";
+  | "2025-11-25"
+  | "2026-07-28";
 
 /**
  * @deprecated Use {@link RegistrationMode} (re-exported from shared/xaa) — the

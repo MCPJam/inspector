@@ -90,6 +90,7 @@ export const ANALYTICS_EVENTS = {
   compare_run_tab_changed: { source: "client" },
   compare_run_view_opened: { source: "client" },
   compat_cta_clicked: { source: "client" },
+  computer_chat_attachment_uploaded: { source: "client" },
   computer_start_limit_hit: { source: "client" },
   computer_terminal_opened: { source: "client" },
   connect_host_overlay_opened: { source: "client" },

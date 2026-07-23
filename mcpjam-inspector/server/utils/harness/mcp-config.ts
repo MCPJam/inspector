@@ -16,14 +16,6 @@
  * token is the caller's job — see `run-harness-turn`.
  */
 
-/** Failure building the harness MCP config (e.g. a server with no tunnel). */
-export class HarnessMcpConfigError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "HarnessMcpConfigError";
-  }
-}
-
 /** One server, resolved to its MCPJam proxy endpoint + per-turn token. */
 export interface HarnessProxyServerInput {
   /** The MCPJam serverId (used as the key→name source for tool mapping). */

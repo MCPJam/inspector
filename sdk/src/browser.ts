@@ -300,6 +300,7 @@ export type {
   RegistrationStrategy2025_03_26,
   RegistrationStrategy2025_06_18,
   RegistrationStrategy2025_11_25,
+  RegistrationStrategy2026_07_28,
 } from "./oauth/state-machines/types.js";
 
 // MCP conformance transport support — pure predicate, safe for the browser.

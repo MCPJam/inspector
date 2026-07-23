@@ -412,12 +412,6 @@ export interface MCPJamHandlerOptions {
    * browser-fulfilled) and skills (the harness has its own).
    */
   builtInTools?: ToolSet;
-  /**
-   * WS5 foundation: reusable instruction bundles for the harness runtime,
-   * forwarded to `new HarnessAgent({ skills })`. Harness-only (emulated ignores).
-   * Empty/unset today — hosted-mode skills authoring is a separate workstream.
-   */
-  skills?: unknown[];
   authHeader?: string;
   chatboxId?: string;
   accessVersion?: number;

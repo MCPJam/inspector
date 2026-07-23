@@ -87,7 +87,6 @@ import { resolveEffectiveClientCapabilities } from "@/lib/effective-client";
 import { EXCALIDRAW_SERVER_NAME } from "@/lib/excalidraw-quick-connect";
 import { readOnboardingState } from "@/lib/onboarding-state";
 import {
-  resolveEffectiveMcpProtocolVersion,
   type HostConfigDtoV2,
   type McpProtocolVersion,
 } from "@/lib/client-config-v2";
@@ -772,6 +771,56 @@ function getConnectionTransport(serverConfig: MCPServerConfig): string {
   return "unknown";
 }
 
+/**
+ * The single source of truth for a connection's effective wire protocol
+ * version. Every server-specific signal beats the broad host default; the
+ * host default is a blanket setting used only when nothing server-specific
+ * applies. Used by both the connect resolver and the connected-server
+ * revalidation effect so the "which version" answer can't drift between
+ * "what we connect with" and "when we re-test".
+ *
+ * Precedence: explicit per-server override → explicit pin on the config being
+ * connected → explicit pin on the canonical stored `server.config` (recovers
+ * the pin when a caller passes a rebuilt URL-only config) → the 2026 era
+ * implied by the server's saved OAuth profile → host default.
+ */
+export function resolveEffectiveWireProtocolVersion(input: {
+  serverConfig: MCPServerConfig | undefined;
+  server: ServerWithName | undefined;
+  serverOverride: McpProtocolVersion | undefined;
+  hostPin: McpProtocolVersion | undefined;
+}): McpProtocolVersion | undefined {
+  const { serverConfig, server, serverOverride, hostPin } = input;
+  const readConfigPin = (
+    config: MCPServerConfig | undefined
+  ): McpProtocolVersion | undefined => {
+    const raw =
+      config && "mcpProtocolVersion" in config
+        ? config.mcpProtocolVersion
+        : undefined;
+    return typeof raw === "string" && isKnownProtocolVersion(raw)
+      ? raw
+      : undefined;
+  };
+  const configPin = readConfigPin(serverConfig);
+  // Fall back to the canonical stored config so a probe/reconnect that was
+  // handed a slim URL-only config (which drops the pin) still recovers the
+  // wire era the server was saved with.
+  const canonicalConfigPin = readConfigPin(server?.config);
+  const oauthProfilePin: McpProtocolVersion | undefined =
+    server?.useOAuth === true &&
+    server.oauthFlowProfile?.protocolVersion === "2026-07-28"
+      ? "2026-07-28"
+      : undefined;
+  return (
+    serverOverride ??
+    configPin ??
+    canonicalConfigPin ??
+    oauthProfilePin ??
+    hostPin
+  );
+}
+
 function countRecordKeys(value: unknown): number {
   return value && typeof value === "object" && !Array.isArray(value)
     ? Object.keys(value).length
@@ -1205,7 +1254,18 @@ export function useServerState({
       // reaches the connect payload — without this argument, the host
       // default wins and per-server overrides are silently dropped (the
       // bug PR #2257 review flagged).
-      serverId?: string
+      serverId?: string,
+      // Server name, used only to derive the sessionless 2026 wire era from
+      // the server's saved OAuth profile when nothing higher-precedence pins
+      // it. Every connect/probe/reconnect path funnels through this resolver,
+      // so deriving here covers them all in one place.
+      serverName?: string,
+      // Authoritative pending server entry (a form save in flight). When
+      // supplied it REPLACES the stored app-state lookup for the config/profile
+      // fallbacks, so a form that downgrades 2026→2025 (an intentionally
+      // unpinned config) does not resurrect the stale stored 2026 pin/profile.
+      // Reconnects omit it and fall back to the stored entry as before.
+      authoritativeServerEntry?: ServerWithName
     ) => {
       const defaults: ConnectionDefaults = {};
       if ("url" in serverConfig) {
@@ -1261,12 +1321,18 @@ export function useServerState({
         typeof rawHostPin === "string" && isKnownProtocolVersion(rawHostPin)
           ? rawHostPin
           : undefined;
-      const effective = resolveEffectiveMcpProtocolVersion(
+      const resolvedProtocolVersion = resolveEffectiveWireProtocolVersion({
+        serverConfig,
+        // An in-flight authoritative form save wins over the stale stored
+        // entry, so a 2026→2025 downgrade doesn't recover the old pin/profile.
+        server:
+          authoritativeServerEntry ??
+          (serverName ? appStateServersRef.current[serverName] : undefined),
         serverOverride,
-        hostPin
-      );
-      if (effective !== undefined) {
-        defaults.mcpProtocolVersion = effective;
+        hostPin,
+      });
+      if (resolvedProtocolVersion !== undefined) {
+        defaults.mcpProtocolVersion = resolvedProtocolVersion;
       }
       // Enterprise-managed authorization policy from the active host's
       // mcpProfile. Sent only when validly ON; an `invalid` stored policy
@@ -1352,7 +1418,14 @@ export function useServerState({
   );
 
   const guardedTestConnection = useCallback(
-    async (serverConfig: MCPServerConfig, serverName: string) => {
+    async (
+      serverConfig: MCPServerConfig,
+      serverName: string,
+      // The authoritative pending server entry when this probe is part of a
+      // form save (handleConnect). Threaded into the resolver so wire-era
+      // resolution reads the new config/profile, not the stale stored one.
+      authoritativeServerEntry?: ServerWithName
+    ) => {
       assertClientConfigSynced();
       // Opt into the resolver path when both projectId and a Convex serverId
       // are populated in the API context; otherwise fall back to legacy
@@ -1371,7 +1444,9 @@ export function useServerState({
           connectionDefaults: buildResolverConnectionDefaults(
             serverConfig,
             activeMcpProfile,
-            resolved.serverId
+            resolved.serverId,
+            serverName,
+            authoritativeServerEntry
           ),
         });
       }
@@ -1397,10 +1472,14 @@ export function useServerState({
           serverConfig,
           resolved.serverId
         );
+        // The 2026 wire era (from the server's saved OAuth profile) is derived
+        // inside `buildResolverConnectionDefaults` via `serverName`, so it
+        // covers this reconnect path and the connect/probe paths uniformly.
         const connectionDefaults = buildResolverConnectionDefaults(
           configWithDefaults,
           activeMcpProfile,
-          resolved.serverId
+          resolved.serverId,
+          serverName
         );
         const effectiveProtocolVersion = connectionDefaults?.mcpProtocolVersion;
         const result = await reconnectServer(
@@ -2229,12 +2308,16 @@ export function useServerState({
         typeof rawOverride === "string" && isKnownProtocolVersion(rawOverride)
           ? rawOverride
           : undefined;
-      const resolvedPin = resolveEffectiveMcpProtocolVersion(
+      // Same precedence as the connect resolver (shared helper) so the
+      // "did the effective version change?" decision matches what we would
+      // actually connect with — including the config pin and the 2026 era
+      // implied by the server's OAuth profile, not just override/host default.
+      const effective = resolveEffectiveWireProtocolVersion({
+        serverConfig: server.config,
+        server,
         serverOverride,
-        hostPin
-      );
-      // Gate removed — stateless-mcp-enabled goes permanent 2026-05-27.
-      const effective: McpProtocolVersion | undefined = resolvedPin;
+        hostPin,
+      });
 
       const seenBefore = lastAppliedProtocolVersionRef.current.has(name);
       const previous = lastAppliedProtocolVersionRef.current.get(name);
@@ -2959,18 +3042,19 @@ export function useServerState({
             serverId: hostedServerId ?? null,
             serverName: formData.name,
           };
-          const serverConfig = {
-            url: formData.url,
-            ...(formData.headers && Object.keys(formData.headers).length > 0
-              ? { requestInit: { headers: formData.headers } }
-              : {}),
-          } satisfies HttpServerConfig;
+          // Reuse the canonical config from `toMCPConfig` (which carries the
+          // 2026 `mcpProtocolVersion` stamp) rather than rebuilding a URL-only
+          // config that drops the wire era — otherwise this first stored-cred
+          // probe runs the 2025 initialize handshake against a sessionless
+          // server and fails before OAuth can start.
+          const serverConfig: MCPServerConfig = mcpConfig;
           logger.info("Connecting with synced OAuth credentials", {
             serverName: formData.name,
           });
           const storedCredentialResult = await guardedTestConnection(
             withProjectConnectionDefaults(serverConfig),
-            formData.name
+            formData.name,
+            serverEntryForSave
           );
           if (isStaleOp(formData.name, token)) return;
           if (storedCredentialResult.success) {
@@ -2981,6 +3065,7 @@ export function useServerState({
               config: serverConfig,
               tokens: undefined,
               useOAuth: true,
+              oauthFlowProfile: serverEntryForSave.oauthFlowProfile,
             });
             // An Auto server may have connected without credentials — don't
             // claim OAuth happened when it didn't.
@@ -3109,7 +3194,8 @@ export function useServerState({
               );
               const connectionResult = await guardedTestConnection(
                 withProjectConnectionDefaults(oauthServerConfig),
-                formData.name
+                formData.name,
+                serverEntryForSave
               );
               if (isStaleOp(formData.name, token)) return;
               if (connectionResult.success) {
@@ -3121,6 +3207,7 @@ export function useServerState({
                   tokens: undefined,
                   useOAuth: true,
                   oauthTrace: oauthResult.oauthTrace,
+                  oauthFlowProfile: serverEntryForSave.oauthFlowProfile,
                 });
                 toast.success("Connected successfully with OAuth!");
                 storeInitInfo(formData.name, connectionResult.initInfo).catch(
@@ -3179,7 +3266,8 @@ export function useServerState({
         const effectiveConfig = withProjectConnectionDefaults(mcpConfig);
         const result = await guardedTestConnection(
           effectiveConfig,
-          formData.name
+          formData.name,
+          serverEntryForSave
         );
         if (isStaleOp(formData.name, token)) return;
         if (result.success) {
@@ -3188,6 +3276,7 @@ export function useServerState({
             name: formData.name,
             config: mcpConfig,
             useOAuth: formData.useOAuth ?? false,
+            oauthFlowProfile: serverEntryForSave.oauthFlowProfile,
           });
           // Env now persists on the Convex server doc via syncServerToConvex;
           // no localStorage write needed. The resolver returns env in the
@@ -3604,8 +3693,29 @@ export function useServerState({
       });
       localStorage.removeItem(`mcp-tokens-${serverName}`);
 
+      // Stamp the wire era on the config PERSISTED by CONNECT_SUCCESS.
+      // `buildResolverConnectionDefaults` covers the immediate reconnect's wire
+      // negotiation, but the persisted config is what hosted chat/eval/backend
+      // read later (they don't consult the OAuth profile), so it must carry the
+      // pin itself. An explicit stored pin wins; otherwise a just-completed
+      // 2026 OAuth flow is authoritative evidence of the sessionless era (this
+      // is a flow completion, not a form save, so there is no downgrade
+      // ambiguity — the profile reflects the flow that just ran).
+      const existingServer = appStateServersRef.current[serverName];
+      const existingConfig = existingServer?.config;
+      const existingWireVersion =
+        existingConfig && "mcpProtocolVersion" in existingConfig
+          ? existingConfig.mcpProtocolVersion
+          : undefined;
+      const oauthFlowWireVersion =
+        existingServer?.oauthFlowProfile?.protocolVersion === "2026-07-28"
+          ? ("2026-07-28" as const)
+          : undefined;
+      const wireVersion = existingWireVersion ?? oauthFlowWireVersion;
+
       const serverConfig = {
         url: serverUrl,
+        ...(wireVersion ? { mcpProtocolVersion: wireVersion } : {}),
       } satisfies HttpServerConfig;
 
       dispatch({
