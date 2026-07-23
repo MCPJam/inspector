@@ -185,12 +185,12 @@ This adds 6 checks after the main flow: DCR redirect URI policy, invalid client 
 
 | Strategy | Description | Protocol versions |
 |----------|-------------|-------------------|
-| `cimd` | Client ID Metadata Document — the client publishes its identity at a URL | 2025-11-25 only |
+| `cimd` | Client ID Metadata Document — the client publishes its identity at a URL | 2025-11-25, 2026-07-28 |
 | `dcr` | Dynamic Client Registration — the client registers itself at runtime | All |
 | `preregistered` | Pre-registered client ID and optional secret | All |
 
 **When to choose what:**
-- **CIMD** (2025-11-25): preferred for production when the auth server supports it — avoids mutable DCR state.
+- **CIMD** (2025-11-25, 2026-07-28): preferred for production when the auth server supports it — avoids mutable DCR state.
 - **DCR**: the default for quick testing — works everywhere, no pre-configuration needed.
 - **Preregistered**: use when the auth server doesn't support DCR, or for `client_credentials` M2M flows.
 
