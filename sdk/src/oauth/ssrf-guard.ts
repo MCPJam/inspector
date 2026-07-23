@@ -102,6 +102,14 @@ function isDisallowedIpv6(input: string): boolean {
   if (b0 === 0xff) return true; // ff00::/8 multicast
   if (h[0] === 0x2001 && h[1] === 0x0db8) return true; // 2001:db8::/32 docs
   if (h[0] === 0x0100 && h[1] === 0 && h[2] === 0 && h[3] === 0) return true; // 100::/64
+  // NAT64 (RFC 6052 well-known 64:ff9b::/96, RFC 8215 local-use 64:ff9b:1::/48):
+  // a translator can carry an embedded IPv4 into private space. Refuse the
+  // local-use /48 outright, and refuse the well-known /96 when its embedded
+  // IPv4 (low 32 bits) is disallowed (a public embedded IPv4 stays allowed).
+  if (h[0] === 0x0064 && h[1] === 0xff9b) {
+    if (h[2] === 0x0001) return true; // 64:ff9b:1::/48 local-use
+    return isDisallowedEmbeddedIpv4(h[6], h[7]);
+  }
   // IPv4-mapped (::ffff:0:0/96) and deprecated IPv4-compatible (::/96): the
   // embedded IPv4 decides — this closes the ::ffff:7f00:1 hex-literal bypass.
   if (h[0] === 0 && h[1] === 0 && h[2] === 0 && h[3] === 0 && h[4] === 0) {

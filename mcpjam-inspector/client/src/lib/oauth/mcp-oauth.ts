@@ -13,6 +13,7 @@ import {
   getBrowserDebugDynamicRegistrationMetadata,
   getSupportedRegistrationStrategies,
   EMPTY_OAUTH_FLOW_STATE,
+  isPrivateHost,
   projectOAuthTraceSnapshot,
   resolveAuthorizationPlan,
   runOAuthStateMachine,
@@ -732,6 +733,28 @@ function createTraceResponseFromResult(
   };
 }
 
+/**
+ * SSRF: re-validate the FINAL URL of a fetch response (after any redirects the
+ * browser followed) against the same private-host policy the factory guard
+ * applied to the request URL. An empty/opaque URL can't be inspected and is
+ * left to the normal flow; a private destination throws so the caller falls
+ * through to the DNS-pinning proxy (or fails closed).
+ */
+function assertFinalResponseUrlAllowed(finalUrl: string | undefined): void {
+  if (!finalUrl) return;
+  let host: string;
+  try {
+    host = new URL(finalUrl).hostname;
+  } catch {
+    return;
+  }
+  if (isPrivateHost(host)) {
+    throw new Error(
+      `Refusing OAuth response from private/reserved host "${host}" (possible SSRF via redirect)`
+    );
+  }
+}
+
 function createOAuthRequestExecutor(fetchFn: typeof fetch, serverUrl?: string) {
   return async (request: HttpHistoryEntry["request"]) => {
     let response:
@@ -750,6 +773,11 @@ function createOAuthRequestExecutor(fetchFn: typeof fetch, serverUrl?: string) {
         headers: request.headers,
         body: serializeOAuthRequestBody(request.body, request.headers),
       });
+      // SSRF: the factory guard validated the INITIAL url, but a public URL can
+      // redirect (or DNS-resolve) to a private host that fetch followed silently.
+      // Re-validate the FINAL response URL; a private destination throws, which
+      // falls through to the DNS-pinning proxy retry below (fail closed).
+      assertFinalResponseUrlAllowed(directResponse.url);
       response = {
         status: directResponse.status,
         statusText: directResponse.statusText,

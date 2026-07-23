@@ -169,6 +169,15 @@ export type {
   ProbeTransportResult,
 } from "./server-probe.js";
 export { runOAuthStateMachine } from "./oauth/state-machines/runner.js";
+// SSRF host classification (shared hardening): the browser executor re-validates
+// the FINAL response URL after redirects using the same RFC 6890 policy the
+// factory guard applies to the initial request URL.
+export {
+  assertOutboundOAuthUrlAllowed,
+  isPrivateHost,
+  isDisallowedIpAddress,
+  OAuthOutboundUrlBlockedError,
+} from "./oauth/ssrf-guard.js";
 export type {
   OAuthAuthorizationRequestResult,
   OAuthStateMachineRunConfig,

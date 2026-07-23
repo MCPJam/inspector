@@ -22,6 +22,8 @@ describe("isDisallowedIpAddress / isPrivateHost (RFC 6890)", () => {
       "fc00::1", // IPv6 unique-local
       "::ffff:169.254.169.254", // IPv4-mapped bypass
       "::ffff:7f00:1", // ::ffff:127.0.0.1 hex bypass
+      "64:ff9b:1::a00:1", // NAT64 local-use /48 embedding 10.0.0.1
+      "64:ff9b::a00:1", // NAT64 well-known /96 embedding 10.0.0.1
     ]) {
       expect(isDisallowedIpAddress(ip)).toBe(true);
     }
@@ -30,6 +32,8 @@ describe("isDisallowedIpAddress / isPrivateHost (RFC 6890)", () => {
   it("allows public unicast addresses", () => {
     expect(isDisallowedIpAddress("8.8.8.8")).toBe(false);
     expect(isDisallowedIpAddress("2606:4700:4700::1111")).toBe(false);
+    // NAT64 well-known prefix embedding a PUBLIC IPv4 (8.8.8.8) stays allowed.
+    expect(isDisallowedIpAddress("64:ff9b::808:808")).toBe(false);
   });
 
   it("treats localhost names as private", () => {
@@ -182,5 +186,15 @@ describe("factory wraps every machine's executor with the SSRF guard", () => {
     await advance(machine);
     const urls = inner.mock.calls.map((c) => c[0].url);
     expect(urls).toContain("https://auth.example.com/register");
+  });
+
+  it("blocks a loopback registration fetch by default (no opt-in)", async () => {
+    const { machine, inner } = buildAtRegistration(
+      "http://127.0.0.1:8080/register",
+    );
+    await advance(machine);
+    // allowLoopbackMetadataFetch defaults to false → the hostile-loopback
+    // fetch never reaches the executor.
+    expect(inner).not.toHaveBeenCalled();
   });
 });

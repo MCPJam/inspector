@@ -49,9 +49,10 @@ export interface OAuthStateMachineFactoryConfig extends BaseOAuthStateMachineCon
     | RegistrationStrategy2026_07_28;
   /**
    * Permit outbound OAuth metadata fetches to loopback hosts (local-dev
-   * reflectors). Defaults to `true` so localhost dev flows keep working; the
-   * SSRF guard still blocks LAN/link-local/reserved destinations regardless.
-   * Set `false` for strict public-host enforcement.
+   * reflectors). Defaults to `false` (secure): a hostile server must not be
+   * able to steer metadata fetches at the user's own `127.0.0.1`/`localhost`.
+   * Only an explicit local-dev surface should opt in. The guard blocks
+   * LAN/link-local/reserved destinations regardless of this flag.
    */
   allowLoopbackMetadataFetch?: boolean;
 }
@@ -98,8 +99,12 @@ export function createOAuthStateMachine(
   // untrusted metadata URLs (PRM pointer, AS metadata, CIMD) to this executor.
   // Validate the destination before the fetch runs — blocking private/reserved
   // hosts — with an explicit loopback opt-in for local dev.
-  const allowLoopback = allowLoopbackMetadataFetch ?? true;
+  const allowLoopback = allowLoopbackMetadataFetch ?? false;
   const guardedExecutor: OAuthRequestExecutor = async (request) => {
+    // Validate the request URL (initial hop) for every machine request. The
+    // executor is responsible for re-validating the FINAL URL after any
+    // redirects (see the client executor / DNS-pinning proxy) — a URL-string
+    // check here cannot catch a 3xx or DNS-rebind to a private host.
     assertOutboundOAuthUrlAllowed(request.url, { allowLoopback });
     return rest.requestExecutor(request);
   };
