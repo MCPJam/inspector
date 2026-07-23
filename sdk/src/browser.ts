@@ -176,6 +176,17 @@ export {
   validateAuthorizationResponseIssuer,
   type AuthorizationResponseIssuerCheck,
 } from "./oauth/state-machines/debug-oauth-2026-07-28.js";
+// SEP-2350 runtime scope step-up core (2R-stepup): scope union, insufficient-
+// scope challenge parsing, and the §10.5 interactive/M2M/debugger policy split.
+// Era-agnostic — the step-up decision lives at the runtime request boundary.
+export {
+  computeScopeUnion,
+  parseInsufficientScopeChallenge,
+  resolveStepUpAction,
+  type InsufficientScopeChallenge,
+  type StepUpAuthMode,
+  type StepUpAction,
+} from "./oauth/state-machines/shared/challenges.js";
 export type {
   OAuthAuthorizationRequestResult,
   OAuthStateMachineRunConfig,
