@@ -72,20 +72,58 @@ export interface InsufficientScopeChallenge {
  */
 /**
  * A `WWW-Authenticate` header may list several challenges (RFC 7235 §4.1), e.g.
- * `Basic realm="x", Bearer error="insufficient_scope"`. The underlying parser
- * only reads a header that STARTS with `Bearer`, so isolate the Bearer
- * challenge first — from the last `Bearer ` token, whose auth-params run to the
- * end of the header — before delegating.
+ * `Basic realm="x", Bearer error="insufficient_scope", scope="a b"`. Both the
+ * challenge list AND each challenge's auth-params are comma-separated, and a
+ * quoted value may itself contain a comma — so a naive "slice from Bearer to
+ * end" would fold a LATER scheme's params (or a fabricated one hidden in a
+ * quote) into the Bearer parse. Tokenize quote-aware, group segments into
+ * challenges (a segment that starts with `<scheme> <rest>` opens a new
+ * challenge; a bare `key=value` segment continues the current one), and return
+ * only the Bearer challenge's auth-params (last one wins), re-prefixed so the
+ * delegated `Bearer …` parser reads exactly those.
  */
 function selectBearerChallenge(header?: string): string | undefined {
   if (!header) {
     return undefined;
   }
-  if (/^\s*Bearer\s/i.test(header)) {
-    return header;
+
+  // Split on commas that are not inside a double-quoted string.
+  const segments: string[] = [];
+  let buffer = "";
+  let inQuotes = false;
+  for (let i = 0; i < header.length; i++) {
+    const ch = header[i];
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+      buffer += ch;
+    } else if (ch === "," && !inQuotes) {
+      segments.push(buffer);
+      buffer = "";
+    } else {
+      buffer += ch;
+    }
   }
-  const match = header.match(/(?:^|[,\s])(Bearer\s+.*)$/i);
-  return match ? match[1] : undefined;
+  segments.push(buffer);
+
+  // Group segments into challenges. A segment of the form `<scheme> <rest>`
+  // (a bare auth-scheme token followed by whitespace) opens a new challenge;
+  // an auth-param segment (`key=value`, no leading `<token> `) continues it.
+  const challenges: Array<{ scheme: string; params: string[] }> = [];
+  const CHALLENGE_START = /^([A-Za-z][A-Za-z0-9!#$%&'*+.^_`|~-]*)\s+(.+)$/s;
+  for (const raw of segments) {
+    const seg = raw.trim();
+    if (!seg) continue;
+    const start = CHALLENGE_START.exec(seg);
+    if (start) {
+      challenges.push({ scheme: start[1].toLowerCase(), params: [start[2]] });
+    } else if (challenges.length > 0) {
+      challenges[challenges.length - 1].params.push(seg);
+    }
+  }
+
+  // Last Bearer challenge wins (mirrors last-value-wins param parsing).
+  const bearer = challenges.filter((c) => c.scheme === "bearer").pop();
+  return bearer ? `Bearer ${bearer.params.join(", ")}` : undefined;
 }
 
 export function parseInsufficientScopeChallenge(

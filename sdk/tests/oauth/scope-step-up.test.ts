@@ -52,6 +52,25 @@ describe("parseInsufficientScopeChallenge (RFC 6750 / SEP-2350)", () => {
     expect(c.isInsufficientScope).toBe(true);
     expect(c.challengedScopes).toEqual(["read", "write"]);
   });
+
+  it("does not let a LATER scheme's params bleed into the Bearer challenge", () => {
+    // The Basic challenge trailing Bearer carries error="insufficient_scope";
+    // it must NOT be attributed to Bearer (which here is a plain 401).
+    const c = parseInsufficientScopeChallenge(
+      'Bearer realm="mcp", Basic error="insufficient_scope", scope="admin"',
+    );
+    expect(c.isInsufficientScope).toBe(false);
+    expect(c.challengedScopes).toBeUndefined();
+  });
+
+  it("is not fooled by a fabricated challenge hidden inside a quoted value", () => {
+    // The quoted realm contains a comma and a fake `Bearer error=…`; quote-aware
+    // splitting keeps it as one Basic auth-param, so no insufficient_scope.
+    const c = parseInsufficientScopeChallenge(
+      'Basic realm="x, Bearer error=insufficient_scope"',
+    );
+    expect(c.isInsufficientScope).toBe(false);
+  });
 });
 
 describe("resolveStepUpAction (§10.5 policy split, bounded retry)", () => {
