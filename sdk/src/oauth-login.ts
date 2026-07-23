@@ -289,6 +289,12 @@ async function runVerification(
       ? { headers: config.customHeaders }
       : undefined,
     timeout: verificationConfig.timeout ?? 30_000,
+    // Post-auth verification must speak the negotiated wire era. For 2026 the
+    // MCP endpoint is stateless (no initialize), so pin the transport; older
+    // OAuth flows keep the legacy default (unset) they used before.
+    ...(config.protocolVersion === "2026-07-28"
+      ? { mcpProtocolVersion: "2026-07-28" as const }
+      : {}),
   };
 
   try {

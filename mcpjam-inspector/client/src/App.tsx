@@ -203,7 +203,10 @@ import {
   completeHostedOAuthCallback,
   handleOAuthCallback,
 } from "./lib/oauth/mcp-oauth";
-import { buildElectronMcpCallbackUrl } from "./hooks/use-server-state";
+import {
+  buildElectronMcpCallbackUrl,
+  resolveEffectiveWireProtocolVersion,
+} from "./hooks/use-server-state";
 import { disconnectAllRuntimeServers } from "./state/mcp-api";
 import { getEffectiveProjectClientCapabilities } from "./lib/client-config";
 import {
@@ -215,7 +218,6 @@ import {
 import {
   cloneHostTemplateInput,
   gateMcpToolResultImageRenderingByModelVisibility,
-  resolveEffectiveMcpProtocolVersion,
 } from "./lib/client-config-v2";
 import type { ProjectServerConfigDto } from "./lib/project-server-config";
 import { useHostList, useHostMutations } from "@/hooks/useClients";
@@ -2551,7 +2553,12 @@ export default function App() {
 
     const mcpProtocolVersionsByServerId: Record<string, McpProtocolVersion> =
       {};
-    for (const serverId of new Set(Object.values(hostedServerIdsByName))) {
+    const seenServerIds = new Set<string>();
+    for (const [serverName, serverId] of Object.entries(
+      hostedServerIdsByName
+    )) {
+      if (seenServerIds.has(serverId)) continue;
+      seenServerIds.add(serverId);
       // Project-server config is the control-plane source for per-server
       // protocol overrides. Host config mirrors it through Convex fan-out,
       // but hosted API calls should not fall back to the host default while
@@ -2566,10 +2573,18 @@ export default function App() {
         isKnownProtocolVersion(rawServerOverride)
           ? rawServerOverride
           : undefined;
-      const effective = resolveEffectiveMcpProtocolVersion(
+      // Share the client resolver's precedence so hosted chat/eval pick up the
+      // 2026 wire era a server carries via its OAuth profile / stamped config —
+      // not just explicit per-server overrides. Otherwise a modal-saved 2026
+      // OAuth server passes the immediate probe but hosted backend connects
+      // fall back to the 2025 initialize path. (`override → config pin →
+      // OAuth-profile 2026 → host default`.)
+      const effective = resolveEffectiveWireProtocolVersion({
+        serverConfig: undefined,
+        server: appState.servers[serverName],
         serverOverride,
-        hostPin
-      );
+        hostPin,
+      });
       if (!effective) continue;
       mcpProtocolVersionsByServerId[serverId] = effective;
     }
@@ -2596,6 +2611,10 @@ export default function App() {
     activeMcpProfile,
     hostedServerIdsByName,
     projectServerConfigDto?.overrides,
+    // The hosted protocol-version map now derives the OAuth-era pin from each
+    // server's config/OAuth profile, so it must recompute when server state
+    // changes (e.g. a modal-saved 2026 profile or a persisted config pin).
+    appState.servers,
   ]);
   useApiContext({
     projectId: convexProjectId,

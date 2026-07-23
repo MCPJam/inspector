@@ -3,6 +3,7 @@ import { getConformanceAuthCodeDynamicRegistrationMetadata } from "../../oauth/c
 import type { OAuthFlowState } from "../../oauth/state-machines/types.js";
 import {
   buildInitializeRequestBody,
+  buildStatelessVerifyRequestBody,
   resolveInitializeProtocolVersion,
 } from "../../oauth/state-machines/shared/initialize.js";
 import { resolveRequestedScopeValue } from "../../oauth/state-machines/shared/challenges.js";
@@ -100,6 +101,27 @@ function buildInvalidTokenMcpRequest(
 
   if (input.config.protocolVersion !== "2025-03-26") {
     headers["MCP-Protocol-Version"] = input.config.protocolVersion;
+  }
+
+  // 2026-07-28 has no initialize handshake: the authenticated probe is a
+  // stateless `tools/list` carrying the protocol-version `_meta` envelope and
+  // the `Mcp-Method` header (mirrors the debug-oauth-2026-07-28 machine). An
+  // `initialize` body would be rejected by a spec-compliant modern server, so
+  // the invalid-token check would misread that rejection.
+  if (input.config.protocolVersion === "2026-07-28") {
+    headers["Mcp-Method"] = "tools/list";
+    return {
+      method: "POST",
+      url: input.config.serverUrl,
+      headers,
+      body: buildStatelessVerifyRequestBody({
+        protocolVersion: input.config.protocolVersion,
+        authMode: input.config.auth.mode,
+        clientName: "MCPJam SDK OAuth Conformance",
+        clientVersion: "1.0.0",
+        id: 999,
+      }),
+    };
   }
 
   return {

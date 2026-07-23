@@ -213,6 +213,10 @@ export type AppAction =
       tokens?: OauthTokens;
       useOAuth?: boolean;
       oauthTrace?: OAuthTrace;
+      // The just-saved OAuth debugger profile. When present it replaces the
+      // stored one so a form that downgrades 2026→2025 doesn't leave a stale
+      // 2026 `oauthFlowProfile` behind for the resolver to revive.
+      oauthFlowProfile?: OAuthTestProfile;
     }
   | {
       type: "CONNECT_FAILURE";

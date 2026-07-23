@@ -2582,3 +2582,29 @@ describe("mcp-oauth", () => {
     });
   });
 });
+
+describe("createServerConfig wire-era pin", () => {
+  it("pins mcpProtocolVersion for a 2026-07-28 OAuth flow", async () => {
+    const { createServerConfig } = await import("../mcp-oauth");
+    const config = createServerConfig(
+      "https://mcp.example.com",
+      { access_token: "tok" },
+      "2026-07-28",
+    );
+    expect((config as { mcpProtocolVersion?: string }).mcpProtocolVersion).toBe(
+      "2026-07-28",
+    );
+  });
+
+  it("leaves the wire era unset for older OAuth versions (legacy default)", async () => {
+    const { createServerConfig } = await import("../mcp-oauth");
+    const config = createServerConfig(
+      "https://mcp.example.com",
+      { access_token: "tok" },
+      "2025-11-25",
+    );
+    expect(
+      (config as { mcpProtocolVersion?: string }).mcpProtocolVersion,
+    ).toBeUndefined();
+  });
+});
