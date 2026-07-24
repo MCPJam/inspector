@@ -9,7 +9,7 @@
  */
 
 import { decodeJWT, formatJWTTimestamp } from "./shared/jwt.js";
-import { EMPTY_OAUTH_FLOW_STATE } from "./types.js";
+import { EMPTY_OAUTH_FLOW_STATE, buildResetFlowState } from "./types.js";
 import type {
   BaseOAuthStateMachineConfig,
   OAuthFlowStep,
@@ -536,6 +536,7 @@ export const createDebugOAuthStateMachine = (
             const initialRequestHeaders = mergeHeaders(customHeaders, {
               "Content-Type": "application/json",
               Accept: "application/json, text/event-stream",
+              "MCP-Protocol-Version": "2025-06-18",
             });
             const initializeRequestBody = buildInitializeRequestBody({
               protocolVersion: initializeProtocolVersion,
@@ -587,6 +588,7 @@ export const createDebugOAuthStateMachine = (
                 headers: mergeHeaders(customHeaders, {
                   "Content-Type": "application/json",
                   Accept: "application/json, text/event-stream",
+                  "MCP-Protocol-Version": "2025-06-18",
                 }),
                 body: JSON.stringify(
                   buildInitializeRequestBody({
@@ -1287,8 +1289,12 @@ export const createDebugOAuthStateMachine = (
               break;
             }
 
-            // Registration successful
-            if (strictConformance && dcr.missingClientId) {
+            // Registration successful.
+            // RFC 7591: a successful (2xx) registration response MUST carry a
+            // client_id. Without one there is no client identity to proceed
+            // with, so reject regardless of strictConformance — accepting it
+            // would carry an undefined clientId into the authorization leg.
+            if (dcr.missingClientId) {
               updateState({
                 lastResponse: dcr.response,
                 httpHistory: dcr.httpHistory,
@@ -2095,20 +2101,10 @@ export const createDebugOAuthStateMachine = (
 
     // Reset the flow to initial state
     resetFlow: () => {
-      updateState({
-        ...EMPTY_OAUTH_FLOW_STATE,
-        lastRequest: undefined,
-        lastResponse: undefined,
-        httpHistory: [],
-        infoLogs: [],
-        authorizationCode: undefined,
-        authorizationUrl: undefined,
-        accessToken: undefined,
-        refreshToken: undefined,
-        codeVerifier: undefined,
-        codeChallenge: undefined,
-        error: undefined,
-      });
+      // Reset to a fully-cleared flow. updateState MERGES, so every field must
+      // be explicitly cleared — buildResetFlowState enumerates them all so no
+      // stored client, token, discovery result, or recorded issuer survives.
+      updateState(buildResetFlowState());
     },
   };
 

@@ -9,7 +9,7 @@
  */
 
 import { decodeJWT, formatJWTTimestamp } from "./shared/jwt.js";
-import { EMPTY_OAUTH_FLOW_STATE } from "./types.js";
+import { EMPTY_OAUTH_FLOW_STATE, buildResetFlowState } from "./types.js";
 import type {
   BaseOAuthStateMachineConfig,
   OAuthFlowStep,
@@ -654,6 +654,7 @@ export const createDebugOAuthStateMachine = (
             const initialRequestHeaders = mergeHeaders(customHeaders, {
               "Content-Type": "application/json",
               Accept: "application/json, text/event-stream",
+              "MCP-Protocol-Version": "2025-11-25",
             });
             const initializeRequestBody = buildInitializeRequestBody({
               protocolVersion: initializeProtocolVersion,
@@ -705,6 +706,7 @@ export const createDebugOAuthStateMachine = (
                 headers: mergeHeaders(customHeaders, {
                   "Content-Type": "application/json",
                   Accept: "application/json, text/event-stream",
+                  "MCP-Protocol-Version": "2025-11-25",
                 }),
                 body: JSON.stringify(
                   buildInitializeRequestBody({
@@ -1449,8 +1451,12 @@ export const createDebugOAuthStateMachine = (
                 break;
               }
 
-              // Registration successful
-              if (strictConformance && dcr.missingClientId) {
+              // Registration successful.
+              // RFC 7591: a successful (2xx) registration response MUST carry a
+              // client_id. Without one there is no client identity to proceed
+              // with, so reject regardless of strictConformance — accepting it
+              // would carry an undefined clientId into the authorization leg.
+              if (dcr.missingClientId) {
                 updateState({
                   lastResponse: dcr.response,
                   httpHistory: dcr.httpHistory,
@@ -1497,9 +1503,16 @@ export const createDebugOAuthStateMachine = (
             return;
 
           case "cimd_fetch_request":
-            // CIMD Step 3: Fetch and validate the CIMD document
+            // CIMD Step 3: Fetch the CIMD document ONCE and record it as the
+            // response shown in the trace. The validation step reads this exact
+            // recorded document rather than re-fetching, so the AS cannot serve
+            // one document here and a different one at validation time.
             try {
-              // Fetch the CIMD document (simulating what the auth server does)
+              const cimdRequest = {
+                method: "GET",
+                url: cimdClientId,
+                headers: normalizeHeaders(undefined),
+              };
               const cimdResponse = await executeRequest(cimdClientId, {
                 method: "GET",
               });
@@ -1510,9 +1523,27 @@ export const createDebugOAuthStateMachine = (
                 );
               }
 
-              // Store metadata for next step
+              // Record the fetched document as lastResponse + a history entry so
+              // the validation step (and the trace) reads exactly these bytes.
+              const cimdResponseData = {
+                status: cimdResponse.status,
+                statusText: cimdResponse.statusText,
+                headers: cimdResponse.headers,
+                body: cimdResponse.body,
+              };
               updateState({
                 currentStep: "cimd_metadata_response",
+                lastRequest: cimdRequest,
+                lastResponse: cimdResponseData,
+                httpHistory: [
+                  ...(state.httpHistory || []),
+                  {
+                    step: "cimd_fetch_request",
+                    timestamp: Date.now(),
+                    request: cimdRequest,
+                    response: cimdResponseData,
+                  },
+                ],
                 isInitiatingAuth: false,
               });
 
@@ -1530,20 +1561,14 @@ export const createDebugOAuthStateMachine = (
             }
 
           case "cimd_metadata_response":
-            // CIMD Step 4: Validate the fetched metadata and complete registration
+            // CIMD Step 4: Validate the metadata fetched in the previous step
+            // (no re-fetch) and complete registration.
             try {
-              // Re-fetch to validate
-              const cimdResponse = await executeRequest(cimdClientId, {
-                method: "GET",
-              });
+              const cimdDoc = state.lastResponse?.body;
 
-              if (!cimdResponse.ok) {
-                throw new Error(
-                  `CIMD endpoint returned HTTP ${cimdResponse.status}`
-                );
+              if (!cimdDoc || typeof cimdDoc !== "object") {
+                throw new Error("CIMD metadata document was not available");
               }
-
-              const cimdDoc = cimdResponse.body;
 
               // Validate CIMD document
               if (cimdDoc.client_id !== cimdClientId) {
@@ -2343,20 +2368,10 @@ export const createDebugOAuthStateMachine = (
 
     // Reset the flow to initial state
     resetFlow: () => {
-      updateState({
-        ...EMPTY_OAUTH_FLOW_STATE,
-        lastRequest: undefined,
-        lastResponse: undefined,
-        httpHistory: [],
-        infoLogs: [],
-        authorizationCode: undefined,
-        authorizationUrl: undefined,
-        accessToken: undefined,
-        refreshToken: undefined,
-        codeVerifier: undefined,
-        codeChallenge: undefined,
-        error: undefined,
-      });
+      // Reset to a fully-cleared flow. updateState MERGES, so every field must
+      // be explicitly cleared — buildResetFlowState enumerates them all so no
+      // stored client, token, discovery result, or recorded issuer survives.
+      updateState(buildResetFlowState());
     },
   };
 
