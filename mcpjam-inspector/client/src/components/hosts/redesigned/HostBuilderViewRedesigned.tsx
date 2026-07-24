@@ -558,10 +558,12 @@ export function HostBuilderViewRedesigned({
                     shellStyle={canvasShellStyle}
                   />
                 </ReactFlowProvider>
-                {/* Client selector pinned over the canvas (fixed position —
-                    it does not pan/zoom with the flow). The header's
-                    GlobalHostBar hides itself while this canvas is open. */}
-                <div className="pointer-events-none absolute inset-x-0 top-5 z-20 flex justify-center pr-2">
+                {/* Client selector pinned top-left over the canvas (fixed
+                    position — it does not pan/zoom with the flow) so it stays
+                    accessible without blocking the canvas content. The
+                    header's GlobalHostBar hides itself while this canvas is
+                    open. */}
+                <div className="pointer-events-none absolute inset-x-0 top-5 z-20 flex justify-start pl-5 pr-2">
                   <div className="pointer-events-auto">
                     <HostCanvasSelector
                       projectId={projectId}

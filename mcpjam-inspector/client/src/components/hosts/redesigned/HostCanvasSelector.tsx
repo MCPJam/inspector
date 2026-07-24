@@ -6,10 +6,8 @@ import { toast } from "@/lib/toast";
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import { cn } from "@/lib/utils";
@@ -24,14 +22,17 @@ import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
 import { getCatalogHost } from "@mcpjam/sdk/host-compat";
 
 /**
- * Client selector pinned to the top-center of the Connect host canvas.
+ * Client selector pinned to the top-left of the Connect host canvas.
  *
  * Replaces the header `HostOverlayBar` while the canvas is open (the header
- * instance hides itself — see `GlobalHostBar`). Design settled in the PR
- * #3144 review round: one large labeled dropdown trigger for switching plus
- * an explicit "Add client" action, instead of a small pager with adjacent
- * icon-only buttons. The menu opens to the LEFT of the card so it floats
- * over empty canvas rather than covering the client card below.
+ * instance hides itself — see `GlobalHostBar`). Layout settled in the #3269
+ * review round: two pills pinned top-left so they stay accessible without
+ * blocking the canvas —
+ *   1. an "Add client" pill (left-most) carrying the quick-add template
+ *      logos, and
+ *   2. a switcher pill (to its right) that opens the full client list.
+ * The add action lives only in the left pill; the switcher menu no longer
+ * duplicates it. The menu opens downward, over empty canvas below the pills.
  */
 
 const QUICK_ADD_TEMPLATES = ["claude", "chatgpt", "copilot"] as const;
@@ -40,6 +41,9 @@ const MCPJAM_HOST_NAME = "MCPJam";
 const LAST_HOST_DELETE_REASON =
   "A project needs at least one client. Create another client first.";
 const ANALYTICS_LOCATION = "host_canvas";
+
+const PILL_CLASS =
+  "flex items-center rounded-2xl border border-border/60 bg-card/95 p-1.5 shadow-lg shadow-black/[0.06] backdrop-blur-sm";
 
 /**
  * Hosts don't persist which catalog template they came from, so the logo is
@@ -188,152 +192,151 @@ export function HostCanvasSelector({
 
   if (isLoading || !active) {
     return (
-      <div className="h-14 w-72 animate-pulse rounded-2xl border border-border/60 bg-card/80" />
+      <div className="flex items-center gap-2">
+        <div className="h-14 w-40 animate-pulse rounded-2xl border border-border/60 bg-card/80" />
+        <div className="h-14 w-56 animate-pulse rounded-2xl border border-border/60 bg-card/80" />
+      </div>
     );
   }
 
   return (
     <div
-      className="flex items-center rounded-2xl border border-border/60 bg-card/95 p-1.5 shadow-lg shadow-black/[0.06] backdrop-blur-sm"
+      className="flex items-center gap-2"
       data-testid="host-canvas-selector"
     >
-      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
-        <DropdownMenuTrigger asChild>
-          <button
-            type="button"
-            aria-label="Client used for preview"
-            data-testid="host-canvas-current"
-            className={cn(
-              "flex h-11 items-center gap-2.5 rounded-xl pr-2.5 pl-3.5 outline-none transition-colors",
-              "hover:bg-muted/50 data-[state=open]:bg-muted/50",
-              "focus-visible:ring-2 focus-visible:ring-ring/45"
-            )}
-          >
-            <img
-              src={logoFor(active.name)}
-              alt=""
-              className="size-5 shrink-0 object-contain"
-            />
-            <span className="max-w-[16rem] truncate text-[15px] font-semibold">
-              {active.name}
-            </span>
-            <span className="rounded-full border border-border/60 px-2 py-0.5 text-[11px] font-medium tabular-nums text-muted-foreground">
-              {activeIndex + 1} / {sortedHosts.length}
-            </span>
-            <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground" />
-          </button>
-        </DropdownMenuTrigger>
-        {/* Opens to the LEFT of the card, over empty canvas — bottom
-            placement would cover the client card the selector sits above. */}
-        <DropdownMenuContent
-          side="left"
-          align="start"
-          sideOffset={10}
-          className="min-w-[15rem]"
+      {/* Add client — left-most. Carries the quick-add template logos so the
+          add path stays a single control (the switcher menu no longer has its
+          own add action). */}
+      <div className={PILL_CLASS}>
+        <button
+          type="button"
+          data-testid="host-canvas-add"
+          onClick={() => {
+            track("connect_host_overlay_add_clicked", {
+              location: ANALYTICS_LOCATION,
+              host_count: hosts.length,
+            });
+            openCreateWithTemplate(undefined);
+          }}
+          className={cn(
+            "inline-flex h-11 items-center gap-1.5 rounded-xl px-3 text-sm font-medium text-primary transition-colors",
+            "hover:bg-primary/10",
+            "focus-visible:ring-2 focus-visible:ring-ring/45 focus-visible:outline-none"
+          )}
         >
-          <DropdownMenuRadioGroup value={activeHostId} onValueChange={switchTo}>
-            {sortedHosts.map((host) => (
-              <DropdownMenuRadioItem
-                key={host.hostId}
-                value={host.hostId}
-                className="group gap-2.5 py-2 pr-1.5"
+          <Plus className="size-4" />
+          Add client
+        </button>
+        <span
+          className="ml-0.5 flex shrink-0 items-center gap-0.5 pr-1"
+          data-testid="host-canvas-quick-add"
+        >
+          {QUICK_ADD_TEMPLATES.map((id) => {
+            const catalogHost =
+              catalogState.status === "live"
+                ? getCatalogHost(catalogState.catalog, id)
+                : undefined;
+            const label = catalogHost?.label ?? id;
+            return (
+              <button
+                key={id}
+                type="button"
+                aria-label={`Add ${label} client`}
+                title={`Add ${label}`}
+                data-testid={`host-canvas-quick-add-${id}`}
+                onClick={() => openCreateWithTemplate(id)}
+                className={cn(
+                  "inline-flex size-7 items-center justify-center rounded-md transition-colors",
+                  "hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                )}
               >
                 <img
-                  src={logoFor(host.name)}
+                  src={getHostLogoSrc(id, themeMode)}
                   alt=""
-                  className="size-4 shrink-0 object-contain"
+                  className="size-4 object-contain"
                 />
-                <span className="flex-1 truncate">{host.name}</span>
-                <span className="ml-2 flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 group-data-[highlighted]:opacity-100">
-                  <button
-                    type="button"
-                    aria-label={`Delete ${host.name}`}
-                    data-testid={`host-canvas-delete-${host.hostId}`}
-                    disabled={isDeleting || !canDelete}
-                    title={!canDelete ? LAST_HOST_DELETE_REASON : undefined}
-                    className="inline-flex size-6 items-center justify-center rounded-sm text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50"
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      void handleDelete(host.hostId);
-                    }}
-                  >
-                    <Trash2 className="size-3.5" />
-                  </button>
-                </span>
-              </DropdownMenuRadioItem>
-            ))}
-          </DropdownMenuRadioGroup>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            data-testid="host-canvas-menu-add"
-            onSelect={() => openCreateWithTemplate(undefined)}
-            className="group py-2 pr-1.5"
-          >
-            <Plus className="size-3.5" />
-            <span className="flex-1">Add client</span>
-            <span
-              className="ml-2 flex shrink-0 items-center gap-0.5"
-              onPointerDown={(e) => e.stopPropagation()}
+              </button>
+            );
+          })}
+        </span>
+      </div>
+
+      {/* Switcher — to the right of Add client. Click to see all clients and
+          switch between them; per-client delete lives on hover. */}
+      <div className={PILL_CLASS}>
+        <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-label="Client used for preview"
+              data-testid="host-canvas-current"
+              className={cn(
+                "flex h-11 items-center gap-2.5 rounded-xl pr-2.5 pl-3.5 outline-none transition-colors",
+                "hover:bg-muted/50 data-[state=open]:bg-muted/50",
+                "focus-visible:ring-2 focus-visible:ring-ring/45"
+              )}
             >
-              {QUICK_ADD_TEMPLATES.map((id) => {
-                const catalogHost =
-                  catalogState.status === "live"
-                    ? getCatalogHost(catalogState.catalog, id)
-                    : undefined;
-                if (!catalogHost) return null;
-                return (
-                  <button
-                    key={id}
-                    type="button"
-                    aria-label={`Add ${catalogHost.label} host`}
-                    title={`Add ${catalogHost.label}`}
-                    data-testid={`host-canvas-quick-add-${id}`}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      openCreateWithTemplate(id);
-                    }}
-                    className={cn(
-                      "inline-flex size-6 items-center justify-center rounded-sm transition-colors",
-                      "hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-                    )}
-                  >
-                    <img
-                      src={getHostLogoSrc(id, themeMode)}
-                      alt=""
-                      className="size-4 object-contain"
-                    />
-                  </button>
-                );
-              })}
-            </span>
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-
-      <div className="mx-1 h-6 w-px shrink-0 bg-border/60" />
-
-      <button
-        type="button"
-        data-testid="host-canvas-add"
-        onClick={() => {
-          track("connect_host_overlay_add_clicked", {
-            location: ANALYTICS_LOCATION,
-            host_count: hosts.length,
-          });
-          openCreateWithTemplate(undefined);
-        }}
-        className={cn(
-          "inline-flex h-11 items-center gap-1.5 rounded-xl px-3 text-sm font-medium text-primary transition-colors",
-          "hover:bg-primary/10",
-          "focus-visible:ring-2 focus-visible:ring-ring/45 focus-visible:outline-none"
-        )}
-      >
-        <Plus className="size-4" />
-        Add client
-      </button>
+              <img
+                src={logoFor(active.name)}
+                alt=""
+                className="size-5 shrink-0 object-contain"
+              />
+              <span className="max-w-[16rem] truncate text-[15px] font-semibold">
+                {active.name}
+              </span>
+              <span className="rounded-full border border-border/60 px-2 py-0.5 text-[11px] font-medium tabular-nums text-muted-foreground">
+                {activeIndex + 1} / {sortedHosts.length}
+              </span>
+              <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground" />
+            </button>
+          </DropdownMenuTrigger>
+          {/* Opens downward, over the empty canvas below the top-left pills. */}
+          <DropdownMenuContent
+            side="bottom"
+            align="start"
+            sideOffset={10}
+            className="min-w-[15rem]"
+          >
+            <DropdownMenuRadioGroup
+              value={activeHostId}
+              onValueChange={switchTo}
+            >
+              {sortedHosts.map((host) => (
+                <DropdownMenuRadioItem
+                  key={host.hostId}
+                  value={host.hostId}
+                  className="group gap-2.5 py-2 pr-1.5"
+                >
+                  <img
+                    src={logoFor(host.name)}
+                    alt=""
+                    className="size-4 shrink-0 object-contain"
+                  />
+                  <span className="flex-1 truncate">{host.name}</span>
+                  <span className="ml-2 flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 group-data-[highlighted]:opacity-100">
+                    <button
+                      type="button"
+                      aria-label={`Delete ${host.name}`}
+                      data-testid={`host-canvas-delete-${host.hostId}`}
+                      disabled={isDeleting || !canDelete}
+                      title={!canDelete ? LAST_HOST_DELETE_REASON : undefined}
+                      className="inline-flex size-6 items-center justify-center rounded-sm text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        void handleDelete(host.hostId);
+                      }}
+                    >
+                      <Trash2 className="size-3.5" />
+                    </button>
+                  </span>
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
 
       <CreateHostDialog
         isOpen={showCreate}

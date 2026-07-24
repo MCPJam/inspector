@@ -113,7 +113,7 @@ describe("HostCanvasSelector", () => {
     });
   });
 
-  it("opens the client menu to the left so it doesn't cover the canvas card", async () => {
+  it("opens the client menu downward, below the top-left pills", async () => {
     const user = userEvent.setup();
     mockUseHostList.mockReturnValue({ hosts: twoHosts, isLoading: false });
     render(<HostCanvasSelector projectId="proj-1" activeHostId="host-a" />);
@@ -122,8 +122,23 @@ describe("HostCanvasSelector", () => {
 
     const menu = await screen.findByRole("menu");
     await waitFor(() => {
-      expect(menu).toHaveAttribute("data-side", "left");
+      expect(menu).toHaveAttribute("data-side", "bottom");
     });
+  });
+
+  it("keeps the add-client action out of the switcher menu", async () => {
+    const user = userEvent.setup();
+    mockUseHostList.mockReturnValue({ hosts: twoHosts, isLoading: false });
+    render(<HostCanvasSelector projectId="proj-1" activeHostId="host-a" />);
+
+    await user.click(screen.getByTestId("host-canvas-current"));
+    await screen.findByRole("menu");
+
+    // The only add path is the left-most pill; the menu must not carry a
+    // second one (per the #3269 review).
+    expect(
+      screen.queryByTestId("host-canvas-menu-add")
+    ).not.toBeInTheDocument();
   });
 
   it("navigates to the picked host and updates the preview pointer", async () => {
