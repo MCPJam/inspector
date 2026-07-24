@@ -126,6 +126,35 @@ describe("ClientSelector", () => {
     expect(screen.getByText("Global")).toBeInTheDocument();
   });
 
+  // The lead ("Global") row must be uncheckable like any other. The
+  // selector only reports the shorter line-up; promoting the new slot 0
+  // is `usePersistedHost`'s job — see its "drops the lead" tests.
+  it("removes the lead host when its row is unchecked while comparing", async () => {
+    const user = userEvent.setup();
+    const onSelectedHostIdsChange = vi.fn();
+    render(
+      <ClientSelector
+        hosts={hosts}
+        projectId="project-1"
+        currentHostId="host-0"
+        selectedHostIds={["host-0", "host-1", "host-3"]}
+        multiHostEnabled
+        onHostChange={vi.fn()}
+        onSelectedHostIdsChange={onSelectedHostIdsChange}
+        onMultiHostEnabledChange={vi.fn()}
+        onPromoteLead={vi.fn()}
+        enableMultiHost
+      />
+    );
+
+    await user.click(screen.getByTestId("client-selector-trigger"));
+    expect(screen.getByText("Global")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("client-row-host-0"));
+
+    expect(onSelectedHostIdsChange).toHaveBeenCalledWith(["host-1", "host-3"]);
+  });
+
   it("uses app-surface logo variants inside the modal", async () => {
     const user = userEvent.setup();
     renderClientSelector({

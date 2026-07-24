@@ -8,8 +8,8 @@
  * - start reserves through the same path and honors the daily cap: a cap
  *   rejection comes back as execution_failed naming the cap, NEVER a bypass;
  * - hibernate/reset/delete map to their hooks;
- * - unavailable (no data plane, or signed out) → unsupported_in_mode with the
- *   action hook never called;
+ * - unavailable (no data plane, or a non-member actor) → unsupported_in_mode
+ *   with the action hook never called;
  * - the snapshot reports redacted status and never a terminal token.
  */
 import { act, render } from "@testing-library/react";
@@ -50,6 +50,16 @@ vi.mock("@/hooks/useComputerEnvironments", () => ({
   useResetComputer: () => resetComputer,
 }));
 
+// The non-member state renders <GuestSignInMessage>, which reads the WorkOS +
+// PostHog hooks. Stub both so it mounts without an AuthKitProvider / PostHog
+// provider.
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => ({ signIn: vi.fn() }),
+}));
+vi.mock("posthog-js/react", () => ({
+  usePostHog: () => ({ capture: vi.fn() }),
+}));
+
 vi.mock("../EnvironmentsDrawer", () => ({
   EnvironmentsDrawer: ({ open }: { open: boolean }) =>
     open ? <div data-testid="env-drawer" /> : null,
@@ -84,13 +94,13 @@ async function dispatch(command: Omit<InspectorCommand, "id">) {
 }
 
 function renderComputer(props?: {
-  isAuthenticated?: boolean;
+  isSignedInMember?: boolean;
   projectId?: string | null;
 }) {
   render(
     <ComputerView
       projectId={props?.projectId ?? "proj-1"}
-      isAuthenticated={props?.isAuthenticated ?? true}
+      isSignedInMember={props?.isSignedInMember ?? true}
     />,
   );
 }
@@ -165,8 +175,10 @@ describe("ComputerView — agent bridge handlers", () => {
     expect(deleteComputer).toHaveBeenCalledWith({ projectId: "proj-1" });
   });
 
-  it("refuses every command as unsupported_in_mode when signed out (hooks never called)", async () => {
-    renderComputer({ isAuthenticated: false });
+  it("refuses every command as unsupported_in_mode for a non-member (hooks never called)", async () => {
+    // Guests (anonymous actors) and signed-out visitors alike: the bridge still
+    // registers, but every handler refuses because there's no member project.
+    renderComputer({ isSignedInMember: false });
     for (const type of [
       "startComputer",
       "hibernateComputer",

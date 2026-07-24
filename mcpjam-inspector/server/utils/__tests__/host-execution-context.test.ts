@@ -86,6 +86,41 @@ describe("resolveExecutionContext — harness (host-only, server-authoritative)"
     });
     expect(result.harness).toBeUndefined();
   });
+
+  it("yields no harness capability for a guest-shaped runtime config (harness/computer omitted)", () => {
+    // COMP-3 guest gate. The backend OMITS `harness` and `computer` from a
+    // guest actor's runtime config (account-scoped PHASE3 flags — see
+    // mcpjam-backend convex/lib/executionAccess.ts), while still returning the
+    // rest of the host's execution fields. The resolver must then surface no
+    // harness (emulated fallback), even if a tampered body tries to smuggle
+    // one — `ExecutionOverrides` has no `harness`/`computer` field, so the
+    // body structurally cannot inject them. `computer` is not part of the
+    // resolver's output at all; the call site reads it off the runtime config
+    // (undefined for a guest) separately.
+    const result = resolveExecutionContext({
+      hostConfig: {
+        systemPrompt: "host prompt",
+        temperature: 0.2,
+        requireToolApproval: false,
+        respectToolVisibility: true,
+        modelId: "anthropic/claude-haiku-4.5",
+        selectedServerIds: ["srv-1"],
+        // harness + computer intentionally absent (guest actor).
+      },
+      overrides: {
+        // A guest body cannot carry harness/computer through overrides — the
+        // type has no such field — so the strongest test is that the
+        // non-harness fields still resolve while harness stays undefined.
+        systemPrompt: "body prompt",
+      },
+      precedence: "override-wins",
+    });
+    expect(result.harness).toBeUndefined();
+    expect(result.systemPrompt).toBe("body prompt");
+    expect(result.modelId).toBe("anthropic/claude-haiku-4.5");
+    // `computer` is never a resolved-execution field.
+    expect("computer" in result).toBe(false);
+  });
 });
 
 const IMAGE_POLICY_DISABLED = {

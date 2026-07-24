@@ -815,6 +815,10 @@ async function persistOAuthStateArtifacts(
     await provider.saveCodeVerifier(state.codeVerifier);
   }
 
+  if (typeof state.state === "string" && state.state) {
+    provider.saveIssuedCallbackState(state.state);
+  }
+
   // Persist discovery (incl. authorizationServerUrl) BEFORE saveTokens: the
   // hosted-OAuth import inside saveTokens reads the AS URL from discoveryState()
   // (localStorage), so it must already be written or the import omits it and a
@@ -2239,6 +2243,24 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     localStorage.setItem(`mcp-verifier-${this.serverName}`, codeVerifier);
   }
 
+  // 2R-iss / review F6: the issued CSRF `state` persisted durably (like the
+  // verifier), so the no-stored-session callback fallback can still recover and
+  // validate it after the flow session is lost, instead of redeeming blindly.
+  saveIssuedCallbackState(state: string) {
+    localStorage.setItem(`mcp-oauth-issued-state-${this.serverName}`, state);
+  }
+
+  issuedCallbackState(): string | undefined {
+    return (
+      localStorage.getItem(`mcp-oauth-issued-state-${this.serverName}`) ??
+      undefined
+    );
+  }
+
+  clearIssuedCallbackState() {
+    localStorage.removeItem(`mcp-oauth-issued-state-${this.serverName}`);
+  }
+
   codeVerifier(): string {
     const verifier = localStorage.getItem(`mcp-verifier-${this.serverName}`);
     if (!verifier) {
@@ -2859,6 +2881,7 @@ export async function completeHostedOAuthCallback(
   authorizationCode: string,
   options: {
     callbackState?: string | null;
+    callbackIss?: string | null;
     onTraceUpdate?: (trace: OAuthTrace) => void;
     authorizationHeader?: string | null;
   } = {}
@@ -2961,6 +2984,13 @@ export async function completeHostedOAuthCallback(
       typeof options.callbackState === "string"
         ? options.callbackState.trim()
         : "";
+    // RFC 9207 authorization-response `iss`. The hosted flow redeems the code
+    // server-side and the browser has no local session/recorded issuer for it,
+    // so the backend performs the exact-match validation; thread the value into
+    // the completion request so it CAN (client-side validation isn't possible
+    // here). Empty string omitted below.
+    const callbackIss =
+      typeof options.callbackIss === "string" ? options.callbackIss.trim() : "";
     if (!context.sessionId && !legacyCodeVerifier) {
       throw new Error("Code verifier not found");
     }
@@ -3031,6 +3061,7 @@ export async function completeHostedOAuthCallback(
           projectId: context.projectId,
           serverId: context.serverId,
           code: authorizationCode,
+          ...(callbackIss ? { iss: callbackIss } : {}),
           oauthResourceUrl,
           ...(context.sessionId
             ? {
@@ -3095,6 +3126,7 @@ export async function completeHostedOAuthCallback(
 
     localStorage.removeItem(`mcp-tokens-${serverName}`);
     localStorage.removeItem(`mcp-verifier-${serverName}`);
+    localStorage.removeItem(`mcp-oauth-issued-state-${serverName}`);
     writeStoredOAuthConfig(serverName, {
       resourceUrl: oauthResourceUrl,
     });
@@ -3388,6 +3420,7 @@ export async function handleOAuthCallback(
       });
       clearOAuthFlowSession(serverName);
       localStorage.removeItem(`mcp-verifier-${serverName}`);
+      localStorage.removeItem(`mcp-oauth-issued-state-${serverName}`);
       localStorage.removeItem("mcp-oauth-pending");
       return {
         success: true,
@@ -3429,11 +3462,24 @@ export async function handleOAuthCallback(
       fetchFn,
       oauthConfig.customHeaders
     );
-    // 2R-iss: validate the RFC 9207 `iss` against the discovered issuer before
-    // redeeming on this no-stored-session fallback. There is no persisted
-    // request `state` on this path, so CSRF `state` is enforced only on the
-    // resume path (which has the stored session); pass `expectedState:
-    // undefined` here.
+    // 2R-iss / review F6: the flow session that held the issued `state` is gone
+    // on this fallback, but every machine issues a state, so an omitted OR
+    // mismatched callback state is unverifiable and MUST NOT redeem. Recover the
+    // state from its durable key (persisted like the verifier, which this path
+    // already depends on surviving). If it can't be recovered, fail closed —
+    // there is no value to match, so redemption would skip CSRF entirely.
+    const recoveredExpectedState = provider.issuedCallbackState();
+    if (!recoveredExpectedState) {
+      localStorage.removeItem("mcp-oauth-pending");
+      return {
+        success: false,
+        error:
+          "OAuth `state` could not be verified — the issued authorization state was not found, so the callback state cannot be matched (possible CSRF). Please retry the connection.",
+        serverName,
+      };
+    }
+    // Validate CSRF `state` (recovered) and RFC 9207 `iss` before redeeming. A
+    // missing or mismatched callbackState now fails the state check.
     const fallbackIssuerMetadata = discoveryState.authorizationServerMetadata as
       | {
           issuer?: string;
@@ -3443,7 +3489,7 @@ export async function handleOAuthCallback(
     const fallbackSecurity = evaluateCallbackSecurity({
       callbackState: options.callbackState,
       callbackIss: options.callbackIss,
-      expectedState: undefined,
+      expectedState: recoveredExpectedState,
       recordedIssuer: fallbackIssuerMetadata?.issuer,
       issParameterSupported:
         fallbackIssuerMetadata?.authorization_response_iss_parameter_supported,
@@ -3501,6 +3547,7 @@ export async function handleOAuthCallback(
     // Clean up pending state
     localStorage.removeItem("mcp-oauth-pending");
     localStorage.removeItem(`mcp-verifier-${serverName}`);
+    localStorage.removeItem(`mcp-oauth-issued-state-${serverName}`);
     writeStoredOAuthConfig(serverName, {
       resourceUrl: oauthResourceUrl,
     });
@@ -3794,6 +3841,7 @@ export function clearOAuthData(serverName: string): void {
   localStorage.removeItem(`mcp-tokens-${serverName}`);
   localStorage.removeItem(`mcp-client-${serverName}`);
   localStorage.removeItem(`mcp-verifier-${serverName}`);
+  localStorage.removeItem(`mcp-oauth-issued-state-${serverName}`);
   localStorage.removeItem(`mcp-serverUrl-${serverName}`);
   localStorage.removeItem(`mcp-oauth-config-${serverName}`);
   oauthBindingStorage.clear(serverName);

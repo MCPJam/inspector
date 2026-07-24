@@ -259,9 +259,17 @@ export function createComputerUploadHandler(deps: ComputerUploadDeps = {}) {
       logger.warn("[computer-upload] write failed", {
         computerId: claims.computerId,
         errorCode: classifyError(err),
+        writtenCount: written.length,
       });
+      // Report which files DID land so a retry can skip them instead of
+      // re-uploading the whole batch into an unclear sandbox state.
       return c.json(
-        { ok: false, error: "Failed to write files to your computer." },
+        {
+          ok: false,
+          error: "Failed to write files to your computer.",
+          written,
+          failedAt: planned[written.length]?.name ?? null,
+        },
         502
       );
     }

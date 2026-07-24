@@ -20,7 +20,10 @@
  */
 import { Hono } from "hono";
 import "../../types/hono";
-import { handleJsonRpc } from "../../services/mcp-http-bridge";
+import {
+  handleJsonRpc,
+  parseAndValidateJsonRpc,
+} from "../../services/mcp-http-bridge";
 import {
   createAuthorizedManager,
   withManager,
@@ -130,12 +133,15 @@ async function handle(c: any) {
     return c.json({ error: "Unsupported request" }, 400);
   }
 
-  let body: any;
-  try {
-    body = await c.req.json();
-  } catch {
-    body = undefined;
+  // Malformed payloads must NOT fall through to the notification → 202 path
+  // (the bridge treats a missing method as a notification): a garbage body
+  // acknowledged as "Accepted" looks like a delivered message to the harness.
+  // Shared with the local MCP proxy (`http-adapters`) via the bridge helper.
+  const validation = await parseAndValidateJsonRpc(() => c.req.json());
+  if (!validation.ok) {
+    return c.json(validation.response, validation.status as 400);
   }
+  const body = validation.body;
 
   // Rebuild the user's authorized connection server-side via the acting-as
   // service-token exchange (no browser bearer in the sandbox). Convex baked the

@@ -42,6 +42,7 @@ import { ComputerStatusChip } from "./ComputerStatusChip";
 import { ComputerTerminal } from "./ComputerTerminal";
 import { ComputersUnavailableMessage } from "./ComputersUnavailableMessage";
 import { PaneMessage } from "./PaneMessage";
+import { GuestSignInMessage } from "@/components/auth/GuestSignInMessage";
 
 /**
  * The "Computer" tab — manage the project's personal cloud computer (one per
@@ -50,12 +51,19 @@ import { PaneMessage } from "./PaneMessage";
  */
 export function ComputerView({
   projectId,
-  isAuthenticated,
+  isSignedInMember,
 }: {
   projectId: string | null;
-  isAuthenticated: boolean;
+  /**
+   * True only for a signed-in member — NOT merely "has a Convex identity".
+   * Anonymous guests are `useConvexAuth().isAuthenticated === true` (they're
+   * provisioned as anonymous actors), so gating the personal computer on raw
+   * auth would let guests through; the caller must pass member-ness
+   * (`!currentUser.isAnonymous`) so the guest sign-in affordance below fires.
+   */
+  isSignedInMember: boolean;
 }) {
-  const effectiveProjectId = isAuthenticated ? projectId : null;
+  const effectiveProjectId = isSignedInMember ? projectId : null;
   const status = useComputerStatus(effectiveProjectId);
   const reserve = useReserveComputer();
   const deleteComputer = useDeleteComputer();
@@ -368,8 +376,20 @@ export function ComputerView({
     },
   });
 
-  if (!isAuthenticated) {
-    return <Empty>Sign in to use a personal computer for this project.</Empty>;
+  if (!isSignedInMember) {
+    // Guest actor (anonymous or not signed in): the personal computer (and the
+    // Claude Code harness that runs inside it) is account-scoped, so the
+    // backend omits it from a guest's runtime config. Offer the honest next
+    // step with a working sign-in button instead of a dead-end line of copy.
+    return (
+      <div className="flex h-full items-center justify-center p-6">
+        <GuestSignInMessage
+          compact
+          location="computer_view"
+          message="Sign in to use a personal computer for this project — it runs on a per-account cloud workstation, so it's off for guests."
+        />
+      </div>
+    );
   }
   if (!projectId) {
     return (
