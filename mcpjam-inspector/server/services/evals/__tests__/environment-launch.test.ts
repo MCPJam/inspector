@@ -13,7 +13,10 @@ const RESOLVED: ResolvedEnvironmentForLaunch = {
   environmentRef: { environmentId: "env-1", name: "Staging", revision: 4 },
   hostId: "host-1",
   selectedServerIds: ["ps_1", "ps_2"],
-  selectedServerNames: ["linear", "asana"],
+  servers: [
+    { serverId: "ps_1", name: "linear" },
+    { serverId: "ps_2", name: "asana" },
+  ],
 };
 
 function fakeConvexClient(result: unknown) {
@@ -23,17 +26,21 @@ function fakeConvexClient(result: unknown) {
 }
 
 describe("environmentServerRefs", () => {
-  it("prefers the runtime server-name projection", () => {
+  it("prefers the live-healed server-name projection", () => {
     expect(environmentServerRefs(RESOLVED)).toEqual(["linear", "asana"]);
   });
 
-  it("falls back to ids when names are absent or empty", () => {
+  it("falls back to ids when the healed projection is absent or empty", () => {
     expect(
-      environmentServerRefs({ ...RESOLVED, selectedServerNames: undefined })
+      environmentServerRefs({
+        ...RESOLVED,
+        servers: undefined as unknown as ResolvedEnvironmentForLaunch["servers"],
+      })
     ).toEqual(["ps_1", "ps_2"]);
-    expect(
-      environmentServerRefs({ ...RESOLVED, selectedServerNames: [] })
-    ).toEqual(["ps_1", "ps_2"]);
+    expect(environmentServerRefs({ ...RESOLVED, servers: [] })).toEqual([
+      "ps_1",
+      "ps_2",
+    ]);
   });
 });
 

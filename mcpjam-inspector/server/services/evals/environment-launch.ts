@@ -21,24 +21,29 @@ export interface ResolvedEnvironmentForLaunch {
     revision: number;
   };
   hostId: string;
+  hostName?: string;
   hostConfigId?: string;
-  /** The closed server selection (Convex projectServer ids). */
+  /** The raw closed server selection (Convex server ids) — do not substitute. */
   selectedServerIds: string[];
-  /** Stable runtime server names for the same selection (wire-tolerant). */
-  selectedServerNames?: string[];
+  /**
+   * Live-healed connectable projection of `selectedServerIds`: each id healed
+   * to its current live server (delete + re-add-same-name), genuinely-gone
+   * servers dropped, deduped by live id, in selection order.
+   */
+  servers: Array<{ serverId: string; name: string }>;
   serverAttachmentId?: string | null;
 }
 
 /**
  * Runtime server refs for manager connection / eval execution: the eval
- * pipeline keys managers by runtime server NAME, so prefer the name
- * projection and fall back to ids when the backend omits it.
+ * pipeline keys managers by runtime server NAME, so prefer the live-healed
+ * `servers` name projection and fall back to raw ids when it is empty.
  */
 export function environmentServerRefs(
   resolved: ResolvedEnvironmentForLaunch
 ): string[] {
-  return resolved.selectedServerNames && resolved.selectedServerNames.length > 0
-    ? resolved.selectedServerNames
+  return resolved.servers && resolved.servers.length > 0
+    ? resolved.servers.map((s) => s.name)
     : resolved.selectedServerIds;
 }
 
