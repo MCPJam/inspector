@@ -395,7 +395,7 @@ POST /api/v1/projects/{projectId}/eval-ingest/runs/start
 
 **Source order (highest priority first):**
 
-1. `iteration.hostSnapshot` — per-iteration capture from `HostRuntime` (Stage 4). Reflects the bound `Host` state at the iteration's end.
+1. `iteration.hostSnapshot` — per-iteration capture from `HostRuntime` (Stage 4). Reflects the bound `Host` state at the iteration's end. Not yet carried by `EvalResultInput`, so today the reporter falls through to 2 and 3.
 2. `executor.getHostSnapshot?.()` — fallback for executors that don't expose per-iteration snapshots.
 3. `MCPJamReportingConfig.host` — explicit override, compatibility path.
 
@@ -448,7 +448,7 @@ Advanced replay override. Most users should not construct this manually.
 | `trace` | `EvalTraceInput` | No | Conversation trace |
 | `externalIterationId` | `string` | No | Custom iteration ID |
 | `externalCaseId` | `string` | No | Custom case ID |
-| `metadata` | `Record<string, string \| number \| boolean>` | No | Custom metadata; values must be scalars. When the runner evaluates a case's predicates, it persists `{ predicate, passed, reason }[]` under `metadata.predicates` automatically. |
+| `metadata` | `Record<string, string \| number \| boolean>` | No | Custom metadata; values must be scalars. When the runner evaluates a case's predicates, it persists `{ predicate, passed, reason, scope? }[]` under `metadata.predicates` automatically. |
 | `isNegativeTest` | `boolean` | No | Whether this is a negative test |
 | `advancedConfig` | `Record<string, unknown>` | No | Advanced case configuration recorded with the iteration (e.g. `steps`, `system`, `temperature`) |
 | `matchOptions` | `EvalMatchOptions` | No | Per-result match options. When present, the inspector snapshots these onto the iteration so historical pass/fail computation honors them. See [`EvalMatchOptions`](/sdk/reference/validators#evalmatchoptions) |

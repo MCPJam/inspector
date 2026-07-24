@@ -95,7 +95,7 @@ The SDK eval reporter additionally sends `{ hostConfig, hostConfigHash }` at the
 - `POST /api/v1/projects/:projectId/eval-ingest/report` (one-shot path) — same.
 - `POST /api/v1/projects/:projectId/eval-ingest/runs/iterations` and `…/runs/finalize` — **never** carry the pair (per-run, not per-batch).
 
-Source order, run-level only: `iteration.hostSnapshot` → `executor.getHostSnapshot?.()` → `MCPJamReportingConfig.host`. Pass-1 homogeneity gate: send only when all available iteration snapshots canonicalize to the same hash; heterogeneous runs omit (per-iteration wire support is a later stage). Any error while resolving or canonicalizing the snapshot logs a warning and omits the pair rather than failing the upload.
+Source order, run-level only: `iteration.hostSnapshot` → `executor.getHostSnapshot?.()` → `MCPJamReportingConfig.host`. Today `EvalResultInput` carries no `hostSnapshot` field, so the shipped reporter effectively resolves executor → explicit host; the iteration slot and its homogeneity gate (send only when all snapshots canonicalize to the same hash) are forward-compatible for when per-iteration capture is wired through the wire shape (see the comment in `resolveWireHostConfigForRun`, `sdk/src/report-eval-results.ts`). Any error while resolving or canonicalizing the snapshot logs a warning and omits the pair rather than failing the upload.
 
 `hostConfigHash` is a transport-integrity check — the backend re-runs `normalizeSdkEvalHostConfigForWire → canonicalizeHostConfigV2 → computeHostConfigHashV2` and rejects on mismatch. It is **not** the persisted storage id; suite-resolved Convex `Id<'servers'>` are layered on top at storage time, so the persisted `hostConfigsV2` row's hash differs from the wire hash by design.
 
@@ -134,7 +134,7 @@ The legacy `/sdk/v1/evals/*` endpoints and the project API keys (`mcpjam_…`) t
 
 - **Auth** — `Authorization: Bearer <sk_ key>`, resolved from `input.apiKey ?? MCPJAM_API_KEY`. Base URL from `input.baseUrl ?? MCPJAM_BASE_URL` (default `https://app.mcpjam.com`); project from `input.project ?? MCPJAM_PROJECT_ID` (default `default`).
 - **Flow** — widget snapshots upload first (via `artifacts/upload-url`); then, if the run fits in one request (≤ 200 results and ≤ 1 MiB), a single `report` call; otherwise `runs/start` → chunked `runs/iterations` → `runs/finalize`.
-- **Retry** — 429/5xx, network errors, and timeouts retry with fixed delays (250/750/1750 ms, ±20% jitter). Billing-limit errors never retry. If `runs/start` reports the run already completed (idempotent reuse), the reporter short-circuits.
+- **Retry** — 429/5xx, network errors, and timeouts retry with base delays of 250/750/1750 ms plus ±20% jitter. Billing-limit errors never retry. If `runs/start` reports the run already completed (idempotent reuse), the reporter short-circuits.
 
 ## Predicate gate
 

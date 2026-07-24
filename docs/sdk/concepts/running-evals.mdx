@@ -345,7 +345,7 @@ const r1 = await runtime.run("Who am I?");
 const r2 = await runtime.run("List my projects", { context: [r1] });
 ```
 
-**Eval reporting (Stage 5).** When you upload results to MCPJam, the reporter additionally sends the canonical host config alongside each run (`{ hostConfig, hostConfigHash }`) so the persisted row in the Evals UI shows the exact host you ran with. Pass 1 sends a run-level snapshot only when all iteration snapshots match; heterogeneous runs (mutating the bound `Host` between iterations) omit the run-level field for now. Old backends without the capability are unaffected. Source order is `iteration.hostSnapshot` → `executor.getHostSnapshot?.()` → `MCPJamReportingConfig.host`.
+**Eval reporting (Stage 5).** When you upload results to MCPJam, the reporter additionally sends the canonical host config alongside each run (`{ hostConfig, hostConfigHash }`) so the persisted row in the Evals UI shows the exact host you ran with — the v1 ingest surface always accepts the pair. The snapshot comes from `executor.getHostSnapshot?.()`, falling back to `MCPJamReportingConfig.host`; uploaded results carry no per-iteration `hostSnapshot` field today, so per-iteration wire pickup is a later stage.
 
 ## Generate evals from the Inspector
 

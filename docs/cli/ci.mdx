@@ -390,6 +390,8 @@ Poll `eval status` until `run.status` is terminal (`completed`, `failed`, or `ca
           MCPJAM_API_KEY: ${{ secrets.MCPJAM_API_KEY }}
         run: |
           RUN_ID=$(jq -r '.runId' eval-run.json)
+          ATTEMPTS=0
+          MAX_ATTEMPTS=60   # ~30 minutes at one poll per 30 s
           while :; do
             npx -y @mcpjam/cli@latest eval status \
               --run "$RUN_ID" \
@@ -397,6 +399,11 @@ Poll `eval status` until `run.status` is terminal (`completed`, `failed`, or `ca
               --format json > eval-status.json
             STATUS=$(jq -r '.run.status' eval-status.json)
             case "$STATUS" in completed|failed|cancelled) break;; esac
+            ATTEMPTS=$((ATTEMPTS + 1))
+            if [ "$ATTEMPTS" -ge "$MAX_ATTEMPTS" ]; then
+              echo "Timed out waiting for eval run (last status: $STATUS)"
+              exit 1
+            fi
             sleep 30
           done
           jq '.run.summary' eval-status.json
@@ -404,7 +411,7 @@ Poll `eval status` until `run.status` is terminal (`completed`, `failed`, or `ca
 ```
 
 <Note>
-`eval run` and `eval status` exit non-zero only on transport or usage errors. The pass/fail verdict lives in the JSON payload (`run.result`), so the final assertion above is what fails the job.
+The eval verdict does not control the exit code — `eval run` and `eval status` exit non-zero on API, transport, and usage errors instead. The pass/fail verdict lives in the JSON payload (`run.result`), so the final assertion above is what fails the job.
 </Note>
 
 Hosted runs execute LLM iterations on the platform and consume your organization's credits or configured provider keys. See the [`eval` command reference](/cli/reference#eval-commands) for the rest of the surface (`eval cancel`, `eval iterations`, `eval trace`, `eval cases`, and more).
