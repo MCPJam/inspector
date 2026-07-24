@@ -48,6 +48,24 @@ describe("extractInsufficientScopeChallenge (SEP-2350)", () => {
     err.cause = err;
     expect(extractInsufficientScopeChallenge(err)).toBeUndefined();
   });
+
+  it("does NOT treat an unrelated error carrying a requiredScope field as a challenge", () => {
+    // A non-InsufficientScope error that happens to expose a `requiredScope`
+    // string must not be duck-typed into an OAuth step-up challenge — that
+    // would trigger a spurious client re-authorization.
+    const err = new Error("some tool needs a scope") as any;
+    err.requiredScope = "read:everything";
+    err.resourceMetadataUrl = "https://rs.example/.well-known";
+    expect(extractInsufficientScopeChallenge(err)).toBeUndefined();
+  });
+
+  it("does not treat a wrapped non-InsufficientScope requiredScope-bearer as a challenge", () => {
+    const inner = new Error("nested") as any;
+    inner.requiredScope = "admin";
+    const outer = new Error("outer");
+    (outer as any).cause = inner;
+    expect(extractInsufficientScopeChallenge(outer)).toBeUndefined();
+  });
 });
 
 describe("serializeMcpError", () => {

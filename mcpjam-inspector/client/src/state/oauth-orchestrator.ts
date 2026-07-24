@@ -2,6 +2,7 @@ import {
   clearOAuthData,
   initiateOAuth,
   readStoredOAuthConfig,
+  resolveStoredIssuer,
   MCPOAuthOptions,
 } from "@/lib/oauth/mcp-oauth";
 import { normalizeRegistrationMode } from "@/shared/xaa.js";
@@ -332,6 +333,21 @@ function stepUpAttemptsKey(serverName: string): string {
   return `${STEP_UP_ATTEMPTS_PREFIX}${serverName}`;
 }
 
+// The bounded step-up counter lives in `sessionStorage`, NOT `localStorage`: it
+// must survive the OAuth browser redirect that a re-authorization triggers
+// (same-origin, same tab → sessionStorage persists across the redirect
+// round-trip), but it must NOT outlive the browser session. In `localStorage`,
+// a prior session's exhausted counter would make a brand-new session throw
+// immediately on its first legitimate step-up. `sessionStorage` scopes the
+// bound to the session, which is exactly the loop we need to bound (§10.5#5).
+function stepUpAttemptsStore(): Storage | undefined {
+  try {
+    return typeof sessionStorage !== "undefined" ? sessionStorage : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // Key attempts by issuer so an AS switch (or a step-up before issuer
 // discovery) never reuses another AS's count. An unknown issuer buckets under
 // "" — its own isolated bucket.
@@ -344,8 +360,9 @@ function readStepUpAttempts(
   issuer: string | undefined,
 ): number {
   try {
-    if (typeof localStorage === "undefined") return 0;
-    const raw = localStorage.getItem(stepUpAttemptsKey(serverName));
+    const store = stepUpAttemptsStore();
+    if (!store) return 0;
+    const raw = store.getItem(stepUpAttemptsKey(serverName));
     if (!raw) return 0;
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const value = parsed?.[issuerBucket(issuer)];
@@ -363,8 +380,9 @@ function writeStepUpAttempts(
   attempts: number,
 ): void {
   try {
-    if (typeof localStorage === "undefined") return;
-    const raw = localStorage.getItem(stepUpAttemptsKey(serverName));
+    const store = stepUpAttemptsStore();
+    if (!store) return;
+    const raw = store.getItem(stepUpAttemptsKey(serverName));
     let map: Record<string, number> = {};
     if (raw) {
       try {
@@ -377,7 +395,7 @@ function writeStepUpAttempts(
       }
     }
     map[issuerBucket(issuer)] = attempts;
-    localStorage.setItem(stepUpAttemptsKey(serverName), JSON.stringify(map));
+    store.setItem(stepUpAttemptsKey(serverName), JSON.stringify(map));
   } catch {
     // Best-effort: a full/unavailable store must not abort the OAuth flow. The
     // upstream transport still bounds retries within a single request; only the
@@ -391,6 +409,13 @@ export interface InsufficientScopeStepUpInput {
   issuer: string | undefined;
   /** Scopes named by the `403` `WWW-Authenticate` challenge's `scope` param. */
   challengedScopes: string[] | undefined;
+  /**
+   * The scopes the server's ORIGINAL OAuth flow requested (from the stored
+   * profile/config). Included in the union so the FIRST runtime step-up — when
+   * nothing has been persisted yet — does not drop the scopes the existing
+   * grant already held and re-request only the challenged subset.
+   */
+  originalScopes?: string[];
   /** Where the step-up is handled — drives the §10.5 policy split. */
   authMode: StepUpAuthMode;
   /** Max cross-request re-authorizations before giving up (default 1). */
@@ -420,11 +445,17 @@ export interface InsufficientScopeStepUpDecision {
 export function resolveInsufficientScopeStepUp(
   input: InsufficientScopeStepUpInput,
 ): InsufficientScopeStepUpDecision {
-  const { serverName, issuer, challengedScopes, authMode } = input;
+  const { serverName, issuer, challengedScopes, originalScopes, authMode } =
+    input;
   const maxRetries = input.maxRetries ?? DEFAULT_STEP_UP_MAX_RETRIES;
   const attempt = readStepUpAttempts(serverName, issuer);
   const action = resolveStepUpAction({ authMode, attempt, maxRetries });
-  const scopes = stepUpScopeUnion(serverName, issuer, challengedScopes);
+  const scopes = stepUpScopeUnion(
+    serverName,
+    issuer,
+    challengedScopes,
+    originalScopes,
+  );
 
   if (action === "reauthorize") {
     // Persist the widened set as the newly-requested scopes for this issuer so
@@ -447,18 +478,139 @@ export function resetInsufficientScopeStepUp(
   issuer: string | undefined,
 ): void {
   try {
-    if (typeof localStorage === "undefined") return;
-    const raw = localStorage.getItem(stepUpAttemptsKey(serverName));
+    const store = stepUpAttemptsStore();
+    if (!store) return;
+    const raw = store.getItem(stepUpAttemptsKey(serverName));
     if (!raw) return;
     const parsed = JSON.parse(raw) as Record<string, number>;
     if (!parsed || typeof parsed !== "object") return;
     delete parsed[issuerBucket(issuer)];
     if (Object.keys(parsed).length === 0) {
-      localStorage.removeItem(stepUpAttemptsKey(serverName));
+      store.removeItem(stepUpAttemptsKey(serverName));
     } else {
-      localStorage.setItem(stepUpAttemptsKey(serverName), JSON.stringify(parsed));
+      store.setItem(stepUpAttemptsKey(serverName), JSON.stringify(parsed));
     }
   } catch {
     // Best-effort reset.
   }
+}
+
+// ===========================================================================
+// Tool-call step-up wiring (local, non-hosted surface)
+// ===========================================================================
+//
+// The composition a live tool-call surface uses when `executeToolApi` surfaces
+// an `insufficientScope` challenge: resolve the server's issuer + originally-
+// requested scopes, run the bounded {@link resolveInsufficientScopeStepUp}
+// decision, and — on `reauthorize` — drive the fresh union-scope OAuth flow via
+// {@link ensureAuthorizedForReconnect}. This is what makes the step-up CORE
+// reachable end-to-end from a real MCP tool call on the local path.
+
+function readServerUrlForStepUp(server: ServerWithName): string | undefined {
+  const fromConfig = (server.config as any)?.url?.toString?.();
+  if (fromConfig) return fromConfig;
+  try {
+    return (
+      localStorage.getItem(`mcp-serverUrl-${server.name}`) ?? undefined
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+function readOriginalOAuthScopes(
+  server: ServerWithName,
+): string[] | undefined {
+  // Mirror buildReconnectOAuthOptions' scope precedence: the flow profile's
+  // scopes, else the stored OAuth config's scopes. These are the scopes the
+  // ORIGINAL grant requested — the base the step-up union must not drop.
+  const profileScopes = parseOAuthScopes(server.oauthFlowProfile?.scopes);
+  if (profileScopes) return profileScopes;
+  return readStoredOAuthConfig(server.name).scopes;
+}
+
+/** The `WWW-Authenticate` challenge fields a failed tool call surfaces. */
+export interface ToolCallStepUpChallenge {
+  requiredScope?: string;
+  resourceMetadataUrl?: string;
+}
+
+export interface ToolCallStepUpOutcome {
+  /** `reauthorize` (a fresh flow ran), `throw`, or `manual`. */
+  action: StepUpAction;
+  /** The union scope set the decision produced (for display / the fresh flow). */
+  scopes: string[];
+  /** Re-authorizations already performed this session before this decision. */
+  attempt: number;
+  /**
+   * The OAuth outcome when `action === "reauthorize"` (typically a `redirect`,
+   * which navigates away). Undefined for `throw` / `manual`.
+   */
+  reauthorization?: OAuthResult;
+}
+
+/**
+ * Handle a runtime `403 insufficient_scope` on a live tool call: decide (bounded
+ * per session, §10.5 policy split) and, on `reauthorize`, run the union-scope
+ * re-authorization. The caller supplies the server and the parsed challenge; the
+ * issuer and originally-requested scopes are resolved from stored state here.
+ */
+export async function applyToolCallStepUp(
+  server: ServerWithName,
+  challenge: ToolCallStepUpChallenge,
+  options?: {
+    /** Defaults to `interactive` — the local tool runner drives a browser flow. */
+    authMode?: StepUpAuthMode;
+    maxRetries?: number;
+    onTraceUpdate?: (trace: OAuthTrace) => void;
+    beforeRedirect?: (oauthOptions: MCPOAuthOptions) => void;
+  },
+): Promise<ToolCallStepUpOutcome> {
+  const issuer = resolveStoredIssuer(server.name, readServerUrlForStepUp(server));
+  const challengedScopes = parseOAuthScopes(challenge.requiredScope);
+
+  const decision = resolveInsufficientScopeStepUp({
+    serverName: server.name,
+    issuer,
+    challengedScopes,
+    originalScopes: readOriginalOAuthScopes(server),
+    authMode: options?.authMode ?? "interactive",
+    maxRetries: options?.maxRetries,
+  });
+
+  if (decision.action !== "reauthorize") {
+    return {
+      action: decision.action,
+      scopes: decision.scopes,
+      attempt: decision.attempt,
+    };
+  }
+
+  const reauthorization = await ensureAuthorizedForReconnect(server, {
+    allowInteractiveOAuthFlow: true,
+    // A resolved `reauthorize` IS the confirmed escalation — without this an
+    // auto server's tokenless guard would short-circuit to
+    // ready-unauthenticated instead of redirecting for the widened scopes.
+    interactiveOAuthConfirmed: true,
+    stepUpScopes: decision.scopes,
+    onTraceUpdate: options?.onTraceUpdate,
+    beforeRedirect: options?.beforeRedirect,
+  });
+
+  return {
+    action: decision.action,
+    scopes: decision.scopes,
+    attempt: decision.attempt,
+    reauthorization,
+  };
+}
+
+/**
+ * Clear the step-up counter after a SUCCESSFUL tool call (resolves the server's
+ * issuer, then {@link resetInsufficientScopeStepUp}). Call this on a completed
+ * result so a later legitimate step-up starts from zero.
+ */
+export function resetToolCallStepUp(server: ServerWithName): void {
+  const issuer = resolveStoredIssuer(server.name, readServerUrlForStepUp(server));
+  resetInsufficientScopeStepUp(server.name, issuer);
 }

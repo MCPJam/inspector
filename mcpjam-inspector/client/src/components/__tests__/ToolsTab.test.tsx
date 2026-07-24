@@ -34,6 +34,15 @@ vi.mock("@/lib/apis/mcp-tasks-api", () => ({
   getTaskCapabilities: (...args: unknown[]) => mockGetTaskCapabilities(...args),
 }));
 
+// SEP-2350 step-up orchestration — spy so we can assert the local tool-call
+// surface drives the resolver on a `403 insufficient_scope`.
+const mockApplyToolCallStepUp = vi.fn();
+const mockResetToolCallStepUp = vi.fn();
+vi.mock("@/state/oauth-orchestrator", () => ({
+  applyToolCallStepUp: (...args: unknown[]) => mockApplyToolCallStepUp(...args),
+  resetToolCallStepUp: (...args: unknown[]) => mockResetToolCallStepUp(...args),
+}));
+
 // Mock request storage
 vi.mock("@/lib/request-storage", () => ({
   listSavedRequests: vi.fn().mockReturnValue([]),
@@ -119,6 +128,11 @@ describe("ToolsTab", () => {
       supportsToolCalls: false,
       supportsList: false,
       supportsCancel: false,
+    });
+    mockApplyToolCallStepUp.mockResolvedValue({
+      action: "reauthorize",
+      scopes: [],
+      attempt: 0,
     });
   });
 
@@ -534,6 +548,107 @@ describe("ToolsTab", () => {
           undefined
         );
       });
+    });
+
+    it("drives the step-up resolver on a 403 insufficient_scope challenge", async () => {
+      const serverConfig = createServerConfig();
+      const server = {
+        name: "test-server",
+        config: serverConfig,
+        useOAuth: true,
+      } as unknown as import("@/state/app-types").ServerWithName;
+
+      mockListTools.mockResolvedValue({
+        tools: [
+          {
+            name: "scoped-tool",
+            inputSchema: { type: "object", properties: {} },
+          },
+        ],
+      });
+
+      // The tool call fails with a runtime insufficient-scope challenge.
+      mockExecuteToolApi.mockResolvedValue({
+        error: "insufficient_scope",
+        insufficientScope: {
+          requiredScope: "admin",
+          resourceMetadataUrl: "https://rs.example/.well-known",
+        },
+      });
+
+      render(
+        <ToolsTab
+          serverConfig={serverConfig}
+          serverName="test-server"
+          server={server}
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("scoped-tool")).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText("scoped-tool"));
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: /^run/i })
+        ).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByRole("button", { name: /^run/i }));
+
+      // The local surface forwards the challenge into the step-up resolver.
+      await waitFor(() => {
+        expect(mockApplyToolCallStepUp).toHaveBeenCalledWith(
+          server,
+          expect.objectContaining({
+            requiredScope: "admin",
+            resourceMetadataUrl: "https://rs.example/.well-known",
+          })
+        );
+      });
+    });
+
+    it("resets the step-up counter after a successful tool call", async () => {
+      const serverConfig = createServerConfig();
+      const server = {
+        name: "test-server",
+        config: serverConfig,
+        useOAuth: true,
+      } as unknown as import("@/state/app-types").ServerWithName;
+
+      mockListTools.mockResolvedValue({
+        tools: [
+          { name: "ok-tool", inputSchema: { type: "object", properties: {} } },
+        ],
+      });
+      mockExecuteToolApi.mockResolvedValue({
+        status: "completed",
+        result: { content: [{ type: "text", text: "ok" }] },
+      });
+
+      render(
+        <ToolsTab
+          serverConfig={serverConfig}
+          serverName="test-server"
+          server={server}
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("ok-tool")).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByText("ok-tool"));
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: /^run/i })
+        ).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByRole("button", { name: /^run/i }));
+
+      await waitFor(() => {
+        expect(mockResetToolCallStepUp).toHaveBeenCalledWith(server);
+      });
+      expect(mockApplyToolCallStepUp).not.toHaveBeenCalled();
     });
   });
 

@@ -41,6 +41,11 @@ import {
 } from "@/lib/apis/mcp-tasks-api";
 import { trackTask } from "@/lib/task-tracker";
 import { validateToolOutput } from "@/lib/schema-utils";
+import {
+  applyToolCallStepUp,
+  resetToolCallStepUp,
+} from "@/state/oauth-orchestrator";
+import type { ServerWithName } from "@/state/app-types";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import { isNormalizedError } from "@mcpjam/sdk/browser";
 import { WebApiError } from "@/lib/apis/web/base";
@@ -133,6 +138,13 @@ function normalizeElicitationContent(
 interface ToolsTabProps {
   serverConfig?: MCPServerConfig;
   serverName?: string;
+  /**
+   * The full server entry — needed to drive a SEP-2350 runtime scope step-up
+   * when a tool call returns a `403 insufficient_scope` challenge (issuer +
+   * originally-requested scopes are resolved from it). Optional: surfaces that
+   * don't plumb it through simply never trigger the local step-up.
+   */
+  server?: ServerWithName;
   serverConnectionStatus?: ConnectionStatus;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
 }
@@ -140,6 +152,7 @@ interface ToolsTabProps {
 export function ToolsTab({
   serverConfig,
   serverName,
+  server,
   serverConnectionStatus,
   mcpToolResultImageRendering,
 }: ToolsTabProps) {
@@ -511,6 +524,19 @@ export function ToolsTab({
       const callResult = response.result;
       setResult(callResult);
 
+      // SEP-2350: a successful call clears the bounded step-up counter so a
+      // future legitimate scope step-up starts fresh rather than inheriting a
+      // stale count that would prematurely throw.
+      if (server) {
+        try {
+          resetToolCallStepUp(server);
+        } catch (err) {
+          logger.warn("Failed to reset step-up counter", {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
       const rawResult = callResult as unknown as Record<string, unknown>;
       const currentTool = tools[toolName];
       setStructuredContentValid(
@@ -580,6 +606,26 @@ export function ToolsTab({
       setNormalizedError(
         isNormalizedError(maybeNormalized) ? maybeNormalized : null
       );
+
+      // SEP-2350 runtime scope step-up: the tool call failed with a
+      // `403 insufficient_scope`. Drive the bounded, union-scope
+      // re-authorization for the local (non-hosted) surface. On `reauthorize`
+      // this redirects the browser to the authorization server; `throw` /
+      // `manual` leave the surfaced error in place.
+      const insufficientScope = (
+        response as { insufficientScope?: import("@/lib/apis/mcp-tools-api").ToolInsufficientScopeChallenge }
+      ).insufficientScope;
+      if (insufficientScope && server) {
+        void applyToolCallStepUp(server, {
+          requiredScope: insufficientScope.requiredScope,
+          resourceMetadataUrl: insufficientScope.resourceMetadataUrl,
+        }).catch((err) => {
+          logger.error("Step-up re-authorization failed", {
+            toolName,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+      }
     }
   };
 

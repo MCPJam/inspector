@@ -103,11 +103,14 @@ export type InsufficientScopeChallenge = {
  * A runtime `403 insufficient_scope` from a live MCP request surfaces here as
  * this transport-layer error (the SDK constructs the transport with
  * `onInsufficientScope: "throw"`, so it never attempts a doomed server-side
- * interactive re-authorization). Detection is by `.name` /
- * `constructor.mcpBrand` — the class does not extend `OAuthError`, and its
- * fields (`requiredScope`, `resourceMetadataUrl`) originate from the resource
- * server's header, so treat them as untrusted when rendering. Returning the
- * challenge lets the client drive the union-scope step-up re-authorization.
+ * interactive re-authorization). Detection is strictly by
+ * `constructor.mcpBrand` / `.name` — an actual `InsufficientScopeError`, never
+ * a duck-typed `requiredScope` field (an unrelated error carrying that field
+ * must not masquerade as a step-up challenge). The class does not extend
+ * `OAuthError`, and its fields (`requiredScope`, `resourceMetadataUrl`)
+ * originate from the resource server's header, so treat them as untrusted when
+ * rendering. Returning the challenge lets the client drive the union-scope
+ * step-up re-authorization.
  */
 export function extractInsufficientScopeChallenge(
   error: unknown,
@@ -116,10 +119,14 @@ export function extractInsufficientScopeChallenge(
   let current: any = error;
   while (current && typeof current === "object" && !seen.has(current)) {
     seen.add(current);
+    // Recognize ONLY an actual `InsufficientScopeError` — by its class brand
+    // (`mcpBrand`, survives minification/cross-realm) or `.name`. Do NOT
+    // duck-type on a `requiredScope` string: an unrelated error that happens
+    // to carry a `requiredScope` field must not be serialized to the client as
+    // an OAuth step-up challenge (it would trigger a spurious re-authorization).
     const isInsufficientScope =
-      current.name === "InsufficientScopeError" ||
       current.constructor?.mcpBrand === "mcp.InsufficientScopeError" ||
-      typeof current.requiredScope === "string";
+      current.name === "InsufficientScopeError";
     if (isInsufficientScope) {
       const requiredScope =
         typeof current.requiredScope === "string"

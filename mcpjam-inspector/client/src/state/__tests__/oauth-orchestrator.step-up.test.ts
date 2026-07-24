@@ -1,24 +1,32 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ServerWithName } from "../app-types";
 
-const { clearOAuthDataMock, initiateOAuthMock, readStoredOAuthConfigMock } =
-  vi.hoisted(() => ({
-    clearOAuthDataMock: vi.fn(),
-    initiateOAuthMock: vi.fn(),
-    readStoredOAuthConfigMock: vi.fn(),
-  }));
+const {
+  clearOAuthDataMock,
+  initiateOAuthMock,
+  readStoredOAuthConfigMock,
+  resolveStoredIssuerMock,
+} = vi.hoisted(() => ({
+  clearOAuthDataMock: vi.fn(),
+  initiateOAuthMock: vi.fn(),
+  readStoredOAuthConfigMock: vi.fn(),
+  resolveStoredIssuerMock: vi.fn(),
+}));
 
 vi.mock("@/lib/oauth/mcp-oauth", () => ({
   clearOAuthData: clearOAuthDataMock,
   hasOAuthConfig: vi.fn(),
   initiateOAuth: initiateOAuthMock,
   readStoredOAuthConfig: readStoredOAuthConfigMock,
+  resolveStoredIssuer: resolveStoredIssuerMock,
 }));
 
 import {
   ensureAuthorizedForReconnect,
   resolveInsufficientScopeStepUp,
   resetInsufficientScopeStepUp,
+  applyToolCallStepUp,
+  resetToolCallStepUp,
 } from "../oauth-orchestrator";
 import { persistRequestedScopes } from "@/lib/oauth/requested-scopes";
 
@@ -43,7 +51,11 @@ describe("resolveInsufficientScopeStepUp (SEP-2350)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    // The bounded counter now lives in sessionStorage — clear it too so
+    // counter state never leaks between tests.
+    sessionStorage.clear();
     readStoredOAuthConfigMock.mockReturnValue({});
+    resolveStoredIssuerMock.mockReturnValue(ISSUER);
   });
 
   it("unions previously-requested and challenged scopes on reauthorize", () => {
@@ -167,6 +179,97 @@ describe("resolveInsufficientScopeStepUp (SEP-2350)", () => {
     });
     expect(decision.action).toBe("manual");
     expect(decision.attempt).toBe(0);
+  });
+
+  it("includes the ORIGINAL OAuth scopes on the first step-up (nothing persisted yet)", () => {
+    // No prior step-up → nothing persisted. Without originalScopes the union
+    // would collapse to just the challenged scope and DROP the grant's scopes.
+    const decision = resolveInsufficientScopeStepUp({
+      serverName: "asana",
+      issuer: ISSUER,
+      challengedScopes: ["admin"],
+      originalScopes: ["read", "write"],
+      authMode: "interactive",
+      maxRetries: 1,
+    });
+    expect(decision.action).toBe("reauthorize");
+    // original ∪ challenged, original first, de-duplicated.
+    expect(decision.scopes).toEqual(["read", "write", "admin"]);
+  });
+
+  it("unions original ∪ persisted ∪ challenged without duplicating overlap", () => {
+    persistRequestedScopes("asana", ISSUER, ["read", "extra"]);
+    const decision = resolveInsufficientScopeStepUp({
+      serverName: "asana",
+      issuer: ISSUER,
+      challengedScopes: ["admin", "read"],
+      originalScopes: ["read", "write"],
+      authMode: "interactive",
+      maxRetries: 1,
+    });
+    expect(decision.scopes).toEqual(["read", "write", "extra", "admin"]);
+  });
+
+  it("bounds the counter PER SESSION (sessionStorage, not localStorage)", () => {
+    resolveInsufficientScopeStepUp({
+      serverName: "asana",
+      issuer: ISSUER,
+      challengedScopes: ["admin"],
+      authMode: "interactive",
+      maxRetries: 1,
+    });
+    // The counter is written to sessionStorage (survives a redirect within the
+    // session) and NOT localStorage (would block a fresh browser session).
+    expect(sessionStorage.getItem("mcp-stepup-attempts-asana")).toContain(
+      ISSUER,
+    );
+    expect(localStorage.getItem("mcp-stepup-attempts-asana")).toBeNull();
+  });
+
+  it("applyToolCallStepUp drives the resolver and the union-scope re-authorization", async () => {
+    // Original grant scopes come from the stored OAuth config.
+    readStoredOAuthConfigMock.mockReturnValue({ scopes: ["read", "write"] });
+    initiateOAuthMock.mockResolvedValue({ success: true });
+
+    const outcome = await applyToolCallStepUp(createServer(), {
+      requiredScope: "admin",
+    });
+
+    expect(outcome.action).toBe("reauthorize");
+    expect(outcome.scopes).toEqual(["read", "write", "admin"]);
+    expect(outcome.reauthorization).toEqual({ kind: "redirect" });
+    // The fresh flow requests the widened union.
+    expect(initiateOAuthMock).toHaveBeenCalledWith(
+      expect.objectContaining({ scopes: ["read", "write", "admin"] }),
+    );
+  });
+
+  it("applyToolCallStepUp with m2m throws and never opens a browser", async () => {
+    readStoredOAuthConfigMock.mockReturnValue({ scopes: ["read"] });
+    const outcome = await applyToolCallStepUp(
+      createServer(),
+      { requiredScope: "admin" },
+      { authMode: "m2m" },
+    );
+    expect(outcome.action).toBe("throw");
+    expect(outcome.reauthorization).toBeUndefined();
+    expect(initiateOAuthMock).not.toHaveBeenCalled();
+  });
+
+  it("resetToolCallStepUp clears the counter after a successful call", () => {
+    const input = {
+      serverName: "asana",
+      issuer: ISSUER,
+      challengedScopes: ["admin"],
+      authMode: "interactive" as const,
+      maxRetries: 1,
+    };
+    resolveInsufficientScopeStepUp(input); // counter → 1
+    expect(resolveInsufficientScopeStepUp(input).action).toBe("throw");
+
+    resetToolCallStepUp(createServer());
+
+    expect(resolveInsufficientScopeStepUp(input).action).toBe("reauthorize");
   });
 
   it("counts step-up attempts per issuer (an AS switch starts fresh)", () => {
