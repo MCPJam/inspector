@@ -240,6 +240,20 @@ function OAuthStepRow({ step }: { step: OAuthConformanceStepResult }) {
             </div>
           )}
 
+          {step.warnings && step.warnings.length > 0 && (
+            <div className="rounded-sm bg-muted/20 px-2 py-1.5 text-xs text-muted-foreground">
+              <div className="mb-1 flex items-center gap-1 font-medium text-foreground/70">
+                <AlertTriangle className="h-3 w-3" />
+                Warnings
+              </div>
+              <ul className="space-y-1 pl-4 list-disc">
+                {step.warnings.map((warning) => (
+                  <li key={warning}>{warning}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {step.error && (
             <div className="rounded-sm border border-red-500/20 bg-red-500/5 px-2 py-1.5 text-xs text-red-400 whitespace-pre-wrap break-words">
               {step.error.message}

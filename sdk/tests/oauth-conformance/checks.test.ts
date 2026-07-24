@@ -450,6 +450,40 @@ describe("oauth server obligation checks", () => {
       });
     });
 
+    it("strips Authorization variants supplied via customHeaders", async () => {
+      const trackedRequest = jest.fn().mockImplementation(async (request) => {
+        const authKeys = Object.keys(request.headers).filter(
+          (key: string) => key.toLowerCase() === "authorization",
+        );
+        expect(authKeys).toEqual([]);
+        expect(request.headers["X-Gateway"]).toBe("bypass");
+        return {
+          ok: false,
+          status: 401,
+          statusText: "Unauthorized",
+          headers: { "www-authenticate": BEARER_WITH_METADATA },
+          body: { error: "unauthorized" },
+        };
+      });
+
+      const result = await runUnauthenticatedChallengeCheck({
+        ...(baseObligationInput as any),
+        config: {
+          ...baseObligationInput.config,
+          customHeaders: {
+            authorization: "Bearer gateway-bypass-token",
+            "X-Gateway": "bypass",
+          },
+        },
+        trackedRequest,
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_unauthenticated_challenge",
+        status: "passed",
+      });
+    });
+
     it("fails when the server returns 500 instead of 401", async () => {
       const result = await runUnauthenticatedChallengeCheck({
         ...(baseObligationInput as any),
@@ -485,6 +519,27 @@ describe("oauth server obligation checks", () => {
         step: "oauth_unauthenticated_challenge",
         status: "failed",
         error: { message: expect.stringContaining("without a WWW-Authenticate Bearer challenge") },
+      });
+    });
+
+    it("fails when a 401 challenge does not offer a Bearer scheme", async () => {
+      const result = await runUnauthenticatedChallengeCheck({
+        ...(baseObligationInput as any),
+        trackedRequest: jest.fn().mockResolvedValue({
+          ok: false,
+          status: 401,
+          statusText: "Unauthorized",
+          headers: { "www-authenticate": 'Basic realm="mcp"' },
+          body: { error: "unauthorized" },
+        }),
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_unauthenticated_challenge",
+        status: "failed",
+        error: {
+          message: expect.stringContaining("does not offer a Bearer challenge"),
+        },
       });
     });
 
@@ -582,6 +637,53 @@ describe("oauth server obligation checks", () => {
       });
     });
 
+    it("skips when the challenge does not offer a Bearer scheme", async () => {
+      const result = await runResourceMetadataChallengeCheck({
+        ...(baseObligationInput as any),
+        trackedRequest: jest.fn().mockResolvedValue({
+          ok: false,
+          status: 401,
+          statusText: "Unauthorized",
+          headers: { "www-authenticate": 'Basic realm="mcp"' },
+          body: undefined,
+        }),
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_resource_metadata_challenge",
+        status: "skipped",
+        error: {
+          message: expect.stringContaining("does not offer a Bearer scheme"),
+        },
+      });
+    });
+
+    it("does not accept a lookalike parameter name for resource_metadata", async () => {
+      const result = await runResourceMetadataChallengeCheck({
+        ...(baseObligationInput as any),
+        trackedRequest: jest.fn().mockResolvedValue({
+          ok: false,
+          status: 401,
+          statusText: "Unauthorized",
+          headers: {
+            "www-authenticate":
+              'Bearer x_resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource"',
+          },
+          body: undefined,
+        }),
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_resource_metadata_challenge",
+        status: "failed",
+        error: {
+          message: expect.stringContaining(
+            "omitted the resource_metadata parameter",
+          ),
+        },
+      });
+    });
+
     it("skips when there is no challenge to inspect", async () => {
       const result = await runResourceMetadataChallengeCheck({
         ...(baseObligationInput as any),
@@ -648,7 +750,7 @@ describe("oauth server obligation checks", () => {
       });
     });
 
-    it("passes a non-404 4xx but records it as evidence only", async () => {
+    it("passes a non-404 4xx and records it as a warning, not an error", async () => {
       const result = await runStaleSessionRejectionCheck({
         ...(baseObligationInput as any),
         trackedRequest: jest.fn().mockResolvedValue({
@@ -663,8 +765,49 @@ describe("oauth server obligation checks", () => {
       expect(result).toMatchObject({
         step: "oauth_stale_session_rejection",
         status: "passed",
-        error: { message: expect.stringContaining("prefers 404") },
+        warnings: [expect.stringContaining("prefers 404")],
       });
+      expect(result.error).toBeUndefined();
+    });
+
+    it("treats a 404 with an empty JSON object body as parseable", async () => {
+      const result = await runStaleSessionRejectionCheck({
+        ...(baseObligationInput as any),
+        trackedRequest: jest.fn().mockResolvedValue({
+          ok: false,
+          status: 404,
+          statusText: "Not Found",
+          headers: {},
+          body: {},
+        }),
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_stale_session_rejection",
+        status: "passed",
+      });
+      expect(result.warnings).toBeUndefined();
+      expect(result.error).toBeUndefined();
+    });
+
+    it("warns when a 404 rejection has an empty body", async () => {
+      const result = await runStaleSessionRejectionCheck({
+        ...(baseObligationInput as any),
+        trackedRequest: jest.fn().mockResolvedValue({
+          ok: false,
+          status: 404,
+          statusText: "Not Found",
+          headers: {},
+          body: "",
+        }),
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_stale_session_rejection",
+        status: "passed",
+        warnings: [expect.stringContaining("empty or unparseable")],
+      });
+      expect(result.error).toBeUndefined();
     });
 
     it("skips when the server accepts an unknown session id", async () => {

@@ -19,3 +19,8 @@ checks:
 
 These are hard failures against normative spec text, distinct from the
 host-capability readiness matrix.
+
+`StepResult` gains an optional `warnings` array for non-fatal evidence on a
+passing step (e.g. a stale session rejected with 400 instead of the
+spec-preferred 404). Warnings surface in conformance report details and render
+distinctly from errors in the inspector UI.

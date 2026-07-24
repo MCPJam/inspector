@@ -169,6 +169,10 @@ export interface StepResult {
     message: string;
     details?: unknown;
   };
+  /** Non-fatal evidence recorded on a passing step (e.g. a spec-preferred but
+   * not mandated behavior was missed). Never present on a failed step —
+   * failures use `error`. */
+  warnings?: string[];
   teachableMoments?: string[];
 }
 

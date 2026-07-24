@@ -366,6 +366,41 @@ describe("ConformanceTab", () => {
     ).not.toBeNull();
   });
 
+  it("renders warnings on a passed OAuth step without an error banner", async () => {
+    setupSuccessfulRunMocks({
+      oauth: createOAuthResult({
+        steps: [
+          {
+            step: "oauth_stale_session_rejection",
+            title: "OAuth Check: Stale Session Rejection",
+            summary: "Reject unknown session ids with a 4xx.",
+            status: "passed",
+            durationMs: 9,
+            logs: [],
+            httpAttempts: [],
+            warnings: [
+              "Rejected with HTTP 400 (the transport spec prefers 404)",
+            ],
+          },
+        ],
+      }),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+
+    fireEvent.click(screen.getByText("Run available checks"));
+    await screen.findByText("OAuth summary");
+
+    clickRow("OAuth Check: Stale Session Rejection");
+    const warning = screen.getByText(
+      "Rejected with HTTP 400 (the transport spec prefers 404)",
+    );
+    expect(warning).not.toBeNull();
+    expect(screen.queryByText("Warnings")).not.toBeNull();
+    // Warnings render in the muted style, never the red error treatment.
+    expect(warning.closest("div")?.className).not.toContain("red");
+  });
+
   it("collapses expanded rows when conformance is rerun", async () => {
     setupSuccessfulRunMocks({
       protocol: createProtocolResult({

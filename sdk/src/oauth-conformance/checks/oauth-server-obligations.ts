@@ -40,6 +40,7 @@ export interface OAuthServerObligationOutcome {
   status: StepResult["status"];
   durationMs: number;
   error?: StepResult["error"];
+  warnings?: StepResult["warnings"];
 }
 
 interface OAuthServerObligationInput {
@@ -117,10 +118,12 @@ function challengeOffersBearer(wwwAuthenticate: string): boolean {
 }
 
 /** Extract the `resource_metadata` auth-param value from a WWW-Authenticate
- * challenge. RFC 7235 allows the value quoted or as a bare token; accept both. */
+ * challenge. RFC 7235 allows the value quoted or as a bare token; accept both.
+ * The left boundary keeps a hypothetical `x_resource_metadata` param from
+ * matching. */
 function extractResourceMetadata(wwwAuthenticate: string): string | undefined {
   const match = wwwAuthenticate.match(
-    /resource_metadata\s*=\s*(?:"([^"]*)"|([^",\s]+))/i,
+    /(?:^|[\s,])resource_metadata\s*=\s*(?:"([^"]*)"|([^",\s]+))/i,
   );
   if (!match) {
     return undefined;
@@ -144,9 +147,7 @@ function bodyIsParseable(body: unknown): boolean {
   if (typeof body === "string") {
     return body.trim().length > 0;
   }
-  if (typeof body === "object") {
-    return Object.keys(body as Record<string, unknown>).length > 0;
-  }
+  // Any object (including {}) got here by parsing successfully.
   return true;
 }
 
@@ -165,6 +166,15 @@ function buildUnauthenticatedMcpRequest(
     "Content-Type": "application/json",
     Accept: "application/json, text/event-stream",
   };
+
+  // customHeaders may carry credentials (e.g. a gateway bypass token). If any
+  // Authorization variant survives the spread, the probe is silently
+  // authenticated and the check false-fails on the resulting 2xx.
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === "authorization") {
+      delete headers[key];
+    }
+  }
 
   if (config.protocolVersion !== "2025-03-26") {
     headers["MCP-Protocol-Version"] = config.protocolVersion;
@@ -312,6 +322,22 @@ export async function runResourceMetadataChallengeCheck(
     };
   }
 
+  // A non-Bearer challenge (e.g. Basic) already fails
+  // oauth_unauthenticated_challenge; failing here too would report the same
+  // root cause twice. RFC 9728 only obligates resource_metadata on Bearer.
+  if (!challengeOffersBearer(wwwAuthenticate)) {
+    return {
+      step: "oauth_resource_metadata_challenge",
+      status: "skipped",
+      durationMs,
+      error: {
+        message:
+          "The WWW-Authenticate challenge does not offer a Bearer scheme, so resource_metadata does not apply; the missing Bearer challenge is reported by the unauthenticated-challenge check",
+        details: { wwwAuthenticate },
+      },
+    };
+  }
+
   const resourceMetadata = extractResourceMetadata(wwwAuthenticate);
 
   if (!resourceMetadata) {
@@ -346,6 +372,11 @@ export async function runResourceMetadataChallengeCheck(
   };
 }
 
+// Unlike every other check, this request carries the REAL access token, and a
+// transport failure embeds it in error.details.request.headers. That is safe
+// in reports only because renderConformanceReportJson (conformance-reporting.ts)
+// deep-redacts authorization keys via redaction.ts before serializing — any
+// consumer of raw StepResults bypasses that redaction.
 function buildStaleSessionMcpRequest(
   config: NormalizedOAuthConformanceConfig,
   accessToken: string,
@@ -454,28 +485,26 @@ export async function runStaleSessionRejectionCheck(
   }
 
   if (response.status >= 400) {
-    const parseableBody = bodyIsParseable(response.body);
+    // Evidence only — 404 is spec-preferred and a parseable body is nice to
+    // have, but neither is mandated, so they never downgrade a passing 4xx.
+    // Recorded as warnings, not error: the UI renders error as a failure
+    // banner regardless of status.
+    const warnings: string[] = [];
+    if (response.status !== 404) {
+      warnings.push(
+        `Rejected with HTTP ${response.status} (the transport spec prefers 404)`,
+      );
+    }
+    if (!bodyIsParseable(response.body)) {
+      warnings.push(
+        `Rejected with ${response.status} but the response body was empty or unparseable`,
+      );
+    }
     return {
       step: "oauth_stale_session_rejection",
       status: "passed",
       durationMs,
-      // Evidence only — 404 is spec-preferred and a parseable body is nice to
-      // have, but neither is mandated, so they never downgrade a passing 4xx.
-      ...(response.status !== 404 || !parseableBody
-        ? {
-            error: {
-              message:
-                response.status !== 404
-                  ? `Rejected with HTTP ${response.status} (the transport spec prefers 404)`
-                  : "Rejected with 404 but the response body was empty or unparseable",
-              details: {
-                status: response.status,
-                statusText: response.statusText,
-                parseableBody,
-              },
-            },
-          }
-        : {}),
+      ...(warnings.length ? { warnings } : {}),
     };
   }
 

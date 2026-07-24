@@ -180,10 +180,13 @@ function reportCaseFromOAuthStep(
     durationMs: step.durationMs,
     description: step.summary,
     ...(step.error?.message ? { error: step.error.message } : {}),
-    ...(step.error?.details !== undefined || step.teachableMoments?.length
+    ...(step.error?.details !== undefined ||
+    step.warnings?.length ||
+    step.teachableMoments?.length
       ? {
           details: buildDetailPayload({
             errorDetails: step.error?.details,
+            warnings: step.warnings,
             teachableMoments: step.teachableMoments,
           }),
         }
