@@ -19,16 +19,16 @@ const finalizePendingAttemptsMock = vi.fn();
 const fetchPinnedSkillMock = vi.fn();
 
 vi.mock("../../swarm-agent.js", async () => {
-  const actual =
-    await vi.importActual<typeof import("../../swarm-agent.js")>(
-      "../../swarm-agent.js"
-    );
+  const actual = await vi.importActual<typeof import("../../swarm-agent.js")>(
+    "../../swarm-agent.js"
+  );
   return {
     ...actual,
     reportAttempt: (...args: unknown[]) => reportAttemptMock(...args),
     swarmPersonaNextTurn: (...args: unknown[]) =>
       swarmPersonaNextTurnMock(...args),
-    heartbeatJourneyRun: (...args: unknown[]) => heartbeatJourneyRunMock(...args),
+    heartbeatJourneyRun: (...args: unknown[]) =>
+      heartbeatJourneyRunMock(...args),
     finalizePendingAttempts: (...args: unknown[]) =>
       finalizePendingAttemptsMock(...args),
     fetchPinnedSkill: (...args: unknown[]) => fetchPinnedSkillMock(...args),
@@ -36,8 +36,9 @@ vi.mock("../../swarm-agent.js", async () => {
 });
 
 vi.mock("../runner.js", async () => {
-  const actual =
-    await vi.importActual<typeof import("../runner.js")>("../runner.js");
+  const actual = await vi.importActual<typeof import("../runner.js")>(
+    "../runner.js"
+  );
   return {
     ...actual,
     runSyntheticHostSession: (...args: unknown[]) =>
@@ -730,9 +731,13 @@ describe("swarm runner — live stream emit", () => {
 });
 
 describe("swarm fan-out runner — environment targets (Project Environments)", () => {
+  // `targetId` is deliberately OPAQUE and does NOT encode the environment id.
+  // The session-id mint must read `environmentRef.environmentId`; a fixture
+  // spelling `environment:<envId>` in BOTH fields would let a regression that
+  // parses the target id pass unnoticed.
   const ENV_TARGET_A = {
     ...HOST,
-    targetId: "environment:envA",
+    targetId: "target-a",
     environmentRef: { environmentId: "envA", name: "Env A", revision: 1 },
     pinnedSkills: [
       {
@@ -746,7 +751,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
   };
   const ENV_TARGET_B = {
     ...HOST, // SAME host as A — two env targets sharing one host.
-    targetId: "environment:envB",
+    targetId: "target-b",
     environmentRef: { environmentId: "envB", name: "Env B", revision: 2 },
     // Skill-less env target: pinned mode with an EMPTY authoritative set.
   };
@@ -782,10 +787,10 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     expect(claims.every((a) => a.hostId === "host-1")).toBe(true);
     const claimTargets = claims.map((a) => a.targetId).sort();
     expect(claimTargets).toEqual([
-      "environment:envA",
-      "environment:envA",
-      "environment:envB",
-      "environment:envB",
+      "target-a",
+      "target-a",
+      "target-b",
+      "target-b",
     ]);
     // Terminals echo targetId too.
     const terminals = reportAttemptMock.mock.calls
@@ -804,7 +809,9 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     const adapters = runSyntheticHostSessionMock.mock.calls.map(
       (c) => c[0] as any
     );
-    const a = adapters.find((x) => x.chatSessionId === "synth_run-1_env_envA_0");
+    const a = adapters.find(
+      (x) => x.chatSessionId === "synth_run-1_env_envA_0"
+    );
     expect(a.runtime.pinnedSkills).toHaveLength(1);
     expect(a.runtime.pinnedSkills[0]).toMatchObject({
       name: "sk-one",
@@ -812,9 +819,25 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
       content: "# body",
     });
     // Persist attribution carries the targetId (chat-ingestion echo).
-    expect(a.persist.targetId).toBe("environment:envA");
+    expect(a.persist.targetId).toBe("target-a");
 
-    const b = adapters.find((x) => x.chatSessionId === "synth_run-1_env_envB_0");
+    // The body fetch must be routed with THIS target's authorization inputs —
+    // an unconditional mock would otherwise return the right body for a
+    // wrongly-addressed request.
+    expect(fetchPinnedSkillMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      expect.objectContaining({
+        projectId: "proj-1",
+        runId: "run-1",
+        targetId: "target-a",
+        contentHash: "hash-1",
+      })
+    );
+
+    const b = adapters.find(
+      (x) => x.chatSessionId === "synth_run-1_env_envB_0"
+    );
     // Skill-less env target: authoritative EMPTY array — NEVER undefined
     // (undefined would fall back to the live pool).
     expect(b.runtime.pinnedSkills).toEqual([]);
@@ -824,7 +847,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     fetchPinnedSkillMock.mockResolvedValue(pinnedArtifact("hash-1"));
     const envTargetC = {
       ...ENV_TARGET_A,
-      targetId: "environment:envC",
+      targetId: "target-c",
       environmentRef: { environmentId: "envC", name: "Env C", revision: 1 },
     };
 
@@ -856,7 +879,7 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
       .map((c) => c[2] as any)
       .filter(
         (a) =>
-          a.targetId === "environment:envA" &&
+          a.targetId === "target-a" &&
           a.status === "failed" &&
           a.errorCode === "host_worker_failed"
       )
@@ -915,5 +938,55 @@ describe("swarm fan-out runner — environment targets (Project Environments)", 
     };
     await startJourneyRun(baseOpts({ hosts: [p02Target], sessionsPerHost: 1 }));
     expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed when the pinned union has provenance but NO host-channel entry", async () => {
+    // Provenance EXISTS (so the pre-P0.2 check passes) but every entry is
+    // environment-only — the host channel would be silently dropped.
+    const envOnlyUnionTarget = {
+      ...ENV_TARGET_A,
+      skillSelection: { mode: "explicit" as const, skillIds: ["skX"] },
+      pinnedSkills: [
+        {
+          skillId: "skEnv",
+          name: "env-skill",
+          description: "d",
+          contentHash: "hash-1",
+          sharing: "project" as const,
+          channels: ["environment" as const],
+        },
+      ],
+    };
+    await startJourneyRun(
+      baseOpts({ hosts: [envOnlyUnionTarget], sessionsPerHost: 1 })
+    );
+    expect(runSyntheticHostSessionMock).not.toHaveBeenCalled();
+    expect(fetchPinnedSkillMock).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when an id-identified union omits a selected host skill", async () => {
+    // Host channel is present, but the selection names TWO skills and only one
+    // is in the union — a partially dropped host channel.
+    const partialTarget = {
+      ...ENV_TARGET_A,
+      skillSelection: {
+        mode: "explicit" as const,
+        skillIds: ["skX", "skY"],
+      },
+      pinnedSkills: [
+        {
+          skillId: "skX",
+          name: "sk-one",
+          description: "d",
+          contentHash: "hash-1",
+          sharing: "project" as const,
+          channels: ["host" as const],
+        },
+      ],
+    };
+    await startJourneyRun(
+      baseOpts({ hosts: [partialTarget], sessionsPerHost: 1 })
+    );
+    expect(runSyntheticHostSessionMock).not.toHaveBeenCalled();
   });
 });

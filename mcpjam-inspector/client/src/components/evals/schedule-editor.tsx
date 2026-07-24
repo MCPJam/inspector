@@ -68,7 +68,7 @@ export function ScheduleEditor({
   environmentIds?: string[];
 }) {
   const setSuiteSchedule = useMutation(
-    "testSuites:setSuiteSchedule" as any,
+    "testSuites:setSuiteSchedule" as any
   ) as unknown as (args: {
     suiteId: string;
     enabled: boolean;
@@ -83,7 +83,7 @@ export function ScheduleEditor({
   // until the next enable (the server only stores intervals on enabled
   // writes). Re-seeds when the persisted value changes from elsewhere.
   const [draftIntervalMinutes, setDraftIntervalMinutes] = useState(
-    persistedIntervalMinutes,
+    persistedIntervalMinutes
   );
   useEffect(() => {
     setDraftIntervalMinutes(persistedIntervalMinutes);
@@ -92,9 +92,17 @@ export function ScheduleEditor({
   // Environment pin: REQUIRED when the suite attaches ≥2 environments.
   // Draft mirrors the interval pattern — persisted pin (or first attached
   // env) seeds it, and every enabled write carries it.
+  // Memoized on CONTENT, not on the array reference: `environmentIds` comes
+  // from a live Convex subscription and is a fresh array on every parent
+  // re-render even when the ids are identical. Keying on the reference made the
+  // seeding effect below re-run on any unrelated suite update, silently
+  // discarding a pin the user had picked but not yet saved. Convex ids never
+  // contain a comma, so the joined key is unambiguous.
+  const attachedEnvironmentIdsKey = (environmentIds ?? []).join(",");
   const attachedEnvironmentIds = useMemo(
-    () => environmentIds ?? [],
-    [environmentIds],
+    () =>
+      attachedEnvironmentIdsKey ? attachedEnvironmentIdsKey.split(",") : [],
+    [attachedEnvironmentIdsKey]
   );
   // Flag-gated: with the kill-switch off, the environment pin control, its
   // query, and its write are all suppressed even for a suite that already has
@@ -110,7 +118,7 @@ export function ScheduleEditor({
     setDraftEnvironmentId(persistedEnvironmentId ?? attachedEnvironmentIds[0]);
   }, [persistedEnvironmentId, attachedEnvironmentIds]);
   const environments = useProjectEnvironments(
-    requiresEnvironmentPin ? projectId : null,
+    requiresEnvironmentPin ? projectId : null
   );
   // Defensive: a persisted pin whose environment was detached from the
   // suite still renders (marked) so the user sees why a re-pin is needed.
@@ -132,7 +140,7 @@ export function ScheduleEditor({
     const effectiveEnvironmentId = args.environmentId ?? draftEnvironmentId;
     if (args.enabled && requiresEnvironmentPin && !effectiveEnvironmentId) {
       toast.error(
-        "Pick which environment scheduled runs should use before enabling.",
+        "Pick which environment scheduled runs should use before enabling."
       );
       return;
     }
@@ -150,12 +158,10 @@ export function ScheduleEditor({
           ? { environmentId: effectiveEnvironmentId }
           : {}),
       });
-      toast.success(
-        args.enabled ? "Schedule updated" : "Schedule disabled",
-      );
+      toast.success(args.enabled ? "Schedule updated" : "Schedule disabled");
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to update schedule",
+        error instanceof Error ? error.message : "Failed to update schedule"
       );
     } finally {
       setIsSaving(false);
@@ -163,9 +169,7 @@ export function ScheduleEditor({
   };
 
   const pausedState =
-    enabled && schedule && schedule.state !== "active"
-      ? schedule.state
-      : null;
+    enabled && schedule && schedule.state !== "active" ? schedule.state : null;
 
   return (
     <div className="space-y-3">
@@ -249,10 +253,7 @@ export function ScheduleEditor({
                 </SelectItem>
               ))}
               {pinDetached && draftEnvironmentId ? (
-                <SelectItem
-                  value={draftEnvironmentId}
-                  className="text-xs"
-                >
+                <SelectItem value={draftEnvironmentId} className="text-xs">
                   {environmentLabel(draftEnvironmentId)} (no longer attached)
                 </SelectItem>
               ) : null}
@@ -282,8 +283,8 @@ export function ScheduleEditor({
       ) : null}
       <p className="text-[11px] text-muted-foreground">
         Runs the whole suite — render checks and prompt tests — under your
-        identity. Prompt tests use the organization&apos;s model
-        configuration; failed scheduled runs raise an in-app notification.
+        identity. Prompt tests use the organization&apos;s model configuration;
+        failed scheduled runs raise an in-app notification.
       </p>
     </div>
   );

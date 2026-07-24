@@ -164,13 +164,13 @@ describe("SwarmsTab — new journey form env mode", () => {
     // Same host as Prod (host-1 again → deduped).
     fireEvent.click(screen.getByTestId("journey-environments-picker"));
     fireEvent.click(
-      await screen.findByRole("checkbox", { name: /staging-like/i }),
+      await screen.findByRole("checkbox", { name: /staging-like/i })
     );
     fireEvent.click(
-      await screen.findByRole("checkbox", { name: /prod-like/i }),
+      await screen.findByRole("checkbox", { name: /prod-like/i })
     );
     fireEvent.click(
-      await screen.findByRole("checkbox", { name: /same host as prod/i }),
+      await screen.findByRole("checkbox", { name: /same host as prod/i })
     );
 
     fireEvent.click(screen.getByRole("button", { name: /create journey/i }));
@@ -188,12 +188,27 @@ describe("SwarmsTab — new journey form env mode", () => {
     expect("serverAttachmentId" in payload).toBe(false);
   });
 
-  it("clients mode stays byte-compatible (no environmentIds in the payload)", async () => {
+  // NOTE: this suite mocks out `ServerGroupPicker`, so a clients-mode submit
+  // can't be driven to completion here — the payload-level byte-compatibility
+  // assertion lives in the sibling `SwarmsTab.journeyForm` suite (flag OFF).
+  // What IS specific to this suite is that turning the flag ON must not change
+  // the default mode or leak the env picker into clients mode.
+  it("defaults to clients mode with no env surface when the env flag is on", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
     openForm();
-    // Default mode is Clients; env state must not leak into the payload.
+
+    expect(screen.getByTestId("journey-target-mode-clients")).toHaveAttribute(
+      "aria-checked",
+      "true"
+    );
+    // The env picker belongs to environments mode only — it must not render
+    // (nor subscribe) while the form is in clients mode.
     expect(
-      screen.getByTestId("journey-target-mode-clients"),
-    ).toHaveAttribute("aria-checked", "true");
+      screen.queryByTestId("journey-environments-picker")
+    ).not.toBeInTheDocument();
+    // The legacy clients affordance is the one that's present.
+    expect(
+      screen.getByRole("button", { name: /attached clients/i })
+    ).toBeInTheDocument();
   });
 });

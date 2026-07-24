@@ -6,7 +6,9 @@ import {
 import { skillsFingerprint } from "../runtime-skills.js";
 import type { PinnedSkillArtifact } from "../../../../shared/skill-types.js";
 
-const artifact = (over: Partial<PinnedSkillArtifact> = {}): PinnedSkillArtifact => ({
+const artifact = (
+  over: Partial<PinnedSkillArtifact> = {}
+): PinnedSkillArtifact => ({
   name: "my-skill",
   description: "does things",
   content: "# body",
@@ -37,17 +39,15 @@ describe("pinnedArtifactsToRuntimeSkills", () => {
 
   it("skillsFingerprint over the mapped set derives from the pinned artifact fingerprints", () => {
     const a = skillsFingerprint(
-      pinnedArtifactsToRuntimeSkills([artifact({ skillId: "sk1" })]),
+      pinnedArtifactsToRuntimeSkills([artifact({ skillId: "sk1" })])
     );
     const b = skillsFingerprint(
       pinnedArtifactsToRuntimeSkills([
         artifact({ skillId: "sk1", contentHash: "hash-2" }),
-      ]),
+      ])
     );
     expect(a).not.toBe(b); // a different pinned artifact ⇒ a different hash
-    expect(
-      skillsFingerprint(pinnedArtifactsToRuntimeSkills([])),
-    ).toBe(""); // empty pinned set ⇒ the stable empty sentinel
+    expect(skillsFingerprint(pinnedArtifactsToRuntimeSkills([]))).toBe(""); // empty pinned set ⇒ the stable empty sentinel
   });
 
   it("projects preserved frontmatter onto the known Agent-Skills envelope only", () => {
@@ -70,7 +70,10 @@ describe("pinnedArtifactsToRuntimeSkills", () => {
 });
 
 describe("materializePinnedSkillFiles", () => {
-  const makeSession = () => {
+  // `findStdout` seeds what the prune sweep's `find` reports as already on box
+  // (default: nothing). Every test shares this one session builder so the mock
+  // shape can't drift between them.
+  const makeSession = (findStdout = "") => {
     const writes: Array<{ path: string; content: string }> = [];
     const commands: string[] = [];
     return {
@@ -82,6 +85,9 @@ describe("materializePinnedSkillFiles", () => {
         }),
         run: vi.fn(async (a: { command: string }) => {
           commands.push(a.command);
+          if (a.command.startsWith("find ")) {
+            return { exitCode: 0, stdout: findStdout, stderr: "" };
+          }
           return { exitCode: 0, stdout: "", stderr: "" };
         }),
       },
@@ -135,26 +141,11 @@ describe("materializePinnedSkillFiles", () => {
   });
 
   it("prunes on-box supporting files not present in the pinned artifact", async () => {
-    const writes: Array<{ path: string; content: string }> = [];
-    const commands: string[] = [];
     const base = "/home/user/.claude/skills/my-skill";
-    const session = {
-      writeTextFile: vi.fn(async (a: { path: string; content: string }) => {
-        writes.push(a);
-      }),
-      run: vi.fn(async (a: { command: string }) => {
-        commands.push(a.command);
-        // The find sweep lists a stale file (b.md) and the kept file (a.md).
-        if (a.command.startsWith("find ")) {
-          return {
-            exitCode: 0,
-            stdout: `${base}/a.md\n${base}/b.md\n`,
-            stderr: "",
-          };
-        }
-        return { exitCode: 0, stdout: "", stderr: "" };
-      }),
-    };
+    // The find sweep lists a stale file (b.md) and the kept file (a.md).
+    const { session, writes, commands } = makeSession(
+      `${base}/a.md\n${base}/b.md\n`
+    );
     await materializePinnedSkillFiles({
       session,
       artifacts: [artifact({ files: [{ path: "a.md", content: "keep" }] })],

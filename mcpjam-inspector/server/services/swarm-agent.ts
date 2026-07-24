@@ -299,6 +299,10 @@ export async function fetchPinnedSkill(
     data.ok !== true ||
     !skill ||
     typeof skill.name !== "string" ||
+    // `description` is REQUIRED on the artifact (it becomes the skill's
+    // frontmatter description in the sandbox), so validate it here rather than
+    // letting `undefined` reach the runtime as a well-typed lie.
+    typeof skill.description !== "string" ||
     typeof skill.content !== "string" ||
     typeof skill.contentHash !== "string"
   ) {

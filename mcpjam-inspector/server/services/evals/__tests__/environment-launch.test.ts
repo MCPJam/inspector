@@ -45,7 +45,8 @@ describe("environmentServerIds", () => {
     expect(
       environmentServerIds({
         ...RESOLVED,
-        servers: undefined as unknown as ResolvedEnvironmentForLaunch["servers"],
+        servers:
+          undefined as unknown as ResolvedEnvironmentForLaunch["servers"],
       })
     ).toEqual(["ps_1", "ps_2"]);
     expect(environmentServerIds({ ...RESOLVED, servers: [] })).toEqual([
@@ -61,6 +62,15 @@ describe("environmentServerNames", () => {
   });
 
   it("is empty when the backend omits the healed projection", () => {
+    // Both spellings of "omitted": absent (an older backend that predates the
+    // healed projection) and present-but-empty.
+    expect(
+      environmentServerNames({
+        ...RESOLVED,
+        servers:
+          undefined as unknown as ResolvedEnvironmentForLaunch["servers"],
+      })
+    ).toEqual([]);
     expect(environmentServerNames({ ...RESOLVED, servers: [] })).toEqual([]);
   });
 });

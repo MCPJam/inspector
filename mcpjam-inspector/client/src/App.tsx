@@ -30,7 +30,7 @@ import { ChatboxesTab } from "./components/ChatboxesTab";
 import { SwarmsTab } from "./components/swarms/SwarmsTab";
 import { EmptyState } from "./components/ui/empty-state";
 import {
-  canManageHosts,
+  canManageAsOwnerOrAdmin,
   canViewSwarms,
   useViewerProjectRole,
 } from "./hooks/useProjects";
@@ -996,12 +996,10 @@ export function ToolsRoute() {
           serverConnectionStatus={
             selectedServerEntry?.connectionStatus ?? "disconnected"
           }
-          mcpToolResultImageRendering={
-            gateMcpToolResultImageRenderingByModelVisibility(
-              activeHost?.config?.mcpToolResultImageRendering,
-              activeHost?.config?.modelVisibleMcpToolResults
-            )
-          }
+          mcpToolResultImageRendering={gateMcpToolResultImageRenderingByModelVisibility(
+            activeHost?.config?.mcpToolResultImageRendering,
+            activeHost?.config?.modelVisibleMcpToolResults
+          )}
         />
       </div>
     </ActiveHostCapsResolverScope>
@@ -1227,15 +1225,16 @@ export function EnvironmentsRoute() {
     viewerEmail: user?.email,
     identityLoading: isWorkOsLoading,
   });
-  // Anonymous Convex owners never get a WorkOS email, so `role` stays
-  // undefined — but they own their personal-org default project and clear the
-  // backend admin gate (`requireAdminAccess` → owner) via userId. Mirror
-  // SwarmsTab: WorkOS-signed-in viewers go through the role-based admin gate;
-  // a settled anonymous owner (authenticated, not signed in, WorkOS hydrated)
-  // gets management. Fail-closed while WorkOS is still resolving.
-  const canManage = isWorkOsSignedIn
-    ? canManageHosts(role)
-    : isAuthenticated && !!convexProjectId && !isWorkOsLoading;
+  // Shared with SwarmsTab and unit-tested in `useProjects.test.ts`: WorkOS
+  // viewers take the role-based admin gate; a SETTLED anonymous Convex owner
+  // gets management (they never receive a role); fail-closed while hydrating.
+  const canManage = canManageAsOwnerOrAdmin({
+    isWorkOsSignedIn,
+    role,
+    isAuthenticated,
+    hasProject: !!convexProjectId,
+    identityLoading: isWorkOsLoading,
+  });
   return (
     <ProjectEnvironmentsRoute
       projectId={convexProjectId ?? null}
@@ -1663,8 +1662,8 @@ export default function App() {
     activeTab === "oauth-flow"
       ? "oauth"
       : activeTab === "xaa-flow" && xaaEnabled === true
-        ? "xaa"
-        : null;
+      ? "xaa"
+      : null;
   const { hidden: hiddenHeaderServers, hide: hideHeaderServer } =
     useHiddenHeaderServers(headerHiddenSurface);
 
@@ -2147,8 +2146,8 @@ export default function App() {
     const names = appState.selectedMultipleServers.length
       ? appState.selectedMultipleServers
       : appState.selectedServer && appState.selectedServer !== "none"
-        ? [appState.selectedServer]
-        : [];
+      ? [appState.selectedServer]
+      : [];
     publishSelectedServerNames(names);
   }, [appState.selectedMultipleServers, appState.selectedServer]);
   const persistRuntimeServerToProjectRef = useRef(
@@ -2899,7 +2898,9 @@ export default function App() {
         if (hasSurfaceKey && !isAppSurfaceId(requested)) {
           throw createInspectorCommandClientError(
             "invalid_request",
-            `Invalid surface ${JSON.stringify(requested)}. Omit it to snapshot the whole app, or pass a known screen id.`
+            `Invalid surface ${JSON.stringify(
+              requested
+            )}. Omit it to snapshot the whole app, or pass a known screen id.`
           );
         }
 
@@ -2933,8 +2934,8 @@ export default function App() {
         const selectedServers = appState.selectedMultipleServers?.length
           ? appState.selectedMultipleServers
           : focused
-            ? [focused]
-            : [];
+          ? [focused]
+          : [];
         return {
           path: pathname,
           activeTab: pathnameToActiveTab(pathname),

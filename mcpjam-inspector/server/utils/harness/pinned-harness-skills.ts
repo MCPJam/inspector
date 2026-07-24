@@ -49,11 +49,13 @@ function toExtraFrontmatter(
 ): SkillExtraFrontmatterInput | undefined {
   if (!frontmatter) return undefined;
   const out: SkillExtraFrontmatterInput = {};
-  if (typeof frontmatter.license === "string") out.license = frontmatter.license;
+  if (typeof frontmatter.license === "string")
+    out.license = frontmatter.license;
   if (typeof frontmatter.compatibility === "string") {
     out.compatibility = frontmatter.compatibility;
   }
-  const allowedTools = frontmatter["allowedTools"] ?? frontmatter["allowed-tools"];
+  const allowedTools =
+    frontmatter["allowedTools"] ?? frontmatter["allowed-tools"];
   if (
     Array.isArray(allowedTools) &&
     allowedTools.every((t) => typeof t === "string")
@@ -112,6 +114,10 @@ async function pruneStalePinnedSkillFiles(
   signal?: AbortSignal
 ): Promise<void> {
   if (deliveredDirs.size === 0) return;
+  // Check abort BEFORE the sweep: the `find` is sandbox-wide, so an already
+  // cancelled turn must not pay for it. Matches the per-file write loop below,
+  // which checks `signal?.aborted` before each `session.run`.
+  if (signal?.aborted) return;
   try {
     const ls = await session.run({
       command: `find ${shellQuote(
@@ -184,9 +190,12 @@ export async function materializePinnedSkillFiles(args: {
     const files = artifact.files;
     if (!files || files.length === 0) continue;
     if (!isValidSkillName(artifact.name)) {
-      logger.warn("[pinned-harness-skills] invalid skill name; skipping files", {
-        name: artifact.name,
-      });
+      logger.warn(
+        "[pinned-harness-skills] invalid skill name; skipping files",
+        {
+          name: artifact.name,
+        }
+      );
       continue;
     }
     const skillDir = `${SKILLS_BASE}/${artifact.name}`;
@@ -207,7 +216,9 @@ export async function materializePinnedSkillFiles(args: {
           await session.writeTextFile({ path: target, content: file.content });
         } else if (typeof file.base64 === "string") {
           await session.run({
-            command: `printf '%s' ${shellQuote(file.base64)} | base64 -d > ${shellQuote(target)}`,
+            command: `printf '%s' ${shellQuote(
+              file.base64
+            )} | base64 -d > ${shellQuote(target)}`,
           });
         }
       } catch (err) {

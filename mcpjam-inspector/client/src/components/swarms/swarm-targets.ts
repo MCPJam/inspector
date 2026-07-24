@@ -66,20 +66,24 @@ function disambiguateLabels(columns: SwarmTargetColumn[]): SwarmTargetColumn[] {
  * Build the run-detail matrix columns: one per `hostSummaries` row (run order),
  * joined to `snapshot.hosts` by targetId (fallback: first snapshot entry with
  * the same host). Env targets label by environment name; host targets by the
- * project host name (fallback: snapshot hostName, then a truncated id).
+ * LIVE project host name, then the snapshot's `hostName`, then a truncated id.
+ *
+ * `hostName` MUST return `undefined` for a host no longer in the project so the
+ * snapshot fallback is reachable — a caller that folds its own `id.slice(0, 8)`
+ * into the lookup makes historical runs render truncated ids instead of the
+ * name the run was launched with. The truncation fallback lives HERE, once.
  */
 export function buildSwarmRunTargets(args: {
   hostSummaries: Array<Pick<JourneyHostSummary, "hostId" | "targetId">>;
   snapshotHosts?: JourneySnapshotTarget[];
-  hostName: (hostId: string) => string;
+  hostName: (hostId: string) => string | undefined;
 }): SwarmTargetColumn[] {
   const { hostSummaries, snapshotHosts, hostName } = args;
   const columns = hostSummaries.map((summary) => {
     const snap =
       (summary.targetId !== undefined
         ? snapshotHosts?.find((h) => h.targetId === summary.targetId)
-        : undefined) ??
-      snapshotHosts?.find((h) => h.hostId === summary.hostId);
+        : undefined) ?? snapshotHosts?.find((h) => h.hostId === summary.hostId);
     const environmentId = snap?.environmentRef?.environmentId;
     const label =
       snap?.environmentRef?.name ??
@@ -134,7 +138,7 @@ export function buildUnrunJourneyTargets(args: {
       hostId,
       label: hostName(hostId),
       identity: { hostId },
-    })),
+    }))
   );
 }
 

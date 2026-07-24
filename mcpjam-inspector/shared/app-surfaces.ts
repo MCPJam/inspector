@@ -282,7 +282,11 @@ export const APP_SURFACES = [
       reason:
         "Admin-flavored configuration surface behind a rollout flag; no agent automation until the feature is generally available.",
     },
-    showInAtlas: true,
+    // The Atlas is intentionally STATIC — it cannot read
+    // `project-environments-enabled`, so advertising `/environments` would send
+    // the agent to a surface that redirects on every flag-off project. Flip to
+    // `true` when the flag is retired at GA.
+    showInAtlas: false,
   },
   {
     id: "evals",
@@ -363,8 +367,7 @@ export const APP_SURFACES = [
     routePatterns: ["resources"],
     navSegments: ["resources"],
     title: "Resources",
-    purpose:
-      "List and read the resources a connected MCP server exposes.",
+    purpose: "List and read the resources a connected MCP server exposes.",
     userActivities: [
       "Browse a server's resources and resource templates",
       "Read a resource, or resolve and read a template",
@@ -643,7 +646,7 @@ export function listAppSurfaces(): readonly AppSurfaceManifest[] {
 }
 
 const surfacesById = new Map<string, AppSurfaceManifest>(
-  listAppSurfaces().map((s) => [s.id, s]),
+  listAppSurfaces().map((s) => [s.id, s])
 );
 
 export function getAppSurface(id: string): AppSurfaceManifest | undefined {
@@ -655,7 +658,7 @@ export function isAppSurfaceId(value: unknown): value is AppSurfaceId {
 }
 
 const surfacesByNavSegment = new Map<string, AppSurfaceManifest>(
-  listAppSurfaces().flatMap((s) => s.navSegments.map((seg) => [seg, s])),
+  listAppSurfaces().flatMap((s) => s.navSegments.map((seg) => [seg, s]))
 );
 
 /**
@@ -664,7 +667,7 @@ const surfacesByNavSegment = new Map<string, AppSurfaceManifest>(
  * the coverage test asserts no segment is claimed by two surfaces.
  */
 export function getAppSurfaceByNavSegment(
-  segment: string,
+  segment: string
 ): AppSurfaceManifest | undefined {
   return surfacesByNavSegment.get(segment);
 }
@@ -690,7 +693,7 @@ export function listAppSurfaceNavSegments(): string[] {
  */
 export function buildAppAtlas(opts?: { hosted?: boolean }): string {
   const surfaces = listAppSurfaces().filter(
-    (s) => s.showInAtlas && !(opts?.hosted && s.hostedBlocked),
+    (s) => s.showInAtlas && !(opts?.hosted && s.hostedBlocked)
   );
   return [
     "## The MCPJam inspector, screen by screen",
@@ -706,7 +709,7 @@ export function buildAppAtlas(opts?: { hosted?: boolean }): string {
         `### ${s.title} (${s.navSegments[0]})`,
         s.purpose,
         ...s.userActivities.map((a) => `- ${a}`),
-      ].join("\n"),
+      ].join("\n")
     ),
   ].join("\n");
 }

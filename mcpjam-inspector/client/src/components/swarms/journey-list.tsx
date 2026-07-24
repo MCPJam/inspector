@@ -126,10 +126,14 @@ export function journeyTargetColumns(
   hosts: JourneyListHost[],
   latestRun?: JourneyRun | null,
   environments?: EnvironmentView[],
-  environmentsEnabled = true,
+  environmentsEnabled = true
 ): SwarmTargetColumn[] {
-  const nameOf = (id: string) =>
-    hosts.find((h) => h.hostId === id)?.name ?? id.slice(0, 8);
+  // `nameOf` returns undefined for a host no longer in the project so
+  // `buildSwarmRunTargets` can fall back to the RUN SNAPSHOT's own hostName
+  // before truncating the id. The unrun path has no snapshot, so it takes the
+  // truncating variant directly.
+  const nameOf = (id: string) => hosts.find((h) => h.hostId === id)?.name;
+  const labelOf = (id: string) => nameOf(id) ?? id.slice(0, 8);
   if (latestRun && latestRun.hostSummaries.length > 0) {
     return buildSwarmRunTargets({
       hostSummaries: latestRun.hostSummaries,
@@ -143,7 +147,7 @@ export function journeyTargetColumns(
     hostIds: journey.hostIds,
     environmentIds: environmentsEnabled ? journey.environmentIds : undefined,
     environments: environmentsEnabled ? environments : undefined,
-    hostName: nameOf,
+    hostName: labelOf,
   });
 }
 
@@ -152,10 +156,10 @@ export function journeyTargetColumns(
  * pre-3A historical rows and fresh legacy rows key identically). */
 export function journeyHostOutcome(
   run: JourneyRun,
-  targetKey: string,
+  targetKey: string
 ): JourneyCellOutcome {
   const entry = run.hostSummaries.find(
-    (h) => summaryTargetKey(h) === targetKey,
+    (h) => summaryTargetKey(h) === targetKey
   );
   if (!entry || entry.total === 0) {
     return run.status === "running" ? "running" : "none";
@@ -192,7 +196,7 @@ export function JourneyList({
   isAuthenticated: boolean;
   projectId: string;
   onLaunch: (
-    journeyId: string,
+    journeyId: string
   ) => Promise<
     { status: "launched"; runId?: string } | { status: "already_launching" }
   >;
@@ -202,7 +206,7 @@ export function JourneyList({
   onOpenRun: (
     journey: JourneyListJourney,
     run: JourneyRun,
-    targetKey: string | null,
+    targetKey: string | null
   ) => void;
   onCloseRun: () => void;
   /** Live project environments (flag-gated; undefined when the flag is off). */
@@ -252,7 +256,7 @@ function JourneyBlock({
   hosts: JourneyListHost[];
   serverAttachments: ServerAttachment[];
   onLaunch: (
-    journeyId: string,
+    journeyId: string
   ) => Promise<
     { status: "launched"; runId?: string } | { status: "already_launching" }
   >;
@@ -262,7 +266,7 @@ function JourneyBlock({
   onOpenRun: (
     journey: JourneyListJourney,
     run: JourneyRun,
-    targetKey: string | null,
+    targetKey: string | null
   ) => void;
   onCloseRun: () => void;
   environments?: EnvironmentView[];
@@ -275,11 +279,11 @@ function JourneyBlock({
   } = usePaginatedQuery(
     SWARM_QUERIES.listJourneyRuns as any,
     { journeyRefId: journey._id } as any,
-    { initialNumItems: DEFAULT_PAGE_SIZE },
+    { initialNumItems: DEFAULT_PAGE_SIZE }
   );
   const rollup = useQuery(
     SWARM_QUERIES.journeyRollup as any,
-    { journeyRefId: journey._id } as any,
+    { journeyRefId: journey._id } as any
   ) as JourneyRollup | undefined;
 
   const [launching, setLaunching] = useState(false);
@@ -297,13 +301,13 @@ function JourneyBlock({
         hosts,
         latestRun,
         environments,
-        environmentsEnabled,
+        environmentsEnabled
       ),
-    [journey, hosts, latestRun, environments, environmentsEnabled],
+    [journey, hosts, latestRun, environments, environmentsEnabled]
   );
   const serverGroupName = journey.serverAttachmentId
-    ? (serverAttachments.find((a) => a._id === journey.serverAttachmentId)
-        ?.name ?? null)
+    ? serverAttachments.find((a) => a._id === journey.serverAttachmentId)
+        ?.name ?? null
     : null;
   const configHint = `${journey.config.sessionsPerHost}/host · ${journey.config.maxTurns} turns`;
 
@@ -345,7 +349,7 @@ function JourneyBlock({
     <div
       className={cn(
         "rounded-lg border px-3 py-2.5",
-        selection ? "border-primary/50" : "border-border/60",
+        selection ? "border-primary/50" : "border-border/60"
       )}
     >
       <div className="flex items-start justify-between gap-3">
@@ -377,7 +381,7 @@ function JourneyBlock({
             <span
               className={cn(
                 "rounded-full px-1.5 py-px text-[10px] font-medium capitalize",
-                runStatusChipClass(latestRun.status),
+                runStatusChipClass(latestRun.status)
               )}
             >
               {latestRun.status.replace(/_/g, " ")}
@@ -458,11 +462,11 @@ function JourneyBlock({
             }))
             .filter(
               (
-                p,
+                p
               ): p is {
                 run: JourneyRun;
                 outcome: Exclude<JourneyCellOutcome, "none">;
-              } => p.outcome !== "none",
+              } => p.outcome !== "none"
             )
             .slice(-MAX_TREND_SEGMENTS);
           const cellSelected =
@@ -476,7 +480,7 @@ function JourneyBlock({
                 "flex min-h-[4rem] w-full flex-col items-start justify-center gap-1 rounded-md border px-2.5 py-2 text-left transition-colors",
                 cellSelected
                   ? "border-primary bg-primary/5"
-                  : "border-border/50 bg-background/60",
+                  : "border-border/50 bg-background/60"
               )}
             >
               <button
@@ -505,12 +509,12 @@ function JourneyBlock({
                   <span
                     className={cn(
                       "text-[11px] font-semibold tabular-nums",
-                      meta?.text ?? "text-muted-foreground",
+                      meta?.text ?? "text-muted-foreground"
                     )}
                   >
                     {summary
                       ? `${summary.succeeded}/${summary.total} ok`
-                      : (meta?.label ?? "No data")}
+                      : meta?.label ?? "No data"}
                   </span>
                 </span>
               </button>
@@ -523,14 +527,21 @@ function JourneyBlock({
                     <button
                       key={run._id}
                       type="button"
-                      aria-label={`Open run ${run.status} (${runSummaryLine(run)}) on ${col.label}`}
-                      title={`${runNumberLabel(runCount, typedRuns.indexOf(run))} · ${run.status.replace(/_/g, " ")} · ${runSummaryLine(run)} · ${formatJourneyRelativeTime(run.createdAt)}`}
+                      aria-label={`Open run ${run.status} (${runSummaryLine(
+                        run
+                      )}) on ${col.label}`}
+                      title={`${runNumberLabel(
+                        runCount,
+                        typedRuns.indexOf(run)
+                      )} · ${run.status.replace(/_/g, " ")} · ${runSummaryLine(
+                        run
+                      )} · ${formatJourneyRelativeTime(run.createdAt)}`}
                       onClick={() => openRun(run, col.key)}
                       className={cn(
                         "min-w-[4px] flex-1 rounded-[2px] outline-none transition-opacity hover:opacity-70 focus-visible:ring-2 focus-visible:ring-ring",
                         SEGMENT_CLASS[segOutcome],
                         selection?.runId === run._id &&
-                          "ring-1 ring-primary ring-offset-1 ring-offset-background",
+                          "ring-1 ring-primary ring-offset-1 ring-offset-background"
                       )}
                     />
                   ))}
@@ -556,7 +567,7 @@ function JourneyBlock({
                 className={cn(
                   "flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left text-xs outline-none transition-colors",
                   "hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring",
-                  isOpen && "bg-muted/40",
+                  isOpen && "bg-muted/40"
                 )}
                 aria-expanded={isOpen}
                 aria-label={
@@ -569,7 +580,7 @@ function JourneyBlock({
                 <span
                   className={cn(
                     "size-1.5 shrink-0 rounded-full",
-                    runStatusDotClass(r.status),
+                    runStatusDotClass(r.status)
                   )}
                 />
                 <span className="shrink-0 font-medium text-foreground/90">
@@ -624,22 +635,33 @@ function JourneyEnvironmentsEditor({
 
   const current = useMemo(
     () => journey.environmentIds ?? [],
-    [journey.environmentIds],
+    [journey.environmentIds]
   );
+  // Seed ONLY on the closed→open transition. `journey` is a live Convex
+  // subscription, so `current` gets a new identity whenever anything on the
+  // journey changes (a rollup landing, a new run) — reseeding on every change
+  // while the popover is open would wipe the user's unsaved selection
+  // mid-edit. `currentRef` keeps the seed value fresh without making the
+  // effect depend on it.
+  const currentRef = useRef(current);
+  currentRef.current = current;
+  const wasOpen = useRef(false);
   useEffect(() => {
-    if (open) setDraft(current);
-  }, [open, current]);
+    if (open && !wasOpen.current) setDraft(currentRef.current);
+    wasOpen.current = open;
+  }, [open]);
 
   // New selections are limited to LIVE environments; a draft id that no longer
   // resolves in the list (archived/retired) renders as a detach-only row so the
   // user can remove it (a saved journey can't target a retired environment).
   const liveEnvironments = useMemo(
     () => environments.filter((e) => !e.archivedAt),
-    [environments],
+    [environments]
   );
   const orphanDraftIds = useMemo(
-    () => draft.filter((id) => !environments.some((e) => e.environmentId === id)),
-    [draft, environments],
+    () =>
+      draft.filter((id) => !environments.some((e) => e.environmentId === id)),
+    [draft, environments]
   );
 
   const toggle = (environmentId: string) =>
@@ -647,19 +669,18 @@ function JourneyEnvironmentsEditor({
       prev.includes(environmentId)
         ? prev.filter((id) => id !== environmentId)
         : prev.length >= MAX_ENVIRONMENTS_PER_JOURNEY
-          ? prev
-          : [...prev, environmentId],
+        ? prev
+        : [...prev, environmentId]
     );
 
   const dirty =
-    draft.length !== current.length ||
-    draft.some((id, i) => id !== current[i]);
+    draft.length !== current.length || draft.some((id, i) => id !== current[i]);
 
   const save = async () => {
     const payload = buildEnvJourneyPayload(draft, environments);
     if (!payload) {
       toast.error(
-        "Pick at least one environment that resolves to a valid client.",
+        "Pick at least one environment that resolves to a valid client."
       );
       return;
     }
@@ -674,7 +695,7 @@ function JourneyEnvironmentsEditor({
       setOpen(false);
     } catch (e) {
       toast.error(
-        e instanceof Error ? e.message : "Failed to update environments",
+        e instanceof Error ? e.message : "Failed to update environments"
       );
     } finally {
       setSaving(false);
@@ -686,7 +707,7 @@ function JourneyEnvironmentsEditor({
     if (!payload) {
       toast.error(
         "Can't switch to clients: none of this journey's environments " +
-          "resolves to a valid client. Select clients manually instead.",
+          "resolves to a valid client. Select clients manually instead."
       );
       return;
     }
@@ -694,7 +715,7 @@ function JourneyEnvironmentsEditor({
       !window.confirm(
         "Switch this journey back to clients? Environment server-group " +
           "overrides and environment skills stop applying; future runs use " +
-          "those clients' own defaults.",
+          "those clients' own defaults."
       )
     ) {
       return;
@@ -710,7 +731,7 @@ function JourneyEnvironmentsEditor({
       setOpen(false);
     } catch (e) {
       toast.error(
-        e instanceof Error ? e.message : "Failed to update environments",
+        e instanceof Error ? e.message : "Failed to update environments"
       );
     } finally {
       setSaving(false);
@@ -719,8 +740,8 @@ function JourneyEnvironmentsEditor({
 
   const label =
     current.length === 1
-      ? (environments.find((e) => e.environmentId === current[0])?.name ??
-        "1 environment")
+      ? environments.find((e) => e.environmentId === current[0])?.name ??
+        "1 environment"
       : `${current.length} environments`;
 
   return (
@@ -753,69 +774,69 @@ function JourneyEnvironmentsEditor({
             </p>
           ) : (
             <>
-            {liveEnvironments.map((env) => {
-              const selected = draft.includes(env.environmentId);
-              const ordinal = draft.indexOf(env.environmentId);
-              const disabled =
-                !selected && draft.length >= MAX_ENVIRONMENTS_PER_JOURNEY;
-              return (
+              {liveEnvironments.map((env) => {
+                const selected = draft.includes(env.environmentId);
+                const ordinal = draft.indexOf(env.environmentId);
+                const disabled =
+                  !selected && draft.length >= MAX_ENVIRONMENTS_PER_JOURNEY;
+                return (
+                  <button
+                    key={env.environmentId}
+                    type="button"
+                    role="checkbox"
+                    aria-checked={selected}
+                    disabled={disabled}
+                    onPointerDown={(e) => e.preventDefault()}
+                    onClick={() => toggle(env.environmentId)}
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded py-1.5 pl-2 pr-2 text-left text-sm",
+                      "hover:bg-accent hover:text-accent-foreground",
+                      selected && "bg-accent/50",
+                      disabled && "cursor-not-allowed opacity-50"
+                    )}
+                  >
+                    <Check
+                      className={cn(
+                        "size-3.5 shrink-0",
+                        selected ? "opacity-100" : "opacity-0"
+                      )}
+                    />
+                    <span className="min-w-0 flex-1 truncate">
+                      <span className="font-medium">{env.name}</span>
+                    </span>
+                    {selected ? (
+                      <span className="shrink-0 rounded-full bg-muted px-1.5 text-[10px] tabular-nums text-muted-foreground">
+                        {ordinal + 1}
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })}
+              {orphanDraftIds.map((id) => (
                 <button
-                  key={env.environmentId}
+                  key={id}
                   type="button"
                   role="checkbox"
-                  aria-checked={selected}
-                  disabled={disabled}
+                  aria-checked
                   onPointerDown={(e) => e.preventDefault()}
-                  onClick={() => toggle(env.environmentId)}
+                  onClick={() => toggle(id)}
                   className={cn(
-                    "flex w-full items-center gap-2 rounded py-1.5 pl-2 pr-2 text-left text-sm",
-                    "hover:bg-accent hover:text-accent-foreground",
-                    selected && "bg-accent/50",
-                    disabled && "cursor-not-allowed opacity-50",
+                    "flex w-full items-center gap-2 rounded bg-accent/50 py-1.5 pl-2 pr-2 text-left text-sm",
+                    "hover:bg-accent hover:text-accent-foreground"
                   )}
                 >
-                  <Check
-                    className={cn(
-                      "size-3.5 shrink-0",
-                      selected ? "opacity-100" : "opacity-0",
-                    )}
-                  />
+                  <Check className="size-3.5 shrink-0 opacity-100" />
                   <span className="min-w-0 flex-1 truncate">
-                    <span className="font-medium">{env.name}</span>
-                  </span>
-                  {selected ? (
-                    <span className="shrink-0 rounded-full bg-muted px-1.5 text-[10px] tabular-nums text-muted-foreground">
-                      {ordinal + 1}
+                    <span className="font-medium">Retired environment</span>
+                    <span className="ml-1 text-[10px] text-muted-foreground">
+                      (unavailable — remove)
                     </span>
-                  ) : null}
-                </button>
-              );
-            })}
-            {orphanDraftIds.map((id) => (
-              <button
-                key={id}
-                type="button"
-                role="checkbox"
-                aria-checked
-                onPointerDown={(e) => e.preventDefault()}
-                onClick={() => toggle(id)}
-                className={cn(
-                  "flex w-full items-center gap-2 rounded bg-accent/50 py-1.5 pl-2 pr-2 text-left text-sm",
-                  "hover:bg-accent hover:text-accent-foreground",
-                )}
-              >
-                <Check className="size-3.5 shrink-0 opacity-100" />
-                <span className="min-w-0 flex-1 truncate">
-                  <span className="font-medium">Retired environment</span>
-                  <span className="ml-1 text-[10px] text-muted-foreground">
-                    (unavailable — remove)
                   </span>
-                </span>
-                <span className="shrink-0 rounded-full bg-muted px-1.5 text-[10px] tabular-nums text-muted-foreground">
-                  {draft.indexOf(id) + 1}
-                </span>
-              </button>
-            ))}
+                  <span className="shrink-0 rounded-full bg-muted px-1.5 text-[10px] tabular-nums text-muted-foreground">
+                    {draft.indexOf(id) + 1}
+                  </span>
+                </button>
+              ))}
             </>
           )}
         </div>

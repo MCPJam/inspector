@@ -29,7 +29,15 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, usePaginatedQuery } from "convex/react";
-import { Check, ChevronDown, Info, Loader2, Plus, Users, X } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  Info,
+  Loader2,
+  Plus,
+  Users,
+  X,
+} from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
@@ -204,15 +212,16 @@ function useProjectHosts(projectId: string | null) {
 }
 /** Live project environments — subscribed ONLY while the feature flag is on
  * (every client exposure of Project Environments is flag-gated). */
-function useProjectEnvironmentsList(projectId: string | null, enabled: boolean) {
+function useProjectEnvironmentsList(
+  projectId: string | null,
+  enabled: boolean
+) {
   return useQuery(
     SWARM_QUERIES.listEnvironments as any,
     // `shouldQueryProjectId` (not a bare truthiness check): a local/placeholder
     // or UUID project id during a project transition would 500 the Convex arg
     // validator, so skip until the id is a real queryable project.
-    enabled && shouldQueryProjectId(projectId)
-      ? ({ projectId } as any)
-      : "skip",
+    enabled && shouldQueryProjectId(projectId) ? ({ projectId } as any) : "skip"
   ) as EnvironmentView[] | undefined;
 }
 function usePersonaTrackRecord(personaRefId: string | null) {
@@ -236,7 +245,7 @@ function RunningPersonasSubscriber({
 }) {
   const ids = useQuery(
     SWARM_QUERIES.listRunningPersonaRefIds as any,
-    projectId ? ({ projectId } as any) : "skip",
+    projectId ? ({ projectId } as any) : "skip"
   ) as string[] | undefined;
 
   useEffect(() => {
@@ -246,10 +255,7 @@ function RunningPersonasSubscriber({
   return null;
 }
 
-export function SwarmsTab({
-  projectId,
-  isAuthenticated,
-}: SwarmsTabProps) {
+export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
   // Don't subscribe to project-scoped Convex reads until auth is ready — a
   // signed-out/loading mount with a persisted project would otherwise surface
   // authorization errors instead of holding the screen.
@@ -259,12 +265,12 @@ export function SwarmsTab({
   const environmentsEnabled = useProjectEnvironmentsEnabled();
   const environments = useProjectEnvironmentsList(
     effectiveProjectId,
-    environmentsEnabled,
+    environmentsEnabled
   );
   const [runningPersonaIds, setRunningPersonaIds] = useState<string[]>([]);
   const runningSet = useMemo(
     () => new Set(runningPersonaIds),
-    [runningPersonaIds],
+    [runningPersonaIds]
   );
   const onRunningPersonasChange = useCallback((ids: string[]) => {
     setRunningPersonaIds(ids);
@@ -273,7 +279,7 @@ export function SwarmsTab({
   // Parse ONCE on mount so later user navigation isn't clobbered by the URL.
   const deepLink = useMemo(
     () => parseSwarmSessionParams(window.location.search),
-    [],
+    []
   );
   type SwarmViewMode = "journeys" | "sessions";
   const SWARM_VIEW_OPTIONS = [
@@ -283,10 +289,10 @@ export function SwarmsTab({
   // Session deep-links open the flat Sessions browser; run-only links stay on
   // Journeys so the matrix / live stream can restore.
   const [viewMode, setViewMode] = useState<SwarmViewMode>(() =>
-    deepLink.threadId ? "sessions" : "journeys",
+    deepLink.threadId ? "sessions" : "journeys"
   );
   const [selectedPersonaId, setSelectedPersonaId] = useState<string | null>(
-    () => deepLink.personaRefId ?? null,
+    () => deepLink.personaRefId ?? null
   );
   const journeys = useJourneys(selectedPersonaId);
   // Lifted for the agent snapshot (one subscription).
@@ -305,18 +311,18 @@ export function SwarmsTab({
         notes?: string;
         avatarShape?: number;
         avatarPalette?: number;
-      },
+      }
     ) => {
       try {
         await updatePersona({ personaRefId, ...patch } as any);
       } catch (error) {
         toast.error(
-          error instanceof Error ? error.message : "Failed to update persona",
+          error instanceof Error ? error.message : "Failed to update persona"
         );
         throw error;
       }
     },
-    [updatePersona],
+    [updatePersona]
   );
 
   const selectedPersona = useMemo(
@@ -328,7 +334,7 @@ export function SwarmsTab({
   // must not subscribe getPersonaTrackRecord before the allowed persona list
   // has loaded and matched — that surfaces backend authorization errors.
   const trackRecord = usePersonaTrackRecord(
-    selectedPersona ? selectedPersonaId : null,
+    selectedPersona ? selectedPersonaId : null
   );
 
   // New-journey form, lifted so `ui_open_journey_form` can open it (the
@@ -347,7 +353,7 @@ export function SwarmsTab({
     (
       journey: JourneyListJourney,
       run: JourneyRun,
-      targetKey: string | null,
+      targetKey: string | null
     ) => {
       setRunDetail({
         journeyId: journey._id,
@@ -356,7 +362,7 @@ export function SwarmsTab({
         runSnapshot: run,
       });
     },
-    [],
+    []
   );
   const closeRunDetail = useCallback(() => setRunDetail(null), []);
   // Close the panel when the persona changes or its journey disappears.
@@ -373,7 +379,7 @@ export function SwarmsTab({
     }
   }, [journeys, runDetail]);
   const detailJourney = runDetail
-    ? (journeys?.find((j) => j._id === runDetail.journeyId) ?? null)
+    ? journeys?.find((j) => j._id === runDetail.journeyId) ?? null
     : null;
 
   // ── Agent bridge ──────────────────────────────────────────────────────────
@@ -388,7 +394,7 @@ export function SwarmsTab({
     if (!agentOperable) {
       throw createInspectorCommandClientError(
         "unsupported_in_mode",
-        "Swarms is locked here — sign in and select a project before using the swarm tools.",
+        "Swarms is locked here — sign in and select a project before using the swarm tools."
       );
     }
   };
@@ -409,10 +415,9 @@ export function SwarmsTab({
   // ANY failure and dropped only after a confirmed 2xx.
   const launchJourney = useCallback(
     async (
-      journeyId: string,
+      journeyId: string
     ): Promise<
-      | { status: "launched"; runId?: string }
-      | { status: "already_launching" }
+      { status: "launched"; runId?: string } | { status: "already_launching" }
     > => {
       if (!projectId) {
         throw new LaunchJourneyRunError(0, "No project is selected.");
@@ -440,7 +445,7 @@ export function SwarmsTab({
         launchingRef.current.delete(journeyId);
       }
     },
-    [projectId],
+    [projectId]
   );
 
   // Exact (case-insensitive) resolution against the loaded lists — unknown or
@@ -449,24 +454,24 @@ export function SwarmsTab({
     if (typeof raw !== "string" || raw.trim().length === 0) {
       throw createInspectorCommandClientError(
         "invalid_request",
-        "Missing required 'persona' string (a persona name or id).",
+        "Missing required 'persona' string (a persona name or id)."
       );
     }
     const wanted = raw.trim();
     const wantedLower = wanted.toLowerCase();
     const matches = (personas ?? []).filter(
-      (p) => p._id === wanted || p.name.toLowerCase() === wantedLower,
+      (p) => p._id === wanted || p.name.toLowerCase() === wantedLower
     );
     if (matches.length === 1) return matches[0];
     if (matches.length === 0) {
       throw createInspectorCommandClientError(
         "invalid_request",
-        `No persona matches "${wanted}". Use a persona name or id from this screen (list them with ui_snapshot_app).`,
+        `No persona matches "${wanted}". Use a persona name or id from this screen (list them with ui_snapshot_app).`
       );
     }
     throw createInspectorCommandClientError(
       "invalid_request",
-      `${matches.length} personas match "${wanted}" — pass the persona id instead (ids are in ui_snapshot_app).`,
+      `${matches.length} personas match "${wanted}" — pass the persona id instead (ids are in ui_snapshot_app).`
     );
   };
 
@@ -474,13 +479,13 @@ export function SwarmsTab({
     if (typeof raw !== "string" || raw.trim().length === 0) {
       throw createInspectorCommandClientError(
         "invalid_request",
-        "Missing required 'journey' string (a goal or journey id).",
+        "Missing required 'journey' string (a goal or journey id)."
       );
     }
     if (!selectedPersona) {
       throw createInspectorCommandClientError(
         "invalid_request",
-        "Select a persona first — journeys are listed per persona (see ui_snapshot_app).",
+        "Select a persona first — journeys are listed per persona (see ui_snapshot_app)."
       );
     }
     const wanted = raw.trim();
@@ -489,18 +494,18 @@ export function SwarmsTab({
       (j) =>
         j._id === wanted ||
         j.goal.toLowerCase() === wantedLower ||
-        (j.name ?? "").toLowerCase() === wantedLower,
+        (j.name ?? "").toLowerCase() === wantedLower
     );
     if (matches.length === 1) return matches[0];
     if (matches.length === 0) {
       throw createInspectorCommandClientError(
         "invalid_request",
-        `No journey matches "${wanted}" for persona "${selectedPersona.name}". Use a journey goal or id from this screen; if the journey belongs to another persona, select that persona first.`,
+        `No journey matches "${wanted}" for persona "${selectedPersona.name}". Use a journey goal or id from this screen; if the journey belongs to another persona, select that persona first.`
       );
     }
     throw createInspectorCommandClientError(
       "invalid_request",
-      `${matches.length} journeys match "${wanted}" — pass the journey id instead (ids are in ui_snapshot_app).`,
+      `${matches.length} journeys match "${wanted}" — pass the journey id instead (ids are in ui_snapshot_app).`
     );
   };
 
@@ -516,7 +521,7 @@ export function SwarmsTab({
         if (!pid) {
           throw createInspectorCommandClientError(
             "unsupported_in_mode",
-            "No project is selected.",
+            "No project is selected."
           );
         }
         const { payload } = command as CreatePersonaInspectorCommand;
@@ -527,19 +532,19 @@ export function SwarmsTab({
         if (!name) {
           throw createInspectorCommandClientError(
             "invalid_request",
-            "Missing required 'name' string.",
+            "Missing required 'name' string."
           );
         }
         if (!role) {
           throw createInspectorCommandClientError(
             "invalid_request",
-            "Missing required 'role' string.",
+            "Missing required 'role' string."
           );
         }
         if (payload?.notes !== undefined && typeof payload.notes !== "string") {
           throw createInspectorCommandClientError(
             "invalid_request",
-            "'notes' must be a string when provided.",
+            "'notes' must be a string when provided."
           );
         }
         const notes =
@@ -571,13 +576,13 @@ export function SwarmsTab({
         if (!persona) {
           throw createInspectorCommandClientError(
             "invalid_request",
-            "Select or name a persona first — a journey belongs to a persona.",
+            "Select or name a persona first — a journey belongs to a persona."
           );
         }
         if (payload?.goal !== undefined && typeof payload.goal !== "string") {
           throw createInspectorCommandClientError(
             "invalid_request",
-            "'goal' must be a string when provided.",
+            "'goal' must be a string when provided."
           );
         }
         const goal =
@@ -597,7 +602,7 @@ export function SwarmsTab({
         if (!pid) {
           throw createInspectorCommandClientError(
             "unsupported_in_mode",
-            "No project is selected.",
+            "No project is selected."
           );
         }
         const { payload } = command as LaunchSwarmRunInspectorCommand;
@@ -610,7 +615,7 @@ export function SwarmsTab({
           if (result.status === "already_launching") {
             throw createInspectorCommandClientError(
               "execution_failed",
-              "This journey is already launching — wait for it to start.",
+              "This journey is already launching — wait for it to start."
             );
           }
           return {
@@ -624,12 +629,12 @@ export function SwarmsTab({
             if (e.status === 402) {
               throw createInspectorCommandClientError(
                 "execution_failed",
-                `Cannot launch this journey run: ${e.message} Launching spends the organization's swarm quota, which is exhausted — do not retry until it resets or billing is updated.`,
+                `Cannot launch this journey run: ${e.message} Launching spends the organization's swarm quota, which is exhausted — do not retry until it resets or billing is updated.`
               );
             }
             throw createInspectorCommandClientError(
               "execution_failed",
-              `Could not launch the journey run: ${e.message}`,
+              `Could not launch the journey run: ${e.message}`
             );
           }
           throw e; // already an InspectorCommandClientError (e.g. already_launching)
@@ -724,14 +729,19 @@ export function SwarmsTab({
                 <h2 className="text-sm font-semibold">Personas</h2>
                 <NewPersonaDialog
                   onCreate={async (draft) => {
-                    const row = await createPersona({ projectId, ...draft } as any);
+                    const row = await createPersona({
+                      projectId,
+                      ...draft,
+                    } as any);
                     setSelectedPersonaId(row._id);
                   }}
                 />
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto">
                 {personas === undefined ? (
-                  <div className="p-4 text-sm text-muted-foreground">Loading…</div>
+                  <div className="p-4 text-sm text-muted-foreground">
+                    Loading…
+                  </div>
                 ) : personas.length === 0 ? (
                   <div className="p-4 text-sm text-muted-foreground">
                     No personas yet. Create one to get started.
@@ -746,7 +756,7 @@ export function SwarmsTab({
                         onClick={() => setSelectedPersonaId(p._id)}
                         className={cn(
                           "flex w-full items-center gap-3 border-b px-4 py-3 text-left hover:bg-muted/50",
-                          selected && "bg-muted",
+                          selected && "bg-muted"
                         )}
                       >
                         <PersonaPixelAvatar
@@ -788,7 +798,7 @@ export function SwarmsTab({
                         onDelete={async () => {
                           if (
                             !window.confirm(
-                              `Delete persona "${selectedPersona.name}"? Its journeys are hidden but historical runs are kept.`,
+                              `Delete persona "${selectedPersona.name}"? Its journeys are hidden but historical runs are kept.`
                             )
                           ) {
                             return;
@@ -805,7 +815,7 @@ export function SwarmsTab({
                           "mb-3",
                           journeyFormOpen
                             ? "space-y-2"
-                            : "flex items-center justify-between",
+                            : "flex items-center justify-between"
                         )}
                       >
                         <h3 className="text-sm font-semibold">Journeys</h3>
@@ -881,7 +891,9 @@ export function SwarmsTab({
                       <ResizableHandle withHandle />
                       <ResizablePanel defaultSize={62} minSize={35}>
                         <RunDetailPanel
-                          key={`${runDetail.runId}:${runDetail.targetKey ?? ""}`}
+                          key={`${runDetail.runId}:${
+                            runDetail.targetKey ?? ""
+                          }`}
                           journey={detailJourney}
                           runId={runDetail.runId}
                           runSnapshot={runDetail.runSnapshot}
@@ -945,11 +957,11 @@ function RunDetailPanel({
   const { results: runs } = usePaginatedQuery(
     SWARM_QUERIES.listJourneyRuns as any,
     { journeyRefId: journey._id } as any,
-    { initialNumItems: DEFAULT_PAGE_SIZE },
+    { initialNumItems: DEFAULT_PAGE_SIZE }
   );
   const rollup = useQuery(
     SWARM_QUERIES.journeyRollup as any,
-    { journeyRefId: journey._id } as any,
+    { journeyRefId: journey._id } as any
   ) as JourneyRollup | undefined;
   const typedRuns = runs as JourneyRun[];
   const runIndex = typedRuns.findIndex((r) => r._id === runId);
@@ -969,7 +981,7 @@ function RunDetailPanel({
             <span
               className={cn(
                 "rounded-full px-1.5 py-px text-[10px] font-medium capitalize",
-                runStatusChipClass(run.status),
+                runStatusChipClass(run.status)
               )}
             >
               {run.status.replace(/_/g, " ")}
@@ -1045,7 +1057,7 @@ function RunSessionsView({
   } = usePaginatedQuery(
     SWARM_QUERIES.listSessionsByJourneyRun as any,
     { journeyRunId: runId } as any,
-    { initialNumItems: Math.max(DEFAULT_PAGE_SIZE, sessionsPerHost * 4) },
+    { initialNumItems: Math.max(DEFAULT_PAGE_SIZE, sessionsPerHost * 4) }
   );
 
   const streamEnabled = runStatus === "running";
@@ -1053,13 +1065,16 @@ function RunSessionsView({
 
   const [selection, setSelection] = useState<SwarmMatrixSelection | null>(null);
   const [detailSession, setDetailSession] = useState<JourneySessionRow | null>(
-    null,
+    null
   );
   const [sessionToPromote, setSessionToPromote] =
     useState<JourneySessionRow | null>(null);
 
-  const hostName = (id: string) =>
-    hosts.find((h) => h.hostId === id)?.name ?? id.slice(0, 8);
+  // Returns undefined for a host no longer in the project so
+  // `buildSwarmRunTargets` can fall back to the run snapshot's `hostName`
+  // before truncating the id.
+  const hostName = (id: string) => hosts.find((h) => h.hostId === id)?.name;
+  const hostNameOrId = (id: string) => hostName(id) ?? id.slice(0, 8);
 
   const rows = sessions as JourneySessionRow[];
   const hostSummaries = run.hostSummaries;
@@ -1080,7 +1095,7 @@ function RunSessionsView({
     return Array.from(seen).map((hostId) => ({
       key: hostId,
       hostId,
-      label: hostName(hostId),
+      label: hostNameOrId(hostId),
       identity: { hostId },
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1093,7 +1108,7 @@ function RunSessionsView({
   }, [rows]);
 
   const selectedConvex = selection
-    ? (convexByChatId.get(selection.chatSessionId) ?? null)
+    ? convexByChatId.get(selection.chatSessionId) ?? null
     : null;
 
   const fallbackTrace = useMemo(
@@ -1101,7 +1116,7 @@ function RunSessionsView({
       selection
         ? liveSessionTrace(stream.sessions[selection.chatSessionId])
         : null,
-    [selection, stream.sessions],
+    [selection, stream.sessions]
   );
 
   // Deep-link restore: select the matrix cell whose MINTED session id matches
@@ -1142,10 +1157,10 @@ function RunSessionsView({
     if (!target) return;
     const mintedIds = Array.from(
       { length: Math.max(1, sessionsPerHost) },
-      (_, i) => swarmAttemptChatSessionId(runId, target.identity, i),
+      (_, i) => swarmAttemptChatSessionId(runId, target.identity, i)
     );
     const matchIdx = mintedIds.findIndex((id) =>
-      rows.some((s) => s.chatSessionId === id),
+      rows.some((s) => s.chatSessionId === id)
     );
     if (matchIdx >= 0) {
       appliedInitialTargetRef.current = true;
@@ -1164,7 +1179,7 @@ function RunSessionsView({
       hostSummaries.some(
         (h) =>
           (h.targetId ?? h.hostId) === initialTargetKey ||
-          h.hostId === initialTargetKey,
+          h.hostId === initialTargetKey
       )
     ) {
       appliedInitialTargetRef.current = true;
@@ -1192,7 +1207,7 @@ function RunSessionsView({
   useEffect(() => {
     if (selection || !streamEnabled) return;
     const runningEntry = Object.entries(stream.cellStatus).find(
-      ([, status]) => status === "running",
+      ([, status]) => status === "running"
     );
     if (!runningEntry) return;
     const [key] = runningEntry;
@@ -1210,7 +1225,7 @@ function RunSessionsView({
       chatSessionId: swarmAttemptChatSessionId(
         runId,
         target.identity,
-        sessionIndex,
+        sessionIndex
       ),
     });
   }, [selection, streamEnabled, stream.cellStatus, runId, targets]);
@@ -1315,7 +1330,7 @@ function RunSessionsView({
               type: "test-edit",
               suiteId,
               testId: testCaseId,
-            }),
+            })
           );
         }}
       />
@@ -1393,7 +1408,7 @@ function PersonaDetailHeader({
             className={cn(
               "mt-2 min-h-0 resize-none border-0 bg-transparent px-0 py-0 text-sm",
               "text-muted-foreground shadow-none placeholder:text-muted-foreground/60",
-              "focus-visible:border-0 focus-visible:ring-0",
+              "focus-visible:border-0 focus-visible:ring-0"
             )}
           />
         </div>
@@ -1452,7 +1467,7 @@ function NewPersonaDialog({
       setOpen(false);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to create persona",
+        error instanceof Error ? error.message : "Failed to create persona"
       );
     } finally {
       setSaving(false);
@@ -1536,9 +1551,7 @@ function NewPersonaDialog({
               disabled={saving || !name.trim() || !role.trim()}
               onClick={() => void handleCreate()}
             >
-              {saving ? (
-                <Loader2 className="mr-1 size-3 animate-spin" />
-              ) : null}
+              {saving ? <Loader2 className="mr-1 size-3 animate-spin" /> : null}
               Create persona
             </Button>
           </DialogFooter>
@@ -1582,11 +1595,11 @@ function NewJourneyButton({
   const [goal, setGoal] = useState("");
   const [hostIds, setHostIds] = useState<string[]>([]);
   const [serverAttachmentId, setServerAttachmentId] = useState<string | null>(
-    null,
+    null
   );
   // Target mode: "clients" (legacy, unchanged) vs "environments" (flag-gated).
   const [targetMode, setTargetMode] = useState<"clients" | "environments">(
-    "clients",
+    "clients"
   );
   const [environmentIds, setEnvironmentIds] = useState<string[]>([]);
   const [envPickerOpen, setEnvPickerOpen] = useState(false);
@@ -1596,7 +1609,7 @@ function NewJourneyButton({
   // Judge config is hidden behind "Advanced" — progressive discovery. Default
   // undefined = managed defaults (auto-grade off) until the user opts in.
   const [judgeConfig, setJudgeConfig] = useState<GoalJudgeConfig | undefined>(
-    undefined,
+    undefined
   );
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const { availableModels } = useAvailableModels({ projectId });
@@ -1625,22 +1638,26 @@ function NewJourneyButton({
         const rank = (h: HostItem) => (isSwarmClient(h) ? 0 : 1);
         return rank(a) - rank(b) || a.name.localeCompare(b.name);
       }),
-    [hosts],
+    [hosts]
   );
   const selectedHosts = useMemo(
     () => sortedHosts.filter((h) => hostIds.includes(h.hostId)),
-    [sortedHosts, hostIds],
+    [sortedHosts, hostIds]
   );
   const clientsTriggerLabel =
     selectedHosts.length === 0
       ? "No clients · pick one"
-      : (selectedHosts[0]?.name ?? "Clients");
-  const clientsExtra =
-    selectedHosts.length > 1 ? selectedHosts.length - 1 : 0;
+      : selectedHosts[0]?.name ?? "Clients";
+  const clientsExtra = selectedHosts.length > 1 ? selectedHosts.length - 1 : 0;
 
   if (!open) {
     return (
-      <Button type="button" size="sm" variant="outline" onClick={() => setOpen(true)}>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        onClick={() => setOpen(true)}
+      >
         <Plus className="mr-1 size-3" />
         New journey
       </Button>
@@ -1654,7 +1671,7 @@ function NewJourneyButton({
     <div
       className={cn(
         "w-full rounded-xl border border-border/50 bg-card/50 p-3 shadow-sm",
-        "ring-1 ring-black/[0.03] dark:ring-white/[0.06]",
+        "ring-1 ring-black/[0.03] dark:ring-white/[0.06]"
       )}
     >
       <div className="mb-2.5 flex flex-col gap-1">
@@ -1677,12 +1694,10 @@ function NewJourneyButton({
           role="radiogroup"
           aria-label="Journey target mode"
         >
-          {(
-            [
-              { value: "clients" as const, label: "Clients" },
-              { value: "environments" as const, label: "Environments" },
-            ]
-          ).map((opt) => (
+          {[
+            { value: "clients" as const, label: "Clients" },
+            { value: "environments" as const, label: "Environments" },
+          ].map((opt) => (
             <button
               key={opt.value}
               type="button"
@@ -1694,7 +1709,7 @@ function NewJourneyButton({
                 "rounded-full border px-2 py-0.5 font-medium transition-colors",
                 targetMode === opt.value
                   ? "border-primary/50 bg-primary/10 text-foreground"
-                  : "border-border/60 text-muted-foreground hover:bg-muted/50",
+                  : "border-border/60 text-muted-foreground hover:bg-muted/50"
               )}
             >
               {opt.label}
@@ -1717,16 +1732,16 @@ function NewJourneyButton({
                   "outline-none transition-colors",
                   environmentIds.length === 0
                     ? "border-dashed border-border/60 bg-muted/30 hover:bg-muted/45"
-                    : "border-border/60 bg-muted/40 hover:bg-muted/60",
+                    : "border-border/60 bg-muted/40 hover:bg-muted/60"
                 )}
                 aria-label="Attached environments"
               >
                 <span className="min-w-0 flex-1 truncate text-xs font-medium">
                   {environmentIds.length === 0
                     ? "No environments · pick one"
-                    : (environments.find(
-                        (e) => e.environmentId === environmentIds[0],
-                      )?.name ?? "Environments")}
+                    : environments.find(
+                        (e) => e.environmentId === environmentIds[0]
+                      )?.name ?? "Environments"}
                 </span>
                 {environmentIds.length > 1 ? (
                   <span className="text-[10px] text-muted-foreground">
@@ -1742,7 +1757,11 @@ function NewJourneyButton({
               sideOffset={4}
               onCloseAutoFocus={(e) => e.preventDefault()}
             >
-              <div className="space-y-0.5" role="group" aria-label="Environments">
+              <div
+                className="space-y-0.5"
+                role="group"
+                aria-label="Environments"
+              >
                 <p className="px-2 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                   Environments
                 </p>
@@ -1771,21 +1790,21 @@ function NewJourneyButton({
                             prev.includes(env.environmentId)
                               ? prev.filter((id) => id !== env.environmentId)
                               : prev.length >= 10
-                                ? prev
-                                : [...prev, env.environmentId],
+                              ? prev
+                              : [...prev, env.environmentId]
                           )
                         }
                         className={cn(
                           "flex w-full items-center gap-2 rounded py-1.5 pl-2 pr-2 text-left text-sm",
                           "hover:bg-accent hover:text-accent-foreground",
                           selected && "bg-accent/50",
-                          disabled && "cursor-not-allowed opacity-50",
+                          disabled && "cursor-not-allowed opacity-50"
                         )}
                       >
                         <Check
                           className={cn(
                             "size-3.5 shrink-0",
-                            selected ? "opacity-100" : "opacity-0",
+                            selected ? "opacity-100" : "opacity-0"
                           )}
                         />
                         <span className="min-w-0 flex-1 truncate">
@@ -1806,38 +1825,6 @@ function NewJourneyButton({
               </div>
             </PopoverContent>
           </Popover>
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Label
-              htmlFor="swarm-journey-sessions"
-              className="shrink-0 text-[11px] text-muted-foreground"
-            >
-              Sessions
-            </Label>
-            <Input
-              id="swarm-journey-sessions"
-              type="number"
-              min={1}
-              max={5}
-              className="h-8 w-14"
-              value={sessionsPerHost}
-              onChange={(e) => setSessionsPerHost(Number(e.target.value))}
-            />
-            <Label
-              htmlFor="swarm-journey-turns"
-              className="ml-1 shrink-0 text-[11px] text-muted-foreground"
-            >
-              Turns
-            </Label>
-            <Input
-              id="swarm-journey-turns"
-              type="number"
-              min={1}
-              max={20}
-              className="h-8 w-14"
-              value={maxTurns}
-              onChange={(e) => setMaxTurns(Number(e.target.value))}
-            />
-          </div>
         </div>
       ) : null}
 
@@ -1845,7 +1832,7 @@ function NewJourneyButton({
       <div
         className={cn(
           "mb-2.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-2",
-          targetMode === "environments" && "hidden",
+          targetMode === "environments" && "hidden"
         )}
       >
         <ServerGroupPicker
@@ -1866,7 +1853,7 @@ function NewJourneyButton({
                 "outline-none transition-colors",
                 hostIds.length === 0
                   ? "border-dashed border-border/60 bg-muted/30 hover:bg-muted/45"
-                  : "border-border/60 bg-muted/40 hover:bg-muted/60",
+                  : "border-border/60 bg-muted/40 hover:bg-muted/60"
               )}
               aria-label="Attached clients"
             >
@@ -1942,13 +1929,13 @@ function NewJourneyButton({
                       className={cn(
                         "flex w-full items-center gap-2 rounded py-1.5 pl-2 pr-2 text-left text-sm",
                         "hover:bg-accent hover:text-accent-foreground",
-                        selected && "bg-accent/50",
+                        selected && "bg-accent/50"
                       )}
                     >
                       <Check
                         className={cn(
                           "size-3.5 shrink-0",
-                          selected ? "opacity-100" : "opacity-0",
+                          selected ? "opacity-100" : "opacity-0"
                         )}
                       />
                       <JourneyHostLogoMark label={h.name} />
@@ -1972,39 +1959,46 @@ function NewJourneyButton({
             </div>
           </PopoverContent>
         </Popover>
+      </div>
 
-        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Label
-            htmlFor="swarm-journey-sessions"
-            className="shrink-0 text-[11px] text-muted-foreground"
-          >
-            Sessions
-          </Label>
-          <Input
-            id="swarm-journey-sessions"
-            type="number"
-            min={1}
-            max={5}
-            className="h-8 w-14"
-            value={sessionsPerHost}
-            onChange={(e) => setSessionsPerHost(Number(e.target.value))}
-          />
-          <Label
-            htmlFor="swarm-journey-turns"
-            className="ml-1 shrink-0 text-[11px] text-muted-foreground"
-          >
-            Turns
-          </Label>
-          <Input
-            id="swarm-journey-turns"
-            type="number"
-            min={1}
-            max={20}
-            className="h-8 w-14"
-            value={maxTurns}
-            onChange={(e) => setMaxTurns(Number(e.target.value))}
-          />
-        </div>
+      {/* Sessions / Turns — rendered EXACTLY ONCE regardless of target mode.
+          The legacy clients bar above is CSS-`hidden` in environments mode
+          rather than unmounted, so keeping a per-mode copy of these inputs put
+          two elements with `id="swarm-journey-sessions"` /
+          `id="swarm-journey-turns"` in the DOM at the same time, breaking
+          every `label[for]` association. The fields are byte-identical in both
+          modes, so there is nothing mode-specific to preserve. */}
+      <div className="mb-2.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+        <Label
+          htmlFor="swarm-journey-sessions"
+          className="shrink-0 text-[11px] text-muted-foreground"
+        >
+          Sessions
+        </Label>
+        <Input
+          id="swarm-journey-sessions"
+          type="number"
+          min={1}
+          max={5}
+          className="h-8 w-14"
+          value={sessionsPerHost}
+          onChange={(e) => setSessionsPerHost(Number(e.target.value))}
+        />
+        <Label
+          htmlFor="swarm-journey-turns"
+          className="ml-1 shrink-0 text-[11px] text-muted-foreground"
+        >
+          Turns
+        </Label>
+        <Input
+          id="swarm-journey-turns"
+          type="number"
+          min={1}
+          max={20}
+          className="h-8 w-14"
+          value={maxTurns}
+          onChange={(e) => setMaxTurns(Number(e.target.value))}
+        />
       </div>
 
       {/* Advanced → Judge. Hidden by default (progressive discovery); the
@@ -2019,7 +2013,7 @@ function NewJourneyButton({
           <ChevronDown
             className={cn(
               "size-3 transition-transform",
-              advancedOpen && "rotate-180",
+              advancedOpen && "rotate-180"
             )}
           />
           Advanced
@@ -2039,7 +2033,12 @@ function NewJourneyButton({
       </div>
 
       <div className="flex justify-end gap-2">
-        <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          onClick={() => setOpen(false)}
+        >
           Cancel
         </Button>
         <Button
@@ -2065,7 +2064,7 @@ function NewJourneyButton({
               // own server-group override.
               const payload = buildEnvJourneyPayload(
                 environmentIds,
-                environments,
+                environments
               );
               if (!payload) return;
               await onCreate({
