@@ -57,6 +57,13 @@ listTools.post("/", async (c) => {
       }
 
       try {
+        // No cursor here is deliberate, not a "only page 1" bug: the
+        // official beta.4 client auto-pages no-cursor `listTools` calls
+        // under the hood, so this already returns the server's COMPLETE
+        // tool list. Cursor plumbing exists elsewhere (MCPClientManager.
+        // listTools(serverId, { cursor }), the /api/mcp/prompts + resource
+        // templates routes) for callers that want one raw page — don't
+        // "fix" this call site into single-page behavior.
         const { tools } = await clientManager.listTools(serverId);
         const toolsMetadata = clientManager.getAllToolsMetadata(serverId);
         const serverTools = tools.map((tool: any) => {

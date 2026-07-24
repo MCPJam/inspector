@@ -12,12 +12,22 @@ const prompts = new Hono();
 // List prompts endpoint
 prompts.post("/list", async (c) => {
   try {
-    const body = (await c.req.json()) as { serverId?: string };
+    const body = (await c.req.json()) as {
+      serverId?: string;
+      cursor?: string;
+    };
     if (!body.serverId) {
       return c.json({ success: false, error: "serverId is required" }, 400);
     }
+    // Cursor is optional — omitted, this returns the full aggregate (the
+    // official beta.4 client auto-pages no-cursor list calls). Passing a
+    // cursor returns exactly one raw page, matching the tools/resources
+    // routes' cursor parity.
     return c.json(
-      await listPrompts(c.mcpClientManager, body as { serverId: string }),
+      await listPrompts(c.mcpClientManager, {
+        serverId: body.serverId,
+        cursor: body.cursor,
+      }),
     );
   } catch (error) {
     logger.error("Error fetching prompts", error, { serverId: "unknown" });
