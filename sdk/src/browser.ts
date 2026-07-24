@@ -169,6 +169,16 @@ export type {
   ProbeTransportResult,
 } from "./server-probe.js";
 export { runOAuthStateMachine } from "./oauth/state-machines/runner.js";
+// SSRF host classification (shared hardening): the browser executor re-validates
+// the FINAL response URL after redirects using the same RFC 6890 policy the
+// factory guard applies to the initial request URL.
+export {
+  assertOutboundOAuthUrlAllowed,
+  isPrivateHost,
+  isDisallowedIpAddress,
+  isLoopbackOAuthUrl,
+  OAuthOutboundUrlBlockedError,
+} from "./oauth/ssrf-guard.js";
 // RFC 9207 authorization-response `iss` validation. Era-agnostic (validating a
 // present `iss` is permitted on every version), so the browser callback gate
 // reuses it across 2025/2026 flows.

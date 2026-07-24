@@ -13,6 +13,8 @@ import {
   getBrowserDebugDynamicRegistrationMetadata,
   getSupportedRegistrationStrategies,
   EMPTY_OAUTH_FLOW_STATE,
+  isLoopbackOAuthUrl,
+  isPrivateHost,
   projectOAuthTraceSnapshot,
   resolveAuthorizationPlan,
   runOAuthStateMachine,
@@ -734,6 +736,31 @@ function createTraceResponseFromResult(
   };
 }
 
+/**
+ * Defense-in-depth against redirect-based SSRF. The browser fetch has ALREADY
+ * followed any redirects and contacted the destination by the time we see the
+ * response, so this does NOT prevent the network request — it prevents the
+ * OAuth flow from CONSUMING a response whose final URL is a private/reserved
+ * host, and routes retryable cases through the DNS-pinning proxy. It also can't
+ * detect a public hostname that DNS-resolves to a private address (that is the
+ * proxy's job). Re-validate the FINAL URL against the factory guard's policy;
+ * an empty/opaque URL can't be inspected and is left to the normal flow.
+ */
+function assertFinalResponseUrlAllowed(finalUrl: string | undefined): void {
+  if (!finalUrl) return;
+  let host: string;
+  try {
+    host = new URL(finalUrl).hostname;
+  } catch {
+    return;
+  }
+  if (isPrivateHost(host)) {
+    throw new Error(
+      `Refusing OAuth response from private/reserved host "${host}" (possible SSRF via redirect)`
+    );
+  }
+}
+
 function createOAuthRequestExecutor(fetchFn: typeof fetch, serverUrl?: string) {
   return async (request: HttpHistoryEntry["request"]) => {
     let response:
@@ -752,6 +779,11 @@ function createOAuthRequestExecutor(fetchFn: typeof fetch, serverUrl?: string) {
         headers: request.headers,
         body: serializeOAuthRequestBody(request.body, request.headers),
       });
+      // SSRF defense-in-depth: the factory guard validated the INITIAL url. The
+      // fetch may have already followed a redirect to a private host; reject
+      // CONSUMING that response (a private final URL throws → proxy retry / fail
+      // closed). Does not stop the request itself; DNS-rebind is the proxy's job.
+      assertFinalResponseUrlAllowed(directResponse.url);
       response = {
         status: directResponse.status,
         statusText: directResponse.statusText,
@@ -2698,6 +2730,10 @@ export async function initiateOAuth(
       serverUrl: options.serverUrl,
       serverName: options.serverName,
       redirectUrl: provider.redirectUrl,
+      // Exact-origin loopback allowance: only when the USER-CONFIGURED server is
+      // itself loopback does the SSRF guard permit loopback metadata fetches
+      // (a public server can never steer one at the user's own 127.0.0.1).
+      allowLoopbackMetadataFetch: isLoopbackOAuthUrl(options.serverUrl),
       hasClientSecret: Boolean(options.clientSecret || options.hasClientSecret),
       sanitizeTrace: SANITIZE_OAUTH_TRACES,
       requestExecutor,
@@ -3359,6 +3395,9 @@ export async function handleOAuthCallback(
         serverUrl,
         serverName,
         redirectUrl: provider.redirectUrl,
+        // Exact-origin loopback allowance (see initiate path): opt in only for a
+        // user-configured loopback server, never for a public/remote one.
+        allowLoopbackMetadataFetch: isLoopbackOAuthUrl(serverUrl),
         sanitizeTrace: SANITIZE_OAUTH_TRACES,
         requestExecutor,
         loadPreregisteredCredentials: async () => {

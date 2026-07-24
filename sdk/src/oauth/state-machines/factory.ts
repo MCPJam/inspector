@@ -9,11 +9,13 @@ import type {
   OAuthStateMachine,
   OAuthProtocolVersion,
   BaseOAuthStateMachineConfig,
+  OAuthRequestExecutor,
   RegistrationStrategy2025_03_26,
   RegistrationStrategy2025_06_18,
   RegistrationStrategy2025_11_25,
   RegistrationStrategy2026_07_28,
 } from "./types.js";
+import { assertOutboundOAuthUrlAllowed } from "../ssrf-guard.js";
 
 import {
   createDebugOAuthStateMachine as create2025_03_26,
@@ -45,6 +47,14 @@ export interface OAuthStateMachineFactoryConfig extends BaseOAuthStateMachineCon
     | RegistrationStrategy2025_06_18
     | RegistrationStrategy2025_11_25
     | RegistrationStrategy2026_07_28;
+  /**
+   * Permit outbound OAuth metadata fetches to loopback hosts (local-dev
+   * reflectors). Defaults to `false` (secure): a hostile server must not be
+   * able to steer metadata fetches at the user's own `127.0.0.1`/`localhost`.
+   * Only an explicit local-dev surface should opt in. The guard blocks
+   * LAN/link-local/reserved destinations regardless of this flag.
+   */
+  allowLoopbackMetadataFetch?: boolean;
 }
 
 /**
@@ -79,7 +89,26 @@ export interface OAuthStateMachineFactoryConfig extends BaseOAuthStateMachineCon
 export function createOAuthStateMachine(
   config: OAuthStateMachineFactoryConfig,
 ): OAuthStateMachine {
-  const { protocolVersion, ...baseConfig } = config;
+  const {
+    protocolVersion,
+    allowLoopbackMetadataFetch,
+    ...rest
+  } = config;
+
+  // SSRF guard (shared hardening, all machines at once): every machine hands
+  // untrusted metadata URLs (PRM pointer, AS metadata, CIMD) to this executor.
+  // Validate the destination before the fetch runs — blocking private/reserved
+  // hosts — with an explicit loopback opt-in for local dev.
+  const allowLoopback = allowLoopbackMetadataFetch ?? false;
+  const guardedExecutor: OAuthRequestExecutor = async (request) => {
+    // Validate the request URL (initial hop) for every machine request. The
+    // executor is responsible for re-validating the FINAL URL after any
+    // redirects (see the client executor / DNS-pinning proxy) — a URL-string
+    // check here cannot catch a 3xx or DNS-rebind to a private host.
+    assertOutboundOAuthUrlAllowed(request.url, { allowLoopback });
+    return rest.requestExecutor(request);
+  };
+  const baseConfig = { ...rest, requestExecutor: guardedExecutor };
 
   switch (protocolVersion) {
     case "2025-03-26":
