@@ -315,11 +315,25 @@ export class MCPClientManager {
   getClient(serverId: string): Client | undefined {
     const managed = this.liveClientStates.get(serverId)?.client;
     if (!managed) return undefined;
-    // `OfficialSdkClientAdapter` exposes the wrapped Client via `.inner`;
-    // structural check keeps this independent of an instanceof tree-
-    // shaken across the SDK boundary.
-    const inner = (managed as { inner?: Client }).inner;
-    return inner;
+    // Peel the `ManagedMcpClient` wrapper chain down to the raw upstream
+    // `Client`. Each wrapper exposes the next layer via `.inner`:
+    // `LogLevelMetaClient` (present on every connection, wrapping) →
+    // `OfficialSdkClientAdapter` → upstream `Client`. The upstream `Client`
+    // does NOT expose `.inner`, so unwrap until `.inner` is absent. A single
+    // `.inner` hop would stop at the adapter (a `ManagedMcpClient` lacking
+    // `complete`/`setLoggingLevel`-with-result), which is what external
+    // consumers of this deprecated API — and the conformance runner — expect
+    // to be the raw `Client`. Structural check keeps this independent of an
+    // instanceof tree shaken across the SDK boundary.
+    let current: unknown = managed;
+    while (
+      current &&
+      typeof current === "object" &&
+      (current as { inner?: unknown }).inner
+    ) {
+      current = (current as { inner?: unknown }).inner;
+    }
+    return current as Client;
   }
 
   /**
