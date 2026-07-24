@@ -1,5 +1,9 @@
 import { ServerFormData } from "@/shared/types.js";
 import { ServerWithName } from "@/state/app-types";
+import {
+  unwrapMcpServerMap,
+  type UnwrapFailureReason,
+} from "@/lib/plugins/mcp-config-shape";
 
 export interface JsonServerConfig {
   command?: string;
@@ -11,6 +15,27 @@ export interface JsonServerConfig {
 
 export interface JsonConfig {
   mcpServers: Record<string, JsonServerConfig>;
+}
+
+/**
+ * Map an unwrap failure to the legacy user-facing message. The wording is kept
+ * byte-identical to the pre-refactor parser so existing callers/tests and the
+ * import modal copy are unchanged; only the set of ACCEPTED shapes widened (a
+ * bare `mcp_servers` wrapper and a direct server map now parse identically to
+ * `mcpServers`).
+ */
+function unwrapErrorMessage(reason: UnwrapFailureReason): string {
+  if (reason === "both-wrappers") {
+    return 'Invalid JSON config: cannot declare both "mcp_servers" and "mcpServers"';
+  }
+  return 'Invalid JSON config: missing or invalid "mcpServers" property';
+}
+
+function validateErrorMessage(reason: UnwrapFailureReason): string {
+  if (reason === "both-wrappers") {
+    return 'Cannot declare both "mcp_servers" and "mcpServers"';
+  }
+  return 'Missing or invalid "mcpServers" property';
 }
 
 /**
@@ -59,19 +84,18 @@ export function formatJsonConfig(
  */
 export function parseJsonConfig(jsonContent: string): ServerFormData[] {
   try {
-    const config: JsonConfig = JSON.parse(jsonContent);
+    const config: unknown = JSON.parse(jsonContent);
 
-    if (!config.mcpServers || typeof config.mcpServers !== "object") {
-      throw new Error(
-        'Invalid JSON config: missing or invalid "mcpServers" property',
-      );
+    const unwrapped = unwrapMcpServerMap(config);
+    if (!unwrapped.ok) {
+      throw new Error(unwrapErrorMessage(unwrapped.reason));
     }
 
     const servers: ServerFormData[] = [];
 
     for (const [serverName, serverConfig] of Object.entries(
-      config.mcpServers,
-    )) {
+      unwrapped.servers,
+    ) as Array<[string, JsonServerConfig]>) {
       if (!serverConfig || typeof serverConfig !== "object") {
         console.warn(`Skipping invalid server config for "${serverName}"`);
         continue;
@@ -124,16 +148,17 @@ export function validateJsonConfig(jsonContent: string): {
   error?: string;
 } {
   try {
-    const config = JSON.parse(jsonContent);
+    const config: unknown = JSON.parse(jsonContent);
 
-    if (!config.mcpServers || typeof config.mcpServers !== "object") {
+    const unwrapped = unwrapMcpServerMap(config);
+    if (!unwrapped.ok) {
       return {
         success: false,
-        error: 'Missing or invalid "mcpServers" property',
+        error: validateErrorMessage(unwrapped.reason),
       };
     }
 
-    const serverNames = Object.keys(config.mcpServers);
+    const serverNames = Object.keys(unwrapped.servers);
     if (serverNames.length === 0) {
       return {
         success: false,
@@ -143,8 +168,8 @@ export function validateJsonConfig(jsonContent: string): {
 
     // Validate each server config
     for (const [serverName, serverConfig] of Object.entries(
-      config.mcpServers,
-    )) {
+      unwrapped.servers,
+    ) as Array<[string, JsonServerConfig]>) {
       if (!serverConfig || typeof serverConfig !== "object") {
         return {
           success: false,

@@ -128,6 +128,78 @@ describe("parseJsonConfig", () => {
     });
   });
 
+  describe("compatible config shapes (mcp_servers / direct)", () => {
+    // The three shapes must import IDENTICALLY (acceptance criterion of INS-1):
+    // an OpenAI `mcp_servers` wrapper, a direct server map, and the legacy
+    // `mcpServers` wrapper all produce the same ServerFormData.
+    const expected = [
+      {
+        name: "svr",
+        type: "stdio" as const,
+        command: "node",
+        args: ["server.js"],
+        env: {},
+      },
+    ];
+
+    it("parses the mcpServers wrapper (legacy)", () => {
+      const json = JSON.stringify({
+        mcpServers: { svr: { command: "node", args: ["server.js"] } },
+      });
+      expect(parseJsonConfig(json)).toEqual(expected);
+    });
+
+    it("parses the mcp_servers wrapper identically", () => {
+      const json = JSON.stringify({
+        mcp_servers: { svr: { command: "node", args: ["server.js"] } },
+      });
+      expect(parseJsonConfig(json)).toEqual(expected);
+    });
+
+    it("parses a direct server map identically", () => {
+      const json = JSON.stringify({
+        svr: { command: "node", args: ["server.js"] },
+      });
+      expect(parseJsonConfig(json)).toEqual(expected);
+    });
+
+    it("preserves env values across all three shapes", () => {
+      const server = { command: "python", env: { API_KEY: "secret123" } };
+      const direct = parseJsonConfig(JSON.stringify({ s: server }));
+      const snake = parseJsonConfig(JSON.stringify({ mcp_servers: { s: server } }));
+      const camel = parseJsonConfig(JSON.stringify({ mcpServers: { s: server } }));
+      expect(direct).toEqual(snake);
+      expect(snake).toEqual(camel);
+      expect(direct[0].env).toEqual({ API_KEY: "secret123" });
+    });
+
+    it("validates mcp_servers and direct shapes as success", () => {
+      expect(
+        validateJsonConfig(
+          JSON.stringify({ mcp_servers: { s: { command: "node" } } }),
+        ).success,
+      ).toBe(true);
+      expect(
+        validateJsonConfig(
+          JSON.stringify({ s: { url: "https://x/mcp" } }),
+        ).success,
+      ).toBe(true);
+    });
+
+    it("rejects declaring both wrappers", () => {
+      const json = JSON.stringify({
+        mcp_servers: { a: { command: "x" } },
+        mcpServers: { b: { command: "y" } },
+      });
+      expect(() => parseJsonConfig(json)).toThrow(
+        'cannot declare both "mcp_servers" and "mcpServers"',
+      );
+      expect(validateJsonConfig(json).error).toContain(
+        'Cannot declare both "mcp_servers" and "mcpServers"',
+      );
+    });
+  });
+
   describe("error handling", () => {
     it("throws error for invalid JSON", () => {
       expect(() => parseJsonConfig("not valid json")).toThrow(
