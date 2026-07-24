@@ -1174,7 +1174,7 @@ function CompareSearchBar({
             ref={searchAnchorRef}
             className={cn(
               mobileOptimized
-                ? "min-w-0 max-w-full flex-1"
+                ? "w-full min-w-[96px] max-w-[420px] flex-1"
                 : "order-last w-full sm:order-none sm:w-auto sm:min-w-[240px] sm:flex-1"
             )}
           >
@@ -1283,22 +1283,22 @@ function CompareSearchBar({
     <div
       className={cn(
         "mb-4 flex flex-wrap items-center gap-3",
-        mobileOptimized && "min-w-0 items-center gap-2"
+        mobileOptimized && "@container min-w-0 items-center gap-2"
       )}
     >
       {mobileOptimized ? (
-        <div className="flex basis-full flex-col items-center gap-1 pb-2 pt-1 sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(0,720px)_minmax(0,1fr)] sm:items-center sm:gap-2">
-          <div className="flex w-full min-w-0 flex-nowrap items-center justify-center gap-2 sm:col-start-2">
+        <div className="flex basis-full flex-col items-center gap-2 pb-2 pt-1 @min-[900px]:grid @min-[900px]:grid-cols-[auto_minmax(0,1fr)_auto] @min-[900px]:items-center @min-[900px]:gap-4">
+          <div className="flex w-full min-w-0 flex-nowrap items-center justify-center gap-2 @min-[900px]:col-start-2">
             {searchRow}
           </div>
           {actions ? (
-            <div className="flex items-center gap-1.5 sm:col-start-1 sm:row-start-1 sm:justify-self-start">
+            <div className="flex items-center justify-center gap-1.5 @min-[900px]:col-start-1 @min-[900px]:row-start-1 @min-[900px]:justify-self-start">
               {actions}
             </div>
           ) : null}
           <a
             href={MAIN_PRODUCT_URL}
-            className="inline-flex min-w-0 shrink-0 items-center gap-1.5 text-[11px] leading-none text-muted-foreground transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 sm:col-start-3 sm:row-start-1 sm:justify-self-end"
+            className="inline-flex min-w-0 shrink-0 items-center gap-1.5 text-[11px] leading-none text-muted-foreground transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 @min-[900px]:col-start-3 @min-[900px]:row-start-1 @min-[900px]:justify-self-end"
             aria-label="Open MCPJam"
           >
             <span>Brought to you by</span>
