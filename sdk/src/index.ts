@@ -102,6 +102,18 @@ export {
   type McpProtocolVersion,
 } from "./mcp-client-manager/index.js";
 
+// Response cache (SEP-2549) — per-call disposition + serve provenance
+export type {
+  CacheMode,
+  CacheScope,
+  CacheHitEvent,
+  CacheEventLogger,
+} from "./mcp-client-manager/index.js";
+export {
+  ObservableResponseCache,
+  type ObservableResponseCacheOptions,
+} from "./mcp-client-manager/index.js";
+
 // Error classes
 export {
   MCPError,

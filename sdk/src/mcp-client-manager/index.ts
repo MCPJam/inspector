@@ -58,6 +58,18 @@ export type {
   ClientCapabilityOptions,
 } from "./types.js";
 
+// Types - Response cache (SEP-2549) provenance
+export type {
+  CacheMode,
+  CacheScope,
+  CacheHitEvent,
+  CacheEventLogger,
+} from "./types.js";
+export {
+  ObservableResponseCache,
+  type ObservableResponseCacheOptions,
+} from "./observable-response-cache.js";
+
 // Types - MCP result aliases
 export type {
   MCPPromptListResult,

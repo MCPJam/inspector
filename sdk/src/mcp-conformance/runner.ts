@@ -114,7 +114,13 @@ async function safeListResourceTemplates(
   ctx: Pick<MCPClientCheckContext, "manager" | "serverId">,
 ): Promise<string[]> {
   try {
-    const result = await ctx.manager.listResourceTemplates(ctx.serverId);
+    // Conformance is a raw-evidence surface: bypass the SEP-2549 response
+    // cache so the check always exercises the live wire.
+    const result = await ctx.manager.listResourceTemplates(
+      ctx.serverId,
+      undefined,
+      { cacheMode: "bypass" },
+    );
     return (result.resourceTemplates ?? []).map((template) => template.uriTemplate);
   } catch {
     return [];

@@ -8,6 +8,7 @@
 
 import { MCPClientManager } from "./mcp-client-manager/index.js";
 import type {
+  CacheMode,
   ListToolsResult,
   MCPPrompt,
   MCPResource,
@@ -18,19 +19,32 @@ import type {
 } from "./mcp-client-manager/index.js";
 import { isMethodUnavailableError } from "./mcp-client-manager/index.js";
 
+/**
+ * Per-call cache disposition threaded to the underlying cacheable verbs
+ * (SEP-2549). Absent ⇒ upstream default `"use"`. Raw-evidence callers
+ * (snapshot/doctor/conformance) pass `"bypass"` so their reads never resolve
+ * from a cached body. See {@link CacheMode}.
+ */
+type WithCacheMode = { cacheMode?: CacheMode };
+
+/** Build the read options object, omitting it entirely when no cacheMode is set. */
+function cacheOptions(cacheMode?: CacheMode): { cacheMode: CacheMode } | undefined {
+  return cacheMode ? { cacheMode } : undefined;
+}
+
 // ── Param types ─────────────────────────────────────────────────────
 
-export interface ListResourcesParams {
+export interface ListResourcesParams extends WithCacheMode {
   serverId: string;
   cursor?: string;
 }
 
-export interface ReadResourceParams {
+export interface ReadResourceParams extends WithCacheMode {
   serverId: string;
   uri: string;
 }
 
-export interface ListPromptsParams {
+export interface ListPromptsParams extends WithCacheMode {
   serverId: string;
   cursor?: string;
 }
@@ -45,12 +59,12 @@ export interface GetPromptParams {
   arguments?: Record<string, unknown>;
 }
 
-export interface ListToolsParams {
+export interface ListToolsParams extends WithCacheMode {
   serverId: string;
   cursor?: string;
 }
 
-export interface ListAllToolsParams {
+export interface ListAllToolsParams extends WithCacheMode {
   serverId: string;
 }
 
@@ -59,7 +73,7 @@ export interface ListAllToolsResult {
   toolsMetadata: Record<string, unknown>;
 }
 
-export interface ListAllResourcesParams {
+export interface ListAllResourcesParams extends WithCacheMode {
   serverId: string;
 }
 
@@ -67,7 +81,7 @@ export interface ListAllResourcesResult {
   resources: MCPResource[];
 }
 
-export interface ListAllPromptsParams {
+export interface ListAllPromptsParams extends WithCacheMode {
   serverId: string;
 }
 
@@ -75,7 +89,7 @@ export interface ListAllPromptsResult {
   prompts: MCPPrompt[];
 }
 
-export interface ListAllResourceTemplatesParams {
+export interface ListAllResourceTemplatesParams extends WithCacheMode {
   serverId: string;
 }
 
@@ -107,7 +121,8 @@ export async function listResources(
 ) {
   const result = await manager.listResources(
     params.serverId,
-    params.cursor ? { cursor: params.cursor } : undefined
+    params.cursor ? { cursor: params.cursor } : undefined,
+    cacheOptions(params.cacheMode)
   );
   return {
     resources: result.resources ?? [],
@@ -119,9 +134,11 @@ export async function readResource(
   manager: MCPClientManager,
   params: ReadResourceParams
 ) {
-  const content = await manager.readResource(params.serverId, {
-    uri: params.uri,
-  });
+  const content = await manager.readResource(
+    params.serverId,
+    { uri: params.uri },
+    cacheOptions(params.cacheMode)
+  );
   return { content };
 }
 
@@ -133,7 +150,8 @@ export async function listPrompts(
 ) {
   const result = await manager.listPrompts(
     params.serverId,
-    params.cursor ? { cursor: params.cursor } : undefined
+    params.cursor ? { cursor: params.cursor } : undefined,
+    cacheOptions(params.cacheMode)
   );
   return {
     prompts: result.prompts ?? [],
@@ -197,7 +215,8 @@ export async function listTools(
 ) {
   const result = await manager.listTools(
     params.serverId,
-    params.cursor ? { cursor: params.cursor } : undefined
+    params.cursor ? { cursor: params.cursor } : undefined,
+    cacheOptions(params.cacheMode)
   );
   return {
     tools: result.tools ?? [],
@@ -213,7 +232,12 @@ export async function listAllTools(
     Awaited<ReturnType<typeof listTools>>["tools"][number],
     Awaited<ReturnType<typeof listTools>>
   >(
-    async (cursor) => listTools(manager, { serverId: params.serverId, cursor }),
+    async (cursor) =>
+      listTools(manager, {
+        serverId: params.serverId,
+        cursor,
+        cacheMode: params.cacheMode,
+      }),
     "tools/list",
     (page) => page.tools ?? []
   );
@@ -238,7 +262,11 @@ export async function listAllResources(
     Awaited<ReturnType<typeof listResources>>
   >(
     async (cursor) =>
-      listResources(manager, { serverId: params.serverId, cursor }),
+      listResources(manager, {
+        serverId: params.serverId,
+        cursor,
+        cacheMode: params.cacheMode,
+      }),
     "resources/list",
     (page) => page.resources ?? []
   );
@@ -255,7 +283,11 @@ export async function listAllPrompts(
     Awaited<ReturnType<typeof listPrompts>>
   >(
     async (cursor) =>
-      listPrompts(manager, { serverId: params.serverId, cursor }),
+      listPrompts(manager, {
+        serverId: params.serverId,
+        cursor,
+        cacheMode: params.cacheMode,
+      }),
     "prompts/list",
     (page) => page.prompts ?? []
   );
@@ -280,7 +312,8 @@ export async function listAllResourceTemplates(
       try {
         result = await manager.listResourceTemplates(
           params.serverId,
-          cursor ? { cursor } : undefined
+          cursor ? { cursor } : undefined,
+          cacheOptions(params.cacheMode)
         );
       } catch (error) {
         if (
