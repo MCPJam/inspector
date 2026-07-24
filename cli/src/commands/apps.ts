@@ -8,6 +8,7 @@ import {
   type MCPAppsCheckCategory,
   type MCPAppsCheckId,
   type MCPAppsConformanceConfig,
+  type McpProtocolVersion,
 } from "@mcpjam/sdk";
 import { loadAppsSuiteConfig } from "../lib/config-file.js";
 import {
@@ -598,21 +599,23 @@ export function buildAppsConformanceConfig(
         )
       : undefined;
 
-  const protocolVersion = options.protocolVersion?.trim();
-  if (protocolVersion) {
-    if (!isKnownProtocolVersion(protocolVersion)) {
-      throw usageError(`Unknown --protocol-version: ${protocolVersion}`);
+  const trimmedProtocolVersion = options.protocolVersion?.trim();
+  let mcpProtocolVersion: McpProtocolVersion | undefined;
+  if (trimmedProtocolVersion) {
+    if (!isKnownProtocolVersion(trimmedProtocolVersion)) {
+      throw usageError(`Unknown --protocol-version: ${trimmedProtocolVersion}`);
     }
     if (!("url" in serverConfig) || !serverConfig.url) {
       throw usageError(
         "--protocol-version can only be used with an HTTP target (--url).",
       );
     }
+    mcpProtocolVersion = trimmedProtocolVersion;
   }
 
   return {
     ...serverConfig,
-    ...(protocolVersion ? { mcpProtocolVersion: protocolVersion } : {}),
+    ...(mcpProtocolVersion ? { mcpProtocolVersion } : {}),
     ...(resolvedCheckIds && resolvedCheckIds.length > 0
       ? { checkIds: resolvedCheckIds as MCPAppsConformanceConfig["checkIds"] }
       : {}),
