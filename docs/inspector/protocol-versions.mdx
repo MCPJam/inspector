@@ -139,9 +139,9 @@ For everything else — `tools/list`, `tools/call`, `resources/*`, `prompts/*`, 
 4. Run a `tools/list` and a `tools/call` from the **Tools** tab.
 5. Watch the **Activity** log for the request `_meta` and the `MCP-Protocol-Version` header.
 6. Try an unsupported version on a second test server to confirm your `-32004` error envelope looks right.
-7. Once your server is happy on the RC, keep one Client on **Latest** so you can flip between versions without rewriting settings.
+7. Once your server is happy on the RC, keep one Client on **Automatic** (or pinned to **Latest (2025-11-25)**) so you can flip between versions without rewriting settings.
 
-If you need to talk to a mix of servers on different versions in the same Client, use per-server overrides — the RC server stays pinned to `2026-07-28`, the rest fall back to Latest.
+If you need to talk to a mix of servers on different versions in the same Client, use per-server overrides — the RC server stays pinned to `2026-07-28`, the rest fall back to the host default.
 
 ## Recommended reading
 
