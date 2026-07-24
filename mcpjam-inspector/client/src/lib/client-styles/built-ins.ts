@@ -36,6 +36,12 @@ import {
   getCursorStyleVariables,
 } from "@/config/cursor-client-context";
 import {
+  VSCODE_CHAT_BACKGROUND,
+  VSCODE_FONT_CSS,
+  VSCODE_PLATFORM,
+  getVscodeStyleVariables,
+} from "@/config/vscode-client-context";
+import {
   MCPJAM_CHAT_BACKGROUND,
   MCPJAM_FONT_CSS,
   MCPJAM_PLATFORM,
@@ -581,15 +587,15 @@ export const CODEX_HOST_STYLE: HostStyleDefinition = {
 /**
  * Visual Studio Code 1.130.0 host style, captured from a live MCP base
  * initialize + MCP Apps ui/initialize probe on 2026-07-23. VS Code supplies
- * its semantic widget variables from the persisted hostContext; Cursor's
- * neutral editor palette remains only the inspector-shell fallback.
+ * semantic `var(--vscode-...)` references; the resolver uses the corresponding
+ * browser-resolved light and dark captures outside the VS Code workbench.
  */
 export const VSCODE_HOST_STYLE: HostStyleDefinition = {
   id: "vscode",
   mcp: {
     protocolOverride: UIType.MCP_APPS,
-    platform: CURSOR_PLATFORM,
-    fontCss: CURSOR_FONT_CSS,
+    platform: VSCODE_PLATFORM,
+    fontCss: VSCODE_FONT_CSS,
     mcpAppsCapabilities: MCP_APPS_VSCODE as ResolvedMcpAppsCapabilities,
     hostCapabilitiesAugment: {
       serverTools: { listChanged: true },
@@ -606,7 +612,7 @@ export const VSCODE_HOST_STYLE: HostStyleDefinition = {
         structuredContent: {},
       },
     },
-    resolveStyleVariables: getCursorStyleVariables,
+    resolveStyleVariables: getVscodeStyleVariables,
   },
   chatUi: {
     label: "VS Code",
@@ -615,7 +621,7 @@ export const VSCODE_HOST_STYLE: HostStyleDefinition = {
     logoSrc: vscodeLogo,
     // Flat, dark, IDE-like surface — same visual family as Cursor/ChatGPT.
     family: "chatgpt",
-    resolveChatBackground: (theme) => CURSOR_CHAT_BACKGROUND[theme],
+    resolveChatBackground: (theme) => VSCODE_CHAT_BACKGROUND[theme],
     loadingIndicator: CursorShineIndicator,
   },
 };

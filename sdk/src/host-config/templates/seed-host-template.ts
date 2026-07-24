@@ -25,6 +25,7 @@ import {
   getMcpJamStyleVariables,
 } from "./mcpjam-style.js";
 import { getMistralStyleVariables } from "./mistral-style.js";
+import { getVscodeStyleVariables } from "./vscode-style.js";
 import {
   GOOSE_FONT_CSS,
   GOOSE_HOST_STYLE_VARIABLES,
@@ -40,7 +41,7 @@ const DEFAULT_SEED_APP_VERSION = "0.0.0";
 // Captured from Visual Studio Code 1.130.0's ui/initialize hostContext on
 // 2026-07-23. VS Code intentionally sends references to its own workbench
 // custom properties rather than resolved colors.
-const VSCODE_HOST_STYLE_VARIABLES: Record<string, string> = {
+export const VSCODE_HOST_RAW_STYLE_VARIABLES: Record<string, string> = {
   "--color-background-primary": "var(--vscode-editor-background)",
   "--color-background-secondary": "var(--vscode-sideBar-background)",
   "--color-background-tertiary": "var(--vscode-activityBar-background)",
@@ -1725,7 +1726,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         platform: "desktop",
         deviceCapabilities: { touch: false, hover: true },
         styles: {
-          variables: VSCODE_HOST_STYLE_VARIABLES,
+          variables: getVscodeStyleVariables(theme),
         },
       };
       base.mcpProfile = {

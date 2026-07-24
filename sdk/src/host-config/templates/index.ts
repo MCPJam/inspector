@@ -35,6 +35,7 @@ export {
   MCPJAM_PLATFORM,
 } from "./mcpjam-style.js";
 export { getMistralStyleVariables } from "./mistral-style.js";
+export { getVscodeStyleVariables } from "./vscode-style.js";
 export {
   GOOSE_FONT_CSS,
   GOOSE_PLATFORM,

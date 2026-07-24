@@ -292,6 +292,15 @@ describe("seedHostTemplate", () => {
       deviceCapabilities: { touch: false, hover: true },
     });
     expect(hostContext.styles.variables["--font-text-md-size"]).toBe("13px");
+    expect(hostContext.styles.variables["--color-background-primary"]).toBe(
+      "#1e1e1e"
+    );
+    const lightConfig = seedHostTemplate("vscode", { theme: "light" });
+    expect(
+      (lightConfig.hostContext as typeof hostContext).styles.variables[
+        "--color-background-primary"
+      ]
+    ).toBe("#ffffff");
     expect(profile?.initialize).toEqual({
       supportedProtocolVersions: ["2025-11-25"],
       clientInfo: { name: "Visual Studio Code", version: "1.130.0" },

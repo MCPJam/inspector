@@ -226,6 +226,18 @@ describe("host-styles registry", () => {
     ).toBe(false);
   });
 
+  it("resolves VS Code shell tokens from the captured light and dark themes", () => {
+    const lightVars = VSCODE_HOST_STYLE.mcp.resolveStyleVariables("light");
+    const darkVars = VSCODE_HOST_STYLE.mcp.resolveStyleVariables("dark");
+
+    expect(lightVars["--color-background-primary"]).toBe("#ffffff");
+    expect(lightVars["--color-text-primary"]).toBe("#202020");
+    expect(darkVars["--color-background-primary"]).toBe("#1e1e1e");
+    expect(darkVars["--color-text-primary"]).toBe("#cccccc");
+    expect(Object.keys(lightVars)).toHaveLength(76);
+    expect(Object.keys(darkVars)).toHaveLength(76);
+  });
+
   it("rejects duplicate host style ids", async () => {
     vi.resetModules();
     const { CLAUDE_HOST_STYLE, registerHostStyle } = await import("..");
