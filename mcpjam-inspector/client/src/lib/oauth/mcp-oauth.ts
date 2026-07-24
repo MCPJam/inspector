@@ -2555,7 +2555,7 @@ function loadStoredDiscoveryState(
  * undefined before any AS is resolved; callers must NOT fall back to a stored
  * envelope's `activeIssuer`, which may be a stale AS after a PRM change.
  */
-function resolveStoredIssuer(
+export function resolveStoredIssuer(
   serverName: string,
   serverUrl?: string
 ): string | undefined {
