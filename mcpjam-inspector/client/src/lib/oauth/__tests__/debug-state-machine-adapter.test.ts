@@ -210,3 +210,24 @@ describe("Inspector OAuth adapter one-step stepping", () => {
     expect("scheduleAutoAdvance" in config).toBe(false);
   });
 });
+
+describe("Inspector OAuth adapter SSRF loopback opt-in", () => {
+  // The SSRF guard blocks loopback metadata fetches unless the machine opts in.
+  // The debugger is a local-dev surface, so it must opt in whenever the server
+  // under test is itself loopback (e.g. a 127.0.0.1 dev MCP server) — otherwise
+  // discovery is refused and the flow never reaches "Authorize" (regression the
+  // oauth-debugger e2e caught).
+  it("allows loopback metadata fetch for a 127.0.0.1 server under test", () => {
+    const config = buildMachineConfig({
+      serverUrl: "http://127.0.0.1:52144/mcp",
+    }) as unknown as Record<string, unknown>;
+    expect(config.allowLoopbackMetadataFetch).toBe(true);
+  });
+
+  it("does not allow loopback for a public server under test", () => {
+    const config = buildMachineConfig({
+      serverUrl: "https://mcp.example.com/mcp",
+    }) as unknown as Record<string, unknown>;
+    expect(config.allowLoopbackMetadataFetch).toBe(false);
+  });
+});
