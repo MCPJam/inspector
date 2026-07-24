@@ -246,7 +246,7 @@ describe("useServerForm", () => {
     expect(built.clearClientSecret).toBeUndefined();
   });
 
-  it("rejects a short client secret for pre-registered XAA", () => {
+  it("allows a short client secret for pre-registered XAA", () => {
     const { result } = renderHook(() => useServerForm());
 
     act(() => {
@@ -258,10 +258,8 @@ describe("useServerForm", () => {
       result.current.setClientSecret("short");
     });
 
-    expect(result.current.validateForm()).toBe(
-      "Client Secret must be at least 8 characters if provided"
-    );
-    expect(result.current.authConfigurationBlocksSubmit).toBe(true);
+    expect(result.current.validateForm()).toBeNull();
+    expect(result.current.authConfigurationBlocksSubmit).toBe(false);
   });
 
   it("emits confidential CIMD when the local capability is available", () => {
