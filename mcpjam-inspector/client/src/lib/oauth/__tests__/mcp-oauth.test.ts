@@ -856,10 +856,10 @@ describe("mcp-oauth", () => {
       });
 
       expect(result.success).toBe(true);
-      expect(localStorage.getItem("mcp-client-hosted")).toBe(
-        JSON.stringify({
-          client_id: "hosted-client-id",
-        })
+      // The client id persists (now inside the SEP-2352 issuer-keyed envelope),
+      // but the secret must never reach localStorage.
+      expect(localStorage.getItem("mcp-client-hosted")).toContain(
+        "hosted-client-id"
       );
       expect(localStorage.getItem("mcp-client-hosted")).not.toContain(
         "client_secret"
@@ -1877,13 +1877,94 @@ describe("mcp-oauth", () => {
       });
 
       expect(result.success).toBe(true);
-      expect(localStorage.getItem("mcp-client-asana")).toBe(
-        JSON.stringify({
-          client_id: "stale-client-id",
-        })
+      // The stale client id is reused (not re-registered), now inside the
+      // SEP-2352 issuer-keyed envelope.
+      expect(localStorage.getItem("mcp-client-asana")).toContain(
+        "stale-client-id"
       );
       expect(mockRegisterClient).not.toHaveBeenCalled();
       expect(getOAuthTraceFailureStep(result.oauthTrace)).toBeUndefined();
+    });
+
+    it("does not reuse a client id across an authorization-server change (SEP-2352)", async () => {
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      const provider = new MCPOAuthProvider(
+        "issuer-change",
+        "https://mcp.example.com/sse"
+      );
+
+      // Register against AS A.
+      await provider.saveDiscoveryState({
+        ...createDiscoveryState(),
+        authorizationServerUrl: "https://as-a.example.com",
+        authorizationServerMetadata: { issuer: "https://as-a.example.com" },
+      } as any);
+      await provider.saveClientInformation({ client_id: "client-for-as-a" });
+      expect((await provider.clientInformation())?.client_id).toBe(
+        "client-for-as-a"
+      );
+
+      // Protected-resource metadata now points to AS B.
+      await provider.saveDiscoveryState({
+        ...createDiscoveryState(),
+        authorizationServerUrl: "https://as-b.example.com",
+        authorizationServerMetadata: { issuer: "https://as-b.example.com" },
+      } as any);
+
+      // AS A's client id must NOT be reused for AS B — the flow re-registers.
+      expect(await provider.clientInformation()).toBeUndefined();
+
+      // Registering against AS B keeps AS A's bucket (a multi-issuer server).
+      await provider.saveClientInformation({ client_id: "client-for-as-b" });
+      expect((await provider.clientInformation())?.client_id).toBe(
+        "client-for-as-b"
+      );
+      const raw = localStorage.getItem("mcp-client-issuer-change") ?? "";
+      expect(raw).toContain("client-for-as-a");
+      expect(raw).toContain("client-for-as-b");
+    });
+
+    it("ignores a stale envelope activeIssuer in favor of the discovered issuer (review F4/F5)", async () => {
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      // Seed a v2 envelope whose activeIssuer still points at AS A.
+      localStorage.setItem(
+        "mcp-client-stale-issuer",
+        JSON.stringify({
+          v: 2,
+          activeIssuer: "https://as-a.example.com",
+          byIssuer: {
+            "https://as-a.example.com": { client_id: "client-for-as-a" },
+          },
+        })
+      );
+      const provider = new MCPOAuthProvider(
+        "stale-issuer",
+        "https://mcp.example.com/sse"
+      );
+      // Discovery has since moved to AS B.
+      await provider.saveDiscoveryState({
+        ...createDiscoveryState(),
+        authorizationServerUrl: "https://as-b.example.com",
+        authorizationServerMetadata: { issuer: "https://as-b.example.com" },
+      } as any);
+
+      // The stale AS-A credential must NOT be returned for AS B, even though it
+      // is the envelope's activeIssuer bucket.
+      expect(await provider.clientInformation()).toBeUndefined();
+
+      // A save keys to the discovered issuer (AS B), leaving AS A's bucket
+      // intact rather than overwriting it.
+      await provider.saveClientInformation({ client_id: "client-for-as-b" });
+      const raw = JSON.parse(
+        localStorage.getItem("mcp-client-stale-issuer") || "{}"
+      );
+      expect(raw.byIssuer["https://as-b.example.com"].client_id).toBe(
+        "client-for-as-b"
+      );
+      expect(raw.byIssuer["https://as-a.example.com"].client_id).toBe(
+        "client-for-as-a"
+      );
+      expect(raw.activeIssuer).toBe("https://as-b.example.com");
     });
 
     it("preserves the original callback error and verifier when registry token exchange fails", async () => {

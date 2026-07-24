@@ -41,6 +41,7 @@ import {
 } from "./shared/resource-indicator.js";
 import { buildStatelessVerifyRequestBody } from "./shared/initialize.js";
 import {
+  computeScopeUnion,
   parseBearerAuthenticateParameters,
   parseScopeString,
   resolveRequestedScopeValue,
@@ -88,7 +89,7 @@ function buildScopeUnionDetails(
     rows.push({ label: "requested scopes", value: requested.join(" ") });
   }
   if (challenged.length > 0) {
-    const union = Array.from(new Set([...requested, ...challenged]));
+    const union = computeScopeUnion(requested, challenged);
     rows.push({ label: "challenged scopes", value: challenged.join(" ") });
     rows.push({ label: "scope union", value: union.join(" ") });
   }
