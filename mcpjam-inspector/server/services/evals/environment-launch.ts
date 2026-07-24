@@ -35,16 +35,33 @@ export interface ResolvedEnvironmentForLaunch {
 }
 
 /**
- * Runtime server refs for manager connection / eval execution: the eval
- * pipeline keys managers by runtime server NAME, so prefer the live-healed
- * `servers` name projection and fall back to raw ids when it is empty.
+ * Server IDs for manager priming / connection / lookup. The eval manager keys
+ * every server by its Convex server ID (`createAuthorizedManager` →
+ * `effectiveAuthByServerId`), so both the manager batch and
+ * `resolveServerIdsOrThrow` must use IDs, never names. Prefer the live-healed
+ * `servers[].serverId` (delete + re-add-same-name resolves to the current id
+ * and matches the batch we connect) and fall back to the raw closed set only
+ * when the backend omits the healed projection.
  */
-export function environmentServerRefs(
+export function environmentServerIds(
+  resolved: ResolvedEnvironmentForLaunch
+): string[] {
+  return resolved.servers && resolved.servers.length > 0
+    ? resolved.servers.map((s) => s.serverId)
+    : resolved.selectedServerIds;
+}
+
+/**
+ * Display names aligned by index with {@link environmentServerIds}, for the
+ * manager's `serverNames` projection. Empty when the backend omits the healed
+ * projection (the manager then falls back to showing the server id).
+ */
+export function environmentServerNames(
   resolved: ResolvedEnvironmentForLaunch
 ): string[] {
   return resolved.servers && resolved.servers.length > 0
     ? resolved.servers.map((s) => s.name)
-    : resolved.selectedServerIds;
+    : [];
 }
 
 export async function resolveEnvironmentForLaunch(

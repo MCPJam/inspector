@@ -96,13 +96,65 @@ export function pinnedArtifactsToRuntimeSkills(
 }
 
 /**
+ * Remove supporting files ON BOX under a pinned skill's dir that aren't in that
+ * artifact's file set (files dropped/renamed between snapshots, or a skill whose
+ * file set became empty), so a REUSED sandbox reflects the target's exact
+ * snapshot instead of retaining a prior run's files. Mirrors the live path's
+ * `pruneStaleSkillFiles`: one global `find` (reaches dirs that received NO file
+ * this turn), removal scoped to delivered dirs, SKILL.md never touched, fail-soft.
+ * `keepByDir` maps a skill dir → the abs paths it should still hold (empty ⇒
+ * prune all its supporting files).
+ */
+async function pruneStalePinnedSkillFiles(
+  session: PinnedSkillFileSession,
+  deliveredDirs: Set<string>,
+  keepByDir: Map<string, Set<string>>,
+  signal?: AbortSignal
+): Promise<void> {
+  if (deliveredDirs.size === 0) return;
+  try {
+    const ls = await session.run({
+      command: `find ${shellQuote(
+        SKILLS_BASE
+      )} -mindepth 2 -type f ! -name SKILL.md`,
+    });
+    if (ls.exitCode !== 0) return;
+    const onBox = ls.stdout
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    for (const p of onBox) {
+      if (signal?.aborted) return;
+      if (!p.startsWith(`${SKILLS_BASE}/`)) continue;
+      const name = p.slice(SKILLS_BASE.length + 1).split("/")[0];
+      const skillDir = `${SKILLS_BASE}/${name}`;
+      if (!deliveredDirs.has(skillDir)) continue; // never a foreign skill
+      if (p === `${skillDir}/SKILL.md`) continue; // belt-and-suspenders
+      if (keepByDir.get(skillDir)?.has(p)) continue; // still current
+      try {
+        await session.run({ command: `rm -f -- ${shellQuote(p)}` });
+      } catch {
+        // best-effort per-file removal
+      }
+    }
+  } catch {
+    // Best-effort — a prune failure never blocks materialization.
+  }
+}
+
+/**
  * Write the pinned artifacts' inline supporting files under each skill's own
  * dir (`~/.claude/skills/<name>/<path>`). Path-validated per file (defense in
  * depth over the backend's pin-time validation); binary files ride base64
  * through `base64 -d` (the b64 alphabet is single-quote safe). Best-effort per
  * file: a single bad file logs and is skipped — the pinned SKILL.md already
- * shipped via the adapter — but this NEVER prunes anything (pruning stays the
- * live path's reconcile concern).
+ * shipped via the adapter.
+ *
+ * FIRST prunes stale supporting files not present in each artifact's file set
+ * ({@link pruneStalePinnedSkillFiles}) so a reused sandbox reflects the pinned
+ * snapshot EXACTLY — the whole point of a pinned env run. The caller passes
+ * EVERY pinned skill (not only those with files) so a skill whose file set
+ * became empty still gets its orphans pruned.
  */
 export async function materializePinnedSkillFiles(args: {
   session: PinnedSkillFileSession;
@@ -110,6 +162,24 @@ export async function materializePinnedSkillFiles(args: {
   signal?: AbortSignal;
 }): Promise<void> {
   const { session, artifacts, signal } = args;
+
+  // Prune before write: build delivered dirs + the files each should keep from
+  // the authoritative pinned artifacts, then remove anything else on box.
+  const deliveredDirs = new Set<string>();
+  const keepByDir = new Map<string, Set<string>>();
+  for (const artifact of artifacts) {
+    if (!isValidSkillName(artifact.name)) continue;
+    const skillDir = `${SKILLS_BASE}/${artifact.name}`;
+    deliveredDirs.add(skillDir);
+    const keep = new Set<string>();
+    for (const file of artifact.files ?? []) {
+      const target = `${skillDir}/${file.path}`;
+      if (isPathWithinDirectory(skillDir, file.path)) keep.add(target);
+    }
+    keepByDir.set(skillDir, keep);
+  }
+  await pruneStalePinnedSkillFiles(session, deliveredDirs, keepByDir, signal);
+
   for (const artifact of artifacts) {
     const files = artifact.files;
     if (!files || files.length === 0) continue;

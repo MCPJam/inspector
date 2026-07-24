@@ -30,7 +30,8 @@ import {
 import { fetchSuiteRunServerSelection } from "../routes/v1/evals.js";
 import { createConvexClient } from "./evals/route-helpers.js";
 import {
-  environmentServerRefs,
+  environmentServerIds,
+  environmentServerNames,
   resolveEnvironmentForLaunch,
 } from "./evals/environment-launch.js";
 
@@ -197,8 +198,8 @@ export async function executeClaimedRun(
             },
           );
           return {
-            serverIds: resolved.selectedServerIds,
-            serverNames: environmentServerRefs(resolved),
+            serverIds: environmentServerIds(resolved),
+            serverNames: environmentServerNames(resolved),
           };
         })()
       : await fetchSuiteRunServerSelection(bearer, claimed.suiteId, undefined);

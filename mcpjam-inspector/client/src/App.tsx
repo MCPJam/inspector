@@ -1220,16 +1220,26 @@ export function EnvironmentsRoute() {
   // browses read-only.
   const { convexProjectId, isAuthenticated } = useAppRouteContext();
   const { user, isLoading: isWorkOsLoading } = useAuth();
+  const isWorkOsSignedIn = !!user;
   const { role } = useViewerProjectRole({
     isAuthenticated,
     projectId: convexProjectId,
     viewerEmail: user?.email,
     identityLoading: isWorkOsLoading,
   });
+  // Anonymous Convex owners never get a WorkOS email, so `role` stays
+  // undefined — but they own their personal-org default project and clear the
+  // backend admin gate (`requireAdminAccess` → owner) via userId. Mirror
+  // SwarmsTab: WorkOS-signed-in viewers go through the role-based admin gate;
+  // a settled anonymous owner (authenticated, not signed in, WorkOS hydrated)
+  // gets management. Fail-closed while WorkOS is still resolving.
+  const canManage = isWorkOsSignedIn
+    ? canManageHosts(role)
+    : isAuthenticated && !!convexProjectId && !isWorkOsLoading;
   return (
     <ProjectEnvironmentsRoute
       projectId={convexProjectId ?? null}
-      canManage={canManageHosts(role)}
+      canManage={canManage}
     />
   );
 }

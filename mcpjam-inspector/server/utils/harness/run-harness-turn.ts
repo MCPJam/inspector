@@ -894,16 +894,17 @@ export async function runHarnessTurn(
             }).catch(() => {});
             // PINNED MODE: supporting files ride INLINE on the pinned
             // artifacts (P0.2 host-channel plugin skills) — never the live
-            // file query. Env-channel entries are SKILL.md-only under P0.3,
-            // so this is a no-op for them.
+            // file query. Env-channel entries are SKILL.md-only under P0.3.
+            // Always invoked (not gated on `some(files)`): the writer also
+            // PRUNES stale files so a reused box matches the pinned snapshot
+            // exactly — a skill whose file set became empty must still have its
+            // prior-run orphans removed.
             if (skillsArePinned) {
-              if (pinnedHarnessSkills!.some((a) => a.files?.length)) {
-                await materializePinnedSkillFiles({
-                  session,
-                  artifacts: pinnedHarnessSkills!,
-                  ...(abortSignal ? { signal: abortSignal } : {}),
-                }).catch(() => {});
-              }
+              await materializePinnedSkillFiles({
+                session,
+                artifacts: pinnedHarnessSkills!,
+                ...(abortSignal ? { signal: abortSignal } : {}),
+              }).catch(() => {});
             }
             // Materialize supporting files AFTER reconcile (the adapter wrote each
             // SKILL.md; reconcile removed stale managed dirs). Fetched here rather

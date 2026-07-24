@@ -3,7 +3,8 @@ import { captureServerEvent } from "../../utils/analytics.js";
 import { z } from "zod";
 import { createConvexClient } from "../../services/evals/route-helpers.js";
 import {
-  environmentServerRefs,
+  environmentServerIds,
+  environmentServerNames,
   resolveEnvironmentForLaunch,
 } from "../../services/evals/environment-launch.js";
 import { detachPreparedEvalRun } from "../../services/evals/detached-run.js";
@@ -150,9 +151,14 @@ evals.post("/run", async (c) =>
             environmentId: rawBody.environmentId,
           },
         );
-        rawBody.serverIds = resolved.selectedServerIds;
-        if (resolved.servers?.length) {
-          rawBody.serverNames = environmentServerRefs(resolved);
+        // Prime the ephemeral manager with the live-healed server IDs (not the
+        // raw closed set) so the batch we authorize/connect matches the IDs
+        // `resolveServerIdsOrThrow` later looks up — a server deleted and
+        // re-added under the same name resolves to its current id in both.
+        rawBody.serverIds = environmentServerIds(resolved);
+        const serverNames = environmentServerNames(resolved);
+        if (serverNames.length) {
+          rawBody.serverNames = serverNames;
         }
       }
       const connection = await createManualHostedConnection(

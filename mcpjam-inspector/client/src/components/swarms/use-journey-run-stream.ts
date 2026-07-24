@@ -13,6 +13,7 @@ import {
 } from "@/shared/swarm-stream-events";
 import { streamJourneyRun } from "@/lib/swarm-api";
 import type { TraceEnvelope } from "@/components/evals/trace-viewer-adapter";
+import { summaryTargetKey } from "./swarm-targets";
 
 export type SwarmCellLiveStatus = SwarmAttemptStreamStatus | "pending";
 
@@ -40,12 +41,18 @@ export type JourneyRunStreamState = {
   error: string | null;
 };
 
-/** Canonical per-event target key (D2): `targetId ?? hostId`. */
+/**
+ * Canonical per-event target key (D2). MUST match the matrix column key
+ * ({@link summaryTargetKey}): a host-shaped `targetId` (`host:<hostId>`, which
+ * fresh legacy runs echo on the SSE envelope) collapses to the bare hostId, so
+ * live cell updates land on the same key the matrix reads instead of leaving a
+ * running cell stuck "pending".
+ */
 export function swarmEventTargetKey(event: {
   targetId?: string;
   hostId: string;
 }): string {
-  return event.targetId ?? event.hostId;
+  return summaryTargetKey(event);
 }
 
 export function swarmCellKey(targetKey: string, sessionIndex: number): string {

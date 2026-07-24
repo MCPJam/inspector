@@ -120,10 +120,44 @@ describe("materializePinnedSkillFiles", () => {
     expect(writes).toEqual([]);
   });
 
-  it("no-ops for artifacts without files (SKILL.md-only env-channel entries)", async () => {
-    const { session } = makeSession();
+  it("writes nothing for artifacts without files, but still runs the prune sweep", async () => {
+    const { session, commands } = makeSession();
     await materializePinnedSkillFiles({ session, artifacts: [artifact()] });
     expect(session.writeTextFile).not.toHaveBeenCalled();
-    expect(session.run).not.toHaveBeenCalled();
+    // Prune runs even with no files so a skill whose set became empty gets its
+    // orphans removed; the sweep is a single find (empty stdout ⇒ no rm).
+    expect(commands.some((c) => c.startsWith("find "))).toBe(true);
+    expect(commands.some((c) => c.startsWith("rm "))).toBe(false);
+  });
+
+  it("prunes on-box supporting files not present in the pinned artifact", async () => {
+    const writes: Array<{ path: string; content: string }> = [];
+    const commands: string[] = [];
+    const base = "/home/user/.claude/skills/my-skill";
+    const session = {
+      writeTextFile: vi.fn(async (a: { path: string; content: string }) => {
+        writes.push(a);
+      }),
+      run: vi.fn(async (a: { command: string }) => {
+        commands.push(a.command);
+        // The find sweep lists a stale file (b.md) and the kept file (a.md).
+        if (a.command.startsWith("find ")) {
+          return {
+            exitCode: 0,
+            stdout: `${base}/a.md\n${base}/b.md\n`,
+            stderr: "",
+          };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }),
+    };
+    await materializePinnedSkillFiles({
+      session,
+      artifacts: [artifact({ files: [{ path: "a.md", content: "keep" }] })],
+    });
+    // b.md is not in the artifact ⇒ removed; a.md is kept (not rm'd) and rewritten.
+    expect(commands).toContain(`rm -f -- '${base}/b.md'`);
+    expect(commands).not.toContain(`rm -f -- '${base}/a.md'`);
+    expect(writes).toContainEqual({ path: `${base}/a.md`, content: "keep" });
   });
 });

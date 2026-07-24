@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { ConvexError } from "convex/values";
 import {
   environmentRevisionConflictError,
-  environmentServerRefs,
+  environmentServerIds,
+  environmentServerNames,
   isEnvironmentRevisionConflict,
   resolveEnvironmentForLaunch,
   type ResolvedEnvironmentForLaunch,
@@ -25,22 +26,42 @@ function fakeConvexClient(result: unknown) {
   } as unknown as Parameters<typeof resolveEnvironmentForLaunch>[0];
 }
 
-describe("environmentServerRefs", () => {
-  it("prefers the live-healed server-name projection", () => {
-    expect(environmentServerRefs(RESOLVED)).toEqual(["linear", "asana"]);
+describe("environmentServerIds", () => {
+  it("prefers the live-healed server ids (manager keys by id, not name)", () => {
+    expect(environmentServerIds(RESOLVED)).toEqual(["ps_1", "ps_2"]);
   });
 
-  it("falls back to ids when the healed projection is absent or empty", () => {
+  it("returns the healed id when a server was deleted and re-added (id != raw)", () => {
     expect(
-      environmentServerRefs({
+      environmentServerIds({
+        ...RESOLVED,
+        selectedServerIds: ["ps_stale"],
+        servers: [{ serverId: "ps_live", name: "linear" }],
+      })
+    ).toEqual(["ps_live"]);
+  });
+
+  it("falls back to the raw closed set when the healed projection is absent or empty", () => {
+    expect(
+      environmentServerIds({
         ...RESOLVED,
         servers: undefined as unknown as ResolvedEnvironmentForLaunch["servers"],
       })
     ).toEqual(["ps_1", "ps_2"]);
-    expect(environmentServerRefs({ ...RESOLVED, servers: [] })).toEqual([
+    expect(environmentServerIds({ ...RESOLVED, servers: [] })).toEqual([
       "ps_1",
       "ps_2",
     ]);
+  });
+});
+
+describe("environmentServerNames", () => {
+  it("projects display names aligned with the healed ids", () => {
+    expect(environmentServerNames(RESOLVED)).toEqual(["linear", "asana"]);
+  });
+
+  it("is empty when the backend omits the healed projection", () => {
+    expect(environmentServerNames({ ...RESOLVED, servers: [] })).toEqual([]);
   });
 });
 

@@ -888,6 +888,18 @@ export function useEvalHandlers({
         return null;
       }
 
+      // Environment suites resolve their closed server set server-side (P0.1)
+      // at Run-all fan-out; the single-case quick-run path below still derives
+      // servers from host/flat plans and can't send `environmentId`, so it
+      // would mis-launch (or trip the "attach a client" gate). Route env suites
+      // to Run all instead of silently running against the wrong servers.
+      if ((suite.environmentIds?.length ?? 0) > 0) {
+        toast.info(
+          "Run environment suites with Run all — single-case quick-run doesn't resolve environments yet.",
+        );
+        return null;
+      }
+
       // Widget probes have no single-case quick-run path yet: the
       // run-test-case endpoints only execute model-driven cases, and probes
       // intentionally carry no models. Without this branch the model guard

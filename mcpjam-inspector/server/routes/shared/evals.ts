@@ -45,7 +45,7 @@ import {
 } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "../../services/evals/convex-sanitize.js";
 import {
-  environmentServerRefs,
+  environmentServerIds,
   resolveEnvironmentForLaunch,
   type ResolvedEnvironmentForLaunch,
 } from "../../services/evals/environment-launch.js";
@@ -1562,7 +1562,7 @@ export async function prepareEvalRun(
   }
 
   const resolvedServerIds = resolveServerIdsOrThrow(
-    environmentLaunch ? environmentServerRefs(environmentLaunch) : serverIds,
+    environmentLaunch ? environmentServerIds(environmentLaunch) : serverIds,
     clientManager
   );
   const persistedServerRefs =
