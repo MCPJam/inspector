@@ -68,10 +68,7 @@ export interface PinnableSkill {
 export type PinnedSkillArtifactFile = {
   path: string;
   mimeType?: string;
-} & (
-  | { content: string; base64?: never }
-  | { base64: string; content?: never }
-);
+} & ({ content: string; base64?: never } | { base64: string; content?: never });
 
 /**
  * The COMPLETE pinned runtime artifact for one snapshot-pinned skill, as served
@@ -89,8 +86,18 @@ export interface PinnedSkillArtifact {
   contentHash: string;
   skillId?: string;
   sharing?: "user" | "project";
-  /** P0.2 channel provenance (stable order: host, then environment). */
-  channels?: Array<"host" | "environment">;
+  /**
+   * Channel provenance, in stable `host` → `environment` → `plugin` order. A
+   * skill reachable through more than one channel is ONE entry carrying every
+   * tag.
+   *
+   * `plugin` entries come from an environment's pinned plugin VERSIONS. The
+   * backend emits them once the environment plugin-pin consumers ship; this
+   * mirror is widened AHEAD of that so a deployed runner never meets a value
+   * its own type says is impossible. Nothing here branches on the value — the
+   * only runtime use is a presence check — so widening is type-level only.
+   */
+  channels?: Array<"host" | "environment" | "plugin">;
   /** Preserved extra frontmatter beyond name/description (plugin skills). */
   frontmatter?: Record<string, unknown>;
   /** Supporting files (host-channel plugin skills only under P0.3). */
