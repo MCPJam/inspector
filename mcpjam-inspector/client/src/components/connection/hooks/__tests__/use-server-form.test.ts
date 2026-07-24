@@ -1001,7 +1001,7 @@ describe("useServerForm", () => {
     });
   });
 
-  it("normalizes legacy automatic OAuth protocol mode to explicit latest for existing servers", async () => {
+  it("preserves a stored 'auto' OAuth protocol mode so the wire-pin bridge still applies on edit", async () => {
     const server = {
       name: "Existing OAuth server",
       config: {
@@ -1023,11 +1023,59 @@ describe("useServerForm", () => {
 
     const { result } = renderHook(() => useServerForm(server));
 
+    // Round-2: a stored "auto" is NOT coerced to a concrete era during
+    // hydration — the deferred sentinel survives so the submit-time bridge can
+    // route a 2026-pinned server through the 2026 OAuth flow.
     await waitFor(() => {
-      expect(result.current.oauthProtocolMode).toBe("2025-11-25");
+      expect(result.current.oauthProtocolMode).toBe("auto");
     });
 
+    // Under a 2026 wire pin the preserved "auto" bakes the 2026 flow…
+    expect(
+      result.current.buildFormData({
+        wireProtocolVersionOverride: "2026-07-28",
+      }).oauthProtocolMode
+    ).toBe("2026-07-28");
+    // …and without a pin it lands on the 2025 default, as before.
+    expect(result.current.buildFormData().oauthProtocolMode).toBe("2025-11-25");
+
     localStorage.removeItem("mcp-oauth-config-Existing OAuth server");
+  });
+
+  it("keeps 'auto' when editing an OAuth server with no stored protocol so the wire-pin bridge applies", async () => {
+    // Round-2: the edit initializer called normalizeOauthProtocolMode(undefined)
+    // → a concrete 2025-11-25, stranding an edited OAuth server (no stored
+    // protocol) on the 2025 flow even under a 2026 wire pin. With no stored
+    // protocol the deferred "auto" default must survive.
+    const server = {
+      name: "OAuth server without stored protocol",
+      config: {
+        url: "https://example.com/mcp",
+      },
+      useOAuth: true,
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    const { result } = renderHook(() => useServerForm(server));
+
+    await waitFor(() => {
+      expect(result.current.authType).toBe("oauth");
+    });
+    expect(result.current.oauthProtocolMode).toBe("auto");
+    // The preserved sentinel is a no-op change (initial snapshot is "auto" too).
+    expect(result.current.hasChanges).toBe(false);
+
+    // The submit path resolves it against the wire pin: 2026 under a 2026 pin…
+    expect(
+      result.current.buildFormData({
+        wireProtocolVersionOverride: "2026-07-28",
+      }).oauthProtocolMode
+    ).toBe("2026-07-28");
+    // …and the 2025 default otherwise.
+    expect(result.current.buildFormData().oauthProtocolMode).toBe("2025-11-25");
   });
 
   it("normalizes invalid stored OAuth registration strategies back to auto", async () => {

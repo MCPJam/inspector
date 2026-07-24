@@ -692,11 +692,13 @@ export const isBedrockModelId = (modelId: string): boolean => {
 };
 
 /**
- * The concrete connect-form OAuth protocol eras, in dropdown order (newest
- * first). SINGLE SOURCE OF TRUTH: both the {@link ServerFormOAuthProtocolMode}
- * union and {@link normalizeOauthProtocolMode}'s membership check derive from
- * this tuple, so a new era is added in exactly one place and the two can no
- * longer drift on which values survive a stored/prefilled pin.
+ * The concrete connect-form OAuth protocol eras, in chronological order
+ * (oldest first). The dropdown (AuthenticationSection's PROTOCOL_OPTIONS)
+ * renders newest-first separately; this tuple's order is not the UI order.
+ * SINGLE SOURCE OF TRUTH: both the {@link ServerFormOAuthProtocolMode} union
+ * and {@link normalizeOauthProtocolMode}'s membership check derive from this
+ * tuple, so a new era is added in exactly one place and the two can no longer
+ * drift on which values survive a stored/prefilled pin.
  */
 export const SERVER_FORM_OAUTH_PROTOCOL_MODES = [
   "2025-03-26",
@@ -727,18 +729,23 @@ function isConcreteOauthProtocolMode(
 }
 
 /**
- * Coerce an arbitrary stored/prefilled protocol string to a concrete
- * connect-form OAuth protocol mode, preserving the 2026-07-28 draft era.
- * Unknown values — and the deferred "auto" sentinel, which callers resolve
- * separately once the wire pin is known — fall back to the current default
- * (2025-11-25). Single-sourced here so the Add and Edit connect-form paths
- * cannot drift: they previously kept private, hand-maintained copies that
- * both had to be patched in lockstep to avoid silently degrading a stored
- * 2026-07-28 pin down to 2025-11-25.
+ * Coerce an arbitrary stored/prefilled protocol string to a connect-form OAuth
+ * protocol mode, preserving both the 2026-07-28 draft era AND the deferred
+ * "auto" sentinel. "auto" is a valid {@link ServerFormOAuthProtocolMode} that
+ * the wire-pin bridge resolves later, so it MUST survive hydration — coercing
+ * it to a concrete era here drops the sentinel and makes the bridge unreachable
+ * for prefilled/edited servers. Only unknown values and `undefined` fall back
+ * to the current concrete default (2025-11-25). Single-sourced here so the Add
+ * and Edit connect-form paths cannot drift: they previously kept private,
+ * hand-maintained copies that both had to be patched in lockstep to avoid
+ * silently degrading a stored 2026-07-28 pin down to 2025-11-25.
  */
 export function normalizeOauthProtocolMode(
   value?: string
 ): ServerFormOAuthProtocolMode {
+  if (value === "auto") {
+    return "auto";
+  }
   return value != null && isConcreteOauthProtocolMode(value)
     ? value
     : DEFAULT_OAUTH_PROTOCOL_CONCRETE_MODE;

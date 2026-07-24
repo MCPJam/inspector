@@ -416,10 +416,16 @@ export function ServerDetailModal({
 
       const finalFormData = formState.buildFormData({
         ...(revealedHeaders ? { revealedHeaders } : {}),
-        // Resolve a deferred "auto" OAuth protocol against the server's wire
-        // pin (edit-loaded modes are concrete, so this is a no-op for them —
-        // it just keeps the Add and Edit save paths on one resolver).
-        wireProtocolVersionOverride: currentMcpProtocolVersionOverride,
+        // Resolve a deferred "auto" OAuth protocol against the effective wire
+        // pin. Precedence mirrors AuthenticationSection's preview: the
+        // per-server pin wins, else the active host's mcpProfile pin (so an
+        // edited OAuth server with no stored protocol under a 2026-pinned host
+        // bakes the 2026 flow). An edit-loaded concrete mode passes through
+        // unchanged. Reads the same context source as the display bridge so
+        // the saved profile and the preview cannot disagree.
+        wireProtocolVersionOverride:
+          currentMcpProtocolVersionOverride ??
+          activeMcpProfile?.mcpProtocolVersion,
       });
       await onSubmit(finalFormData, server.name);
     } finally {

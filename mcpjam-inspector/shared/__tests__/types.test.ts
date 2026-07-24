@@ -139,8 +139,14 @@ describe("normalizeOauthProtocolMode (connect-form OAuth protocol)", () => {
     expect(normalizeOauthProtocolMode("2026-07-28")).not.toBe("2025-11-25");
   });
 
-  it("falls back to 2025-11-25 for the deferred 'auto' sentinel and unknowns", () => {
-    expect(normalizeOauthProtocolMode("auto")).toBe("2025-11-25");
+  it("preserves the deferred 'auto' sentinel through hydration", () => {
+    // "auto" is a valid mode the wire-pin bridge resolves later; coercing it
+    // to a concrete era here would drop the sentinel and make the bridge
+    // unreachable for prefilled/edited servers.
+    expect(normalizeOauthProtocolMode("auto")).toBe("auto");
+  });
+
+  it("falls back to 2025-11-25 for unknowns and undefined", () => {
     expect(normalizeOauthProtocolMode(undefined)).toBe("2025-11-25");
     expect(normalizeOauthProtocolMode("garbage")).toBe("2025-11-25");
   });

@@ -290,15 +290,24 @@ export function useServerForm(
         clientIdValue = storedTokens?.client_id || savedClientId;
         clientSecretValue = hasStoredClientSecretValue ? "" : savedClientSecret;
 
-        protocolModeValue = normalizeOauthProtocolMode(
+        // A server with a stored OAuth protocol loads that (concrete) era. A
+        // server with NONE stored keeps the deferred "auto" default so the
+        // wire-pin bridge still applies on edit — normalizing `undefined`
+        // would bake a concrete 2025-11-25 and make the bridge unreachable for
+        // an edited server pinned to the 2026 wire era. (normalizeOauthProtocol
+        // Mode also preserves a stored "auto" should one ever be persisted.)
+        const storedProtocolMode =
           typeof oauthConfig.protocolMode === "string"
             ? oauthConfig.protocolMode
             : typeof server.oauthFlowProfile?.protocolVersion === "string"
             ? server.oauthFlowProfile.protocolVersion
             : typeof oauthConfig.protocolVersion === "string"
             ? oauthConfig.protocolVersion
-            : undefined
-        );
+            : undefined;
+        protocolModeValue =
+          storedProtocolMode != null
+            ? normalizeOauthProtocolMode(storedProtocolMode)
+            : DEFAULT_OAUTH_PROTOCOL_MODE;
 
         // The CANONICAL per-server registrationMode wins — it can be "auto",
         // while the legacy profile/localStorage values are rollback-compat
