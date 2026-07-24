@@ -31,6 +31,8 @@ export {
   getTemplateMcpAppsCapabilities,
   hydrateHostCompatCatalog,
   type EvaluateMarketHostsOptions,
+  type DocumentedCapabilityEvidence,
+  type HostCompatibilityEvidence,
   type HostCompatCatalog,
   type HostCompatCatalogHost,
 } from "./catalog.js";

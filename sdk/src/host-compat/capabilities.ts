@@ -45,11 +45,10 @@ export const MCP_APPS_FULL: McpAppsCapabilities = frozen({
   widgetDisplayModeRequests: "accept",
 });
 
-/** ChatGPT — full minus serverResources + logging. */
+/** ChatGPT — full surface minus downloadFile. */
 export const MCP_APPS_CHATGPT: McpAppsCapabilities = frozen({
   ...MCP_APPS_FULL,
-  serverResources: false,
-  logging: false,
+  downloadFile: false,
 });
 
 /** Mistral Le Chat — Apps-side `ui/initialize` evidence (no pip / download / teardown). */
@@ -146,13 +145,14 @@ export const MCP_APPS_SLACK: McpAppsCapabilities = frozen({
 
 /** VS Code 1.130.0 — captured from a live VS Code MCP Apps host probe on
  * 2026-07-23. Advertises inline-only display, typed updateModelContext,
- * downloadFile, and host-context changes; no message or teardown surfaces. */
+ * downloadFile, and host-context changes. Unexercised behavior retains the
+ * existing emulator defaults. */
 export const MCP_APPS_VSCODE: McpAppsCapabilities = frozen({
   availableDisplayModes: ["inline"],
-  toolInputPartial: false,
-  toolCancelled: false,
+  toolInputPartial: true,
+  toolCancelled: true,
   hostContextChanged: true,
-  resourceTeardown: false,
+  resourceTeardown: true,
   toolInfo: false,
   openLinks: true,
   serverTools: true,
@@ -161,12 +161,12 @@ export const MCP_APPS_VSCODE: McpAppsCapabilities = frozen({
   updateModelContext: true,
   message: false,
   sandboxPermissions: true,
-  cspFrameDomains: false,
-  cspBaseUriDomains: false,
-  resourcePrefersBorder: false,
+  cspFrameDomains: true,
+  cspBaseUriDomains: true,
+  resourcePrefersBorder: true,
   downloadFile: true,
-  requestTeardown: false,
-  widgetDisplayModeRequests: "decline",
+  requestTeardown: true,
+  widgetDisplayModeRequests: "accept",
 });
 
 /** Spec-default "no claims" — every advertise key off. Fallback baseline. */

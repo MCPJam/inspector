@@ -1198,6 +1198,18 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "apps": {
         "compatRuntime": {
           "openaiApps": true,
+          "openaiAppsOverrides": {
+            "callTool": true,
+            "getFileDownloadUrl": false,
+            "notifyIntrinsicHeight": true,
+            "openExternal": true,
+            "requestDisplayMode": "fullscreen-only",
+            "requestModal": false,
+            "sendFollowUpMessage": true,
+            "setOpenInAppUrl": true,
+            "setWidgetState": true,
+            "uploadFile": false,
+          },
         },
         "sandbox": {
           "csp": {
@@ -1214,14 +1226,14 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "uiInitialize": {
           "hostInfo": {
             "name": "Copilot",
-            "version": "1.0.0",
+            "version": "1.0.1",
           },
         },
       },
       "initialize": {
         "clientInfo": {
           "name": "ms-copilot",
-          "version": "1.0.0",
+          "version": "1.0.1",
         },
       },
       "profileVersion": 1,
@@ -1300,6 +1312,18 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
       "apps": {
         "compatRuntime": {
           "openaiApps": true,
+          "openaiAppsOverrides": {
+            "callTool": true,
+            "getFileDownloadUrl": false,
+            "notifyIntrinsicHeight": true,
+            "openExternal": true,
+            "requestDisplayMode": "fullscreen-only",
+            "requestModal": false,
+            "sendFollowUpMessage": true,
+            "setOpenInAppUrl": true,
+            "setWidgetState": true,
+            "uploadFile": false,
+          },
         },
         "sandbox": {
           "csp": {
@@ -1316,14 +1340,14 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "uiInitialize": {
           "hostInfo": {
             "name": "Copilot",
-            "version": "1.0.0",
+            "version": "1.0.1",
           },
         },
       },
       "initialize": {
         "clientInfo": {
           "name": "ms-copilot",
-          "version": "1.0.0",
+          "version": "1.0.1",
         },
       },
       "profileVersion": 1,
@@ -3427,24 +3451,24 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "availableDisplayModes": [
             "inline",
           ],
-          "cspBaseUriDomains": false,
-          "cspFrameDomains": false,
+          "cspBaseUriDomains": true,
+          "cspFrameDomains": true,
           "downloadFile": true,
           "hostContextChanged": true,
           "logging": true,
           "message": false,
           "openLinks": true,
-          "requestTeardown": false,
-          "resourcePrefersBorder": false,
-          "resourceTeardown": false,
+          "requestTeardown": true,
+          "resourcePrefersBorder": true,
+          "resourceTeardown": true,
           "sandboxPermissions": true,
           "serverResources": true,
           "serverTools": true,
-          "toolCancelled": false,
+          "toolCancelled": true,
           "toolInfo": false,
-          "toolInputPartial": false,
+          "toolInputPartial": true,
           "updateModelContext": true,
-          "widgetDisplayModeRequests": "decline",
+          "widgetDisplayModeRequests": "accept",
         },
         "sandbox": {
           "allowFeatures": {
@@ -3659,24 +3683,24 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "availableDisplayModes": [
             "inline",
           ],
-          "cspBaseUriDomains": false,
-          "cspFrameDomains": false,
+          "cspBaseUriDomains": true,
+          "cspFrameDomains": true,
           "downloadFile": true,
           "hostContextChanged": true,
           "logging": true,
           "message": false,
           "openLinks": true,
-          "requestTeardown": false,
-          "resourcePrefersBorder": false,
-          "resourceTeardown": false,
+          "requestTeardown": true,
+          "resourcePrefersBorder": true,
+          "resourceTeardown": true,
           "sandboxPermissions": true,
           "serverResources": true,
           "serverTools": true,
-          "toolCancelled": false,
+          "toolCancelled": true,
           "toolInfo": false,
-          "toolInputPartial": false,
+          "toolInputPartial": true,
           "updateModelContext": true,
-          "widgetDisplayModeRequests": "decline",
+          "widgetDisplayModeRequests": "accept",
         },
         "sandbox": {
           "allowFeatures": {

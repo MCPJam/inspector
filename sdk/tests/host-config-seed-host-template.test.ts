@@ -141,6 +141,47 @@ describe("seedHostTemplate", () => {
     );
   });
 
+  it("keeps ChatGPT raw host capabilities faithful to the probe", () => {
+    const config = seedHostTemplate("chatgpt", { theme: "dark" });
+
+    expect(config.hostCapabilitiesOverride).toMatchObject({
+      serverResources: {},
+      logging: {},
+    });
+    expect(config.hostCapabilitiesOverride).not.toHaveProperty("downloadFile");
+  });
+
+  it("labels and persists the Copilot 1.0.1 documented runtime surface", () => {
+    const config = seedHostTemplate("copilot", { theme: "dark" });
+    const profile = config.mcpProfile;
+
+    expect(profile?.initialize?.clientInfo).toEqual({
+      name: "ms-copilot",
+      version: "1.0.1",
+    });
+    expect(profile?.apps?.uiInitialize?.hostInfo).toEqual({
+      name: "Copilot",
+      version: "1.0.1",
+    });
+    expect(profile?.apps?.compatRuntime).toMatchObject({
+      openaiApps: true,
+      openaiAppsOverrides: {
+        callTool: true,
+        sendFollowUpMessage: true,
+        requestDisplayMode: "fullscreen-only",
+        uploadFile: false,
+        getFileDownloadUrl: false,
+        requestModal: false,
+      },
+    });
+    expect(config.hostCapabilitiesOverride).toEqual({
+      openLinks: {},
+      serverTools: {},
+      message: { text: {} },
+      updateModelContext: { text: {} },
+    });
+  });
+
   it("keeps Goose host capabilities faithful to the raw probe", () => {
     const config = seedHostTemplate("goose", { theme: "dark" });
     const apps = config.mcpProfile?.apps as any;
@@ -211,7 +252,7 @@ describe("seedHostTemplate", () => {
     });
   });
 
-  it("keeps VS Code 1.130 faithful to the raw probe", () => {
+  it("keeps VS Code 1.130 handshake facts and emulator defaults", () => {
     const config = seedHostTemplate("vscode", { theme: "dark" });
     const profile = config.mcpProfile;
     const hostContext = config.hostContext as {
@@ -262,12 +303,18 @@ describe("seedHostTemplate", () => {
     expect(profile?.apps?.compatRuntime).toEqual({ openaiApps: false });
     expect(profile?.apps?.mcpAppsOverrides).toMatchObject({
       availableDisplayModes: ["inline"],
+      toolInputPartial: true,
+      toolCancelled: true,
       hostContextChanged: true,
+      resourceTeardown: true,
+      toolInfo: false,
       updateModelContext: true,
       message: false,
-      cspFrameDomains: false,
-      cspBaseUriDomains: false,
-      widgetDisplayModeRequests: "decline",
+      cspFrameDomains: true,
+      cspBaseUriDomains: true,
+      resourcePrefersBorder: true,
+      requestTeardown: true,
+      widgetDisplayModeRequests: "accept",
     });
     expect(profile?.apps?.sandbox?.sandboxAttrs).toEqual([
       "allow-pointer-lock",

@@ -949,11 +949,10 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           sandbox: {
             csp: {
               // No host-side `restrictTo` — see the Claude template for
-              // the full rationale. Real ChatGPT does ship the same
-              // captured allowlist (anthropic / openai / jsdelivr), but
-              // mirroring it here only narrows the view's declared CSP
-              // (intersection trap) and silently breaks widgets reaching
-              // any other origin. The view's declaration is authoritative.
+              // the full rationale. The host-probe resource declared the
+              // captured anthropic / openai / jsdelivr allowlist, so it is
+              // per-resource evidence rather than a global ChatGPT allowlist.
+              // The view's declaration is authoritative.
               mode: "declared",
               // cspDirectives — verbatim from a live chatgpt response
               // Content-Security-Policy header (captured 2026-05-18 via
@@ -1494,8 +1493,9 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
   },
   {
     id: "copilot",
-    label: "Copilot",
-    description: "Microsoft 365 Copilot host. OpenAI-shaped Apps SDK.",
+    label: "Copilot 1.0.1",
+    description:
+      "Microsoft 365 Copilot 1.0.1 compatibility profile. OpenAI-shaped Apps SDK.",
     seed: (opts) => {
       const base = emptyHostConfigInputV2({
         hostStyle: "copilot",
@@ -1574,17 +1574,17 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         initialize: {
           // Base MCP protocol: clientInfo sent during MCP `initialize`.
           // Matches Microsoft's "ms-copilot" identity convention. The
-          // specific name/version values are guesses (no live probe and no
-          // learn.microsoft.com source confirms them).
-          clientInfo: { name: "ms-copilot", version: "1.0.0" },
+          // name is an emulation convention and 1.0.1 labels MCPJam's
+          // vendor-doc profile, not a Microsoft product build.
+          clientInfo: { name: "ms-copilot", version: "1.0.1" },
         },
         apps: {
           uiInitialize: {
             // MCP Apps extension: hostInfo sent in `ui/initialize`. Apps
             // that branch on `hostInfo.name === "Copilot"` need this to
-            // take that path. The specific name/version values are guesses
-            // (no live probe and no learn.microsoft.com source confirms them).
-            hostInfo: { name: "Copilot", version: "1.0.0" },
+            // take that path. Version 1.0.1 is MCPJam's compatibility-profile
+            // label, not a Microsoft-published host build number.
+            hostInfo: { name: "Copilot", version: "1.0.1" },
           },
           // Vendor compat-runtime shims. Copilot routes widgets through
           // the OpenAI Apps SDK under the hood, so the `window.openai`
@@ -1592,7 +1592,24 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           // inherited from the preset) so the JSON editor surfaces the
           // field on day one and the injected-globals chip reads as a
           // template choice, not "(from preset)".
-          compatRuntime: { openaiApps: true },
+          compatRuntime: {
+            openaiApps: true,
+            // Explicitly persist every method covered by Microsoft's
+            // component-bridge table. Methods absent from the vendor table
+            // continue to inherit the Copilot style preset.
+            openaiAppsOverrides: {
+              callTool: true,
+              sendFollowUpMessage: true,
+              setWidgetState: true,
+              requestDisplayMode: "fullscreen-only",
+              notifyIntrinsicHeight: true,
+              openExternal: true,
+              setOpenInAppUrl: true,
+              requestModal: false,
+              uploadFile: false,
+              getFileDownloadUrl: false,
+            },
+          },
           sandbox: {
             csp: {
               // No host-side `restrictTo` on connect/resource/baseUri
@@ -1749,10 +1766,13 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           },
           mcpAppsOverrides: {
             availableDisplayModes: ["inline"],
-            toolInputPartial: false,
-            toolCancelled: false,
+            // The handshake probe did not exercise lifecycle, display-request,
+            // or resource-metadata behavior, so retain the existing emulator
+            // defaults for those dimensions.
+            toolInputPartial: true,
+            toolCancelled: true,
             hostContextChanged: true,
-            resourceTeardown: false,
+            resourceTeardown: true,
             toolInfo: false,
             openLinks: true,
             serverTools: true,
@@ -1761,12 +1781,12 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             updateModelContext: true,
             message: false,
             sandboxPermissions: true,
-            cspFrameDomains: false,
-            cspBaseUriDomains: false,
-            resourcePrefersBorder: false,
+            cspFrameDomains: true,
+            cspBaseUriDomains: true,
+            resourcePrefersBorder: true,
             downloadFile: true,
-            requestTeardown: false,
-            widgetDisplayModeRequests: "decline",
+            requestTeardown: true,
+            widgetDisplayModeRequests: "accept",
           },
         },
       };

@@ -102,6 +102,30 @@ describe("bundledHostCompatCatalog", () => {
     });
   });
 
+  it("preserves Copilot 1.0.1 evidence without leaking it into host config", () => {
+    const catalog = bundledHostCompatCatalog();
+    const copilot = getCatalogHost(catalog, "copilot");
+    const template = getCatalogTemplate(catalog, "copilot");
+
+    expect(copilot?.label).toBe("Copilot 1.0.1");
+    expect(copilot?.compatibilityEvidence?.profileLabel).toBe("Copilot 1.0.1");
+    expect(
+      copilot?.compatibilityEvidence?.componentBridge[
+        "window.openai.requestDisplayMode"
+      ]
+    ).toMatchObject({
+      status: "limited",
+      note: "Fullscreen requests only.",
+    });
+    expect(
+      copilot?.compatibilityEvidence?.toolAnnotations.readOnlyHint?.status
+    ).toBe("supported");
+    expect(
+      copilot?.compatibilityEvidence?.deployment.productionAuthentication
+    ).toEqual(["OAuth 2.1", "Microsoft Entra SSO"]);
+    expect(template).not.toHaveProperty("compatibilityEvidence");
+  });
+
   it("uses template image fields as source and derives imageSupport for profiles", () => {
     const catalog = bundledHostCompatCatalog();
     const rawGeneratedHost = BUNDLED_HOST_COMPAT_CATALOG.hostsById.notion;
@@ -210,10 +234,10 @@ describe("buildHostProfilesFromCatalog", () => {
   it("carries each host's explicit sandbox permission allowlist", () => {
     const profiles = buildMarketHostProfiles();
     expect(
-      profiles.find((p) => p.id === "claude")?.sandboxPermissionAllow,
+      profiles.find((p) => p.id === "claude")?.sandboxPermissionAllow
     ).toEqual({ clipboardWrite: true });
     expect(
-      profiles.find((p) => p.id === "goose")?.sandboxPermissionAllow,
+      profiles.find((p) => p.id === "goose")?.sandboxPermissionAllow
     ).toEqual({});
   });
 
