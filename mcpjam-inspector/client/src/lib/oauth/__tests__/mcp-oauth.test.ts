@@ -2193,6 +2193,91 @@ describe("mcp-oauth", () => {
       });
     });
 
+    it("classifies a v2-shaped but corrupt envelope as invalid, not valid tokens", async () => {
+      const { getStoredTokens, getStoredTokensState } = await import(
+        "../mcp-oauth"
+      );
+      // `byIssuer` is a string, not an object: the record carries the v2
+      // version marker but fails the full issuer-keyed shape check. Without the
+      // corrupt-v2 guard, parseLegacyStoredTokens accepts the raw `{ v: 2, ... }`
+      // object as an unbound legacy token bag and surfaces it as VALID tokens.
+      localStorage.setItem(
+        "mcp-tokens-corrupt-v2",
+        JSON.stringify({ v: 2, byIssuer: "not-an-object" })
+      );
+      expect(getStoredTokens("corrupt-v2")).toBeUndefined();
+      expect(getStoredTokensState("corrupt-v2")).toEqual({
+        tokens: undefined,
+        isInvalid: true,
+      });
+
+      // `byIssuer` missing entirely is likewise a corrupt v2 envelope.
+      localStorage.setItem(
+        "mcp-tokens-corrupt-v2-missing",
+        JSON.stringify({ v: 2, activeIssuer: "https://as.example.com" })
+      );
+      expect(getStoredTokensState("corrupt-v2-missing")).toEqual({
+        tokens: undefined,
+        isInvalid: true,
+      });
+
+      // `byIssuer` null is corrupt too (typeof null === "object" but rejected).
+      localStorage.setItem(
+        "mcp-tokens-corrupt-v2-null",
+        JSON.stringify({ v: 2, byIssuer: null })
+      );
+      expect(getStoredTokensState("corrupt-v2-null")).toEqual({
+        tokens: undefined,
+        isInvalid: true,
+      });
+    });
+
+    it("getStoredTokens does not surface a PREVIOUS serverUrl's token bucket when the name is reused (SEP-2352)", async () => {
+      const { MCPOAuthProvider, getStoredTokens } = await import(
+        "../mcp-oauth"
+      );
+      // v2 token envelope + discovery bound to the ORIGINAL serverUrl (AS A).
+      localStorage.setItem(
+        "mcp-tokens-reused-gst",
+        JSON.stringify({
+          v: 2,
+          activeIssuer: "https://as-a.example.com",
+          byIssuer: {
+            "https://as-a.example.com": {
+              access_token: "token-for-as-a",
+              token_type: "Bearer",
+            },
+          },
+        })
+      );
+      const originalProvider = new MCPOAuthProvider(
+        "reused-gst",
+        "https://old.example.com/sse"
+      );
+      await originalProvider.saveDiscoveryState({
+        ...createDiscoveryState(),
+        authorizationServerUrl: "https://as-a.example.com",
+        authorizationServerMetadata: { issuer: "https://as-a.example.com" },
+      } as any);
+
+      // Reading with the ORIGINAL serverUrl still resolves AS A → token present.
+      expect(getStoredTokens("reused-gst", "https://old.example.com/sse")
+        ?.access_token).toBe("token-for-as-a");
+
+      // Reused with a DIFFERENT URL: the stale discovery must NOT resolve an
+      // issuer, so AS A's token bucket is NOT surfaced through getStoredTokens.
+      expect(
+        getStoredTokens("reused-gst", "https://new.example.com/sse")
+      ).toBeUndefined();
+
+      // The security-critical regression: calling WITHOUT a serverUrl falls back
+      // to persisted discovery, which still points at AS A. Passing the new URL
+      // (as every caller now does) is what prevents the stale-bucket read.
+      expect(getStoredTokens("reused-gst")?.access_token).toBe(
+        "token-for-as-a"
+      );
+    });
+
     it("preserves the original callback error and verifier when registry token exchange fails", async () => {
       authFetch.mockImplementationOnce(async (input: RequestInfo | URL) => {
         const url =

@@ -39,6 +39,22 @@ export function isIssuerKeyedStore<T>(
   );
 }
 
+/**
+ * True when `value` carries the v2 version marker (`v === 2`) regardless of
+ * whether the rest of the issuer-keyed shape is valid. A record that is
+ * version-marked but fails `isIssuerKeyedStore` (e.g. `byIssuer` missing, null,
+ * or not an object) is a CORRUPT v2 envelope — NOT a legacy unkeyed record.
+ * Callers use this to classify such a record as invalid instead of accepting
+ * the raw `{ v: 2, ... }` object as an unbound legacy credential bag.
+ */
+export function hasIssuerKeyedVersionMarker(value: unknown): boolean {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    (value as { v?: unknown }).v === ISSUER_KEYED_STORAGE_VERSION
+  );
+}
+
 export interface IssuerKeyedRead<T> {
   value: T | undefined;
   /**

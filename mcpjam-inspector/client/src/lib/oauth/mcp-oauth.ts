@@ -39,6 +39,7 @@ import type {
 import type { HttpServerConfig } from "@mcpjam/sdk/browser";
 import { generateRandomString } from "./pkce";
 import {
+  hasIssuerKeyedVersionMarker,
   isIssuerKeyedStore,
   readIssuerKeyed,
   writeIssuerKeyed,
@@ -3698,6 +3699,16 @@ export function getStoredTokensState(
   }
   const isKeyedEnvelope = isIssuerKeyedStore(parsed);
 
+  // A record carrying the v2 version marker but FAILING the full issuer-keyed
+  // shape check (e.g. `byIssuer` missing, null, or not an object) is a CORRUPT
+  // v2 envelope. Without this guard `parseLegacyStoredTokens` accepts the raw
+  // `{ v: 2, ... }` object as an unbound legacy token bag and the record is
+  // surfaced as valid tokens. Classify it as INVALID here, for parity with the
+  // legacy-malformed handling below.
+  if (!isKeyedEnvelope && hasIssuerKeyedVersionMarker(parsed)) {
+    return { tokens: undefined, isInvalid: true };
+  }
+
   // SEP-2352: gate the record by the exact resolved issuer so a v2-keyed AS-A
   // token bucket is never surfaced after PRM resolves to AS B. Bind the exact
   // serverUrl (as the provider's `tokens()` read does via `currentIssuer()`) so
@@ -3740,14 +3751,18 @@ export function getStoredTokensState(
   };
 }
 
-export function getStoredTokens(serverName: string): any {
-  return getStoredTokensState(serverName).tokens;
+// `serverUrl` binds the issuer-keyed token read to the EXACT server URL so a
+// reused server name can't surface a previous authorization server's tokens
+// (SEP-2352). Callers should pass `server.config.url`; omitting it falls back
+// to the persisted discovery/session issuer (legacy behavior).
+export function getStoredTokens(serverName: string, serverUrl?: string): any {
+  return getStoredTokensState(serverName, serverUrl).tokens;
 }
 
 /**
  * Checks if OAuth is configured for a server by looking at multiple sources
  */
-export function hasOAuthConfig(serverName: string): boolean {
+export function hasOAuthConfig(serverName: string, serverUrl?: string): boolean {
   if (HOSTED_MODE) {
     return false;
   }
@@ -3756,7 +3771,7 @@ export function hasOAuthConfig(serverName: string): boolean {
   const storedOAuthConfig = localStorage.getItem(
     `mcp-oauth-config-${serverName}`
   );
-  const storedTokens = getStoredTokens(serverName);
+  const storedTokens = getStoredTokens(serverName, serverUrl);
 
   return (
     storedServerUrl != null ||
@@ -3771,12 +3786,13 @@ export function hasOAuthConfig(serverName: string): boolean {
  */
 export async function waitForTokens(
   serverName: string,
-  timeoutMs: number = 5000
+  timeoutMs: number = 5000,
+  serverUrl?: string
 ): Promise<any> {
   const startTime = Date.now();
 
   while (Date.now() - startTime < timeoutMs) {
-    const tokens = getStoredTokens(serverName);
+    const tokens = getStoredTokens(serverName, serverUrl);
     if (tokens?.access_token) {
       return tokens;
     }

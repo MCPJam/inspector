@@ -247,7 +247,10 @@ export function useServerForm(
         // 1. Check if server has oauth tokens
         // 2. Check if there's stored OAuth data
         const hasOAuthTokens = server.oauthTokens != null;
-        const hasStoredOAuthConfig = hasOAuthConfig(server.name);
+        // Bind stored-credential reads to the exact server URL so a reused
+        // server name can't surface a previous authorization server's data.
+        const httpServerUrl = config.url ? config.url.toString() : undefined;
+        const hasStoredOAuthConfig = hasOAuthConfig(server.name, httpServerUrl);
         hasServerOAuth =
           server.useOAuth === true ||
           hasOAuthTokens ||
@@ -260,7 +263,7 @@ export function useServerForm(
         const storedClientInfo = localStorage.getItem(
           `mcp-client-${server.name}`
         );
-        const storedTokens = getStoredTokens(server.name);
+        const storedTokens = getStoredTokens(server.name, httpServerUrl);
 
         const clientInfo = storedClientInfo ? JSON.parse(storedClientInfo) : {};
         const oauthConfig = storedOAuthConfig
