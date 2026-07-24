@@ -35,7 +35,28 @@ export function isIssuerKeyedStore<T>(
     typeof value === "object" &&
     (value as { v?: unknown }).v === ISSUER_KEYED_STORAGE_VERSION &&
     typeof (value as { byIssuer?: unknown }).byIssuer === "object" &&
-    (value as { byIssuer?: unknown }).byIssuer !== null
+    (value as { byIssuer?: unknown }).byIssuer !== null &&
+    // An array `byIssuer` passes `typeof === "object"` but is NOT a valid
+    // issuer→record map. Reject it so a `{ v: 2, byIssuer: [] }` record is
+    // classified as a CORRUPT v2 envelope (via hasIssuerKeyedVersionMarker)
+    // rather than an empty keyed store that silently reads as absent.
+    !Array.isArray((value as { byIssuer?: unknown }).byIssuer)
+  );
+}
+
+/**
+ * True when `value` carries the v2 version marker (`v === 2`) regardless of
+ * whether the rest of the issuer-keyed shape is valid. A record that is
+ * version-marked but fails `isIssuerKeyedStore` (e.g. `byIssuer` missing, null,
+ * or not an object) is a CORRUPT v2 envelope — NOT a legacy unkeyed record.
+ * Callers use this to classify such a record as invalid instead of accepting
+ * the raw `{ v: 2, ... }` object as an unbound legacy credential bag.
+ */
+export function hasIssuerKeyedVersionMarker(value: unknown): boolean {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    (value as { v?: unknown }).v === ISSUER_KEYED_STORAGE_VERSION
   );
 }
 

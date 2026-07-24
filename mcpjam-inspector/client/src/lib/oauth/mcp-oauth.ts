@@ -38,7 +38,12 @@ import type {
 } from "@mcpjam/sdk/browser";
 import type { HttpServerConfig } from "@mcpjam/sdk/browser";
 import { generateRandomString } from "./pkce";
-import { readIssuerKeyed, writeIssuerKeyed } from "./issuer-keyed-storage";
+import {
+  hasIssuerKeyedVersionMarker,
+  isIssuerKeyedStore,
+  readIssuerKeyed,
+  writeIssuerKeyed,
+} from "./issuer-keyed-storage";
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE, SANITIZE_OAUTH_TRACES } from "@/lib/config";
 import {
@@ -86,6 +91,19 @@ const ELECTRON_MCP_CALLBACK_STATE_PREFIX = "electron_mcp:";
 interface StoredOAuthClientInformation {
   client_id?: string;
   client_secret?: string;
+}
+
+/**
+ * Narrows a raw (pre-migration) parsed `mcp-tokens-*` record to a usable token
+ * object. Any non-null, non-array object is accepted as an unbound legacy token
+ * bag; anything else (string, number, array, null) is rejected. Used by the
+ * issuer-keyed token reads so a legacy unkeyed record is returned as UNBOUND
+ * compat while a v2 envelope is gated to the exact resolved issuer (SEP-2352).
+ */
+function parseLegacyStoredTokens(parsed: unknown): any {
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    ? parsed
+    : undefined;
 }
 
 type OAuthRegistrationStrategy =
@@ -2129,15 +2147,49 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   }
 
   tokens() {
-    const stored = localStorage.getItem(`mcp-tokens-${this.serverName}`);
-    if (!stored) {
+    // SEP-2352: return only the token bucket bound to the EXACT resolved issuer.
+    // `currentIssuer()` binds the provider's serverUrl, so a discovery entry for
+    // a DIFFERENT serverUrl can't resolve an issuer here. A v2-keyed envelope for
+    // AS A yields nothing once discovery resolves to AS B, so AS A's tokens are
+    // never presented to AS B (mirrors the client-id read). Legacy unkeyed
+    // records — the only shape written today; see the `saveTokens` note on Convex
+    // being the token source of truth — are returned as UNBOUND compat so
+    // existing local logins and the refresh path keep working.
+    const raw = localStorage.getItem(`mcp-tokens-${this.serverName}`);
+    // A record carrying the v2 version marker but FAILING the full issuer-keyed
+    // shape check (e.g. `byIssuer` missing, null, an array, or not an object) is
+    // a CORRUPT v2 envelope. Without this guard `parseLegacyStoredTokens`
+    // accepts the raw `{ v: 2, ... }` object as an unbound legacy token bag and
+    // it is surfaced as VALID tokens. `tokens()` has no isInvalid contract, so
+    // return undefined — parity with the corrupt-v2 classification in
+    // getStoredTokensState.
+    if (raw) {
+      try {
+        const parsedRaw = JSON.parse(raw);
+        if (
+          !isIssuerKeyedStore(parsedRaw) &&
+          hasIssuerKeyedVersionMarker(parsedRaw)
+        ) {
+          return undefined;
+        }
+      } catch {
+        // Unparseable raw is handled below by readIssuerKeyed (returns absent).
+      }
+    }
+    const issuer = this.currentIssuer();
+    const { value, legacyUnbound } = readIssuerKeyed<any>(
+      raw,
+      issuer,
+      parseLegacyStoredTokens
+    );
+    // When no issuer resolves (e.g. serverUrl changed so persisted discovery no
+    // longer matches), a v2 envelope must NOT surface its `activeIssuer` bucket —
+    // that could be a stale AS's tokens after a PRM/serverUrl change (SEP-2352).
+    // Only legacy unkeyed records are returned as UNBOUND compat.
+    if (!issuer && !legacyUnbound) {
       return undefined;
     }
-    try {
-      return JSON.parse(stored);
-    } catch {
-      return undefined;
-    }
+    return value;
   }
 
   async saveTokens(tokens: any) {
@@ -3645,42 +3697,92 @@ export interface StoredTokensState {
   isInvalid: boolean;
 }
 
-export function getStoredTokensState(serverName: string): StoredTokensState {
+export function getStoredTokensState(
+  serverName: string,
+  serverUrl?: string
+): StoredTokensState {
   if (HOSTED_MODE) {
     return { tokens: undefined, isInvalid: false };
   }
-  const tokens = localStorage.getItem(`mcp-tokens-${serverName}`);
+  const raw = localStorage.getItem(`mcp-tokens-${serverName}`);
   // TODO: Maybe we should move clientID away from the token info? Not sure if clientID is bonded to token
-  if (!tokens) return { tokens: undefined, isInvalid: false };
+  if (!raw) return { tokens: undefined, isInvalid: false };
 
+  // A present-but-unparseable record is corrupt (isInvalid), distinct from an
+  // absent one — detect that up front so the issuer gating below doesn't
+  // silently reclassify malformed data as "no tokens".
+  let parsed: unknown;
   try {
-    const tokensJson = JSON.parse(tokens);
-    const clientJson = readStoredClientInformation(serverName);
-
-    // Merge tokens with client_id from client information
-    return {
-      tokens: {
-        ...tokensJson,
-        client_id: clientJson.client_id || tokensJson.client_id,
-      },
-      isInvalid: false,
-    };
+    parsed = JSON.parse(raw);
   } catch {
-    return {
-      tokens: undefined,
-      isInvalid: true,
-    };
+    return { tokens: undefined, isInvalid: true };
   }
+  const isKeyedEnvelope = isIssuerKeyedStore(parsed);
+
+  // A record carrying the v2 version marker but FAILING the full issuer-keyed
+  // shape check (e.g. `byIssuer` missing, null, or not an object) is a CORRUPT
+  // v2 envelope. Without this guard `parseLegacyStoredTokens` accepts the raw
+  // `{ v: 2, ... }` object as an unbound legacy token bag and the record is
+  // surfaced as valid tokens. Classify it as INVALID here, for parity with the
+  // legacy-malformed handling below.
+  if (!isKeyedEnvelope && hasIssuerKeyedVersionMarker(parsed)) {
+    return { tokens: undefined, isInvalid: true };
+  }
+
+  // SEP-2352: gate the record by the exact resolved issuer so a v2-keyed AS-A
+  // token bucket is never surfaced after PRM resolves to AS B. Bind the exact
+  // serverUrl (as the provider's `tokens()` read does via `currentIssuer()`) so
+  // a discovery entry for a PREVIOUS serverUrl — when a server name is reused —
+  // can't resolve a stale issuer here. Legacy unkeyed records stay readable as
+  // UNBOUND compat (parity with the client-id read).
+  const issuer = resolveStoredIssuer(serverName, serverUrl);
+  const { value: tokensJson, legacyUnbound } = readIssuerKeyed<any>(
+    raw,
+    issuer,
+    parseLegacyStoredTokens
+  );
+  if (!tokensJson) {
+    if (isKeyedEnvelope) {
+      // A v2 envelope with no bucket for the resolved issuer (or none resolved):
+      // not corrupt, just not this AS's tokens — treat as absent so the flow
+      // re-authorizes.
+      return { tokens: undefined, isInvalid: false };
+    }
+    // A present, valid-JSON but malformed legacy record (e.g. `null`, an array,
+    // or a scalar) is INVALID, not absent — preserve the pre-2R classification
+    // so the UI surfaces "invalid stored auth data" rather than silently
+    // dropping it.
+    return { tokens: undefined, isInvalid: true };
+  }
+  // When no issuer resolves, a v2 envelope must NOT surface its `activeIssuer`
+  // bucket (a stale AS after a serverUrl/PRM change, SEP-2352). Only legacy
+  // unkeyed records are returned as UNBOUND compat.
+  if (!issuer && !legacyUnbound) {
+    return { tokens: undefined, isInvalid: false };
+  }
+
+  const clientJson = readStoredClientInformation(serverName, serverUrl);
+  return {
+    tokens: {
+      ...tokensJson,
+      client_id: clientJson.client_id || tokensJson.client_id,
+    },
+    isInvalid: false,
+  };
 }
 
-export function getStoredTokens(serverName: string): any {
-  return getStoredTokensState(serverName).tokens;
+// `serverUrl` binds the issuer-keyed token read to the EXACT server URL so a
+// reused server name can't surface a previous authorization server's tokens
+// (SEP-2352). Callers should pass `server.config.url`; omitting it falls back
+// to the persisted discovery/session issuer (legacy behavior).
+export function getStoredTokens(serverName: string, serverUrl?: string): any {
+  return getStoredTokensState(serverName, serverUrl).tokens;
 }
 
 /**
  * Checks if OAuth is configured for a server by looking at multiple sources
  */
-export function hasOAuthConfig(serverName: string): boolean {
+export function hasOAuthConfig(serverName: string, serverUrl?: string): boolean {
   if (HOSTED_MODE) {
     return false;
   }
@@ -3689,7 +3791,7 @@ export function hasOAuthConfig(serverName: string): boolean {
   const storedOAuthConfig = localStorage.getItem(
     `mcp-oauth-config-${serverName}`
   );
-  const storedTokens = getStoredTokens(serverName);
+  const storedTokens = getStoredTokens(serverName, serverUrl);
 
   return (
     storedServerUrl != null ||
@@ -3704,12 +3806,13 @@ export function hasOAuthConfig(serverName: string): boolean {
  */
 export async function waitForTokens(
   serverName: string,
-  timeoutMs: number = 5000
+  timeoutMs: number = 5000,
+  serverUrl?: string
 ): Promise<any> {
   const startTime = Date.now();
 
   while (Date.now() - startTime < timeoutMs) {
-    const tokens = getStoredTokens(serverName);
+    const tokens = getStoredTokens(serverName, serverUrl);
     if (tokens?.access_token) {
       return tokens;
     }

@@ -26,6 +26,23 @@ describe("issuer-keyed-storage", () => {
     expect(isIssuerKeyedStore(rec)).toBe(true);
   });
 
+  it("rejects a v2 record whose byIssuer is missing, null, or an array", () => {
+    // A valid map still passes.
+    expect(
+      isIssuerKeyedStore({ v: 2, byIssuer: { [asA]: { client_id: "a" } } })
+    ).toBe(true);
+    // Malformed byIssuer shapes are NOT issuer-keyed stores — callers classify
+    // these as corrupt v2 envelopes rather than empty keyed stores.
+    expect(isIssuerKeyedStore({ v: 2 })).toBe(false);
+    expect(isIssuerKeyedStore({ v: 2, byIssuer: null })).toBe(false);
+    expect(isIssuerKeyedStore({ v: 2, byIssuer: "x" })).toBe(false);
+    // An array passes `typeof === "object"` but must be rejected.
+    expect(isIssuerKeyedStore({ v: 2, byIssuer: [] })).toBe(false);
+    expect(
+      isIssuerKeyedStore({ v: 2, byIssuer: [{ client_id: "a" }] })
+    ).toBe(false);
+  });
+
   it("returns the bucket for the exact issuer and nothing for another (SEP-2352)", () => {
     const raw = JSON.stringify(writeIssuerKeyed<Cred>(null, asA, { client_id: "a" }));
     expect(readIssuerKeyed<Cred>(raw, asA, parseLegacy).value).toEqual({

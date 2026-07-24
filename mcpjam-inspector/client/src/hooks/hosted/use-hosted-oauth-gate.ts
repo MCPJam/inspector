@@ -70,7 +70,8 @@ function buildHostedOAuthStateMap(
     const existing = previous[server.serverId];
     const hasToken = isVaultBacked
       ? false
-      : !!getStoredTokens(server.serverName)?.access_token;
+      : !!getStoredTokens(server.serverName, server.serverUrl ?? undefined)
+          ?.access_token;
     const matchesResume =
       resumeMarker != null &&
       matchesHostedOAuthServerIdentity(
@@ -144,10 +145,11 @@ function setStoredOAuthTokenState(
 
 async function waitForStoredAccessToken(
   serverName: string,
-  attempts: number
+  attempts: number,
+  serverUrl?: string
 ): Promise<string | null> {
   for (let attempt = 0; attempt < attempts; attempt++) {
-    const accessToken = getStoredTokens(serverName)?.access_token;
+    const accessToken = getStoredTokens(serverName, serverUrl)?.access_token;
     if (typeof accessToken === "string" && accessToken.trim()) {
       return accessToken;
     }
@@ -281,9 +283,11 @@ export function useHostedOAuthGate({
           : isResume
           ? await waitForStoredAccessToken(
               server.serverName,
-              RESUME_TOKEN_POLL_ATTEMPTS
+              RESUME_TOKEN_POLL_ATTEMPTS,
+              server.serverUrl ?? undefined
             )
-          : getStoredTokens(server.serverName)?.access_token ?? null;
+          : getStoredTokens(server.serverName, server.serverUrl ?? undefined)
+              ?.access_token ?? null;
 
         if (isUnmountedRef.current) return;
 
@@ -481,7 +485,8 @@ export function useHostedOAuthGate({
         ? null
         : await waitForStoredAccessToken(
             server.serverName,
-            INLINE_TOKEN_POLL_ATTEMPTS
+            INLINE_TOKEN_POLL_ATTEMPTS,
+            server.serverUrl ?? undefined
           );
 
       if (accessToken) {
