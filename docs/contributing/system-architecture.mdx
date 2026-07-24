@@ -6,7 +6,7 @@ icon: "network"
 
 ## Overview
 
-MCPJam Inspector is a sophisticated multi-platform application that runs in three distinct modes: Web Application, Electron Desktop App, and Docker Container. This architecture guide explains how the system adapts to each deployment mode while maintaining a unified codebase.
+MCPJam Inspector runs in three modes: Web Application, Electron Desktop App, and Docker Container. This guide explains how the system adapts to each deployment mode while sharing one codebase.
 
 <CardGroup cols={3}>
   <Card title="Web App" icon="globe">
@@ -338,7 +338,7 @@ graph TB
 
 ### Startup Sequence
 
-Here's what happens when you launch the Electron app:
+When you launch the Electron app:
 
 ```mermaid
 sequenceDiagram
@@ -437,7 +437,7 @@ sequenceDiagram
 
 ### MCPClientManager Architecture
 
-The `MCPClientManager` is the heart of MCP server integration:
+The `MCPClientManager` handles MCP server integration:
 
 ```mermaid
 graph TB
@@ -844,7 +844,7 @@ graph LR
 
 <Warning>
   The application handles sensitive data including API keys, OAuth tokens, and
-  MCP server access. Security is a top priority.
+  MCP server access.
 </Warning>
 
 ### Security Layers
@@ -910,7 +910,7 @@ graph TB
   </Accordion>
 
   <Accordion title="Authentication" icon="lock">
-    **WorkOS AuthKit:** Enterprise-grade OAuth 2.0
+    **WorkOS AuthKit:** OAuth 2.0
 
     **Token Storage:** Secure localStorage with expiration
 
@@ -1003,6 +1003,5 @@ flowchart LR
 </CardGroup>
 
 <Check>
-  Now you understand the complete system architecture! Ready to contribute?
-  Check out the [Contributing Guide](/CONTRIBUTING).
+  Ready to contribute? Check out the [Contributing Guide](/CONTRIBUTING).
 </Check>

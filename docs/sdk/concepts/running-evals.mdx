@@ -4,7 +4,7 @@ description: "Measure tool accuracy with statistical evaluations"
 icon: "chart-bar"
 ---
 
-LLMs are probabilistic—the same prompt might produce different results each time. Running a test once tells you it *can* work, not that it *reliably* works. Evals run the same test many times and measure statistical accuracy.
+LLMs are probabilistic, so the same prompt might produce different results each time. Running a test once tells you it *can* work, not that it *reliably* works. Evals run the same test many times and measure statistical accuracy.
 
 ## Why Run Evals?
 
@@ -304,7 +304,7 @@ const test = new EvalTest({
 await test.run(runtime, { iterations: 10 });
 ```
 
-`HostRuntime` (returned by `host.withManager(...)`) snapshots the live `Host` on every `.run()`, so mutating the bound host between iterations takes effect on the next iteration. `HostRunner` snapshots once at construction — pick `HostRunner` for a static spec, `HostRuntime` when you want the spec editable across calls.
+`HostRuntime` (returned by `host.withManager(...)`) snapshots the live `Host` on every `.run()`, so mutating the bound host between iterations takes effect on the next iteration. `HostRunner` snapshots once at construction. Pick `HostRunner` for a static spec, `HostRuntime` when you want the spec editable across calls.
 
 **Personal computer.** A `Host` can declare a personal cloud workstation via the `computer` property (type `HostComputer`, exported from `@mcpjam/sdk`). When set, the chatbox surfaces a `bash` tool and a web terminal for signed-in members. Use `setComputer()` to attach or detach it fluently:
 
