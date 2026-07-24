@@ -33,6 +33,7 @@ import {
   environmentServerIds,
   environmentServerNames,
   resolveEnvironmentForLaunch,
+  type ResolvedEnvironmentForLaunch,
 } from "./evals/environment-launch.js";
 
 const POLL_INTERVAL_MS = 15_000;
@@ -185,10 +186,16 @@ export async function executeClaimedRun(
     );
     // Environment claims connect the environment's authoritatively resolved
     // closed set, not the suite's saved selection — the saved selection
-    // predates (or ignores) the pinned environment. prepareEvalRun
-    // re-resolves; a revision moved between the two resolutions rejects at
-    // the run-start mutation and the trigger's idempotency path retries.
-    const selection = claimed.environmentId
+    // predates (or ignores) the pinned environment. The SAME resolution is
+    // handed to prepareEvalRun (`resolvedEnvironment`), so the revision the
+    // run-start mutation asserts matches the set the manager connected; an
+    // environment edit after this point loses the revision check and the
+    // trigger's idempotency path retries cleanly.
+    const selection: {
+      serverIds: string[];
+      serverNames: string[];
+      resolvedEnvironment?: ResolvedEnvironmentForLaunch;
+    } = claimed.environmentId
       ? await (async () => {
           const resolved = await resolveEnvironmentForLaunch(
             createConvexClient(bearer),
@@ -200,6 +207,7 @@ export async function executeClaimedRun(
           return {
             serverIds: environmentServerIds(resolved),
             serverNames: environmentServerNames(resolved),
+            resolvedEnvironment: resolved,
           };
         })()
       : await fetchSuiteRunServerSelection(bearer, claimed.suiteId, undefined);
@@ -239,6 +247,9 @@ export async function executeClaimedRun(
         source: "schedule",
         ...(claimed.environmentId
           ? { environmentId: claimed.environmentId }
+          : {}),
+        ...(selection.resolvedEnvironment
+          ? { resolvedEnvironment: selection.resolvedEnvironment }
           : {}),
         // Claim retries can never double-create a run: the mutation's
         // idempotency lookup wins over the 30s fingerprint window.

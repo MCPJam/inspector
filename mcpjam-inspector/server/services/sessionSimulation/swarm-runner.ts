@@ -765,6 +765,18 @@ async function resolveTargetPinnedSkills(args: {
     );
   }
 
+  // Env targets MUST carry a targetId for per-target claim/report attribution,
+  // even when they pin NO skills — otherwise the target reaches attempt claim
+  // with host-only identity and is misattributed (or rejected by the
+  // target-aware backend). Enforce before the skill-less early return; legacy
+  // host-only targets legitimately omit it.
+  if (isEnvTarget && !target.targetId) {
+    throw new Error(
+      "Environment snapshot target has no targetId — refusing to run with " +
+        "host-only identity (per-target attribution would be lost)"
+    );
+  }
+
   if (meta.length === 0) return [];
   const targetId = target.targetId;
   if (!targetId) {
@@ -778,14 +790,17 @@ async function resolveTargetPinnedSkills(args: {
     const artifact = await resolvePinnedSkillCached({
       projectId,
       contentHash: entry.contentHash,
+      // Caller-agnostic: the shared fetch keeps only its own request timeout, so
+      // this run's cancellation can't fail another run coalesced on the same
+      // body. THIS caller's `signal` detaches its own await below instead.
       fetcher: () =>
         fetchPinnedSkill(convexHttpUrl, bearer, {
           projectId,
           runId,
           targetId,
           contentHash: entry.contentHash,
-          ...(signal ? { signal } : {}),
         }),
+      ...(signal ? { signal } : {}),
     });
     // Preserve the snapshot's channel provenance when the served artifact
     // doesn't carry it (the cache is keyed by content, not by target).

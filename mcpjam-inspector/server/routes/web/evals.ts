@@ -6,7 +6,9 @@ import {
   environmentServerIds,
   environmentServerNames,
   resolveEnvironmentForLaunch,
+  type ResolvedEnvironmentForLaunch,
 } from "../../services/evals/environment-launch.js";
+import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { detachPreparedEvalRun } from "../../services/evals/detached-run.js";
 import { prepareSuiteReplayFromRun } from "../../services/evals/replay-suite-run.js";
 import { runTraceRepairJob } from "../../services/evals/trace-repair-runner.js";
@@ -135,17 +137,23 @@ evals.post("/run", async (c) =>
       // Environment launches carry no browser serverIds (the browser never
       // knows an environment's closed execution set). Prime the hosted
       // connection batch from the authoritative resolution so the manager
-      // connects exactly that set; `prepareEvalRun` re-resolves and the
-      // run-start mutation's `expectedEnvironmentRevision` check rejects
-      // any environment edit interleaved between the two resolutions.
+      // connects exactly that set, then hand the SAME resolution to
+      // `prepareEvalRun` so `expectedEnvironmentRevision` describes what the
+      // manager connected — an environment edit after this preflight then
+      // fails the run-start revision check instead of being missed.
+      let preflightEnvironment: ResolvedEnvironmentForLaunch | undefined;
       if (
         typeof rawBody.environmentId === "string" &&
         rawBody.environmentId &&
         typeof rawBody.projectId === "string" &&
         rawBody.projectId
       ) {
-        const resolved = await resolveEnvironmentForLaunch(
-          createConvexClient(assertBearerToken(c)),
+        // Convert an `sk_` API-key bearer to the short-lived delegated JWT the
+        // Convex query surface requires (same conversion the hosted connection
+        // uses); the raw key would 401 the resolver for API-key callers.
+        const bearer = await getConvexBearerForRequest(c);
+        preflightEnvironment = await resolveEnvironmentForLaunch(
+          createConvexClient(bearer),
           {
             projectId: rawBody.projectId,
             environmentId: rawBody.environmentId,
@@ -155,8 +163,8 @@ evals.post("/run", async (c) =>
         // raw closed set) so the batch we authorize/connect matches the IDs
         // `resolveServerIdsOrThrow` later looks up — a server deleted and
         // re-added under the same name resolves to its current id in both.
-        rawBody.serverIds = environmentServerIds(resolved);
-        const serverNames = environmentServerNames(resolved);
+        rawBody.serverIds = environmentServerIds(preflightEnvironment);
+        const serverNames = environmentServerNames(preflightEnvironment);
         if (serverNames.length) {
           rawBody.serverNames = serverNames;
         }
@@ -173,6 +181,9 @@ evals.post("/run", async (c) =>
         prepared = await prepareEvalRun(manager, {
           ...body,
           convexAuthToken,
+          ...(preflightEnvironment
+            ? { resolvedEnvironment: preflightEnvironment }
+            : {}),
         });
       } catch (error) {
         await manager.disconnectAllServers().catch(() => {});

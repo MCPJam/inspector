@@ -129,6 +129,38 @@ describe("pinned-skill cache", () => {
     expect(calls).toBe(1);
   });
 
+  it("caller abort detaches only that caller — the shared fetch still populates the cache for others", async () => {
+    let calls = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const fetcher = async () => {
+      calls++;
+      await gate;
+      return artifact("h1");
+    };
+    const ac = new AbortController();
+    // Caller A owns its own signal; caller B coalesces onto the same fetch.
+    const pA = resolvePinnedSkillCached({
+      projectId: "p1",
+      contentHash: "h1",
+      fetcher,
+      signal: ac.signal,
+    });
+    const pB = resolvePinnedSkillCached({
+      projectId: "p1",
+      contentHash: "h1",
+      fetcher,
+    });
+    // A cancels; B (and the shared fetch) must be unaffected.
+    ac.abort();
+    await expect(pA).rejects.toMatchObject({ name: "AbortError" });
+    release();
+    const b = await pB;
+    expect(b.contentHash).toBe("h1");
+    expect(calls).toBe(1); // one shared fetch, never restarted by A's abort
+    expect(__pinnedSkillCacheSizeForTest()).toBe(1); // cache populated despite A
+  });
+
   it("keys by project too — same hash in two projects is two entries", async () => {
     let calls = 0;
     const fetcher = async () => {

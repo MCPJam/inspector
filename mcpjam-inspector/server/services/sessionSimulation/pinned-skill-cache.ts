@@ -49,6 +49,33 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Resolve with the shared fetch, but let THIS caller detach if its own signal
+ * aborts — without cancelling the underlying fetch (other coalesced callers,
+ * and the cache write, keep going). The shared fetch stays bound only to its
+ * own per-call timeout, never to any single caller's cancellation.
+ */
+function raceCallerAbort<T>(shared: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) {
+    return Promise.reject(new DOMException("Aborted", "AbortError"));
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () =>
+      reject(new DOMException("Aborted", "AbortError"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    shared.then(
+      (v) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(v);
+      },
+      (e) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(e);
+      }
+    );
+  });
+}
+
 async function fetchWithRetry(
   fetcher: () => Promise<PinnedSkillArtifact>,
   retryDelaysMs: readonly number[]
@@ -70,15 +97,23 @@ async function fetchWithRetry(
 
 /**
  * Resolve one pinned skill body through the cache. `fetcher` performs the
- * actual authorized fetch (the runner binds `fetchPinnedSkill` with its run
- * context); it is invoked at most once per coalesced burst and retried per the
- * policy above. `retryDelaysMs` is injectable for tests only.
+ * actual authorized fetch; it MUST be caller-agnostic (no per-caller abort
+ * signal baked in — only its own request timeout), because it is shared across
+ * every caller coalescing on the same key. It is invoked at most once per
+ * coalesced burst and retried per the policy above. `retryDelaysMs` is
+ * injectable for tests only.
+ *
+ * `signal` is THIS caller's cancellation: when supplied, the caller's await
+ * detaches on abort (rejects `AbortError`) without cancelling the shared fetch,
+ * so cancelling one run never fails another run coalesced on the same body and
+ * the cache still populates for everyone else.
  */
 export async function resolvePinnedSkillCached(args: {
   projectId: string;
   contentHash: string;
   fetcher: () => Promise<PinnedSkillArtifact>;
   retryDelaysMs?: readonly number[];
+  signal?: AbortSignal;
 }): Promise<PinnedSkillArtifact> {
   const key = `${args.projectId}:${args.contentHash}`;
 
@@ -93,32 +128,30 @@ export async function resolvePinnedSkillCached(args: {
     cache.delete(key);
   }
 
-  const pending = inFlight.get(key);
-  if (pending) return pending;
-
-  const promise = fetchWithRetry(
-    args.fetcher,
-    args.retryDelaysMs ?? RETRY_DELAYS_MS
-  )
-    .then((artifact) => {
-      cache.set(key, {
-        artifact,
-        expiresAt: Date.now() + PINNED_SKILL_CACHE_TTL_MS,
+  let shared = inFlight.get(key);
+  if (!shared) {
+    shared = fetchWithRetry(args.fetcher, args.retryDelaysMs ?? RETRY_DELAYS_MS)
+      .then((artifact) => {
+        cache.set(key, {
+          artifact,
+          expiresAt: Date.now() + PINNED_SKILL_CACHE_TTL_MS,
+        });
+        while (cache.size > PINNED_SKILL_CACHE_MAX) {
+          const oldest = cache.keys().next().value as string | undefined;
+          if (oldest === undefined) break;
+          cache.delete(oldest);
+        }
+        return artifact;
+      })
+      .finally(() => {
+        // Success OR failure: clear the in-flight slot. Failures were not cached
+        // above, so the next caller starts a fresh fetch.
+        inFlight.delete(key);
       });
-      while (cache.size > PINNED_SKILL_CACHE_MAX) {
-        const oldest = cache.keys().next().value as string | undefined;
-        if (oldest === undefined) break;
-        cache.delete(oldest);
-      }
-      return artifact;
-    })
-    .finally(() => {
-      // Success OR failure: clear the in-flight slot. Failures were not cached
-      // above, so the next caller starts a fresh fetch.
-      inFlight.delete(key);
-    });
-  inFlight.set(key, promise);
-  return promise;
+    inFlight.set(key, shared);
+  }
+
+  return args.signal ? raceCallerAbort(shared, args.signal) : shared;
 }
 
 /** Test-only: reset module state between cases. */

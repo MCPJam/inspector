@@ -107,8 +107,8 @@ describe("materializePinnedSkillFiles", () => {
     expect(commands.some((c) => c.startsWith("mkdir -p "))).toBe(true);
   });
 
-  it("skips a path that escapes the skill dir", async () => {
-    const { session, writes } = makeSession();
+  it("skips a path that escapes the skill dir without any write/exec for it", async () => {
+    const { session, writes, commands } = makeSession();
     await materializePinnedSkillFiles({
       session,
       artifacts: [
@@ -118,6 +118,10 @@ describe("materializePinnedSkillFiles", () => {
       ],
     });
     expect(writes).toEqual([]);
+    // The rejected path must never reach mkdir, a binary write, or any other
+    // command — not just be absent from writeTextFile.
+    expect(commands.some((c) => c.includes("evil.sh"))).toBe(false);
+    expect(commands.some((c) => c.startsWith("mkdir "))).toBe(false);
   });
 
   it("writes nothing for artifacts without files, but still runs the prune sweep", async () => {

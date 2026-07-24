@@ -340,6 +340,17 @@ type RunEvalsWithManagerRequest = RunEvalsRequest & {
    * passes its trigger id so claim retries can never double-create a run.
    */
   idempotencyKey?: string;
+  /**
+   * Pre-resolved environment from the caller's manager-priming preflight (the
+   * hosted `/run` route and the scheduled worker resolve the environment ONCE
+   * to connect its closed set). When present — and for the same
+   * `environmentId` — `prepareEvalRun` reuses THIS resolution, including its
+   * revision, instead of re-resolving. That makes `expectedEnvironmentRevision`
+   * describe the exact set the manager was connected with, so an environment
+   * edit after the preflight fails the run-start revision check (clean 409 /
+   * retry) rather than pairing a stale manager with a newer run snapshot.
+   */
+  resolvedEnvironment?: ResolvedEnvironmentForLaunch;
 };
 
 export const RunTestCaseRequestSchema = z.object({
@@ -1471,6 +1482,7 @@ export async function prepareEvalRun(
     refreshSnapshot,
     runGroupId,
     environmentId,
+    resolvedEnvironment,
     source,
     idempotencyKey,
   } = request;
@@ -1547,10 +1559,19 @@ export async function prepareEvalRun(
         "projectId is required for environment runs"
       );
     }
-    environmentLaunch = await resolveEnvironmentForLaunch(convexClient, {
-      projectId,
-      environmentId,
-    });
+    // Reuse the caller's preflight resolution when it is for THIS environment
+    // (the manager was primed from it) so the revision we assert equals the
+    // one we connected — a same-key edit after the preflight then loses the
+    // revision check instead of silently pairing a stale manager with a newer
+    // snapshot. Fall back to resolving here for callers that didn't preflight.
+    environmentLaunch =
+      resolvedEnvironment &&
+      resolvedEnvironment.environmentRef.environmentId === environmentId
+        ? resolvedEnvironment
+        : await resolveEnvironmentForLaunch(convexClient, {
+            projectId,
+            environmentId,
+          });
   } else if (serverIds.length === 0) {
     // Legacy launches keep the old ≥1-server contract; enforced here (not
     // in Zod) because environment launches legitimately send none.
