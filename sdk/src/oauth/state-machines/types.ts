@@ -221,6 +221,65 @@ export const EMPTY_OAUTH_FLOW_STATE: OAuthFlowState = {
   tokenEndpointAuthMethod: undefined,
 };
 
+/**
+ * Builds a fully-cleared flow state for `resetFlow`. State updates MERGE over
+ * the prior state (see runner.ts `updateState`), so a reset that only spreads
+ * `EMPTY_OAUTH_FLOW_STATE` (whose optional fields are absent, not `undefined`)
+ * leaves every prior credential, token, discovery result, and recorded issuer
+ * in place. This helper enumerates EVERY optional `OAuthFlowState` field as an
+ * explicit `undefined` so the merge overwrites — nothing leaks across a reset —
+ * and returns fresh empty arrays so no history/log array is shared. Add new
+ * fields here whenever `OAuthFlowState` grows.
+ */
+export function buildResetFlowState(): OAuthFlowState {
+  return {
+    isInitiatingAuth: false,
+    currentStep: "idle",
+
+    // Discovery / challenge
+    serverUrl: undefined,
+    wwwAuthenticateHeader: undefined,
+    challengedScopes: undefined,
+    resourceMetadataUrl: undefined,
+    resourceMetadata: undefined,
+    resourceIndicator: undefined,
+    authorizationServerUrl: undefined,
+    authorizationServerMetadata: undefined,
+
+    // Client registration
+    clientId: undefined,
+    clientSecret: undefined,
+    tokenEndpointAuthMethod: undefined,
+
+    // PKCE
+    codeVerifier: undefined,
+    codeChallenge: undefined,
+    codeChallengeMethod: undefined,
+
+    // Authorization
+    authorizationUrl: undefined,
+    authorizationCode: undefined,
+    state: undefined,
+    recordedIssuer: undefined,
+    authorizationResponseIss: undefined,
+    requestedScopes: undefined,
+
+    // Tokens
+    accessToken: undefined,
+    refreshToken: undefined,
+    tokenType: undefined,
+    expiresIn: undefined,
+
+    // Raw request/response + history
+    lastRequest: undefined,
+    lastResponse: undefined,
+    httpHistory: [],
+    infoLogs: [],
+
+    error: undefined,
+  };
+}
+
 // State machine interface
 export interface OAuthStateMachine {
   state: OAuthFlowState;
