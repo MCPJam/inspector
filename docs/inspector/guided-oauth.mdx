@@ -33,6 +33,12 @@ When the server's Protected Resource Metadata (PRM) advertises a `resource` iden
 
 The debugger intentionally proceeds rather than failing so you can observe real server behavior. Use the [OAuth Conformance](/cli/oauth-conformance) tool if you need strict RFC 9728 validation.
 
+### DCR client_id enforcement
+
+When using Dynamic Client Registration (DCR), the debugger requires that a successful (2xx) registration response includes a `client_id`. RFC 7591 mandates this field on every successful registration; without it there is no client identity to carry into the authorization leg. If your authorization server returns a 2xx response that omits `client_id`, the flow stops with an error at the `request_client_registration` step regardless of whether strict conformance mode is enabled.
+
+If you see this error, check that your authorization server's registration endpoint returns `client_id` in the response body on success.
+
 ## Inline OAuth tracing
 
 When you connect a server using OAuth 2.0, Inspector automatically records a trace of every step in the flow and surfaces it in the connection UI — no separate tool required.
