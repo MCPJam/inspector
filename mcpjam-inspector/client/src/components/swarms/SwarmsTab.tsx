@@ -66,11 +66,19 @@ import {
   SWARM_QUERIES,
   DEFAULT_PAGE_SIZE,
   swarmAttemptChatSessionId,
+  type EnvironmentView,
   type JourneyRun,
   type JourneyRollup,
   type JourneySessionRow,
   type PersonaTrackRecord,
 } from "@/lib/swarm-api";
+import {
+  buildSwarmRunTargets,
+  findTargetCellForChatSessionId,
+  type SwarmTargetColumn,
+} from "@/components/swarms/swarm-targets";
+import { buildEnvJourneyPayload } from "@/components/swarms/journey-environments";
+import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 // The badge + wide-shape guard live in the shared session-quality module so
 // surfaces rendered inside this subtree can use them without an import cycle.
 // Re-exported here because the goal-score unit test imports from `../SwarmsTab`.
@@ -153,6 +161,8 @@ type Journey = {
   hostIds: string[];
   /** Standalone server group shared across all hosts at launch (suite-like). */
   serverAttachmentId?: string | null;
+  /** Env-based fan-out (Project Environments). Non-empty ⇒ env-based. */
+  environmentIds?: string[] | null;
   config: { sessionsPerHost: number; maxTurns: number };
   /** Per-journey goal-completion judge config (shared envelope with suites). */
   judgeConfig?: GoalJudgeConfig;
@@ -190,6 +200,14 @@ function useProjectHosts(projectId: string | null) {
     SWARM_QUERIES.listHosts as any,
     projectId ? ({ projectId } as any) : "skip"
   ) as HostItem[] | undefined;
+}
+/** Live project environments — subscribed ONLY while the feature flag is on
+ * (every client exposure of Project Environments is flag-gated). */
+function useProjectEnvironmentsList(projectId: string | null, enabled: boolean) {
+  return useQuery(
+    SWARM_QUERIES.listEnvironments as any,
+    enabled && projectId ? ({ projectId } as any) : "skip",
+  ) as EnvironmentView[] | undefined;
 }
 function usePersonaTrackRecord(personaRefId: string | null) {
   return useQuery(
@@ -232,6 +250,11 @@ export function SwarmsTab({
   const effectiveProjectId = isAuthenticated ? projectId : null;
   const personas = usePersonas(effectiveProjectId);
   const hosts = useProjectHosts(effectiveProjectId);
+  const environmentsEnabled = useProjectEnvironmentsEnabled();
+  const environments = useProjectEnvironmentsList(
+    effectiveProjectId,
+    environmentsEnabled,
+  );
   const [runningPersonaIds, setRunningPersonaIds] = useState<string[]>([]);
   const runningSet = useMemo(
     () => new Set(runningPersonaIds),
@@ -315,11 +338,15 @@ export function SwarmsTab({
     (JourneyRunSelection & { runSnapshot: JourneyRun }) | null
   >(null);
   const openRunDetail = useCallback(
-    (journey: JourneyListJourney, run: JourneyRun, hostId: string | null) => {
+    (
+      journey: JourneyListJourney,
+      run: JourneyRun,
+      targetKey: string | null,
+    ) => {
       setRunDetail({
         journeyId: journey._id,
         runId: run._id,
-        hostId,
+        targetKey,
         runSnapshot: run,
       });
     },
@@ -779,6 +806,8 @@ export function SwarmsTab({
                         <NewJourneyButton
                           projectId={projectId}
                           hosts={hosts ?? []}
+                          environments={environments ?? []}
+                          environmentsEnabled={environmentsEnabled}
                           open={journeyFormOpen}
                           onOpenChange={(o) => {
                             setJourneyFormOpen(o);
@@ -817,6 +846,8 @@ export function SwarmsTab({
                           selection={runDetail}
                           onOpenRun={openRunDetail}
                           onCloseRun={closeRunDetail}
+                          environments={environments}
+                          environmentsEnabled={environmentsEnabled}
                         />
                       )}
                     </>
@@ -844,11 +875,11 @@ export function SwarmsTab({
                       <ResizableHandle withHandle />
                       <ResizablePanel defaultSize={62} minSize={35}>
                         <RunDetailPanel
-                          key={`${runDetail.runId}:${runDetail.hostId ?? ""}`}
+                          key={`${runDetail.runId}:${runDetail.targetKey ?? ""}`}
                           journey={detailJourney}
                           runId={runDetail.runId}
                           runSnapshot={runDetail.runSnapshot}
-                          hostId={runDetail.hostId}
+                          targetKey={runDetail.targetKey}
                           hosts={hosts ?? []}
                           initialThreadId={
                             deepLink.runId === runDetail.runId
@@ -886,7 +917,7 @@ function RunDetailPanel({
   journey,
   runId,
   runSnapshot,
-  hostId,
+  targetKey,
   hosts,
   initialThreadId,
   onClose,
@@ -895,7 +926,8 @@ function RunDetailPanel({
   runId: string;
   /** Seed until this panel's own runs subscription resolves the run. */
   runSnapshot: JourneyRun;
-  hostId: string | null;
+  /** Canonical target key (`targetId ?? hostId`) to preselect, if any. */
+  targetKey: string | null;
   hosts: HostItem[];
   initialThreadId?: string;
   onClose: () => void;
@@ -963,13 +995,12 @@ function RunDetailPanel({
       </div>
       <div className="min-h-0 flex-1">
         <RunSessionsView
-          runId={run._id}
+          run={run}
           personaRefId={journey.personaRefId}
           hosts={hosts}
-          hostSummaries={run.hostSummaries}
           runStatus={run.status}
           sessionsPerHost={journey.config.sessionsPerHost}
-          initialHostId={hostId ?? undefined}
+          initialTargetKey={targetKey ?? undefined}
           initialThreadId={initialThreadId}
         />
       </div>
@@ -979,27 +1010,28 @@ function RunDetailPanel({
 
 // ── sessions × hosts matrix + live stream (per run) ──────────────────────────
 function RunSessionsView({
-  runId,
+  run,
   personaRefId,
   hosts,
-  hostSummaries,
   runStatus,
   sessionsPerHost,
-  initialHostId,
+  initialTargetKey,
   initialThreadId,
 }: {
-  runId: string;
+  /** The run (live row or terminal snapshot) — targets join `hostSummaries`
+   * to `snapshot.hosts` for per-target columns/labels (B6). */
+  run: JourneyRun;
   /** Owning persona — encoded into copied session links for deep-link restore. */
   personaRefId: string;
   hosts: HostItem[];
-  hostSummaries: JourneyRun["hostSummaries"];
   runStatus: JourneyRun["status"];
   sessionsPerHost: number;
-  /** Matrix drill-in: preselect this host's first session (deferred to `initialThreadId`). */
-  initialHostId?: string;
+  /** Matrix drill-in: preselect this target's first session (deferred to `initialThreadId`). */
+  initialTargetKey?: string;
   /** Deep-link session (`id`) to auto-select once it's on a loaded page. */
   initialThreadId?: string;
 }) {
+  const runId = run._id;
   const {
     results: sessions,
     status,
@@ -1024,13 +1056,29 @@ function RunSessionsView({
     hosts.find((h) => h.hostId === id)?.name ?? id.slice(0, 8);
 
   const rows = sessions as JourneySessionRow[];
-  const hostIds = useMemo(() => {
-    const fromSummary = hostSummaries.map((h) => h.hostId);
-    if (fromSummary.length > 0) return fromSummary;
+  const hostSummaries = run.hostSummaries;
+  // Per-TARGET column model (D2/B6): one column per hostSummaries row, joined
+  // to snapshot.hosts by targetId (env columns get environment-name labels,
+  // #n-suffixed on collisions). Fallback for degenerate rows-only data:
+  // synthesize host columns from the session rows.
+  const targets = useMemo<SwarmTargetColumn[]>(() => {
+    if (hostSummaries.length > 0) {
+      return buildSwarmRunTargets({
+        hostSummaries,
+        snapshotHosts: run.snapshot?.hosts,
+        hostName,
+      });
+    }
     const seen = new Set<string>();
     for (const s of rows) seen.add(s.hostId);
-    return Array.from(seen);
-  }, [hostSummaries, rows]);
+    return Array.from(seen).map((hostId) => ({
+      key: hostId,
+      hostId,
+      label: hostName(hostId),
+      identity: { hostId },
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hostSummaries, run.snapshot, rows, hosts]);
 
   const convexByChatId = useMemo(() => {
     const map = new Map<string, JourneySessionRow>();
@@ -1050,58 +1098,91 @@ function RunSessionsView({
     [selection, stream.sessions],
   );
 
-  // Deep-link restore: select the matrix cell for the linked Convex session.
+  // Deep-link restore: select the matrix cell whose MINTED session id matches
+  // the linked Convex session (bounded ≤ targets × sessionsPerHost — B6).
   const appliedInitialThreadRef = useRef(false);
   useEffect(() => {
     if (appliedInitialThreadRef.current || !initialThreadId) return;
     const match = rows.find((s) => s.id === initialThreadId);
     if (!match) return;
     appliedInitialThreadRef.current = true;
-    const sessionIndex = Number(
-      match.chatSessionId.split("_").pop() ?? "0",
-    );
+    const cell = findTargetCellForChatSessionId({
+      runId,
+      targets,
+      sessionsPerHost,
+      chatSessionId: match.chatSessionId,
+    });
     setSelection({
+      targetKey: cell?.target.key ?? match.hostId,
       hostId: match.hostId,
-      sessionIndex: Number.isFinite(sessionIndex) ? sessionIndex : 0,
+      sessionIndex: cell?.sessionIndex ?? 0,
       chatSessionId: match.chatSessionId,
     });
     setDetailSession(match);
-  }, [initialThreadId, rows]);
+  }, [initialThreadId, rows, runId, targets, sessionsPerHost]);
 
-  // Matrix drill-in: preselect the clicked host's first session. `initialThreadId`
-  // (an explicit deep-linked session) always wins, so skip when it's present.
-  const appliedInitialHostRef = useRef(false);
+  // Matrix drill-in: preselect the clicked target's first session.
+  // `initialThreadId` (an explicit deep-linked session) always wins.
+  const appliedInitialTargetRef = useRef(false);
   useEffect(() => {
-    if (appliedInitialHostRef.current || !initialHostId || initialThreadId) {
+    if (
+      appliedInitialTargetRef.current ||
+      !initialTargetKey ||
+      initialThreadId
+    ) {
       return;
     }
-    const match = rows.find((s) => s.hostId === initialHostId);
-    if (match) {
-      appliedInitialHostRef.current = true;
-      const sessionIndex = Number(match.chatSessionId.split("_").pop() ?? "0");
+    const target = targets.find((t) => t.key === initialTargetKey);
+    if (!target) return;
+    const mintedIds = Array.from(
+      { length: Math.max(1, sessionsPerHost) },
+      (_, i) => swarmAttemptChatSessionId(runId, target.identity, i),
+    );
+    const matchIdx = mintedIds.findIndex((id) =>
+      rows.some((s) => s.chatSessionId === id),
+    );
+    if (matchIdx >= 0) {
+      appliedInitialTargetRef.current = true;
       setSelection({
-        hostId: match.hostId,
-        sessionIndex: Number.isFinite(sessionIndex) ? sessionIndex : 0,
-        chatSessionId: match.chatSessionId,
+        targetKey: target.key,
+        hostId: target.hostId,
+        sessionIndex: matchIdx,
+        chatSessionId: mintedIds[matchIdx],
       });
       return;
     }
-    // No persisted row yet: for a terminal run with attempts on this host,
-    // synthesize the first attempt's cell so the pane opens on that host.
+    // No persisted row yet: for a terminal run with attempts on this target,
+    // synthesize the first attempt's cell so the pane opens on that target.
     if (
       runStatus !== "running" &&
-      hostSummaries.some((h) => h.hostId === initialHostId && h.total > 0)
+      hostSummaries.some(
+        (h) =>
+          (h.targetId ?? h.hostId) === initialTargetKey ||
+          h.hostId === initialTargetKey,
+      )
     ) {
-      appliedInitialHostRef.current = true;
+      appliedInitialTargetRef.current = true;
       setSelection({
-        hostId: initialHostId,
+        targetKey: target.key,
+        hostId: target.hostId,
         sessionIndex: 0,
-        chatSessionId: swarmAttemptChatSessionId(runId, initialHostId, 0),
+        chatSessionId: mintedIds[0],
       });
     }
-  }, [initialHostId, initialThreadId, rows, runStatus, hostSummaries, runId]);
+  }, [
+    initialTargetKey,
+    initialThreadId,
+    rows,
+    runStatus,
+    hostSummaries,
+    runId,
+    targets,
+    sessionsPerHost,
+  ]);
 
-  // Auto-select the first running cell when a live stream starts.
+  // Auto-select the first running cell when a live stream starts. Cell keys
+  // are `${targetKey}:${sessionIndex}` and target keys may themselves contain
+  // ":" (opaque ids), so split on the LAST colon.
   useEffect(() => {
     if (selection || !streamEnabled) return;
     const runningEntry = Object.entries(stream.cellStatus).find(
@@ -1109,16 +1190,24 @@ function RunSessionsView({
     );
     if (!runningEntry) return;
     const [key] = runningEntry;
-    const [hostId, idxStr] = key.split(":");
-    if (!hostId || idxStr == null) return;
-    const sessionIndex = Number(idxStr);
+    const cut = key.lastIndexOf(":");
+    if (cut <= 0) return;
+    const targetKey = key.slice(0, cut);
+    const sessionIndex = Number(key.slice(cut + 1));
     if (!Number.isFinite(sessionIndex)) return;
+    const target = targets.find((t) => t.key === targetKey);
+    if (!target) return;
     setSelection({
-      hostId,
+      targetKey,
+      hostId: target.hostId,
       sessionIndex,
-      chatSessionId: swarmAttemptChatSessionId(runId, hostId, sessionIndex),
+      chatSessionId: swarmAttemptChatSessionId(
+        runId,
+        target.identity,
+        sessionIndex,
+      ),
     });
-  }, [selection, streamEnabled, stream.cellStatus, runId]);
+  }, [selection, streamEnabled, stream.cellStatus, runId, targets]);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto p-4">
@@ -1143,8 +1232,7 @@ function RunSessionsView({
       <div className="shrink-0">
         <SwarmSessionsMatrix
           runId={runId}
-          hostIds={hostIds}
-          hostName={hostName}
+          targets={targets}
           sessionsPerHost={sessionsPerHost}
           sessions={rows}
           hostSummaries={hostSummaries}
@@ -1457,6 +1545,8 @@ function NewPersonaDialog({
 function NewJourneyButton({
   projectId,
   hosts,
+  environments,
+  environmentsEnabled,
   onCreate,
   open,
   onOpenChange,
@@ -1464,10 +1554,16 @@ function NewJourneyButton({
 }: {
   projectId: string;
   hosts: HostItem[];
+  /** Live project environments (flag-gated; empty when the flag is off). */
+  environments: EnvironmentView[];
+  /** Gates the env-mode toggle (`project-environments-enabled`). */
+  environmentsEnabled: boolean;
   onCreate: (draft: {
     goal: string;
     hostIds: string[];
-    serverAttachmentId: string;
+    serverAttachmentId?: string;
+    /** Env-mode: the ordered fan-out; compat hostIds ride alongside. */
+    environmentIds?: string[];
     config: { sessionsPerHost: number; maxTurns: number };
     judgeConfig?: GoalJudgeConfig;
   }) => Promise<void>;
@@ -1482,6 +1578,12 @@ function NewJourneyButton({
   const [serverAttachmentId, setServerAttachmentId] = useState<string | null>(
     null,
   );
+  // Target mode: "clients" (legacy, unchanged) vs "environments" (flag-gated).
+  const [targetMode, setTargetMode] = useState<"clients" | "environments">(
+    "clients",
+  );
+  const [environmentIds, setEnvironmentIds] = useState<string[]>([]);
+  const [envPickerOpen, setEnvPickerOpen] = useState(false);
   const [sessionsPerHost, setSessionsPerHost] = useState(2);
   const [maxTurns, setMaxTurns] = useState(6);
   const [clientsPickerOpen, setClientsPickerOpen] = useState(false);
@@ -1499,6 +1601,8 @@ function NewJourneyButton({
       setGoal(goalSeed);
       setJudgeConfig(undefined);
       setAdvancedOpen(false);
+      setTargetMode("clients");
+      setEnvironmentIds([]);
     }
   }, [open, goalSeed]);
   const setOpen = onOpenChange;
@@ -1561,8 +1665,183 @@ function NewJourneyButton({
         />
       </div>
 
+      {environmentsEnabled ? (
+        <div
+          className="mb-2 flex items-center gap-1 text-[11px]"
+          role="radiogroup"
+          aria-label="Journey target mode"
+        >
+          {(
+            [
+              { value: "clients" as const, label: "Clients" },
+              { value: "environments" as const, label: "Environments" },
+            ]
+          ).map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              role="radio"
+              aria-checked={targetMode === opt.value}
+              data-testid={`journey-target-mode-${opt.value}`}
+              onClick={() => setTargetMode(opt.value)}
+              className={cn(
+                "rounded-full border px-2 py-0.5 font-medium transition-colors",
+                targetMode === opt.value
+                  ? "border-primary/50 bg-primary/10 text-foreground"
+                  : "border-border/60 text-muted-foreground hover:bg-muted/50",
+              )}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {targetMode === "environments" ? (
+        /* Env mode: ordered ≤10 environment multi-select (name + host chip).
+           Server group + skills come from each environment's own definition. */
+        <div className="mb-2.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-2">
+          <Popover open={envPickerOpen} onOpenChange={setEnvPickerOpen}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                data-testid="journey-environments-picker"
+                className={cn(
+                  "flex h-8 max-w-[280px] shrink-0 items-center gap-1 rounded-full border px-2 text-foreground",
+                  "outline-none transition-colors",
+                  environmentIds.length === 0
+                    ? "border-dashed border-border/60 bg-muted/30 hover:bg-muted/45"
+                    : "border-border/60 bg-muted/40 hover:bg-muted/60",
+                )}
+                aria-label="Attached environments"
+              >
+                <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                  {environmentIds.length === 0
+                    ? "No environments · pick one"
+                    : (environments.find(
+                        (e) => e.environmentId === environmentIds[0],
+                      )?.name ?? "Environments")}
+                </span>
+                {environmentIds.length > 1 ? (
+                  <span className="text-[10px] text-muted-foreground">
+                    +{environmentIds.length - 1}
+                  </span>
+                ) : null}
+                <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent
+              className="w-72 p-1"
+              align="start"
+              sideOffset={4}
+              onCloseAutoFocus={(e) => e.preventDefault()}
+            >
+              <div className="space-y-0.5" role="group" aria-label="Environments">
+                <p className="px-2 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Environments
+                </p>
+                {environments.length === 0 ? (
+                  <p className="px-2 py-1.5 text-xs text-muted-foreground">
+                    No environments in this project.
+                  </p>
+                ) : (
+                  environments.map((env) => {
+                    const selected = environmentIds.includes(env.environmentId);
+                    const ordinal = environmentIds.indexOf(env.environmentId);
+                    const disabled = !selected && environmentIds.length >= 10;
+                    const hostLabel =
+                      hosts.find((h) => h.hostId === env.hostId)?.name ??
+                      env.hostId.slice(0, 8);
+                    return (
+                      <button
+                        key={env.environmentId}
+                        type="button"
+                        role="checkbox"
+                        aria-checked={selected}
+                        disabled={disabled}
+                        onPointerDown={(e) => e.preventDefault()}
+                        onClick={() =>
+                          setEnvironmentIds((prev) =>
+                            prev.includes(env.environmentId)
+                              ? prev.filter((id) => id !== env.environmentId)
+                              : prev.length >= 10
+                                ? prev
+                                : [...prev, env.environmentId],
+                          )
+                        }
+                        className={cn(
+                          "flex w-full items-center gap-2 rounded py-1.5 pl-2 pr-2 text-left text-sm",
+                          "hover:bg-accent hover:text-accent-foreground",
+                          selected && "bg-accent/50",
+                          disabled && "cursor-not-allowed opacity-50",
+                        )}
+                      >
+                        <Check
+                          className={cn(
+                            "size-3.5 shrink-0",
+                            selected ? "opacity-100" : "opacity-0",
+                          )}
+                        />
+                        <span className="min-w-0 flex-1 truncate">
+                          <span className="font-medium">{env.name}</span>
+                          <span className="mt-0.5 block truncate text-[10px] text-muted-foreground">
+                            {hostLabel}
+                          </span>
+                        </span>
+                        {selected ? (
+                          <span className="shrink-0 rounded-full bg-muted px-1.5 text-[10px] tabular-nums text-muted-foreground">
+                            {ordinal + 1}
+                          </span>
+                        ) : null}
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </PopoverContent>
+          </Popover>
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Label
+              htmlFor="swarm-journey-sessions"
+              className="shrink-0 text-[11px] text-muted-foreground"
+            >
+              Sessions
+            </Label>
+            <Input
+              id="swarm-journey-sessions"
+              type="number"
+              min={1}
+              max={5}
+              className="h-8 w-14"
+              value={sessionsPerHost}
+              onChange={(e) => setSessionsPerHost(Number(e.target.value))}
+            />
+            <Label
+              htmlFor="swarm-journey-turns"
+              className="ml-1 shrink-0 text-[11px] text-muted-foreground"
+            >
+              Turns
+            </Label>
+            <Input
+              id="swarm-journey-turns"
+              type="number"
+              min={1}
+              max={20}
+              className="h-8 w-14"
+              value={maxTurns}
+              onChange={(e) => setMaxTurns(Number(e.target.value))}
+            />
+          </div>
+        </div>
+      ) : null}
+
       {/* Compact picker bar — same pill language as SuiteOverviewClientBar. */}
-      <div className="mb-2.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-2">
+      <div
+        className={cn(
+          "mb-2.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-2",
+          targetMode === "environments" && "hidden",
+        )}
+      >
         <ServerGroupPicker
           projectId={projectId}
           value={serverAttachmentId}
@@ -1762,8 +2041,9 @@ function NewJourneyButton({
           size="sm"
           disabled={
             !goal.trim() ||
-            !serverAttachmentId ||
-            hostIds.length === 0 ||
+            (targetMode === "environments"
+              ? buildEnvJourneyPayload(environmentIds, environments) === null
+              : !serverAttachmentId || hostIds.length === 0) ||
             !Number.isInteger(sessionsPerHost) ||
             sessionsPerHost < 1 ||
             sessionsPerHost > 5 ||
@@ -1772,17 +2052,38 @@ function NewJourneyButton({
             maxTurns > 20
           }
           onClick={async () => {
-            if (!serverAttachmentId) return;
-            await onCreate({
-              goal,
-              hostIds,
-              serverAttachmentId,
-              config: { sessionsPerHost, maxTurns },
-              ...(judgeConfig ? { judgeConfig } : {}),
-            });
+            if (targetMode === "environments") {
+              // Env-mode submit: environmentIds + compat hostIds recomputed
+              // from the selected environments (deduped, in order — B5).
+              // serverAttachmentId is OMITTED: each environment carries its
+              // own server-group override.
+              const payload = buildEnvJourneyPayload(
+                environmentIds,
+                environments,
+              );
+              if (!payload) return;
+              await onCreate({
+                goal,
+                hostIds: payload.hostIds,
+                environmentIds: payload.environmentIds,
+                config: { sessionsPerHost, maxTurns },
+                ...(judgeConfig ? { judgeConfig } : {}),
+              });
+            } else {
+              if (!serverAttachmentId) return;
+              await onCreate({
+                goal,
+                hostIds,
+                serverAttachmentId,
+                config: { sessionsPerHost, maxTurns },
+                ...(judgeConfig ? { judgeConfig } : {}),
+              });
+            }
             setOpen(false);
             setGoal("");
             setHostIds([]);
+            setEnvironmentIds([]);
+            setTargetMode("clients");
             setServerAttachmentId(null);
             setJudgeConfig(undefined);
           }}

@@ -31,6 +31,10 @@ import {
   type SyntheticModelSource,
 } from "../../utils/org-model-config.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
+import type {
+  PinnableSkill,
+  PinnedSkillArtifact,
+} from "../../../shared/skill-types.js";
 import {
   resolveHostTools,
   type HostComputerResource,
@@ -539,6 +543,17 @@ export interface SyntheticHostRuntime {
    * surface authorizes via project membership and leaves it undefined.
    */
   chatboxId?: string;
+  /**
+   * Authoritative pinned skills for an ENVIRONMENT-based swarm target
+   * (Project Environments, D3). `undefined` ⇒ legacy live-pool semantics
+   * (cloud skill tools / harness live fetch, unchanged). An array — possibly
+   * EMPTY, meaning deliberately skill-less — ⇒ skills come EXCLUSIVELY from
+   * these pinned artifacts: the emulated engine gets them via prepareChatV2
+   * `skillsSource` (never `cloudSkills`), and a harness turn gets them via the
+   * pinned harness path (never `fetchRuntimeSkills`, and NEVER through
+   * prepareChatV2's pinned branch, which throws on harness).
+   */
+  pinnedSkills?: PinnedSkillArtifact[];
 }
 
 /** Attribution tags stamped onto every transcript persist for this session. */
@@ -550,6 +565,9 @@ export interface SyntheticPersistAttribution {
   synthesisRunId?: string;
   journeyRunId?: string;
   hostId?: string;
+  /** Opaque swarm execution-target id — echoed on chat ingestion so two
+   * same-host targets stay attributable. Absent for legacy/chatbox surfaces. */
+  targetId?: string;
   personaId?: string;
   personaLabel?: string;
   personaRefId?: string;
@@ -696,7 +714,9 @@ export async function runSyntheticHostSession(
     // call — so advertising the `listSkills`/`loadSkill` meta-tools (always 2
     // tools, even for a project with no skills) would turn an otherwise-toolless
     // approval simulation into one that fails every session for no benefit.
+    const pinnedSkills = runtime.pinnedSkills;
     const cloudSkillsEnabled =
+      pinnedSkills === undefined &&
       !requireToolApproval &&
       Boolean(authHeader) &&
       Boolean(projectId) &&
@@ -707,6 +727,33 @@ export async function runSyntheticHostSession(
         provider: modelDefinition.provider,
         hasProjectId: Boolean(projectId),
       });
+
+    // Authoritative pinned mode (env-based swarm target): the emulated engine
+    // gets frozen pinned tools via `skillsSource` — NEVER the live cloud-skill
+    // tools. `kind: "none"` covers (a) a deliberately skill-less target, (b) the
+    // approval-mode no-skills semantics (a headless visitor can't approve, same
+    // rationale as the cloudSkills gate above), and (c) HARNESS turns —
+    // prepareChatV2 THROWS on harness+pinned, so a harness target's pinned
+    // artifacts ride `pinnedHarnessSkills` on the drain instead.
+    const skillsSource:
+      | { kind: "pinned"; skills: PinnableSkill[] }
+      | { kind: "none" }
+      | undefined =
+      pinnedSkills === undefined
+        ? undefined
+        : harness || requireToolApproval || pinnedSkills.length === 0
+          ? { kind: "none" }
+          : {
+              kind: "pinned",
+              skills: pinnedSkills.map(
+                (a): PinnableSkill => ({
+                  name: a.name,
+                  description: a.description,
+                  content: a.content,
+                  contentHash: a.contentHash,
+                }),
+              ),
+            };
 
     const prepared = await prepareChatV2({
       mcpClientManager: manager,
@@ -726,6 +773,7 @@ export async function runSyntheticHostSession(
           }
         : {}),
       ...(builtInTools ? { builtInTools } : {}),
+      ...(skillsSource ? { skillsSource } : {}),
       ...(cloudSkillsEnabled
         ? { cloudSkills: { authHeader, projectId } }
         : {}),
@@ -904,6 +952,14 @@ export async function runSyntheticHostSession(
         // resolved once above; `journeyRunId`/`hostId` are the swarm run + pinned
         // host. All three are inert for the emulated engine / non-swarm surfaces.
         ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
+        // Pinned harness skills (env-based swarm target running a real
+        // harness): the harness turn skips the live skills fetch and delivers
+        // exactly these artifacts (skillsHash derives from their fingerprints).
+        // Passed even when EMPTY — an empty authoritative set means the
+        // harness must run skill-less, not fall back to the live pool.
+        ...(harness && pinnedSkills !== undefined
+          ? { pinnedHarnessSkills: pinnedSkills }
+          : {}),
         ...(persist.hostId ? { hostId: persist.hostId } : {}),
         // Chatbox surface only. The chatbox runtime-config redeem returns an
         // accessVersion that /stream/org/resolve uses to authorize the actor
@@ -999,6 +1055,7 @@ export async function runSyntheticHostSession(
           : {}),
         ...(persist.journeyRunId ? { journeyRunId: persist.journeyRunId } : {}),
         ...(persist.hostId ? { hostId: persist.hostId } : {}),
+        ...(persist.targetId ? { targetId: persist.targetId } : {}),
         turnTrace,
         resumeConfig,
         ...(toolSnapshot ? { toolSnapshot } : {}),
@@ -1075,6 +1132,7 @@ export async function runSyntheticHostSession(
           : {}),
         ...(persist.journeyRunId ? { journeyRunId: persist.journeyRunId } : {}),
         ...(persist.hostId ? { hostId: persist.hostId } : {}),
+        ...(persist.targetId ? { targetId: persist.targetId } : {}),
         resumeConfig,
       });
     }
@@ -1514,6 +1572,7 @@ export async function drainAssistantTurn(
     journeyRunId,
     hostId,
     harnessMcpProxy,
+    pinnedHarnessSkills,
     extraBodyFields,
     hooks,
   } = args;
@@ -1715,6 +1774,9 @@ export async function drainAssistantTurn(
     // key on (journeyRunId, hostId, chatSessionId) instead of direct-chat.
     ...(journeyRunId ? { journeyRunId } : {}),
     ...(hostId ? { hostId } : {}),
+    // Pinned harness skills (env-based swarm target): presence — even an
+    // EMPTY array — makes the harness turn skip the live skills fetch.
+    ...(pinnedHarnessSkills !== undefined ? { pinnedHarnessSkills } : {}),
     ...(args.requireToolApproval !== undefined
       ? { requireToolApproval: args.requireToolApproval }
       : {}),

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { JourneyRun } from "@/lib/swarm-api";
-import { journeyHostColumns, journeyHostOutcome } from "../journey-list";
+import { journeyTargetColumns, journeyHostOutcome } from "../journey-list";
 
 function run(
   partial: Partial<JourneyRun> & {
@@ -17,6 +17,7 @@ function run(
       rateLimited: 0,
     },
     hostSummaries: partial.hostSummaries,
+    snapshot: partial.snapshot,
     goalScoreSummary: partial.goalScoreSummary,
     createdAt: partial.createdAt ?? 1,
   };
@@ -30,20 +31,94 @@ const hs = (
   rateLimited = 0,
 ) => ({ hostId, total, succeeded, failed, rateLimited });
 
-describe("journeyHostColumns", () => {
-  it("unions target hosts, orders by the project host list, appends unknowns", () => {
-    const journeys = [
-      { _id: "j1", personaRefId: "p", goal: "g1", hostIds: ["b", "z"], config: { sessionsPerHost: 1, maxTurns: 1 } },
-      { _id: "j2", personaRefId: "p", goal: "g2", hostIds: ["a", "b"], config: { sessionsPerHost: 1, maxTurns: 1 } },
+describe("journeyTargetColumns", () => {
+  const hosts = [
+    { hostId: "a", name: "Alpha" },
+    { hostId: "b", name: "Bravo" },
+  ];
+
+  it("unrun legacy journey: one column per hostId in journey order", () => {
+    const journey = {
+      _id: "j1",
+      personaRefId: "p",
+      goal: "g1",
+      hostIds: ["b", "a", "z"],
+      config: { sessionsPerHost: 1, maxTurns: 1 },
+    };
+    const cols = journeyTargetColumns(journey, hosts, null);
+    expect(cols.map((c) => c.key)).toEqual(["b", "a", "z"]);
+    expect(cols.map((c) => c.label)).toEqual(["Bravo", "Alpha", "z"]);
+    expect(cols.every((c) => c.environmentId === undefined)).toBe(true);
+  });
+
+  it("unrun env-based journey: one column per environment in environmentIds order, labeled by env name", () => {
+    const journey = {
+      _id: "j1",
+      personaRefId: "p",
+      goal: "g1",
+      hostIds: ["a"],
+      environmentIds: ["env2", "env1"],
+      config: { sessionsPerHost: 1, maxTurns: 1 },
+    };
+    const environments = [
+      { environmentId: "env1", projectId: "pr", name: "Staging", hostId: "a", revision: 1 },
+      { environmentId: "env2", projectId: "pr", name: "Prod", hostId: "a", revision: 3 },
     ];
-    const hosts = [
-      { hostId: "a", name: "Alpha" },
-      { hostId: "b", name: "Bravo" },
-    ];
-    const cols = journeyHostColumns(journeys, hosts);
-    // a, b come first (project order); z is unknown → appended, name falls back.
-    expect(cols.map((c) => c.hostId)).toEqual(["a", "b", "z"]);
-    expect(cols.map((c) => c.name)).toEqual(["Alpha", "Bravo", "z"]);
+    const cols = journeyTargetColumns(journey, hosts, null, environments);
+    expect(cols.map((c) => c.label)).toEqual(["Prod", "Staging"]);
+    expect(cols.map((c) => c.environmentId)).toEqual(["env2", "env1"]);
+    expect(cols.map((c) => c.hostId)).toEqual(["a", "a"]);
+  });
+
+  it("run with two SAME-HOST env targets: distinct columns keyed by targetId, env-name labels, #n suffix on collisions", () => {
+    const journey = {
+      _id: "j1",
+      personaRefId: "p",
+      goal: "g1",
+      hostIds: ["a"],
+      environmentIds: ["env1", "env2"],
+      config: { sessionsPerHost: 1, maxTurns: 1 },
+    };
+    const latestRun = run({
+      hostSummaries: [
+        { hostId: "a", targetId: "environment:env1", total: 1, succeeded: 1, failed: 0, rateLimited: 0 },
+        { hostId: "a", targetId: "environment:env2", total: 1, succeeded: 0, failed: 1, rateLimited: 0 },
+      ],
+      snapshot: {
+        hosts: [
+          { hostId: "a", targetId: "environment:env1", environmentRef: { environmentId: "env1", name: "Same Name", revision: 1 } },
+          { hostId: "a", targetId: "environment:env2", environmentRef: { environmentId: "env2", name: "Same Name", revision: 2 } },
+        ],
+      },
+    });
+    const cols = journeyTargetColumns(journey, hosts, latestRun);
+    expect(cols.map((c) => c.key)).toEqual([
+      "environment:env1",
+      "environment:env2",
+    ]);
+    expect(cols.map((c) => c.label)).toEqual(["Same Name #1", "Same Name #2"]);
+    // Per-target outcomes stay distinct even though the host is shared.
+    expect(journeyHostOutcome(latestRun, "environment:env1")).toBe("pass");
+    expect(journeyHostOutcome(latestRun, "environment:env2")).toBe("fail");
+  });
+
+  it("fresh legacy run: host-shaped targetIds collapse to bare hostId keys (pre-3A parity)", () => {
+    const journey = {
+      _id: "j1",
+      personaRefId: "p",
+      goal: "g1",
+      hostIds: ["a"],
+      config: { sessionsPerHost: 1, maxTurns: 1 },
+    };
+    const latestRun = run({
+      hostSummaries: [
+        { hostId: "a", targetId: "host:a", total: 1, succeeded: 1, failed: 0, rateLimited: 0 },
+      ],
+      snapshot: { hosts: [{ hostId: "a", targetId: "host:a" }] },
+    });
+    const cols = journeyTargetColumns(journey, hosts, latestRun);
+    expect(cols.map((c) => c.key)).toEqual(["a"]);
+    expect(journeyHostOutcome(latestRun, "a")).toBe("pass");
   });
 });
 

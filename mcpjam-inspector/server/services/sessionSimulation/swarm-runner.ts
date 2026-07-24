@@ -5,14 +5,19 @@ import {
   type SimulationManagerFactory,
 } from "./runner.js";
 import {
+  fetchPinnedSkill,
   finalizePendingAttempts,
   heartbeatJourneyRun,
   reportAttempt,
   swarmPersonaNextTurn,
   type PersonaSnapshot,
   type PinnedHostExecutionSpec,
+  type PinnedSkillMeta,
   type SwarmAttemptStatus,
 } from "../swarm-agent.js";
+import { resolvePinnedSkillCached } from "./pinned-skill-cache.js";
+import { swarmAttemptChatSessionId } from "../../../shared/swarm-session-id.js";
+import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
 import { JourneyRunStreamHub } from "./swarm-stream-hub.js";
 import type {
   SwarmStreamEnvelope,
@@ -54,8 +59,29 @@ import type {
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000;
 const MAX_ATTEMPT_ERROR_CHARS = 500;
-/** Bounded host-worker pool: at most this many hosts run concurrently. */
-export const MAX_CONCURRENT_HOSTS = 3;
+/** Bounded target-worker pool: at most this many execution targets run
+ * concurrently. A target is one `snapshot.hosts[]` entry — a legacy host OR a
+ * project environment (two environments may share a host and still count as
+ * two targets). */
+export const MAX_CONCURRENT_TARGETS = 3;
+/** @deprecated Renamed {@link MAX_CONCURRENT_TARGETS} (targets ≠ hosts once
+ * environments land). Kept for existing tests/imports. */
+export const MAX_CONCURRENT_HOSTS = MAX_CONCURRENT_TARGETS;
+
+/** Session-id identity for a pinned execution target (shared mint — D1).
+ * `environmentId` comes from the FIRST-CLASS `environmentRef`; the opaque
+ * `targetId` is never parsed. */
+function targetSessionIdentity(target: PinnedHostExecutionSpec): {
+  hostId: string;
+  environmentId?: string;
+} {
+  return {
+    hostId: target.hostId,
+    ...(target.environmentRef?.environmentId
+      ? { environmentId: target.environmentRef.environmentId }
+      : {}),
+  };
+}
 
 /**
  * Builds a fresh, fully-connected manager scoped to one pinned host's
@@ -317,34 +343,56 @@ async function runJourneyFanOut(
 
   logEvent("run.start", {
     runId,
-    hostCount: hosts.length,
+    targetCount: hosts.length,
     sessionsPerHost,
     maxTurns,
-    maxConcurrentHosts: Math.min(MAX_CONCURRENT_HOSTS, hosts.length),
+    maxConcurrentTargets: Math.min(MAX_CONCURRENT_TARGETS, hosts.length),
   });
 
-  // --- Run one host's sessions SEQUENTIALLY --------------------------------
-  const runHost = async (host: PinnedHostExecutionSpec): Promise<void> => {
-    const hostId = host.hostId;
-    const modelId = host.modelId;
-    // Hoisted so the worker-level catch below knows how far this host got and
+  // --- Run one target's sessions SEQUENTIALLY ------------------------------
+  const runTarget = async (target: PinnedHostExecutionSpec): Promise<void> => {
+    const hostId = target.hostId;
+    const targetId = target.targetId;
+    const modelId = target.modelId;
+    // Hoisted so the worker-level catch below knows how far this target got and
     // can finalize the attempts it left behind.
     let sessionIdx = 0;
     try {
-    // Resolve the pinned host's modelId to a ModelDefinition once per host
+    // Resolve the pinned target's modelId to a ModelDefinition once per target
     // (catalog hits pass through; BYOK shapes get a derived provider). NEVER
     // refetch the live host config — everything comes from the immutable
     // snapshot. A model-less / unresolvable pinned spec throws HERE, before any
-    // attempt is claimed — the catch finalizes this host's pending attempts.
+    // attempt is claimed — the catch finalizes this target's pending attempts.
     const modelDefinition = buildSyntheticModelDefinition(modelId);
 
+    // Resolve the target's pinned skill BODIES up front (D3, fail-closed).
+    // Undefined ⇒ legacy live-pool semantics; an array (possibly empty) ⇒ the
+    // authoritative pinned set — env targets NEVER touch the live skills query.
+    // A persistent fetch failure / 404 / hash mismatch throws HERE, before any
+    // attempt is claimed, and the worker-catch finalizes the target's attempts
+    // `failed` — never a silent skill-less run.
+    const pinnedSkills = await resolveTargetPinnedSkills({
+      target,
+      projectId,
+      runId,
+      convexHttpUrl,
+      bearer,
+      signal: sessionSignal,
+    });
+
     for (sessionIdx = 0; sessionIdx < sessionsPerHost; sessionIdx++) {
-      // Run-level stop (spend cap or shutdown/cancel) halts THIS host too.
+      // Run-level stop (spend cap or shutdown/cancel) halts THIS target too.
       if (stopScheduling()) return;
 
       // Deterministic claim key — the immutable chatSessionId the attempt is
-      // claimed with and every persist + terminal reuse.
-      const chatSessionId = `synth_${runId}_${hostId}_${sessionIdx}`;
+      // claimed with and every persist + terminal reuse (shared mint, D1: env
+      // targets key on environmentRef.environmentId so two env targets on the
+      // SAME host can never collide).
+      const chatSessionId = swarmAttemptChatSessionId(
+        runId,
+        targetSessionIdentity(target),
+        sessionIdx
+      );
 
       // CLAIM before executing: the `running` transition requires the
       // chatSessionId and is immutable thereafter. Persistence is LAUNCHER-gated
@@ -356,6 +404,7 @@ async function runJourneyFanOut(
           projectId,
           runId,
           hostId,
+          ...(targetId ? { targetId } : {}),
           sessionIdx,
           status: "running",
           chatSessionId,
@@ -364,6 +413,7 @@ async function runJourneyFanOut(
         logger.error("[swarm.runner] attempt claim failed; skipping session", {
           runId,
           hostId,
+          targetId,
           sessionIdx,
           error: err instanceof Error ? err.message : String(err),
         });
@@ -388,11 +438,12 @@ async function runJourneyFanOut(
       }
 
       const attemptStartedAt = Date.now();
-      logEvent("attempt.start", { runId, hostId, sessionIdx, modelId });
+      logEvent("attempt.start", { runId, hostId, targetId, sessionIdx, modelId });
 
       const envelope: SwarmStreamEnvelope = {
         runId,
         hostId,
+        ...(targetId ? { targetId } : {}),
         chatSessionId,
         sessionIndex: sessionIdx,
       };
@@ -411,23 +462,27 @@ async function runJourneyFanOut(
         maxTurns,
         runtime: {
           modelDefinition,
-          systemPrompt: host.systemPrompt,
-          temperature: host.temperature,
-          requireToolApproval: host.requireToolApproval,
-          respectToolVisibility: host.respectToolVisibility,
-          progressiveToolDiscovery: host.progressiveToolDiscovery,
-          builtInToolIds: host.builtInToolIds,
-          modelVisibleMcpToolResults: host.modelVisibleMcpToolResults,
-          mcpToolResultImageRendering: host.mcpToolResultImageRendering,
-          computer: host.computer,
-          harness: host.harness,
+          systemPrompt: target.systemPrompt,
+          temperature: target.temperature,
+          requireToolApproval: target.requireToolApproval,
+          respectToolVisibility: target.respectToolVisibility,
+          progressiveToolDiscovery: target.progressiveToolDiscovery,
+          builtInToolIds: target.builtInToolIds,
+          modelVisibleMcpToolResults: target.modelVisibleMcpToolResults,
+          mcpToolResultImageRendering: target.mcpToolResultImageRendering,
+          computer: target.computer,
+          harness: target.harness,
+          // Authoritative pinned skills for env-based targets (undefined ⇒
+          // legacy live-pool). The shared core routes them to prepareChatV2
+          // (`skillsSource`) or the harness pinned path — never a live query.
+          ...(pinnedSkills !== undefined ? { pinnedSkills } : {}),
           // Swarm authorizes via project membership — no chatbox access
           // version, no chatbox id.
         },
         authHeader,
         // Each attempt gets a fresh manager + browser context, scoped to THIS
-        // host's pinned required servers.
-        managerFactory: () => managerFactory(host),
+        // target's pinned required servers.
+        managerFactory: () => managerFactory(target),
         // Thread the run-level stop signal (composed with shutdown/cancel) so a
         // spend-cap short-circuit cancels this host's in-flight turns.
         abortSignal: sessionSignal,
@@ -448,6 +503,7 @@ async function runJourneyFanOut(
           origin: "swarm",
           journeyRunId: runId,
           hostId,
+          ...(targetId ? { targetId } : {}),
           personaId: personaSnapshot.personaId,
           personaLabel: personaSnapshot.name,
         },
@@ -498,6 +554,7 @@ async function runJourneyFanOut(
           projectId,
           runId,
           hostId,
+          ...(targetId ? { targetId } : {}),
           sessionIdx,
           status: terminal.status,
           chatSessionId,
@@ -510,12 +567,14 @@ async function runJourneyFanOut(
         logEvent("attempt.report_failed", {
           runId,
           hostId,
+          targetId,
           sessionIdx,
           status: terminal.status,
         });
         logger.error("[swarm.runner] terminal attempt report failed", {
           runId,
           hostId,
+          targetId,
           sessionIdx,
           status: terminal.status,
           error: err instanceof Error ? err.message : String(err),
@@ -525,6 +584,7 @@ async function runJourneyFanOut(
       logEvent("attempt.finish", {
         runId,
         hostId,
+        targetId,
         sessionIdx,
         status: terminal.status,
         durationMs: Date.now() - attemptStartedAt,
@@ -542,20 +602,22 @@ async function runJourneyFanOut(
           logEvent("run.spend_cap_short_circuit", {
             runId,
             hostId,
+            targetId,
             sessionIdx,
           });
           return;
         }
-        // PROVIDER rate-limit: stop THIS host's remaining sessions and mark
-        // them rate_limited. Other hosts keep running.
-        logEvent("host.rate_limit_short_circuit", {
+        // PROVIDER rate-limit: stop THIS target's remaining sessions and mark
+        // them rate_limited. Other targets keep running.
+        logEvent("target.rate_limit_short_circuit", {
           runId,
           hostId,
+          targetId,
           fromSessionIdx: sessionIdx + 1,
           remaining: sessionsPerHost - (sessionIdx + 1),
         });
-        await markRemainingHostAttemptsRateLimited(
-          { convexHttpUrl, bearer, projectId, runId, hostId },
+        await markRemainingTargetAttemptsRateLimited(
+          { convexHttpUrl, bearer, projectId, runId, target },
           sessionIdx + 1,
           sessionsPerHost
         );
@@ -563,28 +625,31 @@ async function runJourneyFanOut(
       }
     }
     } catch (err) {
-      // A worker-level throw (e.g. a model-less pinned spec whose modelId can't
-      // resolve) must NOT abort the pool or leave this host's attempts dangling.
-      // Finalize this host's not-yet-terminal attempts (`[sessionIdx..N)` — the
-      // in-flight claim, if any, plus every never-claimed pending) as `failed`
-      // and let the OTHER workers keep running (the pool continues; the run ends
-      // consistently). Best-effort; the stale-run cron backstops anything missed.
-      logEvent("host.worker_failed", { runId, hostId, sessionIdx });
+      // A worker-level throw (a model-less pinned spec whose modelId can't
+      // resolve, or a pinned-skill body that could not be fetched/verified)
+      // must NOT abort the pool or leave this target's attempts dangling.
+      // Finalize this target's not-yet-terminal attempts (`[sessionIdx..N)` —
+      // the in-flight claim, if any, plus every never-claimed pending) as
+      // `failed` and let the OTHER workers keep running (the pool continues;
+      // the run ends consistently). Best-effort; the stale-run cron backstops
+      // anything missed.
+      logEvent("target.worker_failed", { runId, hostId, targetId, sessionIdx });
       logger.error(
-        "[swarm.runner] host worker failed; finalizing its attempts",
+        "[swarm.runner] target worker failed; finalizing its attempts",
         {
           runId,
           hostId,
+          targetId,
           sessionIdx,
           error: err instanceof Error ? err.message : String(err),
         }
       );
-      // Finalize this host's not-yet-terminal attempts `[sessionIdx..N)`: the
+      // Finalize this target's not-yet-terminal attempts `[sessionIdx..N)`: the
       // sweep re-claims the in-flight attempt (if the throw landed after a
       // claim; an idempotent re-claim with the same chatSessionId) and every
       // never-claimed pending, reporting each `failed`.
-      await markRemainingHostAttemptsFailed(
-        { convexHttpUrl, bearer, projectId, runId, hostId },
+      await markRemainingTargetAttemptsFailed(
+        { convexHttpUrl, bearer, projectId, runId, target },
         sessionIdx,
         sessionsPerHost
       );
@@ -592,17 +657,18 @@ async function runJourneyFanOut(
   };
 
   try {
-    // Bounded worker pool: a shared host queue drained by ≤MAX_CONCURRENT_HOSTS
-    // workers. Each worker pulls the next host, runs it to completion (or its
-    // per-host short-circuit), then pulls the next — so no more than N hosts
-    // are ever active at once, and a slow host doesn't block others.
-    const hostQueue = [...hosts];
-    const workerCount = Math.min(MAX_CONCURRENT_HOSTS, hostQueue.length);
+    // Bounded worker pool: a shared target queue drained by
+    // ≤MAX_CONCURRENT_TARGETS workers. Each worker pulls the next target, runs
+    // it to completion (or its per-target short-circuit), then pulls the next —
+    // so no more than N targets are ever active at once, and a slow target
+    // doesn't block others.
+    const targetQueue = [...hosts];
+    const workerCount = Math.min(MAX_CONCURRENT_TARGETS, targetQueue.length);
     const worker = async (): Promise<void> => {
       while (!stopScheduling()) {
-        const host = hostQueue.shift();
-        if (!host) return;
-        await runHost(host);
+        const target = targetQueue.shift();
+        if (!target) return;
+        await runTarget(target);
       }
     };
     await Promise.all(
@@ -636,7 +702,7 @@ async function runJourneyFanOut(
     clearInterval(heartbeat);
     logEvent("run.finish", {
       runId,
-      hostCount: hosts.length,
+      targetCount: hosts.length,
       durationMs: Date.now() - runStartedAt,
       spendCapTripped,
       aborted: abortSignal?.aborted === true,
@@ -645,32 +711,127 @@ async function runJourneyFanOut(
 }
 
 /**
- * Mark a rate-limited host's remaining `pending` attempts (`[fromIdx, toIdx)`)
- * as `rate_limited`. The backend `finalize-pending` is whole-run scoped (no
- * hostId), so we walk the host's own attempts via the reportAttempt state
- * machine: claim (`running` + the deterministic chatSessionId) then report the
- * terminal. Entirely best-effort — a failure here is logged and the sweep
- * continues; the backend stale-run cron backstops anything missed.
+ * Resolve a target's pinned skill BODIES (Project Environments, D3).
+ *
+ * Returns `undefined` for a legacy host target (live whole-pool semantics
+ * downstream) and the authoritative artifact array — possibly EMPTY, meaning
+ * deliberately skill-less — for an env-based target. Env-ness keys on the
+ * first-class `environmentRef` (the opaque `targetId` is never parsed);
+ * a `pinnedSkills` array on ANY target is also treated as authoritative.
+ *
+ * FAIL-CLOSED cases (throw → the worker-catch finalizes the target `failed`):
+ *   - a pinned entry's body can't be fetched (persistent network/5xx), 404s,
+ *     or fails hash verification — never a silent skill-less run;
+ *   - the snapshot carries a non-empty host `skillSelection` but the pinned
+ *     union carries NO channel provenance (pre-P0.2 backend) — running would
+ *     silently drop the host skill channel;
+ *   - a target with pinned metadata but no `targetId` (backend invariant
+ *     violation — the fetch route requires it).
+ *
+ * Bodies are content-addressed and cached process-wide (`pinned-skill-cache`),
+ * with in-flight coalescing across targets and bounded retries.
  */
-async function markRemainingHostAttemptsRateLimited(
+async function resolveTargetPinnedSkills(args: {
+  target: PinnedHostExecutionSpec;
+  projectId: string;
+  runId: string;
+  convexHttpUrl: string;
+  bearer: string;
+  signal?: AbortSignal;
+}): Promise<PinnedSkillArtifact[] | undefined> {
+  const { target, projectId, runId, convexHttpUrl, bearer, signal } = args;
+  const isEnvTarget = Boolean(target.environmentRef);
+  if (!isEnvTarget && target.pinnedSkills === undefined) {
+    return undefined; // legacy live-pool semantics
+  }
+  const meta: PinnedSkillMeta[] = target.pinnedSkills ?? [];
+
+  // P0.2 guard: a host-carried skillSelection MUST be represented in the
+  // pinned union (per-entry `channels` provenance proves the union is the
+  // authoritative two-channel composition). Never silently ignore it.
+  const hostSelection = target.skillSelection;
+  const hostWantsSkills =
+    !!hostSelection &&
+    Array.isArray(hostSelection.skillIds) &&
+    hostSelection.skillIds.length > 0;
+  const unionIsAuthoritative = meta.some(
+    (m) => Array.isArray(m.channels) && m.channels.length > 0
+  );
+  if (hostWantsSkills && !unionIsAuthoritative) {
+    throw new Error(
+      "Snapshot target carries a host skillSelection but its pinnedSkills " +
+        "union has no channel provenance (pre-P0.2 backend) — refusing to run " +
+        "with a silently dropped host skill channel"
+    );
+  }
+
+  if (meta.length === 0) return [];
+  const targetId = target.targetId;
+  if (!targetId) {
+    throw new Error(
+      "Snapshot target has pinned skills but no targetId — cannot fetch pinned bodies"
+    );
+  }
+
+  const artifacts: PinnedSkillArtifact[] = [];
+  for (const entry of meta) {
+    const artifact = await resolvePinnedSkillCached({
+      projectId,
+      contentHash: entry.contentHash,
+      fetcher: () =>
+        fetchPinnedSkill(convexHttpUrl, bearer, {
+          projectId,
+          runId,
+          targetId,
+          contentHash: entry.contentHash,
+          ...(signal ? { signal } : {}),
+        }),
+    });
+    // Preserve the snapshot's channel provenance when the served artifact
+    // doesn't carry it (the cache is keyed by content, not by target).
+    artifacts.push({
+      ...artifact,
+      ...(artifact.channels === undefined && entry.channels !== undefined
+        ? { channels: entry.channels }
+        : {}),
+    });
+  }
+  return artifacts;
+}
+
+/**
+ * Mark a rate-limited target's remaining `pending` attempts (`[fromIdx, toIdx)`)
+ * as `rate_limited`. The backend `finalize-pending` is whole-run scoped (no
+ * target dimension), so we walk the target's own attempts via the reportAttempt
+ * state machine: claim (`running` + the deterministic chatSessionId) then
+ * report the terminal. Entirely best-effort — a failure here is logged and the
+ * sweep continues; the backend stale-run cron backstops anything missed.
+ */
+async function markRemainingTargetAttemptsRateLimited(
   ctx: {
     convexHttpUrl: string;
     bearer: string;
     projectId: string;
     runId: string;
-    hostId: string;
+    target: PinnedHostExecutionSpec;
   },
   fromIdx: number,
   toIdx: number
 ): Promise<void> {
-  const { convexHttpUrl, bearer, projectId, runId, hostId } = ctx;
+  const { convexHttpUrl, bearer, projectId, runId, target } = ctx;
+  const { hostId, targetId } = target;
   for (let sessionIdx = fromIdx; sessionIdx < toIdx; sessionIdx++) {
-    const chatSessionId = `synth_${runId}_${hostId}_${sessionIdx}`;
+    const chatSessionId = swarmAttemptChatSessionId(
+      runId,
+      targetSessionIdentity(target),
+      sessionIdx
+    );
     try {
       await reportAttempt(convexHttpUrl, bearer, {
         projectId,
         runId,
         hostId,
+        ...(targetId ? { targetId } : {}),
         sessionIdx,
         status: "running",
         chatSessionId,
@@ -679,6 +840,7 @@ async function markRemainingHostAttemptsRateLimited(
         projectId,
         runId,
         hostId,
+        ...(targetId ? { targetId } : {}),
         sessionIdx,
         status: "rate_limited",
         chatSessionId,
@@ -686,10 +848,11 @@ async function markRemainingHostAttemptsRateLimited(
       });
     } catch (err) {
       logger.warn(
-        "[swarm.runner] failed to mark remaining host attempt rate_limited",
+        "[swarm.runner] failed to mark remaining target attempt rate_limited",
         {
           runId,
           hostId,
+          targetId,
           sessionIdx,
           error: err instanceof Error ? err.message : String(err),
         }
@@ -699,35 +862,41 @@ async function markRemainingHostAttemptsRateLimited(
 }
 
 /**
- * Mark a failed host-worker's not-yet-terminal attempts (`[fromIdx, toIdx)`)
- * as `failed` (errorCode `host_worker_failed`). Sibling of
- * {@link markRemainingHostAttemptsRateLimited}: walk the host's own attempts
- * via the reportAttempt state machine (claim `running` + the deterministic
- * chatSessionId, then report the terminal). Re-claiming an already-claimed
- * `running` attempt with the SAME chatSessionId is idempotent; an already
- * `succeeded`/`failed` attempt rejects the re-claim (terminal is immutable) and
- * is skipped. Entirely best-effort — a failure is logged and the sweep
- * continues; the backend stale-run cron backstops anything missed.
+ * Mark a failed target-worker's not-yet-terminal attempts (`[fromIdx, toIdx)`)
+ * as `failed` (errorCode `host_worker_failed` — kept for backend/dashboard
+ * compat). Sibling of {@link markRemainingTargetAttemptsRateLimited}: walk the
+ * target's own attempts via the reportAttempt state machine (claim `running` +
+ * the deterministic chatSessionId, then report the terminal). Re-claiming an
+ * already-claimed `running` attempt with the SAME chatSessionId is idempotent;
+ * an already `succeeded`/`failed` attempt rejects the re-claim (terminal is
+ * immutable) and is skipped. Entirely best-effort — a failure is logged and the
+ * sweep continues; the backend stale-run cron backstops anything missed.
  */
-async function markRemainingHostAttemptsFailed(
+async function markRemainingTargetAttemptsFailed(
   ctx: {
     convexHttpUrl: string;
     bearer: string;
     projectId: string;
     runId: string;
-    hostId: string;
+    target: PinnedHostExecutionSpec;
   },
   fromIdx: number,
   toIdx: number
 ): Promise<void> {
-  const { convexHttpUrl, bearer, projectId, runId, hostId } = ctx;
+  const { convexHttpUrl, bearer, projectId, runId, target } = ctx;
+  const { hostId, targetId } = target;
   for (let sessionIdx = fromIdx; sessionIdx < toIdx; sessionIdx++) {
-    const chatSessionId = `synth_${runId}_${hostId}_${sessionIdx}`;
+    const chatSessionId = swarmAttemptChatSessionId(
+      runId,
+      targetSessionIdentity(target),
+      sessionIdx
+    );
     try {
       await reportAttempt(convexHttpUrl, bearer, {
         projectId,
         runId,
         hostId,
+        ...(targetId ? { targetId } : {}),
         sessionIdx,
         status: "running",
         chatSessionId,
@@ -736,6 +905,7 @@ async function markRemainingHostAttemptsFailed(
         projectId,
         runId,
         hostId,
+        ...(targetId ? { targetId } : {}),
         sessionIdx,
         status: "failed",
         chatSessionId,
@@ -743,10 +913,11 @@ async function markRemainingHostAttemptsFailed(
       });
     } catch (err) {
       logger.warn(
-        "[swarm.runner] failed to mark remaining host attempt failed",
+        "[swarm.runner] failed to mark remaining target attempt failed",
         {
           runId,
           hostId,
+          targetId,
           sessionIdx,
           error: err instanceof Error ? err.message : String(err),
         }

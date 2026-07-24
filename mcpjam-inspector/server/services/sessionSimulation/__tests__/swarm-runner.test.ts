@@ -16,6 +16,7 @@ const heartbeatJourneyRunMock = vi.fn();
 const runSyntheticHostSessionMock = vi.fn();
 
 const finalizePendingAttemptsMock = vi.fn();
+const fetchPinnedSkillMock = vi.fn();
 
 vi.mock("../../swarm-agent.js", async () => {
   const actual =
@@ -30,6 +31,7 @@ vi.mock("../../swarm-agent.js", async () => {
     heartbeatJourneyRun: (...args: unknown[]) => heartbeatJourneyRunMock(...args),
     finalizePendingAttempts: (...args: unknown[]) =>
       finalizePendingAttemptsMock(...args),
+    fetchPinnedSkill: (...args: unknown[]) => fetchPinnedSkillMock(...args),
   };
 });
 
@@ -49,6 +51,8 @@ import {
   getRunningJourneyStreamHub,
   MAX_CONCURRENT_HOSTS,
 } from "../swarm-runner.js";
+import { __clearPinnedSkillCacheForTest } from "../pinned-skill-cache.js";
+import { SwarmAgentError } from "../../swarm-agent.js";
 
 const HOST = {
   hostId: "host-1",
@@ -105,6 +109,8 @@ beforeEach(() => {
   runSyntheticHostSessionMock.mockReset().mockResolvedValue({
     outcome: "succeeded",
   });
+  fetchPinnedSkillMock.mockReset();
+  __clearPinnedSkillCacheForTest();
 });
 
 afterEach(() => {
@@ -720,5 +726,194 @@ describe("swarm runner — live stream emit", () => {
     for (const call of runSyntheticHostSessionMock.mock.calls) {
       expect(typeof (call[0] as { emit?: unknown }).emit).toBe("function");
     }
+  });
+});
+
+describe("swarm fan-out runner — environment targets (Project Environments)", () => {
+  const ENV_TARGET_A = {
+    ...HOST,
+    targetId: "environment:envA",
+    environmentRef: { environmentId: "envA", name: "Env A", revision: 1 },
+    pinnedSkills: [
+      {
+        skillId: "sk1",
+        name: "sk-one",
+        description: "d",
+        contentHash: "hash-1",
+        sharing: "project" as const,
+      },
+    ],
+  };
+  const ENV_TARGET_B = {
+    ...HOST, // SAME host as A — two env targets sharing one host.
+    targetId: "environment:envB",
+    environmentRef: { environmentId: "envB", name: "Env B", revision: 2 },
+    // Skill-less env target: pinned mode with an EMPTY authoritative set.
+  };
+
+  const pinnedArtifact = (contentHash: string) => ({
+    name: "sk-one",
+    description: "d",
+    content: "# body",
+    contentHash,
+  });
+
+  it("two SAME-HOST env targets mint distinct env session ids and claim with their targetId", async () => {
+    fetchPinnedSkillMock.mockResolvedValue(pinnedArtifact("hash-1"));
+
+    await startJourneyRun(
+      baseOpts({ hosts: [ENV_TARGET_A, ENV_TARGET_B], sessionsPerHost: 2 })
+    );
+
+    const sessionIds = runSyntheticHostSessionMock.mock.calls
+      .map((c) => (c[0] as any).chatSessionId)
+      .sort();
+    expect(sessionIds).toEqual([
+      "synth_run-1_env_envA_0",
+      "synth_run-1_env_envA_1",
+      "synth_run-1_env_envB_0",
+      "synth_run-1_env_envB_1",
+    ]);
+
+    // Every claim carried the target's opaque targetId + the shared hostId.
+    const claims = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .filter((a) => a.status === "running");
+    expect(claims.every((a) => a.hostId === "host-1")).toBe(true);
+    const claimTargets = claims.map((a) => a.targetId).sort();
+    expect(claimTargets).toEqual([
+      "environment:envA",
+      "environment:envA",
+      "environment:envB",
+      "environment:envB",
+    ]);
+    // Terminals echo targetId too.
+    const terminals = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .filter((a) => a.status !== "running");
+    expect(terminals.every((a) => typeof a.targetId === "string")).toBe(true);
+  });
+
+  it("delivers pinned skill BODIES to the session runtime (authoritative array), and an empty pin set as []", async () => {
+    fetchPinnedSkillMock.mockResolvedValue(pinnedArtifact("hash-1"));
+
+    await startJourneyRun(
+      baseOpts({ hosts: [ENV_TARGET_A, ENV_TARGET_B], sessionsPerHost: 1 })
+    );
+
+    const adapters = runSyntheticHostSessionMock.mock.calls.map(
+      (c) => c[0] as any
+    );
+    const a = adapters.find((x) => x.chatSessionId === "synth_run-1_env_envA_0");
+    expect(a.runtime.pinnedSkills).toHaveLength(1);
+    expect(a.runtime.pinnedSkills[0]).toMatchObject({
+      name: "sk-one",
+      contentHash: "hash-1",
+      content: "# body",
+    });
+    // Persist attribution carries the targetId (chat-ingestion echo).
+    expect(a.persist.targetId).toBe("environment:envA");
+
+    const b = adapters.find((x) => x.chatSessionId === "synth_run-1_env_envB_0");
+    // Skill-less env target: authoritative EMPTY array — NEVER undefined
+    // (undefined would fall back to the live pool).
+    expect(b.runtime.pinnedSkills).toEqual([]);
+  });
+
+  it("caches pinned bodies by (projectId, contentHash): one fetch even across two targets pinning the same hash", async () => {
+    fetchPinnedSkillMock.mockResolvedValue(pinnedArtifact("hash-1"));
+    const envTargetC = {
+      ...ENV_TARGET_A,
+      targetId: "environment:envC",
+      environmentRef: { environmentId: "envC", name: "Env C", revision: 1 },
+    };
+
+    await startJourneyRun(
+      baseOpts({ hosts: [ENV_TARGET_A, envTargetC], sessionsPerHost: 1 })
+    );
+
+    expect(fetchPinnedSkillMock).toHaveBeenCalledTimes(1);
+    // Both targets still ran with the shared cached artifact.
+    expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("a persistent pinned-skill fetch failure finalizes THAT target's attempts failed — never a silent skill-less run — and does not stop the sibling target", async () => {
+    fetchPinnedSkillMock.mockRejectedValue(
+      new SwarmAgentError(404, "", "not found")
+    );
+
+    await startJourneyRun(
+      baseOpts({ hosts: [ENV_TARGET_A, ENV_TARGET_B], sessionsPerHost: 2 })
+    );
+
+    // Env A (the pinned target) never executed a session.
+    const executed = runSyntheticHostSessionMock.mock.calls.map(
+      (c) => (c[0] as any).chatSessionId
+    );
+    expect(executed.some((id) => id.includes("env_envA"))).toBe(false);
+    // Its attempts were finalized failed via the worker-catch sweep.
+    const envAFailed = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .filter(
+        (a) =>
+          a.targetId === "environment:envA" &&
+          a.status === "failed" &&
+          a.errorCode === "host_worker_failed"
+      )
+      .map((a) => a.sessionIdx)
+      .sort();
+    expect(envAFailed).toEqual([0, 1]);
+    // The sibling (skill-less) target ran both its sessions.
+    expect(executed.filter((id) => id.includes("env_envB"))).toHaveLength(2);
+  });
+
+  it("env targets NEVER trigger a live skills query path: legacy targets keep pinnedSkills undefined", async () => {
+    await startJourneyRun(baseOpts({ hosts: [HOST], sessionsPerHost: 1 }));
+    const adapter = runSyntheticHostSessionMock.mock.calls[0]![0] as any;
+    // Legacy: undefined (live-pool semantics downstream), and no pinned fetch.
+    expect(adapter.runtime.pinnedSkills).toBeUndefined();
+    expect(fetchPinnedSkillMock).not.toHaveBeenCalled();
+  });
+
+  it("fails closed on a pre-P0.2 snapshot whose host skillSelection is not represented in the pinned union", async () => {
+    const preP02Target = {
+      ...ENV_TARGET_A,
+      // Host channel wants skills…
+      skillSelection: { mode: "explicit" as const, skillIds: ["skX"] },
+      // …but the pinned entries carry NO channel provenance (pre-P0.2).
+    };
+    await startJourneyRun(
+      baseOpts({ hosts: [preP02Target], sessionsPerHost: 1 })
+    );
+    // No session executed; attempts finalized failed.
+    expect(runSyntheticHostSessionMock).not.toHaveBeenCalled();
+    const failed = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .filter((a) => a.status === "failed");
+    expect(failed).toHaveLength(1);
+    // With channel provenance present (P0.2 union), the same target runs.
+    reportAttemptMock.mockClear();
+    runSyntheticHostSessionMock.mockClear();
+    fetchPinnedSkillMock.mockResolvedValue({
+      name: "sk-one",
+      description: "d",
+      content: "# body",
+      contentHash: "hash-1",
+    });
+    const p02Target = {
+      ...preP02Target,
+      pinnedSkills: [
+        {
+          skillId: "skX",
+          name: "sk-one",
+          description: "d",
+          contentHash: "hash-1",
+          sharing: "project" as const,
+          channels: ["host" as const],
+        },
+      ],
+    };
+    await startJourneyRun(baseOpts({ hosts: [p02Target], sessionsPerHost: 1 }));
+    expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(1);
   });
 });

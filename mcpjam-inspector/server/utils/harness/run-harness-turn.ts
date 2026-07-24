@@ -80,6 +80,10 @@ import {
   claudeCodeSafeSkills,
 } from "./runtime-skills.js";
 import { materializeSkillFiles } from "./materialize-skill-files.js";
+import {
+  materializePinnedSkillFiles,
+  pinnedArtifactsToRuntimeSkills,
+} from "./pinned-harness-skills.js";
 import { materializeSkillFrontmatter } from "./materialize-skill-frontmatter.js";
 import {
   reconcileSkillDirs,
@@ -331,6 +335,7 @@ export async function runHarnessTurn(
     harnessMcpProxy,
     builtInTools,
     executionScope,
+    pinnedHarnessSkills,
   } = options;
   // Canonicalize the model id up front (bare hosted ids like `gpt-5-nano` →
   // `openai/gpt-5-nano`). Everything downstream — supportsModel, the adapter's
@@ -596,8 +601,18 @@ export async function runHarnessTurn(
       // reuses the stored hash (no resume churn, no empty-hash commit). The skills
       // fingerprint is tracked SEPARATELY from `runtimeFingerprint` precisely so
       // "unknown" (failure) is distinguishable from "" (empty project).
-      const skillsFetch =
-        projectId && authHeader
+      // PINNED MODE (Project Environments, env-based swarm targets): the
+      // caller supplied the authoritative pinned artifact set — even EMPTY —
+      // so the live skills query is SKIPPED entirely and `skillsHash` derives
+      // from the pinned artifact fingerprints. Legacy callers (undefined) keep
+      // the live tri-state fetch unchanged.
+      const skillsArePinned = pinnedHarnessSkills !== undefined;
+      const skillsFetch = skillsArePinned
+        ? {
+            ok: true as const,
+            skills: pinnedArtifactsToRuntimeSkills(pinnedHarnessSkills),
+          }
+        : projectId && authHeader
           ? await fetchRuntimeSkills(authHeader, projectId, executionScope)
           : { ok: true as const, skills: [] };
       const runtimeSkills = skillsFetch.ok ? skillsFetch.skills : null;
@@ -877,11 +892,24 @@ export async function runHarnessTurn(
               skillsHash: skillsHash ?? "",
               ...(abortSignal ? { signal: abortSignal } : {}),
             }).catch(() => {});
+            // PINNED MODE: supporting files ride INLINE on the pinned
+            // artifacts (P0.2 host-channel plugin skills) — never the live
+            // file query. Env-channel entries are SKILL.md-only under P0.3,
+            // so this is a no-op for them.
+            if (skillsArePinned) {
+              if (pinnedHarnessSkills!.some((a) => a.files?.length)) {
+                await materializePinnedSkillFiles({
+                  session,
+                  artifacts: pinnedHarnessSkills!,
+                  ...(abortSignal ? { signal: abortSignal } : {}),
+                }).catch(() => {});
+              }
+            }
             // Materialize supporting files AFTER reconcile (the adapter wrote each
             // SKILL.md; reconcile removed stale managed dirs). Fetched here rather
             // than at turn start to keep the zero-file fast path free. Fully
             // fail-soft; guest/swarm scope uses the execution-scoped file query.
-            if (projectId && authHeader && runtimeSkills.length > 0) {
+            else if (projectId && authHeader && runtimeSkills.length > 0) {
               // Tri-state: `{ ok: false }` ⇒ the fetch FAILED (transient). Skip
               // materialization then — an empty file set would otherwise prune
               // every delivered skill's on-box files. `{ ok: true, files: [] }`

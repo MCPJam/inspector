@@ -20,6 +20,8 @@ export type SwarmLiveSessionState = {
   envelope: {
     runId: string;
     hostId: string;
+    /** Opaque execution-target id (absent on legacy/historical streams). */
+    targetId?: string;
     chatSessionId: string;
     sessionIndex: number;
   };
@@ -30,15 +32,24 @@ export type SwarmLiveSessionState = {
 
 export type JourneyRunStreamState = {
   sessions: Record<string, SwarmLiveSessionState>;
-  /** Coarse matrix key: `${hostId}:${sessionIndex}` → status */
+  /** Coarse matrix key: `${targetKey}:${sessionIndex}` → status, where
+   * targetKey is the canonical `targetId ?? hostId` (D2). */
   cellStatus: Record<string, SwarmCellLiveStatus>;
   runComplete: boolean;
   connected: boolean;
   error: string | null;
 };
 
-export function swarmCellKey(hostId: string, sessionIndex: number): string {
-  return `${hostId}:${sessionIndex}`;
+/** Canonical per-event target key (D2): `targetId ?? hostId`. */
+export function swarmEventTargetKey(event: {
+  targetId?: string;
+  hostId: string;
+}): string {
+  return event.targetId ?? event.hostId;
+}
+
+export function swarmCellKey(targetKey: string, sessionIndex: number): string {
+  return `${targetKey}:${sessionIndex}`;
 }
 
 function emptyRunStreamState(): JourneyRunStreamState {
@@ -61,6 +72,7 @@ function ensureSession(
     envelope: {
       runId: event.runId,
       hostId: event.hostId,
+      ...(event.targetId ? { targetId: event.targetId } : {}),
       chatSessionId: event.chatSessionId,
       sessionIndex: event.sessionIndex,
     },
@@ -84,7 +96,7 @@ export function reduceSwarmStreamEvent(
   }
 
   const session = ensureSession(state, event);
-  const cellKey = swarmCellKey(event.hostId, event.sessionIndex);
+  const cellKey = swarmCellKey(swarmEventTargetKey(event), event.sessionIndex);
   let nextSession = session;
   let nextCellStatus = state.cellStatus[cellKey] ?? "pending";
 

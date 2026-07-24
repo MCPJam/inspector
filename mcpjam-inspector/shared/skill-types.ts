@@ -60,6 +60,42 @@ export interface PinnableSkill {
 }
 
 /**
+ * One supporting file inside a pinned skill's runtime artifact (P0.2). Exactly
+ * one of `content` (text) / `base64` (binary) is set. `path` is RELATIVE to the
+ * skill's own directory and must be re-validated before any write.
+ */
+export interface PinnedSkillArtifactFile {
+  path: string;
+  content?: string;
+  base64?: string;
+  mimeType?: string;
+}
+
+/**
+ * The COMPLETE pinned runtime artifact for one snapshot-pinned skill, as served
+ * by `GET /journey-execution/runs/skill`. The shipped backend serves the
+ * SKILL.md-only subset (`name`/`description`/`contentHash`/`content`); the
+ * P0.2 union additionally carries channel provenance and — for host-channel
+ * plugin skills — supporting `files` and preserved extra `frontmatter`. Every
+ * extension field is optional so the SKILL.md-only response stays valid.
+ */
+export interface PinnedSkillArtifact {
+  name: string;
+  description: string;
+  content: string;
+  /** Opaque artifact fingerprint — covers the complete pinned envelope. */
+  contentHash: string;
+  skillId?: string;
+  sharing?: "user" | "project";
+  /** P0.2 channel provenance (stable order: host, then environment). */
+  channels?: Array<"host" | "environment">;
+  /** Preserved extra frontmatter beyond name/description (plugin skills). */
+  frontmatter?: Record<string, unknown>;
+  /** Supporting files (host-channel plugin skills only under P0.3). */
+  files?: PinnedSkillArtifactFile[];
+}
+
+/**
  * Full skill with content (used when loading a skill)
  */
 export interface Skill {
