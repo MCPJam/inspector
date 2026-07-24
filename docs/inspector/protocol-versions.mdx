@@ -25,11 +25,20 @@ Use the host default when you want every server in a Client to speak the same ve
 
 ## Available versions
 
-| Option                               | Protocol version | Transport                                       | Use it when                                                                                                                                 |
-| ------------------------------------ | ---------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Latest**                           | `2025-11-25`     | HTTP, STDIO, SSE                                | The current stable MCP. Default for everything not opted in to the RC.                                                                      |
-| **2026 RC**                          | `2026-07-28`     | HTTP in MCPJam's preview (Streamable HTTP POST) | You want to test your server against the stateless RC — no `initialize` handshake, `server/discover` for capabilities, per-request `_meta`. |
-| **Host default** _(per-server only)_ | —                | —                                               | Inherit whatever the Client's MCP Protocol tab is set to.                                                                                   |
+### Host default (client-level) dropdown
+
+| Option                    | Stored pin         | Transport                                       | Use it when                                                                                                                                 |
+| ------------------------- | ------------------ | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Automatic**             | none               | —                                               | The SDK picks the wire version at connect time. This is the default; no pin is stored.                                                      |
+| **2026 RC (2026-07-28)**  | `2026-07-28`       | HTTP in MCPJam's preview (Streamable HTTP POST) | You want to test your server against the stateless RC — no `initialize` handshake, `server/discover` for capabilities, per-request `_meta`. |
+| **Latest (2025-11-25)**   | `2025-11-25`       | HTTP, STDIO, SSE                                | Pin to the current stable release. The initialize handshake offers only this version.                                                       |
+| **2025-06-18**            | `2025-06-18`       | HTTP, STDIO, SSE                                | Test against the June 2025 stable revision.                                                                                                 |
+| **2025-03-26**            | `2025-03-26`       | HTTP, STDIO, SSE                                | Test against the March 2025 stable revision.                                                                                                |
+| **Host default** _(per-server only)_ | —     | —                                               | Inherit whatever the Client's MCP Protocol tab is set to.                                                                                   |
+
+**Automatic** stores no pin — the absence of a pin is the meaning, not a hidden default. Picking any other option stores that exact version literal and narrows the `initialize` handshake's accept-list to that single revision.
+
+**Latest (2025-11-25)** is derived, not hardcoded: it always labels the newest non-RC stable version in the SDK's known-version list. When a newer stable version is added, the "Latest" marker moves forward automatically.
 
 The 2026 RC applies the stateless model across transports. MCPJam's initial preview client is narrower: it currently supports the RC over Streamable HTTP POST. The per-server dropdown hides the RC option for STDIO and legacy SSE servers; if a host-level RC default reaches a non-HTTP server, the inspector fails the connection with a clear transport error instead of silently attempting the wrong protocol.
 
