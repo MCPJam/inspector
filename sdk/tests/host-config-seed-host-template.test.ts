@@ -252,7 +252,7 @@ describe("seedHostTemplate", () => {
     });
   });
 
-  it("keeps VS Code 1.130 handshake facts and emulator defaults", () => {
+  it("keeps VS Code 1.130 handshake facts and deliberate emulator defaults", () => {
     const config = seedHostTemplate("vscode", { theme: "dark" });
     const profile = config.mcpProfile;
     const hostContext = config.hostContext as {

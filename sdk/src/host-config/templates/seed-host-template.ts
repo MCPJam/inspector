@@ -1767,8 +1767,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           mcpAppsOverrides: {
             availableDisplayModes: ["inline"],
             // The handshake probe did not exercise lifecycle, display-request,
-            // or resource-metadata behavior, so retain the existing emulator
-            // defaults for those dimensions.
+            // or resource-metadata behavior. These values deliberately retain
+            // the existing emulator defaults rather than claiming host evidence.
             toolInputPartial: true,
             toolCancelled: true,
             hostContextChanged: true,

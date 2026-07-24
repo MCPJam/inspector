@@ -145,8 +145,8 @@ export const MCP_APPS_SLACK: McpAppsCapabilities = frozen({
 
 /** VS Code 1.130.0 — captured from a live VS Code MCP Apps host probe on
  * 2026-07-23. Advertises inline-only display, typed updateModelContext,
- * downloadFile, and host-context changes. Unexercised behavior retains the
- * existing emulator defaults. */
+ * downloadFile, and host-context changes. Unexercised behavior deliberately
+ * retains the existing emulator defaults. */
 export const MCP_APPS_VSCODE: McpAppsCapabilities = frozen({
   availableDisplayModes: ["inline"],
   toolInputPartial: true,
