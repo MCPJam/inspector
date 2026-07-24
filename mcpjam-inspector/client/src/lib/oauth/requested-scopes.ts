@@ -102,16 +102,29 @@ export function persistRequestedScopes(
 
 /**
  * The scope set a step-up re-authorization should request: the union of the
- * scopes previously requested for this issuer and the scopes challenged by the
- * `403 insufficient_scope` response.
+ * scopes ORIGINALLY requested by the server's OAuth flow, the scopes persisted
+ * for this issuer from a prior step-up, and the scopes challenged by the `403
+ * insufficient_scope` response.
+ *
+ * `originalScopes` matters on the FIRST runtime step-up: nothing has been
+ * persisted yet (the persisted set only exists after a prior step-up
+ * re-authorization), so without the originally-requested scopes the union would
+ * collapse to just the challenged scopes and the re-authorization would DROP the
+ * scopes the original grant already held — the server would come back
+ * still-insufficient on the pre-existing scopes.
  */
 export function stepUpScopeUnion(
   serverName: string,
   issuer: string | undefined,
   challengedScopes: string[] | undefined,
+  originalScopes?: string[],
 ): string[] {
-  return computeScopeUnion(
+  // Order: original-requested first, then any issuer-persisted prior union,
+  // then the newly-challenged scopes. computeScopeUnion de-dupes and preserves
+  // first-seen order.
+  const previouslyRequested = computeScopeUnion(
+    originalScopes,
     readRequestedScopes(serverName, issuer),
-    challengedScopes,
   );
+  return computeScopeUnion(previouslyRequested, challengedScopes);
 }
