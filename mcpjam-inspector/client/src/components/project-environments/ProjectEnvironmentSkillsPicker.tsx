@@ -115,7 +115,11 @@ export function ProjectEnvironmentSkillsPicker({
           const ineligible =
             skill.pinnability !== undefined && skill.pinnability.ok === false;
           const capBlocked = !checked && atCap;
-          const rowDisabled = disabled || ineligible || capBlocked;
+          // Ineligibility (and the cap) block NEW selections only — a skill that
+          // was pinned and later became ineligible must stay uncheckable so the
+          // user can repair the selection.
+          const rowDisabled =
+            disabled || capBlocked || (ineligible && !checked);
           const row = (
             <Label
               key={skillId}

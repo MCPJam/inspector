@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, TriangleAlert, X } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
@@ -123,6 +123,33 @@ export function ProjectEnvironmentEditor({
     setBaseRevision(environment.revision);
     setConflicted(false);
   }, [environment]);
+
+  // Project switched while the form is open: drop any draft that referenced the
+  // previous project's host/server-group/skills so it can't be submitted to the
+  // newly selected project. (Skips the initial mount — state already seeded.)
+  const didMountRef = useRef(false);
+  useEffect(() => {
+    if (!didMountRef.current) {
+      didMountRef.current = true;
+      return;
+    }
+    setDraft(
+      environment
+        ? draftFromEnvironment(environment)
+        : {
+            name: "",
+            description: "",
+            hostId: null,
+            serverAttachmentId: null,
+            skillSelection: null,
+          }
+    );
+    setBaseRevision(environment?.revision ?? null);
+    setConflicted(false);
+    // Reset is keyed on the project boundary only; `environment` changes are
+    // handled by the list⇄detail remount and the explicit reload path.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
 
   const save = async () => {
     if (!trimmedName) {

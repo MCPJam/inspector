@@ -27,14 +27,23 @@ export function compatHostIdsForEnvironments(
 
 /**
  * Payload for an env-mode create/edit: `environmentIds` + recomputed compat
- * `hostIds`. Returns null when no valid compat host can be resolved (the
- * caller must block the write — the backend requires ≥1 hostId).
+ * `hostIds`. Returns null when the selection is unusable and the caller must
+ * block the write: no selection, an id that does NOT resolve in the live list
+ * (archived/deleted — persisting it would leave a target that can never
+ * launch), or no compat host (the backend requires ≥1 hostId).
  */
 export function buildEnvJourneyPayload(
   environmentIds: string[],
   environments: EnvironmentView[],
 ): { environmentIds: string[]; hostIds: string[] } | null {
   if (environmentIds.length === 0) return null;
+  // Reject unresolved ids rather than silently persisting them: every selected
+  // environment must exist in the live list. A stale archived/deleted id must
+  // be removed from the selection before the journey can be saved.
+  const allResolve = environmentIds.every((id) =>
+    environments.some((e) => e.environmentId === id),
+  );
+  if (!allResolve) return null;
   const hostIds = compatHostIdsForEnvironments(environmentIds, environments);
   if (hostIds.length === 0) return null;
   return { environmentIds, hostIds };

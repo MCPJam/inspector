@@ -49,6 +49,7 @@ import {
 } from "./run-insight-rail";
 import { runDetailMetaLabelClass } from "./run-detail-typography";
 import { useEnvironments } from "@/hooks/useComputerEnvironments";
+import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -436,9 +437,12 @@ export function RunDetailView({
     : null;
   // Project-environment provenance frozen at run start (name + revision) —
   // renders the "Environment" chip. Distinct from the sandbox-image pin
-  // above, whose chip reads "Sandbox image".
-  const runProjectEnvironmentRef =
-    selectedRunDetails.configSnapshot?.environmentRef ?? null;
+  // above, whose chip reads "Sandbox image". Flag-gated so the rollback
+  // kill-switch hides env names/revisions on retained historical runs too.
+  const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
+  const runProjectEnvironmentRef = projectEnvironmentsEnabled
+    ? (selectedRunDetails.configSnapshot?.environmentRef ?? null)
+    : null;
   const {
     result: goalCompletionResult,
     pending: goalCompletionPending,

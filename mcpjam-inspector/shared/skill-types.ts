@@ -60,16 +60,18 @@ export interface PinnableSkill {
 }
 
 /**
- * One supporting file inside a pinned skill's runtime artifact (P0.2). Exactly
- * one of `content` (text) / `base64` (binary) is set. `path` is RELATIVE to the
- * skill's own directory and must be re-validated before any write.
+ * One supporting file inside a pinned skill's runtime artifact (P0.2). EXACTLY
+ * one of `content` (text) / `base64` (binary) is set — encoded as a union so an
+ * impossible both-or-neither file can't be constructed. `path` is RELATIVE to
+ * the skill's own directory and must be re-validated before any write.
  */
-export interface PinnedSkillArtifactFile {
+export type PinnedSkillArtifactFile = {
   path: string;
-  content?: string;
-  base64?: string;
   mimeType?: string;
-}
+} & (
+  | { content: string; base64?: never }
+  | { base64: string; content?: never }
+);
 
 /**
  * The COMPLETE pinned runtime artifact for one snapshot-pinned skill, as served

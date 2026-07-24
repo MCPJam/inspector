@@ -47,6 +47,12 @@ describe("buildEnvJourneyPayload", () => {
     expect(buildEnvJourneyPayload([], ENVS)).toBeNull();
     expect(buildEnvJourneyPayload(["missing"], ENVS)).toBeNull();
   });
+
+  it("rejects the write when any selected id is unresolved (archived/deleted), not just persist the valid ones", () => {
+    // "e1" resolves but "missing" does not — the whole write is blocked so a
+    // stale archived id can't be persisted alongside valid ones.
+    expect(buildEnvJourneyPayload(["e1", "missing"], ENVS)).toBeNull();
+  });
 });
 
 describe("buildClearToLegacyPayload", () => {

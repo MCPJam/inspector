@@ -34,7 +34,12 @@ export function SuiteProjectEnvironmentsPicker({
   /** The suite's persisted attach-ordered environment ids. */
   environmentIds: string[] | undefined;
 }) {
-  const environments = useProjectEnvironments(projectId);
+  // Include archived so a suite whose attached environment was later archived
+  // can still surface (and DETACH) that row — a live-only list would drop it,
+  // leaving the id stuck with only a "…" label and no way to remove it.
+  const environments = useProjectEnvironments(projectId, {
+    includeArchived: true,
+  });
   const setSuiteEnvironments = useMutation(
     "testSuites:setSuiteEnvironments" as any
   ) as unknown as (args: {
@@ -49,6 +54,21 @@ export function SuiteProjectEnvironmentsPicker({
   const environmentsById = useMemo(
     () => new Map((environments ?? []).map((e) => [e.environmentId, e])),
     [environments]
+  );
+  // Live envs are attachable; archived envs that are STILL attached to this
+  // suite render as detach-only rows (never offered for new selection).
+  const liveEnvironments = useMemo(
+    () => (environments ?? []).filter((e) => !e.archivedAt),
+    [environments]
+  );
+  const archivedSelected = useMemo(
+    () =>
+      selected
+        .map((id) => environmentsById.get(id))
+        .filter(
+          (e): e is NonNullable<typeof e> => !!e && e.archivedAt !== undefined
+        ),
+    [selected, environmentsById]
   );
 
   const commit = async (next: string[]) => {
@@ -118,13 +138,13 @@ export function SuiteProjectEnvironmentsPicker({
           <div className="flex items-center gap-2 px-2 py-2 text-xs text-muted-foreground">
             <Loader2 className="size-3.5 animate-spin" /> Loading…
           </div>
-        ) : environments.length === 0 ? (
+        ) : liveEnvironments.length === 0 && archivedSelected.length === 0 ? (
           <p className="px-2 py-1.5 text-xs text-muted-foreground">
             No environments in this project yet.
           </p>
         ) : (
           <div className="max-h-64 space-y-0.5 overflow-y-auto">
-            {environments.map((env) => {
+            {liveEnvironments.map((env) => {
               const ordinal = selected.indexOf(env.environmentId);
               const checked = ordinal !== -1;
               const capBlocked =
@@ -154,6 +174,36 @@ export function SuiteProjectEnvironmentsPicker({
                       {ordinal + 1}
                     </span>
                   ) : null}
+                </Label>
+              );
+            })}
+            {archivedSelected.map((env) => {
+              const ordinal = selected.indexOf(env.environmentId);
+              return (
+                <Label
+                  key={env.environmentId}
+                  className={cn(
+                    "flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent/30",
+                    saving &&
+                      "cursor-not-allowed opacity-60 hover:bg-transparent"
+                  )}
+                >
+                  {/* Archived: uncheck to detach only — never re-attachable. */}
+                  <Checkbox
+                    checked
+                    onCheckedChange={() => toggle(env.environmentId, false)}
+                    disabled={saving}
+                    aria-label={`${env.name} (archived)`}
+                  />
+                  <span className="min-w-0 flex-1 truncate font-normal">
+                    {env.name}
+                    <span className="ml-1 text-[10px] text-muted-foreground">
+                      (archived)
+                    </span>
+                  </span>
+                  <span className="shrink-0 rounded-full bg-muted px-1.5 font-mono text-[10px] text-muted-foreground">
+                    {ordinal + 1}
+                  </span>
                 </Label>
               );
             })}

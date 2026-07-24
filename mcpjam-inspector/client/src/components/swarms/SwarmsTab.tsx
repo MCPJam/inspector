@@ -79,6 +79,7 @@ import {
 } from "@/components/swarms/swarm-targets";
 import { buildEnvJourneyPayload } from "@/components/swarms/journey-environments";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { shouldQueryProjectId } from "@/hooks/useProjects";
 // The badge + wide-shape guard live in the shared session-quality module so
 // surfaces rendered inside this subtree can use them without an import cycle.
 // Re-exported here because the goal-score unit test imports from `../SwarmsTab`.
@@ -206,7 +207,12 @@ function useProjectHosts(projectId: string | null) {
 function useProjectEnvironmentsList(projectId: string | null, enabled: boolean) {
   return useQuery(
     SWARM_QUERIES.listEnvironments as any,
-    enabled && projectId ? ({ projectId } as any) : "skip",
+    // `shouldQueryProjectId` (not a bare truthiness check): a local/placeholder
+    // or UUID project id during a project transition would 500 the Convex arg
+    // validator, so skip until the id is a real queryable project.
+    enabled && shouldQueryProjectId(projectId)
+      ? ({ projectId } as any)
+      : "skip",
   ) as EnvironmentView[] | undefined;
 }
 function usePersonaTrackRecord(personaRefId: string | null) {

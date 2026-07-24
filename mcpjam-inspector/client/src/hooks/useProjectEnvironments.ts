@@ -52,13 +52,17 @@ export function useProjectEnvironments(
 ): ProjectEnvironmentView[] | undefined {
   const { isAuthenticated } = useConvexAuth();
   const isUserReady = useDbUserReady();
+  // Send the SAME normalized id `shouldQueryProjectId` validated — a
+  // whitespace-padded id passes the guard but would target a different/invalid
+  // project if forwarded raw.
+  const normalizedProjectId = projectId?.trim() || null;
   const enableQuery =
-    isAuthenticated && isUserReady && shouldQueryProjectId(projectId);
+    isAuthenticated && isUserReady && shouldQueryProjectId(normalizedProjectId);
   return useQuery(
     "projectEnvironments:listEnvironments" as any,
     enableQuery
       ? ({
-          projectId,
+          projectId: normalizedProjectId,
           ...(options?.includeArchived ? { includeArchived: true } : {}),
         } as any)
       : "skip"

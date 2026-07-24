@@ -126,6 +126,7 @@ export function journeyTargetColumns(
   hosts: JourneyListHost[],
   latestRun?: JourneyRun | null,
   environments?: EnvironmentView[],
+  environmentsEnabled = true,
 ): SwarmTargetColumn[] {
   const nameOf = (id: string) =>
     hosts.find((h) => h.hostId === id)?.name ?? id.slice(0, 8);
@@ -136,10 +137,12 @@ export function journeyTargetColumns(
       hostName: nameOf,
     });
   }
+  // Flag-off rollback: an unrun env-based journey renders as legacy (its
+  // hostIds) rather than exposing environment ids/labels.
   return buildUnrunJourneyTargets({
     hostIds: journey.hostIds,
-    environmentIds: journey.environmentIds,
-    environments,
+    environmentIds: environmentsEnabled ? journey.environmentIds : undefined,
+    environments: environmentsEnabled ? environments : undefined,
     hostName: nameOf,
   });
 }
@@ -285,10 +288,18 @@ function JourneyBlock({
   const typedRuns = runs as JourneyRun[];
   const latestRun = typedRuns[0] ?? null;
   const runCount = rollup?.runCount ?? typedRuns.length;
-  const isEnvBased = (journey.environmentIds?.length ?? 0) > 0;
+  const isEnvBased =
+    environmentsEnabled && (journey.environmentIds?.length ?? 0) > 0;
   const targetCols = useMemo(
-    () => journeyTargetColumns(journey, hosts, latestRun, environments),
-    [journey, hosts, latestRun, environments],
+    () =>
+      journeyTargetColumns(
+        journey,
+        hosts,
+        latestRun,
+        environments,
+        environmentsEnabled,
+      ),
+    [journey, hosts, latestRun, environments, environmentsEnabled],
   );
   const serverGroupName = journey.serverAttachmentId
     ? (serverAttachments.find((a) => a._id === journey.serverAttachmentId)
@@ -619,6 +630,18 @@ function JourneyEnvironmentsEditor({
     if (open) setDraft(current);
   }, [open, current]);
 
+  // New selections are limited to LIVE environments; a draft id that no longer
+  // resolves in the list (archived/retired) renders as a detach-only row so the
+  // user can remove it (a saved journey can't target a retired environment).
+  const liveEnvironments = useMemo(
+    () => environments.filter((e) => !e.archivedAt),
+    [environments],
+  );
+  const orphanDraftIds = useMemo(
+    () => draft.filter((id) => !environments.some((e) => e.environmentId === id)),
+    [draft, environments],
+  );
+
   const toggle = (environmentId: string) =>
     setDraft((prev) =>
       prev.includes(environmentId)
@@ -724,12 +747,13 @@ function JourneyEnvironmentsEditor({
           <p className="px-1 pb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
             Environments
           </p>
-          {environments.length === 0 ? (
+          {liveEnvironments.length === 0 && orphanDraftIds.length === 0 ? (
             <p className="px-1 py-1.5 text-xs text-muted-foreground">
               No environments in this project.
             </p>
           ) : (
-            environments.map((env) => {
+            <>
+            {liveEnvironments.map((env) => {
               const selected = draft.includes(env.environmentId);
               const ordinal = draft.indexOf(env.environmentId);
               const disabled =
@@ -766,7 +790,33 @@ function JourneyEnvironmentsEditor({
                   ) : null}
                 </button>
               );
-            })
+            })}
+            {orphanDraftIds.map((id) => (
+              <button
+                key={id}
+                type="button"
+                role="checkbox"
+                aria-checked
+                onPointerDown={(e) => e.preventDefault()}
+                onClick={() => toggle(id)}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded bg-accent/50 py-1.5 pl-2 pr-2 text-left text-sm",
+                  "hover:bg-accent hover:text-accent-foreground",
+                )}
+              >
+                <Check className="size-3.5 shrink-0 opacity-100" />
+                <span className="min-w-0 flex-1 truncate">
+                  <span className="font-medium">Retired environment</span>
+                  <span className="ml-1 text-[10px] text-muted-foreground">
+                    (unavailable — remove)
+                  </span>
+                </span>
+                <span className="shrink-0 rounded-full bg-muted px-1.5 text-[10px] tabular-nums text-muted-foreground">
+                  {draft.indexOf(id) + 1}
+                </span>
+              </button>
+            ))}
+            </>
           )}
         </div>
         <div className="mt-2 flex items-center justify-between gap-2 border-t border-border/40 pt-2">

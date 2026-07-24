@@ -19,6 +19,11 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
     projectId ? mockUseProjectEnvironments() : undefined,
 }));
 
+// The environment pin is flag-gated; these cases exercise the enabled path.
+vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
+  useProjectEnvironmentsEnabled: () => true,
+}));
+
 vi.mock("@/lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));

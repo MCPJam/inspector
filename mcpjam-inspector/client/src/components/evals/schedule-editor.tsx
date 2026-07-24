@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from "@mcpjam/design-system/select";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
+import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 
 const INTERVAL_OPTIONS: Array<{ minutes: number; label: string }> = [
   { minutes: 5, label: "Every 5 minutes" },
@@ -95,7 +96,12 @@ export function ScheduleEditor({
     () => environmentIds ?? [],
     [environmentIds],
   );
-  const requiresEnvironmentPin = attachedEnvironmentIds.length >= 2;
+  // Flag-gated: with the kill-switch off, the environment pin control, its
+  // query, and its write are all suppressed even for a suite that already has
+  // ≥2 attached environments.
+  const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
+  const requiresEnvironmentPin =
+    projectEnvironmentsEnabled && attachedEnvironmentIds.length >= 2;
   const persistedEnvironmentId = schedule?.environmentId;
   const [draftEnvironmentId, setDraftEnvironmentId] = useState<
     string | undefined
@@ -116,8 +122,15 @@ export function ScheduleEditor({
   const environmentLabel = (id: string) =>
     environments?.find((e) => e.environmentId === id)?.name ?? id;
 
-  const apply = async (args: { enabled: boolean; intervalMinutes?: number }) => {
-    if (args.enabled && requiresEnvironmentPin && !draftEnvironmentId) {
+  const apply = async (args: {
+    enabled: boolean;
+    intervalMinutes?: number;
+    /** New pin to persist this write (env-change path); defaults to the draft
+     * pin. Passed explicitly because a just-set draft isn't visible yet. */
+    environmentId?: string;
+  }) => {
+    const effectiveEnvironmentId = args.environmentId ?? draftEnvironmentId;
+    if (args.enabled && requiresEnvironmentPin && !effectiveEnvironmentId) {
       toast.error(
         "Pick which environment scheduled runs should use before enabling.",
       );
@@ -127,11 +140,14 @@ export function ScheduleEditor({
     try {
       await setSuiteSchedule({
         suiteId,
-        ...args,
+        enabled: args.enabled,
+        ...(args.intervalMinutes !== undefined
+          ? { intervalMinutes: args.intervalMinutes }
+          : {}),
         // Every enabled write carries the pin so a backend-side default can
         // never drift from what this editor shows.
-        ...(args.enabled && requiresEnvironmentPin && draftEnvironmentId
-          ? { environmentId: draftEnvironmentId }
+        ...(args.enabled && requiresEnvironmentPin && effectiveEnvironmentId
+          ? { environmentId: effectiveEnvironmentId }
           : {}),
       });
       toast.success(
@@ -211,21 +227,15 @@ export function ScheduleEditor({
             onValueChange={(next) => {
               if (!next) return;
               setDraftEnvironmentId(next);
+              // Route through apply() so this write serializes on `isSaving`
+              // with the switch/interval writes — a quick disable or interval
+              // change can no longer race and persist an unintended state.
               if (enabled) {
-                void setSuiteSchedule({
-                  suiteId,
+                void apply({
                   enabled: true,
                   intervalMinutes: draftIntervalMinutes,
                   environmentId: next,
-                })
-                  .then(() => toast.success("Schedule updated"))
-                  .catch((error) =>
-                    toast.error(
-                      error instanceof Error
-                        ? error.message
-                        : "Failed to update schedule",
-                    ),
-                  );
+                });
               }
             }}
           >
