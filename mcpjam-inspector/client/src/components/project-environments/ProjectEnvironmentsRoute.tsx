@@ -51,6 +51,24 @@ export function ProjectEnvironmentsRoute({
     null
   );
 
+  // The route is NOT keyed on projectId (router.tsx renders a bare
+  // <EnvironmentsRoute />), so switching the active project re-runs this
+  // component with a new `projectId` but every piece of selection state
+  // intact. Reset all three:
+  //   - `creating` is the harmful one — the editor would stay open holding the
+  //     PREVIOUS project's host / server group / skill picks while bound to the
+  //     new projectId. (The backend re-validates project scope, so a save
+  //     fails rather than corrupting — but the form is broken and confusing.)
+  //   - `selectedId` mostly self-heals once the new list arrives and no id
+  //     matches, but clearing it avoids a flash of the wrong detail.
+  //   - `justCreated` holds a raw env object from the OLD project that
+  //     `selected` would otherwise return for up to 3s.
+  useEffect(() => {
+    setSelectedId(null);
+    setCreating(false);
+    setJustCreated(null);
+  }, [projectId]);
+
   useEffect(() => {
     if (!justCreated) return;
     if (

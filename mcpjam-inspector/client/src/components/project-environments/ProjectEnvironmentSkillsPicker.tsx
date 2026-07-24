@@ -64,6 +64,20 @@ export function ProjectEnvironmentSkillsPicker({
 
   const selectedIds = useMemo(() => new Set(value?.skillIds ?? []), [value]);
   const atCap = selectedIds.size >= MAX_ENVIRONMENT_SKILLS;
+  // Pinned ids the shared-skills list doesn't return: the skill was unshared,
+  // deleted, or moved out of the project. Without a row they are invisible AND
+  // unremovable, yet they still count toward the footer and still ship on
+  // save. Surface them as detach-only rows. Gated on `skills` having loaded so
+  // the loading state doesn't flash every pin as an orphan.
+  const orphanSelectedIds = useMemo(
+    () =>
+      skills === null
+        ? []
+        : Array.from(selectedIds).filter(
+            (id) => !skills.some((s) => s.skillId === id)
+          ),
+    [skills, selectedIds]
+  );
 
   const toggle = (skillId: string, checked: boolean) => {
     const next = new Set(selectedIds);
@@ -93,7 +107,10 @@ export function ProjectEnvironmentSkillsPicker({
       </div>
     );
   }
-  if (skills.length === 0) {
+  // Only the truly-empty case short-circuits. With orphaned pins we MUST fall
+  // through to the list so they get detach-only rows — otherwise the pins are
+  // invisible, unremovable, and still sent on save.
+  if (skills.length === 0 && orphanSelectedIds.length === 0) {
     return (
       <p className="py-1 text-xs italic text-muted-foreground">
         No shared skills in this project yet. Share a skill with the project to
@@ -163,6 +180,37 @@ export function ProjectEnvironmentSkillsPicker({
             </Tooltip>
           );
         })}
+        {orphanSelectedIds.map((skillId) => (
+          <Label
+            key={skillId}
+            className={cn(
+              "flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent/30",
+              disabled && "cursor-not-allowed opacity-60 hover:bg-transparent"
+            )}
+          >
+            {/* Unresolvable pin: uncheck to remove only — never re-selectable.
+                There is no name to show; the row exists so the id is
+                removable rather than a silent passenger on every save. */}
+            <Checkbox
+              checked
+              onCheckedChange={() => toggle(skillId, false)}
+              disabled={disabled}
+              aria-label={`Unavailable skill ${skillId} (remove)`}
+            />
+            <SquareSlash className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="flex min-w-0 flex-col">
+              <span className="truncate font-normal text-muted-foreground">
+                Unavailable skill
+                <span className="ml-1 font-mono text-[10px]">
+                  {skillId.slice(0, 8)}
+                </span>
+              </span>
+              <span className="truncate text-[11px] text-muted-foreground">
+                No longer shared with this project — remove it to save.
+              </span>
+            </span>
+          </Label>
+        ))}
       </div>
       <p className="text-[11px] text-muted-foreground">
         {selectedIds.size}/{MAX_ENVIRONMENT_SKILLS} skills selected

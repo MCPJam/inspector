@@ -70,6 +70,20 @@ export function SuiteProjectEnvironmentsPicker({
         ),
     [selected, environmentsById]
   );
+  // An attached id the query doesn't return AT ALL (hard-deleted, or no longer
+  // in this project). `archivedSelected` cannot surface these — it resolves
+  // through `environmentsById`, so a missing id filters away silently and the
+  // suite stays stuck referencing something with no row and no way to detach
+  // it. Render them as detach-only rows, same as archived. Gated on the query
+  // having settled so a loading list doesn't flash every attached id as an
+  // orphan.
+  const orphanSelectedIds = useMemo(
+    () =>
+      environments === undefined
+        ? []
+        : selected.filter((id) => !environmentsById.has(id)),
+    [environments, selected, environmentsById]
+  );
 
   const commit = async (next: string[]) => {
     setSaving(true);
@@ -138,7 +152,9 @@ export function SuiteProjectEnvironmentsPicker({
           <div className="flex items-center gap-2 px-2 py-2 text-xs text-muted-foreground">
             <Loader2 className="size-3.5 animate-spin" /> Loading…
           </div>
-        ) : liveEnvironments.length === 0 && archivedSelected.length === 0 ? (
+        ) : liveEnvironments.length === 0 &&
+          archivedSelected.length === 0 &&
+          orphanSelectedIds.length === 0 ? (
           <p className="px-2 py-1.5 text-xs text-muted-foreground">
             No environments in this project yet.
           </p>
@@ -199,6 +215,37 @@ export function SuiteProjectEnvironmentsPicker({
                     {env.name}
                     <span className="ml-1 text-[10px] text-muted-foreground">
                       (archived)
+                    </span>
+                  </span>
+                  <span className="shrink-0 rounded-full bg-muted px-1.5 font-mono text-[10px] text-muted-foreground">
+                    {ordinal + 1}
+                  </span>
+                </Label>
+              );
+            })}
+            {orphanSelectedIds.map((environmentId) => {
+              const ordinal = selected.indexOf(environmentId);
+              return (
+                <Label
+                  key={environmentId}
+                  className={cn(
+                    "flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent/30",
+                    saving &&
+                      "cursor-not-allowed opacity-60 hover:bg-transparent"
+                  )}
+                >
+                  {/* Unresolvable: uncheck to detach only. There is no name to
+                      show — the row exists purely so the id is removable. */}
+                  <Checkbox
+                    checked
+                    onCheckedChange={() => toggle(environmentId, false)}
+                    disabled={saving}
+                    aria-label={`Unavailable environment ${environmentId} (detach)`}
+                  />
+                  <span className="min-w-0 flex-1 truncate font-normal text-muted-foreground">
+                    Unavailable environment
+                    <span className="ml-1 font-mono text-[10px]">
+                      {environmentId.slice(0, 8)}
                     </span>
                   </span>
                   <span className="shrink-0 rounded-full bg-muted px-1.5 font-mono text-[10px] text-muted-foreground">
