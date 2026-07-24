@@ -222,7 +222,7 @@ await app.sendMessage({
 });
 ```
 
-This is powerful because it allows your UI to trigger additional LLM interactions. When the user clicks "What's on the menu?", the message is sent back to the LLM, which can then call another MCP tool (like `get-menu`) to respond.
+This lets your UI trigger additional LLM interactions. When the user clicks "What's on the menu?", the message is sent back to the LLM, which can then call another MCP tool (like `get-menu`) to respond.
 
 #### What else can your app do?
 
@@ -391,7 +391,7 @@ registerAppResource(server,
 );
 ```
 
-`registerAppResource` allows us to easily register a resource with UI metadata so the host knows where the assets are to serve it to the host.
+`registerAppResource` registers a resource with UI metadata so the host knows where the assets are.
 
 #### Registering an App Tool (with UI)
 
@@ -483,7 +483,7 @@ The easiest way to test your app is using MCPJam Inspector:
 npx @mcpjam/inspector
 ```
 
-On first launch MCPJam auto-connects a sample Excalidraw server — open the **Servers** tab and add your own. Then head to the **Playground** to render widgets, debug CSP/device behavior, and drive your app with an LLM — test it all in one place!
+On first launch MCPJam auto-connects a sample Excalidraw server. Open the **Servers** tab and add your own, then head to the **Playground** to render widgets, debug CSP/device behavior, and drive your app with an LLM.
 
 ### What's next?
 

@@ -2495,6 +2495,7 @@ export function useServerState({
     async (
       code: string,
       state: string | null,
+      iss: string | null,
       hostedCallbackContext: ReturnType<typeof getHostedOAuthCallbackContext>
     ) => {
       const pendingServerName = localStorage.getItem("mcp-oauth-pending");
@@ -2517,10 +2518,13 @@ export function useServerState({
         const result = isHostedProjectCallback
           ? await completeHostedOAuthCallback(hostedCallbackContext, code, {
               callbackState: state,
+              callbackIss: iss,
               onTraceUpdate: handleLiveOAuthTrace,
             })
           : await handleOAuthCallback(code, {
               onTraceUpdate: handleLiveOAuthTrace,
+              callbackState: state,
+              callbackIss: iss,
             });
 
         localStorage.removeItem("mcp-oauth-return-hash");
@@ -2753,6 +2757,8 @@ export function useServerState({
     const code = urlParams.get("code");
     const state = urlParams.get("state");
     const error = urlParams.get("error");
+    // 2R-iss: RFC 9207 issuer identification from the callback URL.
+    const iss = urlParams.get("iss");
     const errorDescription = urlParams.get("error_description");
     const electronCallbackUrl = buildElectronMcpCallbackUrl();
     // Read in local mode too: the pending marker pins the org/project/server
@@ -2825,6 +2831,7 @@ export function useServerState({
       void handleOAuthCallbackComplete(
         code,
         state,
+        iss,
         isHostedProjectCallback ? hostedOAuthCallbackContext : null
       ).finally(restoreCallbackUrl);
     } else if (error) {

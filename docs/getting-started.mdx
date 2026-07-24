@@ -6,7 +6,7 @@ icon: "rocket"
 
 ## 1. Open MCPJam
 
-**Web**: HTTPS only, runs in the browser with no install. Server links can be shared with teammates. **Terminal** and **Desktop**: HTTP/S and local STDIO.
+**Web**: HTTPS only, runs in the browser with no install. Share server links with teammates. **Terminal** and **Desktop**: HTTP/S and local STDIO.
 
 <CardGroup cols={3}>
   <Card title="Web App" icon="globe" href="https://app.mcpjam.com">
@@ -28,7 +28,7 @@ On first launch, MCPJam connects the Excalidraw sample server (diagramming MCP a
 Draw me an MCP architecture diagram
 ```
 
-Press **Send**. The diagram renders in the app. No API key, ngrok, or ChatGPT/Claude subscription needed. Sequence: tool call → widget → inspect.
+Press **Send**. The diagram renders in the app: tool call, then widget, then inspect. No API key, ngrok, or ChatGPT/Claude subscription needed.
 
 <Check>
 You should see a tool call to `create_view` followed by a rendered diagram inline in the chat. If you don't, check that the Excalidraw server shows **Connected** in the **Connect** tab.
@@ -77,7 +77,7 @@ You should see your server show **Connected** with a green dot in the **Connect*
   <Accordion title="How do I check which version of Inspector I'm running?" icon="tag">
     All three installs (Web, Desktop, Terminal) show the running version in the **Settings** tab under **About**.
 
-    To see what the latest published version on npm is — useful for confirming an `@latest` pull actually moved you forward — run:
+    To see the latest published version on npm, run this. It's useful for confirming an `@latest` pull actually moved you forward:
 
     ```bash
     npm view @mcpjam/inspector version
@@ -86,10 +86,10 @@ You should see your server show **Connected** with a green dot in the **Connect*
     The Desktop and Web apps update on their own. For the Terminal install, the `@latest` tag in `npx @mcpjam/inspector@latest` pulls the most recent release every run.
   </Accordion>
   <Accordion title="Can MCPJam auto-install MCP servers into my repo?" icon="package">
-    Not directly — MCPJam doesn't reach into your repo. The closest workflow is **Skills**: install the MCPJam CLI skill into a project so an agent working in that repo knows how to use MCP tools and call MCPJam against your servers. See [Skills](/inspector/skills).
+    Not directly. MCPJam doesn't reach into your repo. The closest workflow is **Skills**: install the MCPJam CLI skill into a project so an agent working in that repo knows how to use MCP tools and call MCPJam against your servers. See [Skills](/inspector/skills).
   </Accordion>
   <Accordion title="Where are my files saved?" icon="folder">
-    It depends what you mean — the word covers three different things:
+    It depends what you mean. The word covers three different things:
 
     - **OAuth credentials** from `mcpjam login`: `~/.mcpjam/config.json`. Override per command with `--credentials-out`. See [CLI OAuth login](/cli/oauth-login).
     - **Eval results**: uploaded to your MCPJam project when `MCPJAM_API_KEY` is set to an MCPJam API key (`sk_…`). See [Saving Results](/sdk/concepts/saving-results).

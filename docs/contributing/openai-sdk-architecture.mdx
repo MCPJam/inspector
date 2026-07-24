@@ -6,7 +6,7 @@ icon: "puzzle"
 
 # OpenAI SDK Architecture
 
-This guide explains how MCPJam Inspector implements the OpenAI Apps SDK to render custom UI components for MCP tool results. This enables MCP server developers to create rich, interactive visualizations for their tool outputs.
+This guide explains how MCPJam Inspector implements the OpenAI Apps SDK to render custom UI components for MCP tool results. This enables MCP server developers to create interactive visualizations for their tool outputs.
 
 <Note>
   MCPJam Inspector also supports
@@ -18,7 +18,7 @@ This guide explains how MCPJam Inspector implements the OpenAI Apps SDK to rende
 
 ## Overview
 
-MCPJam Inspector provides full support for the [OpenAI Apps SDK](https://developers.openai.com/apps-sdk), allowing MCP tools to return custom UI components that render in iframes with a sandboxed `window.openai` API bridge.
+MCPJam Inspector supports the [OpenAI Apps SDK](https://developers.openai.com/apps-sdk), letting MCP tools return custom UI components that render in iframes with a sandboxed `window.openai` API bridge.
 
 <Note>
   This document covers the **V1 Playground** implementation. As of PR #773,
@@ -73,7 +73,7 @@ See [Playground Architecture - MCP-UI Integration](./playground-architecture#mcp
 
 ## Architecture Overview
 
-MCPJam Inspector implements a **triple-iframe architecture** matching ChatGPT's actual implementation for maximum compatibility and security isolation:
+MCPJam Inspector implements a **triple-iframe architecture** that matches ChatGPT's implementation for compatibility and security isolation:
 
 ```mermaid
 graph TB
@@ -139,7 +139,7 @@ graph TB
 
 ### Triple-Iframe Architecture
 
-The triple-iframe design provides **true cross-origin isolation** for maximum security:
+The triple-iframe design provides cross-origin isolation:
 
 1. **Outer Iframe** (`about:blank`) - Container with popup permissions
 2. **Middle Iframe** (cross-origin sandbox proxy) - Uses localhost ↔ 127.0.0.1 origin swap for isolation
@@ -287,7 +287,7 @@ setInterval(
 
 ### 3. Triple-Iframe Widget Loading
 
-The system uses a sophisticated triple-iframe architecture with cross-origin isolation:
+The system uses a triple-iframe architecture with cross-origin isolation:
 
 ```mermaid
 sequenceDiagram
@@ -1350,7 +1350,7 @@ if (message.id?.startsWith("widget-state-")) return null;
 - **Null Handling**: Setting state to `null` removes the state message entirely
 - **Example**: When a chart widget updates its selected date range, the model receives: `"The state of widget tool_123 is: {\"startDate\":\"2024-01-01\",\"endDate\":\"2024-01-31\"}"`
 
-This enables powerful use cases like:
+This enables use cases like:
 
 - LLM understanding user interactions with widgets
 - Contextual follow-up questions based on widget state
@@ -1597,7 +1597,7 @@ inner.src = widgetUrl; // Widget content loaded via src
 
 ## Complete Data Flow Example
 
-Let's trace a complete interaction where a widget calls a tool:
+This example traces a full interaction where a widget calls a tool:
 
 ```mermaid
 sequenceDiagram

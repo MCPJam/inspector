@@ -890,10 +890,16 @@ export function CaniuseCapabilityRoute() {
 }
 
 export function ComputerRoute() {
-  const { convexProjectId, isAuthenticated } = useAppRouteContext();
+  const { convexProjectId, isAuthenticated, isGuestProjectActor } =
+    useAppRouteContext();
   const [previewedHostId] = usePreviewedHostId(convexProjectId);
   const navigate = useAppNavigate();
   const computersEnabled = useComputersEnabledState();
+
+  // A personal computer is account-scoped. Anonymous guests are provisioned
+  // Convex actors (`isAuthenticated === true`), so member-ness — not raw auth —
+  // is what gates the feature vs. the guest sign-in affordance.
+  const isSignedInMember = isAuthenticated && !isGuestProjectActor;
 
   // Only redirect on an explicit `false`. While PostHog hydrates the flag is
   // `undefined`; bouncing then would strand a flagged-in user who cold-loads
@@ -909,11 +915,11 @@ export function ComputerRoute() {
   const computerView = (
     <ComputerView
       projectId={convexProjectId}
-      isAuthenticated={isAuthenticated}
+      isSignedInMember={isSignedInMember}
     />
   );
 
-  if (!isAuthenticated) {
+  if (!isSignedInMember) {
     return computerView;
   }
 
@@ -1738,6 +1744,8 @@ export default function App() {
     const code = urlParams.get("code");
     const error = urlParams.get("error");
     const state = urlParams.get("state");
+    // 2R-iss: RFC 9207 issuer identification from the callback URL.
+    const iss = urlParams.get("iss");
 
     let cancelled = false;
     setHostedOAuthHandling(true);
@@ -1826,12 +1834,15 @@ export default function App() {
 
           return completeHostedOAuthCallback(callbackContext, code, {
             callbackState: state,
+            callbackIss: iss,
             onTraceUpdate: handleLiveOAuthTrace,
             authorizationHeader,
           });
         })()
       : handleOAuthCallback(code, {
           onTraceUpdate: handleLiveOAuthTrace,
+          callbackState: state,
+          callbackIss: iss,
         });
 
     completeCallback
@@ -3787,6 +3798,7 @@ export default function App() {
     hostsTabSelectedHostId,
     isAuthLoading,
     isAuthenticated,
+    isGuestProjectActor,
     isBillingContextPending,
     isLoadingRemoteProjects,
     areServersHydrated,

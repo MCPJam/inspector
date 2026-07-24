@@ -216,6 +216,25 @@ function createFetchFromRequestExecutor(
   };
 }
 
+// A real authorization server returns the exact `state` the client issued, and
+// the 2R-iss callback gate now enforces it. Echo the state persisted by
+// initiateOAuth for the pending server so callback tests mirror real requests.
+// Prefers the flow-session state; on the no-session fallback path it falls back
+// to the durable issued-state key (which F6 recovery reads). Returns null only
+// when neither is present.
+const issuedCallbackState = (): string | null => {
+  const serverName = localStorage.getItem("mcp-oauth-pending");
+  if (!serverName) return null;
+  try {
+    const raw = localStorage.getItem(`mcp-oauth-flow-state-${serverName}`);
+    const fromSession = raw ? (JSON.parse(raw).state?.state ?? null) : null;
+    if (fromSession) return fromSession;
+  } catch {
+    // fall through to the durable key
+  }
+  return localStorage.getItem(`mcp-oauth-issued-state-${serverName}`);
+};
+
 describe("mcp-oauth", () => {
   let authFetch: ReturnType<typeof vi.fn>;
 
@@ -837,10 +856,10 @@ describe("mcp-oauth", () => {
       });
 
       expect(result.success).toBe(true);
-      expect(localStorage.getItem("mcp-client-hosted")).toBe(
-        JSON.stringify({
-          client_id: "hosted-client-id",
-        })
+      // The client id persists (now inside the SEP-2352 issuer-keyed envelope),
+      // but the secret must never reach localStorage.
+      expect(localStorage.getItem("mcp-client-hosted")).toContain(
+        "hosted-client-id"
       );
       expect(localStorage.getItem("mcp-client-hosted")).not.toContain(
         "client_secret"
@@ -1494,7 +1513,9 @@ describe("mcp-oauth", () => {
       });
       expect(initiateResult.success).toBe(true);
 
-      const callbackResult = await handleOAuthCallback("oauth-code");
+      const callbackResult = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+      });
 
       expect(callbackResult.success).toBe(true);
       expect(callbackResult.serverName).toBe("asana");
@@ -1562,7 +1583,9 @@ describe("mcp-oauth", () => {
       // Exercise the callback path that performs the exchange directly; the
       // state-machine path already owns separate resource persistence tests.
       localStorage.removeItem(`mcp-oauth-flow-state-${serverName}`);
-      const callbackResult = await handleOAuthCallback("oauth-code");
+      const callbackResult = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+      });
       expect(callbackResult.success, callbackResult.error).toBe(true);
       expect(callbackResult.oauthResourceUrl).toBe(advertisedResource);
       expect(
@@ -1685,7 +1708,9 @@ describe("mcp-oauth", () => {
       );
 
       const { handleOAuthCallback } = await import("../mcp-oauth");
-      const callbackResult = await handleOAuthCallback("oauth-code");
+      const callbackResult = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+      });
 
       expect(callbackResult.success).toBe(true);
       expect(localStorage.getItem("mcp-verifier-asana")).toBeNull();
@@ -1852,13 +1877,94 @@ describe("mcp-oauth", () => {
       });
 
       expect(result.success).toBe(true);
-      expect(localStorage.getItem("mcp-client-asana")).toBe(
-        JSON.stringify({
-          client_id: "stale-client-id",
-        })
+      // The stale client id is reused (not re-registered), now inside the
+      // SEP-2352 issuer-keyed envelope.
+      expect(localStorage.getItem("mcp-client-asana")).toContain(
+        "stale-client-id"
       );
       expect(mockRegisterClient).not.toHaveBeenCalled();
       expect(getOAuthTraceFailureStep(result.oauthTrace)).toBeUndefined();
+    });
+
+    it("does not reuse a client id across an authorization-server change (SEP-2352)", async () => {
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      const provider = new MCPOAuthProvider(
+        "issuer-change",
+        "https://mcp.example.com/sse"
+      );
+
+      // Register against AS A.
+      await provider.saveDiscoveryState({
+        ...createDiscoveryState(),
+        authorizationServerUrl: "https://as-a.example.com",
+        authorizationServerMetadata: { issuer: "https://as-a.example.com" },
+      } as any);
+      await provider.saveClientInformation({ client_id: "client-for-as-a" });
+      expect((await provider.clientInformation())?.client_id).toBe(
+        "client-for-as-a"
+      );
+
+      // Protected-resource metadata now points to AS B.
+      await provider.saveDiscoveryState({
+        ...createDiscoveryState(),
+        authorizationServerUrl: "https://as-b.example.com",
+        authorizationServerMetadata: { issuer: "https://as-b.example.com" },
+      } as any);
+
+      // AS A's client id must NOT be reused for AS B — the flow re-registers.
+      expect(await provider.clientInformation()).toBeUndefined();
+
+      // Registering against AS B keeps AS A's bucket (a multi-issuer server).
+      await provider.saveClientInformation({ client_id: "client-for-as-b" });
+      expect((await provider.clientInformation())?.client_id).toBe(
+        "client-for-as-b"
+      );
+      const raw = localStorage.getItem("mcp-client-issuer-change") ?? "";
+      expect(raw).toContain("client-for-as-a");
+      expect(raw).toContain("client-for-as-b");
+    });
+
+    it("ignores a stale envelope activeIssuer in favor of the discovered issuer (review F4/F5)", async () => {
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      // Seed a v2 envelope whose activeIssuer still points at AS A.
+      localStorage.setItem(
+        "mcp-client-stale-issuer",
+        JSON.stringify({
+          v: 2,
+          activeIssuer: "https://as-a.example.com",
+          byIssuer: {
+            "https://as-a.example.com": { client_id: "client-for-as-a" },
+          },
+        })
+      );
+      const provider = new MCPOAuthProvider(
+        "stale-issuer",
+        "https://mcp.example.com/sse"
+      );
+      // Discovery has since moved to AS B.
+      await provider.saveDiscoveryState({
+        ...createDiscoveryState(),
+        authorizationServerUrl: "https://as-b.example.com",
+        authorizationServerMetadata: { issuer: "https://as-b.example.com" },
+      } as any);
+
+      // The stale AS-A credential must NOT be returned for AS B, even though it
+      // is the envelope's activeIssuer bucket.
+      expect(await provider.clientInformation()).toBeUndefined();
+
+      // A save keys to the discovered issuer (AS B), leaving AS A's bucket
+      // intact rather than overwriting it.
+      await provider.saveClientInformation({ client_id: "client-for-as-b" });
+      const raw = JSON.parse(
+        localStorage.getItem("mcp-client-stale-issuer") || "{}"
+      );
+      expect(raw.byIssuer["https://as-b.example.com"].client_id).toBe(
+        "client-for-as-b"
+      );
+      expect(raw.byIssuer["https://as-a.example.com"].client_id).toBe(
+        "client-for-as-a"
+      );
+      expect(raw.activeIssuer).toBe("https://as-b.example.com");
     });
 
     it("preserves the original callback error and verifier when registry token exchange fails", async () => {
@@ -1907,7 +2013,9 @@ describe("mcp-oauth", () => {
       );
 
       const { handleOAuthCallback } = await import("../mcp-oauth");
-      const callbackResult = await handleOAuthCallback("oauth-code");
+      const callbackResult = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+      });
 
       expect(callbackResult.success).toBe(false);
       expect(callbackResult.error).not.toBe("Code verifier not found");
@@ -1952,7 +2060,9 @@ describe("mcp-oauth", () => {
       );
 
       const { handleOAuthCallback } = await import("../mcp-oauth");
-      const callbackResult = await handleOAuthCallback("oauth-code");
+      const callbackResult = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+      });
 
       expect(callbackResult.success).toBe(true);
       expect(browserFetch).not.toHaveBeenCalled();
@@ -1978,6 +2088,8 @@ describe("mcp-oauth", () => {
 
     const seedAsanaCallback = (discoveryState: any) => {
       localStorage.setItem("mcp-oauth-pending", "asana");
+      // Durable issued state (F6 recovery reads this on the no-session path).
+      localStorage.setItem("mcp-oauth-issued-state-asana", "asana-issued-state");
       localStorage.setItem(
         "mcp-serverUrl-asana",
         "https://mcp.asana.com/v2/mcp"
@@ -2006,12 +2118,51 @@ describe("mcp-oauth", () => {
       });
 
       const { handleOAuthCallback } = await import("../mcp-oauth");
-      const callbackResult = await handleOAuthCallback("oauth-code");
+      const callbackResult = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+      });
 
       expect(callbackResult.success).toBe(false);
       expect(callbackResult.error).toContain(
         "Rejected OAuth resource indicator"
       );
+      expect(mockExchangeAuthorization).not.toHaveBeenCalled();
+    });
+
+    it("fails closed on the no-session fallback for a mismatched OR omitted state (review F6)", async () => {
+      const { handleOAuthCallback } = await import("../mcp-oauth");
+
+      // Durable issued state is recovered ("asana-issued-state"); a mismatched
+      // callback state must be rejected before redemption.
+      seedAsanaCallback(createAsanaDiscoveryState());
+      const mismatched = await handleOAuthCallback("oauth-code", {
+        callbackState: "attacker-supplied-state",
+      });
+      expect(mismatched.success).toBe(false);
+      expect(mismatched.error).toContain("state");
+      expect(mockExchangeAuthorization).not.toHaveBeenCalled();
+
+      // An OMITTED callback state is equally unverifiable — every machine issues
+      // a state — so it must also fail closed, not slip through.
+      seedAsanaCallback(createAsanaDiscoveryState());
+      const omitted = await handleOAuthCallback("oauth-code", {});
+      expect(omitted.success).toBe(false);
+      expect(omitted.error).toContain("state");
+      expect(mockExchangeAuthorization).not.toHaveBeenCalled();
+    });
+
+    it("fails closed on the no-session fallback when the issued state cannot be recovered (review F6)", async () => {
+      seedAsanaCallback(createAsanaDiscoveryState());
+      // Simulate the durable issued state also being lost.
+      localStorage.removeItem("mcp-oauth-issued-state-asana");
+
+      const { handleOAuthCallback } = await import("../mcp-oauth");
+      const result = await handleOAuthCallback("oauth-code", {
+        callbackState: "asana-issued-state",
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("state");
       expect(mockExchangeAuthorization).not.toHaveBeenCalled();
     });
 
@@ -2021,7 +2172,9 @@ describe("mcp-oauth", () => {
       seedAsanaCallback(asana);
 
       const { handleOAuthCallback } = await import("../mcp-oauth");
-      const callbackResult = await handleOAuthCallback("oauth-code");
+      const callbackResult = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+      });
 
       expect(callbackResult.success).toBe(false);
       expect(callbackResult.error).toContain('missing its required "resource"');
@@ -2069,7 +2222,9 @@ describe("mcp-oauth", () => {
       );
 
       const { handleOAuthCallback } = await import("../mcp-oauth");
-      const callbackResult = await handleOAuthCallback("oauth-code");
+      const callbackResult = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+      });
 
       expect(callbackResult.success).toBe(true);
       expect(browserFetch).not.toHaveBeenCalled();
@@ -2138,7 +2293,9 @@ describe("mcp-oauth", () => {
       );
 
       const { handleOAuthCallback } = await import("../mcp-oauth");
-      const callbackResult = await handleOAuthCallback("oauth-code");
+      const callbackResult = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+      });
 
       expect(callbackResult.success).toBe(true);
       expect(browserFetch).not.toHaveBeenCalled();
@@ -2606,5 +2763,80 @@ describe("createServerConfig wire-era pin", () => {
     expect(
       (config as { mcpProtocolVersion?: string }).mcpProtocolVersion,
     ).toBeUndefined();
+  });
+});
+
+describe("evaluateCallbackSecurity (2R-iss callback gate)", () => {
+  const base = {
+    callbackState: "s-123",
+    callbackIss: "https://as.example.com",
+    expectedState: "s-123",
+    recordedIssuer: "https://as.example.com",
+    issParameterSupported: true as boolean | undefined,
+  };
+
+  it("passes when state and iss both match", async () => {
+    const { evaluateCallbackSecurity } = await import("../mcp-oauth");
+    expect(evaluateCallbackSecurity(base)).toEqual({ ok: true });
+  });
+
+  it("rejects a state mismatch (CSRF) before touching iss", async () => {
+    const { evaluateCallbackSecurity } = await import("../mcp-oauth");
+    const result = evaluateCallbackSecurity({
+      ...base,
+      callbackState: "attacker-state",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/state.*mismatch|CSRF/i);
+  });
+
+  it("rejects when an expected state was issued but the callback returns none", async () => {
+    const { evaluateCallbackSecurity } = await import("../mcp-oauth");
+    const result = evaluateCallbackSecurity({ ...base, callbackState: null });
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects a present-but-mismatched iss (RFC 9207)", async () => {
+    const { evaluateCallbackSecurity } = await import("../mcp-oauth");
+    const result = evaluateCallbackSecurity({
+      ...base,
+      callbackIss: "https://evil.example.com",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/issuer|RFC 9207/i);
+  });
+
+  it("rejects an absent iss when the AS advertised iss support", async () => {
+    const { evaluateCallbackSecurity } = await import("../mcp-oauth");
+    const result = evaluateCallbackSecurity({
+      ...base,
+      callbackIss: null,
+      issParameterSupported: true,
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("allows an absent iss when the AS did not advertise iss support", async () => {
+    const { evaluateCallbackSecurity } = await import("../mcp-oauth");
+    expect(
+      evaluateCallbackSecurity({
+        ...base,
+        callbackIss: null,
+        issParameterSupported: undefined,
+      }),
+    ).toEqual({ ok: true });
+  });
+
+  it("skips the state check on the no-session fallback (no expected state)", async () => {
+    const { evaluateCallbackSecurity } = await import("../mcp-oauth");
+    expect(
+      evaluateCallbackSecurity({
+        callbackState: "whatever",
+        callbackIss: "https://as.example.com",
+        expectedState: undefined,
+        recordedIssuer: "https://as.example.com",
+        issParameterSupported: undefined,
+      }),
+    ).toEqual({ ok: true });
   });
 });
