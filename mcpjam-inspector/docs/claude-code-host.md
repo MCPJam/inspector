@@ -30,7 +30,9 @@ for your org.
    credentials enter the box.
 5. **The turn runs.** Claude Code's own agent loop executes; native tools
    (Bash, Read, Write, …) run in-sandbox; file changes land on the Computer's
-   disk; the transcript and trace persist like any other chat.
+   disk; the transcript and trace persist like any other chat. On a host that
+   requires tool approval, side-effecting built-ins pause the turn and resume
+   with your decision (see the table below).
 
 ## What the host toggles control (and don't)
 
@@ -38,7 +40,7 @@ for your org.
 |---|---|
 | Model | Honored — must be an MCPJam-provided Anthropic model (BYOK fails closed; the CLI maps it to its native alias). |
 | System prompt | Honored (passed to the runtime). |
-| Require tool approval | **Not supported** — the runtime runs its tools itself in-sandbox and can't pause for approval. The Behavior tab disables the toggle (`client/src/lib/harness-capabilities.ts`), and a host that has it set is rejected pre-flight. |
+| Require tool approval | Honored for **native and host-executed** tools (WS3, `allow-edits`): side-effecting built-ins pause the turn and resume with your decision; reads stay free. The runtime can't pause for **MCP-server** tools, so approval combined with selected MCP servers is rejected pre-flight (`supportsMcpToolApproval: false`). The Behavior tab doesn't offer the toggle for harness hosts (`client/src/lib/harness-capabilities.ts` marks it not enforced). |
 | Selected MCP servers | Honored — delivered via `.mcp.json` through MCPJam's proxy. |
 | Skills | Honored (runtime skills are materialized into the sandbox). |
 | Temperature / other sampling knobs | **Not honored** — the CLI owns its sampling. Grayed out in the UI. |
@@ -81,7 +83,7 @@ real runtime did. All fail closed; a failed start spends nothing.
 |---|---|
 | Broker delivery kill-switched (`MCPJAM_HARNESS_BROKER_DELIVERY=false`) | Pre-flight error naming the kill switch — harness runs are unavailable on that server. |
 | Enterprise-managed authorization policy on the host | Pre-flight error — the harness MCP proxy can't carry the policy, so the combination is rejected rather than silently bypassed. |
-| Require tool approval set on the host | Pre-flight error asking you to turn it off. |
+| Require tool approval + selected MCP servers | Pre-flight error — the runtime can't pause for approval of MCP-server tools; turn approval off or remove the servers. |
 | Computers data plane not configured | Pre-flight error naming the data plane requirement. |
 | Model not MCPJam-provided / not runnable | Pre-flight error asking you to pick an eligible model. |
 | Computer at daily start cap | Start-limit dialog with upgrade CTA. |
