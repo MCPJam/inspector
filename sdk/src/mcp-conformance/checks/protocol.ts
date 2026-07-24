@@ -21,6 +21,8 @@ const PROTOCOL_CHECK_METADATA = {
   Pick<MCPCheckResult, "id" | "category" | "title" | "description">
 >;
 
+const INVALID_METHOD = "nonexistent/method_that_does_not_exist";
+
 function buildBaseHeaders(ctx: RawHttpCheckContext): Record<string, string> {
   return {
     ...(ctx.config.customHeaders ?? {}),
@@ -30,6 +32,12 @@ function buildBaseHeaders(ctx: RawHttpCheckContext): Record<string, string> {
   };
 }
 
+/**
+ * Legacy prelude: run the `initialize` handshake and return the session id
+ * (if the server mints one). Modern (sessionless) runs skip this entirely.
+ * The protocol version pinned by the run drives the handshake; unset ⇒
+ * `"2025-11-25"`, byte-identical to the pre-era-awareness behavior.
+ */
 async function initializeAndGetSession(
   ctx: RawHttpCheckContext,
 ): Promise<string | undefined> {
@@ -45,7 +53,7 @@ async function initializeAndGetSession(
       id: 1,
       method: "initialize",
       params: {
-        protocolVersion: "2025-11-25",
+        protocolVersion: ctx.config.protocolVersion ?? "2025-11-25",
         capabilities: {},
         clientInfo: {
           name: "mcpjam-sdk-conformance",
@@ -56,6 +64,61 @@ async function initializeAndGetSession(
   });
 
   return response.headers.get("mcp-session-id") ?? undefined;
+}
+
+/**
+ * Send the invalid-method probe.
+ *
+ *   - Legacy: `initialize` first (to obtain a session for stateful servers),
+ *     then the bad-method POST carrying the session id.
+ *   - Modern (2026 era): no prelude. The 2026 era is sessionless, so the
+ *     bad-method POST stands alone, framed with the `MCP-Protocol-Version`
+ *     header and the per-request `_meta` protocol-version envelope the modern
+ *     wire requires (plus the SEP-2243 `mcp-method` mirror header).
+ */
+async function sendInvalidMethodProbe(
+  ctx: RawHttpCheckContext,
+): Promise<Response> {
+  if (ctx.config.era === "modern") {
+    const version = ctx.config.protocolVersion ?? "2025-11-25";
+    return await ctx.fetchFn(ctx.serverUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+        "MCP-Protocol-Version": version,
+        "mcp-method": INVALID_METHOD,
+        ...buildBaseHeaders(ctx),
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 99,
+        method: INVALID_METHOD,
+        params: {
+          _meta: {
+            "io.modelcontextprotocol/protocolVersion": version,
+          },
+        },
+      }),
+    });
+  }
+
+  const sessionId = await initializeAndGetSession(ctx);
+  return await ctx.fetchFn(ctx.serverUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+      ...buildBaseHeaders(ctx),
+      ...(sessionId ? { "mcp-session-id": sessionId } : {}),
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 99,
+      method: INVALID_METHOD,
+      params: {},
+    }),
+  });
 }
 
 export async function runProtocolChecks(
@@ -70,23 +133,7 @@ export async function runProtocolChecks(
 
   const startedAt = Date.now();
   try {
-    const sessionId = await initializeAndGetSession(ctx);
-
-    const response = await ctx.fetchFn(ctx.serverUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json, text/event-stream",
-        ...buildBaseHeaders(ctx),
-        ...(sessionId ? { "mcp-session-id": sessionId } : {}),
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 99,
-        method: "nonexistent/method_that_does_not_exist",
-        params: {},
-      }),
-    });
+    const response = await sendInvalidMethodProbe(ctx);
 
     const contentType = response.headers.get("content-type") ?? "";
     let body: unknown;

@@ -14,19 +14,22 @@ import { TOOL_CHECKS } from "./checks/tools.js";
 import { PROMPT_CHECKS } from "./checks/prompts.js";
 import {
   errorMessage,
+  eraSkipMessage,
   failedResult,
   skippedResult,
 } from "./checks/helpers.js";
 import type {
   MCPCheckCategory,
+  MCPCheckEra,
   MCPCheckId,
   MCPCheckResult,
   MCPClientCheckContext,
+  MCPClientCheckDefinition,
   MCPConformanceConfig,
   MCPConformanceResult,
   NormalizedMCPConformanceConfig,
 } from "./types.js";
-import { MCP_CHECK_CATEGORIES } from "./types.js";
+import { CHECK_ERAS, MCP_CHECK_CATEGORIES } from "./types.js";
 import { normalizeMCPConformanceConfig } from "./validation.js";
 
 const CLIENT_CHECKS = [
@@ -107,7 +110,29 @@ function createServerConfig(
       ? { headers: config.customHeaders }
       : undefined,
     timeout: config.checkTimeout,
+    // Flows through `resolveVersionNegotiation`: a modern (stateless) pin
+    // makes the underlying Client negotiate the 2026 era so a modern-only
+    // server can connect at all. Absent ⇒ legacy negotiation, unchanged.
+    mcpProtocolVersion: config.protocolVersion,
   };
+}
+
+/**
+ * Era gate for a client-backed check. Returns a `skipped` result (never
+ * filtered out — the check still appears in the report) when the check does
+ * not apply to the run's era per {@link CHECK_ERAS}, else `undefined` so the
+ * check runs normally. Skipped checks never fail a run (the verdict is
+ * `checks.every(c => c.status !== "failed")`).
+ */
+function eraGate(
+  check: MCPClientCheckDefinition,
+  era: MCPCheckEra,
+  protocolVersion: string | undefined,
+): MCPCheckResult | undefined {
+  if (CHECK_ERAS[check.id].includes(era)) {
+    return undefined;
+  }
+  return skippedResult(check, eraSkipMessage(era, protocolVersion));
 }
 
 async function safeListResourceTemplates(
@@ -176,26 +201,14 @@ async function runClientChecks(
     const checks = await withEphemeralClient(
       createServerConfig(config),
       async (manager, serverId) => {
-        const client = manager.getClient(serverId);
+        // `getManagedClient()` works for every era — the modern pin and the
+        // legacy path both resolve to a `ManagedMcpClient` (the stateless
+        // preview adapter was removed in Phase 1C; both go through the
+        // official Client now). Absent only if connect failed to register a
+        // client, which is a genuine error.
+        const client = manager.getManagedClient(serverId);
         if (!client) {
-          // `getClient()` returns `undefined` for stateless-preview
-          // connections (no wrapped upstream `Client`). The client-check
-          // suite is written against the upstream `Client` surface, so
-          // it can't run against a stateless adapter yet — surface this
-          // as N/A for every selected client check rather than throwing
-          // a confusing "Underlying MCP client is unavailable" error.
-          // Wiring the suite through `getManagedClient()` is a separate
-          // follow-up.
-          const managed = manager.getManagedClient(serverId);
-          const reason = managed
-            ? "Client-side conformance checks are not yet wired through the 2026-07-28 stateless preview adapter."
-            : "Underlying MCP client is unavailable after connect";
-          if (managed) {
-            return selectedClientChecks.map((check) =>
-              skippedResult(check, reason),
-            );
-          }
-          throw new Error(reason);
+          throw new Error("Managed MCP client is unavailable after connect");
         }
 
         const initializationInfo = manager.getInitializationInfo(serverId);
@@ -223,6 +236,15 @@ async function runClientChecks(
         let connectionLost = false;
 
         for (const check of selectedClientChecks) {
+          // Era gate first: an era-inapplicable check is a deterministic skip
+          // that never runs `check.run`, so it neither observes nor affects
+          // the `connectionLost` sequencing below.
+          const eraSkip = eraGate(check, config.era, config.protocolVersion);
+          if (eraSkip) {
+            results.push(eraSkip);
+            continue;
+          }
+
           if (connectionLost) {
             results.push(
               skippedResult(
