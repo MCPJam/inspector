@@ -427,7 +427,7 @@ async function main() {
 
   const agent = new HostRunner({
     tools: await manager.getTools(),
-    model: "anthropic/claude-sonnet-4-20250514",
+    model: "anthropic/claude-sonnet-4.5",
     apiKey: process.env.ANTHROPIC_API_KEY,
     temperature: 0.1,
   });
