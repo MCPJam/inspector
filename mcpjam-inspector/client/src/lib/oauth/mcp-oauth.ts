@@ -11,6 +11,7 @@ import {
   exchangeAuthorization,
   fetchToken,
   getBrowserDebugDynamicRegistrationMetadata,
+  getSupportedRegistrationStrategies,
   EMPTY_OAUTH_FLOW_STATE,
   projectOAuthTraceSnapshot,
   resolveAuthorizationPlan,
@@ -462,7 +463,8 @@ function loadOAuthFlowSession(
       !parsed.state ||
       (parsed.protocolVersion !== "2025-03-26" &&
         parsed.protocolVersion !== "2025-06-18" &&
-        parsed.protocolVersion !== "2025-11-25")
+        parsed.protocolVersion !== "2025-11-25" &&
+        parsed.protocolVersion !== "2026-07-28")
     ) {
       return undefined;
     }
@@ -883,7 +885,11 @@ function buildAutomaticAuthorizationDecisionReason(
         ? "The authorization server advertised client_id_metadata_document_supported, so automatic mode preferred CIMD over DCR."
         : "The authorization server advertised client_id_metadata_document_supported.";
     case "dcr":
-      if (plan.protocolVersion !== "2025-11-25") {
+      if (
+        !getSupportedRegistrationStrategies(plan.protocolVersion).includes(
+          "cimd"
+        )
+      ) {
         return `CIMD is not available for protocol version ${plan.protocolVersion}, so automatic mode used DCR.`;
       }
 
@@ -1014,13 +1020,15 @@ export function readStoredOAuthConfig(
         parsed?.protocolMode === "auto" ||
         parsed?.protocolMode === "2025-03-26" ||
         parsed?.protocolMode === "2025-06-18" ||
-        parsed?.protocolMode === "2025-11-25"
+        parsed?.protocolMode === "2025-11-25" ||
+        parsed?.protocolMode === "2026-07-28"
           ? parsed.protocolMode
           : undefined,
       protocolVersion:
         parsed?.protocolVersion === "2025-03-26" ||
         parsed?.protocolVersion === "2025-06-18" ||
-        parsed?.protocolVersion === "2025-11-25"
+        parsed?.protocolVersion === "2025-11-25" ||
+        parsed?.protocolVersion === "2026-07-28"
           ? parsed.protocolVersion
           : undefined,
       registrationMode:
@@ -2669,9 +2677,11 @@ export async function initiateOAuth(
       clearOAuthFlowSession(options.serverName);
       return {
         success: true,
-        serverConfig: createServerConfig(options.serverUrl, {
-          access_token: flowResult.state.accessToken,
-        }),
+        serverConfig: createServerConfig(
+          options.serverUrl,
+          { access_token: flowResult.state.accessToken },
+          protocolVersion
+        ),
         oauthTrace: trace,
       };
     }
@@ -3014,7 +3024,11 @@ export async function completeHostedOAuthCallback(
     return {
       success: true,
       serverName,
-      serverConfig: createServerConfig(serverUrl),
+      serverConfig: createServerConfig(
+        serverUrl,
+        undefined,
+        storedOAuthConfig.protocolVersion
+      ),
       expiresAt: result.expiresAt ?? null,
       oauthTrace: mergedTrace,
       oauthResourceUrl,
@@ -3218,9 +3232,11 @@ export async function handleOAuthCallback(
       localStorage.removeItem("mcp-oauth-pending");
       return {
         success: true,
-        serverConfig: createServerConfig(serverUrl, {
-          access_token: flowResult.state.accessToken,
-        }),
+        serverConfig: createServerConfig(
+          serverUrl,
+          { access_token: flowResult.state.accessToken },
+          storedSession?.protocolVersion
+        ),
         serverName,
         oauthTrace: mergedTrace,
         oauthResourceUrl,
@@ -3309,7 +3325,11 @@ export async function handleOAuthCallback(
     const mergedTrace = mergeOAuthTraces(previousTrace, callbackTrace);
     publishOAuthTraceUpdate(serverName, mergedTrace, options.onTraceUpdate);
 
-    const serverConfig = createServerConfig(serverUrl, tokens);
+    const serverConfig = createServerConfig(
+      serverUrl,
+      tokens,
+      oauthConfig.protocolVersion
+    );
     return {
       success: true,
       serverConfig,
@@ -3537,7 +3557,11 @@ export async function refreshOAuthTokens(
       message: "OAuth token refresh completed successfully.",
     });
     emitTrace();
-    const serverConfig = createServerConfig(serverUrl, tokens);
+    const serverConfig = createServerConfig(
+      serverUrl,
+      tokens,
+      oauthConfig.protocolVersion
+    );
     return {
       success: true,
       serverConfig,
@@ -3602,7 +3626,8 @@ export function clearOAuthData(serverName: string): void {
  */
 export function createServerConfig(
   serverUrl: string,
-  tokens?: { access_token?: string | null }
+  tokens?: { access_token?: string | null },
+  protocolVersion?: OAuthProtocolVersion
 ): HttpServerConfig {
   // Note: We don't include authProvider in the config because it can't be serialized
   // when sent to the backend via JSON. The backend will use the Authorization header instead.
@@ -3617,5 +3642,12 @@ export function createServerConfig(
           }
         : {},
     },
+    // Pin the sessionless 2026 wire era so the post-OAuth reconnect/test
+    // probes via the stateless path, not the default 2025 initialize. Only
+    // 2026 is coupled and non-default; older OAuth versions map to the legacy
+    // default (unset), so they stay exactly as before.
+    ...(protocolVersion === "2026-07-28"
+      ? { mcpProtocolVersion: "2026-07-28" as const }
+      : {}),
   };
 }

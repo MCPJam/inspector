@@ -206,6 +206,12 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         // Hosted project OAuth can succeed without browser-side tokens.
         // Preserve explicit auth mode when the dispatch provides it.
         useOAuth: shouldUseOAuth,
+        // Keep the OAuth profile consistent with the just-saved form so a
+        // 2026→2025 downgrade doesn't leave a stale 2026 profile that the
+        // wire-version resolver would revive on the next reconnect.
+        ...(action.oauthFlowProfile
+          ? { oauthFlowProfile: action.oauthFlowProfile }
+          : {}),
       });
       return {
         ...state,

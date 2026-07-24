@@ -1,6 +1,10 @@
 import { Hono } from "hono";
 import "../../types/hono";
-import { handleJsonRpc, BridgeMode } from "../../services/mcp-http-bridge";
+import {
+  handleJsonRpc,
+  parseAndValidateJsonRpc,
+  BridgeMode,
+} from "../../services/mcp-http-bridge";
 import {
   getServerIdForTunnelDomain,
   isActiveTunnelDomain,
@@ -321,11 +325,15 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
       return c.json({ error: "Unsupported request" }, 400);
     }
 
-    // Parse JSON body (best effort)
-    let body: any = undefined;
-    try {
-      body = await c.req.json();
-    } catch {}
+    // Malformed payloads must NOT fall through to the notification → 202 path
+    // (the bridge treats a missing method as a notification): a garbage body
+    // acknowledged as "Accepted" looks like a delivered message to the client.
+    // Shared with the hosted harness proxy (`harness-mcp`) via the bridge helper.
+    const validation = await parseAndValidateJsonRpc(() => c.req.json());
+    if (!validation.ok) {
+      return c.json(validation.response, validation.status as 400);
+    }
+    const body = validation.body;
 
     const clientManager = c.mcpClientManager;
 

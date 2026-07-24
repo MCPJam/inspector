@@ -170,6 +170,9 @@ vi.mock("convex/react", () => ({
   useQuery: (_name: string, args: unknown) =>
     args === "skip" ? undefined : null,
   useMutation: () => () => Promise.resolve(),
+  // COMP-14: useComputerAttachmentUpload pulls in useMintTerminalToken (a
+  // Convex action). The flag mock keeps the flow inert; this keeps it mountable.
+  useAction: () => () => Promise.resolve({ token: "test-token" }),
 }));
 
 // Mock useViews (useProjectServers)
