@@ -53,6 +53,40 @@ function buildTestCaseRequest(runs?: number): unknown {
   };
 }
 
+describe("RunEvalsRequestSchema environmentId boundary", () => {
+  it("accepts AND preserves environmentId (guards the silent-strip failure mode)", () => {
+    const base = buildSuiteRequest() as Record<string, unknown>;
+    const result = RunEvalsRequestSchema.safeParse({
+      ...base,
+      environmentId: "env_123",
+    });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.environmentId).toBe("env_123");
+  });
+
+  it("accepts an environment launch with NO server ids", () => {
+    const base = buildSuiteRequest() as Record<string, unknown>;
+    const result = RunEvalsRequestSchema.safeParse({
+      ...base,
+      serverIds: [],
+      environmentId: "env_123",
+    });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.serverIds).toEqual([]);
+  });
+
+  it("still preserves runGroupId alongside environmentId", () => {
+    const base = buildSuiteRequest() as Record<string, unknown>;
+    const result = RunEvalsRequestSchema.safeParse({
+      ...base,
+      environmentId: "env_123",
+      runGroupId: "group-1",
+    });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.runGroupId).toBe("group-1");
+  });
+});
+
 describe("RunEvalsRequestSchema runs cap", () => {
   it("accepts runs up to 10", () => {
     const result = RunEvalsRequestSchema.safeParse(

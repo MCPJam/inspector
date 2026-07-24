@@ -263,6 +263,33 @@ export function canManageHosts(
   return role === "owner" || role === "admin";
 }
 
+/**
+ * Admin gate for surfaces that must ALSO stay writable for an anonymous Convex
+ * owner (Swarms, Project Environments).
+ *
+ * A WorkOS-signed-in viewer goes through the role-based gate above. An
+ * anonymous owner never produces a WorkOS email, so `useViewerProjectRole`
+ * leaves `role` undefined forever — yet they own their personal-org default
+ * project and clear the backend's `requireAdminAccess` via userId, so denying
+ * them would lock them out of their own project. They get management only once
+ * WorkOS has SETTLED (`identityLoading === false`): while it is still
+ * hydrating, an anonymous owner is indistinguishable from a member whose role
+ * hasn't loaded, so this fails CLOSED.
+ *
+ * Extracted from the route component so the branch is unit-testable — a future
+ * edit here cannot silently re-expose admin controls.
+ */
+export function canManageAsOwnerOrAdmin(args: {
+  isWorkOsSignedIn: boolean;
+  role: ProjectMembershipRole | undefined;
+  isAuthenticated: boolean;
+  hasProject: boolean;
+  identityLoading: boolean;
+}): boolean {
+  if (args.isWorkOsSignedIn) return canManageHosts(args.role);
+  return args.isAuthenticated && args.hasProject && !args.identityLoading;
+}
+
 // Resolve the *current viewer's* project-membership role for a project, reusing
 // the same members-list signal `ProjectSettingsTab` keys off. Returns
 // `role: undefined` while the members list is still loading (or when the viewer
@@ -292,9 +319,8 @@ export function useViewerProjectRole({
   const role = useMemo(() => {
     const email = viewerEmail?.trim().toLowerCase();
     if (!email) return undefined;
-    return activeMembers.find(
-      (member) => member.email.toLowerCase() === email
-    )?.role;
+    return activeMembers.find((member) => member.email.toLowerCase() === email)
+      ?.role;
   }, [activeMembers, viewerEmail]);
 
   return {

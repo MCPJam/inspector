@@ -4,6 +4,8 @@ import { useFeatureFlagEnabled } from "posthog-js/react";
 import { useHostList } from "@/hooks/useClients";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useEnvironments } from "@/hooks/useComputerEnvironments";
+import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { SuiteProjectEnvironmentsPicker } from "./suite-project-environments-picker";
 import { toast } from "sonner";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import {
@@ -389,6 +391,7 @@ export function SuiteIterationsView({
   // Reproducible-evals env picker (gated by the computers feature flag). Only
   // fetch the project's environments when the flag is on and we have a project.
   const computersEnabled = useComputersEnabled();
+  const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
   const computerEnvironments = useEnvironments(
     computersEnabled && projectId ? projectId : null
   );
@@ -1436,6 +1439,32 @@ export function SuiteIterationsView({
                 </SettingsSection>
               ) : null}
 
+              {/* ── Environments (project environments, flag-gated) ────
+                  Attach-ordered bundles of one client + optional server
+                  group + pinned skills. Run all fires one run per attached
+                  environment; the backend resolves each at launch. */}
+              {projectEnvironmentsEnabled && projectId ? (
+                <SettingsSection
+                  label="Environments"
+                  layout="inline"
+                  inlineSlot={
+                    <SuiteProjectEnvironmentsPicker
+                      suiteId={suite._id}
+                      projectId={projectId}
+                      environmentIds={suite.environmentIds}
+                    />
+                  }
+                >
+                  <p className="text-[11px] text-muted-foreground/60">
+                    Run all fires one run per environment, in this order. An
+                    environment bundles one client, an optional server group,
+                    and pinned skills, resolved at launch. The client&apos;s
+                    own skills always apply on top; a suite skills
+                    &quot;exclude&quot; override wins over both.
+                  </p>
+                </SettingsSection>
+              ) : null}
+
               {/* ── Tool calls ───────────────────────────────────────── */}
               <SettingsSection
                 label="Tool calls"
@@ -1513,6 +1542,8 @@ export function SuiteIterationsView({
                   <ScheduleEditor
                     suiteId={suite._id}
                     schedule={suite.schedule}
+                    projectId={projectId}
+                    environmentIds={suite.environmentIds}
                   />
                 </SettingsSection>
               ) : null}

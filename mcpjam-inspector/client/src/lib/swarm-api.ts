@@ -31,6 +31,8 @@ export const SWARM_QUERIES = {
   /** Sessions-tab metric strip aggregates (project-wide or persona-scoped). */
   getSwarmSessionMetrics: "journeyRuns:getSwarmSessionMetrics",
   listRunningPersonaRefIds: "journeyRuns:listRunningPersonaRefIds",
+  /** Project environments picker (env-based journeys — flag-gated UI). */
+  listEnvironments: "projectEnvironments:listEnvironments",
 } as const;
 
 // ── Convex action names (string-keyed calls) ────────────────────────────────
@@ -59,10 +61,49 @@ export interface JourneyRunSummary {
 
 export interface JourneyHostSummary {
   hostId: string;
+  /**
+   * Opaque execution-target id (Project Environments). Present on fresh runs
+   * (both `host:`- and `environment:`-shaped — treated as OPAQUE, never
+   * parsed); absent on historical pre-environments rows. Two same-host env
+   * targets produce two summary rows distinguished only by this.
+   */
+  targetId?: string;
   total: number;
   succeeded: number;
   failed: number;
   rateLimited: number;
+}
+
+/**
+ * Permissive mirror of one `snapshot.hosts[]` execution target — ONLY the
+ * fields the UI joins on for per-target display (label + session-id identity).
+ * The full pinned spec stays server-side.
+ */
+export interface JourneySnapshotTarget {
+  hostId: string;
+  hostName?: string;
+  targetId?: string;
+  /** Present on ENVIRONMENT-based targets; the session-id mint and env labels
+   * key on this — never on `targetId`. */
+  environmentRef?: { environmentId: string; name: string; revision: number };
+  serverAttachmentId?: string;
+}
+
+/**
+ * Hand-mirrored `projectEnvironments:listEnvironments` row subset the Swarms
+ * surface needs (picker labels + compat-host recompute). `skillSelection` is
+ * inline per backend #767 (no skill-group ref).
+ */
+export interface EnvironmentView {
+  environmentId: string;
+  projectId: string;
+  name: string;
+  description?: string;
+  hostId: string;
+  serverAttachmentId?: string | null;
+  skillSelection?: { mode: "explicit"; skillIds: string[] } | null;
+  revision: number;
+  archivedAt?: number;
 }
 
 /**
@@ -95,6 +136,12 @@ export interface JourneyRun {
   status: JourneyRunStatus | string;
   summary: JourneyRunSummary;
   hostSummaries: JourneyHostSummary[];
+  /**
+   * Immutable run snapshot (the full run doc rides `listJourneyRuns`). Only
+   * the target-join subset is mirrored; permissive so older rows (no
+   * `targetId`/`environmentRef`) stay valid.
+   */
+  snapshot?: { hosts?: JourneySnapshotTarget[] };
   /** Judge rollup for this run's sessions (absent until first grading). */
   goalScoreSummary?: GoalScoreRollup;
   createdAt: number;
@@ -246,9 +293,13 @@ export interface PersonaTrackRecord {
   sessionExamples?: unknown[];
 }
 
-/** One host's outcome rollup within {@link JourneyRollup}. */
+/** One execution TARGET's outcome rollup within {@link JourneyRollup}. Env
+ * target rows carry `targetId`; legacy/host rows have none (the backend strips
+ * host-shaped target ids so pre-environments rows and fresh host targets group
+ * identically). `hostId` is the CURRENT display host. */
 export interface JourneyHostRollup {
   hostId: string;
+  targetId?: string;
   total: number;
   succeeded: number;
   failed: number;
@@ -437,11 +488,13 @@ export async function streamJourneyRun(
   }
 }
 
-/** Deterministic attempt chatSessionId — matches the swarm runner claim key. */
-export function swarmAttemptChatSessionId(
-  runId: string,
-  hostId: string,
-  sessionIndex: number,
-): string {
-  return `synth_${runId}_${hostId}_${sessionIndex}`;
-}
+/**
+ * Deterministic attempt chatSessionId — the SHARED mint (D1), re-exported so
+ * the client mirror can never drift from the runner's claim key. Legacy host
+ * targets pass `{ hostId }` (byte-identical to the historical form); env
+ * targets pass `{ hostId, environmentId }` from `environmentRef.environmentId`.
+ */
+export {
+  swarmAttemptChatSessionId,
+  type SwarmSessionTargetIdentity,
+} from "@/shared/swarm-session-id";

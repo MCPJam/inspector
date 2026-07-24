@@ -45,6 +45,11 @@ import {
 } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "../../services/evals/convex-sanitize.js";
 import {
+  environmentServerIds,
+  resolveEnvironmentForLaunch,
+  type ResolvedEnvironmentForLaunch,
+} from "../../services/evals/environment-launch.js";
+import {
   countModelSteps,
   isModelFree,
   normalizePromptTurns,
@@ -235,9 +240,13 @@ export const RunEvalsRequestSchema = z.object({
         return { ...test, steps: wireTestToSteps(test) };
       })
   ),
-  serverIds: z
-    .array(z.string())
-    .min(1, { message: "At least one server must be selected" }),
+  // Non-empty for legacy launches; environment launches (environmentId set)
+  // send NO server ids — the browser never knows an environment's closed
+  // execution set, `prepareEvalRun` resolves it authoritatively (P0.1) and
+  // enforces the ≥1-server rule for legacy requests at runtime (a `.min(1)`
+  // here would reject every env launch; a `.superRefine` would break the
+  // hosted variant's `.omit`).
+  serverIds: z.array(z.string()),
   serverNames: z.array(z.string()).optional(),
   chatboxId: z.string().optional(),
   accessVersion: z.number().int().nonnegative().optional(),
@@ -303,6 +312,19 @@ export const RunEvalsRequestSchema = z.object({
    * unknown keys are stripped silently.
    */
   runGroupId: z.string().optional(),
+  /**
+   * Project-environment launch (one per attached env on a Run-all fan-out;
+   * always sent explicitly, even single-env). `prepareEvalRun` resolves the
+   * environment's closed server set via
+   * `projectEnvironments:resolveEnvironmentForLaunch` BEFORE server
+   * connection/tool capture, uses it INSTEAD of browser-supplied
+   * `serverIds`, and forwards the resolved revision to `startTestSuiteRun`
+   * as `expectedEnvironmentRevision` (stale ⇒ structured 409, no run row).
+   *
+   * Must be declared explicitly on every Zod boundary in the wire path;
+   * unknown keys are stripped silently.
+   */
+  environmentId: z.string().optional(),
 });
 
 export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
@@ -318,6 +340,17 @@ type RunEvalsWithManagerRequest = RunEvalsRequest & {
    * passes its trigger id so claim retries can never double-create a run.
    */
   idempotencyKey?: string;
+  /**
+   * Pre-resolved environment from the caller's manager-priming preflight (the
+   * hosted `/run` route and the scheduled worker resolve the environment ONCE
+   * to connect its closed set). When present — and for the same
+   * `environmentId` — `prepareEvalRun` reuses THIS resolution, including its
+   * revision, instead of re-resolving. That makes `expectedEnvironmentRevision`
+   * describe the exact set the manager was connected with, so an environment
+   * edit after the preflight fails the run-start revision check (clean 409 /
+   * retry) rather than pairing a stale manager with a newer run snapshot.
+   */
+  resolvedEnvironment?: ResolvedEnvironmentForLaunch;
 };
 
 export const RunTestCaseRequestSchema = z.object({
@@ -1448,6 +1481,8 @@ export async function prepareEvalRun(
     namedHostId,
     refreshSnapshot,
     runGroupId,
+    environmentId,
+    resolvedEnvironment,
     source,
     idempotencyKey,
   } = request;
@@ -1507,12 +1542,54 @@ export async function prepareEvalRun(
     assertSuiteRunWithinCap(request);
   }
 
-  const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
+  const { convexClient, convexHttpUrl } = createConvexClients(convexAuthToken);
+
+  // Environment launch (P0.1): resolve the environment's closed execution
+  // set BEFORE server resolution and tool capture, and use it INSTEAD of
+  // any browser-supplied serverIds. The resolved revision travels to the
+  // run-start mutation as `expectedEnvironmentRevision`, so a
+  // resolve-to-mutation edit rejects rather than pairing a tool snapshot
+  // from one environment revision with a run snapshot from another.
+  let environmentLaunch: ResolvedEnvironmentForLaunch | undefined;
+  if (environmentId) {
+    if (!projectId) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "projectId is required for environment runs"
+      );
+    }
+    // Reuse the caller's preflight resolution when it is for THIS environment
+    // (the manager was primed from it) so the revision we assert equals the
+    // one we connected — a same-key edit after the preflight then loses the
+    // revision check instead of silently pairing a stale manager with a newer
+    // snapshot. Fall back to resolving here for callers that didn't preflight.
+    environmentLaunch =
+      resolvedEnvironment &&
+      resolvedEnvironment.environmentRef.environmentId === environmentId
+        ? resolvedEnvironment
+        : await resolveEnvironmentForLaunch(convexClient, {
+            projectId,
+            environmentId,
+          });
+  } else if (serverIds.length === 0) {
+    // Legacy launches keep the old ≥1-server contract; enforced here (not
+    // in Zod) because environment launches legitimately send none.
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "At least one server must be selected"
+    );
+  }
+
+  const resolvedServerIds = resolveServerIdsOrThrow(
+    environmentLaunch ? environmentServerIds(environmentLaunch) : serverIds,
+    clientManager
+  );
   const persistedServerRefs =
-    storageServerIds && storageServerIds.length > 0
+    !environmentLaunch && storageServerIds && storageServerIds.length > 0
       ? storageServerIds
       : resolvedServerIds;
-  const { convexClient, convexHttpUrl } = createConvexClients(convexAuthToken);
   const { toolSnapshot, toolSnapshotDebug } =
     await captureToolSnapshotForEvalAuthoring(
       clientManager,
@@ -1562,6 +1639,8 @@ export async function prepareEvalRun(
     matchOptionsOverride,
     namedHostId,
     runGroupId,
+    environmentId,
+    expectedEnvironmentRevision: environmentLaunch?.environmentRef.revision,
     source,
     idempotencyKey,
   });
