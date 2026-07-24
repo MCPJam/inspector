@@ -265,6 +265,26 @@ export const APP_SURFACES = [
     showInAtlas: true,
   },
   {
+    id: "project-environments",
+    canonicalPath: "/environments",
+    routePatterns: ["environments"],
+    navSegments: ["environments"],
+    title: "Environments",
+    purpose:
+      "Manage the project's environments — named bundles of one client, an optional server group, and optional pinned skills that eval suites and journeys run against.",
+    userActivities: [
+      "Create or edit an environment (name, client, server group, skills)",
+      "Archive or restore an environment",
+      "Review which client and server group an environment resolves to",
+    ],
+    agentTools: {
+      kind: "none",
+      reason:
+        "Admin-flavored configuration surface behind a rollout flag; no agent automation until the feature is generally available.",
+    },
+    showInAtlas: true,
+  },
+  {
     id: "evals",
     canonicalPath: "/evals",
     routePatterns: [

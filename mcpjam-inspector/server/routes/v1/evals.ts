@@ -928,6 +928,11 @@ function toSuiteDetailDto(suite: SuiteDoc, execConfig: any) {
             : {}),
         }))
       : [],
+    // Attach-ordered project environments. READ-ONLY on the public API in
+    // this release — the write path is an explicit follow-up decision.
+    environmentIds: Array.isArray(suite.environmentIds)
+      ? suite.environmentIds.map(String)
+      : [],
     settings: {
       minimumAccuracy:
         typeof suite.defaultPassCriteria?.minimumPassRate === "number"
@@ -949,6 +954,9 @@ function toSuiteDetailDto(suite: SuiteDoc, execConfig: any) {
         typeof suite.schedule?.intervalMinutes === "number"
           ? suite.schedule.intervalMinutes
           : null,
+      environmentId: suite.schedule?.environmentId
+        ? String(suite.schedule.environmentId)
+        : null,
     },
     createdAt: suite.createdAt ?? null,
     updatedAt: suite.updatedAt ?? null,

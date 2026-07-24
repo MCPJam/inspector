@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { captureServerEvent } from "../../utils/analytics.js";
 import { z } from "zod";
 import { createConvexClient } from "../../services/evals/route-helpers.js";
+import { resolveEnvironmentForLaunch } from "../../services/evals/environment-launch.js";
 import { detachPreparedEvalRun } from "../../services/evals/detached-run.js";
 import { prepareSuiteReplayFromRun } from "../../services/evals/replay-suite-run.js";
 import { runTraceRepairJob } from "../../services/evals/trace-repair-runner.js";
@@ -63,7 +64,16 @@ const hostedRunEvalsSchema = RunEvalsRequestSchema.omit({
   projectId: true,
   serverIds: true,
   convexAuthToken: true,
-}).extend(hostedBatchSchema.shape);
+})
+  .extend(hostedBatchSchema.shape)
+  .extend({
+    // Environment launches (environmentId set) arrive with NO server ids —
+    // the /run route primes the batch from the authoritative environment
+    // resolution below, so the batch schema's `.min(1)` would reject them
+    // before the priming result is validated. Legacy launches still hit the
+    // ≥1-server rule in `prepareEvalRun`.
+    serverIds: z.array(z.string().min(1)),
+  });
 
 const hostedRunTestCaseSchema = RunTestCaseRequestSchema.omit({
   serverIds: true,
@@ -117,9 +127,34 @@ evals.post("/run", async (c) =>
   handleRoute(
     c,
     async () => {
+      const rawBody = await readJsonBody<Record<string, unknown>>(c);
+      // Environment launches carry no browser serverIds (the browser never
+      // knows an environment's closed execution set). Prime the hosted
+      // connection batch from the authoritative resolution so the manager
+      // connects exactly that set; `prepareEvalRun` re-resolves and the
+      // run-start mutation's `expectedEnvironmentRevision` check rejects
+      // any environment edit interleaved between the two resolutions.
+      if (
+        typeof rawBody.environmentId === "string" &&
+        rawBody.environmentId &&
+        typeof rawBody.projectId === "string" &&
+        rawBody.projectId
+      ) {
+        const resolved = await resolveEnvironmentForLaunch(
+          createConvexClient(assertBearerToken(c)),
+          {
+            projectId: rawBody.projectId,
+            environmentId: rawBody.environmentId,
+          },
+        );
+        rawBody.serverIds = resolved.selectedServerIds;
+        if (resolved.selectedServerNames?.length) {
+          rawBody.serverNames = resolved.selectedServerNames;
+        }
+      }
       const connection = await createManualHostedConnection(
         c,
-        await readJsonBody<Record<string, unknown>>(c),
+        rawBody,
         hostedRunEvalsSchema,
       );
       const { manager, body, convexAuthToken } = connection;

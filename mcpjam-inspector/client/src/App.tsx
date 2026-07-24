@@ -29,7 +29,12 @@ import { CiEvalsTab } from "./components/CiEvalsTab";
 import { ChatboxesTab } from "./components/ChatboxesTab";
 import { SwarmsTab } from "./components/swarms/SwarmsTab";
 import { EmptyState } from "./components/ui/empty-state";
-import { canViewSwarms, useViewerProjectRole } from "./hooks/useProjects";
+import {
+  canManageHosts,
+  canViewSwarms,
+  useViewerProjectRole,
+} from "./hooks/useProjects";
+import { ProjectEnvironmentsRoute } from "./components/project-environments/ProjectEnvironmentsRoute";
 import { SettingsTab } from "./components/SettingsTab";
 import { ApiKeysRoute } from "./components/settings/ApiKeysRoute";
 import { ProjectSettingsTab } from "./components/ProjectSettingsTab";
@@ -516,6 +521,8 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <ChatboxesRoute />;
     case "swarms":
       return <SwarmsRoute />;
+    case "environments":
+      return <EnvironmentsRoute />;
     case "playground":
       return <PlaygroundRoute />;
     case "support":
@@ -1200,6 +1207,29 @@ export function SwarmsRoute() {
       key={convexProjectId ?? "no-project"}
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
+    />
+  );
+}
+
+export function EnvironmentsRoute() {
+  // Project environments (host + server group + skills bundles). The page
+  // component itself enforces the `project-environments-enabled` flag —
+  // rendering the standard redirect when off — so a direct `/environments`
+  // URL cannot bypass the sidebar gate. Writes are project-admin only
+  // (`canManageHosts` mirrors the backend's admin gate); everyone else
+  // browses read-only.
+  const { convexProjectId, isAuthenticated } = useAppRouteContext();
+  const { user, isLoading: isWorkOsLoading } = useAuth();
+  const { role } = useViewerProjectRole({
+    isAuthenticated,
+    projectId: convexProjectId,
+    viewerEmail: user?.email,
+    identityLoading: isWorkOsLoading,
+  });
+  return (
+    <ProjectEnvironmentsRoute
+      projectId={convexProjectId ?? null}
+      canManage={canManageHosts(role)}
     />
   );
 }

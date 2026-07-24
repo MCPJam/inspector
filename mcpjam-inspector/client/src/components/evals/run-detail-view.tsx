@@ -434,6 +434,11 @@ export function RunDetailView({
     ? runEnvironments?.find((e) => e.environmentId === runComputerEnvId)
         ?.name ?? runComputerEnvId
     : null;
+  // Project-environment provenance frozen at run start (name + revision) —
+  // renders the "Environment" chip. Distinct from the sandbox-image pin
+  // above, whose chip reads "Sandbox image".
+  const runProjectEnvironmentRef =
+    selectedRunDetails.configSnapshot?.environmentRef ?? null;
   const {
     result: goalCompletionResult,
     pending: goalCompletionPending,
@@ -707,9 +712,28 @@ export function RunDetailView({
         </div>
       ) : null}
 
-      {runComputerEnvId ? (
+      {runProjectEnvironmentRef ? (
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <span className={runDetailMetaLabelClass}>Environment</span>
+          <span
+            className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-2 py-0.5 text-xs"
+            title={runProjectEnvironmentRef.environmentId}
+          >
+            <span className="text-foreground">
+              {runProjectEnvironmentRef.name}
+            </span>
+            <span className="font-mono text-[10px] text-muted-foreground">
+              rev {runProjectEnvironmentRef.revision}
+            </span>
+          </span>
+        </div>
+      ) : null}
+
+      {runComputerEnvId ? (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          {/* "Sandbox image", not "Environment" — project environments own
+              that word now (naming decision 2026-07-24). */}
+          <span className={runDetailMetaLabelClass}>Sandbox image</span>
           <span
             className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-2 py-0.5 text-xs"
             title={

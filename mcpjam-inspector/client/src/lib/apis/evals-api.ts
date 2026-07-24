@@ -107,6 +107,15 @@ type RunEvalsRequest = EvalRequestWithServers & {
    * parent row. Absent on single-host launches and legacy runs.
    */
   runGroupId?: string;
+  /**
+   * Project-environment launch: one POST per attached environment on a
+   * Run-all fan-out, always sent explicitly (even single-env). The request
+   * carries NO usable serverIds for these runs — the Inspector server
+   * resolves the environment's closed server set authoritatively and pins
+   * the resolved revision into the run. Must be declared at every wire
+   * boundary or it is silently stripped.
+   */
+  environmentId?: string;
 };
 
 type RunTestCaseRequest = EvalRequestWithServers & {

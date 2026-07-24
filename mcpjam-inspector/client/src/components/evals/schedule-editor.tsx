@@ -8,7 +8,7 @@
  * resume; resume resets the failure counter and the clock.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation } from "convex/react";
 import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
@@ -20,6 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
+import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 
 const INTERVAL_OPTIONS: Array<{ minutes: number; label: string }> = [
   { minutes: 5, label: "Every 5 minutes" },
@@ -35,6 +36,12 @@ export type SuiteSchedule = {
   enabled: boolean;
   state: "active" | "paused_quota" | "paused_auth" | "paused_failures";
   consecutiveFailures?: number;
+  /**
+   * The pinned project environment scheduled runs launch with. Required by
+   * `setSuiteSchedule` when the suite attaches ≥2 environments; single-env
+   * suites may omit it (the run-start default applies).
+   */
+  environmentId?: string;
 };
 
 const PAUSE_COPY: Record<Exclude<SuiteSchedule["state"], "active">, string> = {
@@ -49,9 +56,15 @@ const PAUSE_COPY: Record<Exclude<SuiteSchedule["state"], "active">, string> = {
 export function ScheduleEditor({
   suiteId,
   schedule,
+  projectId = null,
+  environmentIds,
 }: {
   suiteId: string;
   schedule: SuiteSchedule | undefined;
+  /** Needed only to label the environment pin (multi-env suites). */
+  projectId?: string | null;
+  /** The suite's attach-ordered project environments (absent ⇒ legacy). */
+  environmentIds?: string[];
 }) {
   const setSuiteSchedule = useMutation(
     "testSuites:setSuiteSchedule" as any,
@@ -59,6 +72,7 @@ export function ScheduleEditor({
     suiteId: string;
     enabled: boolean;
     intervalMinutes?: number;
+    environmentId?: string;
   }) => Promise<unknown>;
   const [isSaving, setIsSaving] = useState(false);
 
@@ -73,15 +87,53 @@ export function ScheduleEditor({
   useEffect(() => {
     setDraftIntervalMinutes(persistedIntervalMinutes);
   }, [persistedIntervalMinutes]);
-  const pausedState =
-    enabled && schedule && schedule.state !== "active"
-      ? schedule.state
-      : null;
+
+  // Environment pin: REQUIRED when the suite attaches ≥2 environments.
+  // Draft mirrors the interval pattern — persisted pin (or first attached
+  // env) seeds it, and every enabled write carries it.
+  const attachedEnvironmentIds = useMemo(
+    () => environmentIds ?? [],
+    [environmentIds],
+  );
+  const requiresEnvironmentPin = attachedEnvironmentIds.length >= 2;
+  const persistedEnvironmentId = schedule?.environmentId;
+  const [draftEnvironmentId, setDraftEnvironmentId] = useState<
+    string | undefined
+  >(persistedEnvironmentId ?? attachedEnvironmentIds[0]);
+  useEffect(() => {
+    setDraftEnvironmentId(persistedEnvironmentId ?? attachedEnvironmentIds[0]);
+  }, [persistedEnvironmentId, attachedEnvironmentIds]);
+  const environments = useProjectEnvironments(
+    requiresEnvironmentPin ? projectId : null,
+  );
+  // Defensive: a persisted pin whose environment was detached from the
+  // suite still renders (marked) so the user sees why a re-pin is needed.
+  const pinDetached =
+    !!draftEnvironmentId &&
+    attachedEnvironmentIds.length > 0 &&
+    !attachedEnvironmentIds.includes(draftEnvironmentId);
+
+  const environmentLabel = (id: string) =>
+    environments?.find((e) => e.environmentId === id)?.name ?? id;
 
   const apply = async (args: { enabled: boolean; intervalMinutes?: number }) => {
+    if (args.enabled && requiresEnvironmentPin && !draftEnvironmentId) {
+      toast.error(
+        "Pick which environment scheduled runs should use before enabling.",
+      );
+      return;
+    }
     setIsSaving(true);
     try {
-      await setSuiteSchedule({ suiteId, ...args });
+      await setSuiteSchedule({
+        suiteId,
+        ...args,
+        // Every enabled write carries the pin so a backend-side default can
+        // never drift from what this editor shows.
+        ...(args.enabled && requiresEnvironmentPin && draftEnvironmentId
+          ? { environmentId: draftEnvironmentId }
+          : {}),
+      });
       toast.success(
         args.enabled ? "Schedule updated" : "Schedule disabled",
       );
@@ -93,6 +145,11 @@ export function ScheduleEditor({
       setIsSaving(false);
     }
   };
+
+  const pausedState =
+    enabled && schedule && schedule.state !== "active"
+      ? schedule.state
+      : null;
 
   return (
     <div className="space-y-3">
@@ -143,6 +200,56 @@ export function ScheduleEditor({
           </SelectContent>
         </Select>
       </div>
+      {requiresEnvironmentPin ? (
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs text-muted-foreground">
+            Scheduled runs use environment
+          </span>
+          <Select
+            value={draftEnvironmentId ?? ""}
+            disabled={isSaving}
+            onValueChange={(next) => {
+              if (!next) return;
+              setDraftEnvironmentId(next);
+              if (enabled) {
+                void setSuiteSchedule({
+                  suiteId,
+                  enabled: true,
+                  intervalMinutes: draftIntervalMinutes,
+                  environmentId: next,
+                })
+                  .then(() => toast.success("Schedule updated"))
+                  .catch((error) =>
+                    toast.error(
+                      error instanceof Error
+                        ? error.message
+                        : "Failed to update schedule",
+                    ),
+                  );
+              }
+            }}
+          >
+            <SelectTrigger className="h-8 w-44 text-xs">
+              <SelectValue placeholder="Pick an environment" />
+            </SelectTrigger>
+            <SelectContent>
+              {attachedEnvironmentIds.map((id) => (
+                <SelectItem key={id} value={id} className="text-xs">
+                  {environmentLabel(id)}
+                </SelectItem>
+              ))}
+              {pinDetached && draftEnvironmentId ? (
+                <SelectItem
+                  value={draftEnvironmentId}
+                  className="text-xs"
+                >
+                  {environmentLabel(draftEnvironmentId)} (no longer attached)
+                </SelectItem>
+              ) : null}
+            </SelectContent>
+          </Select>
+        </div>
+      ) : null}
       {pausedState ? (
         <div className="flex items-start justify-between gap-3 rounded-md border border-warning/50 bg-warning/10 p-3">
           <p className="text-xs text-foreground">{PAUSE_COPY[pausedState]}</p>

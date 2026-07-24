@@ -21,6 +21,7 @@ import {
   UserPlus,
   ShieldCheck,
   Loader2,
+  Layers,
 } from "lucide-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { track } from "@/lib/analytics";
@@ -226,6 +227,12 @@ const navigationSections: NavSection[] = [
         icon: FlaskConical,
         billingFeature: "evals",
         evalsSubnav: true,
+      },
+      {
+        title: "Environments",
+        url: "/environments",
+        icon: Layers,
+        featureFlag: "project-environments-enabled",
       },
     ],
   },
@@ -607,6 +614,9 @@ export function MCPSidebar({
   // Hosted Cloud Skills nav is gated until QA completes; fail-closed (absent /
   // loading flag ⇒ hidden). See `useSkillsEnabled`.
   const skillsEnabled = useFeatureFlagEnabled("skills-enabled");
+  const projectEnvironmentsEnabled = useFeatureFlagEnabled(
+    "project-environments-enabled"
+  );
   const { isAuthenticated, isLoading: isConvexAuthLoading } = useConvexAuth();
   const { user, isLoading: isWorkOsAuthLoading } = useAuth();
   // Until WorkOS + Convex resolve the session we don't yet know guest-vs-authed
@@ -681,6 +691,8 @@ export function MCPSidebar({
       "hosts-enabled": isAuthenticated,
       "home-page-enabled": isAuthenticated,
       xaa: xaaEnabled === true,
+      "project-environments-enabled":
+        projectEnvironmentsEnabled === true && isAuthenticated,
     }),
     [
       learningEnabled,
@@ -689,6 +701,7 @@ export function MCPSidebar({
       conformanceEnabled,
       compatibilityEnabled,
       xaaEnabled,
+      projectEnvironmentsEnabled,
       isAuthenticated,
     ]
   );

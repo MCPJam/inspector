@@ -17,10 +17,12 @@ import type {
 } from "./types";
 import { getSuiteReplayEligibility } from "./replay-eligibility";
 import {
-  buildSuiteHostRunPlans,
+  buildSuiteRunPlans,
   getEffectiveSuiteServers,
   getSelectedSuiteHostRunPlan,
 } from "./helpers";
+import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
+import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { draftTestCaseId } from "./draft-test-case";
 import { isModelFree, promptTurnsToSteps } from "@/shared/steps";
 import type { useEvalMutations } from "./use-eval-mutations";
@@ -230,6 +232,14 @@ export function useEvalHandlers({
   // Resolves the WorkOS token for signed-in users and the guest bearer for
   // guests (project-owning guests included). See use-convex-access-token.
   const getAccessToken = useConvexAccessToken();
+  // Environment names for env-suite fan-out toasts/labels only — env plans
+  // never derive servers from this list (the server resolves them at launch).
+  // Queried only when the feature flag is on; a flag-off env suite still
+  // fans out correctly with ids as display fallbacks.
+  const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
+  const projectEnvironments = useProjectEnvironments(
+    projectEnvironmentsEnabled ? projectId : null,
+  );
 
   // Action states
   const [rerunningSuiteId, setRerunningSuiteId] = useState<string | null>(null);
@@ -572,6 +582,13 @@ export function useEvalHandlers({
     ) => {
       if (rerunningSuiteId) return;
 
+      // Environment suites launch through the server's authoritative
+      // resolution (P0.1): the browser never knows the environment's closed
+      // server set, so the legacy server-readiness gates below are skipped —
+      // the server returns a readable auth/connection error for the exact
+      // resolved set instead.
+      const isEnvironmentSuite = (suite.environmentIds?.length ?? 0) > 0;
+
       // Effective servers = flat env.servers ∪ resolved servers across all
       // host attachments. Without this union, a host-only suite would fail
       // the "no servers configured" gate even though the runner can derive
@@ -590,7 +607,7 @@ export function useEvalHandlers({
         latestRun,
       });
 
-      if (suiteServers.length === 0) {
+      if (!isEnvironmentSuite && suiteServers.length === 0) {
         if (rerunEligibility.replayableLatestRun?._id) {
           await handleReplayRun(suite, rerunEligibility.replayableLatestRun);
           return;
@@ -599,7 +616,7 @@ export function useEvalHandlers({
         return;
       }
 
-      if (rerunEligibility.missingServers.length > 0) {
+      if (!isEnvironmentSuite && rerunEligibility.missingServers.length > 0) {
         if (ensureServersReady != null) {
           const readiness = await ensureServersReady(suiteServers);
           if (!hasUnavailableServers(readiness)) {
@@ -635,26 +652,31 @@ export function useEvalHandlers({
 
       setRerunningSuiteId(suite._id);
 
-      // Host-bound fan-out: when the suite has hostAttachments we fire one
-      // run request per host so each gets its own snapshot. Otherwise we
-      // run the suite's flat server list once as before.
-      const runPlans = buildSuiteHostRunPlans(
+      // Fan-out axis: attached project environments (one run per env, in
+      // attach order) win over hostAttachments; otherwise one run request
+      // per host so each gets its own snapshot, else the suite's flat
+      // server list once as before. Env plans carry NO serverIds — the
+      // server resolves the environment's closed set at launch.
+      const runPlans = buildSuiteRunPlans(
         suite,
+        projectEnvironments,
         executionContext.suiteServers,
       );
 
       // Generate a shared group id ONLY when the rerun fans out to more
-      // than one host. The inspector route threads this through the Zod
-      // schema → recorder → Convex mutation; every sibling run carries
-      // the same id so the UI can collapse them into a single parent
-      // row. Single-host launches stay ungrouped so legacy + single-host
-      // rows render identically.
+      // than one host/environment. The inspector route threads this through
+      // the Zod schema → recorder → Convex mutation; every sibling run
+      // carries the same id so the UI can collapse them into a single
+      // parent row. Single-plan launches stay ungrouped so legacy +
+      // single-host rows render identically.
       const runGroupId = runPlans.length > 1 ? crypto.randomUUID() : undefined;
 
       // Show toast immediately when user clicks rerun
       toast.success(
         runPlans.length > 1
-          ? `Starting ${runPlans.length} runs across hosts…`
+          ? `Starting ${runPlans.length} runs across ${
+              isEnvironmentSuite ? "environments" : "hosts"
+            }…`
           : "Run started successfully! Results will appear shortly.",
       );
 
@@ -721,6 +743,11 @@ export function useEvalHandlers({
               matchOptionsOverride: options?.matchOptionsOverride,
               refreshSnapshot: options?.refreshSnapshot,
               ...(plan.namedHostId ? { namedHostId: plan.namedHostId } : {}),
+              // Always sent explicitly on env plans — even single-env
+              // suites — so the server's authoritative resolution runs.
+              ...(plan.environmentId
+                ? { environmentId: plan.environmentId }
+                : {}),
               ...(runGroupId ? { runGroupId } : {}),
             }),
           ),
@@ -799,7 +826,12 @@ export function useEvalHandlers({
           }
         } else if (failures.length < runPlans.length) {
           const failedHostNames = failures
-            .map((failure) => failure.plan.hostName ?? "(unnamed client)")
+            .map(
+              (failure) =>
+                failure.plan.environmentName ??
+                failure.plan.hostName ??
+                "(unnamed client)",
+            )
             .join(", ");
           toast.error(
             `${failures.length} of ${runPlans.length} client runs failed: ${failedHostNames}`,
@@ -827,6 +859,7 @@ export function useEvalHandlers({
       getAccessToken,
       projectId,
       projectServers,
+      projectEnvironments,
       getSuiteExecutionContext,
       handleReplayRun,
       evalsNavigationContext,

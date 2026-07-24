@@ -7,6 +7,7 @@ import App, {
   CiEvalsRoute,
   ConformanceRoute,
   CaniuseCapabilityRoute,
+  EnvironmentsRoute,
   CompatibilityRoute,
   ComputerRoute,
   EvalsRoute,
@@ -103,6 +104,10 @@ const ROUTE_ELEMENTS: Record<
   // `/swarms` — project-scoped Persona → Journey → Run surface (`SwarmsTab`)
   // with Journeys + Sessions views. Same billing feature as chatboxes.
   swarms: { element: <SwarmsRoute /> },
+  // `/environments` — project environments management. The route component
+  // enforces the `project-environments-enabled` flag itself (redirects when
+  // off), so registration here does not expose the dark feature.
+  environments: { element: <EnvironmentsRoute /> },
   playground: { element: <PlaygroundRoute /> },
   support: { element: <SupportRoute /> },
   settings: { element: <SettingsRoute /> },

@@ -70,6 +70,14 @@ export interface Skill {
 }
 
 /**
+ * Whether a cloud skill can be pinned into a project environment's skill
+ * selection. Mirrors the backend's list-field: `plugin_component` skills,
+ * skills with supporting files, and skills with extra frontmatter are
+ * ineligible; `reason` is backend-authored copy pickers surface verbatim.
+ */
+export type SkillPinnability = { ok: true } | { ok: false; reason: string };
+
+/**
  * Skill list item (used for listing skills without full content).
  *
  * Local (filesystem) skills set `path`. Cloud (Convex) skills set `skillId`,
@@ -91,6 +99,13 @@ export interface SkillListItem {
   origin?: "local" | "cloud";
   /** Cloud skills only — how the record came to exist (absent ⇒ 'authored'). */
   provenance?: SkillProvenance;
+  /**
+   * Cloud skills only — whether the skill can be pinned into a project
+   * environment's skill selection (backend P0.3 list-field, forwarded through
+   * `/api/web/skills/list`). Absent on older backends ⇒ eligibility unknown;
+   * pickers treat absent as eligible and rely on the save-time backend gate.
+   */
+  pinnability?: SkillPinnability;
 }
 
 /**

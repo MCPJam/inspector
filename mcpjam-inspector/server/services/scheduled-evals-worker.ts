@@ -28,6 +28,8 @@ import {
   type PreparedEvalRun,
 } from "../routes/shared/evals.js";
 import { fetchSuiteRunServerSelection } from "../routes/v1/evals.js";
+import { createConvexClient } from "./evals/route-helpers.js";
+import { resolveEnvironmentForLaunch } from "./evals/environment-launch.js";
 
 const POLL_INTERVAL_MS = 15_000;
 const POLL_JITTER_MS = 5_000;
@@ -44,6 +46,14 @@ type ClaimedScheduledRun = {
   projectId: string | null;
   createdByExternalId: string;
   scheduledFor: number;
+  /**
+   * The schedule's pinned project environment (required for multi-env
+   * suites, defaulted for single-env, null for legacy suites). The worker
+   * MUST forward it to `prepareEvalRun` regardless of any browser feature
+   * flag — claims are data-driven. Optional for wire tolerance against a
+   * backend that predates the field.
+   */
+  environmentId?: string | null;
 };
 
 export function isScheduledEvalsWorkerEnabled(): boolean {
@@ -169,11 +179,30 @@ export async function executeClaimedRun(
       claimed.createdByExternalId,
       claimed.organizationId,
     );
-    const selection = await fetchSuiteRunServerSelection(
-      bearer,
-      claimed.suiteId,
-      undefined,
-    );
+    // Environment claims connect the environment's authoritatively resolved
+    // closed set, not the suite's saved selection — the saved selection
+    // predates (or ignores) the pinned environment. prepareEvalRun
+    // re-resolves; a revision moved between the two resolutions rejects at
+    // the run-start mutation and the trigger's idempotency path retries.
+    const selection = claimed.environmentId
+      ? await (async () => {
+          const resolved = await resolveEnvironmentForLaunch(
+            createConvexClient(bearer),
+            {
+              projectId: claimed.projectId!,
+              environmentId: claimed.environmentId!,
+            },
+          );
+          return {
+            serverIds: resolved.selectedServerIds,
+            serverNames:
+              resolved.selectedServerNames &&
+              resolved.selectedServerNames.length > 0
+                ? resolved.selectedServerNames
+                : resolved.selectedServerIds,
+          };
+        })()
+      : await fetchSuiteRunServerSelection(bearer, claimed.suiteId, undefined);
 
     // Empty caller context = plain-JWT caller (locked by caller-context
     // contract test); the delegated JWT is the principal.
@@ -200,12 +229,17 @@ export async function executeClaimedRun(
     try {
       prepared = await prepareEvalRun(manager, {
         suiteId: claimed.suiteId,
+        // Non-null here (the no-project guard above returned already).
+        projectId: claimed.projectId ?? undefined,
         tests: [],
         serverIds: selection.serverIds,
         serverNames: selection.serverNames,
         convexAuthToken: bearer,
         suiteRerun: true,
         source: "schedule",
+        ...(claimed.environmentId
+          ? { environmentId: claimed.environmentId }
+          : {}),
         // Claim retries can never double-create a run: the mutation's
         // idempotency lookup wins over the 30s fingerprint window.
         idempotencyKey: claimed.triggerId,
