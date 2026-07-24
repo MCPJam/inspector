@@ -87,6 +87,13 @@ export interface MultiPageFixtureOptions {
    * spec-legal tool-execution failure, never a thrown JSON-RPC error.
    */
   failingTool?: boolean;
+  /**
+   * Invoked with the tool name the instant a `tools/call` reaches the fixture
+   * handler, BEFORE any work. Used to build a deterministic "the request
+   * actually arrived" synchronization point (see `waitForToolCall` on
+   * {@link ServedMultiPageFixture}) instead of racing a fixed sleep.
+   */
+  onToolCall?: (name: string) => void;
 }
 
 function paginatedPage<T>(
@@ -182,7 +189,11 @@ export function buildMultiPageFixtureServer(
 
     server.setRequestHandler("tools/call", async (request: any, ctx: any) => {
       const name = request.params.name as string;
-      if (name === "fail-tool") {
+      options.onToolCall?.(name);
+      // `fail-tool` is opt-in: only the `failingTool` mode makes it fail, so a
+      // test that forgot to enable the mode can't silently get the failing
+      // outcome anyway.
+      if (name === "fail-tool" && options.failingTool) {
         return {
           content: [{ type: "text", text: "fail-tool always fails" }],
           isError: true,
@@ -193,9 +204,22 @@ export function buildMultiPageFixtureServer(
         // never resolves on its own within a test's timeout, so the test's
         // `AbortSignal` is what ends the call.
         const delayMs = Number(request.params.arguments?.delayMs ?? 60_000);
-        await new Promise((resolve, reject) => {
+        const signal: AbortSignal | undefined = ctx?.signal;
+        await new Promise<void>((resolve, reject) => {
+          // Already aborted before we could attach a listener — reject now so
+          // no timer is ever created for a doomed call.
+          if (signal?.aborted) {
+            reject(new Error("slow-tool aborted"));
+            return;
+          }
           const timer = setTimeout(resolve, delayMs);
-          ctx?.signal?.addEventListener?.("abort", () => {
+          // Never let this held-open timer keep the test process (or a
+          // wait-for-open-handles runner) alive for the full delay if the
+          // abort listener doesn't fire — e.g. the transport doesn't surface
+          // cancellation on `ctx.signal`. `unref` is enough on its own; the
+          // abort listener is the fast, deterministic path when it does fire.
+          (timer as unknown as { unref?: () => void }).unref?.();
+          signal?.addEventListener?.("abort", () => {
             clearTimeout(timer);
             reject(new Error("slow-tool aborted"));
           });
@@ -263,6 +287,14 @@ export interface ServedMultiPageFixture {
   url: string;
   /** Every request/response the fixture handled, verbatim, in call order. */
   exchanges: RawExchange[];
+  /**
+   * Resolves when a `tools/call` for `name` has actually reached the fixture
+   * handler (resolving immediately if one already has). A deterministic
+   * request-arrival signal for held-open calls (e.g. `slow-tool`), whose
+   * response never completes and so never lands in {@link exchanges} — making
+   * the exchange log useless as a "did it dispatch?" check.
+   */
+  waitForToolCall: (name: string) => Promise<void>;
   close: () => Promise<void>;
 }
 
@@ -280,7 +312,27 @@ export interface ServedMultiPageFixture {
 export async function serveMultiPageFixtureOnPort(
   options: MultiPageFixtureOptions = {}
 ): Promise<ServedMultiPageFixture> {
-  const handler = createMultiPageFixtureHandler(options);
+  // Track which tool calls have reached the handler so callers can await a
+  // real arrival signal (see `waitForToolCall`) rather than a racy sleep.
+  const seenToolCalls = new Set<string>();
+  const toolCallWaiters: Array<{ name: string; resolve: () => void }> = [];
+  const onToolCall = (name: string) => {
+    seenToolCalls.add(name);
+    for (let i = toolCallWaiters.length - 1; i >= 0; i--) {
+      if (toolCallWaiters[i]!.name === name) {
+        toolCallWaiters.splice(i, 1)[0]!.resolve();
+      }
+    }
+    options.onToolCall?.(name);
+  };
+  const waitForToolCall = (name: string): Promise<void> => {
+    if (seenToolCalls.has(name)) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      toolCallWaiters.push({ name, resolve });
+    });
+  };
+
+  const handler = createMultiPageFixtureHandler({ ...options, onToolCall });
   const cap = createCapturingFetch((input, init) =>
     (handler.fetch as any)(input, init)
   );
@@ -292,6 +344,7 @@ export async function serveMultiPageFixtureOnPort(
   return {
     url: `http://127.0.0.1:${address.port}/mcp`,
     exchanges: cap.exchanges,
+    waitForToolCall,
     close: () => new Promise<void>((resolve) => httpServer.close(() => resolve())),
   };
 }

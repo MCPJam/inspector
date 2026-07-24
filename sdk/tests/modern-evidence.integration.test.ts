@@ -86,11 +86,22 @@ describe("modern-era (2026-07-28) wire evidence", () => {
       { signal: controller.signal }
     );
 
-    // Give the request time to actually reach the server before aborting.
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    // Deterministic proof the tools/call actually reached the fixture before
+    // we abort — a held-open call never lands in `exchanges` (its response
+    // never completes), so a fixed sleep here would let the test pass without
+    // ever dispatching the request. `waitForToolCall` resolves the instant the
+    // handler receives it.
+    await served!.waitForToolCall("slow-tool");
     controller.abort();
 
-    await expect(callPromise).rejects.toBeTruthy();
+    // The dispatched, held-open call must reject as a consequence of the abort
+    // (not resolve with `slow-tool finished`).
+    const outcome = await callPromise.then(
+      () => "resolved" as const,
+      (err) => err
+    );
+    expect(outcome).not.toBe("resolved");
+    expect(outcome).toBeTruthy();
 
     // The spec cancellation signal on modern is the aborted per-request
     // stream itself — there must be no explicit notifications/cancelled
