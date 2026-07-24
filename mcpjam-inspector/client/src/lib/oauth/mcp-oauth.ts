@@ -2156,6 +2156,26 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     // being the token source of truth — are returned as UNBOUND compat so
     // existing local logins and the refresh path keep working.
     const raw = localStorage.getItem(`mcp-tokens-${this.serverName}`);
+    // A record carrying the v2 version marker but FAILING the full issuer-keyed
+    // shape check (e.g. `byIssuer` missing, null, an array, or not an object) is
+    // a CORRUPT v2 envelope. Without this guard `parseLegacyStoredTokens`
+    // accepts the raw `{ v: 2, ... }` object as an unbound legacy token bag and
+    // it is surfaced as VALID tokens. `tokens()` has no isInvalid contract, so
+    // return undefined — parity with the corrupt-v2 classification in
+    // getStoredTokensState.
+    if (raw) {
+      try {
+        const parsedRaw = JSON.parse(raw);
+        if (
+          !isIssuerKeyedStore(parsedRaw) &&
+          hasIssuerKeyedVersionMarker(parsedRaw)
+        ) {
+          return undefined;
+        }
+      } catch {
+        // Unparseable raw is handled below by readIssuerKeyed (returns absent).
+      }
+    }
     const issuer = this.currentIssuer();
     const { value, legacyUnbound } = readIssuerKeyed<any>(
       raw,

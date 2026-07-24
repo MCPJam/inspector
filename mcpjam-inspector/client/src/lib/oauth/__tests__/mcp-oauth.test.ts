@@ -2230,6 +2230,44 @@ describe("mcp-oauth", () => {
         tokens: undefined,
         isInvalid: true,
       });
+
+      // `byIssuer` an ARRAY passes `typeof === "object"` but is not a valid
+      // issuer→record map: still a corrupt v2 envelope, not an empty keyed store
+      // that reads as absent.
+      localStorage.setItem(
+        "mcp-tokens-corrupt-v2-array",
+        JSON.stringify({ v: 2, byIssuer: [] })
+      );
+      expect(getStoredTokens("corrupt-v2-array")).toBeUndefined();
+      expect(getStoredTokensState("corrupt-v2-array")).toEqual({
+        tokens: undefined,
+        isInvalid: true,
+      });
+    });
+
+    it("provider.tokens() returns undefined for a v2-marked but malformed envelope", async () => {
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      // A record carrying the v2 marker but failing the issuer-keyed shape check
+      // must NOT be handed to parseLegacyStoredTokens (which would accept the raw
+      // `{ v: 2, ... }` object as an unbound legacy token bag and surface it as
+      // valid). tokens() has no isInvalid channel, so it returns undefined.
+      const provider = new MCPOAuthProvider(
+        "corrupt-v2-provider",
+        "https://mcp.example.com/sse"
+      );
+
+      for (const bad of [
+        { v: 2, byIssuer: "not-an-object" },
+        { v: 2, activeIssuer: "https://as.example.com" },
+        { v: 2, byIssuer: null },
+        { v: 2, byIssuer: [] },
+      ]) {
+        localStorage.setItem(
+          "mcp-tokens-corrupt-v2-provider",
+          JSON.stringify(bad)
+        );
+        expect(provider.tokens()).toBeUndefined();
+      }
     });
 
     it("getStoredTokens does not surface a PREVIOUS serverUrl's token bucket when the name is reused (SEP-2352)", async () => {

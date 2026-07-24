@@ -35,7 +35,12 @@ export function isIssuerKeyedStore<T>(
     typeof value === "object" &&
     (value as { v?: unknown }).v === ISSUER_KEYED_STORAGE_VERSION &&
     typeof (value as { byIssuer?: unknown }).byIssuer === "object" &&
-    (value as { byIssuer?: unknown }).byIssuer !== null
+    (value as { byIssuer?: unknown }).byIssuer !== null &&
+    // An array `byIssuer` passes `typeof === "object"` but is NOT a valid
+    // issuer→record map. Reject it so a `{ v: 2, byIssuer: [] }` record is
+    // classified as a CORRUPT v2 envelope (via hasIssuerKeyedVersionMarker)
+    // rather than an empty keyed store that silently reads as absent.
+    !Array.isArray((value as { byIssuer?: unknown }).byIssuer)
   );
 }
 

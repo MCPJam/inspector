@@ -485,7 +485,8 @@ export function useHostedOAuthGate({
         ? null
         : await waitForStoredAccessToken(
             server.serverName,
-            INLINE_TOKEN_POLL_ATTEMPTS
+            INLINE_TOKEN_POLL_ATTEMPTS,
+            server.serverUrl ?? undefined
           );
 
       if (accessToken) {
