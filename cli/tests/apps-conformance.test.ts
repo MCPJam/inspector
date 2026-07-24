@@ -49,3 +49,42 @@ test("buildAppsConformanceConfig lets explicit check ids override categories", (
 
   assert.deepEqual(config.checkIds, ["ui-tools-present"]);
 });
+
+test("buildAppsConformanceConfig pins mcpProtocolVersion when --protocol-version is a known version", () => {
+  const config = buildAppsConformanceConfig({
+    url: "https://example.com/mcp",
+    protocolVersion: "2026-07-28",
+  });
+
+  assert.equal(
+    (config as { mcpProtocolVersion?: string }).mcpProtocolVersion,
+    "2026-07-28",
+  );
+});
+
+test("buildAppsConformanceConfig rejects an unknown --protocol-version", () => {
+  assert.throws(
+    () =>
+      buildAppsConformanceConfig({
+        url: "https://example.com/mcp",
+        protocolVersion: "not-a-real-version",
+      }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("Unknown --protocol-version"),
+  );
+});
+
+test("buildAppsConformanceConfig rejects --protocol-version against a stdio target", () => {
+  assert.throws(
+    () =>
+      buildAppsConformanceConfig({
+        command: "node",
+        args: ["server.js"],
+        protocolVersion: "2026-07-28",
+      }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("HTTP target"),
+  );
+});
