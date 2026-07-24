@@ -38,7 +38,11 @@ import type {
 } from "@mcpjam/sdk/browser";
 import type { HttpServerConfig } from "@mcpjam/sdk/browser";
 import { generateRandomString } from "./pkce";
-import { readIssuerKeyed, writeIssuerKeyed } from "./issuer-keyed-storage";
+import {
+  isIssuerKeyedStore,
+  readIssuerKeyed,
+  writeIssuerKeyed,
+} from "./issuer-keyed-storage";
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE, SANITIZE_OAUTH_TRACES } from "@/lib/config";
 import {
@@ -2143,19 +2147,27 @@ export class MCPOAuthProvider implements OAuthClientProvider {
 
   tokens() {
     // SEP-2352: return only the token bucket bound to the EXACT resolved issuer.
-    // A v2-keyed envelope for AS A yields nothing once discovery resolves to
-    // AS B, so AS A's tokens are never presented to AS B (mirrors the client-id
-    // read). Legacy unkeyed records — the only shape written today; see the
-    // `saveTokens` note on Convex being the token source of truth — are returned
-    // as UNBOUND compat so existing local logins and the refresh path keep
-    // working. Before any AS is resolved, `readIssuerKeyed` falls back to the
-    // envelope's active bucket (or the legacy value), preserving refresh.
+    // `currentIssuer()` binds the provider's serverUrl, so a discovery entry for
+    // a DIFFERENT serverUrl can't resolve an issuer here. A v2-keyed envelope for
+    // AS A yields nothing once discovery resolves to AS B, so AS A's tokens are
+    // never presented to AS B (mirrors the client-id read). Legacy unkeyed
+    // records — the only shape written today; see the `saveTokens` note on Convex
+    // being the token source of truth — are returned as UNBOUND compat so
+    // existing local logins and the refresh path keep working.
     const raw = localStorage.getItem(`mcp-tokens-${this.serverName}`);
-    const { value } = readIssuerKeyed<any>(
+    const issuer = this.currentIssuer();
+    const { value, legacyUnbound } = readIssuerKeyed<any>(
       raw,
-      this.currentIssuer(),
+      issuer,
       parseLegacyStoredTokens
     );
+    // When no issuer resolves (e.g. serverUrl changed so persisted discovery no
+    // longer matches), a v2 envelope must NOT surface its `activeIssuer` bucket —
+    // that could be a stale AS's tokens after a PRM/serverUrl change (SEP-2352).
+    // Only legacy unkeyed records are returned as UNBOUND compat.
+    if (!issuer && !legacyUnbound) {
+      return undefined;
+    }
     return value;
   }
 
@@ -3664,7 +3676,10 @@ export interface StoredTokensState {
   isInvalid: boolean;
 }
 
-export function getStoredTokensState(serverName: string): StoredTokensState {
+export function getStoredTokensState(
+  serverName: string,
+  serverUrl?: string
+): StoredTokensState {
   if (HOSTED_MODE) {
     return { tokens: undefined, isInvalid: false };
   }
@@ -3675,28 +3690,47 @@ export function getStoredTokensState(serverName: string): StoredTokensState {
   // A present-but-unparseable record is corrupt (isInvalid), distinct from an
   // absent one — detect that up front so the issuer gating below doesn't
   // silently reclassify malformed data as "no tokens".
+  let parsed: unknown;
   try {
-    JSON.parse(raw);
+    parsed = JSON.parse(raw);
   } catch {
     return { tokens: undefined, isInvalid: true };
   }
+  const isKeyedEnvelope = isIssuerKeyedStore(parsed);
 
   // SEP-2352: gate the record by the exact resolved issuer so a v2-keyed AS-A
-  // token bucket is never surfaced after PRM resolves to AS B. Legacy unkeyed
-  // records stay readable as UNBOUND compat (parity with the client-id read).
-  const issuer = resolveStoredIssuer(serverName);
-  const { value: tokensJson } = readIssuerKeyed<any>(
+  // token bucket is never surfaced after PRM resolves to AS B. Bind the exact
+  // serverUrl (as the provider's `tokens()` read does via `currentIssuer()`) so
+  // a discovery entry for a PREVIOUS serverUrl — when a server name is reused —
+  // can't resolve a stale issuer here. Legacy unkeyed records stay readable as
+  // UNBOUND compat (parity with the client-id read).
+  const issuer = resolveStoredIssuer(serverName, serverUrl);
+  const { value: tokensJson, legacyUnbound } = readIssuerKeyed<any>(
     raw,
     issuer,
     parseLegacyStoredTokens
   );
   if (!tokensJson) {
-    // A v2 envelope with no bucket for the resolved issuer: not corrupt, just
-    // not this AS's tokens — treat as absent so the flow re-authorizes.
+    if (isKeyedEnvelope) {
+      // A v2 envelope with no bucket for the resolved issuer (or none resolved):
+      // not corrupt, just not this AS's tokens — treat as absent so the flow
+      // re-authorizes.
+      return { tokens: undefined, isInvalid: false };
+    }
+    // A present, valid-JSON but malformed legacy record (e.g. `null`, an array,
+    // or a scalar) is INVALID, not absent — preserve the pre-2R classification
+    // so the UI surfaces "invalid stored auth data" rather than silently
+    // dropping it.
+    return { tokens: undefined, isInvalid: true };
+  }
+  // When no issuer resolves, a v2 envelope must NOT surface its `activeIssuer`
+  // bucket (a stale AS after a serverUrl/PRM change, SEP-2352). Only legacy
+  // unkeyed records are returned as UNBOUND compat.
+  if (!issuer && !legacyUnbound) {
     return { tokens: undefined, isInvalid: false };
   }
 
-  const clientJson = readStoredClientInformation(serverName);
+  const clientJson = readStoredClientInformation(serverName, serverUrl);
   return {
     tokens: {
       ...tokensJson,

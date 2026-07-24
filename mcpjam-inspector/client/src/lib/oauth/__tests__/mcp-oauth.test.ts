@@ -2092,6 +2092,107 @@ describe("mcp-oauth", () => {
       );
     });
 
+    it("does not surface the activeIssuer token bucket before any AS resolves (SEP-2352)", async () => {
+      const { MCPOAuthProvider, getStoredTokens, getStoredTokensState } =
+        await import("../mcp-oauth");
+      // A v2 envelope exists but NO discovery/session has resolved an issuer for
+      // this server. The read must NOT fall back to the envelope's activeIssuer
+      // bucket — that AS binding is unverified for the current serverUrl.
+      localStorage.setItem(
+        "mcp-tokens-unresolved",
+        JSON.stringify({
+          v: 2,
+          activeIssuer: "https://as-a.example.com",
+          byIssuer: {
+            "https://as-a.example.com": {
+              access_token: "token-for-as-a",
+              token_type: "Bearer",
+            },
+          },
+        })
+      );
+      const provider = new MCPOAuthProvider(
+        "unresolved",
+        "https://mcp.example.com/sse"
+      );
+
+      // No discovery state saved → currentIssuer() is undefined → absent.
+      expect(provider.tokens()).toBeUndefined();
+      expect(getStoredTokens("unresolved")).toBeUndefined();
+      expect(getStoredTokensState("unresolved").isInvalid).toBe(false);
+      // The bucket is preserved for when discovery later resolves to AS A.
+      expect(localStorage.getItem("mcp-tokens-unresolved") ?? "").toContain(
+        "token-for-as-a"
+      );
+    });
+
+    it("does not surface a token bucket bound via a PREVIOUS serverUrl when the name is reused (SEP-2352)", async () => {
+      const { MCPOAuthProvider, getStoredTokensState } = await import(
+        "../mcp-oauth"
+      );
+      // Seed a v2 token envelope and discovery bound to the ORIGINAL serverUrl.
+      localStorage.setItem(
+        "mcp-tokens-reused-name",
+        JSON.stringify({
+          v: 2,
+          activeIssuer: "https://as-a.example.com",
+          byIssuer: {
+            "https://as-a.example.com": {
+              access_token: "token-for-as-a",
+              token_type: "Bearer",
+            },
+          },
+        })
+      );
+      const originalProvider = new MCPOAuthProvider(
+        "reused-name",
+        "https://old.example.com/sse"
+      );
+      await originalProvider.saveDiscoveryState({
+        ...createDiscoveryState(),
+        authorizationServerUrl: "https://as-a.example.com",
+        authorizationServerMetadata: { issuer: "https://as-a.example.com" },
+      } as any);
+
+      // Reading with the ORIGINAL serverUrl still resolves AS A → token present.
+      expect(
+        getStoredTokensState("reused-name", "https://old.example.com/sse")
+          .tokens?.access_token
+      ).toBe("token-for-as-a");
+
+      // The server name is now reused with a DIFFERENT URL. The stale discovery
+      // (for the old URL) must NOT resolve an issuer, so the AS-A token bucket is
+      // NOT surfaced for the new server.
+      const reused = getStoredTokensState(
+        "reused-name",
+        "https://new.example.com/sse"
+      );
+      expect(reused.tokens).toBeUndefined();
+      expect(reused.isInvalid).toBe(false);
+    });
+
+    it("classifies a present-but-malformed token record (null) as invalid, not absent", async () => {
+      const { getStoredTokens, getStoredTokensState } = await import(
+        "../mcp-oauth"
+      );
+      // Valid JSON but not a usable token object. Pre-2R this classified as
+      // invalid (the client_id merge threw); the issuer-keyed read must preserve
+      // that classification rather than silently reporting "no tokens".
+      localStorage.setItem("mcp-tokens-malformed-null", "null");
+      expect(getStoredTokens("malformed-null")).toBeUndefined();
+      expect(getStoredTokensState("malformed-null")).toEqual({
+        tokens: undefined,
+        isInvalid: true,
+      });
+
+      // A JSON array is likewise a malformed-but-present record.
+      localStorage.setItem("mcp-tokens-malformed-array", "[]");
+      expect(getStoredTokensState("malformed-array")).toEqual({
+        tokens: undefined,
+        isInvalid: true,
+      });
+    });
+
     it("preserves the original callback error and verifier when registry token exchange fails", async () => {
       authFetch.mockImplementationOnce(async (input: RequestInfo | URL) => {
         const url =
