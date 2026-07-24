@@ -89,7 +89,62 @@ function getExecutionDurationMs(context: ExecutionContext): number {
   return Math.max(0, Date.now() - context.startedAtMs);
 }
 
-function serializeMcpError(error: unknown) {
+/** The `WWW-Authenticate` step-up challenge fields surfaced to the client. */
+export type InsufficientScopeChallenge = {
+  requiredScope?: string;
+  resourceMetadataUrl?: string;
+  errorDescription?: string;
+};
+
+/**
+ * Recognize an upstream `InsufficientScopeError` (SEP-2350) anywhere in the
+ * error / cause chain and return its `WWW-Authenticate` challenge fields.
+ *
+ * A runtime `403 insufficient_scope` from a live MCP request surfaces here as
+ * this transport-layer error (the SDK constructs the transport with
+ * `onInsufficientScope: "throw"`, so it never attempts a doomed server-side
+ * interactive re-authorization). Detection is by `.name` /
+ * `constructor.mcpBrand` — the class does not extend `OAuthError`, and its
+ * fields (`requiredScope`, `resourceMetadataUrl`) originate from the resource
+ * server's header, so treat them as untrusted when rendering. Returning the
+ * challenge lets the client drive the union-scope step-up re-authorization.
+ */
+export function extractInsufficientScopeChallenge(
+  error: unknown,
+): InsufficientScopeChallenge | undefined {
+  const seen = new Set<unknown>();
+  let current: any = error;
+  while (current && typeof current === "object" && !seen.has(current)) {
+    seen.add(current);
+    const isInsufficientScope =
+      current.name === "InsufficientScopeError" ||
+      current.constructor?.mcpBrand === "mcp.InsufficientScopeError" ||
+      typeof current.requiredScope === "string";
+    if (isInsufficientScope) {
+      const requiredScope =
+        typeof current.requiredScope === "string"
+          ? current.requiredScope
+          : undefined;
+      const resourceMetadataUrl =
+        typeof current.resourceMetadataUrl === "string"
+          ? current.resourceMetadataUrl
+          : undefined;
+      const errorDescription =
+        typeof current.errorDescription === "string"
+          ? current.errorDescription
+          : undefined;
+      // Only surface when at least one challenge field is present — a bare
+      // name match with no fields carries nothing actionable.
+      if (requiredScope || resourceMetadataUrl || errorDescription) {
+        return { requiredScope, resourceMetadataUrl, errorDescription };
+      }
+    }
+    current = current.cause;
+  }
+  return undefined;
+}
+
+export function serializeMcpError(error: unknown) {
   const anyErr = error as any;
   const base = {
     name: anyErr?.name ?? "Error",
@@ -105,6 +160,10 @@ function serializeMcpError(error: unknown) {
       code: (cause as any)?.code,
       data: (cause as any)?.data,
     };
+  }
+  const insufficientScope = extractInsufficientScopeChallenge(error);
+  if (insufficientScope) {
+    base.insufficientScope = insufficientScope;
   }
   if (process.env.NODE_ENV === "development" && anyErr?.stack) {
     base.stack = anyErr.stack;
