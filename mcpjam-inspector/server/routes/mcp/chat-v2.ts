@@ -697,6 +697,12 @@ chatV2.post("/", async (c) => {
         ? {
             authHeader: builtInAuthHeader,
             projectId: body.projectId,
+            // A request with no user-supplied Authorization is an anonymous
+            // guest (the route mints a production guest bearer for it), so the
+            // resolver withholds bash on the personal-project path — matching
+            // web/chat-v2's `isGuest: Boolean(c.get("guestId"))`. Bash is kept
+            // only for a host-funded swarm executionScope.
+            isGuest: !requestAuthHeader,
             ...(executionScope ? { executionScope } : {}),
             ...(body.chatSessionId
               ? { chatSessionId: body.chatSessionId }

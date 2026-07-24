@@ -324,7 +324,9 @@ chatV2.post("/", async (c) => {
     // built-in-tools/registry.ts). `computer` comes exclusively from the
     // server-resolved runtime config — never the request body — so a
     // tampered client can't attach a shell the host didn't authorize; the
-    // resolver also skips computer-backed tools for guest actors.
+    // resolver skips bash for anonymous guests unless the turn carries a
+    // host-funded swarm executionScope (personal-project guest reserves are
+    // rejected backend-side).
     // Harness preflight: a host-bound turn whose resolved host runs a harness
     // (claude-code | codex) must fail closed with a clear message when the
     // runtime isn't available on this server — never silently degrade to the
