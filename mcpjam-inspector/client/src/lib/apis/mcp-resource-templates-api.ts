@@ -48,7 +48,8 @@ export async function listResourceTemplatesPage(
     resourceTemplates: Array.isArray(body?.resourceTemplates)
       ? (body.resourceTemplates as MCPResourceTemplate[])
       : [],
-    nextCursor:
-      typeof body?.nextCursor === "string" ? body.nextCursor : undefined,
+    ...(typeof body?.nextCursor === "string"
+      ? { nextCursor: body.nextCursor }
+      : {}),
   };
 }

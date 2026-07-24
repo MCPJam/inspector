@@ -36,11 +36,17 @@ export async function listPromptsPage(
   return runByMode({
     forceHosted: opts?.forceHosted,
     hosted: async () => {
-      const body = await listHostedPrompts({ serverNameOrId: serverId });
+      const body = await listHostedPrompts({
+        serverNameOrId: serverId,
+        cursor: opts?.cursor,
+      });
       return {
         prompts: Array.isArray(body?.prompts)
           ? (body.prompts as MCPPrompt[])
           : [],
+        ...(typeof body?.nextCursor === "string"
+          ? { nextCursor: body.nextCursor }
+          : {}),
       };
     },
     local: async () => {
@@ -67,8 +73,9 @@ export async function listPromptsPage(
         prompts: Array.isArray(body?.prompts)
           ? (body.prompts as MCPPrompt[])
           : [],
-        nextCursor:
-          typeof body?.nextCursor === "string" ? body.nextCursor : undefined,
+        ...(typeof body?.nextCursor === "string"
+          ? { nextCursor: body.nextCursor }
+          : {}),
       };
     },
   });
