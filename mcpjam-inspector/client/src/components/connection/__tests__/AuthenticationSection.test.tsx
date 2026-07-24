@@ -846,6 +846,39 @@ describe("AuthenticationSection", () => {
       ).not.toBeInTheDocument();
     });
 
+    it("resolves 'auto' against the host-default pin when no per-server override is set", () => {
+      // Mirrors the submit path: with no per-server pin, the preview must
+      // resolve against the PROP-FIRST host default (the same value the modal
+      // bakes with), even with no ActiveMcpProfileProvider in the tree.
+      render(
+        <AuthenticationSection
+          {...protocolBaseProps}
+          oauthProtocolMode="auto"
+          serverMcpProtocolVersion={undefined}
+          hostDefaultMcpProtocolVersion="2026-07-28"
+        />
+      );
+      openAdvanced();
+      expect(screen.getByText("2026-07-28 (Draft)")).toBeInTheDocument();
+      expect(
+        screen.queryByText("2025-11-25 (Latest)")
+      ).not.toBeInTheDocument();
+    });
+
+    it("lets a per-server override win over the host-default pin for 'auto'", () => {
+      render(
+        <AuthenticationSection
+          {...protocolBaseProps}
+          oauthProtocolMode="auto"
+          serverMcpProtocolVersion="2026-07-28"
+          hostDefaultMcpProtocolVersion="2025-06-18"
+        />
+      );
+      openAdvanced();
+      expect(screen.getByText("2026-07-28 (Draft)")).toBeInTheDocument();
+      expect(screen.queryByText("2025-06-18")).not.toBeInTheDocument();
+    });
+
     it("lets an explicit protocol selection win over a 2026 wire pin", () => {
       render(
         <AuthenticationSection

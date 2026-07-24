@@ -65,6 +65,19 @@ interface AuthenticationSectionProps {
    * default, so a 2026-pinned host still routes "auto" through the 2026 flow.
    */
   serverMcpProtocolVersion?: McpProtocolVersion;
+  /**
+   * The active host's default MCP wire pin, resolved PROP-FIRST by the
+   * surrounding shell (ServerDetailModal:
+   * `hostDefaultMcpProtocolVersion ?? useActiveMcpProfile()`). The "auto"
+   * OAuth bridge falls back to this when no per-server pin is set — it is the
+   * SAME value the submit path bakes the era with, so the plan preview and the
+   * persisted era cannot disagree even when the modal renders without an
+   * `ActiveMcpProfileProvider` (or with one whose value differs from the
+   * prop). Undefined → the component's own `useActiveMcpProfile()` read below
+   * is the final fallback, which is exactly the Add path's context-only
+   * behavior (the Add modal passes no host-default prop).
+   */
+  hostDefaultMcpProtocolVersion?: McpProtocolVersion;
   registrationMode: RegistrationMode;
   onOauthRegistrationModeChange: (value: RegistrationMode) => void;
   xaaClientAuth?: XaaClientAuthMethod;
@@ -146,6 +159,7 @@ export function AuthenticationSection({
   oauthProtocolMode,
   onOauthProtocolModeChange,
   serverMcpProtocolVersion,
+  hostDefaultMcpProtocolVersion,
   registrationMode,
   onOauthRegistrationModeChange,
   xaaClientAuth = "none",
@@ -341,9 +355,16 @@ export function AuthenticationSection({
   // still routes through 2026), else the 2025 default. An explicit protocol
   // selection is passed straight through — it always wins over the bridge.
   // Single-sourced with the submit path via the shared resolver so the plan
-  // preview and the saved profile cannot disagree.
+  // preview and the saved profile cannot disagree. The host fallback prefers
+  // the prop-first `hostDefaultMcpProtocolVersion` (the authoritative host pin
+  // the submit path also bakes with — see ServerDetailModal) so preview and
+  // persisted era stay identical even when this component is mounted outside an
+  // `ActiveMcpProfileProvider`; the local context read is only the last resort
+  // for callers (the Add modal) that pass no host-default prop.
   const effectiveWireProtocolVersion =
-    serverMcpProtocolVersion ?? activeMcpProfile?.mcpProtocolVersion;
+    serverMcpProtocolVersion ??
+    hostDefaultMcpProtocolVersion ??
+    activeMcpProfile?.mcpProtocolVersion;
   const effectiveOauthProtocolMode = resolveEffectiveOauthProtocolMode(
     oauthProtocolMode,
     effectiveWireProtocolVersion

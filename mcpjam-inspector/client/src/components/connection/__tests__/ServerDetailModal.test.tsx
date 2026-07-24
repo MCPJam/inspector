@@ -690,4 +690,118 @@ describe("ServerDetailModal", () => {
 
     expect(onKeyDown).not.toHaveBeenCalled();
   });
+
+  // Regression: an "Auto" OAuth server with no stored protocol era must bake
+  // the SAME era the plan preview showed. The submit path resolves "auto"
+  // against the PROP-FIRST resolved host default (the value the chip and the
+  // preview use), NOT the raw ActiveMcpProfile context — otherwise a modal
+  // rendered without an ActiveMcpProfileProvider (context undefined) would
+  // save the 2025 default while the chip/host advertise 2026.
+  describe("bakes the Auto OAuth era against the effective wire pin at save", () => {
+    const renameAndSave = async (name = "test-server-renamed") => {
+      const nameInput = screen.getByDisplayValue("test-server");
+      fireEvent.change(nameInput, { target: { value: name } });
+      const form = screen
+        .getByRole("button", { name: "Save Changes" })
+        .closest("form");
+      expect(form).not.toBeNull();
+      fireEvent.submit(form!);
+    };
+
+    it("saves the 2026 era from the host default when no per-server pin is set", async () => {
+      const onSubmit = vi.fn().mockResolvedValue({
+        ok: true,
+        serverName: "test-server",
+      });
+
+      render(
+        <ServerDetailModal
+          {...defaultProps}
+          server={createServer({ authMethod: "auto" })}
+          onSubmit={onSubmit}
+          hostDefaultMcpProtocolVersion="2026-07-28"
+        />
+      );
+
+      await renameAndSave();
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            authMethod: "auto",
+            useOAuth: true,
+            oauthProtocolMode: "2026-07-28",
+          }),
+          "test-server"
+        );
+      });
+    });
+
+    it("saves the current default era when the host is not 2026-pinned", async () => {
+      const onSubmit = vi.fn().mockResolvedValue({
+        ok: true,
+        serverName: "test-server",
+      });
+
+      render(
+        <ServerDetailModal
+          {...defaultProps}
+          server={createServer({ authMethod: "auto" })}
+          onSubmit={onSubmit}
+        />
+      );
+
+      await renameAndSave();
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            authMethod: "auto",
+            useOAuth: true,
+            oauthProtocolMode: "2025-11-25",
+          }),
+          "test-server"
+        );
+      });
+    });
+
+    it("re-resolves to the 2026 era from a per-server override even when the host default is not 2026", async () => {
+      const onSubmit = vi.fn().mockResolvedValue({
+        ok: true,
+        serverName: "test-server",
+      });
+      // Per-server wire pin (project-layer override) is 2026 while the host
+      // default is unset — the override must win and bake the 2026 era.
+      mockUseQuery.mockReturnValue({
+        projectId: "project_123",
+        serverIds: ["server_123"],
+        overrides: {
+          server_123: { mcpProtocolVersionOverride: "2026-07-28" },
+        },
+      });
+
+      render(
+        <ServerDetailModal
+          {...defaultProps}
+          server={createServer({ authMethod: "auto" })}
+          onSubmit={onSubmit}
+          projectId="project_123"
+          hostedServerId="server_123"
+        />
+      );
+
+      await renameAndSave();
+
+      await waitFor(() => {
+        expect(onSubmit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            authMethod: "auto",
+            useOAuth: true,
+            oauthProtocolMode: "2026-07-28",
+          }),
+          "test-server"
+        );
+      });
+    });
+  });
 });
