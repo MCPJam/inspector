@@ -628,21 +628,19 @@ export function ProtocolTab({
             </SelectContent>
           </Select>
         </div>
-        {/* Spells out what the selection actually stores. "Automatic" is the
-            absence of a pin, which is invisible in the JSON editor below (the
-            key is simply omitted) — without this line the only way to tell
-            "Automatic" from a pinned literal is to know the tri-state
-            convention. The two pinned cases differ materially, so they get
-            their own copy rather than one hedged sentence: a stateless pin
-            has no legacy fallback, while a stateful pin can be silently
-            outranked by an explicit `supportedProtocolVersions`. */}
-        <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
-          {selectedDropdownValue === "auto"
-            ? "No version pinned — MCPJam negotiates the wire version at connect time. A server's own protocol override still wins."
-            : isStatelessProtocolVersion(selectedDropdownValue)
-            ? `Pinned to ${selectedDropdownValue} for every server on this client. The server must offer it at connect time; there is no fallback to 2025. A server's own protocol override still wins.`
-            : `Pinned to ${selectedDropdownValue} — the initialize handshake offers only this version. An explicit supportedProtocolVersions below overrides the pin. A server's own protocol override still wins.`}
-        </p>
+        {/* Spells out what a pin actually stores. The two pinned cases differ
+            materially, so they get their own copy: a stateless pin has no
+            legacy fallback, while a stateful pin narrows the initialize
+            handshake to that one version. "Automatic" gets no line — the
+            absence of a pin needs no explanation and keeps the panel quiet in
+            the default state. */}
+        {selectedDropdownValue !== "auto" && (
+          <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
+            {isStatelessProtocolVersion(selectedDropdownValue)
+              ? `Pinned to ${selectedDropdownValue} for every server on this client. The server must offer it at connect time; there is no fallback to 2025. A server's own protocol override still wins.`
+              : `Pinned to ${selectedDropdownValue} — the initialize handshake offers only this version. A server's own protocol override still wins.`}
+          </p>
+        )}
         {showPolicyToggle && (
         <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
           <div className="min-w-0">

@@ -153,10 +153,4 @@ describe("ProtocolTab protocol-version dropdown", () => {
     // trigger if we handed it an unmatched value.
     expect(screen.getByRole("combobox")).toHaveTextContent("Automatic");
   });
-
-  it("explains that Automatic stores no pin", () => {
-    render(<Harness initial={emptyHostConfigInputV2()} />);
-
-    expect(screen.getByText(/No version pinned/i)).toBeInTheDocument();
-  });
 });
