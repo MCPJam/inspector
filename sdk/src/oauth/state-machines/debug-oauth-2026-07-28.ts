@@ -1666,6 +1666,10 @@ export const createDebugOAuthStateMachine = (
                 url: cimdClientId,
                 headers: normalizeHeaders(undefined),
               };
+              // Capture request start BEFORE issuing the fetch so the trace
+              // entry's timestamp reflects request start and carries the
+              // round-trip duration, matching every other fetch step.
+              const cimdRequestStart = Date.now();
               const cimdResponse = await executeRequest(cimdClientId, {
                 method: "GET",
               });
@@ -1692,7 +1696,8 @@ export const createDebugOAuthStateMachine = (
                   ...(state.httpHistory || []),
                   {
                     step: "cimd_fetch_request",
-                    timestamp: Date.now(),
+                    timestamp: cimdRequestStart,
+                    duration: Date.now() - cimdRequestStart,
                     request: cimdRequest,
                     response: cimdResponseData,
                   },

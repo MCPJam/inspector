@@ -339,6 +339,17 @@ describe("CIMD document is fetched once and the shown document is validated", ()
       // The fetched document is recorded as the shown response.
       expect(state.lastResponse?.body).toEqual(goodDoc);
 
+      // The CIMD trace step is timed like every other fetch: its timestamp
+      // marks request start (before the fetch) and it carries a round-trip
+      // duration, rather than being stamped after the fetch with no duration.
+      const cimdEntry = (state.httpHistory ?? []).find(
+        (e) => e.step === "cimd_fetch_request",
+      );
+      expect(cimdEntry).toBeDefined();
+      expect(typeof cimdEntry?.timestamp).toBe("number");
+      expect(typeof cimdEntry?.duration).toBe("number");
+      expect(cimdEntry?.duration).toBeGreaterThanOrEqual(0);
+
       // Step 2: validate — must NOT issue a second fetch.
       await machine.proceedToNextStep();
 
