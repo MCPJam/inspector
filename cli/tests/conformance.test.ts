@@ -76,6 +76,36 @@ test("buildConfig loads access-token auth from a credentials file", async () => 
   assert.equal(config.accessToken, "file-access-token");
 });
 
+test("buildConfig threads a known protocol version into the config", () => {
+  const config = buildConfig({
+    url: "https://example.com/mcp",
+    protocolVersion: "2026-07-28",
+  });
+
+  assert.equal(config.protocolVersion, "2026-07-28");
+});
+
+test("buildConfig rejects an unknown protocol version", () => {
+  assert.throws(
+    () =>
+      buildConfig({
+        url: "https://example.com/mcp",
+        protocolVersion: "bogus-version",
+      }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("Unknown protocol version: bogus-version"),
+  );
+});
+
+test("buildConfig omits protocolVersion when absent", () => {
+  const config = buildConfig({
+    url: "https://example.com/mcp",
+  });
+
+  assert.equal("protocolVersion" in config, false);
+});
+
 test("buildConfig rejects credentials-file auth conflicts", async () => {
   const credentialsFile = await writeCredentialsJson({
     version: 1,

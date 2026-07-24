@@ -1,6 +1,8 @@
 import {
+  isKnownProtocolVersion,
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
+  MCP_PROTOCOL_VERSIONS,
   type MCPConformanceConfig,
   MCPConformanceSuite,
   MCPConformanceTest,
@@ -34,6 +36,7 @@ export interface ProtocolConformanceOptions {
   checkTimeout?: number;
   category?: string[];
   checkId?: string[];
+  protocolVersion?: string;
 }
 
 export function registerProtocolCommands(program: Command): void {
@@ -73,6 +76,10 @@ export function registerProtocolCommands(program: Command): void {
       "Specific check ID to run. Repeat for multiple. Default: all.",
       (value: string, previous: string[] = []) => [...previous, value],
       [],
+    )
+    .option(
+      "--protocol-version <version>",
+      "Pin the MCP protocol version to conform against. Default: legacy (2025-era) behavior.",
     )
     .option(
       "--reporter <reporter>",
@@ -176,6 +183,13 @@ export function buildConfig(
     );
   }
 
+  const protocolVersion = options.protocolVersion?.trim();
+  if (protocolVersion && !isKnownProtocolVersion(protocolVersion)) {
+    throw usageError(
+      `Unknown protocol version: ${protocolVersion}. Known: ${MCP_PROTOCOL_VERSIONS.join(", ")}`,
+    );
+  }
+
   return {
     serverUrl,
     accessToken,
@@ -186,6 +200,9 @@ export function buildConfig(
       : {}),
     ...(checkIds && checkIds.length > 0
       ? { checkIds: checkIds as MCPConformanceConfig["checkIds"] }
+      : {}),
+    ...(protocolVersion
+      ? { protocolVersion: protocolVersion as MCPConformanceConfig["protocolVersion"] }
       : {}),
   };
 }
