@@ -185,11 +185,12 @@ describe("swarm-agent reportAttempt — targetId echo", () => {
   });
 
   it("spreads targetId into the body when present and omits it when absent", async () => {
-    fetchMock.mockResolvedValue(
-      new Response(JSON.stringify({ ok: true, applied: true }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      })
+    fetchMock.mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ ok: true, applied: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
     );
 
     await reportAttempt(CONVEX_HTTP_URL, "b", {
