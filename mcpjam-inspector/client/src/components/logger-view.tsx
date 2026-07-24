@@ -29,7 +29,10 @@ import {
   type UiProtocol,
 } from "@/stores/traffic-log-store";
 import type { LoggingLevel } from "@modelcontextprotocol/client";
-import { isStatelessProtocolVersion } from "@mcpjam/sdk/browser";
+import {
+  isKnownProtocolVersion,
+  isStatelessProtocolVersion,
+} from "@mcpjam/sdk/browser";
 import { setServerLoggingLevel } from "@/state/mcp-api";
 import { toast } from "@/lib/toast";
 import { useSharedAppState } from "@/state/app-state-context";
@@ -104,7 +107,19 @@ function getClientLoggingMechanism(
 ): LoggingMechanism {
   const info = server.initializationInfo;
   if (!info?.serverCapabilities?.logging) return "none";
-  return info.protocolVersion && isStatelessProtocolVersion(info.protocolVersion)
+  // Mirror `MCPClientManager.getLoggingMechanism` (server/sdk): the modern
+  // `per-request-meta` path is chosen only when the NEGOTIATED version is a
+  // *known* stateless (modern-era) version. This matches the SDK's own version
+  // routing, whose `isStatelessProtocolVersion` is documented to be called
+  // ONLY after `isKnownProtocolVersion` — without the known-check, an
+  // unrecognized/typo version would misroute to `per-request-meta` (it returns
+  // true for any non-empty non-stateful string). An absent or unknown version
+  // resolves to the legacy `setLevel` path, exactly as the SDK does when
+  // `getProtocolEra() !== "modern"`.
+  const version = info.protocolVersion;
+  return version &&
+    isKnownProtocolVersion(version) &&
+    isStatelessProtocolVersion(version)
     ? "per-request-meta"
     : "setLevel";
 }

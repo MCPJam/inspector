@@ -1673,23 +1673,37 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
 }
 
 /**
- * Bridges a single server's `notifications/message` log records into the
- * hosted RPC log collector for the duration of one ephemeral operation.
+ * Opts a single server into per-request `"debug"` logging for the duration of
+ * one ephemeral operation, so its `notifications/message` records land in the
+ * hosted RPC log collector.
  *
  * Direct hosted ops (tools/execute, prompts/get, resources/read, ...) are a
  * single request/response — there is no persistent session for a human to
  * flip a log level on later, so per §11.3 "surfacing" this opts the server
  * into the SAME default the legacy auto-`debug` connect gate already applies
- * (`MCPClientManager.connectToServer`): if the negotiated mechanism is the
- * modern `"per-request-meta"` opt-in, request `"debug"` for this op only
+ * (`MCPClientManager.connectToServer`): request `"debug"` for this op only
  * (torn down with the ephemeral connection in the route's `finally`, so it
- * never persists). Legacy servers already stream via the connect-time gate;
- * `setPerRequestLogLevel` is a harmless no-op there (the decorator only
- * injects on the modern era). `onLogMessage` delivers within the originating
- * request's response for the modern era, so by the time the route's manager
- * call resolves the records have already reached the collector — BEFORE
- * `runEphemeralConnection`'s `finally` disconnects the server and the
- * response stream closes.
+ * never persists).
+ *
+ * `setPerRequestLogLevel` is called UNCONDITIONALLY — no `getLoggingMechanism`
+ * guard — because that guard races the connect lifecycle: the manager
+ * constructor kicks off connects in a microtask, so `getLoggingMechanism`
+ * evaluated here (before the first manager op) can observe an unpopulated
+ * `liveClientStates` and return `"none"`, silently skipping the opt-in for a
+ * modern server. Calling unconditionally is safe: `setPerRequestLogLevel` only
+ * stores the level (read live once the client exists), so it works before
+ * connect, and it is inert on the legacy era — the `LogLevelMetaClient`
+ * decorator injects the `_meta` level only when `getProtocolEra() === "modern"`
+ * (legacy servers stream via the connect-time gate instead).
+ *
+ * We do NOT tee `onLogMessage` into the collector: the manager's configured
+ * `rpcLogger` (the logging transport wrapper) already records every received
+ * `notifications/message` as `{ serverId, direction: "receive", message }`
+ * into this same collector, so a tee here would double every log record in
+ * `_rpcLogs`. For the modern era those records are delivered inline within the
+ * originating request's response, so by the time the route's manager call
+ * resolves they have already reached the collector — BEFORE
+ * `runEphemeralConnection`'s `finally` disconnects the server.
  */
 function forwardLogMessagesInto(
   manager: InstanceType<typeof MCPClientManager>,
@@ -1697,16 +1711,7 @@ function forwardLogMessagesInto(
 ) {
   return (serverId: string) => {
     if (!rpcCollector) return;
-    if (manager.getLoggingMechanism(serverId) === "per-request-meta") {
-      manager.setPerRequestLogLevel(serverId, "debug");
-    }
-    manager.onLogMessage(serverId, (notification) => {
-      rpcCollector.rpcLogger({
-        serverId,
-        direction: "receive",
-        message: notification,
-      });
-    });
+    manager.setPerRequestLogLevel(serverId, "debug");
   };
 }
 

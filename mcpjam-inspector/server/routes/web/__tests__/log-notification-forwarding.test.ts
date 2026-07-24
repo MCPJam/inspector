@@ -8,32 +8,57 @@ import { Hono } from "hono";
  * down and the response is returned.
  *
  * `withEphemeralConnection`'s `forwardLogMessages(serverId)` (server/routes/
- * web/auth.ts) is what wires this: it (a) opts a modern-mechanism server
- * into `"debug"` for the duration of this one operation — mirroring the
- * legacy auto-`debug` connect gate the SDK already applies — and (b)
- * registers `manager.onLogMessage` to tee records into the collector.
+ * web/auth.ts) is what wires this: it opts a server into `"debug"` for the
+ * duration of this one operation — mirroring the legacy auto-`debug` connect
+ * gate the SDK already applies. The server's `notifications/message` records
+ * are then captured by the manager's configured `rpcLogger` (the logging
+ * transport wrapper), NOT by a second `onLogMessage` tee — teeing would
+ * double every record in `_rpcLogs`.
  *
  * The mock manager below simulates the real dual-era contract proven by the
  * SDK's `logging-dual-era.integration.test.ts`: for the modern mechanism,
  * `notifications/message` arrives INLINE within the originating request's
- * response — i.e. synchronously, before the manager call's promise resolves
- * — so any `onLogMessage` handler registered beforehand has already fired
- * by the time `runEphemeralConnection`'s `finally` disconnects the server.
+ * response — i.e. synchronously, before the manager call's promise resolves.
+ * It models the real capture path by emitting the received notification
+ * through the same `rpcLogger` the transport wrapper uses (constructor option
+ * 2), so by the time `runEphemeralConnection`'s `finally` disconnects the
+ * server the record is already in the collector.
+ *
+ * ORDERING: to prove delivery happened BEFORE disconnect (not merely
+ * "eventually"), `disconnectAllServers` emits a lifecycle sentinel through the
+ * same `rpcLogger`. Because the collector preserves emission order, the test
+ * asserts the `notifications/message` record precedes that sentinel in
+ * `_rpcLogs` — a teardown-order regression (delivery after disconnect, or a
+ * dropped record) would flip or break that ordering.
  */
+type MockRpcLogger = (record: {
+  serverId: string;
+  direction: "send" | "receive";
+  message: { jsonrpc: string; method?: string; params?: unknown };
+}) => void;
+
+const DISCONNECT_SENTINEL_METHOD = "test/__disconnected__";
+
 vi.mock("@mcpjam/sdk", async () => {
   const actual = await vi.importActual<typeof import("@mcpjam/sdk")>(
     "@mcpjam/sdk"
   );
 
   class MockMCPClientManager {
-    private readonly logHandlers = new Map<
-      string,
-      Set<(n: { method: string; params?: unknown }) => void>
-    >();
     private readonly perRequestLevels = new Map<string, string>();
-    public disconnectedBeforeLogDelivered = false;
+    private readonly rpcLogger?: MockRpcLogger;
+    public logDelivered = false;
+    public logDeliveredBeforeDisconnect = false;
 
-    constructor(_servers: Record<string, unknown>) {}
+    constructor(
+      _servers: Record<string, unknown>,
+      options?: { rpcLogger?: MockRpcLogger }
+    ) {
+      // Mirror the real manager: `createAuthorizedManager` passes the hosted
+      // collector's `rpcLogger` as constructor option 2, and the manager wraps
+      // each transport so every received wire message is logged through it.
+      this.rpcLogger = options?.rpcLogger;
+    }
 
     getLoggingMechanism(_serverId: string): "per-request-meta" {
       return "per-request-meta";
@@ -44,15 +69,6 @@ vi.mock("@mcpjam/sdk", async () => {
       else this.perRequestLevels.set(serverId, level);
     }
 
-    onLogMessage(
-      serverId: string,
-      handler: (n: { method: string; params?: unknown }) => void
-    ) {
-      const set = this.logHandlers.get(serverId) ?? new Set();
-      set.add(handler);
-      this.logHandlers.set(serverId, set);
-    }
-
     async executeTool(serverId: string, toolName: string) {
       // Only "emits" a log record when the caller opted in — matches the
       // real modern-era contract (absence of the level ⇒ no server emission
@@ -60,12 +76,18 @@ vi.mock("@mcpjam/sdk", async () => {
       if (this.perRequestLevels.has(serverId)) {
         // Delivered INLINE, synchronously, before the tool result — exactly
         // as the real modern-era stream does per the SDK integration test.
-        for (const handler of this.logHandlers.get(serverId) ?? []) {
-          handler({
+        // Captured via the transport-level `rpcLogger`, the same path the
+        // real `wrapTransportForLogging` uses for received notifications.
+        this.rpcLogger?.({
+          serverId,
+          direction: "receive",
+          message: {
+            jsonrpc: "2.0",
             method: "notifications/message",
             params: { level: "debug", data: `log from ${toolName}` },
-          });
-        }
+          },
+        });
+        this.logDelivered = true;
       }
       return {
         content: [{ type: "text", text: "ok" }],
@@ -73,11 +95,16 @@ vi.mock("@mcpjam/sdk", async () => {
     }
 
     async disconnectAllServers() {
-      // If a log record were still pending delivery when disconnect runs,
-      // a real transport teardown could drop it. Recording this here lets
-      // the test assert the collector already had the record BEFORE this
-      // ran (see assertion below), not merely that it arrives eventually.
-      this.disconnectedBeforeLogDelivered = this.logHandlers.size > 0;
+      // Snapshot whether the log was already delivered when teardown runs: a
+      // teardown-order regression would leave this false. Also emit a
+      // lifecycle sentinel through the collector so the ordering is observable
+      // in the response `_rpcLogs` (the notification must precede it).
+      this.logDeliveredBeforeDisconnect = this.logDelivered;
+      this.rpcLogger?.({
+        serverId: "__lifecycle__",
+        direction: "receive",
+        message: { jsonrpc: "2.0", method: DISCONNECT_SENTINEL_METHOD },
+      });
       return undefined;
     }
   }
@@ -176,16 +203,33 @@ describe("hosted tools/execute forwards notifications/message before the respons
     }>(response);
 
     expect(status).toBe(200);
-    const logRecord = data._rpcLogs.find(
+    const logIndex = data._rpcLogs.findIndex(
       (entry) => entry.message?.method === "notifications/message"
     );
     expect(
-      logRecord,
+      logIndex,
       "notifications/message forwarded into the hosted rpc log envelope"
-    ).toBeDefined();
-    expect(logRecord).toMatchObject({
+    ).toBeGreaterThanOrEqual(0);
+    expect(data._rpcLogs[logIndex]).toMatchObject({
       serverId: "srv-1",
       direction: "receive",
     });
+
+    // ORDERING: prove the record was in the collector BEFORE the ephemeral
+    // connection tore down. The mock's `disconnectAllServers` emits a
+    // lifecycle sentinel through the same collector, so the notification must
+    // appear strictly before it — a teardown-order regression (delivery after
+    // disconnect, or a dropped record) would flip or break this ordering.
+    const disconnectIndex = data._rpcLogs.findIndex(
+      (entry) => entry.message?.method === DISCONNECT_SENTINEL_METHOD
+    );
+    expect(
+      disconnectIndex,
+      "disconnect lifecycle sentinel present in the envelope"
+    ).toBeGreaterThanOrEqual(0);
+    expect(
+      logIndex,
+      "notifications/message recorded BEFORE the ephemeral disconnect"
+    ).toBeLessThan(disconnectIndex);
   });
 });
