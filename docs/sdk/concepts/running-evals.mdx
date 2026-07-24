@@ -172,7 +172,7 @@ See [Eval reporting — Tool execution and `passed`](/sdk/reference/eval-reporti
 
 Predicates express richer pass/fail criteria than tool-call matching — without an LLM judge. Each predicate is a pure function of the iteration transcript, so it produces the same verdict every time, which makes it safe to use as a CI release gate.
 
-Predicates are authored in the corpus JSON (the Inspector's per-case **Checks** editor writes the same shape) and threaded through the runner automatically — they are not a field you set on individual uploaded results. A case passes iff **all** predicates pass. An absent or empty list means no predicate gate.
+Predicates are authored in the corpus JSON (the Inspector's per-case **Checks** editor writes the same shape) and threaded through the runner automatically; there is no predicate field to set on individual uploaded results. A case passes iff **all** predicates pass. An absent or empty list means no predicate gate.
 
 The twelve built-in predicate types:
 

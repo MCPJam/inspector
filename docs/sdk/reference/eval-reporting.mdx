@@ -458,7 +458,7 @@ Advanced replay override. Most users should not construct this manually.
 
 Predicates add a deterministic, state-based assertion layer on top of tool-call matching. Each predicate is a pure function of the iteration transcript — same transcript, same verdict — which makes it suitable as a CI release gate.
 
-Predicates are authored on the suite or case (in the corpus JSON, or through the Inspector's per-case **Checks** editor) — `EvalResultInput` has no predicate field. The runner evaluates them and persists per-predicate verdicts under [`metadata.predicates`](#predicate-results-in-metadata). A case passes the predicate gate iff **all** predicates pass. An absent or empty list means no predicate gate (the case is judged solely by tool-call matching and `failOnToolError`).
+Predicates are authored on the suite or case (in the corpus JSON, or through the Inspector's per-case **Checks** editor). `EvalResultInput` has no predicate field. The runner evaluates them and persists per-predicate verdicts under [`metadata.predicates`](#predicate-results-in-metadata). A case passes the predicate gate iff **all** predicates pass. An absent or empty list means no predicate gate (the case is judged solely by tool-call matching and `failOnToolError`).
 
 #### Predicate types
 
