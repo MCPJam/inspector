@@ -7,7 +7,17 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
-import { Bell, Check, Copy, Filter, Flag, Loader2, Share2 } from "lucide-react";
+import {
+  Bell,
+  Check,
+  Copy,
+  Filter,
+  Flag,
+  Loader2,
+  Moon,
+  Share2,
+  Sun,
+} from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Dialog,
@@ -76,6 +86,7 @@ import {
 import { SearchInput } from "@/components/ui/search-input";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { buildHostCompareSnapshot } from "@/lib/webmcp/review-surface-snapshots";
+import { updateThemeMode } from "@/lib/theme-utils";
 import { cn } from "@/lib/utils";
 
 type CompareViewMode = "table" | "list";
@@ -603,6 +614,7 @@ export function HostConfigCompareView({
                       searchQuery={fieldSearchQuery}
                       fields={compareFields}
                     />
+                    <ThemeToggleButton />
                   </div>
                 ) : undefined
               }
@@ -676,6 +688,35 @@ export function HostConfigCompareView({
         )}
       </div>
     </div>
+  );
+}
+
+function ThemeToggleButton() {
+  const themeMode = usePreferencesStore((s) => s.themeMode);
+  const setThemeMode = usePreferencesStore((s) => s.setThemeMode);
+  const nextThemeMode = themeMode === "dark" ? "light" : "dark";
+  const label = `Switch to ${nextThemeMode} mode`;
+
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      aria-label={label}
+      title={label}
+      className={cn("gap-1.5", CANIUSE_ACTION_BUTTON_CLASS)}
+      onClick={() => {
+        updateThemeMode(nextThemeMode);
+        setThemeMode(nextThemeMode);
+      }}
+    >
+      {themeMode === "dark" ? (
+        <Sun className="size-3.5" />
+      ) : (
+        <Moon className="size-3.5" />
+      )}
+      <span>Theme</span>
+    </Button>
   );
 }
 

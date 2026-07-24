@@ -10,6 +10,10 @@ const mockHostListState = vi.hoisted(() => ({
 const mockCatalogState = vi.hoisted(() => ({
   current: null as any,
 }));
+const mockPreferencesState = vi.hoisted(() => ({
+  themeMode: "light" as "light" | "dark",
+  setThemeMode: vi.fn(),
+}));
 
 const originalMatchMedia = window.matchMedia;
 
@@ -37,7 +41,9 @@ vi.mock("@/lib/host-compat/use-host-catalog", async () => {
 });
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({
-  usePreferencesStore: () => "light",
+  usePreferencesStore: (
+    selector: (state: typeof mockPreferencesState) => unknown
+  ) => selector(mockPreferencesState),
 }));
 
 function makeHost(hostId: string, name: string) {
@@ -84,6 +90,9 @@ describe("HostConfigCompareView public mode", () => {
   beforeEach(() => {
     mockHostListState.hosts = [];
     mockCatalogState.current = null;
+    mockPreferencesState.themeMode = "light";
+    mockPreferencesState.setThemeMode.mockClear();
+    document.documentElement.classList.remove("dark");
     global.fetch = vi.fn();
   });
 
@@ -93,6 +102,7 @@ describe("HostConfigCompareView public mode", () => {
       writable: true,
       value: originalMatchMedia,
     });
+    document.documentElement.classList.remove("dark");
   });
 
   it("renders preset compare content without requiring sign-in or a project", async () => {
@@ -125,6 +135,27 @@ describe("HostConfigCompareView public mode", () => {
         screen.queryByText(/Select at least one client/i)
       ).not.toBeInTheDocument();
     });
+  });
+
+  it("toggles the public caniuse theme from the top action row", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <MemoryRouter>
+        <HostConfigCompareView
+          projectId={null}
+          isAuthenticated={false}
+          presetOnly
+        />
+      </MemoryRouter>
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Switch to dark mode" })
+    );
+
+    expect(mockPreferencesState.setThemeMode).toHaveBeenCalledWith("dark");
+    expect(document.documentElement).toHaveClass("dark");
   });
 
   it("puts the preferred caniuse clients in the top chip row", () => {
