@@ -48,7 +48,7 @@ The 2026 RC applies the stateless model across transports. MCPJam's initial prev
   <img
     className="block"
     src="/images/protocol-versions/host-default-dropdown.png"
-    alt="Client editor with the MCP Protocol tab open and the Protocol version dropdown showing Latest (2025-11-25) and 2026 RC (2026-07-28) options"
+    alt="Client editor with the MCP Protocol tab open and the Protocol version dropdown showing Automatic, 2026 RC (2026-07-28), Latest (2025-11-25), 2025-06-18, and 2025-03-26 options"
     width="1000"
   />
 </Frame>
@@ -56,10 +56,14 @@ The 2026 RC applies the stateless model across transports. MCPJam's initial prev
 1. Open the **Clients** tab.
 2. Pick the Client you want to edit (or create a new one).
 3. Open the **MCP Protocol** tab.
-4. In the **Protocol version** dropdown, pick **Latest** or **2026 RC (2026-07-28)**.
+4. In the **Protocol version** dropdown, pick a version:
+   - **Automatic** — no pin stored; the SDK picks the version at connect time (default).
+   - **2026 RC (2026-07-28)** — pin to the stateless RC.
+   - **Latest (2025-11-25)** — pin to the current stable release.
+   - **2025-06-18** or **2025-03-26** — pin to an earlier stable revision.
 5. Save.
 
-Every server attached to this Client now connects with that version unless it has its own per-server override.
+Every server attached to this Client now connects with that version unless it has its own per-server override. A helper note appears below the dropdown whenever a version is pinned, describing what the pin stores.
 
 ## Overriding a single server
 
