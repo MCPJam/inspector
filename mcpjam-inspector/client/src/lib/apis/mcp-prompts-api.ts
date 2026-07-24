@@ -17,21 +17,37 @@ export interface BatchPromptsResponse {
   errors?: Record<string, string>;
 }
 
+/** SEP-2549 cache-serve provenance (§11.2) — present ONLY on an actual hit. */
+export type ServedFromCache = { ageMs: number };
+
+/**
+ * `listPrompts` keeps its historical bare-array return shape (many callers
+ * destructure it directly); provenance is attached as a non-enumerable-ish
+ * extra property so it survives without forcing every call site to unwrap an
+ * envelope. Present ONLY when a hit actually occurred.
+ */
+export type PromptListWithProvenance = MCPPrompt[] & {
+  servedFromCache?: ServedFromCache;
+};
+
 export async function listPrompts(
   serverId: string,
-  opts?: { forceHosted?: boolean },
-): Promise<MCPPrompt[]> {
+  opts?: { forceHosted?: boolean; refresh?: boolean },
+): Promise<PromptListWithProvenance> {
   return runByMode({
     forceHosted: opts?.forceHosted,
     hosted: async () => {
       const body = await listHostedPrompts({ serverNameOrId: serverId });
-      return Array.isArray(body?.prompts) ? (body.prompts as MCPPrompt[]) : [];
+      // Hosted direct-ops always bypass the response cache server-side.
+      return (
+        Array.isArray(body?.prompts) ? (body.prompts as MCPPrompt[]) : []
+      ) as PromptListWithProvenance;
     },
     local: async () => {
       const res = await authFetch("/api/mcp/prompts/list", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ serverId }),
+        body: JSON.stringify({ serverId, refresh: opts?.refresh }),
       });
 
       let body: any = null;
@@ -44,7 +60,13 @@ export async function listPrompts(
         throw new Error(message);
       }
 
-      return Array.isArray(body?.prompts) ? (body.prompts as MCPPrompt[]) : [];
+      const prompts = (
+        Array.isArray(body?.prompts) ? (body.prompts as MCPPrompt[]) : []
+      ) as PromptListWithProvenance;
+      if (body?.servedFromCache) {
+        prompts.servedFromCache = body.servedFromCache;
+      }
+      return prompts;
     },
   });
 }

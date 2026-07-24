@@ -34,6 +34,7 @@ import {
   respondToElicitationApi,
   type ToolExecutionResponse,
   type TaskOptions,
+  type ServedFromCache,
 } from "@/lib/apis/mcp-tools-api";
 import {
   getTaskCapabilities,
@@ -206,6 +207,9 @@ export function ToolsTab({
   // block each other.
   const stepUpInFlightRef = useRef<Set<string>>(new Set());
   const [cursor, setCursor] = useState<string | undefined>(undefined);
+  const [servedFromCache, setServedFromCache] = useState<
+    ServedFromCache | undefined
+  >(undefined);
   const isServerConnected =
     serverConnectionStatus === undefined ||
     serverConnectionStatus === "connected";
@@ -425,7 +429,7 @@ export function ToolsTab({
     }
   };
 
-  const fetchTools = async (reset = false) => {
+  const fetchTools = async (reset = false, forceRefresh = false) => {
     if (!serverName) {
       logger.warn("Cannot fetch tools: no serverId available");
       return;
@@ -452,6 +456,7 @@ export function ToolsTab({
       const data = await listTools({
         serverId: serverName,
         cursor: reset ? undefined : cursor,
+        refresh: forceRefresh,
       });
       if (fetchVersion !== toolFetchVersionRef.current) return;
       const toolArray = data.tools ?? [];
@@ -460,6 +465,9 @@ export function ToolsTab({
       );
       setTools((prev) => (reset ? dictionary : { ...prev, ...dictionary }));
       setCursor(data.nextCursor);
+      // SEP-2549 provenance: only ever set on an actual hit — a non-hit
+      // fetch clears any stale badge from a previous cached response.
+      setServedFromCache(data.servedFromCache);
       logger.info("Tools fetched", {
         serverId: serverName,
         toolCount: toolArray.length,
@@ -813,7 +821,9 @@ export function ToolsTab({
   };
 
   const handleToolRefresh = () => {
-    void fetchTools(true);
+    // Explicit user "Refresh" click ⇒ cacheMode: "refresh" server-side, so it
+    // always re-fetches even if a still-fresh cached entry exists.
+    void fetchTools(true, true);
   };
 
   const filteredSavedRequests = searchQuery.trim()
@@ -894,6 +904,7 @@ export function ToolsTab({
       searchQuery={searchQuery}
       onSearchQueryChange={setSearchQuery}
       onRefresh={handleToolRefresh}
+      servedFromCache={servedFromCache}
       onSelectTool={setSelectedTool}
       savedRequests={filteredSavedRequests}
       highlightedRequestId={highlightedRequestId}

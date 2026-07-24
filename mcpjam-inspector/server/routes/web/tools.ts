@@ -15,7 +15,9 @@ const tools = new Hono();
 
 tools.post("/list", async (c) =>
   withEphemeralConnection(c, toolsListSchema, (manager, body) =>
-    listTools(manager, body),
+    // Hosted direct-ops read the server's live surface — never a cached
+    // body — so raw/conformance evidence can't be masked by a stale serve.
+    listTools(manager, { ...body, cacheMode: "bypass" }),
   ),
 );
 

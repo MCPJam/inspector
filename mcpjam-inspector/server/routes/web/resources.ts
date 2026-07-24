@@ -10,13 +10,14 @@ const resources = new Hono();
 
 resources.post("/list", async (c) =>
   withEphemeralConnection(c, resourcesListSchema, (manager, body) =>
-    listResources(manager, body),
+    // Hosted direct-ops read the server's live surface — never a cached body.
+    listResources(manager, { ...body, cacheMode: "bypass" }),
   ),
 );
 
 resources.post("/read", async (c) =>
   withEphemeralConnection(c, resourcesReadSchema, (manager, body) =>
-    readResource(manager, body),
+    readResource(manager, { ...body, cacheMode: "bypass" }),
   ),
 );
 
