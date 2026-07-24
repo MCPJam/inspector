@@ -472,10 +472,10 @@ Predicates are authored on the suite or case (in the corpus JSON, or through the
 | `responseMatches` | `pattern` | The final assistant message matches the regular expression `pattern` (regex source string, no flags). |
 | `noToolErrors` | — | No tool produced an error (neither MCP `isError: true` nor a JSON-RPC/transport failure). |
 | `finalAssistantMessageNonEmpty` | — | The final assistant message is a non-empty, non-whitespace string. |
-| `tokenBudgetUnder` | `tokens` | Total token usage for the iteration is strictly under `tokens`. Fails closed when usage is unavailable. |
-| `widgetRendered` | `toolName?` | At least one MCP App widget render observation (narrowed to `toolName` when set) has `status === "rendered"`. Fails closed when the iteration recorded no render observations in scope. |
-| `widgetRenderLatencyUnder` | `ms`, `toolName?` | Every rendered widget observation (narrowed to `toolName` when set) mounted in strictly under `ms` milliseconds. Fails closed when no observation in scope rendered. |
-| `widgetNoConsoleErrors` | `toolName?` | No widget render observation (narrowed to `toolName` when set) captured console errors. Fails closed when the iteration recorded no render observations in scope. |
+| `tokenBudgetUnder` | `tokens` | Total token usage for the iteration is strictly under `tokens`. Fails when usage was not measured. |
+| `widgetRendered` | `toolName?` | At least one MCP App widget render observation (narrowed to `toolName` when set) has `status === "rendered"`. Fails when the iteration recorded no render observations in scope. |
+| `widgetRenderLatencyUnder` | `ms`, `toolName?` | Every rendered widget observation (narrowed to `toolName` when set) mounted in strictly under `ms` milliseconds. Fails when nothing in scope rendered — an unrendered widget has no latency to check. |
+| `widgetNoConsoleErrors` | `toolName?` | No widget render observation (narrowed to `toolName` when set) captured console errors. Fails when the iteration recorded no render observations in scope. |
 
 #### ArgMatcher
 
@@ -486,9 +486,9 @@ Used by `toolCalledWith` to specify expected arguments and matching mode.
 | `args` | `Record<string, unknown>` | Expected argument shape. |
 | `argumentMatching` | `"partial" \| "exact" \| "ignore"` | Matching mode. `"partial"` (default) checks only the keys present in `args`; `"exact"` requires deep equality; `"ignore"` skips argument comparison. |
 
-#### Fail-closed behavior
+#### A predicate never passes by default
 
-Malformed predicates (unknown type, missing required fields, invalid `minCount`, empty `needle`/`pattern`) always fail the case rather than silently passing. `responseMatches` also fails closed on patterns with nested quantifiers (ReDoS guard) and on messages exceeding 100,000 characters.
+A predicate that cannot be evaluated fails the case instead of silently passing. That covers malformed predicates (unknown type, missing required fields, invalid `minCount`, empty `needle`/`pattern`) and predicates with nothing to measure: `tokenBudgetUnder` when usage was not captured, and the `widget*` predicates when the iteration recorded no render observations. `responseMatches` also rejects patterns with nested quantifiers (ReDoS guard) and messages over 100,000 characters.
 
 #### Example
 

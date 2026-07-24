@@ -78,7 +78,7 @@ import { MCPClientManager, HostRunner } from "@mcpjam/sdk";
 
 const agent = new HostRunner({
   tools: await manager.getTools(),
-  model: "anthropic/claude-sonnet-4-5",
+  model: "anthropic/claude-sonnet-5",
   apiKey: process.env.ANTHROPIC_API_KEY,
   mcpClientManager: manager,
 });
@@ -147,7 +147,7 @@ async function main() {
 
   const agent = new HostRunner({
     tools: await manager.getTools(),
-    model: "anthropic/claude-sonnet-4-5",
+    model: "anthropic/claude-sonnet-5",
     apiKey: process.env.ANTHROPIC_API_KEY,
     mcpClientManager: manager,
   });
