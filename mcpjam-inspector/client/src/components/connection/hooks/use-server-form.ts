@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import {
   ServerFormData,
+  normalizeOauthProtocolMode,
+  resolveEffectiveOauthProtocolMode,
   type ServerFormAuthType,
   type ServerFormOAuthProtocolMode,
 } from "@/shared/types.js";
@@ -49,7 +51,13 @@ interface InitialFormValues {
   xaaEmail: string;
 }
 
-const DEFAULT_OAUTH_PROTOCOL_MODE: ServerFormOAuthProtocolMode = "2025-11-25";
+// New connect forms default to the deferred "auto" sentinel, NOT a concrete
+// era: "auto" lets AuthenticationSection's wire-pin bridge (and the submit-time
+// resolver below) route a 2026-07-28-pinned server through the 2026 OAuth flow.
+// A concrete default would make that bridge unreachable — the user would have
+// to hand-pick 2026 even on a server already pinned to the 2026 wire era. Edit
+// mode overwrites this from the server's stored (always concrete) protocol.
+const DEFAULT_OAUTH_PROTOCOL_MODE: ServerFormOAuthProtocolMode = "auto";
 const DEFAULT_OAUTH_REGISTRATION_MODE: RegistrationMode = "auto";
 
 interface HeaderEntry {
@@ -58,16 +66,8 @@ interface HeaderEntry {
   value: string;
 }
 
-function normalizeOauthProtocolMode(
-  value?: string
-): ServerFormOAuthProtocolMode {
-  return value === "2025-03-26" ||
-    value === "2025-06-18" ||
-    value === "2025-11-25" ||
-    value === "2026-07-28"
-    ? value
-    : DEFAULT_OAUTH_PROTOCOL_MODE;
-}
+// normalizeOauthProtocolMode is single-sourced in shared/types (preserves the
+// 2026-07-28 draft era; unknown/"auto" → 2025-11-25 default).
 
 // Single-sourced in the SDK's registration vocabulary (accepts the legacy
 // pre_registered alias; unknown → undefined so callers apply defaults).
@@ -293,15 +293,24 @@ export function useServerForm(
         clientIdValue = storedTokens?.client_id || savedClientId;
         clientSecretValue = hasStoredClientSecretValue ? "" : savedClientSecret;
 
-        protocolModeValue = normalizeOauthProtocolMode(
+        // A server with a stored OAuth protocol loads that (concrete) era. A
+        // server with NONE stored keeps the deferred "auto" default so the
+        // wire-pin bridge still applies on edit — normalizing `undefined`
+        // would bake a concrete 2025-11-25 and make the bridge unreachable for
+        // an edited server pinned to the 2026 wire era. (normalizeOauthProtocol
+        // Mode also preserves a stored "auto" should one ever be persisted.)
+        const storedProtocolMode =
           typeof oauthConfig.protocolMode === "string"
             ? oauthConfig.protocolMode
             : typeof server.oauthFlowProfile?.protocolVersion === "string"
             ? server.oauthFlowProfile.protocolVersion
             : typeof oauthConfig.protocolVersion === "string"
             ? oauthConfig.protocolVersion
-            : undefined
-        );
+            : undefined;
+        protocolModeValue =
+          storedProtocolMode != null
+            ? normalizeOauthProtocolMode(storedProtocolMode)
+            : DEFAULT_OAUTH_PROTOCOL_MODE;
 
         // The CANONICAL per-server registrationMode wins — it can be "auto",
         // while the legacy profile/localStorage values are rollback-compat
@@ -801,6 +810,15 @@ export function useServerForm(
      * change without wiping the headers the form can't see.
      */
     revealedHeaders?: Record<string, string>;
+    /**
+     * The server's per-server MCP wire-version pin. Only used to resolve the
+     * deferred "auto" OAuth protocol mode into a concrete era at save time so
+     * the persisted OAuth profile / localStorage config carry the 2026-07-28
+     * flow when the wire is pinned to 2026 (OAuth + transport ship together).
+     * The pin itself is NOT emitted from this hook — the Add/Edit shells own
+     * that on the project layer.
+     */
+    wireProtocolVersionOverride?: string;
   }): ServerFormData => {
     const parsedTimeout = Number.parseInt(requestTimeout.trim(), 10);
     const reqTimeout = Number.isFinite(parsedTimeout)
@@ -947,7 +965,17 @@ export function useServerForm(
           : useXaa
           ? server?.authServerMode
           : undefined,
-      oauthProtocolMode: useOAuth ? oauthProtocolMode : undefined,
+      // Bake the deferred "auto" sentinel into a concrete era before it is
+      // persisted: "auto" + a 2026-07-28 wire pin submits the 2026 OAuth flow,
+      // otherwise the current default. An explicit selection passes through.
+      // Same resolver the AuthenticationSection preview uses, so the saved
+      // profile matches what the form showed.
+      oauthProtocolMode: useOAuth
+        ? resolveEffectiveOauthProtocolMode(
+            oauthProtocolMode,
+            buildOptions?.wireProtocolVersionOverride
+          )
+        : undefined,
       // The unified registration mode rides with every authorization flow —
       // the XAA debugger reads the same per-server field the OAuth flow does.
       registrationMode:

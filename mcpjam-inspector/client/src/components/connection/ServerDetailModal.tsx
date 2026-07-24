@@ -414,9 +414,22 @@ export function ServerDetailModal({
         }
       }
 
-      const finalFormData = formState.buildFormData(
-        revealedHeaders ? { revealedHeaders } : undefined
-      );
+      const finalFormData = formState.buildFormData({
+        ...(revealedHeaders ? { revealedHeaders } : {}),
+        // Resolve a deferred "auto" OAuth protocol against the effective wire
+        // pin. Precedence mirrors AuthenticationSection's preview: the
+        // per-server pin wins, else the PROP-FIRST resolved host default (so an
+        // edited OAuth server with no stored protocol under a 2026-pinned host
+        // bakes the 2026 flow). An edit-loaded concrete mode passes through
+        // unchanged. Uses `resolvedHostDefaultMcpProtocolVersion` — the same
+        // authoritative host pin the chip attributes and the preview now
+        // resolves against — rather than the raw context read, so the saved
+        // era matches the preview even when this modal renders without an
+        // ActiveMcpProfileProvider (or one whose value differs from the prop).
+        wireProtocolVersionOverride:
+          currentMcpProtocolVersionOverride ??
+          resolvedHostDefaultMcpProtocolVersion,
+      });
       await onSubmit(finalFormData, server.name);
     } finally {
       setIsSaving(false);
@@ -631,6 +644,9 @@ export function ServerDetailModal({
                     projectXaaDefaultIdentity={projectXaaDefaultIdentity}
                     mcpProtocolVersionOverride={
                       currentMcpProtocolVersionOverride
+                    }
+                    hostDefaultMcpProtocolVersion={
+                      resolvedHostDefaultMcpProtocolVersion
                     }
                     onMcpProtocolVersionOverrideChange={
                       canEditMcpProtocolVersionOverride

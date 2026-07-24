@@ -14,7 +14,7 @@ import {
 } from "@mcpjam/design-system/select";
 import {
   ServerFormData,
-  type ServerFormOAuthProtocolMode,
+  normalizeOauthProtocolMode,
 } from "@/shared/types.js";
 import { track } from "@/lib/analytics";
 import { HOSTED_MODE } from "@/lib/config";
@@ -26,6 +26,7 @@ import { EnvVarsSection } from "./shared/EnvVarsSection";
 import { HostedConnectionTypeControl } from "./shared/HostedConnectionTypeControl";
 import { findProjectByAnyId, type Project } from "@/state/app-types";
 import { useOptionalSharedAppState } from "@/state/app-state-context";
+import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
 
 interface AddServerModalProps {
   isOpen: boolean;
@@ -49,16 +50,8 @@ interface AddServerModalProps {
   projectId?: string | null;
 }
 
-function normalizeOauthProtocolMode(
-  value?: ServerFormData["oauthProtocolMode"],
-): ServerFormOAuthProtocolMode {
-  return value === "2025-03-26" ||
-    value === "2025-06-18" ||
-    value === "2025-11-25" ||
-    value === "2026-07-28"
-    ? value
-    : "2025-11-25";
-}
+// normalizeOauthProtocolMode / ServerFormOAuthProtocolMode are single-sourced
+// in shared/types (the normalizer preserves the 2026-07-28 draft era).
 
 // Single-sourced in the SDK's registration vocabulary (accepts the legacy
 // pre_registered alias; unknown → undefined so callers apply defaults).
@@ -128,6 +121,11 @@ export function AddServerModal({
   projectId = null,
 }: AddServerModalProps) {
   const appState = useOptionalSharedAppState();
+  // Active host's mcpProfile — the host-level wire pin that "auto" OAuth
+  // falls back to when no per-server override is set (see handleSubmit and
+  // AuthenticationSection's serverMcpProtocolVersion prop). Provided by the
+  // Servers tab's ActiveMcpProfileProvider; undefined in local/CLI contexts.
+  const activeMcpProfile = useActiveMcpProfile();
   const activeProject = findProjectByAnyId(
     appState?.projects,
     appState?.activeProjectId,
@@ -164,6 +162,10 @@ export function AddServerModal({
   // Initialize form with initial data if provided
   useEffect(() => {
     if (initialData && isOpen) {
+      // Hydrate the per-server wire pin from the prefill so the OAuth-protocol
+      // "auto" bridge sees it: a 2026-07-28-pinned prefill must resolve to the
+      // 2026 OAuth flow and round-trip its pin, not silently drop to 2025.
+      setMcpProtocolVersionOverride(initialData.mcpProtocolVersionOverride);
       if (initialData.name) {
         formState.setName(initialData.name);
       }
@@ -344,7 +346,15 @@ export function AddServerModal({
     }
 
     const finalFormData: ServerFormData = {
-      ...formState.buildFormData(),
+      ...formState.buildFormData({
+        // Resolve a default ("auto") OAuth protocol against the effective wire
+        // pin so a 2026-07-28-pinned server submits the 2026 OAuth flow, not
+        // the 2025 default. Precedence mirrors AuthenticationSection's preview:
+        // the per-server pin wins, else the active host's mcpProfile pin. An
+        // explicit dropdown selection still wins over both.
+        wireProtocolVersionOverride:
+          mcpProtocolVersionOverride ?? activeMcpProfile?.mcpProtocolVersion,
+      }),
       ...(mcpProtocolVersionOverride !== undefined
         ? { mcpProtocolVersionOverride }
         : {}),
@@ -501,6 +511,7 @@ export function AddServerModal({
               onOauthScopesChange={formState.setOauthScopesInput}
               oauthProtocolMode={formState.oauthProtocolMode}
               onOauthProtocolModeChange={formState.setOauthProtocolMode}
+              serverMcpProtocolVersion={mcpProtocolVersionOverride}
               registrationMode={formState.registrationMode}
               onOauthRegistrationModeChange={
                 formState.setOauthRegistrationMode

@@ -18,10 +18,72 @@ describe("useServerForm", () => {
     vi.mocked(hasOAuthConfig).mockReturnValue(false);
   });
 
-  it("defaults OAuth protocol mode to explicit latest", () => {
+  it("defaults OAuth protocol mode to the deferred 'auto' sentinel", () => {
+    // "auto" (not a concrete era) is what makes the wire-pin bridge reachable:
+    // a fresh form defers its OAuth era to the server's MCP wire pin instead of
+    // hard-pinning 2025-11-25 and stranding a 2026-pinned server on the 2025
+    // flow. The submit path bakes it into a concrete era (see below).
     const { result } = renderHook(() => useServerForm());
 
-    expect(result.current.oauthProtocolMode).toBe("2025-11-25");
+    expect(result.current.oauthProtocolMode).toBe("auto");
+  });
+
+  describe("default OAuth protocol 'auto' → wire-pin submit bridge", () => {
+    const startDefaultOAuthAdd = (result: {
+      current: ReturnType<typeof useServerForm>;
+    }) => {
+      act(() => {
+        result.current.setName("Draft server");
+        result.current.setUrl("https://example.com/mcp");
+        result.current.setAuthType("oauth");
+        result.current.setShowAuthSettings(true);
+        // Note: oauthProtocolMode is left at its "auto" default — the user
+        // never touched the Protocol dropdown.
+      });
+    };
+
+    it("bakes the 2026 OAuth flow when adding with a 2026-07-28 wire pin", () => {
+      const { result } = renderHook(() => useServerForm());
+      startDefaultOAuthAdd(result);
+
+      expect(
+        result.current.buildFormData({
+          wireProtocolVersionOverride: "2026-07-28",
+        })
+      ).toMatchObject({
+        useOAuth: true,
+        oauthProtocolMode: "2026-07-28",
+      });
+    });
+
+    it("keeps the 2025-11-25 default when there is no 2026 wire pin", () => {
+      const { result } = renderHook(() => useServerForm());
+      startDefaultOAuthAdd(result);
+
+      expect(result.current.buildFormData()).toMatchObject({
+        useOAuth: true,
+        oauthProtocolMode: "2025-11-25",
+      });
+      expect(
+        result.current.buildFormData({
+          wireProtocolVersionOverride: "2025-11-25",
+        }).oauthProtocolMode
+      ).toBe("2025-11-25");
+    });
+
+    it("lets an explicit protocol selection win over a 2026 wire pin", () => {
+      const { result } = renderHook(() => useServerForm());
+      startDefaultOAuthAdd(result);
+      act(() => {
+        result.current.setOauthProtocolMode("2025-06-18");
+      });
+
+      expect(
+        result.current.buildFormData({
+          wireProtocolVersionOverride: "2026-07-28",
+        }).oauthProtocolMode
+      ).toBe("2025-06-18");
+    });
   });
 
   it("rejects malformed HTTP URLs even when HTTPS is optional", () => {
@@ -939,7 +1001,7 @@ describe("useServerForm", () => {
     });
   });
 
-  it("normalizes legacy automatic OAuth protocol mode to explicit latest for existing servers", async () => {
+  it("preserves a stored 'auto' OAuth protocol mode so the wire-pin bridge still applies on edit", async () => {
     const server = {
       name: "Existing OAuth server",
       config: {
@@ -961,11 +1023,59 @@ describe("useServerForm", () => {
 
     const { result } = renderHook(() => useServerForm(server));
 
+    // Round-2: a stored "auto" is NOT coerced to a concrete era during
+    // hydration — the deferred sentinel survives so the submit-time bridge can
+    // route a 2026-pinned server through the 2026 OAuth flow.
     await waitFor(() => {
-      expect(result.current.oauthProtocolMode).toBe("2025-11-25");
+      expect(result.current.oauthProtocolMode).toBe("auto");
     });
 
+    // Under a 2026 wire pin the preserved "auto" bakes the 2026 flow…
+    expect(
+      result.current.buildFormData({
+        wireProtocolVersionOverride: "2026-07-28",
+      }).oauthProtocolMode
+    ).toBe("2026-07-28");
+    // …and without a pin it lands on the 2025 default, as before.
+    expect(result.current.buildFormData().oauthProtocolMode).toBe("2025-11-25");
+
     localStorage.removeItem("mcp-oauth-config-Existing OAuth server");
+  });
+
+  it("keeps 'auto' when editing an OAuth server with no stored protocol so the wire-pin bridge applies", async () => {
+    // Round-2: the edit initializer called normalizeOauthProtocolMode(undefined)
+    // → a concrete 2025-11-25, stranding an edited OAuth server (no stored
+    // protocol) on the 2025 flow even under a 2026 wire pin. With no stored
+    // protocol the deferred "auto" default must survive.
+    const server = {
+      name: "OAuth server without stored protocol",
+      config: {
+        url: "https://example.com/mcp",
+      },
+      useOAuth: true,
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    const { result } = renderHook(() => useServerForm(server));
+
+    await waitFor(() => {
+      expect(result.current.authType).toBe("oauth");
+    });
+    expect(result.current.oauthProtocolMode).toBe("auto");
+    // The preserved sentinel is a no-op change (initial snapshot is "auto" too).
+    expect(result.current.hasChanges).toBe(false);
+
+    // The submit path resolves it against the wire pin: 2026 under a 2026 pin…
+    expect(
+      result.current.buildFormData({
+        wireProtocolVersionOverride: "2026-07-28",
+      }).oauthProtocolMode
+    ).toBe("2026-07-28");
+    // …and the 2025 default otherwise.
+    expect(result.current.buildFormData().oauthProtocolMode).toBe("2025-11-25");
   });
 
   it("normalizes invalid stored OAuth registration strategies back to auto", async () => {
