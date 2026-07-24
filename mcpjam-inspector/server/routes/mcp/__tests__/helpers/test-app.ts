@@ -12,6 +12,7 @@ import chatV2 from "../../chat-v2.js";
 import listTools from "../../list-tools.js";
 import widgetRender from "../../widget-render.js";
 import widgetSession from "../../widget-session.js";
+import logLevel from "../../log-level.js";
 import { adapterHttp, managerHttp } from "../../http-adapters.js";
 
 // Import security middleware
@@ -33,6 +34,7 @@ export type RouteConfig =
   | "list-tools"
   | "widget-render"
   | "widget-session"
+  | "log-level"
   | "adapter-http"
   | "manager-http";
 
@@ -46,6 +48,7 @@ const routeModules: Record<RouteConfig, { path: string; handler: Hono }> = {
   "list-tools": { path: "/api/mcp/list-tools", handler: listTools },
   "widget-render": { path: "/api/mcp/widget-render", handler: widgetRender },
   "widget-session": { path: "/api/mcp/widget-session", handler: widgetSession },
+  "log-level": { path: "/api/mcp/log-level", handler: logLevel },
   "adapter-http": { path: "/api/mcp/adapter-http", handler: adapterHttp },
   "manager-http": { path: "/api/mcp/manager-http", handler: managerHttp },
 };

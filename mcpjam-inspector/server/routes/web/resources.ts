@@ -15,8 +15,13 @@ resources.post("/list", async (c) =>
 );
 
 resources.post("/read", async (c) =>
-  withEphemeralConnection(c, resourcesReadSchema, (manager, body) =>
-    readResource(manager, body),
+  withEphemeralConnection(
+    c,
+    resourcesReadSchema,
+    (manager, body, forwardLogMessages) => {
+      forwardLogMessages(body.serverId);
+      return readResource(manager, body);
+    },
   ),
 );
 

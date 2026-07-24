@@ -26,12 +26,17 @@ prompts.post("/list-multi", async (c) =>
 );
 
 prompts.post("/get", async (c) =>
-  withEphemeralConnection(c, promptsGetSchema, (manager, body) =>
-    getPrompt(manager, {
-      serverId: body.serverId,
-      name: body.promptName,
-      arguments: body.arguments,
-    }),
+  withEphemeralConnection(
+    c,
+    promptsGetSchema,
+    (manager, body, forwardLogMessages) => {
+      forwardLogMessages(body.serverId);
+      return getPrompt(manager, {
+        serverId: body.serverId,
+        name: body.promptName,
+        arguments: body.arguments,
+      });
+    },
   ),
 );
 

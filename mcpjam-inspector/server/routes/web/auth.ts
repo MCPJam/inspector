@@ -1672,12 +1672,57 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
   return { manager, body: body as z.infer<S>, convexAuthToken: bearerToken };
 }
 
+/**
+ * Bridges a single server's `notifications/message` log records into the
+ * hosted RPC log collector for the duration of one ephemeral operation.
+ *
+ * Direct hosted ops (tools/execute, prompts/get, resources/read, ...) are a
+ * single request/response — there is no persistent session for a human to
+ * flip a log level on later, so per §11.3 "surfacing" this opts the server
+ * into the SAME default the legacy auto-`debug` connect gate already applies
+ * (`MCPClientManager.connectToServer`): if the negotiated mechanism is the
+ * modern `"per-request-meta"` opt-in, request `"debug"` for this op only
+ * (torn down with the ephemeral connection in the route's `finally`, so it
+ * never persists). Legacy servers already stream via the connect-time gate;
+ * `setPerRequestLogLevel` is a harmless no-op there (the decorator only
+ * injects on the modern era). `onLogMessage` delivers within the originating
+ * request's response for the modern era, so by the time the route's manager
+ * call resolves the records have already reached the collector — BEFORE
+ * `runEphemeralConnection`'s `finally` disconnects the server and the
+ * response stream closes.
+ */
+function forwardLogMessagesInto(
+  manager: InstanceType<typeof MCPClientManager>,
+  rpcCollector: ReturnType<typeof createHostedRpcLogCollector> | undefined,
+) {
+  return (serverId: string) => {
+    if (!rpcCollector) return;
+    if (manager.getLoggingMechanism(serverId) === "per-request-meta") {
+      manager.setPerRequestLogLevel(serverId, "debug");
+    }
+    manager.onLogMessage(serverId, (notification) => {
+      rpcCollector.rpcLogger({
+        serverId,
+        direction: "receive",
+        message: notification,
+      });
+    });
+  };
+}
+
 export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
   c: any,
   schema: S,
   fn: (
     manager: InstanceType<typeof MCPClientManager>,
-    body: z.infer<S>
+    body: z.infer<S>,
+    /**
+     * Registers log-notification forwarding for one server into this
+     * request's hosted RPC log collector. Call before the manager op that
+     * may trigger server-side logging (tool execute, resource read, prompt
+     * get, ...). No-op when RPC log collection is disabled for this route.
+     */
+    forwardLogMessages: (serverId: string) => void
   ) => Promise<T>,
   options?: {
     timeoutMs?: number;
@@ -1694,11 +1739,18 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
       rpcCollector = createHostedRpcLogCollector(rawBody);
     }
 
-    const result = await runEphemeralConnection(c, rawBody, schema, fn, {
-      timeoutMs: options?.timeoutMs,
-      guestUnsupportedMessage: options?.guestUnsupportedMessage,
-      rpcLogger: rpcCollector?.rpcLogger,
-    });
+    const result = await runEphemeralConnection(
+      c,
+      rawBody,
+      schema,
+      (manager, body) =>
+        fn(manager, body, forwardLogMessagesInto(manager, rpcCollector)),
+      {
+        timeoutMs: options?.timeoutMs,
+        guestUnsupportedMessage: options?.guestUnsupportedMessage,
+        rpcLogger: rpcCollector?.rpcLogger,
+      }
+    );
 
     return c.json(attachHostedRpcLogs(result, rpcCollector), 200);
   } catch (error) {

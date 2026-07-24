@@ -388,7 +388,10 @@ export async function getInitializationInfo(serverId: string) {
 
 export async function setServerLoggingLevel(
   serverId: string,
-  level: LoggingLevel,
+  // `null` opts out of the modern per-request mechanism (absent `_meta` key
+  // on the wire). Not meaningful for the legacy `logging/setLevel`
+  // mechanism — the server route rejects it there.
+  level: LoggingLevel | null,
 ) {
   if (HOSTED_MODE) {
     void serverId;
