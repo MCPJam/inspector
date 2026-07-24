@@ -29,7 +29,10 @@ import {
 } from "../routes/shared/evals.js";
 import { fetchSuiteRunServerSelection } from "../routes/v1/evals.js";
 import { createConvexClient } from "./evals/route-helpers.js";
-import { resolveEnvironmentForLaunch } from "./evals/environment-launch.js";
+import {
+  environmentServerRefs,
+  resolveEnvironmentForLaunch,
+} from "./evals/environment-launch.js";
 
 const POLL_INTERVAL_MS = 15_000;
 const POLL_JITTER_MS = 5_000;
@@ -195,11 +198,7 @@ export async function executeClaimedRun(
           );
           return {
             serverIds: resolved.selectedServerIds,
-            serverNames:
-              resolved.selectedServerNames &&
-              resolved.selectedServerNames.length > 0
-                ? resolved.selectedServerNames
-                : resolved.selectedServerIds,
+            serverNames: environmentServerRefs(resolved),
           };
         })()
       : await fetchSuiteRunServerSelection(bearer, claimed.suiteId, undefined);

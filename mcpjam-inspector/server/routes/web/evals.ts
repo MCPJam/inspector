@@ -2,7 +2,10 @@ import { Hono } from "hono";
 import { captureServerEvent } from "../../utils/analytics.js";
 import { z } from "zod";
 import { createConvexClient } from "../../services/evals/route-helpers.js";
-import { resolveEnvironmentForLaunch } from "../../services/evals/environment-launch.js";
+import {
+  environmentServerRefs,
+  resolveEnvironmentForLaunch,
+} from "../../services/evals/environment-launch.js";
 import { detachPreparedEvalRun } from "../../services/evals/detached-run.js";
 import { prepareSuiteReplayFromRun } from "../../services/evals/replay-suite-run.js";
 import { runTraceRepairJob } from "../../services/evals/trace-repair-runner.js";
@@ -148,8 +151,8 @@ evals.post("/run", async (c) =>
           },
         );
         rawBody.serverIds = resolved.selectedServerIds;
-        if (resolved.selectedServerNames?.length) {
-          rawBody.serverNames = resolved.selectedServerNames;
+        if (resolved.servers?.length) {
+          rawBody.serverNames = environmentServerRefs(resolved);
         }
       }
       const connection = await createManualHostedConnection(
