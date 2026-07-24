@@ -75,6 +75,7 @@ import { RefreshTokenOAuthProvider } from "./refresh-token-auth-provider.js";
 import {
   NotificationManager,
   applyProgressHandler,
+  LoggingMessageNotificationMethod,
   PromptListChangedNotificationMethod,
   ResourceListChangedNotificationMethod,
   ResourceUpdatedNotificationMethod,
@@ -147,6 +148,14 @@ export class MCPClientManager {
     string,
     Promise<string>
   >();
+  /**
+   * Per-server modern per-request log level. A present entry means "inject
+   * `LOG_LEVEL_META_KEY` into every request's `_meta` on the modern era";
+   * an ABSENT entry means opt-out (no `_meta` key). Read live by each
+   * server's `LogLevelMetaClient` decorator via the provider closure wired
+   * at connect, so `setPerRequestLogLevel` takes effect without reconnect.
+   */
+  private readonly perRequestLogLevels = new Map<string, LoggingLevel>();
 
   // Managers for specific features
   private readonly notificationManager = new NotificationManager();
@@ -443,6 +452,7 @@ export class MCPClientManager {
     this.toolsMetadataCache.delete(serverId);
     this.notificationManager.clearServer(serverId);
     this.elicitationManager.clearServer(serverId);
+    this.perRequestLogLevels.delete(serverId);
   }
 
   /**
@@ -875,6 +885,52 @@ export class MCPClientManager {
   }
 
   /**
+   * Modern (2026-07-28) per-request logging opt-in. One user-facing concept
+   * ("set a level for this server"), era-specific delivery: on the modern era
+   * the level rides on every request as `_meta[LOG_LEVEL_META_KEY]` (injected
+   * by the server's `LogLevelMetaClient` decorator); on the legacy era this is
+   * inert — use {@link setLoggingLevel} there.
+   *
+   * Passing `undefined` opts out: the key becomes ABSENT on the wire (absence
+   * is semantic — we never send an empty/null level). Takes effect on the next
+   * request without a reconnect. No-op-safe before connect: the level is
+   * stored and read live once the client exists.
+   */
+  setPerRequestLogLevel(
+    serverId: string,
+    level: LoggingLevel | undefined
+  ): void {
+    if (level === undefined) {
+      this.perRequestLogLevels.delete(serverId);
+    } else {
+      this.perRequestLogLevels.set(serverId, level);
+    }
+  }
+
+  /**
+   * Which logging mechanism is live for a server, for UI selection:
+   *   - `"per-request-meta"` — modern era + server advertises `logging`; set a
+   *     level with {@link setPerRequestLogLevel}.
+   *   - `"setLevel"` — legacy era + server advertises `logging`; set a level
+   *     with {@link setLoggingLevel}.
+   *   - `"none"` — no live client, or the server does not advertise `logging`.
+   */
+  getLoggingMechanism(
+    serverId: string
+  ): "setLevel" | "per-request-meta" | "none" {
+    const client = this.liveClientStates.get(serverId)?.client;
+    if (!client) {
+      return "none";
+    }
+    if (!client.getServerCapabilities?.()?.logging) {
+      return "none";
+    }
+    return client.getProtocolEra?.() === "modern"
+      ? "per-request-meta"
+      : "setLevel";
+  }
+
+  /**
    * Gets the session ID for a Streamable HTTP server.
    */
   getSessionIdByServer(serverId: string): string | undefined {
@@ -953,6 +1009,23 @@ export class MCPClientManager {
     this.addNotificationHandler(
       serverId,
       TaskStatusNotificationMethod,
+      handler
+    );
+  }
+
+  /**
+   * Registers a handler for server→client log records
+   * (`notifications/message`). Works on BOTH eras: legacy servers stream
+   * these after `logging/setLevel`; modern servers stream them inline within
+   * the originating request's response. Follows the same
+   * `NotificationManager.addHandler` + `applyToClient` path as the
+   * `list_changed` registrations, so a handler registered before connect is
+   * re-applied when the client is (re)built.
+   */
+  onLogMessage(serverId: string, handler: NotificationHandler): void {
+    this.addNotificationHandler(
+      serverId,
+      LoggingMessageNotificationMethod,
       handler
     );
   }
@@ -1284,7 +1357,13 @@ export class MCPClientManager {
         resolvedClientInfo as { name: string; version: string },
         clientOptions
       );
-      const managedClient: ManagedMcpClient = wrapLegacyClient(upstreamClient);
+      // Wire the modern per-request logging opt-in. The provider reads the
+      // per-server level live, so `setPerRequestLogLevel` takes effect with no
+      // reconnect; the decorator itself only injects on the modern era.
+      const managedClient: ManagedMcpClient = wrapLegacyClient(
+        upstreamClient,
+        () => this.perRequestLogLevels.get(serverId),
+      );
       client = managedClient;
 
       // Apply handlers (no-ops for the stateless stub; rewired after
