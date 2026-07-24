@@ -83,8 +83,17 @@ describe("MCPConformanceTest", () => {
     const result = await test.run();
 
     expect(result.passed).toBe(false);
+
+    // Assert the anchor itself, not just "something failed": the connect
+    // failure is pinned to the first selected check (`ping`). A bare
+    // `failed.length >= 1` would also pass if `ping` had failed for an
+    // unrelated reason or a different check failed, masking a missing anchor.
+    const ping = result.checks.find((check) => check.id === "ping");
+    expect(ping?.status).toBe("failed");
+    // And exactly the anchored check failed — no other check masks a missing
+    // anchor, and none is left era-skipped-into-a-silent-pass.
     const failed = result.checks.filter((check) => check.status === "failed");
-    expect(failed.length).toBeGreaterThanOrEqual(1);
+    expect(failed.map((check) => check.id)).toEqual(["ping"]);
   });
 
   it("treats stateless Streamable HTTP servers as supported transport variants", async () => {
