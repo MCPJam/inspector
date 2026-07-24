@@ -55,13 +55,17 @@ describe("usePluginImportRunner", () => {
     expect(result.current.phase).toBe("uploading");
 
     // The runner threads an onPhase callback into the orchestrator; driving it
-    // moves the runner into the (otherwise unobservable) inspecting phase.
+    // moves the runner into the (otherwise unobservable) inspecting phase AND
+    // must expose the staged importId so usePluginImport(importId) can subscribe
+    // to server-side progress while inspection runs (not null until done).
     const onPhase = mockStartFromZip.mock.calls[0][1].onPhase as (
       p: "uploading" | "inspecting",
+      importId?: string,
     ) => void;
     expect(typeof onPhase).toBe("function");
-    act(() => onPhase("inspecting"));
+    act(() => onPhase("inspecting", "i1"));
     expect(result.current.phase).toBe("inspecting");
+    expect(result.current.importId).toBe("i1");
 
     await act(async () => {
       d.resolve(okResult("i1"));

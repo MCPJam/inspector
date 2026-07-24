@@ -164,9 +164,11 @@ export interface StartPluginImportArgs {
   /**
    * Progress callback. Fires `uploading` before the upload and `inspecting`
    * after the import row is staged (so the runner can surface the inspect phase
-   * instead of jumping straight from uploading to done).
+   * instead of jumping straight from uploading to done). The `inspecting` call
+   * carries the staged `importId` so a subscriber can attach to server-side
+   * progress WHILE inspection runs, not only after it finishes.
    */
-  onPhase?: (phase: StartPluginImportPhase) => void;
+  onPhase?: (phase: StartPluginImportPhase, importId?: string) => void;
 }
 
 export interface StartPluginImportResult {
@@ -219,8 +221,9 @@ export async function startPluginImportFromZip(
     bundleStorageId,
     sourceLabel: args.sourceLabel,
   });
-  // The row now exists; a later failure must not lose its id.
-  args.onPhase?.("inspecting");
+  // The row now exists; a later failure must not lose its id. Hand the id to the
+  // progress callback so a subscriber can attach during inspection, not after.
+  args.onPhase?.("inspecting", importId);
   try {
     const inspect = await inspectImport(convex, { importId });
     return { importId, bundleStorageId, inspect };
@@ -237,7 +240,7 @@ export interface StartPluginImportFromFolderArgs {
   /** Selected folder CONTENTS (path/bytes entries, paths validated by the SDK). */
   files: PluginFolderFiles;
   sourceLabel?: string;
-  onPhase?: (phase: StartPluginImportPhase) => void;
+  onPhase?: (phase: StartPluginImportPhase, importId?: string) => void;
 }
 
 /**

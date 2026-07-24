@@ -118,7 +118,10 @@ export function usePluginImportRunner(): UsePluginImportRunner {
   const run = useCallback(
     async (
       exec: (
-        onPhase: (phase: "uploading" | "inspecting") => void,
+        onPhase: (
+          phase: "uploading" | "inspecting",
+          importId?: string,
+        ) => void,
       ) => Promise<StartPluginImportResult>,
     ): Promise<StartPluginImportResult> => {
       const attempt = ++attemptRef.current;
@@ -129,12 +132,15 @@ export function usePluginImportRunner(): UsePluginImportRunner {
 
       commit({ phase: "uploading", importId: null, error: null });
       try {
-        const result = await exec((phase) => {
+        const result = await exec((phase, importId) => {
           // The orchestrator reports `inspecting` once the row is staged; that
           // is the only phase the runner cannot infer on its own (uploading is
-          // set up-front, done/error from the outcome).
+          // set up-front, done/error from the outcome). It hands over the staged
+          // importId here so `usePluginImport(importId)` can subscribe to
+          // server-side progress WHILE inspection runs — committing null would
+          // defeat the purpose of surfacing the inspecting phase at all.
           if (phase === "inspecting") {
-            commit({ phase: "inspecting", importId: null, error: null });
+            commit({ phase: "inspecting", importId: importId ?? null, error: null });
           }
         });
         commit({

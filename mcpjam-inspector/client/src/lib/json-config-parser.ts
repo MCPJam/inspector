@@ -113,12 +113,15 @@ export function parseJsonConfig(jsonContent: string): ServerFormData[] {
         continue;
       }
 
-      // Determine server type based on config
+      // Determine server type based on config. Route on a GENUINE non-empty URL
+      // (or an explicit http/sse type token) — a present-but-empty `url: ""` is
+      // NOT http-ish, so a stdio entry that also carries `url: ""` stays stdio
+      // instead of being routed to HTTP and skipped for a missing URL. This
+      // mirrors validateJsonConfig so a validated config never imports nothing.
       const httpToken = serverConfig.type ?? serverConfig.transport;
-      const isHttpish =
-        isHttpTypeToken(httpToken) || typeof serverConfig.url === "string";
       const hasUrl =
         typeof serverConfig.url === "string" && serverConfig.url.length > 0;
+      const isHttpish = isHttpTypeToken(httpToken) || hasUrl;
       if (isHttpish) {
         // HTTP/SSE server. Require a non-empty URL — a `{type:"sse"}` entry with
         // no URL would otherwise import an unusable empty server.

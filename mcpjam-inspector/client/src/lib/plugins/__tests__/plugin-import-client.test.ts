@@ -115,15 +115,20 @@ describe("startPluginImportFromZip", () => {
     expect(result.inspect.status).toBe("failed");
   });
 
-  it("fires onPhase uploading then inspecting", async () => {
-    const { convex } = makeConvex();
-    const phases: string[] = [];
+  it("fires onPhase uploading then inspecting, carrying the staged importId", async () => {
+    const { convex } = makeConvex({ importId: "import_live" });
+    const calls: Array<[string, string | undefined]> = [];
     await startPluginImportFromZip(convex, {
       projectId: "proj_1",
       bundle: new Blob([]),
-      onPhase: (p) => phases.push(p),
+      onPhase: (p, importId) => calls.push([p, importId]),
     });
-    expect(phases).toEqual(["uploading", "inspecting"]);
+    // `inspecting` must carry the id createImport already returned, so a
+    // subscriber can attach WHILE inspection runs (not only after it finishes).
+    expect(calls).toEqual([
+      ["uploading", undefined],
+      ["inspecting", "import_live"],
+    ]);
   });
 
   it("preserves the staged importId when inspect throws", async () => {

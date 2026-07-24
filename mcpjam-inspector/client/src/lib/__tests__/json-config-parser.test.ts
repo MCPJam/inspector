@@ -234,6 +234,27 @@ describe("parseJsonConfig", () => {
       // And it is not imported as an empty, unusable server.
       expect(parseJsonConfig(json)).toHaveLength(0);
     });
+
+    it("imports a stdio entry that carries an empty url as stdio (not skipped)", () => {
+      // A present-but-empty `url: ""` must NOT route a command entry to HTTP and
+      // get it skipped for a missing URL. validate must accept it AND parse must
+      // import exactly one stdio server (never a validated-but-imports-nothing
+      // config).
+      const json = JSON.stringify({
+        mcp_servers: {
+          local: { command: "node", args: ["server.js"], url: "" },
+        },
+      });
+      expect(validateJsonConfig(json).success).toBe(true);
+      const servers = parseJsonConfig(json);
+      expect(servers).toHaveLength(1);
+      expect(servers[0]).toMatchObject({
+        name: "local",
+        type: "stdio",
+        command: "node",
+        args: ["server.js"],
+      });
+    });
   });
 
   describe("error handling", () => {
