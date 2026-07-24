@@ -3,10 +3,18 @@ import type {
   MCPCheckResult,
   RawHttpCheckContext,
 } from "../types.js";
+import { CHECK_ERAS } from "../types.js";
 import {
+  eraSkipMessage,
   failedResult,
   passedResult,
+  skippedResult,
 } from "./helpers.js";
+
+// JSON-RPC "Method not found" — the only conforming error for an unrecognized
+// method name (JSON-RPC 2.0 §5.1). Accepting any numeric code would let a
+// server pass this check with an unrelated error (e.g. -32602 Invalid params).
+const METHOD_NOT_FOUND = -32601;
 
 const PROTOCOL_CHECK_METADATA = {
   "protocol-invalid-method-error": {
@@ -86,17 +94,32 @@ async function sendInvalidMethodProbe(
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json, text/event-stream",
+        ...buildBaseHeaders(ctx),
+        // Probe-owned headers spread LAST so a caller's `customHeaders` can
+        // never overwrite the protocol-version pin or the SEP-2243 method
+        // mirror — otherwise a stray custom header turns an honest probe into
+        // a false failure unrelated to the server under test.
         "MCP-Protocol-Version": version,
         "mcp-method": INVALID_METHOD,
-        ...buildBaseHeaders(ctx),
       },
       body: JSON.stringify({
         jsonrpc: "2.0",
         id: 99,
         method: INVALID_METHOD,
         params: {
+          // The 2026-07-28 wire requires the FULL per-request `_meta` envelope
+          // (protocolVersion + clientInfo + clientCapabilities). Sending only
+          // the version makes a conforming server reject the request as a
+          // malformed envelope (-32602) BEFORE it ever dispatches the method,
+          // so the probe would never actually exercise unknown-method handling.
+          // clientInfo / clientCapabilities mirror the legacy `initialize`.
           _meta: {
             "io.modelcontextprotocol/protocolVersion": version,
+            "io.modelcontextprotocol/clientInfo": {
+              name: "mcpjam-sdk-conformance",
+              version: "1.0.0",
+            },
+            "io.modelcontextprotocol/clientCapabilities": {},
           },
         },
       }),
@@ -128,6 +151,22 @@ export async function runProtocolChecks(
   const results: MCPCheckResult[] = [];
 
   if (!selectedCheckIds.has("protocol-invalid-method-error")) {
+    return results;
+  }
+
+  // Era gate: route the raw protocol track through CHECK_ERAS, the single
+  // source of truth shared with the client / security / transport tracks. The
+  // invalid-method probe currently applies to both eras, so this is inert
+  // today — but keeping the runner on the map means a future reclassification
+  // (e.g. the Phase 3 safety valve downgrading it to legacy-only) becomes a
+  // safe era-skip instead of silently drifting into a false failure.
+  if (!CHECK_ERAS["protocol-invalid-method-error"].includes(ctx.config.era)) {
+    results.push(
+      skippedResult(
+        PROTOCOL_CHECK_METADATA["protocol-invalid-method-error"],
+        eraSkipMessage(ctx.config.era, ctx.config.protocolVersion),
+      ),
+    );
     return results;
   }
 
@@ -180,6 +219,21 @@ export async function runProtocolChecks(
           PROTOCOL_CHECK_METADATA["protocol-invalid-method-error"],
           Date.now() - startedAt,
           `JSON-RPC error is malformed: ${!hasCode ? "missing numeric code" : "missing message string"}`,
+          {
+            status: response.status,
+            error: rpcError,
+          },
+        ),
+      );
+      return results;
+    }
+
+    if (rpcError.code !== METHOD_NOT_FOUND) {
+      results.push(
+        failedResult(
+          PROTOCOL_CHECK_METADATA["protocol-invalid-method-error"],
+          Date.now() - startedAt,
+          `Expected JSON-RPC error code ${METHOD_NOT_FOUND} (Method not found) for an unrecognized method, got ${String(rpcError.code)}`,
           {
             status: response.status,
             error: rpcError,

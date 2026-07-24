@@ -281,11 +281,30 @@ async function runClientChecks(
 
     return checks;
   } catch (error) {
-    const firstCheck = selectedClientChecks[0];
     const checks: MCPCheckResult[] = [];
 
+    // Era gate applies even when the connection could not be established: an
+    // era-inapplicable check is a deterministic era-skip, never a failure. On a
+    // modern run a connect error must NOT surface a legacy-only check (e.g.
+    // `server-initialize`) as failed, or `result.passed` goes false for a check
+    // that does not apply to the run's era. The surfaced connect failure is
+    // pinned to the first ERA-APPLICABLE check (in legacy that is
+    // `selectedClientChecks[0]`, byte-identical to the pre-era-awareness path).
+    const firstApplicableCheck = selectedClientChecks.find(
+      (check) => !eraGate(check, config.era, config.protocolVersion),
+    );
+
     for (const check of selectedClientChecks) {
-      if (check.id === "server-initialize" || check.id === firstCheck.id) {
+      const eraSkip = eraGate(check, config.era, config.protocolVersion);
+      if (eraSkip) {
+        checks.push(eraSkip);
+        continue;
+      }
+
+      if (
+        check.id === "server-initialize" ||
+        check.id === firstApplicableCheck?.id
+      ) {
         checks.push(
           failedResult(
             check,

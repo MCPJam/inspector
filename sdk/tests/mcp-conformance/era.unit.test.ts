@@ -195,9 +195,20 @@ describe("runProtocolChecks — era-aware invalid-method probe", () => {
     expect(headers["mcp-session-id"]).toBeUndefined();
     const body = JSON.parse(String(calls[0]?.body));
     expect(body.method).toBe("nonexistent/method_that_does_not_exist");
+    // Full 2026-07-28 per-request _meta envelope — a conforming modern server
+    // rejects an incomplete envelope (-32602) before dispatching the method,
+    // so all three keys must be present or the probe never reaches unknown-
+    // method handling.
     expect(body.params._meta["io.modelcontextprotocol/protocolVersion"]).toBe(
       "2026-07-28"
     );
+    expect(body.params._meta["io.modelcontextprotocol/clientInfo"]).toEqual({
+      name: "mcpjam-sdk-conformance",
+      version: "1.0.0",
+    });
+    expect(
+      body.params._meta["io.modelcontextprotocol/clientCapabilities"]
+    ).toEqual({});
   });
 });
 
