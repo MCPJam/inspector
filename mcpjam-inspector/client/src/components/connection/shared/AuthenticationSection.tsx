@@ -21,13 +21,15 @@ import {
 import {
   readXaaEnterprisePolicy,
   resolveAuthorizationPlan,
+  type McpProtocolVersion,
 } from "@mcpjam/sdk/browser";
 import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
 import type { RegistrationMode, XaaClientAuthMethod } from "@/shared/xaa.js";
 import type { ConfidentialCimdCapabilityStatus } from "@/hooks/use-confidential-cimd-capability";
-import type {
-  ServerFormAuthType,
-  ServerFormOAuthProtocolMode,
+import {
+  resolveEffectiveOauthProtocolMode,
+  type ServerFormAuthType,
+  type ServerFormOAuthProtocolMode,
 } from "@/shared/types.js";
 import { REGISTRATION_MODE_OPTIONS } from "@/lib/registration-strategy";
 import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
@@ -51,6 +53,31 @@ interface AuthenticationSectionProps {
   onOauthScopesChange: (value: string) => void;
   oauthProtocolMode: ServerFormOAuthProtocolMode;
   onOauthProtocolModeChange: (value: ServerFormOAuthProtocolMode) => void;
+  /**
+   * The server's per-server MCP wire-version pin (from the Connection
+   * overrides picker / project server config). Drives the "auto" OAuth-mode
+   * bridge: OAuth and the sessionless transport ship together in the 2026
+   * era, so when the wire pin is 2026-07-28 an "auto" protocol mode resolves
+   * to the 2026 OAuth flow rather than the 2025 default. The mirror of
+   * server-helpers' oauth-mode → wire stamp (#3363). An EXPLICIT protocol
+   * selection always wins over this bridge. Undefined ("Client default") falls
+   * back to the active host's `mcpProfile.mcpProtocolVersion` before the SDK
+   * default, so a 2026-pinned host still routes "auto" through the 2026 flow.
+   */
+  serverMcpProtocolVersion?: McpProtocolVersion;
+  /**
+   * The active host's default MCP wire pin, resolved PROP-FIRST by the
+   * surrounding shell (ServerDetailModal:
+   * `hostDefaultMcpProtocolVersion ?? useActiveMcpProfile()`). The "auto"
+   * OAuth bridge falls back to this when no per-server pin is set — it is the
+   * SAME value the submit path bakes the era with, so the plan preview and the
+   * persisted era cannot disagree even when the modal renders without an
+   * `ActiveMcpProfileProvider` (or with one whose value differs from the
+   * prop). Undefined → the component's own `useActiveMcpProfile()` read below
+   * is the final fallback, which is exactly the Add path's context-only
+   * behavior (the Add modal passes no host-default prop).
+   */
+  hostDefaultMcpProtocolVersion?: McpProtocolVersion;
   registrationMode: RegistrationMode;
   onOauthRegistrationModeChange: (value: RegistrationMode) => void;
   xaaClientAuth?: XaaClientAuthMethod;
@@ -131,6 +158,8 @@ export function AuthenticationSection({
   onOauthScopesChange,
   oauthProtocolMode,
   onOauthProtocolModeChange,
+  serverMcpProtocolVersion,
+  hostDefaultMcpProtocolVersion,
   registrationMode,
   onOauthRegistrationModeChange,
   xaaClientAuth = "none",
@@ -176,8 +205,9 @@ export function AuthenticationSection({
   // method here overrides — the helper copy under the select says which.
   // `invalid` renders as off here; the connect path surfaces the config
   // error, this component only shapes helper text.
+  const activeMcpProfile = useActiveMcpProfile();
   const hostPolicyEnterpriseManaged =
-    readXaaEnterprisePolicy(useActiveMcpProfile()).kind === "on";
+    readXaaEnterprisePolicy(activeMcpProfile).kind === "on";
   const [revealedClientSecret, setRevealedClientSecret] = useState<
     string | null
   >(null);
@@ -317,8 +347,28 @@ export function AuthenticationSection({
     effectiveXaaRegistrationMode === "preregistered";
   const showXaaClientAuthPicker =
     confidentialCimdStatus === "ready" || xaaClientAuth === "private_key_jwt";
-  const effectiveOauthProtocolMode =
-    oauthProtocolMode === "auto" ? "2025-11-25" : oauthProtocolMode;
+  // "auto" defers the protocol era to the effective wire pin: OAuth and the
+  // sessionless transport ship together, so a 2026-07-28 wire pin makes "auto"
+  // resolve to the 2026 OAuth flow (mirror of server-helpers' oauth-mode → wire
+  // stamp). Precedence: the per-server pin wins, else the ACTIVE HOST's
+  // mcpProfile.mcpProtocolVersion (so "Client default" on a 2026-pinned host
+  // still routes through 2026), else the 2025 default. An explicit protocol
+  // selection is passed straight through — it always wins over the bridge.
+  // Single-sourced with the submit path via the shared resolver so the plan
+  // preview and the saved profile cannot disagree. The host fallback prefers
+  // the prop-first `hostDefaultMcpProtocolVersion` (the authoritative host pin
+  // the submit path also bakes with — see ServerDetailModal) so preview and
+  // persisted era stay identical even when this component is mounted outside an
+  // `ActiveMcpProfileProvider`; the local context read is only the last resort
+  // for callers (the Add modal) that pass no host-default prop.
+  const effectiveWireProtocolVersion =
+    serverMcpProtocolVersion ??
+    hostDefaultMcpProtocolVersion ??
+    activeMcpProfile?.mcpProtocolVersion;
+  const effectiveOauthProtocolMode = resolveEffectiveOauthProtocolMode(
+    oauthProtocolMode,
+    effectiveWireProtocolVersion
+  );
   const oauthPlan =
     authType === "oauth" || authType === "auto"
       ? resolveAuthorizationPlan({

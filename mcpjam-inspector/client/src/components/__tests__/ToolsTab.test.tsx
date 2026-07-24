@@ -34,6 +34,15 @@ vi.mock("@/lib/apis/mcp-tasks-api", () => ({
   getTaskCapabilities: (...args: unknown[]) => mockGetTaskCapabilities(...args),
 }));
 
+// SEP-2350 step-up orchestration — spy so we can assert the local tool-call
+// surface drives the resolver on a `403 insufficient_scope`.
+const mockApplyToolCallStepUp = vi.fn();
+const mockResetToolCallStepUp = vi.fn();
+vi.mock("@/state/oauth-orchestrator", () => ({
+  applyToolCallStepUp: (...args: unknown[]) => mockApplyToolCallStepUp(...args),
+  resetToolCallStepUp: (...args: unknown[]) => mockResetToolCallStepUp(...args),
+}));
+
 // Mock request storage
 vi.mock("@/lib/request-storage", () => ({
   listSavedRequests: vi.fn().mockReturnValue([]),
@@ -83,6 +92,12 @@ vi.mock("@/lib/task-tracker", () => ({
   trackTask: vi.fn(),
 }));
 
+// Mock app navigation — the task_created success branch navigates to /tasks;
+// stub it so tests don't need a router mounted.
+vi.mock("@/lib/app-navigation", () => ({
+  navigateApp: vi.fn(),
+}));
+
 // Mock ResizablePanelGroup to simplify rendering
 vi.mock("../ui/resizable", () => ({
   ResizablePanelGroup: ({ children }: { children: React.ReactNode }) => (
@@ -119,6 +134,11 @@ describe("ToolsTab", () => {
       supportsToolCalls: false,
       supportsList: false,
       supportsCancel: false,
+    });
+    mockApplyToolCallStepUp.mockResolvedValue({
+      action: "reauthorize",
+      scopes: [],
+      attempt: 0,
     });
   });
 
@@ -534,6 +554,218 @@ describe("ToolsTab", () => {
           undefined
         );
       });
+    });
+
+    it("drives the step-up resolver on a 403 insufficient_scope challenge", async () => {
+      const serverConfig = createServerConfig();
+      const server = {
+        name: "test-server",
+        config: serverConfig,
+        useOAuth: true,
+      } as unknown as import("@/state/app-types").ServerWithName;
+
+      mockListTools.mockResolvedValue({
+        tools: [
+          {
+            name: "scoped-tool",
+            inputSchema: { type: "object", properties: {} },
+          },
+        ],
+      });
+
+      // The tool call fails with a runtime insufficient-scope challenge.
+      mockExecuteToolApi.mockResolvedValue({
+        error: "insufficient_scope",
+        insufficientScope: {
+          requiredScope: "admin",
+          resourceMetadataUrl: "https://rs.example/.well-known",
+        },
+      });
+
+      render(
+        <ToolsTab
+          serverConfig={serverConfig}
+          serverName="test-server"
+          server={server}
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("scoped-tool")).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText("scoped-tool"));
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: /^run/i })
+        ).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByRole("button", { name: /^run/i }));
+
+      // The local surface forwards the challenge into the step-up resolver.
+      await waitFor(() => {
+        expect(mockApplyToolCallStepUp).toHaveBeenCalledWith(
+          server,
+          expect.objectContaining({
+            requiredScope: "admin",
+            resourceMetadataUrl: "https://rs.example/.well-known",
+          })
+        );
+      });
+    });
+
+    it("resets the step-up counter after a successful tool call", async () => {
+      const serverConfig = createServerConfig();
+      const server = {
+        name: "test-server",
+        config: serverConfig,
+        useOAuth: true,
+      } as unknown as import("@/state/app-types").ServerWithName;
+
+      mockListTools.mockResolvedValue({
+        tools: [
+          { name: "ok-tool", inputSchema: { type: "object", properties: {} } },
+        ],
+      });
+      mockExecuteToolApi.mockResolvedValue({
+        status: "completed",
+        result: { content: [{ type: "text", text: "ok" }] },
+      });
+
+      render(
+        <ToolsTab
+          serverConfig={serverConfig}
+          serverName="test-server"
+          server={server}
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("ok-tool")).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByText("ok-tool"));
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: /^run/i })
+        ).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByRole("button", { name: /^run/i }));
+
+      await waitFor(() => {
+        expect(mockResetToolCallStepUp).toHaveBeenCalledWith(server);
+      });
+      expect(mockApplyToolCallStepUp).not.toHaveBeenCalled();
+    });
+
+    it("resets the step-up counter on a task_created success too", async () => {
+      const serverConfig = createServerConfig();
+      const server = {
+        name: "test-server",
+        config: serverConfig,
+        useOAuth: true,
+      } as unknown as import("@/state/app-types").ServerWithName;
+
+      mockListTools.mockResolvedValue({
+        tools: [
+          { name: "task-tool", inputSchema: { type: "object", properties: {} } },
+        ],
+      });
+      // A task-augmented tool that succeeds returns `task_created`, NOT
+      // `completed` — the reset must still fire on this branch.
+      mockExecuteToolApi.mockResolvedValue({
+        status: "task_created",
+        task: {
+          taskId: "task-1",
+          createdAt: Date.now(),
+          status: "working",
+          ttl: 0,
+          pollInterval: 1000,
+        },
+      });
+
+      render(
+        <ToolsTab
+          serverConfig={serverConfig}
+          serverName="test-server"
+          server={server}
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("task-tool")).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByText("task-tool"));
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: /^run/i })
+        ).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByRole("button", { name: /^run/i }));
+
+      await waitFor(() => {
+        expect(mockResetToolCallStepUp).toHaveBeenCalledWith(server);
+      });
+    });
+
+    it("dedupes concurrent step-ups: only one runs per server while in flight", async () => {
+      const serverConfig = createServerConfig();
+      const server = {
+        name: "test-server",
+        config: serverConfig,
+        useOAuth: true,
+      } as unknown as import("@/state/app-types").ServerWithName;
+
+      mockListTools.mockResolvedValue({
+        tools: [
+          {
+            name: "scoped-tool",
+            inputSchema: { type: "object", properties: {} },
+          },
+        ],
+      });
+      // Every run surfaces the same insufficient-scope challenge.
+      mockExecuteToolApi.mockResolvedValue({
+        error: "insufficient_scope",
+        insufficientScope: {
+          requiredScope: "admin",
+          resourceMetadataUrl: "https://rs.example/.well-known",
+        },
+      });
+      // Keep the first step-up pending (a redirect flow would navigate away),
+      // so the in-flight guard stays set across the second run.
+      mockApplyToolCallStepUp.mockReturnValue(new Promise(() => {}));
+
+      render(
+        <ToolsTab
+          serverConfig={serverConfig}
+          serverName="test-server"
+          server={server}
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("scoped-tool")).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByText("scoped-tool"));
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: /^run/i })
+        ).toBeInTheDocument();
+      });
+
+      const runButton = screen.getByRole("button", { name: /^run/i });
+      fireEvent.click(runButton);
+      await waitFor(() => {
+        expect(mockApplyToolCallStepUp).toHaveBeenCalledTimes(1);
+      });
+
+      // A second run while the first step-up is still resolving must NOT fire a
+      // duplicate (which would double-redirect / double-bump the counter).
+      fireEvent.click(runButton);
+      await waitFor(() => {
+        expect(mockExecuteToolApi).toHaveBeenCalledTimes(2);
+      });
+      expect(mockApplyToolCallStepUp).toHaveBeenCalledTimes(1);
     });
   });
 

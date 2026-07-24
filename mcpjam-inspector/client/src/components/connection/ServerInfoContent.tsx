@@ -42,9 +42,11 @@ export function ServerInfoContent({
   const [hostedTokenError, setHostedTokenError] = useState<string | null>(null);
   const hostedRevealRequestIdRef = useRef(0);
 
+  const serverUrl =
+    "url" in server.config ? server.config.url?.toString() : undefined;
   const storedTokensState = server.oauthTokens
     ? { tokens: undefined, isInvalid: false }
-    : getStoredTokensState(server.name);
+    : getStoredTokensState(server.name, serverUrl);
   const oauthTokens = server.oauthTokens ?? storedTokensState.tokens;
   const hasInvalidStoredAuthData =
     server.oauthTokens == null && storedTokensState.isInvalid;

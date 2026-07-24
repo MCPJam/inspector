@@ -32,6 +32,15 @@ interface EditServerFormContentProps {
   onMcpProtocolVersionOverrideChange?: (
     mode: McpProtocolVersion | undefined
   ) => void;
+  /**
+   * The active host's default MCP wire pin, resolved PROP-FIRST by the modal
+   * (`hostDefaultMcpProtocolVersion ?? useActiveMcpProfile()`). Forwarded to
+   * AuthenticationSection so the "auto" OAuth plan preview resolves against the
+   * SAME host fallback the submit path bakes with — otherwise the preview
+   * (context) and the saved era (host default) could disagree when the modal
+   * renders outside an ActiveMcpProfileProvider.
+   */
+  hostDefaultMcpProtocolVersion?: McpProtocolVersion;
   /** Project default XAA test identity — shown as override placeholders. */
   projectXaaDefaultIdentity?: { subject: string; email: string } | null;
 }
@@ -43,6 +52,7 @@ export function EditServerFormContent({
   hostedServerId = null,
   mcpProtocolVersionOverride,
   onMcpProtocolVersionOverrideChange,
+  hostDefaultMcpProtocolVersion,
   projectXaaDefaultIdentity = null,
 }: EditServerFormContentProps) {
   const hostedUrlPlaceholder = "https://example.com/mcp";
@@ -229,6 +239,8 @@ export function EditServerFormContent({
             onOauthScopesChange={formState.setOauthScopesInput}
             oauthProtocolMode={formState.oauthProtocolMode}
             onOauthProtocolModeChange={formState.setOauthProtocolMode}
+            serverMcpProtocolVersion={mcpProtocolVersionOverride}
+            hostDefaultMcpProtocolVersion={hostDefaultMcpProtocolVersion}
             registrationMode={formState.registrationMode}
             onOauthRegistrationModeChange={formState.setOauthRegistrationMode}
             xaaClientAuth={formState.xaaClientAuth}

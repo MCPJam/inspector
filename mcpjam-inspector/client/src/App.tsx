@@ -985,6 +985,7 @@ export function ToolsRoute() {
         <ToolsTab
           serverConfig={selectedMCPConfig}
           serverName={appState.selectedServer}
+          server={selectedServerEntry ?? undefined}
           serverConnectionStatus={
             selectedServerEntry?.connectionStatus ?? "disconnected"
           }

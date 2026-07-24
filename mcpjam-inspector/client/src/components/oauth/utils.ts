@@ -13,10 +13,11 @@ import { getStoredTokens } from "@/lib/oauth/mcp-oauth";
 // those fields blank for a server the Connect page clearly knows about.
 const readStoredOAuthCredentials = (
   serverName?: string,
+  serverUrl?: string,
 ): { clientId: string; scopes: string } => {
   if (!serverName) return { clientId: "", scopes: "" };
   try {
-    const storedTokens = getStoredTokens(serverName);
+    const storedTokens = getStoredTokens(serverName, serverUrl);
     const clientInfo = JSON.parse(
       localStorage.getItem(`mcp-client-${serverName}`) || "{}",
     );
@@ -88,7 +89,10 @@ export const deriveOAuthProfileFromServer = (
       ? (httpConfig as any).clientSecret
       : "";
 
-  const stored = readStoredOAuthCredentials(server.name);
+  const stored = readStoredOAuthCredentials(
+    server.name,
+    toUrlString(httpConfig.url) || undefined,
+  );
 
   return {
     ...EMPTY_OAUTH_TEST_PROFILE,

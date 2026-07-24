@@ -1485,6 +1485,22 @@ export class MCPClientManager {
         reconnectionOptions: config.reconnectionOptions,
         authProvider: effectiveAuthProvider,
         sessionId: config.sessionId,
+        // SEP-2350 step-up. MCPJam drives interactive re-authorization on the
+        // CLIENT (a browser redirect through `initiateOAuth` /
+        // `ensureAuthorizedForReconnect`), not inside this transport. This
+        // transport runs server-side over a bearer `accessToken` or a
+        // `RefreshTokenOAuthProvider` — neither can complete an interactive
+        // step-up here. Under the upstream default (`"reauthorize"`) a 403
+        // `insufficient_scope` against a refresh-token server would run
+        // `auth(..., forceReauthorization: true)`, hit
+        // `RefreshTokenOAuthProvider.redirectToAuthorization()` and throw a
+        // bare "Non-interactive OAuth flow" — losing the challenge scopes.
+        // `"throw"` makes the transport surface a clean
+        // `InsufficientScopeError` (carrying `requiredScope` /
+        // `resourceMetadataUrl`) that the host serializes to the client, which
+        // owns the union-scope re-authorization and the bounded per-session
+        // retry (§10.5#5). Cross-request loop bounding is host responsibility.
+        onInsufficientScope: "throw",
       });
 
       try {

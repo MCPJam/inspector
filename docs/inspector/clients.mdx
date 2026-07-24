@@ -105,6 +105,13 @@ The Apps Extension tab contains two independent capability matrices that never c
 
 The canvas on the left shows a live diagram of the Client — the model, attached servers, and any per-server overrides. Cards flash briefly when you switch between Clients so you can see what changed.
 
+While the Connect canvas is open, a **client selector** is pinned to the top-left of the canvas. It shows two controls:
+
+- **Add client** pill — opens the Create client dialog. Quick-add buttons for Claude, ChatGPT, and Copilot appear alongside it so you can spin up a template client without filling in the form.
+- **Switcher pill** — shows the active client's logo, name, and its position in the list (e.g. `2 / 3`). Click to open a dropdown listing all clients; select one to switch the canvas to it. A delete button appears on hover for each client (disabled on the last remaining client).
+
+The header client bar hides itself while the canvas is open to avoid duplicating the control.
+
 ## Using a Client
 
 Once saved, a Client shows up in the picker at the top of every consumer:

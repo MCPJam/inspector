@@ -46,6 +46,16 @@ When a tool triggers an MCP elicitation request, a dialog appears asking you to 
 
 **Decline** and **Cancel** are always available and bypass validation — they send the corresponding action to the server without any parameters.
 
+### OAuth scope step-up on tool calls
+
+When a tool call returns a `403 insufficient_scope` error, the Tools tab automatically triggers a re-authorization flow. Inspector unions the scopes from your original OAuth grant with the scopes the server challenged, then redirects you to the authorization server to approve the expanded set. After you return from the consent screen, re-run the tool.
+
+The step-up is bounded per browser session: if re-authorization does not resolve the scope error after the allowed number of attempts, Inspector surfaces the error instead of redirecting again. The counter resets when a tool call succeeds, so a future legitimate scope challenge starts fresh. Opening a new browser session also resets the counter.
+
+<Note>
+Runtime scope step-up is only available on the local (non-hosted) tool-call surface. The hosted path does not yet forward the scope challenge.
+</Note>
+
 ### Tool quality badges
 
 When enabled, each tool in the sidebar may display a small badge showing the number of quality findings for that tool:
