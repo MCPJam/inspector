@@ -59,9 +59,11 @@ describe("usePluginImport", () => {
   });
 
   it("treats uploaded and inspecting as in-progress inspection", () => {
-    mockUseQuery.mockReturnValue(record("inspecting"));
-    const { result } = renderHook(() => usePluginImport("import_1"));
-    expect(result.current.isInspecting).toBe(true);
-    expect(result.current.isTerminal).toBe(false);
+    for (const status of ["uploaded", "inspecting"] as const) {
+      mockUseQuery.mockReturnValue(record(status));
+      const { result } = renderHook(() => usePluginImport("import_1"));
+      expect(result.current.isInspecting).toBe(true);
+      expect(result.current.isTerminal).toBe(false);
+    }
   });
 });

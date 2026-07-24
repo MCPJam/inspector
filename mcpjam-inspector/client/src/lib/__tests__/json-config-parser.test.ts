@@ -198,6 +198,42 @@ describe("parseJsonConfig", () => {
         'Cannot declare both "mcp_servers" and "mcpServers"',
       );
     });
+
+    it("carries HTTP headers through on the new shapes (credentials)", () => {
+      const server = {
+        url: "https://mcp.example.com/mcp",
+        headers: { Authorization: "Bearer tok", "X-Api-Key": "abc" },
+      };
+      const snake = parseJsonConfig(
+        JSON.stringify({ mcp_servers: { s: server } }),
+      );
+      const direct = parseJsonConfig(JSON.stringify({ s: server }));
+      expect(snake[0].headers).toEqual({
+        Authorization: "Bearer tok",
+        "X-Api-Key": "abc",
+      });
+      expect(direct[0].headers).toEqual(snake[0].headers);
+    });
+
+    it("tolerates non-object sibling keys in a direct map", () => {
+      const json = JSON.stringify({
+        version: "1.0",
+        s: { command: "node" },
+      });
+      expect(validateJsonConfig(json).success).toBe(true);
+      const servers = parseJsonConfig(json);
+      expect(servers).toHaveLength(1);
+      expect(servers[0].name).toBe("s");
+    });
+
+    it("rejects an SSE/HTTP entry with no URL", () => {
+      const json = JSON.stringify({ mcp_servers: { s: { type: "sse" } } });
+      const result = validateJsonConfig(json);
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('must have a non-empty "url"');
+      // And it is not imported as an empty, unusable server.
+      expect(parseJsonConfig(json)).toHaveLength(0);
+    });
   });
 
   describe("error handling", () => {

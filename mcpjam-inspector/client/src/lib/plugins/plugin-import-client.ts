@@ -152,12 +152,21 @@ export async function uploadBundleToStorage(
   return body.storageId;
 }
 
+/** Phases the orchestrator passes to an optional progress callback. */
+export type StartPluginImportPhase = "uploading" | "inspecting";
+
 export interface StartPluginImportArgs {
   projectId: string;
   /** ZIP bytes of the plugin bundle (hosted ZIP upload or folderToZip output). */
   bundle: Blob;
   /** Optional display label (backend sanitizes; a local path is never stored). */
   sourceLabel?: string;
+  /**
+   * Progress callback. Fires `uploading` before the upload and `inspecting`
+   * after the import row is staged (so the runner can surface the inspect phase
+   * instead of jumping straight from uploading to done).
+   */
+  onPhase?: (phase: StartPluginImportPhase) => void;
 }
 
 export interface StartPluginImportResult {
@@ -168,15 +177,39 @@ export interface StartPluginImportResult {
 }
 
 /**
+ * Error thrown when the flow fails AFTER a `pluginImports` row was staged (e.g.
+ * `inspectImport` rejects). It carries the staged `importId` so the caller can
+ * still subscribe to / recover the row instead of stranding it — a bare rethrow
+ * loses the id.
+ */
+export class PluginImportError extends Error {
+  readonly importId: string;
+  readonly bundleStorageId: string;
+  constructor(
+    message: string,
+    context: { importId: string; bundleStorageId: string; cause?: unknown },
+  ) {
+    super(message, { cause: context.cause });
+    this.name = "PluginImportError";
+    this.importId = context.importId;
+    this.bundleStorageId = context.bundleStorageId;
+  }
+}
+
+/**
  * Full upload → stage → inspect for a ZIP bundle. `createImport` does not
  * trigger inspection on the backend, so we schedule `inspectImport` here and
  * await its terminal preview_ready / failed result. Callers then read the
  * sanitized preview via `getPluginImport` (or the `usePluginImport` hook).
+ *
+ * If `inspectImport` throws after staging, the staged `importId` is preserved
+ * on a thrown `PluginImportError` so the caller keeps a handle to the row.
  */
 export async function startPluginImportFromZip(
   convex: PluginConvexClient,
   args: StartPluginImportArgs,
 ): Promise<StartPluginImportResult> {
+  args.onPhase?.("uploading");
   const uploadUrl = await generateBundleUploadUrl(convex, {
     projectId: args.projectId,
   });
@@ -186,15 +219,25 @@ export async function startPluginImportFromZip(
     bundleStorageId,
     sourceLabel: args.sourceLabel,
   });
-  const inspect = await inspectImport(convex, { importId });
-  return { importId, bundleStorageId, inspect };
+  // The row now exists; a later failure must not lose its id.
+  args.onPhase?.("inspecting");
+  try {
+    const inspect = await inspectImport(convex, { importId });
+    return { importId, bundleStorageId, inspect };
+  } catch (cause) {
+    throw new PluginImportError(
+      cause instanceof Error ? cause.message : "Plugin inspect failed",
+      { importId, bundleStorageId, cause },
+    );
+  }
 }
 
 export interface StartPluginImportFromFolderArgs {
   projectId: string;
-  /** Bundle-relative path → bytes for the selected folder's CONTENTS. */
+  /** Selected folder CONTENTS (path/bytes entries, paths validated by the SDK). */
   files: PluginFolderFiles;
   sourceLabel?: string;
+  onPhase?: (phase: StartPluginImportPhase) => void;
 }
 
 /**
@@ -212,6 +255,7 @@ export async function startPluginImportFromFolder(
     projectId: args.projectId,
     bundle,
     sourceLabel: args.sourceLabel,
+    onPhase: args.onPhase,
   });
 }
 

@@ -9,8 +9,20 @@ export interface JsonServerConfig {
   command?: string;
   args?: string[];
   env?: Record<string, string>;
-  type?: "sse";
+  headers?: Record<string, string>;
+  type?: string;
+  transport?: string;
   url?: string;
+}
+
+/** Transport `type`/`transport` values that denote an HTTP/SSE server. */
+function isHttpTypeToken(token: unknown): boolean {
+  return (
+    token === "sse" ||
+    token === "http" ||
+    token === "streamable-http" ||
+    token === "streamableHttp"
+  );
 }
 
 export interface JsonConfig {
@@ -102,14 +114,29 @@ export function parseJsonConfig(jsonContent: string): ServerFormData[] {
       }
 
       // Determine server type based on config
-      if (serverConfig.type === "sse" || serverConfig.url) {
-        // HTTP/SSE server
+      const httpToken = serverConfig.type ?? serverConfig.transport;
+      const isHttpish =
+        isHttpTypeToken(httpToken) || typeof serverConfig.url === "string";
+      const hasUrl =
+        typeof serverConfig.url === "string" && serverConfig.url.length > 0;
+      if (isHttpish) {
+        // HTTP/SSE server. Require a non-empty URL — a `{type:"sse"}` entry with
+        // no URL would otherwise import an unusable empty server.
+        if (!hasUrl) {
+          console.warn(
+            `Skipping server "${serverName}": HTTP/SSE server missing "url"`,
+          );
+          continue;
+        }
+        // Carry headers (and env) through for ALL accepted shapes — the
+        // OpenAI mcp_servers/direct configs put credentials like Authorization
+        // in `headers`, and dropping them silently loses the connection's auth.
         servers.push({
           name: serverName,
           type: "http",
-          url: serverConfig.url || "",
-          headers: {},
-          env: {},
+          url: serverConfig.url as string,
+          headers: serverConfig.headers || {},
+          env: serverConfig.env || {},
           useOAuth: false,
         });
       } else if (serverConfig.command) {
@@ -171,6 +198,11 @@ export function validateJsonConfig(jsonContent: string): {
       unwrapped.servers,
     ) as Array<[string, JsonServerConfig]>) {
       if (!serverConfig || typeof serverConfig !== "object") {
+        // A direct server map may carry non-object sibling keys (e.g. a
+        // top-level `version: "1.0"`); tolerate them like the wrapped shapes do
+        // (the parse loop skips them). Inside an explicit wrapper, a non-object
+        // value is a malformed server and stays an error.
+        if (unwrapped.wrapper === "direct") continue;
         return {
           success: false,
           error: `Invalid server config for "${serverName}"`,
@@ -179,21 +211,31 @@ export function validateJsonConfig(jsonContent: string): {
 
       const configObj = serverConfig as JsonServerConfig;
       const hasCommand =
-        configObj.command && typeof configObj.command === "string";
-      const hasUrl = configObj.url && typeof configObj.url === "string";
-      const isSse = configObj.type === "sse";
-
-      if (!hasCommand && !hasUrl && !isSse) {
-        return {
-          success: false,
-          error: `Server "${serverName}" must have either "command" or "url" property`,
-        };
-      }
+        typeof configObj.command === "string" && configObj.command.length > 0;
+      const hasUrl =
+        typeof configObj.url === "string" && configObj.url.length > 0;
+      const isHttpType = isHttpTypeToken(configObj.type ?? configObj.transport);
 
       if (hasCommand && hasUrl) {
         return {
           success: false,
           error: `Server "${serverName}" cannot have both "command" and "url" properties`,
+        };
+      }
+
+      if (isHttpType || hasUrl) {
+        // HTTP/SSE server must carry a usable URL — reject `{type:"sse"}` with
+        // no URL rather than importing an empty, unusable server.
+        if (!hasUrl) {
+          return {
+            success: false,
+            error: `Server "${serverName}" must have a non-empty "url" property`,
+          };
+        }
+      } else if (!hasCommand) {
+        return {
+          success: false,
+          error: `Server "${serverName}" must have either "command" or "url" property`,
         };
       }
     }

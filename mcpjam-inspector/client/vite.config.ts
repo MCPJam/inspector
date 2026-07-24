@@ -41,6 +41,14 @@ const sdkWidgetRuntimeEntry = path.resolve(
   rootDir,
   "../sdk/src/widget-runtime/index.ts",
 );
+// @mcpjam/sdk/plugin-bundle resolves to dist via package exports; alias it to
+// source so build:client resolves it without a prior `npm run build -w
+// @mcpjam/sdk` (mirrors the SDK subpath aliases above). The exported parser is
+// pure/browser-safe (no Node imports), so aliasing to source is safe.
+const sdkPluginBundleEntry = path.resolve(
+  rootDir,
+  "../sdk/src/plugin-bundle/index.ts",
+);
 // @mcpjam/chat-ui publishes from dist, but a clean checkout has no
 // chat-ui/dist until it is built. Resolve the package from source so the
 // inspector's dev/build/typecheck/test never depend on a chat-ui build.
@@ -106,6 +114,7 @@ export default defineConfig(({ mode }) => {
         "@mcpjam/chat-ui/trace": chatUiTraceEntry,
         "@mcpjam/chat-ui": chatUiEntry,
         "@mcpjam/widget-react": widgetReactEntry,
+        "@mcpjam/sdk/plugin-bundle": sdkPluginBundleEntry,
         "@mcpjam/sdk/browser": sdkBrowserEntry,
         "@mcpjam/sdk/widget-runtime": sdkWidgetRuntimeEntry,
         "@mcpjam/sdk/host-compat": sdkHostCompatEntry,

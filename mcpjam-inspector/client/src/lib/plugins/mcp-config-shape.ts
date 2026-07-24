@@ -68,14 +68,15 @@ function looksLikeServerEntry(value: unknown): boolean {
 }
 
 /**
- * Detect whether a wrapper-less object is a direct server map: every value
- * must be an object and at least one must look like a server entry.
+ * Detect whether a wrapper-less object is a direct server map: at least one
+ * value must look like a server entry. Non-object sibling keys (e.g. a
+ * top-level `version: "1.0"` alongside real servers) are TOLERATED — the
+ * wrapped shapes don't reject such siblings either, and the per-server loop
+ * skips non-object values — so a direct map imports the same servers a
+ * `mcp_servers` wrapper would.
  */
 function looksLikeServerMap(record: Record<string, unknown>): boolean {
-  const values = Object.values(record);
-  if (values.length === 0) return false;
-  if (!values.every(isPlainObject)) return false;
-  return values.some(looksLikeServerEntry);
+  return Object.values(record).some(looksLikeServerEntry);
 }
 
 /**

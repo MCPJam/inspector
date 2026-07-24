@@ -17,9 +17,66 @@
  * emitted in sorted path order so the produced bytes are deterministic for a
  * given input (useful for tests and content caching). Browser-safe: no Node
  * APIs, only typed arrays and TextEncoder.
+ *
+ * TRADEOFF (deflate is intentionally out of scope for INS-1): because STORE
+ * does not compress, `folderToZip` first runs `assertFolderWithinLimits` — a
+ * preflight against the SDK's uncompressed bundle limits — so an oversized
+ * folder fails fast with a clear error instead of blowing up memory while
+ * materializing the archive. STORE also adds ~per-entry header overhead, so a
+ * folder whose CONTENT is just under the backend's 25 MB *compressed* cap can
+ * still be rejected on upload; the backend remains the authority on the
+ * compressed cap. If large real-world plugins hit this, add deflate here.
  */
 
+import {
+  DEFAULT_PLUGIN_BUNDLE_LIMITS,
+  type PluginBundleLimits,
+} from "@mcpjam/sdk/plugin-bundle";
 import type { PluginFolderFiles } from "./plugin-file-source";
+
+/** Stable error code thrown when a folder exceeds the SDK bundle limits. */
+export const PLUGIN_FOLDER_TOO_LARGE = "PLUGIN_FOLDER_TOO_LARGE";
+
+export class PluginFolderTooLargeError extends Error {
+  readonly code = PLUGIN_FOLDER_TOO_LARGE;
+  constructor(message: string) {
+    super(message);
+    this.name = "PluginFolderTooLargeError";
+  }
+}
+
+/**
+ * Preflight a folder against the SDK's uncompressed bundle limits (entry count,
+ * per-file size, total size) BEFORE materializing the archive in memory. Mirror
+ * of the archive-level caps the parser/backend enforce, applied early so an
+ * oversized selection cannot OOM the STORE writer. Throws
+ * `PluginFolderTooLargeError`; the parser still enforces the same caps on the
+ * uploaded archive as the authoritative check.
+ */
+export function assertFolderWithinLimits(
+  files: PluginFolderFiles,
+  limits: PluginBundleLimits = DEFAULT_PLUGIN_BUNDLE_LIMITS,
+): void {
+  if (files.length > limits.maxEntries) {
+    throw new PluginFolderTooLargeError(
+      `plugin folder has ${files.length} files; the limit is ${limits.maxEntries}`,
+    );
+  }
+  let total = 0;
+  for (const file of files) {
+    if (file.bytes.byteLength > limits.maxFileBytes) {
+      throw new PluginFolderTooLargeError(
+        `plugin file "${file.path}" is ${file.bytes.byteLength} bytes; the per-file limit is ${limits.maxFileBytes}`,
+      );
+    }
+    total += file.bytes.byteLength;
+    if (total > limits.maxTotalBytes) {
+      throw new PluginFolderTooLargeError(
+        `plugin folder exceeds the ${limits.maxTotalBytes}-byte uncompressed limit`,
+      );
+    }
+  }
+}
 
 const LOCAL_FILE_HEADER_SIG = 0x04034b50;
 const CENTRAL_DIR_HEADER_SIG = 0x02014b50;
@@ -62,22 +119,28 @@ interface StagedEntry {
 }
 
 /**
- * Zip a plugin folder map (bundle-relative POSIX path → bytes) into a single
- * ZIP byte array. Directory entries are implied by file paths and are not
- * written; the SDK parser derives structure from file paths.
+ * Zip a plugin folder (array of bundle-relative path → bytes) into a single ZIP
+ * byte array. Directory entries are implied by file paths and are not written;
+ * the SDK parser derives structure from file paths. Duplicate paths are written
+ * verbatim (the parser rejects them). Throws `PluginFolderTooLargeError` when
+ * the folder exceeds the SDK's uncompressed limits.
  */
-export function folderToZip(files: PluginFolderFiles): Uint8Array {
+export function folderToZip(files: PluginFolderFiles): Uint8Array<ArrayBuffer> {
+  assertFolderWithinLimits(files);
+
   const encoder = new TextEncoder();
-  // Sorted for deterministic output; the bundle hash is order-independent but
-  // stable bytes make the archive itself reproducible.
-  const paths = [...files.keys()].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  // Sorted by path for deterministic output; the bundle hash is
+  // order-independent but stable bytes make the archive itself reproducible.
+  // A stable sort preserves the relative order of any duplicate paths.
+  const ordered = [...files].sort((a, b) =>
+    a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
+  );
 
   const staged: StagedEntry[] = [];
   const chunks: Uint8Array[] = [];
   let offset = 0;
 
-  for (const path of paths) {
-    const data = files.get(path)!;
+  for (const { path, bytes: data } of ordered) {
     const nameBytes = encoder.encode(path);
     const crc = crc32(data);
 
@@ -153,7 +216,7 @@ export function folderToZip(files: PluginFolderFiles): Uint8Array {
 
 /** Convenience: zip a folder and wrap it as a `Blob` ready for upload. */
 export function folderToZipBlob(files: PluginFolderFiles): Blob {
-  const bytes = folderToZip(files);
-  // Copy into a fresh ArrayBuffer so Blob never sees a shared/pooled buffer.
-  return new Blob([bytes.slice().buffer], { type: "application/zip" });
+  // `folderToZip` returns a Uint8Array backed by its own freshly-allocated
+  // buffer, so Blob can take it directly.
+  return new Blob([folderToZip(files)], { type: "application/zip" });
 }

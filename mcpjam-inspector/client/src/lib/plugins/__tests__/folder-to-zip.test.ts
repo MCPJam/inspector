@@ -1,38 +1,45 @@
 import { describe, it, expect } from "vitest";
 import { unzipSync } from "fflate";
-import { parsePluginBundle } from "@mcpjam/sdk/plugin-bundle";
-import { folderToZip, folderToZipBlob } from "../folder-to-zip.js";
+import { parsePluginBundle, PluginBundleError } from "@mcpjam/sdk/plugin-bundle";
+import {
+  assertFolderWithinLimits,
+  folderToZip,
+  folderToZipBlob,
+  PluginFolderTooLargeError,
+} from "../folder-to-zip.js";
 import {
   createFolderPluginSource,
   readBrowserFolderSelection,
+  type PluginFolderFile,
   type PluginFolderFiles,
 } from "../plugin-file-source.js";
 
 const encoder = new TextEncoder();
 const enc = (text: string): Uint8Array => encoder.encode(text);
+const pathsOf = (files: PluginFolderFiles): string[] =>
+  files.map((f) => f.path);
+
+const MANIFEST = enc(
+  JSON.stringify({
+    name: "demo-plugin",
+    version: "1.2.3",
+    description: "A demo plugin for INS-1 parity tests.",
+  }),
+);
 
 /** A valid combined bundle: manifest + one skill + a `.mcp.json` (mcp_servers). */
-function combinedBundle(): Map<string, Uint8Array> {
-  return new Map<string, Uint8Array>([
-    [
-      ".codex-plugin/plugin.json",
-      enc(
-        JSON.stringify({
-          name: "demo-plugin",
-          version: "1.2.3",
-          description: "A demo plugin for INS-1 parity tests.",
-        }),
-      ),
-    ],
-    [
-      "skills/demo-skill/SKILL.md",
-      enc(
+function combinedBundle(): PluginFolderFile[] {
+  return [
+    { path: ".codex-plugin/plugin.json", bytes: MANIFEST },
+    {
+      path: "skills/demo-skill/SKILL.md",
+      bytes: enc(
         "---\nname: demo-skill\ndescription: Does demo things for tests.\n---\n\nInstructions.\n",
       ),
-    ],
-    [
-      ".mcp.json",
-      enc(
+    },
+    {
+      path: ".mcp.json",
+      bytes: enc(
         JSON.stringify({
           mcp_servers: {
             "local-server": {
@@ -43,18 +50,17 @@ function combinedBundle(): Map<string, Uint8Array> {
           },
         }),
       ),
-    ],
-  ]);
+    },
+  ];
 }
 
 describe("folderToZip", () => {
   it("produces a ZIP a standard unzipper can read back byte-for-byte", () => {
     const files = combinedBundle();
-    const zip = folderToZip(files);
-    const recovered = unzipSync(zip);
+    const recovered = unzipSync(folderToZip(files));
 
-    expect(Object.keys(recovered).sort()).toEqual([...files.keys()].sort());
-    for (const [path, bytes] of files) {
+    expect(Object.keys(recovered).sort()).toEqual(pathsOf(files).sort());
+    for (const { path, bytes } of files) {
       // fflate may return a subarray view (differing byteOffset/buffer); compare
       // by content, not by typed-array identity/structure.
       expect(Array.from(recovered[path])).toEqual(Array.from(bytes));
@@ -62,9 +68,9 @@ describe("folderToZip", () => {
   });
 
   it("is deterministic for identical input", () => {
-    const a = folderToZip(combinedBundle());
-    const b = folderToZip(combinedBundle());
-    expect(a).toEqual(b);
+    expect(folderToZip(combinedBundle())).toEqual(
+      folderToZip(combinedBundle()),
+    );
   });
 
   it("wraps output as an application/zip Blob", () => {
@@ -74,8 +80,64 @@ describe("folderToZip", () => {
   });
 
   it("handles an empty folder (valid empty archive)", () => {
-    const zip = folderToZip(new Map());
-    expect(unzipSync(zip)).toEqual({});
+    expect(unzipSync(folderToZip([]))).toEqual({});
+  });
+
+  it("preflights against the DEFAULT SDK limits before materializing", () => {
+    // A single file above the 10 MB default per-file cap must fail fast rather
+    // than materialize the archive.
+    const oversized = [
+      { path: "big.bin", bytes: new Uint8Array(10 * 1024 * 1024 + 1) },
+    ];
+    expect(() => folderToZip(oversized)).toThrow(PluginFolderTooLargeError);
+  });
+});
+
+describe("assertFolderWithinLimits", () => {
+  const limits = {
+    maxEntries: 2,
+    maxTotalBytes: 50,
+    maxFileBytes: 30,
+    maxPathBytes: 512,
+    maxPathDepth: 20,
+    maxSkills: 20,
+    maxMcpServers: 20,
+  };
+
+  it("rejects too many entries", () => {
+    const files = [
+      { path: "a", bytes: enc("x") },
+      { path: "b", bytes: enc("y") },
+      { path: "c", bytes: enc("z") },
+    ];
+    expect(() => assertFolderWithinLimits(files, limits)).toThrow(/files/);
+  });
+
+  it("rejects an oversized single file", () => {
+    expect(() =>
+      assertFolderWithinLimits(
+        [{ path: "a", bytes: new Uint8Array(40) }],
+        limits,
+      ),
+    ).toThrow(/per-file limit/);
+  });
+
+  it("rejects an oversized total", () => {
+    expect(() =>
+      assertFolderWithinLimits(
+        [
+          { path: "a", bytes: new Uint8Array(30) },
+          { path: "b", bytes: new Uint8Array(30) },
+        ],
+        limits,
+      ),
+    ).toThrow(/uncompressed limit/);
+  });
+
+  it("accepts a folder within limits", () => {
+    expect(() =>
+      assertFolderWithinLimits([{ path: "a", bytes: enc("x") }], limits),
+    ).not.toThrow();
   });
 });
 
@@ -90,7 +152,9 @@ describe("folder vs ZIP bundle-hash parity", () => {
     const fromFolder = await parsePluginBundle(createFolderPluginSource(files));
 
     const roundTripped = unzipSync(folderToZip(files));
-    const rebuilt: PluginFolderFiles = new Map(Object.entries(roundTripped));
+    const rebuilt: PluginFolderFiles = Object.entries(roundTripped).map(
+      ([path, bytes]) => ({ path, bytes }),
+    );
     const fromZip = await parsePluginBundle(createFolderPluginSource(rebuilt));
 
     expect(fromFolder.bundleHash).toBe(fromZip.bundleHash);
@@ -101,44 +165,83 @@ describe("folder vs ZIP bundle-hash parity", () => {
   });
 });
 
-describe("createFolderPluginSource", () => {
+describe("createFolderPluginSource — SDK path validators are not bypassed", () => {
   it("enforces maxBytes by throwing rather than truncating", async () => {
-    const source = createFolderPluginSource(
-      new Map([["big.bin", new Uint8Array(100)]]),
-    );
+    const source = createFolderPluginSource([
+      { path: "big.bin", bytes: new Uint8Array(100) },
+    ]);
     await expect(source.readBytes("big.bin", 10)).rejects.toThrow(/exceeds/);
   });
 
   it("lists entries with sizes and reads text", async () => {
-    const source = createFolderPluginSource(
-      new Map([["a.txt", enc("hello")]]),
-    );
-    const entries = await source.list();
-    expect(entries).toEqual([{ path: "a.txt", size: 5, kind: "file" }]);
+    const source = createFolderPluginSource([
+      { path: "a.txt", bytes: enc("hello") },
+    ]);
+    expect(await source.list()).toEqual([
+      { path: "a.txt", size: 5, kind: "file" },
+    ]);
     expect(await source.readText?.("a.txt", 100)).toBe("hello");
+  });
+
+  it("surfaces an absolute path so the parser fires PATH_ABSOLUTE", async () => {
+    const source = createFolderPluginSource([
+      { path: ".codex-plugin/plugin.json", bytes: MANIFEST },
+      { path: "/etc/passwd", bytes: enc("root:x:0:0") },
+    ]);
+    const err = await parsePluginBundle(source).catch((e) => e);
+    expect(err).toBeInstanceOf(PluginBundleError);
+    expect((err as PluginBundleError).issues.map((i) => i.code)).toContain(
+      "PATH_ABSOLUTE",
+    );
+  });
+
+  it("surfaces duplicate paths so the parser fires PATH_DUPLICATE", async () => {
+    const source = createFolderPluginSource([
+      { path: ".codex-plugin/plugin.json", bytes: MANIFEST },
+      { path: "dup.txt", bytes: enc("a") },
+      { path: "dup.txt", bytes: enc("b") },
+    ]);
+    const err = await parsePluginBundle(source).catch((e) => e);
+    expect(err).toBeInstanceOf(PluginBundleError);
+    expect((err as PluginBundleError).issues.map((i) => i.code)).toContain(
+      "PATH_DUPLICATE",
+    );
   });
 });
 
 describe("readBrowserFolderSelection", () => {
   // jsdom's File lacks arrayBuffer(); build a minimal browser-File-shaped stub
-  // exposing exactly what readBrowserFolderSelection reads.
-  function fakeFile(relativePath: string, content: string): File {
+  // exposing exactly what readBrowserFolderSelection reads. An undefined
+  // `relativePath` models a drag-and-drop file with no webkitRelativePath.
+  function fakeFile(
+    name: string,
+    content: string,
+    relativePath?: string,
+  ): File {
     const bytes = enc(content);
     return {
-      name: relativePath.split("/").pop() ?? "f",
-      webkitRelativePath: relativePath,
+      name,
+      webkitRelativePath: relativePath ?? "",
       arrayBuffer: async () => bytes.buffer,
     } as unknown as File;
   }
 
   it("strips the selected root directory segment so keys are bundle-relative", async () => {
     const files = await readBrowserFolderSelection([
-      fakeFile("my-plugin/.codex-plugin/plugin.json", "{}"),
-      fakeFile("my-plugin/skills/s/SKILL.md", "x"),
+      fakeFile("plugin.json", "{}", "my-plugin/.codex-plugin/plugin.json"),
+      fakeFile("SKILL.md", "x", "my-plugin/skills/s/SKILL.md"),
     ]);
-    expect([...files.keys()].sort()).toEqual([
+    expect(pathsOf(files).sort()).toEqual([
       ".codex-plugin/plugin.json",
       "skills/s/SKILL.md",
     ]);
+  });
+
+  it("falls back to file.name when webkitRelativePath is absent (drag-drop)", async () => {
+    const files = await readBrowserFolderSelection([
+      fakeFile("plugin.json", "{}"),
+    ]);
+    expect(pathsOf(files)).toEqual(["plugin.json"]);
+    expect(files).toHaveLength(1);
   });
 });

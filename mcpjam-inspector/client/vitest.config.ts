@@ -36,6 +36,13 @@ const sdkWidgetRuntimeEntry = path.resolve(
   rootDir,
   "../sdk/src/widget-runtime/index.ts",
 );
+// @mcpjam/sdk/plugin-bundle advertises ./dist via package exports; alias to
+// source so inspector vitest resolves it without a prior SDK build (mirrors the
+// SDK subpath aliases above). The exported parser is pure/browser-safe.
+const sdkPluginBundleEntry = path.resolve(
+  rootDir,
+  "../sdk/src/plugin-bundle/index.ts",
+);
 // Resolve @mcpjam/chat-ui from source (its published exports point at dist,
 // which a clean checkout hasn't built). Mirrors the SDK source aliases above.
 const chatUiEntry = path.resolve(rootDir, "../chat-ui/src/index.ts");
@@ -133,6 +140,10 @@ export default defineConfig({
       {
         find: "@mcpjam/sdk/skill-reference",
         replacement: sdkSkillReferenceEntry,
+      },
+      {
+        find: "@mcpjam/sdk/plugin-bundle",
+        replacement: sdkPluginBundleEntry,
       },
       { find: "@mcpjam/sdk/browser", replacement: sdkBrowserEntry },
       { find: "@mcpjam/sdk/matchers", replacement: sdkMatchersEntry },

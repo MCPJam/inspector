@@ -14,9 +14,10 @@
  * that consumes these.
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useConvex, useQuery } from "convex/react";
 import {
+  PluginImportError,
   startPluginImportFromFolder,
   startPluginImportFromZip,
   type StartPluginImportResult,
@@ -109,19 +110,34 @@ export function usePluginImportRunner(): UsePluginImportRunner {
     importId: null,
     error: null,
   });
+  // Attempt generation. Every run() and reset() bumps it; a run may only commit
+  // state while it is still the latest attempt, so a slow run that resolves
+  // after a reset() or a newer run cannot stomp the fresher state.
+  const attemptRef = useRef(0);
 
   const run = useCallback(
     async (
-      exec: () => Promise<StartPluginImportResult>,
+      exec: (
+        onPhase: (phase: "uploading" | "inspecting") => void,
+      ) => Promise<StartPluginImportResult>,
     ): Promise<StartPluginImportResult> => {
-      setState({ phase: "uploading", importId: null, error: null });
+      const attempt = ++attemptRef.current;
+      const isCurrent = () => attemptRef.current === attempt;
+      const commit = (next: UsePluginImportRunnerState) => {
+        if (isCurrent()) setState(next);
+      };
+
+      commit({ phase: "uploading", importId: null, error: null });
       try {
-        // `startPluginImportFrom*` performs upload → createImport → inspect in
-        // sequence; we cannot observe the importId until it resolves, so the
-        // runner reports `uploading` across upload+stage, then the result
-        // carries the id and the terminal inspect status.
-        const result = await exec();
-        setState({
+        const result = await exec((phase) => {
+          // The orchestrator reports `inspecting` once the row is staged; that
+          // is the only phase the runner cannot infer on its own (uploading is
+          // set up-front, done/error from the outcome).
+          if (phase === "inspecting") {
+            commit({ phase: "inspecting", importId: null, error: null });
+          }
+        });
+        commit({
           phase: result.inspect.status === "failed" ? "error" : "done",
           importId: result.importId,
           error:
@@ -136,7 +152,11 @@ export function usePluginImportRunner(): UsePluginImportRunner {
         return result;
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
-        setState({ phase: "error", importId: null, error });
+        // Preserve the staged importId when inspect throws after staging, so the
+        // UI can still subscribe to / recover the row instead of stranding it.
+        const importId =
+          err instanceof PluginImportError ? err.importId : null;
+        commit({ phase: "error", importId, error });
         throw error;
       }
     },
@@ -144,16 +164,23 @@ export function usePluginImportRunner(): UsePluginImportRunner {
   );
 
   const startFromZip = useCallback<UsePluginImportRunner["startFromZip"]>(
-    (args) => run(() => startPluginImportFromZip(convex, args)),
+    (args) =>
+      run((onPhase) => startPluginImportFromZip(convex, { ...args, onPhase })),
     [convex, run],
   );
 
   const startFromFolder = useCallback<UsePluginImportRunner["startFromFolder"]>(
-    (args) => run(() => startPluginImportFromFolder(convex, args)),
+    (args) =>
+      run((onPhase) =>
+        startPluginImportFromFolder(convex, { ...args, onPhase }),
+      ),
     [convex, run],
   );
 
   const reset = useCallback(() => {
+    // Invalidate any in-flight attempt so its late resolution cannot revive
+    // state after the reset.
+    attemptRef.current++;
     setState({ phase: "idle", importId: null, error: null });
   }, []);
 

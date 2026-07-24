@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   commitImport,
   PLUGIN_COMMIT_NOT_AVAILABLE,
+  PluginImportError,
   startPluginImportFromFolder,
   startPluginImportFromZip,
   uploadBundleToStorage,
@@ -113,6 +114,32 @@ describe("startPluginImportFromZip", () => {
     });
     expect(result.inspect.status).toBe("failed");
   });
+
+  it("fires onPhase uploading then inspecting", async () => {
+    const { convex } = makeConvex();
+    const phases: string[] = [];
+    await startPluginImportFromZip(convex, {
+      projectId: "proj_1",
+      bundle: new Blob([]),
+      onPhase: (p) => phases.push(p),
+    });
+    expect(phases).toEqual(["uploading", "inspecting"]);
+  });
+
+  it("preserves the staged importId when inspect throws", async () => {
+    const { convex, action } = makeConvex({ importId: "import_kept" });
+    // Make the inspect action reject AFTER createImport staged the row.
+    (action as unknown as { mockRejectedValueOnce: (e: Error) => void }).mockRejectedValueOnce(
+      new Error("inspect boom"),
+    );
+    const err = await startPluginImportFromZip(convex, {
+      projectId: "proj_1",
+      bundle: new Blob([]),
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(PluginImportError);
+    expect((err as PluginImportError).importId).toBe("import_kept");
+    expect((err as PluginImportError).bundleStorageId).toBe("st_from_zip");
+  });
 });
 
 describe("startPluginImportFromFolder", () => {
@@ -126,9 +153,12 @@ describe("startPluginImportFromFolder", () => {
 
   it("zips the folder then runs the same flow", async () => {
     const { convex } = makeConvex({ importId: "import_folder" });
-    const files = new Map([
-      [".codex-plugin/plugin.json", new TextEncoder().encode("{}")],
-    ]);
+    const files = [
+      {
+        path: ".codex-plugin/plugin.json",
+        bytes: new TextEncoder().encode("{}"),
+      },
+    ];
     const result = await startPluginImportFromFolder(convex, {
       projectId: "proj_1",
       files,

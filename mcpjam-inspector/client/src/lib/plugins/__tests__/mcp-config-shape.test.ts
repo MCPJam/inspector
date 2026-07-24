@@ -88,7 +88,22 @@ describe("unwrapMcpServerMap", () => {
   });
 
   it("treats a direct map with a type-only entry as a server map", () => {
-    const result = unwrapMcpServerMap({ svr: { type: "sse", url: "https://x" } });
+    // No `url`/`command` — proves the `type`-only branch of server detection.
+    const result = unwrapMcpServerMap({ svr: { type: "sse" } });
     expect(result.ok).toBe(true);
+  });
+
+  it("tolerates non-object sibling keys in a direct map", () => {
+    // A top-level `version` alongside real servers must not defeat direct-map
+    // detection (parity with the wrapped shapes).
+    const result = unwrapMcpServerMap({
+      version: "1.0",
+      svr: { command: "node" },
+    });
+    expect(result).toEqual({
+      ok: true,
+      wrapper: "direct",
+      servers: { version: "1.0", svr: { command: "node" } },
+    });
   });
 });
