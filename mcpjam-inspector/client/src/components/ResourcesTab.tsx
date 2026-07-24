@@ -258,6 +258,10 @@ export function ResourcesTab({
     setTemplateContent(null);
     setTemplateError("");
     setTemplateOverrides({});
+    // SEP-2549 provenance describes the currently displayed lists; clear it
+    // whenever those lists are emptied so a badge cannot outlive its data.
+    setResourcesServedFromCache(undefined);
+    setTemplatesServedFromCache(undefined);
   };
 
   // Fetch resources and templates on mount
@@ -298,6 +302,9 @@ export function ResourcesTab({
       setSelectedResource("");
       setResourceContent(null);
       setNextCursor(undefined);
+      // Clear stale provenance at the start of a non-append (re)fetch so a
+      // failed/in-flight refresh cannot keep showing the previous badge.
+      setResourcesServedFromCache(undefined);
     }
     const fetchVersion = ++resourcesFetchVersionRef.current;
 
@@ -349,6 +356,9 @@ export function ResourcesTab({
     setSelectedTemplate("");
     setTemplateOverrides({});
     setTemplateContent(null);
+    // Clear stale provenance at the start of a template (re)fetch so a
+    // failed/in-flight refresh cannot keep showing the previous badge.
+    setTemplatesServedFromCache(undefined);
     const fetchVersion = ++templatesFetchVersionRef.current;
 
     try {

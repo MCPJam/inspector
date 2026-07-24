@@ -294,6 +294,10 @@ export function ToolsTab({
       setTaskCapabilities(null);
     }
     setCursor(undefined);
+    // SEP-2549 provenance describes the currently displayed list; once that
+    // list is cleared (disconnect, server switch, or a reset before a
+    // refresh) the badge must not survive to describe stale/other-server data.
+    setServedFromCache(undefined);
   };
 
   useEffect(() => {

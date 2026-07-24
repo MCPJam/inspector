@@ -25,7 +25,7 @@ resourceTemplates.post("/list", async (c) => {
     const mcpClientManager = c.mcpClientManager;
     const { result, events } = await withCacheEventCapture(() =>
       mcpClientManager.listResourceTemplates(serverId!, undefined, {
-        cacheMode: refresh ? "refresh" : undefined,
+        cacheMode: refresh === true ? "refresh" : undefined,
       }),
     );
     const servedFromCache = toServedFromCache(events);

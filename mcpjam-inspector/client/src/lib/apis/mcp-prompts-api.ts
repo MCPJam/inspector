@@ -64,7 +64,15 @@ export async function listPrompts(
         Array.isArray(body?.prompts) ? (body.prompts as MCPPrompt[]) : []
       ) as PromptListWithProvenance;
       if (body?.servedFromCache) {
-        prompts.servedFromCache = body.servedFromCache;
+        // Non-enumerable so object-spread / for-in / Object.entries over the
+        // bare array stay unchanged (matches the documented contract above);
+        // provenance is still directly accessible as `.servedFromCache`.
+        Object.defineProperty(prompts, "servedFromCache", {
+          value: body.servedFromCache,
+          enumerable: false,
+          configurable: true,
+          writable: true,
+        });
       }
       return prompts;
     },

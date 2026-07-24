@@ -68,7 +68,7 @@ listTools.post("/", async (c) => {
           const { tools } = await clientManager.listTools(
             serverId,
             undefined,
-            { cacheMode: refresh ? "refresh" : undefined },
+            { cacheMode: refresh === true ? "refresh" : undefined },
           );
           const toolsMetadata = clientManager.getAllToolsMetadata(serverId);
           const serverTools = tools.map((tool: any) => {

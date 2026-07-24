@@ -142,6 +142,9 @@ export function ResourceTemplatesTab({
     setTemplates([]);
     setSelectedTemplate("");
     setResourceContent(null);
+    // Clear stale provenance at the start of a (re)fetch so a failed or
+    // in-flight refresh cannot keep showing the previous badge.
+    setTemplatesServedFromCache(undefined);
 
     try {
       const serverTemplates = await listResourceTemplatesApi(serverName, {

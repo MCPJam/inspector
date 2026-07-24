@@ -149,6 +149,9 @@ export function PromptsTab({
     setFormFields([]);
     setPromptContent(null);
     setError("");
+    // SEP-2549 provenance describes the currently displayed prompt list; clear
+    // it whenever that list is emptied so the badge cannot outlive its data.
+    setPromptsServedFromCache(undefined);
   };
 
   useEffect(() => {

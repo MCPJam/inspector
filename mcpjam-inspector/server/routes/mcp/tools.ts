@@ -242,7 +242,7 @@ tools.post("/list", async (c) => {
         serverId: normalizedServerId,
         modelId,
         cursor,
-        cacheMode: refresh ? "refresh" : undefined,
+        cacheMode: refresh === true ? "refresh" : undefined,
       }),
     );
     const servedFromCache = toServedFromCache(events);

@@ -28,7 +28,7 @@ prompts.post("/list", async (c) => {
       listPrompts(c.mcpClientManager, {
         serverId: body.serverId!,
         cursor: body.cursor,
-        cacheMode: body.refresh ? "refresh" : undefined,
+        cacheMode: body.refresh === true ? "refresh" : undefined,
       }),
     );
     const servedFromCache = toServedFromCache(events);

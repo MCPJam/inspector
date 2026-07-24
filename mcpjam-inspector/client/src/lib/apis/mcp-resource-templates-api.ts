@@ -39,7 +39,14 @@ export async function listResourceTemplates(
       : []
   ) as ResourceTemplateListWithProvenance;
   if (body?.servedFromCache) {
-    templates.servedFromCache = body.servedFromCache;
+    // Non-enumerable so object-spread / for-in over the bare array stay
+    // unchanged; provenance is still accessible as `.servedFromCache`.
+    Object.defineProperty(templates, "servedFromCache", {
+      value: body.servedFromCache,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
   }
   return templates;
 }

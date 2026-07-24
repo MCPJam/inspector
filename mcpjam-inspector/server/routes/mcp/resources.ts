@@ -26,7 +26,7 @@ resources.post("/list", async (c) => {
       listResources(c.mcpClientManager, {
         serverId: serverId!,
         cursor: body.cursor,
-        cacheMode: body.refresh ? "refresh" : undefined,
+        cacheMode: body.refresh === true ? "refresh" : undefined,
       }),
     );
     const servedFromCache = toServedFromCache(events);
@@ -68,7 +68,7 @@ resources.post("/read", async (c) => {
       readResource(c.mcpClientManager, {
         serverId: serverId!,
         uri: uri!,
-        cacheMode: body.refresh ? "refresh" : undefined,
+        cacheMode: body.refresh === true ? "refresh" : undefined,
       }),
     );
     const servedFromCache = toServedFromCache(events);
