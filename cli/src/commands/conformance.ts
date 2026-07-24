@@ -184,9 +184,12 @@ export function buildConfig(
   }
 
   const protocolVersion = options.protocolVersion?.trim();
-  if (protocolVersion && !isKnownProtocolVersion(protocolVersion)) {
+  if (
+    options.protocolVersion !== undefined &&
+    (!protocolVersion || !isKnownProtocolVersion(protocolVersion))
+  ) {
     throw usageError(
-      `Unknown protocol version: ${protocolVersion}. Known: ${MCP_PROTOCOL_VERSIONS.join(", ")}`,
+      `Unknown protocol version: ${protocolVersion ?? ""}. Known: ${MCP_PROTOCOL_VERSIONS.join(", ")}`,
     );
   }
 

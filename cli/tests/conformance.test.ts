@@ -3,8 +3,32 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { buildConfig } from "../src/commands/conformance.js";
+import { Command } from "commander";
+import {
+  buildConfig,
+  registerProtocolCommands,
+} from "../src/commands/conformance.js";
 import { CliError } from "../src/lib/output.js";
+
+function buildConformanceCommand(
+  onOptions: (options: unknown) => void,
+): Command {
+  const program = new Command();
+  program.exitOverride();
+  registerProtocolCommands(program);
+  const protocol = program.commands.find((c) => c.name() === "protocol");
+  assert.ok(protocol, "protocol command should be registered");
+  const conformance = protocol.commands.find(
+    (c) => c.name() === "conformance",
+  );
+  assert.ok(conformance, "conformance command should be registered");
+  // Replace the network-running action so we exercise only option
+  // registration and threading into buildConfig, not the live suite.
+  conformance.action((options) => {
+    onOptions(options);
+  });
+  return program;
+}
 
 async function writeCredentialsJson(contents: object): Promise<string> {
   const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-conformance-"));
@@ -92,6 +116,63 @@ test("buildConfig rejects an unknown protocol version", () => {
         url: "https://example.com/mcp",
         protocolVersion: "bogus-version",
       }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("Unknown protocol version: bogus-version"),
+  );
+});
+
+test("buildConfig rejects a whitespace-only protocol version", () => {
+  assert.throws(
+    () =>
+      buildConfig({
+        url: "https://example.com/mcp",
+        protocolVersion: "   ",
+      }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("Unknown protocol version"),
+  );
+});
+
+test("protocol conformance threads --protocol-version into the config", async () => {
+  let captured: ReturnType<typeof buildConfig> | undefined;
+  const program = buildConformanceCommand((options) => {
+    captured = buildConfig(options as Parameters<typeof buildConfig>[0]);
+  });
+
+  await program.parseAsync(
+    [
+      "protocol",
+      "conformance",
+      "--url",
+      "https://example.com/mcp",
+      "--protocol-version",
+      "2026-07-28",
+    ],
+    { from: "user" },
+  );
+
+  assert.equal(captured?.protocolVersion, "2026-07-28");
+});
+
+test("protocol conformance rejects an unknown --protocol-version", async () => {
+  const program = buildConformanceCommand((options) => {
+    buildConfig(options as Parameters<typeof buildConfig>[0]);
+  });
+
+  await assert.rejects(
+    program.parseAsync(
+      [
+        "protocol",
+        "conformance",
+        "--url",
+        "https://example.com/mcp",
+        "--protocol-version",
+        "bogus-version",
+      ],
+      { from: "user" },
+    ),
     (error) =>
       error instanceof CliError &&
       error.message.includes("Unknown protocol version: bogus-version"),

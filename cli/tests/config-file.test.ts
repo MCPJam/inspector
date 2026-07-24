@@ -225,6 +225,36 @@ test("loadProtocolSuiteConfig throws on an unknown run protocolVersion", () => {
   });
 });
 
+test("loadProtocolSuiteConfig threads a known defaults protocolVersion", () => {
+  const config = {
+    serverUrl: "https://mcp.example.com/mcp",
+    defaults: { protocolVersion: "2026-07-28" },
+    runs: [{}],
+  };
+
+  withTempFile(JSON.stringify(config), (path) => {
+    const result = loadProtocolSuiteConfig(path);
+    assert.equal(result.defaults?.protocolVersion, "2026-07-28");
+  });
+});
+
+test("loadProtocolSuiteConfig throws on an unknown defaults protocolVersion", () => {
+  const config = {
+    serverUrl: "https://mcp.example.com/mcp",
+    defaults: { protocolVersion: "bogus-version" },
+    runs: [{}],
+  };
+
+  withTempFile(JSON.stringify(config), (path) => {
+    assert.throws(
+      () => loadProtocolSuiteConfig(path),
+      (error) =>
+        error instanceof CliError &&
+        error.message.includes("defaults.protocolVersion"),
+    );
+  });
+});
+
 test("loadAppsSuiteConfig loads an HTTP target config file", () => {
   const config = {
     name: "Apps Suite",
