@@ -89,19 +89,24 @@ async function sendInvalidMethodProbe(
 ): Promise<Response> {
   if (ctx.config.era === "modern") {
     const version = ctx.config.protocolVersion ?? "2025-11-25";
+    // Build with a `Headers` instance so probe-owned fields win by
+    // case-insensitive NAME, not by object-key ordering. A plain object keeps
+    // `MCP-Method` and `mcp-method` as two distinct keys; Fetch then normalizes
+    // both to the canonical `mcp-method` and CONCATENATES their values
+    // ("tools/list, __invalid__"), so a caller's `customHeaders` case-variant
+    // would blend into the probe header and turn an honest probe into a false
+    // failure. `headers.set(...)` after the base spread REPLACES any such
+    // collision regardless of the caller's casing.
+    const headers = new Headers({
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+      ...buildBaseHeaders(ctx),
+    });
+    headers.set("MCP-Protocol-Version", version);
+    headers.set("mcp-method", INVALID_METHOD);
     return await ctx.fetchFn(ctx.serverUrl, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json, text/event-stream",
-        ...buildBaseHeaders(ctx),
-        // Probe-owned headers spread LAST so a caller's `customHeaders` can
-        // never overwrite the protocol-version pin or the SEP-2243 method
-        // mirror — otherwise a stray custom header turns an honest probe into
-        // a false failure unrelated to the server under test.
-        "MCP-Protocol-Version": version,
-        "mcp-method": INVALID_METHOD,
-      },
+      headers,
       body: JSON.stringify({
         jsonrpc: "2.0",
         id: 99,

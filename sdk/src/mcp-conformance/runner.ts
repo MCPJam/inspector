@@ -294,6 +294,27 @@ async function runClientChecks(
       (check) => !eraGate(check, config.era, config.protocolVersion),
     );
 
+    // Degenerate modern-era selection: EVERY selected client check is
+    // legacy-only, so there is no era-applicable check to pin the connect
+    // failure to (`firstApplicableCheck` is undefined). The normal loop below
+    // would era-skip all of them and the connection error would vanish — the
+    // run could report `passed` despite never connecting. Anchor the failure on
+    // the first selected check so a genuine connect failure ALWAYS surfaces as
+    // at least one failed result. This branch is unreachable in the legacy era
+    // (every check applies to `legacy`, so `firstApplicableCheck` is always
+    // defined), keeping the legacy path byte-identical to pre-era-awareness.
+    if (!firstApplicableCheck) {
+      return selectedClientChecks.map((check, index) =>
+        index === 0
+          ? failedResult(check, 0, errorMessage(error), undefined, error)
+          : (eraGate(check, config.era, config.protocolVersion) ??
+            skippedResult(
+              check,
+              "Skipping check because the MCP client session could not be established",
+            )),
+      );
+    }
+
     for (const check of selectedClientChecks) {
       const eraSkip = eraGate(check, config.era, config.protocolVersion);
       if (eraSkip) {

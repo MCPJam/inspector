@@ -68,6 +68,25 @@ describe("MCPConformanceTest", () => {
     }
   });
 
+  it("modern run + connect failure + all-legacy-only selection surfaces a failure, not a pass", async () => {
+    // Modern era, but the only selected client check (`ping`) is legacy-only,
+    // so it is era-skipped for this run. The server is unreachable, so
+    // `withEphemeralClient` throws. Without the connect-failure anchor, every
+    // check would be era-skipped and the run would silently report `passed`.
+    const test = new MCPConformanceTest({
+      serverUrl: "http://127.0.0.1:1/mcp",
+      protocolVersion: "2026-07-28",
+      checkTimeout: 3_000,
+      checkIds: ["ping"],
+    });
+
+    const result = await test.run();
+
+    expect(result.passed).toBe(false);
+    const failed = result.checks.filter((check) => check.status === "failed");
+    expect(failed.length).toBeGreaterThanOrEqual(1);
+  });
+
   it("treats stateless Streamable HTTP servers as supported transport variants", async () => {
     const mockServer = await startConformanceMockServer({
       statelessTransport: true,
