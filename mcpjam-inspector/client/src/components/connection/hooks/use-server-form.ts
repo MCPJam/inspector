@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import {
   ServerFormData,
+  normalizeOauthProtocolMode,
   type ServerFormAuthType,
   type ServerFormOAuthProtocolMode,
 } from "@/shared/types.js";
@@ -58,16 +59,8 @@ interface HeaderEntry {
   value: string;
 }
 
-function normalizeOauthProtocolMode(
-  value?: string
-): ServerFormOAuthProtocolMode {
-  return value === "2025-03-26" ||
-    value === "2025-06-18" ||
-    value === "2025-11-25" ||
-    value === "2026-07-28"
-    ? value
-    : DEFAULT_OAUTH_PROTOCOL_MODE;
-}
+// normalizeOauthProtocolMode is single-sourced in shared/types (preserves the
+// 2026-07-28 draft era; unknown/"auto" → 2025-11-25 default).
 
 // Single-sourced in the SDK's registration vocabulary (accepts the legacy
 // pre_registered alias; unknown → undefined so callers apply defaults).

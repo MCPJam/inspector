@@ -7,6 +7,7 @@ import {
   isMCPJamGuestAllowedModel,
   isMCPJamProvidedModel,
   isModelSupported,
+  normalizeOauthProtocolMode,
   SUPPORTED_MODELS,
 } from "../types.js";
 
@@ -119,5 +120,26 @@ describe("MCPJam-provided model classification", () => {
     expect(hosted.every((m) => m.hosted === true)).toBe(true);
     // Every hosted snapshot model is guest-allowed now (guests un-curated).
     expect(hosted.every((m) => m.guestAllowed === true)).toBe(true);
+  });
+});
+
+describe("normalizeOauthProtocolMode (connect-form OAuth protocol)", () => {
+  // Single source for the Add and Edit connect forms — both previously kept
+  // private copies that had to preserve 2026-07-28 in lockstep.
+  it("preserves every concrete protocol era, including the 2026-07-28 draft", () => {
+    expect(normalizeOauthProtocolMode("2025-03-26")).toBe("2025-03-26");
+    expect(normalizeOauthProtocolMode("2025-06-18")).toBe("2025-06-18");
+    expect(normalizeOauthProtocolMode("2025-11-25")).toBe("2025-11-25");
+    expect(normalizeOauthProtocolMode("2026-07-28")).toBe("2026-07-28");
+  });
+
+  it("does not silently degrade a stored 2026-07-28 pin to 2025-11-25", () => {
+    expect(normalizeOauthProtocolMode("2026-07-28")).not.toBe("2025-11-25");
+  });
+
+  it("falls back to 2025-11-25 for the deferred 'auto' sentinel and unknowns", () => {
+    expect(normalizeOauthProtocolMode("auto")).toBe("2025-11-25");
+    expect(normalizeOauthProtocolMode(undefined)).toBe("2025-11-25");
+    expect(normalizeOauthProtocolMode("garbage")).toBe("2025-11-25");
   });
 });

@@ -229,6 +229,7 @@ export function EditServerFormContent({
             onOauthScopesChange={formState.setOauthScopesInput}
             oauthProtocolMode={formState.oauthProtocolMode}
             onOauthProtocolModeChange={formState.setOauthProtocolMode}
+            serverMcpProtocolVersion={mcpProtocolVersionOverride}
             registrationMode={formState.registrationMode}
             onOauthRegistrationModeChange={formState.setOauthRegistrationMode}
             xaaClientAuth={formState.xaaClientAuth}

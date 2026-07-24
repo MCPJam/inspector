@@ -699,6 +699,27 @@ export type ServerFormOAuthProtocolMode =
   | "2026-07-28";
 
 /**
+ * Coerce an arbitrary stored/prefilled protocol string to a concrete
+ * connect-form OAuth protocol mode, preserving the 2026-07-28 draft era.
+ * Unknown values — and the deferred "auto" sentinel, which callers resolve
+ * separately once the wire pin is known — fall back to the current default
+ * (2025-11-25). Single-sourced here so the Add and Edit connect-form paths
+ * cannot drift: they previously kept private, hand-maintained copies that
+ * both had to be patched in lockstep to avoid silently degrading a stored
+ * 2026-07-28 pin down to 2025-11-25.
+ */
+export function normalizeOauthProtocolMode(
+  value?: string
+): ServerFormOAuthProtocolMode {
+  return value === "2025-03-26" ||
+    value === "2025-06-18" ||
+    value === "2025-11-25" ||
+    value === "2026-07-28"
+    ? value
+    : "2025-11-25";
+}
+
+/**
  * @deprecated Use {@link RegistrationMode} (re-exported from shared/xaa) — the
  * unified client-registration vocabulary shared by the OAuth flows and the
  * XAA debugger. Structurally identical; kept as an alias for older imports.

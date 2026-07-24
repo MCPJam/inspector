@@ -774,4 +774,91 @@ describe("AuthenticationSection", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByText(/A client secret is saved/i)).toBeInTheDocument();
   });
+
+  describe("Protocol dropdown + auto → wire-pin bridge", () => {
+    const protocolBaseProps = {
+      serverUrl: "https://example.com/mcp",
+      authType: "oauth" as const,
+      onAuthTypeChange: vi.fn(),
+      showAuthSettings: true,
+      bearerToken: "",
+      onBearerTokenChange: vi.fn(),
+      oauthScopesInput: "",
+      onOauthScopesChange: vi.fn(),
+      onOauthProtocolModeChange: vi.fn(),
+      registrationMode: "auto" as const,
+      onOauthRegistrationModeChange: vi.fn(),
+      useCustomClientId: false,
+      onUseCustomClientIdChange: vi.fn(),
+      clientId: "",
+      onClientIdChange: vi.fn(),
+      clientSecret: "",
+      onClientSecretChange: vi.fn(),
+      clientIdError: null,
+      clientSecretError: null,
+    };
+
+    const openAdvanced = () =>
+      fireEvent.click(
+        screen.getByRole("button", { name: /advanced settings/i })
+      );
+
+    it("offers the 2026-07-28 (Draft) option in the Protocol dropdown", () => {
+      render(
+        <AuthenticationSection
+          {...protocolBaseProps}
+          oauthProtocolMode="2026-07-28"
+        />
+      );
+      openAdvanced();
+      // Radix Select renders the selected item's label in the trigger; the
+      // 2026 draft option resolving to a label proves it is in PROTOCOL_OPTIONS.
+      expect(screen.getByText("2026-07-28 (Draft)")).toBeInTheDocument();
+    });
+
+    it("resolves 'auto' to the 2026 flow when the wire pin is 2026-07-28", () => {
+      render(
+        <AuthenticationSection
+          {...protocolBaseProps}
+          oauthProtocolMode="auto"
+          serverMcpProtocolVersion="2026-07-28"
+        />
+      );
+      openAdvanced();
+      expect(screen.getByText("2026-07-28 (Draft)")).toBeInTheDocument();
+      expect(
+        screen.queryByText("2025-11-25 (Latest)")
+      ).not.toBeInTheDocument();
+    });
+
+    it("resolves 'auto' to the 2025-11-25 default when no 2026 wire pin", () => {
+      render(
+        <AuthenticationSection
+          {...protocolBaseProps}
+          oauthProtocolMode="auto"
+          serverMcpProtocolVersion="2025-11-25"
+        />
+      );
+      openAdvanced();
+      expect(screen.getByText("2025-11-25 (Latest)")).toBeInTheDocument();
+      expect(
+        screen.queryByText("2026-07-28 (Draft)")
+      ).not.toBeInTheDocument();
+    });
+
+    it("lets an explicit protocol selection win over a 2026 wire pin", () => {
+      render(
+        <AuthenticationSection
+          {...protocolBaseProps}
+          oauthProtocolMode="2025-06-18"
+          serverMcpProtocolVersion="2026-07-28"
+        />
+      );
+      openAdvanced();
+      expect(screen.getByText("2025-06-18")).toBeInTheDocument();
+      expect(
+        screen.queryByText("2026-07-28 (Draft)")
+      ).not.toBeInTheDocument();
+    });
+  });
 });

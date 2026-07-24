@@ -510,6 +510,24 @@ describe("OAuth test-profile round-trip (protocol version + registration strateg
     expect(profile.clientId).toBe("client_abc");
   });
 
+  it("survives a 2026-07-28 draft-era protocol version through the round-trip", () => {
+    const servers = deserializeServersFromConvex([
+      {
+        name: "draft-2026",
+        enabled: true,
+        useOAuth: true,
+        url: "https://example.test/mcp",
+        clientId: "client_abc",
+        oauthProtocolVersion: "2026-07-28",
+        oauthRegistrationStrategy: "dcr",
+      },
+    ]);
+
+    const profile = servers["draft-2026"].oauthFlowProfile!;
+    expect(profile.protocolVersion).toBe("2026-07-28");
+    expect(profile.registrationStrategy).toBe("dcr");
+  });
+
   it("builds a profile even when only the strategy columns are present", () => {
     const servers = deserializeServersFromConvex([
       {

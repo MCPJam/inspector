@@ -21,6 +21,7 @@ import {
 import {
   readXaaEnterprisePolicy,
   resolveAuthorizationPlan,
+  type McpProtocolVersion,
 } from "@mcpjam/sdk/browser";
 import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
 import type { RegistrationMode, XaaClientAuthMethod } from "@/shared/xaa.js";
@@ -51,6 +52,17 @@ interface AuthenticationSectionProps {
   onOauthScopesChange: (value: string) => void;
   oauthProtocolMode: ServerFormOAuthProtocolMode;
   onOauthProtocolModeChange: (value: ServerFormOAuthProtocolMode) => void;
+  /**
+   * The server's per-server MCP wire-version pin (from the Connection
+   * overrides picker / project server config). Drives the "auto" OAuth-mode
+   * bridge: OAuth and the sessionless transport ship together in the 2026
+   * era, so when the wire pin is 2026-07-28 an "auto" protocol mode resolves
+   * to the 2026 OAuth flow rather than the 2025 default. The mirror of
+   * server-helpers' oauth-mode → wire stamp (#3363). An EXPLICIT protocol
+   * selection always wins over this bridge. Undefined = inherit host/SDK
+   * default → "auto" stays on the 2025-11-25 flow.
+   */
+  serverMcpProtocolVersion?: McpProtocolVersion;
   registrationMode: RegistrationMode;
   onOauthRegistrationModeChange: (value: RegistrationMode) => void;
   xaaClientAuth?: XaaClientAuthMethod;
@@ -131,6 +143,7 @@ export function AuthenticationSection({
   onOauthScopesChange,
   oauthProtocolMode,
   onOauthProtocolModeChange,
+  serverMcpProtocolVersion,
   registrationMode,
   onOauthRegistrationModeChange,
   xaaClientAuth = "none",
@@ -317,8 +330,17 @@ export function AuthenticationSection({
     effectiveXaaRegistrationMode === "preregistered";
   const showXaaClientAuthPicker =
     confidentialCimdStatus === "ready" || xaaClientAuth === "private_key_jwt";
-  const effectiveOauthProtocolMode =
-    oauthProtocolMode === "auto" ? "2025-11-25" : oauthProtocolMode;
+  // "auto" defers the protocol era to the server's wire pin: OAuth and the
+  // sessionless transport ship together, so a 2026-07-28 wire pin makes "auto"
+  // resolve to the 2026 OAuth flow (mirror of server-helpers' oauth-mode → wire
+  // stamp). An explicit protocol selection is passed straight through — it
+  // always wins over the bridge.
+  const effectiveOauthProtocolMode: Exclude<ServerFormOAuthProtocolMode, "auto"> =
+    oauthProtocolMode === "auto"
+      ? serverMcpProtocolVersion === "2026-07-28"
+        ? "2026-07-28"
+        : "2025-11-25"
+      : oauthProtocolMode;
   const oauthPlan =
     authType === "oauth" || authType === "auto"
       ? resolveAuthorizationPlan({
