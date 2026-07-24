@@ -26,9 +26,10 @@ import {
 import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
 import type { RegistrationMode, XaaClientAuthMethod } from "@/shared/xaa.js";
 import type { ConfidentialCimdCapabilityStatus } from "@/hooks/use-confidential-cimd-capability";
-import type {
-  ServerFormAuthType,
-  ServerFormOAuthProtocolMode,
+import {
+  resolveEffectiveOauthProtocolMode,
+  type ServerFormAuthType,
+  type ServerFormOAuthProtocolMode,
 } from "@/shared/types.js";
 import { REGISTRATION_MODE_OPTIONS } from "@/lib/registration-strategy";
 import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
@@ -334,13 +335,12 @@ export function AuthenticationSection({
   // sessionless transport ship together, so a 2026-07-28 wire pin makes "auto"
   // resolve to the 2026 OAuth flow (mirror of server-helpers' oauth-mode → wire
   // stamp). An explicit protocol selection is passed straight through — it
-  // always wins over the bridge.
-  const effectiveOauthProtocolMode: Exclude<ServerFormOAuthProtocolMode, "auto"> =
-    oauthProtocolMode === "auto"
-      ? serverMcpProtocolVersion === "2026-07-28"
-        ? "2026-07-28"
-        : "2025-11-25"
-      : oauthProtocolMode;
+  // always wins over the bridge. Single-sourced with the submit path via the
+  // shared resolver so the plan preview and the saved profile cannot disagree.
+  const effectiveOauthProtocolMode = resolveEffectiveOauthProtocolMode(
+    oauthProtocolMode,
+    serverMcpProtocolVersion
+  );
   const oauthPlan =
     authType === "oauth" || authType === "auto"
       ? resolveAuthorizationPlan({

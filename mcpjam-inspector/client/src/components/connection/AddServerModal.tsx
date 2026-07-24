@@ -156,6 +156,10 @@ export function AddServerModal({
   // Initialize form with initial data if provided
   useEffect(() => {
     if (initialData && isOpen) {
+      // Hydrate the per-server wire pin from the prefill so the OAuth-protocol
+      // "auto" bridge sees it: a 2026-07-28-pinned prefill must resolve to the
+      // 2026 OAuth flow and round-trip its pin, not silently drop to 2025.
+      setMcpProtocolVersionOverride(initialData.mcpProtocolVersionOverride);
       if (initialData.name) {
         formState.setName(initialData.name);
       }
@@ -336,7 +340,12 @@ export function AddServerModal({
     }
 
     const finalFormData: ServerFormData = {
-      ...formState.buildFormData(),
+      ...formState.buildFormData({
+        // Resolve a default ("auto") OAuth protocol against the wire pin so a
+        // 2026-07-28-pinned server submits the 2026 OAuth flow, not the 2025
+        // default. An explicit dropdown selection still wins.
+        wireProtocolVersionOverride: mcpProtocolVersionOverride,
+      }),
       ...(mcpProtocolVersionOverride !== undefined
         ? { mcpProtocolVersionOverride }
         : {}),

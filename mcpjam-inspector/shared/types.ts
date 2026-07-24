@@ -691,12 +691,40 @@ export const isBedrockModelId = (modelId: string): boolean => {
   );
 };
 
+/**
+ * The concrete connect-form OAuth protocol eras, in dropdown order (newest
+ * first). SINGLE SOURCE OF TRUTH: both the {@link ServerFormOAuthProtocolMode}
+ * union and {@link normalizeOauthProtocolMode}'s membership check derive from
+ * this tuple, so a new era is added in exactly one place and the two can no
+ * longer drift on which values survive a stored/prefilled pin.
+ */
+export const SERVER_FORM_OAUTH_PROTOCOL_MODES = [
+  "2025-03-26",
+  "2025-06-18",
+  "2025-11-25",
+  "2026-07-28",
+] as const;
+
+/** A resolved connect-form OAuth protocol era (never the "auto" sentinel). */
+export type ServerFormOAuthProtocolConcreteMode =
+  (typeof SERVER_FORM_OAUTH_PROTOCOL_MODES)[number];
+
 export type ServerFormOAuthProtocolMode =
   | "auto"
-  | "2025-03-26"
-  | "2025-06-18"
-  | "2025-11-25"
-  | "2026-07-28";
+  | ServerFormOAuthProtocolConcreteMode;
+
+/**
+ * The default concrete era used when nothing is stored and "auto" cannot be
+ * biased by a wire pin (the current "Latest" release).
+ */
+export const DEFAULT_OAUTH_PROTOCOL_CONCRETE_MODE: ServerFormOAuthProtocolConcreteMode =
+  "2025-11-25";
+
+function isConcreteOauthProtocolMode(
+  value: string
+): value is ServerFormOAuthProtocolConcreteMode {
+  return (SERVER_FORM_OAUTH_PROTOCOL_MODES as readonly string[]).includes(value);
+}
 
 /**
  * Coerce an arbitrary stored/prefilled protocol string to a concrete
@@ -711,12 +739,32 @@ export type ServerFormOAuthProtocolMode =
 export function normalizeOauthProtocolMode(
   value?: string
 ): ServerFormOAuthProtocolMode {
-  return value === "2025-03-26" ||
-    value === "2025-06-18" ||
-    value === "2025-11-25" ||
-    value === "2026-07-28"
+  return value != null && isConcreteOauthProtocolMode(value)
     ? value
-    : "2025-11-25";
+    : DEFAULT_OAUTH_PROTOCOL_CONCRETE_MODE;
+}
+
+/**
+ * Resolve a connect-form OAuth protocol mode to the concrete era the flow will
+ * actually run. An explicit era passes straight through — it always wins. The
+ * deferred "auto" sentinel defers to the server's per-server MCP wire-version
+ * pin: OAuth and the sessionless transport ship together, so a 2026-07-28 wire
+ * pin makes "auto" resolve to the 2026 OAuth flow (the mirror of
+ * server-helpers' oauth-mode → wire stamp, #3363); otherwise "auto" resolves
+ * to the current default. Single-sourced so the display bridge (which drives
+ * the OAuth plan preview) and the submit path (which bakes the era into the
+ * saved profile) cannot disagree on where "auto" lands.
+ */
+export function resolveEffectiveOauthProtocolMode(
+  mode: ServerFormOAuthProtocolMode,
+  wireProtocolVersion?: string
+): ServerFormOAuthProtocolConcreteMode {
+  if (mode !== "auto") {
+    return mode;
+  }
+  return wireProtocolVersion === "2026-07-28"
+    ? "2026-07-28"
+    : DEFAULT_OAUTH_PROTOCOL_CONCRETE_MODE;
 }
 
 /**

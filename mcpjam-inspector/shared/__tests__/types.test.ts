@@ -8,6 +8,8 @@ import {
   isMCPJamProvidedModel,
   isModelSupported,
   normalizeOauthProtocolMode,
+  resolveEffectiveOauthProtocolMode,
+  SERVER_FORM_OAUTH_PROTOCOL_MODES,
   SUPPORTED_MODELS,
 } from "../types.js";
 
@@ -141,5 +143,39 @@ describe("normalizeOauthProtocolMode (connect-form OAuth protocol)", () => {
     expect(normalizeOauthProtocolMode("auto")).toBe("2025-11-25");
     expect(normalizeOauthProtocolMode(undefined)).toBe("2025-11-25");
     expect(normalizeOauthProtocolMode("garbage")).toBe("2025-11-25");
+  });
+
+  it("derives its accepted set from the single-source tuple", () => {
+    // Every concrete era normalizes to itself; the tuple IS the source the
+    // union and the membership check share, so this guards against drift.
+    for (const era of SERVER_FORM_OAUTH_PROTOCOL_MODES) {
+      expect(normalizeOauthProtocolMode(era)).toBe(era);
+    }
+  });
+});
+
+describe("resolveEffectiveOauthProtocolMode (auto → wire-pin bridge)", () => {
+  it("resolves 'auto' to the 2026 flow only under a 2026-07-28 wire pin", () => {
+    expect(resolveEffectiveOauthProtocolMode("auto", "2026-07-28")).toBe(
+      "2026-07-28"
+    );
+  });
+
+  it("resolves 'auto' to the 2025-11-25 default without a 2026 wire pin", () => {
+    expect(resolveEffectiveOauthProtocolMode("auto", "2025-11-25")).toBe(
+      "2025-11-25"
+    );
+    expect(resolveEffectiveOauthProtocolMode("auto", undefined)).toBe(
+      "2025-11-25"
+    );
+  });
+
+  it("passes an explicit selection straight through — it always wins", () => {
+    expect(resolveEffectiveOauthProtocolMode("2025-06-18", "2026-07-28")).toBe(
+      "2025-06-18"
+    );
+    expect(resolveEffectiveOauthProtocolMode("2026-07-28", undefined)).toBe(
+      "2026-07-28"
+    );
   });
 });

@@ -18,10 +18,72 @@ describe("useServerForm", () => {
     vi.mocked(hasOAuthConfig).mockReturnValue(false);
   });
 
-  it("defaults OAuth protocol mode to explicit latest", () => {
+  it("defaults OAuth protocol mode to the deferred 'auto' sentinel", () => {
+    // "auto" (not a concrete era) is what makes the wire-pin bridge reachable:
+    // a fresh form defers its OAuth era to the server's MCP wire pin instead of
+    // hard-pinning 2025-11-25 and stranding a 2026-pinned server on the 2025
+    // flow. The submit path bakes it into a concrete era (see below).
     const { result } = renderHook(() => useServerForm());
 
-    expect(result.current.oauthProtocolMode).toBe("2025-11-25");
+    expect(result.current.oauthProtocolMode).toBe("auto");
+  });
+
+  describe("default OAuth protocol 'auto' → wire-pin submit bridge", () => {
+    const startDefaultOAuthAdd = (result: {
+      current: ReturnType<typeof useServerForm>;
+    }) => {
+      act(() => {
+        result.current.setName("Draft server");
+        result.current.setUrl("https://example.com/mcp");
+        result.current.setAuthType("oauth");
+        result.current.setShowAuthSettings(true);
+        // Note: oauthProtocolMode is left at its "auto" default — the user
+        // never touched the Protocol dropdown.
+      });
+    };
+
+    it("bakes the 2026 OAuth flow when adding with a 2026-07-28 wire pin", () => {
+      const { result } = renderHook(() => useServerForm());
+      startDefaultOAuthAdd(result);
+
+      expect(
+        result.current.buildFormData({
+          wireProtocolVersionOverride: "2026-07-28",
+        })
+      ).toMatchObject({
+        useOAuth: true,
+        oauthProtocolMode: "2026-07-28",
+      });
+    });
+
+    it("keeps the 2025-11-25 default when there is no 2026 wire pin", () => {
+      const { result } = renderHook(() => useServerForm());
+      startDefaultOAuthAdd(result);
+
+      expect(result.current.buildFormData()).toMatchObject({
+        useOAuth: true,
+        oauthProtocolMode: "2025-11-25",
+      });
+      expect(
+        result.current.buildFormData({
+          wireProtocolVersionOverride: "2025-11-25",
+        }).oauthProtocolMode
+      ).toBe("2025-11-25");
+    });
+
+    it("lets an explicit protocol selection win over a 2026 wire pin", () => {
+      const { result } = renderHook(() => useServerForm());
+      startDefaultOAuthAdd(result);
+      act(() => {
+        result.current.setOauthProtocolMode("2025-06-18");
+      });
+
+      expect(
+        result.current.buildFormData({
+          wireProtocolVersionOverride: "2026-07-28",
+        }).oauthProtocolMode
+      ).toBe("2025-06-18");
+    });
   });
 
   it("rejects malformed HTTP URLs even when HTTPS is optional", () => {

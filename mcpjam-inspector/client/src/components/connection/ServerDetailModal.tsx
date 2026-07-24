@@ -414,9 +414,13 @@ export function ServerDetailModal({
         }
       }
 
-      const finalFormData = formState.buildFormData(
-        revealedHeaders ? { revealedHeaders } : undefined
-      );
+      const finalFormData = formState.buildFormData({
+        ...(revealedHeaders ? { revealedHeaders } : {}),
+        // Resolve a deferred "auto" OAuth protocol against the server's wire
+        // pin (edit-loaded modes are concrete, so this is a no-op for them —
+        // it just keeps the Add and Edit save paths on one resolver).
+        wireProtocolVersionOverride: currentMcpProtocolVersionOverride,
+      });
       await onSubmit(finalFormData, server.name);
     } finally {
       setIsSaving(false);
