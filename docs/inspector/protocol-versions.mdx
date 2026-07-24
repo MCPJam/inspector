@@ -78,6 +78,20 @@ The pin is applied once the server is created and the connection is established.
 
 The per-server override is the more specific signal — it wins over whatever the Client's MCP Protocol tab says.
 
+## OAuth protocol alignment with the wire pin
+
+When you add or edit an HTTP server with **OAuth 2.0** authentication, the **Authentication → Advanced → Protocol** dropdown lets you choose which OAuth spec era the connect flow uses. The default is **Auto**.
+
+**Auto** resolves the OAuth era from the effective MCP wire pin rather than always using the 2025-11-25 default:
+
+- If the server's per-server wire pin is `2026-07-28`, **Auto** resolves to the **2026-07-28 (Draft)** OAuth flow.
+- If the host Client's default wire pin is `2026-07-28` (and no per-server override is set), **Auto** also resolves to the 2026 flow.
+- Otherwise, **Auto** resolves to `2025-11-25` (the current stable default).
+
+An explicit selection in the Protocol dropdown always wins over the wire pin — pick `2025-06-18` and it stays `2025-06-18` regardless of the wire pin.
+
+This keeps OAuth and transport in sync: the 2026-07-28 RC ships the sessionless transport and the updated OAuth spec together, so a server pinned to the 2026 wire era needs the matching OAuth flow to connect successfully.
+
 ## What changes when you pick the 2026 RC
 
 If your server already speaks `2026-07-28`, you mostly won't notice. A few things to know when you're testing:
