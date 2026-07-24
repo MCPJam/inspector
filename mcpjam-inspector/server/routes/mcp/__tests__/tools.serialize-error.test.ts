@@ -2,8 +2,23 @@ import { describe, it, expect } from "vitest";
 import { InsufficientScopeError } from "@modelcontextprotocol/client";
 import {
   extractInsufficientScopeChallenge,
+  jsonError,
   serializeMcpError,
 } from "../tools.js";
+
+/** A minimal Hono-`c`-like stub that captures the `c.json(body, status)` call. */
+function captureJson() {
+  const calls: Array<{ body: unknown; status?: number }> = [];
+  return {
+    c: {
+      json: (body: unknown, status?: number) => {
+        calls.push({ body, status });
+        return { body, status };
+      },
+    },
+    calls,
+  };
+}
 
 describe("extractInsufficientScopeChallenge (SEP-2350)", () => {
   it("extracts the challenge from a top-level InsufficientScopeError", () => {
@@ -90,5 +105,43 @@ describe("serializeMcpError", () => {
     >;
     expect(serialized.insufficientScope).toBeUndefined();
     expect(serialized.message).toBe("nope");
+  });
+});
+
+describe("jsonError (SEP-2350 challenge status)", () => {
+  it("returns HTTP 403 for an insufficient_scope challenge that carries no status", () => {
+    // `InsufficientScopeError` has no numeric `status`, so without the challenge
+    // override it would serialize with the generic 500 fallback.
+    const err = new InsufficientScopeError({ requiredScope: "read write" });
+    expect((err as any).status).toBeUndefined();
+
+    const { c, calls } = captureJson();
+    jsonError(c, err, 500);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].status).toBe(403);
+    const body = calls[0].body as Record<string, any>;
+    expect(body.mcpError.insufficientScope).toEqual({
+      requiredScope: "read write",
+      resourceMetadataUrl: undefined,
+      errorDescription: undefined,
+    });
+  });
+
+  it("honors an explicit numeric status even when a challenge is present", () => {
+    const err = new InsufficientScopeError({ requiredScope: "admin" });
+    (err as any).status = 401;
+
+    const { c, calls } = captureJson();
+    jsonError(c, err, 500);
+
+    expect(calls[0].status).toBe(401);
+  });
+
+  it("falls back to the provided status for an ordinary error", () => {
+    const { c, calls } = captureJson();
+    jsonError(c, new Error("boom"), 500);
+
+    expect(calls[0].status).toBe(500);
   });
 });

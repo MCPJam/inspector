@@ -178,12 +178,19 @@ export function serializeMcpError(error: unknown) {
   return base;
 }
 
-function jsonError(c: any, error: unknown, fallbackStatus = 500) {
+export function jsonError(c: any, error: unknown, fallbackStatus = 500) {
   const details = serializeMcpError(error);
-  const status =
+  const explicitStatus =
     typeof (error as any)?.status === "number"
       ? (error as any).status
-      : fallbackStatus;
+      : undefined;
+  // SEP-2350: an `InsufficientScopeError` from `onInsufficientScope: "throw"`
+  // carries no numeric `status`, so without this the challenge would serialize
+  // with the generic 500 fallback. A scope step-up challenge MUST come back as
+  // HTTP 403 so the client recognizes it and drives the bounded re-auth. Honor
+  // an explicit numeric status if the error already carried one.
+  const status =
+    explicitStatus ?? (details.insufficientScope ? 403 : fallbackStatus);
   const normalized = describeError(error);
   return c.json(
     { error: details.message as string, mcpError: details, normalized },

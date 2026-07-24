@@ -597,6 +597,17 @@ export async function applyToolCallStepUp(
     beforeRedirect: options?.beforeRedirect,
   });
 
+  // The resolver already bumped the per-session counter (it must persist BEFORE
+  // the redirect so the bound survives the round-trip). But that path also
+  // clears stored OAuth data and can fail transiently (e.g. an OAuth-init
+  // error), returning a non-`redirect` outcome WITHOUT navigating away. A
+  // consumed-but-not-initiated attempt would block retrying the tool in the
+  // same session, so roll the counter back to its pre-decision value unless a
+  // genuine re-authorization was actually initiated (a `redirect`).
+  if (reauthorization.kind !== "redirect") {
+    writeStepUpAttempts(server.name, issuer, decision.attempt);
+  }
+
   return {
     action: decision.action,
     scopes: decision.scopes,

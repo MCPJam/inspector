@@ -92,6 +92,12 @@ vi.mock("@/lib/task-tracker", () => ({
   trackTask: vi.fn(),
 }));
 
+// Mock app navigation — the task_created success branch navigates to /tasks;
+// stub it so tests don't need a router mounted.
+vi.mock("@/lib/app-navigation", () => ({
+  navigateApp: vi.fn(),
+}));
+
 // Mock ResizablePanelGroup to simplify rendering
 vi.mock("../ui/resizable", () => ({
   ResizablePanelGroup: ({ children }: { children: React.ReactNode }) => (
@@ -649,6 +655,117 @@ describe("ToolsTab", () => {
         expect(mockResetToolCallStepUp).toHaveBeenCalledWith(server);
       });
       expect(mockApplyToolCallStepUp).not.toHaveBeenCalled();
+    });
+
+    it("resets the step-up counter on a task_created success too", async () => {
+      const serverConfig = createServerConfig();
+      const server = {
+        name: "test-server",
+        config: serverConfig,
+        useOAuth: true,
+      } as unknown as import("@/state/app-types").ServerWithName;
+
+      mockListTools.mockResolvedValue({
+        tools: [
+          { name: "task-tool", inputSchema: { type: "object", properties: {} } },
+        ],
+      });
+      // A task-augmented tool that succeeds returns `task_created`, NOT
+      // `completed` — the reset must still fire on this branch.
+      mockExecuteToolApi.mockResolvedValue({
+        status: "task_created",
+        task: {
+          taskId: "task-1",
+          createdAt: Date.now(),
+          status: "working",
+          ttl: 0,
+          pollInterval: 1000,
+        },
+      });
+
+      render(
+        <ToolsTab
+          serverConfig={serverConfig}
+          serverName="test-server"
+          server={server}
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("task-tool")).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByText("task-tool"));
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: /^run/i })
+        ).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByRole("button", { name: /^run/i }));
+
+      await waitFor(() => {
+        expect(mockResetToolCallStepUp).toHaveBeenCalledWith(server);
+      });
+    });
+
+    it("dedupes concurrent step-ups: only one runs per server while in flight", async () => {
+      const serverConfig = createServerConfig();
+      const server = {
+        name: "test-server",
+        config: serverConfig,
+        useOAuth: true,
+      } as unknown as import("@/state/app-types").ServerWithName;
+
+      mockListTools.mockResolvedValue({
+        tools: [
+          {
+            name: "scoped-tool",
+            inputSchema: { type: "object", properties: {} },
+          },
+        ],
+      });
+      // Every run surfaces the same insufficient-scope challenge.
+      mockExecuteToolApi.mockResolvedValue({
+        error: "insufficient_scope",
+        insufficientScope: {
+          requiredScope: "admin",
+          resourceMetadataUrl: "https://rs.example/.well-known",
+        },
+      });
+      // Keep the first step-up pending (a redirect flow would navigate away),
+      // so the in-flight guard stays set across the second run.
+      mockApplyToolCallStepUp.mockReturnValue(new Promise(() => {}));
+
+      render(
+        <ToolsTab
+          serverConfig={serverConfig}
+          serverName="test-server"
+          server={server}
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("scoped-tool")).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByText("scoped-tool"));
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: /^run/i })
+        ).toBeInTheDocument();
+      });
+
+      const runButton = screen.getByRole("button", { name: /^run/i });
+      fireEvent.click(runButton);
+      await waitFor(() => {
+        expect(mockApplyToolCallStepUp).toHaveBeenCalledTimes(1);
+      });
+
+      // A second run while the first step-up is still resolving must NOT fire a
+      // duplicate (which would double-redirect / double-bump the counter).
+      fireEvent.click(runButton);
+      await waitFor(() => {
+        expect(mockExecuteToolApi).toHaveBeenCalledTimes(2);
+      });
+      expect(mockApplyToolCallStepUp).toHaveBeenCalledTimes(1);
     });
   });
 

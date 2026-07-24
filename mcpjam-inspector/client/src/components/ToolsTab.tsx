@@ -200,6 +200,11 @@ export function ToolsTab({
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const toolFetchVersionRef = useRef(0);
   const taskCapabilitiesFetchVersionRef = useRef(0);
+  // SEP-2350: guards against a second tool run (or a repeated error) kicking off
+  // a duplicate step-up while the first is still in flight — a double redirect
+  // or double counter bump. Keyed by server name so distinct servers never
+  // block each other.
+  const stepUpInFlightRef = useRef<Set<string>>(new Set());
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const isServerConnected =
     serverConnectionStatus === undefined ||
@@ -509,6 +514,21 @@ export function ToolsTab({
     return toolName ? tools[toolName]?._meta : undefined;
   };
 
+  // SEP-2350: a successful call clears the bounded step-up counter so a future
+  // legitimate scope step-up starts fresh rather than inheriting a stale count
+  // that would prematurely throw. Factored so BOTH success paths — an immediate
+  // `completed` result and a task-augmented `task_created` — reset it.
+  const resetStepUpOnSuccess = () => {
+    if (!server) return;
+    try {
+      resetToolCallStepUp(server);
+    } catch (err) {
+      logger.warn("Failed to reset step-up counter", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  };
+
   const handleExecutionResponse = (
     response: ToolExecutionResponse,
     toolName: string
@@ -524,18 +544,7 @@ export function ToolsTab({
       const callResult = response.result;
       setResult(callResult);
 
-      // SEP-2350: a successful call clears the bounded step-up counter so a
-      // future legitimate scope step-up starts fresh rather than inheriting a
-      // stale count that would prematurely throw.
-      if (server) {
-        try {
-          resetToolCallStepUp(server);
-        } catch (err) {
-          logger.warn("Failed to reset step-up counter", {
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
+      resetStepUpOnSuccess();
 
       const rawResult = callResult as unknown as Record<string, unknown>;
       const currentTool = tools[toolName];
@@ -564,6 +573,11 @@ export function ToolsTab({
     // Handle task creation response (MCP Tasks spec 2025-11-25)
     if ("status" in response && response.status === "task_created") {
       const { task, modelImmediateResponse } = response;
+
+      // A task-augmented tool that succeeds lands here, not in the `completed`
+      // branch — reset the step-up counter on this success path too so a stale
+      // count doesn't prematurely throw a later legitimate step-up.
+      resetStepUpOnSuccess();
 
       // Track the task locally so it appears in the Tasks tab
       if (serverName) {
@@ -616,15 +630,27 @@ export function ToolsTab({
         response as { insufficientScope?: import("@/lib/apis/mcp-tools-api").ToolInsufficientScopeChallenge }
       ).insufficientScope;
       if (insufficientScope && server) {
-        void applyToolCallStepUp(server, {
-          requiredScope: insufficientScope.requiredScope,
-          resourceMetadataUrl: insufficientScope.resourceMetadataUrl,
-        }).catch((err) => {
-          logger.error("Step-up re-authorization failed", {
-            toolName,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        });
+        // Dedup: only one step-up may be in flight per server. Without this a
+        // second tool run (or a repeated error) while the first is still
+        // resolving could fire a duplicate — a double redirect or double
+        // counter bump. The guard clears once the step-up settles.
+        const stepUpKey = server.name;
+        if (!stepUpInFlightRef.current.has(stepUpKey)) {
+          stepUpInFlightRef.current.add(stepUpKey);
+          void applyToolCallStepUp(server, {
+            requiredScope: insufficientScope.requiredScope,
+            resourceMetadataUrl: insufficientScope.resourceMetadataUrl,
+          })
+            .catch((err) => {
+              logger.error("Step-up re-authorization failed", {
+                toolName,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            })
+            .finally(() => {
+              stepUpInFlightRef.current.delete(stepUpKey);
+            });
+        }
       }
     }
   };

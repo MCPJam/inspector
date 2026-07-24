@@ -244,6 +244,51 @@ describe("resolveInsufficientScopeStepUp (SEP-2350)", () => {
     );
   });
 
+  it("applyToolCallStepUp consumes the attempt when the reauth actually redirects", async () => {
+    readStoredOAuthConfigMock.mockReturnValue({ scopes: ["read"] });
+    initiateOAuthMock.mockResolvedValue({ success: true }); // → { kind: "redirect" }
+
+    const outcome = await applyToolCallStepUp(createServer(), {
+      requiredScope: "admin",
+    });
+    expect(outcome.reauthorization).toEqual({ kind: "redirect" });
+
+    // A genuine re-authorization was initiated, so the attempt is consumed: a
+    // second challenge in the same session is now bounded to `throw`.
+    const retry = resolveInsufficientScopeStepUp({
+      serverName: "asana",
+      issuer: ISSUER,
+      challengedScopes: ["admin"],
+      authMode: "interactive",
+      maxRetries: 1,
+    });
+    expect(retry.action).toBe("throw");
+  });
+
+  it("applyToolCallStepUp does NOT consume the attempt on a transient reauth/init failure", async () => {
+    readStoredOAuthConfigMock.mockReturnValue({ scopes: ["read"] });
+    // ensureAuthorizedForReconnect clears stored OAuth data then the OAuth init
+    // fails transiently → an `error` outcome that never navigated away.
+    initiateOAuthMock.mockResolvedValue({ success: false, error: "init boom" });
+
+    const outcome = await applyToolCallStepUp(createServer(), {
+      requiredScope: "admin",
+    });
+    expect(outcome.action).toBe("reauthorize");
+    expect(outcome.reauthorization?.kind).toBe("error");
+
+    // The counter was rolled back: a retry in the SAME session still
+    // re-authorizes rather than being blocked by a wasted attempt.
+    const retry = resolveInsufficientScopeStepUp({
+      serverName: "asana",
+      issuer: ISSUER,
+      challengedScopes: ["admin"],
+      authMode: "interactive",
+      maxRetries: 1,
+    });
+    expect(retry.action).toBe("reauthorize");
+  });
+
   it("applyToolCallStepUp with m2m throws and never opens a browser", async () => {
     readStoredOAuthConfigMock.mockReturnValue({ scopes: ["read"] });
     const outcome = await applyToolCallStepUp(
