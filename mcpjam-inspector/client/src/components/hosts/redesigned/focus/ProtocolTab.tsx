@@ -13,6 +13,8 @@ import { Switch } from "@mcpjam/design-system/switch";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import {
   isKnownProtocolVersion,
+  isStatelessProtocolVersion,
+  MCP_PROTOCOL_VERSIONS,
   readXaaEnterprisePolicy,
   withXaaEnterprisePolicy,
   withoutXaaEnterprisePolicy,
@@ -26,14 +28,63 @@ import {
 import type { HostAttentionIssue } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
 
-type HostProtocolDropdownValue = "latest" | "rc";
+/**
+ * "auto" is the UI-only sentinel for "no pin stored" — it maps to
+ * `mcpProfile.mcpProtocolVersion === undefined`, NOT to a wire literal.
+ * Deliberately not labelled with a version number: absence means the SDK
+ * picks the version at connect time, so hardcoding a revision into that
+ * label would go stale the moment the SDK's default moves (the sequenced
+ * Phase-5 `versionNegotiation: 'auto'` activation) without anything in
+ * this file changing.
+ *
+ * Every other entry is a real wire literal and writes itself through
+ * verbatim. This matters — a stateful pin is NOT cosmetic: it narrows the
+ * legacy client's `supportedProtocolVersions` accept-list, so
+ * `initialize.params.protocolVersion` goes out as the pinned value
+ * instead of the SDK's built-in newest default
+ * (`MCPClientManager.ts`, `resolveVersionNegotiation` call site).
+ */
+type HostProtocolDropdownValue = "auto" | McpProtocolVersion;
+
+/**
+ * Decorate the two revisions that carry meaning beyond their date, and
+ * derive both markers rather than hardcoding them:
+ *
+ * - **Latest** = newest non-stateless revision. Computed via
+ *   `isStatelessProtocolVersion` so the marker walks forward on its own
+ *   when a newer stable version is appended to `MCP_PROTOCOL_VERSIONS` —
+ *   a hardcoded "Latest (2025-11-25)" would quietly become a lie.
+ * - **RC** = any stateless revision, i.e. the 2026-era preview.
+ *
+ * `MCP_PROTOCOL_VERSIONS` is ordered oldest-first; the dropdown lists
+ * newest-first, which puts the two versions anyone actually picks at the
+ * top and leaves the archaeology below.
+ */
+const LATEST_STABLE_PROTOCOL_VERSION: McpProtocolVersion | undefined = [
+  ...MCP_PROTOCOL_VERSIONS,
+]
+  .reverse()
+  .find((v) => !isStatelessProtocolVersion(v));
+
+function protocolVersionLabel(version: McpProtocolVersion): string {
+  // "2026-07-28" → "2026 RC (2026-07-28)": the era year is how the RC is
+  // spoken about, the full date is what actually goes on the wire.
+  if (isStatelessProtocolVersion(version)) {
+    return `${version.slice(0, 4)} RC (${version})`;
+  }
+  if (version === LATEST_STABLE_PROTOCOL_VERSION) return `Latest (${version})`;
+  return version;
+}
 
 const HOST_PROTOCOL_OPTIONS: Array<{
   value: HostProtocolDropdownValue;
   label: string;
 }> = [
-  { value: "latest", label: "Latest (2025-11-25)" },
-  { value: "rc", label: "2026 RC (2026-07-28)" },
+  { value: "auto", label: "Automatic" },
+  ...[...MCP_PROTOCOL_VERSIONS].reverse().map((version) => ({
+    value: version,
+    label: protocolVersionLabel(version),
+  })),
 ];
 
 interface ProtocolTabProps {
@@ -457,11 +508,16 @@ export function ProtocolTab({
     applyParsedToDraft: applyJsonToDraft,
     onDraftChange,
   });
-  // Stored stateful literals (legacy carry-over) collapse to "Latest"
-  // since they route to the same code path; saving normalizes back to
-  // undefined.
+  // Every known version has its own entry, so a stored pin shows itself
+  // rather than collapsing onto a neighbour. Only genuinely unknown values
+  // (hand-edited junk, a version retired from the SDK) fall back to
+  // "Automatic" — matching what the connect path does with them anyway.
+  const storedProtocolVersion = draft.mcpProfile?.mcpProtocolVersion;
   const selectedDropdownValue: HostProtocolDropdownValue =
-    draft.mcpProfile?.mcpProtocolVersion === "2026-07-28" ? "rc" : "latest";
+    storedProtocolVersion !== undefined &&
+    isKnownProtocolVersion(storedProtocolVersion)
+      ? storedProtocolVersion
+      : "auto";
 
   // Dropdown handler. Writes through to `draft.mcpProfile.mcpProtocolVersion`
   // directly (parallel to the JSON editor's applyJsonToDraft path) so the
@@ -547,19 +603,21 @@ export function ProtocolTab({
         <div className="flex items-center gap-3">
           <span
             className="text-[12px] font-medium"
-            title="Latest: current stable MCP wire version (2025-11-25). 2026 RC: MCPJam's current 2026-07-28 stateless preview over Streamable HTTP POST."
+            title="Automatic: store no pin — MCPJam picks the wire version at connect time. Any other choice pins that exact revision for every server on this client."
           >
             {fProtocolVersion.label}
           </span>
           <Select
             value={selectedDropdownValue}
             onValueChange={(next) => {
-              setProtocolVersion(next === "rc" ? "2026-07-28" : undefined);
+              setProtocolVersion(
+                next === "auto" ? undefined : (next as McpProtocolVersion)
+              );
             }}
             disabled={readOnly}
           >
             <SelectTrigger className="h-9 text-xs">
-              <SelectValue placeholder="Latest" />
+              <SelectValue placeholder="Automatic" />
             </SelectTrigger>
             <SelectContent>
               {HOST_PROTOCOL_OPTIONS.map((opt) => (
@@ -570,6 +628,19 @@ export function ProtocolTab({
             </SelectContent>
           </Select>
         </div>
+        {/* Spells out what a pin actually stores. The two pinned cases differ
+            materially, so they get their own copy: a stateless pin has no
+            legacy fallback, while a stateful pin narrows the initialize
+            handshake to that one version. "Automatic" gets no line — the
+            absence of a pin needs no explanation and keeps the panel quiet in
+            the default state. */}
+        {selectedDropdownValue !== "auto" && (
+          <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
+            {isStatelessProtocolVersion(selectedDropdownValue)
+              ? `Pinned to ${selectedDropdownValue} for every server on this client. The server must offer it at connect time; there is no fallback to 2025. A server's own protocol override still wins.`
+              : `Pinned to ${selectedDropdownValue} — the initialize handshake offers only this version. A server's own protocol override still wins.`}
+          </p>
+        )}
         {showPolicyToggle && (
         <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
           <div className="min-w-0">
