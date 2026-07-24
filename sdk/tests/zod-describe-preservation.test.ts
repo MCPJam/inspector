@@ -53,8 +53,8 @@ describe("zod .describe() preservation (4.2.0 regression)", () => {
       { fetch: (input, init) => handler.fetch(new Request(input as string | URL, init)) },
     );
 
-    await client.connect(transport);
     try {
+      await client.connect(transport);
       const { tools } = await client.listTools();
       const tool = tools.find((t) => t.name === "greet");
       expect(tool).toBeDefined();
