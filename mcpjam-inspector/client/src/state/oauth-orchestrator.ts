@@ -598,13 +598,26 @@ export async function applyToolCallStepUp(
   });
 
   // The resolver already bumped the per-session counter (it must persist BEFORE
-  // the redirect so the bound survives the round-trip). But that path also
-  // clears stored OAuth data and can fail transiently (e.g. an OAuth-init
-  // error), returning a non-`redirect` outcome WITHOUT navigating away. A
-  // consumed-but-not-initiated attempt would block retrying the tool in the
-  // same session, so roll the counter back to its pre-decision value unless a
-  // genuine re-authorization was actually initiated (a `redirect`).
-  if (reauthorization.kind !== "redirect") {
+  // the redirect so the bound survives the round-trip). Roll it back to its
+  // pre-decision value ONLY on a transient failure that never navigated away
+  // and never completed a re-authorization — an OAuth-init `error` or a
+  // `reauth_required` — so a wasted attempt doesn't block retrying the tool in
+  // the same session.
+  //
+  // A `redirect` OR a `ready` KEEPS the consumed attempt. A `ready` here is NOT
+  // a genuine widened-scope grant — the redirect round-trip is what mints new
+  // scopes; a `ready` means `initiateOAuth` resolved without navigating (the
+  // server was already authorized / no redirect was needed), so the challenged
+  // scope was NOT obtained. Rolling that back would let a server stuck on
+  // `insufficient_scope` loop forever: every retry reads the un-bumped count,
+  // re-bumps, sees `ready`, rolls back, and never advances toward the cap.
+  // Keeping the bump advances the bounded budget until the §10.5 policy throws.
+  // A genuine step-up success clears the counter elsewhere — the caller's
+  // reset-on-successful-tool-call path — not here.
+  if (
+    reauthorization.kind === "error" ||
+    reauthorization.kind === "reauth_required"
+  ) {
     writeStepUpAttempts(server.name, issuer, decision.attempt);
   }
 

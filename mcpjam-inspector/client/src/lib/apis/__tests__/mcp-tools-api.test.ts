@@ -1,7 +1,23 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const { authFetchMock, isHostedModeMock } = vi.hoisted(() => ({
+  authFetchMock: vi.fn(),
+  isHostedModeMock: vi.fn(() => false),
+}));
+
+vi.mock("@/lib/session-token", () => ({
+  authFetch: authFetchMock,
+}));
+
+vi.mock("@/lib/apis/mode-client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/apis/mode-client")>();
+  return { ...actual, isHostedMode: isHostedModeMock };
+});
+
 import {
   attachToolMetadata,
   parseInsufficientScopeChallenge,
+  respondToElicitationApi,
 } from "../mcp-tools-api";
 import type { ListToolsResultWithMetadata } from "../mcp-tools-api";
 
@@ -39,6 +55,79 @@ describe("parseInsufficientScopeChallenge (SEP-2350)", () => {
     expect(parseInsufficientScopeChallenge(undefined)).toBeUndefined();
     expect(parseInsufficientScopeChallenge("nope")).toBeUndefined();
     expect(parseInsufficientScopeChallenge({})).toBeUndefined();
+  });
+});
+
+describe("respondToElicitationApi (SEP-2350 step-up on resume)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    isHostedModeMock.mockReturnValue(false);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    isHostedModeMock.mockReturnValue(false);
+  });
+
+  it("forwards the insufficient_scope challenge when a resume fails with 403", async () => {
+    authFetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: "insufficient scope",
+          mcpError: {
+            insufficientScope: {
+              requiredScope: "read write admin",
+              resourceMetadataUrl: "https://rs.example/.well-known",
+            },
+          },
+          normalized: {
+            slug: "insufficient-scope",
+            title: "Insufficient scope",
+            oneLine: "The tool needs more scope.",
+            docsAnchor: "#insufficient-scope",
+            severity: "error",
+            rawMessage: "insufficient scope",
+            likelyCauses: [],
+            nextSteps: [],
+          },
+        }),
+        { status: 403, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    const result = await respondToElicitationApi("exec-1", "req-1", {
+      action: "accept",
+      content: {},
+    });
+
+    expect("error" in result && result.error).toBe("insufficient scope");
+    expect(
+      "insufficientScope" in result ? result.insufficientScope : undefined,
+    ).toEqual({
+      requiredScope: "read write admin",
+      resourceMetadataUrl: "https://rs.example/.well-known",
+      errorDescription: undefined,
+    });
+    // The describer block is preserved too, mirroring the /execute path.
+    expect(
+      "normalized" in result ? result.normalized : undefined,
+    ).toMatchObject({ title: "Insufficient scope" });
+  });
+
+  it("omits insufficientScope when a resume failure carries no challenge", async () => {
+    authFetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ error: "boom" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const result = await respondToElicitationApi("exec-1", "req-1", {
+      action: "accept",
+      content: {},
+    });
+
+    expect("error" in result && result.error).toBe("boom");
+    expect("insufficientScope" in result).toBe(false);
   });
 });
 

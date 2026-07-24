@@ -265,6 +265,37 @@ describe("resolveInsufficientScopeStepUp (SEP-2350)", () => {
     expect(retry.action).toBe("throw");
   });
 
+  it("applyToolCallStepUp KEEPS the attempt on a no-op `ready` (prevents an infinite step-up loop)", async () => {
+    readStoredOAuthConfigMock.mockReturnValue({ scopes: ["read"] });
+    // initiateOAuth resolves WITHOUT navigating: an already-authorized server
+    // returns a serverConfig immediately → ensureAuthorizedForReconnect `ready`.
+    // This is NOT a genuine widened-scope grant (that needs the redirect
+    // round-trip), so the consumed attempt MUST stick — otherwise a server
+    // stuck returning `insufficient_scope` would loop forever as each retry
+    // rolled the budget back to zero.
+    initiateOAuthMock.mockResolvedValue({
+      success: true,
+      serverConfig: { type: "http", url: "https://mcp.asana.com/sse" },
+    });
+
+    const outcome = await applyToolCallStepUp(createServer(), {
+      requiredScope: "admin",
+    });
+    expect(outcome.action).toBe("reauthorize");
+    expect(outcome.reauthorization?.kind).toBe("ready");
+
+    // The attempt was consumed (NOT reset): a second challenge in the same
+    // session is now bounded to `throw` rather than re-authorizing forever.
+    const retry = resolveInsufficientScopeStepUp({
+      serverName: "asana",
+      issuer: ISSUER,
+      challengedScopes: ["admin"],
+      authMode: "interactive",
+      maxRetries: 1,
+    });
+    expect(retry.action).toBe("throw");
+  });
+
   it("applyToolCallStepUp does NOT consume the attempt on a transient reauth/init failure", async () => {
     readStoredOAuthConfigMock.mockReturnValue({ scopes: ["read"] });
     // ensureAuthorizedForReconnect clears stored OAuth data then the OAuth init

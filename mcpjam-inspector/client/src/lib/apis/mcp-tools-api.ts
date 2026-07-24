@@ -277,7 +277,23 @@ export async function respondToElicitationApi(
   } catch {}
   if (!res.ok) {
     const message = body?.error || `Respond failed (${res.status})`;
-    return { error: message } as ToolExecutionResponse;
+    // SEP-2350: an elicitation-resume can ALSO fail with a runtime
+    // `403 insufficient_scope` (the widened-scope call happens after the
+    // elicitation round-trip). The `/respond` route serializes the same
+    // `mcpError.insufficientScope` / `normalized` blocks as `/execute`, so
+    // mirror that narrowing here — otherwise the challenge is dropped and the
+    // resume path can never drive a step-up.
+    const normalized = isNormalizedError(body?.normalized)
+      ? (body.normalized as NormalizedError)
+      : undefined;
+    const insufficientScope = parseInsufficientScopeChallenge(
+      body?.mcpError?.insufficientScope,
+    );
+    return {
+      error: message,
+      ...(normalized ? { normalized } : {}),
+      ...(insufficientScope ? { insufficientScope } : {}),
+    } as ToolExecutionResponse;
   }
   return body as ToolExecutionResponse;
 }
