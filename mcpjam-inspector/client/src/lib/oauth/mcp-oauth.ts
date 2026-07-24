@@ -88,6 +88,19 @@ interface StoredOAuthClientInformation {
   client_secret?: string;
 }
 
+/**
+ * Narrows a raw (pre-migration) parsed `mcp-tokens-*` record to a usable token
+ * object. Any non-null, non-array object is accepted as an unbound legacy token
+ * bag; anything else (string, number, array, null) is rejected. Used by the
+ * issuer-keyed token reads so a legacy unkeyed record is returned as UNBOUND
+ * compat while a v2 envelope is gated to the exact resolved issuer (SEP-2352).
+ */
+function parseLegacyStoredTokens(parsed: unknown): any {
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    ? parsed
+    : undefined;
+}
+
 type OAuthRegistrationStrategy =
   | RegistrationStrategy2025_03_26
   | RegistrationStrategy2025_06_18
@@ -2129,15 +2142,21 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   }
 
   tokens() {
-    const stored = localStorage.getItem(`mcp-tokens-${this.serverName}`);
-    if (!stored) {
-      return undefined;
-    }
-    try {
-      return JSON.parse(stored);
-    } catch {
-      return undefined;
-    }
+    // SEP-2352: return only the token bucket bound to the EXACT resolved issuer.
+    // A v2-keyed envelope for AS A yields nothing once discovery resolves to
+    // AS B, so AS A's tokens are never presented to AS B (mirrors the client-id
+    // read). Legacy unkeyed records — the only shape written today; see the
+    // `saveTokens` note on Convex being the token source of truth — are returned
+    // as UNBOUND compat so existing local logins and the refresh path keep
+    // working. Before any AS is resolved, `readIssuerKeyed` falls back to the
+    // envelope's active bucket (or the legacy value), preserving refresh.
+    const raw = localStorage.getItem(`mcp-tokens-${this.serverName}`);
+    const { value } = readIssuerKeyed<any>(
+      raw,
+      this.currentIssuer(),
+      parseLegacyStoredTokens
+    );
+    return value;
   }
 
   async saveTokens(tokens: any) {
@@ -3649,28 +3668,42 @@ export function getStoredTokensState(serverName: string): StoredTokensState {
   if (HOSTED_MODE) {
     return { tokens: undefined, isInvalid: false };
   }
-  const tokens = localStorage.getItem(`mcp-tokens-${serverName}`);
+  const raw = localStorage.getItem(`mcp-tokens-${serverName}`);
   // TODO: Maybe we should move clientID away from the token info? Not sure if clientID is bonded to token
-  if (!tokens) return { tokens: undefined, isInvalid: false };
+  if (!raw) return { tokens: undefined, isInvalid: false };
 
+  // A present-but-unparseable record is corrupt (isInvalid), distinct from an
+  // absent one — detect that up front so the issuer gating below doesn't
+  // silently reclassify malformed data as "no tokens".
   try {
-    const tokensJson = JSON.parse(tokens);
-    const clientJson = readStoredClientInformation(serverName);
-
-    // Merge tokens with client_id from client information
-    return {
-      tokens: {
-        ...tokensJson,
-        client_id: clientJson.client_id || tokensJson.client_id,
-      },
-      isInvalid: false,
-    };
+    JSON.parse(raw);
   } catch {
-    return {
-      tokens: undefined,
-      isInvalid: true,
-    };
+    return { tokens: undefined, isInvalid: true };
   }
+
+  // SEP-2352: gate the record by the exact resolved issuer so a v2-keyed AS-A
+  // token bucket is never surfaced after PRM resolves to AS B. Legacy unkeyed
+  // records stay readable as UNBOUND compat (parity with the client-id read).
+  const issuer = resolveStoredIssuer(serverName);
+  const { value: tokensJson } = readIssuerKeyed<any>(
+    raw,
+    issuer,
+    parseLegacyStoredTokens
+  );
+  if (!tokensJson) {
+    // A v2 envelope with no bucket for the resolved issuer: not corrupt, just
+    // not this AS's tokens — treat as absent so the flow re-authorizes.
+    return { tokens: undefined, isInvalid: false };
+  }
+
+  const clientJson = readStoredClientInformation(serverName);
+  return {
+    tokens: {
+      ...tokensJson,
+      client_id: clientJson.client_id || tokensJson.client_id,
+    },
+    isInvalid: false,
+  };
 }
 
 export function getStoredTokens(serverName: string): any {

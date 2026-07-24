@@ -1967,6 +1967,131 @@ describe("mcp-oauth", () => {
       expect(raw.activeIssuer).toBe("https://as-b.example.com");
     });
 
+    it("does not present AS-A tokens after discovery resolves to AS-B (SEP-2352)", async () => {
+      const { MCPOAuthProvider, getStoredTokens, getStoredTokensState } =
+        await import("../mcp-oauth");
+      // Seed a v2 token envelope with buckets for two authorization servers.
+      // (No app path writes keyed token records today — Convex is the token
+      // source of truth — so we seed the envelope directly to exercise the
+      // issuer-gated READ, exactly as the client-id F4/F5 test does.)
+      localStorage.setItem(
+        "mcp-tokens-issuer-tokens",
+        JSON.stringify({
+          v: 2,
+          activeIssuer: "https://as-a.example.com",
+          byIssuer: {
+            "https://as-a.example.com": {
+              access_token: "token-for-as-a",
+              token_type: "Bearer",
+            },
+            "https://as-b.example.com": {
+              access_token: "token-for-as-b",
+              token_type: "Bearer",
+            },
+          },
+        })
+      );
+      const provider = new MCPOAuthProvider(
+        "issuer-tokens",
+        "https://mcp.example.com/sse"
+      );
+
+      // Discovery points at AS A → AS A's token is returned.
+      await provider.saveDiscoveryState({
+        ...createDiscoveryState(),
+        authorizationServerUrl: "https://as-a.example.com",
+        authorizationServerMetadata: { issuer: "https://as-a.example.com" },
+      } as any);
+      expect(provider.tokens()?.access_token).toBe("token-for-as-a");
+      expect(getStoredTokens("issuer-tokens")?.access_token).toBe(
+        "token-for-as-a"
+      );
+
+      // Protected-resource metadata now resolves to AS B → AS B's token, and
+      // AS A's token is NEVER surfaced for AS B.
+      await provider.saveDiscoveryState({
+        ...createDiscoveryState(),
+        authorizationServerUrl: "https://as-b.example.com",
+        authorizationServerMetadata: { issuer: "https://as-b.example.com" },
+      } as any);
+      expect(provider.tokens()?.access_token).toBe("token-for-as-b");
+      expect(getStoredTokens("issuer-tokens")?.access_token).toBe(
+        "token-for-as-b"
+      );
+      expect(getStoredTokensState("issuer-tokens").isInvalid).toBe(false);
+
+      // Both buckets remain intact (a multi-issuer server keeps each AS's row).
+      const raw = localStorage.getItem("mcp-tokens-issuer-tokens") ?? "";
+      expect(raw).toContain("token-for-as-a");
+      expect(raw).toContain("token-for-as-b");
+    });
+
+    it("returns a legacy unkeyed token record as unbound compat (lazy migration)", async () => {
+      const { MCPOAuthProvider, getStoredTokens } = await import(
+        "../mcp-oauth"
+      );
+      // Pre-migration records are raw (unversioned) token bags with no issuer
+      // binding. They stay readable so existing local logins and the refresh
+      // path keep working (parity with the client-id read).
+      localStorage.setItem(
+        "mcp-tokens-legacy-tokens",
+        JSON.stringify({
+          access_token: "legacy-access",
+          refresh_token: "legacy-refresh",
+          token_type: "Bearer",
+        })
+      );
+      const provider = new MCPOAuthProvider(
+        "legacy-tokens",
+        "https://mcp.example.com/sse"
+      );
+      // Even with an issuer resolved, an UNBOUND legacy record is returned —
+      // we cannot know which AS it was granted by.
+      await provider.saveDiscoveryState({
+        ...createDiscoveryState(),
+        authorizationServerUrl: "https://as-a.example.com",
+        authorizationServerMetadata: { issuer: "https://as-a.example.com" },
+      } as any);
+      expect(provider.tokens()?.access_token).toBe("legacy-access");
+      expect(provider.tokens()?.refresh_token).toBe("legacy-refresh");
+      expect(getStoredTokens("legacy-tokens")?.access_token).toBe(
+        "legacy-access"
+      );
+    });
+
+    it("treats a v2 token envelope with no bucket for the resolved issuer as absent", async () => {
+      const { MCPOAuthProvider, getStoredTokens, getStoredTokensState } =
+        await import("../mcp-oauth");
+      localStorage.setItem(
+        "mcp-tokens-no-bucket",
+        JSON.stringify({
+          v: 2,
+          activeIssuer: "https://as-a.example.com",
+          byIssuer: {
+            "https://as-a.example.com": { access_token: "token-for-as-a" },
+          },
+        })
+      );
+      const provider = new MCPOAuthProvider(
+        "no-bucket",
+        "https://mcp.example.com/sse"
+      );
+      await provider.saveDiscoveryState({
+        ...createDiscoveryState(),
+        authorizationServerUrl: "https://as-b.example.com",
+        authorizationServerMetadata: { issuer: "https://as-b.example.com" },
+      } as any);
+
+      // No AS-B bucket → treat as absent (re-authorize), not corrupt.
+      expect(provider.tokens()).toBeUndefined();
+      expect(getStoredTokens("no-bucket")).toBeUndefined();
+      expect(getStoredTokensState("no-bucket").isInvalid).toBe(false);
+      // AS-A's bucket is left intact for when discovery points back at it.
+      expect(localStorage.getItem("mcp-tokens-no-bucket") ?? "").toContain(
+        "token-for-as-a"
+      );
+    });
+
     it("preserves the original callback error and verifier when registry token exchange fails", async () => {
       authFetch.mockImplementationOnce(async (input: RequestInfo | URL) => {
         const url =
