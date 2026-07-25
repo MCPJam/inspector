@@ -187,17 +187,59 @@ describe("runProtocolChecks — era-aware invalid-method probe", () => {
     expect(results[0]?.status).toBe("passed");
     // No initialize prelude — a single sessionless POST.
     expect(calls).toHaveLength(1);
-    const headers = calls[0]?.headers as Record<string, string>;
-    expect(headers["MCP-Protocol-Version"]).toBe("2026-07-28");
-    expect(headers["mcp-method"]).toBe(
+    const headers = new Headers(calls[0]?.headers as HeadersInit);
+    expect(headers.get("MCP-Protocol-Version")).toBe("2026-07-28");
+    expect(headers.get("mcp-method")).toBe(
       "nonexistent/method_that_does_not_exist"
     );
-    expect(headers["mcp-session-id"]).toBeUndefined();
+    expect(headers.has("mcp-session-id")).toBe(false);
     const body = JSON.parse(String(calls[0]?.body));
     expect(body.method).toBe("nonexistent/method_that_does_not_exist");
+    // Full 2026-07-28 per-request _meta envelope — a conforming modern server
+    // rejects an incomplete envelope (-32602) before dispatching the method,
+    // so all three keys must be present or the probe never reaches unknown-
+    // method handling.
     expect(body.params._meta["io.modelcontextprotocol/protocolVersion"]).toBe(
       "2026-07-28"
     );
+    expect(body.params._meta["io.modelcontextprotocol/clientInfo"]).toEqual({
+      name: "mcpjam-sdk-conformance",
+      version: "1.0.0",
+    });
+    expect(
+      body.params._meta["io.modelcontextprotocol/clientCapabilities"]
+    ).toEqual({});
+  });
+
+  it("modern: a customHeaders case-variant never blends into the probe pin", async () => {
+    const calls: Array<RequestInit | undefined> = [];
+    const fetchFn = (async (_url: unknown, init?: RequestInit) => {
+      calls.push(init);
+      return jsonRpcErrorResponse();
+    }) as unknown as typeof fetch;
+
+    // Case-variant collisions with the probe-owned pins. A plain object would
+    // keep these as distinct keys and Fetch would concatenate the canonical
+    // duplicates ("stale, __invalid__"); the Headers instance must REPLACE them.
+    const config = normalize({
+      fetchFn,
+      protocolVersion: "2026-07-28",
+      customHeaders: {
+        "MCP-Method": "tools/list",
+        "mcp-protocol-version": "1999-01-01",
+      },
+    });
+    await runProtocolChecks(
+      { config, serverUrl: SERVER_URL, fetchFn: config.fetchFn },
+      selected
+    );
+
+    const headers = new Headers(calls[0]?.headers as HeadersInit);
+    // No concatenation — the probe pin wins cleanly.
+    expect(headers.get("mcp-method")).toBe(
+      "nonexistent/method_that_does_not_exist"
+    );
+    expect(headers.get("MCP-Protocol-Version")).toBe("2026-07-28");
   });
 });
 

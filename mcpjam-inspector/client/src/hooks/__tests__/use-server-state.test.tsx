@@ -3597,6 +3597,43 @@ describe("syncServerToConvex name-collision recovery", () => {
     );
     expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
   });
+
+  it("preserves leading/trailing whitespace in the saved client secret", async () => {
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+    const dispatch = vi.fn();
+
+    mockConvexQuery.mockResolvedValue([]);
+    mockCreateServerWithClientSecret.mockResolvedValue("srv_oauth");
+
+    const { result } = renderUseServerState(dispatch, appState, {
+      isAuthenticated: true,
+      hasSignedInUser: true,
+      useLocalFallback: false,
+      effectiveProjects: appState.projects,
+      activeProjectServersFlat: undefined,
+    });
+
+    await act(async () => {
+      await result.current.saveServerConfigWithoutConnecting({
+        name: "OAuth Server",
+        type: "http",
+        url: "https://oauth.example.com/mcp",
+        useOAuth: true,
+        clientId: "client-id",
+        clientSecret: " secret ",
+      });
+    });
+
+    // The secret must reach the backend exactly as typed. Trimming it here
+    // would silently change a secret that legitimately has surrounding
+    // whitespace.
+    expect(mockCreateServerWithClientSecret).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clientSecret: " secret ",
+      })
+    );
+  });
 });
 
 // NOTE: keep this describe BEFORE "persistRuntimeServerToProjectIfNeeded" —

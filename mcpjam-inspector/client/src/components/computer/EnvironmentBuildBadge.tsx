@@ -1,11 +1,11 @@
 import { Badge } from "@mcpjam/design-system/badge";
-import type { EnvironmentBuildView } from "@/hooks/useComputerEnvironments";
+import type { SandboxImageBuildView } from "@/hooks/useSandboxImages";
 
 /** Build-status chip for an environment, mirroring `ComputerStatusChip`. */
 export function EnvironmentBuildBadge({
   build,
 }: {
-  build: EnvironmentBuildView | null | undefined;
+  build: SandboxImageBuildView | null | undefined;
 }) {
   if (!build) return <Badge variant="outline">Not built</Badge>;
   switch (build.status) {

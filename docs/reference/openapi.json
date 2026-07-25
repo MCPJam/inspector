@@ -22,8 +22,8 @@
       "description": "Project hosts: named model + capability profiles you run chats and eval suites against."
     },
     {
-      "name": "Computer environments",
-      "description": "Custom Computer images: digest-pinned Dockerfile environments your project's computers boot from."
+      "name": "Sandbox images",
+      "description": "Custom Computer images: a digest-pinned Dockerfile built into an immutable image your project's computers boot from."
     },
     {
       "name": "Server diagnostics",
@@ -66,9 +66,7 @@
     "/host-catalog": {
       "get": {
         "operationId": "getHostCompatCatalog",
-        "tags": [
-          "Catalog"
-        ],
+        "tags": ["Catalog"],
         "summary": "Get the host-compat catalog",
         "description": "The versioned host-compatibility catalog backing `mcpjam compat` verdicts. Public and unauthenticated: static host facts and creation config with no project or user scope. Always returns a catalog — `source` is `live` when the backend publish was reachable and `bundled` when serving the SDK's built-in fallback.",
         "security": [],
@@ -106,17 +104,12 @@
                     },
                     "source": {
                       "type": "string",
-                      "enum": [
-                        "live",
-                        "bundled"
-                      ],
+                      "enum": ["live", "bundled"],
                       "description": "Whether this envelope came from the backend publish or the SDK's bundled fallback."
                     },
                     "catalog": {
                       "type": "object",
-                      "required": [
-                        "hostsById"
-                      ],
+                      "required": ["hostsById"],
                       "properties": {
                         "hostsById": {
                           "type": "object",
@@ -191,11 +184,46 @@
         "tags": ["Harness"],
         "summary": "List a harness's native built-in tools",
         "description": "The native tools an agent harness (e.g. `claude-code`) runs INSIDE its sandbox — Bash, Read, Edit, Glob, Grep, WebSearch, and the like. Display-only: these execute via the harness's own agent loop and are NOT callable through MCPJam. Static published-package metadata; no project scope.",
-        "parameters": [{ "name": "harnessId", "in": "path", "required": true, "schema": { "type": "string", "enum": ["claude-code"] }, "description": "The harness id." }],
+        "parameters": [
+          {
+            "name": "harnessId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "enum": ["claude-code"] },
+            "description": "The harness id."
+          }
+        ],
         "responses": {
           "200": {
             "description": "The harness's built-in tools.",
-            "content": { "application/json": { "schema": { "type": "object", "required": ["items"], "properties": { "items": { "type": "array", "items": { "type": "object", "required": ["key", "name"], "properties": { "key": { "type": "string" }, "name": { "type": "string" }, "commonName": { "type": "string" }, "toolUseKind": { "type": "string" }, "description": { "type": "string" }, "inputSchema": { "type": "object", "additionalProperties": true } } } } } } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["items"],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": ["key", "name"],
+                        "properties": {
+                          "key": { "type": "string" },
+                          "name": { "type": "string" },
+                          "commonName": { "type": "string" },
+                          "toolUseKind": { "type": "string" },
+                          "description": { "type": "string" },
+                          "inputSchema": {
+                            "type": "object",
+                            "additionalProperties": true
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
           },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "404": { "$ref": "#/components/responses/NotFound" },
@@ -204,17 +232,21 @@
         }
       }
     },
-    "/projects/{projectId}/computer-environments": {
+    "/projects/{projectId}/images": {
       "get": {
-        "operationId": "listComputerEnvironments",
-        "tags": ["Computer environments"],
-        "summary": "List a project's computer environments",
-        "description": "The custom Computer images (digest-pinned Dockerfile environments) saved in the project — your own personal drafts plus the project-shared ones.",
+        "operationId": "listSandboxImages",
+        "tags": ["Sandbox images"],
+        "summary": "List a project's sandbox images",
+        "description": "The custom Computer images (digest-pinned Dockerfiles built into immutable images) saved in the project — your own personal drafts plus the project-shared ones.",
         "parameters": [{ "$ref": "#/components/parameters/projectId" }],
         "responses": {
           "200": {
-            "description": "The project's environments.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComputerEnvironmentPage" } } }
+            "description": "The project's sandbox images.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SandboxImagePage" }
+              }
+            }
           },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Forbidden" },
@@ -225,24 +257,33 @@
         }
       },
       "post": {
-        "operationId": "createComputerEnvironment",
-        "tags": ["Computer environments"],
-        "summary": "Create a computer environment",
-        "description": "Create a personal-draft environment from a Dockerfile and respond `201` with its detail. Build it (`POST .../build`) before a computer can boot from it. Guest callers are denied (a write).",
+        "operationId": "createSandboxImage",
+        "tags": ["Sandbox images"],
+        "summary": "Create a sandbox image",
+        "description": "Create a personal-draft sandbox image from a Dockerfile and respond `201` with its detail. Build it (`POST .../build`) before a computer can boot from it. Guest callers are denied (a write).",
         "parameters": [{ "$ref": "#/components/parameters/projectId" }],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/ComputerEnvironmentCreateRequest" },
-              "example": { "name": "scraper", "dockerfile": "FROM debian:bookworm-slim@sha256:...\nRUN apt-get update" }
+              "schema": {
+                "$ref": "#/components/schemas/SandboxImageCreateRequest"
+              },
+              "example": {
+                "name": "scraper",
+                "dockerfile": "FROM debian:bookworm-slim@sha256:...\nRUN apt-get update"
+              }
             }
           }
         },
         "responses": {
           "201": {
-            "description": "The environment was created.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComputerEnvironment" } } }
+            "description": "The sandbox image was created.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SandboxImage" }
+              }
+            }
           },
           "400": { "$ref": "#/components/responses/ValidationError" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
@@ -254,20 +295,24 @@
         }
       }
     },
-    "/projects/{projectId}/computer-environments/{environmentId}": {
+    "/projects/{projectId}/images/{imageId}": {
       "get": {
-        "operationId": "getComputerEnvironment",
-        "tags": ["Computer environments"],
-        "summary": "Get a computer environment",
-        "description": "One environment's Dockerfile, sharing, and latest build. An environment that exists but belongs to a different project reads as `404 NOT_FOUND`.",
+        "operationId": "getSandboxImage",
+        "tags": ["Sandbox images"],
+        "summary": "Get a sandbox image",
+        "description": "One sandbox image's Dockerfile, sharing, and latest build. An image that exists but belongs to a different project reads as `404 NOT_FOUND`.",
         "parameters": [
           { "$ref": "#/components/parameters/projectId" },
-          { "$ref": "#/components/parameters/environmentId" }
+          { "$ref": "#/components/parameters/imageId" }
         ],
         "responses": {
           "200": {
-            "description": "The environment.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComputerEnvironment" } } }
+            "description": "The sandbox image.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SandboxImage" }
+              }
+            }
           },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Forbidden" },
@@ -278,27 +323,33 @@
         }
       },
       "patch": {
-        "operationId": "updateComputerEnvironment",
-        "tags": ["Computer environments"],
-        "summary": "Update a computer environment",
-        "description": "Edit an environment's name and/or Dockerfile. Re-build it for the changes to take effect on a computer. Guest callers are denied (a write).",
+        "operationId": "updateSandboxImage",
+        "tags": ["Sandbox images"],
+        "summary": "Update a sandbox image",
+        "description": "Edit a sandbox image's name and/or Dockerfile. Re-build it for the changes to take effect on a computer. Guest callers are denied (a write).",
         "parameters": [
           { "$ref": "#/components/parameters/projectId" },
-          { "$ref": "#/components/parameters/environmentId" }
+          { "$ref": "#/components/parameters/imageId" }
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/ComputerEnvironmentUpdateRequest" },
+              "schema": {
+                "$ref": "#/components/schemas/SandboxImageUpdateRequest"
+              },
               "example": { "name": "scraper (v2)" }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "The updated environment.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComputerEnvironment" } } }
+            "description": "The updated sandbox image.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SandboxImage" }
+              }
+            }
           },
           "400": { "$ref": "#/components/responses/ValidationError" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
@@ -310,18 +361,22 @@
         }
       },
       "delete": {
-        "operationId": "deleteComputerEnvironment",
-        "tags": ["Computer environments"],
-        "summary": "Delete a computer environment",
-        "description": "Permanently delete an environment. Computers booted from it fall back to the base image. Deleting a project-shared environment requires project admin. Bodyless — any field is rejected. Guest callers are denied (a write).",
+        "operationId": "deleteSandboxImage",
+        "tags": ["Sandbox images"],
+        "summary": "Delete a sandbox image",
+        "description": "Permanently delete a sandbox image. Computers booted from it fall back to the base image. Deleting a project-shared image requires project admin. Bodyless — any field is rejected. Guest callers are denied (a write).",
         "parameters": [
           { "$ref": "#/components/parameters/projectId" },
-          { "$ref": "#/components/parameters/environmentId" }
+          { "$ref": "#/components/parameters/imageId" }
         ],
         "responses": {
           "200": {
-            "description": "The environment was deleted.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComputerEnvironmentDeleted" } } }
+            "description": "The sandbox image was deleted.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SandboxImageDeleted" }
+              }
+            }
           },
           "400": { "$ref": "#/components/responses/ValidationError" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
@@ -333,20 +388,26 @@
         }
       }
     },
-    "/projects/{projectId}/computer-environments/{environmentId}/builds": {
+    "/projects/{projectId}/images/{imageId}/builds": {
       "get": {
-        "operationId": "listComputerEnvironmentBuilds",
-        "tags": ["Computer environments"],
-        "summary": "List an environment's builds",
-        "description": "An environment's builds, newest first, each with its status and capped log preview.",
+        "operationId": "listSandboxImageBuilds",
+        "tags": ["Sandbox images"],
+        "summary": "List a sandbox image's builds",
+        "description": "A sandbox image's builds, newest first, each with its status and capped log preview.",
         "parameters": [
           { "$ref": "#/components/parameters/projectId" },
-          { "$ref": "#/components/parameters/environmentId" }
+          { "$ref": "#/components/parameters/imageId" }
         ],
         "responses": {
           "200": {
-            "description": "The environment's builds.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComputerEnvironmentBuildPage" } } }
+            "description": "The sandbox image's builds.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxImageBuildPage"
+                }
+              }
+            }
           },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Forbidden" },
@@ -357,21 +418,27 @@
         }
       }
     },
-    "/projects/{projectId}/computer-environments/{environmentId}/build": {
+    "/projects/{projectId}/images/{imageId}/build": {
       "post": {
-        "operationId": "buildComputerEnvironment",
-        "tags": ["Computer environments"],
-        "summary": "Build a computer environment",
-        "description": "Trigger a build of the environment's image and respond `202`. The build runs asynchronously — poll the builds list for status. Bodyless. Guest callers are denied (a write).",
+        "operationId": "buildSandboxImage",
+        "tags": ["Sandbox images"],
+        "summary": "Build a sandbox image",
+        "description": "Trigger a build of the sandbox image's image and respond `202`. The build runs asynchronously — poll the builds list for status. Bodyless. Guest callers are denied (a write).",
         "parameters": [
           { "$ref": "#/components/parameters/projectId" },
-          { "$ref": "#/components/parameters/environmentId" }
+          { "$ref": "#/components/parameters/imageId" }
         ],
         "requestBody": { "$ref": "#/components/requestBodies/emptyBody" },
         "responses": {
           "202": {
             "description": "The build was accepted.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComputerEnvironmentBuildStarted" } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxImageBuildStarted"
+                }
+              }
+            }
           },
           "400": { "$ref": "#/components/responses/ValidationError" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
@@ -383,21 +450,25 @@
         }
       }
     },
-    "/projects/{projectId}/computer-environments/{environmentId}/promote": {
+    "/projects/{projectId}/images/{imageId}/promote": {
       "post": {
-        "operationId": "promoteComputerEnvironment",
-        "tags": ["Computer environments"],
-        "summary": "Share an environment with the project",
-        "description": "Promote a personal-draft environment to a project-shared one. Requires project admin. Bodyless. Guest callers are denied (a write).",
+        "operationId": "promoteSandboxImage",
+        "tags": ["Sandbox images"],
+        "summary": "Share a sandbox image with the project",
+        "description": "Promote a personal-draft sandbox image to a project-shared one. Requires project admin. Bodyless. Guest callers are denied (a write).",
         "parameters": [
           { "$ref": "#/components/parameters/projectId" },
-          { "$ref": "#/components/parameters/environmentId" }
+          { "$ref": "#/components/parameters/imageId" }
         ],
         "requestBody": { "$ref": "#/components/requestBodies/emptyBody" },
         "responses": {
           "200": {
-            "description": "The now-shared environment.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComputerEnvironment" } } }
+            "description": "The now-shared sandbox image.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SandboxImage" }
+              }
+            }
           },
           "400": { "$ref": "#/components/responses/ValidationError" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
@@ -409,21 +480,25 @@
         }
       }
     },
-    "/projects/{projectId}/computer-environments/{environmentId}/use": {
+    "/projects/{projectId}/images/{imageId}/use": {
       "post": {
-        "operationId": "useComputerEnvironment",
-        "tags": ["Computer environments"],
-        "summary": "Boot your computer from an environment",
-        "description": "Attach the environment to the caller's computer, which re-provisions it from the pinned image (installed files are wiped). The environment must have a `ready` build, and the computer provider must match the build's. Bodyless. Guest callers are denied (a write).",
+        "operationId": "useSandboxImage",
+        "tags": ["Sandbox images"],
+        "summary": "Boot your computer from a sandbox image",
+        "description": "Attach the sandbox image to the caller's computer, which re-provisions it from the pinned image (installed files are wiped). The image must have a `ready` build, and the computer provider must match the build's. Bodyless. Guest callers are denied (a write).",
         "parameters": [
           { "$ref": "#/components/parameters/projectId" },
-          { "$ref": "#/components/parameters/environmentId" }
+          { "$ref": "#/components/parameters/imageId" }
         ],
         "requestBody": { "$ref": "#/components/requestBodies/emptyBody" },
         "responses": {
           "200": {
-            "description": "The environment was attached; the computer is re-provisioning.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComputerAttached" } } }
+            "description": "The sandbox image was attached; the computer is re-provisioning.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ComputerAttached" }
+              }
+            }
           },
           "400": { "$ref": "#/components/responses/ValidationError" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
@@ -438,7 +513,7 @@
     "/projects/{projectId}/computer/reset": {
       "post": {
         "operationId": "resetComputer",
-        "tags": ["Computer environments"],
+        "tags": ["Sandbox images"],
         "summary": "Reset your computer to its image",
         "description": "Reset the caller's computer back to its current image, wiping mutable state. Bodyless. Guest callers are denied (a write).",
         "parameters": [{ "$ref": "#/components/parameters/projectId" }],
@@ -446,7 +521,11 @@
         "responses": {
           "200": {
             "description": "The reset was requested.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ComputerReset" } } }
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ComputerReset" }
+              }
+            }
           },
           "400": { "$ref": "#/components/responses/ValidationError" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
@@ -468,7 +547,11 @@
         "responses": {
           "200": {
             "description": "The project's hosts.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HostPage" } } }
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HostPage" }
+              }
+            }
           },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Forbidden" },
@@ -489,14 +572,22 @@
           "content": {
             "application/json": {
               "schema": { "$ref": "#/components/schemas/HostCreateRequest" },
-              "example": { "name": "Claude", "template": "claude", "theme": "dark" }
+              "example": {
+                "name": "Claude",
+                "template": "claude",
+                "theme": "dark"
+              }
             }
           }
         },
         "responses": {
           "201": {
             "description": "The host was created.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HostDetail" } } }
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HostDetail" }
+              }
+            }
           },
           "400": { "$ref": "#/components/responses/ValidationError" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
@@ -521,7 +612,11 @@
         "responses": {
           "200": {
             "description": "The host settings.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HostDetail" } } }
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HostDetail" }
+              }
+            }
           },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Forbidden" },
@@ -552,7 +647,11 @@
         "responses": {
           "200": {
             "description": "The updated host settings.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HostDetail" } } }
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HostDetail" }
+              }
+            }
           },
           "400": { "$ref": "#/components/responses/ValidationError" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
@@ -579,7 +678,10 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "force": { "type": "boolean", "description": "Delete even if the host is still referenced." }
+                  "force": {
+                    "type": "boolean",
+                    "description": "Delete even if the host is still referenced."
+                  }
                 }
               }
             }
@@ -588,7 +690,11 @@
         "responses": {
           "200": {
             "description": "The host was deleted.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HostDeleted" } } }
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HostDeleted" }
+              }
+            }
           },
           "400": { "$ref": "#/components/responses/ValidationError" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
@@ -1774,11 +1880,11 @@
         "description": "Host ID, as returned by the project's host list.",
         "schema": { "type": "string" }
       },
-      "environmentId": {
-        "name": "environmentId",
+      "imageId": {
+        "name": "imageId",
         "in": "path",
         "required": true,
-        "description": "Computer environment ID, as returned by the project's environment list.",
+        "description": "Sandbox image ID, as returned by the project's image list.",
         "schema": { "type": "string" }
       }
     },
@@ -3030,22 +3136,48 @@
       "Host": {
         "type": "object",
         "description": "A host in a project, as returned by the host list.",
-        "required": ["id", "name", "hostConfigId", "modelId", "serverCount", "createdAt", "updatedAt"],
+        "required": [
+          "id",
+          "name",
+          "hostConfigId",
+          "modelId",
+          "serverCount",
+          "createdAt",
+          "updatedAt"
+        ],
         "properties": {
           "id": { "type": "string" },
           "name": { "type": "string" },
-          "hostConfigId": { "type": "string", "description": "ID of the content-addressed host config this host points at." },
-          "modelId": { "type": "string", "description": "Resolved model id, e.g. `anthropic/claude-haiku-4.5`." },
-          "serverCount": { "type": "integer", "description": "Number of MCP servers attached to the host config." },
-          "createdAt": { "type": "number", "description": "Unix epoch milliseconds." },
-          "updatedAt": { "type": "number", "description": "Unix epoch milliseconds." }
+          "hostConfigId": {
+            "type": "string",
+            "description": "ID of the content-addressed host config this host points at."
+          },
+          "modelId": {
+            "type": "string",
+            "description": "Resolved model id, e.g. `anthropic/claude-haiku-4.5`."
+          },
+          "serverCount": {
+            "type": "integer",
+            "description": "Number of MCP servers attached to the host config."
+          },
+          "createdAt": {
+            "type": "number",
+            "description": "Unix epoch milliseconds."
+          },
+          "updatedAt": {
+            "type": "number",
+            "description": "Unix epoch milliseconds."
+          }
         }
       },
       "HostPage": {
         "type": "object",
         "required": ["items"],
         "properties": {
-          "items": { "type": "array", "items": { "$ref": "#/components/schemas/Host" } }
+          "items": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Host" }
+          }
         }
       },
       "HostDetail": {
@@ -3055,7 +3187,11 @@
         "properties": {
           "id": { "type": "string" },
           "name": { "type": "string" },
-          "config": { "type": "object", "additionalProperties": true, "description": "Host config v2 DTO. Opaque object; shape mirrors the inspector's host editor." }
+          "config": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Host config v2 DTO. Opaque object; shape mirrors the inspector's host editor."
+          }
         }
       },
       "HostCreateRequest": {
@@ -3063,14 +3199,39 @@
         "description": "Create a host from a built-in template OR a full host config. Exactly one of `template` or `config` is required.",
         "required": ["name"],
         "properties": {
-          "name": { "type": "string", "description": "Display name for the new host." },
+          "name": {
+            "type": "string",
+            "description": "Display name for the new host."
+          },
           "template": {
             "type": "string",
             "description": "Built-in template id to seed the host config from.",
-            "enum": ["mcpjam", "claude", "claude-code", "chatgpt", "mistral", "cursor", "codex", "copilot", "vscode", "agentcore", "n8n", "perplexity"]
+            "enum": [
+              "mcpjam",
+              "claude",
+              "claude-code",
+              "chatgpt",
+              "mistral",
+              "cursor",
+              "codex",
+              "copilot",
+              "vscode",
+              "agentcore",
+              "n8n",
+              "perplexity"
+            ]
           },
-          "theme": { "type": "string", "enum": ["light", "dark"], "description": "Theme stamped into the seeded config (template only)." },
-          "config": { "type": "object", "additionalProperties": true, "minProperties": 1, "description": "Full host config v2, used verbatim (alternative to `template`)." }
+          "theme": {
+            "type": "string",
+            "enum": ["light", "dark"],
+            "description": "Theme stamped into the seeded config (template only)."
+          },
+          "config": {
+            "type": "object",
+            "additionalProperties": true,
+            "minProperties": 1,
+            "description": "Full host config v2, used verbatim (alternative to `template`)."
+          }
         },
         "oneOf": [{ "required": ["template"] }, { "required": ["config"] }]
       },
@@ -3079,7 +3240,12 @@
         "description": "Edit a host. Provide at least one of `name` or `config`; only the fields you pass change.",
         "properties": {
           "name": { "type": "string", "description": "New display name." },
-          "config": { "type": "object", "additionalProperties": true, "minProperties": 1, "description": "Replacement host config v2." }
+          "config": {
+            "type": "object",
+            "additionalProperties": true,
+            "minProperties": 1,
+            "description": "Replacement host config v2."
+          }
         },
         "anyOf": [{ "required": ["name"] }, { "required": ["config"] }]
       },
@@ -3091,75 +3257,133 @@
           "deleted": { "type": "boolean", "enum": [true] }
         }
       },
-      "ComputerEnvironmentBuild": {
+      "SandboxImageBuild": {
         "type": "object",
-        "description": "One build of an environment's image.",
-        "required": ["id", "status", "provider", "baseImageDigests", "createdAt"],
+        "description": "One build of a sandbox image's image.",
+        "required": [
+          "id",
+          "status",
+          "provider",
+          "baseImageDigests",
+          "createdAt"
+        ],
         "properties": {
           "id": { "type": "string" },
-          "status": { "type": "string", "enum": ["queued", "building", "ready", "failed"] },
+          "status": {
+            "type": "string",
+            "enum": ["queued", "building", "ready", "failed"]
+          },
           "provider": { "type": "string", "enum": ["e2b", "stub"] },
           "e2bBuildId": { "type": "string" },
-          "baseImageDigests": { "type": "array", "items": { "type": "string" }, "description": "Resolved sha256 digest of every FROM base (the reproducibility pin)." },
-          "logPreview": { "type": "string", "description": "Capped, ANSI-stripped tail of the build log." },
+          "baseImageDigests": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Resolved sha256 digest of every FROM base (the reproducibility pin)."
+          },
+          "logPreview": {
+            "type": "string",
+            "description": "Capped, ANSI-stripped tail of the build log."
+          },
           "error": { "type": "string" },
           "createdAt": { "type": "number" },
           "startedAt": { "type": "number" },
           "finishedAt": { "type": "number" }
         }
       },
-      "ComputerEnvironment": {
+      "SandboxImage": {
         "type": "object",
         "description": "A project's custom Computer image: a digest-pinned Dockerfile plus its latest build.",
-        "required": ["id", "projectId", "name", "dockerfile", "contentHash", "sharing", "isOwner", "currentBuild", "createdAt", "updatedAt"],
+        "required": [
+          "id",
+          "projectId",
+          "name",
+          "dockerfile",
+          "contentHash",
+          "sharing",
+          "isOwner",
+          "currentBuild",
+          "createdAt",
+          "updatedAt"
+        ],
         "properties": {
           "id": { "type": "string" },
           "projectId": { "type": "string" },
           "name": { "type": "string" },
           "dockerfile": { "type": "string" },
           "contentHash": { "type": "string" },
-          "sharing": { "type": "string", "enum": ["user", "project"], "description": "`user` = a personal draft; `project` = shared with the whole project." },
+          "sharing": {
+            "type": "string",
+            "enum": ["user", "project"],
+            "description": "`user` = a personal draft; `project` = shared with the whole project."
+          },
           "isOwner": { "type": "boolean" },
-          "currentBuild": { "oneOf": [{ "$ref": "#/components/schemas/ComputerEnvironmentBuild" }, { "type": "null" }] },
+          "currentBuild": {
+            "oneOf": [
+              { "$ref": "#/components/schemas/SandboxImageBuild" },
+              { "type": "null" }
+            ]
+          },
           "createdAt": { "type": "number" },
           "updatedAt": { "type": "number" }
         }
       },
-      "ComputerEnvironmentPage": {
+      "SandboxImagePage": {
         "type": "object",
         "required": ["items"],
         "properties": {
-          "items": { "type": "array", "items": { "$ref": "#/components/schemas/ComputerEnvironment" } },
+          "items": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/SandboxImage" }
+          },
           "nextCursor": { "type": "string" }
         }
       },
-      "ComputerEnvironmentBuildPage": {
+      "SandboxImageBuildPage": {
         "type": "object",
         "required": ["items"],
         "properties": {
-          "items": { "type": "array", "items": { "$ref": "#/components/schemas/ComputerEnvironmentBuild" } },
+          "items": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/SandboxImageBuild" }
+          },
           "nextCursor": { "type": "string" }
         }
       },
-      "ComputerEnvironmentCreateRequest": {
+      "SandboxImageCreateRequest": {
         "type": "object",
-        "description": "Create an environment from a Dockerfile. The Dockerfile must start FROM an allowlisted official base pinned by @sha256 digest; only FROM + RUN are supported.",
+        "description": "Create a sandbox image from a Dockerfile. The Dockerfile must start FROM an allowlisted official base pinned by @sha256 digest; only FROM + RUN are supported.",
         "required": ["name", "dockerfile"],
         "properties": {
-          "name": { "type": "string", "minLength": 1, "description": "Display name for the new environment; must be non-empty after trimming." },
-          "dockerfile": { "type": "string", "minLength": 1, "description": "Dockerfile text." }
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Display name for the new sandbox image; must be non-empty after trimming."
+          },
+          "dockerfile": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Dockerfile text."
+          }
         }
       },
-      "ComputerEnvironmentUpdateRequest": {
+      "SandboxImageUpdateRequest": {
         "type": "object",
-        "description": "Edit an environment. Provide at least one of `name` or `dockerfile`; only the fields you pass change.",
+        "description": "Edit a sandbox image. Provide at least one of `name` or `dockerfile`; only the fields you pass change.",
         "properties": {
-          "name": { "type": "string", "minLength": 1, "description": "New display name; must be non-empty after trimming." },
-          "dockerfile": { "type": "string", "minLength": 1, "description": "Replacement Dockerfile text." }
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "New display name; must be non-empty after trimming."
+          },
+          "dockerfile": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Replacement Dockerfile text."
+          }
         },
         "anyOf": [{ "required": ["name"] }, { "required": ["dockerfile"] }]
       },
-      "ComputerEnvironmentDeleted": {
+      "SandboxImageDeleted": {
         "type": "object",
         "required": ["id", "deleted"],
         "properties": {
@@ -3167,23 +3391,29 @@
           "deleted": { "type": "boolean", "enum": [true] }
         }
       },
-      "ComputerEnvironmentBuildStarted": {
+      "SandboxImageBuildStarted": {
         "type": "object",
         "description": "A build was accepted (202). It runs in the background — poll the builds list for status.",
         "required": ["id", "buildId", "reused"],
         "properties": {
-          "id": { "type": "string", "description": "The environment id." },
+          "id": { "type": "string", "description": "The sandbox image id." },
           "buildId": { "type": "string" },
-          "reused": { "type": "boolean", "description": "True when an identical prior build was reused instead of rebuilding." }
+          "reused": {
+            "type": "boolean",
+            "description": "True when an identical prior build was reused instead of rebuilding."
+          }
         }
       },
       "ComputerAttached": {
         "type": "object",
-        "required": ["environmentId", "computerId", "status"],
+        "required": ["imageId", "computerId", "status"],
         "properties": {
-          "environmentId": { "type": "string" },
+          "imageId": { "type": "string" },
           "computerId": { "type": "string" },
-          "status": { "type": "string", "description": "The computer's lifecycle status after attaching (it re-provisions)." }
+          "status": {
+            "type": "string",
+            "description": "The computer's lifecycle status after attaching (it re-provisions)."
+          }
         }
       },
       "ComputerReset": {

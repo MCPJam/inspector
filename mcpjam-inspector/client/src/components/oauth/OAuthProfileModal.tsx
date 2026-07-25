@@ -146,7 +146,12 @@ export function OAuthProfileModal({
     }
 
     const trimmedClientId = draft.clientId.trim();
-    const trimmedClientSecret = draft.clientSecret.trim();
+    // Preserve the exact typed secret — only whether there's a real value is
+    // trim-based (whitespace-only counts as none). Trimming the value itself
+    // would silently corrupt a secret with legitimate surrounding whitespace.
+    const trimmedClientSecret = draft.clientSecret.trim()
+      ? draft.clientSecret
+      : "";
     setError(null);
 
     return {

@@ -281,11 +281,51 @@ async function runClientChecks(
 
     return checks;
   } catch (error) {
-    const firstCheck = selectedClientChecks[0];
     const checks: MCPCheckResult[] = [];
 
+    // Era gate applies even when the connection could not be established: an
+    // era-inapplicable check is a deterministic era-skip, never a failure. On a
+    // modern run a connect error must NOT surface a legacy-only check (e.g.
+    // `server-initialize`) as failed, or `result.passed` goes false for a check
+    // that does not apply to the run's era. The surfaced connect failure is
+    // pinned to the first ERA-APPLICABLE check (in legacy that is
+    // `selectedClientChecks[0]`, byte-identical to the pre-era-awareness path).
+    const firstApplicableCheck = selectedClientChecks.find(
+      (check) => !eraGate(check, config.era, config.protocolVersion),
+    );
+
+    // Degenerate modern-era selection: EVERY selected client check is
+    // legacy-only, so there is no era-applicable check to pin the connect
+    // failure to (`firstApplicableCheck` is undefined). The normal loop below
+    // would era-skip all of them and the connection error would vanish — the
+    // run could report `passed` despite never connecting. Anchor the failure on
+    // the first selected check so a genuine connect failure ALWAYS surfaces as
+    // at least one failed result. This branch is unreachable in the legacy era
+    // (every check applies to `legacy`, so `firstApplicableCheck` is always
+    // defined), keeping the legacy path byte-identical to pre-era-awareness.
+    if (!firstApplicableCheck) {
+      return selectedClientChecks.map((check, index) =>
+        index === 0
+          ? failedResult(check, 0, errorMessage(error), undefined, error)
+          : (eraGate(check, config.era, config.protocolVersion) ??
+            skippedResult(
+              check,
+              "Skipping check because the MCP client session could not be established",
+            )),
+      );
+    }
+
     for (const check of selectedClientChecks) {
-      if (check.id === "server-initialize" || check.id === firstCheck.id) {
+      const eraSkip = eraGate(check, config.era, config.protocolVersion);
+      if (eraSkip) {
+        checks.push(eraSkip);
+        continue;
+      }
+
+      if (
+        check.id === "server-initialize" ||
+        check.id === firstApplicableCheck?.id
+      ) {
         checks.push(
           failedResult(
             check,

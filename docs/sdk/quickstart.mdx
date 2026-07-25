@@ -78,7 +78,7 @@ import { MCPClientManager, HostRunner } from "@mcpjam/sdk";
 
 const agent = new HostRunner({
   tools: await manager.getTools(),
-  model: "anthropic/claude-sonnet-4-20250514",
+  model: "anthropic/claude-sonnet-5",
   apiKey: process.env.ANTHROPIC_API_KEY,
   mcpClientManager: manager,
 });
@@ -122,9 +122,12 @@ const test = new EvalTest({
   },
 });
 
-await test.run(agent, { iterations: 30 });
+const run = await test.run(agent, { iterations: 30 });
 
 console.log(`Accuracy: ${(test.accuracy() * 100).toFixed(1)}%`);
+// "Accuracy: 96.7%"
+console.log(`${run.successes}/${run.iterations} passed`);
+// "29/30 passed"
 ```
 
 ## Complete Example
@@ -144,7 +147,7 @@ async function main() {
 
   const agent = new HostRunner({
     tools: await manager.getTools(),
-    model: "anthropic/claude-sonnet-4-20250514",
+    model: "anthropic/claude-sonnet-5",
     apiKey: process.env.ANTHROPIC_API_KEY,
     mcpClientManager: manager,
   });

@@ -29,7 +29,12 @@ import { CiEvalsTab } from "./components/CiEvalsTab";
 import { ChatboxesTab } from "./components/ChatboxesTab";
 import { SwarmsTab } from "./components/swarms/SwarmsTab";
 import { EmptyState } from "./components/ui/empty-state";
-import { canViewSwarms, useViewerProjectRole } from "./hooks/useProjects";
+import {
+  canManageAsOwnerOrAdmin,
+  canViewSwarms,
+  useViewerProjectRole,
+} from "./hooks/useProjects";
+import { ProjectEnvironmentsRoute } from "./components/project-environments/ProjectEnvironmentsRoute";
 import { SettingsTab } from "./components/SettingsTab";
 import { ApiKeysRoute } from "./components/settings/ApiKeysRoute";
 import { ProjectSettingsTab } from "./components/ProjectSettingsTab";
@@ -516,6 +521,8 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <ChatboxesRoute />;
     case "swarms":
       return <SwarmsRoute />;
+    case "environments":
+      return <EnvironmentsRoute />;
     case "playground":
       return <PlaygroundRoute />;
     case "support":
@@ -989,12 +996,10 @@ export function ToolsRoute() {
           serverConnectionStatus={
             selectedServerEntry?.connectionStatus ?? "disconnected"
           }
-          mcpToolResultImageRendering={
-            gateMcpToolResultImageRenderingByModelVisibility(
-              activeHost?.config?.mcpToolResultImageRendering,
-              activeHost?.config?.modelVisibleMcpToolResults
-            )
-          }
+          mcpToolResultImageRendering={gateMcpToolResultImageRenderingByModelVisibility(
+            activeHost?.config?.mcpToolResultImageRendering,
+            activeHost?.config?.modelVisibleMcpToolResults
+          )}
         />
       </div>
     </ActiveHostCapsResolverScope>
@@ -1200,6 +1205,40 @@ export function SwarmsRoute() {
       key={convexProjectId ?? "no-project"}
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
+    />
+  );
+}
+
+export function EnvironmentsRoute() {
+  // Project environments (host + server group + skills bundles). The page
+  // component itself enforces the `project-environments-enabled` flag —
+  // rendering the standard redirect when off — so a direct `/environments`
+  // URL cannot bypass the sidebar gate. Writes are project-admin only
+  // (`canManageHosts` mirrors the backend's admin gate); everyone else
+  // browses read-only.
+  const { convexProjectId, isAuthenticated } = useAppRouteContext();
+  const { user, isLoading: isWorkOsLoading } = useAuth();
+  const isWorkOsSignedIn = !!user;
+  const { role } = useViewerProjectRole({
+    isAuthenticated,
+    projectId: convexProjectId,
+    viewerEmail: user?.email,
+    identityLoading: isWorkOsLoading,
+  });
+  // Shared with SwarmsTab and unit-tested in `useProjects.test.ts`: WorkOS
+  // viewers take the role-based admin gate; a SETTLED anonymous Convex owner
+  // gets management (they never receive a role); fail-closed while hydrating.
+  const canManage = canManageAsOwnerOrAdmin({
+    isWorkOsSignedIn,
+    role,
+    isAuthenticated,
+    hasProject: !!convexProjectId,
+    identityLoading: isWorkOsLoading,
+  });
+  return (
+    <ProjectEnvironmentsRoute
+      projectId={convexProjectId ?? null}
+      canManage={canManage}
     />
   );
 }
@@ -1623,8 +1662,8 @@ export default function App() {
     activeTab === "oauth-flow"
       ? "oauth"
       : activeTab === "xaa-flow" && xaaEnabled === true
-        ? "xaa"
-        : null;
+      ? "xaa"
+      : null;
   const { hidden: hiddenHeaderServers, hide: hideHeaderServer } =
     useHiddenHeaderServers(headerHiddenSurface);
 
@@ -2107,8 +2146,8 @@ export default function App() {
     const names = appState.selectedMultipleServers.length
       ? appState.selectedMultipleServers
       : appState.selectedServer && appState.selectedServer !== "none"
-        ? [appState.selectedServer]
-        : [];
+      ? [appState.selectedServer]
+      : [];
     publishSelectedServerNames(names);
   }, [appState.selectedMultipleServers, appState.selectedServer]);
   const persistRuntimeServerToProjectRef = useRef(
@@ -2859,7 +2898,9 @@ export default function App() {
         if (hasSurfaceKey && !isAppSurfaceId(requested)) {
           throw createInspectorCommandClientError(
             "invalid_request",
-            `Invalid surface ${JSON.stringify(requested)}. Omit it to snapshot the whole app, or pass a known screen id.`
+            `Invalid surface ${JSON.stringify(
+              requested
+            )}. Omit it to snapshot the whole app, or pass a known screen id.`
           );
         }
 
@@ -2893,8 +2934,8 @@ export default function App() {
         const selectedServers = appState.selectedMultipleServers?.length
           ? appState.selectedMultipleServers
           : focused
-            ? [focused]
-            : [];
+          ? [focused]
+          : [];
         return {
           path: pathname,
           activeTab: pathnameToActiveTab(pathname),

@@ -5,7 +5,7 @@ icon: "git-branch"
 tag: "Preview"
 ---
 
-The inspector can speak more than one version of the MCP protocol. By default it negotiates whatever the SDK considers current, but you can pin a different version when you want to test how your server behaves against a specific draft — including the new **2026-07-28 stateless RC**.
+The inspector can speak more than one version of the MCP protocol. By default (**Automatic**) it negotiates whatever the SDK considers current at connect time, but you can pin a specific version when you want to test how your server behaves against a particular revision — including the **2026-07-28 stateless RC** or any earlier stable release.
 
 This page covers how to pick a version. Automatic per-server version detection is on the roadmap; for now you tell the inspector which version to use.
 
@@ -25,11 +25,20 @@ Use the host default when you want every server in a Client to speak the same ve
 
 ## Available versions
 
-| Option                               | Protocol version | Transport                                       | Use it when                                                                                                                                 |
-| ------------------------------------ | ---------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Latest**                           | `2025-11-25`     | HTTP, STDIO, SSE                                | The current stable MCP. Default for everything not opted in to the RC.                                                                      |
-| **2026 RC**                          | `2026-07-28`     | HTTP in MCPJam's preview (Streamable HTTP POST) | You want to test your server against the stateless RC — no `initialize` handshake, `server/discover` for capabilities, per-request `_meta`. |
-| **Host default** _(per-server only)_ | —                | —                                               | Inherit whatever the Client's MCP Protocol tab is set to.                                                                                   |
+### Host default (client-level) dropdown
+
+| Option                    | Stored pin         | Transport                                       | Use it when                                                                                                                                 |
+| ------------------------- | ------------------ | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Automatic**             | none               | —                                               | The SDK picks the wire version at connect time. This is the default; no pin is stored.                                                      |
+| **2026 RC (2026-07-28)**  | `2026-07-28`       | HTTP in MCPJam's preview (Streamable HTTP POST) | You want to test your server against the stateless RC — no `initialize` handshake, `server/discover` for capabilities, per-request `_meta`. |
+| **Latest (2025-11-25)**   | `2025-11-25`       | HTTP, STDIO, SSE                                | Pin to the current stable release. The initialize handshake offers only this version.                                                       |
+| **2025-06-18**            | `2025-06-18`       | HTTP, STDIO, SSE                                | Test against the June 2025 stable revision.                                                                                                 |
+| **2025-03-26**            | `2025-03-26`       | HTTP, STDIO, SSE                                | Test against the March 2025 stable revision.                                                                                                |
+| **Host default** _(per-server only)_ | —     | —                                               | Inherit whatever the Client's MCP Protocol tab is set to.                                                                                   |
+
+**Automatic** stores no pin — the absence of a pin is the meaning, not a hidden default. Picking any other option stores that exact version literal and narrows the `initialize` handshake's accept-list to that single revision.
+
+**Latest (2025-11-25)** is derived, not hardcoded: it always labels the newest non-RC stable version in the SDK's known-version list. When a newer stable version is added, the "Latest" marker moves forward automatically.
 
 The 2026 RC applies the stateless model across transports. MCPJam's initial preview client is narrower: it currently supports the RC over Streamable HTTP POST. The per-server dropdown hides the RC option for STDIO and legacy SSE servers; if a host-level RC default reaches a non-HTTP server, the inspector fails the connection with a clear transport error instead of silently attempting the wrong protocol.
 
@@ -39,7 +48,7 @@ The 2026 RC applies the stateless model across transports. MCPJam's initial prev
   <img
     className="block"
     src="/images/protocol-versions/host-default-dropdown.png"
-    alt="Client editor with the MCP Protocol tab open and the Protocol version dropdown showing Latest (2025-11-25) and 2026 RC (2026-07-28) options"
+    alt="Client editor with the MCP Protocol tab open and the Protocol version dropdown showing Automatic, 2026 RC (2026-07-28), Latest (2025-11-25), 2025-06-18, and 2025-03-26 options"
     width="1000"
   />
 </Frame>
@@ -47,10 +56,14 @@ The 2026 RC applies the stateless model across transports. MCPJam's initial prev
 1. Open the **Clients** tab.
 2. Pick the Client you want to edit (or create a new one).
 3. Open the **MCP Protocol** tab.
-4. In the **Protocol version** dropdown, pick **Latest** or **2026 RC (2026-07-28)**.
+4. In the **Protocol version** dropdown, pick a version:
+   - **Automatic** — no pin stored; the SDK picks the version at connect time (default).
+   - **2026 RC (2026-07-28)** — pin to the stateless RC.
+   - **Latest (2025-11-25)** — pin to the current stable release.
+   - **2025-06-18** or **2025-03-26** — pin to an earlier stable revision.
 5. Save.
 
-Every server attached to this Client now connects with that version unless it has its own per-server override.
+Every server attached to this Client now connects with that version unless it has its own per-server override. A helper note appears below the dropdown whenever a version is pinned, describing what the pin stores.
 
 ## Overriding a single server
 
@@ -63,7 +76,7 @@ When adding a server to a shared project, the **Connection overrides** section o
 1. Click **Add server** in the **Servers** tab.
 2. Fill in the server details.
 3. Expand **Connection overrides**.
-4. Pick **Client default**, **Latest (2025-11-25)**, or **2026 RC (2026-07-28)** from the **Protocol version** dropdown.
+4. Pick **Client default**, **Latest (2025-11-25)**, **2026 RC (2026-07-28)**, or an earlier stable revision from the **Protocol version** dropdown.
 5. Submit the form.
 
 The pin is applied once the server is created and the connection is established.
@@ -73,7 +86,7 @@ The pin is applied once the server is created and the connection is established.
 1. Go to the **Servers** tab.
 2. Click the three dots on the server card → **Edit** (or open **View server info** → **Edit**).
 3. Expand **Advanced settings**.
-4. Find **Protocol version** and pick **Host default**, **Latest (2025-11-25)**, or **2026 RC (2026-07-28)**.
+4. Find **Protocol version** and pick **Host default**, **Latest (2025-11-25)**, **2026 RC (2026-07-28)**, or an earlier stable revision.
 5. Save and reconnect the server.
 
 The per-server override is the more specific signal — it wins over whatever the Client's MCP Protocol tab says.
@@ -126,9 +139,9 @@ For everything else — `tools/list`, `tools/call`, `resources/*`, `prompts/*`, 
 4. Run a `tools/list` and a `tools/call` from the **Tools** tab.
 5. Watch the **Activity** log for the request `_meta` and the `MCP-Protocol-Version` header.
 6. Try an unsupported version on a second test server to confirm your `-32004` error envelope looks right.
-7. Once your server is happy on the RC, keep one Client on **Latest** so you can flip between versions without rewriting settings.
+7. Once your server is happy on the RC, keep one Client on **Automatic** (or pinned to **Latest (2025-11-25)**) so you can flip between versions without rewriting settings.
 
-If you need to talk to a mix of servers on different versions in the same Client, use per-server overrides — the RC server stays pinned to `2026-07-28`, the rest fall back to Latest.
+If you need to talk to a mix of servers on different versions in the same Client, use per-server overrides — the RC server stays pinned to `2026-07-28`, the rest fall back to the host default.
 
 ## Recommended reading
 

@@ -284,6 +284,16 @@ const createEvalRunSchema = RunEvalsRequestSchema.omit({
   })
   .refine((body) => body.suiteId || (body.serverIds?.length ?? 0) > 0, {
     message: "serverIds are required when creating a new suite",
+  })
+  // Environment runs need the pre-connection resolution the hosted `/run`
+  // route performs; the public surface connects the suite's saved selection
+  // before `prepareEvalRun`, so an `environmentId` here would run against the
+  // wrong servers. Reject it explicitly rather than silently ignore — public
+  // environment launches are a deferred follow-up (plan A9).
+  .refine((body) => !body.environmentId, {
+    message:
+      "environmentId is not supported on the public API yet — run environment suites from the app.",
+    path: ["environmentId"],
   });
 
 // ── Author-only suite-create schema ──────────────────────────────────
@@ -928,6 +938,11 @@ function toSuiteDetailDto(suite: SuiteDoc, execConfig: any) {
             : {}),
         }))
       : [],
+    // Attach-ordered project environments. READ-ONLY on the public API in
+    // this release — the write path is an explicit follow-up decision.
+    environmentIds: Array.isArray(suite.environmentIds)
+      ? suite.environmentIds.map(String)
+      : [],
     settings: {
       minimumAccuracy:
         typeof suite.defaultPassCriteria?.minimumPassRate === "number"
@@ -949,6 +964,9 @@ function toSuiteDetailDto(suite: SuiteDoc, execConfig: any) {
         typeof suite.schedule?.intervalMinutes === "number"
           ? suite.schedule.intervalMinutes
           : null,
+      environmentId: suite.schedule?.environmentId
+        ? String(suite.schedule.environmentId)
+        : null,
     },
     createdAt: suite.createdAt ?? null,
     updatedAt: suite.updatedAt ?? null,

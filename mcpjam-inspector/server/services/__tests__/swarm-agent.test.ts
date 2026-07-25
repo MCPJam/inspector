@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createJourneyRun } from "../swarm-agent.js";
+import {
+  createJourneyRun,
+  fetchPinnedSkill,
+  PinnedSkillIntegrityError,
+  reportAttempt,
+} from "../swarm-agent.js";
 
 /**
  * CONTRACT-LEVEL tests for the inspector→backend journey-execution boundary.
@@ -77,5 +82,143 @@ describe("swarm-agent createJourneyRun — request-body contract", () => {
     // And the bearer is forwarded as a JWT for the JWT-only Convex HTTP action.
     const headers = (init as RequestInit).headers as Record<string, string>;
     expect(headers.Authorization).toBe("Bearer bearer-token");
+  });
+});
+
+describe("swarm-agent fetchPinnedSkill — wire contract", () => {
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const okSkill = (contentHash: string) => ({
+    ok: true,
+    skill: {
+      name: "sk",
+      description: "d",
+      content: "# body",
+      contentHash,
+    },
+  });
+
+  it("GETs /journey-execution/runs/skill with URL-ENCODED query params + bearer", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify(okSkill("h 1+2")), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    );
+
+    const skill = await fetchPinnedSkill(CONVEX_HTTP_URL, "bearer-token", {
+      projectId: "proj/1",
+      runId: "run-1",
+      targetId: "environment:env&1",
+      contentHash: "h 1+2",
+    });
+    expect(skill.content).toBe("# body");
+
+    const [url, init] = fetchMock.mock.calls[0]!;
+    const parsed = new URL(String(url));
+    expect(parsed.pathname).toBe("/journey-execution/runs/skill");
+    // Decoded params round-trip the raw values — i.e. they were encoded.
+    expect(parsed.searchParams.get("projectId")).toBe("proj/1");
+    expect(parsed.searchParams.get("targetId")).toBe("environment:env&1");
+    expect(parsed.searchParams.get("contentHash")).toBe("h 1+2");
+    expect(parsed.searchParams.get("runId")).toBe("run-1");
+    expect((init as RequestInit).method).toBe("GET");
+    expect(
+      new Headers((init as RequestInit).headers).get("Authorization")
+    ).toBe("Bearer bearer-token");
+  });
+
+  it("surfaces a 404 as SwarmAgentError with status 404 (non-retryable downstream)", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ ok: false, code: "not_found" }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      })
+    );
+    await expect(
+      fetchPinnedSkill(CONVEX_HTTP_URL, "b", {
+        projectId: "p",
+        runId: "r",
+        targetId: "t",
+        contentHash: "h",
+      })
+    ).rejects.toMatchObject({ name: "SwarmAgentError", status: 404 });
+  });
+
+  it("rejects a served hash that does not match the requested one (integrity)", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify(okSkill("other-hash")), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    );
+    await expect(
+      fetchPinnedSkill(CONVEX_HTTP_URL, "b", {
+        projectId: "p",
+        runId: "r",
+        targetId: "t",
+        contentHash: "requested-hash",
+      })
+    ).rejects.toBeInstanceOf(PinnedSkillIntegrityError);
+  });
+});
+
+describe("swarm-agent reportAttempt — targetId echo", () => {
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("spreads targetId into the body when present and omits it when absent", async () => {
+    fetchMock.mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ ok: true, applied: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+    );
+
+    await reportAttempt(CONVEX_HTTP_URL, "b", {
+      projectId: "p",
+      runId: "r",
+      hostId: "h",
+      targetId: "environment:e1",
+      sessionIdx: 0,
+      status: "running",
+      chatSessionId: "synth_r_env_e1_0",
+    });
+    const withTarget = JSON.parse(
+      (fetchMock.mock.calls[0]![1] as RequestInit).body as string
+    );
+    expect(withTarget.targetId).toBe("environment:e1");
+    expect(withTarget.hostId).toBe("h");
+
+    await reportAttempt(CONVEX_HTTP_URL, "b", {
+      projectId: "p",
+      runId: "r",
+      hostId: "h",
+      sessionIdx: 0,
+      status: "running",
+      chatSessionId: "synth_r_h_0",
+    });
+    const withoutTarget = JSON.parse(
+      (fetchMock.mock.calls[1]![1] as RequestInit).body as string
+    );
+    expect("targetId" in withoutTarget).toBe(false);
   });
 });

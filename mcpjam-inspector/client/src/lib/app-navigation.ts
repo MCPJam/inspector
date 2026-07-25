@@ -42,6 +42,7 @@ export const routePaths = {
   tracing: "/tracing",
   chatboxes: "/chatboxes",
   swarms: "/swarms",
+  environments: "/environments",
   playground: "/playground",
   support: "/support",
   settings: "/settings",
