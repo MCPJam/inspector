@@ -23,11 +23,13 @@
  */
 
 import { useCallback, useMemo } from "react";
-import { useAction, useMutation, useQuery } from "convex/react";
+import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react";
 import {
+  assertPluginBundleWithinCap,
   toPluginApiError,
   uploadPluginBundleToUrl,
 } from "@/lib/plugins/plugin-api";
+import { shouldQueryProjectId } from "./useProjects";
 import {
   PluginApiError,
   type PluginCommitResult,
@@ -44,8 +46,19 @@ import { usePluginsEnabled } from "./usePluginsEnabled";
 // ---------------------------------------------------------------------------
 // Query hooks (reactive Convex subscriptions — the "polling" of the plan's
 // import-progress requirement is a live subscription, not an interval).
-// All skip while `plugins-enabled` is off/loading or arguments are absent.
+// All skip while `plugins-enabled` is off/loading, auth has not resolved, or
+// arguments are absent. Project-scoped hooks additionally gate on
+// `shouldQueryProjectId` (the useProjects/useChatboxes convention): a
+// transient LOCAL project id (UUID or `local_`/`project_` placeholder) is
+// truthy but would throw an ArgumentValidationError during hydration.
 // ---------------------------------------------------------------------------
+
+/** Shared gate: `plugins-enabled` (fail-closed) AND Convex auth resolved. */
+function usePluginQueriesReady(): boolean {
+  const enabled = usePluginsEnabled();
+  const { isAuthenticated } = useConvexAuth();
+  return enabled && isAuthenticated;
+}
 
 /**
  * Subscribe to an import row's progress (`plugins.getPluginImport`).
@@ -56,10 +69,10 @@ import { usePluginsEnabled } from "./usePluginsEnabled";
 export function usePluginImport(
   importId: string | null | undefined,
 ): PluginImportRow | undefined {
-  const enabled = usePluginsEnabled();
+  const ready = usePluginQueriesReady();
   return useQuery(
     "plugins:getPluginImport" as any,
-    enabled && importId ? ({ importId } as any) : "skip",
+    ready && importId ? ({ importId } as any) : "skip",
   ) as PluginImportRow | undefined;
 }
 
@@ -67,10 +80,10 @@ export function usePluginImport(
 export function useProjectPlugins(
   projectId: string | null | undefined,
 ): PluginSummary[] | undefined {
-  const enabled = usePluginsEnabled();
+  const ready = usePluginQueriesReady();
   return useQuery(
     "plugins:listProjectPlugins" as any,
-    enabled && projectId ? ({ projectId } as any) : "skip",
+    ready && shouldQueryProjectId(projectId) ? ({ projectId } as any) : "skip",
   ) as PluginSummary[] | undefined;
 }
 
@@ -78,10 +91,10 @@ export function useProjectPlugins(
 export function useProjectPlugin(
   pluginId: string | null | undefined,
 ): PluginDetail | undefined {
-  const enabled = usePluginsEnabled();
+  const ready = usePluginQueriesReady();
   return useQuery(
     "plugins:getProjectPlugin" as any,
-    enabled && pluginId ? ({ pluginId } as any) : "skip",
+    ready && pluginId ? ({ pluginId } as any) : "skip",
   ) as PluginDetail | undefined;
 }
 
@@ -89,10 +102,10 @@ export function useProjectPlugin(
 export function usePluginVersion(
   pluginVersionId: string | null | undefined,
 ): PluginVersionDetail | undefined {
-  const enabled = usePluginsEnabled();
+  const ready = usePluginQueriesReady();
   return useQuery(
     "plugins:getPluginVersion" as any,
-    enabled && pluginVersionId ? ({ pluginVersionId } as any) : "skip",
+    ready && pluginVersionId ? ({ pluginVersionId } as any) : "skip",
   ) as PluginVersionDetail | undefined;
 }
 
@@ -100,10 +113,10 @@ export function usePluginVersion(
 export function usePluginSetupStatus(
   pluginVersionId: string | null | undefined,
 ): PluginSetupStatus | undefined {
-  const enabled = usePluginsEnabled();
+  const ready = usePluginQueriesReady();
   return useQuery(
     "plugins:getPluginSetupStatus" as any,
-    enabled && pluginVersionId ? ({ pluginVersionId } as any) : "skip",
+    ready && pluginVersionId ? ({ pluginVersionId } as any) : "skip",
   ) as PluginSetupStatus | undefined;
 }
 
@@ -117,10 +130,10 @@ export function usePluginRuntimePreview(
   projectId: string | null | undefined,
   pluginVersionIds: string[] | null | undefined,
 ): PluginRuntimePreview | undefined {
-  const enabled = usePluginsEnabled();
+  const ready = usePluginQueriesReady();
   return useQuery(
     "plugins:resolvePluginRuntimePreview" as any,
-    enabled && projectId && pluginVersionIds
+    ready && shouldQueryProjectId(projectId) && pluginVersionIds
       ? ({ projectId, pluginVersionIds } as any)
       : "skip",
   ) as PluginRuntimePreview | undefined;
@@ -266,6 +279,10 @@ export function usePluginImportActions(): PluginImportActions {
   const startImport = useCallback(
     async (args: StartPluginImportArgs): Promise<StartPluginImportResult> => {
       requireEnabled();
+      // Size-check BEFORE minting: generateBundleUploadUrl is rate-limited,
+      // and an oversized bundle must not burn a token on a doomed upload.
+      // uploadPluginBundleToUrl re-checks as defense in depth.
+      assertPluginBundleWithinCap(args.bundle);
       const uploadUrl = await generateBundleUploadUrl(args.projectId);
       const bundleStorageId = await uploadPluginBundleToUrl(
         uploadUrl,

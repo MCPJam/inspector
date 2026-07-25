@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import {
+  assertPluginBundleWithinCap,
   MAX_PLUGIN_BUNDLE_COMPRESSED_BYTES,
   toPluginApiError,
   uploadPluginBundleToUrl,
@@ -20,12 +21,15 @@ describe("uploadPluginBundleToUrl", () => {
     const storageId = await uploadPluginBundleToUrl(
       "https://upload.example/x",
       new Uint8Array([1, 2, 3]),
-      fetchImpl as unknown as typeof fetch,
+      { fetchImpl: fetchImpl as unknown as typeof fetch },
     );
     expect(storageId).toBe("st_123");
     expect(fetchImpl).toHaveBeenCalledWith(
       "https://upload.example/x",
-      expect.objectContaining({ method: "POST" }),
+      expect.objectContaining({
+        method: "POST",
+        signal: expect.any(AbortSignal),
+      }),
     );
   });
 
@@ -36,11 +40,9 @@ describe("uploadPluginBundleToUrl", () => {
     } as unknown as Blob;
     Object.setPrototypeOf(oversized, Blob.prototype);
     await expect(
-      uploadPluginBundleToUrl(
-        "https://upload.example/x",
-        oversized,
-        fetchImpl as unknown as typeof fetch,
-      ),
+      uploadPluginBundleToUrl("https://upload.example/x", oversized, {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      }),
     ).rejects.toMatchObject({ code: "ARCHIVE_TOO_LARGE_COMPRESSED" });
     expect(fetchImpl).not.toHaveBeenCalled();
   });
@@ -50,23 +52,66 @@ describe("uploadPluginBundleToUrl", () => {
       async () => ({ ok: false, status: 500 }) as unknown as Response,
     );
     await expect(
-      uploadPluginBundleToUrl(
-        "https://upload.example/x",
-        new Uint8Array([1]),
-        fetchImpl as unknown as typeof fetch,
-      ),
+      uploadPluginBundleToUrl("https://upload.example/x", new Uint8Array([1]), {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      }),
     ).rejects.toMatchObject({ code: "UPLOAD_FAILED" });
   });
 
   it("maps a missing storageId to UPLOAD_FAILED", async () => {
     const fetchImpl = vi.fn(async () => okJson({}));
     await expect(
-      uploadPluginBundleToUrl(
-        "https://upload.example/x",
-        new Uint8Array([1]),
-        fetchImpl as unknown as typeof fetch,
-      ),
+      uploadPluginBundleToUrl("https://upload.example/x", new Uint8Array([1]), {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      }),
     ).rejects.toMatchObject({ code: "UPLOAD_FAILED" });
+  });
+
+  it("rejects an empty-string storageId as UPLOAD_FAILED", async () => {
+    const fetchImpl = vi.fn(async () => okJson({ storageId: "" }));
+    await expect(
+      uploadPluginBundleToUrl("https://upload.example/x", new Uint8Array([1]), {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      }),
+    ).rejects.toMatchObject({ code: "UPLOAD_FAILED" });
+  });
+
+  it("aborts a stalled upload after timeoutMs", async () => {
+    const fetchImpl = vi.fn(
+      (_url: string, init: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () =>
+            reject(
+              new DOMException("The operation was aborted.", "AbortError"),
+            ),
+          );
+        }),
+    );
+    await expect(
+      uploadPluginBundleToUrl("https://upload.example/x", new Uint8Array([1]), {
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        timeoutMs: 20,
+      }),
+    ).rejects.toMatchObject({
+      code: "UPLOAD_FAILED",
+      message: expect.stringContaining("timed out"),
+    });
+  });
+});
+
+describe("assertPluginBundleWithinCap", () => {
+  it("accepts a bundle at the cap and rejects one byte over", () => {
+    const atCap = {
+      size: MAX_PLUGIN_BUNDLE_COMPRESSED_BYTES,
+    } as unknown as Blob;
+    Object.setPrototypeOf(atCap, Blob.prototype);
+    expect(() => assertPluginBundleWithinCap(atCap)).not.toThrow();
+
+    const overCap = {
+      size: MAX_PLUGIN_BUNDLE_COMPRESSED_BYTES + 1,
+    } as unknown as Blob;
+    Object.setPrototypeOf(overCap, Blob.prototype);
+    expect(() => assertPluginBundleWithinCap(overCap)).toThrow(PluginApiError);
   });
 });
 

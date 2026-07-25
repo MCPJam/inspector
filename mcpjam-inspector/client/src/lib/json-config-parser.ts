@@ -92,6 +92,15 @@ export function resolveJsonServerMap(config: unknown): ResolvedJsonServerMap {
 }
 
 /**
+ * Shared per-entry guard: a server config must be a plain object (not null,
+ * not an array). Used by both `parseJsonConfig` and `validateJsonConfig` so
+ * the two paths cannot silently diverge.
+ */
+function isServerConfigRecord(value: unknown): value is JsonServerConfig {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
  * Formats ServerWithName objects to JSON config format
  * @param serversObj - Record of server names to ServerWithName objects
  * @returns JsonConfig object ready for export
@@ -153,15 +162,11 @@ export function parseJsonConfig(jsonContent: string): ServerFormData[] {
     for (const [serverName, rawServerConfig] of Object.entries(
       resolved.servers,
     )) {
-      if (
-        !rawServerConfig ||
-        typeof rawServerConfig !== "object" ||
-        Array.isArray(rawServerConfig)
-      ) {
+      if (!isServerConfigRecord(rawServerConfig)) {
         console.warn(`Skipping invalid server config for "${serverName}"`);
         continue;
       }
-      const serverConfig = rawServerConfig as JsonServerConfig;
+      const serverConfig = rawServerConfig;
 
       // Determine server type based on config
       if (serverConfig.type === "sse" || serverConfig.url) {
@@ -228,18 +233,14 @@ export function validateJsonConfig(jsonContent: string): {
 
     // Validate each server config
     for (const [serverName, serverConfig] of Object.entries(resolved.servers)) {
-      if (
-        !serverConfig ||
-        typeof serverConfig !== "object" ||
-        Array.isArray(serverConfig)
-      ) {
+      if (!isServerConfigRecord(serverConfig)) {
         return {
           success: false,
           error: `Invalid server config for "${serverName}"`,
         };
       }
 
-      const configObj = serverConfig as JsonServerConfig;
+      const configObj = serverConfig;
       const hasCommand =
         configObj.command && typeof configObj.command === "string";
       const hasUrl = configObj.url && typeof configObj.url === "string";

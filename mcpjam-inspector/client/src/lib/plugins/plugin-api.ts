@@ -15,6 +15,38 @@ import { PluginApiError, type PluginApiErrorCode } from "./plugin-api-types";
 export const MAX_PLUGIN_BUNDLE_COMPRESSED_BYTES = 25 * 1024 * 1024; // 25 MB
 
 /**
+ * Default upload timeout. Generous enough for a full 25 MB bundle on a slow
+ * uplink (25 MB at ~1 Mbps ≈ 3.5 min); overridable per call.
+ */
+export const DEFAULT_PLUGIN_UPLOAD_TIMEOUT_MS = 5 * 60 * 1000; // 5 min
+
+/** Compressed byte size of a bundle in either accepted representation. */
+export function pluginBundleByteSize(bundle: Blob | Uint8Array): number {
+  return bundle instanceof Blob ? bundle.size : bundle.byteLength;
+}
+
+/**
+ * Throw `ARCHIVE_TOO_LARGE_COMPRESSED` when a bundle exceeds the backend's
+ * compressed cap. Call this BEFORE minting an upload URL — the mint is
+ * rate-limited, so an oversized bundle must not burn a token on an upload
+ * that can never be imported.
+ */
+export function assertPluginBundleWithinCap(bundle: Blob | Uint8Array): void {
+  if (pluginBundleByteSize(bundle) > MAX_PLUGIN_BUNDLE_COMPRESSED_BYTES) {
+    throw new PluginApiError(
+      "ARCHIVE_TOO_LARGE_COMPRESSED",
+      "The plugin bundle exceeds the maximum compressed size (25 MB).",
+    );
+  }
+}
+
+export interface UploadPluginBundleOptions {
+  fetchImpl?: typeof fetch;
+  /** Abort the upload after this many ms (default 5 minutes). */
+  timeoutMs?: number;
+}
+
+/**
  * Upload a plugin bundle ZIP to a Convex storage upload URL (minted by
  * `plugins.generateBundleUploadUrl`) and return the storage id to pass to
  * `plugins.createImport`.
@@ -22,35 +54,43 @@ export const MAX_PLUGIN_BUNDLE_COMPRESSED_BYTES = 25 * 1024 * 1024; // 25 MB
 export async function uploadPluginBundleToUrl(
   uploadUrl: string,
   bundle: Blob | Uint8Array,
-  fetchImpl: typeof fetch = fetch,
+  options?: UploadPluginBundleOptions,
 ): Promise<string> {
+  const fetchImpl = options?.fetchImpl ?? fetch;
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_PLUGIN_UPLOAD_TIMEOUT_MS;
   const body =
     bundle instanceof Blob
       ? bundle
       : new Blob([bundle as unknown as BlobPart], {
           type: "application/zip",
         });
-  if (body.size > MAX_PLUGIN_BUNDLE_COMPRESSED_BYTES) {
-    throw new PluginApiError(
-      "ARCHIVE_TOO_LARGE_COMPRESSED",
-      "The plugin bundle exceeds the maximum compressed size (25 MB).",
-    );
-  }
+  assertPluginBundleWithinCap(body);
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   let response: Response;
   try {
     response = await fetchImpl(uploadUrl, {
       method: "POST",
       headers: { "Content-Type": "application/zip" },
       body,
+      signal: controller.signal,
     });
   } catch (error) {
+    if (controller.signal.aborted) {
+      throw new PluginApiError(
+        "UPLOAD_FAILED",
+        `Bundle upload timed out after ${timeoutMs}ms`,
+      );
+    }
     throw new PluginApiError(
       "UPLOAD_FAILED",
       `Bundle upload failed: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );
+  } finally {
+    clearTimeout(timeout);
   }
   if (!response.ok) {
     throw new PluginApiError(
@@ -62,13 +102,14 @@ export async function uploadPluginBundleToUrl(
   const payload = (await response.json().catch(() => null)) as {
     storageId?: unknown;
   } | null;
-  if (!payload || typeof payload.storageId !== "string") {
+  const storageId = payload?.storageId;
+  if (typeof storageId !== "string" || storageId.length === 0) {
     throw new PluginApiError(
       "UPLOAD_FAILED",
       "Bundle upload did not return a storage id",
     );
   }
-  return payload.storageId;
+  return storageId;
 }
 
 /**

@@ -156,4 +156,66 @@ describe("createMemoryPluginFileSource", () => {
       "no such bundle file",
     );
   });
+
+  it("enforces maxBytes (throws instead of returning oversized data)", async () => {
+    const source = createMemoryPluginFileSource([textFile("a.txt", "hello")]);
+    await expect(source.readBytes("a.txt", 4)).rejects.toThrow("read limit");
+  });
+});
+
+describe("zipToPluginFiles zip-bomb hardening", () => {
+  // Highly compressible payload: 64 KiB of zeros deflates to ~100 bytes, so
+  // a "bomb" fixture stays tiny on the compressed side while tripping the
+  // (overridden, small) uncompressed limits during extraction.
+  const compressible = (bytes: number): PluginBundleFile => ({
+    path: "big.bin",
+    bytes: new Uint8Array(bytes), // all zeros
+  });
+
+  it("rejects an entry whose uncompressed size exceeds maxFileBytes before inflating it", async () => {
+    const zip = await buildPluginZip([MANIFEST, compressible(64 * 1024)]);
+    await expect(
+      zipToPluginFiles(zip, { limits: { maxFileBytes: 16 * 1024 } }),
+    ).rejects.toMatchObject({
+      name: "PluginBundleError",
+      code: "FILE_TOO_LARGE",
+    });
+  });
+
+  it("rejects when cumulative uncompressed content exceeds maxTotalBytes", async () => {
+    const zip = await buildPluginZip([
+      MANIFEST,
+      { path: "a.bin", bytes: new Uint8Array(32 * 1024) },
+      { path: "b.bin", bytes: new Uint8Array(32 * 1024) },
+    ]);
+    await expect(
+      zipToPluginFiles(zip, {
+        limits: { maxFileBytes: 40 * 1024, maxTotalBytes: 48 * 1024 },
+      }),
+    ).rejects.toMatchObject({
+      name: "PluginBundleError",
+      code: "BUNDLE_TOO_LARGE",
+    });
+  });
+
+  it("rejects an archive with too many entries before reading any of them", async () => {
+    const many = Array.from({ length: 5 }, (_, i) =>
+      textFile(`file-${i}.txt`, String(i)),
+    );
+    const zip = await buildPluginZip(many);
+    await expect(
+      zipToPluginFiles(zip, { limits: { maxEntries: 4 } }),
+    ).rejects.toMatchObject({
+      name: "PluginBundleError",
+      code: "BUNDLE_TOO_MANY_ENTRIES",
+    });
+  });
+
+  it("extracts a compliant archive under the default limits", async () => {
+    const zip = await buildPluginZip([MANIFEST]);
+    const files = await zipToPluginFiles(zip);
+    expect(files.map((file) => file.path)).toEqual([
+      ".codex-plugin/plugin.json",
+    ]);
+  });
 });
