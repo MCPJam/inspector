@@ -2,15 +2,33 @@ import type { MCPResourceTemplate } from "@mcpjam/sdk/browser";
 import { authFetch } from "@/lib/session-token";
 import { ensureLocalMode } from "@/lib/apis/mode-client";
 
+/** SEP-2549 cache-serve provenance (§11.2) — present ONLY on an actual hit. */
+export type ServedFromCache = { ageMs: number };
+
+/** Bare-array return with provenance attached — see `mcp-prompts-api.ts`. */
+export type ResourceTemplateListWithProvenance = MCPResourceTemplate[] & {
+  servedFromCache?: ServedFromCache;
+};
+
 export async function listResourceTemplates(
   serverId: string,
-  opts?: { cursor?: string },
-): Promise<MCPResourceTemplate[]> {
-  const { resourceTemplates } = await listResourceTemplatesPage(
-    serverId,
-    opts,
-  );
-  return resourceTemplates;
+  opts?: { cursor?: string; refresh?: boolean },
+): Promise<ResourceTemplateListWithProvenance> {
+  const { resourceTemplates, servedFromCache } =
+    await listResourceTemplatesPage(serverId, opts);
+  const withProvenance =
+    resourceTemplates as ResourceTemplateListWithProvenance;
+  if (servedFromCache) {
+    // Non-enumerable so object-spread / for-in over the bare array stay
+    // unchanged; provenance is still accessible as `.servedFromCache`.
+    Object.defineProperty(withProvenance, "servedFromCache", {
+      value: servedFromCache,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return withProvenance;
 }
 
 // Cursor-aware variant of `listResourceTemplates`, additive alongside it:
@@ -20,8 +38,12 @@ export async function listResourceTemplates(
 // Templates UI would call.
 export async function listResourceTemplatesPage(
   serverId: string,
-  opts?: { cursor?: string },
-): Promise<{ resourceTemplates: MCPResourceTemplate[]; nextCursor?: string }> {
+  opts?: { cursor?: string; refresh?: boolean },
+): Promise<{
+  resourceTemplates: MCPResourceTemplate[];
+  nextCursor?: string;
+  servedFromCache?: ServedFromCache;
+}> {
   ensureLocalMode("Resource templates are not supported in hosted mode");
 
   const res = await authFetch("/api/mcp/resource-templates/list", {
@@ -30,6 +52,7 @@ export async function listResourceTemplatesPage(
     body: JSON.stringify({
       serverId,
       ...(opts?.cursor ? { cursor: opts.cursor } : {}),
+      ...(opts?.refresh === true ? { refresh: true } : {}),
     }),
   });
 
@@ -50,6 +73,9 @@ export async function listResourceTemplatesPage(
       : [],
     ...(typeof body?.nextCursor === "string"
       ? { nextCursor: body.nextCursor }
+      : {}),
+    ...(body?.servedFromCache
+      ? { servedFromCache: body.servedFromCache as ServedFromCache }
       : {}),
   };
 }

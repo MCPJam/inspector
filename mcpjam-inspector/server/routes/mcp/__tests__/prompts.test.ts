@@ -189,6 +189,7 @@ describe("POST /api/mcp/prompts/list — cursor parity", () => {
     expect(mcpClientManager.listPrompts).toHaveBeenCalledWith(
       "test-server",
       undefined,
+      undefined,
     );
   });
 
@@ -207,9 +208,11 @@ describe("POST /api/mcp/prompts/list — cursor parity", () => {
       "prompt-4",
     ]);
     expect(data.nextCursor).toBe("4");
-    expect(mcpClientManager.listPrompts).toHaveBeenCalledWith("test-server", {
-      cursor: "2",
-    });
+    expect(mcpClientManager.listPrompts).toHaveBeenCalledWith(
+      "test-server",
+      { cursor: "2" },
+      undefined,
+    );
   });
 
   it("omits nextCursor on the final page", async () => {

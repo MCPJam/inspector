@@ -19,6 +19,7 @@ import {
   warnOnConvexDevMisconfiguration,
 } from "./env";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy";
+import { cacheEventLogger } from "./utils/cache-events";
 
 // Security imports
 import {
@@ -297,6 +298,10 @@ const mcpClientManager = new MCPClientManager(
         message,
       });
     },
+    // SEP-2549 cache-serve provenance — a channel SEPARATE from rpcLogger
+    // (see server/utils/cache-events.ts). Routes opt in per-request via
+    // `withCacheEventCapture`; this callback is a no-op outside that scope.
+    cacheEventLogger,
   }
 );
 // Middleware to inject client manager into context

@@ -5,6 +5,9 @@ import {
 } from "@/lib/apis/web/resources-api";
 import { runByMode } from "@/lib/apis/mode-client";
 
+/** SEP-2549 cache-serve provenance (§11.2) — present ONLY on an actual hit. */
+export type ServedFromCache = { ageMs: number };
+
 export type ListResourcesResult = {
   resources: Array<{
     uri: string;
@@ -13,12 +16,13 @@ export type ListResourcesResult = {
     mimeType?: string;
   }>;
   nextCursor?: string;
+  servedFromCache?: ServedFromCache;
 };
 
 export async function listResources(
   serverId: string,
   cursor?: string,
-  opts?: { forceHosted?: boolean },
+  opts?: { forceHosted?: boolean; refresh?: boolean },
 ): Promise<ListResourcesResult> {
   return runByMode({
     forceHosted: opts?.forceHosted,
@@ -27,6 +31,7 @@ export async function listResources(
         serverNameOrId: serverId,
         cursor,
       });
+      // Hosted direct-ops always bypass the response cache server-side.
       return {
         resources: body.resources || [],
         nextCursor: body.nextCursor,
@@ -36,7 +41,7 @@ export async function listResources(
       const res = await authFetch("/api/mcp/resources/list", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ serverId, cursor }),
+        body: JSON.stringify({ serverId, cursor, refresh: opts?.refresh }),
       });
 
       let body: any = null;
@@ -51,6 +56,7 @@ export async function listResources(
       return {
         resources: body.resources || [],
         nextCursor: body.nextCursor,
+        servedFromCache: body.servedFromCache,
       };
     },
   });
@@ -59,7 +65,7 @@ export async function listResources(
 export async function readResource(
   serverId: string,
   uri: string,
-  opts?: { forceHosted?: boolean },
+  opts?: { forceHosted?: boolean; refresh?: boolean },
 ) {
   return runByMode({
     forceHosted: opts?.forceHosted,
@@ -68,7 +74,7 @@ export async function readResource(
       const response = await authFetch(`/api/mcp/resources/read`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ serverId, uri }),
+        body: JSON.stringify({ serverId, uri, refresh: opts?.refresh }),
       });
       return response.json();
     },
