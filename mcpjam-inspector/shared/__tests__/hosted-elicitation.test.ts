@@ -195,3 +195,57 @@ describe("isHostedElicitationDataPart", () => {
     ).toBe(false);
   });
 });
+
+describe("isHostedElicitationEvent — insufficient_scope (SEP-2350)", () => {
+  it("accepts a challenge carrying requiredScope", () => {
+    expect(
+      isHostedElicitationEvent({
+        kind: "insufficient_scope",
+        serverId: "srv-1",
+        serverName: "GitHub",
+        toolCallId: "call-1",
+        requiredScope: "read write",
+        resourceMetadataUrl: "https://rs.example/.well-known",
+      }),
+    ).toBe(true);
+  });
+
+  it("accepts a challenge carrying only resourceMetadataUrl", () => {
+    expect(
+      isHostedElicitationEvent({
+        kind: "insufficient_scope",
+        serverId: "srv-1",
+        resourceMetadataUrl: "https://rs.example/.well-known",
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects a challenge with no actionable fields", () => {
+    expect(
+      isHostedElicitationEvent({
+        kind: "insufficient_scope",
+        serverId: "srv-1",
+        toolCallId: "call-1",
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects a challenge with a non-string requiredScope", () => {
+    expect(
+      isHostedElicitationEvent({
+        kind: "insufficient_scope",
+        serverId: "srv-1",
+        requiredScope: 42,
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects a challenge missing serverId", () => {
+    expect(
+      isHostedElicitationEvent({
+        kind: "insufficient_scope",
+        requiredScope: "read",
+      }),
+    ).toBe(false);
+  });
+});
