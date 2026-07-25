@@ -41,6 +41,7 @@ import {
   provisionEvalSandbox,
   releaseEvalSandbox,
 } from "../utils/computers/control-plane-client.js";
+import { seedEvalCaseAttachments } from "../utils/computers/eval-attachments-seed.js";
 import { logger } from "../utils/logger";
 import { captureMcpAppWidgetSnapshots } from "../utils/mcp-app-widget-capture";
 import {
@@ -2524,6 +2525,31 @@ const runLocalIteration = async ({
             `Could not provision the eval's reproducible sandbox: ${evalSandbox.error}`
           );
         }
+        // COMP-17: seed the case's pinned attachments into the fresh box before
+        // it's exposed as `bash`. Runs BEFORE buildEvalBashTool so the model's
+        // first turn already sees the files. Fail-honest — a seed failure throws
+        // (we're inside the try) and becomes a recorded failed iteration rather
+        // than a silent run without the files.
+        const seeded = await seedEvalCaseAttachments({
+          bearer: convexAuthToken,
+          runId: String(runId),
+          testCaseId: test.testCaseId,
+          sandboxId: evalSandbox.value.sandboxId,
+          ...(abortSignal ? { signal: abortSignal } : {}),
+        });
+        if (seeded.note) {
+          const firstModelTurnIndex = promptTurns.findIndex(
+            (t) => !isPinnedTurn(t)
+          );
+          if (firstModelTurnIndex >= 0) {
+            // Replace the slot (don't mutate the turn object) — promptTurns is
+            // freshly built per iteration, so this stays iteration-local.
+            promptTurns[firstModelTurnIndex] = {
+              ...promptTurns[firstModelTurnIndex],
+              prompt: `${promptTurns[firstModelTurnIndex].prompt}\n\n${seeded.note}`,
+            };
+          }
+        }
         prepared.allTools[EVAL_BASH_TOOL_NAME] = buildEvalBashTool({
           sandboxId: evalSandbox.value.sandboxId,
         });
@@ -3326,6 +3352,27 @@ const runHostedIterationWithBrowser = async (
         throw new Error(
           `Could not provision the eval's reproducible sandbox: ${evalSandbox.error}`
         );
+      }
+      // COMP-17: seed the case's pinned attachments before exposing `bash`
+      // (parity with the local-BYOK path). Fail-honest — a throw here is caught
+      // below and persisted as a failed iteration, never a silent run.
+      const seeded = await seedEvalCaseAttachments({
+        bearer: convexAuthToken,
+        runId: String(runId),
+        testCaseId: test.testCaseId,
+        sandboxId: evalSandbox.value.sandboxId,
+        ...(abortSignal ? { signal: abortSignal } : {}),
+      });
+      if (seeded.note) {
+        const firstModelTurnIndex = promptTurns.findIndex(
+          (t) => !isPinnedTurn(t)
+        );
+        if (firstModelTurnIndex >= 0) {
+          promptTurns[firstModelTurnIndex] = {
+            ...promptTurns[firstModelTurnIndex],
+            prompt: `${promptTurns[firstModelTurnIndex].prompt}\n\n${seeded.note}`,
+          };
+        }
       }
       prepared.allTools[EVAL_BASH_TOOL_NAME] = buildEvalBashTool({
         sandboxId: evalSandbox.value.sandboxId,

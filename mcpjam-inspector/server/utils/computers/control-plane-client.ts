@@ -184,6 +184,41 @@ export async function provisionEvalSandbox(args: {
   );
 }
 
+export interface ResolvedEvalAttachment {
+  name: string;
+  /** Absolute path inside the sandbox to write the file to (frozen at run start). */
+  path: string;
+  contentHash: string;
+  size: number;
+  /** Short-lived download URL for the pinned blob; null when the pin is gone. */
+  url: string | null;
+}
+
+export interface ResolvedEvalAttachmentsCase {
+  /** Frozen case id — match against the running iteration's `test.testCaseId`. */
+  testCaseId: string;
+  attachments: ResolvedEvalAttachment[];
+}
+
+/**
+ * Resolve the run's frozen per-case attachments to download URLs (user-bearer
+ * auth). The control plane joins each case's pinned content-hashes to their
+ * blobs and mints short-lived URLs; a `url: null` means the pin vanished, and
+ * the caller must fail the iteration honestly rather than seed a missing file.
+ */
+export async function resolveEvalRunAttachments(args: {
+  bearer: string;
+  runId: string;
+  signal?: AbortSignal;
+}): Promise<ControlPlaneResult<{ cases: ResolvedEvalAttachmentsCase[] }>> {
+  return postJson<{ cases: ResolvedEvalAttachmentsCase[] }>(
+    "/evals/sandbox/attachments",
+    bearerHeader(args.bearer),
+    { runId: args.runId },
+    args.signal
+  );
+}
+
 /** Release an eval sandbox (service-token auth; idempotent). */
 export async function releaseEvalSandbox(args: {
   sandboxRowId: string;
