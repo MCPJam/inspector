@@ -13,10 +13,12 @@ import {
 } from "../plugin-servers.js";
 
 function clientReturning(value: unknown) {
-  return { query: vi.fn().mockResolvedValue(value) } as never;
+  const client = { query: vi.fn().mockResolvedValue(value) };
+  const get = () => client as never;
+  return Object.assign(get, { client });
 }
 function clientThrowing(error: Error) {
-  return { query: vi.fn().mockRejectedValue(error) } as never;
+  return (() => ({ query: vi.fn().mockRejectedValue(error) })) as never;
 }
 
 describe("resolveTargetPluginServerIds", () => {
@@ -30,9 +32,26 @@ describe("resolveTargetPluginServerIds", () => {
     ).resolves.toEqual([]);
     // Not querying is what keeps every plugin-free journey working against a
     // backend that hasn't deployed the D2 query yet.
-    expect(
-      (client as unknown as { query: ReturnType<typeof vi.fn> }).query
-    ).not.toHaveBeenCalled();
+    expect(client.client.query).not.toHaveBeenCalled();
+  });
+
+  // Regression: the client is built from a THUNK, never eagerly. This runs
+  // after the journey run row exists, and `createConvexClient` throws when
+  // CONVEX_URL is unset — an eager build would turn a config gap into a durable
+  // run with no runner (an orphan), for journeys that pin no plugins at all.
+  it("never constructs a client when the target pinned no plugin servers", async () => {
+    let built = 0;
+    const getClient = () => {
+      built += 1;
+      throw new Error("CONVEX_URL is not set");
+    };
+    await expect(
+      resolveTargetPluginServerIds(getClient as never, {
+        runId: "run1",
+        targetId: "environment:e1",
+      })
+    ).resolves.toEqual([]);
+    expect(built).toBe(0);
   });
 
   it("returns the live-verified server ids", async () => {

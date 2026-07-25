@@ -362,10 +362,16 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
       // possibly-finalized Context.
       const xaaIssuer = resolveXaaIssuer(c, HOSTED_MODE);
 
-      // One client for the run's D2 re-gates. `managerFactory` runs once per
-      // SESSION attempt, not once per target, so constructing this inside it
-      // would mint a fresh client per session for no reason.
-      const pluginRegateClient = createConvexClient(bearerToken);
+      // One client for the run's D2 re-gates, built LAZILY on first use.
+      // `managerFactory` runs once per SESSION attempt, so constructing per
+      // call would be wasteful — but constructing EAGERLY here is worse:
+      // `createConvexClient` throws when `CONVEX_URL` is unset, and we are past
+      // `createJourneyRun`, where any throw orphans a durable run with no
+      // runner (see the comment above). Memoized thunk gets both: at most one
+      // client per run, and none at all for a journey that pins no plugins.
+      let pluginRegateClient: ReturnType<typeof createConvexClient> | undefined;
+      const getPluginRegateClient = () =>
+        (pluginRegateClient ??= createConvexClient(bearerToken));
 
       setImmediate(() => {
         startJourneyRun({
@@ -397,7 +403,7 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
             // next launch. Deliberate — revocation should not wait for a run
             // to finish — at the cost of one query per session.
             const pluginServerIds = await resolveTargetPluginServerIds(
-              pluginRegateClient,
+              getPluginRegateClient,
               {
                 runId,
                 targetId: host.targetId,

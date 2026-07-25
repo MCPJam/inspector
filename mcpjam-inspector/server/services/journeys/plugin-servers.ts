@@ -96,7 +96,15 @@ function describeUnavailable(entry: RunPluginServerUnavailable): string {
  * capability we are about to hand an agent.
  */
 export async function resolveTargetPluginServerIds(
-  convexClient: ConvexHttpClient,
+  /**
+   * Lazily supplies the Convex client — a THUNK, not a client, on purpose.
+   * `createConvexClient` throws when `CONVEX_URL` is unset, and this runs after
+   * the journey run row already exists, where a throw would orphan a durable
+   * run with no runner. Taking a thunk keeps the "no pins ⇒ no client" decision
+   * in ONE place (the early return below) instead of duplicating it at the
+   * callsite where it could drift.
+   */
+  getConvexClient: () => ConvexHttpClient,
   args: {
     runId: string;
     targetId?: string;
@@ -117,7 +125,7 @@ export async function resolveTargetPluginServerIds(
 
   let raw: unknown;
   try {
-    raw = await convexClient.query(
+    raw = await getConvexClient().query(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- string
       // function refs are the established inspector→Convex pattern (see
       // services/evals/environment-launch.ts); there is no codegen here.
