@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { useEffect, useId, useRef } from "react";
 import { ChevronDown, ChevronRight, Plus, X } from "lucide-react";
 import { Input } from "@mcpjam/design-system/input";
 import { useMaskedValues } from "../hooks/use-masked-values";
@@ -136,10 +136,21 @@ export function AdvancedConnectionSettingsSection({
     maskedHeaders.dropAt(index);
     onRemoveHeader?.(index);
   };
-  const handleRevealHeaders = () => {
-    maskedHeaders.revealAll();
-    onRevealHeaders?.();
-  };
+  // Same as the env-var editor: fetch on open so the rows can name themselves,
+  // and leave the values masked until an eye asks for one. See EnvVarsSection.
+  const autoRevealRequested = useRef(false);
+  useEffect(() => {
+    if (
+      !showConfiguration ||
+      !headersHidden ||
+      !onRevealHeaders ||
+      autoRevealRequested.current
+    ) {
+      return;
+    }
+    autoRevealRequested.current = true;
+    onRevealHeaders();
+  }, [showConfiguration, headersHidden, onRevealHeaders]);
   const showClientCapabilitiesControls =
     onClientCapabilitiesOverrideEnabledChange !== undefined &&
     onClientCapabilitiesOverrideTextChange !== undefined;
@@ -239,7 +250,7 @@ export function AdvancedConnectionSettingsSection({
                     subject="headers"
                     isRevealing={isRevealingHeaders}
                     error={headersRevealError}
-                    onReveal={handleRevealHeaders}
+                    onReveal={onRevealHeaders}
                   />
                 )}
                 {!headersHidden && customHeaders.length === 0 && (

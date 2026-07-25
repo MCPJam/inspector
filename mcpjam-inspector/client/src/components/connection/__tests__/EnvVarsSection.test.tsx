@@ -95,9 +95,7 @@ describe("EnvVarsSection value masking", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows the rows that a stored-secret reveal brings back", async () => {
-    const user = userEvent.setup();
-
+  it("fetches stored values on open and names the rows without unmasking them", () => {
     function RevealHarness() {
       const [envVars, setEnvVars] = useState<EnvVar[]>([]);
       return (
@@ -109,14 +107,66 @@ describe("EnvVarsSection value masking", () => {
           onRemove={vi.fn()}
           onUpdate={vi.fn()}
           hasStoredEnv
-          onReveal={() => setEnvVars([{ key: "TOKEN", value: "revealed" }])}
+          onReveal={() =>
+            setEnvVars([
+              { key: "TOKEN", value: "revealed" },
+              { key: "LOG_LEVEL", value: "debug" },
+            ])
+          }
         />
       );
     }
 
     render(<RevealHarness />);
-    await user.click(screen.getByRole("button", { name: /Reveal/ }));
 
-    expect(valueInput("1")).toHaveAttribute("type", "text");
+    // No click: opening the section is what fetches them. The point is that the
+    // user can see *which* variables are set, so the keys are readable...
+    expect(screen.getByLabelText("Environment variable 1 name")).toHaveValue(
+      "TOKEN"
+    );
+    expect(screen.getByLabelText("Environment variable 2 name")).toHaveValue(
+      "LOG_LEVEL"
+    );
+    // ...while the values stay covered until an eye asks for one.
+    expect(valueInput("1")).toHaveAttribute("type", "password");
+    expect(valueInput("2")).toHaveAttribute("type", "password");
+  });
+
+  it("does not re-fire the fetch when it fails", () => {
+    // The mask doubles as the retry, so a failed fetch leaves `hasStoredEnv`
+    // set. Without the guard the effect would fire on every render.
+    const onReveal = vi.fn();
+    const { rerender } = render(
+      <EnvVarsSection
+        envVars={[]}
+        showEnvVars
+        onToggle={vi.fn()}
+        onAdd={vi.fn()}
+        onRemove={vi.fn()}
+        onUpdate={vi.fn()}
+        hasStoredEnv
+        revealError="Couldn't reveal saved secrets."
+        onReveal={onReveal}
+      />
+    );
+
+    rerender(
+      <EnvVarsSection
+        envVars={[]}
+        showEnvVars
+        onToggle={vi.fn()}
+        onAdd={vi.fn()}
+        onRemove={vi.fn()}
+        onUpdate={vi.fn()}
+        hasStoredEnv
+        revealError="Couldn't reveal saved secrets."
+        onReveal={onReveal}
+      />
+    );
+
+    expect(onReveal).toHaveBeenCalledTimes(1);
+    expect(
+      screen.getByRole("button", { name: "Reveal saved environment variables" })
+    ).toBeInTheDocument();
   });
 });

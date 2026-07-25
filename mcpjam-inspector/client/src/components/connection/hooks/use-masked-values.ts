@@ -5,22 +5,22 @@ import { useState } from "react";
  *
  * Values render masked so an API key isn't sitting in cleartext for anyone
  * looking at the screen. This is shoulder-surfing cover, not access control:
- * the value is already in the form, so toggling is pure client state — no
- * fetch, no round-trip, no query per open.
+ * by the time a row exists its value is already in the form, so toggling is
+ * pure client state — the eye never costs a round-trip.
  *
- * `defaultVisible` is the baseline for rows we haven't heard about yet;
- * `overrides` holds the per-row eye state on top of it.
+ * Rows are masked unless a row's own eye says otherwise, including the rows a
+ * stored-secret fetch brings back — opening a section is a request to see what
+ * is configured, not to read the secrets.
  */
 export function useMaskedValues() {
-  const [defaultVisible, setDefaultVisible] = useState(false);
   const [overrides, setOverrides] = useState<Record<number, boolean>>({});
 
-  const isVisible = (index: number) => overrides[index] ?? defaultVisible;
+  const isVisible = (index: number) => overrides[index] ?? false;
 
   const toggle = (index: number) => {
     setOverrides((prev) => ({
       ...prev,
-      [index]: !(prev[index] ?? defaultVisible),
+      [index]: !(prev[index] ?? false),
     }));
   };
 
@@ -46,13 +46,5 @@ export function useMaskedValues() {
     });
   };
 
-  /** Call when the user explicitly asks to see stored values (the "Reveal"
-   * fetch): the rows that arrive are unmasked, since that click is the ask.
-   * Every eye can still put one back. */
-  const revealAll = () => {
-    setDefaultVisible(true);
-    setOverrides({});
-  };
-
-  return { isVisible, toggle, markAdded, dropAt, revealAll };
+  return { isVisible, toggle, markAdded, dropAt };
 }

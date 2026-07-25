@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { useEffect, useId, useRef } from "react";
 import { Input } from "@mcpjam/design-system/input";
 import { ChevronDown, ChevronRight, Plus, X } from "lucide-react";
 import { useMaskedValues } from "../hooks/use-masked-values";
@@ -52,10 +52,19 @@ export function EnvVarsSection({
     onRemove(index);
   };
 
-  const handleReveal = () => {
-    masked.revealAll();
-    onReveal?.();
-  };
+  // Stored values are fetched as soon as the section is opened, so the rows can
+  // show which variables are set instead of a single anonymous mask. The values
+  // still arrive masked: opening a disclosure asks what is configured, not to
+  // read the secrets. Guarded by a ref so a failed fetch doesn't re-fire on
+  // every render — the mask stays clickable as the retry.
+  const autoRevealRequested = useRef(false);
+  useEffect(() => {
+    if (!showEnvVars || !isHidden || !onReveal || autoRevealRequested.current) {
+      return;
+    }
+    autoRevealRequested.current = true;
+    onReveal();
+  }, [showEnvVars, isHidden, onReveal]);
 
   return (
     <div className="space-y-2">
@@ -104,7 +113,7 @@ export function EnvVarsSection({
             subject="environment variables"
             isRevealing={isRevealing}
             error={revealError}
-            onReveal={handleReveal}
+            onReveal={onReveal}
           />
         )}
 

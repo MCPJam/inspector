@@ -61,15 +61,17 @@ describe("useMaskedValues", () => {
     expect(result.current.isVisible(1)).toBe(false);
   });
 
-  it("reveals everything after an explicit reveal, then re-hides per row", () => {
+  it("keeps rows masked no matter how many arrive at once", () => {
     const { result } = renderHook(() => useMaskedValues());
 
-    act(() => result.current.revealAll());
-    expect(result.current.isVisible(0)).toBe(true);
-    expect(result.current.isVisible(4)).toBe(true);
-
-    act(() => result.current.toggle(0));
+    // Stored rows land here after a fetch the user didn't explicitly ask for,
+    // so nothing may unmask itself — only a row's own eye can.
     expect(result.current.isVisible(0)).toBe(false);
-    expect(result.current.isVisible(1)).toBe(true);
+    expect(result.current.isVisible(4)).toBe(false);
+
+    act(() => result.current.toggle(2));
+    expect(result.current.isVisible(2)).toBe(true);
+    expect(result.current.isVisible(0)).toBe(false);
+    expect(result.current.isVisible(4)).toBe(false);
   });
 });
