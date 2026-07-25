@@ -5,9 +5,11 @@ import type {
   OAuthConformanceSuiteConfig,
 } from "@mcpjam/sdk";
 import {
+  isKnownProtocolVersion,
   MCP_APPS_CHECK_IDS,
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
+  MCP_PROTOCOL_VERSIONS,
 } from "@mcpjam/sdk";
 import { usageError } from "./output.js";
 import {
@@ -134,6 +136,16 @@ function validateProtocolRun(run: JsonObject, label: string): void {
   validateOptionalString(run.label, `${label}.label`);
   validateEnumArray(run.categories, MCP_CHECK_CATEGORIES, `${label}.categories`);
   validateEnumArray(run.checkIds, MCP_CHECK_IDS, `${label}.checkIds`);
+  if (run.protocolVersion !== undefined) {
+    if (
+      typeof run.protocolVersion !== "string" ||
+      !isKnownProtocolVersion(run.protocolVersion)
+    ) {
+      throw usageError(
+        `Invalid ${label}.protocolVersion "${String(run.protocolVersion)}". Known: ${MCP_PROTOCOL_VERSIONS.join(", ")}`,
+      );
+    }
+  }
 }
 
 function validateOAuthFlow(
