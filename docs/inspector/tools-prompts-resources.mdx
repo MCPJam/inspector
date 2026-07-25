@@ -96,6 +96,22 @@ All communication between MCPJam and your MCP server is logged in real-time:
 
 The JSON-RPC logger helps you debug your MCP server implementation and understand the complete protocol flow.
 
+### Per-server log level controls
+
+The Logs panel includes a per-server log level popover. The controls shown depend on which protocol version the server negotiated:
+
+| Server era | Control shown | Default |
+|---|---|---|
+| Legacy (`2025-11-25` and earlier) | Level dropdown (`debug` … `emergency`) | `debug` — level is sent via `logging/setLevel` RPC |
+| Modern (`2026-07-28`) | Opt-in toggle + level dropdown | **Off** — no log level is sent until you enable the toggle |
+| No logging capability | "Not supported" label | — |
+
+**Legacy servers** display a **Deprecated (SEP-2577)** note below the level dropdown. The `logging/setLevel` RPC mechanism is deprecated as of the `2026-07-28` protocol revision.
+
+**Modern servers** default to opt-out — no `logLevel` is included in request metadata until you flip the toggle on. Once opted in, the selected level rides along with every subsequent request. Flip the toggle off to opt back out (no level sent).
+
+When you invoke a tool, read a resource, or fetch a prompt from the inspector, the server's log notifications (`notifications/message`) are captured and appear in the Logs panel alongside the JSON-RPC traffic for that operation.
+
 ### OAuth log entries
 
 When a server uses OAuth, each step of the OAuth flow appears as a log entry in the traffic log alongside regular JSON-RPC messages. Use the **Source** filter dropdown and select **OAuth** to show only OAuth entries.
