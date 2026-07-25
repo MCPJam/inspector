@@ -1,8 +1,8 @@
-import dns from "node:dns/promises";
 import { lookup as dnsLookupCb } from "node:dns";
 import http from "node:http";
 import https from "node:https";
 import type { LookupFunction } from "node:net";
+import type { IncomingMessage } from "node:http";
 
 export class OAuthProxyError extends Error {
   status: number;
@@ -23,7 +23,7 @@ export interface OAuthProxyRequest {
    * weakened); otherwise an explicit value is honored and omission preserves
    * the historical "follow". */
   redirect?: "follow" | "manual";
-  /** Bound the fetch and response-body read. */
+  /** Bound DNS, connection setup, redirects, and the response-body read. */
   timeoutMs?: number;
 }
 
@@ -45,37 +45,6 @@ import {
 } from "./oauth/ssrf-guard.js";
 export { isDisallowedIpAddress };
 
-async function resolveAndValidateDns(hostname: string): Promise<string | null> {
-  if (/^\d+\.\d+\.\d+\.\d+$/.test(hostname) || hostname.includes(":")) {
-    return null;
-  }
-
-  const resolved: string[] = [];
-  try {
-    const ipv4 = await dns.resolve4(hostname);
-    resolved.push(...ipv4);
-  } catch {
-    // no A records is fine
-  }
-  try {
-    const ipv6 = await dns.resolve6(hostname);
-    resolved.push(...ipv6);
-  } catch {
-    // no AAAA records is fine
-  }
-
-  for (const ip of resolved) {
-    if (isPrivateHost(ip)) {
-      throw new OAuthProxyError(
-        400,
-        "Hostname resolves to a private/reserved IP address"
-      );
-    }
-  }
-
-  return resolved[0] ?? null;
-}
-
 interface ValidatedUrl {
   url: URL;
 }
@@ -95,10 +64,16 @@ function parseAndValidateUrl(url: string, httpsOnly = false): URL {
   if (targetUrl.protocol !== "https:" && targetUrl.protocol !== "http:") {
     throw new OAuthProxyError(400, "Invalid protocol");
   }
+  if (targetUrl.username || targetUrl.password) {
+    throw new OAuthProxyError(
+      400,
+      "OAuth target URL must not contain credentials",
+    );
+  }
   if (httpsOnly && targetUrl.protocol !== "https:") {
     throw new OAuthProxyError(
       400,
-      "Only HTTPS targets are allowed in hosted mode"
+      "Only HTTPS targets are allowed in hosted mode",
     );
   }
 
@@ -107,33 +82,23 @@ function parseAndValidateUrl(url: string, httpsOnly = false): URL {
 
 export async function validateUrl(
   url: string,
-  httpsOnly = false
+  httpsOnly = false,
 ): Promise<ValidatedUrl> {
   const targetUrl = parseAndValidateUrl(url, httpsOnly);
-
-  // Local mode permits HTTP and explicit loopback OAuth servers; it must not
-  // disable SSRF validation for every other host.
-  const explicitLoopback =
+  const allowLoopbackFlow =
     !httpsOnly && isLoopbackOAuthUrl(targetUrl.toString());
-  if (isPrivateHost(targetUrl.hostname) && !explicitLoopback) {
-    throw new OAuthProxyError(
-      400,
-      "Private/reserved IP addresses are not allowed"
-    );
-  }
-  if (!explicitLoopback) {
-    await resolveAndValidateDns(targetUrl.hostname);
-  }
+  await resolvePinnedAddresses(
+    targetUrl,
+    allowLoopbackFlow,
+    undefined,
+    "OAuth target",
+  );
 
   return { url: targetUrl };
 }
 
-function buildFetchUrl(targetUrl: URL): string {
-  return targetUrl.toString();
-}
-
 function requestTimeoutSignal(
-  timeoutMs: number | undefined
+  timeoutMs: number | undefined,
 ): AbortSignal | undefined {
   if (timeoutMs === undefined) return undefined;
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
@@ -142,45 +107,55 @@ function requestTimeoutSignal(
   return AbortSignal.timeout(timeoutMs);
 }
 
-async function parseResponseBody(response: Response): Promise<unknown> {
-  try {
-    return await response.json();
-  } catch {
-    try {
-      return await response.text();
-    } catch {
-      return null;
-    }
-  }
-}
-
 function buildRequestHeaders(
-  customHeaders: Record<string, string> | undefined
+  customHeaders: Record<string, string> | undefined,
 ): Record<string, string> {
-  return {
-    "User-Agent": "MCP-Inspector/1.0",
-    ...customHeaders,
-  };
+  const headers: Record<string, string> = {};
+  for (const [name, value] of Object.entries(customHeaders ?? {})) {
+    headers[name.toLowerCase()] = value;
+  }
+
+  // These are connection-specific or must be derived from the actual pinned
+  // request. Do not let a proxy caller override them.
+  for (const name of [
+    "connection",
+    "content-length",
+    "host",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "proxy-connection",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+  ]) {
+    delete headers[name];
+  }
+
+  headers["user-agent"] ??= "MCP-Inspector/1.0";
+  // Raw http(s).request does not decompress automatically. Requesting identity
+  // keeps response parsing deterministic and preserves fetch-like semantics.
+  headers["accept-encoding"] = "identity";
+  return headers;
 }
 
 function encodeRequestBody(
   method: string,
   body: unknown,
-  contentType: string | undefined
-): BodyInit | undefined {
+  contentType: string | undefined,
+): string | undefined {
   if (method !== "POST" || body === undefined || body === null) {
     return undefined;
   }
 
   const isFormUrlEncoded = contentType?.includes(
-    "application/x-www-form-urlencoded"
+    "application/x-www-form-urlencoded",
   );
 
   if (isFormUrlEncoded && typeof body === "object") {
     const params = new URLSearchParams();
-    for (const [key, value] of Object.entries(
-      body as Record<string, unknown>
-    )) {
+    for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
       params.append(key, String(value));
     }
     return params.toString();
@@ -207,24 +182,23 @@ export async function fetchPinnedPublicDocument(
     headers?: Record<string, string>;
     timeoutMs?: number;
     maxBytes?: number;
-  } = {}
+  } = {},
 ): Promise<OAuthProxyResponse> {
   const url = new URL(urlString);
   if (url.protocol !== "https:") {
     throw new OAuthProxyError(
       400,
-      "The client metadata document must be served over HTTPS"
+      "The client metadata document must be served over HTTPS",
     );
   }
   // Reject a literal private/reserved host before opening any connection.
   if (isPrivateHost(url.hostname)) {
     throw new OAuthProxyError(
       400,
-      `The client metadata host is a private or reserved address (${url.hostname})`
+      `The client metadata host is a private or reserved address (${url.hostname})`,
     );
   }
-  const maxBytes =
-    opts.maxBytes && opts.maxBytes > 0 ? opts.maxBytes : 5 * 1024;
+  const maxBytes = opts.maxBytes && opts.maxBytes > 0 ? opts.maxBytes : 5 * 1024;
   const timeoutMs =
     opts.timeoutMs && opts.timeoutMs > 0 ? opts.timeoutMs : 5000;
 
@@ -244,7 +218,7 @@ export async function fetchPinnedPublicDocument(
         return callback(
           new OAuthProxyError(400, `Could not resolve ${hostname}`),
           "",
-          0
+          0,
         );
       }
       for (const a of list) {
@@ -252,10 +226,10 @@ export async function fetchPinnedPublicDocument(
           return callback(
             new OAuthProxyError(
               400,
-              `${hostname} resolves to a private or reserved address (${a.address})`
+              `${hostname} resolves to a private or reserved address (${a.address})`,
             ),
             "",
-            0
+            0,
           );
         }
       }
@@ -263,7 +237,7 @@ export async function fetchPinnedPublicDocument(
         return (
           callback as unknown as (
             err: NodeJS.ErrnoException | null,
-            addresses: { address: string; family: number }[]
+            addresses: { address: string; family: number }[],
           ) => void
         )(null, list);
       }
@@ -305,8 +279,8 @@ export async function fetchPinnedPublicDocument(
             reject(
               new OAuthProxyError(
                 400,
-                `The client metadata document exceeds the ${maxBytes}-byte cap`
-              )
+                `The client metadata document exceeds the ${maxBytes}-byte cap`,
+              ),
             );
             return;
           }
@@ -329,174 +303,491 @@ export async function fetchPinnedPublicDocument(
           });
         });
         res.on("error", reject);
-      }
+      },
     );
     request.on("error", (err) => {
       reject(
         deadline.aborted
           ? new OAuthProxyError(
               400,
-              `The client metadata document request exceeded the ${timeoutMs}ms deadline`
+              `The client metadata document request exceeded the ${timeoutMs}ms deadline`,
             )
-          : err
+          : err,
       );
     });
     request.end();
   });
 }
 
+const MAX_OAUTH_PROXY_REDIRECTS = 5;
+const MAX_OAUTH_PROXY_BYTES = 1024 * 1024;
+const DEBUG_SSE_MAX_READ_MS = 5000;
+const DEBUG_SSE_IDLE_TIMEOUT_MS = 1000;
+
+interface PreparedOAuthRequest {
+  method: string;
+  headers: Record<string, string>;
+  body?: Buffer;
+}
+
+interface RawPinnedOAuthResponse {
+  status: number;
+  statusText: string;
+  headers: Record<string, string>;
+  finalUrl: string;
+  stream?: IncomingMessage;
+}
+
+function normalizeResponseHeaders(
+  response: IncomingMessage
+): Record<string, string> {
+  const headers: Record<string, string> = {};
+  for (const [key, value] of Object.entries(response.headers)) {
+    headers[key.toLowerCase()] = Array.isArray(value)
+      ? value.join(", ")
+      : String(value ?? "");
+  }
+  return headers;
+}
+
+function prepareOAuthRequest(req: OAuthProxyRequest): PreparedOAuthRequest {
+  const method = (req.method ?? "GET").toUpperCase();
+  const headers = buildRequestHeaders(req.headers);
+  const contentType = headers["content-type"];
+  if (
+    method === "POST" &&
+    req.body !== undefined &&
+    req.body !== null &&
+    !contentType
+  ) {
+    headers["content-type"] = "application/json";
+  }
+
+  const encodedBody = encodeRequestBody(
+    method,
+    req.body,
+    headers["content-type"]
+  );
+  const body =
+    encodedBody === undefined ? undefined : Buffer.from(encodedBody, "utf8");
+  if (body) {
+    headers["content-length"] = String(body.byteLength);
+  }
+  return { method, headers, body };
+}
+
+function isFetchRedirectStatus(status: number): boolean {
+  return (
+    status === 301 ||
+    status === 302 ||
+    status === 303 ||
+    status === 307 ||
+    status === 308
+  );
+}
+
+function removeHeaders(
+  headers: Record<string, string>,
+  names: readonly string[]
+): void {
+  for (const name of names) {
+    delete headers[name];
+  }
+}
+
+function updateRequestForRedirect(
+  request: PreparedOAuthRequest,
+  status: number,
+  currentUrl: URL,
+  nextUrl: URL
+): PreparedOAuthRequest {
+  const next: PreparedOAuthRequest = {
+    method: request.method,
+    headers: { ...request.headers },
+    body: request.body,
+  };
+
+  // Fetch rewrites POST to GET for 301/302, and every non-GET/HEAD method to
+  // GET for 303. 307/308 preserve both method and body.
+  if (
+    ((status === 301 || status === 302) && next.method === "POST") ||
+    (status === 303 && next.method !== "GET" && next.method !== "HEAD")
+  ) {
+    next.method = "GET";
+    next.body = undefined;
+    removeHeaders(next.headers, [
+      "content-encoding",
+      "content-language",
+      "content-length",
+      "content-location",
+      "content-type",
+    ]);
+  }
+
+  // Match Fetch's credential-boundary behavior. A redirect to another origin
+  // must not receive bearer/basic credentials or cookies supplied to the
+  // original authorization server.
+  if (currentUrl.origin !== nextUrl.origin) {
+    removeHeaders(next.headers, [
+      "authorization",
+      "cookie",
+      "cookie2",
+      "proxy-authorization",
+    ]);
+  }
+
+  return next;
+}
+
+async function requestPinnedOAuthHop(
+  targetUrl: URL,
+  requestInit: PreparedOAuthRequest,
+  allowLoopbackFlow: boolean,
+  signal: AbortSignal | undefined
+): Promise<RawPinnedOAuthResponse> {
+  const pinnedAddresses = await resolvePinnedAddresses(
+    targetUrl,
+    allowLoopbackFlow,
+    signal,
+    "OAuth proxy target"
+  );
+  const transport = targetUrl.protocol === "https:" ? https : http;
+
+  return await new Promise<RawPinnedOAuthResponse>((resolve, reject) => {
+    const request = transport.request(
+      targetUrl,
+      {
+        method: requestInit.method,
+        headers: requestInit.headers,
+        ...(pinnedAddresses
+          ? { lookup: createPinnedLookup(pinnedAddresses) }
+          : {}),
+        ...(targetUrl.protocol === "https:" &&
+        !/^\d+\.\d+\.\d+\.\d+$/.test(targetUrl.hostname) &&
+        !targetUrl.hostname.includes(":")
+          ? { servername: targetUrl.hostname }
+          : {}),
+        signal,
+      },
+      (response) => {
+        resolve({
+          status: response.statusCode ?? 0,
+          statusText: response.statusMessage ?? "",
+          headers: normalizeResponseHeaders(response),
+          finalUrl: targetUrl.toString(),
+          stream: response,
+        });
+      }
+    );
+    request.on("error", reject);
+    if (requestInit.body) {
+      request.write(requestInit.body);
+    }
+    request.end();
+  });
+}
+
+async function executePinnedOAuthRequest(req: OAuthProxyRequest): Promise<{
+  response: RawPinnedOAuthResponse;
+  signal: AbortSignal | undefined;
+}> {
+  const initialUrl = parseAndValidateUrl(req.url, req.httpsOnly);
+  const allowLoopbackFlow =
+    !req.httpsOnly && isLoopbackOAuthUrl(initialUrl.toString());
+  const redirectMode = req.httpsOnly ? "manual" : req.redirect ?? "follow";
+  const signal = requestTimeoutSignal(req.timeoutMs);
+  let currentUrl = initialUrl;
+  let requestInit = prepareOAuthRequest(req);
+
+  try {
+    for (let redirectCount = 0; ; redirectCount += 1) {
+      const response = await requestPinnedOAuthHop(
+        currentUrl,
+        requestInit,
+        allowLoopbackFlow,
+        signal
+      );
+
+      if (!isFetchRedirectStatus(response.status)) {
+        return { response, signal };
+      }
+
+      // Redirect bodies are never useful to the proxy and can otherwise be an
+      // unbounded resource sink. Preserve the status and headers for manual
+      // mode, but close the stream immediately.
+      response.stream?.destroy();
+      response.stream = undefined;
+
+      const location = response.headers.location;
+      if (redirectMode === "manual" || !location) {
+        return { response, signal };
+      }
+      if (redirectCount >= MAX_OAUTH_PROXY_REDIRECTS) {
+        throw new OAuthProxyError(400, "Too many OAuth proxy redirects");
+      }
+
+      let nextUrl: URL;
+      try {
+        nextUrl = new URL(location, currentUrl);
+      } catch {
+        throw new OAuthProxyError(
+          502,
+          "OAuth proxy returned an invalid redirect URL"
+        );
+      }
+      // Validate scheme and hosted HTTPS policy now. DNS/private-network
+      // validation happens in requestPinnedOAuthHop before the next socket.
+      nextUrl = parseAndValidateUrl(nextUrl.toString(), req.httpsOnly);
+      requestInit = updateRequestForRedirect(
+        requestInit,
+        response.status,
+        currentUrl,
+        nextUrl
+      );
+      currentUrl = nextUrl;
+    }
+  } catch (error) {
+    if (signal?.aborted) {
+      throw new OAuthProxyError(
+        400,
+        `OAuth proxy request timeout after ${req.timeoutMs}ms`
+      );
+    }
+    throw error;
+  }
+}
+
+async function readBoundedResponseBody(
+  response: IncomingMessage | undefined
+): Promise<string> {
+  if (!response) return "";
+
+  return await new Promise<string>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    let settled = false;
+
+    const cleanup = () => {
+      response.removeListener("data", onData);
+      response.removeListener("end", onEnd);
+      response.removeListener("error", onError);
+      response.removeListener("aborted", onAborted);
+    };
+    const fail = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      response.destroy();
+      reject(error);
+    };
+    const onData = (chunk: Buffer | string) => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      total += buffer.byteLength;
+      if (total > MAX_OAUTH_PROXY_BYTES) {
+        fail(
+          new OAuthProxyError(
+            400,
+            `OAuth proxy response exceeds the ${MAX_OAUTH_PROXY_BYTES}-byte cap`
+          )
+        );
+        return;
+      }
+      chunks.push(buffer);
+    };
+    const onEnd = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(Buffer.concat(chunks).toString("utf8"));
+    };
+    const onError = (error: Error) => fail(error);
+    const onAborted = () => fail(new Error("OAuth proxy response was aborted"));
+
+    response.on("data", onData);
+    response.on("end", onEnd);
+    response.on("error", onError);
+    response.on("aborted", onAborted);
+  });
+}
+
+function parseBufferedResponseBody(body: string): unknown {
+  if (!body) return null;
+  try {
+    return JSON.parse(body);
+  } catch {
+    return body;
+  }
+}
+
+async function readDebugSseBody(
+  response: IncomingMessage
+): Promise<Record<string, unknown>> {
+  return await new Promise<Record<string, unknown>>((resolve, reject) => {
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let total = 0;
+    let settled = false;
+    let currentEvent: { event?: string; data?: unknown; id?: string } = {};
+    const events: Array<{ event?: string; data?: unknown; id?: string }> = [];
+    let idleTimer: ReturnType<typeof setTimeout>;
+
+    const cleanup = () => {
+      clearTimeout(idleTimer);
+      clearTimeout(maxTimer);
+      response.removeListener("data", onData);
+      response.removeListener("end", onEnd);
+      response.removeListener("error", onError);
+      response.removeListener("aborted", onAborted);
+    };
+    const result = () => ({
+      transport: "sse",
+      events,
+      isOldTransport: events[0]?.event === "endpoint",
+      endpoint: events[0]?.event === "endpoint" ? events[0].data : null,
+      mcpResponse:
+        events.find((event) => event.event === "message" || !event.event)
+          ?.data || null,
+      rawBuffer: buffer,
+    });
+    const finish = (error?: unknown) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      response.destroy();
+      if (error) reject(error);
+      else resolve(result());
+    };
+    const resetIdleTimer = () => {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(
+        () => finish(new Error("Read timeout")),
+        DEBUG_SSE_IDLE_TIMEOUT_MS
+      );
+    };
+    const processLines = () => {
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (line.startsWith("event:")) {
+          currentEvent.event = line.substring(6).trim();
+        } else if (line.startsWith("data:")) {
+          const data = line.substring(5).trim();
+          try {
+            currentEvent.data = JSON.parse(data);
+          } catch {
+            currentEvent.data = data;
+          }
+        } else if (line.startsWith("id:")) {
+          currentEvent.id = line.substring(3).trim();
+        } else if (line === "" && Object.keys(currentEvent).length > 0) {
+          events.push(currentEvent);
+          currentEvent = {};
+          finish();
+          return;
+        }
+      }
+    };
+    const onData = (chunk: Buffer | string) => {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      total += bytes.byteLength;
+      if (total > MAX_OAUTH_PROXY_BYTES) {
+        finish(
+          new OAuthProxyError(
+            400,
+            `OAuth proxy response exceeds the ${MAX_OAUTH_PROXY_BYTES}-byte cap`
+          )
+        );
+        return;
+      }
+      buffer += decoder.decode(bytes, { stream: true });
+      resetIdleTimer();
+      processLines();
+    };
+    const onEnd = () => {
+      buffer += decoder.decode();
+      processLines();
+      if (!settled) finish();
+    };
+    const onError = (error: Error) => finish(error);
+    const onAborted = () =>
+      finish(new Error("OAuth proxy response was aborted"));
+    const maxTimer = setTimeout(() => finish(), DEBUG_SSE_MAX_READ_MS);
+
+    response.on("data", onData);
+    response.on("end", onEnd);
+    response.on("error", onError);
+    response.on("aborted", onAborted);
+    resetIdleTimer();
+  });
+}
+
 export async function executeOAuthProxy(
   req: OAuthProxyRequest
 ): Promise<OAuthProxyResponse> {
-  const { url: targetUrl } = await validateUrl(req.url, req.httpsOnly);
-  const method = req.method ?? "GET";
-  const customHeaders = req.headers;
-
-  const requestHeaders = buildRequestHeaders(customHeaders);
-  const contentType =
-    customHeaders?.["Content-Type"] || customHeaders?.["content-type"];
-
-  if (method === "POST" && req.body && !contentType) {
-    requestHeaders["Content-Type"] = "application/json";
+  const { response, signal } = await executePinnedOAuthRequest(req);
+  try {
+    const body = await readBoundedResponseBody(response.stream);
+    return {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+      body: parseBufferedResponseBody(body),
+      finalUrl: response.finalUrl,
+    };
+  } catch (error) {
+    if (signal?.aborted) {
+      throw new OAuthProxyError(
+        400,
+        `OAuth proxy request timeout after ${req.timeoutMs}ms`
+      );
+    }
+    throw error;
   }
-
-  const response = await fetch(buildFetchUrl(targetUrl), {
-    method,
-    headers: requestHeaders,
-    redirect: req.httpsOnly ? "manual" : req.redirect ?? "follow",
-    body: encodeRequestBody(method, req.body, contentType),
-    signal: requestTimeoutSignal(req.timeoutMs),
-  });
-
-  const headers: Record<string, string> = {};
-  response.headers.forEach((value, key) => {
-    headers[key] = value;
-  });
-
-  return {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-    body: await parseResponseBody(response),
-    finalUrl: response.url || targetUrl.toString(),
-  };
 }
 
 export async function executeDebugOAuthProxy(
   req: OAuthProxyRequest
 ): Promise<OAuthProxyResponse> {
-  const { url: targetUrl } = await validateUrl(req.url, req.httpsOnly);
-  const method = req.method ?? "GET";
-  const customHeaders = req.headers;
-
-  const requestHeaders = buildRequestHeaders(customHeaders);
-  const contentType =
-    customHeaders?.["Content-Type"] || customHeaders?.["content-type"];
-
-  if (method === "POST" && req.body && !contentType) {
-    requestHeaders["Content-Type"] = "application/json";
-  }
-
-  const response = await fetch(buildFetchUrl(targetUrl), {
-    method,
-    headers: requestHeaders,
-    redirect: req.httpsOnly ? "manual" : req.redirect ?? "follow",
-    body: encodeRequestBody(method, req.body, contentType),
-    signal: requestTimeoutSignal(req.timeoutMs),
-  });
-
-  const headers: Record<string, string> = {};
-  response.headers.forEach((value, key) => {
-    headers[key] = value;
-  });
-
+  const { response, signal } = await executePinnedOAuthRequest(req);
   let responseBody: unknown = null;
-  const contentTypeHeader = headers["content-type"] || "";
 
-  if (contentTypeHeader.includes("text/event-stream")) {
-    try {
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      const events: Array<{ event?: string; data?: unknown; id?: string }> = [];
-      let currentEvent: Record<string, unknown> = {};
-      const maxReadTime = 5000;
-      const startTime = Date.now();
-
-      if (reader) {
-        try {
-          while (Date.now() - startTime < maxReadTime) {
-            const { done, value } = await Promise.race([
-              reader.read(),
-              new Promise<{ done: boolean; value: undefined }>((_, reject) =>
-                setTimeout(() => reject(new Error("Read timeout")), 1000)
-              ),
-            ]);
-
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split(/\r?\n/);
-            buffer = lines.pop() || "";
-
-            for (const line of lines) {
-              if (line.startsWith("event:")) {
-                currentEvent.event = line.substring(6).trim();
-              } else if (line.startsWith("data:")) {
-                const data = line.substring(5).trim();
-                try {
-                  currentEvent.data = JSON.parse(data);
-                } catch {
-                  currentEvent.data = data;
-                }
-              } else if (line.startsWith("id:")) {
-                currentEvent.id = line.substring(3).trim();
-              } else if (line === "") {
-                if (Object.keys(currentEvent).length > 0) {
-                  events.push({ ...currentEvent });
-                  currentEvent = {};
-                  if (events.length >= 1) break;
-                }
-              }
-            }
-
-            if (events.length >= 1) break;
-          }
-        } finally {
-          try {
-            await reader.cancel();
-          } catch {
-            // ignore cancel errors
-          }
+  try {
+    if (
+      response.stream &&
+      response.headers["content-type"]?.includes("text/event-stream")
+    ) {
+      try {
+        responseBody = await readDebugSseBody(response.stream);
+      } catch (error) {
+        if (signal?.aborted) {
+          throw error;
         }
+        responseBody = {
+          error: "Failed to parse SSE stream",
+          details: error instanceof Error ? error.message : String(error),
+        };
       }
-
-      responseBody = {
-        transport: "sse",
-        events,
-        isOldTransport: events[0]?.event === "endpoint",
-        endpoint: events[0]?.event === "endpoint" ? events[0].data : null,
-        mcpResponse:
-          events.find((event) => event.event === "message" || !event.event)
-            ?.data || null,
-        rawBuffer: buffer,
-      };
-    } catch (error) {
-      responseBody = {
-        error: "Failed to parse SSE stream",
-        details: error instanceof Error ? error.message : String(error),
-      };
+    } else {
+      responseBody = parseBufferedResponseBody(
+        await readBoundedResponseBody(response.stream)
+      );
     }
-  } else {
-    responseBody = await parseResponseBody(response);
+  } catch (error) {
+    if (signal?.aborted) {
+      throw new OAuthProxyError(
+        400,
+        `OAuth proxy request timeout after ${req.timeoutMs}ms`
+      );
+    }
+    throw error;
   }
 
   return {
     status: response.status,
     statusText: response.statusText,
-    headers,
+    headers: response.headers,
     body: responseBody,
-    finalUrl: response.url || targetUrl.toString(),
+    finalUrl: response.finalUrl,
   };
 }
 
@@ -523,7 +814,8 @@ function isLoopbackAddress(address: string): boolean {
 async function resolvePinnedAddresses(
   targetUrl: URL,
   allowLoopbackFlow: boolean,
-  signal: AbortSignal | undefined
+  signal: AbortSignal | undefined,
+  targetLabel = "OAuth metadata target"
 ): Promise<PinnedAddress[] | null> {
   const targetIsLoopback = isLoopbackOAuthUrl(targetUrl.toString());
 
@@ -531,7 +823,7 @@ async function resolvePinnedAddresses(
     if (!(allowLoopbackFlow && targetIsLoopback)) {
       throw new OAuthProxyError(
         400,
-        `OAuth metadata target is a private/reserved host (${targetUrl.hostname})`
+        `${targetLabel} is a private/reserved host (${targetUrl.hostname})`
       );
     }
   }
@@ -549,7 +841,7 @@ async function resolvePinnedAddresses(
     const cleanup = () => signal?.removeEventListener("abort", onAbort);
     const onAbort = () => {
       cleanup();
-      reject(signal?.reason ?? new Error("OAuth metadata request aborted"));
+      reject(signal?.reason ?? new Error(`${targetLabel} request aborted`));
     };
 
     if (signal?.aborted) {
@@ -567,7 +859,9 @@ async function resolvePinnedAddresses(
           reject(
             new OAuthProxyError(
               400,
-              `Could not resolve OAuth metadata host ${targetUrl.hostname}`
+              `Could not resolve ${targetLabel.toLowerCase()} ${
+                targetUrl.hostname
+              }`
             )
           );
           return;
@@ -580,7 +874,7 @@ async function resolvePinnedAddresses(
   if (addresses.length === 0) {
     throw new OAuthProxyError(
       400,
-      `Could not resolve OAuth metadata host ${targetUrl.hostname}`
+      `Could not resolve ${targetLabel.toLowerCase()} ${targetUrl.hostname}`
     );
   }
 
@@ -589,13 +883,13 @@ async function resolvePinnedAddresses(
       if (!isLoopbackAddress(address)) {
         throw new OAuthProxyError(
           400,
-          `Loopback OAuth metadata host resolved outside loopback (${address})`
+          `Loopback ${targetLabel.toLowerCase()} resolved outside loopback (${address})`
         );
       }
     } else if (isDisallowedIpAddress(address)) {
       throw new OAuthProxyError(
         400,
-        `OAuth metadata host resolves to a private/reserved IP address (${address})`
+        `${targetLabel} resolves to a private/reserved IP address (${address})`
       );
     }
   }
@@ -642,7 +936,9 @@ async function requestPinnedOAuthMetadata(
         ...(pinnedAddresses
           ? { lookup: createPinnedLookup(pinnedAddresses) }
           : {}),
-        ...(targetUrl.protocol === "https:"
+        ...(targetUrl.protocol === "https:" &&
+        !/^\d+\.\d+\.\d+\.\d+$/.test(targetUrl.hostname) &&
+        !targetUrl.hostname.includes(":")
           ? { servername: targetUrl.hostname }
           : {}),
         signal,
@@ -757,16 +1053,19 @@ export async function fetchOAuthMetadata(
       throw new OAuthProxyError(400, "Too many OAuth metadata redirects");
     }
 
+    let nextUrl: URL;
     try {
-      currentUrl = new URL(location, currentUrl);
+      nextUrl = new URL(location, currentUrl);
     } catch {
       throw new OAuthProxyError(
         502,
         "OAuth metadata returned an invalid redirect URL"
       );
     }
-    // The next iteration validates and pins the redirect destination before
-    // opening its socket.
+    // Validate scheme, hosted HTTPS policy, and embedded credentials now —
+    // same policy as the generic proxy loop. DNS/private-network validation
+    // happens in requestPinnedOAuthMetadata before the next socket.
+    currentUrl = parseAndValidateUrl(nextUrl.toString(), httpsOnly);
   }
 
   if (response.status < 200 || response.status >= 300) {

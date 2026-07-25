@@ -52,7 +52,7 @@ function webErrorCompat(c: Context, routeError: WebRouteError) {
       message: routeError.message,
       error: routeError.message,
     },
-    routeError.status as ContentfulStatusCode
+    routeError.status as ContentfulStatusCode,
   );
 }
 
@@ -64,7 +64,7 @@ function toRouteError(error: unknown): WebRouteError {
     return new WebRouteError(
       error.status,
       statusToErrorCode(error.status),
-      error.message
+      error.message,
     );
   }
   return mapRuntimeError(error);
@@ -76,7 +76,7 @@ function getConvexHttpUrl(): string {
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_HTTP_URL configuration"
+      "Server missing CONVEX_HTTP_URL configuration",
     );
   }
 
@@ -100,8 +100,7 @@ async function proxyConvexOAuthPost(c: Context, path: string) {
   return new Response(bodyText, {
     status: response.status,
     headers: {
-      "Content-Type":
-        response.headers.get("content-type") ?? "application/json",
+      "Content-Type": response.headers.get("content-type") ?? "application/json",
     },
   });
 }
@@ -151,7 +150,7 @@ oauthWeb.get("/metadata", async (c) => {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "Missing url parameter"
+        "Missing url parameter",
       );
     }
 
@@ -160,7 +159,7 @@ oauthWeb.get("/metadata", async (c) => {
       throw new WebRouteError(
         result.status,
         statusToErrorCode(result.status),
-        `Failed to fetch OAuth metadata: ${result.status} ${result.statusText}`
+        `Failed to fetch OAuth metadata: ${result.status} ${result.statusText}`,
       );
     }
 

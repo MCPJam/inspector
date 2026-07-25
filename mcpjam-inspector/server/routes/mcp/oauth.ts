@@ -57,7 +57,7 @@ oauth.post("/debug/proxy", async (c) => {
       });
       return c.json(
         { error: error.message },
-        error.status as ContentfulStatusCode
+        error.status as ContentfulStatusCode,
       );
     }
     getRequestLogger(c, "routes.mcp.oauth").event("mcp.oauth.proxy.failed", {
@@ -71,7 +71,7 @@ oauth.post("/debug/proxy", async (c) => {
         error:
           error instanceof Error ? error.message : "Unknown error occurred",
       },
-      500
+      500,
     );
   }
 });
@@ -102,7 +102,7 @@ oauth.post("/proxy", async (c) => {
       });
       return c.json(
         { error: error.message },
-        error.status as ContentfulStatusCode
+        error.status as ContentfulStatusCode,
       );
     }
     getRequestLogger(c, "routes.mcp.oauth").event("mcp.oauth.proxy.failed", {
@@ -116,7 +116,7 @@ oauth.post("/proxy", async (c) => {
         error:
           error instanceof Error ? error.message : "Unknown error occurred",
       },
-      500
+      500,
     );
   }
 });
@@ -138,7 +138,7 @@ oauth.get("/metadata", async (c) => {
         {
           error: `Failed to fetch OAuth metadata: ${result.status} ${result.statusText}`,
         },
-        result.status as ContentfulStatusCode
+        result.status as ContentfulStatusCode,
       );
     }
 
@@ -155,7 +155,7 @@ oauth.get("/metadata", async (c) => {
       });
       return c.json(
         { error: error.message },
-        error.status as ContentfulStatusCode
+        error.status as ContentfulStatusCode,
       );
     }
     getRequestLogger(c, "routes.mcp.oauth").event("mcp.oauth.proxy.failed", {
@@ -169,7 +169,7 @@ oauth.get("/metadata", async (c) => {
         error:
           error instanceof Error ? error.message : "Unknown error occurred",
       },
-      500
+      500,
     );
   }
 });

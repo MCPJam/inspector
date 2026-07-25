@@ -95,16 +95,23 @@ const oauthProxyResponses = new WeakMap<
   { upstreamFinalUrl?: string }
 >();
 
-function markOAuthProxyResponse(
-  response: Response,
-  upstreamFinalUrl?: string
+function markRawOAuthProxyResponse(
+  response: Response
 ): Response {
   oauthProxyResponses.set(response, {
     upstreamFinalUrl:
-      upstreamFinalUrl ??
-      response.headers.get(OAUTH_UPSTREAM_URL_HEADER) ??
-      undefined,
+      response.headers.get(OAUTH_UPSTREAM_URL_HEADER) ?? undefined,
   });
+  return response;
+}
+
+function markReconstructedOAuthProxyResponse(
+  response: Response,
+  upstreamFinalUrl: string | undefined
+): Response {
+  // The reconstructed response contains headers supplied by the upstream OAuth
+  // server. Only trust provenance captured from MCPJam's raw proxy response.
+  oauthProxyResponses.set(response, { upstreamFinalUrl });
   return response;
 }
 
@@ -1170,7 +1177,7 @@ export function readStoredOAuthConfig(
 
     return config;
   } catch (e) {
-    console.warn("[mcp-oauth] Failed to parse stored OAuth config", e);
+    console.warn('[mcp-oauth] Failed to parse stored OAuth config', e);
     return {
       registryServerId: undefined,
       useRegistryOAuthProxy: false,
@@ -1483,7 +1490,7 @@ function createOAuthFetchInterceptor(
         });
         entry.response = await createTraceResponseFromFetch(response);
         entry.duration = Date.now() - entry.timestamp;
-        return markOAuthProxyResponse(response);
+        return markRawOAuthProxyResponse(response);
       }
     }
 
@@ -1499,7 +1506,7 @@ function createOAuthFetchInterceptor(
         const response = await authFetch(proxyUrl, { ...init, method: "GET" });
         entry.response = await createTraceResponseFromFetch(response);
         entry.duration = Date.now() - entry.timestamp;
-        return markOAuthProxyResponse(response);
+        return markRawOAuthProxyResponse(response);
       }
 
       // For OAuth endpoints, serialize and proxy the full request
@@ -1520,7 +1527,7 @@ function createOAuthFetchInterceptor(
       if (!response.ok) {
         entry.response = await createTraceResponseFromFetch(response);
         entry.duration = Date.now() - entry.timestamp;
-        return markOAuthProxyResponse(response);
+        return markRawOAuthProxyResponse(response);
       }
 
       const upstreamFinalUrl =
@@ -1533,7 +1540,7 @@ function createOAuthFetchInterceptor(
         body: data.body,
       });
       entry.duration = Date.now() - entry.timestamp;
-      return markOAuthProxyResponse(
+      return markReconstructedOAuthProxyResponse(
         new Response(JSON.stringify(data.body), {
           status: data.status,
           statusText: data.statusText,
@@ -1614,7 +1621,7 @@ export function buildMCPOAuthState(): string {
 }
 
 export function isElectronMcpCallbackState(
-  state: string | null | undefined
+  state: string | null | undefined,
 ): boolean {
   return Boolean(state && state.startsWith(ELECTRON_MCP_CALLBACK_STATE_PREFIX));
 }
@@ -2086,9 +2093,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
       );
       localStorage.setItem(
         `mcp-client-${this.serverName}`,
-        JSON.stringify(
-          issuer ? writeIssuerKeyed(raw, issuer, stripped) : stripped
-        )
+        JSON.stringify(issuer ? writeIssuerKeyed(raw, issuer, stripped) : stripped)
       );
       return stripped;
     }
@@ -2283,8 +2288,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     // persist a refresh fallback for servers it can't reach (e.g. localhost);
     // without it, the backend re-discovers against an unreachable resource on
     // refresh and the credential becomes unusable.
-    const authorizationServerUrl =
-      this.discoveryState()?.authorizationServerUrl;
+    const authorizationServerUrl = this.discoveryState()?.authorizationServerUrl;
     const importPayload: ImportHostedOAuthTokensRequest = {
       projectId: this.convexBinding.projectId,
       serverId: this.convexBinding.serverId,
@@ -2358,12 +2362,12 @@ export class MCPOAuthProvider implements OAuthClientProvider {
         } catch (error) {
           console.warn(
             "Failed to open system browser for MCP OAuth; continuing inside MCPJam Desktop:",
-            error
+            error,
           );
         }
       } else {
         console.warn(
-          "System browser opener is unavailable for MCP OAuth; continuing inside MCPJam Desktop."
+          "System browser opener is unavailable for MCP OAuth; continuing inside MCPJam Desktop.",
         );
       }
 
@@ -2818,7 +2822,9 @@ export async function initiateOAuth(
       delete merged.client_secret;
       localStorage.setItem(
         `mcp-client-${options.serverName}`,
-        JSON.stringify(issuer ? writeIssuerKeyed(raw, issuer, merged) : merged)
+        JSON.stringify(
+          issuer ? writeIssuerKeyed(raw, issuer, merged) : merged
+        )
       );
     }
 
@@ -3624,13 +3630,12 @@ export async function handleOAuthCallback(
     }
     // Validate CSRF `state` (recovered) and RFC 9207 `iss` before redeeming. A
     // missing or mismatched callbackState now fails the state check.
-    const fallbackIssuerMetadata =
-      discoveryState.authorizationServerMetadata as
-        | {
-            issuer?: string;
-            authorization_response_iss_parameter_supported?: boolean;
-          }
-        | undefined;
+    const fallbackIssuerMetadata = discoveryState.authorizationServerMetadata as
+      | {
+          issuer?: string;
+          authorization_response_iss_parameter_supported?: boolean;
+        }
+      | undefined;
     const fallbackSecurity = evaluateCallbackSecurity({
       callbackState: options.callbackState,
       callbackIss: options.callbackIss,
@@ -3836,10 +3841,7 @@ export function getStoredTokens(serverName: string, serverUrl?: string): any {
 /**
  * Checks if OAuth is configured for a server by looking at multiple sources
  */
-export function hasOAuthConfig(
-  serverName: string,
-  serverUrl?: string
-): boolean {
+export function hasOAuthConfig(serverName: string, serverUrl?: string): boolean {
   if (HOSTED_MODE) {
     return false;
   }

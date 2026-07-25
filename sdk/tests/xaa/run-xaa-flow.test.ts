@@ -16,6 +16,9 @@ vi.mock("../../src/oauth-proxy.js", async (importOriginal) => {
   const actual = await importOriginal<
     typeof import("../../src/oauth-proxy.js")
   >();
+  const { executeOAuthProxyViaFetch } = await import(
+    "../support/oauth-proxy-fetch-mock.js"
+  );
   return {
     ...actual,
     // These flow tests model every remote endpoint with global.fetch. Metadata
@@ -42,6 +45,8 @@ vi.mock("../../src/oauth-proxy.js", async (importOriginal) => {
         };
       }
     ),
+    executeOAuthProxy: vi.fn(executeOAuthProxyViaFetch),
+    executeDebugOAuthProxy: vi.fn(executeOAuthProxyViaFetch),
   };
 });
 

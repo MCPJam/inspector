@@ -227,7 +227,7 @@ const issuedCallbackState = (): string | null => {
   if (!serverName) return null;
   try {
     const raw = localStorage.getItem(`mcp-oauth-flow-state-${serverName}`);
-    const fromSession = raw ? JSON.parse(raw).state?.state ?? null : null;
+    const fromSession = raw ? (JSON.parse(raw).state?.state ?? null) : null;
     if (fromSession) return fromSession;
   } catch {
     // fall through to the durable key
@@ -757,6 +757,51 @@ describe("mcp-oauth", () => {
         expect.stringMatching(/\/api\/mcp\/oauth\/proxy$/),
         expect.objectContaining({ method: "POST" })
       );
+    });
+
+    it("does not trust a provenance header copied from the upstream OAuth response", async () => {
+      authFetch.mockImplementation(
+        async () =>
+          new Response(
+            JSON.stringify({
+              status: 200,
+              statusText: "OK",
+              headers: {
+                "content-type": "application/json",
+                "x-mcpjam-oauth-upstream-url":
+                  "http://127.0.0.1:8787/spoofed-by-upstream",
+              },
+              body: { access_token: "token" },
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            }
+          )
+      );
+      mockDiscoverOAuthServerInfo.mockImplementation(
+        async (_serverUrl, options) => {
+          const response = await options?.fetchFn?.(
+            "https://auth.example.com/token",
+            { method: "POST" }
+          );
+          if (!response) {
+            throw new Error("Missing OAuth fetch function");
+          }
+          expect(
+            response.headers.get("x-mcpjam-oauth-upstream-url")
+          ).toBe("http://127.0.0.1:8787/spoofed-by-upstream");
+          return createDiscoveryState();
+        }
+      );
+
+      const { initiateOAuth } = await import("../mcp-oauth");
+      const result = await initiateOAuth({
+        serverName: "test-server",
+        serverUrl: "https://example.com/mcp",
+      });
+
+      expect(result.success).toBe(true);
     });
 
     it("allows a proxy-reported loopback URL for an explicitly local MCP server", async () => {
@@ -1555,9 +1600,9 @@ describe("mcp-oauth", () => {
         "static-client-id",
         "static-client-secret"
       );
-      expect(providerWithSecret.clientMetadata.token_endpoint_auth_method).toBe(
-        "client_secret_basic"
-      );
+      expect(
+        providerWithSecret.clientMetadata.token_endpoint_auth_method
+      ).toBe("client_secret_basic");
     });
 
     it("round-trips discovery state for the matching server URL", async () => {
@@ -2453,10 +2498,8 @@ describe("mcp-oauth", () => {
       } as any);
 
       // Reading with the ORIGINAL serverUrl still resolves AS A → token present.
-      expect(
-        getStoredTokens("reused-gst", "https://old.example.com/sse")
-          ?.access_token
-      ).toBe("token-for-as-a");
+      expect(getStoredTokens("reused-gst", "https://old.example.com/sse")
+        ?.access_token).toBe("token-for-as-a");
 
       // Reused with a DIFFERENT URL: the stale discovery must NOT resolve an
       // issuer, so AS A's token bucket is NOT surfaced through getStoredTokens.
@@ -2594,10 +2637,7 @@ describe("mcp-oauth", () => {
     const seedAsanaCallback = (discoveryState: any) => {
       localStorage.setItem("mcp-oauth-pending", "asana");
       // Durable issued state (F6 recovery reads this on the no-session path).
-      localStorage.setItem(
-        "mcp-oauth-issued-state-asana",
-        "asana-issued-state"
-      );
+      localStorage.setItem("mcp-oauth-issued-state-asana", "asana-issued-state");
       localStorage.setItem(
         "mcp-serverUrl-asana",
         "https://mcp.asana.com/v2/mcp"
@@ -3254,10 +3294,10 @@ describe("createServerConfig wire-era pin", () => {
     const config = createServerConfig(
       "https://mcp.example.com",
       { access_token: "tok" },
-      "2026-07-28"
+      "2026-07-28",
     );
     expect((config as { mcpProtocolVersion?: string }).mcpProtocolVersion).toBe(
-      "2026-07-28"
+      "2026-07-28",
     );
   });
 
@@ -3266,10 +3306,10 @@ describe("createServerConfig wire-era pin", () => {
     const config = createServerConfig(
       "https://mcp.example.com",
       { access_token: "tok" },
-      "2025-11-25"
+      "2025-11-25",
     );
     expect(
-      (config as { mcpProtocolVersion?: string }).mcpProtocolVersion
+      (config as { mcpProtocolVersion?: string }).mcpProtocolVersion,
     ).toBeUndefined();
   });
 });
@@ -3331,7 +3371,7 @@ describe("evaluateCallbackSecurity (2R-iss callback gate)", () => {
         ...base,
         callbackIss: null,
         issParameterSupported: undefined,
-      })
+      }),
     ).toEqual({ ok: true });
   });
 
@@ -3344,7 +3384,7 @@ describe("evaluateCallbackSecurity (2R-iss callback gate)", () => {
         expectedState: undefined,
         recordedIssuer: "https://as.example.com",
         issParameterSupported: undefined,
-      })
+      }),
     ).toEqual({ ok: true });
   });
 });
