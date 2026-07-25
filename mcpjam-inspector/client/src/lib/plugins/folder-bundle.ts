@@ -231,7 +231,11 @@ export async function buildPluginZip(
 }
 
 function bundleLimitError(
-  code: "BUNDLE_TOO_MANY_ENTRIES" | "BUNDLE_TOO_LARGE" | "FILE_TOO_LARGE",
+  code:
+    | "BUNDLE_TOO_MANY_ENTRIES"
+    | "BUNDLE_TOO_LARGE"
+    | "FILE_TOO_LARGE"
+    | "PATH_DUPLICATE",
   message: string,
   path?: string,
 ): PluginBundleError {
@@ -243,6 +247,33 @@ function bundleLimitError(
       ...(path !== undefined ? { path } : {}),
     },
   ]);
+}
+
+/**
+ * Read the total-record count from the ZIP's end-of-central-directory (EOCD)
+ * record — the same field the backend's yauzl adapter rejects on — directly
+ * from the raw bytes, before jszip parses (and name-deduplicates) anything.
+ *
+ * The EOCD (`PK\x05\x06`) is 22 bytes plus an up-to-65535-byte trailing
+ * comment, so it is scanned backward within the last 65557 bytes; a match
+ * only counts when its comment-length field spans exactly to the end of the
+ * file (rules out the signature appearing inside entry data). Returns
+ * `undefined` when no EOCD is found — jszip's own "corrupted zip" error then
+ * surfaces from `loadAsync`.
+ */
+function readEocdTotalEntries(bytes: Uint8Array): number | undefined {
+  const EOCD_SIZE = 22;
+  if (bytes.length < EOCD_SIZE) return undefined;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const lowest = Math.max(0, bytes.length - (EOCD_SIZE + 0xffff));
+  for (let i = bytes.length - EOCD_SIZE; i >= lowest; i--) {
+    if (view.getUint32(i, true) !== 0x06054b50) continue;
+    const commentLength = view.getUint16(i + 20, true);
+    if (i + EOCD_SIZE + commentLength !== bytes.length) continue;
+    // Offset 10: total central-directory records across all disks.
+    return view.getUint16(i + 10, true);
+  }
+  return undefined;
 }
 
 /** jszip keeps the central-directory uncompressed size on an internal field. */
@@ -337,16 +368,17 @@ function readEntryBounded(
  *
  * Zip-bomb hardening: extraction enforces the SAME limits the SDK parser and
  * backend archive adapter use (`DEFAULT_PLUGIN_BUNDLE_LIMITS`: 1000 entries,
- * 10 MB per file, 100 MB total uncompressed) DURING inflation. The record
- * count (files AND directories, matching the backend's end-of-central-
- * directory count) is checked before any read; each entry is then inflated
- * as a bounded stream (`readEntryBounded`) that counts ACTUAL bytes and
- * aborts mid-entry when a per-file or cumulative cap is crossed — a forged
- * central-directory size cannot bypass it. The declared size is still used
- * as a cheap fast-fail for honest metadata. Violations throw the SDK's
- * `PluginBundleError` with the matching issue codes
- * (`BUNDLE_TOO_MANY_ENTRIES` / `FILE_TOO_LARGE` / `BUNDLE_TOO_LARGE`), so the
- * UI error path is uniform with parser failures.
+ * 10 MB per file, 100 MB total uncompressed) DURING inflation. The RAW
+ * end-of-central-directory record count (files AND directories, exactly what
+ * the backend's yauzl adapter rejects on) is checked before jszip parses the
+ * archive; each entry is then inflated as a bounded stream
+ * (`readEntryBounded`) that counts ACTUAL bytes and aborts mid-entry when a
+ * per-file or cumulative cap is crossed — a forged central-directory size
+ * cannot bypass it. The declared size is still used as a cheap fast-fail for
+ * honest metadata. Violations throw the SDK's `PluginBundleError` with the
+ * matching issue codes (`BUNDLE_TOO_MANY_ENTRIES` / `FILE_TOO_LARGE` /
+ * `BUNDLE_TOO_LARGE` / `PATH_DUPLICATE`), so the UI error path is uniform
+ * with parser failures.
  */
 export async function zipToPluginFiles(
   zipBytes: Uint8Array,
@@ -356,18 +388,53 @@ export async function zipToPluginFiles(
     ...DEFAULT_PLUGIN_BUNDLE_LIMITS,
     ...options?.limits,
   };
+
+  // Enforce maxEntries against the RAW record count from the EOCD record,
+  // BEFORE jszip parses anything. jszip's `files` is a name-keyed object, so
+  // duplicate (or same-normalizing) names collapse during loadAsync — a
+  // crafted archive with thousands of records could otherwise present a
+  // compliant-looking deduplicated count while the authoritative backend
+  // (yauzl EOCD record count) rejects it.
+  const recordCount = readEocdTotalEntries(zipBytes);
+  if (recordCount !== undefined) {
+    if (recordCount === 0xffff) {
+      // ZIP64 sentinel: the real count lives in the ZIP64 EOCD record. Any
+      // archive with >= 65535 records is far over maxEntries (1000), so
+      // reject on the sentinel instead of parsing ZIP64 structures.
+      throw bundleLimitError(
+        "BUNDLE_TOO_MANY_ENTRIES",
+        `archive declares 65535+ records (ZIP64); the limit is ${limits.maxEntries}`,
+      );
+    }
+    if (recordCount > limits.maxEntries) {
+      throw bundleLimitError(
+        "BUNDLE_TOO_MANY_ENTRIES",
+        `archive has ${recordCount} records; the limit is ${limits.maxEntries}`,
+      );
+    }
+  }
+
   const { default: JSZip } = await import("jszip");
   const zip = await JSZip.loadAsync(toZipInput(zipBytes));
 
-  // Count every archive RECORD, directories included — the backend rejects on
-  // the end-of-central-directory record count before filtering, so a client
-  // preflight that ignored directory records would accept archives the
-  // authoritative validator rejects.
   const allRecords = Object.values(zip.files);
+  // Belt-and-braces for the (malformed) case where the EOCD scan found
+  // nothing but jszip still parsed a central directory.
   if (allRecords.length > limits.maxEntries) {
     throw bundleLimitError(
       "BUNDLE_TOO_MANY_ENTRIES",
       `archive has ${allRecords.length} records; the limit is ${limits.maxEntries}`,
+    );
+  }
+  // If the raw count exceeds what jszip kept, duplicate (or same-normalizing)
+  // names collapsed last-wins during loadAsync. A legitimate bundle has no
+  // reason to contain them, and a deduplicated preview would misrepresent
+  // what stricter parsers (the backend) see. Same code the SDK parser uses
+  // for duplicate normalized paths.
+  if (recordCount !== undefined && recordCount > allRecords.length) {
+    throw bundleLimitError(
+      "PATH_DUPLICATE",
+      `archive contains ${recordCount - allRecords.length} duplicate or colliding entry name(s)`,
     );
   }
   const entries = allRecords.filter((entry) => !entry.dir);

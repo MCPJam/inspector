@@ -296,6 +296,108 @@ describe("zipToPluginFiles zip-bomb hardening", () => {
   });
 });
 
+describe("zipToPluginFiles raw EOCD record counting", () => {
+  /**
+   * Hand-build a ZIP of zero-length STORED entries (CRC32 of empty = 0, so
+   * every field is trivially valid) so the raw local/central/EOCD records —
+   * including duplicates jszip would silently deduplicate — are fully under
+   * the test's control.
+   */
+  function buildRawZip(names: string[], comment = ""): Uint8Array {
+    const locals: Uint8Array[] = [];
+    const centrals: Uint8Array[] = [];
+    let offset = 0;
+    for (const name of names) {
+      const nameBytes = encoder.encode(name);
+      const local = new Uint8Array(30 + nameBytes.length);
+      const lv = new DataView(local.buffer);
+      lv.setUint32(0, 0x04034b50, true); // local file header signature
+      lv.setUint16(4, 20, true); // version needed
+      lv.setUint16(26, nameBytes.length, true);
+      local.set(nameBytes, 30);
+      const central = new Uint8Array(46 + nameBytes.length);
+      const cv = new DataView(central.buffer);
+      cv.setUint32(0, 0x02014b50, true); // central directory signature
+      cv.setUint16(4, 20, true); // version made by
+      cv.setUint16(6, 20, true); // version needed
+      cv.setUint16(28, nameBytes.length, true);
+      cv.setUint32(42, offset, true); // local header offset
+      central.set(nameBytes, 46);
+      locals.push(local);
+      centrals.push(central);
+      offset += local.length;
+    }
+    const centralSize = centrals.reduce((sum, c) => sum + c.length, 0);
+    const commentBytes = encoder.encode(comment);
+    const eocd = new Uint8Array(22 + commentBytes.length);
+    const ev = new DataView(eocd.buffer);
+    ev.setUint32(0, 0x06054b50, true); // EOCD signature
+    ev.setUint16(8, names.length, true); // entries on this disk
+    ev.setUint16(10, names.length, true); // total entries
+    ev.setUint32(12, centralSize, true);
+    ev.setUint32(16, offset, true); // central directory offset
+    ev.setUint16(20, commentBytes.length, true);
+    eocd.set(commentBytes, 22);
+
+    const total = [...locals, ...centrals, eocd];
+    const out = new Uint8Array(total.reduce((sum, c) => sum + c.length, 0));
+    let cursor = 0;
+    for (const chunk of total) {
+      out.set(chunk, cursor);
+      cursor += chunk.length;
+    }
+    return out;
+  }
+
+  it("rejects >maxEntries raw records even when duplicate names would collapse", async () => {
+    // 1001 records sharing one name: jszip's keyed `files` object would
+    // deduplicate this to ONE compliant-looking entry, but the backend's
+    // yauzl EOCD count sees 1001 — the raw count must reject it first.
+    const zip = buildRawZip(Array.from({ length: 1001 }, () => "dup.txt"));
+    await expect(zipToPluginFiles(zip)).rejects.toMatchObject({
+      name: "PluginBundleError",
+      code: "BUNDLE_TOO_MANY_ENTRIES",
+      message: expect.stringContaining("1001"),
+    });
+  });
+
+  it("rejects duplicate names under the record limit as PATH_DUPLICATE", async () => {
+    const zip = buildRawZip(["dup.txt", "dup.txt"]);
+    await expect(zipToPluginFiles(zip)).rejects.toMatchObject({
+      name: "PluginBundleError",
+      code: "PATH_DUPLICATE",
+    });
+  });
+
+  it("counts records correctly through an EOCD trailing comment", async () => {
+    const commented = buildRawZip(["a.txt", "b.txt", "c.txt"], "hello comment");
+    await expect(
+      zipToPluginFiles(commented, { limits: { maxEntries: 2 } }),
+    ).rejects.toMatchObject({
+      name: "PluginBundleError",
+      code: "BUNDLE_TOO_MANY_ENTRIES",
+      message: expect.stringContaining("3"),
+    });
+
+    // ...and does not false-trigger on a compliant commented archive.
+    const ok = await zipToPluginFiles(buildRawZip(["a.txt"], "hi"));
+    expect(ok).toEqual([{ path: "a.txt", bytes: new Uint8Array(0) }]);
+  });
+
+  it("rejects the ZIP64 0xFFFF total-entries sentinel", async () => {
+    const eocd = new Uint8Array(22);
+    const view = new DataView(eocd.buffer);
+    view.setUint32(0, 0x06054b50, true);
+    view.setUint16(8, 0xffff, true);
+    view.setUint16(10, 0xffff, true);
+    await expect(zipToPluginFiles(eocd)).rejects.toMatchObject({
+      name: "PluginBundleError",
+      code: "BUNDLE_TOO_MANY_ENTRIES",
+      message: expect.stringContaining("ZIP64"),
+    });
+  });
+});
+
 describe("filesFromFolderSelection pre-read limits", () => {
   function fakeFile(path: string, size: number): File {
     const file = new File(["x"], path.split("/").pop() ?? "");
