@@ -120,6 +120,7 @@ import {
   type HostedElicitationRequestEvent,
   type HostedElicitationUrlRequiredEvent,
 } from "@/shared/hosted-elicitation";
+import { applyToolCallStepUp } from "@/state/oauth-orchestrator";
 import { respondToChatElicitation } from "@/lib/apis/elicitation-api";
 import {
   isHarnessSessionDataPart,
@@ -1249,6 +1250,10 @@ export function useChatSession(
   const [urlElicitationRequired, setUrlElicitationRequired] = useState<
     HostedElicitationUrlRequiredEvent[]
   >([]);
+  // SEP-2350: dedupes the chat step-up per server so a re-delivered
+  // `insufficient_scope` part (or a second failing tool call) can't fire a
+  // duplicate redirect / double counter bump while the first is in flight.
+  const chatStepUpInFlightRef = useRef<Set<string>>(new Set());
   const resumedVersionRef = useRef<number | null>(null);
   const restoredToolRenderOverridesRef = useRef<
     Record<string, ToolRenderOverride>
@@ -1402,6 +1407,41 @@ export function useChatSession(
             );
           } else if (event.kind === "url_required") {
             setUrlElicitationRequired((current) => [...current, event]);
+          } else if (event.kind === "insufficient_scope") {
+            // SEP-2350: a tool call in the agent loop failed with a runtime
+            // `403 insufficient_scope`. Drive the bounded, union-scope step-up
+            // re-authorization (`reauthorize` redirects the browser to the
+            // authorization server). Resolve the live server entry from the
+            // same store ToolsTab uses; without it there is no stored issuer /
+            // granted scopes to widen, so skip.
+            const activeProject =
+              appState?.projects?.[
+                hostedProjectId ?? appState?.activeProjectId ?? ""
+              ];
+            const server =
+              (event.serverName
+                ? (appState?.servers?.[event.serverName] ??
+                  activeProject?.servers?.[event.serverName])
+                : undefined) ??
+              appState?.servers?.[event.serverId] ??
+              activeProject?.servers?.[event.serverId];
+            if (server && (event.requiredScope || event.resourceMetadataUrl)) {
+              const stepUpKey = server.name;
+              if (!chatStepUpInFlightRef.current.has(stepUpKey)) {
+                chatStepUpInFlightRef.current.add(stepUpKey);
+                void applyToolCallStepUp(server, {
+                  requiredScope: event.requiredScope,
+                  resourceMetadataUrl: event.resourceMetadataUrl,
+                })
+                  .catch(() => {
+                    // A failed step-up leaves the model-facing tool error in
+                    // place; nothing else to surface here.
+                  })
+                  .finally(() => {
+                    chatStepUpInFlightRef.current.delete(stepUpKey);
+                  });
+              }
+            }
           }
         } else if (isHostedRpcLogDataPart(part)) {
           ingestHostedRpcLogs([part.data]);
@@ -1427,7 +1467,7 @@ export function useChatSession(
 
       setLiveTraceState((current) => applyLiveTraceEvent(current, part.data));
     },
-    [hostedProjectId, hostedHostId],
+    [hostedProjectId, hostedHostId, appState],
   );
 
   const syncResumedVersion = useCallback((version: number | null) => {
