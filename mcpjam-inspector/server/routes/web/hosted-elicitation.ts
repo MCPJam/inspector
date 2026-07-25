@@ -62,9 +62,77 @@ import {
   type HostedElicitationMode,
 } from "@/shared/hosted-elicitation";
 
-type ElicitationChunkWriter = {
+export type ElicitationChunkWriter = {
   write: (chunk: UIMessageChunk) => void;
 };
+
+/** The optional challenge fields a `403 insufficient_scope` can carry. */
+export interface InsufficientScopeInfo {
+  serverId: string;
+  toolCallId?: string;
+  requiredScope?: string;
+  resourceMetadataUrl?: string;
+  errorDescription?: string;
+}
+
+/**
+ * Single source of truth for the display-only `insufficient_scope` event shape.
+ * Returns `null` when there is nothing actionable (no challenge field), so both
+ * the bridge and the writer-only fallback drop empty notices identically.
+ */
+export function buildInsufficientScopeEvent(
+  serverName: string | undefined,
+  info: InsufficientScopeInfo,
+): HostedElicitationEvent | null {
+  if (
+    !info.requiredScope &&
+    !info.resourceMetadataUrl &&
+    !info.errorDescription
+  ) {
+    return null;
+  }
+  return {
+    kind: "insufficient_scope",
+    serverId: info.serverId,
+    ...(serverName ? { serverName } : {}),
+    ...(info.toolCallId ? { toolCallId: info.toolCallId } : {}),
+    ...(info.requiredScope ? { requiredScope: info.requiredScope } : {}),
+    ...(info.resourceMetadataUrl
+      ? { resourceMetadataUrl: info.resourceMetadataUrl }
+      : {}),
+    ...(info.errorDescription
+      ? { errorDescription: info.errorDescription }
+      : {}),
+  } as HostedElicitationEvent;
+}
+
+/**
+ * Surface a SEP-2350 `403 insufficient_scope` on the raw stream writer, WITHOUT
+ * a `HostedElicitationBridge`. The chat tool loop uses this so a host that never
+ * advertised elicitation (hence has no bridge) still emits the display-only
+ * scope step-up notice. Safe no-op when `writer` is absent or the challenge is
+ * empty — the emit is purely for display; the failed tool call already stands.
+ */
+export function emitInsufficientScopeChunk(
+  writer: ElicitationChunkWriter | null | undefined,
+  serverName: string | undefined,
+  info: InsufficientScopeInfo,
+): void {
+  if (!writer) return;
+  const event = buildInsufficientScopeEvent(serverName, info);
+  if (!event) return;
+  try {
+    writer.write({
+      type: HOSTED_ELICITATION_DATA_PART_TYPE,
+      data: event,
+      transient: true,
+    } as unknown as UIMessageChunk);
+  } catch (error) {
+    logger.warn("[elicitation] insufficient_scope stream write failed", {
+      error,
+    });
+  }
+}
 
 /** Terminal states the rendezvous row can report. */
 type PollStatus = "pending" | "answered" | "cancelled" | "expired";
@@ -233,34 +301,14 @@ export class HostedElicitationBridge {
    * failed, so no JSON-RPC response is owed and there is nothing to rendezvous
    * on. The client drives the union-scope step-up re-authorization.
    */
-  emitInsufficientScope(info: {
-    serverId: string;
-    toolCallId?: string;
-    requiredScope?: string;
-    resourceMetadataUrl?: string;
-    errorDescription?: string;
-  }): void {
-    // Nothing actionable without at least one challenge field.
-    if (
-      !info.requiredScope &&
-      !info.resourceMetadataUrl &&
-      !info.errorDescription
-    ) {
-      return;
-    }
-    this.emit({
-      kind: "insufficient_scope",
-      serverId: info.serverId,
-      serverName: this.options.serverNamesById[info.serverId],
-      ...(info.toolCallId ? { toolCallId: info.toolCallId } : {}),
-      ...(info.requiredScope ? { requiredScope: info.requiredScope } : {}),
-      ...(info.resourceMetadataUrl
-        ? { resourceMetadataUrl: info.resourceMetadataUrl }
-        : {}),
-      ...(info.errorDescription
-        ? { errorDescription: info.errorDescription }
-        : {}),
-    });
+  emitInsufficientScope(info: InsufficientScopeInfo): void {
+    // Shared builder drops empty notices; `serverName` enriches from the
+    // per-turn id→name map the writer-only fallback can't see.
+    const event = buildInsufficientScopeEvent(
+      this.options.serverNamesById[info.serverId],
+      info,
+    );
+    if (event) this.emit(event);
   }
 
   /**
