@@ -35,6 +35,25 @@ describe("extractInsufficientScopeChallenge (SEP-2350)", () => {
     });
   });
 
+  it("normalizes a URL-object resourceMetadataUrl to a string (real runtime shape)", () => {
+    // The upstream transport constructs InsufficientScopeError with
+    // `resourceMetadataUrl` as a `URL` (from `new URL(...)` on the
+    // WWW-Authenticate header), NOT a string. The extractor must accept it and
+    // normalize, otherwise the real production value is silently dropped.
+    const err = new InsufficientScopeError({
+      requiredScope: "read write",
+      resourceMetadataUrl: new URL(
+        "https://rs.example/.well-known/oauth-protected-resource",
+      ) as any,
+    });
+    expect(extractInsufficientScopeChallenge(err)).toEqual({
+      requiredScope: "read write",
+      resourceMetadataUrl:
+        "https://rs.example/.well-known/oauth-protected-resource",
+      errorDescription: undefined,
+    });
+  });
+
   it("walks the cause chain to find a wrapped InsufficientScopeError", () => {
     const inner = new InsufficientScopeError({ requiredScope: "read:tickets" });
     const outer = new Error("tool call failed");

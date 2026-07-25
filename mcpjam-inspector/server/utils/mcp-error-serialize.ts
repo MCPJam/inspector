@@ -43,10 +43,22 @@ export function extractInsufficientScopeChallenge(
         typeof current.requiredScope === "string"
           ? current.requiredScope
           : undefined;
+      // The upstream `InsufficientScopeError` carries `resourceMetadataUrl` as a
+      // `URL` object at runtime (the transport builds it via `new URL(...)` when
+      // parsing the `WWW-Authenticate` header), even though older callers passed
+      // a string. A bare `typeof === "string"` check would silently DROP the
+      // real production value. Accept a string or a URL(-like) object and
+      // normalize to a string for JSON serialization.
+      const rawResourceMetadataUrl = current.resourceMetadataUrl;
       const resourceMetadataUrl =
-        typeof current.resourceMetadataUrl === "string"
-          ? current.resourceMetadataUrl
-          : undefined;
+        typeof rawResourceMetadataUrl === "string"
+          ? rawResourceMetadataUrl
+          : rawResourceMetadataUrl instanceof URL ||
+              (rawResourceMetadataUrl &&
+                typeof rawResourceMetadataUrl === "object" &&
+                typeof rawResourceMetadataUrl.href === "string")
+            ? String(rawResourceMetadataUrl)
+            : undefined;
       const errorDescription =
         typeof current.errorDescription === "string"
           ? current.errorDescription
