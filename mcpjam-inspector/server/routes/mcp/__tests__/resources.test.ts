@@ -105,6 +105,7 @@ describe("POST /api/mcp/resources/list", () => {
       expect(mcpClientManager.listResources).toHaveBeenCalledWith(
         "test-server",
         { cursor: "cursor-page-2" },
+        undefined,
       );
     });
 
@@ -118,6 +119,7 @@ describe("POST /api/mcp/resources/list", () => {
       expect(res.status).toBe(200);
       expect(mcpClientManager.listResources).toHaveBeenCalledWith(
         "test-server",
+        undefined,
         undefined,
       );
     });
@@ -201,6 +203,7 @@ describe("POST /api/mcp/resources/read", () => {
         {
           uri: "file:///test.txt",
         },
+        undefined,
       );
     });
 
