@@ -205,6 +205,28 @@ export async function listTools(
   };
 }
 
+/**
+ * `listAll*` (this one and its `listAllResources` / `listAllPrompts` /
+ * `listAllResourceTemplates` siblings below) manually walk pages via
+ * `drainPaginatedList`, including its own repeated-cursor guard and
+ * `MAX_PAGINATION_PAGES` cap. On beta.4 that manual walk is largely
+ * redundant for the common case: the underlying `@modelcontextprotocol/
+ * client` `Client.listTools()` (etc.) already auto-aggregates every page
+ * when called with no `cursor` — which is exactly how these helpers make
+ * their first `fetchPage(undefined)` call. `drainPaginatedList`'s loop only
+ * runs a second iteration if that first call still returns a `nextCursor`,
+ * which the client's own aggregate never does (see
+ * `pagination-parity.integration.test.ts` for the verified wire evidence,
+ * including the surprising case: a server that returns a repeated `nextCursor`
+ * makes the CLIENT's internal walk stop silently and return a partial
+ * aggregate — not throw — so `drainPaginatedList`'s repeated-cursor guard
+ * never even fires for that case either).
+ *
+ * Kept as public API regardless (no removals) — a `MCPClientManager` built
+ * without the official SDK's auto-aggregation (or a future client whose
+ * `listMaxPages` behavior differs) still needs this manual walk to be
+ * correct, and callers already depend on this exact function signature.
+ */
 export async function listAllTools(
   manager: MCPClientManager,
   params: ListAllToolsParams
