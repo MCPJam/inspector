@@ -15,7 +15,10 @@ import { MCPClientManager } from "@mcpjam/sdk";
 ## Constructor
 
 ```typescript
-new MCPClientManager(servers: ServerConfig)
+new MCPClientManager(
+  servers: Record<string, StdioServerConfig | HttpServerConfig>,
+  options?: MCPClientManagerOptions
+)
 ```
 
 ### Parameters
@@ -23,6 +26,16 @@ new MCPClientManager(servers: ServerConfig)
 <ParamField path="servers" type="Record<string, StdioServerConfig | HttpServerConfig>" required>
   A map of server IDs to their configurations.
 </ParamField>
+
+<ParamField path="options" type="MCPClientManagerOptions">
+  Global manager options. All fields are optional.
+</ParamField>
+
+### MCPClientManagerOptions
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `cacheEventLogger` | `CacheEventLogger` | Callback invoked when a cacheable read verb (`listTools`, `listResources`, `listResourceTemplates`, `listPrompts`, `readResource`) is answered from a local cache entry — a serve that costs zero wire exchange. Receives `{ serverId, method, params, ageMs, scope }`. This is a distinct channel from the wire/RPC log: cache hits never appear on the wire. When unset, behavior is identical to the upstream default. |
 
 ### Server Configuration Types
 
