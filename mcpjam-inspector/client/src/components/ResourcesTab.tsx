@@ -492,9 +492,12 @@ export function ResourcesTab({
       const data = await readResourceApi(serverName, uri);
       if (readVersion !== templateReadVersionRef.current) return;
       setTemplateContent(data?.content ?? null);
+      resetStepUpOnSuccess();
     } catch (err) {
       if (readVersion !== templateReadVersionRef.current) return;
       setTemplateError(`Error reading resource: ${err}`);
+      // SEP-2350: on a `403 insufficient_scope`, drive the union-scope step-up.
+      driveStepUpFromError(err);
     } finally {
       if (readVersion === templateReadVersionRef.current) {
         setTemplateLoading(false);
