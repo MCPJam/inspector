@@ -121,6 +121,79 @@ test("coerceFieldValue coerces and validates by type", () => {
   );
 });
 
+test("parseElicitationFields treats oneOf/anyOf const branches as an enum", () => {
+  const fields = parseElicitationFields({
+    type: "object",
+    properties: {
+      color: {
+        oneOf: [
+          { const: "red", title: "Red" },
+          { const: "green", title: "Green" },
+        ],
+      },
+    },
+    required: ["color"],
+  });
+  assert.equal(fields[0]?.type, "enum");
+  assert.deepEqual(fields[0]?.enumValues, ["red", "green"]);
+  assert.deepEqual(fields[0]?.enumNames, ["Red", "Green"]);
+});
+
+test("parseElicitationFields parses a multi-select array of enum items", () => {
+  const fields = parseElicitationFields({
+    type: "object",
+    properties: {
+      tags: { type: "array", items: { enum: ["a", "b", "c"] } },
+    },
+    required: ["tags"],
+  });
+  assert.equal(fields[0]?.type, "array");
+  assert.deepEqual(fields[0]?.enumValues, ["a", "b", "c"]);
+});
+
+test("coerceFieldValue collects an enum array as string[] (values and indexes)", () => {
+  assert.deepEqual(
+    coerceFieldValue("a, 3", {
+      key: "tags",
+      type: "array",
+      required: true,
+      enumValues: ["a", "b", "c"],
+    }),
+    { value: ["a", "c"] },
+  );
+});
+
+test("coerceFieldValue collects a free-form scalar array by item type", () => {
+  assert.deepEqual(
+    coerceFieldValue("1, 2, 3", {
+      key: "nums",
+      type: "array",
+      required: true,
+      itemType: "integer",
+    }),
+    { value: [1, 2, 3] },
+  );
+});
+
+test("collector uses null-prototype maps for server-assigned keys", async () => {
+  const reader = scriptedReader(["d"]);
+  const collector = createStdinMrtrCollector({ reader, write: () => {} });
+  // JSON.parse makes `__proto__` an OWN enumerable key, as a wire response would.
+  const proto = JSON.parse(
+    '{"__proto__": {"method": "elicitation/create", "params": {}}}',
+  );
+  const responses = (await collector({
+    state: {} as never,
+    inputRequests: proto as unknown as InputRequests,
+  })) as InputResponses;
+  // `__proto__` became an OWN property (not a prototype mutation).
+  assert.ok(Object.prototype.hasOwnProperty.call(responses, "__proto__"));
+  assert.deepEqual(
+    (responses as Record<string, unknown>).__proto__,
+    { action: "decline" },
+  );
+});
+
 // ── collector: accept / decline / cancel via stdin ─────────────────────────
 
 test("collector accepts a form field and builds ElicitResult content", async () => {
@@ -130,7 +203,11 @@ test("collector accepts a form field and builds ElicitResult content", async () 
     state: {} as never,
     inputRequests: elicit("q"),
   })) as InputResponses;
-  assert.deepEqual(responses.q, { action: "accept", content: { answer: "bananas" } });
+  // Content is a null-prototype map (server-assigned keys); normalize for compare.
+  assert.deepEqual(JSON.parse(JSON.stringify(responses.q)), {
+    action: "accept",
+    content: { answer: "bananas" },
+  });
 });
 
 test("collector declines cleanly (no exception)", async () => {
@@ -164,8 +241,14 @@ test("collector collects every key in a multi-input round", async () => {
     state: {} as never,
     inputRequests: two,
   })) as InputResponses;
-  assert.deepEqual(responses.q1, { action: "accept", content: { answer: "one" } });
-  assert.deepEqual(responses.q2, { action: "accept", content: { answer: "two" } });
+  assert.deepEqual(JSON.parse(JSON.stringify(responses.q1)), {
+    action: "accept",
+    content: { answer: "one" },
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(responses.q2)), {
+    action: "accept",
+    content: { answer: "two" },
+  });
 });
 
 // ── URL mode: printed as plain text, consent only, never auto-open ──────────

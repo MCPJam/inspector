@@ -35,14 +35,22 @@ export type ElicitAction = "accept" | "decline" | "cancel";
 /** A single form field parsed out of an elicitation's `requestedSchema`. */
 export interface ElicitationField {
   key: string;
-  type: "string" | "number" | "integer" | "boolean" | "enum";
+  type: "string" | "number" | "integer" | "boolean" | "enum" | "array";
   required: boolean;
   title?: string;
   description?: string;
-  /** Allowed values for an enum field (the wire values). */
+  /**
+   * Allowed values for an enum field, or for an `array` field the allowed
+   * values of each item when the items are enum-constrained (the wire values).
+   */
   enumValues?: string[];
   /** Human labels aligned by index with {@link enumValues}, when provided. */
   enumNames?: string[];
+  /**
+   * For an `array` field, the scalar type each collected item is coerced to
+   * when the items are NOT enum-constrained. Defaults to `"string"`.
+   */
+  itemType?: "string" | "number" | "integer" | "boolean";
 }
 
 /**
@@ -51,8 +59,12 @@ export interface ElicitationField {
  * the collector is exercised without a TTY.
  */
 export interface LineReader {
-  /** Prints `prompt` (to the reader's own output) and resolves the typed line. */
-  question(prompt: string): Promise<string>;
+  /**
+   * Prints `prompt` (to the reader's own output) and resolves the typed line.
+   * When an already- or later-aborted `signal` is supplied, the wait is
+   * interrupted immediately rather than blocking until the user hits Enter.
+   */
+  question(prompt: string, options?: { signal?: AbortSignal }): Promise<string>;
 }
 
 export interface StdinMrtrCollectorOptions {
@@ -128,19 +140,49 @@ export function parseElicitationFields(requestedSchema: unknown): ElicitationFie
     const description =
       typeof prop.description === "string" ? prop.description : undefined;
 
-    if (Array.isArray(prop.enum)) {
-      const enumValues = prop.enum.map((v) => String(v));
-      const enumNames = Array.isArray(prop.enumNames)
-        ? prop.enumNames.map((v) => String(v))
-        : undefined;
+    // Single-select enum, expressed as `enum`, or as a `oneOf`/`anyOf` list of
+    // `const` (or single-value `enum`) branches — the same forms the debugger's
+    // elicitation parser accepts.
+    const scalarEnum = extractEnum(prop);
+    if (scalarEnum) {
       fields.push({
         key,
         type: "enum",
         required: required.has(key),
         title,
         description,
-        enumValues,
-        ...(enumNames ? { enumNames } : {}),
+        enumValues: scalarEnum.values,
+        ...(scalarEnum.names ? { enumNames: scalarEnum.names } : {}),
+      });
+      continue;
+    }
+
+    // Multi-select / array field. When the items are enum-constrained, present
+    // the same choice list and collect a `string[]`; otherwise collect a list of
+    // scalars coerced to the item type. A scalar answer here would fail the
+    // SDK's strict schema validation, so the field would be unanswerable.
+    if (prop.type === "array") {
+      const items = isRecord(prop.items) ? prop.items : undefined;
+      const itemEnum = items ? extractEnum(items) : undefined;
+      const itemRawType =
+        items && typeof items.type === "string" ? items.type : "string";
+      const itemType: NonNullable<ElicitationField["itemType"]> =
+        itemRawType === "number"
+          ? "number"
+          : itemRawType === "integer"
+            ? "integer"
+            : itemRawType === "boolean"
+              ? "boolean"
+              : "string";
+      fields.push({
+        key,
+        type: "array",
+        required: required.has(key),
+        title,
+        description,
+        ...(itemEnum ? { enumValues: itemEnum.values } : {}),
+        ...(itemEnum?.names ? { enumNames: itemEnum.names } : {}),
+        ...(itemEnum ? {} : { itemType }),
       });
       continue;
     }
@@ -157,6 +199,62 @@ export function parseElicitationFields(requestedSchema: unknown): ElicitationFie
     fields.push({ key, type, required: required.has(key), title, description });
   }
   return fields;
+}
+
+/**
+ * Extracts an enum choice list from a schema node, accepting the three forms a
+ * server may use: a direct `enum` array, or a `oneOf`/`anyOf` list whose
+ * branches each carry a `const` (or a single-value `enum`). Returns `undefined`
+ * when the node is not a closed choice set. `enumNames` / branch `title`s become
+ * the aligned human labels when present.
+ */
+function extractEnum(
+  node: Record<string, unknown>,
+): { values: string[]; names?: string[] } | undefined {
+  if (Array.isArray(node.enum) && node.enum.length > 0) {
+    const values = node.enum.map((v) => String(v));
+    const names = Array.isArray(node.enumNames)
+      ? node.enumNames.map((v) => String(v))
+      : undefined;
+    return names ? { values, names } : { values };
+  }
+
+  const branches = Array.isArray(node.oneOf)
+    ? node.oneOf
+    : Array.isArray(node.anyOf)
+      ? node.anyOf
+      : undefined;
+  if (!branches || branches.length === 0) return undefined;
+
+  const values: string[] = [];
+  const names: string[] = [];
+  let anyName = false;
+  for (const branch of branches) {
+    if (!isRecord(branch)) return undefined;
+    let value: unknown;
+    if ("const" in branch) {
+      value = branch.const;
+    } else if (
+      Array.isArray(branch.enum) &&
+      branch.enum.length === 1
+    ) {
+      value = branch.enum[0];
+    } else {
+      return undefined; // Not a closed const/enum branch set — treat as free text.
+    }
+    values.push(String(value));
+    const label =
+      typeof branch.title === "string"
+        ? branch.title
+        : typeof branch.description === "string"
+          ? branch.description
+          : String(value);
+    if (typeof branch.title === "string" || typeof branch.description === "string") {
+      anyName = true;
+    }
+    names.push(label);
+  }
+  return anyName ? { values, names } : { values };
 }
 
 /**
@@ -207,6 +305,44 @@ export function coerceFieldValue(
         `Choose one of: ${values.join(", ")} (or its number).`,
       );
     }
+    case "array": {
+      // Comma-separated list. For enum-constrained items each part is matched
+      // by value or 1-based index; otherwise each part is coerced to the item
+      // scalar type. Always returns an array so it satisfies the array schema.
+      const parts = trimmed
+        .split(",")
+        .map((p) => p.trim())
+        .filter((p) => p !== "");
+      if (parts.length === 0) {
+        if (field.required) throw new Error(`"${field.key}" is required.`);
+        return { skip: true };
+      }
+      const values = field.enumValues;
+      if (values && values.length > 0) {
+        const selected = parts.map((part) => {
+          if (values.includes(part)) return part;
+          const idx = Number(part);
+          if (Number.isInteger(idx) && idx >= 1 && idx <= values.length) {
+            return values[idx - 1];
+          }
+          throw new Error(
+            `Choose from: ${values.join(", ")} (comma-separated values or numbers).`,
+          );
+        });
+        return { value: selected };
+      }
+      const itemType = field.itemType ?? "string";
+      const coerced = parts.map((part) => {
+        const one = coerceFieldValue(part, {
+          key: field.key,
+          type: itemType,
+          required: true,
+        });
+        // A required scalar never returns `{ skip: true }` for a non-blank part.
+        return (one as { value: unknown }).value;
+      });
+      return { value: coerced };
+    }
   }
 }
 
@@ -218,14 +354,24 @@ export function createStdinMrtrCollector(
   options: StdinMrtrCollectorOptions = {},
 ): MrtrInputCollector {
   const write = options.write ?? ((text: string) => void process.stderr.write(text));
-  const maxFieldAttempts = options.maxFieldAttempts ?? 3;
+  // Normalize to a positive finite integer: a non-positive / NaN / fractional
+  // value would otherwise skip the re-prompt loop entirely and let a required
+  // field be accepted with no value collected.
+  const rawAttempts = options.maxFieldAttempts;
+  const maxFieldAttempts =
+    typeof rawAttempts === "number" && Number.isInteger(rawAttempts) && rawAttempts >= 1
+      ? rawAttempts
+      : 3;
 
   return async ({ inputRequests, signal }) => {
     const activeSignal = signal ?? options.signal;
     throwIfAborted(activeSignal);
 
     const keys = Object.keys(inputRequests);
-    const responses: Record<string, unknown> = {};
+    // Null-prototype: server-assigned keys are untrusted, so a `__proto__` /
+    // `constructor` key must become an own property, not mutate the prototype
+    // (which would drop it from the retry payload and loop the round).
+    const responses: Record<string, unknown> = Object.create(null);
 
     if (options.nonInteractive) {
       write(
@@ -296,16 +442,20 @@ async function collectOne(
   }
 
   const fields = parseElicitationFields(params.requestedSchema);
-  const content: Record<string, unknown> = {};
+  // Null-prototype: field keys are server-assigned and untrusted (see above).
+  const content: Record<string, unknown> = Object.create(null);
   for (const field of fields) {
     const label = field.title ?? field.key;
     if (field.description) ctx.write(`  ${field.description}\n`);
-    if (field.type === "enum") {
+    if (field.type === "enum" || field.type === "array") {
       const values = field.enumValues ?? [];
       values.forEach((value, index) => {
         const name = field.enumNames?.[index];
         ctx.write(`    ${index + 1}) ${value}${name ? ` — ${name}` : ""}\n`);
       });
+      if (field.type === "array") {
+        ctx.write(`    (comma-separated for multiple)\n`);
+      }
     }
     const suffix = field.required ? "" : " (optional, blank to skip)";
     let coerced: { skip: true } | { value: unknown } | undefined;
@@ -313,6 +463,7 @@ async function collectOne(
       throwIfAborted(ctx.signal);
       const raw = await ctx.reader.question(
         `${label} [${field.type}]${suffix}: `,
+        { signal: ctx.signal },
       );
       try {
         coerced = coerceFieldValue(raw, field);
@@ -345,6 +496,7 @@ async function askAction(
     const raw = (
       await reader.question(
         `[a]${opts.acceptLabel.slice(1)} / [d]ecline / [c]ancel: `,
+        { signal },
       )
     )
       .trim()
@@ -379,7 +531,23 @@ function createReadlineReader(): ClosableLineReader {
     output: process.stderr,
   });
   return {
-    question: (prompt: string) => rl.question(prompt),
+    question: async (prompt: string, options?: { signal?: AbortSignal }) => {
+      try {
+        // `readline/promises` `question` accepts `{ signal }` (Node ≥ 20) and
+        // rejects immediately with an AbortError when it fires mid-wait.
+        return await (options?.signal
+          ? rl.question(prompt, { signal: options.signal })
+          : rl.question(prompt));
+      } catch (error) {
+        if (
+          options?.signal?.aborted ||
+          (error as { name?: string })?.name === "AbortError"
+        ) {
+          throw new MrtrCollectAbortError();
+        }
+        throw error;
+      }
+    },
     close: () => rl.close(),
   };
 }
