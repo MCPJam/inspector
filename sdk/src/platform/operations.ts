@@ -2936,7 +2936,7 @@ export const buildImageOperation: PlatformOperation<
   name: "build_sandbox_image",
   title: "Build a sandbox image",
   description:
-    "Trigger a build of the sandbox image's image. Async — poll list_sandbox_image_builds for status.",
+    "Trigger a build of the sandbox image. Async — poll list_sandbox_image_builds for status.",
   readOnly: false,
   inputSchema: imageSelectorInput,
   async execute(input, { client, signal }) {

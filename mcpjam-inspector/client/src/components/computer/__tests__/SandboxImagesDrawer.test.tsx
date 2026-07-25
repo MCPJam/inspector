@@ -103,14 +103,14 @@ describe("SandboxImagesDrawer", () => {
   it("shows an empty state with a create affordance", () => {
     mockEnvironments = [];
     const { getByText } = renderDrawer();
-    expect(getByText(/No custom environments yet/i)).toBeTruthy();
-    expect(getByText("New environment")).toBeTruthy();
+    expect(getByText(/No custom sandbox images yet/i)).toBeTruthy();
+    expect(getByText("New sandbox image")).toBeTruthy();
   });
 
-  it("creates an environment from the new form", async () => {
+  it("creates a sandbox image from the new form", async () => {
     const { getByText, getByPlaceholderText } = renderDrawer();
-    fireEvent.click(getByText("New environment"));
-    fireEvent.change(getByPlaceholderText("Environment name"), {
+    fireEvent.click(getByText("New sandbox image"));
+    fireEvent.change(getByPlaceholderText("Sandbox image name"), {
       target: { value: "scraper" },
     });
     fireEvent.click(getByText("Create"));
@@ -127,8 +127,8 @@ describe("SandboxImagesDrawer", () => {
     );
     mockEnvironments = []; // the reactive list hasn't picked up the new row yet
     const { getByText, getByPlaceholderText } = renderDrawer();
-    fireEvent.click(getByText("New environment"));
-    fireEvent.change(getByPlaceholderText("Environment name"), {
+    fireEvent.click(getByText("New sandbox image"));
+    fireEvent.change(getByPlaceholderText("Sandbox image name"), {
       target: { value: "fresh" },
     });
     fireEvent.click(getByText("Create"));

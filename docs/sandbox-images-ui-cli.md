@@ -1,26 +1,26 @@
-# Plan: Computer Sandbox images — Inspector UI + CLI API
+# Plan: Computer sandbox images — Inspector UI + CLI API
 
 Branch: `feat/images` (off current `origin/main`).
 
 ## Context
 
 The Convex backend (mcpjam-backend, merged #618–#629) ships a complete, live-
-verified "Sandbox images" feature: a project-owned Dockerfile is built
+verified "Computer environments" feature: a project-owned Dockerfile is built
 into an immutable E2B image that a member's personal Computer can boot from
-(`setComputerSandbox image`), plus reset-to-image (`resetComputer`). It's fully
+(`setComputerEnvironment`), plus reset-to-image (`resetComputer`). It's fully
 tested but **unreachable** — no UI surfaces it and the CLI can't drive it. This
 adds both, entirely in the inspector repo. **No backend changes** — every Convex
 function already exists and is reachable as-is.
 
 ## Repo layout (this is a monorepo — get the package right)
 
-| Package                  | Path                                      |
-| ------------------------ | ----------------------------------------- |
-| Inspector app (frontend) | `mcpjam-inspector/client/…`               |
-| Inspector server (Hono)  | `mcpjam-inspector/server/…`               |
-| CLI                      | `cli/…` (top-level)                       |
-| Platform SDK             | `sdk/…` (top-level)                       |
-| Public API spec          | `docs/reference/openapi.json` (top-level) |
+| Package | Path |
+|---|---|
+| Inspector app (frontend) | `mcpjam-inspector/client/…` |
+| Inspector server (Hono) | `mcpjam-inspector/server/…` |
+| CLI | `cli/…` (top-level) |
+| Platform SDK | `sdk/…` (top-level) |
+| Public API spec | `docs/reference/openapi.json` (top-level) |
 
 > An agent editing `client/…` or `server/…` at the repo root will edit the wrong
 > place — those exist only on the older flat-layout branches.
@@ -35,20 +35,23 @@ function already exists and is reachable as-is.
 - **CLI** rides the existing bridge (precedent: `mcpjam-inspector/server/routes/web/servers.ts`,
   `…/routes/shared/evals.ts`): a `v1` Hono route →
   `new ConvexHttpClient(CONVEX_URL); client.setAuth(await getConvexBearerForRequest(c))`
-  → `client.query/mutation("computerSandbox images:…")`. The delegated JWT (minted
+  → `client.query/mutation("computerEnvironments:…")`. The delegated JWT (minted
   from the caller's `sk_` key in `mcpjam-inspector/server/utils/v1-convex-token.ts`)
   makes the `userMutation` resolve the acting user. Mirror the `hosts` stack.
 
 ## Backend functions consumed (all deployed; no changes)
 
-`computerSandbox images`: `listSandbox images(projectId)`, `getSandbox image(sandbox imageId)`,
-`listSandbox imageBuilds(sandbox imageId)`, `createSandbox image(projectId,name,dockerfile)`,
-`updateSandbox image(sandbox imageId,name?,dockerfile?)`, `startSandbox imageBuild(sandbox imageId)`,
-`promoteSandbox imageToProject(sandbox imageId)`, `deleteSandbox image(sandbox imageId)`.
-`projectComputers`: `getComputerStatus(projectId)` (→ `sandbox imageId`),
-`setComputerSandbox image(projectId, sandbox imageId | null)`, `resetComputer(projectId)`.
+`computerEnvironments` — **NOT renamed by the images rename; these literals are
+a cross-repo contract with the mcpjam-backend Convex module and must match it
+exactly**: `listEnvironments(projectId)`, `getEnvironment(environmentId)`,
+`listEnvironmentBuilds(environmentId)`, `createEnvironment(projectId,name,dockerfile)`,
+`updateEnvironment(environmentId,name?,dockerfile?)`, `startEnvironmentBuild(environmentId)`,
+`promoteEnvironmentToProject(environmentId)`, `deleteEnvironment(environmentId)`.
+`projectComputers`: `getComputerStatus(projectId)` (→ `environmentId`),
+`setComputerEnvironment(projectId, environmentId | null)`, `resetComputer(projectId)`.
 
-`Sandbox imageView` (returned by list/get) includes: `sandbox imageId`, `projectId`,
+`SandboxImageView` (returned by list/get) includes: `environmentId` (the Convex
+row's own field name), `projectId`,
 `name`, `dockerfile`, `sharing` (`'user'|'project'`), `isOwner`, `currentBuild`
 (status/error/logPreview/…). **Note it does NOT expose a "can manage shared" /
 admin flag** — see UI step 6.
@@ -72,40 +75,40 @@ Design system `@mcpjam/design-system`: `Button`, `Badge`, `Sheet`, `Dialog`,
 Monaco. `projectId` comes from `useAppRouteContext()` and is passed into
 `ComputerView` as a prop today.
 
-1. **`…/client/src/hooks/useComputerSandbox images.ts`** — mirror
-   `useProjectComputer.ts` (string-id `useQuery`/`useMutation`): `useSandbox images`,
-   `useSandbox image`, `useSandbox imageBuilds`, `useCreateSandbox image`,
-   `useUpdateSandbox image`, `useStartSandbox imageBuild`, `usePromoteSandbox image`,
-   `useDeleteSandbox image`, `useSetComputerSandbox image`, `useResetComputer`. Declare
+1. **`…/client/src/hooks/useSandboxImages.ts`** — mirror
+   `useProjectComputer.ts` (string-id `useQuery`/`useMutation`): `useSandboxImages`,
+   `useSandboxImage`, `useSandboxImageBuilds`, `useCreateSandboxImage`,
+   `useUpdateSandboxImage`, `useStartSandboxImageBuild`, `usePromoteSandboxImage`,
+   `useDeleteSandboxImage`, `useSetComputerSandboxImage`, `useResetComputer`. Declare
    matching TS view types.
 2. **`ComputerView.tsx`** — add an **Image** strip between the subtitle and the
-   usage meter: current image name (resolve `getComputerStatus().sandbox imageId`
-   via `useSandbox images`), **[Change ▾]** (opens drawer), **[Reset]** (confirm →
+   usage meter: current image name (resolve `getComputerStatus().environmentId`
+   via `useSandboxImages`), **[Change ▾]** (opens drawer), **[Reset]** (confirm →
    `resetComputer`, enabled only Ready/asleep).
-3. **`…/components/computer/Sandbox imagesDrawer.tsx`** — design-system `Sheet`.
-   - **Create is first-class**: an empty state ("No sandbox images yet — create one
-     to customize your computer's image. [+ New sandbox image]") AND a persistent
-     **[+ New sandbox image]** in the list. New opens a fresh editor (name +
-     Dockerfile) → `createSandbox image` → land on the new env's detail with **Build**
+3. **`…/components/computer/SandboxImagesDrawer.tsx`** — design-system `Sheet`.
+   - **Create is first-class**: an empty state ("No environments yet — create one
+     to customize your computer's image. [+ New environment]") AND a persistent
+     **[+ New environment]** in the list. New opens a fresh editor (name +
+     Dockerfile) → `createEnvironment` → land on the new env's detail with **Build**
      ready.
    - **List**: own drafts + project-shared, status badges from `currentBuild`, ✓ on
      the attached one, ⋯ = Promote/Delete.
    - **Detail**: name, **Dockerfile editor** (CodeMirror), **Build** (+ live
-     status/log tail by polling `getSandbox image`/`listSandbox imageBuilds`), **Use on
-     computer** (`setComputerSandbox image`, disabled until a Ready build), **sharing**
-     toggle (Just me / Project → `promoteSandbox imageToProject`), **Delete**.
+     status/log tail by polling `getEnvironment`/`listEnvironmentBuilds`), **Use on
+     computer** (`setComputerEnvironment`, disabled until a Ready build), **sharing**
+     toggle (Just me / Project → `promoteEnvironmentToProject`), **Delete**.
 4. **Confirms** (`Dialog`): attach/change ("rebuilds your computer; installed
    files are wiped") and reset — both wipe mutable computer state.
 5. **States**: empty, building (spinner + log), failed (error + log + retry), and
    **attach-rejected** (surface the backend's incompatible-builder / not-ready
    error as a clean toast).
-6. **Admin controls — optimistic, not pre-disabled.** `Sandbox imageView` has
+6. **Admin controls — optimistic, not pre-disabled.** `SandboxImageView` has
    `isOwner` but no "can manage shared." So: for a **draft**, gate edit/build/
    delete on `isOwner`; for a **shared** env, render the controls **optimistically**
-   and map the backend's permission error (thrown by `canManageSharedSandbox images`)
-   to a clean toast ("Only project admins can manage shared sandbox images"). Do not
+   and map the backend's permission error (thrown by `canManageSharedEnvironments`)
+   to a clean toast ("Only project admins can manage shared environments"). Do not
    pretend the client knows admin status. (Follow-up option: add a `canManage`
-   field to `Sandbox imageView` in the backend for nicer UX — out of scope here.)
+   field to `SandboxImageView` in the backend for nicer UX — out of scope here.)
 7. **Tests**: mirror `…/components/computer/__tests__/ComputerView.test.tsx` —
    render states, hook mocks, the attach-rejected toast path.
 
@@ -123,28 +126,27 @@ Mirror the `hosts` stack: command (`cli/src/commands/hosts.ts`) → SDK operatio
 1. **`mcpjam-inspector/server/routes/v1/images.ts`** (Hono), mounted
    in `…/routes/v1/index.ts`, **kept off the guest allowlist**. Each handler:
    `getConvexBearerForRequest(c)` → `ConvexHttpClient.setAuth` →
-   `client.query/mutation("computerSandbox images:…" | "projectComputers:…")` → v1
+   `client.query/mutation("computerEnvironments:…" | "projectComputers:…")` → v1
    envelope (reuse `v1Resource`/`v1PageJson`/`v1Error`). Endpoints under
    `/projects/:projectId/images`:
    - `GET` (list), `POST` (create), `GET/PATCH/DELETE /:envId`,
      `POST /:envId/build`, `GET /:envId/builds`, `POST /:envId/promote`,
-     `POST /:envId/use` → `setComputerSandbox image`, plus
+     `POST /:envId/use` → `setComputerEnvironment`, plus
      `POST /projects/:projectId/computer/reset` → `resetComputer`.
    - **PROJECT-SCOPE GUARD (required):** the backend env mutations
-     (`update`/`build`/`promote`/`delete`) authorize by the _env's_ project, not
+     (`update`/`build`/`promote`/`delete`) authorize by the *env's* project, not
      the URL's `:projectId`. So before any `/:envId` call, the adapter MUST
-     `getSandbox image(envId)` and assert `env.projectId === :projectId`, else `404`
-     — otherwise a user with access to projects A and B could `PATCH
-/projects/A/.../envB` and mutate B's env via an A-scoped URL. (Cleaner
+     `getEnvironment(envId)` and assert `env.projectId === :projectId`, else `404`
+     — otherwise a user with access to projects A and B could
+     `PATCH /projects/A/.../envB` and mutate B's env via an A-scoped URL. (Cleaner
      long-term: backend project-scoped variants that take `(projectId, envId)`;
      tracked as a follow-up, not needed for this PR.)
-2. **`sdk/src/platform/client.ts`** — HTTP methods: `listSandbox images`,
-   `getSandbox image`, `createSandbox image`, `updateSandbox image`, `deleteSandbox image`,
-   `buildSandbox image`, `listSandbox imageBuilds`, `promoteSandbox image`,
-   `useSandbox image`, `resetComputer`.
+2. **`sdk/src/platform/client.ts`** — HTTP methods: `listImages`, `getImage`,
+   `createImage`, `updateImage`, `deleteImage`, `buildImage`, `listImageBuilds`,
+   `promoteImage`, `useImage`, `resetComputer`.
 3. **`sdk/src/platform/operations.ts`** — operations with zod input schemas +
    `resolveProjectOrThrow(client, input.project, signal)`.
-4. **`cli/src/commands/sandbox images.ts`**, registered in `cli/src/index.ts`:
+4. **`cli/src/commands/images.ts`**, registered in `cli/src/index.ts`:
    `mcpjam images list|get|create|edit|build|logs|use|reset|promote|delete`.
    `create`/`edit` read the Dockerfile from `--file <path>` or stdin (the "edit
    them with the CLI" requirement); `--format json` like the rest.
@@ -170,7 +172,7 @@ Mirror the `hosts` stack: command (`cli/src/commands/hosts.ts`) → SDK operatio
 
 ## Sequencing / hygiene
 
-1. Branch stays based on current `origin/main` — keep the diff to _only_ this
+1. Branch stays based on current `origin/main` — keep the diff to *only* this
    feature (no unrelated compat-UI churn).
 2. Part A (UI) first — self-contained, highest user value.
 3. Part B (CLI): v1 route (+ scope guard + openapi) → sdk client → sdk op → cli
