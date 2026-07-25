@@ -116,7 +116,12 @@ export function jsonError(c: any, error: unknown, fallbackStatus = 500) {
     explicitStatus ?? (details.insufficientScope ? 403 : fallbackStatus);
   const normalized = describeError(error);
   return c.json(
-    { error: details.message as string, mcpError: details, normalized },
+    // `success: false` preserves the pre-existing route error contract (the
+    // `/resources/read`, `/prompts/get`, and tool routes all returned it before
+    // switching to this shared serializer) so existing consumers/tests that read
+    // the flag keep working; `mcpError.insufficientScope` still carries the
+    // SEP-2350 step-up challenge.
+    { success: false, error: details.message as string, mcpError: details, normalized },
     status,
   );
 }
