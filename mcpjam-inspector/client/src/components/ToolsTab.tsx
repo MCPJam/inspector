@@ -7,6 +7,7 @@ import type {
 } from "@modelcontextprotocol/client";
 import { Wrench } from "lucide-react";
 import { ElicitationDialog } from "./ElicitationDialog";
+import { MrtrElicitationHost } from "./elicitation/MrtrElicitationHost";
 import { EmptyState } from "./ui/empty-state";
 import { navigateApp } from "@/lib/app-navigation";
 import { ThreePanelLayout } from "./ui/three-panel-layout";
@@ -100,6 +101,19 @@ export type DialogElicitation = {
   message: string;
   schema?: Record<string, unknown>;
   timestamp: string;
+  /**
+   * The era this input request came from, so the dialog can label it honestly:
+   *
+   * - `legacy-request` — an unsolicited server→client `elicitation/create`
+   *   request (the client is answering a question the server asked mid-call).
+   * - `mrtr` — a modern (2026-07-28) multi-round-trip `input_required` result:
+   *   the OPERATION itself needs input before it can complete, and the client
+   *   collects it and retries the original call.
+   *
+   * Optional/additive: surfaces that predate the distinction omit it and get
+   * the neutral legacy phrasing.
+   */
+  origin?: "legacy-request" | "mrtr";
   /**
    * Identity of the server requesting information (MCP spec MUST: the client
    * must make it clear which server is asking). Optional and additive: local
@@ -847,6 +861,10 @@ export function ToolsTab({
           | Record<string, unknown>
           | undefined,
         timestamp: activeElicitation.timestamp,
+        // This surface's `/execute` bridge answers a legacy server→client
+        // `elicitation/create`; modern `input_required` input is collected by
+        // `MrtrElicitationHost` below (era-labeled `mrtr`).
+        origin: "legacy-request",
       }
     : null;
 
@@ -992,6 +1010,11 @@ export function ToolsTab({
         onResponse={handleElicitationResponse}
         loading={elicitationLoading}
       />
+
+      {/* Modern MRTR (`input_required`) input rail. When the running tool
+          returns an `input_required` result, the SDK driver collects rounds
+          through this shared dialog and retries the original call. */}
+      <MrtrElicitationHost />
 
       <SaveRequestDialog
         open={isSaveDialogOpen}

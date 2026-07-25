@@ -25,6 +25,7 @@ import {
   ResizableHandle,
 } from "./ui/resizable";
 import { ElicitationDialog } from "@/components/ElicitationDialog";
+import { MrtrElicitationHost } from "@/components/elicitation/MrtrElicitationHost";
 import {
   ElicitationRequestDialog,
   UrlElicitationRequiredDialog,
@@ -1645,6 +1646,9 @@ export function ChatTabV2({
                 message: data.message,
                 schema: data.schema,
                 timestamp: data.timestamp || new Date().toISOString(),
+                // Legacy server→client `elicitation/create`; modern
+                // `input_required` input is handled by `MrtrElicitationHost`.
+                origin: "legacy-request" as const,
                 // Spec: make it clear WHICH server is asking. Local chat can
                 // have many servers connected at once, so an anonymous dialog
                 // is a real ambiguity. No display name exists on this path —
@@ -2801,6 +2805,10 @@ export function ChatTabV2({
               event={urlElicitationRequired[0] ?? null}
               onDismiss={dismissUrlElicitationRequired}
             />
+            {/* Modern MRTR (`input_required`) input rail for local chat: a tool
+                the agent calls can return `input_required`; the SDK driver
+                collects rounds through this shared dialog and retries. */}
+            <MrtrElicitationHost />
           </div>
         </ResizablePanel>
 

@@ -11,6 +11,7 @@ import exporter from "./export";
 import evals from "./evals";
 import { adapterHttp, managerHttp } from "./http-adapters";
 import elicitation from "./elicitation";
+import mrtr from "./mrtr";
 import models from "./models";
 import listTools from "./list-tools";
 import tokenizer from "./tokenizer";
@@ -45,6 +46,10 @@ mcp.route("/audio", audioTranscriptions);
 
 // Elicitation endpoints
 mcp.route("/elicitation", elicitation);
+// Modern multi-round-trip (`input_required` / MRTR) input bridge — MCP
+// 2026-07-28 §12. Local surfaces collect the driver's per-round elicitation
+// input over this SSE channel.
+mcp.route("/mrtr", mrtr);
 
 // Connect endpoint - REAL IMPLEMENTATION
 mcp.route("/connect", connect);

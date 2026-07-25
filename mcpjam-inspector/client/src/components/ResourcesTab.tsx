@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import { ThreePanelLayout } from "./ui/three-panel-layout";
+import { MrtrElicitationHost } from "./elicitation/MrtrElicitationHost";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { extractDisplayFromValue } from "@/components/chat-v2/shared/tool-result-text";
 import type {
@@ -1157,18 +1158,24 @@ export function ResourcesTab({
   );
 
   return (
-    <ThreePanelLayout
-      id="resources"
-      sidebar={sidebarContent}
-      content={
-        activeTab === "templates"
-          ? templatesCenterContent
-          : resourcesCenterContent
-      }
-      sidebarVisible={isSidebarVisible}
-      onSidebarVisibilityChange={setIsSidebarVisible}
-      sidebarTooltip="Show resources sidebar"
-      serverName={serverName}
-    />
+    <>
+      <ThreePanelLayout
+        id="resources"
+        sidebar={sidebarContent}
+        content={
+          activeTab === "templates"
+            ? templatesCenterContent
+            : resourcesCenterContent
+        }
+        sidebarVisible={isSidebarVisible}
+        onSidebarVisibilityChange={setIsSidebarVisible}
+        sidebarTooltip="Show resources sidebar"
+        serverName={serverName}
+      />
+      {/* Modern MRTR (`input_required`) input rail: a `resources/read` can
+          return `input_required`; the SDK driver collects rounds through this
+          shared dialog and retries the read. */}
+      <MrtrElicitationHost />
+    </>
   );
 }

@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import { ThreePanelLayout } from "./ui/three-panel-layout";
+import { MrtrElicitationHost } from "./elicitation/MrtrElicitationHost";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { extractDisplayFromValue } from "@/components/chat-v2/shared/tool-result-text";
 import type { MCPPrompt, MCPServerConfig } from "@mcpjam/sdk/browser";
@@ -763,14 +764,20 @@ export function PromptsTab({
   );
 
   return (
-    <ThreePanelLayout
-      id="prompts"
-      sidebar={sidebarContent}
-      content={centerContent}
-      sidebarVisible={isSidebarVisible}
-      onSidebarVisibilityChange={setIsSidebarVisible}
-      sidebarTooltip="Show prompts sidebar"
-      serverName={serverName}
-    />
+    <>
+      <ThreePanelLayout
+        id="prompts"
+        sidebar={sidebarContent}
+        content={centerContent}
+        sidebarVisible={isSidebarVisible}
+        onSidebarVisibilityChange={setIsSidebarVisible}
+        sidebarTooltip="Show prompts sidebar"
+        serverName={serverName}
+      />
+      {/* Modern MRTR (`input_required`) input rail: a `prompts/get` can return
+          `input_required`; the SDK driver collects rounds through this shared
+          dialog and retries the get. */}
+      <MrtrElicitationHost />
+    </>
   );
 }

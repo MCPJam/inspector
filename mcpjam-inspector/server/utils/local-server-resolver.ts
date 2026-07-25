@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import type { MCPClientManager, MCPServerConfig } from "@mcpjam/sdk";
 import { narrowElicitationToLocalSupport } from "../routes/mcp/elicitation.js";
+import { registerLocalMrtrCollector } from "../routes/mcp/mrtr.js";
 import {
   describeError,
   isKnownProtocolVersion,
@@ -1140,6 +1141,13 @@ export async function executeLocalServerConnect(
           : String(disconnectError),
     });
   }
+
+  // LOAD-BEARING: register the modern MRTR (`input_required`) input collector
+  // BEFORE connecting. A 2026-07-28 server only embeds `elicitation/create` in
+  // an `input_required` result when the client advertised `elicitation`, and
+  // the SDK advertises it (in `buildCapabilities`) exactly when a collector is
+  // registered at connect time — registering afterward does not re-advertise.
+  registerLocalMrtrCollector(mcpClientManager, serverDisplayName);
 
   try {
     await mcpClientManager.connectToServer(serverDisplayName, resolved.config);
