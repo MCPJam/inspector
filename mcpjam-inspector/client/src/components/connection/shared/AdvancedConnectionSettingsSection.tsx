@@ -138,8 +138,12 @@ export function AdvancedConnectionSettingsSection({
     return true;
   });
   // Per-instance so several of these forms can be mounted at once without
-  // colliding on a shared element id.
+  // colliding on a shared element id. Suffixed for the controls whose visible
+  // label sits in a sibling element and so needs an explicit association.
   const bodyId = useId();
+  const timeoutFieldId = `${bodyId}-timeout`;
+  const protocolLabelId = `${bodyId}-protocol-label`;
+  const protocolTriggerId = `${bodyId}-protocol-trigger`;
   const selectedDropdownValue: DropdownValue =
     mcpProtocolVersionOverride === "2026-07-28"
       ? "rc"
@@ -172,13 +176,17 @@ export function AdvancedConnectionSettingsSection({
           <div className="space-y-4">
             {/* Timeout */}
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-foreground">
+              <label
+                htmlFor={timeoutFieldId}
+                className="text-xs font-medium text-foreground"
+              >
                 Timeout{" "}
                 <span className="font-normal text-muted-foreground">
                   (ms, default {inheritedRequestTimeout})
                 </span>
               </label>
               <Input
+                id={timeoutFieldId}
                 type="number"
                 value={requestTimeout}
                 onChange={(e) => onRequestTimeoutChange(e.target.value)}
@@ -354,6 +362,7 @@ export function AdvancedConnectionSettingsSection({
             {showProtocolVersionControl && (
               <div className="space-y-1.5">
                 <label
+                  id={protocolLabelId}
                   className="text-xs font-medium text-foreground"
                   title="Latest: the current stable MCP wire version (2025-11-25). 2026 RC: MCPJam's current 2026-07-28 stateless preview over Streamable HTTP POST."
                 >
@@ -373,7 +382,14 @@ export function AdvancedConnectionSettingsSection({
                     );
                   }}
                 >
-                  <SelectTrigger className="h-8 w-full text-xs">
+                  {/* Name from the visible label AND the trigger's own text, so
+                      the selected version is still announced — a bare
+                      `aria-label` would replace the value, not add to it. */}
+                  <SelectTrigger
+                    id={protocolTriggerId}
+                    aria-labelledby={`${protocolLabelId} ${protocolTriggerId}`}
+                    className="h-8 w-full text-xs"
+                  >
                     <SelectValue placeholder="Latest" />
                   </SelectTrigger>
                   <SelectContent>
