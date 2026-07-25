@@ -57,6 +57,16 @@ The step-up is bounded per browser session: if re-authorization does not resolve
 Runtime scope step-up is only available on the local (non-hosted) tool-call surface. The hosted path does not yet forward the scope challenge.
 </Note>
 
+### Cache provenance badge
+
+When the inspector serves a tool list from its local client cache instead of sending a request to the server, a badge appears below the search bar showing **"served from client cache · {age}"** (for example, "served from client cache · 4s"). The age reflects how long ago the cached entry was originally fetched.
+
+The badge is only shown on an actual cache hit — its absence means the most recent list came directly from the server. To force a live re-fetch at any time, click the **Refresh** button; this bypasses the cache and always contacts the server.
+
+<Note>
+The cache provenance badge is not shown in hosted mode. Hosted connections always fetch live data directly from the server.
+</Note>
+
 ### Tool quality badges
 
 When enabled, each tool in the sidebar may display a small badge showing the number of quality findings for that tool:
