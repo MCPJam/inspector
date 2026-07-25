@@ -60,7 +60,7 @@ describe("web routes — oauth requires bearer token", () => {
   it("GET /metadata returns 401 without bearer token", async () => {
     const response = await getJson(
       app,
-      "/api/web/oauth/metadata?url=https://example.com/.well-known/oauth",
+      "/api/web/oauth/metadata?url=https://example.com/.well-known/oauth"
     );
     const { status, data } = await expectJson(response);
 
@@ -77,13 +77,14 @@ describe("web routes — oauth requires bearer token", () => {
       statusText: "OK",
       headers: {},
       body: { ok: true },
+      finalUrl: "https://example.com/token",
     });
 
     const response = await postJson(
       app,
       "/api/web/oauth/proxy",
       { url: "https://example.com/token" },
-      token,
+      token
     );
     const { status, data } = await expectJson(response);
 
@@ -93,7 +94,11 @@ describe("web routes — oauth requires bearer token", () => {
       statusText: "OK",
       headers: {},
       body: { ok: true },
+      finalUrl: "https://example.com/token",
     });
+    expect(response.headers.get("x-mcpjam-oauth-upstream-url")).toBe(
+      "https://example.com/token"
+    );
   });
 
   it("GET /metadata succeeds with bearer token", async () => {
@@ -105,14 +110,14 @@ describe("web routes — oauth requires bearer token", () => {
     const response = await getJson(
       app,
       "/api/web/oauth/metadata?url=https://example.com/.well-known/oauth",
-      token,
+      token
     );
     const { status, data } = await expectJson(response);
 
     expect(status).toBe(200);
     expect(data).toEqual({ issuer: "https://example.com" });
     expect(response.headers.get("x-mcpjam-oauth-upstream-url")).toBe(
-      "https://example.com/.well-known/oauth",
+      "https://example.com/.well-known/oauth"
     );
   });
 });
@@ -127,14 +132,14 @@ describe("web routes — oauth error contract", () => {
 
   it("returns compatibility payload for OAuthProxyError on /proxy", async () => {
     executeOAuthProxyMock.mockRejectedValueOnce(
-      new OAuthProxyError(400, "Invalid URL format"),
+      new OAuthProxyError(400, "Invalid URL format")
     );
 
     const response = await postJson(
       app,
       "/api/web/oauth/proxy",
       { url: "bad-url" },
-      token,
+      token
     );
     const { status, data } = await expectJson<OAuthErrorResponse>(response);
 
@@ -167,7 +172,7 @@ describe("web routes — oauth error contract", () => {
     const response = await getJson(
       app,
       "/api/web/oauth/metadata?url=https://oauth.example/.well-known/oauth",
-      token,
+      token
     );
     const { status, data } = await expectJson<OAuthErrorResponse>(response);
 
@@ -181,14 +186,14 @@ describe("web routes — oauth error contract", () => {
 
   it("returns compatibility payload for generic runtime errors", async () => {
     executeOAuthProxyMock.mockRejectedValueOnce(
-      new Error("connect ECONNREFUSED"),
+      new Error("connect ECONNREFUSED")
     );
 
     const response = await postJson(
       app,
       "/api/web/oauth/proxy",
       { url: "https://oauth.example/token", method: "POST", body: {} },
-      token,
+      token
     );
     const { status, data } = await expectJson<OAuthErrorResponse>(response);
 
@@ -215,10 +220,13 @@ describe("web routes — oauth session forwarding", () => {
 
   it("POST /session forwards the bearer-authenticated session bootstrap to Convex", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(
-      new Response(JSON.stringify({ success: true, sessionId: "session-123" }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
+      new Response(
+        JSON.stringify({ success: true, sessionId: "session-123" }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }
+      )
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -232,7 +240,12 @@ describe("web routes — oauth session forwarding", () => {
       },
     };
 
-    const response = await postJson(app, "/api/web/oauth/session", payload, token);
+    const response = await postJson(
+      app,
+      "/api/web/oauth/session",
+      payload,
+      token
+    );
     const { status, data } = await expectJson(response);
 
     expect(status).toBe(200);
@@ -246,7 +259,7 @@ describe("web routes — oauth session forwarding", () => {
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify(payload),
-      },
+      }
     );
   });
 
@@ -265,8 +278,8 @@ describe("web routes — oauth session forwarding", () => {
         {
           status: 200,
           headers: { "Content-Type": "application/json" },
-        },
-      ),
+        }
+      )
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -275,7 +288,12 @@ describe("web routes — oauth session forwarding", () => {
       serverId: "srv_1",
     };
 
-    const response = await postJson(app, "/api/web/oauth/tokens", payload, token);
+    const response = await postJson(
+      app,
+      "/api/web/oauth/tokens",
+      payload,
+      token
+    );
     const { status, data } = await expectJson(response);
 
     expect(status).toBe(200);
@@ -297,7 +315,7 @@ describe("web routes — oauth session forwarding", () => {
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify(payload),
-      },
+      }
     );
   });
 });

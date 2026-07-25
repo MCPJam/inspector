@@ -12,6 +12,39 @@ import {
   ID_JAG_GRANT_PROFILE,
 } from "../../src/oauth/client-identity.js";
 
+vi.mock("../../src/oauth-proxy.js", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("../../src/oauth-proxy.js")
+  >();
+  return {
+    ...actual,
+    // These flow tests model every remote endpoint with global.fetch. Metadata
+    // transport pinning has dedicated oauth-proxy coverage, so preserve this
+    // suite's in-memory transport seam instead of opening real DNS/sockets.
+    fetchOAuthMetadata: vi.fn(
+      async (url: string, _httpsOnly = false, timeoutMs?: number) => {
+        const response = await global.fetch(url, {
+          headers: { Accept: "application/json" },
+          signal:
+            timeoutMs === undefined
+              ? undefined
+              : AbortSignal.timeout(timeoutMs),
+        });
+        if (!response.ok) {
+          return {
+            status: response.status,
+            statusText: response.statusText,
+          };
+        }
+        return {
+          metadata: (await response.json()) as Record<string, unknown>,
+          finalUrl: response.url || url,
+        };
+      }
+    ),
+  };
+});
+
 const SERVER_URL = "https://mcp.example.com/mcp";
 const AS_ISSUER = "https://auth.example.com";
 const TOKEN_ENDPOINT = "https://auth.example.com/oauth/token";

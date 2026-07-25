@@ -95,10 +95,15 @@ const oauthProxyResponses = new WeakMap<
   { upstreamFinalUrl?: string }
 >();
 
-function markOAuthProxyResponse(response: Response): Response {
+function markOAuthProxyResponse(
+  response: Response,
+  upstreamFinalUrl?: string
+): Response {
   oauthProxyResponses.set(response, {
     upstreamFinalUrl:
-      response.headers.get(OAUTH_UPSTREAM_URL_HEADER) ?? undefined,
+      upstreamFinalUrl ??
+      response.headers.get(OAUTH_UPSTREAM_URL_HEADER) ??
+      undefined,
   });
   return response;
 }
@@ -706,7 +711,8 @@ function shouldRetryMcpRequestViaProxy(
 }
 
 async function executeRequestViaProxy(
-  request: HttpHistoryEntry["request"]
+  request: HttpHistoryEntry["request"],
+  serverUrl?: string
 ): Promise<{
   status: number;
   statusText: string;
@@ -737,6 +743,13 @@ async function executeRequestViaProxy(
         : `MCP request proxy failed (${response.status})`;
     throw new Error(message);
   }
+
+  assertFinalResponseUrlAllowed(
+    response.headers.get(OAUTH_UPSTREAM_URL_HEADER) ?? undefined,
+    {
+      allowLoopback: isLoopbackOAuthUrl(serverUrl),
+    }
+  );
 
   const proxied = (await response.json()) as {
     status: number;
@@ -848,7 +861,7 @@ function createOAuthRequestExecutor(fetchFn: typeof fetch, serverUrl?: string) {
         throw error;
       }
 
-      response = await executeRequestViaProxy(request);
+      response = await executeRequestViaProxy(request, serverUrl);
     }
 
     return {
@@ -1157,7 +1170,7 @@ export function readStoredOAuthConfig(
 
     return config;
   } catch (e) {
-    console.warn('[mcp-oauth] Failed to parse stored OAuth config', e);
+    console.warn("[mcp-oauth] Failed to parse stored OAuth config", e);
     return {
       registryServerId: undefined,
       useRegistryOAuthProxy: false,
@@ -1510,6 +1523,8 @@ function createOAuthFetchInterceptor(
         return markOAuthProxyResponse(response);
       }
 
+      const upstreamFinalUrl =
+        response.headers.get(OAUTH_UPSTREAM_URL_HEADER) ?? undefined;
       const data = await response.json();
       entry.response = createTraceResponseFromResult({
         status: data.status,
@@ -1523,7 +1538,8 @@ function createOAuthFetchInterceptor(
           status: data.status,
           statusText: data.statusText,
           headers: new Headers(data.headers),
-        })
+        }),
+        upstreamFinalUrl
       );
     } catch (error) {
       entry.error = {
@@ -1598,7 +1614,7 @@ export function buildMCPOAuthState(): string {
 }
 
 export function isElectronMcpCallbackState(
-  state: string | null | undefined,
+  state: string | null | undefined
 ): boolean {
   return Boolean(state && state.startsWith(ELECTRON_MCP_CALLBACK_STATE_PREFIX));
 }
@@ -2070,7 +2086,9 @@ export class MCPOAuthProvider implements OAuthClientProvider {
       );
       localStorage.setItem(
         `mcp-client-${this.serverName}`,
-        JSON.stringify(issuer ? writeIssuerKeyed(raw, issuer, stripped) : stripped)
+        JSON.stringify(
+          issuer ? writeIssuerKeyed(raw, issuer, stripped) : stripped
+        )
       );
       return stripped;
     }
@@ -2265,7 +2283,8 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     // persist a refresh fallback for servers it can't reach (e.g. localhost);
     // without it, the backend re-discovers against an unreachable resource on
     // refresh and the credential becomes unusable.
-    const authorizationServerUrl = this.discoveryState()?.authorizationServerUrl;
+    const authorizationServerUrl =
+      this.discoveryState()?.authorizationServerUrl;
     const importPayload: ImportHostedOAuthTokensRequest = {
       projectId: this.convexBinding.projectId,
       serverId: this.convexBinding.serverId,
@@ -2339,12 +2358,12 @@ export class MCPOAuthProvider implements OAuthClientProvider {
         } catch (error) {
           console.warn(
             "Failed to open system browser for MCP OAuth; continuing inside MCPJam Desktop:",
-            error,
+            error
           );
         }
       } else {
         console.warn(
-          "System browser opener is unavailable for MCP OAuth; continuing inside MCPJam Desktop.",
+          "System browser opener is unavailable for MCP OAuth; continuing inside MCPJam Desktop."
         );
       }
 
@@ -2799,9 +2818,7 @@ export async function initiateOAuth(
       delete merged.client_secret;
       localStorage.setItem(
         `mcp-client-${options.serverName}`,
-        JSON.stringify(
-          issuer ? writeIssuerKeyed(raw, issuer, merged) : merged
-        )
+        JSON.stringify(issuer ? writeIssuerKeyed(raw, issuer, merged) : merged)
       );
     }
 
@@ -3607,12 +3624,13 @@ export async function handleOAuthCallback(
     }
     // Validate CSRF `state` (recovered) and RFC 9207 `iss` before redeeming. A
     // missing or mismatched callbackState now fails the state check.
-    const fallbackIssuerMetadata = discoveryState.authorizationServerMetadata as
-      | {
-          issuer?: string;
-          authorization_response_iss_parameter_supported?: boolean;
-        }
-      | undefined;
+    const fallbackIssuerMetadata =
+      discoveryState.authorizationServerMetadata as
+        | {
+            issuer?: string;
+            authorization_response_iss_parameter_supported?: boolean;
+          }
+        | undefined;
     const fallbackSecurity = evaluateCallbackSecurity({
       callbackState: options.callbackState,
       callbackIss: options.callbackIss,
@@ -3818,7 +3836,10 @@ export function getStoredTokens(serverName: string, serverUrl?: string): any {
 /**
  * Checks if OAuth is configured for a server by looking at multiple sources
  */
-export function hasOAuthConfig(serverName: string, serverUrl?: string): boolean {
+export function hasOAuthConfig(
+  serverName: string,
+  serverUrl?: string
+): boolean {
   if (HOSTED_MODE) {
     return false;
   }

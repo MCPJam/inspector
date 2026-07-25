@@ -41,17 +41,18 @@ interface MockMetadataResponse {
   statusText?: string;
   headers?: Record<string, string>;
   body?: string;
+  response?: Readable;
 }
 
 function queueMetadataResponses(
   requestMock: ReturnType<typeof vi.fn>,
-  responses: MockMetadataResponse[],
+  responses: MockMetadataResponse[]
 ): void {
   requestMock.mockImplementation(
     (
       _url: URL,
       options: { signal?: AbortSignal },
-      onResponse: (response: Readable) => void,
+      onResponse: (response: Readable) => void
     ) => {
       const request = new EventEmitter() as EventEmitter & {
         end: () => void;
@@ -63,12 +64,13 @@ function queueMetadataResponses(
           options.signal?.addEventListener(
             "abort",
             () => request.emit("error", options.signal?.reason),
-            { once: true },
+            { once: true }
           );
           return;
         }
         queueMicrotask(() => {
-          const response = Readable.from(next.body ? [next.body] : []);
+          const response =
+            next.response ?? Readable.from(next.body ? [next.body] : []);
           Object.assign(response, {
             statusCode: next.status ?? 200,
             statusMessage: next.statusText ?? "OK",
@@ -81,7 +83,7 @@ function queueMetadataResponses(
       };
       request.destroy = () => {};
       return request;
-    },
+    }
   );
 }
 
@@ -95,8 +97,8 @@ describe("oauth-proxy helpers", () => {
       (
         _hostname: string,
         _options: unknown,
-        callback: (error: Error | null, addresses: unknown) => void,
-      ) => callback(null, [{ address: "93.184.216.34", family: 4 }]),
+        callback: (error: Error | null, addresses: unknown) => void
+      ) => callback(null, [{ address: "93.184.216.34", family: 4 }])
     );
   });
 
@@ -138,6 +140,23 @@ describe("oauth-proxy helpers", () => {
     );
   });
 
+  it("reports the upstream final URL for generic OAuth proxy responses", async () => {
+    const upstreamResponse = new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+    Object.defineProperty(upstreamResponse, "url", {
+      value: "https://cdn.example.com/oauth/token",
+    });
+    (global.fetch as jest.Mock).mockResolvedValueOnce(upstreamResponse);
+
+    await expect(
+      executeOAuthProxy({ url: "https://auth.example.com/oauth/token" })
+    ).resolves.toMatchObject({
+      finalUrl: "https://cdn.example.com/oauth/token",
+    });
+  });
+
   it("returns metadata for valid JSON responses", async () => {
     queueMetadataResponses(httpsRequestMock, [
       {
@@ -150,6 +169,9 @@ describe("oauth-proxy helpers", () => {
     ).resolves.toEqual({
       metadata: { issuer: "https://auth.example.com" },
       finalUrl: "https://auth.example.com/.well-known/oauth",
+    });
+    expect(httpsRequestMock.mock.calls[0][1].headers).toMatchObject({
+      "Accept-Encoding": "identity",
     });
   });
 
@@ -179,8 +201,8 @@ describe("oauth-proxy helpers", () => {
       (
         _hostname: string,
         _options: unknown,
-        callback: (error: Error | null, addresses: unknown) => void,
-      ) => callback(null, [{ address: "127.0.0.1", family: 4 }]),
+        callback: (error: Error | null, addresses: unknown) => void
+      ) => callback(null, [{ address: "127.0.0.1", family: 4 }])
     );
     queueMetadataResponses(httpRequestMock, [
       {
@@ -218,8 +240,8 @@ describe("oauth-proxy helpers", () => {
       (
         _hostname: string,
         _options: unknown,
-        callback: (error: Error | null, addresses: unknown) => void,
-      ) => callback(null, [{ address: "10.0.0.5", family: 4 }]),
+        callback: (error: Error | null, addresses: unknown) => void
+      ) => callback(null, [{ address: "10.0.0.5", family: 4 }])
     );
 
     await expect(
@@ -234,26 +256,33 @@ describe("oauth-proxy helpers", () => {
   });
 
   it("validates and pins each public redirect hop before connecting", async () => {
+    const redirectResponse = new Readable({
+      read() {
+        // Deliberately never end: redirect bodies must be destroyed after the
+        // headers rather than drained without a bound.
+      },
+    });
     dnsLookupMock
       .mockImplementationOnce(
         (
           _hostname: string,
           _options: unknown,
-          callback: (error: Error | null, addresses: unknown) => void,
-        ) => callback(null, [{ address: "93.184.216.34", family: 4 }]),
+          callback: (error: Error | null, addresses: unknown) => void
+        ) => callback(null, [{ address: "93.184.216.34", family: 4 }])
       )
       .mockImplementationOnce(
         (
           _hostname: string,
           _options: unknown,
-          callback: (error: Error | null, addresses: unknown) => void,
-        ) => callback(null, [{ address: "1.1.1.1", family: 4 }]),
+          callback: (error: Error | null, addresses: unknown) => void
+        ) => callback(null, [{ address: "1.1.1.1", family: 4 }])
       );
     queueMetadataResponses(httpsRequestMock, [
       {
         status: 302,
         statusText: "Found",
         headers: { location: "https://cdn.example/oauth-metadata" },
+        response: redirectResponse,
       },
       {
         body: JSON.stringify({ issuer: "https://auth.example.com" }),
@@ -273,6 +302,42 @@ describe("oauth-proxy helpers", () => {
     expect(firstLookup).toBeTypeOf("function");
     expect(secondLookup).toBeTypeOf("function");
     expect(firstLookup).not.toBe(secondLookup);
+    await expect(
+      new Promise((resolve, reject) =>
+        firstLookup(
+          "auth.example.com",
+          { all: true },
+          (
+            error: Error | null,
+            addresses: Array<{ address: string; family: number }>
+          ) => (error ? reject(error) : resolve(addresses))
+        )
+      )
+    ).resolves.toEqual([{ address: "93.184.216.34", family: 4 }]);
+    await expect(
+      new Promise((resolve, reject) =>
+        secondLookup(
+          "cdn.example",
+          { all: true },
+          (
+            error: Error | null,
+            addresses: Array<{ address: string; family: number }>
+          ) => (error ? reject(error) : resolve(addresses))
+        )
+      )
+    ).resolves.toEqual([{ address: "1.1.1.1", family: 4 }]);
+    expect(redirectResponse.destroyed).toBe(true);
+  });
+
+  it("includes DNS resolution in the metadata timeout", async () => {
+    dnsLookupMock.mockImplementation(() => {
+      // Simulate a resolver that never calls back.
+    });
+
+    await expect(
+      fetchOAuthMetadata("https://example.com/.well-known/oauth", false, 10)
+    ).rejects.toThrow(/timeout/i);
+    expect(httpsRequestMock).not.toHaveBeenCalled();
   });
 
   it("bounds regular, debug, and metadata requests with timeoutMs", async () => {

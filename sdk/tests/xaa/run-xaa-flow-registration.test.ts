@@ -14,6 +14,38 @@ import {
   TOKEN_EXCHANGE_GRANT,
 } from "../../src/oauth/client-identity.js";
 
+vi.mock("../../src/oauth-proxy.js", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("../../src/oauth-proxy.js")
+  >();
+  return {
+    ...actual,
+    // The flow fixture uses global.fetch for its synthetic OAuth endpoints.
+    // DNS pinning itself is tested in oauth-proxy.test.ts.
+    fetchOAuthMetadata: vi.fn(
+      async (url: string, _httpsOnly = false, timeoutMs?: number) => {
+        const response = await global.fetch(url, {
+          headers: { Accept: "application/json" },
+          signal:
+            timeoutMs === undefined
+              ? undefined
+              : AbortSignal.timeout(timeoutMs),
+        });
+        if (!response.ok) {
+          return {
+            status: response.status,
+            statusText: response.statusText,
+          };
+        }
+        return {
+          metadata: (await response.json()) as Record<string, unknown>,
+          finalUrl: response.url || url,
+        };
+      }
+    ),
+  };
+});
+
 // DCR + CIMD registration strategies driven through the real state machine with
 // a mocked global.fetch (mirrors run-xaa-flow.test.ts). DCR is fully exercised;
 // CIMD here is the public-client variant the engine supports today.
@@ -119,11 +151,14 @@ function registrationStub(config: StubConfig) {
       // ID-JAG redemption.
       if (url === TOKEN_ENDPOINT && method === "POST") {
         counts.token += 1;
-        const t =
-          config.tokenResponses?.[tokenIdx++] ??
+        const t = config.tokenResponses?.[tokenIdx++] ??
           config.token ?? {
             status: 200,
-            body: { access_token: "at-xyz", token_type: "Bearer", expires_in: 300 },
+            body: {
+              access_token: "at-xyz",
+              token_type: "Bearer",
+              expires_in: 300,
+            },
           };
         return json(t.body, t.status);
       }
@@ -158,7 +193,9 @@ describe("runXaaFlow — registration strategies", () => {
   });
 
   it("DCR completes without a --client-id, deriving the identity from registration", async () => {
-    const { fetchImpl, counts } = registrationStub({ asMetadata: dcrAsMetadata });
+    const { fetchImpl, counts } = registrationStub({
+      asMetadata: dcrAsMetadata,
+    });
     global.fetch = fetchImpl as unknown as typeof fetch;
 
     const result = await runXaaFlow({
@@ -287,7 +324,11 @@ describe("runXaaFlow — registration strategies", () => {
       asMetadata: cimdAsMetadata,
       token: {
         status: 200,
-        body: { access_token: "at-cimd", token_type: "Bearer", expires_in: 300 },
+        body: {
+          access_token: "at-cimd",
+          token_type: "Bearer",
+          expires_in: 300,
+        },
       },
     });
     global.fetch = fetchImpl as unknown as typeof fetch;
@@ -301,6 +342,7 @@ describe("runXaaFlow — registration strategies", () => {
         statusText: "OK",
         headers: { "content-type": "application/json" },
         body: publicCimdDoc,
+        finalUrl: CIMD_URL,
       });
 
     const result = await runXaaFlow({

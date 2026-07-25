@@ -11,6 +11,7 @@ import {
 } from "../../utils/oauth-proxy.js";
 
 const oauth = new Hono();
+const OAUTH_UPSTREAM_URL_HEADER = "X-MCPJam-OAuth-Upstream-URL";
 
 function safeHostname(url: string | undefined): string {
   if (!url) return "unknown";
@@ -56,7 +57,7 @@ oauth.post("/debug/proxy", async (c) => {
       });
       return c.json(
         { error: error.message },
-        error.status as ContentfulStatusCode,
+        error.status as ContentfulStatusCode
       );
     }
     getRequestLogger(c, "routes.mcp.oauth").event("mcp.oauth.proxy.failed", {
@@ -70,7 +71,7 @@ oauth.post("/debug/proxy", async (c) => {
         error:
           error instanceof Error ? error.message : "Unknown error occurred",
       },
-      500,
+      500
     );
   }
 });
@@ -88,6 +89,7 @@ oauth.post("/proxy", async (c) => {
     const { url, method, body, headers } = await c.req.json();
     proxyUrl = url;
     const result = await executeOAuthProxy({ url, method, body, headers });
+    c.header(OAUTH_UPSTREAM_URL_HEADER, result.finalUrl);
     return c.json(result);
   } catch (error) {
     const targetUrlHost = safeHostname(proxyUrl);
@@ -100,7 +102,7 @@ oauth.post("/proxy", async (c) => {
       });
       return c.json(
         { error: error.message },
-        error.status as ContentfulStatusCode,
+        error.status as ContentfulStatusCode
       );
     }
     getRequestLogger(c, "routes.mcp.oauth").event("mcp.oauth.proxy.failed", {
@@ -114,7 +116,7 @@ oauth.post("/proxy", async (c) => {
         error:
           error instanceof Error ? error.message : "Unknown error occurred",
       },
-      500,
+      500
     );
   }
 });
@@ -136,11 +138,11 @@ oauth.get("/metadata", async (c) => {
         {
           error: `Failed to fetch OAuth metadata: ${result.status} ${result.statusText}`,
         },
-        result.status as ContentfulStatusCode,
+        result.status as ContentfulStatusCode
       );
     }
 
-    c.header("X-MCPJam-OAuth-Upstream-URL", result.finalUrl);
+    c.header(OAUTH_UPSTREAM_URL_HEADER, result.finalUrl);
     return c.json(result.metadata);
   } catch (error) {
     const targetUrlHost = safeHostname(metadataUrl);
@@ -153,7 +155,7 @@ oauth.get("/metadata", async (c) => {
       });
       return c.json(
         { error: error.message },
-        error.status as ContentfulStatusCode,
+        error.status as ContentfulStatusCode
       );
     }
     getRequestLogger(c, "routes.mcp.oauth").event("mcp.oauth.proxy.failed", {
@@ -167,7 +169,7 @@ oauth.get("/metadata", async (c) => {
         error:
           error instanceof Error ? error.message : "Unknown error occurred",
       },
-      500,
+      500
     );
   }
 });
