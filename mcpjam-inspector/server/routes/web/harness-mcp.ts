@@ -20,7 +20,10 @@
  */
 import { Hono } from "hono";
 import "../../types/hono";
-import { handleJsonRpc } from "../../services/mcp-http-bridge";
+import {
+  handleJsonRpc,
+  parseAndValidateJsonRpc,
+} from "../../services/mcp-http-bridge";
 import {
   createAuthorizedManager,
   withManager,
@@ -29,6 +32,8 @@ import {
 import { verifyHarnessProxyToken } from "../../utils/harness/harness-proxy-token";
 import { rpcLogBus } from "../../services/rpc-log-bus";
 import { logger } from "../../utils/logger";
+import { resolveXaaIssuer } from "../../services/xaa-mint.js";
+import { HOSTED_MODE } from "../../config.js";
 
 const harnessMcp = new Hono();
 
@@ -128,12 +133,15 @@ async function handle(c: any) {
     return c.json({ error: "Unsupported request" }, 400);
   }
 
-  let body: any;
-  try {
-    body = await c.req.json();
-  } catch {
-    body = undefined;
+  // Malformed payloads must NOT fall through to the notification → 202 path
+  // (the bridge treats a missing method as a notification): a garbage body
+  // acknowledged as "Accepted" looks like a delivered message to the harness.
+  // Shared with the local MCP proxy (`http-adapters`) via the bridge helper.
+  const validation = await parseAndValidateJsonRpc(() => c.req.json());
+  if (!validation.ok) {
+    return c.json(validation.response, validation.status as 400);
   }
+  const body = validation.body;
 
   // Rebuild the user's authorized connection server-side via the acting-as
   // service-token exchange (no browser bearer in the sandbox). Convex baked the
@@ -156,6 +164,14 @@ async function handle(c: any) {
         undefined,
         undefined,
         {
+          // Per-server XAA works on the harness proxy (configured servers
+          // mint instead of 500ing). KNOWN LIMITATION: the host's
+          // enterprise-managed POLICY is NOT enforced here — the harness
+          // token's claims carry projectId/serverId but not the host, so an
+          // unconfigured `auto` server on a policy host takes the discover
+          // ladder in a harness turn instead of 409ing. Fix by threading the
+          // host policy (or hostId) into the harness token claims.
+          xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
           // Publish the sandbox's MCP traffic into the in-process rpc-log bus
           // so a live harness turn ON THIS INSTANCE can forward it into the
           // Playground Logs panel (see bridgeHarnessRpcLogsToCollector), and

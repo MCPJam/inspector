@@ -286,7 +286,7 @@ export function ClientContextHeader({
             {...PLAYGROUND_HEADER_TOOLTIP}
             className="max-w-none whitespace-nowrap"
           >
-            These are temporary overrides applied to your current host.
+            These are temporary overrides applied to your current client.
           </TooltipContent>
         </Tooltip>
 

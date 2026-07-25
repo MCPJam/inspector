@@ -41,6 +41,11 @@ import {
 } from "@/lib/apis/mcp-tasks-api";
 import { trackTask } from "@/lib/task-tracker";
 import { validateToolOutput } from "@/lib/schema-utils";
+import {
+  applyToolCallStepUp,
+  resetToolCallStepUp,
+} from "@/state/oauth-orchestrator";
+import type { ServerWithName } from "@/state/app-types";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import { isNormalizedError } from "@mcpjam/sdk/browser";
 import { WebApiError } from "@/lib/apis/web/base";
@@ -51,9 +56,14 @@ import { useToolQualityEnabled } from "@/hooks/useToolQualityEnabled";
 import type { ConnectionStatus } from "@/state/app-types";
 import type { ToolQualityInfo } from "./tools/ToolItem";
 import type { McpToolResultImageRenderingPolicy } from "@/lib/client-config-v2";
+import { boundedJsonByteLength } from "@/lib/webmcp/bounded-size";
+import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 
 type ToolMap = Record<string, Tool>;
 type FormField = ToolFormField;
+
+/** Cap the list of tools the snapshot enumerates (names only). */
+const TOOLS_SNAPSHOT_MAX_ITEMS = 30;
 
 // Shape returned by the backend tool-quality lint query (string-named). The
 // inspector renders these purely as neutral per-tool quality badges.
@@ -89,6 +99,16 @@ export type DialogElicitation = {
   message: string;
   schema?: Record<string, unknown>;
   timestamp: string;
+  /**
+   * Identity of the server requesting information (MCP spec MUST: the client
+   * must make it clear which server is asking). Optional and additive: local
+   * surfaces that don't yet plumb it through fall back to a generic header.
+   *
+   * `serverId` is the immutable, locally-assigned identifier — the trusted
+   * anchor. `serverName` is a server-supplied display label and is NOT trusted.
+   */
+  serverId?: string;
+  serverName?: string;
 };
 
 function normalizeElicitationContent(
@@ -118,6 +138,13 @@ function normalizeElicitationContent(
 interface ToolsTabProps {
   serverConfig?: MCPServerConfig;
   serverName?: string;
+  /**
+   * The full server entry — needed to drive a SEP-2350 runtime scope step-up
+   * when a tool call returns a `403 insufficient_scope` challenge (issuer +
+   * originally-requested scopes are resolved from it). Optional: surfaces that
+   * don't plumb it through simply never trigger the local step-up.
+   */
+  server?: ServerWithName;
   serverConnectionStatus?: ConnectionStatus;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
 }
@@ -125,6 +152,7 @@ interface ToolsTabProps {
 export function ToolsTab({
   serverConfig,
   serverName,
+  server,
   serverConnectionStatus,
   mcpToolResultImageRendering,
 }: ToolsTabProps) {
@@ -172,6 +200,11 @@ export function ToolsTab({
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const toolFetchVersionRef = useRef(0);
   const taskCapabilitiesFetchVersionRef = useRef(0);
+  // SEP-2350: guards against a second tool run (or a repeated error) kicking off
+  // a duplicate step-up while the first is still in flight — a double redirect
+  // or double counter bump. Keyed by server name so distinct servers never
+  // block each other.
+  const stepUpInFlightRef = useRef<Set<string>>(new Set());
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const isServerConnected =
     serverConnectionStatus === undefined ||
@@ -481,6 +514,21 @@ export function ToolsTab({
     return toolName ? tools[toolName]?._meta : undefined;
   };
 
+  // SEP-2350: a successful call clears the bounded step-up counter so a future
+  // legitimate scope step-up starts fresh rather than inheriting a stale count
+  // that would prematurely throw. Factored so BOTH success paths — an immediate
+  // `completed` result and a task-augmented `task_created` — reset it.
+  const resetStepUpOnSuccess = () => {
+    if (!server) return;
+    try {
+      resetToolCallStepUp(server);
+    } catch (err) {
+      logger.warn("Failed to reset step-up counter", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  };
+
   const handleExecutionResponse = (
     response: ToolExecutionResponse,
     toolName: string
@@ -495,6 +543,8 @@ export function ToolsTab({
       setResponseDurationMs(durationMs);
       const callResult = response.result;
       setResult(callResult);
+
+      resetStepUpOnSuccess();
 
       const rawResult = callResult as unknown as Record<string, unknown>;
       const currentTool = tools[toolName];
@@ -523,6 +573,11 @@ export function ToolsTab({
     // Handle task creation response (MCP Tasks spec 2025-11-25)
     if ("status" in response && response.status === "task_created") {
       const { task, modelImmediateResponse } = response;
+
+      // A task-augmented tool that succeeds lands here, not in the `completed`
+      // branch — reset the step-up counter on this success path too so a stale
+      // count doesn't prematurely throw a later legitimate step-up.
+      resetStepUpOnSuccess();
 
       // Track the task locally so it appears in the Tasks tab
       if (serverName) {
@@ -565,6 +620,38 @@ export function ToolsTab({
       setNormalizedError(
         isNormalizedError(maybeNormalized) ? maybeNormalized : null
       );
+
+      // SEP-2350 runtime scope step-up: the tool call failed with a
+      // `403 insufficient_scope`. Drive the bounded, union-scope
+      // re-authorization for the local (non-hosted) surface. On `reauthorize`
+      // this redirects the browser to the authorization server; `throw` /
+      // `manual` leave the surfaced error in place.
+      const insufficientScope = (
+        response as { insufficientScope?: import("@/lib/apis/mcp-tools-api").ToolInsufficientScopeChallenge }
+      ).insufficientScope;
+      if (insufficientScope && server) {
+        // Dedup: only one step-up may be in flight per server. Without this a
+        // second tool run (or a repeated error) while the first is still
+        // resolving could fire a duplicate — a double redirect or double
+        // counter bump. The guard clears once the step-up settles.
+        const stepUpKey = server.name;
+        if (!stepUpInFlightRef.current.has(stepUpKey)) {
+          stepUpInFlightRef.current.add(stepUpKey);
+          void applyToolCallStepUp(server, {
+            requiredScope: insufficientScope.requiredScope,
+            resourceMetadataUrl: insufficientScope.resourceMetadataUrl,
+          })
+            .catch((err) => {
+              logger.error("Step-up re-authorization failed", {
+                toolName,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            })
+            .finally(() => {
+              stepUpInFlightRef.current.delete(stepUpKey);
+            });
+        }
+      }
     }
   };
 
@@ -748,6 +835,41 @@ export function ToolsTab({
         timestamp: activeElicitation.timestamp,
       }
     : null;
+
+  // Agent bridge: SNAPSHOT-ONLY. Tool EXECUTION is already covered by the
+  // global ui_execute_tool, so this surface adds no tool of its own — a
+  // ui_run_server_tool would just duplicate it (the plan drops it). It registers
+  // only a redacted snapshot so the agent can OBSERVE this screen. Must run
+  // before any early return (rules of hooks). Redacted STATE, not payloads: the
+  // selected server, the tool NAMES (bounded), the current selection + its
+  // parameter FIELD NAMES (never the values), and whether a result exists
+  // (presence/size only, never the content).
+  useSurfaceAgentBridge({
+    surfaceId: "tools",
+    snapshot: () => {
+      // Bounded: never fully serialize a huge tool result just to size it.
+      const { bytes: lastResultBytes, truncated: lastResultTruncated } = result
+        ? boundedJsonByteLength(result)
+        : { bytes: 0, truncated: false };
+      const names = Object.keys(tools);
+      return {
+        selectedServer: serverName ?? null,
+        connected: isServerConnected,
+        activeTab,
+        toolCount: names.length,
+        tools: names.slice(0, TOOLS_SNAPSHOT_MAX_ITEMS),
+        selectedTool: selectedTool || null,
+        selectedToolParameterNames: formFields.map((f) => f.name),
+        savedRequestCount: savedRequests.length,
+        lastToolName: lastToolName ?? null,
+        lastResult: {
+          present: Boolean(result),
+          approxSizeBytes: lastResultBytes,
+          ...(lastResultTruncated ? { approxSizeCapped: true } : {}),
+        },
+      };
+    },
+  });
 
   if (!serverConfig) {
     return (

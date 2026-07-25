@@ -135,10 +135,16 @@ vi.mock("@workos-inc/authkit-react", () => ({
 }));
 
 vi.mock("convex/react", () => ({
+  // useChatSession resolves the Convex client to submit elicitation answers
+  // straight to the rendezvous table (the blocked replica isn't addressable).
+  useConvex: () => ({ mutation: vi.fn().mockResolvedValue({ ok: true }) }),
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
   useQuery: (_name: string, args: unknown) =>
     args === "skip" ? undefined : null,
   useMutation: () => () => Promise.resolve(),
+  // COMP-14: useComputerAttachmentUpload pulls in useMintTerminalToken (a
+  // Convex action). The flag mock keeps the flow inert; this keeps it mountable.
+  useAction: () => () => Promise.resolve({ token: "test-token" }),
 }));
 
 vi.mock("@/hooks/useViews", () => ({
@@ -156,6 +162,13 @@ vi.mock("@/lib/apis/web/chat-history-api", () => ({
 // `useChatSession` is shared with single-host tests; we don't need it
 // to do anything beyond return the standard mock object.
 const mockUseChatSession = {
+  // Elicitation surface (hosted). These suites never elicit, but the shape
+  // must match the hook's contract or the dialog crashes on undefined.
+  pendingElicitations: [],
+  respondToElicitation: vi.fn(),
+  elicitationResponding: false,
+  urlElicitationRequired: [],
+  dismissUrlElicitationRequired: vi.fn(),
   messages: [],
   setMessages: vi.fn(),
   sendMessage: vi.fn(),

@@ -15,6 +15,7 @@ interface OAuthSequenceDiagramProps {
   protocolVersion?: OAuthProtocolVersion;
   focusedStep?: OAuthFlowStep | null;
   hasProfile?: boolean;
+  showConfigurePrompt?: boolean;
   onConfigure?: () => void;
 }
 
@@ -32,6 +33,7 @@ export const OAuthSequenceDiagram = memo((props: OAuthSequenceDiagramProps) => {
     protocolVersion = "2025-11-25",
     focusedStep,
     hasProfile = true,
+    showConfigurePrompt = true,
     onConfigure,
   } = props;
 
@@ -59,7 +61,7 @@ export const OAuthSequenceDiagram = memo((props: OAuthSequenceDiagramProps) => {
         />
       </div>
 
-      {!hasProfile && (
+      {!hasProfile && showConfigurePrompt && (
         <div className="absolute inset-0 flex items-center justify-center">
           <div className="bg-background border border-border rounded-lg shadow-lg p-8 max-w-md text-center">
             <div className="mx-auto w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-4">

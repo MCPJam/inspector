@@ -216,6 +216,25 @@ function createFetchFromRequestExecutor(
   };
 }
 
+// A real authorization server returns the exact `state` the client issued, and
+// the 2R-iss callback gate now enforces it. Echo the state persisted by
+// initiateOAuth for the pending server so callback tests mirror real requests.
+// Prefers the flow-session state; on the no-session fallback path it falls back
+// to the durable issued-state key (which F6 recovery reads). Returns null only
+// when neither is present.
+const issuedCallbackState = (): string | null => {
+  const serverName = localStorage.getItem("mcp-oauth-pending");
+  if (!serverName) return null;
+  try {
+    const raw = localStorage.getItem(`mcp-oauth-flow-state-${serverName}`);
+    const fromSession = raw ? (JSON.parse(raw).state?.state ?? null) : null;
+    if (fromSession) return fromSession;
+  } catch {
+    // fall through to the durable key
+  }
+  return localStorage.getItem(`mcp-oauth-issued-state-${serverName}`);
+};
+
 describe("mcp-oauth", () => {
   let authFetch: ReturnType<typeof vi.fn>;
 
@@ -837,10 +856,10 @@ describe("mcp-oauth", () => {
       });
 
       expect(result.success).toBe(true);
-      expect(localStorage.getItem("mcp-client-hosted")).toBe(
-        JSON.stringify({
-          client_id: "hosted-client-id",
-        })
+      // The client id persists (now inside the SEP-2352 issuer-keyed envelope),
+      // but the secret must never reach localStorage.
+      expect(localStorage.getItem("mcp-client-hosted")).toContain(
+        "hosted-client-id"
       );
       expect(localStorage.getItem("mcp-client-hosted")).not.toContain(
         "client_secret"
@@ -1494,7 +1513,9 @@ describe("mcp-oauth", () => {
       });
       expect(initiateResult.success).toBe(true);
 
-      const callbackResult = await handleOAuthCallback("oauth-code");
+      const callbackResult = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+      });
 
       expect(callbackResult.success).toBe(true);
       expect(callbackResult.serverName).toBe("asana");
@@ -1507,6 +1528,97 @@ describe("mcp-oauth", () => {
       expect(localStorage.getItem("mcp-verifier-asana")).toBeNull();
       expect(mockDiscoverOAuthServerInfo).toHaveBeenCalledTimes(2);
       expect(mockExchangeAuthorization).toHaveBeenCalledTimes(1);
+    });
+
+    it("preserves one advertised resource string through authorization, callback, storage, and refresh", async () => {
+      const serverName = "example";
+      const serverUrl = "https://mcp.example.com/api/mcp";
+      const advertisedResource = "HTTPS://MCP.EXAMPLE.COM:443/api/";
+      const discoveryState = {
+        ...createDiscoveryState(),
+        resourceMetadataUrl:
+          "https://mcp.example.com/.well-known/oauth-protected-resource/api",
+        resourceMetadata: {
+          resource: advertisedResource,
+          authorization_servers: ["https://auth.example.com"],
+        },
+      };
+
+      mockDiscoverOAuthServerInfo.mockResolvedValue(discoveryState);
+      mockStartAuthorization.mockResolvedValue({
+        authorizationUrl: new URL(
+          "https://auth.example.com/authorize?state=mock-state"
+        ),
+        codeVerifier: "test-verifier",
+      });
+      mockExchangeAuthorization.mockImplementationOnce(
+        async (_authorizationServerUrl, options) => {
+          expect(options?.resource).toBe(advertisedResource);
+          return {
+            access_token: "access-token",
+            refresh_token: "refresh-token",
+            token_type: "Bearer",
+          };
+        }
+      );
+
+      const { handleOAuthCallback, initiateOAuth, refreshOAuthTokens } =
+        await import("../mcp-oauth");
+
+      const initiateResult = await initiateOAuth({ serverName, serverUrl });
+      expect(initiateResult.success).toBe(true);
+
+      const storedFlow = JSON.parse(
+        localStorage.getItem(`mcp-oauth-flow-state-${serverName}`) ?? "{}"
+      );
+      expect(
+        new URL(storedFlow.state.authorizationUrl).searchParams.get("resource")
+      ).toBe(advertisedResource);
+      expect(
+        JSON.parse(
+          localStorage.getItem(`mcp-oauth-config-${serverName}`) ?? "{}"
+        ).resourceUrl
+      ).toBe(advertisedResource);
+
+      // Exercise the callback path that performs the exchange directly; the
+      // state-machine path already owns separate resource persistence tests.
+      localStorage.removeItem(`mcp-oauth-flow-state-${serverName}`);
+      const callbackResult = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+      });
+      expect(callbackResult.success, callbackResult.error).toBe(true);
+      expect(callbackResult.oauthResourceUrl).toBe(advertisedResource);
+      expect(
+        JSON.parse(
+          localStorage.getItem(`mcp-oauth-config-${serverName}`) ?? "{}"
+        ).resourceUrl
+      ).toBe(advertisedResource);
+
+      // Production imports callback tokens into secure storage. Seed the
+      // local refresh-token adapter explicitly so this unit test can exercise
+      // the browser refresh request that replays the stored resource value.
+      localStorage.setItem(
+        `mcp-tokens-${serverName}`,
+        JSON.stringify({
+          access_token: "access-token",
+          refresh_token: "refresh-token",
+          token_type: "Bearer",
+        })
+      );
+
+      mockFetchToken.mockImplementationOnce(
+        async (_provider, _authorizationServerUrl, options) => {
+          expect(options?.resource).toBe(advertisedResource);
+          return {
+            access_token: "refreshed-access-token",
+            refresh_token: "refresh-token",
+            token_type: "Bearer",
+          };
+        }
+      );
+
+      const refreshResult = await refreshOAuthTokens(serverName);
+      expect(refreshResult.success).toBe(true);
     });
 
     it("treats malformed stored token data as invalid instead of throwing", async () => {
@@ -1596,7 +1708,9 @@ describe("mcp-oauth", () => {
       );
 
       const { handleOAuthCallback } = await import("../mcp-oauth");
-      const callbackResult = await handleOAuthCallback("oauth-code");
+      const callbackResult = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+      });
 
       expect(callbackResult.success).toBe(true);
       expect(localStorage.getItem("mcp-verifier-asana")).toBeNull();
@@ -1763,13 +1877,443 @@ describe("mcp-oauth", () => {
       });
 
       expect(result.success).toBe(true);
-      expect(localStorage.getItem("mcp-client-asana")).toBe(
-        JSON.stringify({
-          client_id: "stale-client-id",
-        })
+      // The stale client id is reused (not re-registered), now inside the
+      // SEP-2352 issuer-keyed envelope.
+      expect(localStorage.getItem("mcp-client-asana")).toContain(
+        "stale-client-id"
       );
       expect(mockRegisterClient).not.toHaveBeenCalled();
       expect(getOAuthTraceFailureStep(result.oauthTrace)).toBeUndefined();
+    });
+
+    it("does not reuse a client id across an authorization-server change (SEP-2352)", async () => {
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      const provider = new MCPOAuthProvider(
+        "issuer-change",
+        "https://mcp.example.com/sse"
+      );
+
+      // Register against AS A.
+      await provider.saveDiscoveryState({
+        ...createDiscoveryState(),
+        authorizationServerUrl: "https://as-a.example.com",
+        authorizationServerMetadata: { issuer: "https://as-a.example.com" },
+      } as any);
+      await provider.saveClientInformation({ client_id: "client-for-as-a" });
+      expect((await provider.clientInformation())?.client_id).toBe(
+        "client-for-as-a"
+      );
+
+      // Protected-resource metadata now points to AS B.
+      await provider.saveDiscoveryState({
+        ...createDiscoveryState(),
+        authorizationServerUrl: "https://as-b.example.com",
+        authorizationServerMetadata: { issuer: "https://as-b.example.com" },
+      } as any);
+
+      // AS A's client id must NOT be reused for AS B — the flow re-registers.
+      expect(await provider.clientInformation()).toBeUndefined();
+
+      // Registering against AS B keeps AS A's bucket (a multi-issuer server).
+      await provider.saveClientInformation({ client_id: "client-for-as-b" });
+      expect((await provider.clientInformation())?.client_id).toBe(
+        "client-for-as-b"
+      );
+      const raw = localStorage.getItem("mcp-client-issuer-change") ?? "";
+      expect(raw).toContain("client-for-as-a");
+      expect(raw).toContain("client-for-as-b");
+    });
+
+    it("ignores a stale envelope activeIssuer in favor of the discovered issuer (review F4/F5)", async () => {
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      // Seed a v2 envelope whose activeIssuer still points at AS A.
+      localStorage.setItem(
+        "mcp-client-stale-issuer",
+        JSON.stringify({
+          v: 2,
+          activeIssuer: "https://as-a.example.com",
+          byIssuer: {
+            "https://as-a.example.com": { client_id: "client-for-as-a" },
+          },
+        })
+      );
+      const provider = new MCPOAuthProvider(
+        "stale-issuer",
+        "https://mcp.example.com/sse"
+      );
+      // Discovery has since moved to AS B.
+      await provider.saveDiscoveryState({
+        ...createDiscoveryState(),
+        authorizationServerUrl: "https://as-b.example.com",
+        authorizationServerMetadata: { issuer: "https://as-b.example.com" },
+      } as any);
+
+      // The stale AS-A credential must NOT be returned for AS B, even though it
+      // is the envelope's activeIssuer bucket.
+      expect(await provider.clientInformation()).toBeUndefined();
+
+      // A save keys to the discovered issuer (AS B), leaving AS A's bucket
+      // intact rather than overwriting it.
+      await provider.saveClientInformation({ client_id: "client-for-as-b" });
+      const raw = JSON.parse(
+        localStorage.getItem("mcp-client-stale-issuer") || "{}"
+      );
+      expect(raw.byIssuer["https://as-b.example.com"].client_id).toBe(
+        "client-for-as-b"
+      );
+      expect(raw.byIssuer["https://as-a.example.com"].client_id).toBe(
+        "client-for-as-a"
+      );
+      expect(raw.activeIssuer).toBe("https://as-b.example.com");
+    });
+
+    it("does not present AS-A tokens after discovery resolves to AS-B (SEP-2352)", async () => {
+      const { MCPOAuthProvider, getStoredTokens, getStoredTokensState } =
+        await import("../mcp-oauth");
+      // Seed a v2 token envelope with buckets for two authorization servers.
+      // (No app path writes keyed token records today — Convex is the token
+      // source of truth — so we seed the envelope directly to exercise the
+      // issuer-gated READ, exactly as the client-id F4/F5 test does.)
+      localStorage.setItem(
+        "mcp-tokens-issuer-tokens",
+        JSON.stringify({
+          v: 2,
+          activeIssuer: "https://as-a.example.com",
+          byIssuer: {
+            "https://as-a.example.com": {
+              access_token: "token-for-as-a",
+              token_type: "Bearer",
+            },
+            "https://as-b.example.com": {
+              access_token: "token-for-as-b",
+              token_type: "Bearer",
+            },
+          },
+        })
+      );
+      const provider = new MCPOAuthProvider(
+        "issuer-tokens",
+        "https://mcp.example.com/sse"
+      );
+
+      // Discovery points at AS A → AS A's token is returned.
+      await provider.saveDiscoveryState({
+        ...createDiscoveryState(),
+        authorizationServerUrl: "https://as-a.example.com",
+        authorizationServerMetadata: { issuer: "https://as-a.example.com" },
+      } as any);
+      expect(provider.tokens()?.access_token).toBe("token-for-as-a");
+      expect(getStoredTokens("issuer-tokens")?.access_token).toBe(
+        "token-for-as-a"
+      );
+
+      // Protected-resource metadata now resolves to AS B → AS B's token, and
+      // AS A's token is NEVER surfaced for AS B.
+      await provider.saveDiscoveryState({
+        ...createDiscoveryState(),
+        authorizationServerUrl: "https://as-b.example.com",
+        authorizationServerMetadata: { issuer: "https://as-b.example.com" },
+      } as any);
+      expect(provider.tokens()?.access_token).toBe("token-for-as-b");
+      expect(getStoredTokens("issuer-tokens")?.access_token).toBe(
+        "token-for-as-b"
+      );
+      expect(getStoredTokensState("issuer-tokens").isInvalid).toBe(false);
+
+      // Both buckets remain intact (a multi-issuer server keeps each AS's row).
+      const raw = localStorage.getItem("mcp-tokens-issuer-tokens") ?? "";
+      expect(raw).toContain("token-for-as-a");
+      expect(raw).toContain("token-for-as-b");
+    });
+
+    it("returns a legacy unkeyed token record as unbound compat (lazy migration)", async () => {
+      const { MCPOAuthProvider, getStoredTokens } = await import(
+        "../mcp-oauth"
+      );
+      // Pre-migration records are raw (unversioned) token bags with no issuer
+      // binding. They stay readable so existing local logins and the refresh
+      // path keep working (parity with the client-id read).
+      localStorage.setItem(
+        "mcp-tokens-legacy-tokens",
+        JSON.stringify({
+          access_token: "legacy-access",
+          refresh_token: "legacy-refresh",
+          token_type: "Bearer",
+        })
+      );
+      const provider = new MCPOAuthProvider(
+        "legacy-tokens",
+        "https://mcp.example.com/sse"
+      );
+      // Even with an issuer resolved, an UNBOUND legacy record is returned —
+      // we cannot know which AS it was granted by.
+      await provider.saveDiscoveryState({
+        ...createDiscoveryState(),
+        authorizationServerUrl: "https://as-a.example.com",
+        authorizationServerMetadata: { issuer: "https://as-a.example.com" },
+      } as any);
+      expect(provider.tokens()?.access_token).toBe("legacy-access");
+      expect(provider.tokens()?.refresh_token).toBe("legacy-refresh");
+      expect(getStoredTokens("legacy-tokens")?.access_token).toBe(
+        "legacy-access"
+      );
+    });
+
+    it("treats a v2 token envelope with no bucket for the resolved issuer as absent", async () => {
+      const { MCPOAuthProvider, getStoredTokens, getStoredTokensState } =
+        await import("../mcp-oauth");
+      localStorage.setItem(
+        "mcp-tokens-no-bucket",
+        JSON.stringify({
+          v: 2,
+          activeIssuer: "https://as-a.example.com",
+          byIssuer: {
+            "https://as-a.example.com": { access_token: "token-for-as-a" },
+          },
+        })
+      );
+      const provider = new MCPOAuthProvider(
+        "no-bucket",
+        "https://mcp.example.com/sse"
+      );
+      await provider.saveDiscoveryState({
+        ...createDiscoveryState(),
+        authorizationServerUrl: "https://as-b.example.com",
+        authorizationServerMetadata: { issuer: "https://as-b.example.com" },
+      } as any);
+
+      // No AS-B bucket → treat as absent (re-authorize), not corrupt.
+      expect(provider.tokens()).toBeUndefined();
+      expect(getStoredTokens("no-bucket")).toBeUndefined();
+      expect(getStoredTokensState("no-bucket").isInvalid).toBe(false);
+      // AS-A's bucket is left intact for when discovery points back at it.
+      expect(localStorage.getItem("mcp-tokens-no-bucket") ?? "").toContain(
+        "token-for-as-a"
+      );
+    });
+
+    it("does not surface the activeIssuer token bucket before any AS resolves (SEP-2352)", async () => {
+      const { MCPOAuthProvider, getStoredTokens, getStoredTokensState } =
+        await import("../mcp-oauth");
+      // A v2 envelope exists but NO discovery/session has resolved an issuer for
+      // this server. The read must NOT fall back to the envelope's activeIssuer
+      // bucket — that AS binding is unverified for the current serverUrl.
+      localStorage.setItem(
+        "mcp-tokens-unresolved",
+        JSON.stringify({
+          v: 2,
+          activeIssuer: "https://as-a.example.com",
+          byIssuer: {
+            "https://as-a.example.com": {
+              access_token: "token-for-as-a",
+              token_type: "Bearer",
+            },
+          },
+        })
+      );
+      const provider = new MCPOAuthProvider(
+        "unresolved",
+        "https://mcp.example.com/sse"
+      );
+
+      // No discovery state saved → currentIssuer() is undefined → absent.
+      expect(provider.tokens()).toBeUndefined();
+      expect(getStoredTokens("unresolved")).toBeUndefined();
+      expect(getStoredTokensState("unresolved").isInvalid).toBe(false);
+      // The bucket is preserved for when discovery later resolves to AS A.
+      expect(localStorage.getItem("mcp-tokens-unresolved") ?? "").toContain(
+        "token-for-as-a"
+      );
+    });
+
+    it("does not surface a token bucket bound via a PREVIOUS serverUrl when the name is reused (SEP-2352)", async () => {
+      const { MCPOAuthProvider, getStoredTokensState } = await import(
+        "../mcp-oauth"
+      );
+      // Seed a v2 token envelope and discovery bound to the ORIGINAL serverUrl.
+      localStorage.setItem(
+        "mcp-tokens-reused-name",
+        JSON.stringify({
+          v: 2,
+          activeIssuer: "https://as-a.example.com",
+          byIssuer: {
+            "https://as-a.example.com": {
+              access_token: "token-for-as-a",
+              token_type: "Bearer",
+            },
+          },
+        })
+      );
+      const originalProvider = new MCPOAuthProvider(
+        "reused-name",
+        "https://old.example.com/sse"
+      );
+      await originalProvider.saveDiscoveryState({
+        ...createDiscoveryState(),
+        authorizationServerUrl: "https://as-a.example.com",
+        authorizationServerMetadata: { issuer: "https://as-a.example.com" },
+      } as any);
+
+      // Reading with the ORIGINAL serverUrl still resolves AS A → token present.
+      expect(
+        getStoredTokensState("reused-name", "https://old.example.com/sse")
+          .tokens?.access_token
+      ).toBe("token-for-as-a");
+
+      // The server name is now reused with a DIFFERENT URL. The stale discovery
+      // (for the old URL) must NOT resolve an issuer, so the AS-A token bucket is
+      // NOT surfaced for the new server.
+      const reused = getStoredTokensState(
+        "reused-name",
+        "https://new.example.com/sse"
+      );
+      expect(reused.tokens).toBeUndefined();
+      expect(reused.isInvalid).toBe(false);
+    });
+
+    it("classifies a present-but-malformed token record (null) as invalid, not absent", async () => {
+      const { getStoredTokens, getStoredTokensState } = await import(
+        "../mcp-oauth"
+      );
+      // Valid JSON but not a usable token object. Pre-2R this classified as
+      // invalid (the client_id merge threw); the issuer-keyed read must preserve
+      // that classification rather than silently reporting "no tokens".
+      localStorage.setItem("mcp-tokens-malformed-null", "null");
+      expect(getStoredTokens("malformed-null")).toBeUndefined();
+      expect(getStoredTokensState("malformed-null")).toEqual({
+        tokens: undefined,
+        isInvalid: true,
+      });
+
+      // A JSON array is likewise a malformed-but-present record.
+      localStorage.setItem("mcp-tokens-malformed-array", "[]");
+      expect(getStoredTokensState("malformed-array")).toEqual({
+        tokens: undefined,
+        isInvalid: true,
+      });
+    });
+
+    it("classifies a v2-shaped but corrupt envelope as invalid, not valid tokens", async () => {
+      const { getStoredTokens, getStoredTokensState } = await import(
+        "../mcp-oauth"
+      );
+      // `byIssuer` is a string, not an object: the record carries the v2
+      // version marker but fails the full issuer-keyed shape check. Without the
+      // corrupt-v2 guard, parseLegacyStoredTokens accepts the raw `{ v: 2, ... }`
+      // object as an unbound legacy token bag and surfaces it as VALID tokens.
+      localStorage.setItem(
+        "mcp-tokens-corrupt-v2",
+        JSON.stringify({ v: 2, byIssuer: "not-an-object" })
+      );
+      expect(getStoredTokens("corrupt-v2")).toBeUndefined();
+      expect(getStoredTokensState("corrupt-v2")).toEqual({
+        tokens: undefined,
+        isInvalid: true,
+      });
+
+      // `byIssuer` missing entirely is likewise a corrupt v2 envelope.
+      localStorage.setItem(
+        "mcp-tokens-corrupt-v2-missing",
+        JSON.stringify({ v: 2, activeIssuer: "https://as.example.com" })
+      );
+      expect(getStoredTokensState("corrupt-v2-missing")).toEqual({
+        tokens: undefined,
+        isInvalid: true,
+      });
+
+      // `byIssuer` null is corrupt too (typeof null === "object" but rejected).
+      localStorage.setItem(
+        "mcp-tokens-corrupt-v2-null",
+        JSON.stringify({ v: 2, byIssuer: null })
+      );
+      expect(getStoredTokensState("corrupt-v2-null")).toEqual({
+        tokens: undefined,
+        isInvalid: true,
+      });
+
+      // `byIssuer` an ARRAY passes `typeof === "object"` but is not a valid
+      // issuer→record map: still a corrupt v2 envelope, not an empty keyed store
+      // that reads as absent.
+      localStorage.setItem(
+        "mcp-tokens-corrupt-v2-array",
+        JSON.stringify({ v: 2, byIssuer: [] })
+      );
+      expect(getStoredTokens("corrupt-v2-array")).toBeUndefined();
+      expect(getStoredTokensState("corrupt-v2-array")).toEqual({
+        tokens: undefined,
+        isInvalid: true,
+      });
+    });
+
+    it("provider.tokens() returns undefined for a v2-marked but malformed envelope", async () => {
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      // A record carrying the v2 marker but failing the issuer-keyed shape check
+      // must NOT be handed to parseLegacyStoredTokens (which would accept the raw
+      // `{ v: 2, ... }` object as an unbound legacy token bag and surface it as
+      // valid). tokens() has no isInvalid channel, so it returns undefined.
+      const provider = new MCPOAuthProvider(
+        "corrupt-v2-provider",
+        "https://mcp.example.com/sse"
+      );
+
+      for (const bad of [
+        { v: 2, byIssuer: "not-an-object" },
+        { v: 2, activeIssuer: "https://as.example.com" },
+        { v: 2, byIssuer: null },
+        { v: 2, byIssuer: [] },
+      ]) {
+        localStorage.setItem(
+          "mcp-tokens-corrupt-v2-provider",
+          JSON.stringify(bad)
+        );
+        expect(provider.tokens()).toBeUndefined();
+      }
+    });
+
+    it("getStoredTokens does not surface a PREVIOUS serverUrl's token bucket when the name is reused (SEP-2352)", async () => {
+      const { MCPOAuthProvider, getStoredTokens } = await import(
+        "../mcp-oauth"
+      );
+      // v2 token envelope + discovery bound to the ORIGINAL serverUrl (AS A).
+      localStorage.setItem(
+        "mcp-tokens-reused-gst",
+        JSON.stringify({
+          v: 2,
+          activeIssuer: "https://as-a.example.com",
+          byIssuer: {
+            "https://as-a.example.com": {
+              access_token: "token-for-as-a",
+              token_type: "Bearer",
+            },
+          },
+        })
+      );
+      const originalProvider = new MCPOAuthProvider(
+        "reused-gst",
+        "https://old.example.com/sse"
+      );
+      await originalProvider.saveDiscoveryState({
+        ...createDiscoveryState(),
+        authorizationServerUrl: "https://as-a.example.com",
+        authorizationServerMetadata: { issuer: "https://as-a.example.com" },
+      } as any);
+
+      // Reading with the ORIGINAL serverUrl still resolves AS A → token present.
+      expect(getStoredTokens("reused-gst", "https://old.example.com/sse")
+        ?.access_token).toBe("token-for-as-a");
+
+      // Reused with a DIFFERENT URL: the stale discovery must NOT resolve an
+      // issuer, so AS A's token bucket is NOT surfaced through getStoredTokens.
+      expect(
+        getStoredTokens("reused-gst", "https://new.example.com/sse")
+      ).toBeUndefined();
+
+      // The security-critical regression: calling WITHOUT a serverUrl falls back
+      // to persisted discovery, which still points at AS A. Passing the new URL
+      // (as every caller now does) is what prevents the stale-bucket read.
+      expect(getStoredTokens("reused-gst")?.access_token).toBe(
+        "token-for-as-a"
+      );
     });
 
     it("preserves the original callback error and verifier when registry token exchange fails", async () => {
@@ -1818,7 +2362,9 @@ describe("mcp-oauth", () => {
       );
 
       const { handleOAuthCallback } = await import("../mcp-oauth");
-      const callbackResult = await handleOAuthCallback("oauth-code");
+      const callbackResult = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+      });
 
       expect(callbackResult.success).toBe(false);
       expect(callbackResult.error).not.toBe("Code verifier not found");
@@ -1863,7 +2409,9 @@ describe("mcp-oauth", () => {
       );
 
       const { handleOAuthCallback } = await import("../mcp-oauth");
-      const callbackResult = await handleOAuthCallback("oauth-code");
+      const callbackResult = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+      });
 
       expect(callbackResult.success).toBe(true);
       expect(browserFetch).not.toHaveBeenCalled();
@@ -1887,15 +2435,10 @@ describe("mcp-oauth", () => {
       );
     });
 
-    it("rejects cross-origin resource metadata during callback completion", async () => {
-      const maliciousDiscoveryState = {
-        ...createAsanaDiscoveryState(),
-        resourceMetadata: {
-          ...createAsanaDiscoveryState().resourceMetadata,
-          resource: "https://evil.example/mcp",
-        },
-      };
+    const seedAsanaCallback = (discoveryState: any) => {
       localStorage.setItem("mcp-oauth-pending", "asana");
+      // Durable issued state (F6 recovery reads this on the no-session path).
+      localStorage.setItem("mcp-oauth-issued-state-asana", "asana-issued-state");
       localStorage.setItem(
         "mcp-serverUrl-asana",
         "https://mcp.asana.com/v2/mcp"
@@ -1909,17 +2452,81 @@ describe("mcp-oauth", () => {
         "mcp-discovery-asana",
         JSON.stringify({
           serverUrl: "https://mcp.asana.com/v2/mcp",
-          discoveryState: maliciousDiscoveryState,
+          discoveryState,
         })
       );
+    };
+
+    it("rejects cross-origin resource metadata during callback completion", async () => {
+      seedAsanaCallback({
+        ...createAsanaDiscoveryState(),
+        resourceMetadata: {
+          ...createAsanaDiscoveryState().resourceMetadata,
+          resource: "https://evil.example/mcp",
+        },
+      });
 
       const { handleOAuthCallback } = await import("../mcp-oauth");
-      const callbackResult = await handleOAuthCallback("oauth-code");
+      const callbackResult = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+      });
 
       expect(callbackResult.success).toBe(false);
       expect(callbackResult.error).toContain(
-        "Rejected cross-origin OAuth resource indicator"
+        "Rejected OAuth resource indicator"
       );
+      expect(mockExchangeAuthorization).not.toHaveBeenCalled();
+    });
+
+    it("fails closed on the no-session fallback for a mismatched OR omitted state (review F6)", async () => {
+      const { handleOAuthCallback } = await import("../mcp-oauth");
+
+      // Durable issued state is recovered ("asana-issued-state"); a mismatched
+      // callback state must be rejected before redemption.
+      seedAsanaCallback(createAsanaDiscoveryState());
+      const mismatched = await handleOAuthCallback("oauth-code", {
+        callbackState: "attacker-supplied-state",
+      });
+      expect(mismatched.success).toBe(false);
+      expect(mismatched.error).toContain("state");
+      expect(mockExchangeAuthorization).not.toHaveBeenCalled();
+
+      // An OMITTED callback state is equally unverifiable — every machine issues
+      // a state — so it must also fail closed, not slip through.
+      seedAsanaCallback(createAsanaDiscoveryState());
+      const omitted = await handleOAuthCallback("oauth-code", {});
+      expect(omitted.success).toBe(false);
+      expect(omitted.error).toContain("state");
+      expect(mockExchangeAuthorization).not.toHaveBeenCalled();
+    });
+
+    it("fails closed on the no-session fallback when the issued state cannot be recovered (review F6)", async () => {
+      seedAsanaCallback(createAsanaDiscoveryState());
+      // Simulate the durable issued state also being lost.
+      localStorage.removeItem("mcp-oauth-issued-state-asana");
+
+      const { handleOAuthCallback } = await import("../mcp-oauth");
+      const result = await handleOAuthCallback("oauth-code", {
+        callbackState: "asana-issued-state",
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("state");
+      expect(mockExchangeAuthorization).not.toHaveBeenCalled();
+    });
+
+    it("rejects PRM metadata that omits its required resource during callback completion", async () => {
+      const asana = createAsanaDiscoveryState();
+      delete asana.resourceMetadata.resource;
+      seedAsanaCallback(asana);
+
+      const { handleOAuthCallback } = await import("../mcp-oauth");
+      const callbackResult = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+      });
+
+      expect(callbackResult.success).toBe(false);
+      expect(callbackResult.error).toContain('missing its required "resource"');
       expect(mockExchangeAuthorization).not.toHaveBeenCalled();
     });
 
@@ -1964,7 +2571,9 @@ describe("mcp-oauth", () => {
       );
 
       const { handleOAuthCallback } = await import("../mcp-oauth");
-      const callbackResult = await handleOAuthCallback("oauth-code");
+      const callbackResult = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+      });
 
       expect(callbackResult.success).toBe(true);
       expect(browserFetch).not.toHaveBeenCalled();
@@ -2033,7 +2642,9 @@ describe("mcp-oauth", () => {
       );
 
       const { handleOAuthCallback } = await import("../mcp-oauth");
-      const callbackResult = await handleOAuthCallback("oauth-code");
+      const callbackResult = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+      });
 
       expect(callbackResult.success).toBe(true);
       expect(browserFetch).not.toHaveBeenCalled();
@@ -2475,5 +3086,106 @@ describe("mcp-oauth", () => {
         useRegistryOAuthProxy: true,
       });
     });
+  });
+});
+
+describe("createServerConfig wire-era pin", () => {
+  it("pins mcpProtocolVersion for a 2026-07-28 OAuth flow", async () => {
+    const { createServerConfig } = await import("../mcp-oauth");
+    const config = createServerConfig(
+      "https://mcp.example.com",
+      { access_token: "tok" },
+      "2026-07-28",
+    );
+    expect((config as { mcpProtocolVersion?: string }).mcpProtocolVersion).toBe(
+      "2026-07-28",
+    );
+  });
+
+  it("leaves the wire era unset for older OAuth versions (legacy default)", async () => {
+    const { createServerConfig } = await import("../mcp-oauth");
+    const config = createServerConfig(
+      "https://mcp.example.com",
+      { access_token: "tok" },
+      "2025-11-25",
+    );
+    expect(
+      (config as { mcpProtocolVersion?: string }).mcpProtocolVersion,
+    ).toBeUndefined();
+  });
+});
+
+describe("evaluateCallbackSecurity (2R-iss callback gate)", () => {
+  const base = {
+    callbackState: "s-123",
+    callbackIss: "https://as.example.com",
+    expectedState: "s-123",
+    recordedIssuer: "https://as.example.com",
+    issParameterSupported: true as boolean | undefined,
+  };
+
+  it("passes when state and iss both match", async () => {
+    const { evaluateCallbackSecurity } = await import("../mcp-oauth");
+    expect(evaluateCallbackSecurity(base)).toEqual({ ok: true });
+  });
+
+  it("rejects a state mismatch (CSRF) before touching iss", async () => {
+    const { evaluateCallbackSecurity } = await import("../mcp-oauth");
+    const result = evaluateCallbackSecurity({
+      ...base,
+      callbackState: "attacker-state",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/state.*mismatch|CSRF/i);
+  });
+
+  it("rejects when an expected state was issued but the callback returns none", async () => {
+    const { evaluateCallbackSecurity } = await import("../mcp-oauth");
+    const result = evaluateCallbackSecurity({ ...base, callbackState: null });
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects a present-but-mismatched iss (RFC 9207)", async () => {
+    const { evaluateCallbackSecurity } = await import("../mcp-oauth");
+    const result = evaluateCallbackSecurity({
+      ...base,
+      callbackIss: "https://evil.example.com",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/issuer|RFC 9207/i);
+  });
+
+  it("rejects an absent iss when the AS advertised iss support", async () => {
+    const { evaluateCallbackSecurity } = await import("../mcp-oauth");
+    const result = evaluateCallbackSecurity({
+      ...base,
+      callbackIss: null,
+      issParameterSupported: true,
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("allows an absent iss when the AS did not advertise iss support", async () => {
+    const { evaluateCallbackSecurity } = await import("../mcp-oauth");
+    expect(
+      evaluateCallbackSecurity({
+        ...base,
+        callbackIss: null,
+        issParameterSupported: undefined,
+      }),
+    ).toEqual({ ok: true });
+  });
+
+  it("skips the state check on the no-session fallback (no expected state)", async () => {
+    const { evaluateCallbackSecurity } = await import("../mcp-oauth");
+    expect(
+      evaluateCallbackSecurity({
+        callbackState: "whatever",
+        callbackIss: "https://as.example.com",
+        expectedState: undefined,
+        recordedIssuer: "https://as.example.com",
+        issParameterSupported: undefined,
+      }),
+    ).toEqual({ ok: true });
   });
 });

@@ -1,4 +1,11 @@
-import { useCallback, useContext, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Card } from "@mcpjam/design-system/card";
@@ -28,9 +35,23 @@ import {
   ServerDetailModal,
   type ServerDetailTab,
 } from "./connection/ServerDetailModal";
+import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
 
 import { JsonImportModal } from "./connection/JsonImportModal";
 import { ServerFormData } from "@/shared/types.js";
+import {
+  createInspectorCommandClientError,
+  registerInspectorCommandHandler,
+} from "@/lib/inspector-command-handlers";
+import type {
+  AddServerInspectorCommand,
+  OpenServerFormInspectorCommand,
+} from "@/shared/inspector-command.js";
+import {
+  serverDraftToFormData,
+  serverDraftToPrefill,
+} from "@/lib/webmcp/server-draft-adapter";
+import { waitForUiCommit } from "@/lib/wait-for-ui-commit";
 import { useAppReady, useAppReadyMessage } from "@/hooks/use-app-ready";
 import { MCPIcon } from "./ui/mcp-icon";
 import {
@@ -64,10 +85,13 @@ import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { ServersLoadingSkeleton } from "@mcpjam/design-system/servers-loading-skeleton";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
-import type {
-  ProjectServerConfigDto,
-  ProjectServerConfigInput,
+import { useAuth } from "@workos-inc/authkit-react";
+import {
+  applyMcpProtocolVersionOverride,
+  type ProjectServerConfigDto,
+  type ProjectServerConfigInput,
 } from "@/lib/project-server-config";
+import type { McpProtocolVersion } from "@/lib/client-config-v2";
 import {
   resetAutoConnectAttempts,
   useAutoConnectProjectServers,
@@ -536,6 +560,8 @@ interface ServersTabProps {
     skipAutoConnect?: boolean
   ) => Promise<ServerUpdateResult>;
   onRemove: (serverName: string) => void;
+  /** Save a server config without connecting — backs `ui_add_server`. */
+  onSaveServerConfig: (formData: ServerFormData) => Promise<boolean>;
   projects: Record<string, Project>;
   activeProjectId: string;
   organizationId: string | null;
@@ -557,6 +583,7 @@ export function ServersTab({
   onReconnect,
   onUpdate,
   onRemove,
+  onSaveServerConfig,
   projects,
   activeProjectId,
   organizationId,
@@ -571,6 +598,7 @@ export function ServersTab({
   const hostsConnectAddServerSlot = useContext(HostsConnectAddServerSlotContext);
   const viewPhase = useHostsConnectViewPhase();
   const { isAuthenticated } = useConvexAuth();
+  const { user: signedInUser } = useAuth();
 
   // Auto-connect the previewed host's REQUIRED servers once per host scope.
   // Mirrors the wiring on the host builder + Playground so /servers, /hosts,
@@ -851,6 +879,11 @@ export function ServersTab({
   const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
     useJsonRpcPanelVisibility();
   const [isAddingServer, setIsAddingServer] = useState(false);
+  // Prefill for an agent-opened Add-server form (`ui_open_server_form`).
+  // Undefined for a hand-opened form, which starts empty as before.
+  const [prefilledServerDraft, setPrefilledServerDraft] = useState<
+    Partial<ServerFormData> | undefined
+  >(undefined);
   const [isImportingJson, setIsImportingJson] = useState(false);
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -1282,6 +1315,68 @@ export function ServersTab({
     [focusLoggerOnServer, onReconnect, isAppBootstrapping, appReadyMessage]
   );
 
+  // Protocol pin chosen in the Add Server modal. The pin is persisted on
+  // the project layer (`projectServerConfig` overrides) keyed by the hosted
+  // server row's `_id` — which doesn't exist until the add flow's Convex
+  // sync lands. Stash the (name, version) pair here and let the effect
+  // below apply it once the hosted row appears in `remoteServersByName`,
+  // then reconnect so the pin actually takes effect on the wire (mirrors
+  // the edit flow's save→reconnect behavior in `ServerDetailModal`).
+  const [pendingAddProtocolPin, setPendingAddProtocolPin] = useState<{
+    serverName: string;
+    version: McpProtocolVersion;
+  } | null>(null);
+  // Guards double-fire while the async apply is in flight (the effect
+  // re-runs on every reactive update of the DTO / server list).
+  const isApplyingAddProtocolPinRef = useRef(false);
+  useEffect(() => {
+    if (!pendingAddProtocolPin) return;
+    if (isApplyingAddProtocolPinRef.current) return;
+    if (!sharedProjectIdForHostScope) return;
+    // Wait for BOTH the hosted server row and the config DTO to hydrate —
+    // `applyMcpProtocolVersionOverride` replaces the whole (serverIds,
+    // overrides) pair, so writing against a still-loading DTO would wipe
+    // other servers' overrides. `null` (no row yet) is a valid baseline.
+    if (projectServerConfigDto === undefined) return;
+    const serverId = remoteServersByName[pendingAddProtocolPin.serverName]?._id;
+    if (!serverId) return;
+    const { serverName, version } = pendingAddProtocolPin;
+    isApplyingAddProtocolPinRef.current = true;
+    void (async () => {
+      try {
+        await applyMcpProtocolVersionOverride({
+          projectId: sharedProjectIdForHostScope,
+          serverId,
+          current: projectServerConfigDto,
+          next: version,
+          setConfig: setProjectServerConfigMutation,
+        });
+        // Reconnect so the just-saved pin governs the live connection.
+        // Non-interactive on purpose: the add flow may already be running
+        // an OAuth escalation; don't stack a second interactive flow.
+        await handleReconnectServer(serverName, {
+          allowInteractiveOAuthFlow: false,
+        });
+      } catch (err) {
+        toast.error(
+          err instanceof Error
+            ? `Server added, but saving its protocol version failed: ${err.message}`
+            : "Server added, but saving its protocol version failed."
+        );
+      } finally {
+        isApplyingAddProtocolPinRef.current = false;
+        setPendingAddProtocolPin(null);
+      }
+    })();
+  }, [
+    pendingAddProtocolPin,
+    sharedProjectIdForHostScope,
+    projectServerConfigDto,
+    remoteServersByName,
+    setProjectServerConfigMutation,
+    handleReconnectServer,
+  ]);
+
   const clearPendingQuickConnectIfMatches = useCallback(
     (serverName: string) => {
       if (pendingQuickConnect?.serverName !== serverName) {
@@ -1407,6 +1502,128 @@ export function ServersTab({
     setIsAddingServer(true);
     setIsActionMenuOpen(false);
   };
+
+  // `openServerForm` AND `addServer` live HERE, not in App.tsx, because both
+  // CREATE a server and so must clear `BILLING_GATES.serverCreation` — a hook
+  // that only exists on this screen. The visible Add button is gated in its
+  // click handler; a command that bypassed it could exceed the plan's server
+  // limit. Registered while Connect is mounted; the tools navigate here first
+  // and the bus's late-registration wait covers the gap.
+  useEffect(() => {
+    // The gate has a loading state distinct from denied. While it's still
+    // resolving, the visible UI withholds the Add controls — so a command
+    // must treat "still loading" as "not yet allowed" rather than racing
+    // ahead of the answer.
+    const assertMayCreateServer = () => {
+      // App readiness first — the same guard the visible Add/connect controls
+      // use (`isAppBootstrapping`). A command that saved during
+      // project-provisioning could write against a project that isn't set up
+      // yet; the visible UI withholds the controls until it's ready, and a
+      // command must not do what the disabled button can't.
+      if (isAppBootstrapping) {
+        throw createInspectorCommandClientError(
+          "execution_failed",
+          appReadyMessage ?? "App is still loading; try again in a moment."
+        );
+      }
+      if (serverCreationGate.isLoading) {
+        throw createInspectorCommandClientError(
+          "execution_failed",
+          "Billing is still loading; try again in a moment."
+        );
+      }
+      if (serverCreationGate.isDenied) {
+        throw createInspectorCommandClientError(
+          "execution_failed",
+          serverCreationGate.denialMessage ??
+            "Upgrade required to add more servers"
+        );
+      }
+    };
+
+    const unregisterOpen = registerInspectorCommandHandler(
+      "openServerForm",
+      async (rawCommand) => {
+        const command = rawCommand as OpenServerFormInspectorCommand;
+        assertMayCreateServer();
+
+        // Lenient prefill: this command exists to open the form for the USER
+        // to finish, so a blank or partial draft is the normal case and must
+        // not be validated as a complete config. It only rejects a genuine
+        // contradiction (bad transport, url+command together).
+        const prefill = serverDraftToPrefill(command.payload?.draft);
+        if (!prefill.ok) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            prefill.error
+          );
+        }
+        setPrefilledServerDraft(prefill.prefill);
+        setIsAddingServer(true);
+        setIsActionMenuOpen(false);
+        await waitForUiCommit();
+        return { opened: true };
+      }
+    );
+
+    const unregisterAdd = registerInspectorCommandHandler(
+      "addServer",
+      async (rawCommand) => {
+        const command = rawCommand as AddServerInspectorCommand;
+        assertMayCreateServer();
+
+        const draft = command.payload?.draft;
+        if (!draft?.name) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            "A server name is required."
+          );
+        }
+        const built = serverDraftToFormData(draft);
+        if (!built.ok) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            built.error
+          );
+        }
+        // Additive means additive: refuse to overwrite an existing server.
+        // Editing one is a different, destructive act that deserves its own
+        // tool rather than a silent clobber here.
+        if (projectServers[built.formData.name]) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            `A server named "${built.formData.name}" already exists. Remove it first, or pick another name.`
+          );
+        }
+
+        // Save WITHOUT connecting: it's the only action-layer call that
+        // reports success and can't wander into an OAuth redirect. The agent
+        // connects as a separate, visible step.
+        const saved = await onSaveServerConfig(built.formData);
+        await waitForUiCommit();
+        if (!saved) {
+          throw createInspectorCommandClientError(
+            "execution_failed",
+            `Could not save "${built.formData.name}". The Connect screen shows why.`
+          );
+        }
+        return { serverName: built.formData.name, saved: true };
+      }
+    );
+
+    return () => {
+      unregisterOpen();
+      unregisterAdd();
+    };
+  }, [
+    isAppBootstrapping,
+    appReadyMessage,
+    serverCreationGate.isLoading,
+    serverCreationGate.isDenied,
+    serverCreationGate.denialMessage,
+    onSaveServerConfig,
+    projectServers,
+  ]);
 
   const handleImportJsonClick = () => {
     if (serverCreationGate.isDenied) {
@@ -1829,6 +2046,13 @@ export function ServersTab({
   );
 
   return (
+    // The previewed host's mcpProfile scopes this tab so the server
+    // add/edit modals' AuthenticationSection can read the host's
+    // enterprise-managed authorization policy via useActiveMcpProfile().
+    // The ServerDetailModal's protocol chip keeps its explicit
+    // hostDefaultMcpProtocolVersion prop (prop wins; see the modal's
+    // resolution comment) — the provider is additive, not a replacement.
+    <ActiveMcpProfileProvider value={previewedHost?.config?.mcpProfile}>
     <div className="h-full flex flex-col">
       {isAuthHydrating ||
       isBillingContextPending ||
@@ -1846,16 +2070,33 @@ export function ServersTab({
       {/* Add Server Modal */}
       <AddServerModal
         isOpen={isAddingServer}
+        initialData={prefilledServerDraft}
         onClose={() => {
           setIsAddingServer(false);
+          setPrefilledServerDraft(undefined);
         }}
         onSubmit={(formData) => {
           track("connecting_server", {
             location: "servers_tab",
           });
+          // The wire-version pin can't be written until the hosted server
+          // row exists — stash it and let the watcher effect apply it once
+          // the Convex sync surfaces the row, then reconnect with the pin.
+          if (formData.mcpProtocolVersionOverride) {
+            setPendingAddProtocolPin({
+              serverName: formData.name,
+              version: formData.mcpProtocolVersionOverride,
+            });
+          }
           handleConnectServer(formData);
         }}
         projectClientConfig={selectedProject?.clientConfig}
+        organizationId={selectedProject?.organizationId ?? null}
+        isSignedIn={Boolean(signedInUser)}
+        projectXaaDefaultIdentity={
+          selectedProject?.xaaTestDefaults?.defaultIdentity ?? null
+        }
+        projectId={sharedProjectIdForHostScope}
       />
 
       {/* JSON Import Modal */}
@@ -1880,12 +2121,19 @@ export function ServersTab({
           projectClientConfig={selectedProject?.clientConfig}
           projectId={hostedProjectId}
           hostedServerId={detailModalHostedServerId}
-          // Servers tab doesn't mount under ActiveMcpProfileProvider,
-          // so surface the host default explicitly from the
-          // previewedHost's `mcpProfile.mcpProtocolVersion` for the chip's
-          // source attribution.
+          organizationId={selectedProject?.organizationId ?? null}
+          isSignedIn={Boolean(signedInUser)}
+          // The tab now mounts under ActiveMcpProfileProvider (see the
+          // root wrapper), which is the source for general host-profile
+          // reads (e.g. the auth section's enterprise-policy guidance).
+          // The protocol chip stays PROP-FIRST: this explicit value wins
+          // over the provider (see the modal's resolution comment), so
+          // its source attribution is unchanged.
           hostDefaultMcpProtocolVersion={
             previewedHost?.config?.mcpProfile?.mcpProtocolVersion
+          }
+          projectXaaDefaultIdentity={
+            selectedProject?.xaaTestDefaults?.defaultIdentity ?? null
           }
         />
       )}
@@ -1900,5 +2148,6 @@ export function ServersTab({
           )
         : null}
     </div>
+    </ActiveMcpProfileProvider>
   );
 }

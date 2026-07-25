@@ -19,6 +19,11 @@ export interface RemoteProject {
   organizationId: string;
   visibility?: ProjectVisibility;
   ownerId: string;
+  /** Admin-controlled default synthetic identity for the MCPJam test IdP
+   * (atomic pair). Absent when the project has no default. */
+  xaaTestDefaults?: {
+    defaultIdentity: { subject: string; email: string };
+  };
   createdAt: number;
   updatedAt: number;
 }
@@ -57,7 +62,22 @@ export interface RemoteServer {
   authServerMode?: "mcpjam" | "own";
   xaaSubject?: string;
   xaaEmail?: string;
+  xaaIdentityAssertionFormat?: string;
   registrationMode?: string;
+  // CIMD client authentication ("none" | "private_key_jwt"). Requires the Convex
+  // schema + `servers:getProjectServers` query to persist/return it for hosted
+  // round-trip, mirroring xaaIdentityAssertionFormat.
+  xaaClientAuth?: string;
+  xaaDcrClientId?: string;
+  xaaDcrTokenEndpointAuthMethod?:
+    | "client_secret_post"
+    | "client_secret_basic"
+    | "none";
+  xaaDcrIssuer?: string;
+  xaaDcrClientSecretExpiresAt?: number;
+  xaaDcrRegisteredAt?: number;
+  xaaDcrStatus?: "registered" | "registering" | "uncertain";
+  hasXaaDcrRegistration?: boolean;
   authMethod?: string;
   createdAt: number;
   updatedAt: number;
@@ -243,19 +263,53 @@ export function canManageHosts(
   return role === "owner" || role === "admin";
 }
 
+/**
+ * Admin gate for surfaces that must ALSO stay writable for an anonymous Convex
+ * owner (Swarms, Project Environments).
+ *
+ * A WorkOS-signed-in viewer goes through the role-based gate above. An
+ * anonymous owner never produces a WorkOS email, so `useViewerProjectRole`
+ * leaves `role` undefined forever — yet they own their personal-org default
+ * project and clear the backend's `requireAdminAccess` via userId, so denying
+ * them would lock them out of their own project. They get management only once
+ * WorkOS has SETTLED (`identityLoading === false`): while it is still
+ * hydrating, an anonymous owner is indistinguishable from a member whose role
+ * hasn't loaded, so this fails CLOSED.
+ *
+ * Extracted from the route component so the branch is unit-testable — a future
+ * edit here cannot silently re-expose admin controls.
+ */
+export function canManageAsOwnerOrAdmin(args: {
+  isWorkOsSignedIn: boolean;
+  role: ProjectMembershipRole | undefined;
+  isAuthenticated: boolean;
+  hasProject: boolean;
+  identityLoading: boolean;
+}): boolean {
+  if (args.isWorkOsSignedIn) return canManageHosts(args.role);
+  return args.isAuthenticated && args.hasProject && !args.identityLoading;
+}
+
 // Resolve the *current viewer's* project-membership role for a project, reusing
 // the same members-list signal `ProjectSettingsTab` keys off. Returns
 // `role: undefined` while the members list is still loading (or when the viewer
 // isn't found among the active members). Callers should treat `isLoading` as
 // "not yet decided" rather than firing member-only queries.
+//
+// `identityLoading` is the WorkOS (or equivalent) hydrate signal — Convex
+// `isAuthenticated` alone is NOT enough, because guest sessions also flip it
+// true without ever producing a `viewerEmail`.
 export function useViewerProjectRole({
   isAuthenticated,
   projectId,
   viewerEmail,
+  identityLoading = false,
 }: {
   isAuthenticated: boolean;
   projectId: string | null;
   viewerEmail: string | null | undefined;
+  /** True while the identity provider may still produce `viewerEmail`. */
+  identityLoading?: boolean;
 }): { role: ProjectMembershipRole | undefined; isLoading: boolean } {
   const { activeMembers, isLoading } = useProjectMembers({
     isAuthenticated,
@@ -265,32 +319,34 @@ export function useViewerProjectRole({
   const role = useMemo(() => {
     const email = viewerEmail?.trim().toLowerCase();
     if (!email) return undefined;
-    return activeMembers.find(
-      (member) => member.email.toLowerCase() === email
-    )?.role;
+    return activeMembers.find((member) => member.email.toLowerCase() === email)
+      ?.role;
   }, [activeMembers, viewerEmail]);
 
   return {
     role,
-    isLoading: isViewerRolePending(isLoading, isAuthenticated, viewerEmail),
+    isLoading: isViewerRolePending(isLoading, identityLoading, viewerEmail),
   };
 }
 
 /**
- * Is the viewer's project role still "not yet decided"? True while the members
- * list is loading OR while the viewer's identity is still hydrating — WorkOS
- * `user.email` arrives asynchronously AFTER `isAuthenticated` flips true, so if
- * the members list resolves first we'd otherwise report a real member as
- * `{ role: undefined, isLoading: false }` and callers would wrongly deny them.
- * Treat "authenticated but no viewer email yet" as still-loading so the gate
- * shows a spinner, not access-denied, until the identity is available.
+ * Is the viewer's project role still "not yet decided"?
+ *
+ * - Identity still hydrating → pending (avoids flashing access-denied for a
+ *   real member whose WorkOS `user.email` arrives after Convex auth).
+ * - Identity settled with no email → NOT pending. Convex guest sessions are
+ *   authenticated without a WorkOS user; waiting on email forever spun the
+ *   Swarms gate. No email means no matchable membership → deny.
+ * - Identity settled with an email → pending only while the members list loads.
  */
 export function isViewerRolePending(
   membersLoading: boolean,
-  isAuthenticated: boolean,
+  identityLoading: boolean,
   viewerEmail: string | null | undefined
 ): boolean {
-  return membersLoading || (isAuthenticated && !viewerEmail?.trim());
+  if (identityLoading) return true;
+  if (!viewerEmail?.trim()) return false;
+  return membersLoading;
 }
 
 export function useProjectMutations() {

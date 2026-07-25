@@ -12,6 +12,101 @@ type JsonRpcBody = {
   params?: any;
 };
 
+type JsonRpcId = string | number | null;
+
+type JsonRpcErrorResponse = {
+  jsonrpc: "2.0";
+  id: JsonRpcId;
+  error: { code: number; message: string };
+};
+
+export type JsonRpcValidation =
+  | { ok: true; body: JsonRpcBody }
+  | { ok: false; status: number; response: JsonRpcErrorResponse };
+
+// Only a string / number / null id may be echoed back — a JSON-RPC error whose
+// `id` is an object or array is itself malformed and harder for clients to
+// correlate, so anything else normalizes to null.
+function normalizeJsonRpcId(raw: unknown): JsonRpcId {
+  return typeof raw === "string" || typeof raw === "number" ? raw : null;
+}
+
+/**
+ * Parse + validate a single JSON-RPC 2.0 request from a request body reader,
+ * shared by the harness proxy (`harness-mcp`) and the local MCP proxy
+ * (`http-adapters`). On any problem it returns a ready-made JSON-RPC error
+ * response (never a 202): a garbage body acknowledged as "Accepted" looks like
+ * a delivered message to the client. On success it returns the parsed body.
+ *
+ * Rejections:
+ *   - unparseable JSON → -32700 Parse error
+ *   - not a JSON object, or a top-level array (JSON-RPC batch), or a present but
+ *     non-`"2.0"` `jsonrpc`, or a missing/empty `method` → -32600 Invalid Request
+ *
+ * Batches (top-level arrays) are rejected deliberately: MCP (2025-06-18) removed
+ * JSON-RPC batching and the bridge's `handleJsonRpc` processes a single request,
+ * so an array is not a supported MCP message.
+ *
+ * An ABSENT `jsonrpc` is tolerated (not required): these bridge routes serve
+ * spec-lenient tunneled MCP clients that historically POST without the version
+ * field, and the 202-on-garbage bug is already closed by the non-empty `method`
+ * requirement (a body with no method → -32600, never a fake 202). We still catch
+ * a PRESENT but wrong version (e.g. `"1.0"`) as malformed. Callers that see
+ * `ok: false` return `response` with `status`; `ok: true` bodies flow on to
+ * `handleJsonRpc` (a valid notification still resolves there to a 202).
+ */
+export async function parseAndValidateJsonRpc(
+  readJson: () => Promise<unknown>,
+): Promise<JsonRpcValidation> {
+  let body: unknown;
+  try {
+    body = await readJson();
+  } catch {
+    return {
+      ok: false,
+      status: 400,
+      response: {
+        jsonrpc: "2.0",
+        id: null,
+        error: { code: -32700, message: "Parse error" },
+      },
+    };
+  }
+  const obj =
+    !!body && typeof body === "object" && !Array.isArray(body)
+      ? (body as Record<string, unknown>)
+      : null;
+  // A non-scalar `id` or non-structured `params` must be rejected HERE, not just
+  // normalized in the error path: an otherwise-valid request (valid `method`)
+  // with an object/array `id` would otherwise flow to `handleJsonRpc`, which
+  // echoes `id` verbatim into a SUCCESS response — emitting an invalid JSON-RPC
+  // id. `params`, if present, must be structured (object/array) per JSON-RPC 2.0.
+  if (
+    !obj ||
+    (obj.jsonrpc !== undefined && obj.jsonrpc !== "2.0") ||
+    (obj.id !== undefined &&
+      obj.id !== null &&
+      typeof obj.id !== "string" &&
+      typeof obj.id !== "number") ||
+    (obj.params !== undefined &&
+      obj.params !== null &&
+      typeof obj.params !== "object") ||
+    typeof obj.method !== "string" ||
+    obj.method.length === 0
+  ) {
+    return {
+      ok: false,
+      status: 400,
+      response: {
+        jsonrpc: "2.0",
+        id: obj ? normalizeJsonRpcId(obj.id) : null,
+        error: { code: -32600, message: "Invalid Request" },
+      },
+    };
+  }
+  return { ok: true, body: body as JsonRpcBody };
+}
+
 export function buildInitializeResult(serverId: string, mode: BridgeMode) {
   if (mode === "adapter") {
     return {

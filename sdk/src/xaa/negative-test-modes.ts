@@ -4,6 +4,13 @@
 // alongside the mode enum (the single source of truth) rather than in the client.
 import type { NegativeTestMode } from "./constants.js";
 
+/** True when acceptance and rejection are both valid under deployment policy. */
+export function isPolicyDependentNegativeTestMode(
+  mode: NegativeTestMode
+): boolean {
+  return mode === "unknown_sub" || mode === "scope_denial";
+}
+
 export const NEGATIVE_TEST_MODE_DETAILS: Record<
   NegativeTestMode,
   {
@@ -77,13 +84,15 @@ export const NEGATIVE_TEST_MODE_DETAILS: Record<
   unknown_sub: {
     label: "Unknown Subject",
     description:
-      "Names a user (`sub`) the server has never seen. A correct server rejects an unknown subject.",
-    expectedFailure: "Authorization server should reject the unknown subject.",
+      "Uses a subject (`sub`) outside the configured happy path. The authorization server may reject it, resolve it, or JIT-provision it according to local policy.",
+    expectedFailure:
+      "Observe the authorization server's subject-resolution policy.",
   },
   scope_denial: {
     label: "Scope Denial",
     description:
-      "Requests high-privilege scopes the mock user shouldn't get. A correct server refuses to grant them.",
-    expectedFailure: "Authorization server should reject the requested scopes.",
+      "Requests high-privilege scopes. The authorization server may reject the request or issue a token with a permitted subset according to local policy.",
+    expectedFailure:
+      "Observe whether the authorization server rejects or narrows the requested scopes.",
   },
 };

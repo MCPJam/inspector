@@ -20,6 +20,7 @@ import { attachToolMetadata } from "@/lib/apis/tool-metadata";
 export type ListToolsResultWithMetadata = ListToolsResult & {
   toolsMetadata?: Record<string, Record<string, any>>;
   tokenCount?: number;
+  tokenCountError?: string;
 };
 
 export type ToolServerMap = Record<string, string>;
@@ -60,7 +61,49 @@ export type ToolExecutionResponse =
        * ErrorCard directly without re-classifying from `error`.
        */
       normalized?: NormalizedError;
+      /**
+       * SEP-2350 step-up: present when the tool call failed with a runtime
+       * `403 insufficient_scope`. The server transport surfaces the
+       * `WWW-Authenticate` challenge as an `InsufficientScopeError`, which the
+       * `/tools/execute` route serializes onto `mcpError.insufficientScope`.
+       * Consumers pass `requiredScope` into the client step-up
+       * re-authorization (union of previously-requested and challenged scopes,
+       * bounded per session). Untrusted resource-server input — treat as such
+       * when rendering.
+       */
+      insufficientScope?: ToolInsufficientScopeChallenge;
     };
+
+/** The `WWW-Authenticate` step-up challenge surfaced on a failed tool call. */
+export type ToolInsufficientScopeChallenge = {
+  requiredScope?: string;
+  resourceMetadataUrl?: string;
+  errorDescription?: string;
+};
+
+/**
+ * Narrow an untrusted `mcpError.insufficientScope` payload to the challenge
+ * shape. Returns `undefined` unless at least one string field is present, so a
+ * malformed or empty block never masquerades as an actionable step-up.
+ */
+export function parseInsufficientScopeChallenge(
+  raw: unknown,
+): ToolInsufficientScopeChallenge | undefined {
+  if (!raw || typeof raw !== "object") {
+    return undefined;
+  }
+  const r = raw as Record<string, unknown>;
+  const requiredScope =
+    typeof r.requiredScope === "string" ? r.requiredScope : undefined;
+  const resourceMetadataUrl =
+    typeof r.resourceMetadataUrl === "string" ? r.resourceMetadataUrl : undefined;
+  const errorDescription =
+    typeof r.errorDescription === "string" ? r.errorDescription : undefined;
+  if (!requiredScope && !resourceMetadataUrl && !errorDescription) {
+    return undefined;
+  }
+  return { requiredScope, resourceMetadataUrl, errorDescription };
+}
 
 export async function listTools({
   serverId,
@@ -136,7 +179,20 @@ export async function executeToolApi(
           error instanceof WebApiError && isNormalizedError(error.normalized)
             ? error.normalized
             : undefined;
-        return { error: message, ...(normalized ? { normalized } : {}) };
+        // Hosted step-up challenge, if the route forwarded one on `details`
+        // (the WebRouteError `details` block WebApiError carries). Best-effort:
+        // omitted when the hosted serializer sends none.
+        const insufficientScope =
+          error instanceof WebApiError
+            ? parseInsufficientScopeChallenge(
+                (error.details as any)?.insufficientScope,
+              )
+            : undefined;
+        return {
+          error: message,
+          ...(normalized ? { normalized } : {}),
+          ...(insufficientScope ? { insufficientScope } : {}),
+        };
       }
     },
     local: async () => {
@@ -159,9 +215,16 @@ export async function executeToolApi(
         const normalized = isNormalizedError(body?.normalized)
           ? (body.normalized as NormalizedError)
           : undefined;
+        // SEP-2350: surface the step-up challenge the /tools/execute route
+        // serialized onto `mcpError.insufficientScope` for a runtime
+        // `403 insufficient_scope`, so consumers can drive union-scope re-auth.
+        const insufficientScope = parseInsufficientScopeChallenge(
+          body?.mcpError?.insufficientScope,
+        );
         return {
           error: message,
           ...(normalized ? { normalized } : {}),
+          ...(insufficientScope ? { insufficientScope } : {}),
         } as ToolExecutionResponse;
       }
 
@@ -214,7 +277,23 @@ export async function respondToElicitationApi(
   } catch {}
   if (!res.ok) {
     const message = body?.error || `Respond failed (${res.status})`;
-    return { error: message } as ToolExecutionResponse;
+    // SEP-2350: an elicitation-resume can ALSO fail with a runtime
+    // `403 insufficient_scope` (the widened-scope call happens after the
+    // elicitation round-trip). The `/respond` route serializes the same
+    // `mcpError.insufficientScope` / `normalized` blocks as `/execute`, so
+    // mirror that narrowing here — otherwise the challenge is dropped and the
+    // resume path can never drive a step-up.
+    const normalized = isNormalizedError(body?.normalized)
+      ? (body.normalized as NormalizedError)
+      : undefined;
+    const insufficientScope = parseInsufficientScopeChallenge(
+      body?.mcpError?.insufficientScope,
+    );
+    return {
+      error: message,
+      ...(normalized ? { normalized } : {}),
+      ...(insufficientScope ? { insufficientScope } : {}),
+    } as ToolExecutionResponse;
   }
   return body as ToolExecutionResponse;
 }
@@ -228,6 +307,7 @@ export interface ToolsMetadataAggregate {
   /** Bare tool names that appear on more than one server. */
   collidingToolNames: string[];
   tokenCounts: Record<string, number> | null;
+  tokenCountErrors: Record<string, string> | null;
   /**
    * Tool schemas advertised to the model (name + description + inputSchema),
    * keyed by bare tool name. Used by the Raw view when rendering rehydrated
@@ -258,6 +338,7 @@ export async function getToolsMetadata(
     scopedMetadata: {},
     collidingToolNames: [],
     tokenCounts: modelId ? {} : null,
+    tokenCountErrors: modelId ? {} : null,
     serializedTools: {},
   };
   // Track which servers have seen each tool name so we can surface collisions
@@ -291,6 +372,9 @@ export async function getToolsMetadata(
       // Collect token counts if modelId was provided
       if (modelId && data.tokenCount !== undefined && aggregate.tokenCounts) {
         aggregate.tokenCounts[serverId] = data.tokenCount;
+      }
+      if (modelId && data.tokenCountError && aggregate.tokenCountErrors) {
+        aggregate.tokenCountErrors[serverId] = data.tokenCountError;
       }
     }),
   );

@@ -37,14 +37,8 @@ import {
   recordAppToolInvocation,
 } from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
 import { scrubAppToolResultForModel } from "@/components/chat-v2/thread/mcp-apps/app-tools-sanitizer";
-import { useUiToolsRegistry } from "@/lib/webmcp/ui-tools-registry";
-import { handleUiToolCall } from "@/lib/webmcp/ui-tool-executor";
-import {
-  createUiAwareApprovalResponseHandler,
-  fulfillOrphanedDeferredUiToolCalls,
-} from "@/lib/webmcp/ui-tool-approval";
 import { useAuth } from "@workos-inc/authkit-react";
-import { useConvexAuth } from "convex/react";
+import { useConvex, useConvexAuth } from "convex/react";
 import { ModelDefinition, type ModelProvider } from "@/shared/types";
 import {
   ProviderTokens,
@@ -54,6 +48,7 @@ import { useCustomProviders } from "@/hooks/use-custom-providers";
 import { usePersistedModel } from "@/hooks/use-persisted-model";
 import {
   getDefaultModel,
+  isMCPJamProvidedModelMenuItem,
   type OrgVisibleConfig,
 } from "@/components/chat-v2/shared/model-helpers";
 import {
@@ -65,7 +60,6 @@ import { useOutOfCredits } from "@/hooks/useCreditBalance";
 import {
   isBedrockModelId,
   isMCPJamGuestAllowedModel,
-  isMCPJamProvidedModel,
 } from "@/shared/types";
 import { useDetectedOllamaModels } from "@/hooks/use-detected-ollama-models";
 import { useHostedModelCatalog } from "@/hooks/use-hosted-model-catalog";
@@ -119,6 +113,14 @@ import {
   pickTranscriptForLiveTracePreview,
 } from "@/shared/live-chat-trace-preview";
 import { isHostedRpcLogDataPart } from "@/shared/hosted-rpc-log";
+import {
+  HOSTED_ELICITATION_VERSION,
+  isHostedElicitationDataPart,
+  type HostedElicitationAction,
+  type HostedElicitationRequestEvent,
+  type HostedElicitationUrlRequiredEvent,
+} from "@/shared/hosted-elicitation";
+import { respondToChatElicitation } from "@/lib/apis/elicitation-api";
 import {
   isHarnessSessionDataPart,
   isHarnessResetDataPart,
@@ -180,7 +182,7 @@ function isOrgManagedModel(
   orgConfig: OrgVisibleConfig | undefined,
   model: ModelDefinition
 ): boolean {
-  if (isMCPJamProvidedModel(String(model.id))) return false;
+  if (isMCPJamProvidedModelMenuItem(model)) return false;
   const providerKey = getOrgProviderKeyForModel(model);
   if (!providerKey) return false;
   const provider = orgConfig?.providers.find(
@@ -300,6 +302,24 @@ export interface TokenUsage {
 }
 
 export interface UseChatSessionReturn {
+  /**
+   * Elicitation requests whose tool call is blocked on this user right now.
+   * Turn-scoped: they arrive as transient stream parts and are dropped when the
+   * stream ends, because the server has already resolved them to `cancel` by
+   * then. FIFO — surfaces render `[0]`.
+   */
+  pendingElicitations: HostedElicitationRequestEvent[];
+  /** Submit accept/decline/cancel. Resolves once the answer is durable. */
+  respondToElicitation: (answer: {
+    rendezvousId: string;
+    action: HostedElicitationAction;
+    content?: Record<string, unknown>;
+  }) => Promise<void>;
+  elicitationResponding: boolean;
+  /** -32042 notices — display-only, anchored to the failed tool call. */
+  urlElicitationRequired: HostedElicitationUrlRequiredEvent[];
+  dismissUrlElicitationRequired: (toolCallId?: string) => void;
+
   // Chat state
   messages: UIMessage[];
   setMessages: React.Dispatch<React.SetStateAction<UIMessage[]>>;
@@ -353,6 +373,7 @@ export interface UseChatSessionReturn {
   tokenUsage: TokenUsage;
   mcpToolsTokenCount: Record<string, number> | null;
   mcpToolsTokenCountLoading: boolean;
+  mcpToolsTokenCountErrors: Record<string, string> | null;
   systemPromptTokenCount: number | null;
   systemPromptTokenCountLoading: boolean;
 
@@ -1181,6 +1202,9 @@ export function useChatSession(
     onResetRef.current = onReset;
   }, [onReset]);
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
+  // Elicitation answers go straight to Convex — the blocked replica isn't
+  // addressable from here (see `elicitation-api.ts`).
+  const convexClient = useConvex();
   const {
     hasToken,
     getToken,
@@ -1212,6 +1236,19 @@ export function useChatSession(
     useState<Record<string, ToolRenderOverride>>({});
   const [liveTraceState, setLiveTraceState] =
     useState<LiveTraceAccumulatorState>(() => createEmptyLiveTraceState());
+  /**
+   * Elicitations whose tool call is blocked on this user right now. Turn-scoped
+   * by nature — the request arrives as a transient stream part and the blocked
+   * call dies with the stream, so there is nothing to persist or rehydrate.
+   */
+  const [pendingElicitations, setPendingElicitations] = useState<
+    HostedElicitationRequestEvent[]
+  >([]);
+  const [elicitationResponding, setElicitationResponding] = useState(false);
+  /** -32042 notices: display-only, anchored to the tool call that failed. */
+  const [urlElicitationRequired, setUrlElicitationRequired] = useState<
+    HostedElicitationUrlRequiredEvent[]
+  >([]);
   const resumedVersionRef = useRef<number | null>(null);
   const restoredToolRenderOverridesRef = useRef<
     Record<string, ToolRenderOverride>
@@ -1231,6 +1268,8 @@ export function useChatSession(
   > | null>(null);
   const [mcpToolsTokenCountLoading, setMcpToolsTokenCountLoading] =
     useState(false);
+  const [mcpToolsTokenCountErrors, setMcpToolsTokenCountErrors] =
+    useState<Record<string, string> | null>(null);
   const [systemPromptTokenCount, setSystemPromptTokenCount] = useState<
     number | null
   >(null);
@@ -1344,7 +1383,27 @@ export function useChatSession(
   const handleStreamDataPart = useCallback(
     (part: unknown) => {
       if (!isTraceEventDataPart(part)) {
-        if (isHostedRpcLogDataPart(part)) {
+        if (isHostedElicitationDataPart(part)) {
+          const event = part.data;
+          if (event.kind === "request") {
+            // Dedupe on rendezvousId: a re-delivered part must not stack a
+            // second dialog for the same blocked tool call.
+            setPendingElicitations((queue) =>
+              queue.some((e) => e.rendezvousId === event.rendezvousId)
+                ? queue
+                : [...queue, event],
+            );
+          } else if (event.kind === "resolved") {
+            // The server reached a terminal state on its own (TTL expiry, or
+            // an answer that landed elsewhere) — close the dialog rather than
+            // leave the user submitting into a dead rendezvous.
+            setPendingElicitations((queue) =>
+              queue.filter((e) => e.rendezvousId !== event.rendezvousId),
+            );
+          } else if (event.kind === "url_required") {
+            setUrlElicitationRequired((current) => [...current, event]);
+          }
+        } else if (isHostedRpcLogDataPart(part)) {
           ingestHostedRpcLogs([part.data]);
         } else if (isHarnessSessionDataPart(part)) {
           // Cache the harness workdir so the Playground Shell can open a
@@ -1484,6 +1543,15 @@ export function useChatSession(
     return resolveSelectableModel(selectedModelId) ?? fallback;
   }, [availableModels, initialModelId, selectableModels, selectedModelId]);
 
+  const tokenCountSelectionKey = useMemo(() => {
+    if (!selectedModel?.id || !selectedModel?.provider) return "";
+    const modelId = isMCPJamProvidedModelMenuItem(selectedModel)
+      ? String(selectedModel.id)
+      : `${selectedModel.provider}/${selectedModel.id}`;
+    return `${selectedServersSignature}\u0001${modelId}`;
+  }, [selectedModel, selectedServersSignature]);
+  const lastObservedTokenCountSelectionKeyRef = useRef<string | null>(null);
+
   const setSelectedModel = useCallback(
     (model: ModelDefinition) => {
       if (initialModelId) {
@@ -1495,9 +1563,7 @@ export function useChatSession(
   );
 
   const isMcpJamModel = useMemo(() => {
-    return selectedModel?.id
-      ? isMCPJamProvidedModel(String(selectedModel.id))
-      : false;
+    return selectedModel ? isMCPJamProvidedModelMenuItem(selectedModel) : false;
   }, [selectedModel]);
   const selectedModelUsesOrgRuntime = useMemo(
     () => isOrgManagedModel(hostedOrgModelConfig, selectedModel),
@@ -1579,7 +1645,12 @@ export function useChatSession(
   // Convex server ids resolved by the hosted preflight (`hostedEnsureServerIds`)
   // in `sendMessage`, consumed once by the (synchronous) transport body so the
   // hosted send carries real ids for ad-hoc/App servers, not display names.
-  const resolvedHostedServerIdsRef = useRef<string[] | null>(null);
+  // Carries the NAMES snapshot the ids were resolved from, so a selection
+  // change during the async preflight can't pair stale ids with fresh names.
+  const resolvedHostedServersRef = useRef<{
+    serverIds: string[];
+    serverNames: string[];
+  } | null>(null);
 
   const transport = useMemo(() => {
     const shouldUseOrgAwareChatApi =
@@ -1629,12 +1700,12 @@ export function useChatSession(
       // Prefer ids resolved by the `sendMessage` preflight (ad-hoc/App servers
       // persisted to real Convex ids); consume once. Fall back to the
       // pre-resolved selection for surfaces without a preflight (e.g. chatbox).
-      const preflightServerIds = resolvedHostedServerIdsRef.current;
-      resolvedHostedServerIdsRef.current = null;
+      const preflight = resolvedHostedServersRef.current;
+      resolvedHostedServersRef.current = null;
       const hostedServerBatch = buildResolvedServerBatchRequest({
         projectId: hostedProjectId,
-        serverIds: preflightServerIds ?? hostedSelectedServerIds,
-        serverNames: selectedServers,
+        serverIds: preflight?.serverIds ?? hostedSelectedServerIds,
+        serverNames: preflight?.serverNames ?? selectedServers,
         accessScope: "chat_v2",
         ...(isHostedDirectChat &&
         hostedOAuthTokens &&
@@ -1656,6 +1727,12 @@ export function useChatSession(
         selectedServerIds: resolvedServerIds,
         selectedServerNames: resolvedServerNames,
         chatSessionId,
+        // Handshake: tells the server this bundle can render an elicitation
+        // prompt. Catalog hosts already declare the capability, so without
+        // this a stale bundle would leave the turn blocked for a full TTL on
+        // any server that elicits. The server only registers its callback —
+        // and therefore only advertises `elicitation` — when it sees this.
+        hostedElicitationVersion: HOSTED_ELICITATION_VERSION,
         ...(isHostedDirectChat ? { directVisibility } : {}),
         // Host-bound direct preview: forward the saved host id so the server
         // re-resolves the host's authoritative runtime config (harness/computer
@@ -1782,14 +1859,8 @@ export function useChatSession(
           appTools: useAppToolsRegistry
             .getState()
             .snapshotForChatBody(chatSessionIdRef.current),
-          // WebMCP UI tools snapshot — same drain-fresh contract as appTools;
-          // the server defends the boundary again in `validateUiToolEntries`.
-          // Omitted for chatbox sessions (published/share-link AND owner
-          // preview): those turns render the end-user chatbox surface, which
-          // must not advertise inspector-driving ui_* tools to the model.
-          ...(hostedChatboxId
-            ? {}
-            : { uiTools: useUiToolsRegistry.getState().snapshotForChatBody() }),
+          // MCPJam UI tools are agent-surface-only; the only uiTools sender
+          // is agent-chat-instances.ts (/api/web/mcpjam-agent).
           ...(widgetModelContext && widgetModelContext.length > 0
             ? { widgetModelContext }
             : {}),
@@ -1861,24 +1932,6 @@ export function useChatSession(
     // app aliases land here.
     onToolCall: async ({ toolCall }) => {
       const toolName = (toolCall as { toolName: string }).toolName;
-      // WebMCP UI tools run first: `handleUiToolCall` only claims calls the
-      // UI registry knows (or shipped this session) and supplies the output
-      // itself; everything else falls through to the app-alias path below.
-      if (
-        await handleUiToolCall({
-          toolName,
-          toolCallId: (toolCall as { toolCallId: string }).toolCallId,
-          input: (toolCall as { input: unknown }).input,
-          addToolOutput: addToolOutput as Parameters<
-            typeof handleUiToolCall
-          >[0]["addToolOutput"],
-          // Defers mutating UI tools to the approval pill when the toggle is
-          // on — must mirror the server's gate (shared predicate).
-          requireToolApproval: requireToolApprovalRef.current,
-        })
-      ) {
-        return;
-      }
       const entry = useAppToolsRegistry
         .getState()
         .resolve(toolName, chatSessionIdRef.current);
@@ -2037,39 +2090,6 @@ export function useChatSession(
   });
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
-
-  // UI-tool-aware approval responses: Approve on a `ui_*` part executes the
-  // tool in the browser and ships the result (the server can't execute a
-  // no-execute tool, and a bare approval response would strand the turn);
-  // Deny and every non-UI tool use the plain approval response unchanged.
-  const uiAwareAddToolApprovalResponse = useMemo(
-    () =>
-      createUiAwareApprovalResponseHandler({
-        getMessages: () => messagesRef.current,
-        addToolApprovalResponse,
-        addToolOutput: addToolOutput as Parameters<
-          typeof createUiAwareApprovalResponseHandler
-        >[0]["addToolOutput"],
-      }),
-    [addToolApprovalResponse, addToolOutput]
-  );
-
-  // Orphaned-defer fallback: a UI tool call deferred for approval whose
-  // approval request never arrived (client/server flag disagreement for one
-  // turn, e.g. the toggle flipped mid-stream) executes once the stream
-  // settles so the turn can't hang.
-  const prevStatusForDeferredUiRef = useRef(status);
-  useEffect(() => {
-    const prev = prevStatusForDeferredUiRef.current;
-    prevStatusForDeferredUiRef.current = status;
-    if (prev === status || status !== "ready") return;
-    fulfillOrphanedDeferredUiToolCalls({
-      messages: messagesRef.current,
-      addToolOutput: addToolOutput as Parameters<
-        typeof fulfillOrphanedDeferredUiToolCalls
-      >[0]["addToolOutput"],
-    });
-  }, [addToolOutput, status]);
 
   const queueSessionHydration = useCallback(
     (hydration: PendingSessionHydration) => {
@@ -2374,17 +2394,24 @@ export function useChatSession(
         // visible toast (callers fire-and-forget, so don't reject).
         const usesWebEngine =
           HOSTED_MODE || selectedModelUsesOrgRuntime || hostedRequiresWebChatApi;
+        // Snapshot the selection ONCE: the resolved ids must ride with the
+        // names they were resolved from, even if the user edits the selection
+        // while the preflight is in flight.
+        const serverNamesSnapshot = selectedServers;
         if (
           usesWebEngine &&
           hostedEnsureServerIds &&
-          selectedServers.length > 0
+          serverNamesSnapshot.length > 0
         ) {
           try {
-            const resolved = await hostedEnsureServerIds(selectedServers);
-            resolvedHostedServerIdsRef.current = resolved.map((r) => r.serverId);
+            const resolved = await hostedEnsureServerIds(serverNamesSnapshot);
+            resolvedHostedServersRef.current = {
+              serverIds: resolved.map((r) => r.serverId),
+              serverNames: serverNamesSnapshot,
+            };
           } catch (error) {
             pendingWidgetModelContextRef.current = undefined;
-            resolvedHostedServerIdsRef.current = null;
+            resolvedHostedServersRef.current = null;
             toast.error(
               error instanceof Error
                 ? error.message
@@ -2402,7 +2429,7 @@ export function useChatSession(
           }
         } catch (error) {
           pendingWidgetModelContextRef.current = undefined;
-          resolvedHostedServerIdsRef.current = null;
+          resolvedHostedServersRef.current = null;
           throw error;
         }
       })();
@@ -2425,6 +2452,8 @@ export function useChatSession(
     setChatSessionId(generateId());
     setMessages([]);
     setPersistedSnapshotToolCallIds([]);
+    setPendingElicitations([]);
+    setUrlElicitationRequired([]);
     syncResumedVersion(null);
     syncRestoredToolRenderOverrides({});
     onResetRef.current?.("reset");
@@ -2726,6 +2755,7 @@ export function useChatSession(
   useEffect(() => {
     const fetchToolsMetadata = async () => {
       if (selectedServers.length === 0) {
+        lastObservedTokenCountSelectionKeyRef.current = null;
         setToolsMetadata((previous) =>
           Object.keys(previous).length > 0 ? {} : previous
         );
@@ -2738,32 +2768,56 @@ export function useChatSession(
         setMcpToolsTokenCount((previous) =>
           previous !== null ? null : previous
         );
+        setMcpToolsTokenCountErrors((previous) =>
+          previous !== null ? null : previous
+        );
         setMcpToolsTokenCountLoading((previous) =>
           previous ? false : previous
         );
         return;
       }
 
-      const shouldCountTokens = selectedModel?.id && selectedModel?.provider;
+      const shouldCountTokens =
+        tokenCountSelectionKey !== "" && messages.length === 0;
+      const selectionChanged =
+        lastObservedTokenCountSelectionKeyRef.current !== null &&
+        lastObservedTokenCountSelectionKeyRef.current !== tokenCountSelectionKey;
+      lastObservedTokenCountSelectionKeyRef.current = tokenCountSelectionKey;
       const modelIdForTokens = shouldCountTokens
-        ? isMCPJamProvidedModel(String(selectedModel.id))
+        ? isMCPJamProvidedModelMenuItem(selectedModel)
           ? String(selectedModel.id)
           : `${selectedModel.provider}/${selectedModel.id}`
         : undefined;
 
-      setMcpToolsTokenCountLoading(!!modelIdForTokens);
+      if (selectionChanged && !shouldCountTokens) {
+        setMcpToolsTokenCount(null);
+        setMcpToolsTokenCountErrors(null);
+      }
+      setMcpToolsTokenCountLoading(shouldCountTokens);
 
       try {
-        const { metadata, toolServerMap, serializedTools, tokenCounts } =
-          await getToolsMetadata(selectedServers, modelIdForTokens);
+        const {
+          metadata,
+          toolServerMap,
+          serializedTools,
+          tokenCounts,
+          tokenCountErrors,
+        } = await getToolsMetadata(selectedServers, modelIdForTokens);
         setToolsMetadata(metadata);
         setToolServerMap(toolServerMap);
         setSerializedTools(serializedTools);
-        setMcpToolsTokenCount(
-          tokenCounts && Object.keys(tokenCounts).length > 0
-            ? tokenCounts
-            : null
-        );
+        if (shouldCountTokens) {
+          setMcpToolsTokenCount(
+            tokenCounts && Object.keys(tokenCounts).length > 0
+              ? tokenCounts
+              : null
+          );
+          setMcpToolsTokenCountErrors(
+            tokenCountErrors && Object.keys(tokenCountErrors).length > 0
+              ? tokenCountErrors
+              : null
+          );
+        }
       } catch (error) {
         if (!(hostedChatboxId && isAuthDeniedError(error))) {
           console.warn(
@@ -2774,7 +2828,10 @@ export function useChatSession(
         setToolsMetadata({});
         setToolServerMap({});
         setSerializedTools({});
-        setMcpToolsTokenCount(null);
+        if (shouldCountTokens) {
+          setMcpToolsTokenCount(null);
+          setMcpToolsTokenCountErrors(null);
+        }
       } finally {
         setMcpToolsTokenCountLoading(false);
       }
@@ -2784,6 +2841,7 @@ export function useChatSession(
   }, [
     selectedServersSignature,
     selectedModel,
+    tokenCountSelectionKey,
     hostedChatboxId,
     apiContextRevision,
   ]);
@@ -2799,7 +2857,7 @@ export function useChatSession(
 
       setSystemPromptTokenCountLoading(true);
       try {
-        const modelId = isMCPJamProvidedModel(String(selectedModel.id))
+        const modelId = isMCPJamProvidedModelMenuItem(selectedModel)
           ? String(selectedModel.id)
           : `${selectedModel.provider}/${selectedModel.id}`;
         const count = await countTextTokens(systemPrompt, modelId);
@@ -2872,7 +2930,13 @@ export function useChatSession(
     ? true
     : selectedModelUsesOrgRuntime ||
       (isMcpJamModel &&
-        !isMCPJamGuestAllowedModel(String(selectedModel?.id ?? "")));
+        // Prefer the live catalog's guestAllowed flag (always true now that
+        // guests are un-gated); fall back to the static snapshot for
+        // offline/cold-start classification.
+        !(
+          selectedModel?.guestAllowed ??
+          isMCPJamGuestAllowedModel(String(selectedModel?.id ?? ""))
+        ));
   const isAuthReady =
     !requiresAuthForChat || guestMode || (isAuthenticated && !!authHeaders);
   // Guest users don't need WorkOS auth — authFetch handles guest bearer tokens
@@ -2886,13 +2950,67 @@ export function useChatSession(
     HOSTED_MODE ||
     hostedRequiresWebChatApi ||
     (selectedModelUsesOrgRuntime && !localMcpRuntimeRequired);
+  // When the surface provides a send-time resolver (`ensureServerIds`), the
+  // preflight resolves ad-hoc/App server names → Convex ids at send, so a
+  // pre-resolved id per selected server is NOT required up front — requiring
+  // it would keep submit blocked forever for servers the preflight exists to
+  // persist (they only get ids once a send runs).
   const hostedContextNotReady =
     orgOrHostedContextRequired &&
     (!hostedProjectId ||
       (selectedServerIdsRequired &&
         selectedServers.length > 0 &&
+        !hostedEnsureServerIds &&
         hostedSelectedServerIds.length !== selectedServers.length));
   const isStreaming = status === "streaming" || status === "submitted";
+
+  // The blocked tool call cannot outlive the stream: when it ends (finished,
+  // stopped, or errored) the server has already resolved every outstanding
+  // elicitation to `cancel`, so any dialog still open is answering into a dead
+  // rendezvous. Drop them instead of letting the user submit into the void.
+  useEffect(() => {
+    if (isStreaming) return;
+    setPendingElicitations((queue) => (queue.length > 0 ? [] : queue));
+  }, [isStreaming]);
+
+  const respondToElicitation = useCallback(
+    async (answer: {
+      rendezvousId: string;
+      action: HostedElicitationAction;
+      content?: Record<string, unknown>;
+    }) => {
+      setElicitationResponding(true);
+      try {
+        const result = await respondToChatElicitation(convexClient, answer);
+        // Close on a losing race too (already expired / answered elsewhere):
+        // the row is terminal either way, so keeping the dialog open would
+        // only invite a second doomed submit.
+        setPendingElicitations((queue) =>
+          queue.filter((e) => e.rendezvousId !== answer.rendezvousId),
+        );
+        if (!result.ok) {
+          toast.info(
+            result.reason === "expired"
+              ? "That request timed out, so it was cancelled."
+              : "That request was already resolved.",
+          );
+        }
+      } catch (error) {
+        console.warn("[elicitation] respond failed", error);
+        toast.error("Couldn't send your response. The request will time out.");
+      } finally {
+        setElicitationResponding(false);
+      }
+    },
+    [convexClient],
+  );
+
+  const dismissUrlElicitationRequired = useCallback((toolCallId?: string) => {
+    setUrlElicitationRequired((current) =>
+      current.filter((e) => e.toolCallId !== toolCallId),
+    );
+  }, []);
+
   const submitBlocked =
     disableForAuthentication ||
     isAuthLoading ||
@@ -2941,13 +3059,14 @@ export function useChatSession(
     tokenUsage,
     mcpToolsTokenCount,
     mcpToolsTokenCountLoading,
+    mcpToolsTokenCountErrors,
     systemPromptTokenCount,
     systemPromptTokenCountLoading,
 
     // Tool approval
     requireToolApproval,
     setRequireToolApproval,
-    addToolApprovalResponse: uiAwareAddToolApprovalResponse,
+    addToolApprovalResponse,
 
     // Actions
     resetChat,
@@ -2967,6 +3086,13 @@ export function useChatSession(
     hasTraceSnapshot,
     hasLiveTimelineContent,
     traceViewsSupported,
+
+    // Elicitation (hosted): a server is blocking a tool call on this user.
+    pendingElicitations,
+    respondToElicitation,
+    elicitationResponding,
+    urlElicitationRequired,
+    dismissUrlElicitationRequired,
 
     // Computed state
     isStreaming,

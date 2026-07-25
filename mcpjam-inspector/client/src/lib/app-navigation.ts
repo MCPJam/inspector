@@ -11,11 +11,8 @@ import { useCallback, useContext, useLayoutEffect, useState } from "react";
 import { UNSAFE_LocationContext, UNSAFE_NavigationContext } from "react-router";
 import { getAppRouter } from "../router-ref";
 import type { EvalRoute } from "./eval-route-types";
-import {
-  HOSTED_HASH_ALLOWED_TABS,
-  HOSTED_HASH_BLOCKED_TABS,
-  normalizeHostedHashTab,
-} from "./hosted-tab-policy";
+import { normalizeHostedHashTab } from "./hosted-tab-policy";
+import { listAppSurfaceNavSegments } from "@/shared/app-surfaces";
 
 export type OrganizationRouteSection = "overview" | "billing" | "models";
 
@@ -45,6 +42,7 @@ export const routePaths = {
   tracing: "/tracing",
   chatboxes: "/chatboxes",
   swarms: "/swarms",
+  environments: "/environments",
   playground: "/playground",
   support: "/support",
   settings: "/settings",
@@ -305,21 +303,22 @@ export function useActiveTab(): string {
   return pathnameToActiveTab(pathname);
 }
 
-const KNOWN_APP_TAB_SEGMENTS = new Set<string>([
-  ...HOSTED_HASH_ALLOWED_TABS,
-  ...HOSTED_HASH_BLOCKED_TABS,
-  "chat",
-  "home",
-  // Top-level cross-host config comparison surface. Distinct first segment
-  // from "clients" so the sidebar's first-segment isActive resolution
-  // doesn't light up Connect when this is the active route.
-  "host-compare",
-  // Project Computers tab — a peer of the connect views (Servers/Host/
-  // Compare). Its own first segment so return-target normalization and
-  // activeTab resolution treat /computer as a known route, not a fallback
-  // to Servers.
-  "computer",
-]);
+/**
+ * Every tab segment that resolves to a real screen — DERIVED from the
+ * surface manifests (`shared/app-surfaces.ts`), which are also what the
+ * agent's atlas and the route-coverage tests read.
+ *
+ * It used to be a hand-maintained union of the hosted-policy lists plus a
+ * few literals, which is a drift hazard in the one direction that matters:
+ * add a screen, forget this list, and the screen silently becomes
+ * unreachable by `ui_navigate` while `pathnameToActiveTab` quietly resolves
+ * it to Servers. Now the manifest is the single place to add.
+ *
+ * The hosted policy lists (`hosted-tab-policy.ts`) stay as a FILTER over
+ * these segments — availability is a separate question from existence — and
+ * a test asserts every policy entry still names a real segment.
+ */
+const KNOWN_APP_TAB_SEGMENTS = new Set<string>(listAppSurfaceNavSegments());
 
 export function isKnownAppTabSegment(segment: string): boolean {
   return KNOWN_APP_TAB_SEGMENTS.has(segment);

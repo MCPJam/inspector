@@ -18,10 +18,72 @@ describe("useServerForm", () => {
     vi.mocked(hasOAuthConfig).mockReturnValue(false);
   });
 
-  it("defaults OAuth protocol mode to explicit latest", () => {
+  it("defaults OAuth protocol mode to the deferred 'auto' sentinel", () => {
+    // "auto" (not a concrete era) is what makes the wire-pin bridge reachable:
+    // a fresh form defers its OAuth era to the server's MCP wire pin instead of
+    // hard-pinning 2025-11-25 and stranding a 2026-pinned server on the 2025
+    // flow. The submit path bakes it into a concrete era (see below).
     const { result } = renderHook(() => useServerForm());
 
-    expect(result.current.oauthProtocolMode).toBe("2025-11-25");
+    expect(result.current.oauthProtocolMode).toBe("auto");
+  });
+
+  describe("default OAuth protocol 'auto' → wire-pin submit bridge", () => {
+    const startDefaultOAuthAdd = (result: {
+      current: ReturnType<typeof useServerForm>;
+    }) => {
+      act(() => {
+        result.current.setName("Draft server");
+        result.current.setUrl("https://example.com/mcp");
+        result.current.setAuthType("oauth");
+        result.current.setShowAuthSettings(true);
+        // Note: oauthProtocolMode is left at its "auto" default — the user
+        // never touched the Protocol dropdown.
+      });
+    };
+
+    it("bakes the 2026 OAuth flow when adding with a 2026-07-28 wire pin", () => {
+      const { result } = renderHook(() => useServerForm());
+      startDefaultOAuthAdd(result);
+
+      expect(
+        result.current.buildFormData({
+          wireProtocolVersionOverride: "2026-07-28",
+        })
+      ).toMatchObject({
+        useOAuth: true,
+        oauthProtocolMode: "2026-07-28",
+      });
+    });
+
+    it("keeps the 2025-11-25 default when there is no 2026 wire pin", () => {
+      const { result } = renderHook(() => useServerForm());
+      startDefaultOAuthAdd(result);
+
+      expect(result.current.buildFormData()).toMatchObject({
+        useOAuth: true,
+        oauthProtocolMode: "2025-11-25",
+      });
+      expect(
+        result.current.buildFormData({
+          wireProtocolVersionOverride: "2025-11-25",
+        }).oauthProtocolMode
+      ).toBe("2025-11-25");
+    });
+
+    it("lets an explicit protocol selection win over a 2026 wire pin", () => {
+      const { result } = renderHook(() => useServerForm());
+      startDefaultOAuthAdd(result);
+      act(() => {
+        result.current.setOauthProtocolMode("2025-06-18");
+      });
+
+      expect(
+        result.current.buildFormData({
+          wireProtocolVersionOverride: "2026-07-28",
+        }).oauthProtocolMode
+      ).toBe("2025-06-18");
+    });
   });
 
   it("rejects malformed HTTP URLs even when HTTPS is optional", () => {
@@ -112,42 +174,244 @@ describe("useServerForm", () => {
     });
   });
 
-  it("defaults the XAA simulated identity to the signed-in user when the fields are blank", () => {
-    const { result } = renderHook(() =>
-      useServerForm(undefined, { signedInEmail: "john@mcpjam.com" })
-    );
+  it("does not require or emit preregistered credentials for explicit XAA CIMD", () => {
+    const { result } = renderHook(() => useServerForm());
 
     act(() => {
-      result.current.setName("XAA server");
+      result.current.setName("XAA CIMD server");
       result.current.setUrl("https://example.com/mcp");
       result.current.setAuthType("xaa");
-      result.current.setClientId("resource-client-id");
+      result.current.setOauthRegistrationMode("cimd");
+      result.current.setClientId("stale-preregistered-client");
+      result.current.setClientSecret("stale-preregistered-secret");
     });
 
+    expect(result.current.preregisteredOauthBlocksSubmit).toBe(false);
     expect(result.current.buildFormData()).toMatchObject({
       useXaa: true,
-      xaaSubject: "john@mcpjam.com",
-      xaaEmail: "john@mcpjam.com",
+      registrationMode: "cimd",
+      clientId: undefined,
+      clientSecret: undefined,
+      hasClientSecret: undefined,
+      clearClientSecret: undefined,
     });
   });
 
-  it("uses an explicit XAA subject/email override instead of the signed-in default", () => {
-    const { result } = renderHook(() =>
-      useServerForm(undefined, { signedInEmail: "john@mcpjam.com" })
-    );
+  it("retains hidden preregistered credentials for explicit XAA DCR", () => {
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setName("XAA DCR server");
+      result.current.setUrl("https://example.com/mcp");
+      result.current.setAuthType("xaa");
+      result.current.setOauthRegistrationMode("dcr");
+      result.current.setClientId("stored-preregistered-client");
+      result.current.setClientSecret("stored-preregistered-secret");
+    });
+
+    expect(result.current.preregisteredOauthBlocksSubmit).toBe(false);
+    expect(result.current.validateForm()).toBeNull();
+    expect(result.current.authConfigurationBlocksSubmit).toBe(false);
+    expect(result.current.buildFormData()).toMatchObject({
+      useXaa: true,
+      registrationMode: "dcr",
+      clientId: "stored-preregistered-client",
+      clientSecret: "stored-preregistered-secret",
+      hasClientSecret: true,
+    });
+  });
+
+  it("emits public CIMD without stored client credentials", () => {
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setName("Public CIMD server");
+      result.current.setUrl("https://example.com/mcp");
+      result.current.setAuthType("xaa");
+      result.current.setOauthRegistrationMode("cimd");
+      result.current.setXaaClientAuth("none");
+      result.current.setClientId("stale-client");
+      result.current.setClientSecret("stale-secret");
+    });
+
+    expect(result.current.validateForm()).toBeNull();
+    const built = result.current.buildFormData();
+    expect(built).toMatchObject({
+      useXaa: true,
+      registrationMode: "cimd",
+      xaaClientAuth: "none",
+    });
+    expect(built.clientId).toBeUndefined();
+    expect(built.clientSecret).toBeUndefined();
+    expect(built.clearClientSecret).toBeUndefined();
+  });
+
+  it("allows a short client secret for pre-registered XAA", () => {
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setName("Pre-registered XAA server");
+      result.current.setUrl("https://example.com/mcp");
+      result.current.setAuthType("xaa");
+      result.current.setOauthRegistrationMode("preregistered");
+      result.current.setClientId("resource-client-id");
+      result.current.setClientSecret("short");
+    });
+
+    expect(result.current.validateForm()).toBeNull();
+    expect(result.current.authConfigurationBlocksSubmit).toBe(false);
+  });
+
+  it("emits confidential CIMD when the local capability is available", () => {
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setName("Private CIMD server");
+      result.current.setUrl("https://example.com/mcp");
+      result.current.setAuthType("xaa");
+      result.current.setOauthRegistrationMode("cimd");
+      result.current.setXaaClientAuth("private_key_jwt");
+    });
+
+    expect(result.current.confidentialCimdCapability.status).toBe("ready");
+    expect(result.current.authConfigurationBlocksSubmit).toBe(false);
+    expect(result.current.buildFormData()).toMatchObject({
+      registrationMode: "cimd",
+      xaaClientAuth: "private_key_jwt",
+    });
+  });
+
+  it("omits the identity pair entirely when the override fields are untouched (no force-default)", () => {
+    const { result } = renderHook(() => useServerForm());
 
     act(() => {
       result.current.setName("XAA server");
       result.current.setUrl("https://example.com/mcp");
       result.current.setAuthType("xaa");
       result.current.setClientId("resource-client-id");
-      result.current.setXaaSubject("john");
     });
 
-    expect(result.current.buildFormData()).toMatchObject({
-      xaaSubject: "john",
-      xaaEmail: "john@mcpjam.com",
+    // Untouched pair → BOTH keys omitted so the save path preserves stored
+    // values; nothing is force-defaulted (to the signed-in user or anything
+    // else).
+    const built = result.current.buildFormData();
+    expect(built.useXaa).toBe(true);
+    expect("xaaSubject" in built).toBe(false);
+    expect("xaaEmail" in built).toBe(false);
+  });
+
+  it("omits the identity pair on an untouched edit of a server with a stored override", async () => {
+    const server = {
+      name: "Saved XAA server",
+      config: { url: "https://example.com/mcp" },
+      useXaa: true,
+      useOAuth: false,
+      authServerMode: "mcpjam",
+      clientId: "resource-client-id",
+      xaaSubject: "stored-sub",
+      xaaEmail: "stored@example.com",
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    const { result } = renderHook(() => useServerForm(server));
+    await waitFor(() => {
+      expect(result.current.xaaSubject).toBe("stored-sub");
     });
+
+    act(() => {
+      result.current.setOauthScopesInput("read:tools");
+    });
+
+    // An unrelated edit leaves the identity pair untouched → omitted, so the
+    // save path preserves the stored values instead of re-writing them.
+    const built = result.current.buildFormData();
+    expect("xaaSubject" in built).toBe(false);
+    expect("xaaEmail" in built).toBe(false);
+  });
+
+  it("emits the complete trimmed pair when both override fields are edited", () => {
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setName("XAA server");
+      result.current.setUrl("https://example.com/mcp");
+      result.current.setAuthType("xaa");
+      result.current.setClientId("resource-client-id");
+      result.current.setXaaSubject("  alice  ");
+      result.current.setXaaEmail(" alice@example.com ");
+    });
+
+    expect(result.current.validateForm()).toBeNull();
+    expect(result.current.buildFormData()).toMatchObject({
+      xaaSubject: "alice",
+      xaaEmail: "alice@example.com",
+    });
+  });
+
+  it('emits "" for both fields on an explicit clear of a stored override', async () => {
+    const server = {
+      name: "Saved XAA server",
+      config: { url: "https://example.com/mcp" },
+      useXaa: true,
+      useOAuth: false,
+      authServerMode: "mcpjam",
+      oauthFlowProfile: { clientId: "resource-client-id" },
+      xaaSubject: "stored-sub",
+      xaaEmail: "stored@example.com",
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    const { result } = renderHook(() => useServerForm(server));
+    await waitFor(() => {
+      expect(result.current.xaaSubject).toBe("stored-sub");
+    });
+
+    act(() => {
+      result.current.setXaaSubject("");
+      result.current.setXaaEmail("");
+    });
+
+    expect(result.current.validateForm()).toBeNull();
+    // The explicit empty pair reaches the backend, which normalizes it away.
+    expect(result.current.buildFormData()).toMatchObject({
+      xaaSubject: "",
+      xaaEmail: "",
+    });
+  });
+
+  it("blocks save with an actionable validation error on a partial identity pair", () => {
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setName("XAA server");
+      result.current.setUrl("https://example.com/mcp");
+      result.current.setAuthType("xaa");
+      result.current.setClientId("resource-client-id");
+      result.current.setXaaSubject("alice");
+    });
+
+    expect(result.current.validateForm()).toBe(
+      "Complete or clear the server identity override"
+    );
+
+    // Completing the pair clears the error…
+    act(() => {
+      result.current.setXaaEmail("alice@example.com");
+    });
+    expect(result.current.validateForm()).toBeNull();
+
+    // …and so does clearing both.
+    act(() => {
+      result.current.setXaaSubject("");
+      result.current.setXaaEmail("");
+    });
+    expect(result.current.validateForm()).toBeNull();
   });
 
   it("resolves an XAA server (useXaa, useOAuth false) to authType=xaa and never downgrades it to oauth on save", async () => {
@@ -735,7 +999,7 @@ describe("useServerForm", () => {
     });
   });
 
-  it("normalizes legacy automatic OAuth protocol mode to explicit latest for existing servers", async () => {
+  it("preserves a stored 'auto' OAuth protocol mode so the wire-pin bridge still applies on edit", async () => {
     const server = {
       name: "Existing OAuth server",
       config: {
@@ -757,11 +1021,59 @@ describe("useServerForm", () => {
 
     const { result } = renderHook(() => useServerForm(server));
 
+    // Round-2: a stored "auto" is NOT coerced to a concrete era during
+    // hydration — the deferred sentinel survives so the submit-time bridge can
+    // route a 2026-pinned server through the 2026 OAuth flow.
     await waitFor(() => {
-      expect(result.current.oauthProtocolMode).toBe("2025-11-25");
+      expect(result.current.oauthProtocolMode).toBe("auto");
     });
 
+    // Under a 2026 wire pin the preserved "auto" bakes the 2026 flow…
+    expect(
+      result.current.buildFormData({
+        wireProtocolVersionOverride: "2026-07-28",
+      }).oauthProtocolMode
+    ).toBe("2026-07-28");
+    // …and without a pin it lands on the 2025 default, as before.
+    expect(result.current.buildFormData().oauthProtocolMode).toBe("2025-11-25");
+
     localStorage.removeItem("mcp-oauth-config-Existing OAuth server");
+  });
+
+  it("keeps 'auto' when editing an OAuth server with no stored protocol so the wire-pin bridge applies", async () => {
+    // Round-2: the edit initializer called normalizeOauthProtocolMode(undefined)
+    // → a concrete 2025-11-25, stranding an edited OAuth server (no stored
+    // protocol) on the 2025 flow even under a 2026 wire pin. With no stored
+    // protocol the deferred "auto" default must survive.
+    const server = {
+      name: "OAuth server without stored protocol",
+      config: {
+        url: "https://example.com/mcp",
+      },
+      useOAuth: true,
+      lastConnectionTime: new Date(),
+      connectionStatus: "disconnected",
+      retryCount: 0,
+      enabled: true,
+    } as any;
+
+    const { result } = renderHook(() => useServerForm(server));
+
+    await waitFor(() => {
+      expect(result.current.authType).toBe("oauth");
+    });
+    expect(result.current.oauthProtocolMode).toBe("auto");
+    // The preserved sentinel is a no-op change (initial snapshot is "auto" too).
+    expect(result.current.hasChanges).toBe(false);
+
+    // The submit path resolves it against the wire pin: 2026 under a 2026 pin…
+    expect(
+      result.current.buildFormData({
+        wireProtocolVersionOverride: "2026-07-28",
+      }).oauthProtocolMode
+    ).toBe("2026-07-28");
+    // …and the 2025 default otherwise.
+    expect(result.current.buildFormData().oauthProtocolMode).toBe("2025-11-25");
   });
 
   it("normalizes invalid stored OAuth registration strategies back to auto", async () => {
@@ -865,6 +1177,28 @@ describe("useServerForm", () => {
     });
   });
 
+  it("defaults new servers to Auto and emits it on save", () => {
+    const { result } = renderHook(() => useServerForm());
+    expect(result.current.authType).toBe("auto");
+
+    act(() => {
+      result.current.setName("brand-new");
+      result.current.setUrl("https://example.com/mcp");
+    });
+    expect(result.current.buildFormData()).toMatchObject({
+      authMethod: "auto",
+      useOAuth: true,
+      useXaa: false,
+    });
+
+    // resetForm restores the Auto default, not None.
+    act(() => {
+      result.current.setAuthType("bearer");
+      result.current.resetForm();
+    });
+    expect(result.current.authType).toBe("auto");
+  });
+
   it("sends clearXaaConfig only when explicitly moving off XAA", async () => {
     const xaaServer = {
       name: "was-xaa",
@@ -943,6 +1277,63 @@ describe("useServerForm", () => {
     });
 
     expect(result.current.preregisteredOauthBlocksSubmit).toBe(false);
+  });
+
+  describe("validateClientSecret", () => {
+    it("allows an empty client secret (public/PKCE client)", () => {
+      const { result } = renderHook(() => useServerForm());
+      expect(result.current.validateClientSecret("")).toBeNull();
+    });
+
+    it("rejects a whitespace-only client secret", () => {
+      const { result } = renderHook(() => useServerForm());
+      expect(result.current.validateClientSecret("   ")).toBe(
+        "Client Secret cannot be only whitespace",
+      );
+    });
+
+    it("allows a single-character client secret", () => {
+      const { result } = renderHook(() => useServerForm());
+      expect(result.current.validateClientSecret("a")).toBeNull();
+    });
+
+    it("allows the reported repro value ('banana', 6 characters)", () => {
+      const { result } = renderHook(() => useServerForm());
+      expect(result.current.validateClientSecret("banana")).toBeNull();
+    });
+
+    it("still allows client secrets 8+ characters long", () => {
+      const { result } = renderHook(() => useServerForm());
+      expect(
+        result.current.validateClientSecret("a-long-enough-secret"),
+      ).toBeNull();
+    });
+
+    it("does not affect validateClientId's own minimum-length rule", () => {
+      const { result } = renderHook(() => useServerForm());
+      expect(result.current.validateClientId("ab")).toBe(
+        "Client ID must be at least 3 characters",
+      );
+      expect(result.current.validateClientId("abc")).toBeNull();
+    });
+  });
+
+  it("preserves leading/trailing whitespace in the saved client secret", () => {
+    // buildFormData() only trims to check whether a replacement was typed
+    // at all (see validateClientSecret above) — it must not trim the value
+    // it actually saves, or a secret that legitimately has surrounding
+    // whitespace gets silently corrupted.
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setType("http");
+      result.current.setAuthType("oauth");
+      result.current.setOauthRegistrationMode("preregistered");
+      result.current.setClientId("client-id");
+      result.current.setClientSecret(" secret ");
+    });
+
+    expect(result.current.buildFormData().clientSecret).toBe(" secret ");
   });
 
   it("represents a stored client secret without exposing the value", async () => {

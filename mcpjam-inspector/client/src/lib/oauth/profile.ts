@@ -3,12 +3,14 @@ import type {
   RegistrationStrategy2025_03_26,
   RegistrationStrategy2025_06_18,
   RegistrationStrategy2025_11_25,
+  RegistrationStrategy2026_07_28,
 } from "@mcpjam/sdk/browser";
 
 export type OAuthRegistrationStrategy =
   | RegistrationStrategy2025_03_26
   | RegistrationStrategy2025_06_18
-  | RegistrationStrategy2025_11_25;
+  | RegistrationStrategy2025_11_25
+  | RegistrationStrategy2026_07_28;
 
 export interface OAuthTestProfile {
   serverUrl: string;
@@ -36,6 +38,7 @@ const OAUTH_PROTOCOL_VERSIONS: readonly OAuthProtocolVersion[] = [
   "2025-03-26",
   "2025-06-18",
   "2025-11-25",
+  "2026-07-28",
 ];
 
 const OAUTH_REGISTRATION_STRATEGIES: readonly OAuthRegistrationStrategy[] = [

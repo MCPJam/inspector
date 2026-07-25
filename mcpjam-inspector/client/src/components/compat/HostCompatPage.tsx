@@ -1,9 +1,12 @@
 import { Boxes } from "lucide-react";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import type { ServerWithName } from "@/state/app-types";
 import { useServerToolsData } from "@/lib/host-compat/use-host-compat";
 import { HostCompatContent } from "@/components/compat/HostCompatContent";
 import { HostCompatMatrix } from "@/components/compat/HostCompatMatrix";
 import { EmptyState } from "@/components/ui/empty-state";
+import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
+import { buildCompatibilitySnapshot } from "@/lib/webmcp/review-surface-snapshots";
 
 /**
  * Standalone Compatibility destination — "does my server work on these hosts?".
@@ -38,7 +41,28 @@ export function HostCompatPage({
   // runs unconditionally; it no-ops for a null/empty server.
   const detailServer =
     servers.find((s) => s.name === selectedServer?.name) ?? servers[0] ?? null;
-  const toolsData = useServerToolsData(detailServer);
+  const toolsState = useServerToolsData(detailServer);
+
+  // Agent bridge: SNAPSHOT-ONLY (no tools). Compatibility is a read-only review
+  // screen (agentTools kind "none") that the agent may OBSERVE: which connected
+  // servers are on the matrix and which one's report is open. Must run before
+  // the early return below (rules of hooks). Redacted STATE only — server names
+  // and selection, never a server's config or the per-host findings.
+  // Gate the provider on the SAME flag as the surface: ui_snapshot_app reads
+  // the registry independent of sidebar visibility, so without this an agent
+  // could observe Compatibility even where the flag is off. `=== true` keeps it
+  // unregistered while the flag is still loading; the bridge re-runs on flip.
+  const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
+  useSurfaceAgentBridge({
+    surfaceId: "compatibility",
+    enabled: compatibilityEnabled === true,
+    snapshot: () =>
+      buildCompatibilitySnapshot({
+        servers,
+        selectedServerName: detailServer?.name ?? null,
+        showMatrix: servers.length > 1,
+      }),
+  });
 
   if (servers.length === 0) {
     return (
@@ -60,8 +84,8 @@ export function HostCompatPage({
           Compatibility
         </h1>
         <p className="text-xs text-muted-foreground">
-          Whether your servers work on each host — spec conformance first, then
-          per-host apps &amp; server gaps.
+          Whether your servers work on each client — spec conformance first, then
+          per-client apps &amp; server gaps.
         </p>
       </div>
 
@@ -89,7 +113,8 @@ export function HostCompatPage({
           </h2>
           <HostCompatContent
             server={detailServer}
-            toolsData={toolsData}
+            toolsData={toolsState.data}
+            toolsLoadStatus={toolsState.status}
             projectId={projectId}
             source="compat_page"
           />

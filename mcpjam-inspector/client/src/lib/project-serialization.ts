@@ -3,7 +3,12 @@ import {
   normalizeOAuthProtocolVersion,
   normalizeOAuthRegistrationStrategy,
 } from "@/lib/oauth/profile";
-import { normalizeAuthMethod, normalizeRegistrationMode } from "@/shared/xaa.js";
+import {
+  normalizeAuthMethod,
+  normalizeIdentityAssertionFormat,
+  normalizeRegistrationMode,
+  normalizeXaaClientAuth,
+} from "@/shared/xaa.js";
 
 type SerializeOptions = {
   /**
@@ -76,8 +81,15 @@ function serializeServersInternal(
     if (server.xaaEmail !== undefined) {
       serializedServer.xaaEmail = server.xaaEmail;
     }
+    if (server.xaaIdentityAssertionFormat !== undefined) {
+      serializedServer.xaaIdentityAssertionFormat =
+        server.xaaIdentityAssertionFormat;
+    }
     if (server.registrationMode !== undefined) {
       serializedServer.registrationMode = server.registrationMode;
+    }
+    if (server.xaaClientAuth !== undefined) {
+      serializedServer.xaaClientAuth = server.xaaClientAuth;
     }
     if (server.authMethod !== undefined) {
       serializedServer.authMethod = server.authMethod;
@@ -274,6 +286,14 @@ export function deserializeServersFromConvex(
     if (serverData.xaaEmail !== undefined) {
       server.xaaEmail = serverData.xaaEmail;
     }
+    // Narrow the bare wire value to a known format; drop anything unknown so
+    // the debugger falls back to the OIDC default (normalize-or-clear).
+    const xaaIdentityAssertionFormat = normalizeIdentityAssertionFormat(
+      serverData.xaaIdentityAssertionFormat,
+    );
+    if (xaaIdentityAssertionFormat !== undefined) {
+      server.xaaIdentityAssertionFormat = xaaIdentityAssertionFormat;
+    }
     // Narrow the bare wire value to a known mode; drop anything unknown so the
     // flows fall back to their defaults. Accepts the legacy per-flow keys
     // (xaaRegistrationStrategy, oauthRegistrationMode) from old exports —
@@ -285,6 +305,44 @@ export function deserializeServersFromConvex(
     );
     if (registrationMode !== undefined) {
       server.registrationMode = registrationMode;
+    }
+    // Narrow the CIMD client-auth method; drop anything unknown so the debugger
+    // falls back to public CIMD.
+    const xaaClientAuth = normalizeXaaClientAuth(serverData.xaaClientAuth);
+    if (xaaClientAuth !== undefined) {
+      server.xaaClientAuth = xaaClientAuth;
+    }
+    if (typeof serverData.xaaDcrClientId === "string") {
+      server.xaaDcrClientId = serverData.xaaDcrClientId;
+    }
+    if (
+      serverData.xaaDcrTokenEndpointAuthMethod === "client_secret_post" ||
+      serverData.xaaDcrTokenEndpointAuthMethod === "client_secret_basic" ||
+      serverData.xaaDcrTokenEndpointAuthMethod === "none"
+    ) {
+      server.xaaDcrTokenEndpointAuthMethod =
+        serverData.xaaDcrTokenEndpointAuthMethod;
+    }
+    if (typeof serverData.xaaDcrIssuer === "string") {
+      server.xaaDcrIssuer = serverData.xaaDcrIssuer;
+    }
+    if (typeof serverData.xaaDcrClientSecretExpiresAt === "number") {
+      server.xaaDcrClientSecretExpiresAt =
+        serverData.xaaDcrClientSecretExpiresAt;
+    }
+    if (typeof serverData.xaaDcrRegisteredAt === "number") {
+      server.xaaDcrRegisteredAt = serverData.xaaDcrRegisteredAt;
+    }
+    if (
+      serverData.xaaDcrStatus === "registered" ||
+      serverData.xaaDcrStatus === "registering" ||
+      serverData.xaaDcrStatus === "uncertain"
+    ) {
+      server.xaaDcrStatus = serverData.xaaDcrStatus;
+    }
+    if (serverData.hasXaaDcrRegistration !== undefined) {
+      server.hasXaaDcrRegistration =
+        serverData.hasXaaDcrRegistration === true;
     }
     const authMethod = normalizeAuthMethod(serverData.authMethod);
     if (authMethod !== undefined) {

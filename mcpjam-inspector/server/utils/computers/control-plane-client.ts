@@ -278,6 +278,46 @@ export async function recordComputerCommand(args: {
   }
 }
 
+export interface UploadBytesReservation {
+  total: number;
+  cap: number;
+}
+
+/**
+ * Reserve `bytes` against the computer's cumulative-upload quota BEFORE writing
+ * them into the box (service-token auth). The check-and-increment is atomic in
+ * Convex, so this is the race-safe chokepoint shared by every metered file-API
+ * writer (the `/computers/upload` route and harness skill-file materialization).
+ * Callers MUST write only on `{ ok: true }`:
+ *   - ok:true              → reserved; proceed with the write.
+ *   - ok:false, status 413 → over quota; surface a 413-style error, write nothing.
+ *   - ok:false, status 404 → computer gone; treat as unavailable (503).
+ *   - ok:false, status 0   → not configured / network error; caller decides its
+ *                            fail-open vs fail-closed policy.
+ * Not idempotent — one successful call reserves the bytes exactly once, so call
+ * it once per write with the total byte count.
+ */
+export async function reserveUploadBytes(args: {
+  computerId: string;
+  bytes: number;
+  signal?: AbortSignal;
+}): Promise<ControlPlaneResult<UploadBytesReservation>> {
+  const headers = authHeaders();
+  if (!headers) {
+    return {
+      ok: false,
+      status: 0,
+      error: "INSPECTOR_SERVICE_TOKEN is not set or was rejected",
+    };
+  }
+  return postJson<UploadBytesReservation>(
+    "/computers/reserve-upload-bytes",
+    headers,
+    { computerId: args.computerId, bytes: args.bytes },
+    args.signal
+  );
+}
+
 /** Record a terminal session transition (service-token auth; idempotent). */
 export async function recordTerminalSession(args: {
   sessionId: string;
@@ -295,6 +335,30 @@ export async function recordTerminalSession(args: {
     logger.warn("[computers] failed to record terminal session", {
       sessionId: args.sessionId,
       action: args.action,
+      status: result.status,
+      error: result.error,
+    });
+  }
+}
+
+/**
+ * Bump the computer's `lastActiveAt` (service-token auth) so live terminal I/O
+ * counts as activity for the idle-hibernate sweep. Sent throttled (~once/min)
+ * from the terminal bridge on PTY I/O; best-effort — a dropped touch just risks
+ * an earlier idle hibernate, never a failed keystroke.
+ */
+export async function touchComputerActivity(args: {
+  computerId: string;
+}): Promise<void> {
+  const headers = authHeaders();
+  if (!headers) return;
+  const result = await postJson("/computers/terminal-sessions", headers, {
+    action: "touch",
+    computerId: args.computerId,
+  });
+  if (!result.ok) {
+    logger.warn("[computers] failed to touch computer activity", {
+      computerId: args.computerId,
       status: result.status,
       error: result.error,
     });

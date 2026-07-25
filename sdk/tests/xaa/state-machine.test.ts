@@ -10,10 +10,64 @@ import {
   createXAAStateMachine,
 } from "../../src/xaa/state-machines/state-machine.js";
 import {
+  buildXaaDcrCredentialCacheKey,
   createInitialXAAFlowState,
+  isXaaDcrClientSecretExpired,
   type XaaEphemeralDcrCredentials,
   type XAAFlowState,
 } from "../../src/xaa/state-machines/types.js";
+
+// One step per Continue click: each request step now takes two
+// proceedToNextStep calls (fire the request, then process the response), so
+// tests drive to a target step instead of assuming a fixed count. Stops early
+// if the flow parks (no step change).
+async function advanceUntil(
+  machine: { proceedToNextStep: () => Promise<void> },
+  readStep: () => XAAFlowState["currentStep"],
+  target: XAAFlowState["currentStep"],
+  cap = 40
+): Promise<void> {
+  for (let i = 0; i < cap && readStep() !== target; i += 1) {
+    const before = readStep();
+    await machine.proceedToNextStep();
+    if (readStep() === before) return;
+  }
+}
+
+const PREREGISTERED_XAA_ARROW_STEPS: XAAFlowState["currentStep"][] = [
+  "discover_resource_metadata",
+  "received_resource_metadata",
+  "discover_authz_metadata",
+  "received_authz_metadata",
+  "user_authentication",
+  "received_identity_assertion",
+  "token_exchange_request",
+  "received_id_jag",
+  "inspect_id_jag",
+  "jwt_bearer_request",
+  "received_access_token",
+  "authenticated_mcp_request",
+  "complete",
+];
+
+async function recordEveryAdvance(
+  machine: { proceedToNextStep: () => Promise<void> },
+  readStep: () => XAAFlowState["currentStep"],
+  target: XAAFlowState["currentStep"],
+  cap = 40
+): Promise<XAAFlowState["currentStep"][]> {
+  const visited: XAAFlowState["currentStep"][] = [];
+  for (let i = 0; i < cap && readStep() !== target; i += 1) {
+    const before = readStep();
+    await machine.proceedToNextStep();
+    const after = readStep();
+    if (after === before) {
+      throw new Error(`XAA flow stopped at ${after} before reaching ${target}`);
+    }
+    visited.push(after);
+  }
+  return visited;
+}
 
 function encodePart(value: Record<string, any>): string {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -159,6 +213,10 @@ describe("createXAAStateMachine", () => {
               access_token: "access-token",
               token_type: "Bearer",
               expires_in: 300,
+              // The AS narrows the requested scope (read:tools write:tools →
+              // read:tools) — the machine must retain what was actually
+              // granted, from the token RESPONSE, not echo the request.
+              scope: "read:tools",
             },
           },
           ok: true,
@@ -178,15 +236,21 @@ describe("createXAAStateMachine", () => {
       clientId: "mcpjam-debugger",
       userId: "user-12345",
       email: "demo.user@example.com",
-      scope: "read:tools",
+      // Wider than the response's grant so the grantedScope assertion proves
+      // the value comes from the token response, not a request echo.
+      scope: "read:tools write:tools",
     });
 
-    for (let index = 0; index < 7; index += 1) {
-      await machine.proceedToNextStep();
-    }
+    const visited = await recordEveryAdvance(
+      machine,
+      () => state.currentStep,
+      "complete"
+    );
 
     expect(state.currentStep).toBe("complete");
+    expect(visited).toEqual(PREREGISTERED_XAA_ARROW_STEPS);
     expect(state.accessToken).toBe("access-token");
+    expect(state.grantedScope).toBe("read:tools");
     expect(state.identityAssertion).toBe(idToken);
     expect(state.idJag).toBe(idJag);
     expect(state.idJagDecoded?.issues).toHaveLength(0);
@@ -287,7 +351,11 @@ describe("createXAAStateMachine", () => {
       scope: "read:tools",
     });
 
-    await machine.proceedToNextStep();
+    await advanceUntil(
+      machine,
+      () => state.currentStep,
+      "received_identity_assertion"
+    );
 
     expect(authBodies).toHaveLength(1);
     expect(authBodies[0].userId).toBe("john");
@@ -468,9 +536,7 @@ describe("createXAAStateMachine", () => {
       authzServerIssuer: "https://auth.example.com",
     });
 
-    for (let index = 0; index < 5; index += 1) {
-      await machine.proceedToNextStep();
-    }
+    await advanceUntil(machine, () => state.currentStep, "inspect_id_jag");
 
     expect(state.currentStep).toBe("inspect_id_jag");
     expect(state.idJagDecoded?.issues).toEqual(
@@ -546,7 +612,11 @@ describe("createXAAStateMachine", () => {
       const { machine, executor, getStateSnapshot, idJag } =
         buildExchangeHarness();
 
-      await machine.proceedToNextStep();
+      await advanceUntil(
+        machine,
+        () => getStateSnapshot().currentStep,
+        "received_id_jag"
+      );
 
       const [path, init] = executor.internalRequest.mock.calls[0];
       expect(path).toBe("/token");
@@ -656,6 +726,339 @@ describe("createXAAStateMachine", () => {
       expect(getStateSnapshot().issuerBaseUrl).toBe(
         "https://issuer.example/api/web/xaa"
       );
+    });
+  });
+
+  describe("managed-IdP policy context and outcomes", () => {
+    const MANAGED_CONFIG = {
+      policyMode: "managed",
+      testIdentityId: "xti_alice",
+      resourceAppId: "xra_1",
+    } as const;
+
+    function buildManagedHarness(options: {
+      configExtras?: Record<string, any>;
+      stateExtras?: Partial<XAAFlowState>;
+      /** Response for the mint call; defaults to a valid spec exchange. */
+      mintResult?: (idJag: string) => any;
+      /** Payload overrides for the minted (fake) ID-JAG. */
+      idJagClaims?: Record<string, any>;
+    }) {
+      let state: XAAFlowState = createInitialXAAFlowState({
+        serverUrl: "https://mcp.example.com",
+        authzServerIssuer: "https://auth.example.com",
+        clientId: "mcpjam-debugger",
+        scope: "read:tools",
+        identityAssertion: "id.token.jwt",
+        currentStep: "received_identity_assertion",
+        ...options.stateExtras,
+      });
+
+      const idJag = makeJwt({
+        iss: "https://issuer.example/api/web/xaa",
+        sub: "user-12345",
+        aud: "https://auth.example.com",
+        resource: "https://mcp.example.com",
+        client_id: "mcpjam-debugger",
+        exp: Math.floor(Date.now() / 1000) + 300,
+        ...options.idJagClaims,
+      });
+
+      const executor = {
+        externalRequest: vi.fn(),
+        internalRequest: vi.fn(async (path: string) => {
+          if (path.endsWith("/token")) {
+            return options.mintResult
+              ? options.mintResult(idJag)
+              : specTokenExchangeResult(idJag);
+          }
+          if (path.endsWith("/token-exchange")) {
+            return options.mintResult
+              ? options.mintResult(idJag)
+              : {
+                  status: 200,
+                  statusText: "OK",
+                  headers: {},
+                  body: { id_jag: idJag },
+                  ok: true,
+                };
+          }
+          if (path === "/proxy/token") {
+            return {
+              status: 200,
+              statusText: "OK",
+              headers: {},
+              body: {
+                status: 200,
+                body: { access_token: "ras-token", token_type: "Bearer" },
+              },
+              ok: true,
+            };
+          }
+          throw new Error(`Unexpected internal request: ${path}`);
+        }),
+      };
+
+      const machine = createXAAStateMachine({
+        getState: () => state,
+        updateState: (updates) => {
+          state = { ...state, ...updates };
+        },
+        serverUrl: "https://mcp.example.com",
+        issuerBaseUrl: "https://issuer.example/api/web/xaa",
+        requestExecutor: executor,
+        clientId: "mcpjam-debugger",
+        scope: "read:tools",
+        authzServerIssuer: "https://auth.example.com",
+        ...options.configExtras,
+      });
+
+      return { machine, executor, getStateSnapshot: () => state, idJag };
+    }
+
+    it("emits the managed context as headers on a HOSTED_MODE-style run (org-scoped prefix, issuerMode local)", async () => {
+      // The primary managed path: a DIRECT hosted run keeps issuerMode
+      // "local" (the hosted flag is only the local-forwarding opt-in), so the
+      // managed context must key on policyMode presence alone.
+      const { machine, executor, getStateSnapshot } = buildManagedHarness({
+        configExtras: {
+          mintPathPrefix: "/o/org_123",
+          issuerMode: "local",
+          ...MANAGED_CONFIG,
+        },
+      });
+
+      await machine.proceedToNextStep();
+
+      const [path, init] = executor.internalRequest.mock.calls[0];
+      expect(path).toBe("/o/org_123/token");
+      expect((init as RequestInit).headers).toMatchObject({
+        "x-mcpjam-policy-mode": "managed",
+        "x-mcpjam-test-identity-id": "xti_alice",
+        "x-mcpjam-resource-app-id": "xra_1",
+      });
+      // issuerMode is "local", so the hosted-forwarding headers must NOT ride.
+      expect(
+        (init as RequestInit).headers as Record<string, string>
+      ).not.toHaveProperty("x-mcpjam-issuer-mode");
+      // The RFC 8693 form body stays spec-pure.
+      const sent = new URLSearchParams(String((init as RequestInit).body));
+      expect(sent.get("policyMode")).toBeNull();
+      expect(sent.get("testIdentityId")).toBeNull();
+      expect(sent.get("resourceAppId")).toBeNull();
+      // The logged wire request stays clean of transport headers.
+      const entry = (getStateSnapshot().httpHistory || []).find(
+        (item) => item.step === "token_exchange_request"
+      );
+      expect(entry?.request.headers).toEqual({
+        "Content-Type": "application/x-www-form-urlencoded",
+      });
+    });
+
+    it("emits the managed context as body fields on the legacy JSON mint", async () => {
+      const { machine, executor } = buildManagedHarness({
+        configExtras: {
+          specTokenEndpointAvailable: false,
+          ...MANAGED_CONFIG,
+        },
+      });
+
+      await machine.proceedToNextStep();
+
+      const [path, init] = executor.internalRequest.mock.calls[0];
+      expect(path).toBe("/token-exchange");
+      const parsed = JSON.parse(String((init as RequestInit).body));
+      expect(parsed).toMatchObject({
+        policyMode: "managed",
+        testIdentityId: "xti_alice",
+        resourceAppId: "xra_1",
+      });
+    });
+
+    it("emits no managed context when policyMode is unset (byte-identical legacy requests)", async () => {
+      const spec = buildManagedHarness({});
+      await spec.machine.proceedToNextStep();
+      const [, specInit] = spec.executor.internalRequest.mock.calls[0];
+      expect(
+        Object.keys(
+          (specInit as RequestInit).headers as Record<string, string>
+        ).some((name) => name.toLowerCase().startsWith("x-mcpjam-"))
+      ).toBe(false);
+
+      const json = buildManagedHarness({
+        configExtras: { specTokenEndpointAvailable: false },
+      });
+      await json.machine.proceedToNextStep();
+      const [, jsonInit] = json.executor.internalRequest.mock.calls[0];
+      const parsed = JSON.parse(String((jsonInit as RequestInit).body));
+      expect(parsed).not.toHaveProperty("policyMode");
+      expect(parsed).not.toHaveProperty("testIdentityId");
+      expect(parsed).not.toHaveProperty("resourceAppId");
+    });
+
+    it("records an idpPolicy denial and parks at token_exchange_request on a managed policy rejection", async () => {
+      const { machine, getStateSnapshot } = buildManagedHarness({
+        configExtras: { ...MANAGED_CONFIG },
+        mintResult: () => ({
+          status: 403,
+          statusText: "Forbidden",
+          headers: {},
+          body: { error: "access_denied", error_description: "not_assigned" },
+          ok: false,
+        }),
+      });
+
+      await machine.proceedToNextStep();
+
+      const state = getStateSnapshot();
+      expect(state.idpPolicy).toEqual({
+        outcome: "denied",
+        errorCode: "access_denied",
+        reasonCode: "not_assigned",
+      });
+      expect(state.currentStep).toBe("token_exchange_request");
+      expect(state.error).toBe("not_assigned");
+      expect(state.idJag).toBeUndefined();
+    });
+
+    it("drops a non-allowlisted error code from the denial instead of echoing it", async () => {
+      const { machine, getStateSnapshot } = buildManagedHarness({
+        configExtras: { ...MANAGED_CONFIG },
+        mintResult: () => ({
+          status: 400,
+          statusText: "Bad Request",
+          headers: {},
+          body: { error: "server_error", error_description: "boom" },
+          ok: false,
+        }),
+      });
+
+      await machine.proceedToNextStep();
+
+      expect(getStateSnapshot().idpPolicy).toEqual({
+        outcome: "denied",
+        reasonCode: "boom",
+      });
+    });
+
+    it("never fabricates idpPolicy on a legacy (unmanaged-context) failure", async () => {
+      const { machine, getStateSnapshot } = buildManagedHarness({
+        mintResult: () => ({
+          status: 403,
+          statusText: "Forbidden",
+          headers: {},
+          body: { error: "access_denied", error_description: "nope" },
+          ok: false,
+        }),
+      });
+
+      await machine.proceedToNextStep();
+
+      const state = getStateSnapshot();
+      expect(state.idpPolicy).toBeUndefined();
+      expect(state.currentStep).toBe("token_exchange_request");
+    });
+
+    it("records granted (not downscoped) when the issuer echoes the full requested scope", async () => {
+      const { machine, getStateSnapshot, idJag } = buildManagedHarness({
+        configExtras: { ...MANAGED_CONFIG },
+        mintResult: (token) => ({
+          ...specTokenExchangeResult(token),
+          body: { ...specTokenExchangeResult(token).body, scope: "read:tools" },
+        }),
+        idJagClaims: { scope: "read:tools" },
+      });
+
+      await machine.proceedToNextStep();
+
+      expect(getStateSnapshot().idpPolicy).toEqual({
+        outcome: "granted",
+        requestedScope: "read:tools",
+        grantedScope: "read:tools",
+      });
+      expect(getStateSnapshot().idJag).toBe(idJag);
+    });
+
+    it("records a downscope and drives inspection + the jwt-bearer request with the granted scope", async () => {
+      const { machine, executor, getStateSnapshot } = buildManagedHarness({
+        configExtras: { ...MANAGED_CONFIG },
+        stateExtras: {
+          scope: "read:tools write:tools",
+          tokenEndpoint: "https://auth.example.com/oauth/token",
+        },
+        mintResult: (token) => ({
+          ...specTokenExchangeResult(token),
+          body: { ...specTokenExchangeResult(token).body, scope: "read:tools" },
+        }),
+        // The minted ID-JAG carries the NARROWED scope, as the issuer minted it.
+        idJagClaims: { scope: "read:tools" },
+      });
+
+      // Exchange → downscoped policy outcome.
+      await machine.proceedToNextStep();
+      expect(getStateSnapshot().idpPolicy).toEqual({
+        outcome: "downscoped",
+        requestedScope: "read:tools write:tools",
+        grantedScope: "read:tools",
+      });
+
+      // Inspection lints against the GRANTED scope — the narrowed ID-JAG
+      // raises no scope issue (the original request would have).
+      await machine.proceedToNextStep(); // expose the received ID-JAG response
+      await machine.proceedToNextStep();
+      const inspected = getStateSnapshot();
+      expect(inspected.currentStep).toBe("inspect_id_jag");
+      expect(
+        (inspected.idJagDecoded?.issues || []).filter(
+          (issue) => issue.field === "scope"
+        )
+      ).toEqual([]);
+
+      // The jwt-bearer redemption asks the RAS for the granted scope.
+      await machine.proceedToNextStep();
+      const proxyCall = executor.internalRequest.mock.calls.find(
+        ([path]) => path === "/proxy/token"
+      );
+      expect(proxyCall).toBeDefined();
+      const proxyBody = JSON.parse(String((proxyCall![1] as RequestInit).body));
+      expect(proxyBody.scope).toBe("read:tools");
+    });
+
+    it("preserves an explicit empty granted scope — redemption never falls back to the request", async () => {
+      const { machine, executor, getStateSnapshot } = buildManagedHarness({
+        configExtras: { ...MANAGED_CONFIG },
+        stateExtras: {
+          scope: "read:tools write:tools",
+          tokenEndpoint: "https://auth.example.com/oauth/token",
+        },
+        mintResult: (token) => ({
+          ...specTokenExchangeResult(token),
+          // Zero-scope grant: everything requested was stripped.
+          body: { ...specTokenExchangeResult(token).body, scope: "" },
+        }),
+        // The minted ID-JAG carries no scope claim.
+        idJagClaims: {},
+      });
+
+      await machine.proceedToNextStep();
+      // "" must survive into grantedScope — dropping it would make
+      // `grantedScope ?? state.scope` resurrect the stripped request.
+      expect(getStateSnapshot().idpPolicy).toEqual({
+        outcome: "downscoped",
+        requestedScope: "read:tools write:tools",
+        grantedScope: "",
+      });
+
+      await machine.proceedToNextStep(); // expose the received ID-JAG response
+      await machine.proceedToNextStep(); // inspect (scopeless JAG, no issue)
+      await machine.proceedToNextStep(); // jwt-bearer redemption
+      const proxyCall = executor.internalRequest.mock.calls.find(
+        ([path]) => path === "/proxy/token"
+      );
+      expect(proxyCall).toBeDefined();
+      const proxyBody = JSON.parse(String((proxyCall![1] as RequestInit).body));
+      // The redemption must NOT request the original scopes the IdP removed.
+      expect(proxyBody.scope ?? "").not.toContain("read:tools");
     });
   });
 
@@ -1042,6 +1445,22 @@ describe("createXAAStateMachine", () => {
       expect(
         externalUrls.some((u) => u.includes("oauth-authorization-server"))
       ).toBe(false);
+      expect(
+        state.infoLogs?.find(
+          (log) => log.id === "xaa-resource-metadata-skipped-request"
+        )
+      ).toBeDefined();
+      expect(
+        state.infoLogs?.find(
+          (log) => log.id === "xaa-authz-metadata-skipped-request"
+        )
+      ).toBeDefined();
+      expect(
+        state.infoLogs?.find((log) => log.id === "xaa-resource-metadata-skipped")
+      ).toBeDefined();
+      expect(
+        state.infoLogs?.find((log) => log.id === "xaa-authz-metadata-skipped")
+      ).toBeDefined();
     });
 
     it("skips resource discovery when the issuer is configured but still discovers the token endpoint", async () => {
@@ -1097,15 +1516,30 @@ describe("createXAAStateMachine", () => {
         authzServerIssuer: "https://auth.example.com",
       });
 
-      // idle -> (skip resource) -> received_resource_metadata
+      // The network probe is skipped, but both visible diagram actions still
+      // consume one Continue click apiece.
+      await machine.proceedToNextStep();
+      expect(state.currentStep).toBe("discover_resource_metadata");
+      expect(
+        state.infoLogs?.find(
+          (log) => log.id === "xaa-resource-metadata-skipped-request"
+        )
+      ).toBeDefined();
       await machine.proceedToNextStep();
       expect(state.currentStep).toBe("received_resource_metadata");
+      expect(
+        state.infoLogs?.find((log) => log.id === "xaa-resource-metadata-skipped")
+      ).toBeDefined();
       expect(
         externalUrls.some((u) => u.includes("oauth-protected-resource"))
       ).toBe(false);
 
-      // received_resource_metadata -> AS discovery (RFC 8414) actually runs
-      await machine.proceedToNextStep();
+      // received_resource_metadata -> AS discovery (RFC 8414): request + process
+      await advanceUntil(
+        machine,
+        () => state.currentStep,
+        "received_authz_metadata"
+      );
       expect(state.currentStep).toBe("received_authz_metadata");
       expect(state.tokenEndpoint).toBe("https://auth.example.com/oauth/token");
       expect(
@@ -1170,7 +1604,11 @@ describe("createXAAStateMachine", () => {
         requestExecutor: executor,
       });
 
-      await machine.proceedToNextStep();
+      await advanceUntil(
+        machine,
+        () => state.currentStep,
+        "received_resource_metadata"
+      );
 
       expect(state.currentStep).toBe("received_resource_metadata");
       expect(state.authzServerIssuer).toBe("https://auth.example.com");
@@ -1271,8 +1709,11 @@ describe("createXAAStateMachine", () => {
         requestExecutor: executor,
         clientSecret: overrides.clientSecret,
       });
-      await machine.proceedToNextStep(); // discover_resource_metadata
-      await machine.proceedToNextStep(); // discover_authz_metadata
+      await advanceUntil(
+        machine,
+        () => state.currentStep,
+        "received_authz_metadata"
+      );
       return state;
     }
 
@@ -1349,10 +1790,46 @@ describe("createXAAStateMachine", () => {
 const DCR_SECRET = "dcr-minted-secret-value-123";
 const REGISTRATION_ENDPOINT = "https://auth.example.com/oauth/register";
 
-// Mirrors dcrCacheKeyFor: encodeURIComponent each component, join with "::".
-// Harness target key is "target-1".
 const dcrCacheKey = (endpoint: string, scope: string) =>
-  ["target-1", endpoint, scope].map(encodeURIComponent).join("::");
+  buildXaaDcrCredentialCacheKey({
+    targetKey: "target-1",
+    registrationEndpoint: endpoint,
+    scope,
+  });
+
+describe("DCR credential cache helpers", () => {
+  it("keys credentials by target, endpoint, and scope without delimiter collisions", () => {
+    expect(
+      buildXaaDcrCredentialCacheKey({
+        targetKey: "target::one",
+        registrationEndpoint: REGISTRATION_ENDPOINT,
+        scope: "read::tools",
+      })
+    ).toBe(
+      ["target::one", REGISTRATION_ENDPOINT, "read::tools"]
+        .map(encodeURIComponent)
+        .join("::")
+    );
+  });
+
+  it("expires only finite confidential-client secrets", () => {
+    expect(
+      isXaaDcrClientSecretExpired(
+        { clientSecret: "secret", clientSecretExpiresAt: 99 },
+        100
+      )
+    ).toBe(true);
+    expect(
+      isXaaDcrClientSecretExpired(
+        { clientSecret: "secret", clientSecretExpiresAt: 0 },
+        100
+      )
+    ).toBe(false);
+    expect(
+      isXaaDcrClientSecretExpired({ clientSecretExpiresAt: 99 }, 100)
+    ).toBe(false);
+  });
+});
 
 interface DynamicHarnessOptions {
   strategy: "dcr" | "cimd";
@@ -1370,6 +1847,7 @@ interface DynamicHarnessOptions {
   cache?: Map<string, XaaEphemeralDcrCredentials>;
   registrationId?: string;
   seedDuplicateRisk?: boolean;
+  organizationId?: string;
 }
 
 function createDynamicHarness(options: DynamicHarnessOptions) {
@@ -1383,6 +1861,7 @@ function createDynamicHarness(options: DynamicHarnessOptions) {
     userId: "user-12345",
     email: "demo.user@example.com",
     scope: "read:tools",
+    organizationId: options.organizationId,
     registrationStrategy: options.strategy,
     // Simulates the per-target duplicate-risk flag re-seeded into a fresh
     // (from-idle) run after an ordinary reset.
@@ -1580,6 +2059,7 @@ function createDynamicHarness(options: DynamicHarnessOptions) {
     userId: "user-12345",
     email: "demo.user@example.com",
     scope: "read:tools",
+    organizationId: options.organizationId,
     registrationStrategy: options.strategy,
     registrationId: options.registrationId,
     dcrCredentialCache: {
@@ -1927,6 +2407,19 @@ describe("open dcr registration strategy", () => {
     expect(first.registerCalls()).toHaveLength(1);
 
     const second = createDynamicHarness({ strategy: "dcr", cache });
+    await advanceUntil(
+      second.machine,
+      () => second.getState().currentStep,
+      "received_authz_metadata"
+    );
+
+    // The diagram must know that its next action is the single local reuse
+    // arrow before the user clicks it; otherwise it first shows a registration
+    // request and swaps that arrow out during the click.
+    expect(second.getState().dcrRegistrationReused).toBe(true);
+    await second.machine.proceedToNextStep();
+    expect(second.getState().currentStep).toBe("received_client_credentials");
+
     await second.machine.runAll();
     const state = second.getState();
 
@@ -1995,9 +2488,11 @@ describe("open dcr registration strategy", () => {
     });
     // Behavior, not just the flag: at received_authz_metadata the machine
     // goes straight to IdP authentication — no registration POST is issued.
-    for (let index = 0; index < 3; index += 1) {
-      await harness.machine.proceedToNextStep();
-    }
+    await advanceUntil(
+      harness.machine,
+      () => harness.getState().currentStep,
+      "received_identity_assertion"
+    );
     expect(harness.registerCalls()).toHaveLength(0);
     expect(
       harness.internalCalls.some((call) => call.path === "/authenticate")
@@ -2199,6 +2694,100 @@ describe("cimd registration strategy", () => {
     expect(harness.getState().error).toContain("malformed");
   });
 
+  it("adopts a confidential (private_key_jwt) document and redeems with it, no public_client warning", async () => {
+    const harness = createDynamicHarness({
+      strategy: "cimd",
+      authzMetadataExtras: CIMD_SUPPORTED,
+      cimdResponse: {
+        status: 200,
+        headers: { "content-type": "application/json" },
+        body: {
+          client_id: XAA_DEBUG_CLIENT_ID_METADATA_URL,
+          grant_types: [
+            "urn:ietf:params:oauth:grant-type:token-exchange",
+            "urn:ietf:params:oauth:grant-type:jwt-bearer",
+          ],
+          authorization_grant_profiles_supported: [
+            "urn:ietf:params:oauth:grant-profile:id-jag",
+          ],
+          token_endpoint_auth_method: "private_key_jwt",
+          jwks: {
+            keys: [
+              {
+                kty: "EC",
+                crv: "P-256",
+                x: "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+                y: "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0",
+                kid: "xaa-client-1",
+                alg: "ES256",
+                use: "sig",
+              },
+            ],
+          },
+        },
+      },
+    });
+    await harness.machine.runAll();
+    const state = harness.getState();
+
+    expect(state.currentStep).toBe("complete");
+    expect(state.clientId).toBe(XAA_DEBUG_CLIENT_ID_METADATA_URL);
+    expect(state.tokenEndpointAuthMethod).toBe("private_key_jwt");
+    // Confidential clients carry no public_client warning.
+    expect(
+      state.registrationWarnings?.some((w) => w.code === "public_client")
+    ).toBe(false);
+
+    // The method flows to the redemption request, keeping the URL identity and
+    // never a secret. The executor signs the client_assertion from the method.
+    const proxyBody = harness.proxyTokenBody();
+    expect(proxyBody.clientId).toBe(XAA_DEBUG_CLIENT_ID_METADATA_URL);
+    expect(proxyBody.clientSecret).toBeUndefined();
+    expect(proxyBody.tokenEndpointAuthMethod).toBe("private_key_jwt");
+    expect(proxyBody.organizationId).toBeUndefined();
+  });
+
+  it("includes the active org only for resolved private_key_jwt CIMD redemption", async () => {
+    const harness = createDynamicHarness({
+      strategy: "cimd",
+      organizationId: "org_123",
+      authzMetadataExtras: CIMD_SUPPORTED,
+      cimdResponse: {
+        status: 200,
+        headers: { "content-type": "application/json" },
+        body: {
+          client_id: XAA_DEBUG_CLIENT_ID_METADATA_URL,
+          grant_types: [
+            "urn:ietf:params:oauth:grant-type:token-exchange",
+            "urn:ietf:params:oauth:grant-type:jwt-bearer",
+          ],
+          authorization_grant_profiles_supported: [
+            "urn:ietf:params:oauth:grant-profile:id-jag",
+          ],
+          token_endpoint_auth_method: "private_key_jwt",
+          jwks: {
+            keys: [
+              {
+                kty: "EC",
+                crv: "P-256",
+                x: "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+                y: "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0",
+                kid: "xaa-client-1",
+                alg: "ES256",
+                use: "sig",
+              },
+            ],
+          },
+        },
+      },
+    });
+    await harness.machine.runAll();
+    expect(harness.proxyTokenBody()).toMatchObject({
+      tokenEndpointAuthMethod: "private_key_jwt",
+      organizationId: "org_123",
+    });
+  });
+
   const cimdDoc = {
     client_id: XAA_DEBUG_CLIENT_ID_METADATA_URL,
     grant_types: [
@@ -2387,8 +2976,11 @@ describe("createXAAStateMachine discovery guards", () => {
       });
     });
 
-    await machine.proceedToNextStep();
-    await machine.proceedToNextStep();
+    await advanceUntil(
+      machine,
+      () => getState().currentStep,
+      "received_authz_metadata"
+    );
 
     expect(getState().currentStep).toBe("received_authz_metadata");
     expect(getState().authzServerIssuer).toBe(liveIssuer);
@@ -2413,5 +3005,379 @@ describe("createXAAStateMachine discovery guards", () => {
 
     expect(getState().currentStep).toBe("discover_authz_metadata");
     expect(getState().error).toMatch(/does not match/i);
+  });
+});
+
+describe("createXAAStateMachine SAML axes", () => {
+  const fakeSamlAssertionB64 = Buffer.from(
+    `<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_a1"/>`
+  ).toString("base64");
+
+  function samlExecutor(options: { subjectIdFormatParam?: boolean } = {}) {
+    const idJag = makeJwt({
+      iss: "https://issuer.example/api/web/xaa",
+      sub: "user-12345",
+      aud: "https://auth.example.com",
+      resource: "https://mcp.example.com",
+      client_id: "mcpjam-debugger",
+      exp: Math.floor(Date.now() / 1000) + 300,
+      ...(options.subjectIdFormatParam
+        ? {
+            sub_id: {
+              format: "saml-nameid",
+              issuer: "https://issuer.example/api/web/xaa",
+              nameid: "user-12345",
+              sp_name_qualifier: "https://auth.example.com",
+            },
+          }
+        : {}),
+    });
+
+    return {
+      idJag,
+      executor: {
+        externalRequest: vi.fn(async () => ({
+          status: 200,
+          statusText: "OK",
+          headers: {},
+          body: {
+            jsonrpc: "2.0",
+            id: "mcpjam-xaa-cli",
+            result: {
+              protocolVersion: "2025-11-25",
+              serverInfo: { name: "demo" },
+            },
+          },
+          ok: true,
+        })),
+        internalRequest: vi.fn(async (path: string) => {
+          if (path === "/authenticate") {
+            return {
+              status: 200,
+              statusText: "OK",
+              headers: {},
+              body: {
+                assertion: fakeSamlAssertionB64,
+                assertion_format: "saml",
+                token_type: "Bearer",
+                expires_in: 300,
+                subject: {
+                  issuer: "https://issuer.example/api/web/xaa",
+                  nameid: "user-12345",
+                  nameidFormat:
+                    "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+                  spNameQualifier: "mcpjam-xaa-debugger",
+                },
+                user: { sub: "user-12345", email: "demo.user@example.com" },
+              },
+              ok: true,
+            };
+          }
+          if (path === "/token") {
+            return specTokenExchangeResult(idJag);
+          }
+          return {
+            status: 200,
+            statusText: "OK",
+            headers: {},
+            body: {
+              status: 200,
+              statusText: "OK",
+              headers: {},
+              body: {
+                access_token: "access-token",
+                token_type: "Bearer",
+                expires_in: 300,
+              },
+            },
+            ok: true,
+          };
+        }),
+      },
+    };
+  }
+
+  function buildSamlMachine(
+    executor: {
+      internalRequest: ReturnType<typeof vi.fn>;
+      externalRequest: ReturnType<typeof vi.fn>;
+    },
+    stateOverrides: Partial<XAAFlowState> = {}
+  ) {
+    let state: XAAFlowState = createInitialXAAFlowState({
+      serverUrl: "https://mcp.example.com",
+      authzServerIssuer: "https://auth.example.com",
+      tokenEndpoint: "https://auth.example.com/oauth/token",
+      clientId: "mcpjam-debugger",
+      userId: "user-12345",
+      email: "demo.user@example.com",
+      identityAssertionFormat: "saml",
+      subjectIdentifierFormat: "saml-nameid",
+      ...stateOverrides,
+    });
+    const machine = createXAAStateMachine({
+      state,
+      getState: () => state,
+      updateState: (updates) => {
+        state = { ...state, ...updates };
+      },
+      serverUrl: "https://mcp.example.com",
+      issuerBaseUrl: "https://issuer.example/api/web/xaa",
+      requestExecutor: executor,
+      clientId: "mcpjam-debugger",
+      userId: "user-12345",
+      email: "demo.user@example.com",
+      identityAssertionFormat: state.identityAssertionFormat,
+      subjectIdentifierFormat: state.subjectIdentifierFormat,
+    });
+    return { machine, getState: () => state };
+  }
+
+  it("walks a full SAML run: saml2 subject_token_type + subject_id_format + subject metadata", async () => {
+    const { executor } = samlExecutor({ subjectIdFormatParam: true });
+    const { machine, getState } = buildSamlMachine(executor);
+
+    const visited = await recordEveryAdvance(
+      machine,
+      () => getState().currentStep,
+      "complete"
+    );
+
+    const state = getState();
+    expect(state.currentStep).toBe("complete");
+    expect(visited).toEqual(PREREGISTERED_XAA_ARROW_STEPS);
+    expect(state.identityAssertion).toBe(fakeSamlAssertionB64);
+    expect(state.identityAssertionSubject).toEqual({
+      issuer: "https://issuer.example/api/web/xaa",
+      nameid: "user-12345",
+      nameidFormat: "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
+      spNameQualifier: "mcpjam-xaa-debugger",
+    });
+
+    // The authenticate request declares the input axis.
+    const authCall = executor.internalRequest.mock.calls.find(
+      ([path]) => path === "/authenticate"
+    );
+    expect(JSON.parse(String(authCall?.[1]?.body)).assertionFormat).toBe(
+      "saml"
+    );
+
+    // The RFC 8693 exchange presents the SAML token type and asks for the
+    // saml-nameid output axis via the mock-extension param.
+    const tokenCall = executor.internalRequest.mock.calls.find(
+      ([path]) => path === "/token"
+    );
+    const form = new URLSearchParams(String(tokenCall?.[1]?.body));
+    expect(form.get("subject_token")).toBe(fakeSamlAssertionB64);
+    expect(form.get("subject_token_type")).toBe(
+      "urn:ietf:params:oauth:token-type:saml2"
+    );
+    expect(form.get("subject_id_format")).toBe("saml-nameid");
+
+    // Format-aware log label.
+    const assertionLog = state.infoLogs?.find(
+      (log) => log.id === "xaa-identity-assertion"
+    );
+    expect(assertionLog?.label).toBe("SAML assertion issued");
+    expect(assertionLog?.data).toMatchObject({ nameid: "user-12345" });
+
+    // The assertion stays out of every diagnostic surface.
+    const diagnostics = JSON.stringify({
+      lastRequest: state.lastRequest,
+      lastResponse: state.lastResponse,
+      httpHistory: state.httpHistory,
+      infoLogs: state.infoLogs,
+      error: state.error,
+    });
+    expect(diagnostics).not.toContain(fakeSamlAssertionB64);
+  });
+
+  it("omits subject_id_format for the oauth-sub output axis (OIDC wire unchanged)", async () => {
+    const { executor } = samlExecutor();
+    const { machine, getState } = buildSamlMachine(executor, {
+      subjectIdentifierFormat: "oauth-sub",
+    });
+
+    await machine.runAll();
+
+    expect(getState().currentStep).toBe("complete");
+    const tokenCall = executor.internalRequest.mock.calls.find(
+      ([path]) => path === "/token"
+    );
+    expect(tokenCall).toBeDefined();
+    const form = new URLSearchParams(String(tokenCall?.[1]?.body));
+    expect(form.get("subject_token_type")).toBe(
+      "urn:ietf:params:oauth:token-type:saml2"
+    );
+    expect(form.get("subject_id_format")).toBeNull();
+  });
+
+  it("hard-fails when a SAML run receives an OIDC-only response (older issuer)", async () => {
+    const { executor } = samlExecutor();
+    executor.internalRequest.mockImplementation(async (path: string) => {
+      if (path === "/authenticate") {
+        return {
+          status: 200,
+          statusText: "OK",
+          headers: {},
+          body: { id_token: "an-oidc-token" },
+          ok: true,
+        };
+      }
+      throw new Error("unexpected call");
+    });
+    const { machine, getState } = buildSamlMachine(executor);
+
+    await machine.runAll();
+
+    const state = getState();
+    expect(state.currentStep).toBe("user_authentication");
+    expect(state.error).toMatch(/did not include an `assertion`/);
+    expect(state.identityAssertion).toBeUndefined();
+  });
+
+  it("keeps both format axes sticky across resetFlow", async () => {
+    const { executor } = samlExecutor();
+    const { machine, getState } = buildSamlMachine(executor);
+
+    await machine.proceedToNextStep();
+    machine.resetFlow();
+
+    const state = getState();
+    expect(state.currentStep).toBe("idle");
+    expect(state.identityAssertionFormat).toBe("saml");
+    expect(state.subjectIdentifierFormat).toBe("saml-nameid");
+    expect(state.identityAssertionSubject).toBeUndefined();
+  });
+
+  it("defaults both axes to oidc/oauth-sub and sends assertionFormat=oidc", async () => {
+    let state: XAAFlowState = createInitialXAAFlowState({
+      serverUrl: "https://mcp.example.com",
+      authzServerIssuer: "https://auth.example.com",
+      tokenEndpoint: "https://auth.example.com/oauth/token",
+      clientId: "mcpjam-debugger",
+      currentStep: "received_authz_metadata",
+    });
+    expect(state.identityAssertionFormat).toBe("oidc");
+    expect(state.subjectIdentifierFormat).toBe("oauth-sub");
+
+    const executor = {
+      externalRequest: vi.fn(),
+      internalRequest: vi.fn(async () => ({
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        body: { id_token: "id-token" },
+        ok: true,
+      })),
+    };
+    const machine = createXAAStateMachine({
+      state,
+      getState: () => state,
+      updateState: (updates) => {
+        state = { ...state, ...updates };
+      },
+      serverUrl: "https://mcp.example.com",
+      issuerBaseUrl: "https://issuer.example/api/web/xaa",
+      requestExecutor: executor,
+      clientId: "mcpjam-debugger",
+    });
+
+    await machine.proceedToNextStep();
+    await machine.proceedToNextStep();
+
+    const authCall = executor.internalRequest.mock.calls[0];
+    expect(JSON.parse(String(authCall?.[1]?.body)).assertionFormat).toBe(
+      "oidc"
+    );
+    expect(state.currentStep).toBe("received_identity_assertion");
+    expect(state.identityAssertion).toBe("id-token");
+  });
+});
+
+describe("negative-test probe is terminal", () => {
+  it("shows the JWT request and accepted-token response on separate clicks", async () => {
+    let state: XAAFlowState = createInitialXAAFlowState({
+      serverUrl: "https://mcp.example.com",
+      resourceUrl: "https://mcp.example.com",
+      authzServerIssuer: "https://auth.example.com",
+      tokenEndpoint: "https://auth.example.com/token",
+      clientId: "mcpjam-debugger",
+      idJag: "broken-id-jag",
+      currentStep: "inspect_id_jag",
+      negativeTestMode: "unknown_kid",
+    });
+    const externalRequest = vi.fn();
+    const internalRequest = vi.fn(async () => ({
+      status: 200,
+      statusText: "OK",
+      headers: {},
+      body: {
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        body: {
+          access_token: "illegitimate-token",
+          token_type: "Bearer",
+          expires_in: 300,
+        },
+      },
+      ok: true,
+    }));
+    const machine = createXAAStateMachine({
+      state,
+      getState: () => state,
+      updateState: (updates) => {
+        state = { ...state, ...updates };
+      },
+      serverUrl: "https://mcp.example.com",
+      issuerBaseUrl: "https://issuer.example/api/web/xaa",
+      requestExecutor: { externalRequest, internalRequest },
+      negativeTestMode: "unknown_kid",
+      clientId: "mcpjam-debugger",
+      authzServerIssuer: "https://auth.example.com",
+    });
+
+    await machine.proceedToNextStep();
+    expect(state.currentStep).toBe("jwt_bearer_request");
+    expect(state.negativeProbe).toBeUndefined();
+    expect(state.accessToken).toBe("illegitimate-token");
+
+    await machine.proceedToNextStep();
+    expect(state.currentStep).toBe("received_access_token");
+    expect(state.negativeProbe).toEqual({ outcome: "accepted", status: 200 });
+    expect(
+      state.infoLogs?.find((entry) => entry.id === "xaa-negative-accepted")
+        ?.data
+    ).toEqual({ status: 200, mode: "unknown_kid" });
+    expect(externalRequest).not.toHaveBeenCalled();
+  });
+
+  it("does not advance past an accepted probe into the authenticated MCP call", async () => {
+    // A negative-mode run the authorization server WRONGLY accepts rests at
+    // received_access_token with negativeProbe set. A direct proceedToNextStep
+    // must not carry the illegitimately issued token into the MCP request.
+    let state: XAAFlowState = createInitialXAAFlowState({
+      serverUrl: "https://mcp.example.com",
+      accessToken: "leaked-token",
+      currentStep: "received_access_token",
+      negativeProbe: { outcome: "accepted", status: 200 },
+    });
+    const externalRequest = vi.fn();
+    const machine = createXAAStateMachine({
+      state,
+      getState: () => state,
+      updateState: (updates) => {
+        state = { ...state, ...updates };
+      },
+      serverUrl: "https://mcp.example.com",
+      issuerBaseUrl: "https://issuer.example/api/web/xaa",
+      requestExecutor: { externalRequest, internalRequest: vi.fn() },
+    });
+
+    await machine.proceedToNextStep();
+
+    expect(state.currentStep).toBe("received_access_token");
+    expect(externalRequest).not.toHaveBeenCalled();
   });
 });

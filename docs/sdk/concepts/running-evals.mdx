@@ -4,7 +4,7 @@ description: "Measure tool accuracy with statistical evaluations"
 icon: "chart-bar"
 ---
 
-LLMs are probabilistic—the same prompt might produce different results each time. Running a test once tells you it *can* work, not that it *reliably* works. Evals run the same test many times and measure statistical accuracy.
+LLMs are probabilistic, so the same prompt might produce different results each time. Running a test once tells you it *can* work, not that it *reliably* works. Evals run the same test many times and measure statistical accuracy.
 
 ## Why Run Evals?
 
@@ -170,24 +170,28 @@ See [Eval reporting — Tool execution and `passed`](/sdk/reference/eval-reporti
 
 ### Predicate gate
 
-`successPredicates` lets you express richer pass/fail criteria beyond tool-call matching — without an LLM judge. Predicates are pure functions of the iteration transcript, so they produce the same verdict every time and are safe to use as a CI release gate.
+Predicates express richer pass/fail criteria than tool-call matching — without an LLM judge. Each predicate is a pure function of the iteration transcript, so it produces the same verdict every time, which makes it safe to use as a CI release gate.
 
-A case passes iff **all** predicates pass. An absent or empty list means no predicate gate.
+Predicates are authored in the corpus JSON (the Inspector's per-case **Checks** editor writes the same shape) and threaded through the runner automatically; there is no predicate field to set on individual uploaded results. A case passes iff **all** predicates pass. An absent or empty list means no predicate gate.
 
-The eight built-in predicate types:
+The twelve built-in predicate types:
 
 | Type | What it checks |
 |------|----------------|
 | `toolCalledWith` | A specific tool was called with matching args (partial/exact/ignore mode) |
 | `toolCalledAtLeastOnce` | A tool was called at least once |
 | `toolNeverCalled` | A forbidden tool was never called |
+| `firstToolWas` | The first tool call in the transcript was a specific tool |
 | `responseContains` | The final assistant message contains a substring |
 | `responseMatches` | The final assistant message matches a regex |
 | `noToolErrors` | No tool produced an error (MCP `isError` or transport failure) |
 | `finalAssistantMessageNonEmpty` | The final assistant message is non-empty |
 | `tokenBudgetUnder` | Total token usage is strictly under a budget |
+| `widgetRendered` | At least one MCP App widget rendered successfully (optionally scoped to one tool) |
+| `widgetRenderLatencyUnder` | Every rendered widget mounted in strictly under a millisecond budget |
+| `widgetNoConsoleErrors` | No widget render captured console errors |
 
-Predicates are authored in the corpus JSON (V1) and threaded through the runner automatically. See [Predicate gate reference](/sdk/reference/eval-reporting#predicate-gate) for the full type definitions and a code example.
+When an iteration records no widget render observations, the three `widget*` predicates fail rather than pass — a missing signal counts as a failure. See [Predicate gate reference](/sdk/reference/eval-reporting#predicate-gate) for the full type definitions and a code example.
 
 ### Suite Results
 
@@ -288,7 +292,7 @@ await manager.connectToServer("everything", {
 
 const host = new Host({
   style: "mcpjam",
-  model: "openai/gpt-4o",
+  model: "openai/gpt-5.6-sol",
   systemPrompt: "You are a helpful assistant.",
 }).requireServer("everything");
 
@@ -304,7 +308,35 @@ const test = new EvalTest({
 await test.run(runtime, { iterations: 10 });
 ```
 
-`HostRuntime` (returned by `host.withManager(...)`) snapshots the live `Host` on every `.run()`, so mutating the bound host between iterations takes effect on the next iteration. `HostRunner` snapshots once at construction — pick `HostRunner` for a static spec, `HostRuntime` when you want the spec editable across calls.
+`HostRuntime` (returned by `host.withManager(...)`) snapshots the live `Host` on every `.run()`, so mutating the bound host between iterations takes effect on the next iteration. `HostRunner` snapshots once at construction. Pick `HostRunner` for a static spec, `HostRuntime` when you want the spec editable across calls.
+
+**Personal computer.** A `Host` can declare a personal cloud workstation via the `computer` property (type `HostComputer`, exported from `@mcpjam/sdk`). When set, the chatbox surfaces a `bash` tool and a web terminal for signed-in members. Use `setComputer()` to attach or detach it fluently:
+
+```typescript
+import { Host, type HostComputer } from "@mcpjam/sdk";
+
+// Attach with the default shape
+const host = new Host({ style: "mcpjam", model: "openai/gpt-5.6-sol" })
+  .setComputer();
+
+// Attach with an initial working directory
+host.setComputer({ kind: "personal", toolset: "bash", workdir: "/srv/app" });
+
+// Detach
+host.setComputer(null);
+```
+
+Or pass it directly in the constructor:
+
+```typescript
+const host = new Host({
+  style: "mcpjam",
+  model: "openai/gpt-5.6-sol",
+  computer: { kind: "personal", toolset: "bash" },
+});
+```
+
+`null` and an absent `computer` field hash identically, so existing host configs are unaffected. The `computer` field is automatically stripped from eval wire configs — evals never target personal computers.
 
 **Statelessness.** `HostRuntime.run()` does NOT auto-replay history across turns. Use `PromptOptions.context` to thread context explicitly:
 
@@ -313,7 +345,7 @@ const r1 = await runtime.run("Who am I?");
 const r2 = await runtime.run("List my projects", { context: [r1] });
 ```
 
-**Eval reporting (Stage 5).** When you upload results to MCPJam, the reporter additionally sends the canonical host config alongside each run (`{ hostConfig, hostConfigHash }`) so the persisted row in the Evals UI shows the exact host you ran with. Pass 1 sends a run-level snapshot only when all iteration snapshots match; heterogeneous runs (mutating the bound `Host` between iterations) omit the run-level field for now. Old backends without the capability are unaffected. Source order is `iteration.hostSnapshot` → `executor.getHostSnapshot?.()` → `MCPJamReportingConfig.host`.
+**Eval reporting (Stage 5).** When you upload results to MCPJam and the reporter can resolve a host snapshot, it sends the canonical host config alongside the run (`{ hostConfig, hostConfigHash }`) so the persisted row in the Evals UI shows the exact host you ran with — the v1 ingest surface always accepts the pair. The snapshot comes from `executor.getHostSnapshot?.()`, falling back to `MCPJamReportingConfig.host`; result-only uploads with neither source omit the pair. Uploaded results don't yet carry a per-iteration `hostSnapshot` field, so the pair stays run-level for now.
 
 ## Generate evals from the Inspector
 

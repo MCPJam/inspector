@@ -28,6 +28,13 @@ import {
   type PreparedEvalRun,
 } from "../routes/shared/evals.js";
 import { fetchSuiteRunServerSelection } from "../routes/v1/evals.js";
+import { createConvexClient } from "./evals/route-helpers.js";
+import {
+  environmentServerIds,
+  environmentServerNames,
+  resolveEnvironmentForLaunch,
+  type ResolvedEnvironmentForLaunch,
+} from "./evals/environment-launch.js";
 
 const POLL_INTERVAL_MS = 15_000;
 const POLL_JITTER_MS = 5_000;
@@ -44,6 +51,14 @@ type ClaimedScheduledRun = {
   projectId: string | null;
   createdByExternalId: string;
   scheduledFor: number;
+  /**
+   * The schedule's pinned project environment (required for multi-env
+   * suites, defaulted for single-env, null for legacy suites). The worker
+   * MUST forward it to `prepareEvalRun` regardless of any browser feature
+   * flag — claims are data-driven. Optional for wire tolerance against a
+   * backend that predates the field.
+   */
+  environmentId?: string | null;
 };
 
 export function isScheduledEvalsWorkerEnabled(): boolean {
@@ -169,14 +184,43 @@ export async function executeClaimedRun(
       claimed.createdByExternalId,
       claimed.organizationId,
     );
-    const selection = await fetchSuiteRunServerSelection(
-      bearer,
-      claimed.suiteId,
-      undefined,
-    );
+    // Environment claims connect the environment's authoritatively resolved
+    // closed set, not the suite's saved selection — the saved selection
+    // predates (or ignores) the pinned environment. The SAME resolution is
+    // handed to prepareEvalRun (`resolvedEnvironment`), so the revision the
+    // run-start mutation asserts matches the set the manager connected; an
+    // environment edit after this point loses the revision check and the
+    // trigger's idempotency path retries cleanly.
+    const selection: {
+      serverIds: string[];
+      serverNames: string[];
+      resolvedEnvironment?: ResolvedEnvironmentForLaunch;
+    } = claimed.environmentId
+      ? await (async () => {
+          const resolved = await resolveEnvironmentForLaunch(
+            createConvexClient(bearer),
+            {
+              projectId: claimed.projectId!,
+              environmentId: claimed.environmentId!,
+            },
+          );
+          return {
+            serverIds: environmentServerIds(resolved),
+            serverNames: environmentServerNames(resolved),
+            resolvedEnvironment: resolved,
+          };
+        })()
+      : await fetchSuiteRunServerSelection(bearer, claimed.suiteId, undefined);
 
     // Empty caller context = plain-JWT caller (locked by caller-context
     // contract test); the delegated JWT is the principal.
+    //
+    // NO xaaIssuer/xaaPolicy here: the worker has no request Context to
+    // derive the issuer from, and the scheduled-suite selection carries no
+    // host-persona input, so there is no enterprise policy to enforce. A
+    // per-server XAA (`useXaa`) server in a scheduled suite fails closed in
+    // the manager builder ("Missing XAA issuer") — the pre-existing behavior
+    // on this surface. Lifting it needs an env-derived public issuer URL.
     const authorized = await createAuthorizedManager(
       {},
       bearer,
@@ -193,12 +237,20 @@ export async function executeClaimedRun(
     try {
       prepared = await prepareEvalRun(manager, {
         suiteId: claimed.suiteId,
+        // Non-null here (the no-project guard above returned already).
+        projectId: claimed.projectId ?? undefined,
         tests: [],
         serverIds: selection.serverIds,
         serverNames: selection.serverNames,
         convexAuthToken: bearer,
         suiteRerun: true,
         source: "schedule",
+        ...(claimed.environmentId
+          ? { environmentId: claimed.environmentId }
+          : {}),
+        ...(selection.resolvedEnvironment
+          ? { resolvedEnvironment: selection.resolvedEnvironment }
+          : {}),
         // Claim retries can never double-create a run: the mutation's
         // idempotency lookup wins over the 30s fingerprint window.
         idempotencyKey: claimed.triggerId,

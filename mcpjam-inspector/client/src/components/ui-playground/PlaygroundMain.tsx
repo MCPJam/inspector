@@ -23,6 +23,10 @@ import {
 import type { CSSProperties, ReactNode } from "react";
 import { Braces, Loader2, Trash2 } from "lucide-react";
 import {
+  ElicitationRequestDialog,
+  UrlElicitationRequiredDialog,
+} from "@/components/elicitation/ElicitationRequestDialog";
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -109,6 +113,14 @@ import {
 } from "@/lib/client-config-v2";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useHarnessBuiltinTools } from "@/hooks/useHarnessBuiltinTools";
+import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useComputerAttachmentUpload } from "@/hooks/useComputerAttachmentUpload";
+import { buildComputerAttachmentNote } from "@/lib/computer-attachments";
+import {
+  getBillingErrorMessage,
+  isComputerStartLimitError,
+} from "@/lib/billing-entitlements";
+import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import { useAgentToolPromptBridge } from "@/stores/agent-tool-prompt-bridge";
 import { usePersistedHost } from "@/hooks/use-persisted-host";
 import { usePlaygroundHostSlots } from "@/hooks/use-playground-host-slots";
@@ -174,6 +186,10 @@ import {
   prefetchChatHistorySession,
 } from "@/components/chat-v2/history/chat-history-prefetch";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
+import {
+  resolveSelectablePlaygroundModel,
+  usePlaygroundAgentControlsBridgeStore,
+} from "@/components/playground/playground-agent-controls-bridge";
 import { WebApiError } from "@/lib/apis/web/base";
 import { useDirectChatSessionSubscription } from "@/hooks/use-direct-chat-session-subscription";
 import { WidgetSurfaceProvider } from "@/contexts/widget-surface-context";
@@ -655,6 +671,20 @@ export function PlaygroundMain({
   // Hosted mode context (projectId, serverIds, OAuth tokens)
   const activeProject = appState.projects[appState.activeProjectId];
   const convexProjectId = activeProject?.sharedProjectId ?? null;
+
+  // COMP-14: when the previewed host attaches a personal computer, composer
+  // attachments are ALSO uploaded into the sandbox (reserve → mint → upload,
+  // the same primitives the Shell uses) and the outgoing message carries a
+  // system-visible note with the sandbox paths so the model's bash tool can
+  // reach them. Signed-in only — guests keep today's inline-only attachments
+  // (the backend rejects guest computer reservations for host-bound previews).
+  // The `computer` gate itself lives below, once the previewed host resolves.
+  const computersEnabled = useComputersEnabled();
+  const computerAttachmentUpload = useComputerAttachmentUpload({
+    projectId: convexProjectId,
+    isAuthenticated: isConvexAuthenticated,
+  });
+  const attachmentUploadInFlightRef = useRef(false);
   const hostedOrgModelConfig = useHostedOrgModelConfig({
     projectId: convexProjectId,
     organizationId: activeProject?.organizationId ?? null,
@@ -724,6 +754,14 @@ export function PlaygroundMain({
   const { tools: harnessBuiltinTools } =
     useHarnessBuiltinTools(previewedHostId);
 
+  // COMP-14 gate: composer attachments go into the sandbox only when the
+  // previewed host actually attaches a computer (honesty rule — no computer, no
+  // sandbox upload; attachments stay inline-only exactly as before).
+  const computerAttachmentsActive =
+    computersEnabled &&
+    isConvexAuthenticated &&
+    !!previewedHost?.config?.computer;
+
   // Use shared chat session hook
   const composerOnResetRef = useRef<() => void>(() => {});
   const {
@@ -748,6 +786,9 @@ export function PlaygroundMain({
     toolsMetadata,
     toolServerMap,
     tokenUsage,
+    mcpToolsTokenCount,
+    mcpToolsTokenCountLoading,
+    mcpToolsTokenCountErrors,
     resetChat,
     startChatWithMessages,
     liveTraceEnvelope,
@@ -768,6 +809,11 @@ export function PlaygroundMain({
     restoredToolRenderOverrides,
     status,
     authHeaders,
+    pendingElicitations,
+    respondToElicitation,
+    elicitationResponding,
+    urlElicitationRequired,
+    dismissUrlElicitationRequired,
   } = useChatSession({
     selectedServers,
     directVisibility: pendingDirectVisibility,
@@ -2690,6 +2736,68 @@ export function PlaygroundMain({
     [setMultiModelEnabled, setSelectedModel, setSelectedModelIds]
   );
 
+  // Publish the chat composer's controls so the global playground agent tools
+  // (ui_select_model / ui_set_system_prompt / ui_reset_chat /
+  // ui_stop_generation), whose handlers live in the sibling `usePlaygroundState`
+  // subtree, can drive this session. Mirrors the chat-history bridge above:
+  // replace whole on any dependency change, clear to null on unmount. Only
+  // redacted state crosses (model id/name, prompt presence+length, a bounded
+  // history count + last role) — never message text or the prompt itself. The
+  // actions reuse the exact functions the composer controls call.
+  const setAgentControls = usePlaygroundAgentControlsBridgeStore(
+    (s) => s.setControls
+  );
+  useEffect(() => {
+    const lastMessage =
+      messages.length > 0 ? messages[messages.length - 1] : null;
+    setAgentControls({
+      selectedModel: selectedModel
+        ? { id: String(selectedModel.id), name: selectedModel.name }
+        : null,
+      systemPrompt: {
+        present: systemPrompt.trim().length > 0,
+        length: systemPrompt.length,
+      },
+      history: {
+        messageCount: messages.length,
+        lastRole: lastMessage ? (lastMessage.role as string) : null,
+      },
+      // Multi-model-aware streaming flag, matching the composer's stop control.
+      isGenerating: isStreamingActive,
+      selectModel: (identifier) => {
+        // Resolves the identifier AND enforces the picker's availability policy
+        // (disabled rows rejected), so the agent can't select a locked model.
+        const resolution = resolveSelectablePlaygroundModel(
+          identifier,
+          availableModels
+        );
+        if (!resolution.ok) return resolution;
+        const { model } = resolution;
+        handleSingleModelChange(model);
+        return { ok: true, model: { id: String(model.id), name: model.name } };
+      },
+      setSystemPrompt: (prompt) => setSystemPrompt(prompt),
+      resetChat: () => handleResetAllChats(),
+      stopGeneration: () => {
+        if (!isStreamingActive) return { stopped: false };
+        stopActiveChat();
+        return { stopped: true };
+      },
+    });
+    return () => setAgentControls(null);
+  }, [
+    availableModels,
+    handleResetAllChats,
+    handleSingleModelChange,
+    isStreamingActive,
+    messages,
+    selectedModel,
+    setAgentControls,
+    setSystemPrompt,
+    stopActiveChat,
+    systemPrompt,
+  ]);
+
   const handleSelectedModelsChange = useCallback(
     (models: ModelDefinition[]) => {
       const nextSelectedModels = models.slice(0, 3);
@@ -2957,6 +3065,53 @@ export function PlaygroundMain({
       setIsFullscreenChatOpen(true);
     }
 
+    // COMP-14: computer-attached host → land the attachments in the sandbox
+    // (via the existing reserve → mint → upload path; the upload route enforces
+    // the COMP-8 quota) and append a system-visible note with the sandbox paths
+    // so the model can reference them. A failed upload ABORTS the send with the
+    // composer state intact — an honest error beats a message whose files
+    // silently never reached the box. Inline file parts are unchanged (vision
+    // et al. keep working).
+    let composerText = composer.input;
+    if (fileAttachments.length > 0 && computerAttachmentsActive) {
+      if (attachmentUploadInFlightRef.current) {
+        return false;
+      }
+      attachmentUploadInFlightRef.current = true;
+      try {
+        const entries = await computerAttachmentUpload.uploadAttachments(
+          fileAttachments.map((a) => a.file)
+        );
+        const note = buildComputerAttachmentNote(entries);
+        if (note) {
+          composerText =
+            composerText.trim().length > 0
+              ? `${composerText}\n\n${note}`
+              : note;
+        }
+        track("computer_chat_attachment_uploaded", {
+          file_count: entries.length,
+        });
+      } catch (err) {
+        if (isComputerStartLimitError(err)) {
+          track("computer_start_limit_hit", {
+            location: "playground_attachments",
+          });
+          useMCPJamLimitDialogStore.getState().notifyLimitHit();
+        } else {
+          toast.error(
+            getBillingErrorMessage(
+              err,
+              "Could not upload attachments to the computer."
+            )
+          );
+        }
+        return false;
+      } finally {
+        attachmentUploadInFlightRef.current = false;
+      }
+    }
+
     const files =
       fileAttachments.length > 0
         ? await attachmentsToFileUIParts(fileAttachments)
@@ -2964,7 +3119,7 @@ export function PlaygroundMain({
 
     if (isCompareMode) {
       queueBroadcastRequest({
-        text: composer.input,
+        text: composerText,
         files,
         prependMessages: [],
         widgetModelContext: modelContextQueue,
@@ -2973,14 +3128,14 @@ export function PlaygroundMain({
     } else {
       queueBroadcastRequest(
         {
-          text: composer.input,
+          text: composerText,
           files,
           prependMessages: [],
         },
         { single_model_send: true }
       );
       sendMessage({
-        text: composer.input,
+        text: composerText,
         files,
         metadata: outgoingSenderMetadata,
         widgetModelContext: modelContextQueue,
@@ -3008,6 +3163,8 @@ export function PlaygroundMain({
     sendMessage,
     outgoingSenderMetadata,
     onFirstMessageSent,
+    computerAttachmentsActive,
+    computerAttachmentUpload,
   ]);
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -3219,9 +3376,12 @@ export function PlaygroundMain({
       isPreparingServerForSend,
     tokenUsage,
     selectedServers,
-    mcpToolsTokenCount: null,
-    mcpToolsTokenCountLoading: false,
-    connectedOrConnectingServerConfigs: { [serverName]: { name: serverName } },
+    mcpToolsTokenCount,
+    mcpToolsTokenCountLoading,
+    mcpToolsTokenCountErrors,
+    connectedOrConnectingServerConfigs: Object.fromEntries(
+      selectedServers.map((name) => [name, { name }])
+    ),
     systemPromptTokenCount: null,
     systemPromptTokenCountLoading: false,
     mcpPromptResults,
@@ -4067,6 +4227,21 @@ export function PlaygroundMain({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {/*
+        Playground had no elicitation UI at all — a server that asked for input
+        here would block until the request timed out with no way to answer.
+      */}
+      <ElicitationRequestDialog
+        key={pendingElicitations[0]?.rendezvousId ?? "none"}
+        request={pendingElicitations[0] ?? null}
+        onRespond={respondToElicitation}
+        loading={elicitationResponding}
+      />
+      <UrlElicitationRequiredDialog
+        key={urlElicitationRequired[0]?.toolCallId ?? "no-url-required"}
+        event={urlElicitationRequired[0] ?? null}
+        onDismiss={dismissUrlElicitationRequired}
+      />
     </WidgetSurfaceProvider>
   );
 }

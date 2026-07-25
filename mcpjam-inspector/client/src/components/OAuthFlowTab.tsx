@@ -87,11 +87,15 @@ const isHttpServer = (server?: ServerWithName) =>
 interface OAuthFlowTabProps {
   serverConfigs: Record<string, ServerWithName>;
   selectedServerName: string;
+  hasHeaderServers?: boolean;
+  areServersHydrated?: boolean;
   onSelectServer: (serverName: string) => void;
+  // Resolves false when the save failed (the hook toasts the reason), so
+  // callers can keep the modal open instead of treating every call as saved.
   onSaveServerConfig?: (
     formData: ServerFormData,
-    options?: { oauthProfile?: OAuthTestProfile },
-  ) => void;
+    options?: { oauthProfile?: OAuthTestProfile; originalServerName?: string },
+  ) => void | boolean | Promise<void | boolean>;
   onConnectWithTokens?: (
     serverName: string,
     tokens: OAuthTokensFromFlow,
@@ -113,6 +117,8 @@ interface OAuthFlowTabProps {
 export const OAuthFlowTab = ({
   serverConfigs,
   selectedServerName,
+  hasHeaderServers = false,
+  areServersHydrated = true,
   onSelectServer,
   onSaveServerConfig,
   onConnectWithTokens,
@@ -120,6 +126,15 @@ export const OAuthFlowTab = ({
   openProfileModalSignal,
 }: OAuthFlowTabProps) => {
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  // "edit" opens the modal prefilled with the selected server; "add" opens it
+  // blank so a new target can be saved without touching the current one.
+  const [profileModalMode, setProfileModalMode] = useState<"edit" | "add">(
+    "edit",
+  );
+  const openProfileModal = useCallback((mode: "edit" | "add") => {
+    setProfileModalMode(mode);
+    setIsProfileModalOpen(true);
+  }, []);
 
   // Open the modal when the shell bumps the signal (header "Add Server"). Skip
   // the initial value so it doesn't pop open on mount.
@@ -127,8 +142,10 @@ export const OAuthFlowTab = ({
   useEffect(() => {
     if (openProfileModalSignal === prevOpenSignalRef.current) return;
     prevOpenSignalRef.current = openProfileModalSignal;
-    setIsProfileModalOpen(true);
-  }, [openProfileModalSignal]);
+    // The header button reads "Add Server" — open blank, not prefilled with
+    // the current selection.
+    openProfileModal("add");
+  }, [openProfileModalSignal, openProfileModal]);
   const [pendingServerSelection, setPendingServerSelection] = useState<
     string | null
   >(null);
@@ -168,10 +185,19 @@ export const OAuthFlowTab = ({
   }, [pendingServerSelection, serverConfigs, onSelectServer]);
 
   useEffect(() => {
+    // On a hard reload, the project server query resolves after this tab first
+    // mounts. Do not mistake that loading gap for an empty project. If an
+    // eligible server then appears in the header, also close any dialog opened
+    // by the earlier empty state.
+    if (!areServersHydrated) return;
+    if (hasHeaderServers) {
+      setIsProfileModalOpen(false);
+      return;
+    }
     if (httpServerCount === 0) {
       setIsProfileModalOpen(true);
     }
-  }, [httpServerCount]);
+  }, [areServersHydrated, hasHeaderServers, httpServerCount]);
 
   const profile = useMemo(
     () => deriveOAuthProfileFromServer(activeServer),
@@ -285,7 +311,12 @@ export const OAuthFlowTab = ({
       customHeaders,
       registrationStrategy,
       preregisteredClientId: profile.clientId.trim() || undefined,
-      preregisteredClientSecret: profile.clientSecret.trim() || undefined,
+      // Preserve the exact typed secret — trimming would silently change a
+      // secret that legitimately has leading/trailing whitespace before it
+      // ever reaches the live OAuth token exchange.
+      preregisteredClientSecret: profile.clientSecret.trim()
+        ? profile.clientSecret
+        : undefined,
       hasClientSecret: Boolean(activeServer?.hasClientSecret),
     });
   }, [
@@ -425,7 +456,11 @@ export const OAuthFlowTab = ({
   ]);
 
   useEffect(() => {
-    const processOAuthCallback = (code: string, state: string | undefined) => {
+    const processOAuthCallback = (
+      code: string,
+      state: string | undefined,
+      iss?: string | undefined
+    ) => {
       if (processedCodeRef.current === code) {
         return;
       }
@@ -464,6 +499,10 @@ export const OAuthFlowTab = ({
 
       updateOAuthFlowState({
         authorizationCode: code,
+        // 2R-iss / review F8: record the RFC 9207 `iss` so the machine's
+        // authorization-response issuer step validates it (it reads
+        // `state.authorizationResponseIss`) instead of leaving it unset.
+        authorizationResponseIss: iss,
         error: undefined,
       });
 
@@ -479,7 +518,7 @@ export const OAuthFlowTab = ({
       }
 
       if (event.data?.type === "OAUTH_CALLBACK" && event.data?.code) {
-        processOAuthCallback(event.data.code, event.data.state);
+        processOAuthCallback(event.data.code, event.data.state, event.data.iss);
       }
     };
 
@@ -511,8 +550,9 @@ export const OAuthFlowTab = ({
 
         const code = parsed.searchParams.get("code");
         const state = parsed.searchParams.get("state");
+        const iss = parsed.searchParams.get("iss");
         if (code) {
-          processOAuthCallback(code, state ?? undefined);
+          processOAuthCallback(code, state ?? undefined, iss ?? undefined);
         }
       } catch (error) {
         console.error("Failed to process Electron OAuth callback:", error);
@@ -524,7 +564,11 @@ export const OAuthFlowTab = ({
       channel = new BroadcastChannel("oauth_callback_channel");
       channel.onmessage = (event) => {
         if (event.data?.type === "OAUTH_CALLBACK" && event.data?.code) {
-          processOAuthCallback(event.data.code, event.data.state);
+          processOAuthCallback(
+            event.data.code,
+            event.data.state,
+            event.data.iss
+          );
         }
       };
     } catch (error) {
@@ -568,7 +612,7 @@ export const OAuthFlowTab = ({
                 protocolVersion={protocolVersion}
                 focusedStep={focusedStep}
                 hasProfile={hasProfile}
-                onConfigure={() => setIsProfileModalOpen(true)}
+                onConfigure={() => openProfileModal("edit")}
               />
             </ResizablePanel>
 
@@ -606,7 +650,8 @@ export const OAuthFlowTab = ({
                     : undefined,
                 }}
                 actions={{
-                  onConfigure: () => setIsProfileModalOpen(true),
+                  onConfigure: () => openProfileModal("edit"),
+                  onAddServer: () => openProfileModal("add"),
                   onReset: hasProfile ? () => resetOAuthFlow() : undefined,
                   // Hide Continue button when showing Connect/Refresh buttons
                   onContinue:
@@ -642,7 +687,8 @@ export const OAuthFlowTab = ({
             protocolVersion={protocolVersion}
             focusedStep={focusedStep}
             hasProfile={false}
-            onConfigure={() => setIsProfileModalOpen(true)}
+            showConfigurePrompt={areServersHydrated && !hasHeaderServers}
+            onConfigure={() => openProfileModal("edit")}
           />
         )}
       </div>
@@ -658,10 +704,21 @@ export const OAuthFlowTab = ({
       <OAuthProfileModal
         open={isProfileModalOpen}
         onOpenChange={setIsProfileModalOpen}
-        server={activeServer}
+        server={profileModalMode === "add" ? undefined : activeServer}
         existingServerNames={Object.keys(serverConfigs)}
-        onSave={({ formData, profile: savedProfile }) => {
-          onSaveServerConfig?.(formData, { oauthProfile: savedProfile });
+        onSave={async ({ formData, profile: savedProfile }) => {
+          // Await and check the result: a failed save must not close the modal,
+          // reset the flow, or move the selection onto a server that was never
+          // written. The hook already toasted the reason, so throw a generic
+          // message for the modal's inline error.
+          const saved = await onSaveServerConfig?.(formData, {
+            oauthProfile: savedProfile,
+            originalServerName:
+              profileModalMode === "add" ? undefined : activeServer?.name,
+          });
+          if (saved === false) {
+            throw new Error("Could not save the server. Please try again.");
+          }
           setPendingServerSelection(formData.name);
           resetOAuthFlow(formData.url);
         }}

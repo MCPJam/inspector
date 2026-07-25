@@ -1,7 +1,11 @@
 // Headless Cross-App Access (ID-JAG) flow driver. It self-issues an ID-JAG,
 // verifies that the configured issuer actually publishes the signing key,
 // redeems the assertion, and probes the protected MCP resource.
-import { executeOAuthProxy, fetchOAuthMetadata } from "../oauth-proxy.js";
+import {
+  executeOAuthProxy,
+  fetchOAuthMetadata,
+  validateUrl,
+} from "../oauth-proxy.js";
 import {
   getXAAIdpJwks,
   getXAAIssuerUrl,
@@ -11,7 +15,9 @@ import { verifyXaaJwt } from "./mint/signer.js";
 import type { XaaTokenEndpointAuthMethod } from "./mint/jwt-bearer.js";
 import {
   DEFAULT_NEGATIVE_TEST_MODE,
+  type IdentityAssertionFormat,
   type NegativeTestMode,
+  type SubjectIdentifierFormat,
 } from "./constants.js";
 import {
   buildIssuerPublicationCandidates,
@@ -23,6 +29,7 @@ import {
   type XaaCapabilityEvidence,
 } from "./mcp-init.js";
 import { createInProcessXaaExecutor } from "./in-process-executor.js";
+import { isLoopbackClientMetadataUrl } from "../oauth/state-machines/shared/client-id-metadata.js";
 import { createXAAStateMachine } from "./state-machines/state-machine.js";
 import { runXaaStateMachine } from "./state-machines/runner.js";
 import {
@@ -32,7 +39,11 @@ import {
 import {
   createInitialXAAFlowState,
   type XAAFlowState,
+  type XaaDcrCredentialCache,
+  type XaaEphemeralDcrCredentials,
+  type XaaRegistrationWarning,
 } from "./state-machines/types.js";
+import { type RegistrationStrategy } from "../registration.js";
 
 const ID_JAG_TYP = "oauth-id-jag+jwt";
 
@@ -49,11 +60,26 @@ export interface XaaFlowConfig {
   issuerBaseUrl: string;
   subject: string;
   email?: string;
-  clientId: string;
+  /** Pre-registered client id. Optional: DCR mints it, CIMD derives it from the
+   * metadata-document URL. Required only for the `preregistered` strategy. */
+  clientId?: string;
   clientSecret?: string;
   scope?: string;
   tokenEndpointAuthMethod?: XaaTokenEndpointAuthMethod;
+  /** Client-registration strategy. Defaults to `preregistered`. */
+  registrationStrategy?: RegistrationStrategy;
+  /** CIMD only: the Client ID Metadata Document URL. Defaults to the hosted
+   * XAA debugger document. */
+  clientIdMetadataUrl?: string;
+  /** Local-dev-only opt-in: permit an http:// loopback CIMD document URL (a
+   * locally-run reflector). Never affects public/remote URLs. */
+  allowLoopbackClientMetadata?: boolean;
   negativeTestMode?: NegativeTestMode;
+  /** Input axis: assertion format the mock IdP mints ("oidc" default). */
+  identityAssertionFormat?: IdentityAssertionFormat;
+  /** Output axis: mint a saml-nameid `sub_id` into the ID-JAG when
+   * "saml-nameid" ("oauth-sub" default). Independent of the input axis. */
+  subjectIdentifierFormat?: SubjectIdentifierFormat;
   /** Per outbound request timeout in milliseconds. */
   timeoutMs?: number;
   /** Reject non-HTTPS / private targets. Default false for local development. */
@@ -76,6 +102,17 @@ export interface XaaRedemptionResult {
 export interface XaaFlowResult {
   completed: boolean;
   issuer: string;
+  /** How the client identity was obtained. Secret-free: never carries the
+   * DCR-minted client_secret. `warnings` surfaces non-blocking findings such as
+   * the public-client CIMD warning. */
+  registration?: {
+    strategy: RegistrationStrategy;
+    clientId?: string;
+    /** A prior session registration was reused rather than minting a new one
+     * (e.g. the negative probe reused the baseline's DCR client). */
+    reused: boolean;
+    warnings: XaaRegistrationWarning[];
+  };
   authzServerIssuer?: string;
   tokenEndpoint?: string;
   authorizationServerCapabilities?: {
@@ -338,9 +375,70 @@ function projectFlowError(state: XAAFlowState): string | undefined {
   return state.error;
 }
 
+/** Registration wiring shared across every attempt of a single runXaaFlow call:
+ * one strategy, one CIMD URL, and ONE DCR credential cache so the negative
+ * baseline + probe reuse a single dynamic registration instead of minting one
+ * per attempt. Internal — never exposed on the public XaaFlowConfig. */
+interface AttemptContext {
+  registrationStrategy: RegistrationStrategy;
+  clientIdMetadataUrl?: string;
+  allowLoopbackClientMetadata?: boolean;
+  dcrCredentialCache: XaaDcrCredentialCache;
+  dcrCacheTargetKey: string;
+}
+
+/** A Map-backed DCR credential cache plus a registration counter (for the
+ * `reused` diagnostic) and the set of minted secrets (to scrub any reflected in
+ * an RAS error body out of the result — the secret otherwise never enters it). */
+function createDcrCredentialCache(): {
+  cache: XaaDcrCredentialCache;
+  registrations: () => number;
+  secrets: () => string[];
+} {
+  const store = new Map<string, XaaEphemeralDcrCredentials>();
+  let registrations = 0;
+  return {
+    cache: {
+      get: (key) => store.get(key),
+      set: (key, value) => {
+        registrations += 1;
+        store.set(key, value);
+      },
+      delete: (key) => {
+        store.delete(key);
+      },
+    },
+    registrations: () => registrations,
+    secrets: () =>
+      [...store.values()]
+        .map((c) => c.clientSecret)
+        .filter((s): s is string => typeof s === "string" && s.length > 0),
+  };
+}
+
+/** Deep-replace every occurrence of any `secrets` string with "[REDACTED]". */
+function scrubSecrets(value: unknown, secrets: string[]): unknown {
+  if (secrets.length === 0) return value;
+  if (typeof value === "string") {
+    let out = value;
+    for (const secret of secrets) {
+      if (out.includes(secret)) out = out.split(secret).join("[REDACTED]");
+    }
+    return out;
+  }
+  if (Array.isArray(value)) return value.map((v) => scrubSecrets(v, secrets));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [k, scrubSecrets(v, secrets)]),
+    );
+  }
+  return value;
+}
+
 async function runSharedAttempt(
   config: XaaFlowConfig,
   mode: NegativeTestMode,
+  ctx: AttemptContext,
   stopAtAccessToken = false,
   progress?: (message: string) => void
 ): Promise<XAAFlowState> {
@@ -357,7 +455,9 @@ async function runSharedAttempt(
     email: config.email,
     scope: config.scope,
     negativeTestMode: mode,
-    registrationStrategy: "preregistered",
+    identityAssertionFormat: config.identityAssertionFormat,
+    subjectIdentifierFormat: config.subjectIdentifierFormat,
+    registrationStrategy: ctx.registrationStrategy,
   });
   const executor = createInProcessXaaExecutor({
     issuerBaseUrl: config.issuerBaseUrl,
@@ -396,13 +496,19 @@ async function runSharedAttempt(
     issuerBaseUrl: config.issuerBaseUrl,
     requestExecutor: executor,
     negativeTestMode: mode,
+    identityAssertionFormat: config.identityAssertionFormat,
+    subjectIdentifierFormat: config.subjectIdentifierFormat,
     userId: config.subject,
     email: config.email,
     clientId: config.clientId,
     clientSecret: config.clientSecret,
     scope: config.scope,
     authzServerIssuer: config.authzServerIssuer,
-    registrationStrategy: "preregistered",
+    registrationStrategy: ctx.registrationStrategy,
+    clientIdMetadataUrl: ctx.clientIdMetadataUrl,
+    allowLoopbackClientMetadata: ctx.allowLoopbackClientMetadata,
+    dcrCredentialCache: ctx.dcrCredentialCache,
+    dcrCacheTargetKey: ctx.dcrCacheTargetKey,
   });
 
   await runXaaStateMachine(
@@ -421,6 +527,107 @@ export async function runXaaFlow(
   const issuer = getXAAIssuerUrl(config.issuerBaseUrl);
   const publicationStep: XaaFlowStep[] = [];
 
+  // One registration context (and one DCR credential cache) for the whole run,
+  // so a negative baseline + probe reuse a single dynamic registration.
+  const strategy: RegistrationStrategy =
+    config.registrationStrategy ?? "preregistered";
+  const dcr = createDcrCredentialCache();
+  const ctx: AttemptContext = {
+    registrationStrategy: strategy,
+    clientIdMetadataUrl: config.clientIdMetadataUrl,
+    allowLoopbackClientMetadata: config.allowLoopbackClientMetadata,
+    dcrCredentialCache: dcr.cache,
+    dcrCacheTargetKey: config.serverUrl,
+  };
+  let attempts = 0;
+  // Registration diagnostics accumulate across attempts: the negative probe
+  // reuses the baseline's cached DCR client, so its own state carries no
+  // clientId/warnings — retain them from whichever attempt registered.
+  let capturedClientId: string | undefined;
+  let capturedWarnings: XaaRegistrationWarning[] = [];
+  const captureRegistration = (state: XAAFlowState) => {
+    if (state.clientId) capturedClientId = state.clientId;
+    if (state.registrationWarnings && state.registrationWarnings.length > 0)
+      capturedWarnings = state.registrationWarnings;
+  };
+  const registration = (
+    state: XAAFlowState | undefined
+  ): NonNullable<XaaFlowResult["registration"]> => {
+    const clientId = capturedClientId ?? state?.clientId;
+    const warnings =
+      capturedWarnings.length > 0
+        ? capturedWarnings
+        : (state?.registrationWarnings ?? []);
+    return {
+      strategy: state?.registrationStrategy ?? strategy,
+      ...(clientId ? { clientId } : {}),
+      // DCR reuse: fewer registrations than attempts means a later attempt
+      // reused an earlier attempt's cached client. Only DCR registers.
+      reused:
+        strategy === "dcr" &&
+        dcr.registrations() > 0 &&
+        attempts > dcr.registrations(),
+      warnings,
+    };
+  };
+
+  // Scrub any DCR-minted secret an RAS may have reflected into a response/error
+  // body, so the returned result stays secret-free (the secret is never stored
+  // in flow state, so the caller's key-based redactor can't catch it).
+  const finalize = (result: XaaFlowResult): XaaFlowResult =>
+    scrubSecrets(result, dcr.secrets()) as XaaFlowResult;
+
+  // The dynamic strategies need authorization-server metadata discovery to find
+  // the registration endpoint (DCR) or the client_id_metadata_document_supported
+  // advertisement (CIMD). A pinned tokenEndpoint skips that discovery, so reject
+  // the combination here — not only in the CLI. (`authzServerIssuer` is fine: it
+  // only skips protected-resource discovery; AS metadata is still fetched.)
+  if (
+    (strategy === "dcr" || strategy === "cimd") &&
+    config.tokenEndpoint
+  ) {
+    return {
+      completed: false,
+      issuer,
+      registration: registration(undefined),
+      steps: [],
+      error:
+        `The ${strategy} registration strategy requires authorization-server ` +
+        `metadata discovery; remove tokenEndpoint, which skips the discovery ` +
+        `that provides the ${
+          strategy === "dcr"
+            ? "registration_endpoint"
+            : "client_id_metadata_document_supported flag"
+        }.`,
+    };
+  }
+
+  // Harden a caller-supplied CIMD metadata URL against SSRF: validate it through
+  // the private-host/DNS-resolution path regardless of the local-dev `httpsOnly`
+  // default, so an untrusted URL can't turn the preflight into a fetch of an
+  // internal address. The hardcoded hosted default is trusted and skips this.
+  const skipCimdSsrfForLoopback =
+    config.allowLoopbackClientMetadata === true &&
+    !!config.clientIdMetadataUrl &&
+    isLoopbackClientMetadataUrl(config.clientIdMetadataUrl);
+  if (config.clientIdMetadataUrl && !skipCimdSsrfForLoopback) {
+    try {
+      await validateUrl(config.clientIdMetadataUrl, true);
+    } catch (error) {
+      return {
+        completed: false,
+        issuer,
+        registration: registration(undefined),
+        steps: [],
+        error:
+          `The client metadata URL was rejected: ${
+            error instanceof Error ? error.message : String(error)
+          }. It must be an HTTPS URL that does not resolve to a private or ` +
+          `reserved address.`,
+      };
+    }
+  }
+
   try {
     progress("Verifying the configured issuer metadata and JWKS…");
     initXAAIdpKeyPair();
@@ -438,6 +645,7 @@ export async function runXaaFlow(
       return {
         completed: false,
         issuer,
+        registration: registration(undefined),
         steps: publicationStep,
         error:
           "The configured issuer does not publish the local signing key; " +
@@ -447,7 +655,9 @@ export async function runXaaFlow(
 
     const mode = config.negativeTestMode ?? DEFAULT_NEGATIVE_TEST_MODE;
     if (mode === "valid") {
-      const state = await runSharedAttempt(config, mode, false, progress);
+      attempts += 1;
+      const state = await runSharedAttempt(config, mode, ctx, false, progress);
+      captureRegistration(state);
       const capabilities = projectCapabilities(state, config);
       const idJag = projectIdJag(state, issuer);
       const redemption = projectRedemption(state);
@@ -481,9 +691,10 @@ export async function runXaaFlow(
         });
       }
 
-      return {
+      return finalize({
         completed: state.currentStep === "complete",
         issuer,
+        registration: registration(state),
         ...(state.authzServerIssuer
           ? { authzServerIssuer: state.authzServerIssuer }
           : {}),
@@ -496,16 +707,19 @@ export async function runXaaFlow(
         ...(mcp ? { mcp } : {}),
         steps,
         ...(projectFlowError(state) ? { error: projectFlowError(state) } : {}),
-      };
+      });
     }
 
     progress("Establishing a valid ID-JAG redemption baseline…");
+    attempts += 1;
     const baselineState = await runSharedAttempt(
       config,
       "valid",
+      ctx,
       true,
       progress
     );
+    captureRegistration(baselineState);
     const baselineRedemption = projectRedemption(baselineState);
     const capabilities = projectCapabilities(baselineState, config);
     const baselineStatus = baselineRedemption?.status ?? 0;
@@ -513,9 +727,10 @@ export async function runXaaFlow(
     const baselineSteps = projectSteps(baselineState, "baseline:");
 
     if (!baselineAccepted) {
-      return {
+      return finalize({
         completed: false,
         issuer,
+        registration: registration(baselineState),
         ...(baselineState.authzServerIssuer
           ? { authzServerIssuer: baselineState.authzServerIssuer }
           : {}),
@@ -538,10 +753,12 @@ export async function runXaaFlow(
         error:
           projectFlowError(baselineState) ??
           "The valid baseline was not accepted, so the negative probe cannot be scored.",
-      };
+      });
     }
 
-    const probeState = await runSharedAttempt(config, mode, false, progress);
+    attempts += 1;
+    const probeState = await runSharedAttempt(config, mode, ctx, false, progress);
+    captureRegistration(probeState);
     const redemption = projectRedemption(probeState);
     const idJag = projectIdJag(probeState, issuer);
     const outcome = probeState.negativeProbe?.outcome ?? "inconclusive";
@@ -551,9 +768,10 @@ export async function runXaaFlow(
       ...projectSteps(probeState, "probe:"),
     ];
 
-    return {
+    return finalize({
       completed: outcome === "rejected",
       issuer,
+      registration: registration(probeState),
       ...(probeState.authzServerIssuer
         ? { authzServerIssuer: probeState.authzServerIssuer }
         : {}),
@@ -584,13 +802,14 @@ export async function runXaaFlow(
                 "The negative probe did not produce a conclusive 4xx rejection.",
             }
           : {}),
-    };
+    });
   } catch (error) {
-    return {
+    return finalize({
       completed: false,
       issuer,
+      registration: registration(undefined),
       steps: publicationStep,
       error: error instanceof Error ? error.message : String(error),
-    };
+    });
   }
 }

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { OAuthFlowTab } from "../OAuthFlowTab";
@@ -21,8 +21,12 @@ vi.mock("@/lib/oauth/debug-state-machine-adapter", () => ({
   createInspectorOAuthStateMachine: vi.fn(),
 }));
 
+const captureOAuthSequenceProps = vi.hoisted(() => vi.fn());
 vi.mock("@/components/oauth/OAuthSequenceDiagram", () => ({
-  OAuthSequenceDiagram: () => <div data-testid="oauth-sequence-diagram" />,
+  OAuthSequenceDiagram: (props: unknown) => {
+    captureOAuthSequenceProps(props);
+    return <div data-testid="oauth-sequence-diagram" />;
+  },
 }));
 
 vi.mock("@/components/oauth/OAuthAuthorizationModal", () => ({
@@ -39,8 +43,12 @@ vi.mock("../ui/resizable", () => ({
   ResizableHandle: () => <div />,
 }));
 
+const captureOAuthProfileModalProps = vi.hoisted(() => vi.fn());
 vi.mock("../oauth/OAuthProfileModal", () => ({
-  OAuthProfileModal: () => null,
+  OAuthProfileModal: (props: unknown) => {
+    captureOAuthProfileModalProps(props);
+    return null;
+  },
 }));
 
 vi.mock("../oauth/OAuthFlowLogger", () => ({
@@ -78,6 +86,59 @@ describe("OAuthFlowTab", () => {
       },
       ...overrides,
     } as ServerWithName);
+
+  it("suppresses the configure prompt when the header has a server", () => {
+    render(
+      <OAuthFlowTab
+        serverConfigs={{}}
+        selectedServerName="none"
+        hasHeaderServers
+        onSelectServer={vi.fn()}
+      />,
+    );
+
+    expect(captureOAuthSequenceProps).toHaveBeenLastCalledWith(
+      expect.objectContaining({ showConfigurePrompt: false }),
+    );
+  });
+
+  it("does not open configuration during hydration or after a header server arrives", async () => {
+    const oauthServer = createServer({
+      name: "available-oauth",
+      useOAuth: true,
+      config: { url: "https://example.com/mcp" },
+    });
+    const { rerender } = render(
+      <OAuthFlowTab
+        serverConfigs={{}}
+        selectedServerName="none"
+        areServersHydrated={false}
+        onSelectServer={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(captureOAuthProfileModalProps).toHaveBeenLastCalledWith(
+        expect.objectContaining({ open: false }),
+      );
+    });
+
+    rerender(
+      <OAuthFlowTab
+        serverConfigs={{ "available-oauth": oauthServer }}
+        selectedServerName="none"
+        areServersHydrated
+        hasHeaderServers
+        onSelectServer={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(captureOAuthProfileModalProps).toHaveBeenLastCalledWith(
+        expect.objectContaining({ open: false }),
+      );
+    });
+  });
 
   it("does not select the first HTTP server when opened with a non-HTTP selection", async () => {
     const onSelectServer = vi.fn();
@@ -180,6 +241,45 @@ describe("OAuthFlowTab", () => {
         registrationStrategy: "preregistered",
         preregisteredClientId: "client_prereg",
         preregisteredClientSecret: "prereg-secret",
+      }),
+    );
+  });
+
+  it("passes a client secret's leading/trailing whitespace through unchanged", () => {
+    vi.mocked(createInspectorOAuthStateMachine).mockClear();
+
+    const serverConfigs = {
+      "prereg-server": createServer({
+        name: "prereg-server",
+        useOAuth: true,
+        config: {
+          url: "https://example.com/mcp",
+        },
+        oauthFlowProfile: {
+          serverUrl: "https://example.com/mcp",
+          clientId: "client_prereg",
+          clientSecret: " prereg-secret ",
+          scopes: "openid profile email",
+          customHeaders: [],
+          protocolVersion: "2025-11-25",
+          registrationStrategy: "preregistered",
+        } as ServerWithName["oauthFlowProfile"],
+      }),
+    };
+
+    render(
+      <OAuthFlowTab
+        serverConfigs={serverConfigs}
+        selectedServerName="prereg-server"
+        onSelectServer={vi.fn()}
+      />,
+    );
+
+    // Trimming here would silently authenticate the live token exchange
+    // with a different secret than the one the user entered.
+    expect(createInspectorOAuthStateMachine).toHaveBeenCalledWith(
+      expect.objectContaining({
+        preregisteredClientSecret: " prereg-secret ",
       }),
     );
   });

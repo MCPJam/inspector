@@ -15,6 +15,10 @@
 
 import { redactSensitiveValue } from "../redaction.js";
 import {
+  MCP_ERROR_CODES,
+  PRE_RENUMBER_DRAFT_ERROR_CODES,
+} from "../mcp-client-manager/mcp-error-codes.js";
+import {
   ERROR_CATALOG,
   type ErrorCatalogEntry,
 } from "./catalog.js";
@@ -167,19 +171,34 @@ function inspectorSentinelSlug(message: string): string | undefined {
 }
 
 const JSONRPC_SLUG_BY_CODE: Record<number, string> = {
-  [-32700]: "jsonrpc/parse_error",
-  [-32600]: "jsonrpc/invalid_request",
-  [-32601]: "jsonrpc/method_not_found",
-  [-32602]: "jsonrpc/invalid_params",
-  [-32603]: "jsonrpc/internal_error",
-  [-32000]: "jsonrpc/connection_closed",
-  [-32004]: "jsonrpc/unsupported_protocol_version",
-  [-32042]: "jsonrpc/url_elicitation_required",
+  [MCP_ERROR_CODES.ParseError]: "jsonrpc/parse_error",
+  [MCP_ERROR_CODES.InvalidRequest]: "jsonrpc/invalid_request",
+  [MCP_ERROR_CODES.MethodNotFound]: "jsonrpc/method_not_found",
+  [MCP_ERROR_CODES.InvalidParams]: "jsonrpc/invalid_params",
+  [MCP_ERROR_CODES.InternalError]: "jsonrpc/internal_error",
+  [MCP_ERROR_CODES.ConnectionClosed]: "jsonrpc/connection_closed",
+  // Modern 2026-07-28 protocol codes (post-renumber). `-32020` is the
+  // canonical HeaderMismatch code; the `-32001` overload below is the
+  // pre-renumber transitional path, removed in Phase 1.
+  [MCP_ERROR_CODES.HeaderMismatch]: "jsonrpc/header_mismatch",
+  [MCP_ERROR_CODES.MissingRequiredClientCapability]:
+    "jsonrpc/missing_required_client_capability",
+  [MCP_ERROR_CODES.UnsupportedProtocolVersion]:
+    "jsonrpc/unsupported_protocol_version",
+  // Pre-renumber 2026 DRAFT code, retained only for the Phase 0→1 window so
+  // errors from MCPJam's own not-yet-migrated preview client / fixtures still
+  // describe correctly. Delete with the preview client in Phase 1.
+  [PRE_RENUMBER_DRAFT_ERROR_CODES.UnsupportedProtocolVersion]:
+    "jsonrpc/unsupported_protocol_version",
+  [MCP_ERROR_CODES.UrlElicitationRequired]: "jsonrpc/url_elicitation_required",
 };
 
 /**
- * `-32001` is overloaded: upstream uses it for RequestTimeout, the inspector
- * uses the same numeric code for HeaderMismatch. Disambiguate by message.
+ * `-32001` is overloaded: the SDK uses it for RequestTimeout, and MCPJam's
+ * pre-renumber draft path used the same numeric code for HeaderMismatch.
+ * Disambiguate by message. The modern era gives HeaderMismatch its own code
+ * (`-32020`, mapped directly above), so this overload is transitional and is
+ * removed in Phase 1 once nothing emits `-32001` for a header mismatch.
  */
 function resolveDashThirtyTwoThousandOne(message: string): string {
   if (

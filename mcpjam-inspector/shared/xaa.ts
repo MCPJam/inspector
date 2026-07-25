@@ -8,17 +8,32 @@ export {
   XAA_IDP_KID,
   isNegativeTestMode,
   NEGATIVE_TEST_MODE_DETAILS,
+  isPolicyDependentNegativeTestMode,
   REGISTRATION_STRATEGIES,
   DEFAULT_REGISTRATION_STRATEGY,
   normalizeRegistrationStrategy,
   normalizeRegistrationMode,
   normalizeAuthMethod,
+  IDENTITY_ASSERTION_FORMATS,
+  DEFAULT_IDENTITY_ASSERTION_FORMAT,
+  normalizeIdentityAssertionFormat,
+  SUBJECT_IDENTIFIER_FORMATS,
+  DEFAULT_SUBJECT_IDENTIFIER_FORMAT,
+  normalizeSubjectIdentifierFormat,
+  XAA_CLIENT_AUTH_METHODS,
+  DEFAULT_XAA_CLIENT_AUTH,
+  normalizeXaaClientAuth,
+  SAML2_TOKEN_TYPE,
+  isLoopbackClientMetadataUrl,
 } from "@mcpjam/sdk/browser";
 export type {
   NegativeTestMode,
   RegistrationStrategy,
   RegistrationMode,
   AuthMethod,
+  IdentityAssertionFormat,
+  SubjectIdentifierFormat,
+  XaaClientAuthMethod,
 } from "@mcpjam/sdk/browser";
 
 /**

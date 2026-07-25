@@ -17,10 +17,12 @@ import type {
 } from "./types";
 import { getSuiteReplayEligibility } from "./replay-eligibility";
 import {
-  buildSuiteHostRunPlans,
+  buildSuiteRunPlans,
   getEffectiveSuiteServers,
   getSelectedSuiteHostRunPlan,
 } from "./helpers";
+import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
+import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { draftTestCaseId } from "./draft-test-case";
 import { isModelFree, promptTurnsToSteps } from "@/shared/steps";
 import type { useEvalMutations } from "./use-eval-mutations";
@@ -46,7 +48,7 @@ import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 
 function navigateEvalRoute(route: EvalRoute, context: "evals" | "ci-evals") {
   navigateApp(
-    context === "ci-evals" ? buildCiEvalsPath(route) : buildEvalsPath(route),
+    context === "ci-evals" ? buildCiEvalsPath(route) : buildEvalsPath(route)
   );
 }
 import type { RemoteServer } from "@/hooks/useProjects";
@@ -57,7 +59,7 @@ import {
 } from "@/lib/mcp-server-display-name";
 
 function getConfiguredTestCaseModelValues(
-  testCase: Pick<EvalCase, "models">,
+  testCase: Pick<EvalCase, "models">
 ): string[] {
   const modelValues = new Set<string>();
 
@@ -84,7 +86,7 @@ export function hasUnavailableServers(result: EnsureServersReadyResult) {
 export function formatEnsureServersReadyError(
   result: EnsureServersReadyResult,
   actionLabel: string,
-  projectServers: RemoteServer[] | undefined,
+  projectServers: RemoteServer[] | undefined
 ) {
   if (result.missingServerNames.length > 0) {
     // Never list server names/ids in this toast: refs may be legacy Convex
@@ -112,7 +114,7 @@ export function formatEnsureServersReadyError(
     }
     return `Re-authenticate with ${formatMcpServerRefsForError(
       names,
-      opts,
+      opts
     )} to ${actionLabel}.`;
   }
 
@@ -127,7 +129,7 @@ export function formatEnsureServersReadyError(
     }
     return `We couldn't connect to ${formatMcpServerRefsForError(
       names,
-      opts,
+      opts
     )}. Try again to ${actionLabel}.`;
   }
 
@@ -135,12 +137,12 @@ export function formatEnsureServersReadyError(
 }
 
 export function normalizeSuiteServerRefs(
-  serverNamesOrIds: readonly string[] | undefined,
+  serverNamesOrIds: readonly string[] | undefined
 ): string[] {
   const rawServerRefs = (serverNamesOrIds ?? []).flatMap((serverRef) =>
     typeof serverRef === "string" && serverRef.trim().length > 0
       ? [serverRef.trim()]
-      : [],
+      : []
   );
 
   if (rawServerRefs.length === 0) {
@@ -193,7 +195,7 @@ interface UseEvalHandlersProps {
   projectId?: string | null;
   connectedServerNames?: Set<string>;
   ensureServersReady?: (
-    serverNames: string[],
+    serverNames: string[]
   ) => Promise<EnsureServersReadyResult>;
   latestRunBySuiteId?: Map<string, EvalSuiteRun | null>;
   /**
@@ -230,23 +232,31 @@ export function useEvalHandlers({
   // Resolves the WorkOS token for signed-in users and the guest bearer for
   // guests (project-owning guests included). See use-convex-access-token.
   const getAccessToken = useConvexAccessToken();
+  // Environment names for env-suite fan-out toasts/labels only — env plans
+  // never derive servers from this list (the server resolves them at launch).
+  // Queried only when the feature flag is on; a flag-off env suite still
+  // fans out correctly with ids as display fallbacks.
+  const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
+  const projectEnvironments = useProjectEnvironments(
+    projectEnvironmentsEnabled ? projectId : null
+  );
 
   // Action states
   const [rerunningSuiteId, setRerunningSuiteId] = useState<string | null>(null);
   const [runningTestCaseId, setRunningTestCaseId] = useState<string | null>(
-    null,
+    null
   );
   const [replayingRunId, setReplayingRunId] = useState<string | null>(null);
   const [cancellingRunId, setCancellingRunId] = useState<string | null>(null);
   const [deletingSuiteId, setDeletingSuiteId] = useState<string | null>(null);
   const [suiteToDelete, setSuiteToDelete] = useState<EvalSuite | null>(null);
   const [duplicatingSuiteId, setDuplicatingSuiteId] = useState<string | null>(
-    null,
+    null
   );
   const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
   const [runToDelete, setRunToDelete] = useState<string | null>(null);
   const [deletingTestCaseId, setDeletingTestCaseId] = useState<string | null>(
-    null,
+    null
   );
   const [duplicatingTestCaseId, setDuplicatingTestCaseId] = useState<
     string | null
@@ -266,11 +276,11 @@ export function useEvalHandlers({
             type: "suite-overview";
             suiteId: string;
             view?: SuiteOverviewView;
-          },
+          }
     ) => {
       navigateEvalRoute(route as EvalRoute, evalsNavigationContext);
     },
-    [evalsNavigationContext],
+    [evalsNavigationContext]
   );
 
   // Query to get test cases for a suite
@@ -279,7 +289,7 @@ export function useEvalHandlers({
       try {
         const testCases = await convex.query(
           "testSuites:listTestCases" as any,
-          { suiteId },
+          { suiteId }
         );
         return testCases;
       } catch (error) {
@@ -287,7 +297,7 @@ export function useEvalHandlers({
         return [];
       }
     },
-    [convex],
+    [convex]
   );
 
   const getSuiteExecutionContext = useCallback(
@@ -309,7 +319,7 @@ export function useEvalHandlers({
             (m) =>
               String(m.id) === suite.defaultConfig!.modelId &&
               (!suite.defaultConfig!.provider ||
-                m.provider === suite.defaultConfig!.provider),
+                m.provider === suite.defaultConfig!.provider)
           )
         : undefined;
       // Distinguish "no default set" from "default set but unresolvable"
@@ -336,7 +346,7 @@ export function useEvalHandlers({
         const caseSteps = Array.isArray(testCase.steps)
           ? testCase.steps
           : promptTurnsToSteps(
-              Array.isArray(testCase.promptTurns) ? testCase.promptTurns : [],
+              Array.isArray(testCase.promptTurns) ? testCase.promptTurns : []
             );
         if (isModelFree(caseSteps)) {
           if (caseSteps.length === 0) {
@@ -400,13 +410,13 @@ export function useEvalHandlers({
             ? `${suite.defaultConfig.modelId} (${suite.defaultConfig.provider})`
             : suite.defaultConfig?.modelId;
           toast.error(
-            `Suite default model ${label} is not available. Re-select it in the suite's default execution config, or add per-case models.`,
+            `Suite default model ${label} is not available. Re-select it in the suite's default execution config, or add per-case models.`
           );
         } else if (probesSkippedMissingConfig > 0) {
           // Probe-only suites land here when every probe was skipped above;
           // "add models" would be the wrong prescription for them.
           toast.error(
-            "No tests to run. The suite's render checks are missing their configuration.",
+            "No tests to run. The suite's render checks are missing their configuration."
           );
         } else {
           toast.error("No tests to run. Please add models to your test cases.");
@@ -433,20 +443,20 @@ export function useEvalHandlers({
         providersNeeded,
       };
     },
-    [getTestCasesForRerun, availableModels],
+    [getTestCasesForRerun, availableModels]
   );
 
   const handleReplayRun = useCallback(
     async (
       suite: EvalSuite,
       run: Pick<EvalSuiteRun, "_id" | "hasServerReplayConfig" | "passCriteria">,
-      options?: { minimumPassRate?: number },
+      options?: { minimumPassRate?: number }
     ) => {
       if (rerunningSuiteId || replayingRunId) return;
 
       if (!run.hasServerReplayConfig) {
         toast.error(
-          "This CI run can't be replayed because it doesn't have stored replay config.",
+          "This CI run can't be replayed because it doesn't have stored replay config."
         );
         return;
       }
@@ -517,7 +527,7 @@ export function useEvalHandlers({
               runId: result.runId,
               insightsFocus: true,
             },
-            "ci-evals",
+            "ci-evals"
           );
         }
 
@@ -530,7 +540,7 @@ export function useEvalHandlers({
           getBillingErrorMessage(error, "Failed to replay eval run"),
           {
             id: replayToastId,
-          },
+          }
         );
       } finally {
         setReplayingRunId(null);
@@ -542,7 +552,7 @@ export function useEvalHandlers({
       selectedSuiteEntry,
       getSuiteExecutionContext,
       getAccessToken,
-    ],
+    ]
   );
 
   // Rerun handler
@@ -568,16 +578,23 @@ export function useEvalHandlers({
          * existing suites.
          */
         refreshSnapshot?: boolean;
-      },
+      }
     ) => {
       if (rerunningSuiteId) return;
+
+      // Environment suites launch through the server's authoritative
+      // resolution (P0.1): the browser never knows the environment's closed
+      // server set, so the legacy server-readiness gates below are skipped —
+      // the server returns a readable auth/connection error for the exact
+      // resolved set instead.
+      const isEnvironmentSuite = (suite.environmentIds?.length ?? 0) > 0;
 
       // Effective servers = flat env.servers ∪ resolved servers across all
       // host attachments. Without this union, a host-only suite would fail
       // the "no servers configured" gate even though the runner can derive
       // servers from each attachment's snapshot at fan-out time.
       const suiteServers = normalizeSuiteServerRefs(
-        getEffectiveSuiteServers(suite),
+        getEffectiveSuiteServers(suite)
       );
       const latestRun =
         latestRunBySuiteId?.get(suite._id) ??
@@ -590,7 +607,7 @@ export function useEvalHandlers({
         latestRun,
       });
 
-      if (suiteServers.length === 0) {
+      if (!isEnvironmentSuite && suiteServers.length === 0) {
         if (rerunEligibility.replayableLatestRun?._id) {
           await handleReplayRun(suite, rerunEligibility.replayableLatestRun);
           return;
@@ -599,7 +616,7 @@ export function useEvalHandlers({
         return;
       }
 
-      if (rerunEligibility.missingServers.length > 0) {
+      if (!isEnvironmentSuite && rerunEligibility.missingServers.length > 0) {
         if (ensureServersReady != null) {
           const readiness = await ensureServersReady(suiteServers);
           if (!hasUnavailableServers(readiness)) {
@@ -612,8 +629,8 @@ export function useEvalHandlers({
               formatEnsureServersReadyError(
                 readiness,
                 "run this suite",
-                projectServers,
-              ),
+                projectServers
+              )
             );
             return;
           }
@@ -622,7 +639,7 @@ export function useEvalHandlers({
             formatMcpConnectServerPrompt(rerunEligibility.missingServers, {
               remoteServers: projectServers,
               kind: "suite",
-            }),
+            })
           );
           return;
         }
@@ -635,27 +652,32 @@ export function useEvalHandlers({
 
       setRerunningSuiteId(suite._id);
 
-      // Host-bound fan-out: when the suite has hostAttachments we fire one
-      // run request per host so each gets its own snapshot. Otherwise we
-      // run the suite's flat server list once as before.
-      const runPlans = buildSuiteHostRunPlans(
+      // Fan-out axis: attached project environments (one run per env, in
+      // attach order) win over hostAttachments; otherwise one run request
+      // per host so each gets its own snapshot, else the suite's flat
+      // server list once as before. Env plans carry NO serverIds — the
+      // server resolves the environment's closed set at launch.
+      const runPlans = buildSuiteRunPlans(
         suite,
-        executionContext.suiteServers,
+        projectEnvironments,
+        executionContext.suiteServers
       );
 
       // Generate a shared group id ONLY when the rerun fans out to more
-      // than one host. The inspector route threads this through the Zod
-      // schema → recorder → Convex mutation; every sibling run carries
-      // the same id so the UI can collapse them into a single parent
-      // row. Single-host launches stay ungrouped so legacy + single-host
-      // rows render identically.
+      // than one host/environment. The inspector route threads this through
+      // the Zod schema → recorder → Convex mutation; every sibling run
+      // carries the same id so the UI can collapse them into a single
+      // parent row. Single-plan launches stay ungrouped so legacy +
+      // single-host rows render identically.
       const runGroupId = runPlans.length > 1 ? crypto.randomUUID() : undefined;
 
       // Show toast immediately when user clicks rerun
       toast.success(
         runPlans.length > 1
-          ? `Starting ${runPlans.length} runs across hosts…`
-          : "Run started successfully! Results will appear shortly.",
+          ? `Starting ${runPlans.length} runs across ${
+              isEnvironmentSuite ? "environments" : "hosts"
+            }…`
+          : "Run started successfully! Results will appear shortly."
       );
 
       const suiteRunStartedAt = Date.now();
@@ -721,26 +743,40 @@ export function useEvalHandlers({
               matchOptionsOverride: options?.matchOptionsOverride,
               refreshSnapshot: options?.refreshSnapshot,
               ...(plan.namedHostId ? { namedHostId: plan.namedHostId } : {}),
+              // Always sent explicitly on env plans — even single-env
+              // suites — so the server's authoritative resolution runs.
+              ...(plan.environmentId
+                ? { environmentId: plan.environmentId }
+                : {}),
               ...(runGroupId ? { runGroupId } : {}),
-            }),
-          ),
+            })
+          )
         );
 
         const failures = settled
           .map((result, index) =>
             result.status === "rejected"
               ? { plan: runPlans[index], reason: result.reason }
-              : null,
+              : null
           )
           .filter(
             (
-              entry,
+              entry
             ): entry is { plan: (typeof runPlans)[number]; reason: unknown } =>
-              entry !== null,
+              entry !== null
           );
 
-        // Track suite run started (once per fan-out batch; per-host
+        // Track suite run started (once per fan-out batch; per-target
         // multiplicity is captured in the iteration data).
+        //
+        // `num_hosts` counts PLANS and is kept verbatim for dashboard
+        // compatibility — but for an environment suite a plan is an
+        // ENVIRONMENT, and two environments sharing one host would land in
+        // host analytics as two hosts. `fan_out_axis` + `num_environments`
+        // make the axis explicit so host metrics can exclude env fan-outs
+        // instead of silently absorbing (and double-counting) them.
+        const fanOutAxis = isEnvironmentSuite ? "environment" : "host";
+        const numEnvironments = isEnvironmentSuite ? runPlans.length : 0;
         track("eval_suite_run_started", {
           location: "evals_tab",
           suite_id: suite._id,
@@ -749,6 +785,8 @@ export function useEvalHandlers({
           num_models: executionContext.providersNeeded.size,
           minimum_pass_rate: minimumPassRate,
           num_hosts: runPlans.length,
+          fan_out_axis: fanOutAxis,
+          num_environments: numEnvironments,
         });
 
         track("eval_suite_run_start_requests_completed", {
@@ -761,13 +799,19 @@ export function useEvalHandlers({
           num_failed_hosts: failures.length,
           all_succeeded: failures.length === 0,
           duration_ms: Date.now() - suiteRunStartedAt,
+          fan_out_axis: fanOutAxis,
+          num_environments: numEnvironments,
         });
 
+        // "client" vs "environment": a fan-out plan is one environment for an
+        // environment suite and one client otherwise — the toasts must name
+        // the axis the user actually selected.
+        const targetNoun = isEnvironmentSuite ? "environment" : "client";
         if (failures.length === 0) {
           toast.success(
             runPlans.length > 1
-              ? `All ${runPlans.length} client runs started.`
-              : "Eval run started!",
+              ? `All ${runPlans.length} ${targetNoun} runs started.`
+              : "Eval run started!"
           );
 
           // Drop the user on the new run's detail page so they can see
@@ -788,28 +832,33 @@ export function useEvalHandlers({
                   suiteId: suite._id,
                   runId: newRunId,
                 },
-                evalsNavigationContext,
+                evalsNavigationContext
               );
             }
           } else {
             navigateEvalRoute(
               { type: "suite-overview", suiteId: suite._id, view: "runs" },
-              evalsNavigationContext,
+              evalsNavigationContext
             );
           }
         } else if (failures.length < runPlans.length) {
           const failedHostNames = failures
-            .map((failure) => failure.plan.hostName ?? "(unnamed client)")
+            .map(
+              (failure) =>
+                failure.plan.environmentName ??
+                failure.plan.hostName ??
+                "(unnamed client)"
+            )
             .join(", ");
           toast.error(
-            `${failures.length} of ${runPlans.length} client runs failed: ${failedHostNames}`,
+            `${failures.length} of ${runPlans.length} ${targetNoun} runs failed: ${failedHostNames}`
           );
         } else {
           // All failed — surface the first error for actionable detail.
           const firstError = failures[0]?.reason;
           throw firstError instanceof Error
             ? firstError
-            : new Error(String(firstError ?? "All client runs failed"));
+            : new Error(String(firstError ?? `All ${targetNoun} runs failed`));
         }
       } catch (error) {
         console.error("Failed to rerun evals:", error);
@@ -827,10 +876,11 @@ export function useEvalHandlers({
       getAccessToken,
       projectId,
       projectServers,
+      projectEnvironments,
       getSuiteExecutionContext,
       handleReplayRun,
       evalsNavigationContext,
-    ],
+    ]
   );
 
   const handleRunTestCase = useCallback(
@@ -849,9 +899,21 @@ export function useEvalHandlers({
          */
         iterationOverride?: number;
         namedHostId?: string;
-      },
+      }
     ) => {
       if (runningTestCaseId || rerunningSuiteId || replayingRunId) {
+        return null;
+      }
+
+      // Environment suites resolve their closed server set server-side (P0.1)
+      // at Run-all fan-out; the single-case quick-run path below still derives
+      // servers from host/flat plans and can't send `environmentId`, so it
+      // would mis-launch (or trip the "attach a client" gate). Route env suites
+      // to Run all instead of silently running against the wrong servers.
+      if ((suite.environmentIds?.length ?? 0) > 0) {
+        toast.info(
+          "Run environment suites with Run all — single-case quick-run doesn't resolve environments yet."
+        );
         return null;
       }
 
@@ -880,7 +942,7 @@ export function useEvalHandlers({
       const runPlan = getSelectedSuiteHostRunPlan(suite, options?.namedHostId);
       const suiteServers = normalizeSuiteServerRefs(runPlan.serverIds);
       const disconnectedSuiteServers = suiteServers.filter(
-        (serverName) => !connectedServerNames?.has(serverName),
+        (serverName) => !connectedServerNames?.has(serverName)
       );
 
       if (suiteServers.length === 0) {
@@ -896,8 +958,8 @@ export function useEvalHandlers({
               formatEnsureServersReadyError(
                 readiness,
                 "run this test case",
-                projectServers,
-              ),
+                projectServers
+              )
             );
             return null;
           }
@@ -906,7 +968,7 @@ export function useEvalHandlers({
             formatMcpConnectServerPrompt(disconnectedSuiteServers, {
               remoteServers: projectServers,
               kind: "test-case",
-            }),
+            })
           );
           return null;
         }
@@ -933,11 +995,11 @@ export function useEvalHandlers({
                 options?.iterationOverride !== undefined
                   ? { runs: options.iterationOverride }
                   : undefined,
-            }),
-          ),
+            })
+          )
         );
         const preparedRuns = preparedResults.flatMap((result) =>
-          result.status === "fulfilled" ? [result.value] : [],
+          result.status === "fulfilled" ? [result.value] : []
         );
         const preparationFailures = preparedResults.flatMap((result, index) =>
           result.status === "rejected"
@@ -947,13 +1009,13 @@ export function useEvalHandlers({
                   error: result.reason,
                 },
               ]
-            : [],
+            : []
         );
 
         for (const failure of preparationFailures) {
           console.error(
             `Failed to prepare test case for model ${failure.modelValue}:`,
-            failure.error,
+            failure.error
           );
         }
 
@@ -961,8 +1023,8 @@ export function useEvalHandlers({
           toast.error(
             getBillingErrorMessage(
               preparationFailures[0]?.error,
-              "Failed to run test case",
-            ),
+              "Failed to run test case"
+            )
           );
           return null;
         }
@@ -1009,7 +1071,7 @@ export function useEvalHandlers({
             } catch (error) {
               console.error(
                 `Failed to run test case for model ${preparedRun.modelValue}:`,
-                error,
+                error
               );
               return {
                 ok: false as const,
@@ -1017,26 +1079,26 @@ export function useEvalHandlers({
                 error,
               };
             }
-          }),
+          })
         );
 
         const successfulRuns = runResults.filter(
           (
-            result,
+            result
           ): result is {
             ok: true;
             modelValue: string;
             data: any;
-          } => result.ok,
+          } => result.ok
         );
         const failedRuns = runResults.filter(
           (
-            result,
+            result
           ): result is {
             ok: false;
             modelValue: string;
             error: unknown;
-          } => !result.ok,
+          } => !result.ok
         );
         const totalModelsRequested = modelValuesToRun.length;
         const totalFailedRuns = [
@@ -1053,28 +1115,28 @@ export function useEvalHandlers({
             toast.success(
               isMultiModelRun
                 ? `Test completed across ${totalModelsRequested} models!`
-                : "Test completed successfully!",
+                : "Test completed successfully!"
             );
           } else if (successfulRuns.length > 0) {
             toast.error(
               `${successfulRuns.length}/${totalModelsRequested} model${
                 totalModelsRequested === 1 ? "" : "s"
-              } completed successfully.`,
+              } completed successfully.`
             );
           } else {
             toast.error(
               getBillingErrorMessage(
                 totalFailedRuns[0]?.error,
-                "Failed to run test case",
-              ),
+                "Failed to run test case"
+              )
             );
           }
         } else if (successfulRuns.length === 0) {
           toast.error(
             getBillingErrorMessage(
               totalFailedRuns[0]?.error,
-              "Failed to run test case",
-            ),
+              "Failed to run test case"
+            )
           );
         }
 
@@ -1109,7 +1171,7 @@ export function useEvalHandlers({
       ensureServersReady,
       projectServers,
       isDirectGuest,
-    ],
+    ]
   );
 
   // Delete handler - opens confirmation modal
@@ -1118,12 +1180,14 @@ export function useEvalHandlers({
       if (deletingSuiteId) return;
       setSuiteToDelete(suite);
     },
-    [deletingSuiteId],
+    [deletingSuiteId]
   );
 
   // Confirm deletion - actually performs the deletion
-  const confirmDelete = useCallback(async () => {
-    if (!suiteToDelete || deletingSuiteId) return;
+  // Returns whether the delete actually committed (agent tooling propagates a
+  // real failure from this; the UI dialog ignores the return).
+  const confirmDelete = useCallback(async (): Promise<boolean> => {
+    if (!suiteToDelete || deletingSuiteId) return false;
 
     setDeletingSuiteId(suiteToDelete._id);
 
@@ -1137,9 +1201,11 @@ export function useEvalHandlers({
       }
 
       setSuiteToDelete(null);
+      return true;
     } catch (error) {
       console.error("Failed to delete suite:", error);
       toast.error(getBillingErrorMessage(error, "Failed to delete test suite"));
+      return false;
     } finally {
       setDeletingSuiteId(null);
     }
@@ -1179,19 +1245,19 @@ export function useEvalHandlers({
               type: "suite-overview",
               suiteId: newSuite._id,
             },
-            "evals",
+            "evals"
           );
         }
       } catch (error) {
         console.error("Failed to duplicate suite:", error);
         toast.error(
-          getBillingErrorMessage(error, "Failed to duplicate test suite"),
+          getBillingErrorMessage(error, "Failed to duplicate test suite")
         );
       } finally {
         setDuplicatingSuiteId(null);
       }
     },
-    [duplicatingSuiteId, mutations.duplicateSuiteMutation],
+    [duplicatingSuiteId, mutations.duplicateSuiteMutation]
   );
 
   // Cancel handler
@@ -1211,7 +1277,7 @@ export function useEvalHandlers({
         setCancellingRunId(null);
       }
     },
-    [cancellingRunId, mutations.cancelRunMutation],
+    [cancellingRunId, mutations.cancelRunMutation]
   );
 
   // Delete run handler - opens confirmation modal (for single run from detail view)
@@ -1220,7 +1286,7 @@ export function useEvalHandlers({
       if (deletingRunId) return;
       setRunToDelete(runId);
     },
-    [deletingRunId],
+    [deletingRunId]
   );
 
   // Direct delete function - actually performs the deletion (for batch delete)
@@ -1233,7 +1299,7 @@ export function useEvalHandlers({
         throw error;
       }
     },
-    [mutations.deleteRunMutation],
+    [mutations.deleteRunMutation]
   );
 
   // Confirm run deletion - actually performs the deletion
@@ -1267,7 +1333,7 @@ export function useEvalHandlers({
         testId: draftTestCaseId("prompt"),
       });
     },
-    [navigateAfterTestCaseMutation],
+    [navigateAfterTestCaseMutation]
   );
 
   // Handle delete test case - opens confirmation modal
@@ -1276,7 +1342,7 @@ export function useEvalHandlers({
       if (deletingTestCaseId) return;
       setTestCaseToDelete({ id: testCaseId, title: testCaseTitle });
     },
-    [deletingTestCaseId],
+    [deletingTestCaseId]
   );
 
   /** Perform deletion only (no modal). Used for playground batch delete. */
@@ -1289,7 +1355,7 @@ export function useEvalHandlers({
         test_case_id: testCaseId,
       });
     },
-    [mutations.deleteTestCaseMutation, selectedSuiteId],
+    [mutations.deleteTestCaseMutation, selectedSuiteId]
   );
 
   // Confirm test case deletion
@@ -1321,7 +1387,7 @@ export function useEvalHandlers({
             : {
                 type: "suite-overview",
                 suiteId: selectedSuiteId,
-              },
+              }
         );
       }
 
@@ -1378,7 +1444,7 @@ export function useEvalHandlers({
       } catch (error) {
         console.error("Failed to duplicate test case:", error);
         toast.error(
-          getBillingErrorMessage(error, "Failed to duplicate test case"),
+          getBillingErrorMessage(error, "Failed to duplicate test case")
         );
         return null;
       } finally {
@@ -1389,7 +1455,7 @@ export function useEvalHandlers({
       duplicatingTestCaseId,
       mutations.duplicateTestCaseMutation,
       navigateAfterTestCaseMutation,
-    ],
+    ]
   );
 
   // Generate tests handler - calls API and creates test cases
@@ -1397,14 +1463,14 @@ export function useEvalHandlers({
     async (
       suiteId: string,
       serverIds: string[],
-      postOptions?: HandleGenerateEvalTestsOptions,
+      postOptions?: HandleGenerateEvalTestsOptions
     ) => {
       if (isGeneratingTests) return;
 
       const suiteServers = normalizeSuiteServerRefs(serverIds);
       if (suiteServers.length === 0) {
         toast.error(
-          "Add at least one server to this suite before generating cases.",
+          "Add at least one server to this suite before generating cases."
         );
         return;
       }
@@ -1413,7 +1479,7 @@ export function useEvalHandlers({
 
       try {
         const disconnected = suiteServers.filter(
-          (name) => !connectedServerNames?.has(name),
+          (name) => !connectedServerNames?.has(name)
         );
         if (disconnected.length > 0) {
           if (ensureServersReady != null) {
@@ -1423,8 +1489,8 @@ export function useEvalHandlers({
                 formatEnsureServersReadyError(
                   readiness,
                   "generate test cases",
-                  projectServers,
-                ),
+                  projectServers
+                )
               );
               return;
             }
@@ -1433,7 +1499,7 @@ export function useEvalHandlers({
               formatMcpConnectServerPrompt(disconnected, {
                 remoteServers: projectServers,
                 kind: "suite",
-              }),
+              })
             );
             return;
           }
@@ -1446,7 +1512,7 @@ export function useEvalHandlers({
           suiteId,
           serverIds,
           createTestCase: mutations.createTestCaseMutation as (
-            input: any,
+            input: any
           ) => Promise<unknown>,
           skipIfExistingCases: false,
           isDirectGuest,
@@ -1484,7 +1550,7 @@ export function useEvalHandlers({
             suite_id: suiteId,
             generated_count: outcome.createdCount,
             auto_ran: Boolean(
-              shouldAutoRun && outcome.createdTestCaseIds.length > 0,
+              shouldAutoRun && outcome.createdTestCaseIds.length > 0
             ),
           });
         }
@@ -1495,7 +1561,7 @@ export function useEvalHandlers({
           generated_count: outcome.createdCount,
           api_returned_tests: outcome.apiReturnedTests,
           auto_ran: Boolean(
-            shouldAutoRun && outcome.createdTestCaseIds.length > 0,
+            shouldAutoRun && outcome.createdTestCaseIds.length > 0
           ),
           success: true,
         });
@@ -1508,7 +1574,7 @@ export function useEvalHandlers({
           const suite = postOptions!.suite!;
           const allCases = (await getTestCasesForRerun(suiteId)) as EvalCase[];
           const byId = new Map<string, EvalCase>(
-            allCases.map((c) => [c._id, c]),
+            allCases.map((c) => [c._id, c])
           );
           const toRun: EvalCase[] = [];
           for (const id of outcome.createdTestCaseIds) {
@@ -1527,7 +1593,7 @@ export function useEvalHandlers({
             toast.success(
               `Generated ${outcome.createdCount} test case${
                 outcome.createdCount > 1 ? "s" : ""
-              }. Open the list to run them when they appear.`,
+              }. Open the list to run them when they appear.`
             );
           } else if (toRun.length === 1) {
             toast.success("Generated 1 new case and ran it.");
@@ -1538,7 +1604,7 @@ export function useEvalHandlers({
           toast.success(
             `Generated ${outcome.createdCount} test case${
               outcome.createdCount > 1 ? "s" : ""
-            }`,
+            }`
           );
         }
       } catch (error) {
@@ -1556,7 +1622,7 @@ export function useEvalHandlers({
           error_message: rawMessage.slice(0, 200),
         });
         toast.error(
-          getBillingErrorMessage(error, "Failed to generate test cases"),
+          getBillingErrorMessage(error, "Failed to generate test cases")
         );
       } finally {
         setIsGeneratingTests(false);
@@ -1574,7 +1640,7 @@ export function useEvalHandlers({
       isDirectGuest,
       getTestCasesForRerun,
       handleRunTestCase,
-    ],
+    ]
   );
 
   return {

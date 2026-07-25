@@ -218,6 +218,52 @@ describe("MCPClientManager", () => {
       await manager.disconnectServer("elicitation-enabled-test");
     }, 30000);
 
+    it("should advertise an explicit {form,url} elicitation shape verbatim when a callback is registered", async () => {
+      manager.setElicitationCallback(() => ({ action: "cancel" } as any));
+
+      await manager.connectToServer("elicitation-url-mode-test", {
+        command: "npx",
+        args: ["-y", "@modelcontextprotocol/server-everything"],
+        clientCapabilities: {
+          elicitation: {
+            form: {},
+            url: {},
+          },
+        } as any,
+      });
+
+      const info = manager.getInitializationInfo("elicitation-url-mode-test");
+      expect(info).toBeDefined();
+      // Verbatim: the host-declared shape is what goes on the wire, since it
+      // is what `applyToClient` enforces declared modes against.
+      expect(
+        (info!.clientCapabilities as Record<string, unknown>).elicitation
+      ).toEqual({ form: {}, url: {} });
+
+      await manager.disconnectServer("elicitation-url-mode-test");
+    }, 30000);
+
+    it("should strip an explicit {form,url} elicitation shape when no callback is registered", async () => {
+      await manager.connectToServer("elicitation-url-mode-stripped-test", {
+        command: "npx",
+        args: ["-y", "@modelcontextprotocol/server-everything"],
+        clientCapabilities: {
+          elicitation: {
+            form: {},
+            url: {},
+          },
+        } as any,
+      });
+
+      const info = manager.getInitializationInfo(
+        "elicitation-url-mode-stripped-test"
+      );
+      expect(info).toBeDefined();
+      expect(info!.clientCapabilities).not.toHaveProperty("elicitation");
+
+      await manager.disconnectServer("elicitation-url-mode-stripped-test");
+    }, 30000);
+
     it("should keep exact clientCapabilities free of elicitation when not explicitly configured", async () => {
       manager.setElicitationCallback(() => ({ action: "cancel" } as any));
 

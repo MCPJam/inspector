@@ -1,29 +1,36 @@
 // Node-only in-process XAARequestExecutor — the CLI's "loopback" analog to the
-// inspector's server-backed executor. It services the three MCPJam-owned mint
-// routes (`/authenticate`, `/token-exchange`, `/proxy/token`) in-process using
-// the node mint, and external AS/MCP requests through the hardened OAuth proxy.
+// inspector's server-backed executor. It services the MCPJam-owned mint routes
+// (`/authenticate`, `/token`, `/token-exchange`, `/proxy/token`) in-process as
+// thin adapters over the shared handler cores in `mint/handlers.ts`, and
+// external AS/MCP requests through the hardened OAuth proxy.
 // This is the seam that lets the CLI drive the shared browser-safe state machine
 // without a running inspector server. Imports crypto/fs (mint) + node:dns
 // (proxy) — MUST stay out of the browser entry.
-import { executeDebugOAuthProxy, executeOAuthProxy } from "../oauth-proxy.js";
 import {
-  ID_JAG_TOKEN_TYPE,
-  ID_TOKEN_TOKEN_TYPE,
-  TOKEN_EXCHANGE_GRANT,
-  XAA_DEBUG_IDP_CLIENT_ID,
-} from "../oauth/client-identity.js";
+  executeDebugOAuthProxy,
+  executeOAuthProxy,
+  fetchPinnedPublicDocument,
+} from "../oauth-proxy.js";
+import { TOKEN_EXCHANGE_GRANT } from "../oauth/client-identity.js";
 import { getXAAIssuerUrl, initXAAIdpKeyPair } from "./mint/keypair.js";
 import {
-  issueIdJag,
-  issueMockIdToken,
-  issueNegativeIdJag,
-  validateXaaTokenExchangeSubject,
-  verifyXaaJwt,
-} from "./mint/signer.js";
-import { buildJwtBearerRequest } from "./mint/jwt-bearer.js";
-import { decodeJWT } from "../oauth/state-machines/shared/jwt.js";
-import { DEFAULT_NEGATIVE_TEST_MODE, isNegativeTestMode } from "./constants.js";
+  handleXaaAuthenticate,
+  handleXaaJsonTokenExchange,
+  handleXaaTokenExchangeGrant,
+} from "./mint/handlers.js";
+import {
+  buildXaaJwtBearerRequest,
+  getLocalConfidentialCimdProvider,
+  type ConfidentialCimdProvider,
+} from "./confidential-cimd-provider.js";
+import {
+  DEFAULT_NEGATIVE_TEST_MODE,
+  isNegativeTestMode,
+  normalizeIdentityAssertionFormat,
+  normalizeSubjectIdentifierFormat,
+} from "./constants.js";
 import type {
+  XAAExternalRequestOptions,
   XAARequestExecutor,
   XAARequestResult,
 } from "./state-machines/types.js";
@@ -35,6 +42,10 @@ export interface InProcessXaaExecutorOptions {
   httpsOnly?: boolean;
   /** Per-request timeout (ms) applied to every outbound proxy request. */
   timeoutMs?: number;
+  /** Node-side confidential-CIMD credential capability. Defaults to the local
+   * filesystem-backed provider; inject a different provider for another key
+   * store or omit private_key_jwt from the flow. */
+  confidentialCimdProvider?: ConfidentialCimdProvider;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -105,6 +116,8 @@ export function createInProcessXaaExecutor(
 ): XAARequestExecutor {
   const httpsOnly = options.httpsOnly ?? false;
   const timeoutMs = options.timeoutMs;
+  const confidentialCimdProvider =
+    options.confidentialCimdProvider ?? getLocalConfidentialCimdProvider();
 
   // Ensure the keypair is loaded, then return the canonical /xaa issuer.
   const resolveIssuer = (): string => {
@@ -118,113 +131,67 @@ export function createInProcessXaaExecutor(
   ): Promise<XAARequestResult> => {
     const body = parseInitBody(init);
 
-    // Mock OIDC login → id_token. Mirrors the server /authenticate route.
+    // Mock login → identity assertion (OIDC id_token or SAML assertion).
+    // Thin adapter over the shared core, which owns the server's
+    // demo-identity defaults and rich response body.
     if (path.endsWith("/authenticate")) {
-      const { token } = issueMockIdToken({
+      if (
+        body.assertionFormat !== undefined &&
+        normalizeIdentityAssertionFormat(body.assertionFormat) === undefined
+      ) {
+        return jsonResult(400, {
+          error: `Unsupported assertion format: ${String(
+            body.assertionFormat
+          )}`,
+        });
+      }
+      const result = handleXaaAuthenticate({
         issuer: resolveIssuer(),
-        subject: str(body.userId),
-        email: str(body.email),
-        audience: str(body.audience) || undefined,
-        resourceClientId: str(body.resourceClientId) || undefined,
+        userId: nonEmptyString(body.userId),
+        email: nonEmptyString(body.email),
+        audience: nonEmptyString(body.audience),
+        resourceClientId: nonEmptyString(body.resourceClientId),
+        assertionFormat: normalizeIdentityAssertionFormat(body.assertionFormat),
       });
-      return jsonResult(200, { id_token: token });
+      return jsonResult(result.status, result.body);
     }
 
     // Standards-track RFC 8693 token exchange. The valid debugger flow uses
     // this form-encoded endpoint; the JSON route below remains available for
-    // intentionally malformed assertions used by negative tests.
+    // intentionally malformed assertions used by negative tests. Grant-type
+    // dispatch is the adapter's (it mirrors the server's outer /token route);
+    // everything else lives in the shared core.
     if (path.endsWith("/token") && !path.endsWith("/proxy/token")) {
       const form = parseFormBody(init);
       if (form.grant_type !== TOKEN_EXCHANGE_GRANT) {
         return jsonResult(400, { error: "unsupported_grant_type" });
       }
-      if (
-        form.requested_token_type !== ID_JAG_TOKEN_TYPE ||
-        form.subject_token_type !== ID_TOKEN_TOKEN_TYPE
-      ) {
-        return jsonResult(400, { error: "invalid_request" });
-      }
-      if (!form.subject_token || !form.audience || !form.client_id) {
-        return jsonResult(400, {
-          error: "subject_token, audience and client_id are required",
-        });
-      }
-      if (form.client_id !== XAA_DEBUG_IDP_CLIENT_ID) {
-        return jsonResult(401, {
-          error: "invalid_client",
-          error_description: "Unknown mock IdP client_id",
-        });
-      }
-
-      let subjectPayload: Record<string, unknown>;
-      let subject: ReturnType<typeof validateXaaTokenExchangeSubject>;
-      try {
-        subjectPayload = verifyXaaJwt(form.subject_token, {
-          issuer: resolveIssuer(),
-          typ: "JWT",
-        });
-        subject = validateXaaTokenExchangeSubject(
-          subjectPayload,
-          XAA_DEBUG_IDP_CLIENT_ID
-        );
-      } catch (error) {
-        return jsonResult(400, {
-          error: "invalid_grant",
-          error_description:
-            error instanceof Error ? error.message : "Invalid subject_token",
-        });
-      }
-      const issued = issueIdJag({
-        issuer: resolveIssuer(),
-        subject: subject.subject,
-        email: subject.email,
-        audience: form.audience,
-        resource: form.resource || undefined,
-        clientId: subject.resourceClientId,
-        scope: form.scope || undefined,
-      });
-      return jsonResult(200, {
-        issued_token_type: ID_JAG_TOKEN_TYPE,
-        access_token: issued.token,
-        token_type: "N_A",
-        expires_in: Math.max(
-          0,
-          Math.floor((issued.expiresAt - Date.now()) / 1000)
-        ),
-        ...(form.scope ? { scope: form.scope } : {}),
-      });
+      const result = handleXaaTokenExchangeGrant(resolveIssuer(), form);
+      return jsonResult(result.status, result.body);
     }
 
-    // Token exchange → ID-JAG. Decodes the identity assertion for sub/email,
-    // exactly as the server /token-exchange route does, then mints (applying
-    // the negative-test tamper when requested). Like the server route, a
-    // missing/malformed assertion or one without a subject is a 400 — never a
-    // silently minted empty-subject ID-JAG.
+    // Token exchange → ID-JAG. The adapter mirrors the server's zod +
+    // resolveNegativeTestMode validation; the shared core decodes the
+    // assertion for sub/email and mints (applying the negative-test tamper
+    // when requested). Like the server route, a missing/malformed assertion
+    // or one without a subject is a 400 — never a silently minted
+    // empty-subject ID-JAG. Intentional divergence: the server's
+    // managed-policy-gated response additionally echoes a granted `scope`
+    // field, but the managed context (policyMode/testIdentityId/
+    // resourceAppId) never reaches this in-process CLI path, so no scope is
+    // echoed here.
     if (path.endsWith("/token-exchange")) {
-      const assertion = nonEmptyString(body.identityAssertion);
-      if (!assertion) {
+      const identityAssertion = nonEmptyString(body.identityAssertion);
+      if (!identityAssertion) {
         return jsonResult(400, {
           error: "Token exchange requires a non-empty identity assertion.",
         });
       }
-      const decoded = decodeJWT(assertion);
-      if (!decoded) {
-        return jsonResult(400, {
-          error: "The identity assertion is not a decodable JWT.",
-        });
-      }
-      const claims = asRecord(decoded);
-      const subject = nonEmptyString(claims.sub);
-      if (!subject) {
-        return jsonResult(400, {
-          error: "The identity assertion has no subject (`sub`) claim.",
-        });
-      }
-      const requiredClaims = {
+      const requiredFields = {
         audience: nonEmptyString(body.audience),
         clientId: nonEmptyString(body.clientId),
       };
-      const missingField = Object.entries(requiredClaims).find(
+      const missingField = Object.entries(requiredFields).find(
         ([, value]) => value === undefined
       )?.[0];
       if (missingField) {
@@ -242,22 +209,53 @@ export function createInProcessXaaExecutor(
           )}`,
         });
       }
-      const mode = isNegativeTestMode(body.negativeTestMode)
-        ? body.negativeTestMode
-        : DEFAULT_NEGATIVE_TEST_MODE;
-      const { token } = issueNegativeIdJag(
-        {
+      if (
+        body.assertionFormat !== undefined &&
+        normalizeIdentityAssertionFormat(body.assertionFormat) === undefined
+      ) {
+        return jsonResult(400, {
+          error: `Unsupported assertion format: ${String(
+            body.assertionFormat
+          )}`,
+        });
+      }
+      if (
+        body.subjectIdFormat !== undefined &&
+        normalizeSubjectIdentifierFormat(body.subjectIdFormat) === undefined
+      ) {
+        return jsonResult(400, {
+          error: `Unsupported subject identifier format: ${String(
+            body.subjectIdFormat
+          )}`,
+        });
+      }
+      try {
+        const result = handleXaaJsonTokenExchange({
           issuer: resolveIssuer(),
-          subject,
-          audience: requiredClaims.audience!,
+          identityAssertion,
+          audience: requiredFields.audience!,
           resource: nonEmptyString(body.resource),
-          clientId: requiredClaims.clientId!,
+          clientId: requiredFields.clientId!,
           scope: nonEmptyString(body.scope),
-          email: typeof claims.email === "string" ? claims.email : undefined,
-        },
-        mode
-      );
-      return jsonResult(200, { id_jag: token });
+          negativeTestMode: isNegativeTestMode(body.negativeTestMode)
+            ? body.negativeTestMode
+            : DEFAULT_NEGATIVE_TEST_MODE,
+          assertionFormat: normalizeIdentityAssertionFormat(
+            body.assertionFormat
+          ),
+          subjectIdFormat: normalizeSubjectIdentifierFormat(
+            body.subjectIdFormat
+          ),
+        });
+        return jsonResult(result.status, result.body);
+      } catch (error) {
+        return jsonResult(400, {
+          error:
+            error instanceof Error
+              ? error.message
+              : "Invalid token exchange request",
+        });
+      }
     }
 
     // jwt-bearer redemption proxy → { status, body } (the upstream token
@@ -271,16 +269,25 @@ export function createInProcessXaaExecutor(
           error: "In-process redemption requires an explicit token endpoint.",
         });
       }
-      const { headers, body: form } = buildJwtBearerRequest({
-        assertion: str(body.assertion),
-        clientId: str(body.clientId) || undefined,
-        clientSecret: str(body.clientSecret) || undefined,
-        scope: str(body.scope) || undefined,
-        resource: str(body.resource) || undefined,
-        tokenEndpointAuthMethod: isTokenAuthMethod(body.tokenEndpointAuthMethod)
-          ? body.tokenEndpointAuthMethod
-          : undefined,
-      });
+      const authMethod = isTokenAuthMethod(body.tokenEndpointAuthMethod)
+        ? body.tokenEndpointAuthMethod
+        : undefined;
+      const clientId = str(body.clientId) || undefined;
+      // The shared Node-side builder applies the selected client-auth method.
+      // The browser-safe state machine carries only strings; key material never
+      // leaves the injected confidential-CIMD provider.
+      const { headers, body: form } = buildXaaJwtBearerRequest(
+        {
+          assertion: str(body.assertion),
+          tokenEndpoint,
+          clientId,
+          clientSecret: str(body.clientSecret) || undefined,
+          scope: str(body.scope) || undefined,
+          resource: str(body.resource) || undefined,
+          tokenEndpointAuthMethod: authMethod,
+        },
+        confidentialCimdProvider
+      );
       const upstream = await executeOAuthProxy({
         url: tokenEndpoint,
         method: "POST",
@@ -300,7 +307,8 @@ export function createInProcessXaaExecutor(
 
   const externalRequest = async (
     url: string,
-    init?: RequestInit
+    init?: RequestInit,
+    options?: XAAExternalRequestOptions
   ): Promise<XAARequestResult> => {
     // Preserve the caller's redirect intent (CIMD's document preflight sends
     // `redirect: "manual"` and MUST NOT follow redirects) and normalize the
@@ -311,6 +319,24 @@ export function createInProcessXaaExecutor(
         : init?.redirect === "follow"
         ? "follow"
         : undefined;
+    // `enforcePublicHost` (the caller-influenced CIMD document fetch) uses the
+    // connection-pinned GET: resolve once, reject private/reserved (RFC 6890),
+    // and pin the validated IP into the socket so there is no second DNS
+    // resolution to rebind. This holds even with the executor's local-dev
+    // `httpsOnly: false` default, and never touches the loopback RS calls.
+    if (options?.enforcePublicHost === true) {
+      const pinned = await fetchPinnedPublicDocument(url, {
+        headers: normalizeHeaders(init?.headers),
+        timeoutMs,
+      });
+      return {
+        status: pinned.status,
+        statusText: pinned.statusText,
+        headers: pinned.headers,
+        body: pinned.body,
+        ok: pinned.status >= 200 && pinned.status < 300,
+      };
+    }
     const response = await executeDebugOAuthProxy({
       url,
       method: (init?.method ?? "GET").toUpperCase(),
@@ -334,10 +360,15 @@ export function createInProcessXaaExecutor(
 
 function isTokenAuthMethod(
   value: unknown
-): value is "client_secret_post" | "client_secret_basic" | "none" {
+): value is
+  | "client_secret_post"
+  | "client_secret_basic"
+  | "none"
+  | "private_key_jwt" {
   return (
     value === "client_secret_post" ||
     value === "client_secret_basic" ||
-    value === "none"
+    value === "none" ||
+    value === "private_key_jwt"
   );
 }

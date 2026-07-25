@@ -1,11 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { executeInspectorCommandMock } = vi.hoisted(() => ({
+const { executeInspectorCommandMock, trackMock } = vi.hoisted(() => ({
   executeInspectorCommandMock: vi.fn(),
+  trackMock: vi.fn(),
 }));
 
 vi.mock("@/lib/inspector-command-handlers", () => ({
   executeInspectorCommand: executeInspectorCommandMock,
+}));
+
+vi.mock("@/lib/analytics", () => ({
+  track: trackMock,
 }));
 
 vi.mock("@/lib/config", () => ({
@@ -40,6 +45,10 @@ describe("ui-actions (hosted mode)", () => {
     if (!result.ok) {
       expect(result.reason).toContain('"tracing" is not available in hosted mode');
     }
+    expect(trackMock).toHaveBeenCalledWith(
+      "ui_navigation_rejected",
+      expect.objectContaining({ segment: "tracing", reason: "hosted_blocked" }),
+    );
   });
 
   it("navigateAction never dispatches a blocked target", async () => {

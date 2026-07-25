@@ -20,16 +20,24 @@ import { validateServerFormData } from "@/lib/server-form-validation";
 import type { ServerFormData } from "@/shared/types.js";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import {
+  DEFAULT_IDENTITY_ASSERTION_FORMAT,
   DEFAULT_REGISTRATION_STRATEGY,
-  normalizeRegistrationStrategy,
+  DEFAULT_XAA_CLIENT_AUTH,
+  IDENTITY_ASSERTION_FORMATS,
+  type IdentityAssertionFormat,
   type RegistrationStrategy,
+  type XaaClientAuthMethod,
 } from "@/shared/xaa.js";
-import {
-  XAA_STRATEGY_HINTS,
-  XAA_STRATEGY_OPTIONS,
-} from "@/lib/registration-strategy";
-import { deriveOAuthProfileFromServer } from "../oauth/utils";
+import { XAA_STRATEGY_OPTIONS } from "@/lib/registration-strategy";
+import { HOSTED_MODE } from "@/lib/config";
 import { XaaCredentialFields } from "../connection/shared/XaaCredentialFields";
+import { XAA_PARTIAL_OVERRIDE_ERROR } from "@/lib/xaa/identity";
+import {
+  IDENTITY_ASSERTION_FORMAT_LABELS,
+  buildXaaServerFormData,
+  deriveXaaServerFormSeed,
+  splitXaaScopes,
+} from "./xaa-server-form";
 
 interface XAAServerModalProps {
   open: boolean;
@@ -40,14 +48,20 @@ interface XAAServerModalProps {
   // rejects, so a downstream save failure never discards the form.
   onSave: (payload: { formData: ServerFormData }) => void | Promise<void>;
   /**
-   * Signed-in user's email — the default simulated identity when the per-server
-   * subject/email fields are left blank. Same default as the /servers Connect
-   * page so the two surfaces stay in sync.
+   * The project's admin-controlled default test identity — shown as the
+   * override placeholders (same as the /servers Connect page).
    */
-  signedInEmail?: string;
+  projectDefaultIdentity?: { subject: string; email: string } | null;
   /** Hosted secret context used to reveal an existing saved client secret. */
   projectId?: string | null;
   hostedServerId?: string | null;
+  /** Whether this inspector process has a Node-side confidential-CIMD provider. */
+  confidentialCimdAvailable?: boolean;
+  /**
+   * Preserve an existing private_key_jwt selection while hosted capability
+   * discovery is unresolved. This does not expose the confidential picker.
+   */
+  preserveConfidentialCimdSelection?: boolean;
 }
 
 export function XAAServerModal({
@@ -56,14 +70,15 @@ export function XAAServerModal({
   server,
   existingServerNames,
   onSave,
-  signedInEmail,
+  projectDefaultIdentity = null,
   projectId,
   hostedServerId,
+  confidentialCimdAvailable = !HOSTED_MODE,
+  preserveConfidentialCimdSelection = false,
 }: XAAServerModalProps) {
-  const derived = useMemo(
-    () => deriveOAuthProfileFromServer(server),
-    [server],
-  );
+  // One shared derivation with the flow-header format toggle's untouched
+  // resave, so both surfaces read the same unedited field values.
+  const seed = useMemo(() => deriveXaaServerFormSeed(server), [server]);
   const hasSavedSecret = Boolean(server?.hasClientSecret);
   const isEditing = Boolean(server);
 
@@ -82,6 +97,16 @@ export function XAAServerModal({
   // the `?? existing` merge preserves the raw stored value.
   const [registrationStrategyDirty, setRegistrationStrategyDirty] =
     useState(false);
+  // Identity assertion preset (debugger-only, persisted per-server). Unlike
+  // registrationMode there is no "auto" shared with other flows, so the save
+  // always sends the displayed value.
+  const [identityAssertionFormat, setIdentityAssertionFormat] =
+    useState<IdentityAssertionFormat>(DEFAULT_IDENTITY_ASSERTION_FORMAT);
+  // CIMD client authentication: public (none) or confidential (private_key_jwt).
+  // Only surfaced/sent for the cimd strategy.
+  const [clientAuth, setClientAuth] = useState<XaaClientAuthMethod>(
+    DEFAULT_XAA_CLIENT_AUTH
+  );
   const [clientId, setClientId] = useState("");
   const [scopes, setScopes] = useState("");
   const [authzIssuer, setAuthzIssuer] = useState("");
@@ -90,36 +115,38 @@ export function XAAServerModal({
   // a typed value replaces the saved secret, the Clear toggle removes it.
   const [clientSecret, setClientSecret] = useState("");
   const [clearClientSecret, setClearClientSecret] = useState(false);
-  // Per-server simulated identity — the single source of truth shared with the
-  // /servers Connect page (saved on the server, used by both the debugger run
-  // and the connect mint). Editing it here syncs to /servers and vice versa.
+  // Per-server identity OVERRIDE — one atomic pair shared with the /servers
+  // Connect page (saved on the server, used by both the debugger run and the
+  // connect mint). Only a user edit marks it dirty; an untouched pair is
+  // omitted from the save so the stored values are preserved.
   const [xaaSubject, setXaaSubject] = useState("");
   const [xaaEmail, setXaaEmail] = useState("");
+  const [xaaIdentityDirty, setXaaIdentityDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!open) return;
-    setServerName(server?.name ?? "");
-    setServerUrl(derived.serverUrl ?? "");
-    setRegistrationStrategy(
-      normalizeRegistrationStrategy(server?.registrationMode) ??
-        DEFAULT_REGISTRATION_STRATEGY,
-    );
+    setServerName(seed.serverName);
+    setServerUrl(seed.serverUrl);
+    setRegistrationStrategy(seed.registrationStrategy);
     setRegistrationStrategyDirty(false);
-    setClientId(derived.clientId ?? "");
-    // Scopes can be stored comma- or space-separated upstream; normalize to
-    // the space-separated form this modal edits.
-    setScopes((derived.scopes ?? "").replace(/,/g, " ").trim());
-    setAuthzIssuer(server?.xaaAuthzIssuer ?? "");
-    setAllowPathScopedIssuer(server?.xaaAllowPathScopedIssuer === true);
+    setIdentityAssertionFormat(seed.identityAssertionFormat);
+    setClientAuth(seed.clientAuth);
+    setClientId(seed.clientId);
+    // Scopes arrive space-separated from the seed (stored comma- or
+    // space-separated forms normalized there).
+    setScopes(seed.scopes);
+    setAuthzIssuer(seed.authzIssuer);
+    setAllowPathScopedIssuer(seed.allowPathScopedIssuer);
     setClientSecret("");
     setClearClientSecret(false);
-    setXaaSubject(server?.xaaSubject ?? "");
-    setXaaEmail(server?.xaaEmail ?? "");
+    setXaaSubject(seed.xaaSubject);
+    setXaaEmail(seed.xaaEmail);
+    setXaaIdentityDirty(false);
     setError(null);
     setSaving(false);
-  }, [open, server, derived]);
+  }, [open, seed]);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -129,9 +156,13 @@ export function XAAServerModal({
       setError("Server name is required.");
       return;
     }
+    // Renaming has to collide-check too: only the server being edited is exempt
+    // from its own name. Without the second clause a rename onto another
+    // server's name would silently overwrite that server.
     if (
-      !isEditing &&
-      existingServerNames.some((name) => name === trimmedName)
+      existingServerNames.some(
+        (name) => name === trimmedName && name !== server?.name
+      )
     ) {
       setError(`A server named "${trimmedName}" already exists.`);
       return;
@@ -169,48 +200,53 @@ export function XAAServerModal({
       }
     }
 
-    const scopesArray = scopes
-      .split(/\s+/)
-      .map((scope) => scope.trim())
-      .filter((scope) => scope.length > 0);
-
-    // A typed value replaces the saved secret; the Clear toggle removes it. A
-    // typed replacement always wins over Clear (the save path rejects both).
-    const trimmedSecret = clientSecret.trim();
-    const submittedClearSecret = clearClientSecret && !trimmedSecret;
+    // The identity override is atomic: block a partial pair rather than
+    // saving a mixed identity or silently dropping one member.
+    const trimmedXaaSubject = xaaSubject.trim();
+    const trimmedXaaEmail = xaaEmail.trim();
+    if (
+      xaaIdentityDirty &&
+      (trimmedXaaSubject === "") !== (trimmedXaaEmail === "")
+    ) {
+      setError(`${XAA_PARTIAL_OVERRIDE_ERROR}.`);
+      return;
+    }
 
     setError(null);
 
-    const formData: ServerFormData = {
+    // Field semantics (secret sentinels, preserve-by-omission for the
+    // identity pair and registrationMode) live in the shared builder — the
+    // flow-header format toggle saves through the same one.
+    const formData: ServerFormData = buildXaaServerFormData({
       name: trimmedName,
-      type: "http",
       url: trimmedUrl,
-      // Cross-App Access discriminator — identical to the /servers Connect
-      // page so a server configured in either surface is unambiguously XAA and
-      // editing it in one place never flips it back to plain OAuth.
-      useXaa: true,
-      useOAuth: false,
-      authServerMode: "mcpjam",
       clientId: trimmedClientId,
-      ...(trimmedSecret ? { clientSecret: trimmedSecret } : {}),
-      ...(submittedClearSecret ? { clearClientSecret: true } : {}),
+      clientSecret,
+      clearClientSecret,
       hasClientSecret: server?.hasClientSecret,
-      oauthScopes: scopesArray,
-      // Always send the issuer (possibly empty) so clearing it persists.
-      xaaAuthzIssuer: trimmedIssuer,
-      xaaAllowPathScopedIssuer: allowPathScopedIssuer,
-      // Per-server simulated identity, defaulting to the signed-in user when
-      // blank — identical to the Connect page so the two surfaces stay synced.
-      xaaSubject: xaaSubject.trim() || signedInEmail || undefined,
-      xaaEmail: xaaEmail.trim() || signedInEmail || undefined,
-      // Unified registration mode — written ONLY on explicit user edit (see
-      // the auto-clobber guard above); an untouched selector omits the field
-      // so the save-path `?? existing` merge preserves the stored value
-      // (which may be "auto", shared with the OAuth flow).
-      ...(registrationStrategyDirty
-        ? { registrationMode: registrationStrategy }
-        : {}),
-    };
+      oauthScopes: splitXaaScopes(scopes),
+      authzIssuer: trimmedIssuer,
+      allowPathScopedIssuer,
+      identity: {
+        dirty: xaaIdentityDirty,
+        subject: trimmedXaaSubject,
+        email: trimmedXaaEmail,
+      },
+      identityAssertionFormat,
+      // CIMD client-auth — the builder emits it only for the cimd strategy.
+      // Resolve to "none" when no confidential provider is available (hosted)
+      // so a stale imported private_key_jwt is actively cleared. A pending
+      // capability probe is unknown rather than unavailable, so preserve an
+      // existing private selection without exposing the picker until success.
+      clientAuth:
+        confidentialCimdAvailable || preserveConfidentialCimdSelection
+          ? clientAuth
+          : "none",
+      registration: {
+        dirty: registrationStrategyDirty,
+        strategy: registrationStrategy,
+      },
+    });
 
     // Final gate: the exact validator the save path runs. Any rule added there
     // is enforced here too, so a new rule can never pass this form and then be
@@ -233,7 +269,7 @@ export function XAAServerModal({
       setError(
         saveError instanceof Error
           ? saveError.message
-          : "Couldn't save this server. Your changes were kept — try again.",
+          : "Couldn't save this server. Your changes were kept — try again."
       );
     } finally {
       setSaving(false);
@@ -299,9 +335,58 @@ export function XAAServerModal({
                   ))}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">
-                {XAA_STRATEGY_HINTS[registrationStrategy]}
-              </p>
+            </div>
+
+            {/* CIMD client authentication. Public presents the metadata URL and
+                proves nothing; confidential signs a private_key_jwt assertion
+                with a server-held client key (published via the reflector doc)
+                so an authorization server that requires a confidential client
+                accepts the run. Only meaningful for the cimd strategy. */}
+            {registrationStrategy === "cimd" && confidentialCimdAvailable && (
+              <div className="space-y-2">
+                <Label htmlFor="xaa-client-auth">Client authentication</Label>
+                <Select
+                  value={clientAuth}
+                  onValueChange={(value) =>
+                    setClientAuth(value as XaaClientAuthMethod)
+                  }
+                >
+                  <SelectTrigger id="xaa-client-auth" className="h-10">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">
+                      Public (no client auth)
+                    </SelectItem>
+                    <SelectItem value="private_key_jwt">
+                      Confidential (private_key_jwt)
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {/* Identity assertion format (input axis). A per-server preset the
+                debugger flow reads; changing it resets the current run. */}
+            <div className="space-y-2">
+              <Label htmlFor="xaa-identity-assertion">Identity assertion</Label>
+              <Select
+                value={identityAssertionFormat}
+                onValueChange={(value) =>
+                  setIdentityAssertionFormat(value as IdentityAssertionFormat)
+                }
+              >
+                <SelectTrigger id="xaa-identity-assertion" className="h-10">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {IDENTITY_ASSERTION_FORMATS.map((format) => (
+                    <SelectItem key={format} value={format}>
+                      {IDENTITY_ASSERTION_FORMAT_LABELS[format]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             {/* Shared with the /servers Connect page so both surfaces present
@@ -310,6 +395,7 @@ export function XAAServerModal({
               clientId={clientId}
               onClientIdChange={setClientId}
               clientIdRequired={registrationStrategy === "preregistered"}
+              showClientCredentials={registrationStrategy === "preregistered"}
               clientSecret={clientSecret}
               onClientSecretChange={(value) => {
                 setClientSecret(value);
@@ -326,10 +412,16 @@ export function XAAServerModal({
               xaaAllowPathScopedIssuer={allowPathScopedIssuer}
               onXaaAllowPathScopedIssuerChange={setAllowPathScopedIssuer}
               xaaSubject={xaaSubject}
-              onXaaSubjectChange={setXaaSubject}
+              onXaaSubjectChange={(value) => {
+                setXaaIdentityDirty(true);
+                setXaaSubject(value);
+              }}
               xaaEmail={xaaEmail}
-              onXaaEmailChange={setXaaEmail}
-              signedInEmail={signedInEmail}
+              onXaaEmailChange={(value) => {
+                setXaaIdentityDirty(true);
+                setXaaEmail(value);
+              }}
+              projectDefaultIdentity={projectDefaultIdentity}
               projectId={projectId}
               hostedServerId={hostedServerId}
             />

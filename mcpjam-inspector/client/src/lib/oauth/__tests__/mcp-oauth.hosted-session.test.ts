@@ -63,6 +63,7 @@ describe("mcp-oauth hosted callback sessions", () => {
       "oauth-code",
       {
         callbackState: "oauth-state-1",
+        callbackIss: "https://auth.asana.com",
       }
     );
 
@@ -84,6 +85,8 @@ describe("mcp-oauth hosted callback sessions", () => {
       projectId: "ws_1",
       serverId: "srv_asana",
       code: "oauth-code",
+      // RFC 9207 iss threaded through for backend exact-match validation.
+      iss: "https://auth.asana.com",
       oauthResourceUrl: "https://mcp.asana.com/sse",
       state: "oauth-state-1",
       sessionId: "hosted-session-1",
@@ -264,7 +267,7 @@ describe("mcp-oauth hosted callback sessions", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain(
-      "Rejected cross-origin OAuth resource indicator"
+      "Rejected OAuth resource indicator"
     );
     expect(authFetchMock).not.toHaveBeenCalledWith(
       "https://test.convex.site/web/oauth/complete",
@@ -289,7 +292,7 @@ describe("mcp-oauth hosted callback sessions", () => {
           },
           {
             step: "token_request",
-            title: "Exchange Authorization Code",
+            title: "Request Tokens with Authorization Code",
             status: "pending",
             startedAt: 3,
           },
@@ -405,7 +408,7 @@ describe("mcp-oauth hosted callback sessions", () => {
           },
           {
             step: "token_request",
-            title: "Exchange Authorization Code",
+            title: "Request Tokens with Authorization Code",
             status: "error",
             startedAt: 3,
             completedAt: 4,

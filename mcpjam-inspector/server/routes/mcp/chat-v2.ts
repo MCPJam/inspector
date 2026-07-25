@@ -6,10 +6,7 @@ import {
 } from "ai";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { createLlmModel } from "../../utils/chat-helpers";
-import {
-  getCanonicalModelId,
-  isMCPJamGuestAllowedModel,
-} from "@/shared/types";
+import { getCanonicalModelId } from "@/shared/types";
 import type { ModelProvider } from "@/shared/types";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import { getClientIp } from "../../utils/client-ip.js";
@@ -46,8 +43,6 @@ import {
   prepareChatV2,
   validateAppToolEntries,
   AppToolValidationError,
-  validateUiToolEntries,
-  UiToolValidationError,
   validateWidgetModelContextEntries,
   WidgetModelContextValidationError,
 } from "../../utils/chat-v2-orchestration";
@@ -55,7 +50,11 @@ import {
   formatProviderOverloadError,
   isProviderOverloadError,
 } from "../../utils/provider-error-normalization";
-import { describeError, describeAsSlug } from "@mcpjam/sdk";
+import {
+  describeError,
+  describeAsSlug,
+  readXaaEnterprisePolicy,
+} from "@mcpjam/sdk";
 import { type LiveChatTraceUsage } from "@/shared/live-chat-trace";
 import { isAbortError } from "@/shared/abort-errors";
 import {
@@ -564,20 +563,10 @@ chatV2.post("/", async (c) => {
       modelDefinition.id &&
         isHostedCatalogModel(modelDefinition.id, modelDefinition.provider)
     );
-    if (
-      isMcpJamProvidedModel &&
-      modelDefinition.id &&
-      !requestAuthHeader &&
-      !isMCPJamGuestAllowedModel(modelDefinition.id, modelDefinition.provider)
-    ) {
-      return c.json(
-        {
-          error:
-            "This MCPJam model is not available for guest access. Sign in to continue.",
-        },
-        403,
-      );
-    }
+    // Guests may use any hosted model — model curation for guests is gone;
+    // the backend enforces spend caps (a soft postpaid guard), not an
+    // allowlist. A guest MCPJam-model request still gets its bearer minted
+    // lazily below (resolveMcpJamAuthHeader).
     let mcpJamAuthHeader = requestAuthHeader;
     const resolveMcpJamAuthHeader = async () => {
       if (mcpJamAuthHeader || !isMcpJamProvidedModel) return mcpJamAuthHeader;
@@ -622,22 +611,12 @@ chatV2.post("/", async (c) => {
       throw error;
     }
 
-    // WebMCP UI tools: same boundary treatment as appTools. Chatbox-bound
-    // turns (owner preview persists as `sourceType: "chatbox"`) never accept
-    // them — ui_* tools drive the inspector UI, which is not part of the
-    // chatbox surface, so a stale or tampered client snapshot must not
-    // re-advertise them here.
-    let validatedUiTools;
-    if (!isChatboxSession) {
-      try {
-        validatedUiTools = validateUiToolEntries(body.uiTools);
-      } catch (error) {
-        if (error instanceof UiToolValidationError) {
-          return c.json({ error: error.message }, 400);
-        }
-        throw error;
-      }
-    }
+    // `body.uiTools` is intentionally ignored here, not rejected: MCPJam UI
+    // tools are agent-route-only (server/routes/web/mcpjam-agent.ts), but
+    // cached pre-cutover clients may still send the field. Without a
+    // validated snapshot no MCPJam UI approval/free-name classification
+    // exists on this route — an MCP server tool named `ui_*` is a normal
+    // executable tool with ordinary approval semantics.
 
     let validatedWidgetModelContext;
     try {
@@ -671,6 +650,14 @@ chatV2.post("/", async (c) => {
           String(modelDefinition.id),
           modelDefinition.provider,
         ),
+        // Fail closed rather than let a harness turn bypass the host's
+        // enterprise-managed policy: the harness proxy token carries no
+        // host, so that route can't enforce it (see the flag's docstring).
+        // Read from the server-resolved host config, never the body.
+        xaaEnterprisePolicyOn:
+          readXaaEnterprisePolicy(
+            (hostRuntimeConfig as { mcpProfile?: unknown } | null)?.mcpProfile,
+          ).kind !== "off",
       });
       if (!availability.ok) {
         return c.json(
@@ -710,6 +697,12 @@ chatV2.post("/", async (c) => {
         ? {
             authHeader: builtInAuthHeader,
             projectId: body.projectId,
+            // A request with no user-supplied Authorization is an anonymous
+            // guest (the route mints a production guest bearer for it), so the
+            // resolver withholds bash on the personal-project path — matching
+            // web/chat-v2's `isGuest: Boolean(c.get("guestId"))`. Bash is kept
+            // only for a host-funded swarm executionScope.
+            isGuest: !requestAuthHeader,
             ...(executionScope ? { executionScope } : {}),
             ...(body.chatSessionId
               ? { chatSessionId: body.chatSessionId }
@@ -745,7 +738,6 @@ chatV2.post("/", async (c) => {
             }
           : {}),
         appTools: validatedAppTools,
-        uiTools: validatedUiTools,
       });
     } catch (error) {
       // prepareChatV2 throws on Anthropic validation errors — return 400.

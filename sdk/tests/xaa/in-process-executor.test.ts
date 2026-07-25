@@ -8,7 +8,12 @@ import {
   resetXAAIdpKeyPairForTests,
 } from "../../src/xaa/mint/keypair.js";
 import { verifyXaaJwt, issueMockIdToken } from "../../src/xaa/mint/signer.js";
+import {
+  getXaaClientJwks,
+  resetXaaClientKeyPairForTests,
+} from "../../src/xaa/mint/client-keypair.js";
 import { decodeJWT } from "../../src/oauth/state-machines/shared/jwt.js";
+import { createPublicKey, createVerify } from "crypto";
 import {
   ID_JAG_TOKEN_TYPE,
   ID_TOKEN_TOKEN_TYPE,
@@ -59,6 +64,33 @@ describe("createInProcessXaaExecutor internal routes", () => {
     expect(claims.email).toBe("u@example.com");
   });
 
+  it("/authenticate returns the rich server-parity body", async () => {
+    const exec = createInProcessXaaExecutor({ issuerBaseUrl: ISSUER_BASE });
+    const result = await exec.internalRequest(
+      "/authenticate",
+      post({ userId: "user-1", email: "u@example.com" })
+    );
+    expect(result.status).toBe(200);
+    const body = result.body as Record<string, unknown>;
+    expect(body.token_type).toBe("Bearer");
+    expect(body.expires_in).toBeGreaterThan(0);
+    expect(body.user).toEqual({ sub: "user-1", email: "u@example.com" });
+  });
+
+  it("/authenticate applies the server's demo-identity defaults", async () => {
+    const exec = createInProcessXaaExecutor({ issuerBaseUrl: ISSUER_BASE });
+    const result = await exec.internalRequest("/authenticate", post({}));
+    expect(result.status).toBe(200);
+    const body = result.body as Record<string, unknown>;
+    expect(body.user).toEqual({
+      sub: "user-12345",
+      email: "demo.user@example.com",
+    });
+    const claims = decodeJWT(body.id_token as string)!;
+    expect(claims.sub).toBe("user-12345");
+    expect(claims.email).toBe("demo.user@example.com");
+  });
+
   it("/token-exchange decodes the assertion and mints an ID-JAG", async () => {
     const exec = createInProcessXaaExecutor({ issuerBaseUrl: ISSUER_BASE });
     const issuer = getXAAIssuerUrl(ISSUER_BASE);
@@ -87,6 +119,31 @@ describe("createInProcessXaaExecutor internal routes", () => {
     expect(claims.resource).toBe(RESOURCE);
     expect(claims.client_id).toBe("client-1");
     expect(claims.email).toBe("u@example.com");
+  });
+
+  it("/token-exchange returns the rich server-parity body", async () => {
+    const exec = createInProcessXaaExecutor({ issuerBaseUrl: ISSUER_BASE });
+    const issuer = getXAAIssuerUrl(ISSUER_BASE);
+    const { token: idToken } = issueMockIdToken({
+      issuer,
+      subject: "user-1",
+      email: "u@example.com",
+    });
+    const result = await exec.internalRequest(
+      "/token-exchange",
+      post({
+        identityAssertion: idToken,
+        audience: AS_ISSUER,
+        clientId: "client-1",
+        negativeTestMode: "wrong_audience",
+      })
+    );
+    expect(result.status).toBe(200);
+    const body = result.body as Record<string, unknown>;
+    expect(body.token_type).toBe("N_A");
+    expect(body.issued_token_type).toBe(ID_JAG_TOKEN_TYPE);
+    expect(body.expires_in).toBeGreaterThan(0);
+    expect(body.negative_test_mode).toBe("wrong_audience");
   });
 
   it("/token handles the RFC 8693 form grant", async () => {
@@ -191,6 +248,74 @@ describe("createInProcessXaaExecutor internal routes", () => {
     const wrapper = result.body as { status: number; body: any };
     expect(wrapper.status).toBe(200);
     expect(wrapper.body.access_token).toBe("at-1");
+  });
+
+  it("/proxy/token signs a private_key_jwt client_assertion for confidential CIMD", async () => {
+    resetXaaClientKeyPairForTests(); // regenerate in this test's temp key dir
+    let capturedBody: URLSearchParams | undefined;
+    global.fetch = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (
+          url === TOKEN_ENDPOINT &&
+          (init?.method || "").toUpperCase() === "POST"
+        ) {
+          capturedBody = new URLSearchParams(init?.body as string);
+          return new Response(
+            JSON.stringify({ access_token: "at-1", token_type: "Bearer" }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          );
+        }
+        return new Response("{}", { status: 404 });
+      }
+    ) as unknown as typeof fetch;
+
+    const clientId =
+      "https://app.mcpjam.com/.well-known/oauth/xaa-cimd/AbC123";
+    const exec = createInProcessXaaExecutor({ issuerBaseUrl: ISSUER_BASE });
+    const result = await exec.internalRequest(
+      "/proxy/token",
+      post({
+        tokenEndpoint: TOKEN_ENDPOINT,
+        assertion: "the-id-jag",
+        clientId,
+        tokenEndpointAuthMethod: "private_key_jwt",
+        scope: "read:tools",
+        resource: RESOURCE,
+      })
+    );
+    expect(result.ok).toBe(true);
+
+    // The confidential client-auth pair is on the wire; no secret leaks.
+    expect(capturedBody?.get("client_assertion_type")).toBe(
+      "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+    );
+    expect(capturedBody?.get("client_id")).toBe(clientId);
+    expect(capturedBody?.get("client_secret")).toBeNull();
+
+    // The signed assertion verifies against the published client JWKS with the
+    // exact claims the worker's authenticateCimdClient checks.
+    const assertion = capturedBody?.get("client_assertion");
+    expect(assertion).toBeTruthy();
+    const [header, payload, signature] = (assertion as string).split(".");
+    const publicKey = createPublicKey({
+      key: getXaaClientJwks().keys[0] as any,
+      format: "jwk",
+    });
+    const verifier = createVerify("SHA256");
+    verifier.update(`${header}.${payload}`);
+    expect(
+      verifier.verify(
+        { key: publicKey, dsaEncoding: "ieee-p1363" },
+        Buffer.from(signature, "base64url")
+      )
+    ).toBe(true);
+    const claims = JSON.parse(
+      Buffer.from(payload, "base64url").toString("utf-8")
+    );
+    expect(claims.iss).toBe(clientId);
+    expect(claims.sub).toBe(clientId);
+    expect(claims.aud).toBe(TOKEN_ENDPOINT);
   });
 
   it("/token-exchange rejects a missing/malformed/subject-less assertion with 400", async () => {
@@ -345,5 +470,23 @@ describe("createInProcessXaaExecutor internal routes", () => {
     expect(result.error).toBeUndefined();
     expect(result.completed).toBe(true);
     expect(state.accessToken).toBe("at-1");
+  });
+});
+
+describe("createInProcessXaaExecutor externalRequest SSRF guard", () => {
+  it("enforcePublicHost blocks a private host at fetch time even when httpsOnly is false", async () => {
+    const exec = createInProcessXaaExecutor({
+      issuerBaseUrl: ISSUER_BASE,
+      httpsOnly: false,
+    });
+    // The private-host / DNS guard fires before any network call, closing the
+    // DNS-rebinding window for the caller-influenced CIMD document fetch.
+    await expect(
+      exec.externalRequest(
+        "https://127.0.0.1/xaa-metadata.json",
+        { method: "GET", redirect: "manual" },
+        { enforcePublicHost: true }
+      )
+    ).rejects.toThrow(/private|reserved/i);
   });
 });

@@ -29,7 +29,12 @@ import { CiEvalsTab } from "./components/CiEvalsTab";
 import { ChatboxesTab } from "./components/ChatboxesTab";
 import { SwarmsTab } from "./components/swarms/SwarmsTab";
 import { EmptyState } from "./components/ui/empty-state";
-import { canViewSwarms, useViewerProjectRole } from "./hooks/useProjects";
+import {
+  canManageAsOwnerOrAdmin,
+  canViewSwarms,
+  useViewerProjectRole,
+} from "./hooks/useProjects";
+import { ProjectEnvironmentsRoute } from "./components/project-environments/ProjectEnvironmentsRoute";
 import { SettingsTab } from "./components/SettingsTab";
 import { ApiKeysRoute } from "./components/settings/ApiKeysRoute";
 import { ProjectSettingsTab } from "./components/ProjectSettingsTab";
@@ -91,6 +96,11 @@ import {
 } from "./stores/preferences/preferences-provider";
 import { Toaster } from "@mcpjam/design-system/sonner";
 import { useElectronOAuth } from "./hooks/useElectronOAuth";
+import {
+  useHiddenHeaderServers,
+  type HeaderSurface,
+} from "./hooks/useHiddenHeaderServers";
+import { hasDebuggerHeaderServers } from "./lib/debugger-header-servers";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
 import { usePostHogOrgContext } from "./hooks/usePostHogOrgContext";
@@ -198,18 +208,21 @@ import {
   completeHostedOAuthCallback,
   handleOAuthCallback,
 } from "./lib/oauth/mcp-oauth";
-import { buildElectronMcpCallbackUrl } from "./hooks/use-server-state";
+import {
+  buildElectronMcpCallbackUrl,
+  resolveEffectiveWireProtocolVersion,
+} from "./hooks/use-server-state";
 import { disconnectAllRuntimeServers } from "./state/mcp-api";
 import { getEffectiveProjectClientCapabilities } from "./lib/client-config";
 import {
   getDefaultClientCapabilities,
   isKnownProtocolVersion,
+  readXaaEnterprisePolicy,
   type McpProtocolVersion,
 } from "@mcpjam/sdk/browser";
 import {
   cloneHostTemplateInput,
   gateMcpToolResultImageRenderingByModelVisibility,
-  resolveEffectiveMcpProtocolVersion,
 } from "./lib/client-config-v2";
 import type { ProjectServerConfigDto } from "./lib/project-server-config";
 import { useHostList, useHostMutations } from "@/hooks/useClients";
@@ -252,11 +265,26 @@ import {
 import { useProjectClientConfigSyncPending } from "./hooks/use-project-client-config-sync-pending";
 import { ingestOAuthTraceLogs } from "./stores/traffic-log-store";
 import { clearGuestSession, getGuestBearerToken } from "./lib/guest-session";
+import { publishSelectedServerNames } from "./lib/webmcp/ui-context-source";
 import type {
+  ConnectServerInspectorCommand,
+  DisconnectServerInspectorCommand,
   NavigateInspectorCommand,
   OpenPlaygroundInspectorCommand,
+  RemoveServerInspectorCommand,
   SelectServerInspectorCommand,
+  SnapshotAppInspectorCommand,
 } from "@/shared/inspector-command.js";
+import {
+  getAppSurfaceByNavSegment,
+  isAppSurfaceId,
+} from "@/shared/app-surfaces";
+import { waitForUiToolNames } from "./lib/webmcp/ui-tools-readiness";
+import { listSurfaceGroupToolNames } from "./lib/webmcp/groups";
+import {
+  readAllSurfaceSnapshots,
+  readSurfaceSnapshot,
+} from "@/lib/webmcp/surface-snapshot-registry";
 
 const OCCUPATION_GATE_ROLLOUT_MS = Date.parse("2026-04-29T00:00:00.000Z");
 // Accounts created on/after this ship date are treated as "new" for the
@@ -493,6 +521,8 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <ChatboxesRoute />;
     case "swarms":
       return <SwarmsRoute />;
+    case "environments":
+      return <EnvironmentsRoute />;
     case "playground":
       return <PlaygroundRoute />;
     case "support":
@@ -580,6 +610,7 @@ function ServersTabBody() {
     handleReconnect,
     handleUpdate,
     handleRemoveServer,
+    saveServerConfigWithoutConnecting,
     projects,
     activeProjectId,
     activeProjectBillingOrganizationId,
@@ -603,6 +634,7 @@ function ServersTabBody() {
       onReconnect={handleReconnect}
       onUpdate={handleUpdate}
       onRemove={handleRemoveServer}
+      onSaveServerConfig={saveServerConfigWithoutConnecting}
       projects={projects}
       activeProjectId={activeProjectId}
       organizationId={activeProjectBillingOrganizationId}
@@ -841,7 +873,7 @@ export function HostCompareRoute({ bare = false }: { bare?: boolean } = {}) {
         rightSlot={
           // Host/Compare sub-nav inline in the header row (single bar) rather
           // than stacked beneath the primary nav.
-          <div className="flex min-w-0 items-center justify-center md:justify-end">
+          <div className="flex min-w-0 flex-wrap items-center justify-center gap-2 @2xl:justify-end">
             <HostSectionTabs
               value="compare"
               hostEnabled={Boolean(previewedHostId)}
@@ -865,10 +897,16 @@ export function CaniuseCapabilityRoute() {
 }
 
 export function ComputerRoute() {
-  const { convexProjectId, isAuthenticated } = useAppRouteContext();
+  const { convexProjectId, isAuthenticated, isGuestProjectActor } =
+    useAppRouteContext();
   const [previewedHostId] = usePreviewedHostId(convexProjectId);
   const navigate = useAppNavigate();
   const computersEnabled = useComputersEnabledState();
+
+  // A personal computer is account-scoped. Anonymous guests are provisioned
+  // Convex actors (`isAuthenticated === true`), so member-ness — not raw auth —
+  // is what gates the feature vs. the guest sign-in affordance.
+  const isSignedInMember = isAuthenticated && !isGuestProjectActor;
 
   // Only redirect on an explicit `false`. While PostHog hydrates the flag is
   // `undefined`; bouncing then would strand a flagged-in user who cold-loads
@@ -884,11 +922,11 @@ export function ComputerRoute() {
   const computerView = (
     <ComputerView
       projectId={convexProjectId}
-      isAuthenticated={isAuthenticated}
+      isSignedInMember={isSignedInMember}
     />
   );
 
-  if (!isAuthenticated) {
+  if (!isSignedInMember) {
     return computerView;
   }
 
@@ -954,15 +992,14 @@ export function ToolsRoute() {
         <ToolsTab
           serverConfig={selectedMCPConfig}
           serverName={appState.selectedServer}
+          server={selectedServerEntry ?? undefined}
           serverConnectionStatus={
             selectedServerEntry?.connectionStatus ?? "disconnected"
           }
-          mcpToolResultImageRendering={
-            gateMcpToolResultImageRenderingByModelVisibility(
-              activeHost?.config?.mcpToolResultImageRendering,
-              activeHost?.config?.modelVisibleMcpToolResults
-            )
-          }
+          mcpToolResultImageRendering={gateMcpToolResultImageRenderingByModelVisibility(
+            activeHost?.config?.mcpToolResultImageRendering,
+            activeHost?.config?.modelVisibleMcpToolResults
+          )}
         />
       </div>
     </ActiveHostCapsResolverScope>
@@ -1101,31 +1138,49 @@ export function SwarmsRoute() {
     convexProjectId,
     isAuthenticated,
   } = useAppRouteContext();
-  const { user } = useAuth();
+  // WorkOS identity is the membership match key for the *invitee guest*
+  // notice. Convex `isAuthenticated` is also true for anonymous sessions,
+  // which never get a WorkOS `user.email` — but those actors still own a
+  // personal-org project and pass `requireProjectRole('member')` server-side
+  // via userId. Do NOT treat "no WorkOS email" as "not a member".
+  const { user, isLoading: isWorkOsLoading } = useAuth();
+  const isWorkOsSignedIn = !!user;
 
-  // The backend made the entire Swarm surface member-only: personas, journeys,
-  // journeyRuns, session lists and transcript reads all reject a project
-  // **guest**. Mirror that here — resolve the authenticated viewer's project
-  // role and, when they're a guest/non-member, show an access notice INSTEAD of
-  // mounting `SwarmsTab` so none of the member-only queries ever fire.
+  // The backend made Swarm member-only vs project *invitee guests* (role
+  // `guest`): personas/journeys/runs reject that tier. Mirror that for
+  // WorkOS-signed-in viewers by resolving role from the members list.
   //
-  // Only engage for an authenticated viewer on a real (Convex) project. An
-  // unauthenticated / guest-mode local user (no `convexProjectId`) has no
-  // project membership to check and keeps its existing behavior.
-  const roleGateActive = isAuthenticated && !!convexProjectId;
+  // Anonymous Convex guests skip this notice and mount SwarmsTab — they are
+  // owners of their personal-org default project. Unauthenticated local
+  // (no `convexProjectId`) also keeps existing behavior.
+  const roleGateActive =
+    isAuthenticated && !!convexProjectId && isWorkOsSignedIn;
   const { role, isLoading: roleLoading } = useViewerProjectRole({
     isAuthenticated,
     projectId: convexProjectId,
     viewerEmail: user?.email,
+    // Bound the "wait for email" window to WorkOS hydrate — not Convex auth —
+    // so we never spin forever on anonymous sessions.
+    identityLoading: isWorkOsLoading,
   });
 
   if (billingUiEnabled && activeTabBillingLocked && activeTabBillingFeature) {
     return <ActiveBillingUpsellGate />;
   }
 
+  // Wait for WorkOS before choosing signed-in gate vs anonymous fallthrough,
+  // so a real member never briefly mounts (or gets denied) mid-hydrate.
+  if (isAuthenticated && !!convexProjectId && isWorkOsLoading) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <Loader2 className="size-5 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
   if (roleGateActive) {
-    // Wait for the members list to resolve before deciding, so a guest never
-    // briefly mounts `SwarmsTab` (which would fire the member-only queries).
+    // Wait for members before deciding, so an invitee guest never briefly
+    // mounts `SwarmsTab` (which would fire the member-only queries).
     if (roleLoading) {
       return (
         <div className="flex h-full items-center justify-center">
@@ -1139,7 +1194,7 @@ export function SwarmsRoute() {
         <EmptyState
           icon={Users}
           title="Swarms is available to project members"
-          description="You have guest access to this project. Swarms — personas, journeys and their runs — can only be viewed and run by project members. Ask a project admin to add you as a member to get access."
+          description="Personas, journeys, and their runs can only be viewed and run by project members. Ask a project admin to add you as a member to get access."
         />
       );
     }
@@ -1150,10 +1205,40 @@ export function SwarmsRoute() {
       key={convexProjectId ?? "no-project"}
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
-      // Host create/edit/apply/delete on the Clients sub-tab are admin-gated
-      // server-side; pass the resolved role so the UI hides those affordances
-      // for non-admins (members can still view Swarms + run journeys).
-      viewerRole={role}
+    />
+  );
+}
+
+export function EnvironmentsRoute() {
+  // Project environments (host + server group + skills bundles). The page
+  // component itself enforces the `project-environments-enabled` flag —
+  // rendering the standard redirect when off — so a direct `/environments`
+  // URL cannot bypass the sidebar gate. Writes are project-admin only
+  // (`canManageHosts` mirrors the backend's admin gate); everyone else
+  // browses read-only.
+  const { convexProjectId, isAuthenticated } = useAppRouteContext();
+  const { user, isLoading: isWorkOsLoading } = useAuth();
+  const isWorkOsSignedIn = !!user;
+  const { role } = useViewerProjectRole({
+    isAuthenticated,
+    projectId: convexProjectId,
+    viewerEmail: user?.email,
+    identityLoading: isWorkOsLoading,
+  });
+  // Shared with SwarmsTab and unit-tested in `useProjects.test.ts`: WorkOS
+  // viewers take the role-based admin gate; a SETTLED anonymous Convex owner
+  // gets management (they never receive a role); fail-closed while hydrating.
+  const canManage = canManageAsOwnerOrAdmin({
+    isWorkOsSignedIn,
+    role,
+    isAuthenticated,
+    hasProject: !!convexProjectId,
+    identityLoading: isWorkOsLoading,
+  });
+  return (
+    <ProjectEnvironmentsRoute
+      projectId={convexProjectId ?? null}
+      canManage={canManage}
     />
   );
 }
@@ -1228,7 +1313,8 @@ export function SkillsRoute() {
 }
 
 export function LearningRoute() {
-  return <LearningTab />;
+  const { activeProjectId } = useAppRouteContext();
+  return <LearningTab projectId={activeProjectId ?? null} />;
 }
 
 export function TasksRoute() {
@@ -1259,11 +1345,13 @@ export function OAuthFlowRoute() {
   const {
     appState,
     displayServerConfigs,
+    areServersHydrated,
     setSelectedServer,
     saveServerConfigWithoutConnecting,
     handleConnectWithTokensFromOAuthFlow,
     handleRefreshTokensFromOAuthFlow,
     oauthServerModalNonce,
+    oauthDebuggerHasHeaderServers,
   } = useAppRouteContext();
 
   return (
@@ -1315,6 +1403,8 @@ export function OAuthFlowRoute() {
       <OAuthFlowTab
         serverConfigs={displayServerConfigs}
         selectedServerName={appState.selectedServer}
+        hasHeaderServers={oauthDebuggerHasHeaderServers}
+        areServersHydrated={areServersHydrated}
         onSelectServer={setSelectedServer}
         onSaveServerConfig={saveServerConfigWithoutConnecting}
         onConnectWithTokens={handleConnectWithTokensFromOAuthFlow}
@@ -1330,11 +1420,14 @@ export function XAAFlowRoute() {
     xaaEnabled,
     appState,
     displayServerConfigs,
+    areServersHydrated,
     activeOrganizationId,
+    activeProject,
     convexProjectId,
     setSelectedServer,
     saveServerConfigWithoutConnecting,
     xaaServerModalNonce,
+    xaaDebuggerHasHeaderServers,
   } = useAppRouteContext();
   if (xaaEnabled !== true) return null;
 
@@ -1353,8 +1446,11 @@ export function XAAFlowRoute() {
         // runner saw a confidential server as a public client with no issuer.
         serverConfigs={displayServerConfigs}
         selectedServerName={appState.selectedServer}
+        hasHeaderServers={xaaDebuggerHasHeaderServers}
+        areServersHydrated={areServersHydrated}
         organizationId={activeOrganizationId ?? null}
         projectId={convexProjectId ?? null}
+        projectXaaTestDefaults={activeProject?.xaaTestDefaults ?? null}
         onSelectServer={setSelectedServer}
         onSaveServerConfig={saveServerConfigWithoutConnecting}
         openServerModalSignal={xaaServerModalNonce}
@@ -1558,6 +1654,19 @@ export default function App() {
   const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-ci");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
+
+  // Per-tab "hide from this header" list for the OAuth / XAA debugger chip strip.
+  // View-only (localStorage) — the x on a chip dismisses it from this header
+  // without touching the server's config, tokens, or Convex row.
+  const headerHiddenSurface: HeaderSurface | null =
+    activeTab === "oauth-flow"
+      ? "oauth"
+      : activeTab === "xaa-flow" && xaaEnabled === true
+      ? "xaa"
+      : null;
+  const { hidden: hiddenHeaderServers, hide: hideHeaderServer } =
+    useHiddenHeaderServers(headerHiddenSurface);
+
   const {
     getAccessToken,
     signIn,
@@ -1675,6 +1784,8 @@ export default function App() {
     const code = urlParams.get("code");
     const error = urlParams.get("error");
     const state = urlParams.get("state");
+    // 2R-iss: RFC 9207 issuer identification from the callback URL.
+    const iss = urlParams.get("iss");
 
     let cancelled = false;
     setHostedOAuthHandling(true);
@@ -1763,12 +1874,15 @@ export default function App() {
 
           return completeHostedOAuthCallback(callbackContext, code, {
             callbackState: state,
+            callbackIss: iss,
             onTraceUpdate: handleLiveOAuthTrace,
             authorizationHeader,
           });
         })()
       : handleOAuthCallback(code, {
           onTraceUpdate: handleLiveOAuthTrace,
+          callbackState: state,
+          callbackIss: iss,
         });
 
     completeCallback
@@ -1954,6 +2068,11 @@ export default function App() {
     pendingDashboardOAuth,
     isCloudSyncActive,
     persistRuntimeServerToProjectIfNeeded,
+    // Connect-screen inspector commands (`ui_add_server` & co) delegate to
+    // these — the same handles the Connect screen's own buttons use.
+    connectServerWithResult,
+    handleDisconnect: handleDisconnectAction,
+    handleRemoveServer: handleRemoveServerAction,
     activeMcpProfile,
     activeHost,
     activeHostId,
@@ -1997,11 +2116,12 @@ export default function App() {
     }
   }, [appState.servers, handleDisconnect]);
   useInspectorCommandBus();
-  // WebMCP UI tools: registered in both modes; advertised to MCPJam's chat
-  // agents via the chat POST snapshot and mirrored to the browser's native
-  // modelContext when present. Disabled on the standalone chatbox chat route:
-  // its end user is not the inspector operator, so inspector-driving tools
-  // must not exist on that page (chat snapshot OR native mirror).
+  // MCPJam UI tools: registered in both modes for the in-app "Ask MCPJam"
+  // agent (the registry's only consumer); the always-available side panel
+  // drives whichever inspector surface is open, so registration lives at the
+  // App root. Never exposed to browser-native agents. Disabled on the
+  // standalone chatbox chat route: its end user is not the inspector
+  // operator, so inspector-driving tools must not exist on that page.
   useRegisterUiTools({ enabled: !isChatboxChatRoute });
   // One-time migration from legacy localStorage state to Convex. No-op in
   // hosted mode and after the first successful run; safe to keep in the tree.
@@ -2017,11 +2137,33 @@ export default function App() {
   projectServersRef.current = projectServers;
   const selectedServerRef = useRef(appState.selectedServer);
   selectedServerRef.current = appState.selectedServer;
+  // Publish the current selection for the agent's per-turn orientation block,
+  // which is built in a hook that can't reach app state (ui-context-source).
+  // `selectedServer` uses the string "none" as its no-selection sentinel —
+  // excluded here so the model isn't told a server literally named "none" is
+  // selected.
+  useEffect(() => {
+    const names = appState.selectedMultipleServers.length
+      ? appState.selectedMultipleServers
+      : appState.selectedServer && appState.selectedServer !== "none"
+      ? [appState.selectedServer]
+      : [];
+    publishSelectedServerNames(names);
+  }, [appState.selectedMultipleServers, appState.selectedServer]);
   const persistRuntimeServerToProjectRef = useRef(
     persistRuntimeServerToProjectIfNeeded
   );
   persistRuntimeServerToProjectRef.current =
     persistRuntimeServerToProjectIfNeeded;
+  // Action-layer handles for the Connect-screen inspector commands. Refs,
+  // like the ones above, so the handler-registration effect doesn't tear
+  // down and re-register on every render these identities change.
+  const connectServerWithResultRef = useRef(connectServerWithResult);
+  connectServerWithResultRef.current = connectServerWithResult;
+  const handleDisconnectRef = useRef(handleDisconnectAction);
+  handleDisconnectRef.current = handleDisconnectAction;
+  const handleRemoveServerRef = useRef(handleRemoveServerAction);
+  handleRemoveServerRef.current = handleRemoveServerAction;
   const getInspectorServerState = useCallback((serverName: string) => {
     const runtimeServer = oauthDebuggerServersRef.current[serverName];
     const projectServer = projectServersRef.current[serverName];
@@ -2462,7 +2604,12 @@ export default function App() {
 
     const mcpProtocolVersionsByServerId: Record<string, McpProtocolVersion> =
       {};
-    for (const serverId of new Set(Object.values(hostedServerIdsByName))) {
+    const seenServerIds = new Set<string>();
+    for (const [serverName, serverId] of Object.entries(
+      hostedServerIdsByName
+    )) {
+      if (seenServerIds.has(serverId)) continue;
+      seenServerIds.add(serverId);
       // Project-server config is the control-plane source for per-server
       // protocol overrides. Host config mirrors it through Convex fan-out,
       // but hosted API calls should not fall back to the host default while
@@ -2477,13 +2624,29 @@ export default function App() {
         isKnownProtocolVersion(rawServerOverride)
           ? rawServerOverride
           : undefined;
-      const effective = resolveEffectiveMcpProtocolVersion(
+      // Share the client resolver's precedence so hosted chat/eval pick up the
+      // 2026 wire era a server carries via its OAuth profile / stamped config —
+      // not just explicit per-server overrides. Otherwise a modal-saved 2026
+      // OAuth server passes the immediate probe but hosted backend connects
+      // fall back to the 2025 initialize path. (`override → config pin →
+      // OAuth-profile 2026 → host default`.)
+      const effective = resolveEffectiveWireProtocolVersion({
+        serverConfig: undefined,
+        server: appState.servers[serverName],
         serverOverride,
-        hostPin
-      );
+        hostPin,
+      });
       if (!effective) continue;
       mcpProtocolVersionsByServerId[serverId] = effective;
     }
+
+    // Enterprise-managed authorization policy — sent only when validly ON.
+    // An `invalid` stored value is NOT silently dropped to off: host-bound
+    // turns hit the server-authoritative 409, and interactive connects
+    // fail in buildResolverConnectionDefaults with an actionable message.
+    const xaaPolicyState = readXaaEnterprisePolicy(activeMcpProfile);
+    const xaaPolicy =
+      xaaPolicyState.kind === "on" ? xaaPolicyState.policy : undefined;
 
     return {
       clientInfo,
@@ -2492,12 +2655,17 @@ export default function App() {
         Object.keys(mcpProtocolVersionsByServerId).length > 0
           ? mcpProtocolVersionsByServerId
           : undefined,
+      xaaPolicy,
     };
   }, [
     activeHost?.serverConnectionOverrides,
     activeMcpProfile,
     hostedServerIdsByName,
     projectServerConfigDto?.overrides,
+    // The hosted protocol-version map now derives the OAuth-era pin from each
+    // server's config/OAuth profile, so it must recompute when server state
+    // changes (e.g. a modal-saved 2026 profile or a persisted config pin).
+    appState.servers,
   ]);
   useApiContext({
     projectId: convexProjectId,
@@ -2507,6 +2675,7 @@ export default function App() {
     supportedProtocolVersions: hostedMcpProfilePins.supportedProtocolVersions,
     mcpProtocolVersionsByServerId:
       hostedMcpProfilePins.mcpProtocolVersionsByServerId,
+    xaaPolicy: hostedMcpProfilePins.xaaPolicy,
     clientConfigSyncPending:
       isClientConfigSyncPending || isProjectServerConfigLoading,
     getAccessToken,
@@ -2585,10 +2754,31 @@ export default function App() {
         navigateApp(resolved.path);
         await waitForUiCommit();
 
-        // Report the tab the shell actually landed on, not the requested
-        // one — the gating effects below (feature flags, hosted policy)
-        // can redirect immediately after the navigation commits, and the
-        // caller (SSE bus / WebMCP UI tools) plans its next step from this.
+        // Resolve from where the shell ACTUALLY landed, not the requested tab:
+        // a gating effect (feature flags, hosted policy) can redirect right
+        // after the navigation commits. Using the committed tab means a
+        // redirect away from a group surface won't make us wait 1.5s for tools
+        // that will never register there.
+        const committedTab = pathnameToActiveTab(window.location.pathname);
+
+        // Same-turn advertisement for mount-scoped tool groups: a surface with
+        // `agentTools.kind === "group"` registers its tools in a layout effect
+        // as it mounts, and the chat pipeline drains the registry per POST —
+        // waiting here lets the auto-resume POST after this tool call already
+        // advertise the group, instead of burning a model turn before the
+        // tools appear. The boolean is deliberately ignored: on timeout the
+        // next POST simply re-snapshots whatever is registered by then (the
+        // tools are additive context, not a precondition).
+        const landedSurface = getAppSurfaceByNavSegment(committedTab);
+        if (landedSurface?.agentTools.kind === "group") {
+          await waitForUiToolNames(
+            listSurfaceGroupToolNames(landedSurface.id),
+            1500
+          );
+        }
+
+        // Report the tab the shell actually landed on — the caller (SSE bus /
+        // WebMCP UI tools) plans its next step from this.
         return { activeTab: pathnameToActiveTab(window.location.pathname) };
       }
     );
@@ -2684,12 +2874,210 @@ export default function App() {
       }
     );
 
+    // The ONE `snapshotApp` handler. Surfaces contribute via the provider
+    // registry rather than registering their own handler here: the bus
+    // dispatches newest-first and returns the first success, so a second
+    // handler would shadow this one whenever its surface happened to be
+    // mounted — a whole-app snapshot would silently become a one-screen one.
+    //
+    // Always registered, so `ui_snapshot_app` works from anywhere. It stays
+    // read-only: it never mounts a surface to observe it, which is what
+    // makes its `readOnlyHint` (and its approval exemption) honest.
+    const unregisterSnapshotApp = registerInspectorCommandHandler(
+      "snapshotApp",
+      async (rawCommand) => {
+        const command = rawCommand as SnapshotAppInspectorCommand;
+        const hasSurfaceKey =
+          command.payload != null && "surface" in command.payload;
+        const requested = command.payload?.surface;
+
+        // Handlers cast rather than parse, so the type is no guarantee. An
+        // absent `surface` means whole-app; a PRESENT surface that isn't a
+        // real id (empty string, junk) is an error, not a silent fall-through
+        // to whole-app.
+        if (hasSurfaceKey && !isAppSurfaceId(requested)) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            `Invalid surface ${JSON.stringify(
+              requested
+            )}. Omit it to snapshot the whole app, or pass a known screen id.`
+          );
+        }
+
+        if (requested) {
+          const result = await readSurfaceSnapshot(requested);
+          if (!result.ok) {
+            // A missing provider means the screen isn't open (recoverable by
+            // navigating); a provider that threw or timed out is a genuine
+            // execution failure. Same error string, different code — the
+            // agent reacts differently to each.
+            if (result.reason === "no_provider") {
+              throw createInspectorCommandClientError(
+                "unsupported_in_mode",
+                `${result.error} That screen is not open — navigate to it first, or omit "surface" for app-level state.`
+              );
+            }
+            throw createInspectorCommandClientError(
+              "execution_failed",
+              result.error
+            );
+          }
+          return { surface: requested, [requested]: result.data };
+        }
+
+        const pathname = window.location.pathname;
+        // "none" is the no-selection sentinel — don't report it as a server.
+        const focused =
+          selectedServerRef.current && selectedServerRef.current !== "none"
+            ? selectedServerRef.current
+            : undefined;
+        const selectedServers = appState.selectedMultipleServers?.length
+          ? appState.selectedMultipleServers
+          : focused
+          ? [focused]
+          : [];
+        return {
+          path: pathname,
+          activeTab: pathnameToActiveTab(pathname),
+          selectedServers,
+          servers: Object.entries(projectServersRef.current).map(
+            ([name, server]) => ({
+              name,
+              connectionStatus:
+                (server as { connectionStatus?: string })?.connectionStatus ??
+                "unknown",
+            })
+          ),
+          surfaces: await readAllSurfaceSnapshots(),
+        };
+      }
+    );
+
+    // --- Connect-screen commands -------------------------------------
+    // These delegate to the SAME action layer the Connect screen's own
+    // buttons use (`use-app-state`), so an agent-added server is
+    // byte-identical to a hand-added one. No DOM events, no component
+    // internals — the difference between driving the app and puppeting it.
+
+    const requireKnownServer = (serverName: string) => {
+      const state = getInspectorServerState(serverName);
+      if (!state) {
+        throw createInspectorCommandClientError(
+          "unknown_server",
+          `Unknown server "${serverName}".`
+        );
+      }
+      return state;
+    };
+
+    const readConnectionStatus = (serverName: string) => {
+      const state = getInspectorServerState(serverName);
+      return (
+        state?.runtimeServer?.connectionStatus ??
+        state?.projectServer?.connectionStatus ??
+        "disconnected"
+      );
+    };
+
+    // `addServer` lives in ServersTab, NOT here: creating a server has to
+    // honor `BILLING_GATES.serverCreation`, and that gate is a hook that only
+    // exists on the Connect screen. Registering it here would have bypassed
+    // the same limit the Add button enforces. connect/disconnect/remove don't
+    // create servers, so they stay App-level.
+
+    const unregisterConnectServer = registerInspectorCommandHandler(
+      "connectServer",
+      async (rawCommand) => {
+        const command = rawCommand as ConnectServerInspectorCommand;
+        const serverName = command.payload.serverName;
+        requireKnownServer(serverName);
+
+        const result = await connectServerWithResultRef.current(serverName);
+        await waitForUiCommit();
+
+        // Report what happened, including the outcomes that are neither
+        // success nor failure. `reauth` is the important one: the server
+        // needs the USER to authorize it, and saying "failed" would send
+        // the agent off retrying something only a human can finish.
+        if (result.status === "reauth") {
+          return {
+            serverName,
+            status: "authorization_required",
+            connectionStatus: readConnectionStatus(serverName),
+            message: `"${serverName}" needs authorization. The user must click Authorize on the Connect screen; it opens their identity provider.`,
+          };
+        }
+        if (result.status === "superseded") {
+          return {
+            serverName,
+            status: "superseded",
+            message: `Another connection attempt for "${serverName}" is already in flight; leaving it alone.`,
+          };
+        }
+        if (result.status !== "connected") {
+          throw createInspectorCommandClientError(
+            "execution_failed",
+            result.error ?? `Could not connect "${serverName}".`
+          );
+        }
+
+        return {
+          serverName,
+          status: "connected",
+          connectionStatus: readConnectionStatus(serverName),
+        };
+      }
+    );
+
+    const unregisterDisconnectServer = registerInspectorCommandHandler(
+      "disconnectServer",
+      async (rawCommand) => {
+        const command = rawCommand as DisconnectServerInspectorCommand;
+        const serverName = command.payload.serverName;
+        requireKnownServer(serverName);
+
+        await handleDisconnectRef.current(serverName);
+        await waitForUiCommit();
+        return {
+          serverName,
+          connectionStatus: readConnectionStatus(serverName),
+        };
+      }
+    );
+
+    const unregisterRemoveServer = registerInspectorCommandHandler(
+      "removeServer",
+      async (rawCommand) => {
+        const command = rawCommand as RemoveServerInspectorCommand;
+        const serverName = command.payload.serverName;
+        requireKnownServer(serverName);
+
+        await handleRemoveServerRef.current(serverName);
+        await waitForUiCommit();
+
+        // Verify rather than assume: `handleRemoveServer` resolves void and
+        // the tool result is the only thing the user will read.
+        if (getInspectorServerState(serverName)) {
+          throw createInspectorCommandClientError(
+            "execution_failed",
+            `"${serverName}" is still present after the remove.`
+          );
+        }
+        return { serverName, removed: true };
+      }
+    );
+
     return () => {
       unregisterNavigate();
       unregisterSelectServer();
       unregisterOpenPlayground();
+      unregisterSnapshotApp();
+      unregisterConnectServer();
+      unregisterDisconnectServer();
+      unregisterRemoveServer();
     };
   }, [
+    appState.selectedMultipleServers,
     getInspectorServerState,
     setSelectedServer,
     setSelectedMCPConfigs,
@@ -3268,6 +3656,16 @@ export default function App() {
     (activeTab === "xaa-flow" && xaaEnabled === true) ||
     activeTab === "chat";
 
+  const oauthDebuggerHasHeaderServers = hasDebuggerHeaderServers({
+    serverConfigs: projectServers,
+    hiddenServers: hiddenHeaderServers,
+  });
+  const xaaDebuggerHasHeaderServers = hasDebuggerHeaderServers({
+    serverConfigs: projectServers,
+    hiddenServers: hiddenHeaderServers,
+    includeXaaServers: true,
+  });
+
   const activeServerSelectorProps: ActiveServerSelectorProps | undefined =
     shouldShowActiveServerSelector
       ? {
@@ -3310,9 +3708,21 @@ export default function App() {
             activeTab === "oauth-flow" ||
             (activeTab === "xaa-flow" && xaaEnabled === true),
           includeXaaServers: activeTab === "xaa-flow" && xaaEnabled === true,
+          // Only the OAuth / XAA debugger headers get the "hide from this tab"
+          // x button; other surfaces omit onHideServer so no x renders.
+          hiddenServers: hiddenHeaderServers,
+          onHideServer: headerHiddenSurface ? hideHeaderServer : undefined,
+          // Debugger tabs: if the header has an eligible target and NOTHING
+          // is selected yet, select it instead of leaving the canvas in a
+          // prompt-less empty state — but never replace an existing
+          // selection, since the debuggers fire live auth requests at their
+          // target and it must not change without an explicit click. Other
+          // tabs keep full auto-select (stale selections get replaced).
           autoSelectFilteredServer:
-            activeTab !== "oauth-flow" &&
-            !(activeTab === "xaa-flow" && xaaEnabled === true),
+            activeTab === "oauth-flow" ||
+            (activeTab === "xaa-flow" && xaaEnabled === true)
+              ? "when-empty"
+              : true,
           showOnlyServersWithViews: false,
           hasMessages: false,
         }
@@ -3329,7 +3739,11 @@ export default function App() {
     // on the publish surface (and a matching pill on other sub-tabs).
     activeTab !== "playground" &&
     activeTab !== "chatboxes" &&
-    activeTab !== "swarms"
+    activeTab !== "swarms" &&
+    // The OAuth / XAA debuggers target a specific server via their own server
+    // picker; the global host/client bar is irrelevant there.
+    activeTab !== "oauth-flow" &&
+    activeTab !== "xaa-flow"
       ? {
           projectId: convexProjectId,
           onEditHost: (hostId: string) => {
@@ -3426,6 +3840,7 @@ export default function App() {
     hostsTabSelectedHostId,
     isAuthLoading,
     isAuthenticated,
+    isGuestProjectActor,
     isBillingContextPending,
     isLoadingRemoteProjects,
     areServersHydrated,
@@ -3455,6 +3870,8 @@ export default function App() {
     upgradePlanForActiveTab,
     workOsUser,
     xaaEnabled,
+    oauthDebuggerHasHeaderServers,
+    xaaDebuggerHasHeaderServers,
     xaaServerModalNonce,
     oauthServerModalNonce,
   };

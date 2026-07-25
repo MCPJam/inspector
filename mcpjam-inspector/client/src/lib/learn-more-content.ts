@@ -7,7 +7,8 @@ export interface LearnMoreEntry {
   description: string;
   /** Longer, high-level description for the expanded modal */
   expandedDescription?: string;
-  docsUrl: string;
+  /** Optional — when omitted, the expanded modal hides its Docs link. */
+  docsUrl?: string;
 }
 
 export const learnMoreContent: Record<string, LearnMoreEntry> = {
@@ -71,13 +72,12 @@ export const learnMoreContent: Record<string, LearnMoreEntry> = {
       "A visual, step-by-step interface for testing your MCP server's OAuth implementation. Walk through every step of the handshake with a live sequence diagram, inspect every network request, and validate against multiple spec versions and registration methods (CIMD, DCR, or pre-registration).",
     docsUrl: "https://docs.mcpjam.com/inspector/guided-oauth",
   },
-  "xaa-flow": {
-    title: "XAA Debugger",
-    videoUrl: "https://www.youtube.com/embed/tQSEnr4T5Qc",
-    description:
-      "Test enterprise XAA / ID-JAG authorization flows against real authorization servers.",
-    expandedDescription:
-      "A guided debugger for Cross-App Access style enterprise authorization. Issue a synthetic OIDC identity token, exchange it for a valid or intentionally broken ID-JAG, submit that assertion to your real authorization server, and then verify the resulting access token against your MCP server.",
-    docsUrl: "https://docs.mcpjam.com/inspector/guided-oauth",
+  "xaa-idp": {
+    title: "Cross-App Access",
+    videoUrl: "",
+    description: "",
+    // Content intentionally empty for now — fill in the video/description
+    // later. The XAA guide renders its own Docs link from this docsUrl.
+    docsUrl: "https://docs.mcpjam.com/inspector/xaa-debugger",
   },
 };

@@ -41,6 +41,7 @@ import { isGPT5Model, type ModelDefinition } from "@/shared/types";
 import {
   UI_TOOL_NAME_REGEX,
   uiToolCallNeedsApproval,
+  type UiToolAnnotations,
 } from "@/shared/client-fulfilled-tools";
 import { HOSTED_MODE } from "../config.js";
 import {
@@ -77,11 +78,12 @@ export type AppToolEntry = import("@/shared/chat-v2").AppToolSnapshotEntry;
 /**
  * WebMCP-shaped MCPJam UI tool descriptor as accepted by `prepareChatV2`,
  * already sanitized by {@link validateUiToolEntries}. Mirrors
- * `UiToolSnapshotEntry` in `shared/chat-v2.ts`. Unlike app tools there is no
- * alias indirection: `name` (reserved `ui_` prefix) is the model-facing tool
- * name, fulfilled client-side by `useChat.onToolCall`.
+ * `UiToolSnapshotEntry` in `shared/mcpjam-ui-tools.ts`. Unlike app tools
+ * there is no alias indirection: `name` (reserved `ui_` prefix) is the
+ * model-facing tool name, fulfilled client-side in the browser.
  */
-export type UiToolEntry = import("@/shared/chat-v2").UiToolSnapshotEntry;
+export type UiToolEntry =
+  import("@/shared/mcpjam-ui-tools").UiToolSnapshotEntry;
 export type WidgetModelContextEntry =
   import("@/shared/chat-v2").WidgetModelContextEntry;
 
@@ -273,6 +275,49 @@ export function validateAppToolEntries(input: unknown): AppToolEntry[] {
   return out;
 }
 
+/** MCP `ToolAnnotations` hints accepted on a UI tool snapshot entry. */
+const UI_TOOL_ANNOTATION_KEYS = [
+  "readOnlyHint",
+  "destructiveHint",
+  "idempotentHint",
+  "openWorldHint",
+] as const;
+
+/**
+ * Validate the optional `annotations` object on a UI tool snapshot entry.
+ *
+ * Boolean-only, known keys only. Unknown keys are rejected rather than
+ * dropped: this snapshot drives approval policy, so a typo'd hint must not
+ * pass silently as "absent" (which, for `destructiveHint`, flips the meaning
+ * from additive to destructive).
+ */
+function validateUiToolAnnotations(
+  raw: unknown,
+  index: number
+): UiToolAnnotations | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new UiToolValidationError(
+      `uiTools[${index}].annotations must be an object`
+    );
+  }
+  const out: UiToolAnnotations = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!(UI_TOOL_ANNOTATION_KEYS as readonly string[]).includes(key)) {
+      throw new UiToolValidationError(
+        `uiTools[${index}].annotations has unknown key '${key}'`
+      );
+    }
+    if (typeof value !== "boolean") {
+      throw new UiToolValidationError(
+        `uiTools[${index}].annotations.${key} must be a boolean`
+      );
+    }
+    out[key as (typeof UI_TOOL_ANNOTATION_KEYS)[number]] = value;
+  }
+  return out;
+}
+
 /**
  * Validate and normalize the client-supplied `uiTools` snapshot.
  *
@@ -357,11 +402,24 @@ export function validateUiToolEntries(input: unknown): UiToolEntry[] {
         `uiTools[${i}].readOnly must be a boolean`
       );
     }
+    const annotations = validateUiToolAnnotations(raw.annotations, i);
+    if (
+      annotations?.readOnlyHint !== undefined &&
+      annotations.readOnlyHint !== raw.readOnly
+    ) {
+      // A snapshot that says both "read-only" and "not read-only" has no safe
+      // reading: trusting `readOnlyHint` would let a contradictory entry skip
+      // approval. Reject rather than pick a winner.
+      throw new UiToolValidationError(
+        `uiTools[${i}].annotations.readOnlyHint must equal readOnly`
+      );
+    }
     out.push({
       name,
       description: raw.description,
       inputSchema,
       readOnly: raw.readOnly,
+      ...(annotations ? { annotations } : {}),
     });
   }
   return out;
@@ -708,6 +766,7 @@ export function buildUiTools(
       inputSchema: t.inputSchema,
       needsApproval: uiToolCallNeedsApproval({
         readOnly: t.readOnly,
+        annotations: t.annotations,
         requireToolApproval: opts?.requireToolApproval === true,
       }),
     });
@@ -717,25 +776,59 @@ export function buildUiTools(
 
 /**
  * System-prompt section advertising the UI tools. Empty when none were
- * snapshotted, so surfaces without UI tools keep a byte-identical prompt.
+ * snapshotted — or when none survived collision resolution — so surfaces
+ * without UI tools keep a byte-identical prompt. Callers must pass the
+ * EFFECTIVE entry set for the turn: each sentence naming specific catalog
+ * tools is gated on every tool it mentions being present, so the prompt
+ * never tells the model to call a UI tool that isn't advertised.
  */
 export function buildUiToolsSystemPrompt(
   uiTools: UiToolEntry[] | undefined,
   opts?: { requireToolApproval?: boolean }
 ): string {
   if (!uiTools || uiTools.length === 0) return "";
-  return [
+  const names = new Set(uiTools.map((t) => t.name));
+  const has = (...toolNames: string[]) => toolNames.every((n) => names.has(n));
+  const lines = [
     "## MCPJam UI tools",
     "You can drive the MCPJam inspector itself with the `ui_*` tools. Every action happens in the user's open app and is immediately visible to them.",
-    "Prefer `ui_open_playground` before `ui_select_tool` / `ui_execute_tool` / `ui_snapshot_app`. `ui_execute_tool` REALLY runs a tool against the user's connected MCP server — treat it as side-effectful; when the user hasn't clearly asked to run a tool, prefill it with `ui_select_tool` instead.",
-    "`ui_snapshot_app` is read-only and needs the playground open — use it to observe state before mutating it.",
+  ];
+  if (has("ui_open_playground", "ui_select_tool", "ui_execute_tool")) {
+    lines.push(
+      "Prefer `ui_open_playground` before `ui_select_tool` / `ui_execute_tool`. `ui_execute_tool` REALLY runs a tool against the user's connected MCP server — treat it as side-effectful; when the user hasn't clearly asked to run a tool, prefill it with `ui_select_tool` instead."
+    );
+  }
+  if (has("ui_snapshot_app")) {
+    lines.push(
+      "`ui_snapshot_app` is read-only and works from anywhere — use it to see where the user is and what is selected before acting, rather than assuming."
+    );
+  }
+  lines.push(
     "When a `ui_*` tool returns an error, relay the reason instead of retrying blindly.",
-    ...(opts?.requireToolApproval
-      ? [
-          "Mutating `ui_*` actions pause for the user's explicit approval before they run. A denial is final — explain what you wanted to do instead of retrying the call.",
-        ]
-      : []),
-  ].join("\n");
+    approvalGuidance(uiTools, opts?.requireToolApproval === true)
+  );
+  return lines.join("\n");
+}
+
+/**
+ * The approval sentence, told honestly for the snapshot that was actually
+ * sent. The destructive-pauses promise only holds when EVERY entry is
+ * annotation-aware — a legacy client sends bare `readOnly`, whose predicate
+ * with the flag off is `requireToolApproval && !readOnly`, i.e. nothing
+ * pauses. Promising a destructive gate there advertises a safety net that
+ * isn't there.
+ */
+function approvalGuidance(
+  uiTools: UiToolEntry[],
+  requireToolApproval: boolean
+): string {
+  if (requireToolApproval) {
+    return "Every mutating `ui_*` action pauses for the user's explicit approval before it runs. A denial is final — explain what you wanted to do instead of retrying the call.";
+  }
+  const annotationAware = uiTools.every((t) => t.annotations !== undefined);
+  return annotationAware
+    ? "Destructive `ui_*` actions pause for the user's explicit approval before they run; other actions apply immediately. A denial is final — explain what you wanted to do instead of retrying the call."
+    : "Every `ui_*` action applies immediately, so be deliberate about mutating ones — describe what you're about to do when it isn't obviously what the user asked for.";
 }
 
 export interface PrepareChatV2Result {
@@ -751,6 +844,14 @@ export interface PrepareChatV2Result {
    */
   progressivePlan: ProgressiveToolPlan;
   discoveryState: ToolDiscoveryState;
+  /**
+   * MCPJam UI tool entries that survived collision resolution against the
+   * loaded MCP tools (server tool wins an exact `ui_*` name collision).
+   * Approval classification for client-fulfilled UI calls must use THIS set,
+   * never the raw snapshot — a server-executed tool named `ui_navigate` must
+   * not inherit MCPJam UI approval semantics from a discarded client entry.
+   */
+  effectiveUiTools: UiToolEntry[];
 }
 
 /**
@@ -874,21 +975,26 @@ export async function prepareChatV2(
   // `app_<8hex>` namespace is opaque and disjoint from both).
   const appToolEntries = buildAppTools(appTools);
   // WebMCP UI tools — client-fulfilled like app tools, but with curated
-  // `ui_*` names instead of opaque aliases.
-  const uiToolEntries = buildUiTools(uiTools, { requireToolApproval });
-  const builtInToolEntries = builtInTools ?? {};
-  // UI tools are host-curated like built-ins, but `ui_` is a guessable
-  // prefix any third-party MCP server could ship — failing closed would let
-  // such a server brick every chat turn for the user. Same policy as
-  // built-ins: the UI tool wins and the MCP twin is dropped with a warn.
-  for (const name of Object.keys(uiToolEntries)) {
-    if (Object.prototype.hasOwnProperty.call(mcpTools, name)) {
-      logger.warn(
-        `[chat-v2] UI tool '${name}' shadows an MCP tool with the same name; using the UI tool`,
-      );
-      delete mcpTools[name];
+  // `ui_*` names instead of opaque aliases. `ui_` is a guessable prefix any
+  // MCP server may legitimately ship, so on an exact name collision the
+  // genuine server tool wins: the MCPJam UI entry is omitted for this turn
+  // (with a warn) and the server tool keeps its execute + ordinary approval
+  // semantics. A connected server must never lose a capability because
+  // MCPJam's first-party catalog picked the same name. Everything UI-scoped
+  // downstream — ToolSet entries, system prompt, discovery exemption,
+  // approval classification — derives from this effective set, never the
+  // raw snapshot.
+  const effectiveUiTools = (uiTools ?? []).filter((entry) => {
+    if (!Object.prototype.hasOwnProperty.call(mcpTools, entry.name)) {
+      return true;
     }
-  }
+    logger.warn(
+      `[chat-v2] MCP server tool '${entry.name}' collides with the MCPJam UI tool of the same name; keeping the server tool and omitting the UI entry for this turn`,
+    );
+    return false;
+  });
+  const uiToolEntries = buildUiTools(effectiveUiTools, { requireToolApproval });
+  const builtInToolEntries = builtInTools ?? {};
   // Collision policy, per origin:
   //  - MCP tools: the built-in wins and the server tool is dropped with a
   //    warn. Built-ins are the host's explicit catalog choice, and the
@@ -1018,7 +1124,7 @@ export async function prepareChatV2(
   const enhancedSystemPrompt = [
     systemPrompt,
     skillsPromptSection,
-    buildUiToolsSystemPrompt(uiTools, { requireToolApproval }),
+    buildUiToolsSystemPrompt(effectiveUiTools, { requireToolApproval }),
   ]
     .filter((section): section is string => Boolean(section?.trim()))
     .map((section) => section.trim())
@@ -1048,5 +1154,6 @@ export async function prepareChatV2(
     scrubMessages,
     progressivePlan,
     discoveryState,
+    effectiveUiTools,
   };
 }

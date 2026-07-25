@@ -111,9 +111,30 @@ describe("Inspector OAuth adapter pre-registered client secret", () => {
     expect(config.hasClientSecret).toBe(true);
     const creds = await config.loadPreregisteredCredentials(loaderInput);
     expect(creds.clientId).toBe("client_from_profile");
-    expect(creds.clientSecret).toBe("explicit-secret");
+    // The exact typed secret is used in the live token exchange, including
+    // any leading/trailing whitespace — trimming it would silently
+    // authenticate with a different secret than the one the user entered.
+    expect(creds.clientSecret).toBe("  explicit-secret  ");
     expect(fetchOAuthClientSecret).not.toHaveBeenCalled();
     expect(tryResolveProjectServer).not.toHaveBeenCalled();
+  });
+
+  it("treats a whitespace-only profile secret as absent and falls back to Convex", async () => {
+    tryResolveProjectServer.mockReturnValue({
+      projectId: "proj_1",
+      serverId: "srv_1",
+    });
+    fetchOAuthClientSecret.mockResolvedValue({ clientSecret: "shhh" });
+
+    const config = buildMachineConfig({
+      preregisteredClientId: "client_from_profile",
+      preregisteredClientSecret: "   ",
+      hasClientSecret: true,
+    });
+
+    const creds = await config.loadPreregisteredCredentials(loaderInput);
+    expect(creds.clientSecret).toBe("shhh");
+    expect(fetchOAuthClientSecret).toHaveBeenCalled();
   });
 
   it("pairs a profile clientId with the Convex-backed secret", async () => {
@@ -198,5 +219,36 @@ describe("Inspector OAuth adapter pre-registered client secret", () => {
     );
     expect(stored).not.toHaveProperty("client_secret");
     expect(stored.client_id).toBe("client_abc");
+  });
+});
+
+describe("Inspector OAuth adapter one-step stepping", () => {
+  it("omits scheduleAutoAdvance so each Continue advances exactly one step", () => {
+    const config = buildMachineConfig({}) as unknown as Record<string, unknown>;
+    // Absent, not merely undefined: the SDK debug machines call
+    // scheduleAutoAdvance via optional chaining, so leaving it out is precisely
+    // what stops the prepare -> send -> receive burst on a single click.
+    expect("scheduleAutoAdvance" in config).toBe(false);
+  });
+});
+
+describe("Inspector OAuth adapter SSRF loopback opt-in", () => {
+  // The SSRF guard blocks loopback metadata fetches unless the machine opts in.
+  // The debugger is a local-dev surface, so it must opt in whenever the server
+  // under test is itself loopback (e.g. a 127.0.0.1 dev MCP server) — otherwise
+  // discovery is refused and the flow never reaches "Authorize" (regression the
+  // oauth-debugger e2e caught).
+  it("allows loopback metadata fetch for a 127.0.0.1 server under test", () => {
+    const config = buildMachineConfig({
+      serverUrl: "http://127.0.0.1:52144/mcp",
+    }) as unknown as Record<string, unknown>;
+    expect(config.allowLoopbackMetadataFetch).toBe(true);
+  });
+
+  it("does not allow loopback for a public server under test", () => {
+    const config = buildMachineConfig({
+      serverUrl: "https://mcp.example.com/mcp",
+    }) as unknown as Record<string, unknown>;
+    expect(config.allowLoopbackMetadataFetch).toBe(false);
   });
 });

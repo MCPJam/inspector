@@ -1,4 +1,7 @@
 import dns from "node:dns/promises";
+import { lookup as dnsLookupCb } from "node:dns";
+import https from "node:https";
+import type { LookupFunction } from "node:net";
 
 export class OAuthProxyError extends Error {
   status: number;
@@ -30,46 +33,14 @@ export interface OAuthProxyResponse {
   body: unknown;
 }
 
-function isPrivateHost(hostname: string): boolean {
-  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
-
-  if (
-    host === "localhost" ||
-    host === "0.0.0.0" ||
-    host === "::1" ||
-    host === "::"
-  ) {
-    return true;
-  }
-
-  if (
-    host.startsWith("127.") ||
-    host.startsWith("10.") ||
-    host.startsWith("192.168.") ||
-    host.startsWith("169.254.")
-  ) {
-    return true;
-  }
-
-  if (host.startsWith("172.")) {
-    const second = parseInt(host.split(".")[1] ?? "", 10);
-    if (second >= 16 && second <= 31) {
-      return true;
-    }
-  }
-
-  if (host.includes(":")) {
-    if (host.startsWith("fc") || host.startsWith("fd")) {
-      return true;
-    }
-
-    if (/^fe[89ab][0-9a-f]/i.test(host)) {
-      return true;
-    }
-  }
-
-  return false;
-}
+// SSRF IP classifier + host check moved to the browser-safe `oauth/ssrf-guard`
+// so the machine executor path can reuse it; the Node-only DNS resolution below
+// stays here. Re-exported to preserve the public `isDisallowedIpAddress` symbol.
+import {
+  isDisallowedIpAddress,
+  isPrivateHost,
+} from "./oauth/ssrf-guard.js";
+export { isDisallowedIpAddress };
 
 async function resolveAndValidateDns(hostname: string): Promise<string | null> {
   if (/^\d+\.\d+\.\d+\.\d+$/.test(hostname) || hostname.includes(":")) {
@@ -206,6 +177,151 @@ function encodeRequestBody(
   }
 
   return JSON.stringify(body);
+}
+
+/**
+ * SSRF-hardened GET of a caller-influenced public document (the CIMD client
+ * metadata document). Unlike `validateUrl` + `fetch` — which resolve DNS twice
+ * and leave a rebinding window — this resolves once, rejects any private/reserved
+ * result (RFC 6890), and PINS that address into the connection via a custom
+ * `lookup`, so the socket connects to the validated IP with no second resolution.
+ * HTTPS-only, does not follow redirects, and caps the body (CIMD draft-02 §8.6).
+ */
+export async function fetchPinnedPublicDocument(
+  urlString: string,
+  opts: {
+    headers?: Record<string, string>;
+    timeoutMs?: number;
+    maxBytes?: number;
+  } = {},
+): Promise<OAuthProxyResponse> {
+  const url = new URL(urlString);
+  if (url.protocol !== "https:") {
+    throw new OAuthProxyError(
+      400,
+      "The client metadata document must be served over HTTPS",
+    );
+  }
+  // Reject a literal private/reserved host before opening any connection.
+  if (isPrivateHost(url.hostname)) {
+    throw new OAuthProxyError(
+      400,
+      `The client metadata host is a private or reserved address (${url.hostname})`,
+    );
+  }
+  const maxBytes = opts.maxBytes && opts.maxBytes > 0 ? opts.maxBytes : 5 * 1024;
+  const timeoutMs =
+    opts.timeoutMs && opts.timeoutMs > 0 ? opts.timeoutMs : 5000;
+
+  // Resolve once, validate every candidate, and pin the validated result into
+  // the connection. The socket uses exactly these addresses — no re-resolution —
+  // which is what actually closes the DNS-rebinding window.
+  //
+  // The callback shape must follow `options.all`: with autoSelectFamily (the
+  // Node ≥20 default) the socket passes `all: true` and expects an ARRAY of
+  // {address, family} entries; answering with a bare string there makes Node
+  // throw ERR_INVALID_IP_ADDRESS ("Invalid IP address: undefined").
+  const pinningLookup: LookupFunction = (hostname, options, callback) => {
+    dnsLookupCb(hostname, { all: true, verbatim: true }, (err, addresses) => {
+      if (err) return callback(err, "", 0);
+      const list = Array.isArray(addresses) ? addresses : [];
+      if (list.length === 0) {
+        return callback(
+          new OAuthProxyError(400, `Could not resolve ${hostname}`),
+          "",
+          0,
+        );
+      }
+      for (const a of list) {
+        if (isDisallowedIpAddress(a.address)) {
+          return callback(
+            new OAuthProxyError(
+              400,
+              `${hostname} resolves to a private or reserved address (${a.address})`,
+            ),
+            "",
+            0,
+          );
+        }
+      }
+      if (typeof options === "object" && options?.all) {
+        return (
+          callback as unknown as (
+            err: NodeJS.ErrnoException | null,
+            addresses: { address: string; family: number }[],
+          ) => void
+        )(null, list);
+      }
+      callback(null, list[0].address, list[0].family);
+    });
+  };
+
+  // A TOTAL deadline covering connect + response read (not an idle-socket
+  // timeout that incoming bytes reset): a slow-loris server cannot hold the flow
+  // open indefinitely. Aborting destroys the request and ends the body read.
+  const deadline = AbortSignal.timeout(timeoutMs);
+  return await new Promise<OAuthProxyResponse>((resolve, reject) => {
+    const request = https.request(
+      url,
+      {
+        method: "GET",
+        headers: { "User-Agent": "MCP-Inspector/1.0", ...(opts.headers ?? {}) },
+        lookup: pinningLookup,
+        servername: url.hostname,
+        signal: deadline,
+      },
+      (res) => {
+        const status = res.statusCode ?? 0;
+        const statusText = res.statusMessage ?? "";
+        const headers: Record<string, string> = {};
+        for (const [key, value] of Object.entries(res.headers)) {
+          headers[key.toLowerCase()] = Array.isArray(value)
+            ? value.join(", ")
+            : String(value ?? "");
+        }
+        // Redirects are NOT followed — a 3xx is surfaced as-is (draft-02 forbids
+        // the authorization server following redirects for CIMD).
+        const chunks: Buffer[] = [];
+        let total = 0;
+        res.on("data", (chunk: Buffer) => {
+          total += chunk.length;
+          if (total > maxBytes) {
+            request.destroy();
+            reject(
+              new OAuthProxyError(
+                400,
+                `The client metadata document exceeds the ${maxBytes}-byte cap`,
+              ),
+            );
+            return;
+          }
+          chunks.push(chunk);
+        });
+        res.on("end", () => {
+          const text = Buffer.concat(chunks).toString("utf8");
+          let body: unknown = text;
+          try {
+            body = JSON.parse(text);
+          } catch {
+            // leave as text; the caller's media-type check reports the mismatch
+          }
+          resolve({ status, statusText, headers, body });
+        });
+        res.on("error", reject);
+      },
+    );
+    request.on("error", (err) => {
+      reject(
+        deadline.aborted
+          ? new OAuthProxyError(
+              400,
+              `The client metadata document request exceeded the ${timeoutMs}ms deadline`,
+            )
+          : err,
+      );
+    });
+    request.end();
+  });
 }
 
 export async function executeOAuthProxy(

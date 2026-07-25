@@ -5,12 +5,19 @@ import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import { shouldEnableCloudSkillTools } from "../../utils/computers/cloud-skill-tools.js";
 import { isMCPAuthError } from "@mcpjam/sdk";
 import { resolveHostModelDefinition } from "../../utils/org-model-config.js";
-import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
+import {
+  ELICITATION_TIMEOUT_EXTENSION_MS,
+  HOSTED_MODE,
+  WEB_STREAM_TIMEOUT_MS,
+} from "../../config.js";
+import {
+  HostedElicitationBridge,
+  resolveElicitationGate,
+} from "./hosted-elicitation.js";
+import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import {
   validateAppToolEntries,
   AppToolValidationError,
-  validateUiToolEntries,
-  UiToolValidationError,
   validateWidgetModelContextEntries,
   WidgetModelContextValidationError,
 } from "../../utils/chat-v2-orchestration.js";
@@ -20,6 +27,7 @@ import { captureServerEvent } from "../../utils/analytics.js";
 import {
   hostedChatSchema,
   createAuthorizedManager,
+  buildServerNamesById,
   callerContextFromHono,
   assertBearerToken,
   readJsonBody,
@@ -34,6 +42,11 @@ import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
 import { getClientIp } from "../../utils/client-ip.js";
 import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config.js";
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
+import {
+  parseXaaPolicyValue,
+  xaaPolicyFromMcpProfile,
+} from "../../utils/effective-auth.js";
+import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { type ExecutionScope } from "../../utils/execution-scope.js";
 import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availability.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
@@ -193,6 +206,20 @@ chatV2.post("/", async (c) => {
         );
       }
     }
+    // Enterprise-managed authorization policy. Server-authoritative wherever
+    // a backend host config exists (chatbox / host-bound turns above — the
+    // same fail-closed fetch that owns harness/computer): a tampered body
+    // can neither add the policy (409 DoS on auto servers) nor drop it
+    // (downgrading an unconfigured auto server from xaa to the discover/
+    // OAuth ladder). The body value is honored ONLY on ad-hoc turns, where
+    // the caller is tampering with their own session. Both reads fail
+    // closed on a malformed/unsupported policy (409, never silently off).
+    const xaaPolicy = hostRuntimeConfig
+      ? xaaPolicyFromMcpProfile(
+          (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile
+        )
+      : parseXaaPolicyValue((body as Record<string, unknown>).xaaPolicy);
+
     const resolvedExecution = resolveExecutionContext({
       hostConfig: hostRuntimeConfig,
       overrides: {
@@ -297,7 +324,9 @@ chatV2.post("/", async (c) => {
     // built-in-tools/registry.ts). `computer` comes exclusively from the
     // server-resolved runtime config — never the request body — so a
     // tampered client can't attach a shell the host didn't authorize; the
-    // resolver also skips computer-backed tools for guest actors.
+    // resolver skips bash for anonymous guests unless the turn carries a
+    // host-funded swarm executionScope (personal-project guest reserves are
+    // rejected backend-side).
     // Harness preflight: a host-bound turn whose resolved host runs a harness
     // (claude-code | codex) must fail closed with a clear message when the
     // runtime isn't available on this server — never silently degrade to the
@@ -322,6 +351,10 @@ chatV2.post("/", async (c) => {
           String(modelDefinition.id),
           modelDefinition.provider,
         ),
+        // Fail closed rather than let a harness turn bypass the host's
+        // enterprise-managed policy: the harness proxy token carries no
+        // host, so that route can't enforce it (see the flag's docstring).
+        xaaEnterprisePolicyOn: xaaPolicy != null,
       });
       if (!availability.ok) {
         throw new WebRouteError(
@@ -386,6 +419,33 @@ chatV2.post("/", async (c) => {
       hasProjectId: Boolean(hostedBody.projectId),
     });
 
+    // Registering the callback is what makes the SDK advertise `elicitation`,
+    // so "who declares it" and "may we honor it" are one decision — see
+    // `resolveElicitationGate` for why chatbox turns must not read the body.
+    const {
+      effectiveClientCapabilities,
+      enabled: elicitationEnabled,
+    } = resolveElicitationGate({
+      isChatboxSession,
+      hostClientCapabilities: hostRuntimeConfig?.clientCapabilities,
+      bodyClientCapabilities: hostedBody.clientCapabilities,
+      clientVersion: hostedBody.hostedElicitationVersion,
+    });
+
+    const elicitationBridge = elicitationEnabled
+      ? new HostedElicitationBridge({
+          // NOT the raw Authorization header: for WorkOS API-key callers that
+          // is an `sk_…` key Convex cannot verify. This resolves the delegated
+          // JWT for those callers and passes JWTs through untouched.
+          convexBearer: await getConvexBearerForRequest(c),
+          projectId: hostedBody.projectId,
+          chatSessionId: hostedBody.chatSessionId,
+          serverNamesById:
+            buildServerNamesById(selectedServerIds, selectedServerNames) ?? {},
+          abortSignal: c.req.raw.signal as AbortSignal | undefined,
+        })
+      : undefined;
+
     // Membership chat (no share/chatbox token) is the default — the backend
     // authorizes via project ownership for both guest and authed users.
     // accessScope is only set when a token is in play (shared chat / chatbox)
@@ -401,7 +461,9 @@ chatV2.post("/", async (c) => {
       selectedServerIds,
       WEB_STREAM_TIMEOUT_MS,
       hostedBody.oauthTokens,
-      hostedBody.clientCapabilities,
+      // Chatbox: advertise the HOST's capabilities, not the body's, so the
+      // wire matches what we're prepared to honor.
+      effectiveClientCapabilities,
       {
         ...(isChatboxSession ? { accessScope: "chat_v2" } : {}),
         chatboxId,
@@ -410,6 +472,17 @@ chatV2.post("/", async (c) => {
         serverNames: selectedServerNames,
         initializePins,
         mcpProtocolVersionsByServerId,
+        xaaPolicy,
+        // Required for any XAA server in the batch (policy-forced or
+        // per-server configured) — without it the builder 500s rather than
+        // connecting tokenless.
+        xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
+        ...(elicitationBridge
+          ? {
+              elicitationCallback: elicitationBridge.callback,
+              elicitationTimeoutExtensionMs: ELICITATION_TIMEOUT_EXTENSION_MS,
+            }
+          : {}),
       },
     );
     oauthServerUrls = urls;
@@ -427,25 +500,11 @@ chatV2.post("/", async (c) => {
       throw error;
     }
 
-    // WebMCP UI tools: same boundary treatment as appTools. Chatbox-bound
-    // turns never accept them — ui_* tools drive the inspector UI, which is
-    // not part of the published/preview chatbox surface, so a stale or
-    // tampered client snapshot must not re-advertise them here.
-    let validatedUiTools;
-    if (!isChatboxSession) {
-      try {
-        validatedUiTools = validateUiToolEntries(body.uiTools);
-      } catch (error) {
-        if (error instanceof UiToolValidationError) {
-          throw new WebRouteError(
-            400,
-            ErrorCode.VALIDATION_ERROR,
-            error.message
-          );
-        }
-        throw error;
-      }
-    }
+    // `body.uiTools` is intentionally ignored here, not rejected: MCPJam UI
+    // tools are agent-route-only (server/routes/web/mcpjam-agent.ts), but
+    // cached pre-cutover clients may still send the field. MCP server tools
+    // whose names happen to match `ui_*` come from MCPClientManager and stay
+    // ordinary executable tools.
 
     let validatedWidgetModelContext;
     try {
@@ -508,7 +567,6 @@ chatV2.post("/", async (c) => {
               }
             : {}),
           appTools: validatedAppTools,
-          uiTools: validatedUiTools,
           widgetModelContext: validatedWidgetModelContext,
           ...(builtInTools ? { builtInTools } : {}),
           ...(cloudSkillsEnabled
@@ -573,10 +631,15 @@ chatV2.post("/", async (c) => {
           clientIp: getClientIp(c),
           abortSignal: c.req.raw.signal as AbortSignal | undefined,
           rpcCollector,
+          elicitationBridge,
           c,
         },
       });
     } catch (error) {
+      // The bridge can hold rows created before the throw (e.g. an elicitation
+      // during a tool call that then failed); withdraw them so no answerable
+      // prompt outlives the turn.
+      await elicitationBridge?.dispose();
       await manager.disconnectAllServers();
       throw error;
     }

@@ -17,15 +17,21 @@ The OAuth Debugger provides a visual, step-by-step interface for testing and deb
 
 ## Key Features
 
-The OAuth Debugger provides comprehensive tooling for testing OAuth implementations:
+The OAuth Debugger includes:
 
 - **Visual Step-by-Step Guide** - Interactive flow guide with detailed explanations for each OAuth step
-- **Multi-Protocol Support** - Test against OAuth spec versions 03-26, 06-18, and 11-25
+- **Multi-Protocol Support** - Test against OAuth spec versions 03-26, 06-18, 11-25, and 2026-07-28 (Draft)
 - **Full Registration Methods** - Support for client pre-registration, Dynamic Client Registration (DCR), and Client ID Metadata Documents (CIMD)
 - **Network Inspection** - View all HTTP requests and responses with headers and body content
 - **Educational Context** - Built-in teachable moments and tips for common OAuth issues
-- **Sequence Diagram** - Visual representation of the OAuth flow synchronized with your progress
+- **Sequence Diagram** - Visual representation of the OAuth flow synchronized with your progress, showing the exact resource value the flow sends
 - **Export Capabilities** - Copy logs in guide or raw format for debugging and documentation
+
+### Resource indicator warnings
+
+When the server's Protected Resource Metadata (PRM) advertises a `resource` identifier that does not fully satisfy RFC 9728 — for example, a same-origin resource on a different path than the transport endpoint — the debugger logs a warning at the `received_resource_metadata` step and continues the flow. The warning includes the advertised value, the server URL, and whether strict MCP clients (such as Quick OAuth or the official MCP SDK) will refuse to connect.
+
+The debugger intentionally proceeds rather than failing so you can observe real server behavior. Use the [OAuth Conformance](/cli/oauth-conformance) tool if you need strict RFC 9728 validation.
 
 ## Inline OAuth tracing
 
@@ -48,12 +54,16 @@ Use the inline trace for a quick diagnosis of real connection attempts, and swit
 To begin debugging OAuth flows:
 
 1. **Navigate to the OAuth Debugger** - Click the OAuth Flow tab in MCPJam Inspector
-2. **Configure a Target Server** - Click **Configure Target** to open the OAuth Profile Modal
+2. **Configure a Target Server** - Click **Configure** to open the OAuth Profile Modal prefilled with the currently selected server, or click **Add** to open a blank form and save a new target without changing the current one
 3. **Enter Server Details** - Provide your server's base URL and select your protocol version
 4. **Choose Registration Method** - Select CIMD, DCR, or pre-registered based on your implementation
 5. **Start Testing** - Click **Continue** to begin the OAuth flow
 
 The debugger will guide you through each step of the OAuth handshake, providing real-time feedback and educational context.
+
+<Note>
+The header **Add Server** button also opens a blank form so you can add a new target without affecting the server currently selected in the debugger.
+</Note>
 
 ## OAuth trace in server overview
 
@@ -73,13 +83,34 @@ The trace persists across page reloads so you can inspect a failed OAuth flow af
 
 OAuth trace steps also appear as filterable entries in the traffic log. Select **OAuth** from the **Source** filter in the log panel to isolate them. See [OAuth log entries](/inspector/tools-prompts-resources#oauth-log-entries) for details on the status indicators.
 
+## Bearer token authentication
+
+When you configure an HTTP server with a bearer token, the **Auth** tab shows a **Bearer Token Authentication** panel instead of the OAuth panel. The panel confirms that the server is using bearer auth and directs you to the server configuration to manage or rotate the token.
+
+The **Auth** tab also displays an **Authentication** label that reflects the current auth type for the selected server: **Bearer Token**, **OAuth**, **Process-based** (STDIO), or **No Authentication**.
+
+### Saved bearer tokens
+
+When a bearer token has been saved for a server, the token value is hidden in the edit form. The **Bearer Token** field shows the placeholder text **"Saved — enter a new value to replace"** to indicate that a token is stored without revealing it.
+
+- **Leave the field blank** to keep the existing saved token when you save other changes to the server.
+- **Enter a new value** to replace the saved token on the next save.
+
+In hosted mode, a **Reveal** button appears next to the **Bearer Token** label. Clicking it fetches and displays the stored token value so you can inspect or copy it. The revealed value is cleared when you close the panel or navigate away.
+
+<Note>
+Bearer tokens are stored securely and are never written to your browser's local storage in hosted mode. In local mode, the token is stored in your browser's local storage alongside the rest of your server configuration.
+</Note>
+
 ## Pre-registered client secrets
 
 When you configure a pre-registered OAuth client with a client secret, the secret is stored securely and never exposed in the UI after saving. The client secret field shows the following controls:
 
-- **Reveal** (hosted mode only) — Fetches and temporarily displays the stored secret so you can copy it. The value is hidden again when you close the panel or navigate away.
+- **Reveal** (hosted mode only) — Fetches and displays the stored secret in an editable field. You can copy it or type directly in the field to replace it. Click **Hide** to collapse the field without saving changes.
 - **Clear** — Marks the secret for removal. The secret is deleted from storage when you save. Click **Undo** to cancel before saving.
-- **Replace** — Type a new value into the client secret field to replace the stored secret on the next save. Entering a new value automatically cancels any pending clear.
+- **Replace** — After clicking **Reveal**, type a new value into the revealed field to replace the stored secret on the next save.
+
+When a secret is saved but not yet revealed, the field shows a "A client secret is saved" message in place of an input box. No empty input is shown until you click **Reveal**.
 
 <Note>
 In hosted mode, client secrets are stored in a secure vault and are never written to your browser's local storage. In local mode, the secret is stored in your browser's local storage alongside the rest of your server configuration.

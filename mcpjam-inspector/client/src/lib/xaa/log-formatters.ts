@@ -1,4 +1,12 @@
-import { getXAAStepInfo, getXAAStepIndex } from "./step-metadata";
+import {
+  getXAAReceivedStepForRequest,
+  getXAAStepInfo,
+  getXAAStepIndex,
+} from "./step-metadata";
+import {
+  splitHttpEntriesForDisplay,
+  type HttpEntryView,
+} from "@/lib/http-entry-views";
 import type {
   XAAFlowState,
   XAAFlowStep,
@@ -161,7 +169,8 @@ const appendError = (
 
 export function generateXAAFlowText(
   flowState: XAAFlowState,
-  summary: XAAFlowCopySummary
+  summary: XAAFlowCopySummary,
+  options?: { step?: XAAFlowStep }
 ): string {
   let text = "=== XAA Debugger - Flow ===\n\n";
   text += `Server URL: ${sanitizeUrl(
@@ -179,7 +188,10 @@ export function generateXAAFlowText(
     sanitizeString(summary.scope || flowState.scope || "Not set")
   )}\n`;
   text += `Test mode: ${flowState.negativeTestMode}\n`;
-  text += `Current step: ${flowState.currentStep}\n`;
+  text += `Current step: ${
+    getXAAStepInfo(flowState.currentStep, flowState.identityAssertionFormat)
+      .title
+  }\n`;
   if (flowState.error) {
     text += `ERROR: ${stringify(sanitizeString(flowState.error))}\n`;
   }
@@ -187,8 +199,14 @@ export function generateXAAFlowText(
 
   type TimelineEntry =
     | { type: "info"; timestamp: number; value: XAAInfoLogEntry }
-    | { type: "http"; timestamp: number; value: XAAHttpHistoryEntry };
+    | {
+        type: "http";
+        timestamp: number;
+        value: XAAHttpHistoryEntry;
+        view: HttpEntryView;
+      };
 
+  const currentStepIndex = getXAAStepIndex(flowState.currentStep);
   const byStep = new Map<XAAFlowStep, TimelineEntry[]>();
   const add = (step: XAAFlowStep, entry: TimelineEntry) => {
     const entries = byStep.get(step) ?? [];
@@ -197,25 +215,53 @@ export function generateXAAFlowText(
   };
 
   for (const entry of flowState.infoLogs ?? []) {
-    add(entry.step, { type: "info", timestamp: entry.timestamp, value: entry });
+    if (getXAAStepIndex(entry.step) > currentStepIndex) continue;
+    if (options?.step && entry.step !== options.step) continue;
+    add(entry.step, {
+      type: "info",
+      timestamp: entry.timestamp,
+      value: entry,
+    });
   }
-  for (const entry of flowState.httpHistory ?? []) {
-    add(entry.step, { type: "http", timestamp: entry.timestamp, value: entry });
+  // Keep the request under its request step and the response under the paired
+  // received step, matching the guide and sequence diagram.
+  for (const item of splitHttpEntriesForDisplay<
+    XAAFlowStep,
+    XAAHttpHistoryEntry
+  >({
+    entries: flowState.httpHistory ?? [],
+    pairedReceivedStep: getXAAReceivedStepForRequest,
+    keepCompletedExchangeWhole: (entry) =>
+      entry.step === flowState.currentStep &&
+      Boolean(flowState.error || flowState.negativeProbe),
+  })) {
+    if (getXAAStepIndex(item.step) > currentStepIndex) continue;
+    if (options?.step && item.step !== options.step) continue;
+    add(item.step, {
+      type: "http",
+      timestamp: item.timestamp,
+      value: item.entry,
+      view: item.view,
+    });
   }
 
-  const steps = Array.from(byStep.keys()).sort(
-    (a, b) => getXAAStepIndex(a) - getXAAStepIndex(b)
-  );
+  const steps = options?.step
+    ? [options.step]
+    : Array.from(byStep.keys()).sort(
+        (a, b) => getXAAStepIndex(a) - getXAAStepIndex(b)
+      );
   if (steps.length === 0) return `${text}No activity yet.\n`;
 
   for (const step of steps) {
-    const stepInfo = getXAAStepInfo(step);
+    const stepInfo = getXAAStepInfo(step, flowState.identityAssertionFormat);
     text += `${"=".repeat(60)}\n`;
     text += `${stepInfo.title} [${step}]\n`;
     text += `${"=".repeat(60)}\n`;
     text += `${stepInfo.summary}\n\n`;
 
-    const entries = byStep.get(step)!.sort((a, b) => a.timestamp - b.timestamp);
+    const entries = (byStep.get(step) ?? []).sort(
+      (a, b) => a.timestamp - b.timestamp
+    );
     for (const entry of entries) {
       if (entry.type === "info") {
         const log = entry.value;
@@ -231,29 +277,49 @@ export function generateXAAFlowText(
       }
 
       const http = entry.value;
-      text += `[${formatTimestamp(http.timestamp)}] ${
-        http.request.method
-      } ${sanitizeUrl(http.request.url)}\n`;
-      if (http.duration !== undefined) text += `Duration: ${http.duration}ms\n`;
-      if (http.response) {
+      const view = entry.view;
+      const showRequest = view !== "response";
+      const showResponse = view !== "request";
+
+      if (view === "response") {
+        text += `[${formatTimestamp(entry.timestamp)}] Response to: ${
+          http.request.method
+        } ${sanitizeUrl(http.request.url)}\n`;
+      } else {
+        text += `[${formatTimestamp(http.timestamp)}] Request: ${
+          http.request.method
+        } ${sanitizeUrl(http.request.url)}\n`;
+      }
+      if (showResponse && http.duration !== undefined) {
+        text += `Duration: ${http.duration}ms\n`;
+      }
+      if (showResponse && http.response) {
         text += `Status: ${http.response.status} ${http.response.statusText}\n`;
       }
-      if (Object.keys(http.request.headers).length > 0) {
+      if (view === "request" && http.response) {
+        const receivedStep = getXAAReceivedStepForRequest(http.step);
+        text += `Response: recorded under [${receivedStep}]\n`;
+      }
+      if (showRequest && Object.keys(http.request.headers).length > 0) {
         text += `\nRequest Headers:\n${stringify(
           sanitizeHeaders(http.request.headers)
         )}\n`;
       }
-      if (http.request.body !== undefined) {
+      if (showRequest && http.request.body !== undefined) {
         text += `\nRequest Body:\n${stringify(
           sanitizeBody(http.request.body)
         )}\n`;
       }
-      if (http.response && Object.keys(http.response.headers).length > 0) {
+      if (
+        showResponse &&
+        http.response &&
+        Object.keys(http.response.headers).length > 0
+      ) {
         text += `\nResponse Headers:\n${stringify(
           sanitizeHeaders(http.response.headers)
         )}\n`;
       }
-      if (http.response?.body !== undefined) {
+      if (showResponse && http.response?.body !== undefined) {
         text += `\nResponse Body:\n${stringify(
           sanitizeBody(http.response.body)
         )}\n`;

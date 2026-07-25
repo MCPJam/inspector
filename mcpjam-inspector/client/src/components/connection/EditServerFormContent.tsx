@@ -7,7 +7,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
-import { useAuth } from "@workos-inc/authkit-react";
 import { AdvancedConnectionSettingsSection } from "./shared/AdvancedConnectionSettingsSection";
 import { AuthenticationSection } from "./shared/AuthenticationSection";
 import { EnvVarsSection } from "./shared/EnvVarsSection";
@@ -33,6 +32,17 @@ interface EditServerFormContentProps {
   onMcpProtocolVersionOverrideChange?: (
     mode: McpProtocolVersion | undefined
   ) => void;
+  /**
+   * The active host's default MCP wire pin, resolved PROP-FIRST by the modal
+   * (`hostDefaultMcpProtocolVersion ?? useActiveMcpProfile()`). Forwarded to
+   * AuthenticationSection so the "auto" OAuth plan preview resolves against the
+   * SAME host fallback the submit path bakes with — otherwise the preview
+   * (context) and the saved era (host default) could disagree when the modal
+   * renders outside an ActiveMcpProfileProvider.
+   */
+  hostDefaultMcpProtocolVersion?: McpProtocolVersion;
+  /** Project default XAA test identity — shown as override placeholders. */
+  projectXaaDefaultIdentity?: { subject: string; email: string } | null;
 }
 
 export function EditServerFormContent({
@@ -42,8 +52,9 @@ export function EditServerFormContent({
   hostedServerId = null,
   mcpProtocolVersionOverride,
   onMcpProtocolVersionOverrideChange,
+  hostDefaultMcpProtocolVersion,
+  projectXaaDefaultIdentity = null,
 }: EditServerFormContentProps) {
-  const { user: signedInUser } = useAuth();
   const hostedUrlPlaceholder = "https://example.com/mcp";
   const [revealingEnv, setRevealingEnv] = useState(false);
   const [revealingHeaders, setRevealingHeaders] = useState(false);
@@ -228,8 +239,15 @@ export function EditServerFormContent({
             onOauthScopesChange={formState.setOauthScopesInput}
             oauthProtocolMode={formState.oauthProtocolMode}
             onOauthProtocolModeChange={formState.setOauthProtocolMode}
+            serverMcpProtocolVersion={mcpProtocolVersionOverride}
+            hostDefaultMcpProtocolVersion={hostDefaultMcpProtocolVersion}
             registrationMode={formState.registrationMode}
             onOauthRegistrationModeChange={formState.setOauthRegistrationMode}
+            xaaClientAuth={formState.xaaClientAuth}
+            onXaaClientAuthChange={formState.setXaaClientAuth}
+            confidentialCimdStatus={formState.confidentialCimdCapability.status}
+            confidentialCimdBlockReason={formState.confidentialCimdBlockReason}
+            onRetryConfidentialCimd={formState.confidentialCimdCapability.retry}
             useCustomClientId={formState.useCustomClientId}
             onUseCustomClientIdChange={(checked) => {
               formState.setUseCustomClientId(checked);
@@ -278,7 +296,16 @@ export function EditServerFormContent({
             onXaaSubjectChange={formState.setXaaSubject}
             xaaEmail={formState.xaaEmail}
             onXaaEmailChange={formState.setXaaEmail}
-            signedInEmail={signedInUser?.email}
+            autoSelectsXaa={formState.autoSelectsXaa}
+            projectDefaultIdentity={projectXaaDefaultIdentity}
+            xaaDcrClientId={formState.xaaDcrClientId}
+            xaaDcrTokenEndpointAuthMethod={
+              formState.xaaDcrTokenEndpointAuthMethod
+            }
+            xaaDcrIssuer={formState.xaaDcrIssuer}
+            xaaDcrClientSecretExpiresAt={formState.xaaDcrClientSecretExpiresAt}
+            xaaDcrRegisteredAt={formState.xaaDcrRegisteredAt}
+            xaaDcrStatus={formState.xaaDcrStatus}
           />
         </div>
       )}

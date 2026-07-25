@@ -7,6 +7,9 @@ import {
   isMCPJamGuestAllowedModel,
   isMCPJamProvidedModel,
   isModelSupported,
+  normalizeOauthProtocolMode,
+  resolveEffectiveOauthProtocolMode,
+  SERVER_FORM_OAUTH_PROTOCOL_MODES,
   SUPPORTED_MODELS,
 } from "../types.js";
 
@@ -15,52 +18,29 @@ describe("MCPJam-provided model classification", () => {
     expect(isMCPJamProvidedModel("openai/gpt-4o-mini")).toBe(true);
   });
 
-  it("gates only the premium hosted models from guest access", () => {
-    expect(isMCPJamGuestAllowedModel("anthropic/claude-haiku-4.5")).toBe(true);
-    expect(isMCPJamProvidedModel("anthropic/claude-haiku-4.5")).toBe(true);
-    expect(isMCPJamProvidedModel("openai/gpt-5.4")).toBe(true);
-    expect(isMCPJamProvidedModel("openai/gpt-5.5")).toBe(true);
-    expect(isMCPJamProvidedModel("openai/gpt-5.5-pro")).toBe(true);
-    expect(isMCPJamProvidedModel("deepseek/deepseek-v4-pro")).toBe(true);
-    expect(isMCPJamProvidedModel("deepseek/deepseek-v4-flash")).toBe(true);
-    expect(isMCPJamProvidedModel("qwen/qwen3.6-plus")).toBe(true);
-    expect(isMCPJamProvidedModel("mistralai/mistral-small-2603")).toBe(true);
-    expect(isMCPJamProvidedModel("mistralai/mistral-medium-3-5")).toBe(true);
-    expect(isMCPJamProvidedModel("mistralai/mistral-large-2512")).toBe(true);
-    expect(isMCPJamProvidedModel("mistralai/devstral-2512")).toBe(true);
-    expect(isMCPJamProvidedModel("z-ai/glm-5.2")).toBe(true);
-    expect(isMCPJamGuestAllowedModel("openai/gpt-oss-120b")).toBe(true);
-    expect(isMCPJamGuestAllowedModel("mistralai/mistral-small-2603")).toBe(
-      true
-    );
-    expect(isMCPJamGuestAllowedModel("mistralai/devstral-2512")).toBe(true);
-    expect(isMCPJamGuestAllowedModel("mistralai/mistral-medium-3-5")).toBe(
-      false
-    );
-    expect(isMCPJamGuestAllowedModel("mistralai/mistral-large-2512")).toBe(
-      false
-    );
-    expect(isMCPJamGuestAllowedModel("openai/gpt-5.4")).toBe(false);
-    expect(isMCPJamGuestAllowedModel("openai/gpt-5.4-mini")).toBe(false);
-    expect(isMCPJamGuestAllowedModel("openai/gpt-5.4-nano")).toBe(false);
-    expect(isMCPJamGuestAllowedModel("openai/gpt-5.4-pro")).toBe(false);
-    expect(isMCPJamGuestAllowedModel("openai/gpt-5.5")).toBe(false);
-    expect(isMCPJamGuestAllowedModel("openai/gpt-5.5-pro")).toBe(false);
-    expect(isMCPJamGuestAllowedModel("deepseek/deepseek-v4-pro")).toBe(false);
-    expect(isMCPJamGuestAllowedModel("deepseek/deepseek-v4-flash")).toBe(false);
-    expect(isMCPJamGuestAllowedModel("anthropic/claude-opus-4.6")).toBe(false);
-    expect(isMCPJamGuestAllowedModel("anthropic/claude-opus-4.6-fast")).toBe(
-      false
-    );
-    expect(isMCPJamGuestAllowedModel("anthropic/claude-sonnet-4.6")).toBe(
-      false
-    );
-    expect(isMCPJamGuestAllowedModel("anthropic/claude-opus-4.7")).toBe(false);
-    expect(isMCPJamGuestAllowedModel("google/gemini-3.1-pro-preview")).toBe(
-      false
-    );
-    expect(isMCPJamGuestAllowedModel("qwen/qwen3.6-plus")).toBe(true);
-    expect(isMCPJamGuestAllowedModel("z-ai/glm-5.2")).toBe(true);
+  it("treats every provided hosted model as guest-allowed (guests un-curated)", () => {
+    // Guest curation is gone — enforcement is spend caps, not an allowlist.
+    // isMCPJamGuestAllowedModel now mirrors isMCPJamProvidedModel: a formerly
+    // guest-gated premium model is guest-allowed too.
+    const ids = [
+      "anthropic/claude-haiku-4.5",
+      "openai/gpt-oss-120b",
+      "mistralai/mistral-small-2603",
+      // formerly guest-gated premium:
+      "openai/gpt-5.4",
+      "openai/gpt-5.5-pro",
+      "deepseek/deepseek-v4-pro",
+      "anthropic/claude-opus-4.6",
+      "anthropic/claude-opus-4.7",
+      "google/gemini-3.1-pro-preview",
+      "mistralai/mistral-large-2512",
+    ];
+    for (const id of ids) {
+      expect(isMCPJamProvidedModel(id)).toBe(true);
+      expect(isMCPJamGuestAllowedModel(id)).toBe(true);
+    }
+    // A non-provided (BYOK/unknown) id is still not guest-allowed.
+    expect(isMCPJamGuestAllowedModel("somevendor/not-hosted")).toBe(false);
   });
 
   it("derives hosted provider from the id prefix (display rows removed)", () => {
@@ -140,10 +120,68 @@ describe("MCPJam-provided model classification", () => {
     const hosted = hostedModelDefinitionsFromSnapshot();
     expect(hosted.length).toBeGreaterThan(100);
     expect(hosted.every((m) => m.hosted === true)).toBe(true);
-    // Guest gating is preserved off the static gated set.
-    const haiku = hosted.find((m) => m.id === "anthropic/claude-haiku-4.5");
-    expect(haiku?.guestAllowed).toBe(true);
-    const gatedOpus = hosted.find((m) => m.id === "anthropic/claude-opus-4.6");
-    expect(gatedOpus?.guestAllowed).toBe(false);
+    // Every hosted snapshot model is guest-allowed now (guests un-curated).
+    expect(hosted.every((m) => m.guestAllowed === true)).toBe(true);
+  });
+});
+
+describe("normalizeOauthProtocolMode (connect-form OAuth protocol)", () => {
+  // Single source for the Add and Edit connect forms — both previously kept
+  // private copies that had to preserve 2026-07-28 in lockstep.
+  it("preserves every concrete protocol era, including the 2026-07-28 draft", () => {
+    expect(normalizeOauthProtocolMode("2025-03-26")).toBe("2025-03-26");
+    expect(normalizeOauthProtocolMode("2025-06-18")).toBe("2025-06-18");
+    expect(normalizeOauthProtocolMode("2025-11-25")).toBe("2025-11-25");
+    expect(normalizeOauthProtocolMode("2026-07-28")).toBe("2026-07-28");
+  });
+
+  it("does not silently degrade a stored 2026-07-28 pin to 2025-11-25", () => {
+    expect(normalizeOauthProtocolMode("2026-07-28")).not.toBe("2025-11-25");
+  });
+
+  it("preserves the deferred 'auto' sentinel through hydration", () => {
+    // "auto" is a valid mode the wire-pin bridge resolves later; coercing it
+    // to a concrete era here would drop the sentinel and make the bridge
+    // unreachable for prefilled/edited servers.
+    expect(normalizeOauthProtocolMode("auto")).toBe("auto");
+  });
+
+  it("falls back to 2025-11-25 for unknowns and undefined", () => {
+    expect(normalizeOauthProtocolMode(undefined)).toBe("2025-11-25");
+    expect(normalizeOauthProtocolMode("garbage")).toBe("2025-11-25");
+  });
+
+  it("derives its accepted set from the single-source tuple", () => {
+    // Every concrete era normalizes to itself; the tuple IS the source the
+    // union and the membership check share, so this guards against drift.
+    for (const era of SERVER_FORM_OAUTH_PROTOCOL_MODES) {
+      expect(normalizeOauthProtocolMode(era)).toBe(era);
+    }
+  });
+});
+
+describe("resolveEffectiveOauthProtocolMode (auto → wire-pin bridge)", () => {
+  it("resolves 'auto' to the 2026 flow only under a 2026-07-28 wire pin", () => {
+    expect(resolveEffectiveOauthProtocolMode("auto", "2026-07-28")).toBe(
+      "2026-07-28"
+    );
+  });
+
+  it("resolves 'auto' to the 2025-11-25 default without a 2026 wire pin", () => {
+    expect(resolveEffectiveOauthProtocolMode("auto", "2025-11-25")).toBe(
+      "2025-11-25"
+    );
+    expect(resolveEffectiveOauthProtocolMode("auto", undefined)).toBe(
+      "2025-11-25"
+    );
+  });
+
+  it("passes an explicit selection straight through — it always wins", () => {
+    expect(resolveEffectiveOauthProtocolMode("2025-06-18", "2026-07-28")).toBe(
+      "2025-06-18"
+    );
+    expect(resolveEffectiveOauthProtocolMode("2026-07-28", undefined)).toBe(
+      "2026-07-28"
+    );
   });
 });

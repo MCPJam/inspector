@@ -5,6 +5,8 @@ import {
   emptyHostConfigInputV2,
   type HostTemplateId,
 } from "../src/host-config/templates/index.js";
+import { XAA_MCP_EXTENSION } from "../src/xaa/mcp-init.js";
+import { readXaaEnterprisePolicy } from "../src/xaa/enterprise-policy.js";
 
 const ALL_IDS: HostTemplateId[] = [
   "mcpjam",
@@ -39,6 +41,44 @@ describe("seedHostTemplate", () => {
         // clientCapabilities is always seeded (MCP UI extension etc.).
         expect(config.clientCapabilities).toBeTypeOf("object");
       }
+    }
+  });
+
+  // The MCPJam persona is the inspector's own client and supports the full
+  // XAA path, so it declares the enterprise-managed-authorization extension.
+  // Every real-host persona must NOT — a seed refactor that leaks the key
+  // into inheriting templates (claude/chatgpt/cursor/copilot/vscode all
+  // derive their clientCapabilities from the empty-input base) fails here.
+  it("advertises EMA on the mcpjam template and on no other", () => {
+    for (const id of ALL_IDS) {
+      const config = seedHostTemplate(id, { theme: "dark" });
+      const exts =
+        (config.clientCapabilities as { extensions?: unknown })?.extensions;
+      const hasEma =
+        typeof exts === "object" &&
+        exts !== null &&
+        Object.prototype.hasOwnProperty.call(exts, XAA_MCP_EXTENSION);
+      expect(hasEma, `template ${id}`).toBe(id === "mcpjam");
+    }
+    // The MCP UI default rides along untouched on the mcpjam seed.
+    const mcpjam = seedHostTemplate("mcpjam", { theme: "dark" });
+    const mcpjamExts = (
+      mcpjam.clientCapabilities as { extensions: Record<string, unknown> }
+    ).extensions;
+    expect(mcpjamExts["io.modelcontextprotocol/ui"]).toBeDefined();
+    expect(mcpjamExts[XAA_MCP_EXTENSION]).toEqual({});
+  });
+
+  // The enterprise-managed POLICY (com.mcpjam/enterprise-managed-auth under
+  // mcpProfile.extensions) is opt-in per host — OFF for EVERY persona,
+  // mcpjam included (product decision 2026-07-14). Unlike the EMA
+  // *capability* above (mcpjam alone advertises support), no seed may carry
+  // the policy; this guards against a future seed change enabling
+  // enforcement-by-default.
+  it("seeds the enterprise-managed policy on NO persona", () => {
+    for (const id of ALL_IDS) {
+      const state = readXaaEnterprisePolicy(seedHostTemplate(id).mcpProfile);
+      expect(state.kind, `template ${id}`).toBe("off");
     }
   });
 
@@ -176,6 +216,29 @@ describe("seedHostTemplate", () => {
     const config = emptyHostConfigInputV2({ clientCapabilities: caps });
     (config.clientCapabilities as any).extensions.foo.bar = 999;
     expect(caps.extensions.foo.bar).toBe(1);
+  });
+
+  it("emptyHostConfigInputV2 leaves skillSelection absent by default and clones it when seeded", () => {
+    // Absent stays absent — a fresh seed must hash byte-identically to a
+    // pre-feature seed (the canonicalizer omits an absent skillSelection).
+    const fresh = emptyHostConfigInputV2();
+    expect("skillSelection" in fresh).toBe(false);
+
+    const skillSelection = {
+      mode: "explicit" as const,
+      skillIds: ["sk-1"],
+    };
+    const seeded = emptyHostConfigInputV2({ skillSelection });
+    expect(seeded.skillSelection).toEqual({
+      mode: "explicit",
+      skillIds: ["sk-1"],
+    });
+    // Cloned, not aliased.
+    skillSelection.skillIds.push("sk-2");
+    expect(seeded.skillSelection).toEqual({
+      mode: "explicit",
+      skillIds: ["sk-1"],
+    });
   });
 
   // Golden-output guard. The committed snapshot was captured when these seeds

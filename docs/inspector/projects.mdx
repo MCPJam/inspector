@@ -28,6 +28,18 @@ The combined org and project switcher sits at the top of the sidebar. It shows y
 When you switch projects, all servers disconnect automatically to give you a clean slate.
 </Info>
 
+## Switching Organizations
+
+The context menu leads with the **Projects** list. At the bottom of the menu, a footer row shows your active organization name and its shared credit usage.
+
+- **Switch organization** — appears only when you belong to two or more organizations. Click it to expand an inline list of all your organizations and select a different one. Switching reloads the sidebar with that organization's projects — no page reload required.
+- **New organization** — appears at the bottom of the switch list (or directly in the footer when you have only one org and can create another).
+- The **gear icon** next to an organization name navigates to that organization's settings.
+
+<Info>
+After completing an OAuth flow, you are returned to the organization you were in when the flow started, so you never land on the wrong organization after authenticating.
+</Info>
+
 <iframe
   className="w-full aspect-video rounded-xl"
   src="https://www.youtube.com/embed/p27gp_OuyMA"
@@ -36,18 +48,18 @@ When you switch projects, all servers disconnect automatically to give you a cle
   allowFullScreen
 ></iframe>
 
-## Switching Organizations
+## Leaving an organization
 
-The **Organization** section at the top of the context menu shows your active organization. Click the organization chip to open a popover listing all your organizations and select a different one. Switching organizations reloads the sidebar with that organization's projects — no page reload required.
+If you are a member (not an owner or admin) of an organization, you will see an **Access restricted** screen when you open the organization settings. From that screen you can leave the organization:
 
-- On desktop, hovering over the chip also opens the organization list.
-- The gear icon next to an organization name (visible to admins and owners) navigates to that organization's settings.
-- Per-project settings gears and member avatars are shown on each project row in the list.
+1. Click **Leave organization** below the "Go to Servers" button.
+2. Confirm in the dialog that appears.
 
-<Info>
-After completing an OAuth flow, you are returned to the organization you were in when the flow started, so you never land on the wrong organization after authenticating.
-</Info>
+You will lose access to the organization immediately and be redirected to the Servers page. To rejoin, you need to be re-invited by an admin or owner.
 
+<Note>
+Owners cannot leave an organization — transfer ownership or delete the organization instead.
+</Note>
 ## Sharing Projects
 
 Project sharing lets your entire team work with the same servers. Set up your project once, invite your team by email, and everyone gets access to the same servers with the same configurations instantly.
@@ -108,6 +120,14 @@ The **Default Host Config** section sets the seed configuration applied to new c
 Editing the default host config does **not** change existing chatboxes or eval suites — each owns its own config once created.
 
 The editor is only visible when you are signed in and have a saved project. Members without manage permissions see the editor in read-only mode.
+
+#### Personal computer
+
+When your deployment exposes computer-backed tools (such as **Bash**), a **Personal computer** toggle appears in the built-in tools section of the host config editor. Turning it on attaches a per-member cloud workstation — a persistent Linux sandbox — to the host.
+
+- **Computer-backed tools are disabled until a computer is attached.** The checkbox for tools like Bash is greyed out with a hint ("Requires a personal computer") until you turn the toggle on.
+- **Detaching the computer also removes computer-backed tool ids** from the config, so the saved config is always consistent.
+- The toggle is hidden until the deployment enables at least one computer-backed tool, so it won't appear as a dead control before launch.
 
 ## What's Next
 

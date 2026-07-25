@@ -3,23 +3,49 @@
     {
       "releases": [
         {
+          "name": "@mcpjam/sdk",
+          "type": "patch"
+        }
+      ],
+      "summary": "Validate declared draft-07 tool schemas instead of rejecting them. The upstream v2 client's default validator is 2020-12-only and hard-fails `tools/call` for any tool whose `outputSchema` declares `\"$schema\": \".../draft-07/schema#\"` — which is every MCP TypeScript SDK v1 server built with zod. The spec permits an explicitly declared draft-07 dialect on all protocol versions (2020-12 is only the default when `$schema` is absent), so the SDK now dispatches on the declared `$schema`: absent/2020-12 → a 2020-12 engine, draft-07 → a draft-07 engine, unknown dialects → skipped with a deduped `console.warn` (overridable via `onUnknownDialect`) rather than failing the call. Two runtime flavors share the dispatch core: `DialectAwareJsonSchemaValidator` (Ajv, wired into `MCPClientManager` and `createManagedMcpClient` on Node) and `CspSafeDialectAwareJsonSchemaValidator` (`@cfworker/json-schema`, wired into the HTTP doctor, which ships in the browser/workerd entries where Ajv's `new Function` compilation is unavailable).",
+      "id": "dialect-aware-schema-validation"
+    },
+    {
+      "releases": [
+        {
           "name": "@mcpjam/inspector",
           "type": "minor"
         }
       ],
-      "summary": "Release the latest Inspector updates.\n\n- Split the Chatbox (human) and Swarm (agent) surfaces so human chat sessions and agent-driven swarm runs no longer share one UI.\n- Add a mock OIDC IdP for XAA: authorization-code flow with PKCE, a standard `/token` endpoint, `userinfo`, and org-scoped issuers (`/api/web/xaa/o/<orgId>`), plus an opt-in hosted issuer for local debugger runs that skips tunneling.\n- Harden computers auth: drop HS256/three-var terminal-token compat in favor of RS256-only, JWKS-backed verification and service-token-only auth.\n- Fix local-only-MCP org BYOK to route through the existing `/stream/org` proxy instead of a lease.\n- Migrate funnel/revenue analytics events to the `track()` helper (tranche 1).",
-      "id": "release-rollup-2026-07-10"
+      "summary": "Surface and configure the Swarm goal-completion judge.\n\n- The per-session judge badge (`SessionGoalScoreBadge`) moves to the shared `session-quality` module (reusing the eval `ScoreBadge`) and now renders in the Sessions list and run matrix cells; `SwarmJudgeSection` is reachable even for sessions with no transcript.\n- The judge config type/defaults are extracted to a shared `GoalJudgeConfig` (evals re-export the historical `EvalJudgeConfig` names), so the eval `JudgesSection` is reusable.\n- New journeys expose an **Advanced → Judge** disclosure that reuses `JudgesSection` to set the judge model and auto-grade toggle (`journeys:createJourney` carries the config). Pairs with the backend `judgeConfig` snapshot + config-driven auto-run.",
+      "id": "swarm-journey-judge"
     }
   ],
   "releases": [
     {
+      "name": "@mcpjam/sdk",
+      "type": "patch",
+      "oldVersion": "2.0.0",
+      "changesets": [
+        "dialect-aware-schema-validation"
+      ],
+      "newVersion": "2.0.1"
+    },
+    {
       "name": "@mcpjam/inspector",
       "type": "minor",
-      "oldVersion": "2.24.0",
+      "oldVersion": "2.29.0",
       "changesets": [
-        "release-rollup-2026-07-10"
+        "swarm-journey-judge"
       ],
-      "newVersion": "2.25.0"
+      "newVersion": "2.30.0"
+    },
+    {
+      "name": "@mcpjam/mcp",
+      "type": "none",
+      "oldVersion": "0.0.1",
+      "changesets": [],
+      "newVersion": "0.0.1"
     }
   ]
 }

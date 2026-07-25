@@ -1,8 +1,9 @@
-import { canonicalizeResourceUrl } from "../../oauth/state-machines/shared/urls.js";
+import { resolveResourceIndicatorValue } from "../../oauth/resource-policy.js";
 import { getConformanceAuthCodeDynamicRegistrationMetadata } from "../../oauth/client-identity.js";
 import type { OAuthFlowState } from "../../oauth/state-machines/types.js";
 import {
   buildInitializeRequestBody,
+  buildStatelessVerifyRequestBody,
   resolveInitializeProtocolVersion,
 } from "../../oauth/state-machines/shared/initialize.js";
 import { resolveRequestedScopeValue } from "../../oauth/state-machines/shared/challenges.js";
@@ -102,6 +103,27 @@ function buildInvalidTokenMcpRequest(
     headers["MCP-Protocol-Version"] = input.config.protocolVersion;
   }
 
+  // 2026-07-28 has no initialize handshake: the authenticated probe is a
+  // stateless `tools/list` carrying the protocol-version `_meta` envelope and
+  // the `Mcp-Method` header (mirrors the debug-oauth-2026-07-28 machine). An
+  // `initialize` body would be rejected by a spec-compliant modern server, so
+  // the invalid-token check would misread that rejection.
+  if (input.config.protocolVersion === "2026-07-28") {
+    headers["Mcp-Method"] = "tools/list";
+    return {
+      method: "POST",
+      url: input.config.serverUrl,
+      headers,
+      body: buildStatelessVerifyRequestBody({
+        protocolVersion: input.config.protocolVersion,
+        authMode: input.config.auth.mode,
+        clientName: "MCPJam SDK OAuth Conformance",
+        clientVersion: "1.0.0",
+        id: 999,
+      }),
+    };
+  }
+
   return {
     method: "POST",
     url: input.config.serverUrl,
@@ -141,7 +163,13 @@ function buildTokenRequestBody(
   overrides: Record<string, string | undefined>,
 ): Record<string, string> {
   const body: Record<string, string> = {};
-  const resource = canonicalizeResourceUrl(input.config.serverUrl);
+  // Negative checks tamper OTHER fields; the resource baseline must be the
+  // same resolved value the positive flow sent.
+  const resource = resolveResourceIndicatorValue({
+    serverUrl: input.config.serverUrl,
+    prmResource: input.state.resourceMetadata?.resource,
+    resolved: input.state.resourceIndicator,
+  });
   const state = input.state;
 
   if (input.config.auth.mode === "client_credentials") {
@@ -488,7 +516,11 @@ export async function runInvalidAuthorizeRedirectCheck(
   );
   authorizeUrl.searchParams.set(
     "resource",
-    canonicalizeResourceUrl(input.config.serverUrl),
+    resolveResourceIndicatorValue({
+      serverUrl: input.config.serverUrl,
+      prmResource: input.state.resourceMetadata?.resource,
+      resolved: input.state.resourceIndicator,
+    }),
   );
 
   const requestedScopeValue = resolveRequestedScopeValue({

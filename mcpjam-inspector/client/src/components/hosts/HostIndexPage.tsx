@@ -28,9 +28,9 @@ export function HostIndexPage({
     setDeletingId(host.hostId);
     try {
       await deleteHost({ hostId: host.hostId });
-      toast.success(`Host "${host.name}" deleted`);
+      toast.success(`Client "${host.name}" deleted`);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to delete host";
+      const msg = err instanceof Error ? err.message : "Failed to delete client";
       if (msg.includes("consumer")) {
         toast.error(
           `${msg} — use force delete or remove dependent chatboxes/evals first`,
@@ -47,10 +47,10 @@ export function HostIndexPage({
     setDuplicatingId(host.hostId);
     try {
       const { hostId } = await duplicateHost({ hostId: host.hostId });
-      toast.success(`Host duplicated`);
+      toast.success(`Client duplicated`);
       onSelectHost(hostId);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to duplicate host");
+      toast.error(err instanceof Error ? err.message : "Failed to duplicate client");
     } finally {
       setDuplicatingId(null);
     }

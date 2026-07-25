@@ -57,6 +57,12 @@ vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
   ),
 }));
 
+// The hosted-model catalog hook fetches `/api/mcp/models` for everyone now;
+// stub it so it doesn't pollute this test's fetch assertions.
+vi.mock("@/hooks/use-hosted-model-catalog", () => ({
+  useHostedModelCatalog: () => ({ hostedCatalog: [], status: "fallback" }),
+}));
+
 vi.mock("@/hooks/use-ai-provider-keys", () => ({
   useAiProviderKeys: () => ({
     hasToken: mockState.hasToken,
@@ -114,6 +120,9 @@ vi.mock("@workos-inc/authkit-react", () => ({
 }));
 
 vi.mock("convex/react", () => ({
+  // useChatSession resolves the Convex client to submit elicitation answers
+  // straight to the rendezvous table (the blocked replica isn't addressable).
+  useConvex: () => ({ mutation: vi.fn().mockResolvedValue({ ok: true }) }),
   useConvexAuth: () => ({
     isAuthenticated: true,
     isLoading: false,

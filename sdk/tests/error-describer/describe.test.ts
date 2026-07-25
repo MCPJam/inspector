@@ -94,10 +94,34 @@ const CASES: Case[] = [
     expectRawCode: -32001,
   },
   {
-    name: "-32004 unsupported protocol version",
+    name: "-32004 unsupported protocol version (pre-renumber draft, transitional)",
     build: () => makeError("Unsupported protocol version", { code: -32004 }),
     expectSlug: "jsonrpc/unsupported_protocol_version",
     expectRawCode: -32004,
+  },
+  // Modern 2026-07-28 protocol codes (post-renumber). These are the final wire
+  // codes; the -32001/-32004 cases above are the transitional pre-renumber path.
+  {
+    name: "-32020 header mismatch (modern, unambiguous)",
+    build: () =>
+      makeError("MCP-Protocol-Version header mismatch", { code: -32020 }),
+    expectSlug: "jsonrpc/header_mismatch",
+    expectRawCode: -32020,
+  },
+  {
+    name: "-32021 missing required client capability (modern)",
+    build: () =>
+      makeError("Missing required client capability: elicitation", {
+        code: -32021,
+      }),
+    expectSlug: "jsonrpc/missing_required_client_capability",
+    expectRawCode: -32021,
+  },
+  {
+    name: "-32022 unsupported protocol version (modern)",
+    build: () => makeError("Unsupported protocol version", { code: -32022 }),
+    expectSlug: "jsonrpc/unsupported_protocol_version",
+    expectRawCode: -32022,
   },
   {
     name: "-32042 url elicitation required",

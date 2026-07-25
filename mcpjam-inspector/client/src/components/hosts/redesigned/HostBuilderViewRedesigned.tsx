@@ -36,6 +36,7 @@ import {
 import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { RedesignedHostCanvas } from "./canvas/RedesignedHostCanvas";
+import { HostCanvasSelector } from "./HostCanvasSelector";
 import { parseHostVerifyTabParam } from "../host-verify-deep-link";
 import { buildRedesignedHostCanvas } from "./canvas/canvasBuilder";
 import { HostFocusPanel } from "./focus/HostFocusPanel";
@@ -361,7 +362,7 @@ export function HostBuilderViewRedesigned({
       // The freshly persisted config id arrives via the Convex
       // subscription on the next tick; don't include it in this toast
       // because `host?.config?.id` is still the *previous* saved config here.
-      toast.success("Host saved");
+      toast.success("Client saved");
       // Telemetry is best-effort: a posthog throw must not bubble into the
       // shared catch and surface "Failed to save host" after the config
       // has already been persisted.
@@ -377,7 +378,7 @@ export function HostBuilderViewRedesigned({
         // swallow — analytics must not block the success path
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to save host");
+      toast.error(err instanceof Error ? err.message : "Failed to save client");
     } finally {
       setIsSaving(false);
     }
@@ -449,51 +450,16 @@ export function HostBuilderViewRedesigned({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
-      <div className="relative shrink-0 border-b border-border/40 px-8 py-2.5">
-        <div className="flex min-w-0 items-center justify-end gap-2 sm:gap-3">
-          {/* Host/Compare sub-nav sits inline beside Save — a single header
-              row instead of a second segmented bar stacked over the canvas. */}
-          <HostSectionTabs
-            value="host"
-            hostEnabled
-            onSelect={(next) => {
-              if (next === "compare") navigate("/host-compare");
-            }}
-          />
-          <Tooltip>
-            <TooltipTrigger asChild>
-              {/* Span wrapper: a disabled <button> swallows pointer events,
-                  so the tooltip must hang off an always-interactive parent. */}
-              <span className="inline-flex shrink-0">
-                <Button
-                  size="sm"
-                  onClick={() => void handleSave()}
-                  disabled={!canSave}
-                  variant={isDirty ? "default" : "ghost"}
-                  className={
-                    isDirty
-                      ? "shrink-0"
-                      : "shrink-0 text-muted-foreground hover:text-foreground disabled:opacity-40"
-                  }
-                >
-                  {isSaving ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : (
-                    <Save className="size-4" />
-                  )}
-                  {isDirty ? "Save host" : "Saved"}
-                </Button>
-              </span>
-            </TooltipTrigger>
-            {saveDisabledReason ? (
-              <TooltipContent side="bottom" variant="muted">
-                {saveDisabledReason}
-              </TooltipContent>
-            ) : null}
-          </Tooltip>
-        </div>
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <div className="pointer-events-auto">
+      <div className="@container relative shrink-0 border-b border-border/40 px-4 py-2.5 md:px-8">
+        {/* 3-column grid mirrors the Servers view (ConnectViewHeader): the
+            centered selector and the right-side controls each own a column so
+            they can never overlap. The switch is gated on the header's own
+            width via `@container` (not the viewport) so it stacks correctly
+            when the sidebar is open and the container — not the window — is
+            narrow. Below the container breakpoint it stacks into one column. */}
+        <div className="flex flex-col items-stretch gap-2 @2xl:grid @2xl:grid-cols-[1fr_auto_1fr] @2xl:items-center @2xl:gap-3">
+          <div className="hidden @2xl:block" aria-hidden="true" />
+          <div className="flex min-w-0 justify-center">
             <ViewModeSelector
               value="host"
               ariaLabel="Connect view"
@@ -518,6 +484,50 @@ export function HostBuilderViewRedesigned({
                   : []),
               ]}
             />
+          </div>
+          <div className="flex min-w-0 flex-wrap items-center justify-center gap-2 @2xl:justify-end sm:gap-3">
+            {/* Host/Compare sub-nav sits inline beside Save — a single header
+                row instead of a second segmented bar stacked over the canvas.
+                `flex-wrap` lets the pill + Save drop to their own line rather
+                than overlap if the column is ever squeezed. */}
+            <HostSectionTabs
+              value="host"
+              hostEnabled
+              onSelect={(next) => {
+                if (next === "compare") navigate("/host-compare");
+              }}
+            />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                {/* Span wrapper: a disabled <button> swallows pointer events,
+                    so the tooltip must hang off an always-interactive parent. */}
+                <span className="inline-flex shrink-0">
+                  <Button
+                    size="sm"
+                    onClick={() => void handleSave()}
+                    disabled={!canSave}
+                    variant={isDirty ? "default" : "ghost"}
+                    className={
+                      isDirty
+                        ? "shrink-0"
+                        : "shrink-0 text-muted-foreground hover:text-foreground disabled:opacity-40"
+                    }
+                  >
+                    {isSaving ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <Save className="size-4" />
+                    )}
+                    {isDirty ? "Save client" : "Saved"}
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              {saveDisabledReason ? (
+                <TooltipContent side="bottom" variant="muted">
+                  {saveDisabledReason}
+                </TooltipContent>
+              ) : null}
+            </Tooltip>
           </div>
         </div>
       </div>
@@ -544,7 +554,7 @@ export function HostBuilderViewRedesigned({
               defaultSize={focusState.open ? 55 : 100}
               minSize={30}
             >
-              <div className="h-full min-h-0 pr-2">
+              <div className="relative h-full min-h-0 pr-2">
                 <ReactFlowProvider>
                   <RedesignedHostCanvas
                     viewModel={viewModel}
@@ -557,6 +567,19 @@ export function HostBuilderViewRedesigned({
                     shellStyle={canvasShellStyle}
                   />
                 </ReactFlowProvider>
+                {/* Client selector pinned top-left over the canvas (fixed
+                    position — it does not pan/zoom with the flow) so it stays
+                    accessible without blocking the canvas content. The
+                    header's GlobalHostBar hides itself while this canvas is
+                    open. */}
+                <div className="pointer-events-none absolute inset-x-0 top-5 z-20 flex justify-start pl-5 pr-2">
+                  <div className="pointer-events-auto">
+                    <HostCanvasSelector
+                      projectId={projectId}
+                      activeHostId={hostId}
+                    />
+                  </div>
+                </div>
               </div>
             </ResizablePanel>
             {focusState.open ? (

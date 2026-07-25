@@ -44,7 +44,7 @@ interface OAuthProfileModalProps {
   onSave: (payload: {
     formData: ServerFormData;
     profile: OAuthTestProfile;
-  }) => void;
+  }) => void | Promise<void>;
 }
 
 interface HeaderRow {
@@ -91,6 +91,7 @@ export function OAuthProfileModal({
       : [createHeaderRow()],
   );
   const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const supportedStrategies = useMemo(
     () => getSupportedRegistrationStrategies(draft.protocolVersion),
     [draft.protocolVersion],
@@ -145,7 +146,12 @@ export function OAuthProfileModal({
     }
 
     const trimmedClientId = draft.clientId.trim();
-    const trimmedClientSecret = draft.clientSecret.trim();
+    // Preserve the exact typed secret — only whether there's a real value is
+    // trim-based (whitespace-only counts as none). Trimming the value itself
+    // would silently corrupt a secret with legitimate surrounding whitespace.
+    const trimmedClientSecret = draft.clientSecret.trim()
+      ? draft.clientSecret
+      : "";
     setError(null);
 
     return {
@@ -156,13 +162,25 @@ export function OAuthProfileModal({
     };
   };
 
-  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const validated = getValidatedProfileValues();
     if (!validated) return;
     const trimmedName = serverName.trim();
     if (!trimmedName) {
       setError("Server name is required");
+      return;
+    }
+    // Add mode has no `server`, so every collision is rejected; edit mode
+    // exempts only the row being edited from its own name. Without this the
+    // save handler treats an add-onto-existing-name as a plain save and
+    // overwrites that server (the hook's guard only covers renames).
+    if (
+      existingServerNames.some(
+        (name) => name === trimmedName && name !== server?.name,
+      )
+    ) {
+      setError(`A server named "${trimmedName}" already exists.`);
       return;
     }
 
@@ -185,24 +203,44 @@ export function OAuthProfileModal({
       url: validated.trimmedUrl,
       headers: Object.keys(headerMap).length ? headerMap : undefined,
       useOAuth: true,
+      // Carry the chosen OAuth protocol version onto the connection form so
+      // `toMCPConfig` stamps the sessionless 2026 wire era on the saved/synced
+      // server config. Without this, hosted chat/eval/backend connects — which
+      // forward host/per-server MCP pins, not the OAuth profile — fall back to
+      // the 2025 initialize path for a 2026-only server.
+      oauthProtocolMode: draft.protocolVersion,
       oauthScopes: scopesArray,
       clientId: validated.trimmedClientId || undefined,
       clientSecret: validated.trimmedClientSecret || undefined,
     };
 
-    onSave({
-      formData,
-      profile: {
-        serverUrl: validated.trimmedUrl,
-        clientId: validated.trimmedClientId,
-        clientSecret: validated.trimmedClientSecret,
-        scopes: draft.scopes.trim(),
-        customHeaders: normalizedHeaders,
-        protocolVersion: draft.protocolVersion,
-        registrationStrategy: draft.registrationStrategy,
-      },
-    });
-    onOpenChange(false);
+    // Await so a rejected save keeps the modal open with the entered values
+    // instead of closing over a server that was never written. `saving` blocks
+    // the resubmits that awaiting now makes possible. Mirrors XAAServerModal.
+    setSaving(true);
+    try {
+      await onSave({
+        formData,
+        profile: {
+          serverUrl: validated.trimmedUrl,
+          clientId: validated.trimmedClientId,
+          clientSecret: validated.trimmedClientSecret,
+          scopes: draft.scopes.trim(),
+          customHeaders: normalizedHeaders,
+          protocolVersion: draft.protocolVersion,
+          registrationStrategy: draft.registrationStrategy,
+        },
+      });
+      onOpenChange(false);
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Could not save the server. Please try again.",
+      );
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleProtocolChange = (value: OAuthProtocolVersion) => {
@@ -326,6 +364,9 @@ export function OAuthProfileModal({
                       </SelectItem>
                       <SelectItem value="2025-11-25" className="text-xs">
                         2025-11-25 (Latest)
+                      </SelectItem>
+                      <SelectItem value="2026-07-28" className="text-xs">
+                        2026-07-28 (Draft)
                       </SelectItem>
                     </SelectContent>
                   </Select>
@@ -520,10 +561,13 @@ export function OAuthProfileModal({
               type="button"
               variant="ghost"
               onClick={() => onOpenChange(false)}
+              disabled={saving}
             >
               Cancel
             </Button>
-            <Button type="submit">Save configuration</Button>
+            <Button type="submit" disabled={saving}>
+              {saving ? "Saving…" : "Save configuration"}
+            </Button>
           </DialogFooter>
         </form>
       </DialogContent>

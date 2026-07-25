@@ -7,10 +7,70 @@ icon: "monitor"
 Each project gives every member an opt-in **Computer**: a personal cloud Linux
 workstation with a web terminal and a `bash` tool your agents can call. It boots
 from a base image (Debian + Node + Python) or a custom [environment](#environments)
-you define, sleeps when idle, and wakes on first use.
+you define, sleeps automatically after about 30 minutes idle or shortly after
+you close the terminal, and wakes on next use.
 
 Open it from the **Computer** tab. The first time you open the terminal, MCPJam
 provisions the machine; after that it resumes in about a second.
+
+## Chat attachments
+
+When the previewed host has a computer attached and you are signed in, files you
+attach in the chat composer are uploaded into the computer's filesystem at
+**`/home/user/attachments/`** in addition to being sent inline to the model.
+A short note is appended to your message so the model — and any MCP server
+running on the computer — can reference the files by path:
+
+```
+[Attachments uploaded to the computer — use the bash tool to read them]
+- report.csv: /home/user/attachments/ab12cd34-report.csv
+```
+
+If the upload fails (for example, because the daily start cap is reached or the
+storage quota is exceeded), the send is **aborted** and the composer is left
+intact — your message and attachments are never sent without the files landing
+on the computer first.
+
+<Note>
+  This only applies when the host config attaches a personal computer and you
+  are signed in. Guest sessions and hosts without a computer attached keep the
+  existing inline-only behavior.
+</Note>
+
+## Agent tools
+
+When the **Computer** tab is open, agents have access to four tools for managing
+the computer's lifecycle. These tools are only available while you are on the
+Computer screen and require a signed-in project.
+
+| Tool | What it does |
+|---|---|
+| `ui_start_computer` | Provisions the computer on first use, or wakes it if it is asleep. Counts against the daily start cap — a cap rejection is returned as an error and the start is refused. |
+| `ui_hibernate_computer` | Puts the computer to sleep immediately. Non-destructive: files and state are preserved. |
+| `ui_reset_computer` | Resets the computer to its image, **wiping all files**. Requires confirmation. |
+| `ui_delete_computer` | Tears the computer down entirely, **deleting all files**. Requires confirmation. |
+
+<Note>
+  Opening the interactive terminal is a human action and is not available as an
+  agent tool. The terminal token never appears in the agent transcript.
+</Note>
+
+Agents can check the computer's current state (lifecycle status, environment,
+whether a terminal is open) via the app snapshot (`ui_snapshot_app`) while on
+the Computer screen.
+
+## Sleep and hibernate
+
+Your computer sleeps automatically when it has been idle for about 30 minutes,
+or shortly after you close the terminal. Sleeping is non-destructive — the disk
+and memory are snapshotted and restored on wake, so everything you left running
+is still there.
+
+To put the computer to sleep immediately, click **Hibernate now** in the
+Computer tab toolbar (only visible when the computer is running). You'll be
+asked to confirm, then the terminal closes and the machine hibernates. It wakes
+automatically the next time you open the terminal or an agent calls the `bash`
+tool.
 
 ## Environments
 

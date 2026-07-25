@@ -17,6 +17,8 @@ import {
   resolveLocalOrgMaxSteps,
   type RunLocalOrgChatTurnHeadlessOptions,
 } from "../../utils/org-model-stream-handler.js";
+import type { DirectChatTurnTraceEvents } from "../../utils/direct-chat-turn.js";
+import type { SwarmStreamPayload } from "../../../shared/swarm-stream-events.js";
 import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
 import {
   resolveTurnRuntime,
@@ -29,6 +31,10 @@ import {
   type SyntheticModelSource,
 } from "../../utils/org-model-config.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
+import type {
+  PinnableSkill,
+  PinnedSkillArtifact,
+} from "../../../shared/skill-types.js";
 import {
   resolveHostTools,
   type HostComputerResource,
@@ -537,6 +543,17 @@ export interface SyntheticHostRuntime {
    * surface authorizes via project membership and leaves it undefined.
    */
   chatboxId?: string;
+  /**
+   * Authoritative pinned skills for an ENVIRONMENT-based swarm target
+   * (Project Environments, D3). `undefined` ⇒ legacy live-pool semantics
+   * (cloud skill tools / harness live fetch, unchanged). An array — possibly
+   * EMPTY, meaning deliberately skill-less — ⇒ skills come EXCLUSIVELY from
+   * these pinned artifacts: the emulated engine gets them via prepareChatV2
+   * `skillsSource` (never `cloudSkills`), and a harness turn gets them via the
+   * pinned harness path (never `fetchRuntimeSkills`, and NEVER through
+   * prepareChatV2's pinned branch, which throws on harness).
+   */
+  pinnedSkills?: PinnedSkillArtifact[];
 }
 
 /** Attribution tags stamped onto every transcript persist for this session. */
@@ -548,6 +565,9 @@ export interface SyntheticPersistAttribution {
   synthesisRunId?: string;
   journeyRunId?: string;
   hostId?: string;
+  /** Opaque swarm execution-target id — echoed on chat ingestion so two
+   * same-host targets stay attributable. Absent for legacy/chatbox surfaces. */
+  targetId?: string;
   personaId?: string;
   personaLabel?: string;
   personaRefId?: string;
@@ -586,6 +606,11 @@ export interface SyntheticHostSessionAdapter {
     connectedServerIds: string[];
     promptIndex: number;
   }): Promise<void>;
+  /**
+   * Optional live SSE emitter (swarm). Envelope (runId/hostId/chatSessionId/
+   * sessionIndex) is bound by the caller — this only receives payloads.
+   */
+  emit?(payload: SwarmStreamPayload): void;
 }
 
 export async function runSyntheticHostSession(
@@ -603,6 +628,7 @@ export async function runSyntheticHostSession(
     nextPersonaTurn,
     persist,
     onTurnPersisted,
+    emit,
   } = adapter;
   const {
     modelDefinition,
@@ -688,7 +714,9 @@ export async function runSyntheticHostSession(
     // call — so advertising the `listSkills`/`loadSkill` meta-tools (always 2
     // tools, even for a project with no skills) would turn an otherwise-toolless
     // approval simulation into one that fails every session for no benefit.
+    const pinnedSkills = runtime.pinnedSkills;
     const cloudSkillsEnabled =
+      pinnedSkills === undefined &&
       !requireToolApproval &&
       Boolean(authHeader) &&
       Boolean(projectId) &&
@@ -699,6 +727,33 @@ export async function runSyntheticHostSession(
         provider: modelDefinition.provider,
         hasProjectId: Boolean(projectId),
       });
+
+    // Authoritative pinned mode (env-based swarm target): the emulated engine
+    // gets frozen pinned tools via `skillsSource` — NEVER the live cloud-skill
+    // tools. `kind: "none"` covers (a) a deliberately skill-less target, (b) the
+    // approval-mode no-skills semantics (a headless visitor can't approve, same
+    // rationale as the cloudSkills gate above), and (c) HARNESS turns —
+    // prepareChatV2 THROWS on harness+pinned, so a harness target's pinned
+    // artifacts ride `pinnedHarnessSkills` on the drain instead.
+    const skillsSource:
+      | { kind: "pinned"; skills: PinnableSkill[] }
+      | { kind: "none" }
+      | undefined =
+      pinnedSkills === undefined
+        ? undefined
+        : harness || requireToolApproval || pinnedSkills.length === 0
+          ? { kind: "none" }
+          : {
+              kind: "pinned",
+              skills: pinnedSkills.map(
+                (a): PinnableSkill => ({
+                  name: a.name,
+                  description: a.description,
+                  content: a.content,
+                  contentHash: a.contentHash,
+                }),
+              ),
+            };
 
     const prepared = await prepareChatV2({
       mcpClientManager: manager,
@@ -718,6 +773,7 @@ export async function runSyntheticHostSession(
           }
         : {}),
       ...(builtInTools ? { builtInTools } : {}),
+      ...(skillsSource ? { skillsSource } : {}),
       ...(cloudSkillsEnabled
         ? { cloudSkills: { authHeader, projectId } }
         : {}),
@@ -758,8 +814,17 @@ export async function runSyntheticHostSession(
       ? resolveWebAuthorizedHarnessStrategy()
       : undefined;
 
+    emit?.({ type: "session_start" });
+
     for (let turn = 0; turn < maxTurns; turn++) {
-      if (abortSignal?.aborted) return { outcome: "failed" };
+      if (abortSignal?.aborted) {
+        emit?.({
+          type: "session_complete",
+          status: "failed",
+          errorMessage: "aborted",
+        });
+        return { outcome: "failed" };
+      }
 
       const next = await nextPersonaTurn(lastTranscript);
 
@@ -777,6 +842,12 @@ export async function runSyntheticHostSession(
       // (same per-turn hygiene as the eval runners).
       browser.setActivePromptIndex(turn);
       await browser.dismissCarriedWidget();
+
+      emit?.({
+        type: "turn_start",
+        turnIndex: turn,
+        prompt: next.message,
+      });
 
       const {
         history: updatedHistory,
@@ -800,13 +871,75 @@ export async function runSyntheticHostSession(
         // prepareAdvertisedTools hook hides them until a widget is mounted.
         tools: { ...prepared.allTools, ...browser.computerWidgetTools },
         hooks: {
-          onToolCall: (event) => browser!.noteToolCallInput(event),
-          onToolResult: (event) => browser!.handleEngineToolResult(event),
+          onToolCall: (event) => {
+            browser!.noteToolCallInput(event);
+            const args =
+              event.input &&
+              typeof event.input === "object" &&
+              !Array.isArray(event.input)
+                ? (event.input as Record<string, unknown>)
+                : { value: event.input };
+            emit?.({
+              type: "tool_call",
+              toolName: event.toolName,
+              toolCallId: event.toolCallId,
+              args,
+            });
+          },
+          onToolResult: (event) => {
+            void browser!.handleEngineToolResult(event);
+            emit?.({
+              type: "tool_result",
+              toolCallId: event.toolCallId,
+              result: event.output,
+            });
+          },
           ...(browser.prepareAdvertisedTools
             ? { prepareAdvertisedTools: browser.prepareAdvertisedTools }
             : {}),
-          onToolResultChunk: (chunk) =>
-            browser!.handleDirectToolResultChunk(chunk),
+          onToolResultChunk: async (chunk) => {
+            await browser!.handleDirectToolResultChunk(chunk);
+            emit?.({
+              type: "tool_result",
+              toolCallId: chunk.toolCallId,
+              result: chunk.output,
+            });
+          },
+          onToolCallChunk: (chunk) => {
+            emit?.({
+              type: "tool_call",
+              toolName: chunk.toolName,
+              toolCallId: chunk.toolCallId,
+              args: chunk.input,
+            });
+          },
+          ...(emit
+            ? {
+                onLiveTextDelta: (content: string) => {
+                  emit({ type: "text_delta", content });
+                },
+                onStepFinish: (event: {
+                  stepIndex: number;
+                  turnUsage?: {
+                    inputTokens?: number;
+                    outputTokens?: number;
+                  };
+                }) => {
+                  emit({
+                    type: "step_finish",
+                    stepNumber: event.stepIndex,
+                    ...(event.turnUsage
+                      ? {
+                          usage: {
+                            inputTokens: event.turnUsage.inputTokens ?? 0,
+                            outputTokens: event.turnUsage.outputTokens ?? 0,
+                          },
+                        }
+                      : {}),
+                  });
+                },
+              }
+            : {}),
         },
         progressivePlan: prepared.progressivePlan,
         discoveryState: prepared.discoveryState,
@@ -819,6 +952,14 @@ export async function runSyntheticHostSession(
         // resolved once above; `journeyRunId`/`hostId` are the swarm run + pinned
         // host. All three are inert for the emulated engine / non-swarm surfaces.
         ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
+        // Pinned harness skills (env-based swarm target running a real
+        // harness): the harness turn skips the live skills fetch and delivers
+        // exactly these artifacts (skillsHash derives from their fingerprints).
+        // Passed even when EMPTY — an empty authoritative set means the
+        // harness must run skill-less, not fall back to the live pool.
+        ...(harness && pinnedSkills !== undefined
+          ? { pinnedHarnessSkills: pinnedSkills }
+          : {}),
         ...(persist.hostId ? { hostId: persist.hostId } : {}),
         // Chatbox surface only. The chatbox runtime-config redeem returns an
         // accessVersion that /stream/org/resolve uses to authorize the actor
@@ -842,6 +983,8 @@ export async function runSyntheticHostSession(
           ? { journeyRunId: persist.journeyRunId }
           : {}),
       });
+
+      emit?.({ type: "turn_finish", turnIndex: turn });
       // Track the first turn's modelSource for the per-session persist
       // calls. modelSource is stable across turns within a session because
       // chatbox modelId is pinned by `fetchChatboxRuntimeConfig` at start.
@@ -912,6 +1055,7 @@ export async function runSyntheticHostSession(
           : {}),
         ...(persist.journeyRunId ? { journeyRunId: persist.journeyRunId } : {}),
         ...(persist.hostId ? { hostId: persist.hostId } : {}),
+        ...(persist.targetId ? { targetId: persist.targetId } : {}),
         turnTrace,
         resumeConfig,
         ...(toolSnapshot ? { toolSnapshot } : {}),
@@ -988,10 +1132,12 @@ export async function runSyntheticHostSession(
           : {}),
         ...(persist.journeyRunId ? { journeyRunId: persist.journeyRunId } : {}),
         ...(persist.hostId ? { hostId: persist.hostId } : {}),
+        ...(persist.targetId ? { targetId: persist.targetId } : {}),
         resumeConfig,
       });
     }
 
+    emit?.({ type: "session_complete", status: "succeeded" });
     return { outcome: "succeeded" };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -1002,6 +1148,11 @@ export async function runSyntheticHostSession(
     // breach (stop the WHOLE run). The chatbox runner ignores it for
     // rate-limited outcomes, so this is a safe additive change.
     if (classifyTurnFailure(message) === "rate_limited") {
+      emit?.({
+        type: "session_complete",
+        status: "rate_limited",
+        errorMessage: message,
+      });
       return { outcome: "rate_limited", errorMessage: message };
     }
     logger.warn("[sessionSimulation.runner] session failed", {
@@ -1009,6 +1160,11 @@ export async function runSyntheticHostSession(
       chatSessionId,
       personaId: persist.personaId,
       error: message,
+    });
+    emit?.({
+      type: "session_complete",
+      status: "failed",
+      errorMessage: message,
     });
     return { outcome: "failed", errorMessage: message };
   } finally {
@@ -1334,10 +1490,19 @@ export interface DrainAssistantTurnHooks {
   /** Engine branches (`/stream`, `/stream/org`): MCPJamHandlerOptions pass-throughs. */
   onToolCall?: MCPJamHandlerOptions["onToolCall"];
   onToolResult?: MCPJamHandlerOptions["onToolResult"];
+  /** Live text deltas (hosted + direct). Swarm SSE / eval sinks use this. */
+  onLiveTextDelta?: MCPJamHandlerOptions["onLiveTextDelta"];
+  /** Per-step settle (hosted + direct). Swarm SSE / eval sinks use this. */
+  onStepFinish?: MCPJamHandlerOptions["onStepFinish"];
   /** All branches: per-step advertised-tool narrowing. */
   prepareAdvertisedTools?: MCPJamHandlerOptions["prepareAdvertisedTools"];
   /** Local AI-SDK branch: awaited per-tool-result render hook. */
   onToolResultChunk?: RunLocalOrgChatTurnHeadlessOptions["onToolResultChunk"];
+  /**
+   * Local AI-SDK branch: tool-call chunk (via `traceEvents.onToolCallChunk`).
+   * Hosted engines use {@link onToolCall} instead.
+   */
+  onToolCallChunk?: DirectChatTurnTraceEvents["onToolCallChunk"];
 }
 
 /**
@@ -1407,6 +1572,7 @@ export async function drainAssistantTurn(
     journeyRunId,
     hostId,
     harnessMcpProxy,
+    pinnedHarnessSkills,
     extraBodyFields,
     hooks,
   } = args;
@@ -1510,6 +1676,13 @@ export async function drainAssistantTurn(
       ...(hooks?.onToolResultChunk
         ? { onToolResultChunk: hooks.onToolResultChunk }
         : {}),
+      ...(hooks?.onToolCallChunk
+        ? { onToolCallChunk: hooks.onToolCallChunk }
+        : {}),
+      ...(hooks?.onLiveTextDelta
+        ? { onLiveTextDelta: hooks.onLiveTextDelta }
+        : {}),
+      ...(hooks?.onStepFinish ? { onStepFinish: hooks.onStepFinish } : {}),
       onEngineError: captureEngineError,
     });
 
@@ -1601,6 +1774,9 @@ export async function drainAssistantTurn(
     // key on (journeyRunId, hostId, chatSessionId) instead of direct-chat.
     ...(journeyRunId ? { journeyRunId } : {}),
     ...(hostId ? { hostId } : {}),
+    // Pinned harness skills (env-based swarm target): presence — even an
+    // EMPTY array — makes the harness turn skip the live skills fetch.
+    ...(pinnedHarnessSkills !== undefined ? { pinnedHarnessSkills } : {}),
     ...(args.requireToolApproval !== undefined
       ? { requireToolApproval: args.requireToolApproval }
       : {}),
@@ -1616,6 +1792,10 @@ export async function drainAssistantTurn(
     ...(synthesisRunId ? { synthesisRunId } : {}),
     ...(hooks?.onToolCall ? { onToolCall: hooks.onToolCall } : {}),
     ...(hooks?.onToolResult ? { onToolResult: hooks.onToolResult } : {}),
+    ...(hooks?.onLiveTextDelta
+      ? { onLiveTextDelta: hooks.onLiveTextDelta }
+      : {}),
+    ...(hooks?.onStepFinish ? { onStepFinish: hooks.onStepFinish } : {}),
     ...(hooks?.prepareAdvertisedTools
       ? { prepareAdvertisedTools: hooks.prepareAdvertisedTools }
       : {}),

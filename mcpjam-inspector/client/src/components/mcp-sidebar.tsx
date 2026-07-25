@@ -14,13 +14,14 @@ import {
   SquareSlash,
   MessageCircleQuestionIcon,
   GraduationCap,
-  Box,
+  Network,
   PackageOpen,
   LayoutGrid,
   GitBranch,
   UserPlus,
   ShieldCheck,
   Loader2,
+  Layers,
 } from "lucide-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { track } from "@/lib/analytics";
@@ -51,8 +52,6 @@ import { SidebarUser } from "@/components/sidebar/sidebar-user";
 import { SidebarContextSwitcher } from "@/components/sidebar/sidebar-context-switcher";
 import { SidebarTrialCountdown } from "@/components/sidebar/sidebar-trial-countdown";
 import { ShareProjectDialog } from "@/components/project/ShareProjectDialog";
-//World Cup 2026 TODO remove after the tournament (see world-cup-ball.tsx)
-import { WorldCupBall } from "@/components/world-cup-ball";
 import { useUpdateNotification } from "@/hooks/useUpdateNotification";
 import { Button } from "@mcpjam/design-system/button";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
@@ -88,6 +87,8 @@ interface NavItem {
   icon: React.ComponentType<{ className?: string }>;
   disabled?: boolean;
   disabledTooltip?: string;
+  /** Optional pill shown next to the label, e.g. "New" */
+  badge?: string;
   /** Only show this item when the named feature flag is enabled */
   featureFlag?: string;
   /** Hide this item when the named feature flag is enabled */
@@ -216,7 +217,7 @@ const navigationSections: NavSection[] = [
       {
         title: "Swarms",
         url: "/swarms",
-        icon: Box,
+        icon: Network,
         featureFlag: "sandboxes-enabled",
         billingFeature: "chatboxes",
       },
@@ -226,6 +227,12 @@ const navigationSections: NavSection[] = [
         icon: FlaskConical,
         billingFeature: "evals",
         evalsSubnav: true,
+      },
+      {
+        title: "Environments",
+        url: "/environments",
+        icon: Layers,
+        featureFlag: "project-environments-enabled",
       },
     ],
   },
@@ -280,6 +287,7 @@ const navigationSections: NavSection[] = [
         title: "XAA Debugger",
         url: "/xaa-flow",
         icon: ShieldCheck,
+        badge: "New",
         featureFlag: "xaa",
       },
     ],
@@ -395,7 +403,7 @@ const hostedNavigationSections =
  */
 export function resolveHostedSkillsNav(
   sections: NavSection[],
-  enabled: boolean,
+  enabled: boolean
 ): NavSection[] {
   return sections
     .map((section) => ({
@@ -606,6 +614,9 @@ export function MCPSidebar({
   // Hosted Cloud Skills nav is gated until QA completes; fail-closed (absent /
   // loading flag ⇒ hidden). See `useSkillsEnabled`.
   const skillsEnabled = useFeatureFlagEnabled("skills-enabled");
+  const projectEnvironmentsEnabled = useFeatureFlagEnabled(
+    "project-environments-enabled"
+  );
   const { isAuthenticated, isLoading: isConvexAuthLoading } = useConvexAuth();
   const { user, isLoading: isWorkOsAuthLoading } = useAuth();
   // Until WorkOS + Convex resolve the session we don't yet know guest-vs-authed
@@ -680,6 +691,8 @@ export function MCPSidebar({
       "hosts-enabled": isAuthenticated,
       "home-page-enabled": isAuthenticated,
       xaa: xaaEnabled === true,
+      "project-environments-enabled":
+        projectEnvironmentsEnabled === true && isAuthenticated,
     }),
     [
       learningEnabled,
@@ -688,6 +701,7 @@ export function MCPSidebar({
       conformanceEnabled,
       compatibilityEnabled,
       xaaEnabled,
+      projectEnvironmentsEnabled,
       isAuthenticated,
     ]
   );
@@ -735,8 +749,6 @@ export function MCPSidebar({
                   alt="MCP Jam"
                   className="h-4 w-auto"
                 />
-                {/*World Cup 2026, TODO remove after the tournament */}
-                <WorldCupBall className="ml-1.5" />
               </button>
             ) : state === "expanded" ? (
               <div className="relative isolate w-full">
@@ -759,8 +771,6 @@ export function MCPSidebar({
                     alt="MCP Jam"
                     className="h-4 w-auto"
                   />
-                  {/*World Cup 2026, TODO remove after the tournament */}
-                  <WorldCupBall className="ml-1.5" />
                 </button>
                 <SidebarTrigger
                   className={cn(

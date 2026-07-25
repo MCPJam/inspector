@@ -33,7 +33,6 @@ import {
 } from "@/lib/mcp-ui/mcp-apps-utils";
 import { getConnectionStatusMeta } from "./server-card-utils";
 import { useServerForm } from "./hooks/use-server-form";
-import { useAuth } from "@workos-inc/authkit-react";
 import { ServerInfoContent } from "./ServerInfoContent";
 import { ServerInfoToolsMetadataContent } from "./ServerInfoToolsMetadataContent";
 import { EditServerFormContent } from "./EditServerFormContent";
@@ -41,10 +40,11 @@ import { ServerHistoryContent } from "./ServerHistoryContent";
 import { ServerHistoryDriftChip } from "./ServerHistoryDriftChip";
 import { HostCompatContent } from "@/components/compat/HostCompatContent";
 import type { McpProtocolVersion } from "@/lib/client-config-v2";
-import type {
-  ProjectServerConfigDto,
-  ProjectServerConfigInput,
-  ProjectServerOverrideEntry,
+import {
+  applyMcpProtocolVersionOverride,
+  type ProjectServerConfigDto,
+  type ProjectServerConfigInput,
+  type ProtocolOverrideAutoEnrollRecord,
 } from "@/lib/project-server-config";
 import { EffectiveProtocolVersionChip } from "./shared/EffectiveProtocolVersionChip";
 import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
@@ -79,85 +79,21 @@ interface ServerDetailModalProps {
   projectClientConfig?: Project["clientConfig"];
   projectId?: string | null;
   hostedServerId?: string | null;
+  organizationId?: string | null;
+  isSignedIn?: boolean;
   /**
    * Host-default outbound MCP wire mode resolved from the surrounding
-   * client's hostConfig.mcpProfile. Surfaced as a prop because the
-   * Servers tab doesn't render this modal inside an
-   * `ActiveMcpProfileProvider` scope (that provider only wraps chat /
-   * playground), so `useActiveMcpProfile()` would return undefined and
-   * the chip would always read "Legacy · default" regardless of what
-   * the user toggled on the client. Undefined = no host-level pin =
-   * "Legacy · default" attribution on the chip.
+   * client's hostConfig.mcpProfile. Kept as an explicit prop (PROP-FIRST,
+   * falling back to `useActiveMcpProfile()`) even though the Servers tab
+   * now also mounts `ActiveMcpProfileProvider` — the prop is the
+   * authoritative chip-attribution source everywhere this modal renders.
+   * Undefined = no host-level pin = "Legacy · default" attribution on
+   * the chip.
    */
   hostDefaultMcpProtocolVersion?: McpProtocolVersion;
+  /** Project default XAA test identity — shown as override placeholders. */
+  projectXaaDefaultIdentity?: { subject: string; email: string } | null;
 }
-
-type ProtocolOverrideAutoEnrollRecord = {
-  previousServerIds: string[];
-};
-
-const PROTOCOL_OVERRIDE_AUTO_ENROLL_STORAGE_PREFIX =
-  "mcpjam:protocol-override-auto-enroll";
-
-const getProtocolOverrideAutoEnrollKey = (
-  projectId: string,
-  serverId: string
-) => `${PROTOCOL_OVERRIDE_AUTO_ENROLL_STORAGE_PREFIX}:${projectId}:${serverId}`;
-
-const readProtocolOverrideAutoEnrollRecord = (
-  key: string
-): ProtocolOverrideAutoEnrollRecord | undefined => {
-  if (typeof window === "undefined") return undefined;
-  try {
-    const raw = window.sessionStorage.getItem(key);
-    if (!raw) return undefined;
-    const parsed = JSON.parse(raw) as Partial<ProtocolOverrideAutoEnrollRecord>;
-    if (!Array.isArray(parsed.previousServerIds)) return undefined;
-    return {
-      previousServerIds: parsed.previousServerIds.filter(
-        (id): id is string => typeof id === "string"
-      ),
-    };
-  } catch {
-    return undefined;
-  }
-};
-
-const writeProtocolOverrideAutoEnrollRecord = (
-  key: string,
-  record: ProtocolOverrideAutoEnrollRecord
-) => {
-  if (typeof window === "undefined") return;
-  try {
-    window.sessionStorage.setItem(key, JSON.stringify(record));
-  } catch {
-    // Losing this marker only affects cleanup of an implicit enrollment.
-  }
-};
-
-const removeProtocolOverrideAutoEnrollRecord = (key: string) => {
-  if (typeof window === "undefined") return;
-  try {
-    window.sessionStorage.removeItem(key);
-  } catch {
-    // Best-effort cleanup only.
-  }
-};
-
-const matchesImplicitAutoEnrollment = (
-  currentServerIds: string[],
-  serverId: string,
-  previousServerIds: string[]
-) => {
-  const previousServerIdSet = new Set(previousServerIds);
-  if (previousServerIdSet.has(serverId)) return false;
-  if (!currentServerIds.includes(serverId)) return false;
-  if (currentServerIds.length !== previousServerIdSet.size + 1) return false;
-  return currentServerIds.every(
-    (currentServerId) =>
-      currentServerId === serverId || previousServerIdSet.has(currentServerId)
-  );
-};
 
 export function ServerDetailModal({
   isOpen,
@@ -172,7 +108,10 @@ export function ServerDetailModal({
   projectClientConfig,
   projectId = null,
   hostedServerId = null,
+  organizationId = null,
+  isSignedIn = false,
   hostDefaultMcpProtocolVersion,
+  projectXaaDefaultIdentity = null,
 }: ServerDetailModalProps) {
   const [activeTab, setActiveTab] = useState<ServerDetailTab>(defaultTab);
   const [isReconnecting, setIsReconnecting] = useState(false);
@@ -181,7 +120,6 @@ export function ServerDetailModal({
   const [toolsLoadError, setToolsLoadError] = useState<string | null>(null);
   const [toolsData, setToolsData] =
     useState<ListToolsResultWithMetadata | null>(null);
-
   const initializationInfo = server.initializationInfo;
   const version = initializationInfo?.serverVersion?.version;
 
@@ -291,78 +229,18 @@ export function ServerDetailModal({
       );
       return;
     }
-    // setConfig replaces the entire (serverIds, overrides) pair — read
-    // current (now guaranteed non-undefined), splice in the new
-    // override, write back. Preserve every other server's overrides
-    // verbatim. `projectServerConfigDto` may still be `null` (no row
-    // yet for this project) — that case is genuinely the empty
-    // baseline.
-    const currentServerIds = projectServerConfigDto?.serverIds ?? [];
-    const currentOverrides = projectServerConfigDto?.overrides ?? {};
-    const existingEntry = currentOverrides[serverId] ?? {};
-    const updatedEntry: ProjectServerOverrideEntry = {
-      ...existingEntry,
-      mcpProtocolVersionOverride: next,
-    };
-    // Drop entry when it collapses to nothing (no headers, no timeout,
-    // no wire-mode). Mirrors `normalizeOverrideEntry` on the backend so
-    // the canonicalizer doesn't see an empty entry.
-    const hasContent =
-      (updatedEntry.headersOverride &&
-        Object.keys(updatedEntry.headersOverride).length > 0) ||
-      updatedEntry.requestTimeoutOverride !== undefined ||
-      updatedEntry.mcpProtocolVersionOverride !== undefined;
-    const nextOverrides: Record<string, ProjectServerOverrideEntry> = {
-      ...currentOverrides,
-    };
-    if (hasContent) nextOverrides[serverId] = updatedEntry;
-    else delete nextOverrides[serverId];
-    // Backend validation requires override keys to be members of `serverIds`.
-    // If this control enrolls the server only to save the protocol pin, remember
-    // that provenance so clearing the pin can undo the implicit enrollment
-    // without removing servers that were already explicitly auto-connected.
-    const autoEnrollKey = getProtocolOverrideAutoEnrollKey(projectId, serverId);
-    const autoEnrollRecord =
-      protocolOverrideAutoEnrolledRef.current.get(autoEnrollKey) ??
-      readProtocolOverrideAutoEnrollRecord(autoEnrollKey);
-    const shouldAutoEnrollForOverride =
-      hasContent && !currentServerIds.includes(serverId);
-    const shouldUndoAutoEnroll =
-      !hasContent &&
-      autoEnrollRecord !== undefined &&
-      matchesImplicitAutoEnrollment(
-        currentServerIds,
-        serverId,
-        autoEnrollRecord.previousServerIds
-      );
-    const nextServerIds = shouldAutoEnrollForOverride
-      ? [...currentServerIds, serverId]
-      : shouldUndoAutoEnroll
-      ? currentServerIds.filter(
-          (currentServerId) => currentServerId !== serverId
-        )
-      : currentServerIds;
     try {
-      await setProjectServerConfigMutation({
+      // Shared splice + implicit-enrollment bookkeeping — same helper the
+      // Add Server flow uses (`applyMcpProtocolVersionOverride`). The
+      // `null` case is genuinely the empty baseline (no row yet).
+      await applyMcpProtocolVersionOverride({
         projectId,
-        input: { serverIds: nextServerIds, overrides: nextOverrides },
+        serverId,
+        current: projectServerConfigDto ?? null,
+        next,
+        setConfig: setProjectServerConfigMutation,
+        autoEnrollCache: protocolOverrideAutoEnrolledRef.current,
       });
-      if (shouldAutoEnrollForOverride) {
-        const nextAutoEnrollRecord = {
-          previousServerIds: [...currentServerIds],
-        };
-        protocolOverrideAutoEnrolledRef.current.set(
-          autoEnrollKey,
-          nextAutoEnrollRecord
-        );
-        writeProtocolOverrideAutoEnrollRecord(
-          autoEnrollKey,
-          nextAutoEnrollRecord
-        );
-      } else if (!hasContent && autoEnrollRecord !== undefined) {
-        protocolOverrideAutoEnrolledRef.current.delete(autoEnrollKey);
-        removeProtocolOverrideAutoEnrollRecord(autoEnrollKey);
-      }
       // Reconnect-after-save race: `onReconnect` ultimately reads from
       // `activeHostConfig.serverConnectionOverrides` to compute the new
       // wire mode. That value is a derivation of the same Convex row we
@@ -404,10 +282,11 @@ export function ServerDetailModal({
   const isOpenAIAppServer = isOpenAIApp(toolsData);
   const isOpenAIAppAndMCPAppServer = isOpenAIAppAndMCPApp(toolsData);
 
-  const { user: signedInUser } = useAuth();
   const formState = useServerForm(server, {
     projectClientConfig,
-    signedInEmail: signedInUser?.email,
+    confidentialCimdProbeEnabled: isOpen,
+    organizationId,
+    isSignedIn,
   });
   const trimmedName = formState.name.trim();
   const isDuplicateServerName =
@@ -535,9 +414,22 @@ export function ServerDetailModal({
         }
       }
 
-      const finalFormData = formState.buildFormData(
-        revealedHeaders ? { revealedHeaders } : undefined
-      );
+      const finalFormData = formState.buildFormData({
+        ...(revealedHeaders ? { revealedHeaders } : {}),
+        // Resolve a deferred "auto" OAuth protocol against the effective wire
+        // pin. Precedence mirrors AuthenticationSection's preview: the
+        // per-server pin wins, else the PROP-FIRST resolved host default (so an
+        // edited OAuth server with no stored protocol under a 2026-pinned host
+        // bakes the 2026 flow). An edit-loaded concrete mode passes through
+        // unchanged. Uses `resolvedHostDefaultMcpProtocolVersion` — the same
+        // authoritative host pin the chip attributes and the preview now
+        // resolves against — rather than the raw context read, so the saved
+        // era matches the preview even when this modal renders without an
+        // ActiveMcpProfileProvider (or one whose value differs from the prop).
+        wireProtocolVersionOverride:
+          currentMcpProtocolVersionOverride ??
+          resolvedHostDefaultMcpProtocolVersion,
+      });
       await onSubmit(finalFormData, server.name);
     } finally {
       setIsSaving(false);
@@ -594,8 +486,7 @@ export function ServerDetailModal({
     }
   };
 
-  const tabTriggerClass =
-    "min-w-0 flex-1 px-1.5 text-xs sm:px-2 sm:text-sm";
+  const tabTriggerClass = "min-w-0 flex-1 px-1.5 text-xs sm:px-2 sm:text-sm";
   const isConfigurationTab = activeTab === "configuration";
 
   const handleConfigurationSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -728,7 +619,7 @@ export function ServerDetailModal({
                 aria-label="Client compatibility"
                 className={tabTriggerClass}
               >
-                Hosts
+                Clients
               </TabsTrigger>
               {showHistory && (
                 <TabsTrigger value="history" className={tabTriggerClass}>
@@ -750,8 +641,12 @@ export function ServerDetailModal({
                     isDuplicateServerName={isDuplicateServerName}
                     projectId={projectId}
                     hostedServerId={hostedServerId}
+                    projectXaaDefaultIdentity={projectXaaDefaultIdentity}
                     mcpProtocolVersionOverride={
                       currentMcpProtocolVersionOverride
+                    }
+                    hostDefaultMcpProtocolVersion={
+                      resolvedHostDefaultMcpProtocolVersion
                     }
                     onMcpProtocolVersionOverrideChange={
                       canEditMcpProtocolVersionOverride
@@ -787,7 +682,7 @@ export function ServerDetailModal({
                     isSaving ||
                     isReconnecting ||
                     (!formState.hasChanges && !isConnected) ||
-                    formState.preregisteredOauthBlocksSubmit
+                    formState.authConfigurationBlocksSubmit
                   }
                   size="sm"
                 >
@@ -865,6 +760,15 @@ export function ServerDetailModal({
                   <HostCompatContent
                     server={server}
                     toolsData={toolsData}
+                    toolsLoadStatus={
+                      isLoadingTools
+                        ? "loading"
+                        : toolsLoadError
+                        ? "failed"
+                        : toolsData
+                        ? "ready"
+                        : "idle"
+                    }
                     projectId={projectId}
                     serverId={serverId}
                     onClose={onClose}

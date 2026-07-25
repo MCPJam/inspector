@@ -54,7 +54,8 @@
               "inspector/home",
               "inspector/clients",
               "inspector/projects",
-              "inspector/protocol-versions"
+              "inspector/protocol-versions",
+              "inspector/host-compat"
             ]
           },
           {
@@ -63,25 +64,18 @@
             "pages": [
               "inspector/playground",
               "inspector/evals",
-              "inspector/host-templates"
+              "inspector/compatibility"
             ]
           },
           {
-            "group": "Auth & Conformance",
+            "group": "Authentication",
             "icon": "shield-check",
-            "pages": [
-              "inspector/guided-oauth",
-              "inspector/xaa-debugger",
-              "inspector/xaa-test-idp"
-            ]
+            "pages": ["inspector/guided-oauth", "inspector/xaa-debugger"]
           },
           {
             "group": "Primitives",
             "icon": "puzzle",
-            "pages": [
-              "inspector/tools-prompts-resources",
-              "inspector/skills"
-            ]
+            "pages": ["inspector/tools-prompts-resources", "inspector/skills"]
           },
           {
             "group": "Computer",
@@ -112,6 +106,7 @@
               "cli/server-inspection",
               "cli/oauth-conformance",
               "cli/oauth-login",
+              "cli/xaa",
               "cli/apps-conformance",
               "cli/tools-resources-prompts",
               "cli/ci",
@@ -159,7 +154,8 @@
               "sdk/reference/llm-providers",
               "sdk/reference/protocol-conformance",
               "sdk/reference/oauth-conformance",
-              "sdk/reference/apps-conformance"
+              "sdk/reference/apps-conformance",
+              "sdk/reference/host-compat"
             ]
           }
         ]
@@ -208,9 +204,19 @@
   "redirects": [
     { "source": "/inspector/workspaces", "destination": "/inspector/projects" },
     { "source": "/inspector/chat", "destination": "/inspector/playground" },
-    { "source": "/inspector/app-builder", "destination": "/inspector/playground" },
+    {
+      "source": "/inspector/app-builder",
+      "destination": "/inspector/playground"
+    },
     { "source": "/inspector/test-cases", "destination": "/inspector/evals" },
-    { "source": "/sdk/reference/test-agent", "destination": "/sdk/reference/host-runner" }
+    {
+      "source": "/inspector/xaa-test-idp",
+      "destination": "/inspector/xaa-debugger"
+    },
+    {
+      "source": "/sdk/reference/test-agent",
+      "destination": "/sdk/reference/host-runner"
+    }
   ],
   "navbar": {
     "links": [

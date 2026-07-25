@@ -1,7 +1,12 @@
 // Shared types between client and server
 import { HOSTED_MODEL_IDS } from "./hosted-model-ids.generated";
 
-import type { AuthMethod, RegistrationMode } from "./xaa";
+import type {
+  AuthMethod,
+  IdentityAssertionFormat,
+  RegistrationMode,
+  XaaClientAuthMethod,
+} from "./xaa";
 
 // Legacy server config (keeping for compatibility)
 export interface ServerConfig {
@@ -121,32 +126,12 @@ export type ModelProvider =
 // empty/unreachable (a cold start still bills hosted models to MCPJam credits).
 export const MCPJAM_PROVIDED_MODEL_IDS: string[] = [...HOSTED_MODEL_IDS];
 
-const MCPJAM_GUEST_GATED_MODEL_IDS = [
-  "mistralai/mistral-medium-3-5",
-  "mistralai/mistral-large-2512",
-  "openai/gpt-5.4",
-  "openai/gpt-5.4-mini",
-  "openai/gpt-5.4-nano",
-  "openai/gpt-5.4-pro",
-  "openai/gpt-5.5",
-  "openai/gpt-5.5-pro",
-  "deepseek/deepseek-v4-pro",
-  "deepseek/deepseek-v4-flash",
-  "anthropic/claude-opus-4.6-fast",
-  "anthropic/claude-sonnet-4.6",
-  "anthropic/claude-sonnet-5",
-  "anthropic/claude-opus-4.6",
-  "anthropic/claude-opus-4.7",
-  "anthropic/claude-fable-5",
-  "google/gemini-3.1-pro-preview",
-] as const;
-
-const gatedGuestModelIds = new Set<string>(MCPJAM_GUEST_GATED_MODEL_IDS);
-
-const MCPJAM_GUEST_ALLOWED_MODEL_IDS: string[] =
-  MCPJAM_PROVIDED_MODEL_IDS.filter(
-    (modelId) => !gatedGuestModelIds.has(modelId)
-  );
+// Guests are no longer model-curated: every hosted model is guest-allowed and
+// the backend enforces spend caps rather than an allowlist. Retained as an
+// alias of the full provided set for the snapshot/offline classification path
+// (`isMCPJamGuestAllowedModel`); the live catalog's per-model `guestAllowed`
+// flag (now always true) is the authoritative source when available.
+const MCPJAM_GUEST_ALLOWED_MODEL_IDS: string[] = [...MCPJAM_PROVIDED_MODEL_IDS];
 
 /** Minimal shape `getCanonicalModelId` matches against — `SUPPORTED_MODELS`
  * satisfies it, and so does a `ModelDefinition[]` derived from the backend
@@ -706,11 +691,88 @@ export const isBedrockModelId = (modelId: string): boolean => {
   );
 };
 
+/**
+ * The concrete connect-form OAuth protocol eras, in chronological order
+ * (oldest first). The dropdown (AuthenticationSection's PROTOCOL_OPTIONS)
+ * renders newest-first separately; this tuple's order is not the UI order.
+ * SINGLE SOURCE OF TRUTH: both the {@link ServerFormOAuthProtocolMode} union
+ * and {@link normalizeOauthProtocolMode}'s membership check derive from this
+ * tuple, so a new era is added in exactly one place and the two can no longer
+ * drift on which values survive a stored/prefilled pin.
+ */
+export const SERVER_FORM_OAUTH_PROTOCOL_MODES = [
+  "2025-03-26",
+  "2025-06-18",
+  "2025-11-25",
+  "2026-07-28",
+] as const;
+
+/** A resolved connect-form OAuth protocol era (never the "auto" sentinel). */
+export type ServerFormOAuthProtocolConcreteMode =
+  (typeof SERVER_FORM_OAUTH_PROTOCOL_MODES)[number];
+
 export type ServerFormOAuthProtocolMode =
   | "auto"
-  | "2025-03-26"
-  | "2025-06-18"
-  | "2025-11-25";
+  | ServerFormOAuthProtocolConcreteMode;
+
+/**
+ * The default concrete era used when nothing is stored and "auto" cannot be
+ * biased by a wire pin (the current "Latest" release).
+ */
+export const DEFAULT_OAUTH_PROTOCOL_CONCRETE_MODE: ServerFormOAuthProtocolConcreteMode =
+  "2025-11-25";
+
+function isConcreteOauthProtocolMode(
+  value: string
+): value is ServerFormOAuthProtocolConcreteMode {
+  return (SERVER_FORM_OAUTH_PROTOCOL_MODES as readonly string[]).includes(value);
+}
+
+/**
+ * Coerce an arbitrary stored/prefilled protocol string to a connect-form OAuth
+ * protocol mode, preserving both the 2026-07-28 draft era AND the deferred
+ * "auto" sentinel. "auto" is a valid {@link ServerFormOAuthProtocolMode} that
+ * the wire-pin bridge resolves later, so it MUST survive hydration — coercing
+ * it to a concrete era here drops the sentinel and makes the bridge unreachable
+ * for prefilled/edited servers. Only unknown values and `undefined` fall back
+ * to the current concrete default (2025-11-25). Single-sourced here so the Add
+ * and Edit connect-form paths cannot drift: they previously kept private,
+ * hand-maintained copies that both had to be patched in lockstep to avoid
+ * silently degrading a stored 2026-07-28 pin down to 2025-11-25.
+ */
+export function normalizeOauthProtocolMode(
+  value?: string
+): ServerFormOAuthProtocolMode {
+  if (value === "auto") {
+    return "auto";
+  }
+  return value != null && isConcreteOauthProtocolMode(value)
+    ? value
+    : DEFAULT_OAUTH_PROTOCOL_CONCRETE_MODE;
+}
+
+/**
+ * Resolve a connect-form OAuth protocol mode to the concrete era the flow will
+ * actually run. An explicit era passes straight through — it always wins. The
+ * deferred "auto" sentinel defers to the server's per-server MCP wire-version
+ * pin: OAuth and the sessionless transport ship together, so a 2026-07-28 wire
+ * pin makes "auto" resolve to the 2026 OAuth flow (the mirror of
+ * server-helpers' oauth-mode → wire stamp, #3363); otherwise "auto" resolves
+ * to the current default. Single-sourced so the display bridge (which drives
+ * the OAuth plan preview) and the submit path (which bakes the era into the
+ * saved profile) cannot disagree on where "auto" lands.
+ */
+export function resolveEffectiveOauthProtocolMode(
+  mode: ServerFormOAuthProtocolMode,
+  wireProtocolVersion?: string
+): ServerFormOAuthProtocolConcreteMode {
+  if (mode !== "auto") {
+    return mode;
+  }
+  return wireProtocolVersion === "2026-07-28"
+    ? "2026-07-28"
+    : DEFAULT_OAUTH_PROTOCOL_CONCRETE_MODE;
+}
 
 /**
  * @deprecated Use {@link RegistrationMode} (re-exported from shared/xaa) — the
@@ -723,9 +785,11 @@ export type ServerFormOAuthRegistrationMode = RegistrationMode;
  * The auth type a server-form row is configured with. "xaa" (Cross-App Access)
  * is a distinct flow from "oauth": the inspector server mints the access token
  * server-side via token-exchange rather than running a browser OAuth flow.
- * "auto" SELECTS between them at connect time — XAA when the server is
- * XAA-configured (IdP mode + stored client id), OAuth otherwise. A selection
- * before the flow starts, never a fallback after a failed attempt.
+ * "auto" resolves at connect time: XAA when the server is XAA-configured
+ * (IdP mode + stored client id) — a hard selection, never a fallback after a
+ * failed mint — and otherwise "discover": use a stored OAuth token when one
+ * exists, else connect unauthenticated and escalate to interactive OAuth only
+ * when the server answers 401 (the MCP spec's canonical discovery sequence).
  */
 export type ServerFormAuthType = "auto" | "oauth" | "bearer" | "none" | "xaa";
 
@@ -746,8 +810,9 @@ export interface ServerFormData {
   /**
    * Canonical auth method (Convex `authMethod` column). The useOAuth/useXaa
    * booleans are its derived compat mirrors — the backend re-derives them on
-   * every write. "auto" selects XAA when the server is XAA-configured,
-   * OAuth otherwise (see server/utils/effective-auth.ts).
+   * every write. "auto" selects XAA when the server is XAA-configured, and
+   * otherwise "discover" (stored token if present, else unauthenticated with
+   * OAuth escalation on 401) — see server/utils/effective-auth.ts.
    */
   authMethod?: AuthMethod;
   /**
@@ -757,6 +822,15 @@ export interface ServerFormData {
    */
   clearXaaConfig?: boolean;
   oauthProtocolMode?: ServerFormOAuthProtocolMode;
+  /**
+   * Per-server MCP wire-version pin chosen at ADD time (the edit flow writes
+   * it directly through `projectServerConfig:setConfig` instead of the form
+   * payload). Persisted on the project layer
+   * (`projectServerRefs.mcpProtocolVersionOverride`), NOT on the server's own
+   * config blob — the add flow applies it once the hosted server row exists,
+   * then reconnects. Undefined = inherit host default / SDK default.
+   */
+  mcpProtocolVersionOverride?: import("@mcpjam/sdk/browser").McpProtocolVersion;
   /**
    * Unified client-registration mode (Client↔AS leg) shared by the OAuth
    * flows and the XAA debugger: how this server's client establishes its
@@ -796,6 +870,21 @@ export interface ServerFormData {
   xaaSubject?: string;
   /** Optional simulated-identity override (email) for the MCPJam test IdP. Blank = signed-in user. */
   xaaEmail?: string;
+  /**
+   * XAA-debugger-only preset for the identity assertion the MCPJam test IdP
+   * mints (draft-ietf-oauth-identity-assertion-authz-grant): "oidc" (default)
+   * mints an ID token; "saml" mints a signed SAML assertion AND asks for a
+   * saml-nameid `sub_id` on the ID-JAG. Persisted per-server; saves that omit
+   * it must preserve the stored value (the save-path `?? existing` merge).
+   */
+  xaaIdentityAssertionFormat?: IdentityAssertionFormat;
+  /**
+   * XAA-debugger-only CIMD client authentication ("none" public default |
+   * "private_key_jwt" confidential). Persisted per-server; only meaningful when
+   * registrationMode resolves to "cimd". Saves that omit it preserve the stored
+   * value (the save-path `?? existing` merge).
+   */
+  xaaClientAuth?: XaaClientAuthMethod;
   /** Registry credential key for resolving OAuth client ID from env (e.g. "github") */
   oauthCredentialKey?: string;
   /** True for registry servers that use backend-managed preregistered OAuth credentials */

@@ -9,7 +9,7 @@
  */
 
 import { decodeJWT, formatJWTTimestamp } from "./shared/jwt.js";
-import { EMPTY_OAUTH_FLOW_STATE } from "./types.js";
+import { EMPTY_OAUTH_FLOW_STATE, buildResetFlowState } from "./types.js";
 import type {
   BaseOAuthStateMachineConfig,
   OAuthFlowStep,
@@ -35,6 +35,10 @@ import {
   generateCodeChallenge,
 } from "./shared/pkce.js";
 import { buildResourceMetadataUrl } from "./shared/urls.js";
+import {
+  resolveDiscoveryResourceIndicator,
+  resolveFlowResourceValue,
+} from "./shared/resource-indicator.js";
 import {
   buildInitializeRequestBody,
   resolveInitializeProtocolVersion,
@@ -64,6 +68,12 @@ export interface DebugOAuthStateMachineConfig
   extends BaseOAuthStateMachineConfig {
   registrationStrategy?: RegistrationStrategy2025_06_18; // dcr | preregistered only
 }
+
+// Sequence-diagram previews must show the resource value the flow actually
+// sends (the decision persisted at PRM discovery), not the raw server URL.
+const previewResourceValue = (
+  flowState: OAuthFlowState,
+): string | undefined => resolveFlowResourceValue(flowState);
 
 /**
  * Build the sequence of actions for the 2025-06-18 OAuth flow
@@ -241,7 +251,7 @@ export function buildActions_2025_06_18(
               label: "method",
               value: flowState.codeChallengeMethod || "S256",
             },
-            { label: "resource", value: flowState.serverUrl || "—" },
+            { label: "resource", value: previewResourceValue(flowState) || "—" },
             { label: "Protocol", value: "2025-06-18" },
           ]
         : undefined,
@@ -260,7 +270,7 @@ export function buildActions_2025_06_18(
               value:
                 flowState.codeChallenge?.substring(0, 12) + "..." || "S256",
             },
-            { label: "resource", value: flowState.serverUrl || "" },
+            { label: "resource", value: previewResourceValue(flowState) || "" },
           ]
         : undefined,
     },
@@ -314,7 +324,7 @@ export function buildActions_2025_06_18(
       details: flowState.codeVerifier
         ? [
             { label: "grant_type", value: "authorization_code" },
-            { label: "resource", value: flowState.serverUrl || "" },
+            { label: "resource", value: previewResourceValue(flowState) || "" },
           ]
         : undefined,
     },
@@ -418,6 +428,7 @@ export const createDebugOAuthStateMachine = (
     authMode,
     hasClientSecret = false,
     strictConformance = false,
+    resourceIndicatorEnforcement = "warn",
     registrationStrategy = "dcr", // Default to DCR for 2025-06-18
   } = config;
 
@@ -436,6 +447,14 @@ export const createDebugOAuthStateMachine = (
 
   // Helper to get current state (use getState if provided, otherwise use initial state)
   const getCurrentState = () => (getState ? getState() : initialState);
+
+  // The resource indicator is decided once at PRM discovery and persisted as
+  // state.resourceIndicator (see resource-policy.ts). Reading through this
+  // helper keeps every request site — authorization URL, token body, token
+  // POST — on the identical value, and re-evaluates lazily for flows seeded
+  // past the discovery step.
+  const resolveResourceParameter = (): string =>
+    resolveFlowResourceValue(getCurrentState(), serverUrl);
 
   const executeRequest = (url: string, options: RequestInit = {}) =>
     requestExecutor({
@@ -517,6 +536,7 @@ export const createDebugOAuthStateMachine = (
             const initialRequestHeaders = mergeHeaders(customHeaders, {
               "Content-Type": "application/json",
               Accept: "application/json, text/event-stream",
+              "MCP-Protocol-Version": "2025-06-18",
             });
             const initializeRequestBody = buildInitializeRequestBody({
               protocolVersion: initializeProtocolVersion,
@@ -568,6 +588,7 @@ export const createDebugOAuthStateMachine = (
                 headers: mergeHeaders(customHeaders, {
                   "Content-Type": "application/json",
                   Accept: "application/json, text/event-stream",
+                  "MCP-Protocol-Version": "2025-06-18",
                 }),
                 body: JSON.stringify(
                   buildInitializeRequestBody({
@@ -850,22 +871,28 @@ export const createDebugOAuthStateMachine = (
               const authorizationServerUrl =
                 resourceMetadata.authorization_servers?.[0] || serverUrl;
 
-              // Add info log for Authorization Servers
-              const infoLogs = addInfoLog(
-                state,
-                "received_resource_metadata",
-                "authorization-servers",
-                "Authorization Servers",
-                {
-                  Resource: resourceMetadata.resource,
-                  "Authorization Servers":
-                    resourceMetadata.authorization_servers,
-                },
-              );
+              // The response card is the complete protected-resource metadata.
+              // Keep existing logs only for distinct findings, such as a
+              // resource identifier mismatch below.
+              const existingInfoLogs = state.infoLogs ?? [];
+
+              // Resolve the resource indicator ONCE (rejecting/warning per
+              // the surface's enforcement mode); every later request and
+              // preview site reads state.resourceIndicator instead of
+              // re-deriving it.
+              const { resourceIndicator, infoLogs } =
+                resolveDiscoveryResourceIndicator({
+                  state,
+                  fallbackServerUrl: serverUrl,
+                  prmResource: resourceMetadata.resource,
+                  enforcement: resourceIndicatorEnforcement,
+                  infoLogs: existingInfoLogs,
+                });
 
               updateState({
                 currentStep: "received_resource_metadata",
                 resourceMetadata,
+                resourceIndicator,
                 resourceMetadataUrl:
                   lastAttempt?.request?.url || state.resourceMetadataUrl,
                 authorizationServerUrl,
@@ -1043,42 +1070,6 @@ export const createDebugOAuthStateMachine = (
             const supportedMethods =
               authServerMetadata.code_challenge_methods_supported || [];
 
-            // Add info log for Authorization Server Metadata
-            const metadata: Record<string, any> = {
-              Issuer: authServerMetadata.issuer,
-              "Authorization Endpoint":
-                authServerMetadata.authorization_endpoint,
-              "Token Endpoint": authServerMetadata.token_endpoint,
-            };
-
-            if (authServerMetadata.registration_endpoint) {
-              metadata["Registration Endpoint"] =
-                authServerMetadata.registration_endpoint;
-            }
-            if (authServerMetadata.code_challenge_methods_supported) {
-              metadata["PKCE Methods"] =
-                authServerMetadata.code_challenge_methods_supported;
-            }
-            if (authServerMetadata.grant_types_supported) {
-              metadata["Grant Types"] =
-                authServerMetadata.grant_types_supported;
-            }
-            if (authServerMetadata.response_types_supported) {
-              metadata["Response Types"] =
-                authServerMetadata.response_types_supported;
-            }
-            if (authServerMetadata.scopes_supported) {
-              metadata["Scopes"] = authServerMetadata.scopes_supported;
-            }
-
-            const infoLogs = addInfoLog(
-              getCurrentState(),
-              "received_authorization_server_metadata",
-              "as-metadata",
-              "Authorization Server Metadata",
-              metadata,
-            );
-
             if (!supportedMethods.includes("S256")) {
               console.warn(
                 "Authorization server may not support S256 PKCE method. Supported methods:",
@@ -1090,7 +1081,6 @@ export const createDebugOAuthStateMachine = (
                 authorizationServerMetadata: authServerMetadata,
                 lastResponse: authServerResponseData,
                 httpHistory: updatedHistoryFinal,
-                infoLogs,
                 error:
                   "Warning: Authorization server may not support S256 PKCE method",
                 isInitiatingAuth: false,
@@ -1101,7 +1091,6 @@ export const createDebugOAuthStateMachine = (
                 authorizationServerMetadata: authServerMetadata,
                 lastResponse: authServerResponseData,
                 httpHistory: updatedHistoryFinal,
-                infoLogs,
                 isInitiatingAuth: false,
               });
             }
@@ -1300,8 +1289,12 @@ export const createDebugOAuthStateMachine = (
               break;
             }
 
-            // Registration successful
-            if (strictConformance && dcr.missingClientId) {
+            // Registration successful.
+            // RFC 7591: a successful (2xx) registration response MUST carry a
+            // client_id. Without one there is no client identity to proceed
+            // with, so reject regardless of strictConformance — accepting it
+            // would carry an undefined clientId into the authorization leg.
+            if (dcr.missingClientId) {
               updateState({
                 lastResponse: dcr.response,
                 httpHistory: dcr.httpHistory,
@@ -1352,7 +1345,7 @@ export const createDebugOAuthStateMachine = (
               {
                 code_challenge: codeChallenge,
                 method: "S256",
-                resource: state.serverUrl || "Unknown",
+                resource: resolveResourceParameter() || "Unknown",
               },
             );
 
@@ -1388,8 +1381,9 @@ export const createDebugOAuthStateMachine = (
             );
             authUrl.searchParams.set("code_challenge_method", "S256");
             authUrl.searchParams.set("state", state.state || "");
-            if (state.serverUrl) {
-              authUrl.searchParams.set("resource", state.serverUrl);
+            const authResourceParam = resolveResourceParameter();
+            if (authResourceParam) {
+              authUrl.searchParams.set("resource", authResourceParam);
             }
 
             const requestedScopeValue = resolveRequestedScopeValue({
@@ -1474,8 +1468,9 @@ export const createDebugOAuthStateMachine = (
               tokenRequestBodyObj.code_verifier = state.codeVerifier;
             }
 
-            if (state.serverUrl) {
-              tokenRequestBodyObj.resource = state.serverUrl;
+            const tokenBodyResourceParam = resolveResourceParameter();
+            if (tokenBodyResourceParam) {
+              tokenRequestBodyObj.resource = tokenBodyResourceParam;
             }
 
             const tokenRequest = {
@@ -1544,8 +1539,9 @@ export const createDebugOAuthStateMachine = (
               });
 
               // Add resource parameter if available
-              if (state.serverUrl) {
-                tokenRequestBody.set("resource", state.serverUrl);
+              const tokenResourceParam = resolveResourceParameter();
+              if (tokenResourceParam) {
+                tokenRequestBody.set("resource", tokenResourceParam);
               }
 
               // Make the token request via backend proxy. The client-auth
@@ -2105,20 +2101,10 @@ export const createDebugOAuthStateMachine = (
 
     // Reset the flow to initial state
     resetFlow: () => {
-      updateState({
-        ...EMPTY_OAUTH_FLOW_STATE,
-        lastRequest: undefined,
-        lastResponse: undefined,
-        httpHistory: [],
-        infoLogs: [],
-        authorizationCode: undefined,
-        authorizationUrl: undefined,
-        accessToken: undefined,
-        refreshToken: undefined,
-        codeVerifier: undefined,
-        codeChallenge: undefined,
-        error: undefined,
-      });
+      // Reset to a fully-cleared flow. updateState MERGES, so every field must
+      // be explicitly cleared — buildResetFlowState enumerates them all so no
+      // stored client, token, discovery result, or recorded issuer survives.
+      updateState(buildResetFlowState());
     },
   };
 

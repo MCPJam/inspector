@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { describeError, type NormalizedError } from "@mcpjam/sdk";
+import {
+  describeError,
+  isUnauthorized401,
+  type NormalizedError,
+} from "@mcpjam/sdk";
 
 export const ErrorCode = {
   UNAUTHORIZED: "UNAUTHORIZED",
@@ -17,6 +21,23 @@ export const ErrorCode = {
   // `details` so the client can rebuild a ConvexError and render the proper
   // upgrade message instead of a generic failure.
   BILLING_LIMIT_REACHED: "BILLING_LIMIT_REACHED",
+  // A host with the enterprise-managed authorization POLICY connected an
+  // `auto` server that has no stored XAA client registration. 409 (config
+  // conflict), never a silent downgrade to the discover/OAuth ladder.
+  // "Not configured", deliberately NOT "not enrolled": xaaConfigured proves
+  // an IdP mode + client id registered at the resource authorization
+  // server, not IdP enrollment — XAA_NOT_ENROLLED is reserved for the
+  // future issuer-policy evaluator's denied verdicts. NOTE the local route
+  // envelope (respondWithLocalRouteError) spreads `details` top-level and
+  // drops `code`; clients branch on the top-level `reason:
+  // "xaa_connection_not_configured"`, not this code.
+  XAA_CONNECTION_NOT_CONFIGURED: "XAA_CONNECTION_NOT_CONFIGURED",
+  // A project-environment eval launch resolved one environment revision but
+  // the environment changed before `startTestSuiteRun` inserted the run
+  // (`expectedEnvironmentRevision` mismatch, backend ENV_REVISION_CONFLICT).
+  // 409; interactive callers surface "Environment changed — retry the run",
+  // the scheduled worker retries through its trigger/idempotency path.
+  ENVIRONMENT_REVISION_CONFLICT: "ENVIRONMENT_REVISION_CONFLICT",
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -113,6 +134,22 @@ export function mapRuntimeError(error: unknown): WebRouteError {
   const message = parseErrorMessage(error);
   const lower = message.toLowerCase();
   const normalized = describeError(error);
+
+  // A raw 401 from the target MCP server is an authorization failure, not an
+  // internal error — return the honest status. No `oauthRequired` here: this
+  // mapper has no per-server auth context (multi-server managers), so the
+  // escalation tag is applied only where the effective auth method is known
+  // (the tokenless-discover onUnauthorized handler in createAuthorizedManager
+  // and the local connect executor).
+  if (isUnauthorized401(error)) {
+    return new WebRouteError(
+      401,
+      ErrorCode.UNAUTHORIZED,
+      message,
+      undefined,
+      normalized
+    );
+  }
 
   if (lower.includes("timed out") || lower.includes("timeout")) {
     return new WebRouteError(504, ErrorCode.TIMEOUT, message, undefined, normalized);

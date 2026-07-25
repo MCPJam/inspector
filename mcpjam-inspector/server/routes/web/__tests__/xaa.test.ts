@@ -3,12 +3,16 @@ import { Hono } from "hono";
 import { mkdtempSync, rmSync } from "fs";
 import os from "os";
 import path from "path";
-import xaaWeb from "../xaa.js";
+import {
+  createXaaWebRouter,
+  readXaaCimdOrgMasterKey,
+} from "../xaa.js";
 import { createXaaRouter } from "../../mcp/xaa.js";
 import { bearerAuthMiddleware } from "../../../middleware/bearer-auth.js";
 import { guestRateLimitMiddleware } from "../../../middleware/guest-rate-limit.js";
 import { ErrorCode, WebRouteError } from "../errors.js";
 import { initXAAIdpKeyPair, resetXAAIdpKeyPairForTests } from "@mcpjam/sdk";
+import { getConfidentialCimdProviderForOrg } from "../../../services/xaa-confidential-cimd.js";
 
 function decodeJwtPayload(token: string): Record<string, any> {
   const [, payload] = token.split(".");
@@ -27,7 +31,7 @@ describe("web xaa routes", () => {
     initXAAIdpKeyPair();
 
     app = new Hono();
-    app.route("/api/web/xaa", xaaWeb);
+    app.route("/api/web/xaa", createXaaWebRouter());
   });
 
   afterEach(() => {
@@ -165,7 +169,6 @@ describe("web xaa routes", () => {
     expect(tokenExchangeBody.negative_test_mode).toBe("unknown_kid");
   });
 });
-
 describe("org-scoped issuer routes", () => {
   const originalKeyDir = process.env.XAA_IDP_KEY_DIR;
   const ORG_ID = "org_a1B2-c3";
@@ -282,6 +285,8 @@ describe("org-scoped issuer routes", () => {
     expect(authorizeOrgIssuer).toHaveBeenCalledWith({
       organizationId: ORG_ID,
       bearerToken: "workos-token",
+      issuerKind: "org",
+      clientIp: null,
     });
   });
 
@@ -339,6 +344,152 @@ describe("org-scoped issuer routes", () => {
       "https://app.mcpjam.com/api/web/xaa",
     );
     expect(authorizeOrgIssuer).not.toHaveBeenCalled();
+  });
+});
+
+describe("anonymous test issuer routes (/g/)", () => {
+  const originalKeyDir = process.env.XAA_IDP_KEY_DIR;
+  const ORG_ID = "org_guest-1";
+  let tempDir: string;
+  let app: Hono;
+  let authorizeOrgIssuer: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    tempDir = mkdtempSync(path.join(os.tmpdir(), "xaa-anon-route-"));
+    process.env.XAA_IDP_KEY_DIR = tempDir;
+    resetXAAIdpKeyPairForTests();
+    initXAAIdpKeyPair();
+
+    authorizeOrgIssuer = vi.fn().mockResolvedValue(undefined);
+    app = new Hono();
+    app.route(
+      "/api/web/xaa",
+      createXaaRouter({
+        issuerBasePath: "/api/web",
+        httpsOnlyProxy: true,
+        trustForwardedHeaders: true,
+        protectedMiddlewares: [bearerAuthMiddleware, guestRateLimitMiddleware],
+        authorizeOrgIssuer,
+      }),
+    );
+  });
+
+  afterEach(() => {
+    resetXAAIdpKeyPairForTests();
+    rmSync(tempDir, { recursive: true, force: true });
+    if (originalKeyDir === undefined) {
+      delete process.env.XAA_IDP_KEY_DIR;
+    } else {
+      process.env.XAA_IDP_KEY_DIR = originalKeyDir;
+    }
+  });
+
+  it("marks the /g/ discovery document as an anonymous test issuer", async () => {
+    const discoveryResponse = await app.request(
+      `https://app.mcpjam.com/api/web/xaa/g/${ORG_ID}/.well-known/openid-configuration`,
+    );
+
+    expect(discoveryResponse.status).toBe(200);
+    const body = await discoveryResponse.json();
+    expect(body.issuer).toBe(
+      `https://app.mcpjam.com/api/web/xaa/g/${ORG_ID}`,
+    );
+    // The marker a RAS keys its explicit allowlisting on.
+    expect(body["mcpjam:issuer_kind"]).toBe("anonymous-test");
+    expect(authorizeOrgIssuer).not.toHaveBeenCalled();
+  });
+
+  it("does NOT mark the /o/ discovery document", async () => {
+    const discoveryResponse = await app.request(
+      `https://app.mcpjam.com/api/web/xaa/o/${ORG_ID}/.well-known/openid-configuration`,
+    );
+    // Guard the status so a non-200 error body (which also lacks the marker)
+    // can't silently satisfy the toBeUndefined assertion.
+    expect(discoveryResponse.status).toBe(200);
+    const body = await discoveryResponse.json();
+    expect(body["mcpjam:issuer_kind"]).toBeUndefined();
+  });
+
+  it("requires a bearer on /g/ mint endpoints", async () => {
+    const response = await app.request(`/api/web/xaa/g/${ORG_ID}/authenticate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: "user-12345" }),
+    });
+
+    expect(response.status).toBe(401);
+    expect(authorizeOrgIssuer).not.toHaveBeenCalled();
+  });
+
+  it("authorizes /g/ mints with the anonymous issuer kind", async () => {
+    authorizeOrgIssuer.mockRejectedValueOnce(
+      new WebRouteError(403, ErrorCode.FORBIDDEN, "Not your personal org"),
+    );
+
+    const response = await app.request(`/api/web/xaa/g/${ORG_ID}/authenticate`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer guest-token",
+      },
+      body: JSON.stringify({ userId: "user-12345" }),
+    });
+
+    expect(response.status).toBe(403);
+    expect(authorizeOrgIssuer).toHaveBeenCalledWith({
+      organizationId: ORG_ID,
+      bearerToken: "guest-token",
+      issuerKind: "anonymous",
+      clientIp: null,
+    });
+  });
+
+  it("mints the ID token and ID-JAG with the /g/ issuer", async () => {
+    const headers = {
+      "Content-Type": "application/json",
+      Authorization: "Bearer guest-token",
+      "x-forwarded-proto": "https",
+    };
+
+    const authenticateResponse = await app.request(
+      `http://app.mcpjam.com/api/web/xaa/g/${ORG_ID}/authenticate`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ userId: "user-12345" }),
+      },
+    );
+    expect(authenticateResponse.status).toBe(200);
+    const authenticateBody = await authenticateResponse.json();
+    expect(decodeJwtPayload(authenticateBody.id_token).iss).toBe(
+      `https://app.mcpjam.com/api/web/xaa/g/${ORG_ID}`,
+    );
+
+    const tokenExchangeResponse = await app.request(
+      `http://app.mcpjam.com/api/web/xaa/g/${ORG_ID}/token-exchange`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          identityAssertion: authenticateBody.id_token,
+          audience: "https://auth.example.com",
+          resource: "https://mcp.example.com",
+          clientId: "mcpjam-debugger",
+        }),
+      },
+    );
+
+    expect(tokenExchangeResponse.status).toBe(200);
+    const payload = decodeJwtPayload(
+      (await tokenExchangeResponse.json()).id_jag,
+    );
+    expect(payload.iss).toBe(
+      `https://app.mcpjam.com/api/web/xaa/g/${ORG_ID}`,
+    );
+    expect(authorizeOrgIssuer).toHaveBeenCalledTimes(2);
+    expect(authorizeOrgIssuer).toHaveBeenLastCalledWith(
+      expect.objectContaining({ issuerKind: "anonymous" }),
+    );
   });
 });
 
@@ -501,4 +652,50 @@ describe("mock OIDC IdP gating on the hosted router", () => {
     // The front-channel flow never consults the membership gate.
     expect(authorizeOrgIssuer).not.toHaveBeenCalled();
   });
+});
+
+describe("hosted confidential CIMD master-key configuration", () => {
+  it("leaves the feature disabled when the master key is unset", () => {
+    expect(readXaaCimdOrgMasterKey(undefined)).toBeUndefined();
+  });
+
+  it("accepts exactly 32 unpadded base64url bytes", () => {
+    const encoded = Buffer.alloc(32, 7).toString("base64url");
+    expect(encoded).toHaveLength(43);
+    expect(readXaaCimdOrgMasterKey(encoded)).toEqual(Buffer.alloc(32, 7));
+  });
+
+  it("rejects a non-canonical base64url spelling of the same 32 bytes", () => {
+    const canonical = Buffer.alloc(32, 0).toString("base64url");
+    const nonCanonical = `${canonical.slice(0, -1)}B`;
+    expect(Buffer.from(nonCanonical, "base64url")).toEqual(Buffer.alloc(32, 0));
+    expect(() => readXaaCimdOrgMasterKey(nonCanonical)).toThrow(
+      "canonical unpadded base64url"
+    );
+  });
+
+  it("resolves the provider from environment populated after module import", () => {
+    const original = process.env.XAA_CIMD_ORG_MASTER_KEY;
+    process.env.XAA_CIMD_ORG_MASTER_KEY = Buffer.alloc(32, 9).toString(
+      "base64url",
+    );
+    try {
+      expect(getConfidentialCimdProviderForOrg()).toBeTypeOf("function");
+    } finally {
+      if (original === undefined) {
+        delete process.env.XAA_CIMD_ORG_MASTER_KEY;
+      } else {
+        process.env.XAA_CIMD_ORG_MASTER_KEY = original;
+      }
+    }
+  });
+
+  it.each(["", "not-base64", `${"A".repeat(44)}=`, "A".repeat(42)])(
+    "fails startup for malformed configured values: %j",
+    (value) => {
+      expect(() => readXaaCimdOrgMasterKey(value)).toThrow(
+        "XAA_CIMD_ORG_MASTER_KEY"
+      );
+    }
+  );
 });

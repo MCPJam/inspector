@@ -74,6 +74,8 @@ import {
   HOST_CONFIG_FIELDS,
 } from "@/lib/host-config-field-schema";
 import { SearchInput } from "@/components/ui/search-input";
+import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
+import { buildHostCompareSnapshot } from "@/lib/webmcp/review-surface-snapshots";
 import { cn } from "@/lib/utils";
 
 type CompareViewMode = "table" | "list";
@@ -493,6 +495,40 @@ export function HostConfigCompareView({
     if (hasFieldSearchQuery || supportFilter === "all") return;
     setSupportFilter("all");
   }, [hasFieldSearchQuery, supportFilter]);
+
+  // Agent bridge: SNAPSHOT-ONLY (no tools). Compare is a read-only review
+  // screen (agentTools kind "none") the agent may OBSERVE: which hosts are
+  // being compared and which capability rows the matrix shows. Must run before
+  // the early return below (rules of hooks). Redacted STATE only — host names
+  // and capability LABELS, never a host's resolved config.
+  useSurfaceAgentBridge({
+    surfaceId: "host-compare",
+    snapshot: () => {
+      // List EVERY selected host (not only hydrated `orderedSubjects`), so the
+      // snapshot names the hosts in the selector throughout loading. Prefer the
+      // resolved subject name, else the known-host name, else null (loading).
+      const subjectNameById = new Map(
+        orderedSubjects.map((s) => [s.hostId, s.hostName] as const),
+      );
+      const hostNameById = new Map(
+        hosts.map((h) => [h.hostId, h.name] as const),
+      );
+      return buildHostCompareSnapshot({
+        totalSelectableHosts: knownHostIds.length,
+        selectedHosts: selectedHostIds.map((hostId) => ({
+          hostId,
+          hostName: subjectNameById.get(hostId) ?? hostNameById.get(hostId) ?? null,
+        })),
+        capabilityFields: compareFields,
+        viewMode,
+        searchQuery: fieldSearchQuery,
+        supportFilter: effectiveSupportFilter,
+        divergingOnly,
+        loadedSelectedCount,
+        totalSelectedCount,
+      });
+    },
+  });
 
   if (!presetOnly && !projectId) {
     return (

@@ -222,7 +222,7 @@ await app.sendMessage({
 });
 ```
 
-This is powerful because it allows your UI to trigger additional LLM interactions. When the user clicks "What's on the menu?", the message is sent back to the LLM, which can then call another MCP tool (like `get-menu`) to respond.
+This lets your UI trigger additional LLM interactions. When the user clicks "What's on the menu?", the message is sent back to the LLM, which can then call another MCP tool (like `get-menu`) to respond.
 
 #### What else can your app do?
 
@@ -231,7 +231,7 @@ The `app` object provides several methods to interact with the MCP host:
 - **`app.sendMessage()`** - Send messages to the LLM (as shown above)
 - **`app.callServerTool()`** - Call other MCP tools on your server directly
 - **`app.sendLog()`** - Send log messages to the host for debugging
-- **`app.openLink()`** - Request the host to open a URL
+- **`app.openLink()`** - Request the host to open a URL (only `http` and `https` URLs are allowed; other schemes resolve `{ isError: true }`)
 - **`app.getHostContext()`** - Get information about the host environment (safe area insets, theme, etc.)
 
 For a complete reference of all available methods and capabilities, see the [MCP Apps API documentation](#).
@@ -391,7 +391,7 @@ registerAppResource(server,
 );
 ```
 
-`registerAppResource` allows us to easily register a resource with UI metadata so the host knows where the assets are to serve it to the host.
+`registerAppResource` registers a resource with UI metadata so the host knows where the assets are.
 
 #### Registering an App Tool (with UI)
 
@@ -483,7 +483,7 @@ The easiest way to test your app is using MCPJam Inspector:
 npx @mcpjam/inspector
 ```
 
-On first launch MCPJam auto-connects a sample Excalidraw server — open the **Servers** tab and add your own. Then head to the **Playground** to render widgets, debug CSP/device behavior, and drive your app with an LLM — test it all in one place!
+On first launch MCPJam auto-connects a sample Excalidraw server. Open the **Servers** tab and add your own, then head to the **Playground** to render widgets, debug CSP/device behavior, and drive your app with an LLM.
 
 ### What's next?
 

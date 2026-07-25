@@ -18,7 +18,7 @@ import {
   type OAuthHttpRequest,
   type OAuthProtocolVersion,
 } from "./oauth/state-machines/types.js";
-import { canonicalizeResourceUrl } from "./oauth/state-machines/shared/urls.js";
+import { resolveResourceIndicatorValue } from "./oauth/resource-policy.js";
 import { performClientCredentialsGrant } from "./oauth-conformance/auth-strategies/client-credentials.js";
 import { completeHeadlessAuthorization } from "./oauth-conformance/auth-strategies/headless.js";
 import {
@@ -289,6 +289,12 @@ async function runVerification(
       ? { headers: config.customHeaders }
       : undefined,
     timeout: verificationConfig.timeout ?? 30_000,
+    // Post-auth verification must speak the negotiated wire era. For 2026 the
+    // MCP endpoint is stateless (no initialize), so pin the transport; older
+    // OAuth flows keep the legacy default (unset) they used before.
+    ...(config.protocolVersion === "2026-07-28"
+      ? { mcpProtocolVersion: "2026-07-28" as const }
+      : {}),
   };
 
   try {
@@ -519,6 +525,9 @@ export async function runOAuthLogin(
       customScopes: config.scopes,
       customHeaders: config.customHeaders,
       authMode: config.auth.mode,
+      // Login is a connect surface: unusable PRM resource metadata fails the
+      // discovery step instead of proceeding with a warning like the debugger.
+      resourceIndicatorEnforcement: "reject",
     } as const;
 
     if (config.auth.mode !== "client_credentials") {
@@ -641,7 +650,11 @@ export async function runOAuthLogin(
             clientSecret: state.clientSecret || config.auth.clientSecret,
             tokenEndpointAuthMethod: state.tokenEndpointAuthMethod,
             scope: config.scopes,
-            resource: canonicalizeResourceUrl(config.serverUrl),
+            resource: resolveResourceIndicatorValue({
+              serverUrl: config.serverUrl,
+              prmResource: state.resourceMetadata?.resource,
+              resolved: state.resourceIndicator,
+            }),
             request: trackedRequest,
           });
 

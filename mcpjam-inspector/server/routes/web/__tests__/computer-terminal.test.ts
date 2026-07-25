@@ -275,4 +275,46 @@ describe("GET /api/web/computers/terminal", () => {
       true
     );
   });
+
+  it("touches activity on stdin, throttled to once per window", async () => {
+    stubConfiguredEnv();
+    installSandboxInfoStub("sbx_42");
+    const fakePty = { pid: 1, wait: () => new Promise(() => {}) };
+    const fakeSandbox = {
+      pty: {
+        create: vi.fn().mockResolvedValue(fakePty),
+        resize: vi.fn().mockResolvedValue(undefined),
+        sendInput: vi.fn().mockResolvedValue(undefined),
+        kill: vi.fn().mockResolvedValue(undefined),
+      },
+    };
+    vi.mocked(Sandbox.connect).mockResolvedValue(fakeSandbox as never);
+
+    const token = await signToken();
+    const ws = new WebSocket(
+      `ws://127.0.0.1:${port}/api/web/computers/terminal?cols=80&rows=24`,
+      [token]
+    );
+    await waitForMessage(ws); // "ready"
+
+    // Two keystrokes inside the same throttle window (60s) ⇒ one activity touch.
+    ws.send(Buffer.from([0x61]));
+    ws.send(Buffer.from([0x62]));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const touchCalls = vi.mocked(fetch).mock.calls.filter(([url, init]) => {
+      if (!String(url).includes("/computers/terminal-sessions")) return false;
+      try {
+        return JSON.parse(String(init?.body)).action === "touch";
+      } catch {
+        return false;
+      }
+    });
+    expect(touchCalls).toHaveLength(1);
+    // The stdin still reached the PTY both times.
+    expect(fakeSandbox.pty.sendInput).toHaveBeenCalledTimes(2);
+
+    ws.close();
+    await waitForClose(ws);
+  });
 });

@@ -883,6 +883,7 @@ export function ChatboxChatPage({
             (server) => server.serverName
           )}
           minimalMode
+          showContextPopover
           reasoningDisplayMode="hidden"
           hostedContext={{
             chatboxId: session.chatboxId,

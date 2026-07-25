@@ -98,6 +98,16 @@ export {
   selectResourceURL,
   startAuthorization,
 } from "./oauth/browser-auth.js";
+export {
+  canonicalizeResourceUrl,
+  evaluateResourceIndicator,
+  resolveResourceIndicatorValue,
+} from "./oauth/resource-policy.js";
+export type {
+  ResourceIndicatorDecision,
+  ResourceIndicatorSource,
+  ResourceIndicatorStatus,
+} from "./oauth/resource-policy.js";
 export type {
   OAuthClientInformation,
   OAuthClientInformationFull,
@@ -114,6 +124,7 @@ export {
   ID_JAG_GRANT_PROFILE,
   ID_JAG_TOKEN_TYPE,
   ID_TOKEN_TOKEN_TYPE,
+  SAML2_TOKEN_TYPE,
   JWT_BEARER_GRANT,
   MCPJAM_CLIENT_URI,
   MCPJAM_LOGO_URI,
@@ -122,6 +133,7 @@ export {
   XAA_DEBUG_CLIENT_ID_METADATA_URL,
   evaluateIdJagClientMetadata,
   getBrowserDebugDynamicRegistrationMetadata,
+  getXaaConnectClientMetadata,
   getXaaDebugClientMetadata,
 } from "./oauth/client-identity.js";
 export type {
@@ -157,6 +169,34 @@ export type {
   ProbeTransportResult,
 } from "./server-probe.js";
 export { runOAuthStateMachine } from "./oauth/state-machines/runner.js";
+// SSRF host classification (shared hardening): the browser executor re-validates
+// the FINAL response URL after redirects using the same RFC 6890 policy the
+// factory guard applies to the initial request URL.
+export {
+  assertOutboundOAuthUrlAllowed,
+  isPrivateHost,
+  isDisallowedIpAddress,
+  isLoopbackOAuthUrl,
+  OAuthOutboundUrlBlockedError,
+} from "./oauth/ssrf-guard.js";
+// RFC 9207 authorization-response `iss` validation. Era-agnostic (validating a
+// present `iss` is permitted on every version), so the browser callback gate
+// reuses it across 2025/2026 flows.
+export {
+  validateAuthorizationResponseIssuer,
+  type AuthorizationResponseIssuerCheck,
+} from "./oauth/state-machines/debug-oauth-2026-07-28.js";
+// SEP-2350 runtime scope step-up core (2R-stepup): scope union, insufficient-
+// scope challenge parsing, and the §10.5 interactive/M2M/debugger policy split.
+// Era-agnostic — the step-up decision lives at the runtime request boundary.
+export {
+  computeScopeUnion,
+  parseInsufficientScopeChallenge,
+  resolveStepUpAction,
+  type InsufficientScopeChallenge,
+  type StepUpAuthMode,
+  type StepUpAction,
+} from "./oauth/state-machines/shared/challenges.js";
 export type {
   OAuthAuthorizationRequestResult,
   OAuthStateMachineRunConfig,
@@ -184,7 +224,11 @@ export type {
   DynamicClientRegistrationCredentials,
   DynamicClientRegistrationOutcome,
 } from "./oauth/state-machines/shared/dynamic-client-registration.js";
-export { validateClientIdMetadataUrl } from "./oauth/state-machines/shared/client-id-metadata.js";
+export {
+  validateClientIdMetadataUrl,
+  isLoopbackClientMetadataUrl,
+  isLoopbackHost,
+} from "./oauth/state-machines/shared/client-id-metadata.js";
 export {
   decodeJWT,
   decodeJWTParts,
@@ -198,8 +242,22 @@ export {
   NEGATIVE_TEST_MODES,
   DEFAULT_NEGATIVE_TEST_MODE,
   isNegativeTestMode,
+  IDENTITY_ASSERTION_FORMATS,
+  DEFAULT_IDENTITY_ASSERTION_FORMAT,
+  normalizeIdentityAssertionFormat,
+  SUBJECT_IDENTIFIER_FORMATS,
+  DEFAULT_SUBJECT_IDENTIFIER_FORMAT,
+  normalizeSubjectIdentifierFormat,
+  XAA_CLIENT_AUTH_METHODS,
+  DEFAULT_XAA_CLIENT_AUTH,
+  normalizeXaaClientAuth,
 } from "./xaa/constants.js";
-export type { NegativeTestMode } from "./xaa/constants.js";
+export type {
+  NegativeTestMode,
+  IdentityAssertionFormat,
+  SubjectIdentifierFormat,
+  XaaClientAuthMethod,
+} from "./xaa/constants.js";
 // Shared client-registration vocabulary (single source of truth for OAuth
 // flows AND the XAA debugger's Client↔Resource-AS leg).
 export {
@@ -216,7 +274,10 @@ export type {
   RegistrationMode,
   AuthMethod,
 } from "./registration.js";
-export { NEGATIVE_TEST_MODE_DETAILS } from "./xaa/negative-test-modes.js";
+export {
+  NEGATIVE_TEST_MODE_DETAILS,
+  isPolicyDependentNegativeTestMode,
+} from "./xaa/negative-test-modes.js";
 // Pure XAA discovery + MCP-initialize helpers (browser+node safe, no I/O).
 export {
   canonicalizeMcpResource,
@@ -237,6 +298,18 @@ export type {
   McpInitializeRequest,
   XaaCapabilityEvidence,
 } from "./xaa/mcp-init.js";
+export {
+  readXaaEnterprisePolicy,
+  withXaaEnterprisePolicy,
+  withoutXaaEnterprisePolicy,
+  XAA_ENTERPRISE_POLICY_EXTENSION,
+  XAA_ENTERPRISE_POLICY_IDPS,
+} from "./xaa/enterprise-policy.js";
+export type {
+  XaaEnterprisePolicy,
+  XaaEnterprisePolicyIdp,
+  XaaEnterprisePolicyState,
+} from "./xaa/enterprise-policy.js";
 // XAA flow-core types + capability preflight (browser-safe engine primitives).
 export * from "./xaa/state-machines/index.js";
 export { EMPTY_OAUTH_FLOW_STATE } from "./oauth/state-machines/types.js";
@@ -255,6 +328,7 @@ export type {
   RegistrationStrategy2025_03_26,
   RegistrationStrategy2025_06_18,
   RegistrationStrategy2025_11_25,
+  RegistrationStrategy2026_07_28,
 } from "./oauth/state-machines/types.js";
 
 // MCP conformance transport support — pure predicate, safe for the browser.

@@ -1,9 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../native-mirror", () => ({
-  mirrorUiToolToNative: vi.fn(() => null),
-}));
-
 import {
   __resetUiToolExecutorForTests,
   fulfillApprovedUiToolCall,
@@ -32,7 +28,6 @@ describe("handleUiToolCall", () => {
     __resetUiToolExecutorForTests();
     useUiToolsRegistry.setState({
       tools: new Map(),
-      nativeDisposers: new Map(),
       shippedNames: new Set(),
     });
   });
@@ -81,6 +76,54 @@ describe("handleUiToolCall", () => {
         input: { target: "servers" },
       },
     ]);
+  });
+
+  it("defers a DESTRUCTIVE tool even when requireToolApproval is off", async () => {
+    // The default mode. The client decides "defer" before the server's
+    // approval-request chunk arrives, so this must match the server's
+    // classification exactly or the turn strands.
+    const def = makeTool({
+      name: "ui_execute_tool",
+      readOnly: false,
+      annotations: { readOnlyHint: false, destructiveHint: true },
+    });
+    useUiToolsRegistry.getState().registerUiTool(def);
+    const addToolOutput = vi.fn();
+
+    const handled = await handleUiToolCall({
+      toolName: "ui_execute_tool",
+      toolCallId: "tc-destructive",
+      input: {},
+      addToolOutput,
+      requireToolApproval: false,
+    });
+
+    expect(handled).toBe(true);
+    expect(def.execute).not.toHaveBeenCalled();
+    expect(addToolOutput).not.toHaveBeenCalled();
+    expect(listDeferredUiToolCalls()).toEqual([
+      { toolCallId: "tc-destructive", toolName: "ui_execute_tool", input: {} },
+    ]);
+  });
+
+  it("executes an ADDITIVE tool immediately when requireToolApproval is off", async () => {
+    const def = makeTool({
+      annotations: { readOnlyHint: false, destructiveHint: false },
+    });
+    useUiToolsRegistry.getState().registerUiTool(def);
+    const addToolOutput = vi.fn();
+
+    await handleUiToolCall({
+      toolName: "ui_navigate",
+      toolCallId: "tc-additive",
+      input: { target: "servers" },
+      addToolOutput,
+      requireToolApproval: false,
+    });
+
+    expect(def.execute).toHaveBeenCalled();
+    expect(addToolOutput).toHaveBeenCalled();
+    expect(listDeferredUiToolCalls()).toEqual([]);
   });
 
   it("read-only tools execute immediately even with the flag on", async () => {

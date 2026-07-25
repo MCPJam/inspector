@@ -784,10 +784,16 @@ export function useAppState({
     // project, OR when there's no queryable project id (sentinel like
     // "none"/"null" — query was skipped, so no data is ever coming).
     // Lets ServersTab distinguish "still loading" from "no real project".
+    // Guarded by auth/projects loading: on a hard reload isAuthenticated is
+    // briefly false and the resolved project id is briefly null (projects not
+    // loaded yet), both of which would otherwise read as "hydrated, empty"
+    // and flash empty-state UI (e.g. the OAuth/XAA debugger Configure modal).
     areServersHydrated:
-      !isAuthenticated ||
-      projectState.activeProjectServersFlat !== undefined ||
-      !shouldQueryProjectId(projectState.activeProjectServersFlatProjectId),
+      !isAuthLoading &&
+      !isLoadingRemoteProjects &&
+      (!isAuthenticated ||
+        projectState.activeProjectServersFlat !== undefined ||
+        !shouldQueryProjectId(projectState.activeProjectServersFlatProjectId)),
     isCloudSyncActive,
     activeOrganizationId,
     setActiveOrganizationId,
@@ -830,6 +836,7 @@ export function useAppState({
     handleDisconnect: serverState.handleDisconnect,
     handleRuntimeDisconnect: serverState.handleRuntimeDisconnect,
     handleReconnect: serverState.handleReconnect,
+    connectServerWithResult: serverState.connectServerWithResult,
     reconnectServerForClientSwitch: serverState.reconnectServerForClientSwitch,
     ensureServersReady: serverState.ensureServersReady,
     syncAgentStatus: serverState.syncAgentStatus,

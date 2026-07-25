@@ -26,6 +26,10 @@ import {
 } from "./ui/resizable";
 import { ElicitationDialog } from "@/components/ElicitationDialog";
 import {
+  ElicitationRequestDialog,
+  UrlElicitationRequiredDialog,
+} from "@/components/elicitation/ElicitationRequestDialog";
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -134,6 +138,7 @@ interface ChatTabProps {
   onHasMessagesChange?: (hasMessages: boolean) => void;
   enableMultiModelChat?: boolean;
   minimalMode?: boolean;
+  showContextPopover?: boolean;
   hostedContext?: HostedRuntimeContext;
   executionConfig?: ExecutionConfig;
   reasoningDisplayMode?: ReasoningDisplayMode;
@@ -170,6 +175,7 @@ export function ChatTabV2({
   onHasMessagesChange,
   enableMultiModelChat = false,
   minimalMode = false,
+  showContextPopover,
   hostedContext,
   executionConfig,
   reasoningDisplayMode = "inline",
@@ -323,6 +329,11 @@ export function ChatTabV2({
   const hostedOrgModelConfig = useHostedOrgModelConfig({
     projectId: effectiveHostedProjectId,
     organizationId: modelConfigOrganizationId,
+    // Chatbox surfaces resolve their model from the chatbox row
+    // (executionConfig.modelId), and share-link guests aren't members of the
+    // host's project — so the project-scoped config query would throw and crash
+    // the page. Skip it whenever we're inside a chatbox.
+    disabled: Boolean(hostedChatboxId),
   });
   const { serversById, serversByName } = useProjectServers({
     isAuthenticated: isConvexAuthenticated,
@@ -382,6 +393,7 @@ export function ChatTabV2({
     toolServerMap,
     tokenUsage,
     mcpToolsTokenCount,
+    mcpToolsTokenCountErrors,
     mcpToolsTokenCountLoading,
     systemPromptTokenCount,
     systemPromptTokenCountLoading,
@@ -401,6 +413,11 @@ export function ChatTabV2({
     requireToolApproval,
     setRequireToolApproval,
     addToolApprovalResponse,
+    pendingElicitations,
+    respondToElicitation,
+    elicitationResponding,
+    urlElicitationRequired,
+    dismissUrlElicitationRequired,
   } = useChatSession({
     selectedServers: selectedConnectedServerNames,
     directVisibility: pendingDirectVisibility,
@@ -1628,6 +1645,13 @@ export function ChatTabV2({
                 message: data.message,
                 schema: data.schema,
                 timestamp: data.timestamp || new Date().toISOString(),
+                // Spec: make it clear WHICH server is asking. Local chat can
+                // have many servers connected at once, so an anonymous dialog
+                // is a real ambiguity. No display name exists on this path —
+                // the id is the trusted anchor and is what the dialog shows.
+                ...(typeof data.serverId === "string"
+                  ? { serverId: data.serverId }
+                  : {}),
               },
             ];
           });
@@ -2048,6 +2072,7 @@ export function ChatTabV2({
     tokenUsage,
     selectedServers: selectedConnectedServerNames,
     mcpToolsTokenCount,
+    mcpToolsTokenCountErrors,
     mcpToolsTokenCountLoading,
     connectedOrConnectingServerConfigs,
     systemPromptTokenCount,
@@ -2061,6 +2086,7 @@ export function ChatTabV2({
     requireToolApproval,
     onRequireToolApprovalChange: handleRequireToolApprovalChange,
     minimalMode,
+    showContextPopover,
     showHostStyleSelector,
     hostStyle,
     onHostStyleChange,
@@ -2746,10 +2772,34 @@ export function ChatTabV2({
               </>
             )}
 
+            {/*
+              Two independent sources, deliberately not merged into one queue:
+              the local SSE channel (`/api/mcp/elicitation/*`, local mode only)
+              and the hosted stream data part. They carry different identities
+              (requestId vs rendezvousId) and answer over different transports,
+              so each keeps its own dialog and respond path. Only one can be
+              active in a given mode — `elicitationQueue` never fills in hosted
+              (the SSE effect early-returns), and `pendingElicitations` never
+              fills locally (no bridge is registered).
+            */}
             <ElicitationDialog
               elicitationRequest={activeElicitation}
               onResponse={handleElicitationResponse}
               loading={elicitationLoading}
+            />
+            <ElicitationRequestDialog
+              // Keyed so a second request can't inherit the first's internal
+              // dialog state (popup-blocked notice, half-filled form).
+              key={pendingElicitations[0]?.rendezvousId ?? "none"}
+              request={pendingElicitations[0] ?? null}
+              onRespond={respondToElicitation}
+              loading={elicitationResponding}
+            />
+            {/* -32042: a tool needs an out-of-band interaction finished first. */}
+            <UrlElicitationRequiredDialog
+              key={urlElicitationRequired[0]?.toolCallId ?? "no-url-required"}
+              event={urlElicitationRequired[0] ?? null}
+              onDismiss={dismissUrlElicitationRequired}
             />
           </div>
         </ResizablePanel>

@@ -1,13 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mirrorUiToolToNativeMock } = vi.hoisted(() => ({
-  mirrorUiToolToNativeMock: vi.fn(),
-}));
-
-vi.mock("../native-mirror", () => ({
-  mirrorUiToolToNative: mirrorUiToolToNativeMock,
-}));
-
 import {
   useUiToolsRegistry,
   type UiToolDefinition,
@@ -29,7 +21,8 @@ function makeTool(name: string, extra?: Partial<UiToolDefinition>): UiToolDefini
 function resetRegistry() {
   useUiToolsRegistry.setState({
     tools: new Map(),
-    nativeDisposers: new Map(),
+    globalNames: new Set(),
+    ownerTokens: new Map(),
     shippedNames: new Set(),
   });
 }
@@ -37,7 +30,6 @@ function resetRegistry() {
 describe("useUiToolsRegistry", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mirrorUiToolToNativeMock.mockReturnValue(null);
     resetRegistry();
   });
 
@@ -59,6 +51,25 @@ describe("useUiToolsRegistry", () => {
     ).toThrow(/must match ui_/);
   });
 
+  it("rejects a readOnlyHint that contradicts readOnly loudly", () => {
+    // The server 400s a contradictory snapshot on every chat POST; catching
+    // it at registration turns that into an obvious local failure instead.
+    expect(() =>
+      useUiToolsRegistry.getState().registerUiTool(
+        makeTool("ui_navigate", {
+          readOnly: false,
+          annotations: { readOnlyHint: true },
+        }),
+      ),
+    ).toThrow(/must agree/);
+  });
+
+  it("accepts a definition with no annotations (legacy shape)", () => {
+    expect(() =>
+      useUiToolsRegistry.getState().registerUiTool(makeTool("ui_navigate")),
+    ).not.toThrow();
+  });
+
   it("replaces a re-registered name with a warn (HMR/StrictMode)", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const first = makeTool("ui_navigate");
@@ -73,20 +84,19 @@ describe("useUiToolsRegistry", () => {
     warn.mockRestore();
   });
 
-  it("disposes the native mirror on unregister and on replacement", () => {
-    const disposeFirst = vi.fn();
-    const disposeSecond = vi.fn();
-    mirrorUiToolToNativeMock
-      .mockReturnValueOnce(disposeFirst)
-      .mockReturnValueOnce(disposeSecond);
+  it("clears every per-name registry slot on unregister, even after replacement", () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
 
+    useUiToolsRegistry
+      .getState()
+      .registerUiTool(makeTool("ui_navigate"), { scope: "global" });
     useUiToolsRegistry.getState().registerUiTool(makeTool("ui_navigate"));
-    useUiToolsRegistry.getState().registerUiTool(makeTool("ui_navigate"));
-    expect(disposeFirst).toHaveBeenCalledTimes(1);
 
     useUiToolsRegistry.getState().unregisterUiTool("ui_navigate");
-    expect(disposeSecond).toHaveBeenCalledTimes(1);
+    const state = useUiToolsRegistry.getState();
+    expect(state.tools.has("ui_navigate")).toBe(false);
+    expect(state.globalNames.has("ui_navigate")).toBe(false);
+    expect(state.ownerTokens.has("ui_navigate")).toBe(false);
   });
 
   it("unregisters via an aborted signal and skips already-aborted ones", () => {
@@ -118,6 +128,34 @@ describe("useUiToolsRegistry", () => {
       inputSchema: { type: "object", properties: {} },
       readOnly: true,
     });
+  });
+
+  it("ships annotations so the server can classify approval", () => {
+    const annotations = {
+      readOnlyHint: false,
+      destructiveHint: true,
+      openWorldHint: true,
+    };
+    useUiToolsRegistry
+      .getState()
+      .registerUiTool(makeTool("ui_execute_tool", { annotations }));
+
+    const [entry] = useUiToolsRegistry.getState().snapshotForChatBody();
+    expect(entry.annotations).toEqual(annotations);
+  });
+
+  it("omits the annotations key entirely when a definition has none", () => {
+    useUiToolsRegistry.getState().registerUiTool(makeTool("ui_navigate"));
+    const [entry] = useUiToolsRegistry.getState().snapshotForChatBody();
+    expect(entry).not.toHaveProperty("annotations");
+  });
+
+  it("never ships mayNavigate (client-only metadata)", () => {
+    useUiToolsRegistry
+      .getState()
+      .registerUiTool(makeTool("ui_navigate", { mayNavigate: true }));
+    const [entry] = useUiToolsRegistry.getState().snapshotForChatBody();
+    expect(entry).not.toHaveProperty("mayNavigate");
   });
 
   it("drops oversize schemas from the snapshot instead of truncating them", () => {

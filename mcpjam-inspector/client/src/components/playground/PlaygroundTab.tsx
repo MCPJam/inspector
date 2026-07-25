@@ -187,6 +187,10 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   });
 
   const playgroundState = usePlaygroundState({
+    // This IS the Playground screen, so it publishes the snapshot the agent
+    // reads for `playground`. The hook's other caller (the Evals Record
+    // panel's embedded chat) deliberately doesn't — it isn't this screen.
+    snapshotSurfaceId: "playground",
     activeProjectId: props.activeProjectId,
     serverConfig: props.serverConfig,
     serverName: props.serverName,

@@ -10,7 +10,7 @@
  */
 
 import { decodeJWT, formatJWTTimestamp } from "./shared/jwt.js";
-import { EMPTY_OAUTH_FLOW_STATE } from "./types.js";
+import { EMPTY_OAUTH_FLOW_STATE, buildResetFlowState } from "./types.js";
 import type {
   BaseOAuthStateMachineConfig,
   OAuthFlowStep,
@@ -489,6 +489,7 @@ export const createDebugOAuthStateMachine = (
                 headers: mergeHeaders(customHeaders, {
                   "Content-Type": "application/json",
                   Accept: "application/json, text/event-stream",
+                  "MCP-Protocol-Version": "2025-03-26",
                 }),
                 body: JSON.stringify(
                   buildInitializeRequestBody({
@@ -727,41 +728,6 @@ export const createDebugOAuthStateMachine = (
             const supportedMethods =
               authServerMetadata.code_challenge_methods_supported || [];
 
-            const metadata: Record<string, any> = {
-              Issuer: authServerMetadata.issuer,
-              "Authorization Endpoint":
-                authServerMetadata.authorization_endpoint,
-              "Token Endpoint": authServerMetadata.token_endpoint,
-            };
-
-            if (authServerMetadata.registration_endpoint) {
-              metadata["Registration Endpoint"] =
-                authServerMetadata.registration_endpoint;
-            }
-            if (authServerMetadata.code_challenge_methods_supported) {
-              metadata["PKCE Methods"] =
-                authServerMetadata.code_challenge_methods_supported;
-            }
-            if (authServerMetadata.grant_types_supported) {
-              metadata["Grant Types"] =
-                authServerMetadata.grant_types_supported;
-            }
-            if (authServerMetadata.response_types_supported) {
-              metadata["Response Types"] =
-                authServerMetadata.response_types_supported;
-            }
-            if (authServerMetadata.scopes_supported) {
-              metadata["Scopes"] = authServerMetadata.scopes_supported;
-            }
-
-            const infoLogs = addInfoLog(
-              getCurrentState(),
-              "received_authorization_server_metadata",
-              "as-metadata",
-              "Authorization Server Metadata",
-              metadata,
-            );
-
             if (
               !supportedMethods ||
               supportedMethods.length === 0 ||
@@ -777,7 +743,6 @@ export const createDebugOAuthStateMachine = (
               authorizationServerMetadata: authServerMetadata,
               lastResponse: authServerResponseData,
               httpHistory: updatedHistoryFinal,
-              infoLogs,
               isInitiatingAuth: false,
             });
             break;
@@ -966,7 +931,11 @@ export const createDebugOAuthStateMachine = (
                 break;
               }
 
-              if (strictConformance && dcr.missingClientId) {
+              // RFC 7591: a successful (2xx) registration response MUST carry a
+              // client_id. Without one there is no client identity to proceed
+              // with, so reject regardless of strictConformance — accepting it
+              // would carry an undefined clientId into the authorization leg.
+              if (dcr.missingClientId) {
                 updateState({
                   lastResponse: dcr.response,
                   httpHistory: dcr.httpHistory,
@@ -1824,20 +1793,10 @@ export const createDebugOAuthStateMachine = (
     },
 
     resetFlow: () => {
-      updateState({
-        ...EMPTY_OAUTH_FLOW_STATE,
-        lastRequest: undefined,
-        lastResponse: undefined,
-        httpHistory: [],
-        infoLogs: [],
-        authorizationCode: undefined,
-        authorizationUrl: undefined,
-        accessToken: undefined,
-        refreshToken: undefined,
-        codeVerifier: undefined,
-        codeChallenge: undefined,
-        error: undefined,
-      });
+      // Reset to a fully-cleared flow. updateState MERGES, so every field must
+      // be explicitly cleared — buildResetFlowState enumerates them all so no
+      // stored client, token, discovery result, or recorded issuer survives.
+      updateState(buildResetFlowState());
     },
   };
 

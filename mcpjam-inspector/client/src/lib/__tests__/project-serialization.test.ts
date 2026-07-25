@@ -176,6 +176,63 @@ describe("registrationMode round-trip", () => {
   });
 });
 
+describe("xaaIdentityAssertionFormat round-trip", () => {
+  it("round-trips a known format through deserialize", () => {
+    const servers = deserializeServersFromConvex([
+      {
+        name: "s1",
+        enabled: true,
+        useXaa: true,
+        url: "https://example.test/mcp",
+        xaaIdentityAssertionFormat: "saml",
+      },
+    ]);
+    expect(servers.s1.xaaIdentityAssertionFormat).toBe("saml");
+  });
+
+  it("leaves the field absent when the wire omits it (legacy rows = oidc default)", () => {
+    const servers = deserializeServersFromConvex([
+      {
+        name: "s1",
+        enabled: true,
+        useXaa: true,
+        url: "https://example.test/mcp",
+      },
+    ]);
+    expect(servers.s1.xaaIdentityAssertionFormat).toBeUndefined();
+  });
+
+  it("drops an unknown persisted format so the debugger falls back to oidc", () => {
+    const servers = deserializeServersFromConvex([
+      {
+        name: "s1",
+        enabled: true,
+        useXaa: true,
+        url: "https://example.test/mcp",
+        xaaIdentityAssertionFormat: "totally-bogus",
+      },
+    ]);
+    expect(servers.s1.xaaIdentityAssertionFormat).toBeUndefined();
+  });
+
+  it("serializes a known format for persistence", () => {
+    const server: Record<string, ServerWithName> = {
+      s1: {
+        name: "s1",
+        enabled: true,
+        useXaa: true,
+        retryCount: 0,
+        lastConnectionTime: new Date(),
+        connectionStatus: "disconnected",
+        config: { url: new URL("https://example.test/mcp") },
+        xaaIdentityAssertionFormat: "saml",
+      } as unknown as ServerWithName,
+    };
+    const out = serializeServersForPersistence(server);
+    expect((out.s1 as any).xaaIdentityAssertionFormat).toBe("saml");
+  });
+});
+
 describe("serversHaveChanged redacted secrets", () => {
   it("marks visible bearer authorization headers as bearer-token metadata", () => {
     const servers = deserializeServersFromConvex([
@@ -320,6 +377,45 @@ describe("serversHaveChanged redacted secrets", () => {
   });
 });
 
+describe("XAA DCR runtime serialization boundary", () => {
+  it("hydrates sanitized status but never writes runtime registration state", () => {
+    const hydrated = deserializeServersFromConvex([
+      {
+        name: "dcr-server",
+        enabled: true,
+        useXaa: true,
+        url: "https://example.test/mcp",
+        registrationMode: "dcr",
+        xaaDcrStatus: "registered",
+        xaaDcrClientId: "runtime-client",
+        xaaDcrIssuer: "https://as.example",
+        xaaDcrRegisteredAt: 123,
+        xaaDcrClientSecretExpiresAt: 456,
+        xaaDcrTokenEndpointAuthMethod: "client_secret_post",
+        hasXaaDcrRegistration: true,
+      },
+    ]);
+    expect(hydrated["dcr-server"]).toMatchObject({
+      xaaDcrStatus: "registered",
+      xaaDcrClientId: "runtime-client",
+      hasXaaDcrRegistration: true,
+    });
+
+    for (const serialized of [
+      serializeServersForPersistence(hydrated),
+      serializeServersForSharing(hydrated),
+    ]) {
+      const output = serialized["dcr-server"] as Record<string, unknown>;
+      expect(output.registrationMode).toBe("dcr");
+      expect(Object.keys(output).some((key) => key.startsWith("xaaDcr"))).toBe(
+        false,
+      );
+      expect(output).not.toHaveProperty("hasXaaDcrRegistration");
+      expect(JSON.stringify(output)).not.toContain("runtime-client");
+    }
+  });
+});
+
 describe("project-serialization xaaAuthzIssuer round-trip", () => {
   // The XAA "Configure Server to Test" modal reads the Authorization Server
   // Issuer from server.xaaAuthzIssuer. If serialize/deserialize drops it, the
@@ -412,6 +508,24 @@ describe("OAuth test-profile round-trip (protocol version + registration strateg
     expect(profile.registrationStrategy).toBe("preregistered");
     expect(profile.protocolVersion).toBe("2025-06-18");
     expect(profile.clientId).toBe("client_abc");
+  });
+
+  it("survives a 2026-07-28 draft-era protocol version through the round-trip", () => {
+    const servers = deserializeServersFromConvex([
+      {
+        name: "draft-2026",
+        enabled: true,
+        useOAuth: true,
+        url: "https://example.test/mcp",
+        clientId: "client_abc",
+        oauthProtocolVersion: "2026-07-28",
+        oauthRegistrationStrategy: "dcr",
+      },
+    ]);
+
+    const profile = servers["draft-2026"].oauthFlowProfile!;
+    expect(profile.protocolVersion).toBe("2026-07-28");
+    expect(profile.registrationStrategy).toBe("dcr");
   });
 
   it("builds a profile even when only the strategy columns are present", () => {

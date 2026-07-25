@@ -54,6 +54,8 @@ import {
   createInspectorCommandClientError,
   registerInspectorCommandHandler,
 } from "@/lib/inspector-command-handlers";
+import { registerSurfaceSnapshotProvider } from "@/lib/webmcp/surface-snapshot-registry";
+import type { AppSurfaceId } from "@/shared/app-surfaces";
 import { useAppToolsRegistry } from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
 import {
   getApiContextRevision,
@@ -62,15 +64,22 @@ import {
 import type {
   ExecuteToolInspectorCommand,
   RenderToolResultInspectorCommand,
+  SelectModelInspectorCommand,
   SelectToolInspectorCommand,
   SetAppContextInspectorCommand,
-  SnapshotAppInspectorCommand,
+  SetSystemPromptInspectorCommand,
 } from "@/shared/inspector-command.js";
+import { getPlaygroundAgentControls } from "@/components/playground/playground-agent-controls-bridge";
 import { useSavedRequests, useServerKey, useToolExecution } from "./index";
 import { PANEL_SIZES } from "../constants";
 
 const SERVER_SYNC_TIMEOUT_MS = 10000;
 const EXECUTION_INJECTION_TIMEOUT_MS = 5000;
+// Upper bound on the full-screen first-run skeleton. If onboarding connect /
+// remote provisioning never resolves (e.g. a guest whose Convex deployment
+// can't authenticate them, so no project is ever provisioned), fall through to
+// the usable Playground instead of spinning forever. See issue #3352.
+const FIRST_RUN_SKELETON_TIMEOUT_MS = 12000;
 
 export const PLAYGROUND_FIRST_RUN_PROMPT =
   "Draw me an MCP architecture diagram";
@@ -83,6 +92,16 @@ type ExecutionInjectionWaiter = {
 };
 
 export interface UsePlaygroundStateOptions {
+  /**
+   * Surface id to publish this instance's snapshot under, for
+   * `ui_snapshot_app`. OPT-IN, and deliberately not defaulted: this hook has
+   * more than one caller (the Playground route, and the Evals Record panel's
+   * embedded chat). Registering unconditionally would make whichever mounted
+   * last own the `playground` id, so an agent asking for the Playground could
+   * silently be shown an eval case's chat instead. Only the surface that IS
+   * the screen passes this.
+   */
+  snapshotSurfaceId?: AppSurfaceId;
   activeProjectId?: string | null;
   serverConfig?: MCPServerConfig;
   serverName?: string;
@@ -154,6 +173,7 @@ export function selectConnectedActiveServerNames(input: {
 
 export function usePlaygroundState(options: UsePlaygroundStateOptions) {
   const {
+    snapshotSurfaceId,
     serverConfig,
     serverName,
     servers = {},
@@ -488,6 +508,14 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
   const buildPlaygroundSnapshot = useCallback(() => {
     const playgroundState = useUIPlaygroundStore.getState();
 
+    // The chat composer's state (model, system prompt, history, streaming)
+    // lives in PlaygroundMain's chat session, published through the
+    // agent-controls bridge. Absent when no chat is mounted (no connected
+    // server). Everything read here is already redacted at the bridge: model
+    // id/name only, system-prompt presence/length (never text), a bounded
+    // history count + last role (never message contents). No keys.
+    const chat = getPlaygroundAgentControls();
+
     return {
       serverName: serverName ?? null,
       selectedTool: playgroundState.selectedTool,
@@ -500,6 +528,14 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
       widgetState: playgroundState.widgetState,
       executionError: playgroundState.executionError,
       isExecuting: playgroundState.isExecuting,
+      chat: chat
+        ? {
+            selectedModel: chat.selectedModel,
+            systemPrompt: chat.systemPrompt,
+            history: chat.history,
+            isGenerating: chat.isGenerating,
+          }
+        : null,
     };
   }, [serverName]);
 
@@ -761,32 +797,134 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
       }
     );
 
-    const unregisterSnapshotApp = registerInspectorCommandHandler(
-      "snapshotApp",
+    // Chat-composer command handlers (the global playground catalog's
+    // ui_select_model / ui_set_system_prompt / ui_reset_chat /
+    // ui_stop_generation). They drive PlaygroundMain's chat session through
+    // the agent-controls bridge — a sibling subtree — so they read the live
+    // controls at dispatch time and fail cleanly with `unsupported_in_mode`
+    // when no chat is mounted (e.g. no connected server). Each returns the
+    // (redacted) playground snapshot so the agent can observe the result.
+    const requireChatControls = () => {
+      const controls = getPlaygroundAgentControls();
+      if (!controls) {
+        throw createInspectorCommandClientError(
+          "unsupported_in_mode",
+          "The Playground chat is not ready. Connect a server and open the Playground first.",
+        );
+      }
+      return controls;
+    };
+
+    // The chat-composer handlers drive the SINGLETON PlaygroundMain controls,
+    // so they must exist only for the real Playground surface — not the Evals
+    // recorder's embedded chat, which mounts this same hook without a
+    // `snapshotSurfaceId`. Registering them there would make
+    // `hasInspectorCommandHandler('resetChat')` true off /playground, skip the
+    // auto-open-playground fallback, and let whichever PlaygroundMain published
+    // its controls last own the action (e.g. ui_reset_chat clearing the eval
+    // preview). Same gate the snapshot provider below already uses.
+    const registerChatControlHandler: typeof registerInspectorCommandHandler = (
+      type,
+      handler,
+    ) =>
+      snapshotSurfaceId
+        ? registerInspectorCommandHandler(type, handler)
+        : () => {};
+
+    const unregisterSelectModel = registerChatControlHandler(
+      "selectModel",
       async (rawCommand) => {
-        const command = rawCommand as SnapshotAppInspectorCommand;
-        if (
-          command.payload.surface &&
-          command.payload.surface !== "playground"
-        ) {
+        const command = rawCommand as SelectModelInspectorCommand;
+        const controls = requireChatControls();
+        const identifier = command.payload.model?.trim();
+        if (!identifier) {
           throw createInspectorCommandClientError(
-            "unsupported_in_mode",
-            `Playground cannot snapshot ${command.payload.surface}.`
+            "invalid_request",
+            "Missing required 'model' identifier.",
           );
         }
-
+        const result = controls.selectModel(identifier);
+        if (!result.ok) {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            result.error,
+          );
+        }
+        await waitForUiCommit();
         return buildPlaygroundSnapshot();
-      }
+      },
     );
+
+    const unregisterSetSystemPrompt = registerChatControlHandler(
+      "setSystemPrompt",
+      async (rawCommand) => {
+        const command = rawCommand as SetSystemPromptInspectorCommand;
+        const controls = requireChatControls();
+        // `prompt` is a required string. The WebMCP wrapper enforces that, but
+        // the server /api/mcp/command path only checks payload is an object, so
+        // validate here too — a nullish coalesce would silently CLEAR the
+        // user's prompt on `{}` / `{ prompt: null }` and report success. An
+        // explicit "" is still a legitimate clear.
+        if (typeof command.payload.prompt !== "string") {
+          throw createInspectorCommandClientError(
+            "invalid_request",
+            "Missing required 'prompt' string (pass an empty string to clear it).",
+          );
+        }
+        controls.setSystemPrompt(command.payload.prompt);
+        await waitForUiCommit();
+        return buildPlaygroundSnapshot();
+      },
+    );
+
+    const unregisterResetChat = registerChatControlHandler(
+      "resetChat",
+      async () => {
+        const controls = requireChatControls();
+        controls.resetChat();
+        await waitForUiCommit();
+        return buildPlaygroundSnapshot();
+      },
+    );
+
+    const unregisterStopGeneration = registerChatControlHandler(
+      "stopGeneration",
+      async () => {
+        const controls = requireChatControls();
+        const { stopped } = controls.stopGeneration();
+        await waitForUiCommit();
+        return { ...buildPlaygroundSnapshot(), stopped };
+      },
+    );
+
+    // A PROVIDER, not a `snapshotApp` command handler. The bus dispatches
+    // handlers newest-first and returns the first success, so a handler here
+    // would shadow the app-level one whenever the Playground is mounted —
+    // and a whole-app snapshot would silently degrade to a playground-only
+    // one. The single handler lives in App.tsx and reads this registry.
+    //
+    // Opt-in per caller: this hook also backs the Evals Record panel's
+    // embedded chat, and registering unconditionally would let whichever
+    // instance mounted last own the `playground` id.
+    const unregisterSnapshotApp = snapshotSurfaceId
+      ? registerSurfaceSnapshotProvider(snapshotSurfaceId, () =>
+          buildPlaygroundSnapshot()
+        )
+      : undefined;
 
     return () => {
       unregisterSelectTool();
       unregisterExecuteTool();
       unregisterRenderToolResult();
       unregisterSetAppContext();
-      unregisterSnapshotApp();
+      unregisterSelectModel();
+      unregisterSetSystemPrompt();
+      unregisterResetChat();
+      unregisterStopGeneration();
+      unregisterSnapshotApp?.();
     };
   }, [
+    snapshotSurfaceId,
     buildPlaygroundSnapshot,
     executeTool,
     injectToolResult,
@@ -823,6 +961,30 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     onboarding.isBootstrappingFirstRunConnection && !!onConnect;
   const isWaitingForServerSync =
     !serverConfig && isServerSyncing && !syncTimedOut;
+
+  // The full-screen first-run skeleton must never be a dead end. Track whether
+  // anything currently wants it, then time-bound it: if the underlying connect
+  // / provisioning never resolves the skeleton falls through to a usable
+  // Playground rather than hanging forever with no escape. See issue #3352.
+  const wantsFirstRunSkeleton =
+    isResolvingRemoteCompletion ||
+    isConnectingFirstRunExcalidraw ||
+    isBootstrappingFirstRunConnection ||
+    isWaitingForServerSync;
+  const [firstRunSkeletonTimedOut, setFirstRunSkeletonTimedOut] =
+    useState(false);
+  useEffect(() => {
+    if (!wantsFirstRunSkeleton) {
+      setFirstRunSkeletonTimedOut(false);
+      return;
+    }
+    const id = setTimeout(
+      () => setFirstRunSkeletonTimedOut(true),
+      FIRST_RUN_SKELETON_TIMEOUT_MS,
+    );
+    return () => clearTimeout(id);
+  }, [wantsFirstRunSkeleton]);
+
   const shouldMarkFirstRunNuxShown =
     firstRunComposerSeed &&
     onboarding.isGuidedPostConnect &&
@@ -838,10 +1000,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
   }, [onboarding.markOnboardingShown, shouldMarkFirstRunNuxShown]);
 
   const loadingState: PlaygroundLoadingState =
-    isResolvingRemoteCompletion ||
-    isConnectingFirstRunExcalidraw ||
-    isBootstrappingFirstRunConnection ||
-    isWaitingForServerSync
+    wantsFirstRunSkeleton && !firstRunSkeletonTimedOut
       ? { kind: "skeleton" }
       : !serverConfig && isServerSyncing && syncTimedOut
       ? { kind: "sync-timed-out" }

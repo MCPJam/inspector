@@ -6,6 +6,7 @@ import {
   Boxes,
   Info,
   Loader2,
+  Moon,
   RotateCcw,
   TerminalSquare,
   Trash2,
@@ -20,6 +21,7 @@ import {
   useComputerStatus,
   useComputerUsage,
   useDeleteComputer,
+  useHibernateComputer,
   useMintTerminalToken,
   useReserveComputer,
 } from "@/hooks/useProjectComputer";
@@ -34,10 +36,13 @@ import {
   isComputerStartLimitError,
 } from "@/lib/billing-entitlements";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
+import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
+import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
 import { ComputerStatusChip } from "./ComputerStatusChip";
 import { ComputerTerminal } from "./ComputerTerminal";
 import { ComputersUnavailableMessage } from "./ComputersUnavailableMessage";
 import { PaneMessage } from "./PaneMessage";
+import { GuestSignInMessage } from "@/components/auth/GuestSignInMessage";
 
 /**
  * The "Computer" tab — manage the project's personal cloud computer (one per
@@ -46,15 +51,23 @@ import { PaneMessage } from "./PaneMessage";
  */
 export function ComputerView({
   projectId,
-  isAuthenticated,
+  isSignedInMember,
 }: {
   projectId: string | null;
-  isAuthenticated: boolean;
+  /**
+   * True only for a signed-in member — NOT merely "has a Convex identity".
+   * Anonymous guests are `useConvexAuth().isAuthenticated === true` (they're
+   * provisioned as anonymous actors), so gating the personal computer on raw
+   * auth would let guests through; the caller must pass member-ness
+   * (`!currentUser.isAnonymous`) so the guest sign-in affordance below fires.
+   */
+  isSignedInMember: boolean;
 }) {
-  const effectiveProjectId = isAuthenticated ? projectId : null;
+  const effectiveProjectId = isSignedInMember ? projectId : null;
   const status = useComputerStatus(effectiveProjectId);
   const reserve = useReserveComputer();
   const deleteComputer = useDeleteComputer();
+  const hibernateComputer = useHibernateComputer();
   const mintTerminalToken = useMintTerminalToken();
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const terminalTheme = themeMode === "dark" ? "dark" : "light";
@@ -63,6 +76,8 @@ export function ComputerView({
   const [starting, setStarting] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [confirmingHibernate, setConfirmingHibernate] = useState(false);
+  const [hibernating, setHibernating] = useState(false);
   const [envDrawerOpen, setEnvDrawerOpen] = useState(false);
   const [confirmingReset, setConfirmingReset] = useState(false);
   const [resetting, setResetting] = useState(false);
@@ -162,6 +177,23 @@ export function ComputerView({
     }
   }, [effectiveProjectId, deleteComputer]);
 
+  const onHibernate = useCallback(async () => {
+    if (!effectiveProjectId) return;
+    setHibernating(true);
+    try {
+      await hibernateComputer({ projectId: effectiveProjectId });
+      setTerminalOpen(false);
+      toast.success("Computer hibernated. It'll wake next time you use it.");
+    } catch (err) {
+      toast.error(
+        getBillingErrorMessage(err, "Could not hibernate the computer.")
+      );
+    } finally {
+      setHibernating(false);
+      setConfirmingHibernate(false);
+    }
+  }, [effectiveProjectId, hibernateComputer]);
+
   const onReset = useCallback(async () => {
     if (!effectiveProjectId) return;
     setResetting(true);
@@ -184,8 +216,180 @@ export function ComputerView({
   const canReset = isReady || liveStatus === "hibernating";
   const canAttach = liveStatus === null || canReset;
 
-  if (!isAuthenticated) {
-    return <Empty>Sign in to use a personal computer for this project.</Empty>;
+  // --- Agent tool group (surface "computer") ----------------------------
+  //
+  // ComputerView owns the single computer's status and the lifecycle action
+  // hooks, so the tools exist exactly while /computer is mounted. Handlers call
+  // the SAME gated callbacks the buttons use, behind the SAME gates:
+  //  - unavailable here (no signed-in project, or no data plane) →
+  //    `unsupported_in_mode`, matching where the buttons are inert;
+  //  - the daily start cap is enforced server-side on reserve, so
+  //    `startComputer` reserves exactly like the Open-terminal button and
+  //    surfaces a cap rejection as `execution_failed` naming the cap.
+  // The interactive TERMINAL is deliberately not a tool — opening it mints a
+  // token and drops a human into a shell; the snapshot reports terminal-open,
+  // never the token.
+  const requireComputerProject = (): string => {
+    if (!effectiveProjectId) {
+      throw createInspectorCommandClientError(
+        "unsupported_in_mode",
+        "The Computer tools need a signed-in project — sign in and select a project first.",
+      );
+    }
+    // Config still loading: `dataPlaneUnavailable` is false while `dataPlane`
+    // is undefined, so without this a same-turn call right after navigation
+    // could reach reserve() and BILL/provision before we know there's even a
+    // usable data plane. Treat unresolved config as pending (retryable), the
+    // way the terminal controller refuses to open until dataPlane resolves.
+    if (dataPlane === undefined) {
+      throw createInspectorCommandClientError(
+        "execution_failed",
+        "The Computer configuration is still loading — try again in a moment.",
+      );
+    }
+    if (dataPlaneUnavailable) {
+      throw createInspectorCommandClientError(
+        "unsupported_in_mode",
+        "Computers aren't available in this deployment (no data plane), so the Computer tools are off.",
+      );
+    }
+    return effectiveProjectId;
+  };
+
+  useSurfaceAgentBridge({
+    surfaceId: "computer",
+    handlers: {
+      startComputer: async () => {
+        const pid = requireComputerProject();
+        try {
+          // The SAME reserve path the Open-terminal button uses (minus opening
+          // the interactive terminal): the daily start cap is enforced here by
+          // the backend.
+          const view = await reserve({ projectId: pid });
+          return {
+            status: "computer_starting",
+            computerStatus: view?.status ?? liveStatus ?? "requested",
+            note: "The computer is provisioning/waking in the background — watch ui_snapshot_app for it to reach 'ready'. This did NOT open the interactive terminal (that's a human action).",
+          };
+        } catch (err) {
+          if (isComputerStartLimitError(err)) {
+            // Daily start cap hit — report the cap, never a bypass.
+            throw createInspectorCommandClientError(
+              "execution_failed",
+              getBillingErrorMessage(err, "Daily computer start limit reached."),
+            );
+          }
+          throw createInspectorCommandClientError(
+            "execution_failed",
+            getBillingErrorMessage(err, "Could not start the computer."),
+          );
+        }
+      },
+      hibernateComputer: async () => {
+        const pid = requireComputerProject();
+        try {
+          const res = await hibernateComputer({ projectId: pid });
+          setTerminalOpen(false);
+          return {
+            status: res.hibernated ? "computer_hibernating" : "nothing_to_hibernate",
+            hibernated: res.hibernated,
+          };
+        } catch (err) {
+          throw createInspectorCommandClientError(
+            "execution_failed",
+            getBillingErrorMessage(err, "Could not hibernate the computer."),
+          );
+        }
+      },
+      resetComputer: async () => {
+        const pid = requireComputerProject();
+        // Same gate as the Reset button (disabled unless `canReset`): a reset
+        // wipes/rebuilds the box, so it's only valid once the computer is
+        // settled (ready or hibernating), never mid-provision/waking/error.
+        if (!canReset) {
+          throw createInspectorCommandClientError(
+            "execution_failed",
+            `The computer can't be reset from "${liveStatus ?? "none"}" — reset only when it's ready or hibernating.`,
+          );
+        }
+        try {
+          const res = await resetComputer({ projectId: pid });
+          return {
+            status: res.reset ? "computer_resetting" : "nothing_to_reset",
+            reset: res.reset,
+          };
+        } catch (err) {
+          throw createInspectorCommandClientError(
+            "execution_failed",
+            getBillingErrorMessage(err, "Could not reset the computer."),
+          );
+        }
+      },
+      deleteComputer: async () => {
+        const pid = requireComputerProject();
+        try {
+          const res = await deleteComputer({ projectId: pid });
+          setTerminalOpen(false);
+          return { status: "computer_deleted", deleted: res.deleted };
+        } catch (err) {
+          throw createInspectorCommandClientError(
+            "execution_failed",
+            getBillingErrorMessage(err, "Could not delete the computer."),
+          );
+        }
+      },
+    },
+    // Redacted STATE only: lifecycle status, attached environment, and an
+    // availability summary. NEVER the terminal token or any credential.
+    snapshot: () => {
+      if (!effectiveProjectId) {
+        return {
+          gated: true,
+          reason: "Sign in and select a project to use the Computer tools.",
+        };
+      }
+      if (dataPlaneUnavailable) {
+        return {
+          gated: true,
+          reason: "Computers aren't available in this deployment.",
+        };
+      }
+      return {
+        status: liveStatus === undefined ? "loading" : liveStatus ?? "none",
+        hasComputer,
+        isReady,
+        hibernatedReason: hibernatedReason ?? null,
+        billingPaused: isBillingPaused,
+        environment: attachedEnvironmentId
+          ? { id: attachedEnvironmentId, name: attachedEnvName ?? null }
+          : null,
+        imageLabel,
+        terminalOpen,
+        // Presence only — the raw provider error can carry tokens/URLs/PII, and
+        // slicing bounds length but not content. The agent gets a fixed summary;
+        // the human sees the full text on the Computer screen.
+        hasError: Boolean(status?.lastError),
+        lastError: status?.lastError
+          ? "The computer reported an error — open the Computer screen for details."
+          : null,
+      };
+    },
+  });
+
+  if (!isSignedInMember) {
+    // Guest actor (anonymous or not signed in): the personal computer (and the
+    // Claude Code harness that runs inside it) is account-scoped, so the
+    // backend omits it from a guest's runtime config. Offer the honest next
+    // step with a working sign-in button instead of a dead-end line of copy.
+    return (
+      <div className="flex h-full items-center justify-center p-6">
+        <GuestSignInMessage
+          compact
+          location="computer_view"
+          message="Sign in to use a personal computer for this project — it runs on a per-account cloud workstation, so it's off for guests."
+        />
+      </div>
+    );
   }
   if (!projectId) {
     return (
@@ -321,6 +525,42 @@ export function ComputerView({
               Open terminal
             </Button>
           ) : null}
+          {isReady ? (
+            confirmingHibernate ? (
+              <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+                Hibernate now?
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void onHibernate()}
+                  disabled={hibernating}
+                >
+                  {hibernating ? (
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                  ) : null}
+                  Hibernate
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setConfirmingHibernate(false)}
+                  disabled={hibernating}
+                >
+                  Cancel
+                </Button>
+              </span>
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setConfirmingHibernate(true)}
+                title="Put the computer to sleep now (state is kept; wakes on next use)"
+              >
+                <Moon className="mr-1.5 h-3.5 w-3.5" />
+                Hibernate now
+              </Button>
+            )
+          ) : null}
           {hasComputer ? (
             confirmingDelete ? (
               <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
@@ -361,8 +601,9 @@ export function ComputerView({
 
       <div className="flex flex-col gap-1.5">
         <p className="text-sm text-muted-foreground">
-          A personal Linux workstation for this project — it sleeps when idle
-          and wakes on use.
+          A personal Linux workstation for this project. It sleeps automatically
+          after about 30 minutes idle, or shortly after you close the terminal,
+          and wakes on use. Use “Hibernate now” to put it to sleep immediately.
         </p>
         <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
           <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />

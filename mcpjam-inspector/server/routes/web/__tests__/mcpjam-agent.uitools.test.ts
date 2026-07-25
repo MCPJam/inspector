@@ -118,11 +118,8 @@ describe("web routes — mcpjam-agent uiTools boundary", () => {
     expect(response.status).toBe(200);
     const args = streamWebChatTurnMock.mock.calls[0][0];
     expect(args.prepare.appTools).toBeUndefined();
-    // Both first-party servers pass the preflight under the mock; the
+    // The docs server passes the preflight under the mock; the
     // client-supplied ids are still ignored.
-    expect(args.prepare.selectedServerIds).toEqual([
-      "mcpjam-docs",
-      "mcpjam-platform",
-    ]);
+    expect(args.prepare.selectedServerIds).toEqual(["mcpjam-docs"]);
   });
 });

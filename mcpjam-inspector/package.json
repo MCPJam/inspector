@@ -1,7 +1,7 @@
 {
   "name": "@mcpjam/inspector",
   "productName": "MCPJam Inspector",
-  "version": "2.25.0",
+  "version": "2.30.0",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
@@ -131,9 +131,9 @@
     "@hookform/resolvers": "^3.10.0",
     "@lezer/highlight": "^1.2.3",
     "@mcp-ui/client": "^5.9.0",
-    "@mcpjam/sdk": "^1.30.0",
-    "@modelcontextprotocol/client": "2.0.0-alpha.2",
-    "@modelcontextprotocol/ext-apps": "^1.7.2",
+    "@mcpjam/sdk": "^2.0.1",
+    "@modelcontextprotocol/client": "2.0.0-beta.4",
+    "@modelcontextprotocol/ext-apps": "^1.7.4",
     "@openrouter/ai-sdk-provider": "^2.0.2",
     "@sentry/electron": "^5.10.0",
     "@sentry/node": "^8.47.0",
@@ -142,6 +142,7 @@
     "@tanstack/react-virtual": "^3.13.12",
     "@workos-inc/authkit-react": "^0.12.0",
     "@workos-inc/node": "^10.2.0",
+    "@xmldom/xmldom": "^0.8.13",
     "@xterm/addon-clipboard": "^0.2.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-web-links": "^0.12.0",
@@ -178,6 +179,7 @@
     "posthog-js": "^1.310.0",
     "posthog-node": "^5.9.2",
     "radix-ui": "^1.4.2",
+    "re2js": "^2.8.6",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-force-graph-2d": "^1.29.1",
@@ -196,6 +198,8 @@
     "url-template": "^3.1.1",
     "use-stick-to-bottom": "^1.1.1",
     "ws": "^8.18.0",
+    "xml-crypto": "^6.1.2",
+    "xpath": "^0.0.34",
     "zod": "^4.1.12",
     "zustand": "^5.0.6"
   },

@@ -17,6 +17,10 @@ mcpjam oauth login --url https://your-server.com/mcp \
 
 On success, the command prints credentials such as an access token, refresh token, client ID, and sometimes client secret. You can pass access tokens to other commands via `--oauth-access-token` or `--access-token`.
 
+<Note>
+  `oauth login` validates the server's Protected Resource Metadata (PRM) at the discovery step. If the PRM document is missing its required `resource` field, or if the advertised resource is on a different origin than the server URL, the login fails before any authorization request is made. Fix the PRM document on your server to resolve this. The OAuth Debugger accepts these values with a warning so you can still observe the flow.
+</Note>
+
 ## Commands
 
 ### `oauth login`
@@ -29,7 +33,7 @@ mcpjam oauth login --url https://your-server.com/mcp \
   --protocol-version 2025-11-25 \
   --registration dcr
 
-# CIMD + interactive (2025-11-25 only)
+# CIMD + interactive (2025-11-25 and 2026-07-28)
 mcpjam oauth login --url https://your-server.com/mcp \
   --protocol-version 2025-11-25 \
   --registration cimd
@@ -102,7 +106,7 @@ Same as `oauth proxy` but routes through the debug proxy path. Use when testing 
 | Flag | Required | Default | Description |
 |------|----------|---------|-------------|
 | `--url <url>` | Yes | | MCP server URL |
-| `--protocol-version <v>` | Yes | | `2025-03-26`, `2025-06-18`, or `2025-11-25` |
+| `--protocol-version <v>` | Yes | | `2025-03-26`, `2025-06-18`, `2025-11-25`, or `2026-07-28` |
 | `--registration <s>` | Yes | | `cimd`, `dcr`, or `preregistered` |
 | `--auth-mode <m>` | No | `interactive` | `headless`, `interactive`, or `client_credentials` |
 | `--client-id <id>` | No | | OAuth client ID (required for `preregistered`) |
