@@ -113,6 +113,7 @@ If your server already speaks `2026-07-28`, you mostly won't notice. A few thing
 - **Per-request metadata.** Every request the inspector sends carries `MCP-Protocol-Version: 2026-07-28` as an HTTP header and the same value inside `params._meta["io.modelcontextprotocol/protocolVersion"]`. `clientInfo` and `clientCapabilities` ride along on every request too.
 - **No session IDs.** The inspector never sends an `mcp-session-id`. If your server returns one, the inspector discards it and surfaces a warning — your server isn't conforming to the stateless RC.
 - **Cancellation is closing the stream.** For SSE responses, the inspector closes the response stream to cancel; your server should treat that as a cancel signal.
+- **`logging/setLevel` is deprecated.** The `2026-07-28` revision deprecates the `logging/setLevel` RPC (SEP-2577). The inspector's Logs panel reflects this: modern servers show an opt-in toggle instead of a level dropdown, and the server info panel displays a deprecation note next to the negotiated protocol version. Log levels are now sent per-request via `_meta` rather than as a one-time RPC.
 
 ### What the inspector tells you
 
