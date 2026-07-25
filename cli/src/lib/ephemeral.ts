@@ -17,6 +17,16 @@ export interface EphemeralManagerOptions {
    * host's identity. Resolve via `resolveHostFromOptions` in `host-resolve`.
    */
   host?: HostConnectionProfile;
+  /**
+   * Runs against the manager BEFORE the initial connect. Used by the
+   * interactive verbs to register an MRTR input collector via
+   * `setMrtrInputCollector` so `elicitation` is advertised on the connect
+   * envelope (a modern server only embeds elicitation when it is).
+   */
+  beforeConnect?: (
+    manager: import("@mcpjam/sdk").MCPClientManager,
+    serverId: string,
+  ) => void | Promise<void>;
 }
 
 export async function withEphemeralManager<T>(
@@ -36,5 +46,6 @@ export async function withEphemeralManager<T>(
     timeout: options?.timeout ?? 30_000,
     rpcLogger: options?.rpcLogger,
     retryPolicy: options?.retryPolicy,
+    beforeConnect: options?.beforeConnect,
   });
 }

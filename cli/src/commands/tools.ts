@@ -7,6 +7,10 @@ import {
 import { writeCommandDebugArtifact } from "../lib/debug-artifact.js";
 import { withEphemeralManager } from "../lib/ephemeral.js";
 import {
+  createStdinMrtrCollector,
+  resolveNonInteractive,
+} from "../lib/mrtr-input.js";
+import {
   buildInspectorServerName,
   findInspectorRenderError,
   parseRenderDevice,
@@ -53,6 +57,8 @@ import {
 interface ToolsCallOptions extends SharedServerTargetOptions {
   toolName?: string;
   name?: string;
+  interactive?: boolean;
+  yes?: boolean;
   toolArgs?: string;
   toolArgsStdin?: boolean;
   params?: string;
@@ -72,6 +78,39 @@ interface ToolsCallOptions extends SharedServerTargetOptions {
   theme?: string;
   locale?: string;
   timeZone?: string;
+}
+
+/**
+ * Builds the `beforeConnect` hook that registers a terminal MRTR input
+ * collector when `--interactive` is set. Registration happens **before** the
+ * manager connects so `elicitation` is advertised on the connect envelope — a
+ * 2026-07-28 server only embeds `input_required` elicitations for a client that
+ * declared the capability. Without `--interactive`, no collector is registered
+ * and the verb behaves exactly as before (legacy fast path unchanged).
+ */
+export function buildMrtrBeforeConnect(
+  options: { interactive?: boolean; yes?: boolean },
+  globalOptions: Pick<GlobalOptions, "quiet">,
+):
+  | ((
+      manager: import("@mcpjam/sdk").MCPClientManager,
+      serverId: string,
+    ) => void)
+  | undefined {
+  if (!options.interactive) return undefined;
+  const nonInteractive = resolveNonInteractive({
+    yes: options.yes,
+    stdinIsTTY: Boolean(process.stdin.isTTY),
+  });
+  const collector = createStdinMrtrCollector({
+    nonInteractive,
+    write: globalOptions.quiet
+      ? () => {}
+      : (text: string) => void process.stderr.write(text),
+  });
+  return (manager, serverId) => {
+    manager.setMrtrInputCollector(serverId, collector);
+  };
 }
 
 export function registerToolsCommands(program: Command): void {
@@ -161,6 +200,14 @@ export function registerToolsCommands(program: Command): void {
       .description("Call an MCP tool")
       .option("--tool-name <tool>", "Tool name")
       .option("--name <tool>", "Alias for --tool-name")
+      .option(
+        "--interactive",
+        "Drive the modern input_required (multi-round-trip) loop: render embedded elicitations to the terminal and collect responses from stdin",
+      )
+      .option(
+        "--yes",
+        "With --interactive, run non-interactively: decline every embedded input request instead of prompting",
+      )
       .option(
         "--tool-args <json>",
         "Tool parameter object as JSON, @path, or - for stdin",
@@ -313,6 +360,7 @@ export function registerToolsCommands(program: Command): void {
           timeout: globalOptions.timeout,
           rpcLogger: primaryCollector?.rpcLogger,
           host: host?.connection,
+          beforeConnect: buildMrtrBeforeConnect(options, globalOptions),
         },
       );
     } catch (error) {

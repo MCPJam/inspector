@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { listPrompts, getPrompt } from "@mcpjam/sdk";
 import { withEphemeralManager } from "../lib/ephemeral.js";
+import { buildMrtrBeforeConnect } from "./tools.js";
 import { createCliRpcLogCollector } from "../lib/rpc-logs.js";
 import { withRpcLogsIfRequested } from "../lib/rpc-helpers.js";
 import {
@@ -73,6 +74,14 @@ export function registerPromptCommands(program: Command): void {
         .option(
           "--prompt-args <json>",
           "Prompt arguments as JSON, @path, or - for stdin",
+        )
+        .option(
+          "--interactive",
+          "Drive the modern input_required (multi-round-trip) loop: render embedded elicitations to the terminal and collect responses from stdin",
+        )
+        .option(
+          "--yes",
+          "With --interactive, run non-interactively: decline every embedded input request instead of prompting",
         ),
     ),
     ),
@@ -112,6 +121,7 @@ export function registerPromptCommands(program: Command): void {
         rpcLogger: collector?.rpcLogger,
         retryPolicy,
         host: host?.connection,
+        beforeConnect: buildMrtrBeforeConnect(options, globalOptions),
       },
     );
 

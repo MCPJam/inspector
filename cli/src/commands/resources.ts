@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { listResources, readResource } from "@mcpjam/sdk";
 import { withEphemeralManager } from "../lib/ephemeral.js";
+import { buildMrtrBeforeConnect } from "./tools.js";
 import { createCliRpcLogCollector } from "../lib/rpc-logs.js";
 import { withRpcLogsIfRequested } from "../lib/rpc-helpers.js";
 import {
@@ -68,7 +69,15 @@ export function registerResourcesCommands(program: Command): void {
         .command("read")
         .description("Read a resource from an MCP server")
         .option("--resource-uri <uri>", "Resource URI")
-        .option("--uri <uri>", "Alias for --resource-uri"),
+        .option("--uri <uri>", "Alias for --resource-uri")
+        .option(
+          "--interactive",
+          "Drive the modern input_required (multi-round-trip) loop: render embedded elicitations to the terminal and collect responses from stdin",
+        )
+        .option(
+          "--yes",
+          "With --interactive, run non-interactively: decline every embedded input request instead of prompting",
+        ),
     ),
     ),
   ).action(async (options, command) => {
@@ -102,6 +111,7 @@ export function registerResourcesCommands(program: Command): void {
         rpcLogger: collector?.rpcLogger,
         retryPolicy,
         host: host?.connection,
+        beforeConnect: buildMrtrBeforeConnect(options, globalOptions),
       },
     );
 
