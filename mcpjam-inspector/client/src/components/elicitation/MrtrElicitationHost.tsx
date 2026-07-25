@@ -74,8 +74,14 @@ export function MrtrElicitationHost() {
       setIndex(index + 1);
       return;
     }
-    // Last key answered — submit the whole round together.
-    await submitWhenComplete(next);
+    // Last key answered — submit the whole round together. A rejected submit
+    // (server still awaiting this round) KEEPS the round mounted so the user can
+    // retry from the last key; swallow here to avoid an unhandled rejection.
+    try {
+      await submitWhenComplete(next);
+    } catch (err) {
+      console.error("[mrtr] Failed to submit round; dialog retained", err);
+    }
   };
 
   const counter = total > 1 ? ` (${index + 1} of ${total})` : "";

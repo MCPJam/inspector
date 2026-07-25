@@ -239,10 +239,9 @@ export function registerLocalMrtrCollector(
     manager.setMrtrInputCollector(serverId, makeCollector(serverId));
     ids.add(serverId);
   } catch (err) {
-    logger.error("[mrtr] Failed to register MRTR collector", {
-      serverId,
-      error: err instanceof Error ? err.message : String(err),
-    });
+    // Pass the original error as the 2nd (error) arg so Sentry captures a stack
+    // and Axiom serializes the real message; serverId is the context (3rd) arg.
+    logger.error("[mrtr] Failed to register MRTR collector", err, { serverId });
   }
 }
 
@@ -300,6 +299,25 @@ export function submitMrtrResponses(
         ok: false,
         status: 400,
         error: `Unexpected response key "${key}" not requested this round`,
+      };
+    }
+  }
+
+  // Validate each answer's action BEFORE resolving the collector: an unknown
+  // action would otherwise be forwarded verbatim to the MCP server as an invalid
+  // `inputResponses` entry (and an `accept` with no content is malformed too).
+  for (const key of answeredKeys) {
+    const answer = responsesByKey[key];
+    if (
+      !answer ||
+      (answer.action !== "accept" &&
+        answer.action !== "decline" &&
+        answer.action !== "cancel")
+    ) {
+      return {
+        ok: false,
+        status: 400,
+        error: `Invalid action for "${key}" (expected accept | decline | cancel)`,
       };
     }
   }
