@@ -140,6 +140,14 @@ export class OfficialSdkClientAdapter implements ManagedMcpClient {
       ManagedMcpClient["getPrompt"]
     >;
   }
+  complete(
+    params: Parameters<Client["complete"]>[0],
+    options?: Parameters<Client["complete"]>[1],
+  ) {
+    return this.inner.complete(params, options) as ReturnType<
+      ManagedMcpClient["complete"]
+    >;
+  }
   ping(options?: Parameters<Client["ping"]>[0]) {
     return this.inner.ping(options) as ReturnType<ManagedMcpClient["ping"]>;
   }

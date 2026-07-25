@@ -32,6 +32,12 @@ export const ErrorCode = {
   // drops `code`; clients branch on the top-level `reason:
   // "xaa_connection_not_configured"`, not this code.
   XAA_CONNECTION_NOT_CONFIGURED: "XAA_CONNECTION_NOT_CONFIGURED",
+  // A project-environment eval launch resolved one environment revision but
+  // the environment changed before `startTestSuiteRun` inserted the run
+  // (`expectedEnvironmentRevision` mismatch, backend ENV_REVISION_CONFLICT).
+  // 409; interactive callers surface "Environment changed — retry the run",
+  // the scheduled worker retries through its trigger/idempotency path.
+  ENVIRONMENT_REVISION_CONFLICT: "ENVIRONMENT_REVISION_CONFLICT",
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

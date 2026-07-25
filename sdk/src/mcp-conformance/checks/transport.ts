@@ -3,12 +3,16 @@ import type {
   MCPCheckResult,
   RawHttpCheckContext,
 } from "../types.js";
+import { CHECK_ERAS } from "../types.js";
 import {
   errorMessage,
+  eraSkipMessage,
   failedResult,
   skippedResult,
   passedResult,
 } from "./helpers.js";
+
+type TransportCheckId = keyof typeof TRANSPORT_CHECK_METADATA;
 
 const TRANSPORT_CHECK_METADATA = {
   "server-sse-polling-session": {
@@ -257,7 +261,7 @@ async function initializeSession(
         id: 1,
         method: "initialize",
         params: {
-          protocolVersion: "2025-11-25",
+          protocolVersion: ctx.config.protocolVersion ?? "2025-11-25",
           capabilities: {},
           clientInfo: {
             name: "mcpjam-sdk-conformance",
@@ -304,11 +308,35 @@ export async function runTransportChecks(
   selectedCheckIds: Set<MCPCheckId>,
 ): Promise<MCPCheckResult[]> {
   const results: MCPCheckResult[] = [];
-  const requestedTransportChecks = [...selectedCheckIds].filter((checkId) =>
-    checkId.startsWith("server-sse") || checkId === "server-accepts-multiple-post-streams",
+  const requestedTransportChecks = [...selectedCheckIds].filter(
+    (checkId): checkId is TransportCheckId =>
+      checkId.startsWith("server-sse") ||
+      checkId === "server-accepts-multiple-post-streams",
   );
 
   if (requestedTransportChecks.length === 0) {
+    return results;
+  }
+
+  // Era gate: every transport check asserts 2025-era stateful-session / SSE
+  // mechanics that do not exist in the sessionless 2026 era, so they are
+  // legacy-only. On a modern run they are skipped up front — the skips fire
+  // BEFORE `initializeSession` is ever called, so no handshake is attempted.
+  const applicableTransportChecks: TransportCheckId[] = [];
+  for (const id of requestedTransportChecks) {
+    if (CHECK_ERAS[id].includes(ctx.config.era)) {
+      applicableTransportChecks.push(id);
+    } else {
+      results.push(
+        skippedResult(
+          TRANSPORT_CHECK_METADATA[id],
+          eraSkipMessage(ctx.config.era, ctx.config.protocolVersion),
+        ),
+      );
+    }
+  }
+
+  if (applicableTransportChecks.length === 0) {
     return results;
   }
 
@@ -426,7 +454,8 @@ export async function runTransportChecks(
               headers: withSessionHeaders({
                 "Content-Type": "application/json",
                 Accept: "text/event-stream, application/json",
-                "mcp-protocol-version": "2025-11-25",
+                "mcp-protocol-version":
+                  ctx.config.protocolVersion ?? "2025-11-25",
                 ...buildBaseHeaders(ctx),
               }, activeSessionId),
               body: JSON.stringify({

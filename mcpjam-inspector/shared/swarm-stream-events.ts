@@ -24,6 +24,13 @@ export type SwarmStreamToolCall = {
 export type SwarmStreamEnvelope = {
   runId: string;
   hostId: string;
+  /**
+   * Opaque execution-target id (Project Environments). Present on events from
+   * env-aware runners; absent on legacy/historical streams. ADDITIVE: `hostId`
+   * is kept for compatibility, but third-party SSE readers keying on hostId
+   * alone will merge two same-host targets — key on `targetId ?? hostId`.
+   */
+  targetId?: string;
   chatSessionId: string;
   sessionIndex: number;
 };

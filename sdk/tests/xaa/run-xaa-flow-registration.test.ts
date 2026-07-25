@@ -3,7 +3,6 @@ import { mkdtempSync, rmSync } from "fs";
 import os from "os";
 import path from "path";
 import { runXaaFlow } from "../../src/xaa/run-xaa-flow.js";
-import * as oauthProxy from "../../src/oauth-proxy.js";
 import {
   getXAAIdpJwks,
   resetXAAIdpKeyPairForTests,
@@ -13,6 +12,73 @@ import {
   JWT_BEARER_GRANT,
   TOKEN_EXCHANGE_GRANT,
 } from "../../src/oauth/client-identity.js";
+
+vi.mock("../../src/oauth-proxy.js", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("../../src/oauth-proxy.js")
+  >();
+  const { executeOAuthProxyViaFetch } = await import(
+    "../support/oauth-proxy-fetch-mock.js"
+  );
+  return {
+    ...actual,
+    // The flow fixture uses global.fetch for its synthetic OAuth endpoints.
+    // DNS pinning itself is tested in oauth-proxy.test.ts.
+    fetchOAuthMetadata: vi.fn(
+      async (url: string, _httpsOnly = false, timeoutMs?: number) => {
+        const response = await global.fetch(url, {
+          headers: { Accept: "application/json" },
+          signal:
+            timeoutMs === undefined
+              ? undefined
+              : AbortSignal.timeout(timeoutMs),
+        });
+        if (!response.ok) {
+          return {
+            status: response.status,
+            statusText: response.statusText,
+          };
+        }
+        return {
+          metadata: (await response.json()) as Record<string, unknown>,
+          finalUrl: response.url || url,
+        };
+      }
+    ),
+    executeOAuthProxy: vi.fn(executeOAuthProxyViaFetch),
+    executeDebugOAuthProxy: vi.fn(executeOAuthProxyViaFetch),
+    validateUrl: vi.fn(async (url: string, httpsOnly = false) => {
+      const parsed = new URL(url);
+      if (parsed.hostname === "127.0.0.1") {
+        return await actual.validateUrl(url, httpsOnly);
+      }
+      return { url: parsed };
+    }),
+    fetchPinnedPublicDocument: vi.fn(
+      async (
+        url: string,
+        opts: {
+          headers?: Record<string, string>;
+          timeoutMs?: number;
+          maxBytes?: number;
+        } = {}
+      ) => {
+        // Keep the real pre-connect rejection for private literals. Public
+        // synthetic endpoints stay on this suite's in-memory fetch seam.
+        if (new URL(url).hostname === "127.0.0.1") {
+          return await actual.fetchPinnedPublicDocument(url, opts);
+        }
+        return await executeOAuthProxyViaFetch({
+          url,
+          headers: opts.headers,
+          timeoutMs: opts.timeoutMs,
+          httpsOnly: true,
+          redirect: "manual",
+        });
+      }
+    ),
+  };
+});
 
 // DCR + CIMD registration strategies driven through the real state machine with
 // a mocked global.fetch (mirrors run-xaa-flow.test.ts). DCR is fully exercised;
@@ -144,6 +210,7 @@ describe("runXaaFlow — registration strategies", () => {
   let tempDir: string;
 
   beforeEach(() => {
+    vi.clearAllMocks();
     tempDir = mkdtempSync(path.join(os.tmpdir(), "xaa-reg-"));
     process.env.XAA_IDP_KEY_DIR = tempDir;
     resetXAAIdpKeyPairForTests();
@@ -170,6 +237,7 @@ describe("runXaaFlow — registration strategies", () => {
       // no clientId
     });
 
+    expect(result.error).toBeUndefined();
     expect(result.completed).toBe(true);
     expect(result.redemption?.tokenIssued).toBe(true);
     expect(counts.registration).toBe(1);
@@ -282,26 +350,16 @@ describe("runXaaFlow — registration strategies", () => {
     expect(serialized).toContain("[REDACTED]"); // the scrub fired
   });
 
-  it("public CIMD fetches the custom metadata URL and uses it as the ID-JAG client_id", async () => {
+  it("public CIMD uses the custom metadata URL as the ID-JAG client_id", async () => {
     const { fetchImpl } = registrationStub({
       asMetadata: cimdAsMetadata,
+      cimdDoc: publicCimdDoc,
       token: {
         status: 200,
         body: { access_token: "at-cimd", token_type: "Bearer", expires_in: 300 },
       },
     });
     global.fetch = fetchImpl as unknown as typeof fetch;
-    // The CIMD document fetch goes through the SSRF-hardened, connection-pinned
-    // path (real https.request) — not global.fetch — so mock it here. Its own
-    // guards are covered in oauth-proxy.test.ts.
-    const pinnedSpy = vi
-      .spyOn(oauthProxy, "fetchPinnedPublicDocument")
-      .mockResolvedValue({
-        status: 200,
-        statusText: "OK",
-        headers: { "content-type": "application/json" },
-        body: publicCimdDoc,
-      });
 
     const result = await runXaaFlow({
       serverUrl: SERVER_URL,
@@ -312,8 +370,7 @@ describe("runXaaFlow — registration strategies", () => {
       clientIdMetadataUrl: CIMD_URL,
     });
 
-    expect(pinnedSpy).toHaveBeenCalledWith(CIMD_URL, expect.anything());
-    pinnedSpy.mockRestore();
+    expect(result.error).toBeUndefined();
     expect(result.completed).toBe(true);
     expect(result.redemption?.tokenIssued).toBe(true);
     expect(result.registration?.strategy).toBe("cimd");

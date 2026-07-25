@@ -21,6 +21,22 @@ import {
   XAA_DEBUG_IDP_CLIENT_ID,
 } from "../../src/oauth/client-identity.js";
 
+vi.mock("../../src/oauth-proxy.js", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("../../src/oauth-proxy.js")
+  >();
+  const { executeOAuthProxyViaFetch } = await import(
+    "../support/oauth-proxy-fetch-mock.js"
+  );
+  return {
+    ...actual,
+    // These executor tests model upstream token endpoints with global.fetch.
+    // Socket pinning and redirect validation have dedicated proxy tests.
+    executeOAuthProxy: vi.fn(executeOAuthProxyViaFetch),
+    executeDebugOAuthProxy: vi.fn(executeOAuthProxyViaFetch),
+  };
+});
+
 const ISSUER_BASE = "https://issuer.example.com/api/mcp";
 const AS_ISSUER = "https://auth.example.com";
 const TOKEN_ENDPOINT = "https://auth.example.com/oauth/token";

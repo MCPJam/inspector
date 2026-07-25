@@ -213,7 +213,12 @@ export function createInspectorOAuthStateMachine(
     hasClientSecret,
     ...machineConfig
   } = config;
-  const explicitClientSecret = preregisteredClientSecret?.trim() || undefined;
+  // Preserve the exact typed secret — trimming would silently change one
+  // that legitimately has leading/trailing whitespace before it's used to
+  // authenticate the live token exchange below.
+  const explicitClientSecret = preregisteredClientSecret?.trim()
+    ? preregisteredClientSecret
+    : undefined;
   const resolveHostedClientSecret = createHostedClientSecretResolver(config);
 
   return createOAuthStateMachine({

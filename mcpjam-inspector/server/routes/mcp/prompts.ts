@@ -24,6 +24,10 @@ prompts.post("/list", async (c) => {
     if (!body.serverId) {
       return c.json({ success: false, error: "serverId is required" }, 400);
     }
+    // Cursor is optional — omitted, this returns the full aggregate (the
+    // official beta.4 client auto-pages no-cursor list calls). Passing a
+    // cursor returns exactly one raw page, matching the tools/resources
+    // routes' cursor parity.
     const { result, events } = await withCacheEventCapture(() =>
       listPrompts(c.mcpClientManager, {
         serverId: body.serverId!,

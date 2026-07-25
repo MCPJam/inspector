@@ -397,6 +397,15 @@ chatV2.post("/", async (c) => {
       },
     );
 
+    // COMP-16: the host-configured computer working directory — the SAME
+    // `computer.workdir` the bash tool runs in — threaded into the harness path
+    // so its Shell roots under the same directory. Server-resolved config only.
+    const rawComputerWorkdir = (
+      hostRuntimeConfig as { computer?: { workdir?: unknown } } | undefined
+    )?.computer?.workdir;
+    const harnessComputerWorkdir =
+      typeof rawComputerWorkdir === "string" ? rawComputerWorkdir : undefined;
+
     // Cloud skills are a Convex-backed PROJECT resource (no computer needed), so
     // the emulated chat path wires the listSkills/loadSkill tools for any
     // signed-in member with a project. Gate only on:
@@ -569,6 +578,11 @@ chatV2.post("/", async (c) => {
           appTools: validatedAppTools,
           widgetModelContext: validatedWidgetModelContext,
           ...(builtInTools ? { builtInTools } : {}),
+          // COMP-16: root the harness Shell at the host-configured working
+          // directory — the same `computer.workdir` the bash tool runs in.
+          ...(harnessComputerWorkdir
+            ? { computerWorkdir: harnessComputerWorkdir }
+            : {}),
           ...(cloudSkillsEnabled
             ? {
                 cloudSkills: {

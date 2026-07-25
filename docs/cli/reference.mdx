@@ -507,9 +507,9 @@ Provide either `--template` or `--file`/`--json`, not both.
 
 ---
 
-## `env` commands
+## `images` commands
 
-Manage custom computer environments (Dockerfile images) in your hosted MCPJam projects. All `env` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam login`.
+Manage custom Computer sandbox images (Dockerfiles) in your hosted MCPJam projects. All `images` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam login`.
 
 ### Shared platform flags
 
@@ -518,64 +518,64 @@ Manage custom computer environments (Dockerfile images) in your hosted MCPJam pr
 | `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
 | `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
 
-### `env list`
+### `images list`
 
 | Flag | Description |
 |------|-------------|
 | `--project <id-or-name>` | Project name or ID (defaults to the most recently updated project) |
 
-### `env get`
+### `images get`
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--environment <id-or-name>` | Yes | Environment name or ID |
+| `--image <id-or-name>` | Yes | Sandbox image name or ID |
 | `--project <id-or-name>` | No | Project name or ID |
 
-### `env create`
+### `images create`
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--name <name>` | Yes | Display name for the new environment |
+| `--name <name>` | Yes | Display name for the new sandbox image |
 | `--file <path>` | Yes | Dockerfile path, or `-` to read from stdin |
 | `--project <id-or-name>` | No | Project name or ID |
 
-### `env edit`
+### `images edit`
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--environment <id-or-name>` | Yes | Environment name or ID |
+| `--image <id-or-name>` | Yes | Sandbox image name or ID |
 | `--project <id-or-name>` | No | Project name or ID |
 | `--name <name>` | No | New display name |
 | `--file <path>` | No | Replacement Dockerfile path (or `-` for stdin) |
 
-### `env build`
+### `images build`
 
-Trigger an image build for the environment (async). Poll `env logs` to check build status.
-
-| Flag | Required | Description |
-|------|----------|-------------|
-| `--environment <id-or-name>` | Yes | Environment name or ID |
-| `--project <id-or-name>` | No | Project name or ID |
-
-### `env logs`
-
-Show an environment's builds (newest first) with their log preview.
+Trigger an image build for the sandbox image (async). Poll `images logs` to check build status.
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--environment <id-or-name>` | Yes | Environment name or ID |
+| `--image <id-or-name>` | Yes | Sandbox image name or ID |
 | `--project <id-or-name>` | No | Project name or ID |
 
-### `env use`
+### `images logs`
 
-Boot your computer from this environment. This rebuilds the computer — installed files are wiped.
+Show a sandbox image's builds (newest first) with their log preview.
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--environment <id-or-name>` | Yes | Environment name or ID |
+| `--image <id-or-name>` | Yes | Sandbox image name or ID |
 | `--project <id-or-name>` | No | Project name or ID |
 
-### `env reset`
+### `images use`
+
+Boot your computer from this sandbox image. This rebuilds the computer — installed files are wiped.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--image <id-or-name>` | Yes | Sandbox image name or ID |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `images reset`
 
 Reset your computer to its current image, wiping mutable state.
 
@@ -583,22 +583,22 @@ Reset your computer to its current image, wiping mutable state.
 |------|----------|-------------|
 | `--project <id-or-name>` | No | Project name or ID |
 
-### `env promote`
+### `images promote`
 
-Share a personal-draft environment with the whole project. Requires project admin permissions.
+Share a personal-draft sandbox image with the whole project. Requires project admin permissions.
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--environment <id-or-name>` | Yes | Environment name or ID |
+| `--image <id-or-name>` | Yes | Sandbox image name or ID |
 | `--project <id-or-name>` | No | Project name or ID |
 
-### `env delete`
+### `images delete`
 
-Permanently delete an environment from a project.
+Permanently delete a sandbox image from a project.
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--environment <id-or-name>` | Yes | Environment name or ID |
+| `--image <id-or-name>` | Yes | Sandbox image name or ID |
 | `--project <id-or-name>` | No | Project name or ID |
 
 ---

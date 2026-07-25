@@ -14,6 +14,7 @@ resourceTemplates.post("/list", async (c) => {
   try {
     const body = (await c.req.json()) as {
       serverId?: string;
+      cursor?: string;
       refresh?: boolean;
     };
     serverId = body.serverId;
@@ -23,14 +24,23 @@ resourceTemplates.post("/list", async (c) => {
       return c.json({ success: false, error: "serverId is required" }, 400);
     }
     const mcpClientManager = c.mcpClientManager;
+    // Cursor is optional — omitted, this returns the full aggregate (the
+    // official beta.4 client auto-pages no-cursor list calls). Passing a
+    // cursor returns exactly one raw page, matching the tools/resources
+    // routes' cursor parity.
     const { result, events } = await withCacheEventCapture(() =>
-      mcpClientManager.listResourceTemplates(serverId!, undefined, {
-        cacheMode: refresh === true ? "refresh" : undefined,
-      }),
+      mcpClientManager.listResourceTemplates(
+        serverId!,
+        body.cursor ? { cursor: body.cursor } : undefined,
+        // Mirrors the SDK's `cacheOptions()` convention: omit the options
+        // object entirely unless a refresh was actually requested.
+        refresh === true ? { cacheMode: "refresh" as const } : undefined,
+      ),
     );
     const servedFromCache = toServedFromCache(events);
     return c.json({
       resourceTemplates: result.resourceTemplates,
+      ...(result.nextCursor ? { nextCursor: result.nextCursor } : {}),
       ...(servedFromCache ? { servedFromCache } : {}),
     });
   } catch (error) {

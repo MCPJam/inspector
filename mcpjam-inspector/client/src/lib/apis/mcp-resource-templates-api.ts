@@ -12,14 +12,48 @@ export type ResourceTemplateListWithProvenance = MCPResourceTemplate[] & {
 
 export async function listResourceTemplates(
   serverId: string,
-  opts?: { refresh?: boolean },
+  opts?: { cursor?: string; refresh?: boolean },
 ): Promise<ResourceTemplateListWithProvenance> {
+  const { resourceTemplates, servedFromCache } =
+    await listResourceTemplatesPage(serverId, opts);
+  const withProvenance =
+    resourceTemplates as ResourceTemplateListWithProvenance;
+  if (servedFromCache) {
+    // Non-enumerable so object-spread / for-in over the bare array stay
+    // unchanged; provenance is still accessible as `.servedFromCache`.
+    Object.defineProperty(withProvenance, "servedFromCache", {
+      value: servedFromCache,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return withProvenance;
+}
+
+// Cursor-aware variant of `listResourceTemplates`, additive alongside it:
+// omitting `cursor` still returns the full aggregate (unchanged default
+// behavior); passing one returns exactly one raw page plus `nextCursor` when
+// the server has more. This is the plumbing a future paginated Resource
+// Templates UI would call.
+export async function listResourceTemplatesPage(
+  serverId: string,
+  opts?: { cursor?: string; refresh?: boolean },
+): Promise<{
+  resourceTemplates: MCPResourceTemplate[];
+  nextCursor?: string;
+  servedFromCache?: ServedFromCache;
+}> {
   ensureLocalMode("Resource templates are not supported in hosted mode");
 
   const res = await authFetch("/api/mcp/resource-templates/list", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ serverId, refresh: opts?.refresh }),
+    body: JSON.stringify({
+      serverId,
+      ...(opts?.cursor ? { cursor: opts.cursor } : {}),
+      ...(opts?.refresh === true ? { refresh: true } : {}),
+    }),
   });
 
   let body: any = null;
@@ -33,20 +67,15 @@ export async function listResourceTemplates(
     throw new Error(message);
   }
 
-  const templates = (
-    Array.isArray(body?.resourceTemplates)
+  return {
+    resourceTemplates: Array.isArray(body?.resourceTemplates)
       ? (body.resourceTemplates as MCPResourceTemplate[])
-      : []
-  ) as ResourceTemplateListWithProvenance;
-  if (body?.servedFromCache) {
-    // Non-enumerable so object-spread / for-in over the bare array stay
-    // unchanged; provenance is still accessible as `.servedFromCache`.
-    Object.defineProperty(templates, "servedFromCache", {
-      value: body.servedFromCache,
-      enumerable: false,
-      configurable: true,
-      writable: true,
-    });
-  }
-  return templates;
+      : [],
+    ...(typeof body?.nextCursor === "string"
+      ? { nextCursor: body.nextCursor }
+      : {}),
+    ...(body?.servedFromCache
+      ? { servedFromCache: body.servedFromCache as ServedFromCache }
+      : {}),
+  };
 }

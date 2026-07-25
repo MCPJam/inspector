@@ -32,22 +32,63 @@ export type PromptListWithProvenance = MCPPrompt[] & {
 
 export async function listPrompts(
   serverId: string,
-  opts?: { forceHosted?: boolean; refresh?: boolean },
+  opts?: { forceHosted?: boolean; cursor?: string; refresh?: boolean },
 ): Promise<PromptListWithProvenance> {
+  const { prompts, servedFromCache } = await listPromptsPage(serverId, opts);
+  const withProvenance = prompts as PromptListWithProvenance;
+  if (servedFromCache) {
+    // Non-enumerable so object-spread / for-in / Object.entries over the
+    // bare array stay unchanged (matches the documented contract above);
+    // provenance is still directly accessible as `.servedFromCache`.
+    Object.defineProperty(withProvenance, "servedFromCache", {
+      value: servedFromCache,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return withProvenance;
+}
+
+// Cursor-aware variant of `listPrompts`, additive alongside it: omitting
+// `cursor` still returns the full aggregate (unchanged default behavior);
+// passing one returns exactly one raw page plus `nextCursor` when the server
+// has more. This is the plumbing a future paginated Prompts UI would call.
+export async function listPromptsPage(
+  serverId: string,
+  opts?: { forceHosted?: boolean; cursor?: string; refresh?: boolean },
+): Promise<{
+  prompts: MCPPrompt[];
+  nextCursor?: string;
+  servedFromCache?: ServedFromCache;
+}> {
   return runByMode({
     forceHosted: opts?.forceHosted,
     hosted: async () => {
-      const body = await listHostedPrompts({ serverNameOrId: serverId });
-      // Hosted direct-ops always bypass the response cache server-side.
-      return (
-        Array.isArray(body?.prompts) ? (body.prompts as MCPPrompt[]) : []
-      ) as PromptListWithProvenance;
+      const body = await listHostedPrompts({
+        serverNameOrId: serverId,
+        cursor: opts?.cursor,
+      });
+      // Hosted direct-ops always bypass the response cache server-side, so no
+      // provenance is ever attached here.
+      return {
+        prompts: Array.isArray(body?.prompts)
+          ? (body.prompts as MCPPrompt[])
+          : [],
+        ...(typeof body?.nextCursor === "string"
+          ? { nextCursor: body.nextCursor }
+          : {}),
+      };
     },
     local: async () => {
       const res = await authFetch("/api/mcp/prompts/list", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ serverId, refresh: opts?.refresh }),
+        body: JSON.stringify({
+          serverId,
+          ...(opts?.cursor ? { cursor: opts.cursor } : {}),
+          ...(opts?.refresh === true ? { refresh: true } : {}),
+        }),
       });
 
       let body: any = null;
@@ -60,21 +101,17 @@ export async function listPrompts(
         throw new Error(message);
       }
 
-      const prompts = (
-        Array.isArray(body?.prompts) ? (body.prompts as MCPPrompt[]) : []
-      ) as PromptListWithProvenance;
-      if (body?.servedFromCache) {
-        // Non-enumerable so object-spread / for-in / Object.entries over the
-        // bare array stay unchanged (matches the documented contract above);
-        // provenance is still directly accessible as `.servedFromCache`.
-        Object.defineProperty(prompts, "servedFromCache", {
-          value: body.servedFromCache,
-          enumerable: false,
-          configurable: true,
-          writable: true,
-        });
-      }
-      return prompts;
+      return {
+        prompts: Array.isArray(body?.prompts)
+          ? (body.prompts as MCPPrompt[])
+          : [],
+        ...(typeof body?.nextCursor === "string"
+          ? { nextCursor: body.nextCursor }
+          : {}),
+        ...(body?.servedFromCache
+          ? { servedFromCache: body.servedFromCache as ServedFromCache }
+          : {}),
+      };
     },
   });
 }
