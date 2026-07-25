@@ -355,7 +355,11 @@ describe("v1 images routes", () => {
       });
     });
 
-    it("attaches an env to the computer, forwarding projectId + environmentId", async () => {
+    // Locks BOTH sides of the naming boundary: the PUBLIC response says
+    // `imageId` (matching the OpenAPI ComputerAttached schema), while the
+    // Convex mutation arg stays `environmentId` because that is the backend
+    // module's parameter name.
+    it("attaches an image, responding with imageId and forwarding environmentId to Convex", async () => {
       mockQuery({ "computerEnvironments:getEnvironment": ENV_ROW });
       mockMutation({
         "projectComputers:setComputerEnvironment": {
@@ -365,11 +369,16 @@ describe("v1 images routes", () => {
       });
       const res = await request("POST", "/api/v1/projects/p1/images/env1/use");
       expect(res.status).toBe(200);
-      expect((await res.json()) as Record<string, unknown>).toMatchObject({
-        environmentId: "env1",
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body).toMatchObject({
+        imageId: "env1",
         computerId: "c1",
         status: "provisioning",
       });
+      // The old public field must be GONE, not merely accompanied — a
+      // spec-generated client validating `required: [imageId]` would still
+      // pass on an extra key, but leaving it invites the two names diverging.
+      expect(body).not.toHaveProperty("environmentId");
       expect(convexMutationMock).toHaveBeenCalledWith(
         "projectComputers:setComputerEnvironment",
         { projectId: "p1", environmentId: "env1" }

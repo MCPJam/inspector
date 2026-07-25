@@ -357,7 +357,7 @@ export interface PlatformImageBuildStarted {
 }
 
 export interface PlatformComputerAttached {
-  environmentId: string;
+  imageId: string;
   computerId: string;
   status: string;
 }

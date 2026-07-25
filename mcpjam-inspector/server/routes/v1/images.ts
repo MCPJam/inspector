@@ -444,7 +444,9 @@ images.post("/projects/:projectId/images/:imageId/use", async (c) => {
     throw translateConvexWriteError(error);
   }
   return v1Resource(c, {
-    environmentId,
+    // PUBLIC field is `imageId`; the Convex mutation arg above stays
+    // `environmentId` because that is the backend module's parameter name.
+    imageId: environmentId,
     computerId: computer.computerId,
     status: computer.status,
   });
