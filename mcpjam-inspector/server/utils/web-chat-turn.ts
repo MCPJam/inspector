@@ -75,7 +75,10 @@ import {
 import { isRenderedUiContextText } from "@/shared/ui-context";
 import type { createHostedRpcLogCollector } from "./../routes/web/hosted-rpc-logs.js";
 import type { HostedElicitationBridge } from "./../routes/web/hosted-elicitation.js";
-import { bridgeHarnessRpcLogsToCollector } from "./../routes/web/hosted-rpc-logs.js";
+import {
+  bridgeHarnessRpcLogsToCollector,
+  startCrossInstanceRpcLogPoll,
+} from "./../routes/web/hosted-rpc-logs.js";
 import type { CustomProviderConfig } from "./chat-helpers.js";
 import { getClientIp } from "./client-ip.js";
 import { convertToMcpjamModelMessages } from "./mcp-tool-result-model-output.js";
@@ -228,7 +231,7 @@ export interface StreamWebChatTurnArgs {
  * types the marker into chat keeps their message intact.
  */
 export function stripUiContextModelParts(
-  messages: ModelMessage[],
+  messages: ModelMessage[]
 ): ModelMessage[] {
   let changed = false;
   const out = messages.map((message) => {
@@ -242,7 +245,7 @@ export function stripUiContextModelParts(
           typeof part === "object" &&
           (part as { type?: unknown }).type === "text" &&
           isRenderedUiContextText((part as { text?: unknown }).text)
-        ),
+        )
     );
     if (content.length === message.content.length) return message;
     changed = true;
@@ -276,7 +279,7 @@ function uiToolApprovalsFrom(
  * path and mapping the error to a `webError(...)` response.
  */
 export async function streamWebChatTurn(
-  args: StreamWebChatTurnArgs,
+  args: StreamWebChatTurnArgs
 ): Promise<Response> {
   const { manager, prepare, persist, runtime } = args;
   const { c } = runtime;
@@ -286,7 +289,7 @@ export async function streamWebChatTurn(
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_HTTP_URL configuration",
+      "Server missing CONVEX_HTTP_URL configuration"
     );
   }
 
@@ -301,7 +304,7 @@ export async function streamWebChatTurn(
       // trigger new linked resource reads. Fresh server-side tool execution
       // resolves resource_link results through trusted tool-origin metadata.
       abortSignal: c.req.raw.signal as AbortSignal | undefined,
-    },
+    }
   );
 
   let prepared;
@@ -391,7 +394,7 @@ export async function streamWebChatTurn(
     : preparedTools;
 
   const widgetModelContextSystemPrompt = buildWidgetModelContextSystemPrompt(
-    prepare.widgetModelContext ?? [],
+    prepare.widgetModelContext ?? []
   );
   const effectiveEnhancedSystemPrompt = [
     enhancedSystemPrompt,
@@ -420,7 +423,7 @@ export async function streamWebChatTurn(
     Boolean(prepare.modelDefinition.id) &&
     isHostedCatalogModel(
       String(prepare.modelDefinition.id),
-      prepare.modelDefinition.provider,
+      prepare.modelDefinition.provider
     );
 
   // Resolve the host config now that `resolvedTemperature` is known.
@@ -428,21 +431,21 @@ export async function streamWebChatTurn(
   // callers preserve that by passing a closure here.
   const resolvedHostConfig: DirectHostConfig | null =
     typeof persist.hostConfig === "function"
-      ? (persist.hostConfig({ resolvedTemperature }) ?? null)
-      : (persist.hostConfig ?? null);
+      ? persist.hostConfig({ resolvedTemperature }) ?? null
+      : persist.hostConfig ?? null;
 
   // Build the persist callback once — it's a closure over a lot of context
   // and is identical between MCPJam-free and org-BYOK other than the modelId
   // + modelSource.
   const buildOnConversationComplete = (
     modelId: string,
-    modelSource: "mcpjam" | "byok" | "local_byok",
+    modelSource: "mcpjam" | "byok" | "local_byok"
   ) => {
     if (!hostedChatSessionId) return undefined;
     return async (
       fullHistory: ModelMessage[],
       turnTrace: PersistedTurnTrace,
-      harnessSessionCommit?: HarnessSessionCommitPayload,
+      harnessSessionCommit?: HarnessSessionCommitPayload
     ) => {
       const isDirectChat = !isChatboxSession;
       // Capture the live tool catalog. Failures must never block the persist.
@@ -460,7 +463,7 @@ export async function streamWebChatTurn(
               await exportConnectedServerToolSnapshotForEvalAuthoring(
                 manager,
                 knownIds,
-                { logPrefix: "chat-v2.persist" },
+                { logPrefix: "chat-v2.persist" }
               );
           }
         } catch {
@@ -484,7 +487,7 @@ export async function streamWebChatTurn(
         sessionMessages: stampSenderUserIdsOnSessionMessages(
           stripUiContextModelParts(fullHistory),
           persist.originalMessages as unknown[],
-          { authenticatedUserId: persist.authenticatedUserId },
+          { authenticatedUserId: persist.authenticatedUserId }
         ),
         startedAt: sessionStartedAt,
         lastActivityAt: Date.now(),
@@ -521,13 +524,13 @@ export async function streamWebChatTurn(
 
   if (!isMCPJam) {
     const providerKeyResult = deriveOrgProviderKeyResult(
-      prepare.modelDefinition,
+      prepare.modelDefinition
     );
     if (!providerKeyResult.ok) {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        providerKeyResult.error,
+        providerKeyResult.error
       );
     }
     const providerKey = providerKeyResult.key;
@@ -547,13 +550,13 @@ export async function streamWebChatTurn(
             chatboxId: persist.chatboxId,
             accessVersion: persist.accessVersion,
             serverIds: persist.selectedServerIds,
-          },
+          }
         )
       : { runtimeLocation: "cloud", providerKey };
 
     const onConversationComplete = buildOnConversationComplete(
       modelId,
-      orgRuntime.runtimeLocation === "local" ? "local_byok" : "byok",
+      orgRuntime.runtimeLocation === "local" ? "local_byok" : "byok"
     );
 
     warnIfChatAbortSignalMissing(runtime.abortSignal, "web/chat-v2");
@@ -626,7 +629,7 @@ export async function streamWebChatTurn(
   const mcpjamModelId = String(prepare.modelDefinition.id);
   const onConversationComplete = buildOnConversationComplete(
     mcpjamModelId,
-    "mcpjam",
+    "mcpjam"
   );
   warnIfChatAbortSignalMissing(runtime.abortSignal, "web/chat-v2");
 
@@ -647,6 +650,9 @@ export async function streamWebChatTurn(
   // Subscribed at stream start (not before — a pre-stream failure must not
   // leave a live subscription) and torn down with the stream.
   let stopHarnessRpcLogBridge: (() => void) | undefined;
+  // COMP-21: cross-instance half of the harness log bridge (polls the shared
+  // Convex sink for frames other instances produced). Paired with the bus bridge.
+  let stopCrossInstanceRpcLogPoll: (() => void) | undefined;
 
   return handleMCPJamFreeChatModel({
     messages: modelMessages,
@@ -673,9 +679,9 @@ export async function streamWebChatTurn(
     selectedServers: persist.selectedServerIds,
     requireToolApproval: persist.requireToolApproval,
     uiToolApprovals: uiToolApprovalsFrom(
-        effectiveUiTools,
-        persist.requireToolApproval
-      ),
+      effectiveUiTools,
+      persist.requireToolApproval
+    ),
     modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
     ...(persist.harness ? { harness: persist.harness } : {}),
     ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
@@ -694,6 +700,8 @@ export async function streamWebChatTurn(
     onStreamComplete: async () => {
       stopHarnessRpcLogBridge?.();
       stopHarnessRpcLogBridge = undefined;
+      stopCrossInstanceRpcLogPoll?.();
+      stopCrossInstanceRpcLogPoll = undefined;
       await cleanupStream();
     },
     onStreamWriterReady: (writer) => {
@@ -705,6 +713,12 @@ export async function streamWebChatTurn(
       runtime.elicitationBridge?.attachStreamWriter(writer);
       if (persist.harness && runtime.rpcCollector && !stopHarnessRpcLogBridge) {
         stopHarnessRpcLogBridge = bridgeHarnessRpcLogsToCollector(
+          persist.selectedServerIds,
+          runtime.rpcCollector
+        );
+        // COMP-21: cross-instance frames (harness-mcp landed on another
+        // instance) arrive via the shared Convex sink. No-op single-instance.
+        stopCrossInstanceRpcLogPoll = startCrossInstanceRpcLogPoll(
           persist.selectedServerIds,
           runtime.rpcCollector
         );
