@@ -19,19 +19,44 @@ export interface BatchPromptsResponse {
 
 export async function listPrompts(
   serverId: string,
-  opts?: { forceHosted?: boolean },
+  opts?: { forceHosted?: boolean; cursor?: string },
 ): Promise<MCPPrompt[]> {
+  const { prompts } = await listPromptsPage(serverId, opts);
+  return prompts;
+}
+
+// Cursor-aware variant of `listPrompts`, additive alongside it: omitting
+// `cursor` still returns the full aggregate (unchanged default behavior);
+// passing one returns exactly one raw page plus `nextCursor` when the server
+// has more. This is the plumbing a future paginated Prompts UI would call.
+export async function listPromptsPage(
+  serverId: string,
+  opts?: { forceHosted?: boolean; cursor?: string },
+): Promise<{ prompts: MCPPrompt[]; nextCursor?: string }> {
   return runByMode({
     forceHosted: opts?.forceHosted,
     hosted: async () => {
-      const body = await listHostedPrompts({ serverNameOrId: serverId });
-      return Array.isArray(body?.prompts) ? (body.prompts as MCPPrompt[]) : [];
+      const body = await listHostedPrompts({
+        serverNameOrId: serverId,
+        cursor: opts?.cursor,
+      });
+      return {
+        prompts: Array.isArray(body?.prompts)
+          ? (body.prompts as MCPPrompt[])
+          : [],
+        ...(typeof body?.nextCursor === "string"
+          ? { nextCursor: body.nextCursor }
+          : {}),
+      };
     },
     local: async () => {
       const res = await authFetch("/api/mcp/prompts/list", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ serverId }),
+        body: JSON.stringify({
+          serverId,
+          ...(opts?.cursor ? { cursor: opts.cursor } : {}),
+        }),
       });
 
       let body: any = null;
@@ -44,7 +69,14 @@ export async function listPrompts(
         throw new Error(message);
       }
 
-      return Array.isArray(body?.prompts) ? (body.prompts as MCPPrompt[]) : [];
+      return {
+        prompts: Array.isArray(body?.prompts)
+          ? (body.prompts as MCPPrompt[])
+          : [],
+        ...(typeof body?.nextCursor === "string"
+          ? { nextCursor: body.nextCursor }
+          : {}),
+      };
     },
   });
 }
