@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { Input } from "@mcpjam/design-system/input";
 import { ChevronDown, ChevronRight, Plus, X } from "lucide-react";
 
@@ -27,6 +28,9 @@ export function EnvVarsSection({
   onReveal,
 }: EnvVarsSectionProps) {
   const isHidden = hasStoredEnv && envVars.length === 0;
+  // Per-instance so the add and edit forms can be mounted at the same time
+  // without colliding on a shared element id.
+  const bodyId = useId();
 
   // Adding from the collapsed state used to append an invisible row — expand
   // first so the new row is always where the click points.
@@ -44,7 +48,7 @@ export function EnvVarsSection({
           type="button"
           onClick={onToggle}
           aria-expanded={showEnvVars}
-          aria-controls="env-vars-body"
+          aria-controls={bodyId}
           className="group flex items-center gap-1.5 text-left"
         >
           {showEnvVars ? (
@@ -72,7 +76,7 @@ export function EnvVarsSection({
         </button>
       </div>
 
-      <div id="env-vars-body">
+      <div id={bodyId}>
         {!showEnvVars && (
           <p className="text-xs text-muted-foreground">
             Passed to your MCP server process (e.g. API keys, config values)
