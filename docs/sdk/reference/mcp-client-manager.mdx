@@ -606,6 +606,110 @@ const response = await generateText({
 
 ---
 
+### setPerRequestLogLevel()
+
+Sets the log level for a server on the modern MCP era (2026-07-28). The level is injected into every outbound request as `_meta["io.modelcontextprotocol/logLevel"]` by the `LogLevelMetaClient` decorator. Passing `undefined` opts out — the key is absent from the wire entirely (absence is semantic; no empty or null value is sent). Takes effect on the next request without a reconnect.
+
+On the legacy era this call is inert; use `setLoggingLevel()` there instead. Use `getLoggingMechanism()` to determine which method applies for a given server.
+
+```typescript
+setPerRequestLogLevel(
+  serverId: string,
+  level: LoggingLevel | undefined
+): void
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `serverId` | `string` | The server ID |
+| `level` | `LoggingLevel \| undefined` | The log level to inject, or `undefined` to opt out |
+
+#### Example
+
+```typescript
+// Opt in: inject "warning" level on every request to this server
+manager.setPerRequestLogLevel("myServer", "warning");
+
+// Opt out: remove the key from the wire
+manager.setPerRequestLogLevel("myServer", undefined);
+```
+
+---
+
+### getLoggingMechanism()
+
+Returns which logging delivery mechanism is active for a server. Use this to decide whether to call `setPerRequestLogLevel()` or `setLoggingLevel()`.
+
+```typescript
+getLoggingMechanism(
+  serverId: string
+): "per-request-meta" | "setLevel" | "none"
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `serverId` | `string` | The server ID |
+
+#### Returns
+
+| Value | Meaning |
+|-------|---------|
+| `"per-request-meta"` | Modern era + server advertises `logging`. Use `setPerRequestLogLevel()`. |
+| `"setLevel"` | Legacy era + server advertises `logging`. Use `setLoggingLevel()`. |
+| `"none"` | No live client, or the server does not advertise the `logging` capability. |
+
+#### Example
+
+```typescript
+const mechanism = manager.getLoggingMechanism("myServer");
+
+if (mechanism === "per-request-meta") {
+  manager.setPerRequestLogLevel("myServer", "warning");
+} else if (mechanism === "setLevel") {
+  await manager.setLoggingLevel("myServer", "warning");
+}
+```
+
+---
+
+### onLogMessage()
+
+Registers a handler for `notifications/message` log records emitted by a server. Works on both eras: legacy servers stream records after `logging/setLevel`; modern servers stream them inline within the originating request's response. A handler registered before connect is re-applied when the client is (re)built.
+
+```typescript
+onLogMessage(serverId: string, handler: NotificationHandler): void
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `serverId` | `string` | The server ID |
+| `handler` | `NotificationHandler` | Called with each `notifications/message` notification |
+
+#### Example
+
+```typescript
+manager.onLogMessage("myServer", (notification) => {
+  const { level, logger, data } = notification.params as {
+    level: string;
+    logger: string;
+    data: unknown;
+  };
+  console.log(`[${level}] ${logger}:`, data);
+});
+
+// Set a level so the server starts emitting records (modern era)
+manager.setPerRequestLogLevel("myServer", "info");
+await manager.executeTool("myServer", "myTool", {});
+```
+
+---
+
 ## Complete Example
 
 ```typescript
