@@ -23,6 +23,12 @@ import { ThreePanelLayout } from "./ui/three-panel-layout";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { extractDisplayFromValue } from "@/components/chat-v2/shared/tool-result-text";
 import type { MCPPrompt, MCPServerConfig } from "@mcpjam/sdk/browser";
+import { insufficientScopeFromError } from "@/lib/apis/insufficient-scope";
+import {
+  applyToolCallStepUp,
+  resetToolCallStepUp,
+} from "@/state/oauth-orchestrator";
+import type { ServerWithName } from "@/state/app-types";
 import {
   getPrompt as getPromptApi,
   listPrompts as listPromptsApi,
@@ -85,6 +91,12 @@ function capPromptContentForTranscript(content: unknown): {
 interface PromptsTabProps {
   serverConfig?: MCPServerConfig;
   serverName?: string;
+  /**
+   * The resolved server entry, needed to drive a SEP-2350 scope step-up on a
+   * `403 insufficient_scope`. Optional: without it a failure just surfaces the
+   * error.
+   */
+  server?: ServerWithName;
   serverConnectionStatus?: ConnectionStatus;
 }
 
@@ -104,6 +116,7 @@ interface FormField {
 export function PromptsTab({
   serverConfig,
   serverName,
+  server,
   serverConnectionStatus,
 }: PromptsTabProps) {
   const [prompts, setPrompts] = useState<MCPPrompt[]>([]);
@@ -116,9 +129,48 @@ export function PromptsTab({
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
   const promptsFetchVersionRef = useRef(0);
   const promptGetVersionRef = useRef(0);
+  // SEP-2350: dedupes step-up per server (no double redirect / double counter
+  // bump while the first is in flight).
+  const stepUpInFlightRef = useRef<Set<string>>(new Set());
   const isServerConnected =
     serverConnectionStatus === undefined ||
     serverConnectionStatus === "connected";
+
+  // A successful get clears the bounded step-up counter so a future legitimate
+  // scope step-up starts fresh.
+  const resetStepUpOnSuccess = useCallback(() => {
+    if (!server) return;
+    try {
+      resetToolCallStepUp(server);
+    } catch {
+      // best-effort; must not mask a successful get
+    }
+  }, [server]);
+
+  // Drive the bounded, union-scope re-authorization when a get failed with a
+  // `403 insufficient_scope`. `reauthorize` redirects the browser; `throw` /
+  // `manual` leave the surfaced error in place.
+  const driveStepUpFromError = useCallback(
+    (err: unknown) => {
+      if (!server) return;
+      const challenge = insufficientScopeFromError(err);
+      if (!challenge) return;
+      const stepUpKey = server.name;
+      if (stepUpInFlightRef.current.has(stepUpKey)) return;
+      stepUpInFlightRef.current.add(stepUpKey);
+      void applyToolCallStepUp(server, {
+        requiredScope: challenge.requiredScope,
+        resourceMetadataUrl: challenge.resourceMetadataUrl,
+      })
+        .catch(() => {
+          // step-up failure is surfaced via the get error already set
+        })
+        .finally(() => {
+          stepUpInFlightRef.current.delete(stepUpKey);
+        });
+    },
+    [server],
+  );
 
   const selectedPromptData = useMemo(() => {
     return prompts.find((prompt) => prompt.name === selectedPrompt) ?? null;
@@ -273,18 +325,28 @@ export function PromptsTab({
         );
         if (getVersion !== promptGetVersionRef.current) return;
         setPromptContent(data.content);
+        resetStepUpOnSuccess();
       } catch (err) {
         if (getVersion !== promptGetVersionRef.current) return;
         const message =
           err instanceof Error ? err.message : `Error getting prompt: ${err}`;
         setError(message);
+        // SEP-2350: on a `403 insufficient_scope`, drive the union-scope step-up.
+        driveStepUpFromError(err);
       } finally {
         if (getVersion === promptGetVersionRef.current) {
           setLoading(false);
         }
       }
     },
-    [selectedPrompt, serverName, isServerConnected, buildParameters],
+    [
+      selectedPrompt,
+      serverName,
+      isServerConnected,
+      buildParameters,
+      resetStepUpOnSuccess,
+      driveStepUpFromError,
+    ],
   );
 
   const promptNames = prompts.map((prompt) => prompt.name);

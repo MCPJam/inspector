@@ -27,6 +27,12 @@ import {
   listResources,
   readResource as readResourceApi,
 } from "@/lib/apis/mcp-resources-api";
+import { insufficientScopeFromError } from "@/lib/apis/insufficient-scope";
+import {
+  applyToolCallStepUp,
+  resetToolCallStepUp,
+} from "@/state/oauth-orchestrator";
+import type { ServerWithName } from "@/state/app-types";
 import { listResourceTemplates } from "@/lib/apis/mcp-resource-templates-api";
 import { parseTemplate } from "url-template";
 import { HOSTED_MODE } from "@/lib/config";
@@ -80,6 +86,12 @@ function capResourceContentForTranscript(content: unknown): {
 interface ResourcesTabProps {
   serverConfig?: MCPServerConfig;
   serverName?: string;
+  /**
+   * The resolved server entry, needed to drive a SEP-2350 scope step-up on a
+   * `403 insufficient_scope` (its stored issuer + originally-granted scopes).
+   * Optional: without it a read failure just surfaces the error.
+   */
+  server?: ServerWithName;
   serverConnectionStatus?: ConnectionStatus;
 }
 
@@ -164,6 +176,7 @@ function renderResourceTextContent(
 export function ResourcesTab({
   serverConfig,
   serverName,
+  server,
   serverConnectionStatus,
 }: ResourcesTabProps) {
   const [activeTab, setActiveTab] = useState<"resources" | "templates">(
@@ -200,6 +213,43 @@ export function ResourcesTab({
   const resourceReadVersionRef = useRef(0);
   const templatesFetchVersionRef = useRef(0);
   const templateReadVersionRef = useRef(0);
+  // SEP-2350: guards against a repeated read error kicking off a duplicate
+  // step-up (double redirect / double counter bump) while the first is still in
+  // flight. Keyed by server name so distinct servers never block each other.
+  const stepUpInFlightRef = useRef<Set<string>>(new Set());
+
+  // A successful read clears the bounded step-up counter so a future legitimate
+  // scope step-up starts fresh rather than inheriting a stale count.
+  const resetStepUpOnSuccess = () => {
+    if (!server) return;
+    try {
+      resetToolCallStepUp(server);
+    } catch {
+      // best-effort; a failed reset must not mask a successful read
+    }
+  };
+
+  // Drive the bounded, union-scope re-authorization when a read failed with a
+  // `403 insufficient_scope`. Deduped per server; `reauthorize` redirects the
+  // browser to the authorization server, `throw` / `manual` leave the error.
+  const driveStepUpFromError = (err: unknown) => {
+    if (!server) return;
+    const challenge = insufficientScopeFromError(err);
+    if (!challenge) return;
+    const stepUpKey = server.name;
+    if (stepUpInFlightRef.current.has(stepUpKey)) return;
+    stepUpInFlightRef.current.add(stepUpKey);
+    void applyToolCallStepUp(server, {
+      requiredScope: challenge.requiredScope,
+      resourceMetadataUrl: challenge.resourceMetadataUrl,
+    })
+      .catch(() => {
+        // step-up failure is surfaced via the read error already set
+      })
+      .finally(() => {
+        stepUpInFlightRef.current.delete(stepUpKey);
+      });
+  };
   const isServerConnected =
     serverConnectionStatus === undefined ||
     serverConnectionStatus === "connected";
@@ -391,9 +441,12 @@ export function ResourcesTab({
       const data = await readResourceApi(serverName, uri);
       if (readVersion !== resourceReadVersionRef.current) return;
       setResourceContent(data?.content ?? null);
+      resetStepUpOnSuccess();
     } catch (err) {
       if (readVersion !== resourceReadVersionRef.current) return;
       setError(`Error reading resource: ${err}`);
+      // SEP-2350: on a `403 insufficient_scope`, drive the union-scope step-up.
+      driveStepUpFromError(err);
     } finally {
       if (readVersion === resourceReadVersionRef.current) {
         setLoading(false);

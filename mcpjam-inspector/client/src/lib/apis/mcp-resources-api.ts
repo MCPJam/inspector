@@ -4,6 +4,11 @@ import {
   readHostedResource,
 } from "@/lib/apis/web/resources-api";
 import { runByMode } from "@/lib/apis/mode-client";
+import { WebApiError } from "@/lib/apis/web/base";
+import {
+  McpRequestError,
+  parseInsufficientScopeChallenge,
+} from "@/lib/apis/insufficient-scope";
 
 export type ListResourcesResult = {
   resources: Array<{
@@ -63,14 +68,51 @@ export async function readResource(
 ) {
   return runByMode({
     forceHosted: opts?.forceHosted,
-    hosted: async () => readHostedResource({ serverNameOrId: serverId, uri }),
+    hosted: async () => {
+      try {
+        return await readHostedResource({ serverNameOrId: serverId, uri });
+      } catch (error) {
+        // SEP-2350: rethrow as an McpRequestError carrying the challenge the
+        // hosted 403 forwarded on `details.insufficientScope`, so the consumer
+        // catch can drive the union-scope step-up.
+        const insufficientScope =
+          error instanceof WebApiError
+            ? parseInsufficientScopeChallenge(
+                (error.details as any)?.insufficientScope,
+              )
+            : undefined;
+        const message = error instanceof Error ? error.message : String(error);
+        throw new McpRequestError(message, {
+          insufficientScope,
+          status: error instanceof WebApiError ? error.status : undefined,
+        });
+      }
+    },
     local: async () => {
       const response = await authFetch(`/api/mcp/resources/read`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ serverId, uri }),
       });
-      return response.json();
+      let body: any = null;
+      try {
+        body = await response.json();
+      } catch {}
+      if (!response.ok) {
+        // SEP-2350: the /resources/read route serializes a 403 challenge onto
+        // `mcpError.insufficientScope` (via jsonError). Surface it so the
+        // consumer can step up. Previously this path returned the error body
+        // as if it were a successful read.
+        const message =
+          body?.error || `Error reading resource (${response.status})`;
+        throw new McpRequestError(message, {
+          insufficientScope: parseInsufficientScopeChallenge(
+            body?.mcpError?.insufficientScope,
+          ),
+          status: response.status,
+        });
+      }
+      return body;
     },
   });
 }

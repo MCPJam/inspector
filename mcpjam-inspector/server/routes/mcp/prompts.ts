@@ -6,6 +6,7 @@ import {
   listPromptsMulti,
   getPrompt,
 } from "../../utils/route-handlers.js";
+import { jsonError } from "../../utils/mcp-error-serialize.js";
 
 const prompts = new Hono();
 
@@ -98,13 +99,10 @@ prompts.post("/get", async (c) => {
     );
   } catch (error) {
     logger.error("Error getting prompt", error);
-    return c.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
-      },
-      500,
-    );
+    // SEP-2350: surface a 403 `insufficient_scope` challenge (on
+    // `mcpError.insufficientScope`) so the client can drive the union-scope
+    // step-up re-authorization; ordinary errors keep the 500 fallback.
+    return jsonError(c, error, 500);
   }
 });
 
