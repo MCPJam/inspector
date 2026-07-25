@@ -23,6 +23,8 @@ import {
   getRunningJourneyStreamHub,
   startJourneyRun,
 } from "../../services/sessionSimulation/swarm-runner.js";
+import { resolveTargetPluginServerIds } from "../../services/journeys/plugin-servers.js";
+import { createConvexClient } from "../../services/evals/route-helpers.js";
 import type { SwarmStreamEvent } from "../../../shared/swarm-stream-events.js";
 import { logger } from "../../utils/logger.js";
 import { assertBearerToken } from "./errors.js";
@@ -43,11 +45,7 @@ swarmRuns.get("/runs/:runId/stream", async (c) => {
   assertBearerToken(c);
   const runId = c.req.param("runId");
   if (!runId) {
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      "runId required"
-    );
+    throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, "runId required");
   }
 
   const hub = getRunningJourneyStreamHub(runId);
@@ -210,7 +208,9 @@ function buildPinnedConnectionSettings(
       initializePins.supportedProtocolVersions = versions;
     }
   }
-  const batchProtocol = coerceProtocolVersion(host.mcpProfile?.mcpProtocolVersion);
+  const batchProtocol = coerceProtocolVersion(
+    host.mcpProfile?.mcpProtocolVersion
+  );
   if (batchProtocol) {
     initializePins.mcpProtocolVersion = batchProtocol;
   }
@@ -219,7 +219,9 @@ function buildPinnedConnectionSettings(
   // resolver key (`mcpProtocolVersion`) and the project-config key
   // (`mcpProtocolVersionOverride`); createAuthorizedManager re-validates.
   const overrides = asRecord(host.serverConnectionOverrides);
-  let mcpProtocolVersionsByServerId: Record<string, McpProtocolVersion> | undefined;
+  let mcpProtocolVersionsByServerId:
+    | Record<string, McpProtocolVersion>
+    | undefined;
   let requestTimeoutByServerId: Record<string, number> | undefined;
   if (overrides) {
     for (const [serverId, rawOverride] of Object.entries(overrides)) {
@@ -249,9 +251,7 @@ function buildPinnedConnectionSettings(
   return {
     timeoutMs,
     ...(Object.keys(initializePins).length > 0 ? { initializePins } : {}),
-    ...(mcpProtocolVersionsByServerId
-      ? { mcpProtocolVersionsByServerId }
-      : {}),
+    ...(mcpProtocolVersionsByServerId ? { mcpProtocolVersionsByServerId } : {}),
     ...(requestTimeoutByServerId ? { requestTimeoutByServerId } : {}),
   };
 }
@@ -376,7 +376,29 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
           // Host-aware: each host connects ONLY its own pinned required servers
           // (optionalServerIds stay off, matching a real no-opt-in visitor).
           managerFactory: async (host) => {
-            const serverIds = host.serverIds;
+            // Decision D2 — re-gate the target's pinned plugin servers against
+            // the LIVE plugin, here at connect time, rather than trusting the
+            // snapshot's `pluginServerIds`. That stored list records what was
+            // PINNED; a plugin disabled or uninstalled since launch must stop
+            // contributing servers even though the snapshot still names them.
+            // Throwing fails this target's sessions as a config error — the
+            // same treatment an invalid stored xaaPolicy gets — because a
+            // silently shrunken server set runs an environment nobody
+            // configured.
+            const pluginServerIds = await resolveTargetPluginServerIds(
+              createConvexClient(bearerToken),
+              {
+                runId,
+                targetId: host.targetId,
+                snapshotPluginServerIds: host.pluginServerIds,
+              }
+            );
+            // Deduped union: the backend keeps plugin ids out of `serverIds`,
+            // but an overlap would double-connect rather than fail, so guard it.
+            const serverIds =
+              pluginServerIds.length > 0
+                ? Array.from(new Set([...host.serverIds, ...pluginServerIds]))
+                : host.serverIds;
             // Reconnect with THIS host's non-secret connection settings
             // (per-request timeout + MCP protocol pins) so the run reproduces
             // the pinned snapshot rather than the host's current live config.

@@ -104,6 +104,19 @@ export interface PinnedHostExecutionSpec {
   /** The environment's standalone server-group pointer (provenance only). */
   serverAttachmentId?: string;
   /**
+   * Servers contributed by the environment's pinned plugin VERSIONS. A
+   * deliberate SIBLING of `serverIds`, never merged into it by the backend: the
+   * snapshot is immutable, so a plugin-materialized id inside `serverIds` would
+   * be a permanent grant and a re-run would reconnect an uninstalled plugin
+   * forever.
+   *
+   * A RECORD OF WHAT WAS PINNED, NOT A LIST TO CONNECT. Decision D2: the runner
+   * re-gates these against the live plugin lifecycle at execution time — see
+   * `services/journeys/plugin-servers.ts`. Absent ⇒ the target's environment
+   * pinned no server-bearing plugin (or the run predates the field).
+   */
+  pluginServerIds?: string[];
+  /**
    * Host-carried skill selection snapshotted from the host config (#767 —
    * inline, no skill-group ref). Provenance only on this side: the runner
    * never resolves it live — pinned bodies come from `pinnedSkills` +
