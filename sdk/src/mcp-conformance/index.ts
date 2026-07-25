@@ -3,6 +3,7 @@ export { MCPConformanceSuite } from "./suite.js";
 
 export type {
   MCPCheckCategory,
+  MCPCheckEra,
   MCPCheckId,
   MCPCheckResult,
   MCPCheckStatus,
@@ -13,6 +14,7 @@ export type {
 } from "./types.js";
 
 export {
+  CHECK_ERAS,
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
 } from "./types.js";

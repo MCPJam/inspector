@@ -23,6 +23,8 @@
 
 import type {
   CallToolResult,
+  CompleteRequest,
+  CompleteResult,
   EmptyResult,
   GetPromptResult,
   Implementation,
@@ -157,6 +159,16 @@ export interface ManagedMcpClient {
     params: { name: string; arguments?: Record<string, string> },
     options?: RequestOptions
   ): Promise<GetPromptResult>;
+
+  // ---- Completions ----
+  // Used by the conformance suite's `completion-complete` check. Passthrough
+  // to upstream `Client.complete`; self-skips when the server does not
+  // advertise the optional completions capability, so this is never invoked
+  // against a server that lacks it.
+  complete(
+    params: CompleteRequest["params"],
+    options?: RequestOptions
+  ): Promise<CompleteResult>;
 
   // ---- Health ----
   ping(options?: RequestOptions): Promise<EmptyResult>;

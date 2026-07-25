@@ -136,25 +136,14 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
       }
 
       try {
-        const result = await ctx.client.setLoggingLevel("info");
-        const isEmptyObject =
-          typeof result === "object" &&
-          result !== null &&
-          Object.keys(result).length === 0;
-
-        if (!isEmptyObject) {
-          return failedResult(
-            this,
-            Date.now() - startedAt,
-            "logging/setLevel did not return an empty object",
-            {
-              result: result as Record<string, unknown>,
-            },
-          );
-        }
+        // The managed client resolves `setLoggingLevel` to `void` (upstream
+        // returns an `EmptyResult` the manager discards). A clean resolve —
+        // no thrown JSON-RPC error — is the pass condition; there is no
+        // result body to inspect.
+        await ctx.client.setLoggingLevel("info");
 
         return passedResult(this, Date.now() - startedAt, {
-          result: result as Record<string, unknown>,
+          level: "info",
         });
       } catch (error) {
         return failedResult(
