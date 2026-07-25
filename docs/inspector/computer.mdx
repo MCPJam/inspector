@@ -13,6 +13,30 @@ you close the terminal, and wakes on next use.
 Open it from the **Computer** tab. The first time you open the terminal, MCPJam
 provisions the machine; after that it resumes in about a second.
 
+## Working directory
+
+The **Working directory** field on the Computer attachment tab controls where the
+`bash` tool runs and where the terminal opens. It defaults to `/home/user`.
+
+- The value must be an absolute path under `/home/user` (for example,
+  `/home/user/myproject`). Paths outside that prefix — including relative paths,
+  `/etc`, or sibling prefixes like `/home/user2` — are rejected with an error
+  before any command runs.
+- When you leave the field blank or enter the default `/home/user`, the setting
+  is treated as unset and the computer's home directory is used.
+- The directory is created automatically on first use, so you do not need to
+  create it beforehand.
+- If the host also uses the Claude Code harness, the harness Shell roots under
+  the same configured directory. The harness framework adds a per-session
+  subfolder (`<workdir>/claude-code-<sessionId>`) for isolation, so the Shell
+  runs one level beneath the configured path rather than directly in it.
+
+<Note>
+  Chat attachments always land in `/home/user/attachments/`. Setting the working
+  directory to `/home/user` (the default) means relative paths to attachments
+  work without any prefix.
+</Note>
+
 ## Chat attachments
 
 When the previewed host has a computer attached and you are signed in, files you
