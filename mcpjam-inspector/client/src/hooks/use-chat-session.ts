@@ -1414,6 +1414,15 @@ export function useChatSession(
             // authorization server). Resolve the live server entry from the
             // same store ToolsTab uses; without it there is no stored issuer /
             // granted scopes to widen, so skip.
+            //
+            // Chatbox / share-link turns are DELIBERATELY skipped here: their
+            // servers are synthesized in ChatboxChatPage with a placeholder
+            // URL and never inserted into the dashboard appState, so this
+            // lookup returns undefined and the `if (server && ...)` guard below
+            // makes the event a safe no-op. That is correct — a share-link
+            // visitor (even an authenticated one) does not own the host's MCP
+            // servers and cannot re-authorize the owner's OAuth; connect-time
+            // chatbox OAuth is handled separately by `useHostedOAuthGate`.
             const activeProject =
               appState?.projects?.[
                 hostedProjectId ?? appState?.activeProjectId ?? ""
