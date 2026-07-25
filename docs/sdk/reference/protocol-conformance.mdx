@@ -117,6 +117,42 @@ writeFileSync(
 | `clientName` | `string` | No | SDK default | Custom MCP client name |
 | `protocolVersion` | `string` | No | | Pin the MCP protocol version (e.g. `"2026-07-28"`). Absent means legacy era. See [Protocol era](#protocol-era). |
 
+## Protocol era
+
+The conformance suite is era-aware. Setting `protocolVersion` to a known stateless value (e.g. `"2026-07-28"`) selects the **modern era**; omitting it (or setting it to a stateful value such as `"2025-11-25"`) selects the **legacy era**.
+
+On a modern run, checks that only assert 2025-era stateful wire mechanics are automatically **skipped** rather than failed. They still appear in the result with `status: "skipped"` so the report is complete. Checks that apply to both eras run normally.
+
+| Check id | Legacy | Modern |
+|----------|--------|--------|
+| `server-initialize` | runs | skipped |
+| `ping` | runs | skipped |
+| `capabilities-consistent` | runs | skipped |
+| `server-sse-polling-session` | runs | skipped |
+| `server-accepts-multiple-post-streams` | runs | skipped |
+| `server-sse-streams-functional` | runs | skipped |
+| `localhost-host-rebinding-rejected` | runs | skipped |
+| `localhost-host-valid-accepted` | runs | skipped |
+| `tools-list` | runs | runs |
+| `tools-input-schemas-valid` | runs | runs |
+| `prompts-list` | runs | runs |
+| `resources-list` | runs | runs |
+| `logging-set-level` | runs | runs |
+| `completion-complete` | runs | runs |
+| `protocol-invalid-method-error` | runs | runs |
+
+Example — testing a modern (2026-07-28) server:
+
+```typescript
+const result = await new MCPConformanceTest({
+  serverUrl: "https://your-server.com/mcp",
+  protocolVersion: "2026-07-28",
+  checkTimeout: 15_000,
+}).run();
+```
+
+Passing an unrecognized version string throws at construction time.
+
 ## Available categories and check ids
 
 Categories:
