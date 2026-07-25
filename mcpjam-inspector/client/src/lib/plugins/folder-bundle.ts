@@ -51,10 +51,21 @@ const FOLDER_JUNK = /(^|\/)(\.DS_Store|Thumbs\.db|desktop\.ini|__MACOSX(\/|$))/;
  * name; when every entry shares that single top-level segment it is stripped
  * so the manifest lands at `.codex-plugin/plugin.json` relative to the bundle
  * root, exactly as it would inside a ZIP of the folder's CONTENTS.
+ *
+ * Limits (`DEFAULT_PLUGIN_BUNDLE_LIMITS`, same constants as the ZIP path and
+ * the SDK/backend validators) are enforced from the browser-reported entry
+ * count and `File.size` metadata BEFORE any file content is read, so an
+ * oversized folder selection is rejected without buffering it into memory.
+ * Violations throw the SDK's `PluginBundleError` with the SDK issue codes.
  */
 export async function filesFromFolderSelection(
   selection: File[],
+  options?: { limits?: Partial<PluginBundleLimits> },
 ): Promise<PluginBundleFile[]> {
+  const limits: PluginBundleLimits = {
+    ...DEFAULT_PLUGIN_BUNDLE_LIMITS,
+    ...options?.limits,
+  };
   const named = selection
     .map((file) => ({
       file,
@@ -73,13 +84,45 @@ export async function filesFromFolderSelection(
   const stripRoot =
     roots.size === 1 && named.every((entry) => entry.path.includes("/"));
 
-  const files: PluginBundleFile[] = [];
+  const pending: Array<{ path: string; file: File }> = [];
   for (const entry of named) {
     const path = stripRoot
       ? entry.path.slice(entry.path.indexOf("/") + 1)
       : entry.path;
     if (path.length === 0) continue;
-    files.push({ path, bytes: await readFileBytes(entry.file) });
+    pending.push({ path, file: entry.file });
+  }
+
+  // Metadata-only limit pass BEFORE reading a single byte. `buildPluginZip`
+  // writes file records only (no directory records), so this entry count is
+  // exactly what the backend archive validator will count on the upload.
+  if (pending.length > limits.maxEntries) {
+    throw bundleLimitError(
+      "BUNDLE_TOO_MANY_ENTRIES",
+      `selection has ${pending.length} files; the limit is ${limits.maxEntries}`,
+    );
+  }
+  let declaredTotal = 0;
+  for (const entry of pending) {
+    if (entry.file.size > limits.maxFileBytes) {
+      throw bundleLimitError(
+        "FILE_TOO_LARGE",
+        `file is ${entry.file.size} bytes; the per-file limit is ${limits.maxFileBytes}`,
+        entry.path,
+      );
+    }
+    declaredTotal += entry.file.size;
+    if (declaredTotal > limits.maxTotalBytes) {
+      throw bundleLimitError(
+        "BUNDLE_TOO_LARGE",
+        `selection exceeds ${limits.maxTotalBytes} bytes of total content`,
+      );
+    }
+  }
+
+  const files: PluginBundleFile[] = [];
+  for (const entry of pending) {
+    files.push({ path: entry.path, bytes: await readFileBytes(entry.file) });
   }
   return files;
 }
@@ -174,6 +217,10 @@ export async function buildPluginZip(
     zip.file(file.path, toZipInput(file.bytes), {
       date: ZIP_EPOCH,
       binary: true,
+      // File records only: implicit directory records would count against the
+      // backend's archive record limit, and `filesFromFolderSelection`'s
+      // pre-read entry count assumes the upload contains exactly its files.
+      createFolders: false,
     });
   }
   return zip.generateAsync({
@@ -205,6 +252,82 @@ function declaredUncompressedSize(entry: unknown): number | undefined {
   return typeof size === "number" && size >= 0 ? size : undefined;
 }
 
+/** Minimal surface of jszip's (untyped) per-entry internal stream. */
+interface JsZipInternalStream {
+  on(event: "data", cb: (chunk: Uint8Array) => void): JsZipInternalStream;
+  on(event: "end", cb: () => void): JsZipInternalStream;
+  on(event: "error", cb: (err: Error) => void): JsZipInternalStream;
+  resume(): JsZipInternalStream;
+  pause(): JsZipInternalStream;
+}
+
+/**
+ * Inflate one entry as a bounded stream. The central directory's declared
+ * size is attacker-controlled (a bomb can forge it below the caps), so the
+ * only trustworthy enforcement is counting ACTUAL inflated bytes as they
+ * stream out and aborting mid-entry the moment a cap is crossed — the
+ * remainder is never inflated.
+ */
+function readEntryBounded(
+  entry: unknown,
+  path: string,
+  maxFileBytes: number,
+  remainingTotalBytes: number,
+): Promise<Uint8Array> {
+  return new Promise<Uint8Array>((resolve, reject) => {
+    const stream = (
+      entry as { internalStream(type: "uint8array"): JsZipInternalStream }
+    ).internalStream("uint8array");
+    const chunks: Uint8Array[] = [];
+    let received = 0;
+    let settled = false;
+    const abort = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      stream.pause();
+      reject(error);
+    };
+    stream
+      .on("data", (chunk) => {
+        if (settled) return;
+        received += chunk.length;
+        if (received > maxFileBytes) {
+          abort(
+            bundleLimitError(
+              "FILE_TOO_LARGE",
+              `file exceeded the per-file limit of ${maxFileBytes} bytes during extraction`,
+              path,
+            ),
+          );
+          return;
+        }
+        if (received > remainingTotalBytes) {
+          abort(
+            bundleLimitError(
+              "BUNDLE_TOO_LARGE",
+              `total uncompressed content exceeded the bundle limit during extraction`,
+            ),
+          );
+          return;
+        }
+        chunks.push(chunk);
+      })
+      .on("error", (err) => abort(err))
+      .on("end", () => {
+        if (settled) return;
+        settled = true;
+        const bytes = new Uint8Array(received);
+        let offset = 0;
+        for (const chunk of chunks) {
+          bytes.set(chunk, offset);
+          offset += chunk.length;
+        }
+        resolve(bytes);
+      })
+      .resume();
+  });
+}
+
 /**
  * Read a ZIP back into bundle files (directory entries dropped, contents
  * untouched — deliberately NO junk filtering, mirroring the backend's ZIP
@@ -214,11 +337,13 @@ function declaredUncompressedSize(entry: unknown): number | undefined {
  *
  * Zip-bomb hardening: extraction enforces the SAME limits the SDK parser and
  * backend archive adapter use (`DEFAULT_PLUGIN_BUNDLE_LIMITS`: 1000 entries,
- * 10 MB per file, 100 MB total uncompressed) DURING inflation — entry count
- * before any read, jszip's declared uncompressed size before inflating an
- * entry, and actual per-file/cumulative bytes after each read — so a crafted
- * archive under the 25 MB compressed cap cannot balloon renderer memory
- * before the parser's own checks run. Violations throw the SDK's
+ * 10 MB per file, 100 MB total uncompressed) DURING inflation. The record
+ * count (files AND directories, matching the backend's end-of-central-
+ * directory count) is checked before any read; each entry is then inflated
+ * as a bounded stream (`readEntryBounded`) that counts ACTUAL bytes and
+ * aborts mid-entry when a per-file or cumulative cap is crossed — a forged
+ * central-directory size cannot bypass it. The declared size is still used
+ * as a cheap fast-fail for honest metadata. Violations throw the SDK's
  * `PluginBundleError` with the matching issue codes
  * (`BUNDLE_TOO_MANY_ENTRIES` / `FILE_TOO_LARGE` / `BUNDLE_TOO_LARGE`), so the
  * UI error path is uniform with parser failures.
@@ -234,22 +359,27 @@ export async function zipToPluginFiles(
   const { default: JSZip } = await import("jszip");
   const zip = await JSZip.loadAsync(toZipInput(zipBytes));
 
-  const entries = Object.values(zip.files).filter((entry) => !entry.dir);
-  if (entries.length > limits.maxEntries) {
+  // Count every archive RECORD, directories included — the backend rejects on
+  // the end-of-central-directory record count before filtering, so a client
+  // preflight that ignored directory records would accept archives the
+  // authoritative validator rejects.
+  const allRecords = Object.values(zip.files);
+  if (allRecords.length > limits.maxEntries) {
     throw bundleLimitError(
       "BUNDLE_TOO_MANY_ENTRIES",
-      `archive has ${entries.length} entries; the limit is ${limits.maxEntries}`,
+      `archive has ${allRecords.length} records; the limit is ${limits.maxEntries}`,
     );
   }
+  const entries = allRecords.filter((entry) => !entry.dir);
 
   let totalBytes = 0;
   const files: PluginBundleFile[] = [];
   for (const entry of entries) {
     const path = entry.name.replace(/\\/g, "/");
 
-    // Reject on the DECLARED size first so an oversized or bomb entry is
-    // never inflated at all. The declared size is attacker-controlled, so the
-    // actual byte counts are re-checked after extraction below.
+    // Cheap fast-fail on the DECLARED size (honest metadata never inflates).
+    // The declared size is attacker-controlled, so the authoritative
+    // enforcement is the bounded stream below, which counts actual bytes.
     const declared = declaredUncompressedSize(entry);
     if (declared !== undefined) {
       if (declared > limits.maxFileBytes) {
@@ -267,21 +397,13 @@ export async function zipToPluginFiles(
       }
     }
 
-    const bytes = await entry.async("uint8array");
-    if (bytes.byteLength > limits.maxFileBytes) {
-      throw bundleLimitError(
-        "FILE_TOO_LARGE",
-        `file exceeds the per-file limit of ${limits.maxFileBytes} bytes`,
-        path,
-      );
-    }
+    const bytes = await readEntryBounded(
+      entry,
+      path,
+      limits.maxFileBytes,
+      limits.maxTotalBytes - totalBytes,
+    );
     totalBytes += bytes.byteLength;
-    if (totalBytes > limits.maxTotalBytes) {
-      throw bundleLimitError(
-        "BUNDLE_TOO_LARGE",
-        `total uncompressed content exceeds ${limits.maxTotalBytes} bytes`,
-      );
-    }
     files.push({ path, bytes });
   }
   return files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));

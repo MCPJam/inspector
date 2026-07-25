@@ -218,4 +218,131 @@ describe("zipToPluginFiles zip-bomb hardening", () => {
       ".codex-plugin/plugin.json",
     ]);
   });
+
+  /**
+   * Overwrite the uncompressed-size field of `fileName`'s central-directory
+   * header (PK\x01\x02, size at offset 24, name at offset 46) so the archive
+   * LIES about how big the entry inflates to.
+   */
+  function forgeDeclaredSize(
+    zipBytes: Uint8Array,
+    fileName: string,
+    forgedSize: number,
+  ): Uint8Array {
+    const out = new Uint8Array(zipBytes);
+    const view = new DataView(out.buffer);
+    const nameBytes = encoder.encode(fileName);
+    for (let i = 0; i + 46 <= out.length; i++) {
+      if (
+        out[i] === 0x50 &&
+        out[i + 1] === 0x4b &&
+        out[i + 2] === 0x01 &&
+        out[i + 3] === 0x02
+      ) {
+        const nameLen = view.getUint16(i + 28, true);
+        const name = out.subarray(i + 46, i + 46 + nameLen);
+        if (
+          nameLen === nameBytes.length &&
+          name.every((byte, j) => byte === nameBytes[j])
+        ) {
+          view.setUint32(i + 24, forgedSize, true);
+          return out;
+        }
+      }
+    }
+    throw new Error(`central-directory header for ${fileName} not found`);
+  }
+
+  it("aborts mid-stream when the declared size is forged below the cap", async () => {
+    // 64 KiB of zeros, but the central directory claims 10 bytes — the
+    // declared-size fast-fail passes, so only the bounded stream can stop it.
+    const zip = await buildPluginZip([MANIFEST, compressible(64 * 1024)]);
+    const forged = forgeDeclaredSize(zip, "big.bin", 10);
+    await expect(
+      zipToPluginFiles(forged, { limits: { maxFileBytes: 16 * 1024 } }),
+    ).rejects.toMatchObject({
+      name: "PluginBundleError",
+      code: "FILE_TOO_LARGE",
+      message: expect.stringContaining("during extraction"),
+    });
+  });
+
+  it("counts directory records toward maxEntries (backend parity)", async () => {
+    // The backend rejects on the end-of-central-directory RECORD count before
+    // filtering, so directory records must count here too. jszip's default
+    // createFolders:true emits a "a/" directory record alongside the file.
+    const { default: JSZip } = await import("jszip");
+    const zip = new JSZip();
+    zip.file("a/one.txt", "1");
+    const bytes = await zip.generateAsync({ type: "uint8array" });
+    await expect(
+      zipToPluginFiles(bytes, { limits: { maxEntries: 1 } }),
+    ).rejects.toMatchObject({
+      name: "PluginBundleError",
+      code: "BUNDLE_TOO_MANY_ENTRIES",
+    });
+  });
+
+  it("uploads built by buildPluginZip contain file records only", async () => {
+    const zip = await buildPluginZip([
+      MANIFEST,
+      textFile("skills/demo/SKILL.md", "x"),
+    ]);
+    const { default: JSZip } = await import("jszip");
+    const loaded = await JSZip.loadAsync(zip);
+    expect(
+      Object.values(loaded.files).filter((entry) => entry.dir),
+    ).toHaveLength(0);
+  });
+});
+
+describe("filesFromFolderSelection pre-read limits", () => {
+  function fakeFile(path: string, size: number): File {
+    const file = new File(["x"], path.split("/").pop() ?? "");
+    Object.defineProperty(file, "webkitRelativePath", { value: path });
+    Object.defineProperty(file, "size", { value: size });
+    Object.defineProperty(file, "arrayBuffer", {
+      value: vi.fn(async () => new ArrayBuffer(size)),
+    });
+    return file;
+  }
+
+  it("rejects an oversized file from metadata without reading it", async () => {
+    const big = fakeFile("plugin/big.bin", 2048);
+    await expect(
+      filesFromFolderSelection([big], { limits: { maxFileBytes: 1024 } }),
+    ).rejects.toMatchObject({
+      name: "PluginBundleError",
+      code: "FILE_TOO_LARGE",
+    });
+    expect(big.arrayBuffer).not.toHaveBeenCalled();
+  });
+
+  it("rejects too many files before reading any", async () => {
+    const files = [fakeFile("plugin/a.txt", 1), fakeFile("plugin/b.txt", 1)];
+    await expect(
+      filesFromFolderSelection(files, { limits: { maxEntries: 1 } }),
+    ).rejects.toMatchObject({
+      name: "PluginBundleError",
+      code: "BUNDLE_TOO_MANY_ENTRIES",
+    });
+    for (const file of files) {
+      expect(file.arrayBuffer).not.toHaveBeenCalled();
+    }
+  });
+
+  it("rejects when cumulative declared sizes exceed maxTotalBytes", async () => {
+    const files = [fakeFile("plugin/a.bin", 60), fakeFile("plugin/b.bin", 60)];
+    await expect(
+      filesFromFolderSelection(files, {
+        limits: { maxFileBytes: 80, maxTotalBytes: 100 },
+      }),
+    ).rejects.toMatchObject({
+      name: "PluginBundleError",
+      code: "BUNDLE_TOO_LARGE",
+    });
+    for (const file of files) {
+      expect(file.arrayBuffer).not.toHaveBeenCalled();
+    }
+  });
 });
