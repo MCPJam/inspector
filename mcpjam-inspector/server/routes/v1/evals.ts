@@ -36,6 +36,12 @@ import {
   type RunEvalsRequest,
 } from "../shared/evals.js";
 import {
+  resolveEnvironmentForLaunch,
+  environmentServerIds,
+  environmentServerNames,
+  type ResolvedEnvironmentForLaunch,
+} from "../../services/evals/environment-launch.js";
+import {
   matchOptionsSchema,
   casePredicatesSchema,
 } from "@/shared/eval-matching";
@@ -282,19 +288,17 @@ const createEvalRunSchema = RunEvalsRequestSchema.omit({
   .refine((body) => body.suiteId || (body.tests?.length ?? 0) > 0, {
     message: "Provide suiteId (rerun) and/or inline tests",
   })
-  .refine((body) => body.suiteId || (body.serverIds?.length ?? 0) > 0, {
-    message: "serverIds are required when creating a new suite",
-  })
-  // Environment runs need the pre-connection resolution the hosted `/run`
-  // route performs; the public surface connects the suite's saved selection
-  // before `prepareEvalRun`, so an `environmentId` here would run against the
-  // wrong servers. Reject it explicitly rather than silently ignore — public
-  // environment launches are a deferred follow-up (plan A9).
-  .refine((body) => !body.environmentId, {
-    message:
-      "environmentId is not supported on the public API yet — run environment suites from the app.",
-    path: ["environmentId"],
-  });
+  // An environment supplies its own closed server set, so it satisfies this
+  // requirement the same way a suite's saved selection does — an environment
+  // run legitimately sends zero serverIds.
+  .refine(
+    (body) =>
+      body.suiteId || body.environmentId || (body.serverIds?.length ?? 0) > 0,
+    {
+      message:
+        "serverIds are required when creating a new suite without an environment",
+    }
+  );
 
 // ── Author-only suite-create schema ──────────────────────────────────
 
@@ -531,6 +535,41 @@ function createConvexReadClient(convexAuthToken: string): ConvexHttpClient {
 function isConvexNotVisibleError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return /not found|unauthorized|not a member/i.test(message);
+}
+
+/**
+ * Map a launch-resolution failure onto the public envelope. The environment
+ * exists and is readable, but cannot currently produce a runnable
+ * configuration (a pinned plugin was disabled, the host was deleted, the
+ * closed server set came out empty) — that is a 409 conflict, not bad input,
+ * and the machine-readable `ENV_*` code rides along in `details` so callers can
+ * branch on the reason. Mirrors `/v1/projects/:p/environments/:e/resolve`.
+ */
+function translateEnvironmentResolveError(error: unknown): unknown {
+  if (error instanceof WebRouteError) return error;
+  const data = (error as { data?: unknown } | null)?.data;
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    const code = (data as { code?: unknown }).code;
+    const message = (data as { message?: unknown }).message;
+    if (typeof code === "string" && code.startsWith("ENV_")) {
+      if (code === "ENV_NOT_FOUND" || code === "ENV_CROSS_PROJECT") {
+        return new WebRouteError(
+          404,
+          ErrorCode.NOT_FOUND,
+          "Environment not found"
+        );
+      }
+      return new WebRouteError(
+        409,
+        ErrorCode.CONFLICT,
+        typeof message === "string"
+          ? message
+          : "Environment cannot be launched right now.",
+        { code }
+      );
+    }
+  }
+  return error;
 }
 
 function requireProjectMatch(
@@ -1375,12 +1414,35 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
   // same swap `runEphemeralConnection` does for the synchronous routes.
   const convexAuthToken = await getConvexBearerForRequest(c);
 
-  // Omitted serverIds on a rerun (the schema guarantees suiteId here):
-  // connect the suite's saved server selection — the exact set the run
-  // snapshot will reference — instead of making the caller guess it.
+  // An environment owns its server set. Resolve it HERE, before the manager is
+  // built, so the manager connects the environment's closed set (including the
+  // servers its pinned plugin versions contribute) rather than the suite's
+  // saved selection — connecting the wrong set would make the tool snapshot
+  // disagree with what the run executes. The resolved value is handed to
+  // `prepareEvalRun` as `resolvedEnvironment` so it doesn't resolve a second
+  // time and risk a different revision.
+  //
+  // Any caller-supplied `serverIds` are deliberately ignored for an
+  // environment run: the closed set is the point.
+  let environmentLaunch: ResolvedEnvironmentForLaunch | undefined;
   let serverIds = body.serverIds ?? [];
   let serverNames = body.serverNames;
-  if (serverIds.length === 0) {
+  if (body.environmentId) {
+    const convex = createConvexReadClient(convexAuthToken);
+    try {
+      environmentLaunch = await resolveEnvironmentForLaunch(convex, {
+        projectId,
+        environmentId: body.environmentId,
+      });
+    } catch (error) {
+      throw translateEnvironmentResolveError(error);
+    }
+    serverIds = environmentServerIds(environmentLaunch);
+    serverNames = environmentServerNames(environmentLaunch);
+  } else if (serverIds.length === 0) {
+    // Omitted serverIds on a rerun (the schema guarantees suiteId here):
+    // connect the suite's saved server selection — the exact set the run
+    // snapshot will reference — instead of making the caller guess it.
     const selection = await fetchSuiteRunServerSelection(
       convexAuthToken,
       body.suiteId!,
@@ -1442,6 +1504,12 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
         suiteRerun,
         convexAuthToken,
         source: "api",
+        // Reuse this exact resolution (and its revision) rather than letting
+        // the shared path resolve again — the run must be pinned to the
+        // revision whose servers the manager just connected.
+        ...(environmentLaunch
+          ? { resolvedEnvironment: environmentLaunch }
+          : {}),
       });
     } catch (error) {
       await manager.disconnectAllServers().catch(() => {});

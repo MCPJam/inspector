@@ -371,6 +371,163 @@ describe("v1 write routes", () => {
       });
     });
 
+    describe("environment-backed runs", () => {
+      const RESOLVED_ENVIRONMENT = {
+        environmentRef: {
+          environmentId: "env_1",
+          name: "Staging",
+          revision: 7,
+        },
+        hostId: "host_1",
+        hostConfigId: "hc_1",
+        selectedServerIds: ["s_env"],
+        // Live-healed projection, plus a server contributed by a pinned
+        // plugin version — the manager must connect BOTH.
+        servers: [
+          { serverId: "s_env_live", name: "env server" },
+          { serverId: "s_plugin", name: "plugin server" },
+        ],
+      };
+
+      function mockHappyCreate() {
+        const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
+        createAuthorizedManagerMock.mockResolvedValue({
+          manager: { disconnectAllServers },
+          oauthServerUrls: {},
+          authenticatedUserId: null,
+        });
+        prepareEvalRunMock.mockResolvedValue({
+          suiteId: "suite_1",
+          runId: "run_1",
+          caseUpsert: { committed: [], failed: [] },
+          recorder: { finalize: vi.fn() },
+          execute: vi.fn().mockResolvedValue(undefined),
+        });
+        return { disconnectAllServers };
+      }
+
+      const inlineTest = {
+        title: "echo works",
+        steps: [{ id: "s1", kind: "prompt", prompt: "Use the echo tool" }],
+        runs: 1,
+        model: "anthropic/claude-haiku-4.5",
+        provider: "anthropic",
+      };
+
+      it("connects the environment's closed set and pins the run to its revision", async () => {
+        mockHappyCreate();
+        convexQueryMock.mockImplementation(async (fn: string) =>
+          fn === "projectEnvironments:resolveEnvironmentForLaunch"
+            ? RESOLVED_ENVIRONMENT
+            : null
+        );
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/p1/eval-runs",
+          // Caller-supplied serverIds are deliberately ignored: the closed set
+          // is the point of running against an environment.
+          { suiteId: "suite_1", environmentId: "env_1", serverIds: ["s_bogus"] }
+        );
+
+        expect(res.status).toBe(202);
+        expect(convexQueryMock).toHaveBeenCalledWith(
+          "projectEnvironments:resolveEnvironmentForLaunch",
+          { projectId: "p1", environmentId: "env_1" }
+        );
+        // The suite's saved selection is never consulted for an env run.
+        expect(convexQueryMock).not.toHaveBeenCalledWith(
+          "testSuites:getSuiteRunServerSelection",
+          expect.anything()
+        );
+        expect(createAuthorizedManagerMock.mock.calls[0][3]).toEqual([
+          "s_env_live",
+          "s_plugin",
+        ]);
+        expect(createAuthorizedManagerMock.mock.calls[0][7]).toMatchObject({
+          serverNames: ["env server", "plugin server"],
+        });
+        // The resolution is handed down instead of re-resolved, so the run is
+        // pinned to the revision whose servers were just connected.
+        expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
+          serverIds: ["s_env_live", "s_plugin"],
+          resolvedEnvironment: RESOLVED_ENVIRONMENT,
+        });
+      });
+
+      it("accepts a new suite with an environment and no serverIds", async () => {
+        mockHappyCreate();
+        convexQueryMock.mockResolvedValue(RESOLVED_ENVIRONMENT);
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/p1/eval-runs",
+          {
+            suiteName: "fresh suite",
+            environmentId: "env_1",
+            tests: [inlineTest],
+          }
+        );
+
+        expect(res.status).toBe(202);
+        expect(prepareEvalRunMock).toHaveBeenCalledTimes(1);
+      });
+
+      it("maps a launch-resolution failure to 409 with the ENV_ reason", async () => {
+        mockHappyCreate();
+        const conflict = Object.assign(new Error("ConvexError"), {
+          data: {
+            code: "ENV_PLUGIN_DISABLED",
+            message: "Pinned plugin is disabled.",
+          },
+        });
+        convexQueryMock.mockRejectedValueOnce(conflict);
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/p1/eval-runs",
+          { suiteId: "suite_1", environmentId: "env_1" }
+        );
+
+        expect(res.status).toBe(409);
+        const body = (await res.json()) as {
+          code?: string;
+          message?: string;
+          details?: { code?: string };
+        };
+        expect(body.code).toBe("CONFLICT");
+        expect(body.message).toBe("Pinned plugin is disabled.");
+        expect(body.details?.code).toBe("ENV_PLUGIN_DISABLED");
+        expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
+        expect(prepareEvalRunMock).not.toHaveBeenCalled();
+      });
+
+      it("maps an unreadable environment to 404, not a conflict", async () => {
+        mockHappyCreate();
+        convexQueryMock.mockRejectedValueOnce(
+          Object.assign(new Error("ConvexError"), {
+            data: { code: "ENV_NOT_FOUND", message: "nope" },
+          })
+        );
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/p1/eval-runs",
+          { suiteId: "suite_1", environmentId: "env_other" }
+        );
+
+        expect(res.status).toBe(404);
+        expect(((await res.json()) as { code?: string }).code).toBe(
+          "NOT_FOUND"
+        );
+        expect(prepareEvalRunMock).not.toHaveBeenCalled();
+      });
+    });
+
     describe("inline test model validation", () => {
       const inlineTest = (model: string, provider = "anthropic") => ({
         title: "echo works",
