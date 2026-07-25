@@ -58,4 +58,70 @@ describe("AdvancedConnectionSettingsSection", () => {
     expect(screen.getByText(/Timeout/)).toBeInTheDocument();
     expect(screen.getByText("Capabilities override")).toBeInTheDocument();
   });
+
+  describe("header value masking", () => {
+    function renderHeaders(customHeaders: Array<{ key: string; value: string }>) {
+      const onRemoveHeader = vi.fn();
+      render(
+        <AdvancedConnectionSettingsSection
+          showConfiguration={true}
+          onToggle={vi.fn()}
+          requestTimeout="10000"
+          onRequestTimeoutChange={vi.fn()}
+          inheritedRequestTimeout={10000}
+          customHeaders={customHeaders}
+          onAddHeader={vi.fn()}
+          onRemoveHeader={onRemoveHeader}
+          onUpdateHeader={vi.fn()}
+        />,
+      );
+      return { onRemoveHeader };
+    }
+
+    it("masks header values until the eye is clicked", () => {
+      renderHeaders([{ key: "X-API-Key", value: "super-secret" }]);
+
+      const value = screen.getByLabelText("Header 1 value");
+      expect(value).toHaveAttribute("type", "password");
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Show value for X-API-Key" }),
+      );
+      expect(screen.getByLabelText("Header 1 value")).toHaveAttribute(
+        "type",
+        "text",
+      );
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Hide value for X-API-Key" }),
+      );
+      expect(screen.getByLabelText("Header 1 value")).toHaveAttribute(
+        "type",
+        "password",
+      );
+    });
+
+    it("keeps a stored-header reveal behind an eye affordance", () => {
+      render(
+        <AdvancedConnectionSettingsSection
+          showConfiguration={true}
+          onToggle={vi.fn()}
+          requestTimeout="10000"
+          onRequestTimeoutChange={vi.fn()}
+          inheritedRequestTimeout={10000}
+          customHeaders={[]}
+          onAddHeader={vi.fn()}
+          onRemoveHeader={vi.fn()}
+          onUpdateHeader={vi.fn()}
+          hasStoredHeaders
+          onRevealHeaders={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByText("Hidden — Reveal to view")).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: /Reveal/ }),
+      ).toBeInTheDocument();
+    });
+  });
 });

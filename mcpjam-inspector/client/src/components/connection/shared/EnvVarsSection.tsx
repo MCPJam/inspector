@@ -1,6 +1,8 @@
-import { useId, useState } from "react";
+import { useId } from "react";
 import { Input } from "@mcpjam/design-system/input";
-import { ChevronDown, ChevronRight, Eye, EyeOff, Plus, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Eye, Plus, X } from "lucide-react";
+import { useMaskedValues } from "../hooks/use-masked-values";
+import { MaskedValueInput } from "./MaskedValueInput";
 
 interface EnvVarsSectionProps {
   envVars: Array<{ key: string; value: string }>;
@@ -32,22 +34,7 @@ export function EnvVarsSection({
   // without colliding on a shared element id.
   const bodyId = useId();
 
-  // Values render masked so an API key isn't sitting in cleartext for anyone
-  // looking at the screen. This is shoulder-surfing cover, not access control:
-  // the value is already in the form, so the eye is a pure client-side toggle —
-  // no fetch, no round-trip. `defaultVisible` sets the baseline for rows we
-  // haven't heard about yet; `valueOverrides` holds the per-row eye state.
-  const [defaultVisible, setDefaultVisible] = useState(false);
-  const [valueOverrides, setValueOverrides] = useState<Record<number, boolean>>(
-    {}
-  );
-  const isValueVisible = (index: number) =>
-    valueOverrides[index] ?? defaultVisible;
-
-  const toggleValueVisibility = (index: number) => {
-    const next = !isValueVisible(index);
-    setValueOverrides((prev) => ({ ...prev, [index]: next }));
-  };
+  const masked = useMaskedValues();
 
   // Adding from the collapsed state used to append an invisible row — expand
   // first so the new row is always where the click points.
@@ -55,32 +42,17 @@ export function EnvVarsSection({
     if (!showEnvVars) {
       onToggle();
     }
-    // The row you're about to type into starts unmasked; masking your own
-    // keystrokes as you enter them helps nobody.
-    setValueOverrides((prev) => ({ ...prev, [envVars.length]: true }));
+    masked.markAdded(envVars.length);
     onAdd();
   };
 
-  // Rows are keyed by position, so dropping one has to slide every override
-  // above it down a slot — otherwise the eye state lands on the wrong variable.
   const handleRemove = (index: number) => {
-    setValueOverrides((prev) => {
-      const next: Record<number, boolean> = {};
-      for (const [key, visible] of Object.entries(prev)) {
-        const at = Number(key);
-        if (at === index) continue;
-        next[at > index ? at - 1 : at] = visible;
-      }
-      return next;
-    });
+    masked.dropAt(index);
     onRemove(index);
   };
 
-  // Reveal is an explicit "show me the stored values", so the rows it fetches
-  // arrive unmasked. Each eye can put one back.
   const handleReveal = () => {
-    setDefaultVisible(true);
-    setValueOverrides({});
+    masked.revealAll();
     onReveal?.();
   };
 
@@ -165,7 +137,6 @@ export function EnvVarsSection({
           // -mx-1/px-1 keeps focus rings from being clipped by the scroller.
           <div className="-mx-1 max-h-52 space-y-1.5 overflow-y-auto px-1">
             {envVars.map((envVar, index) => {
-              const valueVisible = isValueVisible(index);
               const label = envVar.key || `variable ${index + 1}`;
               return (
                 <div key={index} className="flex items-center gap-1.5">
@@ -185,38 +156,15 @@ export function EnvVarsSection({
                   >
                     =
                   </span>
-                  <div className="relative flex-[1.4]">
-                    <Input
-                      type={valueVisible ? "text" : "password"}
-                      value={envVar.value}
-                      onChange={(e) => onUpdate(index, "value", e.target.value)}
-                      placeholder="value"
-                      spellCheck={false}
-                      autoCapitalize="off"
-                      autoCorrect="off"
-                      // Keeps the browser's password manager from offering to
-                      // save an MCP server's env var as a login.
-                      autoComplete="off"
-                      aria-label={`Environment variable ${index + 1} value`}
-                      className="h-8 w-full pr-8 font-mono text-xs"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => toggleValueVisibility(index)}
-                      aria-label={
-                        valueVisible
-                          ? `Hide value for ${label}`
-                          : `Show value for ${label}`
-                      }
-                      className="absolute right-0.5 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
-                    >
-                      {valueVisible ? (
-                        <EyeOff className="h-3.5 w-3.5" />
-                      ) : (
-                        <Eye className="h-3.5 w-3.5" />
-                      )}
-                    </button>
-                  </div>
+                  <MaskedValueInput
+                    value={envVar.value}
+                    onChange={(value) => onUpdate(index, "value", value)}
+                    visible={masked.isVisible(index)}
+                    onToggleVisibility={() => masked.toggle(index)}
+                    inputLabel={`Environment variable ${index + 1} value`}
+                    subject={label}
+                    className="flex-[1.4]"
+                  />
                   <button
                     type="button"
                     onClick={() => handleRemove(index)}

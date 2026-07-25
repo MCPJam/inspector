@@ -1,6 +1,8 @@
 import { useId } from "react";
-import { ChevronDown, ChevronRight, Plus, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Eye, Plus, X } from "lucide-react";
 import { Input } from "@mcpjam/design-system/input";
+import { useMaskedValues } from "../hooks/use-masked-values";
+import { MaskedValueInput } from "./MaskedValueInput";
 import { Switch } from "@mcpjam/design-system/switch";
 import {
   Select,
@@ -122,6 +124,21 @@ export function AdvancedConnectionSettingsSection({
     onRemoveHeader !== undefined &&
     onUpdateHeader !== undefined;
   const headersHidden = hasStoredHeaders && (customHeaders?.length ?? 0) === 0;
+  // Header values carry bearer tokens and API keys, so they mask the same way
+  // env-var values do. See use-masked-values for why the toggle needs no fetch.
+  const maskedHeaders = useMaskedValues();
+  const handleAddHeader = () => {
+    maskedHeaders.markAdded(customHeaders?.length ?? 0);
+    onAddHeader?.();
+  };
+  const handleRemoveHeader = (index: number) => {
+    maskedHeaders.dropAt(index);
+    onRemoveHeader?.(index);
+  };
+  const handleRevealHeaders = () => {
+    maskedHeaders.revealAll();
+    onRevealHeaders?.();
+  };
   const showClientCapabilitiesControls =
     onClientCapabilitiesOverrideEnabledChange !== undefined &&
     onClientCapabilitiesOverrideTextChange !== undefined;
@@ -208,7 +225,7 @@ export function AdvancedConnectionSettingsSection({
                   </label>
                   <button
                     type="button"
-                    onClick={onAddHeader}
+                    onClick={handleAddHeader}
                     disabled={headersHidden}
                     className="flex items-center gap-1 rounded px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                   >
@@ -234,9 +251,10 @@ export function AdvancedConnectionSettingsSection({
                     <button
                       type="button"
                       disabled={isRevealingHeaders || !onRevealHeaders}
-                      onClick={onRevealHeaders}
-                      className="rounded border border-border bg-background px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={handleRevealHeaders}
+                      className="flex shrink-0 items-center gap-1.5 rounded border border-border bg-background px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
                     >
+                      <Eye className="h-3.5 w-3.5" aria-hidden="true" />
                       {isRevealingHeaders ? "Revealing..." : "Reveal"}
                     </button>
                   </div>
@@ -244,7 +262,7 @@ export function AdvancedConnectionSettingsSection({
                 {!headersHidden && customHeaders.length === 0 && (
                   <button
                     type="button"
-                    onClick={onAddHeader}
+                    onClick={handleAddHeader}
                     className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-border py-2.5 text-xs text-muted-foreground transition-colors hover:border-foreground/30 hover:bg-muted/40 hover:text-foreground"
                   >
                     <Plus className="h-3.5 w-3.5" />
@@ -253,55 +271,53 @@ export function AdvancedConnectionSettingsSection({
                 )}
                 {customHeaders.length > 0 && (
                   <div className="space-y-1.5">
-                    {customHeaders.map((header, index) => (
-                      <div
-                        key={header.id ?? `${header.key}-${index}`}
-                        className="flex items-center gap-1.5"
-                      >
-                        <Input
-                          value={header.key}
-                          onChange={(e) =>
-                            onUpdateHeader(index, "key", e.target.value)
-                          }
-                          placeholder="Header"
-                          spellCheck={false}
-                          autoCapitalize="off"
-                          autoCorrect="off"
-                          aria-label={`Header ${index + 1} name`}
-                          className="h-8 flex-1 font-mono text-xs"
-                        />
-                        <span
-                          aria-hidden="true"
-                          className="shrink-0 select-none text-xs text-muted-foreground/70"
+                    {customHeaders.map((header, index) => {
+                      const label = header.key || `header ${index + 1}`;
+                      return (
+                        <div
+                          key={header.id ?? `${header.key}-${index}`}
+                          className="flex items-center gap-1.5"
                         >
-                          :
-                        </span>
-                        <Input
-                          value={header.value}
-                          onChange={(e) =>
-                            onUpdateHeader(index, "value", e.target.value)
-                          }
-                          placeholder="value"
-                          spellCheck={false}
-                          autoCapitalize="off"
-                          autoCorrect="off"
-                          aria-label={`Header ${index + 1} value`}
-                          className="h-8 flex-[1.4] font-mono text-xs"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => onRemoveHeader(index)}
-                          aria-label={
-                            header.key
-                              ? `Remove ${header.key}`
-                              : `Remove header ${index + 1}`
-                          }
-                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-destructive"
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    ))}
+                          <Input
+                            value={header.key}
+                            onChange={(e) =>
+                              onUpdateHeader(index, "key", e.target.value)
+                            }
+                            placeholder="Header"
+                            spellCheck={false}
+                            autoCapitalize="off"
+                            autoCorrect="off"
+                            aria-label={`Header ${index + 1} name`}
+                            className="h-8 flex-1 font-mono text-xs"
+                          />
+                          <span
+                            aria-hidden="true"
+                            className="shrink-0 select-none text-xs text-muted-foreground/70"
+                          >
+                            :
+                          </span>
+                          <MaskedValueInput
+                            value={header.value}
+                            onChange={(value) =>
+                              onUpdateHeader(index, "value", value)
+                            }
+                            visible={maskedHeaders.isVisible(index)}
+                            onToggleVisibility={() => maskedHeaders.toggle(index)}
+                            inputLabel={`Header ${index + 1} value`}
+                            subject={label}
+                            className="flex-[1.4]"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveHeader(index)}
+                            aria-label={`Remove ${label}`}
+                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-destructive"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
                 {headersWarning && (
