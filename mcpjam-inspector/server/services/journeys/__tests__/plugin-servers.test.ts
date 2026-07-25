@@ -144,3 +144,51 @@ describe("resolveTargetPluginServerIds", () => {
     ).rejects.toThrow(/no target id/);
   });
 });
+
+// The resume-config leak this PR nearly shipped.
+//
+// `resumeConfig.selectedServers` is a DURABLE reconnect instruction, replayed
+// by the Sessions viewer with no plugin lifecycle check. Unioning plugin server
+// ids into `connectedServerIds` (which the runner copies into resumeConfig)
+// therefore recreated, through a different door, the exact bypass that keeps
+// `plugin_component` ids out of `hostConfigs.serverIds`: a stored id that
+// outlives the plugin's disable/uninstall.
+describe("resumeConfig must not carry plugin server ids", () => {
+  // Mirrors the filter in sessionSimulation/runner.ts so the invariant is
+  // pinned even though the runner itself needs a full session to exercise.
+  function resumeServers(
+    connectedServerIds: string[],
+    nonResumableServerIds: string[] | undefined,
+    connectedServerNames?: string[]
+  ): string[] {
+    const nonResumable = new Set(nonResumableServerIds ?? []);
+    return Array.isArray(connectedServerNames) &&
+      connectedServerNames.length === connectedServerIds.length
+      ? connectedServerNames.filter(
+          (_, i) => !nonResumable.has(connectedServerIds[i]!)
+        )
+      : connectedServerIds.filter((id) => !nonResumable.has(id));
+  }
+
+  it("drops plugin ids while keeping the host's own servers", () => {
+    expect(resumeServers(["srv_host", "srv_plugin"], ["srv_plugin"])).toEqual([
+      "srv_host",
+    ]);
+  });
+
+  it("drops the aligned NAME when names are supplied", () => {
+    // Index alignment is the contract; filtering names by value would drop the
+    // wrong entry whenever two servers share a display name.
+    expect(
+      resumeServers(
+        ["srv_host", "srv_plugin"],
+        ["srv_plugin"],
+        ["shared-name", "shared-name"]
+      )
+    ).toEqual(["shared-name"]);
+  });
+
+  it("is a no-op for a target with no plugin servers", () => {
+    expect(resumeServers(["srv_host"], undefined)).toEqual(["srv_host"]);
+  });
+});

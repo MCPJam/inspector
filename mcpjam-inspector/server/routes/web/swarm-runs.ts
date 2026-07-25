@@ -362,6 +362,11 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
       // possibly-finalized Context.
       const xaaIssuer = resolveXaaIssuer(c, HOSTED_MODE);
 
+      // One client for the run's D2 re-gates. `managerFactory` runs once per
+      // SESSION attempt, not once per target, so constructing this inside it
+      // would mint a fresh client per session for no reason.
+      const pluginRegateClient = createConvexClient(bearerToken);
+
       setImmediate(() => {
         startJourneyRun({
           runId,
@@ -385,8 +390,14 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
             // same treatment an invalid stored xaaPolicy gets — because a
             // silently shrunken server set runs an environment nobody
             // configured.
+            //
+            // Re-gated per SESSION, not once per target: `managerFactory` is
+            // invoked per session attempt, so a plugin uninstalled mid-run
+            // stops contributing to the very next session rather than at the
+            // next launch. Deliberate — revocation should not wait for a run
+            // to finish — at the cost of one query per session.
             const pluginServerIds = await resolveTargetPluginServerIds(
-              createConvexClient(bearerToken),
+              pluginRegateClient,
               {
                 runId,
                 targetId: host.targetId,
@@ -450,6 +461,11 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
             return {
               manager,
               connectedServerIds: serverIds,
+              // The session connects these, but `resumeConfig` must never tell
+              // a later viewer to reconnect them without re-gating the plugin.
+              ...(pluginServerIds.length > 0
+                ? { nonResumableServerIds: pluginServerIds }
+                : {}),
               dispose: async () => {
                 await manager.disconnectAllServers();
               },
