@@ -48,7 +48,7 @@ import {
   type RunTrendPoint,
 } from "./run-insight-rail";
 import { runDetailMetaLabelClass } from "./run-detail-typography";
-import { useEnvironments } from "@/hooks/useComputerEnvironments";
+import { useSandboxImages } from "@/hooks/useSandboxImages";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import {
   ResizableHandle,
@@ -426,7 +426,7 @@ export function RunDetailView({
     runComputerEnv?.environmentId ??
     selectedRunDetails.configSnapshot?.environment?.computerEnvironmentId ??
     null;
-  const runEnvironments = useEnvironments(
+  const runEnvironments = useSandboxImages(
     runComputerEnvId ? selectedRunDetails.projectId ?? null : null
   );
   // Friendly name when resolvable; otherwise the RAW id (never truncated — it's
@@ -441,7 +441,7 @@ export function RunDetailView({
   // kill-switch hides env names/revisions on retained historical runs too.
   const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
   const runProjectEnvironmentRef = projectEnvironmentsEnabled
-    ? (selectedRunDetails.configSnapshot?.environmentRef ?? null)
+    ? selectedRunDetails.configSnapshot?.environmentRef ?? null
     : null;
   const {
     result: goalCompletionResult,

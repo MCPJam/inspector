@@ -14,7 +14,7 @@ import { useMutation, useQuery } from "convex/react";
 
 export type BuildStatus = "queued" | "building" | "ready" | "failed";
 
-export interface EnvironmentBuildView {
+export interface SandboxImageBuildView {
   buildId: string;
   status: BuildStatus;
   provider: "e2b" | "stub";
@@ -27,7 +27,7 @@ export interface EnvironmentBuildView {
   finishedAt?: number;
 }
 
-export interface EnvironmentView {
+export interface SandboxImageView {
   environmentId: string;
   projectId: string;
   name: string;
@@ -39,59 +39,63 @@ export interface EnvironmentView {
    * shared-env controls are optimistic — see the drawer. */
   isOwner: boolean;
   currentBuildId?: string;
-  currentBuild: EnvironmentBuildView | null;
+  currentBuild: SandboxImageBuildView | null;
   createdAt: number;
   updatedAt: number;
 }
 
 /** Visible environments for a project: the caller's own drafts + the
  * project-shared ones. `undefined` while loading / when `projectId` is absent. */
-export function useEnvironments(
+export function useSandboxImages(
   projectId: string | null
-): EnvironmentView[] | undefined {
+): SandboxImageView[] | undefined {
   return useQuery(
     "computerEnvironments:listEnvironments" as never,
     projectId ? ({ projectId } as never) : "skip"
-  ) as EnvironmentView[] | undefined;
+  ) as SandboxImageView[] | undefined;
 }
 
 /** One environment (with its current build), or `null` if not visible. */
-export function useEnvironment(
+export function useSandboxImage(
   environmentId: string | null
-): EnvironmentView | null | undefined {
+): SandboxImageView | null | undefined {
   return useQuery(
     "computerEnvironments:getEnvironment" as never,
     environmentId ? ({ environmentId } as never) : "skip"
-  ) as EnvironmentView | null | undefined;
+  ) as SandboxImageView | null | undefined;
 }
 
 /** All builds for an environment, newest first. */
-export function useEnvironmentBuilds(
+export function useSandboxImageBuilds(
   environmentId: string | null
-): EnvironmentBuildView[] | undefined {
+): SandboxImageBuildView[] | undefined {
   return useQuery(
     "computerEnvironments:listEnvironmentBuilds" as never,
     environmentId ? ({ environmentId } as never) : "skip"
-  ) as EnvironmentBuildView[] | undefined;
+  ) as SandboxImageBuildView[] | undefined;
 }
 
-export function useCreateEnvironment(): (args: {
+export function useCreateSandboxImage(): (args: {
   projectId: string;
   name: string;
   dockerfile: string;
-}) => Promise<EnvironmentView> {
-  return useMutation("computerEnvironments:createEnvironment" as never) as never;
+}) => Promise<SandboxImageView> {
+  return useMutation(
+    "computerEnvironments:createEnvironment" as never
+  ) as never;
 }
 
-export function useUpdateEnvironment(): (args: {
+export function useUpdateSandboxImage(): (args: {
   environmentId: string;
   name?: string;
   dockerfile?: string;
-}) => Promise<EnvironmentView> {
-  return useMutation("computerEnvironments:updateEnvironment" as never) as never;
+}) => Promise<SandboxImageView> {
+  return useMutation(
+    "computerEnvironments:updateEnvironment" as never
+  ) as never;
 }
 
-export function useStartEnvironmentBuild(): (args: {
+export function useStartSandboxImageBuild(): (args: {
   environmentId: string;
 }) => Promise<{ buildId: string; reused: boolean }> {
   return useMutation(
@@ -99,23 +103,25 @@ export function useStartEnvironmentBuild(): (args: {
   ) as never;
 }
 
-export function usePromoteEnvironment(): (args: {
+export function usePromoteSandboxImage(): (args: {
   environmentId: string;
-}) => Promise<EnvironmentView> {
+}) => Promise<SandboxImageView> {
   return useMutation(
     "computerEnvironments:promoteEnvironmentToProject" as never
   ) as never;
 }
 
-export function useDeleteEnvironment(): (args: {
+export function useDeleteSandboxImage(): (args: {
   environmentId: string;
 }) => Promise<{ deleted: true }> {
-  return useMutation("computerEnvironments:deleteEnvironment" as never) as never;
+  return useMutation(
+    "computerEnvironments:deleteEnvironment" as never
+  ) as never;
 }
 
 /** Attach an environment to the caller's computer (or detach with `null`),
  * which re-provisions the box from the pinned image. */
-export function useSetComputerEnvironment(): (args: {
+export function useSetComputerSandboxImage(): (args: {
   projectId: string;
   environmentId: string | null;
 }) => Promise<{ computerId: string; status: string; environmentId?: string }> {

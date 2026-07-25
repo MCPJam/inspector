@@ -19,15 +19,15 @@ import {
   ChevronLeft,
 } from "lucide-react";
 import {
-  useCreateEnvironment,
-  useDeleteEnvironment,
-  useEnvironments,
-  usePromoteEnvironment,
-  useSetComputerEnvironment,
-  useStartEnvironmentBuild,
-  useUpdateEnvironment,
-  type EnvironmentView,
-} from "@/hooks/useComputerEnvironments";
+  useCreateSandboxImage,
+  useDeleteSandboxImage,
+  useSandboxImages,
+  usePromoteSandboxImage,
+  useSetComputerSandboxImage,
+  useStartSandboxImageBuild,
+  useUpdateSandboxImage,
+  type SandboxImageView,
+} from "@/hooks/useSandboxImages";
 import { EnvironmentBuildBadge } from "./EnvironmentBuildBadge";
 import { convexErrMessage } from "@/lib/convex-error";
 
@@ -50,7 +50,7 @@ const errMessage = convexErrMessage;
  * from. Opened from the Computer tab's "Change image" control. Builds stream
  * reactively via Convex queries, so no manual polling.
  */
-export function EnvironmentsDrawer({
+export function SandboxImagesDrawer({
   open,
   onOpenChange,
   projectId,
@@ -65,13 +65,13 @@ export function EnvironmentsDrawer({
    * (settled or not-yet-provisioned) — mirrors Reset's gating. */
   canAttach: boolean;
 }) {
-  const environments = useEnvironments(open ? projectId : null);
-  const setComputerEnvironment = useSetComputerEnvironment();
+  const environments = useSandboxImages(open ? projectId : null);
+  const setComputerEnvironment = useSetComputerSandboxImage();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   // A just-created env, kept until the (reactive) list query includes it — so
   // we land on its detail immediately instead of bouncing back to the list.
-  const [justCreated, setJustCreated] = useState<EnvironmentView | null>(null);
+  const [justCreated, setJustCreated] = useState<SandboxImageView | null>(null);
 
   const selected = useMemo(
     () =>
@@ -159,7 +159,7 @@ function EnvironmentList({
   onUseBase,
   attachToBaseDisabled,
 }: {
-  environments: EnvironmentView[] | undefined;
+  environments: SandboxImageView[] | undefined;
   attachedEnvironmentId: string | null;
   onSelect: (id: string) => void;
   onNew: () => void;
@@ -280,9 +280,9 @@ function NewEnvironmentForm({
 }: {
   projectId: string;
   onCancel: () => void;
-  onCreated: (env: EnvironmentView) => void;
+  onCreated: (env: SandboxImageView) => void;
 }) {
-  const createEnvironment = useCreateEnvironment();
+  const createEnvironment = useCreateSandboxImage();
   const [name, setName] = useState("");
   const [dockerfile, setDockerfile] = useState(NEW_ENVIRONMENT_TEMPLATE);
   const [saving, setSaving] = useState(false);
@@ -336,7 +336,9 @@ function NewEnvironmentForm({
           Cancel
         </Button>
         <Button size="sm" onClick={() => void create()} disabled={saving}>
-          {saving ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
+          {saving ? (
+            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+          ) : null}
           Create
         </Button>
       </div>
@@ -354,18 +356,18 @@ function EnvironmentDetail({
   onBack,
   onDeleted,
 }: {
-  env: EnvironmentView;
+  env: SandboxImageView;
   projectId: string;
   isAttached: boolean;
   canAttach: boolean;
   onBack: () => void;
   onDeleted: () => void;
 }) {
-  const updateEnvironment = useUpdateEnvironment();
-  const startBuild = useStartEnvironmentBuild();
-  const promote = usePromoteEnvironment();
-  const deleteEnvironment = useDeleteEnvironment();
-  const setComputerEnvironment = useSetComputerEnvironment();
+  const updateEnvironment = useUpdateSandboxImage();
+  const startBuild = useStartSandboxImageBuild();
+  const promote = usePromoteSandboxImage();
+  const deleteEnvironment = useDeleteSandboxImage();
+  const setComputerEnvironment = useSetComputerSandboxImage();
 
   const [name, setName] = useState(env.name);
   const [dockerfile, setDockerfile] = useState(env.dockerfile);
@@ -416,7 +418,9 @@ function EnvironmentDetail({
     setBuilding(true);
     try {
       const res = await startBuild({ environmentId: env.environmentId });
-      toast.success(res.reused ? "Reused an existing build." : "Build started.");
+      toast.success(
+        res.reused ? "Reused an existing build." : "Build started."
+      );
     } catch (err) {
       toast.error(errMessage(err, "Could not start the build."));
     } finally {
@@ -505,8 +509,15 @@ function EnvironmentDetail({
 
       <div className="flex flex-wrap items-center gap-2">
         {dirty ? (
-          <Button size="sm" variant="outline" onClick={() => void save()} disabled={saving}>
-            {saving ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void save()}
+            disabled={saving}
+          >
+            {saving ? (
+              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+            ) : null}
             Save
           </Button>
         ) : null}
@@ -573,10 +584,18 @@ function EnvironmentDetail({
         {confirmingDelete ? (
           <span className="inline-flex items-center gap-2 text-xs">
             <span className="text-muted-foreground">Delete?</span>
-            <Button size="sm" variant="destructive" onClick={() => void onDelete()}>
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => void onDelete()}
+            >
               Delete
             </Button>
-            <Button size="sm" variant="ghost" onClick={() => setConfirmingDelete(false)}>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setConfirmingDelete(false)}
+            >
               Cancel
             </Button>
           </span>
@@ -613,4 +632,3 @@ function DockerfileEditor({
     />
   );
 }
-

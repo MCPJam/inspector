@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
 // Covers the v1 COMPUTER-ENVIRONMENTS surface
-// (server/routes/v1/computer-environments.ts): auth + guest gating, the public
+// (server/routes/v1/images.ts): auth + guest gating, the public
 // DTO mapping (no Convex `environmentId`/`buildId` leak), and — the key
 // difference from hosts — the route-level PROJECT-SCOPE GUARD. The backend env
 // mutations take only an `environmentId` and authorize by the env's own
@@ -111,7 +111,7 @@ function mockMutation(map: Record<string, unknown>) {
   );
 }
 
-describe("v1 computer-environments routes", () => {
+describe("v1 images routes", () => {
   const originalEnv = {
     CONVEX_URL: process.env.CONVEX_URL,
     CONVEX_HTTP_URL: process.env.CONVEX_HTTP_URL,
@@ -133,11 +133,9 @@ describe("v1 computer-environments routes", () => {
 
   describe("auth", () => {
     it("rejects a request with no bearer token (401)", async () => {
-      const res = await request(
-        "GET",
-        "/api/v1/projects/p1/computer-environments",
-        { token: null }
-      );
+      const res = await request("GET", "/api/v1/projects/p1/images", {
+        token: null,
+      });
       expect(res.status).toBe(401);
       expect(((await res.json()) as { code?: string }).code).toBe(
         "UNAUTHORIZED"
@@ -149,11 +147,9 @@ describe("v1 computer-environments routes", () => {
         valid: true,
         guestId: "guest_1",
       });
-      const res = await request(
-        "GET",
-        "/api/v1/projects/p1/computer-environments",
-        { token: "guest-jwt" }
-      );
+      const res = await request("GET", "/api/v1/projects/p1/images", {
+        token: "guest-jwt",
+      });
       expect(res.status).toBe(401);
       expect(((await res.json()) as { code?: string }).code).toBe(
         "UNAUTHORIZED"
@@ -165,10 +161,7 @@ describe("v1 computer-environments routes", () => {
   describe("GET list + detail", () => {
     it("lists environments in the public DTO shape (id, no environmentId leak)", async () => {
       mockQuery({ "computerEnvironments:listEnvironments": [ENV_ROW] });
-      const res = await request(
-        "GET",
-        "/api/v1/projects/p1/computer-environments"
-      );
+      const res = await request("GET", "/api/v1/projects/p1/images");
       expect(res.status).toBe(200);
       const body = (await res.json()) as { items: Record<string, unknown>[] };
       expect(body.items).toHaveLength(1);
@@ -182,10 +175,7 @@ describe("v1 computer-environments routes", () => {
 
     it("returns environment detail and maps environmentId → id", async () => {
       mockQuery({ "computerEnvironments:getEnvironment": ENV_ROW });
-      const res = await request(
-        "GET",
-        "/api/v1/projects/p1/computer-environments/env1"
-      );
+      const res = await request("GET", "/api/v1/projects/p1/images/env1");
       expect(res.status).toBe(200);
       const body = (await res.json()) as Record<string, unknown>;
       expect(body).toMatchObject({ id: "env1", name: "ml-toolkit" });
@@ -200,10 +190,7 @@ describe("v1 computer-environments routes", () => {
       convexQueryMock.mockRejectedValueOnce(
         new Error("Request timed out after 30000ms")
       );
-      const res = await request(
-        "GET",
-        "/api/v1/projects/p1/computer-environments"
-      );
+      const res = await request("GET", "/api/v1/projects/p1/images");
       expect(res.status).toBeGreaterThanOrEqual(500);
       expect(((await res.json()) as { code?: string }).code).not.toBe(
         "VALIDATION_ERROR"
@@ -212,10 +199,7 @@ describe("v1 computer-environments routes", () => {
 
     it("404s a missing environment", async () => {
       mockQuery({ "computerEnvironments:getEnvironment": null });
-      const res = await request(
-        "GET",
-        "/api/v1/projects/p1/computer-environments/nope"
-      );
+      const res = await request("GET", "/api/v1/projects/p1/images/nope");
       expect(res.status).toBe(404);
       expect(((await res.json()) as { code?: string }).code).toBe("NOT_FOUND");
     });
@@ -224,30 +208,22 @@ describe("v1 computer-environments routes", () => {
   describe("project-scope guard", () => {
     it("404s a GET for an env that belongs to another project", async () => {
       mockQuery({ "computerEnvironments:getEnvironment": CROSS_PROJECT_ENV });
-      const res = await request(
-        "GET",
-        "/api/v1/projects/p1/computer-environments/env1"
-      );
+      const res = await request("GET", "/api/v1/projects/p1/images/env1");
       expect(res.status).toBe(404);
     });
 
     it("404s a PATCH for a cross-project env WITHOUT calling the update mutation", async () => {
       mockQuery({ "computerEnvironments:getEnvironment": CROSS_PROJECT_ENV });
-      const res = await request(
-        "PATCH",
-        "/api/v1/projects/p1/computer-environments/env1",
-        { body: { name: "x" } }
-      );
+      const res = await request("PATCH", "/api/v1/projects/p1/images/env1", {
+        body: { name: "x" },
+      });
       expect(res.status).toBe(404);
       expect(convexMutationMock).not.toHaveBeenCalled();
     });
 
     it("404s a DELETE for a cross-project env WITHOUT calling the delete mutation", async () => {
       mockQuery({ "computerEnvironments:getEnvironment": CROSS_PROJECT_ENV });
-      const res = await request(
-        "DELETE",
-        "/api/v1/projects/p1/computer-environments/env1"
-      );
+      const res = await request("DELETE", "/api/v1/projects/p1/images/env1");
       expect(res.status).toBe(404);
       expect(convexMutationMock).not.toHaveBeenCalled();
     });
@@ -256,10 +232,10 @@ describe("v1 computer-environments routes", () => {
     // writes) must all refuse a cross-project env at the guard, never reaching
     // the underlying Convex call.
     it.each([
-      ["GET", "/api/v1/projects/p1/computer-environments/env1/builds"],
-      ["POST", "/api/v1/projects/p1/computer-environments/env1/build"],
-      ["POST", "/api/v1/projects/p1/computer-environments/env1/promote"],
-      ["POST", "/api/v1/projects/p1/computer-environments/env1/use"],
+      ["GET", "/api/v1/projects/p1/images/env1/builds"],
+      ["POST", "/api/v1/projects/p1/images/env1/build"],
+      ["POST", "/api/v1/projects/p1/images/env1/promote"],
+      ["POST", "/api/v1/projects/p1/images/env1/use"],
     ])(
       "%s %s 404s a cross-project env and runs no mutation",
       async (method, path) => {
@@ -274,27 +250,27 @@ describe("v1 computer-environments routes", () => {
   describe("POST create", () => {
     it("creates an environment and returns 201, forwarding name + dockerfile", async () => {
       mockMutation({ "computerEnvironments:createEnvironment": ENV_ROW });
-      const res = await request(
-        "POST",
-        "/api/v1/projects/p1/computer-environments",
-        { body: { name: "ml-toolkit", dockerfile: "FROM debian@sha256:x" } }
-      );
+      const res = await request("POST", "/api/v1/projects/p1/images", {
+        body: { name: "ml-toolkit", dockerfile: "FROM debian@sha256:x" },
+      });
       expect(res.status).toBe(201);
       expect((await res.json()) as Record<string, unknown>).toMatchObject({
         id: "env1",
       });
       expect(convexMutationMock).toHaveBeenCalledWith(
         "computerEnvironments:createEnvironment",
-        { projectId: "p1", name: "ml-toolkit", dockerfile: "FROM debian@sha256:x" }
+        {
+          projectId: "p1",
+          name: "ml-toolkit",
+          dockerfile: "FROM debian@sha256:x",
+        }
       );
     });
 
     it("rejects an empty dockerfile (400)", async () => {
-      const res = await request(
-        "POST",
-        "/api/v1/projects/p1/computer-environments",
-        { body: { name: "x", dockerfile: "" } }
-      );
+      const res = await request("POST", "/api/v1/projects/p1/images", {
+        body: { name: "x", dockerfile: "" },
+      });
       expect(res.status).toBe(400);
       expect(((await res.json()) as { code?: string }).code).toBe(
         "VALIDATION_ERROR"
@@ -303,11 +279,9 @@ describe("v1 computer-environments routes", () => {
     });
 
     it("rejects an unknown field — e.g. a `dockerFile` typo — (400, strict)", async () => {
-      const res = await request(
-        "POST",
-        "/api/v1/projects/p1/computer-environments",
-        { body: { name: "x", dockerFile: "FROM debian@sha256:x" } }
-      );
+      const res = await request("POST", "/api/v1/projects/p1/images", {
+        body: { name: "x", dockerFile: "FROM debian@sha256:x" },
+      });
       expect(res.status).toBe(400);
       expect(((await res.json()) as { code?: string }).code).toBe(
         "VALIDATION_ERROR"
@@ -320,13 +294,14 @@ describe("v1 computer-environments routes", () => {
     it("updates an in-project env, forwarding only environmentId + changed fields", async () => {
       mockQuery({ "computerEnvironments:getEnvironment": ENV_ROW });
       mockMutation({
-        "computerEnvironments:updateEnvironment": { ...ENV_ROW, name: "renamed" },
+        "computerEnvironments:updateEnvironment": {
+          ...ENV_ROW,
+          name: "renamed",
+        },
       });
-      const res = await request(
-        "PATCH",
-        "/api/v1/projects/p1/computer-environments/env1",
-        { body: { name: "renamed" } }
-      );
+      const res = await request("PATCH", "/api/v1/projects/p1/images/env1", {
+        body: { name: "renamed" },
+      });
       expect(res.status).toBe(200);
       expect(convexMutationMock).toHaveBeenCalledWith(
         "computerEnvironments:updateEnvironment",
@@ -335,11 +310,9 @@ describe("v1 computer-environments routes", () => {
     });
 
     it("rejects a delete body carrying a stray field (400, bodyless contract)", async () => {
-      const res = await request(
-        "DELETE",
-        "/api/v1/projects/p1/computer-environments/env1",
-        { body: { force: true } }
-      );
+      const res = await request("DELETE", "/api/v1/projects/p1/images/env1", {
+        body: { force: true },
+      });
       expect(res.status).toBe(400);
       expect(((await res.json()) as { message?: string }).message).toContain(
         "force"
@@ -349,11 +322,10 @@ describe("v1 computer-environments routes", () => {
 
     it("deletes an in-project env", async () => {
       mockQuery({ "computerEnvironments:getEnvironment": ENV_ROW });
-      mockMutation({ "computerEnvironments:deleteEnvironment": { deleted: true } });
-      const res = await request(
-        "DELETE",
-        "/api/v1/projects/p1/computer-environments/env1"
-      );
+      mockMutation({
+        "computerEnvironments:deleteEnvironment": { deleted: true },
+      });
+      const res = await request("DELETE", "/api/v1/projects/p1/images/env1");
       expect(res.status).toBe(200);
       expect((await res.json()) as Record<string, unknown>).toMatchObject({
         id: "env1",
@@ -373,7 +345,7 @@ describe("v1 computer-environments routes", () => {
       });
       const res = await request(
         "POST",
-        "/api/v1/projects/p1/computer-environments/env1/build"
+        "/api/v1/projects/p1/images/env1/build"
       );
       expect(res.status).toBe(202);
       expect((await res.json()) as Record<string, unknown>).toMatchObject({
@@ -391,10 +363,7 @@ describe("v1 computer-environments routes", () => {
           status: "provisioning",
         },
       });
-      const res = await request(
-        "POST",
-        "/api/v1/projects/p1/computer-environments/env1/use"
-      );
+      const res = await request("POST", "/api/v1/projects/p1/images/env1/use");
       expect(res.status).toBe(200);
       expect((await res.json()) as Record<string, unknown>).toMatchObject({
         environmentId: "env1",
@@ -409,10 +378,7 @@ describe("v1 computer-environments routes", () => {
 
     it("resets the computer, forwarding only projectId", async () => {
       mockMutation({ "projectComputers:resetComputer": { reset: true } });
-      const res = await request(
-        "POST",
-        "/api/v1/projects/p1/computer/reset"
-      );
+      const res = await request("POST", "/api/v1/projects/p1/computer/reset");
       expect(res.status).toBe(200);
       expect((await res.json()) as Record<string, unknown>).toMatchObject({
         projectId: "p1",

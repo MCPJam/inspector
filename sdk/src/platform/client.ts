@@ -17,10 +17,10 @@ import type {
   PlatformEvalStepResult,
   PlatformComputerAttached,
   PlatformComputerReset,
-  PlatformEnvironment,
-  PlatformEnvironmentBuild,
-  PlatformEnvironmentBuildStarted,
-  PlatformEnvironmentDeleted,
+  PlatformImage,
+  PlatformImageBuild,
+  PlatformImageBuildStarted,
+  PlatformImageDeleted,
   PlatformHost,
   PlatformHostDeleted,
   PlatformHostDetail,
@@ -228,7 +228,11 @@ export class PlatformApiClient {
   }
 
   updateHost(
-    params: { projectId: string; hostId: string; body: Record<string, unknown> },
+    params: {
+      projectId: string;
+      hostId: string;
+      body: Record<string, unknown>;
+    },
     options?: RequestOptions
   ): Promise<PlatformHostDetail> {
     return this.request(
@@ -259,138 +263,135 @@ export class PlatformApiClient {
     );
   }
 
-  // ── Computer environments ────────────────────────────────────────────
+  // ── Sandbox images ───────────────────────────────────────────────────
+  //
+  // A project's custom Computer base images. "Image", not "environment": a
+  // Project Environment is an unrelated concept and owns that word.
 
-  listEnvironments(
+  listImages(
     params: { projectId: string },
     options?: RequestOptions
-  ): Promise<PlatformPage<PlatformEnvironment>> {
+  ): Promise<PlatformPage<PlatformImage>> {
     return this.request(
       "GET",
-      `/projects/${encodeURIComponent(params.projectId)}/computer-environments`,
+      `/projects/${encodeURIComponent(params.projectId)}/images`,
       {},
       options
     );
   }
 
-  getEnvironment(
-    params: { projectId: string; environmentId: string },
+  getImage(
+    params: { projectId: string; imageId: string },
     options?: RequestOptions
-  ): Promise<PlatformEnvironment> {
+  ): Promise<PlatformImage> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
         params.projectId
-      )}/computer-environments/${encodeURIComponent(params.environmentId)}`,
+      )}/images/${encodeURIComponent(params.imageId)}`,
       {},
       options
     );
   }
 
-  createEnvironment(
+  createImage(
     params: { projectId: string; body: { name: string; dockerfile: string } },
     options?: RequestOptions
-  ): Promise<PlatformEnvironment> {
+  ): Promise<PlatformImage> {
     return this.request(
       "POST",
-      `/projects/${encodeURIComponent(params.projectId)}/computer-environments`,
+      `/projects/${encodeURIComponent(params.projectId)}/images`,
       { body: params.body },
       options
     );
   }
 
-  updateEnvironment(
+  updateImage(
     params: {
       projectId: string;
-      environmentId: string;
+      imageId: string;
       body: { name?: string; dockerfile?: string };
     },
     options?: RequestOptions
-  ): Promise<PlatformEnvironment> {
+  ): Promise<PlatformImage> {
     return this.request(
       "PATCH",
       `/projects/${encodeURIComponent(
         params.projectId
-      )}/computer-environments/${encodeURIComponent(params.environmentId)}`,
+      )}/images/${encodeURIComponent(params.imageId)}`,
       { body: params.body },
       options
     );
   }
 
-  deleteEnvironment(
-    params: { projectId: string; environmentId: string },
+  deleteImage(
+    params: { projectId: string; imageId: string },
     options?: RequestOptions
-  ): Promise<PlatformEnvironmentDeleted> {
+  ): Promise<PlatformImageDeleted> {
     return this.request(
       "DELETE",
       `/projects/${encodeURIComponent(
         params.projectId
-      )}/computer-environments/${encodeURIComponent(params.environmentId)}`,
+      )}/images/${encodeURIComponent(params.imageId)}`,
       {},
       options
     );
   }
 
-  listEnvironmentBuilds(
-    params: { projectId: string; environmentId: string },
+  listImageBuilds(
+    params: { projectId: string; imageId: string },
     options?: RequestOptions
-  ): Promise<PlatformPage<PlatformEnvironmentBuild>> {
+  ): Promise<PlatformPage<PlatformImageBuild>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
         params.projectId
-      )}/computer-environments/${encodeURIComponent(
-        params.environmentId
-      )}/builds`,
+      )}/images/${encodeURIComponent(params.imageId)}/builds`,
       {},
       options
     );
   }
 
-  /** `POST …/build` — async (202); poll `listEnvironmentBuilds` for status. */
-  buildEnvironment(
-    params: { projectId: string; environmentId: string },
+  /** `POST …/build` — async (202); poll `listImageBuilds` for status. */
+  buildImage(
+    params: { projectId: string; imageId: string },
     options?: RequestOptions
-  ): Promise<PlatformEnvironmentBuildStarted> {
+  ): Promise<PlatformImageBuildStarted> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
         params.projectId
-      )}/computer-environments/${encodeURIComponent(
-        params.environmentId
-      )}/build`,
+      )}/images/${encodeURIComponent(params.imageId)}/build`,
       {},
       options
     );
   }
 
-  promoteEnvironment(
-    params: { projectId: string; environmentId: string },
+  promoteImage(
+    params: { projectId: string; imageId: string },
     options?: RequestOptions
-  ): Promise<PlatformEnvironment> {
+  ): Promise<PlatformImage> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
         params.projectId
-      )}/computer-environments/${encodeURIComponent(
-        params.environmentId
-      )}/promote`,
+      )}/images/${encodeURIComponent(params.imageId)}/promote`,
       {},
       options
     );
   }
 
-  /** Attach the environment to the caller's computer (re-provisions from the
+  /** Attach the sandbox image to the caller's computer (re-provisions from the
    * pinned image). */
-  useEnvironment(
-    params: { projectId: string; environmentId: string },
+  useImage(
+    params: { projectId: string; imageId: string },
     options?: RequestOptions
   ): Promise<PlatformComputerAttached> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
         params.projectId
-      )}/computer-environments/${encodeURIComponent(params.environmentId)}/use`,
+      )}/images/${encodeURIComponent(params.imageId)}/use`,
       {},
       options
     );

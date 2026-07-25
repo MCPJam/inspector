@@ -1,16 +1,16 @@
 import { readFileSync } from "node:fs";
 import type { Command } from "commander";
 import {
-  buildEnvironmentOperation,
-  createEnvironmentOperation,
-  deleteEnvironmentOperation,
-  getEnvironmentOperation,
-  listEnvironmentsOperation,
-  listEnvironmentBuildsOperation,
-  promoteEnvironmentOperation,
+  buildImageOperation,
+  createImageOperation,
+  deleteImageOperation,
+  getImageOperation,
+  listImagesOperation,
+  listImageBuildsOperation,
+  promoteImageOperation,
   resetComputerOperation,
-  updateEnvironmentOperation,
-  useEnvironmentOperation,
+  updateImageOperation,
+  useImageOperation,
   PlatformApiError,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
@@ -43,9 +43,13 @@ async function runPlatformCommand<TOutput>(
   const controller = new AbortController();
   const timeoutHandle = setTimeout(() => {
     controller.abort(
-      new PlatformApiError(`Request timed out after ${timeoutMs}ms`, "TIMEOUT", {
-        status: 0,
-      })
+      new PlatformApiError(
+        `Request timed out after ${timeoutMs}ms`,
+        "TIMEOUT",
+        {
+          status: 0,
+        }
+      )
     );
   }, timeoutMs);
   timeoutHandle.unref?.();
@@ -95,17 +99,17 @@ function validateInput<TInput>(
   return parsed.data;
 }
 
-export function registerEnvironmentsCommands(program: Command): void {
+export function registerImagesCommands(program: Command): void {
   const env = program
-    .command("env")
+    .command("images")
     .description(
-      "List, build, and manage custom Computer environments (Dockerfile images) in your hosted MCPJam projects"
+      "List, build, and manage custom Computer sandbox images (Dockerfiles) in your hosted MCPJam projects"
     );
 
   addPlatformOptions(
     env
       .command("list")
-      .description("List the environments in a project")
+      .description("List the sandbox images in a project")
       .option(
         "--project <id-or-name>",
         "Project name or ID (defaults to the most recently updated project)"
@@ -116,7 +120,7 @@ export function registerEnvironmentsCommands(program: Command): void {
       options,
       globalOptions.timeout,
       ({ client, signal }) =>
-        listEnvironmentsOperation.execute(
+        listImagesOperation.execute(
           { project: options.project },
           { client, signal }
         )
@@ -127,12 +131,14 @@ export function registerEnvironmentsCommands(program: Command): void {
   addPlatformOptions(
     env
       .command("get")
-      .description("Show one environment's Dockerfile and latest build status")
-      .requiredOption("--environment <id-or-name>", "Environment name or ID")
+      .description(
+        "Show one sandbox image's Dockerfile and latest build status"
+      )
+      .requiredOption("--image <id-or-name>", "Sandbox image name or ID")
       .option("--project <id-or-name>", "Project name or ID")
   ).action(
     async (
-      options: PlatformOptions & { project?: string; environment: string },
+      options: PlatformOptions & { project?: string; image: string },
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
@@ -140,8 +146,8 @@ export function registerEnvironmentsCommands(program: Command): void {
         options,
         globalOptions.timeout,
         ({ client, signal }) =>
-          getEnvironmentOperation.execute(
-            { project: options.project, environment: options.environment },
+          getImageOperation.execute(
+            { project: options.project, image: options.image },
             { client, signal }
           )
       );
@@ -152,8 +158,10 @@ export function registerEnvironmentsCommands(program: Command): void {
   addPlatformOptions(
     env
       .command("create")
-      .description("Create an environment from a Dockerfile (--file, or - for stdin)")
-      .requiredOption("--name <name>", "Display name for the new environment")
+      .description(
+        "Create a sandbox image from a Dockerfile (--file, or - for stdin)"
+      )
+      .requiredOption("--name <name>", "Display name for the new sandbox image")
       .requiredOption(
         "--file <path>",
         "Dockerfile path, or - to read it from stdin"
@@ -170,7 +178,7 @@ export function registerEnvironmentsCommands(program: Command): void {
     ) => {
       const globalOptions = getGlobalOptions(command);
       const dockerfile = loadDockerfileText(options.file);
-      const input = validateInput(createEnvironmentOperation, {
+      const input = validateInput(createImageOperation, {
         project: options.project,
         name: options.name,
         dockerfile,
@@ -179,7 +187,7 @@ export function registerEnvironmentsCommands(program: Command): void {
         options,
         globalOptions.timeout,
         ({ client, signal }) =>
-          createEnvironmentOperation.execute(input, { client, signal })
+          createImageOperation.execute(input, { client, signal })
       );
       writeResult(result, globalOptions.format);
     }
@@ -188,8 +196,8 @@ export function registerEnvironmentsCommands(program: Command): void {
   addPlatformOptions(
     env
       .command("edit")
-      .description("Edit an environment's name and/or Dockerfile")
-      .requiredOption("--environment <id-or-name>", "Environment name or ID")
+      .description("Edit a sandbox image's name and/or Dockerfile")
+      .requiredOption("--image <id-or-name>", "Sandbox image name or ID")
       .option("--project <id-or-name>", "Project name or ID")
       .option("--name <name>", "New display name")
       .option("--file <path>", "Replacement Dockerfile path (or - for stdin)")
@@ -197,7 +205,7 @@ export function registerEnvironmentsCommands(program: Command): void {
     async (
       options: PlatformOptions & {
         project?: string;
-        environment: string;
+        image: string;
         name?: string;
         file?: string;
       },
@@ -208,9 +216,9 @@ export function registerEnvironmentsCommands(program: Command): void {
         options.file !== undefined
           ? loadDockerfileText(options.file)
           : undefined;
-      const input = validateInput(updateEnvironmentOperation, {
+      const input = validateInput(updateImageOperation, {
         project: options.project,
-        environment: options.environment,
+        image: options.image,
         ...(options.name !== undefined ? { name: options.name } : {}),
         ...(dockerfile !== undefined ? { dockerfile } : {}),
       });
@@ -218,7 +226,7 @@ export function registerEnvironmentsCommands(program: Command): void {
         options,
         globalOptions.timeout,
         ({ client, signal }) =>
-          updateEnvironmentOperation.execute(input, { client, signal })
+          updateImageOperation.execute(input, { client, signal })
       );
       writeResult(result, globalOptions.format);
     }
@@ -227,12 +235,14 @@ export function registerEnvironmentsCommands(program: Command): void {
   addPlatformOptions(
     env
       .command("build")
-      .description("Build the environment's image (async — poll `env logs` for status)")
-      .requiredOption("--environment <id-or-name>", "Environment name or ID")
+      .description(
+        "Build the sandbox image (async — poll `images logs` for status)"
+      )
+      .requiredOption("--image <id-or-name>", "Sandbox image name or ID")
       .option("--project <id-or-name>", "Project name or ID")
   ).action(
     async (
-      options: PlatformOptions & { project?: string; environment: string },
+      options: PlatformOptions & { project?: string; image: string },
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
@@ -240,8 +250,8 @@ export function registerEnvironmentsCommands(program: Command): void {
         options,
         globalOptions.timeout,
         ({ client, signal }) =>
-          buildEnvironmentOperation.execute(
-            { project: options.project, environment: options.environment },
+          buildImageOperation.execute(
+            { project: options.project, image: options.image },
             { client, signal }
           )
       );
@@ -252,12 +262,14 @@ export function registerEnvironmentsCommands(program: Command): void {
   addPlatformOptions(
     env
       .command("logs")
-      .description("Show an environment's builds (newest first) with their log preview")
-      .requiredOption("--environment <id-or-name>", "Environment name or ID")
+      .description(
+        "Show a sandbox image's builds (newest first) with their log preview"
+      )
+      .requiredOption("--image <id-or-name>", "Sandbox image name or ID")
       .option("--project <id-or-name>", "Project name or ID")
   ).action(
     async (
-      options: PlatformOptions & { project?: string; environment: string },
+      options: PlatformOptions & { project?: string; image: string },
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
@@ -265,8 +277,8 @@ export function registerEnvironmentsCommands(program: Command): void {
         options,
         globalOptions.timeout,
         ({ client, signal }) =>
-          listEnvironmentBuildsOperation.execute(
-            { project: options.project, environment: options.environment },
+          listImageBuildsOperation.execute(
+            { project: options.project, image: options.image },
             { client, signal }
           )
       );
@@ -278,13 +290,13 @@ export function registerEnvironmentsCommands(program: Command): void {
     env
       .command("use")
       .description(
-        "Boot your computer from this environment (rebuilds it — installed files are wiped)"
+        "Boot your computer from this sandbox image (rebuilds it — installed files are wiped)"
       )
-      .requiredOption("--environment <id-or-name>", "Environment name or ID")
+      .requiredOption("--image <id-or-name>", "Sandbox image name or ID")
       .option("--project <id-or-name>", "Project name or ID")
   ).action(
     async (
-      options: PlatformOptions & { project?: string; environment: string },
+      options: PlatformOptions & { project?: string; image: string },
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
@@ -292,8 +304,8 @@ export function registerEnvironmentsCommands(program: Command): void {
         options,
         globalOptions.timeout,
         ({ client, signal }) =>
-          useEnvironmentOperation.execute(
-            { project: options.project, environment: options.environment },
+          useImageOperation.execute(
+            { project: options.project, image: options.image },
             { client, signal }
           )
       );
@@ -304,7 +316,9 @@ export function registerEnvironmentsCommands(program: Command): void {
   addPlatformOptions(
     env
       .command("reset")
-      .description("Reset your computer to its current image (wipes mutable state)")
+      .description(
+        "Reset your computer to its current image (wipes mutable state)"
+      )
       .option("--project <id-or-name>", "Project name or ID")
   ).action(async (options: PlatformOptions & { project?: string }, command) => {
     const globalOptions = getGlobalOptions(command);
@@ -323,12 +337,14 @@ export function registerEnvironmentsCommands(program: Command): void {
   addPlatformOptions(
     env
       .command("promote")
-      .description("Share a personal-draft environment with the whole project (admin only)")
-      .requiredOption("--environment <id-or-name>", "Environment name or ID")
+      .description(
+        "Share a personal-draft sandbox image with the whole project (admin only)"
+      )
+      .requiredOption("--image <id-or-name>", "Sandbox image name or ID")
       .option("--project <id-or-name>", "Project name or ID")
   ).action(
     async (
-      options: PlatformOptions & { project?: string; environment: string },
+      options: PlatformOptions & { project?: string; image: string },
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
@@ -336,8 +352,8 @@ export function registerEnvironmentsCommands(program: Command): void {
         options,
         globalOptions.timeout,
         ({ client, signal }) =>
-          promoteEnvironmentOperation.execute(
-            { project: options.project, environment: options.environment },
+          promoteImageOperation.execute(
+            { project: options.project, image: options.image },
             { client, signal }
           )
       );
@@ -348,12 +364,12 @@ export function registerEnvironmentsCommands(program: Command): void {
   addPlatformOptions(
     env
       .command("delete")
-      .description("Permanently delete an environment from a project")
-      .requiredOption("--environment <id-or-name>", "Environment name or ID")
+      .description("Permanently delete a sandbox image from a project")
+      .requiredOption("--image <id-or-name>", "Sandbox image name or ID")
       .option("--project <id-or-name>", "Project name or ID")
   ).action(
     async (
-      options: PlatformOptions & { project?: string; environment: string },
+      options: PlatformOptions & { project?: string; image: string },
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
@@ -361,8 +377,8 @@ export function registerEnvironmentsCommands(program: Command): void {
         options,
         globalOptions.timeout,
         ({ client, signal }) =>
-          deleteEnvironmentOperation.execute(
-            { project: options.project, environment: options.environment },
+          deleteImageOperation.execute(
+            { project: options.project, image: options.image },
             { client, signal }
           )
       );
