@@ -43,10 +43,10 @@ import type {
   PlatformEvalSuiteDetail,
   PlatformComputerAttached,
   PlatformComputerReset,
-  PlatformEnvironment,
-  PlatformEnvironmentBuild,
-  PlatformEnvironmentBuildStarted,
-  PlatformEnvironmentDeleted,
+  PlatformImage,
+  PlatformImageBuild,
+  PlatformImageBuildStarted,
+  PlatformImageDeleted,
   PlatformHost,
   PlatformHostDeleted,
   PlatformHostDetail,
@@ -714,7 +714,12 @@ export const checkHostCompatibilityOperation: PlatformOperation<
       input.project,
       signal
     );
-    const server = await resolveLiveServer(client, project, input.server, signal);
+    const server = await resolveLiveServer(
+      client,
+      project,
+      input.server,
+      signal
+    );
     const scope = { projectId: project.id, serverId: server.id };
 
     // Gather every tool (with its inline `_meta`) across all pages.
@@ -1114,72 +1119,69 @@ const stepInputSchema = z
   ])
   .describe("One authored test step (prompt | toolCall | interact | assert).");
 
-const evalCaseInput = z
-  .object({
-    title: z.string().trim().min(1).describe("Short label for the test case."),
-    runs: z
-      .number()
-      .int()
-      .min(1)
-      .max(10)
-      .optional()
-      .describe("Iterations to run this case per eval run. Defaults to 1."),
-    steps: z
-      .array(stepInputSchema)
-      .min(1)
-      .describe(
-        "Ordered test steps (prompt / toolCall / interact / assert). The first `prompt` step's text is the case query; `toolCalledWith` asserts are the expected tool calls."
-      ),
-    expectedOutput: z
-      .string()
-      .trim()
-      .min(1)
-      .optional()
-      .describe("Expected final answer or substring to assert against."),
-    isNegativeTest: z
-      .boolean()
-      .optional()
-      .describe("When true, the case passes if the expectation is NOT met."),
-    scenario: z
-      .string()
-      .trim()
-      .min(1)
-      .optional()
-      .describe("Optional scenario/context note for the case."),
-    advancedConfig: z
-      .object({
-        system: z.string().optional(),
-        temperature: z.number().optional(),
-        toolChoice: z.any().optional(),
-      })
-      .passthrough()
-      .optional()
-      .describe(
-        "Per-case system prompt / temperature / tool-choice overrides."
-      ),
-    matchOptions: z
-      .record(z.string(), z.any())
-      .optional()
-      .describe("Per-case matcher options (advanced)."),
-    predicates: z
-      .record(z.string(), z.any())
-      .optional()
-      .describe("Per-case success-predicate gate (advanced)."),
-    model: z
-      .string()
-      .trim()
-      .min(1)
-      .optional()
-      .describe("Per-case model override; defaults to the suite-level model."),
-    provider: z
-      .string()
-      .trim()
-      .min(1)
-      .optional()
-      .describe(
-        "Per-case provider override; defaults to the suite-level provider."
-      ),
-  });
+const evalCaseInput = z.object({
+  title: z.string().trim().min(1).describe("Short label for the test case."),
+  runs: z
+    .number()
+    .int()
+    .min(1)
+    .max(10)
+    .optional()
+    .describe("Iterations to run this case per eval run. Defaults to 1."),
+  steps: z
+    .array(stepInputSchema)
+    .min(1)
+    .describe(
+      "Ordered test steps (prompt / toolCall / interact / assert). The first `prompt` step's text is the case query; `toolCalledWith` asserts are the expected tool calls."
+    ),
+  expectedOutput: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Expected final answer or substring to assert against."),
+  isNegativeTest: z
+    .boolean()
+    .optional()
+    .describe("When true, the case passes if the expectation is NOT met."),
+  scenario: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Optional scenario/context note for the case."),
+  advancedConfig: z
+    .object({
+      system: z.string().optional(),
+      temperature: z.number().optional(),
+      toolChoice: z.any().optional(),
+    })
+    .passthrough()
+    .optional()
+    .describe("Per-case system prompt / temperature / tool-choice overrides."),
+  matchOptions: z
+    .record(z.string(), z.any())
+    .optional()
+    .describe("Per-case matcher options (advanced)."),
+  predicates: z
+    .record(z.string(), z.any())
+    .optional()
+    .describe("Per-case success-predicate gate (advanced)."),
+  model: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Per-case model override; defaults to the suite-level model."),
+  provider: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Per-case provider override; defaults to the suite-level provider."
+    ),
+});
 
 const createEvalSuiteInput = z.object({
   project: z
@@ -2612,12 +2614,13 @@ const createHostInput = z
         message: "`config` must be a non-empty host config object.",
       })
       .optional()
-      .describe("Full host config v2 to use verbatim (alternative to template)."),
+      .describe(
+        "Full host config v2 to use verbatim (alternative to template)."
+      ),
   })
-  .refine(
-    (value) => (value.template ? 1 : 0) + (value.config ? 1 : 0) === 1,
-    { message: "Provide exactly one of `template` or a non-empty `config`." }
-  );
+  .refine((value) => (value.template ? 1 : 0) + (value.config ? 1 : 0) === 1, {
+    message: "Provide exactly one of `template` or a non-empty `config`.",
+  });
 export type CreateHostInput = z.infer<typeof createHostInput>;
 
 export const createHostOperation: PlatformOperation<
@@ -2738,53 +2741,50 @@ export const deleteHostOperation: PlatformOperation<
   },
 };
 
-// ── Computer environments ────────────────────────────────────────────────────
+// ── Sandbox images ───────────────────────────────────────────────────────────
 
-const ENVIRONMENT_SELECTOR_DESCRIPTION = "Environment name or ID.";
+const IMAGE_SELECTOR_DESCRIPTION = "Sandbox image name or ID.";
 
-async function resolveEnvironment(
+async function resolveImage(
   client: PlatformApiClient,
   project: PlatformProject,
   selector: string,
   signal: AbortSignal | undefined
-): Promise<PlatformEnvironment> {
-  const page = await client.listEnvironments(
-    { projectId: project.id },
-    { signal }
-  );
+): Promise<PlatformImage> {
+  const page = await client.listImages({ projectId: project.id }, { signal });
   return resolveByIdOrName(
     page.items,
     selector,
-    "Environment",
+    "Sandbox image",
     `project "${project.name}"`
   );
 }
 
-const environmentSelectorInput = z.object({
+const imageSelectorInput = z.object({
   project: z
     .string()
     .trim()
     .min(1)
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
-  environment: z.string().trim().min(1).describe(ENVIRONMENT_SELECTOR_DESCRIPTION),
+  image: z.string().trim().min(1).describe(IMAGE_SELECTOR_DESCRIPTION),
 });
-export type EnvironmentSelectorInput = z.infer<typeof environmentSelectorInput>;
+export type ImageSelectorInput = z.infer<typeof imageSelectorInput>;
 
-export type ListEnvironmentsResult = {
+export type ListImagesResult = {
   project: SelectedProjectInfo;
-  items: PlatformEnvironment[];
+  items: PlatformImage[];
   otherProjects: ProjectInfo[];
 };
 
-export const listEnvironmentsOperation: PlatformOperation<
+export const listImagesOperation: PlatformOperation<
   ProjectScopedInput,
-  ListEnvironmentsResult
+  ListImagesResult
 > = {
-  name: "list_computer_environments",
-  title: "List computer environments",
+  name: "list_sandbox_images",
+  title: "List sandbox images",
   description:
-    "List the custom Computer environments (Dockerfile images) in an MCPJam project. If no project is specified, uses the most recently updated accessible project.",
+    "List the custom Computer sandbox images (Dockerfiles) in an MCPJam project. If no project is specified, uses the most recently updated accessible project.",
   readOnly: true,
   inputSchema: projectScopedInput,
   async execute(input, { client, signal }) {
@@ -2793,10 +2793,7 @@ export const listEnvironmentsOperation: PlatformOperation<
       input.project,
       signal
     );
-    const page = await client.listEnvironments(
-      { projectId: project.id },
-      { signal }
-    );
+    const page = await client.listImages({ projectId: project.id }, { signal });
     return {
       project: toSelectedProjectInfo(project),
       items: page.items,
@@ -2805,43 +2802,42 @@ export const listEnvironmentsOperation: PlatformOperation<
   },
 };
 
-export const getEnvironmentOperation: PlatformOperation<
-  EnvironmentSelectorInput,
-  PlatformEnvironment
+export const getImageOperation: PlatformOperation<
+  ImageSelectorInput,
+  PlatformImage
 > = {
-  name: "get_computer_environment",
-  title: "Show a computer environment",
+  name: "get_sandbox_image",
+  title: "Show a sandbox image",
   description:
-    "Show one environment's Dockerfile, sharing, and latest build status.",
+    "Show one sandbox image's Dockerfile, sharing, and latest build status.",
   readOnly: true,
-  inputSchema: environmentSelectorInput,
+  inputSchema: imageSelectorInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
       signal
     );
-    const env = await resolveEnvironment(
-      client,
-      project,
-      input.environment,
-      signal
-    );
-    return client.getEnvironment(
-      { projectId: project.id, environmentId: env.id },
+    const image = await resolveImage(client, project, input.image, signal);
+    return client.getImage(
+      { projectId: project.id, imageId: image.id },
       { signal }
     );
   },
 };
 
-const createEnvironmentInput = z.object({
+const createImageInput = z.object({
   project: z
     .string()
     .trim()
     .min(1)
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
-  name: z.string().trim().min(1).describe("Display name for the new environment."),
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("Display name for the new sandbox image."),
   dockerfile: z
     .string()
     .min(1)
@@ -2849,25 +2845,25 @@ const createEnvironmentInput = z.object({
       "Dockerfile text. Must start FROM an allowlisted official base pinned by @sha256 digest; only FROM + RUN are supported."
     ),
 });
-export type CreateEnvironmentInput = z.infer<typeof createEnvironmentInput>;
+export type CreateImageInput = z.infer<typeof createImageInput>;
 
-export const createEnvironmentOperation: PlatformOperation<
-  CreateEnvironmentInput,
-  PlatformEnvironment
+export const createImageOperation: PlatformOperation<
+  CreateImageInput,
+  PlatformImage
 > = {
-  name: "create_computer_environment",
-  title: "Create a computer environment",
+  name: "create_sandbox_image",
+  title: "Create a sandbox image",
   description:
-    "Create a custom Computer environment from a Dockerfile. Build it (build_computer_environment) before a computer can boot from it.",
+    "Create a custom Computer sandbox image from a Dockerfile. Build it (build_sandbox_image) before a computer can boot from it.",
   readOnly: false,
-  inputSchema: createEnvironmentInput,
+  inputSchema: createImageInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
       signal
     );
-    return client.createEnvironment(
+    return client.createImage(
       {
         projectId: project.id,
         body: { name: input.name, dockerfile: input.dockerfile },
@@ -2877,7 +2873,7 @@ export const createEnvironmentOperation: PlatformOperation<
   },
 };
 
-const updateEnvironmentInput = z
+const updateImageInput = z
   .object({
     project: z
       .string()
@@ -2885,182 +2881,156 @@ const updateEnvironmentInput = z
       .min(1)
       .optional()
       .describe(PROJECT_SELECTOR_DESCRIPTION),
-    environment: z
-      .string()
-      .trim()
-      .min(1)
-      .describe(ENVIRONMENT_SELECTOR_DESCRIPTION),
+    image: z.string().trim().min(1).describe(IMAGE_SELECTOR_DESCRIPTION),
     name: z
       .string()
       .trim()
       .min(1)
       .optional()
-      .describe("New display name for the environment."),
+      .describe("New display name for the sandbox image."),
     dockerfile: z
       .string()
       .min(1)
       .optional()
       .describe("Replacement Dockerfile text."),
   })
-  .refine((value) => value.name !== undefined || value.dockerfile !== undefined, {
-    message: "Provide at least one of `name` or `dockerfile` to update.",
-  });
-export type UpdateEnvironmentInput = z.infer<typeof updateEnvironmentInput>;
+  .refine(
+    (value) => value.name !== undefined || value.dockerfile !== undefined,
+    {
+      message: "Provide at least one of `name` or `dockerfile` to update.",
+    }
+  );
+export type UpdateImageInput = z.infer<typeof updateImageInput>;
 
-export const updateEnvironmentOperation: PlatformOperation<
-  UpdateEnvironmentInput,
-  PlatformEnvironment
+export const updateImageOperation: PlatformOperation<
+  UpdateImageInput,
+  PlatformImage
 > = {
-  name: "update_computer_environment",
-  title: "Update a computer environment",
+  name: "update_sandbox_image",
+  title: "Update a sandbox image",
   description:
-    "Edit an environment's name and/or Dockerfile. Re-build it for changes to take effect on a computer.",
+    "Edit a sandbox image's name and/or Dockerfile. Re-build it for changes to take effect on a computer.",
   readOnly: false,
-  inputSchema: updateEnvironmentInput,
+  inputSchema: updateImageInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
       signal
     );
-    const env = await resolveEnvironment(
-      client,
-      project,
-      input.environment,
-      signal
-    );
+    const image = await resolveImage(client, project, input.image, signal);
     const body: { name?: string; dockerfile?: string } = {};
     if (input.name !== undefined) body.name = input.name;
     if (input.dockerfile !== undefined) body.dockerfile = input.dockerfile;
-    return client.updateEnvironment(
-      { projectId: project.id, environmentId: env.id, body },
+    return client.updateImage(
+      { projectId: project.id, imageId: image.id, body },
       { signal }
     );
   },
 };
 
-export const buildEnvironmentOperation: PlatformOperation<
-  EnvironmentSelectorInput,
-  PlatformEnvironmentBuildStarted
+export const buildImageOperation: PlatformOperation<
+  ImageSelectorInput,
+  PlatformImageBuildStarted
 > = {
-  name: "build_computer_environment",
-  title: "Build a computer environment",
+  name: "build_sandbox_image",
+  title: "Build a sandbox image",
   description:
-    "Trigger a build of the environment's image. Async — poll list_computer_environment_builds for status.",
+    "Trigger a build of the sandbox image. Async — poll list_sandbox_image_builds for status.",
   readOnly: false,
-  inputSchema: environmentSelectorInput,
+  inputSchema: imageSelectorInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
       signal
     );
-    const env = await resolveEnvironment(
-      client,
-      project,
-      input.environment,
-      signal
-    );
-    return client.buildEnvironment(
-      { projectId: project.id, environmentId: env.id },
+    const image = await resolveImage(client, project, input.image, signal);
+    return client.buildImage(
+      { projectId: project.id, imageId: image.id },
       { signal }
     );
   },
 };
 
-export type ListEnvironmentBuildsResult = {
+export type ListImageBuildsResult = {
   project: SelectedProjectInfo;
-  environmentId: string;
-  items: PlatformEnvironmentBuild[];
+  imageId: string;
+  items: PlatformImageBuild[];
 };
 
-export const listEnvironmentBuildsOperation: PlatformOperation<
-  EnvironmentSelectorInput,
-  ListEnvironmentBuildsResult
+export const listImageBuildsOperation: PlatformOperation<
+  ImageSelectorInput,
+  ListImageBuildsResult
 > = {
-  name: "list_computer_environment_builds",
-  title: "List computer environment builds",
+  name: "list_sandbox_image_builds",
+  title: "List sandbox image builds",
   description:
-    "List an environment's builds (newest first) with their status and log preview.",
+    "List a sandbox image's builds (newest first) with their status and log preview.",
   readOnly: true,
-  inputSchema: environmentSelectorInput,
+  inputSchema: imageSelectorInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
       signal
     );
-    const env = await resolveEnvironment(
-      client,
-      project,
-      input.environment,
-      signal
-    );
-    const page = await client.listEnvironmentBuilds(
-      { projectId: project.id, environmentId: env.id },
+    const image = await resolveImage(client, project, input.image, signal);
+    const page = await client.listImageBuilds(
+      { projectId: project.id, imageId: image.id },
       { signal }
     );
     return {
       project: toSelectedProjectInfo(project),
-      environmentId: env.id,
+      imageId: image.id,
       items: page.items,
     };
   },
 };
 
-export const promoteEnvironmentOperation: PlatformOperation<
-  EnvironmentSelectorInput,
-  PlatformEnvironment
+export const promoteImageOperation: PlatformOperation<
+  ImageSelectorInput,
+  PlatformImage
 > = {
-  name: "promote_computer_environment",
-  title: "Share a computer environment with the project",
+  name: "promote_sandbox_image",
+  title: "Share a sandbox image with the project",
   description:
-    "Promote a personal-draft environment to a project-shared one (requires project admin).",
+    "Promote a personal-draft sandbox image to a project-shared one (requires project admin).",
   readOnly: false,
-  inputSchema: environmentSelectorInput,
+  inputSchema: imageSelectorInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
       signal
     );
-    const env = await resolveEnvironment(
-      client,
-      project,
-      input.environment,
-      signal
-    );
-    return client.promoteEnvironment(
-      { projectId: project.id, environmentId: env.id },
+    const image = await resolveImage(client, project, input.image, signal);
+    return client.promoteImage(
+      { projectId: project.id, imageId: image.id },
       { signal }
     );
   },
 };
 
-export const useEnvironmentOperation: PlatformOperation<
-  EnvironmentSelectorInput,
+export const useImageOperation: PlatformOperation<
+  ImageSelectorInput,
   PlatformComputerAttached
 > = {
-  name: "use_computer_environment",
-  title: "Use a computer environment",
+  name: "use_sandbox_image",
+  title: "Use a sandbox image",
   description:
-    "Attach the environment to your computer, which rebuilds it from the pinned image (installed files are wiped). The environment must have a ready build.",
+    "Attach the sandbox image to your computer, which rebuilds it from the pinned image (installed files are wiped). The sandbox image must have a ready build.",
   readOnly: false,
-  inputSchema: environmentSelectorInput,
+  inputSchema: imageSelectorInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
       signal
     );
-    const env = await resolveEnvironment(
-      client,
-      project,
-      input.environment,
-      signal
-    );
-    return client.useEnvironment(
-      { projectId: project.id, environmentId: env.id },
+    const image = await resolveImage(client, project, input.image, signal);
+    return client.useImage(
+      { projectId: project.id, imageId: image.id },
       { signal }
     );
   },
@@ -3086,30 +3056,25 @@ export const resetComputerOperation: PlatformOperation<
   },
 };
 
-export const deleteEnvironmentOperation: PlatformOperation<
-  EnvironmentSelectorInput,
-  PlatformEnvironmentDeleted
+export const deleteImageOperation: PlatformOperation<
+  ImageSelectorInput,
+  PlatformImageDeleted
 > = {
-  name: "delete_computer_environment",
-  title: "Delete a computer environment",
+  name: "delete_sandbox_image",
+  title: "Delete a sandbox image",
   description:
-    "Permanently delete an environment. Computers booted from it fall back to the base image. This cannot be undone.",
+    "Permanently delete a sandbox image. Computers booted from it fall back to the base image. This cannot be undone.",
   readOnly: false,
-  inputSchema: environmentSelectorInput,
+  inputSchema: imageSelectorInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
       signal
     );
-    const env = await resolveEnvironment(
-      client,
-      project,
-      input.environment,
-      signal
-    );
-    return client.deleteEnvironment(
-      { projectId: project.id, environmentId: env.id },
+    const image = await resolveImage(client, project, input.image, signal);
+    return client.deleteImage(
+      { projectId: project.id, imageId: image.id },
       { signal }
     );
   },

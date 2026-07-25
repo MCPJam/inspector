@@ -1,11 +1,11 @@
 import { render, fireEvent, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
-  EnvironmentView,
-  EnvironmentBuildView,
-} from "@/hooks/useComputerEnvironments";
+  SandboxImageView,
+  SandboxImageBuildView,
+} from "@/hooks/useSandboxImages";
 
-let mockEnvironments: EnvironmentView[] | undefined = [];
+let mockEnvironments: SandboxImageView[] | undefined = [];
 const createEnvironment = vi.fn(async () => env({ environmentId: "new" }));
 const updateEnvironment = vi.fn(async () => env());
 const startBuild = vi.fn(async () => ({ buildId: "b1", reused: false }));
@@ -21,19 +21,19 @@ const { toastError, toastSuccess } = vi.hoisted(() => ({
   toastSuccess: vi.fn(),
 }));
 
-vi.mock("@/hooks/useComputerEnvironments", async () => {
+vi.mock("@/hooks/useSandboxImages", async () => {
   const actual = await vi.importActual<
-    typeof import("@/hooks/useComputerEnvironments")
-  >("@/hooks/useComputerEnvironments");
+    typeof import("@/hooks/useSandboxImages")
+  >("@/hooks/useSandboxImages");
   return {
     ...actual,
-    useEnvironments: () => mockEnvironments,
-    useCreateEnvironment: () => createEnvironment,
-    useUpdateEnvironment: () => updateEnvironment,
-    useStartEnvironmentBuild: () => startBuild,
-    usePromoteEnvironment: () => promote,
-    useDeleteEnvironment: () => deleteEnvironment,
-    useSetComputerEnvironment: () => setComputerEnvironment,
+    useSandboxImages: () => mockEnvironments,
+    useCreateSandboxImage: () => createEnvironment,
+    useUpdateSandboxImage: () => updateEnvironment,
+    useStartSandboxImageBuild: () => startBuild,
+    usePromoteSandboxImage: () => promote,
+    useDeleteSandboxImage: () => deleteEnvironment,
+    useSetComputerSandboxImage: () => setComputerEnvironment,
   };
 });
 
@@ -41,9 +41,11 @@ vi.mock("@/lib/toast", () => ({
   toast: { error: toastError, success: toastSuccess },
 }));
 
-import { EnvironmentsDrawer } from "../EnvironmentsDrawer";
+import { SandboxImagesDrawer } from "../SandboxImagesDrawer";
 
-function build(over: Partial<EnvironmentBuildView> = {}): EnvironmentBuildView {
+function build(
+  over: Partial<SandboxImageBuildView> = {}
+): SandboxImageBuildView {
   return {
     buildId: "b1",
     status: "ready",
@@ -54,7 +56,7 @@ function build(over: Partial<EnvironmentBuildView> = {}): EnvironmentBuildView {
   };
 }
 
-function env(over: Partial<EnvironmentView> = {}): EnvironmentView {
+function env(over: Partial<SandboxImageView> = {}): SandboxImageView {
   return {
     environmentId: "env1",
     projectId: "p1",
@@ -75,7 +77,7 @@ function renderDrawer(
   canAttach = true
 ) {
   return render(
-    <EnvironmentsDrawer
+    <SandboxImagesDrawer
       open
       onOpenChange={() => {}}
       projectId="p1"
@@ -90,7 +92,7 @@ afterEach(() => {
   mockEnvironments = [];
 });
 
-describe("EnvironmentsDrawer", () => {
+describe("SandboxImagesDrawer", () => {
   it("lists the base image + environments", () => {
     mockEnvironments = [env({ name: "ml-toolkit" })];
     const { getByText } = renderDrawer();
@@ -101,14 +103,14 @@ describe("EnvironmentsDrawer", () => {
   it("shows an empty state with a create affordance", () => {
     mockEnvironments = [];
     const { getByText } = renderDrawer();
-    expect(getByText(/No custom environments yet/i)).toBeTruthy();
-    expect(getByText("New environment")).toBeTruthy();
+    expect(getByText(/No custom sandbox images yet/i)).toBeTruthy();
+    expect(getByText("New sandbox image")).toBeTruthy();
   });
 
-  it("creates an environment from the new form", async () => {
+  it("creates a sandbox image from the new form", async () => {
     const { getByText, getByPlaceholderText } = renderDrawer();
-    fireEvent.click(getByText("New environment"));
-    fireEvent.change(getByPlaceholderText("Environment name"), {
+    fireEvent.click(getByText("New sandbox image"));
+    fireEvent.change(getByPlaceholderText("Sandbox image name"), {
       target: { value: "scraper" },
     });
     fireEvent.click(getByText("Create"));
@@ -125,8 +127,8 @@ describe("EnvironmentsDrawer", () => {
     );
     mockEnvironments = []; // the reactive list hasn't picked up the new row yet
     const { getByText, getByPlaceholderText } = renderDrawer();
-    fireEvent.click(getByText("New environment"));
-    fireEvent.change(getByPlaceholderText("Environment name"), {
+    fireEvent.click(getByText("New sandbox image"));
+    fireEvent.change(getByPlaceholderText("Sandbox image name"), {
       target: { value: "fresh" },
     });
     fireEvent.click(getByText("Create"));
@@ -151,9 +153,9 @@ describe("EnvironmentsDrawer", () => {
     mockEnvironments = [env({ currentBuild: build({ status: "building" }) })];
     const { getByText } = renderDrawer();
     fireEvent.click(getByText("ml-toolkit"));
-    expect(
-      (getByText("Use on computer") as HTMLButtonElement).disabled
-    ).toBe(true);
+    expect((getByText("Use on computer") as HTMLButtonElement).disabled).toBe(
+      true
+    );
   });
 
   it("does not start a build when the dirty save fails", async () => {
@@ -174,9 +176,9 @@ describe("EnvironmentsDrawer", () => {
     mockEnvironments = [env()]; // ready build
     const { getByText } = renderDrawer(null, false);
     fireEvent.click(getByText("ml-toolkit"));
-    expect(
-      (getByText("Use on computer") as HTMLButtonElement).disabled
-    ).toBe(true);
+    expect((getByText("Use on computer") as HTMLButtonElement).disabled).toBe(
+      true
+    );
   });
 
   it("saves unsaved edits before sharing to the project", async () => {

@@ -60,6 +60,44 @@ export interface PinnableSkill {
 }
 
 /**
+ * One supporting file inside a pinned skill's runtime artifact (P0.2). EXACTLY
+ * one of `content` (text) / `base64` (binary) is set — encoded as a union so an
+ * impossible both-or-neither file can't be constructed. `path` is RELATIVE to
+ * the skill's own directory and must be re-validated before any write.
+ */
+export type PinnedSkillArtifactFile = {
+  path: string;
+  mimeType?: string;
+} & (
+  | { content: string; base64?: never }
+  | { base64: string; content?: never }
+);
+
+/**
+ * The COMPLETE pinned runtime artifact for one snapshot-pinned skill, as served
+ * by `GET /journey-execution/runs/skill`. The shipped backend serves the
+ * SKILL.md-only subset (`name`/`description`/`contentHash`/`content`); the
+ * P0.2 union additionally carries channel provenance and — for host-channel
+ * plugin skills — supporting `files` and preserved extra `frontmatter`. Every
+ * extension field is optional so the SKILL.md-only response stays valid.
+ */
+export interface PinnedSkillArtifact {
+  name: string;
+  description: string;
+  content: string;
+  /** Opaque artifact fingerprint — covers the complete pinned envelope. */
+  contentHash: string;
+  skillId?: string;
+  sharing?: "user" | "project";
+  /** P0.2 channel provenance (stable order: host, then environment). */
+  channels?: Array<"host" | "environment">;
+  /** Preserved extra frontmatter beyond name/description (plugin skills). */
+  frontmatter?: Record<string, unknown>;
+  /** Supporting files (host-channel plugin skills only under P0.3). */
+  files?: PinnedSkillArtifactFile[];
+}
+
+/**
  * Full skill with content (used when loading a skill)
  */
 export interface Skill {
@@ -68,6 +106,14 @@ export interface Skill {
   content: string; // Markdown body (without frontmatter)
   path: string; // Directory name
 }
+
+/**
+ * Whether a cloud skill can be pinned into a project environment's skill
+ * selection. Mirrors the backend's list-field: `plugin_component` skills,
+ * skills with supporting files, and skills with extra frontmatter are
+ * ineligible; `reason` is backend-authored copy pickers surface verbatim.
+ */
+export type SkillPinnability = { ok: true } | { ok: false; reason: string };
 
 /**
  * Skill list item (used for listing skills without full content).
@@ -91,6 +137,13 @@ export interface SkillListItem {
   origin?: "local" | "cloud";
   /** Cloud skills only — how the record came to exist (absent ⇒ 'authored'). */
   provenance?: SkillProvenance;
+  /**
+   * Cloud skills only — whether the skill can be pinned into a project
+   * environment's skill selection (backend P0.3 list-field, forwarded through
+   * `/api/web/skills/list`). Absent on older backends ⇒ eligibility unknown;
+   * pickers treat absent as eligible and rely on the save-time backend gate.
+   */
+  pinnability?: SkillPinnability;
 }
 
 /**

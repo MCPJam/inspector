@@ -27,6 +27,10 @@ import {
   getPrompt as getPromptApi,
   listPrompts as listPromptsApi,
 } from "@/lib/apis/mcp-prompts-api";
+import {
+  CacheProvenanceBadge,
+  type ServedFromCache,
+} from "@/components/ui/cache-provenance-badge";
 import { SelectedToolHeader } from "./ui-playground/SelectedToolHeader";
 import type { ConnectionStatus } from "@/state/app-types";
 import { boundedJsonByteLength } from "@/lib/webmcp/bounded-size";
@@ -112,6 +116,9 @@ export function PromptsTab({
   const [promptContent, setPromptContent] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [fetchingPrompts, setFetchingPrompts] = useState(false);
+  const [promptsServedFromCache, setPromptsServedFromCache] = useState<
+    ServedFromCache | undefined
+  >(undefined);
   const [error, setError] = useState<string>("");
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
   const promptsFetchVersionRef = useRef(0);
@@ -142,6 +149,9 @@ export function PromptsTab({
     setFormFields([]);
     setPromptContent(null);
     setError("");
+    // SEP-2549 provenance describes the currently displayed prompt list; clear
+    // it whenever that list is emptied so the badge cannot outlive its data.
+    setPromptsServedFromCache(undefined);
   };
 
   useEffect(() => {
@@ -160,7 +170,7 @@ export function PromptsTab({
     }
   }, [selectedPromptData]);
 
-  const fetchPrompts = async () => {
+  const fetchPrompts = async (forceRefresh = false) => {
     if (!serverName) return;
     if (!isServerConnected) {
       resetLoadedPromptState();
@@ -172,9 +182,12 @@ export function PromptsTab({
     const fetchVersion = ++promptsFetchVersionRef.current;
 
     try {
-      const serverPrompts = await listPromptsApi(serverName);
+      const serverPrompts = await listPromptsApi(serverName, {
+        refresh: forceRefresh,
+      });
       if (fetchVersion !== promptsFetchVersionRef.current) return;
       setPrompts(serverPrompts);
+      setPromptsServedFromCache(serverPrompts.servedFromCache);
 
       // Clear selection if the selected prompt no longer exists
       if (
@@ -453,10 +466,12 @@ export function PromptsTab({
             </span>
           </div>
 
+          <CacheProvenanceBadge servedFromCache={promptsServedFromCache} />
+
           {/* Secondary actions */}
           <div className="flex items-center gap-0.5 text-muted-foreground/80">
             <Button
-              onClick={fetchPrompts}
+              onClick={() => fetchPrompts(true)}
               variant="ghost"
               size="sm"
               disabled={fetchingPrompts || !isServerConnected}

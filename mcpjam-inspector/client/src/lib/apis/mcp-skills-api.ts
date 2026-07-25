@@ -4,6 +4,7 @@ import { webPost } from "@/lib/apis/web/base";
 import type {
   Skill,
   SkillListItem,
+  SkillPinnability,
   SkillProvenance,
   SkillFile,
   SkillFileContent,
@@ -41,6 +42,12 @@ interface CloudSkillWire {
   isOwner: boolean;
   /** Wire-tolerant; absent/unknown ⇒ 'authored'. */
   provenance?: string;
+  /**
+   * Project-environment pinnability (backend P0.3 list-field, forwarded
+   * verbatim by `/api/web/skills/list`). Declared explicitly so the mapping
+   * below can carry it; absent on older backends.
+   */
+  pinnability?: SkillPinnability;
   content?: string;
 }
 
@@ -59,6 +66,7 @@ function cloudToListItem(s: CloudSkillWire): SkillListItem {
     isOwner: s.isOwner,
     origin: "cloud",
     provenance: normalizeProvenance(s.provenance),
+    ...(s.pinnability ? { pinnability: s.pinnability } : {}),
   };
 }
 

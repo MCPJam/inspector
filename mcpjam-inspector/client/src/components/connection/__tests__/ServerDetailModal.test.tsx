@@ -156,7 +156,7 @@ describe("ServerDetailModal", () => {
     mockUseFeatureFlagEnabled.mockReturnValue(false);
     mockUseQuery.mockReturnValue(undefined);
     mockSetProjectServerConfig.mockResolvedValue({
-      projectId: "project_123",
+      projectId: "jh7abc123def456ghi789jk",
       serverIds: [],
       overrides: {},
     });
@@ -165,6 +165,45 @@ describe("ServerDetailModal", () => {
     mockListTools.mockResolvedValue({
       tools: [],
       toolsMetadata: {},
+    });
+  });
+
+  // Regression: local mode used to hand this modal the LOCAL project id (a
+  // `crypto.randomUUID()` value). `projectServerConfig:getConfig` validates
+  // `projectId` as `v.id("projects")`, so the query rejected during render
+  // and — with no route ErrorBoundary — replaced the entire page with the
+  // router error screen the moment you opened a server's Config.
+  it.each([
+    ["a local UUID project id", "d0b25b78-8daa-429e-b7cc-9af4716cbe84"],
+    ["a local_ placeholder project id", "local_pending"],
+    ["no project id", null],
+  ])("skips the project-server-config query for %s", (_label, projectId) => {
+    render(<ServerDetailModal {...defaultProps} projectId={projectId} />);
+
+    const configCalls = mockUseQuery.mock.calls.filter(
+      ([name]) => name === "projectServerConfig:getConfig"
+    );
+    expect(configCalls.length).toBeGreaterThan(0);
+    for (const [, args] of configCalls) {
+      expect(args).toBe("skip");
+    }
+  });
+
+  it("queries the project-server config for a real Convex project id", () => {
+    render(
+      <ServerDetailModal
+        {...defaultProps}
+        projectId="jh7abc123def456ghi789jk"
+        hostedServerId="server_123"
+      />
+    );
+
+    const configCalls = mockUseQuery.mock.calls.filter(
+      ([name]) => name === "projectServerConfig:getConfig"
+    );
+    expect(configCalls.length).toBeGreaterThan(0);
+    expect(configCalls.at(-1)?.[1]).toEqual({
+      projectId: "jh7abc123def456ghi789jk",
     });
   });
 
@@ -303,7 +342,7 @@ describe("ServerDetailModal", () => {
     installPointerCaptureMocks();
     mockUseFeatureFlagEnabled.mockReturnValue(true);
     mockUseQuery.mockReturnValue({
-      projectId: "project_123",
+      projectId: "jh7abc123def456ghi789jk",
       serverIds: [],
       overrides: {},
     });
@@ -311,7 +350,7 @@ describe("ServerDetailModal", () => {
     render(
       <ServerDetailModal
         {...defaultProps}
-        projectId="project_123"
+        projectId="jh7abc123def456ghi789jk"
         hostedServerId="server_123"
         hostDefaultMcpProtocolVersion="2026-07-28"
       />
@@ -331,7 +370,7 @@ describe("ServerDetailModal", () => {
 
     await waitFor(() => {
       expect(mockSetProjectServerConfig).toHaveBeenCalledWith({
-        projectId: "project_123",
+        projectId: "jh7abc123def456ghi789jk",
         input: {
           serverIds: ["server_123"],
           overrides: {
@@ -349,7 +388,7 @@ describe("ServerDetailModal", () => {
     installPointerCaptureMocks();
     mockUseFeatureFlagEnabled.mockReturnValue(true);
     let projectServerConfig = {
-      projectId: "project_123",
+      projectId: "jh7abc123def456ghi789jk",
       serverIds: [] as string[],
       overrides: {},
     };
@@ -358,7 +397,7 @@ describe("ServerDetailModal", () => {
     const renderModal = () => (
       <ServerDetailModal
         {...defaultProps}
-        projectId="project_123"
+        projectId="jh7abc123def456ghi789jk"
         hostedServerId="server_123"
         hostDefaultMcpProtocolVersion="2026-07-28"
       />
@@ -378,7 +417,7 @@ describe("ServerDetailModal", () => {
 
     await waitFor(() => {
       expect(mockSetProjectServerConfig).toHaveBeenCalledWith({
-        projectId: "project_123",
+        projectId: "jh7abc123def456ghi789jk",
         input: {
           serverIds: ["server_123"],
           overrides: {
@@ -397,7 +436,7 @@ describe("ServerDetailModal", () => {
     unmount();
 
     projectServerConfig = {
-      projectId: "project_123",
+      projectId: "jh7abc123def456ghi789jk",
       serverIds: ["server_123"],
       overrides: {
         server_123: {
@@ -422,7 +461,7 @@ describe("ServerDetailModal", () => {
 
     await waitFor(() => {
       expect(mockSetProjectServerConfig).toHaveBeenCalledWith({
-        projectId: "project_123",
+        projectId: "jh7abc123def456ghi789jk",
         input: {
           serverIds: [],
           overrides: {},
@@ -436,7 +475,7 @@ describe("ServerDetailModal", () => {
     installPointerCaptureMocks();
     mockUseFeatureFlagEnabled.mockReturnValue(true);
     mockUseQuery.mockReturnValue({
-      projectId: "project_123",
+      projectId: "jh7abc123def456ghi789jk",
       serverIds: ["server_123"],
       overrides: {
         server_123: {
@@ -448,7 +487,7 @@ describe("ServerDetailModal", () => {
     render(
       <ServerDetailModal
         {...defaultProps}
-        projectId="project_123"
+        projectId="jh7abc123def456ghi789jk"
         hostedServerId="server_123"
         hostDefaultMcpProtocolVersion="2026-07-28"
       />
@@ -467,7 +506,7 @@ describe("ServerDetailModal", () => {
 
     await waitFor(() => {
       expect(mockSetProjectServerConfig).toHaveBeenCalledWith({
-        projectId: "project_123",
+        projectId: "jh7abc123def456ghi789jk",
         input: {
           serverIds: ["server_123"],
           overrides: {},
@@ -773,7 +812,7 @@ describe("ServerDetailModal", () => {
       // Per-server wire pin (project-layer override) is 2026 while the host
       // default is unset — the override must win and bake the 2026 era.
       mockUseQuery.mockReturnValue({
-        projectId: "project_123",
+        projectId: "jh7abc123def456ghi789jk",
         serverIds: ["server_123"],
         overrides: {
           server_123: { mcpProtocolVersionOverride: "2026-07-28" },
@@ -785,7 +824,7 @@ describe("ServerDetailModal", () => {
           {...defaultProps}
           server={createServer({ authMethod: "auto" })}
           onSubmit={onSubmit}
-          projectId="project_123"
+          projectId="jh7abc123def456ghi789jk"
           hostedServerId="server_123"
         />
       );

@@ -579,8 +579,11 @@ export function useServerForm(
   };
 
   const validateClientSecret = (value: string): string | null => {
-    if (value && value.length < 8) {
-      return "Client Secret must be at least 8 characters if provided";
+    // No minimum length: the OAuth spec doesn't require one, and the
+    // secret is issued by the authorization server, not chosen here — the
+    // server-side schema only rejects a value that's empty after trimming.
+    if (value && value.trim() === "") {
+      return "Client Secret cannot be only whitespace";
     }
     return null;
   };
@@ -990,8 +993,12 @@ export function useServerForm(
       clientId: usesClientCredentials
         ? clientId.trim() || undefined
         : undefined,
+      // Preserve the exact typed value — only the emptiness check is
+      // trim-based (whitespace-only counts as "no replacement"). Trimming
+      // the saved value itself would silently change a secret that
+      // legitimately has leading/trailing whitespace.
       clientSecret: usesClientCredentials
-        ? normalizedClientSecret || undefined
+        ? (hasReplacementClientSecret ? clientSecret : undefined)
         : undefined,
       hasClientSecret: usesClientCredentials ? nextHasClientSecret : undefined,
       clearClientSecret: usesClientCredentials

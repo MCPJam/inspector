@@ -2,10 +2,16 @@ import {
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
   type MCPCheckCategory,
+  type MCPCheckEra,
   type MCPCheckId,
   type MCPConformanceConfig,
   type NormalizedMCPConformanceConfig,
 } from "./types.js";
+import {
+  isKnownProtocolVersion,
+  isStatelessProtocolVersion,
+  type McpProtocolVersion,
+} from "../mcp-client-manager/mcp-protocol-version.js";
 
 function normalizeCategories(
   categories: MCPConformanceConfig["categories"],
@@ -41,6 +47,26 @@ function normalizeCheckIds(
   return normalized;
 }
 
+function normalizeProtocolVersion(
+  protocolVersion: MCPConformanceConfig["protocolVersion"],
+): { protocolVersion?: McpProtocolVersion; era: MCPCheckEra } {
+  if (protocolVersion === undefined) {
+    // Unset ⇒ legacy era ⇒ byte-identical pre-era-awareness behavior.
+    return { era: "legacy" };
+  }
+
+  if (!isKnownProtocolVersion(protocolVersion)) {
+    throw new Error(
+      `Unknown MCP conformance protocolVersion: ${protocolVersion}`,
+    );
+  }
+
+  return {
+    protocolVersion,
+    era: isStatelessProtocolVersion(protocolVersion) ? "modern" : "legacy",
+  };
+}
+
 export function normalizeMCPConformanceConfig(
   config: MCPConformanceConfig,
 ): NormalizedMCPConformanceConfig {
@@ -57,6 +83,9 @@ export function normalizeMCPConformanceConfig(
 
   const categories = normalizeCategories(config.categories);
   const checkIds = normalizeCheckIds(config.checkIds);
+  const { protocolVersion, era } = normalizeProtocolVersion(
+    config.protocolVersion,
+  );
 
   return {
     serverUrl,
@@ -67,5 +96,7 @@ export function normalizeMCPConformanceConfig(
     checkIds,
     fetchFn: config.fetchFn ?? fetch,
     clientName: config.clientName?.trim() || "mcpjam-sdk-conformance",
+    protocolVersion,
+    era,
   };
 }

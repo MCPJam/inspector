@@ -1598,7 +1598,12 @@ export function useServerState({
       const flatSnapshot =
         activeProjectServersFlatRef.current ?? activeProjectServersFlat;
 
-      const clientSecret = secretOptions?.clientSecret?.trim();
+      // Preserve the exact typed value — only whether there's a real
+      // replacement is trim-based (whitespace-only counts as none).
+      // Trimming the value that's actually sent would silently change a
+      // secret that legitimately has leading/trailing whitespace.
+      const clientSecret = secretOptions?.clientSecret;
+      const hasClientSecretValue = Boolean(clientSecret?.trim());
       const clearClientSecret = secretOptions?.clearClientSecret === true;
       const clearXaaConfig = secretOptions?.clearXaaConfig === true;
       const config = serverEntry.config as any;
@@ -1611,13 +1616,13 @@ export function useServerState({
         secretOptions ?? {},
         "headers"
       );
-      if (clientSecret && clearClientSecret) {
+      if (hasClientSecretValue && clearClientSecret) {
         throw new Error(
           "Cannot replace and clear the OAuth client secret in the same save."
         );
       }
       const hasSecretOperation = Boolean(
-        clientSecret ||
+        hasClientSecretValue ||
           clearClientSecret ||
           hasEnvSecretPatch ||
           hasHeadersSecretPatch ||
@@ -1760,7 +1765,7 @@ export function useServerState({
           const updatePayload = {
             serverId: serverIdToUpdate,
             ...payload,
-            ...(clientSecret ? { clientSecret } : {}),
+            ...(hasClientSecretValue ? { clientSecret } : {}),
             ...(clearClientSecret ? { clearClientSecret: true } : {}),
             ...(clearXaaConfig ? { clearXaaConfig: true } : {}),
           };
@@ -1775,7 +1780,7 @@ export function useServerState({
         const createPayload = {
           projectId: latestProjectId,
           ...payload,
-          ...(clientSecret ? { clientSecret } : {}),
+          ...(hasClientSecretValue ? { clientSecret } : {}),
         };
         const newId = hasSecretOperation
           ? await convexCreateServerWithClientSecret(createPayload)
@@ -1805,7 +1810,7 @@ export function useServerState({
             const createPayload = {
               projectId: latestProjectId,
               ...payload,
-              ...(clientSecret ? { clientSecret } : {}),
+              ...(hasClientSecretValue ? { clientSecret } : {}),
             };
             const newId = hasSecretOperation
               ? await convexCreateServerWithClientSecret(createPayload)
@@ -1819,7 +1824,7 @@ export function useServerState({
             const updatePayload = {
               serverId: retryExisting._id,
               ...payload,
-              ...(clientSecret ? { clientSecret } : {}),
+              ...(hasClientSecretValue ? { clientSecret } : {}),
               ...(clearClientSecret ? { clearClientSecret: true } : {}),
               ...(clearXaaConfig ? { clearXaaConfig: true } : {}),
             };
@@ -1833,7 +1838,7 @@ export function useServerState({
           const createPayload = {
             projectId: latestProjectId,
             ...payload,
-            ...(clientSecret ? { clientSecret } : {}),
+            ...(hasClientSecretValue ? { clientSecret } : {}),
           };
           const newId = hasSecretOperation
             ? await convexCreateServerWithClientSecret(createPayload)

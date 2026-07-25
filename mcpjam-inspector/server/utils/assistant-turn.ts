@@ -208,6 +208,13 @@ export interface RunAssistantTurnOptions {
   hostId?: MCPJamHandlerOptions["hostId"];
 
   /**
+   * Pinned harness skills for env-based swarm targets (Project Environments).
+   * Pass-through to `runHarnessTurn`: when set (even empty) the harness turn
+   * skips the live skills fetch and delivers exactly these pinned artifacts.
+   */
+  pinnedHarnessSkills?: MCPJamHandlerOptions["pinnedHarnessSkills"];
+
+  /**
    * Override the Convex endpoint path. Stage 1 keeps this wired so
    * `handleHostedOrgChatModel` (org BYOK delegation chain) keeps
    * working — `runAssistantTurn` is the same engine, and the org BYOK
@@ -398,6 +405,11 @@ function buildHandlerOptions(
     ...(opts.harnessMcpProxy ? { harnessMcpProxy: opts.harnessMcpProxy } : {}),
     ...(opts.journeyRunId ? { journeyRunId: opts.journeyRunId } : {}),
     ...(opts.hostId ? { hostId: opts.hostId } : {}),
+    // Pinned harness skills: presence (even an EMPTY array) is semantic — an
+    // empty authoritative set means "run skill-less", never "fall back live".
+    ...(opts.pinnedHarnessSkills !== undefined
+      ? { pinnedHarnessSkills: opts.pinnedHarnessSkills }
+      : {}),
     ...(opts.requireToolApproval !== undefined
       ? { requireToolApproval: opts.requireToolApproval }
       : {}),

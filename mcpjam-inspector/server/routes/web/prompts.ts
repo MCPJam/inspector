@@ -15,7 +15,8 @@ const prompts = new Hono();
 
 prompts.post("/list", async (c) =>
   withEphemeralConnection(c, promptsListSchema, (manager, body) =>
-    listPrompts(manager, body),
+    // Hosted direct-ops read the server's live surface — never a cached body.
+    listPrompts(manager, { ...body, cacheMode: "bypass" }),
   ),
 );
 

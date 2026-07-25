@@ -26,6 +26,7 @@
 
 import {
   LOG_LEVEL_META_KEY,
+  type CacheableRequestOptions,
   type LoggingLevel,
   type ProtocolEra,
   type Request,
@@ -128,7 +129,7 @@ export class LogLevelMetaClient implements ManagedMcpClient {
   // ---- Request-bearing methods (inject `_meta` when modern + level set) ----
   listTools(
     params?: Parameters<ManagedMcpClient["listTools"]>[0],
-    options?: RequestOptions,
+    options?: CacheableRequestOptions,
   ) {
     return this.inner.listTools(this.inject(params), options);
   }
@@ -150,25 +151,25 @@ export class LogLevelMetaClient implements ManagedMcpClient {
   }
   listResources(
     params?: Parameters<ManagedMcpClient["listResources"]>[0],
-    options?: RequestOptions,
+    options?: CacheableRequestOptions,
   ) {
     return this.inner.listResources(this.inject(params), options);
   }
   readResource(
     params: Parameters<ManagedMcpClient["readResource"]>[0],
-    options?: RequestOptions,
+    options?: CacheableRequestOptions,
   ) {
     return this.inner.readResource(this.inject(params), options);
   }
   listResourceTemplates(
     params?: Parameters<ManagedMcpClient["listResourceTemplates"]>[0],
-    options?: RequestOptions,
+    options?: CacheableRequestOptions,
   ) {
     return this.inner.listResourceTemplates(this.inject(params), options);
   }
   listPrompts(
     params?: Parameters<ManagedMcpClient["listPrompts"]>[0],
-    options?: RequestOptions,
+    options?: CacheableRequestOptions,
   ) {
     return this.inner.listPrompts(this.inject(params), options);
   }
@@ -189,6 +190,13 @@ export class LogLevelMetaClient implements ManagedMcpClient {
     options?: RequestOptions,
   ) {
     return this.inner.unsubscribeResource(this.inject(params), options);
+  }
+
+  complete(
+    params: Parameters<ManagedMcpClient["complete"]>[0],
+    options?: RequestOptions,
+  ) {
+    return this.inner.complete(this.inject(params), options);
   }
 
   // ---- No-params / non-injected methods (pass-through) ----

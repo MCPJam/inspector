@@ -6,6 +6,7 @@ import {
   type CallToolResult,
   Client,
   type ClientOptions,
+  InMemoryResponseCacheStore,
   type LoggingLevel,
   SSEClientTransport,
   type ServerCapabilities,
@@ -44,6 +45,7 @@ import type {
   ElicitResult,
   ProgressHandler,
   RpcLogger,
+  CacheEventLogger,
   Tool,
   AiSdkTool,
 } from "./types.js";
@@ -108,6 +110,7 @@ import {
 } from "./capabilities.js";
 import { assertCallToolResult, isCreateTaskResult } from "./result-guards.js";
 import { wrapLegacyClient } from "./managed-mcp-client-factory.js";
+import { ObservableResponseCache } from "./observable-response-cache.js";
 import { resolveVersionNegotiation } from "./version-negotiation.js";
 import { DialectAwareJsonSchemaValidator } from "./dialect-aware-json-schema-validator.js";
 import { isStatelessProtocolVersion } from "./mcp-protocol-version.js";
@@ -184,6 +187,7 @@ export class MCPClientManager {
   private readonly defaultLogJsonRpc: boolean;
   private readonly defaultRpcLogger?: RpcLogger;
   private readonly defaultProgressHandler?: ProgressHandler;
+  private readonly cacheEventLogger?: CacheEventLogger;
   private readonly defaultRetryPolicy: RetryPolicy;
   private readonly lazyConnect: boolean;
   private readonly elicitationTimeoutExtensionMs: number;
@@ -215,6 +219,7 @@ export class MCPClientManager {
     this.defaultLogJsonRpc = options.defaultLogJsonRpc ?? false;
     this.defaultRpcLogger = options.rpcLogger;
     this.defaultProgressHandler = options.progressHandler;
+    this.cacheEventLogger = options.cacheEventLogger;
     this.defaultRetryPolicy = normalizeRetryPolicy(options.retryPolicy);
     this.lazyConnect = options.lazyConnect ?? false;
     this.elicitationTimeoutExtensionMs = Math.max(
@@ -1360,6 +1365,21 @@ export class MCPClientManager {
           ? { supportedProtocolVersions }
           : {}),
         ...(versionNegotiation ? { versionNegotiation } : {}),
+        // Cache-serve provenance. Only when a `cacheEventLogger` is wired do we
+        // supply our own store; otherwise the client allocates its default
+        // `InMemoryResponseCacheStore` and behavior is byte-identical. We wrap
+        // a FRESH in-memory store per connection (the upstream default) so
+        // freshness/scope semantics are unchanged — the wrapper only observes.
+        // `defaultCacheTtlMs` is intentionally left at its `0` default: a
+        // result without a server `ttlMs` is stored but never served.
+        ...(this.cacheEventLogger
+          ? {
+              responseCacheStore: new ObservableResponseCache(
+                new InMemoryResponseCacheStore(),
+                { serverId, onHit: this.cacheEventLogger }
+              ),
+            }
+          : {}),
       };
 
       // Both eras go through the official upstream `Client`, constructed
@@ -1991,20 +2011,22 @@ export class MCPClientManager {
 
   private withTimeout(
     serverId: string,
-    options?: RequestOptions
-  ): RequestOptions {
+    options?: ClientRequestOptions
+  ): ClientRequestOptions {
     const state = this.registeredServers.get(serverId);
     const timeout = state?.timeout ?? this.defaultTimeout;
 
     if (!options) return { timeout };
+    // Spread preserves any `cacheMode` the caller threaded so it survives into
+    // the underlying cacheable-verb call.
     if (options.timeout === undefined) return { ...options, timeout };
     return options;
   }
 
   private withProgressHandler(
     serverId: string,
-    options?: RequestOptions
-  ): RequestOptions {
+    options?: ClientRequestOptions
+  ): ClientRequestOptions {
     const mergedOptions = this.withTimeout(serverId, options);
 
     if (!mergedOptions.onprogress && this.defaultProgressHandler) {

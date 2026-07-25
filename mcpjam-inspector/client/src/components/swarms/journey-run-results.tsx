@@ -18,6 +18,7 @@ import {
   type JourneyRunStreamState,
   type SwarmCellLiveStatus,
 } from "./use-journey-run-stream";
+import { summaryTargetKey, type SwarmTargetColumn } from "./swarm-targets";
 import { usePersistedSessionTrace } from "./use-persisted-session-trace";
 
 export type SwarmMatrixCellOutcome =
@@ -136,6 +137,8 @@ export function SwarmHostCell({
 }
 
 export type SwarmMatrixSelection = {
+  /** Canonical target key (`targetId ?? hostId` — D2). */
+  targetKey: string;
   hostId: string;
   sessionIndex: number;
   chatSessionId: string;
@@ -143,8 +146,7 @@ export type SwarmMatrixSelection = {
 
 export function SwarmSessionsMatrix({
   runId,
-  hostIds,
-  hostName,
+  targets,
   sessionsPerHost,
   sessions,
   hostSummaries,
@@ -154,12 +156,13 @@ export function SwarmSessionsMatrix({
   onSelect,
 }: {
   runId: string;
-  hostIds: string[];
-  hostName: (id: string) => string;
+  /** One column per execution target (per-target model — B6). */
+  targets: SwarmTargetColumn[];
   sessionsPerHost: number;
   sessions: JourneySessionRow[];
   hostSummaries: Array<{
     hostId: string;
+    targetId?: string;
     total: number;
     succeeded: number;
     failed: number;
@@ -186,23 +189,26 @@ export function SwarmSessionsMatrix({
         Sessions
       </p>
       <div className="flex flex-wrap gap-1.5">
-        {hostIds.flatMap((hostId) =>
-          Array.from({ length: rows }, (_, sessionIndex) => {
-            const chatSessionId = swarmAttemptChatSessionId(
-              runId,
-              hostId,
-              sessionIndex,
-            );
+        {targets.flatMap((target) => {
+          // Per-TARGET minted cell ids (shared mint — env targets key on the
+          // environmentId identity, so two same-host targets never collide).
+          const cellIds = Array.from({ length: rows }, (_, sessionIndex) =>
+            swarmAttemptChatSessionId(runId, target.identity, sessionIndex),
+          );
+          const listed = cellIds.filter((id) =>
+            sessionByChatId.has(id),
+          ).length;
+          return cellIds.map((chatSessionId, sessionIndex) => {
             const convexSession = sessionByChatId.get(chatSessionId);
             const liveStatus =
-              stream.cellStatus[swarmCellKey(hostId, sessionIndex)];
+              stream.cellStatus[swarmCellKey(target.key, sessionIndex)];
             let outcome = resolveSwarmCellOutcome({
               liveStatus,
               session: convexSession,
               runStatus,
             });
             // Unpersisted failures never appear in listSessionsByJourneyRun.
-            // When the host rollup reports failures and this slot has no
+            // When the target rollup reports failures and this slot has no
             // Convex row (and isn't live-running), mark Fail so the chips
             // match the run summary.
             if (
@@ -210,8 +216,9 @@ export function SwarmSessionsMatrix({
               (!liveStatus || liveStatus === "pending") &&
               runStatus !== "running"
             ) {
-              const hs = hostSummaries.find((h) => h.hostId === hostId);
-              const listed = sessions.filter((s) => s.hostId === hostId).length;
+              const hs = hostSummaries.find(
+                (h) => summaryTargetKey(h) === target.key,
+              );
               const unlistedFailed = hs
                 ? Math.min(hs.failed, Math.max(0, hs.total - listed))
                 : 0;
@@ -225,23 +232,28 @@ export function SwarmSessionsMatrix({
               }
             }
             const selected =
-              selection?.hostId === hostId &&
+              selection?.targetKey === target.key &&
               selection.sessionIndex === sessionIndex;
             return (
               <SwarmHostCell
-                key={`${hostId}:${sessionIndex}`}
-                hostLabel={hostName(hostId)}
+                key={`${target.key}:${sessionIndex}`}
+                hostLabel={target.label}
                 sessionIndex={sessionIndex}
                 outcome={outcome}
                 goalScore={convexSession?.goalScore}
                 selected={selected}
                 onSelect={() =>
-                  onSelect({ hostId, sessionIndex, chatSessionId })
+                  onSelect({
+                    targetKey: target.key,
+                    hostId: target.hostId,
+                    sessionIndex,
+                    chatSessionId,
+                  })
                 }
               />
             );
-          }),
-        )}
+          });
+        })}
       </div>
     </div>
   );
@@ -301,7 +313,7 @@ export function SwarmLiveStreamPane({
   const live = stream.sessions[selection.chatSessionId];
   const outcome = resolveSwarmCellOutcome({
     liveStatus: stream.cellStatus[
-      swarmCellKey(selection.hostId, selection.sessionIndex)
+      swarmCellKey(selection.targetKey, selection.sessionIndex)
     ],
     session: convexSession,
     runStatus,

@@ -7,6 +7,10 @@ import type {
 import "../../types/hono"; // Type extensions
 import { listTools as listToolsShared } from "../../utils/route-handlers.js";
 import { describeError } from "@mcpjam/sdk";
+import {
+  toServedFromCache,
+  withCacheEventCapture,
+} from "../../utils/cache-events.js";
 
 const tools = new Hono();
 
@@ -200,10 +204,11 @@ export function jsonError(c: any, error: unknown, fallbackStatus = 500) {
 
 tools.post("/list", async (c) => {
   try {
-    const { serverId, modelId, cursor } = (await c.req.json()) as {
+    const { serverId, modelId, cursor, refresh } = (await c.req.json()) as {
       serverId?: string;
       modelId?: string;
       cursor?: string;
+      refresh?: boolean;
     };
     if (!serverId) {
       return c.json({ error: "serverId is required" }, 400);
@@ -232,13 +237,19 @@ tools.post("/list", async (c) => {
       return c.json({ tools: [], toolsMetadata: {}, tokenCount: undefined });
     }
 
-    return c.json(
-      await listToolsShared(c.mcpClientManager, {
+    const { result, events } = await withCacheEventCapture(() =>
+      listToolsShared(c.mcpClientManager, {
         serverId: normalizedServerId,
         modelId,
         cursor,
+        cacheMode: refresh === true ? "refresh" : undefined,
       }),
     );
+    const servedFromCache = toServedFromCache(events);
+    return c.json({
+      ...result,
+      ...(servedFromCache ? { servedFromCache } : {}),
+    });
   } catch (error) {
     return jsonError(c, error, 500);
   }

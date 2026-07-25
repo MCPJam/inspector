@@ -3,6 +3,8 @@
  */
 
 import type {
+  CacheMode,
+  CacheScope,
   CallToolResult,
   Client,
   ClientOptions,
@@ -24,6 +26,103 @@ import type { ToolSet } from "ai";
 
 // Re-export ElicitResult for convenience
 export type { ElicitResult };
+
+/**
+ * The per-call cache disposition for the SEP-2549 cacheable verbs
+ * (`listTools` / `listPrompts` / `listResources` / `listResourceTemplates` /
+ * `readResource`). Re-exported verbatim from the upstream client so callers
+ * can `import { CacheMode } from "@mcpjam/sdk"`.
+ *
+ *   - `"use"` (upstream default) serves a still-fresh cached entry — a hit
+ *     costs ZERO wire exchange. A result is "fresh" only when the server sent
+ *     `ttlMs > 0` (SEP-2549) AND that ttl has not elapsed; `defaultCacheTtlMs`
+ *     stays `0`, so a result WITHOUT a server `ttlMs` is stored but never
+ *     served (every call refetches).
+ *   - `"refresh"` always fetches and re-stores (the "Refresh" affordance).
+ *   - `"bypass"` fetches without consulting OR writing the cache — the raw /
+ *     conformance evidence disposition.
+ *
+ * NOTE: only the 2026-07-28 wire codec emits `ttlMs`/`cacheScope`; a 2025-era
+ * connection never carries them, so an invisible cache serve is a modern-era
+ * phenomenon. The cache engine itself is era-blind (it reads `ttlMs` off the
+ * decoded body), but the body only has `ttlMs` when the modern codec put it
+ * there.
+ */
+export type { CacheMode, CacheScope };
+
+/**
+ * A single local cache-serve event, reported by `ObservableResponseCache` to
+ * {@link CacheEventLogger} when a cacheable verb is answered from a still-fresh
+ * cached entry (a `get` whose `expiresAt > now`).
+ *
+ * This is a LOCAL event with no wire counterpart — it MUST NOT be conflated
+ * with {@link RpcLogger} traffic. A cache hit is precisely the case where NO
+ * JSON-RPC request left the process, so injecting it into the rpc/wire log
+ * would make an invisible serve masquerade as a real request.
+ */
+export interface CacheHitEvent {
+  /** The server whose connection served the entry. */
+  serverId: string;
+  /** The cacheable method (`"tools/list"`, `"resources/read"`, …). */
+  method: string;
+  /** Canonical params key (`""` for the list verbs, the `uri` for reads). */
+  params?: string;
+  /**
+   * Age of the served entry in milliseconds (now − store time). Best-effort;
+   * see `ObservableResponseCache` for the heuristic's known imprecision.
+   */
+  ageMs: number;
+  /** Server-reported cache scope (`"public"` / `"private"`), if present. */
+  scope?: CacheScope;
+}
+
+/**
+ * Callback invoked for each fresh cache-serve. Distinct channel from
+ * {@link RpcLogger}: cache hits never appear on the wire, so they surface
+ * here — never as rpc log entries. Absence of an emission is NOT proof a call
+ * hit the wire; see `ObservableResponseCache`.
+ */
+export type CacheEventLogger = (event: CacheHitEvent) => void;
+
+/**
+ * MCPJam response-cache POLICY (SEP-2549). This is the single source of truth
+ * for how the debugger disposes of the client's response cache; the code above
+ * and the raw-evidence surfaces (`server-snapshot`, `server-doctor`,
+ * `mcp-conformance`) implement it.
+ *
+ * 1. **Default UI reads use `"use"`.** A default read MAY be served from cache
+ *    — but ONLY when (a) the server sent `ttlMs > 0` (so the entry is fresh)
+ *    AND (b) MCPJam surfaces the serve's provenance and age to the operator
+ *    (via {@link CacheEventLogger}). A serve the operator cannot see is
+ *    indistinguishable from a fabricated wire response and is forbidden.
+ * 2. **`defaultCacheTtlMs` stays `0`.** A result WITHOUT a server `ttlMs` is
+ *    stored (so the client's `tools/list`-derived index keeps working) but is
+ *    NEVER served. Invisible serving therefore happens EXACTLY when a server
+ *    opts in with `ttlMs > 0`.
+ * 3. **"Refresh" ⇒ `cacheMode: "refresh"`.** The refresh affordance always
+ *    fetches and re-stores.
+ * 4. **Raw / conformance ⇒ `cacheMode: "bypass"`.** Evidence surfaces neither
+ *    consult nor write the cache.
+ *
+ * ### Explicitly DEFERRED: persisted-discovery (`prior`) reconnect
+ *
+ * The upstream client supports a zero-round-trip reconnect by adopting a prior
+ * {@link import("@modelcontextprotocol/client").DiscoverResult} on `connect`
+ * (`ConnectOptions.prior`). MCPJam does NOT implement this here — it is
+ * deferred pending owner sign-off on how to display the provenance of an
+ * adopted-without-a-handshake connection. When implemented, the persisted
+ * `DiscoverResult` MUST be keyed by the full authorization/negotiation context
+ * so a cached discovery is never reused across a different principal or a
+ * different negotiated shape. The intended key spec is:
+ *
+ *   - server ORIGIN (scheme + host + port of the MCP endpoint),
+ *   - AUTH / TENANT context (the same identity that scopes the response cache
+ *     partition — e.g. the auth subject / `cachePartition`), and
+ *   - NEGOTIATION INPUTS (proposed protocol-version accept-list + advertised
+ *     client capabilities) that produced the `DiscoverResult`.
+ *
+ * Do NOT reuse a `prior` across any change in those inputs.
+ */
 
 /**
  * Client capability options extracted from MCP SDK ClientOptions
@@ -332,6 +431,19 @@ export interface MCPClientManagerOptions {
   rpcLogger?: RpcLogger;
   /** Global progress handler */
   progressHandler?: ProgressHandler;
+  /**
+   * Optional provenance sink for LOCAL cache serves. When set, every managed
+   * connection is given an `ObservableResponseCache` (wrapping a fresh
+   * in-memory store) and this callback fires whenever a cacheable verb is
+   * answered from a still-fresh cached entry — a serve that costs ZERO wire
+   * exchange. This is a DISTINCT channel from `rpcLogger`: cache hits never
+   * touch the wire, so they must never be injected into the rpc/wire log
+   * (that would make an invisible serve look like a real request).
+   *
+   * When unset, connections use the upstream default store and behavior is
+   * byte-identical to not wiring a cache observer.
+   */
+  cacheEventLogger?: CacheEventLogger;
   /** Default retry policy for retryable manager operations */
   retryPolicy?: RetryPolicy;
   /**
@@ -460,7 +572,13 @@ export type MCPListTasksResult = BaseListTasksResult;
 // Client Method Parameter Types
 // ============================================================================
 
-export type ClientRequestOptions = RequestOptions;
+/**
+ * Request options accepted by the manager's read verbs. Extends the upstream
+ * `RequestOptions` with the SEP-2549 `cacheMode` so a caller can pick the
+ * per-call cache disposition; ignored by verbs that are not cacheable (e.g.
+ * `callTool`). See {@link CacheMode}.
+ */
+export type ClientRequestOptions = RequestOptions & { cacheMode?: CacheMode };
 export type CallToolOptions = RequestOptions;
 export type ListResourcesParams = Parameters<Client["listResources"]>[0];
 export type ListResourceTemplatesParams = Parameters<

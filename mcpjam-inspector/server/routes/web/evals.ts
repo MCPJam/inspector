@@ -2,6 +2,13 @@ import { Hono } from "hono";
 import { captureServerEvent } from "../../utils/analytics.js";
 import { z } from "zod";
 import { createConvexClient } from "../../services/evals/route-helpers.js";
+import {
+  environmentServerIds,
+  environmentServerNames,
+  resolveEnvironmentForLaunch,
+  type ResolvedEnvironmentForLaunch,
+} from "../../services/evals/environment-launch.js";
+import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { detachPreparedEvalRun } from "../../services/evals/detached-run.js";
 import { prepareSuiteReplayFromRun } from "../../services/evals/replay-suite-run.js";
 import { runTraceRepairJob } from "../../services/evals/trace-repair-runner.js";
@@ -63,7 +70,16 @@ const hostedRunEvalsSchema = RunEvalsRequestSchema.omit({
   projectId: true,
   serverIds: true,
   convexAuthToken: true,
-}).extend(hostedBatchSchema.shape);
+})
+  .extend(hostedBatchSchema.shape)
+  .extend({
+    // Environment launches (environmentId set) arrive with NO server ids —
+    // the /run route primes the batch from the authoritative environment
+    // resolution below, so the batch schema's `.min(1)` would reject them
+    // before the priming result is validated. Legacy launches still hit the
+    // ≥1-server rule in `prepareEvalRun`.
+    serverIds: z.array(z.string().min(1)),
+  });
 
 const hostedRunTestCaseSchema = RunTestCaseRequestSchema.omit({
   serverIds: true,
@@ -117,9 +133,45 @@ evals.post("/run", async (c) =>
   handleRoute(
     c,
     async () => {
+      const rawBody = await readJsonBody<Record<string, unknown>>(c);
+      // Environment launches carry no browser serverIds (the browser never
+      // knows an environment's closed execution set). Prime the hosted
+      // connection batch from the authoritative resolution so the manager
+      // connects exactly that set, then hand the SAME resolution to
+      // `prepareEvalRun` so `expectedEnvironmentRevision` describes what the
+      // manager connected — an environment edit after this preflight then
+      // fails the run-start revision check instead of being missed.
+      let preflightEnvironment: ResolvedEnvironmentForLaunch | undefined;
+      if (
+        typeof rawBody.environmentId === "string" &&
+        rawBody.environmentId &&
+        typeof rawBody.projectId === "string" &&
+        rawBody.projectId
+      ) {
+        // Convert an `sk_` API-key bearer to the short-lived delegated JWT the
+        // Convex query surface requires (same conversion the hosted connection
+        // uses); the raw key would 401 the resolver for API-key callers.
+        const bearer = await getConvexBearerForRequest(c);
+        preflightEnvironment = await resolveEnvironmentForLaunch(
+          createConvexClient(bearer),
+          {
+            projectId: rawBody.projectId,
+            environmentId: rawBody.environmentId,
+          },
+        );
+        // Prime the ephemeral manager with the live-healed server IDs (not the
+        // raw closed set) so the batch we authorize/connect matches the IDs
+        // `resolveServerIdsOrThrow` later looks up — a server deleted and
+        // re-added under the same name resolves to its current id in both.
+        rawBody.serverIds = environmentServerIds(preflightEnvironment);
+        const serverNames = environmentServerNames(preflightEnvironment);
+        if (serverNames.length) {
+          rawBody.serverNames = serverNames;
+        }
+      }
       const connection = await createManualHostedConnection(
         c,
-        await readJsonBody<Record<string, unknown>>(c),
+        rawBody,
         hostedRunEvalsSchema,
       );
       const { manager, body, convexAuthToken } = connection;
@@ -129,6 +181,9 @@ evals.post("/run", async (c) =>
         prepared = await prepareEvalRun(manager, {
           ...body,
           convexAuthToken,
+          ...(preflightEnvironment
+            ? { resolvedEnvironment: preflightEnvironment }
+            : {}),
         });
       } catch (error) {
         await manager.disconnectAllServers().catch(() => {});

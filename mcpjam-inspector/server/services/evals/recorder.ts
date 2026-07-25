@@ -16,6 +16,10 @@ import { finalizeEvalIteration } from "./finalize-iteration.js";
 import { resolveCaseSuccessPredicates } from "@/shared/eval-matching";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import { ConvexError } from "convex/values";
+import {
+  environmentRevisionConflictError,
+  isEnvironmentRevisionConflict,
+} from "./environment-launch.js";
 
 type IterationStatus = "completed" | "failed" | "cancelled";
 // Run-level (not per-iteration) terminal stop reason, threaded into the
@@ -322,6 +326,8 @@ export const startSuiteRunWithRecorder = async ({
   matchOptionsOverride,
   namedHostId,
   runGroupId,
+  environmentId,
+  expectedEnvironmentRevision,
   source,
   idempotencyKey,
 }: {
@@ -381,6 +387,20 @@ export const startSuiteRunWithRecorder = async ({
    */
   runGroupId?: string;
   /**
+   * Project-environment launch: the environment this run resolves and
+   * pins. Threaded into `startTestSuiteRun` (which snapshots
+   * `configSnapshot.environmentRef`). Must be declared here or a
+   * reconstruction of the mutation args would silently drop it.
+   */
+  environmentId?: string;
+  /**
+   * The environment revision `prepareEvalRun` resolved (and captured the
+   * tool snapshot against). The mutation compares it to the environment's
+   * current revision BEFORE inserting any run row and rejects a mismatch
+   * with structured conflict data — see `environment-launch.ts`.
+   */
+  expectedEnvironmentRevision?: number;
+  /**
    * Run origin persisted on `testSuiteRun.source` for audit attribution.
    * Omitted means 'ui' (backend default); the public /api/v1 surface
    * passes 'api'; the scheduled-evals worker passes 'schedule'.
@@ -411,6 +431,10 @@ export const startSuiteRunWithRecorder = async ({
         matchOptionsOverride,
         ...(namedHostId ? { namedHostId } : {}),
         ...(runGroupId ? { runGroupId } : {}),
+        ...(environmentId ? { environmentId } : {}),
+        ...(expectedEnvironmentRevision !== undefined
+          ? { expectedEnvironmentRevision }
+          : {}),
         ...(source ? { source } : {}),
         ...(idempotencyKey ? { idempotencyKey } : {}),
       }
@@ -422,6 +446,16 @@ export const startSuiteRunWithRecorder = async ({
     const billing = asBillingRouteError(error);
     if (billing) {
       throw billing;
+    }
+    // The environment changed between prepareEvalRun's resolution and the
+    // run-start mutation (`expectedEnvironmentRevision` mismatch): no run
+    // row exists. Interactive callers surface the readable 409; the
+    // scheduled worker's trigger/idempotency path retries naturally.
+    if (
+      expectedEnvironmentRevision !== undefined &&
+      isEnvironmentRevisionConflict(error)
+    ) {
+      throw environmentRevisionConflictError();
     }
     throw error;
   }
