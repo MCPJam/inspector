@@ -1,10 +1,88 @@
-import { useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { ElicitationDialog } from "../ElicitationDialog";
 import { UrlElicitationConsent } from "./UrlElicitationConsent";
 import {
   useMrtrElicitationStore,
   type MrtrKeyAnswer,
 } from "@/stores/mrtr-elicitation-store";
+
+/* ------------------------------------------------------------------ *
+ * Single-active-dialog election (multi-mount safety)
+ *
+ * PR7 mounts this host on the chat `Thread` (so the reused dialog overlays an
+ * MCP App whose App-initiated `tools/call` returned `input_required`) in
+ * ADDITION to PR2's per-tab mounts. Several hosts can therefore be mounted at
+ * once on the same screen (e.g. local Chat renders `Thread` AND `ChatTabV2`
+ * mounts its own host; a multi-model surface renders several `Thread`s). The
+ * store and its SSE connection are already singletons, but the *view* was not:
+ * every mounted host independently rendered `rounds[0]`, so N co-visible hosts
+ * would stack N identical dialogs for the same round.
+ *
+ * This module-level election makes the view a singleton too: exactly one
+ * mounted host (the lowest-numbered still-mounted instance) renders the dialog;
+ * the rest render `null`. Registration happens in an effect (never during
+ * render — render stays pure), and `useSyncExternalStore` re-derives each
+ * host's primary flag when the mounted set changes.
+ * ------------------------------------------------------------------ */
+
+const mountedHostIds: number[] = [];
+const electionListeners = new Set<() => void>();
+let hostIdSeq = 0;
+
+function notifyElection(): void {
+  for (const listener of Array.from(electionListeners)) listener();
+}
+
+function primaryHostId(): number | null {
+  return mountedHostIds.length ? Math.min(...mountedHostIds) : null;
+}
+
+/**
+ * Returns whether THIS host instance is the elected primary (the one allowed to
+ * render the dialog). Safe to call unconditionally at the top of the component
+ * so hook order stays stable.
+ */
+function useIsPrimaryMrtrHost(): boolean {
+  const [id] = useState(() => ++hostIdSeq);
+
+  useEffect(() => {
+    mountedHostIds.push(id);
+    notifyElection();
+    return () => {
+      const i = mountedHostIds.indexOf(id);
+      if (i >= 0) mountedHostIds.splice(i, 1);
+      notifyElection();
+    };
+  }, [id]);
+
+  const subscribe = useCallback((cb: () => void) => {
+    electionListeners.add(cb);
+    return () => {
+      electionListeners.delete(cb);
+    };
+  }, []);
+
+  return useSyncExternalStore(
+    subscribe,
+    () => primaryHostId() === id,
+    // SSR / first paint before the mount effect registers this id: assume
+    // primary so a lone host is never hidden on its initial render.
+    () => true,
+  );
+}
+
+/** Test-only: reset the module-level election between cases. */
+export function __resetMrtrHostElection(): void {
+  mountedHostIds.length = 0;
+  electionListeners.clear();
+  hostIdSeq = 0;
+}
 
 /**
  * `MrtrElicitationHost` — the shared LOCAL rail that renders the reused
@@ -25,6 +103,7 @@ import {
  * are collected like any other answer and sent back for the driver to retry.
  */
 export function MrtrElicitationHost() {
+  const isPrimary = useIsPrimaryMrtrHost();
   const connect = useMrtrElicitationStore((s) => s.connect);
   const rounds = useMrtrElicitationStore((s) => s.rounds);
   const responding = useMrtrElicitationStore((s) => s.responding);
@@ -60,7 +139,12 @@ export function MrtrElicitationHost() {
     [activeRound, respond],
   );
 
-  if (!activeRound || !current) return null;
+  // Only the elected primary host renders the dialog; other mounted hosts on
+  // the same screen (e.g. an MCP App `Thread` + a tab's own host) stay silent
+  // so a single round never stacks duplicate dialogs. `connect()` above still
+  // runs on every instance (idempotent; one shared SSE), so any instance can
+  // become primary later without a gap.
+  if (!isPrimary || !activeRound || !current) return null;
 
   const recordAnswer = async (key: string, answer: MrtrKeyAnswer) => {
     // Object.assign onto a fresh object: keys are server-chosen and untrusted.
