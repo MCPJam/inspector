@@ -233,8 +233,13 @@ export function isHostedElicitationEvent(
       isOptionalString(value.requiredScope) &&
       isOptionalString(value.resourceMetadataUrl) &&
       isOptionalString(value.errorDescription) &&
-      // At least one actionable challenge field — a bare kind match carries
-      // nothing to step up on.
+      // Wire-shape validation only: require at least one challenge field so a
+      // bare kind match is rejected. This deliberately stays permissive and
+      // accepts an errorDescription-only event as WELL-FORMED — the
+      // actionability decision (does this challenge warrant a redirect?) lives
+      // in the consumer, which gates the step-up on `requiredScope` /
+      // `resourceMetadataUrl`. The server already avoids emitting
+      // errorDescription-only events, so this branch is defense in depth.
       (typeof value.requiredScope === "string" ||
         typeof value.resourceMetadataUrl === "string" ||
         typeof value.errorDescription === "string")

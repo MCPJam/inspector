@@ -23,7 +23,10 @@ import { ThreePanelLayout } from "./ui/three-panel-layout";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { extractDisplayFromValue } from "@/components/chat-v2/shared/tool-result-text";
 import type { MCPPrompt, MCPServerConfig } from "@mcpjam/sdk/browser";
-import { insufficientScopeFromError } from "@/lib/apis/insufficient-scope";
+import {
+  insufficientScopeFromError,
+  isActionableStepUpChallenge,
+} from "@/lib/apis/insufficient-scope";
 import {
   applyToolCallStepUp,
   resetToolCallStepUp,
@@ -154,7 +157,10 @@ export function PromptsTab({
     (err: unknown) => {
       if (!server) return;
       const challenge = insufficientScopeFromError(err);
-      if (!challenge) return;
+      // Only a scope-bearing (or resource-metadata) challenge is worth a
+      // redirect; an errorDescription-only challenge would consume the
+      // one-attempt step-up budget with nothing to widen.
+      if (!isActionableStepUpChallenge(challenge)) return;
       const stepUpKey = server.name;
       if (stepUpInFlightRef.current.has(stepUpKey)) return;
       stepUpInFlightRef.current.add(stepUpKey);

@@ -406,7 +406,18 @@ export async function streamWebChatTurn(
               // display channel. The client drives the union-scope step-up.
               const insufficientScope =
                 extractInsufficientScopeChallenge(error);
-              if (insufficientScope) {
+              // Only emit a step-up notice the client can ACT on: a
+              // `requiredScope` (scope to add) or a `resourceMetadataUrl` (a PRM
+              // endpoint to discover scopes from). An errorDescription-only
+              // challenge carries nothing to widen — redirecting for it would
+              // burn the bounded one-attempt budget — so it stays plain error
+              // text the model already sees, consistent with every other
+              // surface's actionable-challenge gate.
+              if (
+                insufficientScope &&
+                (insufficientScope.requiredScope ||
+                  insufficientScope.resourceMetadataUrl)
+              ) {
                 const challenge = {
                   serverId,
                   toolCallId: options?.toolCallId,

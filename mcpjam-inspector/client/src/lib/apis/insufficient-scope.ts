@@ -45,6 +45,21 @@ export function parseInsufficientScopeChallenge(
 }
 
 /**
+ * Whether a parsed challenge can actually DRIVE a step-up re-authorization. Only
+ * a `requiredScope` (the scope to add to the union) or a `resourceMetadataUrl`
+ * (a protected-resource-metadata endpoint to discover the challenged scopes
+ * from) is actionable. An `errorDescription`-only challenge is display-only —
+ * redirecting for it would burn the bounded one-attempt step-up budget with no
+ * scope to widen — so every surface gates the ACTION on this predicate while
+ * still surfacing the underlying error text for the user/model.
+ */
+export function isActionableStepUpChallenge(
+  challenge: InsufficientScopeChallenge | undefined,
+): challenge is InsufficientScopeChallenge {
+  return Boolean(challenge?.requiredScope || challenge?.resourceMetadataUrl);
+}
+
+/**
  * Error thrown by the throw-based client APIs (resource read, prompt get) when
  * a request fails, carrying an optional SEP-2350 step-up challenge so the
  * `catch` site can drive the union-scope re-authorization without re-parsing
@@ -80,7 +95,10 @@ export function insufficientScopeFromError(
   error: unknown,
 ): InsufficientScopeChallenge | undefined {
   if (error instanceof McpRequestError && error.insufficientScope) {
-    return error.insufficientScope;
+    // Re-narrow through the parser so a malformed / empty `{}` challenge (truthy
+    // but with no string fields) collapses to `undefined`, matching the hosted
+    // `WebApiError.details` path below instead of leaking a non-actionable {}.
+    return parseInsufficientScopeChallenge(error.insufficientScope);
   }
   const details = (error as { details?: { insufficientScope?: unknown } })
     ?.details;

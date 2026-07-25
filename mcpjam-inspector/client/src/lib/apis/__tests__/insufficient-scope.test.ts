@@ -3,6 +3,7 @@ import { WebApiError } from "@/lib/apis/web/base";
 import {
   McpRequestError,
   insufficientScopeFromError,
+  isActionableStepUpChallenge,
   parseInsufficientScopeChallenge,
 } from "@/lib/apis/insufficient-scope";
 
@@ -69,5 +70,41 @@ describe("insufficientScopeFromError (SEP-2350)", () => {
       insufficientScope: {},
     });
     expect(insufficientScopeFromError(err)).toBeUndefined();
+  });
+
+  it("returns undefined for an McpRequestError carrying an empty {} challenge", () => {
+    // A truthy-but-empty challenge must re-narrow to undefined, matching the
+    // hosted path — never leak a non-actionable {} to a step-up caller.
+    const err = new McpRequestError("read failed", {
+      insufficientScope: {},
+      status: 403,
+    });
+    expect(insufficientScopeFromError(err)).toBeUndefined();
+  });
+});
+
+describe("isActionableStepUpChallenge (SEP-2350)", () => {
+  it("is actionable when a requiredScope is present", () => {
+    expect(
+      isActionableStepUpChallenge({ requiredScope: "read:tickets" }),
+    ).toBe(true);
+  });
+
+  it("is actionable when a resourceMetadataUrl is present", () => {
+    expect(
+      isActionableStepUpChallenge({
+        resourceMetadataUrl: "https://rs.example/.well-known",
+      }),
+    ).toBe(true);
+  });
+
+  it("is NOT actionable for an errorDescription-only challenge", () => {
+    expect(
+      isActionableStepUpChallenge({ errorDescription: "more scope needed" }),
+    ).toBe(false);
+  });
+
+  it("is NOT actionable for undefined", () => {
+    expect(isActionableStepUpChallenge(undefined)).toBe(false);
   });
 });

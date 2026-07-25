@@ -27,7 +27,10 @@ import {
   listResources,
   readResource as readResourceApi,
 } from "@/lib/apis/mcp-resources-api";
-import { insufficientScopeFromError } from "@/lib/apis/insufficient-scope";
+import {
+  insufficientScopeFromError,
+  isActionableStepUpChallenge,
+} from "@/lib/apis/insufficient-scope";
 import {
   applyToolCallStepUp,
   resetToolCallStepUp,
@@ -235,7 +238,10 @@ export function ResourcesTab({
   const driveStepUpFromError = (err: unknown) => {
     if (!server) return;
     const challenge = insufficientScopeFromError(err);
-    if (!challenge) return;
+    // Only a challenge that names a scope (or a resource-metadata URL to
+    // discover one) is worth a redirect; an errorDescription-only challenge
+    // would burn the one-attempt budget with nothing to widen.
+    if (!isActionableStepUpChallenge(challenge)) return;
     const stepUpKey = server.name;
     if (stepUpInFlightRef.current.has(stepUpKey)) return;
     stepUpInFlightRef.current.add(stepUpKey);
