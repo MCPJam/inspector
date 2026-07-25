@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { AdvancedConnectionSettingsSection } from "../shared/AdvancedConnectionSettingsSection";
 
@@ -121,6 +122,88 @@ describe("AdvancedConnectionSettingsSection", () => {
       expect(screen.getByText("Hidden — Reveal to view")).toBeInTheDocument();
       expect(
         screen.getByRole("button", { name: /Reveal/ }),
+      ).toBeInTheDocument();
+    });
+
+    /** The parent owns the rows, so add/remove bookkeeping only runs for real
+     * against state. A static array with vi.fn() callbacks would leave the
+     * index this component hands the masking hook untested. */
+    function HeadersHarness({
+      initial = [],
+    }: {
+      initial?: Array<{ key: string; value: string }>;
+    }) {
+      const [customHeaders, setCustomHeaders] = useState(initial);
+      return (
+        <AdvancedConnectionSettingsSection
+          showConfiguration={true}
+          onToggle={vi.fn()}
+          requestTimeout="10000"
+          onRequestTimeoutChange={vi.fn()}
+          inheritedRequestTimeout={10000}
+          customHeaders={customHeaders}
+          onAddHeader={() =>
+            setCustomHeaders((prev) => [...prev, { key: "", value: "" }])
+          }
+          onRemoveHeader={(index) =>
+            setCustomHeaders((prev) => prev.filter((_, at) => at !== index))
+          }
+          onUpdateHeader={(index, field, value) =>
+            setCustomHeaders((prev) =>
+              prev.map((row, at) =>
+                at === index ? { ...row, [field]: value } : row,
+              ),
+            )
+          }
+        />
+      );
+    }
+
+    it("leaves a newly added header unmasked so it can be typed into", () => {
+      render(<HeadersHarness />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Add header" }));
+
+      expect(screen.getByLabelText("Header 1 value")).toHaveAttribute(
+        "type",
+        "text",
+      );
+      expect(
+        screen.getByRole("button", { name: "Hide value for header 1" }),
+      ).toBeInTheDocument();
+    });
+
+    it("keeps eye state on the right header after one above it is removed", () => {
+      render(
+        <HeadersHarness
+          initial={[
+            { key: "FIRST", value: "one" },
+            { key: "SECOND", value: "two" },
+            { key: "THIRD", value: "three" },
+          ]}
+        />,
+      );
+
+      // Unmask the last row, then delete the row above it. Without re-indexing,
+      // the eye state would slide onto SECOND and expose the wrong value.
+      fireEvent.click(
+        screen.getByRole("button", { name: "Show value for THIRD" }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Remove SECOND" }));
+
+      expect(screen.getByLabelText("Header 1 value")).toHaveAttribute(
+        "type",
+        "password",
+      );
+      expect(screen.getByLabelText("Header 2 value")).toHaveAttribute(
+        "type",
+        "text",
+      );
+      expect(
+        screen.getByRole("button", { name: "Hide value for THIRD" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Show value for FIRST" }),
       ).toBeInTheDocument();
     });
   });
