@@ -228,6 +228,42 @@ export class HostedElicitationBridge {
   }
 
   /**
+   * Surface a runtime `403 insufficient_scope` (SEP-2350) raised by a failed
+   * `tools/call` inside the chat/agent tool loop. Display-only: the call already
+   * failed, so no JSON-RPC response is owed and there is nothing to rendezvous
+   * on. The client drives the union-scope step-up re-authorization.
+   */
+  emitInsufficientScope(info: {
+    serverId: string;
+    toolCallId?: string;
+    requiredScope?: string;
+    resourceMetadataUrl?: string;
+    errorDescription?: string;
+  }): void {
+    // Nothing actionable without at least one challenge field.
+    if (
+      !info.requiredScope &&
+      !info.resourceMetadataUrl &&
+      !info.errorDescription
+    ) {
+      return;
+    }
+    this.emit({
+      kind: "insufficient_scope",
+      serverId: info.serverId,
+      serverName: this.options.serverNamesById[info.serverId],
+      ...(info.toolCallId ? { toolCallId: info.toolCallId } : {}),
+      ...(info.requiredScope ? { requiredScope: info.requiredScope } : {}),
+      ...(info.resourceMetadataUrl
+        ? { resourceMetadataUrl: info.resourceMetadataUrl }
+        : {}),
+      ...(info.errorDescription
+        ? { errorDescription: info.errorDescription }
+        : {}),
+    });
+  }
+
+  /**
    * End-of-turn cleanup. Withdraws any row still pending so a closed stream
    * can't leave an answerable prompt behind for its TTL.
    */

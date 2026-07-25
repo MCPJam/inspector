@@ -68,6 +68,7 @@ import type { HarnessSessionCommitPayload } from "./harness/harness-session-stat
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-helpers.js";
 import { ErrorCode, WebRouteError } from "./../routes/web/errors.js";
 import { readUrlElicitations } from "@/shared/http-tool-calls";
+import { extractInsufficientScopeChallenge } from "./mcp-error-serialize.js";
 import {
   classifyUiToolApprovals,
   type UiToolApprovalClassification,
@@ -381,6 +382,22 @@ export async function streamWebChatTurn(
                         serverId: (tool as any)._serverId ?? "unknown",
                         toolCallId: options?.toolCallId,
                         elicitations,
+                      });
+                    }
+                    // SEP-2350: a runtime `403 insufficient_scope` thrown here is
+                    // about to be collapsed by the AI-SDK into a model-facing
+                    // error-text part, so route the challenge out-of-band on the
+                    // display channel. The client drives the union-scope step-up.
+                    const insufficientScope =
+                      extractInsufficientScopeChallenge(error);
+                    if (insufficientScope) {
+                      runtime.elicitationBridge?.emitInsufficientScope({
+                        serverId: (tool as any)._serverId ?? "unknown",
+                        toolCallId: options?.toolCallId,
+                        requiredScope: insufficientScope.requiredScope,
+                        resourceMetadataUrl:
+                          insufficientScope.resourceMetadataUrl,
+                        errorDescription: insufficientScope.errorDescription,
                       });
                     }
                     throw error;
