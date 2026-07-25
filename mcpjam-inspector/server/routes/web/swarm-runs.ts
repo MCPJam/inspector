@@ -406,9 +406,13 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
             );
             // Deduped union: the backend keeps plugin ids out of `serverIds`,
             // but an overlap would double-connect rather than fail, so guard it.
+            const hostServerIds = new Set(host.serverIds);
+            const pluginOnlyServerIds = pluginServerIds.filter(
+              (id) => !hostServerIds.has(id)
+            );
             const serverIds =
-              pluginServerIds.length > 0
-                ? Array.from(new Set([...host.serverIds, ...pluginServerIds]))
+              pluginOnlyServerIds.length > 0
+                ? [...host.serverIds, ...pluginOnlyServerIds]
                 : host.serverIds;
             // Reconnect with THIS host's non-secret connection settings
             // (per-request timeout + MCP protocol pins) so the run reproduces
@@ -463,8 +467,15 @@ swarmRuns.post("/journeys/:journeyId/runs", async (c) =>
               connectedServerIds: serverIds,
               // The session connects these, but `resumeConfig` must never tell
               // a later viewer to reconnect them without re-gating the plugin.
-              ...(pluginServerIds.length > 0
-                ? { nonResumableServerIds: pluginServerIds }
+              //
+              // Subtract anything ALSO in the host's own `serverIds`: D1 keeps
+              // plugin ids out of that list so the overlap should be empty, but
+              // the union above already guards for it, and marking such an id
+              // non-resumable would strip a legitimately host-pinned server
+              // from resume. An id that stands on its own in the host config
+              // does not need the plugin to justify reconnecting it.
+              ...(pluginOnlyServerIds.length > 0
+                ? { nonResumableServerIds: pluginOnlyServerIds }
                 : {}),
               dispose: async () => {
                 await manager.disconnectAllServers();
