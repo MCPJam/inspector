@@ -1,4 +1,6 @@
 import dns from "node:dns/promises";
+import { EventEmitter } from "node:events";
+import { Readable } from "node:stream";
 import {
   executeDebugOAuthProxy,
   executeOAuthProxy,
@@ -8,6 +10,10 @@ import {
   OAuthProxyError,
 } from "../src/oauth-proxy.js";
 
+const httpRequestMock = vi.hoisted(() => vi.fn());
+const httpsRequestMock = vi.hoisted(() => vi.fn());
+const dnsLookupMock = vi.hoisted(() => vi.fn());
+
 vi.mock("node:dns/promises", () => ({
   __esModule: true,
   default: {
@@ -15,10 +21,83 @@ vi.mock("node:dns/promises", () => ({
     resolve6: vi.fn().mockResolvedValue([]),
   },
 }));
+vi.mock("node:dns", () => ({
+  __esModule: true,
+  lookup: dnsLookupMock,
+}));
+vi.mock("node:http", () => ({
+  __esModule: true,
+  default: { request: httpRequestMock },
+  request: httpRequestMock,
+}));
+vi.mock("node:https", () => ({
+  __esModule: true,
+  default: { request: httpsRequestMock },
+  request: httpsRequestMock,
+}));
+
+interface MockMetadataResponse {
+  status?: number;
+  statusText?: string;
+  headers?: Record<string, string>;
+  body?: string;
+}
+
+function queueMetadataResponses(
+  requestMock: ReturnType<typeof vi.fn>,
+  responses: MockMetadataResponse[],
+): void {
+  requestMock.mockImplementation(
+    (
+      _url: URL,
+      options: { signal?: AbortSignal },
+      onResponse: (response: Readable) => void,
+    ) => {
+      const request = new EventEmitter() as EventEmitter & {
+        end: () => void;
+        destroy: () => void;
+      };
+      request.end = () => {
+        const next = responses.shift();
+        if (!next) {
+          options.signal?.addEventListener(
+            "abort",
+            () => request.emit("error", options.signal?.reason),
+            { once: true },
+          );
+          return;
+        }
+        queueMicrotask(() => {
+          const response = Readable.from(next.body ? [next.body] : []);
+          Object.assign(response, {
+            statusCode: next.status ?? 200,
+            statusMessage: next.statusText ?? "OK",
+            headers: next.headers ?? {
+              "content-type": "application/json",
+            },
+          });
+          onResponse(response);
+        });
+      };
+      request.destroy = () => {};
+      return request;
+    },
+  );
+}
 
 describe("oauth-proxy helpers", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     global.fetch = vi.fn() as unknown as typeof fetch;
+    vi.mocked(dns.resolve4).mockResolvedValue(["93.184.216.34"]);
+    vi.mocked(dns.resolve6).mockResolvedValue([]);
+    dnsLookupMock.mockImplementation(
+      (
+        _hostname: string,
+        _options: unknown,
+        callback: (error: Error | null, addresses: unknown) => void,
+      ) => callback(null, [{ address: "93.184.216.34", family: 4 }]),
+    );
   });
 
   it("blocks private hosts when httpsOnly is enabled", async () => {
@@ -60,18 +139,140 @@ describe("oauth-proxy helpers", () => {
   });
 
   it("returns metadata for valid JSON responses", async () => {
-    (global.fetch as jest.Mock).mockResolvedValueOnce(
-      new Response(JSON.stringify({ issuer: "https://auth.example.com" }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      })
-    );
+    queueMetadataResponses(httpsRequestMock, [
+      {
+        body: JSON.stringify({ issuer: "https://auth.example.com" }),
+      },
+    ]);
 
     await expect(
       fetchOAuthMetadata("https://auth.example.com/.well-known/oauth")
     ).resolves.toEqual({
       metadata: { issuer: "https://auth.example.com" },
+      finalUrl: "https://auth.example.com/.well-known/oauth",
     });
+  });
+
+  it("rejects a public metadata request redirected to loopback", async () => {
+    queueMetadataResponses(httpsRequestMock, [
+      {
+        status: 302,
+        statusText: "Found",
+        headers: {
+          location: "http://127.0.0.1:8787/.well-known/oauth",
+        },
+      },
+    ]);
+
+    await expect(
+      fetchOAuthMetadata("https://auth.example.com/.well-known/oauth")
+    ).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining("private/reserved host"),
+    });
+    expect(httpsRequestMock).toHaveBeenCalledTimes(1);
+    expect(httpRequestMock).not.toHaveBeenCalled();
+  });
+
+  it("allows loopback metadata to remain on loopback for an explicit local flow", async () => {
+    dnsLookupMock.mockImplementation(
+      (
+        _hostname: string,
+        _options: unknown,
+        callback: (error: Error | null, addresses: unknown) => void,
+      ) => callback(null, [{ address: "127.0.0.1", family: 4 }]),
+    );
+    queueMetadataResponses(httpRequestMock, [
+      {
+        status: 302,
+        statusText: "Found",
+        headers: {
+          location: "http://127.0.0.1:8787/.well-known/oauth",
+        },
+      },
+      {
+        body: JSON.stringify({ issuer: "http://127.0.0.1:8787" }),
+      },
+    ]);
+
+    await expect(
+      fetchOAuthMetadata("http://localhost:8787/.well-known/oauth")
+    ).resolves.toEqual({
+      metadata: { issuer: "http://127.0.0.1:8787" },
+      finalUrl: "http://127.0.0.1:8787/.well-known/oauth",
+    });
+  });
+
+  it("rejects loopback metadata in hosted HTTPS-only mode", async () => {
+    await expect(
+      fetchOAuthMetadata("https://localhost/.well-known/oauth", true)
+    ).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining("private/reserved host"),
+    });
+    expect(httpsRequestMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a public-looking metadata hostname that resolves privately in local mode", async () => {
+    dnsLookupMock.mockImplementation(
+      (
+        _hostname: string,
+        _options: unknown,
+        callback: (error: Error | null, addresses: unknown) => void,
+      ) => callback(null, [{ address: "10.0.0.5", family: 4 }]),
+    );
+
+    await expect(
+      fetchOAuthMetadata("http://attacker.example/.well-known/oauth")
+    ).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining(
+        "resolves to a private/reserved IP address"
+      ),
+    });
+    expect(httpRequestMock).not.toHaveBeenCalled();
+  });
+
+  it("validates and pins each public redirect hop before connecting", async () => {
+    dnsLookupMock
+      .mockImplementationOnce(
+        (
+          _hostname: string,
+          _options: unknown,
+          callback: (error: Error | null, addresses: unknown) => void,
+        ) => callback(null, [{ address: "93.184.216.34", family: 4 }]),
+      )
+      .mockImplementationOnce(
+        (
+          _hostname: string,
+          _options: unknown,
+          callback: (error: Error | null, addresses: unknown) => void,
+        ) => callback(null, [{ address: "1.1.1.1", family: 4 }]),
+      );
+    queueMetadataResponses(httpsRequestMock, [
+      {
+        status: 302,
+        statusText: "Found",
+        headers: { location: "https://cdn.example/oauth-metadata" },
+      },
+      {
+        body: JSON.stringify({ issuer: "https://auth.example.com" }),
+      },
+    ]);
+
+    await expect(
+      fetchOAuthMetadata("https://auth.example.com/.well-known/oauth")
+    ).resolves.toEqual({
+      metadata: { issuer: "https://auth.example.com" },
+      finalUrl: "https://cdn.example/oauth-metadata",
+    });
+
+    expect(httpsRequestMock).toHaveBeenCalledTimes(2);
+    const firstLookup = httpsRequestMock.mock.calls[0][1].lookup;
+    const secondLookup = httpsRequestMock.mock.calls[1][1].lookup;
+    expect(firstLookup).toBeTypeOf("function");
+    expect(secondLookup).toBeTypeOf("function");
+    expect(firstLookup).not.toBe(secondLookup);
   });
 
   it("bounds regular, debug, and metadata requests with timeoutMs", async () => {
@@ -89,6 +290,7 @@ describe("oauth-proxy helpers", () => {
     await expect(
       executeDebugOAuthProxy({ url: "https://example.com", timeoutMs: 10 })
     ).rejects.toThrow(/timeout/i);
+    queueMetadataResponses(httpsRequestMock, []);
     await expect(
       fetchOAuthMetadata("https://example.com/.well-known/oauth", false, 10)
     ).rejects.toThrow(/timeout/i);

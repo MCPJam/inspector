@@ -1,5 +1,6 @@
 import dns from "node:dns/promises";
 import { lookup as dnsLookupCb } from "node:dns";
+import http from "node:http";
 import https from "node:https";
 import type { LookupFunction } from "node:net";
 
@@ -38,6 +39,7 @@ export interface OAuthProxyResponse {
 // stays here. Re-exported to preserve the public `isDisallowedIpAddress` symbol.
 import {
   isDisallowedIpAddress,
+  isLoopbackOAuthUrl,
   isPrivateHost,
 } from "./oauth/ssrf-guard.js";
 export { isDisallowedIpAddress };
@@ -77,10 +79,10 @@ interface ValidatedUrl {
   url: URL;
 }
 
-export async function validateUrl(
+function parseAndValidateUrl(
   url: string,
   httpsOnly = false,
-): Promise<ValidatedUrl> {
+): URL {
   if (!url) {
     throw new OAuthProxyError(400, "Missing url parameter");
   }
@@ -92,25 +94,39 @@ export async function validateUrl(
     throw new OAuthProxyError(400, "Invalid URL format");
   }
 
-  if (httpsOnly) {
-    if (targetUrl.protocol !== "https:") {
-      throw new OAuthProxyError(
-        400,
-        "Only HTTPS targets are allowed in hosted mode",
-      );
-    }
-    if (isPrivateHost(targetUrl.hostname)) {
-      throw new OAuthProxyError(
-        400,
-        "Private/reserved IP addresses are not allowed",
-      );
-    }
-    await resolveAndValidateDns(targetUrl.hostname);
-  } else if (
+  if (
     targetUrl.protocol !== "https:" &&
     targetUrl.protocol !== "http:"
   ) {
     throw new OAuthProxyError(400, "Invalid protocol");
+  }
+  if (httpsOnly && targetUrl.protocol !== "https:") {
+    throw new OAuthProxyError(
+      400,
+      "Only HTTPS targets are allowed in hosted mode",
+    );
+  }
+
+  return targetUrl;
+}
+
+export async function validateUrl(
+  url: string,
+  httpsOnly = false,
+): Promise<ValidatedUrl> {
+  const targetUrl = parseAndValidateUrl(url, httpsOnly);
+
+  // Local mode permits HTTP and explicit loopback OAuth servers; it must not
+  // disable SSRF validation for every other host.
+  const explicitLoopback = !httpsOnly && isLoopbackOAuthUrl(targetUrl.toString());
+  if (isPrivateHost(targetUrl.hostname) && !explicitLoopback) {
+    throw new OAuthProxyError(
+      400,
+      "Private/reserved IP addresses are not allowed",
+    );
+  }
+  if (!explicitLoopback) {
+    await resolveAndValidateDns(targetUrl.hostname);
   }
 
   return { url: targetUrl };
@@ -477,34 +493,270 @@ export async function executeDebugOAuthProxy(
   };
 }
 
+const MAX_OAUTH_METADATA_REDIRECTS = 5;
+const MAX_OAUTH_METADATA_BYTES = 1024 * 1024;
+
+interface PinnedAddress {
+  address: string;
+  family: number;
+}
+
+interface RawOAuthMetadataResponse {
+  status: number;
+  statusText: string;
+  headers: Record<string, string>;
+  body: string;
+}
+
+function isLoopbackAddress(address: string): boolean {
+  const host = address.includes(":") ? `[${address}]` : address;
+  return isLoopbackOAuthUrl(`http://${host}`);
+}
+
+async function resolvePinnedAddresses(
+  targetUrl: URL,
+  allowLoopbackFlow: boolean,
+): Promise<PinnedAddress[] | null> {
+  const targetIsLoopback = isLoopbackOAuthUrl(targetUrl.toString());
+
+  if (isPrivateHost(targetUrl.hostname)) {
+    if (!(allowLoopbackFlow && targetIsLoopback)) {
+      throw new OAuthProxyError(
+        400,
+        `OAuth metadata target is a private/reserved host (${targetUrl.hostname})`,
+      );
+    }
+  }
+
+  // Numeric IPs are already the exact socket destination, so there is no DNS
+  // lookup to pin. The literal-host check above has classified them.
+  if (
+    /^\d+\.\d+\.\d+\.\d+$/.test(targetUrl.hostname) ||
+    targetUrl.hostname.includes(":")
+  ) {
+    return null;
+  }
+
+  const addresses = await new Promise<PinnedAddress[]>((resolve, reject) => {
+    dnsLookupCb(
+      targetUrl.hostname,
+      { all: true, verbatim: true },
+      (error, resolved) => {
+        if (error) {
+          reject(
+            new OAuthProxyError(
+              400,
+              `Could not resolve OAuth metadata host ${targetUrl.hostname}`,
+            ),
+          );
+          return;
+        }
+        resolve(Array.isArray(resolved) ? resolved : [resolved]);
+      },
+    );
+  });
+
+  if (addresses.length === 0) {
+    throw new OAuthProxyError(
+      400,
+      `Could not resolve OAuth metadata host ${targetUrl.hostname}`,
+    );
+  }
+
+  for (const { address } of addresses) {
+    if (targetIsLoopback) {
+      if (!isLoopbackAddress(address)) {
+        throw new OAuthProxyError(
+          400,
+          `Loopback OAuth metadata host resolved outside loopback (${address})`,
+        );
+      }
+    } else if (isDisallowedIpAddress(address)) {
+      throw new OAuthProxyError(
+        400,
+        `OAuth metadata host resolves to a private/reserved IP address (${address})`,
+      );
+    }
+  }
+
+  return addresses;
+}
+
+function createPinnedLookup(addresses: PinnedAddress[]): LookupFunction {
+  return (_hostname, options, callback) => {
+    if (typeof options === "object" && options?.all) {
+      return (
+        callback as unknown as (
+          err: NodeJS.ErrnoException | null,
+          resolved: PinnedAddress[],
+        ) => void
+      )(null, addresses);
+    }
+    callback(null, addresses[0].address, addresses[0].family);
+  };
+}
+
+async function requestPinnedOAuthMetadata(
+  targetUrl: URL,
+  allowLoopbackFlow: boolean,
+  signal: AbortSignal | undefined,
+): Promise<RawOAuthMetadataResponse> {
+  const pinnedAddresses = await resolvePinnedAddresses(
+    targetUrl,
+    allowLoopbackFlow,
+  );
+  const transport = targetUrl.protocol === "https:" ? https : http;
+
+  return await new Promise<RawOAuthMetadataResponse>((resolve, reject) => {
+    const request = transport.request(
+      targetUrl,
+      {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "MCP-Inspector/1.0",
+        },
+        ...(pinnedAddresses
+          ? { lookup: createPinnedLookup(pinnedAddresses) }
+          : {}),
+        ...(targetUrl.protocol === "https:"
+          ? { servername: targetUrl.hostname }
+          : {}),
+        signal,
+      },
+      (response) => {
+        const headers: Record<string, string> = {};
+        for (const [key, value] of Object.entries(response.headers)) {
+          headers[key.toLowerCase()] = Array.isArray(value)
+            ? value.join(", ")
+            : String(value ?? "");
+        }
+
+        const status = response.statusCode ?? 0;
+        const statusText = response.statusMessage ?? "";
+        if (status >= 300 && status < 400) {
+          response.resume();
+          resolve({ status, statusText, headers, body: "" });
+          return;
+        }
+
+        const chunks: Buffer[] = [];
+        let total = 0;
+        response.on("data", (chunk: Buffer | string) => {
+          const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          total += buffer.length;
+          if (total > MAX_OAUTH_METADATA_BYTES) {
+            request.destroy();
+            reject(
+              new OAuthProxyError(
+                400,
+                `OAuth metadata exceeds the ${MAX_OAUTH_METADATA_BYTES}-byte cap`,
+              ),
+            );
+            return;
+          }
+          chunks.push(buffer);
+        });
+        response.on("end", () => {
+          resolve({
+            status,
+            statusText,
+            headers,
+            body: Buffer.concat(chunks).toString("utf8"),
+          });
+        });
+        response.on("error", reject);
+      },
+    );
+    request.on("error", reject);
+    request.end();
+  });
+}
+
 export async function fetchOAuthMetadata(
   url: string,
   httpsOnly = false,
   timeoutMs?: number,
 ): Promise<
-  | { metadata: Record<string, unknown>; status?: undefined }
+  | {
+      metadata: Record<string, unknown>;
+      finalUrl: string;
+      status?: undefined;
+    }
   | { status: number; statusText: string }
 > {
-  const { url: metadataUrl } = await validateUrl(url, httpsOnly);
+  const metadataUrl = parseAndValidateUrl(url, httpsOnly);
+  const allowLoopbackFlow =
+    !httpsOnly && isLoopbackOAuthUrl(metadataUrl.toString());
+  const signal = requestTimeoutSignal(timeoutMs);
+  let currentUrl = metadataUrl;
+  let response: RawOAuthMetadataResponse | undefined;
 
-  const response = await fetch(buildFetchUrl(metadataUrl), {
-    method: "GET",
-    headers: {
-      Accept: "application/json",
-      "User-Agent": "MCP-Inspector/1.0",
-    },
-    redirect: httpsOnly ? "manual" : "follow",
-    signal: requestTimeoutSignal(timeoutMs),
-  });
+  for (let redirectCount = 0; ; redirectCount += 1) {
+    if (
+      currentUrl.protocol !== "https:" &&
+      currentUrl.protocol !== "http:"
+    ) {
+      throw new OAuthProxyError(
+        400,
+        "OAuth metadata redirect uses an invalid protocol",
+      );
+    }
+    if (httpsOnly && currentUrl.protocol !== "https:") {
+      throw new OAuthProxyError(
+        400,
+        "OAuth metadata redirect must use HTTPS in hosted mode",
+      );
+    }
 
-  if (!response.ok) {
+    try {
+      response = await requestPinnedOAuthMetadata(
+        currentUrl,
+        allowLoopbackFlow,
+        signal,
+      );
+    } catch (error) {
+      if (signal?.aborted) {
+        throw new OAuthProxyError(
+          400,
+          `OAuth metadata request timeout after ${timeoutMs}ms`,
+        );
+      }
+      throw error;
+    }
+
+    if (response.status < 300 || response.status >= 400) {
+      break;
+    }
+
+    const location = response.headers.location;
+    if (!location) {
+      break;
+    }
+    if (redirectCount >= MAX_OAUTH_METADATA_REDIRECTS) {
+      throw new OAuthProxyError(400, "Too many OAuth metadata redirects");
+    }
+
+    try {
+      currentUrl = new URL(location, currentUrl);
+    } catch {
+      throw new OAuthProxyError(
+        502,
+        "OAuth metadata returned an invalid redirect URL",
+      );
+    }
+    // The next iteration validates and pins the redirect destination before
+    // opening its socket.
+  }
+
+  if (response.status < 200 || response.status >= 300) {
     return {
       status: response.status,
       statusText: response.statusText,
     };
   }
 
-  const contentType = response.headers.get("content-type");
+  const contentType = response.headers["content-type"];
   if (!contentType?.includes("application/json")) {
     return {
       status: 502,
@@ -514,7 +766,7 @@ export async function fetchOAuthMetadata(
 
   let metadata: Record<string, unknown>;
   try {
-    metadata = (await response.json()) as Record<string, unknown>;
+    metadata = JSON.parse(response.body) as Record<string, unknown>;
   } catch {
     return {
       status: 502,
@@ -522,5 +774,10 @@ export async function fetchOAuthMetadata(
     };
   }
 
-  return { metadata };
+  return {
+    metadata,
+    // Every redirect hop above was validated and connected through its pinned
+    // address set before this effective URL could be reached.
+    finalUrl: currentUrl.toString(),
+  };
 }

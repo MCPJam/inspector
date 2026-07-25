@@ -140,6 +140,7 @@ oauth.get("/metadata", async (c) => {
       );
     }
 
+    c.header("X-MCPJam-OAuth-Upstream-URL", result.finalUrl);
     return c.json(result.metadata);
   } catch (error) {
     const targetUrlHost = safeHostname(metadataUrl);

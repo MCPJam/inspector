@@ -161,6 +161,7 @@ oauthWeb.get("/metadata", async (c) => {
       );
     }
 
+    c.header("X-MCPJam-OAuth-Upstream-URL", result.finalUrl);
     return c.json(result.metadata);
   } catch (error) {
     getRequestLogger(c, "routes.web.oauth").event("mcp.oauth.proxy.failed", {
