@@ -120,7 +120,10 @@ import {
   type HostedElicitationRequestEvent,
   type HostedElicitationUrlRequiredEvent,
 } from "@/shared/hosted-elicitation";
-import { applyToolCallStepUp } from "@/state/oauth-orchestrator";
+import {
+  applyToolCallStepUp,
+  resetToolCallStepUp,
+} from "@/state/oauth-orchestrator";
 import { respondToChatElicitation } from "@/lib/apis/elicitation-api";
 import {
   isHarnessSessionDataPart,
@@ -738,6 +741,15 @@ function isTraceEventDataPart(
 
   const part = value as { type?: unknown; data?: unknown };
   return part.type === "data-trace-event" && !!part.data;
+}
+
+// SEP-2350: a JSON-RPC message that carries a `result` (and no `error`) is a
+// SUCCESSFUL response — the signal used to clear a server's bounded step-up
+// counter once its grant is proven sufficient again.
+export function isSuccessfulRpcResponse(message: unknown): boolean {
+  if (!message || typeof message !== "object") return false;
+  const m = message as Record<string, unknown>;
+  return "result" in m && !("error" in m);
 }
 
 function dedupeTraceToolCalls(
@@ -1454,6 +1466,41 @@ export function useChatSession(
           }
         } else if (isHostedRpcLogDataPart(part)) {
           ingestHostedRpcLogs([part.data]);
+          // SEP-2350: chat/agent-loop server tool calls resolve server-side, so
+          // (unlike Tools/Resources/Prompts) this hook has no per-call success
+          // return to clear the bounded step-up counter on. A successful
+          // JSON-RPC RESPONSE from a server in the traffic log is the available
+          // per-server success signal: it proves the current grant is
+          // sufficient, so reset that server's counter — otherwise a stale
+          // count left by an earlier step-up would prematurely cap a later
+          // legitimate challenge for a different scope. Gated on a successful
+          // response so an error reply never clears the budget; the same store
+          // lookup the insufficient_scope branch uses (a share-link chatbox
+          // resolves to no server, making this a safe no-op there).
+          const log = part.data;
+          if (
+            log.direction === "receive" &&
+            isSuccessfulRpcResponse(log.message)
+          ) {
+            const activeProject =
+              appState?.projects?.[
+                hostedProjectId ?? appState?.activeProjectId ?? ""
+              ];
+            const server =
+              (log.serverName
+                ? (appState?.servers?.[log.serverName] ??
+                  activeProject?.servers?.[log.serverName])
+                : undefined) ??
+              appState?.servers?.[log.serverId] ??
+              activeProject?.servers?.[log.serverId];
+            if (server) {
+              try {
+                resetToolCallStepUp(server);
+              } catch {
+                // best-effort; a failed reset must not disrupt log ingestion
+              }
+            }
+          }
         } else if (isHarnessSessionDataPart(part)) {
           // Cache the harness workdir so the Playground Shell can open a
           // terminal there. Keyed by project + host (both known here).

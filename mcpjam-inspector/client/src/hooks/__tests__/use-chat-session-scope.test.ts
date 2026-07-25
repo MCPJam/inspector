@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { areHostedSessionScopesEqual } from "../use-chat-session";
+import {
+  areHostedSessionScopesEqual,
+  isSuccessfulRpcResponse,
+} from "../use-chat-session";
 
 // PR3 (Claude Code harness host): switching the previewed host in the Playground
 // must FORK the session — otherwise turns under host B append onto host A's
@@ -36,5 +39,38 @@ describe("areHostedSessionScopesEqual — host switch forks the session", () => 
         { projectId: "p1", hostId: "h" }
       )
     ).toBe(true);
+  });
+});
+
+// SEP-2350: the chat step-up counter is cleared when a SUCCESSFUL JSON-RPC
+// response arrives from a server in the traffic log. This predicate is the
+// success/error gate — an error reply must never clear the bounded budget.
+describe("isSuccessfulRpcResponse — chat step-up reset gate", () => {
+  it("treats a response carrying result as success", () => {
+    expect(
+      isSuccessfulRpcResponse({ jsonrpc: "2.0", id: 1, result: { ok: true } })
+    ).toBe(true);
+  });
+
+  it("rejects a JSON-RPC error reply", () => {
+    expect(
+      isSuccessfulRpcResponse({
+        jsonrpc: "2.0",
+        id: 1,
+        error: { code: -32000, message: "insufficient_scope" },
+      })
+    ).toBe(false);
+  });
+
+  it("rejects a message with neither result nor error (e.g. a request)", () => {
+    expect(
+      isSuccessfulRpcResponse({ jsonrpc: "2.0", id: 1, method: "tools/call" })
+    ).toBe(false);
+  });
+
+  it("rejects non-object messages", () => {
+    expect(isSuccessfulRpcResponse(null)).toBe(false);
+    expect(isSuccessfulRpcResponse("result")).toBe(false);
+    expect(isSuccessfulRpcResponse(undefined)).toBe(false);
   });
 });
