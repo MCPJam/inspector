@@ -1,7 +1,8 @@
 import { useId } from "react";
 import { Input } from "@mcpjam/design-system/input";
-import { ChevronDown, ChevronRight, Eye, Plus, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, X } from "lucide-react";
 import { useMaskedValues } from "../hooks/use-masked-values";
+import { HiddenValuesField } from "./HiddenValuesField";
 import { MaskedValueInput } from "./MaskedValueInput";
 
 interface EnvVarsSectionProps {
@@ -99,27 +100,12 @@ export function EnvVarsSection({
         )}
 
         {showEnvVars && isHidden && (
-          <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-muted/30 px-3 py-2.5">
-            <div>
-              <p className="text-xs font-medium text-foreground">
-                Hidden — Reveal to view
-              </p>
-              {revealError && (
-                <p role="alert" className="mt-1 text-xs text-destructive">
-                  {revealError}
-                </p>
-              )}
-            </div>
-            <button
-              type="button"
-              disabled={isRevealing || !onReveal}
-              onClick={handleReveal}
-              className="flex shrink-0 items-center gap-1.5 rounded border border-border bg-background px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <Eye className="h-3.5 w-3.5" aria-hidden="true" />
-              {isRevealing ? "Revealing..." : "Reveal"}
-            </button>
-          </div>
+          <HiddenValuesField
+            subject="environment variables"
+            isRevealing={isRevealing}
+            error={revealError}
+            onReveal={handleReveal}
+          />
         )}
 
         {showEnvVars && !isHidden && envVars.length === 0 && (

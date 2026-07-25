@@ -119,10 +119,10 @@ describe("AdvancedConnectionSettingsSection", () => {
         />,
       );
 
-      expect(screen.getByText("Hidden — Reveal to view")).toBeInTheDocument();
+      // The mask is decorative, so the only name for it is the button's.
       expect(
-        screen.getByRole("button", { name: /Reveal/ }),
-      ).toBeInTheDocument();
+        screen.getByRole("button", { name: "Reveal saved headers" }),
+      ).toBeEnabled();
     });
 
     /** The parent owns the rows, so add/remove bookkeeping only runs for real

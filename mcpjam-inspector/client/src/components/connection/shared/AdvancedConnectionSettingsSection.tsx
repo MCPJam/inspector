@@ -1,7 +1,8 @@
 import { useId } from "react";
-import { ChevronDown, ChevronRight, Eye, Plus, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, X } from "lucide-react";
 import { Input } from "@mcpjam/design-system/input";
 import { useMaskedValues } from "../hooks/use-masked-values";
+import { HiddenValuesField } from "./HiddenValuesField";
 import { MaskedValueInput } from "./MaskedValueInput";
 import { Switch } from "@mcpjam/design-system/switch";
 import {
@@ -234,30 +235,12 @@ export function AdvancedConnectionSettingsSection({
                   </button>
                 </div>
                 {headersHidden && (
-                  <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-muted/30 px-3 py-2.5">
-                    <div>
-                      <p className="text-xs font-medium text-foreground">
-                        Hidden — Reveal to view
-                      </p>
-                      {headersRevealError && (
-                        <p
-                          role="alert"
-                          className="mt-1 text-xs text-destructive"
-                        >
-                          {headersRevealError}
-                        </p>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      disabled={isRevealingHeaders || !onRevealHeaders}
-                      onClick={handleRevealHeaders}
-                      className="flex shrink-0 items-center gap-1.5 rounded border border-border bg-background px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      <Eye className="h-3.5 w-3.5" aria-hidden="true" />
-                      {isRevealingHeaders ? "Revealing..." : "Reveal"}
-                    </button>
-                  </div>
+                  <HiddenValuesField
+                    subject="headers"
+                    isRevealing={isRevealingHeaders}
+                    error={headersRevealError}
+                    onReveal={handleRevealHeaders}
+                  />
                 )}
                 {!headersHidden && customHeaders.length === 0 && (
                   <button
