@@ -177,6 +177,9 @@ export interface WebChatTurnPrepareInputs {
   uiTools?: UiToolEntry[];
   /** Server-side built-in tools (e.g. web_search) to merge into the tool set. */
   builtInTools?: ToolSet;
+  /** Host-configured computer working directory (COMP-16); roots the harness
+   *  Shell under the same dir the bash tool runs in. */
+  computerWorkdir?: string;
   widgetModelContext?: WidgetModelContextEntry[];
   /**
    * When set, skills are sourced from the caller's Computer (E2B sandbox)
@@ -681,6 +684,11 @@ export async function streamWebChatTurn(
     // (web_search) to HarnessAgent without the MCP-server tools, which the
     // harness gets via .mcp.json.
     ...(prepare.builtInTools ? { builtInTools: prepare.builtInTools } : {}),
+    // COMP-16: root the harness Shell at the host-configured working directory
+    // (same source as the bash tool's cwd).
+    ...(prepare.computerWorkdir
+      ? { computerWorkdir: prepare.computerWorkdir }
+      : {}),
     abortSignal: runtime.abortSignal,
     onConversationComplete,
     onStreamComplete: async () => {

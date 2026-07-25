@@ -413,6 +413,15 @@ export interface MCPJamHandlerOptions {
    * browser-fulfilled) and skills (the harness has its own).
    */
   builtInTools?: ToolSet;
+  /**
+   * The host's configured computer working directory (`hostConfig.computer
+   * .workdir`), COMP-16. Single source of truth for WHERE commands run on the
+   * box: the chat `bash` tool already reads it via `builtInTools`; the harness
+   * path needs it separately here to root its Shell under the same directory
+   * (the harness framework then nests a per-session `<workdir>/claude-code-<id>`
+   * subdir). Absent ⇒ the box default (`/home/user`). Confined server-side.
+   */
+  computerWorkdir?: string;
   authHeader?: string;
   chatboxId?: string;
   accessVersion?: number;

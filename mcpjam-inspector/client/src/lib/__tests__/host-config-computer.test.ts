@@ -5,8 +5,11 @@ import {
   computerBackedToolIds,
   detachComputerPatch,
   sanitizeHostConfigForEvalSuite,
+  setComputerWorkdirPatch,
   shouldShowComputerToggle,
+  validateComputerWorkdir,
   visibleBuiltInToolCatalog,
+  DEFAULT_COMPUTER_WORKDIR,
 } from "../host-config-computer";
 import { emptyHostConfigInputV2 } from "../client-config-v2";
 import type { BuiltInToolCatalogEntry } from "@/hooks/useBuiltInToolCatalog";
@@ -42,6 +45,46 @@ describe("host-config-computer helpers", () => {
 
   it("attachComputerPatch attaches the resource shape", () => {
     expect(attachComputerPatch()).toEqual({ computer: { kind: "personal" } });
+  });
+
+  describe("working directory (COMP-16)", () => {
+    it("accepts blank and paths under /home/user; rejects escapes", () => {
+      expect(validateComputerWorkdir("")).toBeNull();
+      expect(validateComputerWorkdir("/home/user")).toBeNull();
+      expect(validateComputerWorkdir("/home/user/myproject")).toBeNull();
+      expect(validateComputerWorkdir("relative")).toBeTruthy();
+      expect(validateComputerWorkdir("/etc")).toBeTruthy();
+      expect(validateComputerWorkdir("/home/user/../etc")).toBeTruthy();
+      expect(validateComputerWorkdir("/home/user2")).toBeTruthy();
+    });
+
+    it("sets a non-default workdir on the attached computer", () => {
+      const value = emptyHostConfigInputV2({ computer: { kind: "personal" } });
+      expect(setComputerWorkdirPatch(value, "/home/user/myproject")).toEqual({
+        computer: { kind: "personal", workdir: "/home/user/myproject" },
+      });
+    });
+
+    it("clears workdir at the default or blank (hashes identically to unset)", () => {
+      const value = emptyHostConfigInputV2({
+        computer: { kind: "personal", workdir: "/home/user/old" },
+      });
+      expect(setComputerWorkdirPatch(value, DEFAULT_COMPUTER_WORKDIR)).toEqual({
+        computer: { kind: "personal", workdir: undefined },
+      });
+      expect(setComputerWorkdirPatch(value, "   ")).toEqual({
+        computer: { kind: "personal", workdir: undefined },
+      });
+      // Trailing slash normalizes to the default → cleared.
+      expect(setComputerWorkdirPatch(value, "/home/user/")).toEqual({
+        computer: { kind: "personal", workdir: undefined },
+      });
+    });
+
+    it("is a no-op when no computer is attached", () => {
+      const value = emptyHostConfigInputV2({});
+      expect(setComputerWorkdirPatch(value, "/home/user/x")).toEqual({});
+    });
   });
 
   it("detachComputerPatch clears the computer AND strips computer-backed ids", () => {

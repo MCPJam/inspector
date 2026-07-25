@@ -65,7 +65,8 @@ function happyControlPlane() {
 const toolOpts = {
   authHeader: "Bearer user-token",
   projectId: "proj_1",
-  workdir: "/workspace",
+  // COMP-16: the working directory is confined under /home/user at exec time.
+  workdir: "/home/user/workspace",
 };
 
 function execTool(
@@ -110,7 +111,7 @@ describe(`${BASH_TOOL_NAME} tool`, () => {
       expect.objectContaining({
         sandboxId: "sbx_42",
         command: "echo hello",
-        workdir: "/workspace",
+        workdir: "/home/user/workspace",
         timeoutMs: 120_000,
       })
     );
@@ -131,6 +132,18 @@ describe(`${BASH_TOOL_NAME} tool`, () => {
       status: "completed",
       exitCode: 0,
     });
+  });
+
+  it("rejects a working directory that escapes /home/user with a clear error, before running (COMP-16)", async () => {
+    happyControlPlane();
+    const runner = vi.fn(async () => ({ stdout: "", stderr: "", exitCode: 0 }));
+    const tool = buildBashTool({ ...toolOpts, workdir: "/etc" }, runner);
+
+    const result = await execTool(tool, { command: "cat passwd" });
+    expect(result).toMatchObject({ error: expect.stringContaining("/home/user") });
+    expect((result as { error: string }).error).toContain("/etc");
+    // The escape is caught before the vendor exec — the runner never runs.
+    expect(runner).not.toHaveBeenCalled();
   });
 
   it("polls reserve until ready and surfaces waking → ready", async () => {

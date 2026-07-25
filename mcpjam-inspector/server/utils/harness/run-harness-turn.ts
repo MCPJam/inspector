@@ -72,6 +72,10 @@ import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { createOffsetInterval } from "@/shared/eval-trace";
 import { getCanonicalModelId } from "@/shared/types";
 import { createE2BHarnessSandboxProvider } from "./e2b-sandbox-provider.js";
+import {
+  resolveWorkingDirectory,
+  HOME_ROOT,
+} from "../computers/path-confine.js";
 import { resolveHarnessSandbox } from "./resolve-sandbox.js";
 import {
   fetchRuntimeSkills,
@@ -334,6 +338,7 @@ export async function runHarnessTurn(
     harness,
     harnessMcpProxy,
     builtInTools,
+    computerWorkdir,
     executionScope,
     pinnedHarnessSkills,
   } = options;
@@ -794,8 +799,23 @@ export async function runHarnessTurn(
       const auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl);
       tBroker = Date.now();
 
-      // 4. Assemble the harness over the host's E2B computer.
-      const sandbox = createE2BHarnessSandboxProvider({ sandboxId });
+      // 4. Assemble the harness over the host's E2B computer. Root the Shell at
+      // the host-configured working directory (COMP-16) — the same
+      // `computer.workdir` the chat bash tool honors — confined under
+      // /home/user, defaulting to the box home. The harness framework nests a
+      // per-session `<workdir>/claude-code-<sessionId>` dir beneath it, so both
+      // planes share one configured root even though the Shell gets its own
+      // session subdir. An escaping value falls back to the default rather than
+      // failing the turn (the UI + bash path already reject escapes loudly).
+      const resolvedHarnessWorkdir = resolveWorkingDirectory(computerWorkdir);
+      const defaultWorkingDirectory =
+        "error" in resolvedHarnessWorkdir
+          ? HOME_ROOT
+          : resolvedHarnessWorkdir.workdir ?? HOME_ROOT;
+      const sandbox = createE2BHarnessSandboxProvider({
+        sandboxId,
+        defaultWorkingDirectory,
+      });
       // (permissionMode was computed above, before the runtime fingerprint.)
 
       // The adapter maps the host modelId to the harness's native model and

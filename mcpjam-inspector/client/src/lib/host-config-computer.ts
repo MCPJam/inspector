@@ -80,6 +80,62 @@ export function attachComputerPatch(): Partial<HostConfigInputV2> {
 }
 
 /**
+ * The box home — the default working directory when `computer.workdir` is unset.
+ * Chosen so COMP-14 chat attachments (which land in `/home/user/attachments`)
+ * are reachable by a plain relative path from the default cwd. Mirrors the
+ * server's `HOME_ROOT` (`server/utils/computers/path-confine.ts`).
+ */
+export const DEFAULT_COMPUTER_WORKDIR = "/home/user";
+
+/**
+ * Client-side mirror of the server's `resolveWorkingDirectory` confinement
+ * (COMP-16), for inline field validation only — the server check is
+ * authoritative. Returns an error string, or `null` when acceptable (a blank
+ * value is acceptable and means "use the default"). Keep in lockstep with
+ * `server/utils/computers/path-confine.ts`.
+ */
+export function validateComputerWorkdir(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (trimmed === "") return null; // blank ⇒ default /home/user
+  if (!trimmed.startsWith("/")) {
+    return "Use an absolute path under /home/user.";
+  }
+  const normalized = trimmed.replace(/\/+$/, "");
+  if (
+    normalized !== DEFAULT_COMPUTER_WORKDIR &&
+    !normalized.startsWith(`${DEFAULT_COMPUTER_WORKDIR}/`)
+  ) {
+    return "Must resolve under /home/user.";
+  }
+  if (normalized.split("/").includes("..")) {
+    return 'No ".." segments.';
+  }
+  return null;
+}
+
+/**
+ * Patch that sets (or clears) the computer's working directory (COMP-16). A
+ * blank value OR the default `/home/user` CLEARS `workdir`, so the default
+ * hashes identically to "never set" (content-addressed host configs: the box
+ * default is `/home/user` either way, so storing it would only fork the row).
+ * No-op when no computer is attached.
+ */
+export function setComputerWorkdirPatch(
+  value: HostConfigInputV2,
+  workdir: string
+): Partial<HostConfigInputV2> {
+  if (value.computer === undefined) return {};
+  const trimmed = workdir.trim().replace(/\/+$/, "");
+  const keep = trimmed !== "" && trimmed !== DEFAULT_COMPUTER_WORKDIR;
+  return {
+    computer: {
+      ...value.computer,
+      workdir: keep ? trimmed : undefined,
+    },
+  };
+}
+
+/**
  * Whether the editor should render the personal-computer toggle. Shown when
  * the catalog exposes a computer-backed tool (so the `bash` row stays hidden
  * until launch) OR when a computer is already attached — so an existing
