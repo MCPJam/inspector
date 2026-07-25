@@ -6,7 +6,7 @@
  * execution state for chat injection.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormField } from "@/lib/tool-form";
 import { buildParametersFromFields } from "@/lib/tool-form";
 import {
@@ -14,6 +14,12 @@ import {
   type ToolExecutionResponse,
 } from "@/lib/apis/mcp-tools-api";
 import { readResource } from "@/lib/apis/mcp-resources-api";
+import { parseInsufficientScopeChallenge } from "@/lib/apis/insufficient-scope";
+import {
+  applyToolCallStepUp,
+  resetToolCallStepUp,
+} from "@/state/oauth-orchestrator";
+import { useOptionalSharedAppState } from "@/state/app-state-context";
 import {
   mcpCallToolResultToModelOutput,
   mcpCallToolResultToModelOutputWithLinkedResources,
@@ -218,6 +224,52 @@ export function useToolExecution({
     setPendingExecution(null);
   }, []);
 
+  // SEP-2350 step-up. Resolve the live server entry (non-throwing: the hook is
+  // exercised in tests without an AppStateProvider) so the orchestrator can read
+  // its stored issuer + originally-granted scopes on a `403 insufficient_scope`.
+  const sharedAppState = useOptionalSharedAppState();
+  // Dedupes step-up per server (no double redirect / double counter bump while
+  // the first is in flight).
+  const stepUpInFlightRef = useRef<Set<string>>(new Set());
+
+  const resetStepUpOnSuccess = useCallback(
+    (name: string | undefined) => {
+      const server = name ? sharedAppState?.servers[name] : undefined;
+      if (!server) return;
+      try {
+        resetToolCallStepUp(server);
+      } catch {
+        // best-effort; must not mask a successful execution
+      }
+    },
+    [sharedAppState],
+  );
+
+  const driveStepUpFromResponse = useCallback(
+    (name: string | undefined, response: ToolExecutionResponse) => {
+      const server = name ? sharedAppState?.servers[name] : undefined;
+      if (!server) return;
+      const challenge = parseInsufficientScopeChallenge(
+        (response as { insufficientScope?: unknown }).insufficientScope,
+      );
+      if (!challenge) return;
+      const stepUpKey = server.name;
+      if (stepUpInFlightRef.current.has(stepUpKey)) return;
+      stepUpInFlightRef.current.add(stepUpKey);
+      void applyToolCallStepUp(server, {
+        requiredScope: challenge.requiredScope,
+        resourceMetadataUrl: challenge.resourceMetadataUrl,
+      })
+        .catch(() => {
+          // step-up failure is surfaced via the execution error already set
+        })
+        .finally(() => {
+          stepUpInFlightRef.current.delete(stepUpKey);
+        });
+    },
+    [sharedAppState],
+  );
+
   const storeCompletedToolResult = useCallback(
     (
       effectiveToolName: string,
@@ -320,6 +372,9 @@ export function useToolExecution({
           });
 
           setExecutionError(response.error);
+          // SEP-2350: on a `403 insufficient_scope`, drive the union-scope
+          // step-up re-authorization for this server.
+          driveStepUpFromResponse(effectiveServerName, response);
           return {
             ok: false,
             toolName: effectiveToolName,
@@ -378,6 +433,9 @@ export function useToolExecution({
           success: true,
         });
 
+        // SEP-2350: a successful call clears the bounded step-up counter.
+        resetStepUpOnSuccess(effectiveServerName);
+
         return {
           ok: true,
           toolName: effectiveToolName,
@@ -417,6 +475,8 @@ export function useToolExecution({
       setIsExecuting,
       storeCompletedToolResult,
       modelVisibleMcpToolResults,
+      driveStepUpFromResponse,
+      resetStepUpOnSuccess,
     ]
   );
 
