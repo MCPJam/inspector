@@ -308,9 +308,14 @@ export interface PlatformHostDeleted {
   deleted: true;
 }
 
-// ── Computer environments ────────────────────────────────────────────────────
+// ── Sandbox images ───────────────────────────────────────────────────────────
+//
+// A project's custom Computer base image: a Dockerfile plus its builds. Named
+// "image" (the OCI term) and NOT "environment" — a Project Environment is an
+// unrelated concept (a client + server group + skill/plugin bundle that suites
+// and journeys run against), and it owns that word.
 
-export interface PlatformEnvironmentBuild {
+export interface PlatformImageBuild {
   id: string;
   status: "queued" | "building" | "ready" | "failed";
   provider: "e2b" | "stub";
@@ -323,9 +328,9 @@ export interface PlatformEnvironmentBuild {
   finishedAt?: number;
 }
 
-/** A project's custom Computer image (Dockerfile + its latest build). The list
- * and detail routes return the same shape. */
-export interface PlatformEnvironment {
+/** A project's custom Computer sandbox image (Dockerfile + its latest build).
+ * The list and detail routes return the same shape. */
+export interface PlatformImage {
   id: string;
   projectId: string;
   name: string;
@@ -333,26 +338,26 @@ export interface PlatformEnvironment {
   contentHash: string;
   sharing: "user" | "project";
   isOwner: boolean;
-  currentBuild: PlatformEnvironmentBuild | null;
+  currentBuild: PlatformImageBuild | null;
   createdAt: number;
   updatedAt: number;
 }
 
-export interface PlatformEnvironmentDeleted {
+export interface PlatformImageDeleted {
   id: string;
   deleted: true;
 }
 
 /** `POST …/build` is async (202): the build runs in the background — poll the
  * builds list for status. */
-export interface PlatformEnvironmentBuildStarted {
+export interface PlatformImageBuildStarted {
   id: string;
   buildId: string;
   reused: boolean;
 }
 
 export interface PlatformComputerAttached {
-  environmentId: string;
+  imageId: string;
   computerId: string;
   status: string;
 }
@@ -395,7 +400,12 @@ export interface PlatformEvalIteration {
 /** Public-safe evidence for one eval step (resolved URLs, no blob ids). */
 export interface PlatformEvalStepEvidence {
   /** Widget→host tool calls the interaction triggered. */
-  toolCalls?: Array<{ name: string; args: unknown; ok: boolean; error?: string }>;
+  toolCalls?: Array<{
+    name: string;
+    args: unknown;
+    ok: boolean;
+    error?: string;
+  }>;
   /** Resolved screenshot URL for the step's render/interaction. */
   screenshotUrl?: string;
   /** Resolved iteration replay `.webm` URL (same on every step of the run). */
