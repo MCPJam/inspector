@@ -43,11 +43,35 @@ export type MrtrKeyAnswer = {
   content?: Record<string, unknown>;
 };
 
+/**
+ * Per-round collection progress. Lives in the SINGLETON store (not in
+ * `MrtrElicitationHost` component state) so that when the elected primary host
+ * unmounts mid-round — e.g. the user removes the first chat / multi-model
+ * `Thread` while a tab-level host survives — the promoted host resumes at the
+ * same key with the answers already collected instead of restarting the round
+ * and re-prompting for completed inputs. `roundKey` scopes the progress to one
+ * round: when a different round becomes active, a stale collection is ignored
+ * (a fresh round always starts at index 0 with no answers).
+ */
+interface MrtrCollection {
+  roundKey: string;
+  index: number;
+  answers: Record<string, MrtrKeyAnswer>;
+}
+
 interface MrtrElicitationState {
   rounds: MrtrRound[];
   responding: boolean;
+  /** Shared per-round collection progress (survives host promotion/unmount). */
+  collection: MrtrCollection | null;
   /** Idempotent: starts the singleton SSE listener (local mode only). */
   connect: () => void;
+  /** Persist collection progress for a round (advances index, accrues answers). */
+  setCollection: (
+    roundKey: string,
+    index: number,
+    answers: Record<string, MrtrKeyAnswer>,
+  ) => void;
   /** Submits a whole round's per-key answers back into the SDK driver loop. */
   respond: (
     opId: string,
@@ -97,6 +121,10 @@ export const useMrtrElicitationStore = create<MrtrElicitationState>(
   (set, get) => ({
     rounds: [],
     responding: false,
+    collection: null,
+
+    setCollection: (roundKey, index, answers) =>
+      set({ collection: { roundKey, index, answers } }),
 
     connect: () => {
       if (HOSTED_MODE || sse) return;
@@ -126,8 +154,12 @@ export const useMrtrElicitationStore = create<MrtrElicitationState>(
           body: JSON.stringify({ opId, responses: responsesByKey }),
         });
         // Optimistically drop the op; the `mrtr_input_complete` SSE event is
-        // idempotent with this.
-        set((s) => ({ rounds: s.rounds.filter((r) => r.opId !== opId) }));
+        // idempotent with this. Clear collection progress: the round we just
+        // submitted is done, so a later round of the same op starts clean.
+        set((s) => ({
+          rounds: s.rounds.filter((r) => r.opId !== opId),
+          collection: null,
+        }));
       } finally {
         set({ responding: false });
       }
@@ -136,6 +168,6 @@ export const useMrtrElicitationStore = create<MrtrElicitationState>(
     __ingest: (event) =>
       set((s) => ({ rounds: reduceEvent(s.rounds, event) })),
 
-    __reset: () => set({ rounds: [], responding: false }),
+    __reset: () => set({ rounds: [], responding: false, collection: null }),
   }),
 );

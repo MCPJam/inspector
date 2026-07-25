@@ -97,6 +97,56 @@ describe("MrtrElicitationHost — single-active-dialog election", () => {
     expect(document.body.querySelectorAll('[role="dialog"]').length).toBe(1);
   });
 
+  it("preserves collected answers/index when the primary host is promoted mid-round", () => {
+    const TWO_KEY_ROUND = {
+      type: "mrtr_input_request",
+      opId: "op-2",
+      roundKey: "op-2:0",
+      round: 0,
+      serverId: "srv",
+      requests: [
+        {
+          key: "k1",
+          mode: "form",
+          message: "MRTR_FIRST_KEY",
+          requestedSchema: { type: "object", properties: {} },
+        },
+        {
+          key: "k2",
+          mode: "form",
+          message: "MRTR_SECOND_KEY",
+          requestedSchema: { type: "object", properties: {} },
+        },
+      ],
+      timestamp: new Date().toISOString(),
+    };
+
+    const first = render(<MrtrElicitationHost />);
+    render(<MrtrElicitationHost />);
+    ingest(TWO_KEY_ROUND);
+
+    // First key is showing.
+    expect(document.body.textContent).toContain("MRTR_FIRST_KEY");
+
+    // Simulate the user answering the first key: collection advances to index 1
+    // in the SHARED store (what `recordAnswer` does for a non-final key).
+    act(() => {
+      useMrtrElicitationStore
+        .getState()
+        .setCollection("op-2:0", 1, { k1: { action: "accept" } });
+    });
+    expect(document.body.textContent).toContain("MRTR_SECOND_KEY");
+
+    // Unmount the elected primary mid-round; the survivor takes over and must
+    // resume on the SECOND key — not restart at the first (regression guard).
+    act(() => {
+      first.unmount();
+    });
+    expect(document.body.querySelectorAll('[role="dialog"]').length).toBe(1);
+    expect(document.body.textContent).toContain("MRTR_SECOND_KEY");
+    expect(document.body.textContent).not.toContain("MRTR_FIRST_KEY");
+  });
+
   it("shows no dialog when there is no active round", () => {
     render(
       <>

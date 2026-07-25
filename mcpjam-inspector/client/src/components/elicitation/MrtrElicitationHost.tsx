@@ -31,6 +31,11 @@ import {
  * host's primary flag when the mounted set changes.
  * ------------------------------------------------------------------ */
 
+/** Stable empty answers reference so `answers` identity is steady across renders. */
+const EMPTY_ANSWERS: Record<string, MrtrKeyAnswer> = Object.freeze(
+  Object.create(null),
+);
+
 const mountedHostIds: number[] = [];
 const electionListeners = new Set<() => void>();
 let hostIdSeq = 0;
@@ -108,6 +113,8 @@ export function MrtrElicitationHost() {
   const rounds = useMrtrElicitationStore((s) => s.rounds);
   const responding = useMrtrElicitationStore((s) => s.responding);
   const respond = useMrtrElicitationStore((s) => s.respond);
+  const collection = useMrtrElicitationStore((s) => s.collection);
+  const setCollection = useMrtrElicitationStore((s) => s.setCollection);
 
   useEffect(() => {
     connect();
@@ -115,14 +122,18 @@ export function MrtrElicitationHost() {
 
   const activeRound = rounds[0] ?? null;
 
-  // Per-round collection state, reset whenever a different round becomes active.
-  const [index, setIndex] = useState(0);
-  const [answers, setAnswers] = useState<Record<string, MrtrKeyAnswer>>({});
-
-  useEffect(() => {
-    setIndex(0);
-    setAnswers({});
-  }, [activeRound?.roundKey]);
+  // Per-round collection progress lives in the SINGLETON store (not component
+  // state) so it survives host promotion: if the elected primary unmounts
+  // mid-round, the promoted survivor resumes at the same key with the answers
+  // already gathered instead of restarting the round. A collection scoped to a
+  // different round is stale — a freshly active round always starts at index 0
+  // with no answers.
+  const active =
+    collection && collection.roundKey === activeRound?.roundKey
+      ? collection
+      : null;
+  const index = active?.index ?? 0;
+  const answers = active?.answers ?? EMPTY_ANSWERS;
 
   const requests = activeRound?.requests ?? [];
   const current = requests[index];
@@ -154,8 +165,9 @@ export function MrtrElicitationHost() {
       { [key]: answer },
     );
     if (index + 1 < total) {
-      setAnswers(next);
-      setIndex(index + 1);
+      // Persist progress in the shared store (keyed to this round) so a host
+      // promotion mid-round resumes here instead of restarting at index 0.
+      setCollection(activeRound.roundKey, index + 1, next);
       return;
     }
     // Last key answered — submit the whole round together.
