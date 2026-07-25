@@ -27,6 +27,7 @@ import apiKeys from "./api-keys.js";
 import computers from "./computers.js";
 import skills from "./skills.js";
 import caniuse from "./caniuse.js";
+import mrtrContinuation from "./mrtr-continuation.js";
 import { fetchRemoteGuestJwks } from "../../utils/guest-session-source.js";
 
 const web = new Hono();
@@ -51,6 +52,10 @@ web.use(
 web.use("/chat-history/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/conformance/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/checks/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+// Hosted MRTR continuation resume/cancel (MCP 2026-07-28 §12.5). Bearer +
+// guest rate limit like every MCP-operation route; the resume path re-drives a
+// tool/prompt/resource leg against a freshly-authorized manager.
+web.use("/mrtr/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/server/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 // `/computers/exec` runs commands — bearer required. `/computers/config` is
 // deliberately open: it returns only a boolean and a public URL, and the
@@ -94,6 +99,7 @@ web.route("/guest-token", guestToken);
 web.route("/chat-history", chatHistory);
 web.route("/conformance", conformanceWeb);
 web.route("/checks", checks);
+web.route("/mrtr", mrtrContinuation);
 // `/computers/terminal` (the WS) is registered on the root app in
 // server/index.ts — only /config and /exec live on this sub-router.
 web.route("/computers", computers);

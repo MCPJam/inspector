@@ -117,6 +117,30 @@ export const ELICITATION_SERVICE_ROUTE_TIMEOUT_MS = 10_000;
  */
 export const ELICITATION_TIMEOUT_EXTENSION_MS = ELICITATION_FORM_TTL_MS + 30_000;
 
+// ── Hosted MRTR continuation transport (MCP 2026-07-28 §12.5) ────────────────
+//
+// A suspended `input_required` operation is durably parked in Convex (PR3a) and
+// resumed on a fresh request. Unlike legacy elicitation the worker does NOT
+// block, so the TTL can be generous — it bounds how long a human has to answer
+// across a whole round before the continuation is expired and scrubbed.
+/** How long a suspended MRTR continuation survives awaiting a human answer. */
+export const MRTR_CONTINUATION_TTL_MS = 10 * 60_000;
+/** Lease TTL for a single resume claim; a resume that stalls past this is swept. */
+export const MRTR_CONTINUATION_LEASE_TTL_MS = 60_000;
+/** Deadline for a single Convex continuation-store call. */
+export const MRTR_CONTINUATION_ROUTE_TIMEOUT_MS = 10_000;
+/**
+ * Hard byte cap on the serialized opaque `resumeState` blob (the encoded
+ * `MrtrOperationState`). Oversized state is rejected at the codec, never
+ * silently truncated — a truncated blob would deserialize to a corrupt
+ * operation and re-drive the wrong request.
+ */
+export const MRTR_RESUME_STATE_MAX_BYTES = 128 * 1024;
+/** Per-field cap for the safe display carried to the browser (message, schema). */
+export const MRTR_DISPLAY_FIELD_MAX_BYTES = 16 * 1024;
+/** Cap on a single browser-submitted response's serialized content. */
+export const MRTR_RESPONSE_CONTENT_MAX_BYTES = 64 * 1024;
+
 // Hosted app origin the LOCAL inspector server forwards XAA hosted-issuer
 // mint requests to (server-to-server; hosted CORS blocks the browser from
 // calling it directly). Override for staging. Never derived from a request.
