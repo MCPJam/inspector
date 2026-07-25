@@ -40,8 +40,9 @@
 import type { ModelMessage, ToolResultPart } from "ai";
 import type { UIMessageChunk } from "ai";
 import {
-  mcpCallToolResultToModelOutput,
+  mcpCallToolResultToModelOutputWithLinkedResources,
   type MCPClientManager,
+  type McpLinkedResourceReader,
   type InputResponses,
   type MrtrLegResult,
   type MrtrOperationState,
@@ -148,10 +149,54 @@ export function spliceMrtrToolResult(
         ),
     );
     if (already) return true;
-    messageHistory.splice(i + 1, 0, toolResultMessage);
+    // Insert AFTER any tool-result messages already following this assistant
+    // message. In a multi-call step the completed siblings were spliced right
+    // after the assistant message at suspend time; inserting at `i + 1` would
+    // place the resumed result BEFORE them, reversing tool-result order
+    // relative to the tool-call order the model emitted. Advancing past the
+    // existing `tool` messages preserves that order.
+    let insertAt = i + 1;
+    while (
+      insertAt < messageHistory.length &&
+      messageHistory[insertAt]?.role === "tool"
+    ) {
+      insertAt++;
+    }
+    messageHistory.splice(insertAt, 0, toolResultMessage);
     return true;
   }
   return false;
+}
+
+/**
+ * True when `toolCallId` identifies a tool-call in `messageHistory` that has NOT
+ * yet been answered by a tool-result. Used to validate a resume request before
+ * driving (and consuming) its durable continuation: a stale or tampered
+ * `toolCallId` — absent, or already resolved — must not consume a continuation
+ * whose result would then have nowhere to be spliced.
+ */
+export function hasUnresolvedToolCall(
+  messageHistory: ModelMessage[],
+  toolCallId: string,
+): boolean {
+  const hasCall = messageHistory.some(
+    (m) =>
+      m?.role === "assistant" &&
+      Array.isArray((m as any).content) &&
+      (m as any).content.some(
+        (c: any) => c?.type === "tool-call" && c.toolCallId === toolCallId,
+      ),
+  );
+  if (!hasCall) return false;
+  const resolved = messageHistory.some(
+    (m) =>
+      m?.role === "tool" &&
+      Array.isArray((m as any).content) &&
+      (m as any).content.some(
+        (c: any) => c?.type === "tool-result" && c.toolCallId === toolCallId,
+      ),
+  );
+  return !resolved;
 }
 
 export interface ResolveMrtrChatResumeDeps {
@@ -181,12 +226,24 @@ async function buildToolResultMessage(
   serverId: string,
   result: CallToolResult,
   modelVisibleMcpToolResults: ModelVisibleMcpToolResults | undefined,
+  manager: MCPClientManager,
 ): Promise<ModelMessage> {
+  // Resource-link hydration parity with `executeToolCallsFromMessages`: the
+  // non-MRTR tool path reads embedded resource links so the model sees image /
+  // resource output. Thread a reader over the SAME per-request manager so a
+  // resumed call preserves that behavior instead of emitting bare links.
+  const readResource: McpLinkedResourceReader = ({ uri, options: readOptions }) =>
+    manager.readResource(
+      serverId,
+      { uri },
+      readOptions?.abortSignal ? { signal: readOptions.abortSignal } : undefined,
+    );
   let output: ToolResultPart["output"];
   try {
-    const mapped = (await mcpCallToolResultToModelOutput(result as any, {
-      modelVisibleMcpToolResults,
-    })) as ToolResultPart["output"] | undefined;
+    const mapped = (await mcpCallToolResultToModelOutputWithLinkedResources(
+      result as any,
+      { modelVisibleMcpToolResults, readResource },
+    )) as ToolResultPart["output"] | undefined;
     output = mapped ?? ({ type: "json", value: result as unknown } as any);
   } catch {
     output = { type: "json", value: result as unknown } as any;
@@ -351,6 +408,7 @@ export async function resolveMrtrChatResume(
           serverId,
           result,
           deps.modelVisibleMcpToolResults,
+          deps.manager,
         ),
       };
     }

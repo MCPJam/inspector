@@ -170,7 +170,14 @@ export function deriveServerConfigDigest(
     | undefined;
   return createHash("sha256")
     .update(
-      JSON.stringify({
+      // Canonical (property-order-independent) serialization: the resume site
+      // is a FRESH connection on any replica, so a server may re-serialize
+      // `serverVersion` / `serverCapabilities` with a different key order than
+      // the suspend site saw. Hashing raw `JSON.stringify` wire order would then
+      // dead-lock a legitimate resume as a binding mismatch. `stableStringify`
+      // sorts object keys recursively so equivalent metadata always hashes
+      // identically.
+      stableStringify({
         protocolVersion: info?.protocolVersion ?? null,
         transport: info?.transport ?? null,
         serverVersion: info?.serverVersion ?? null,
@@ -178,6 +185,27 @@ export function deriveServerConfigDigest(
       }),
     )
     .digest("hex");
+}
+
+/**
+ * Deterministic JSON serialization with recursively sorted object keys, so two
+ * structurally-equal values always produce the same string regardless of
+ * property insertion order. Arrays keep their order (order is semantic there).
+ */
+function stableStringify(value: unknown): string {
+  const seen = new WeakSet<object>();
+  const canonicalize = (v: unknown): unknown => {
+    if (v === null || typeof v !== "object") return v;
+    if (seen.has(v as object)) return null; // guard against cycles
+    seen.add(v as object);
+    if (Array.isArray(v)) return v.map(canonicalize);
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(v as Record<string, unknown>).sort()) {
+      out[key] = canonicalize((v as Record<string, unknown>)[key]);
+    }
+    return out;
+  };
+  return JSON.stringify(canonicalize(value));
 }
 
 /** The negotiated protocol era bound to a continuation, read from the live connection. */

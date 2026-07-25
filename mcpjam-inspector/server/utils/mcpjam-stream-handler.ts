@@ -48,6 +48,7 @@ import {
 import { isMrtrSuspendSignalShape } from "@/shared/mrtr-continuation";
 import {
   spliceMrtrToolResult,
+  hasUnresolvedToolCall,
   type MrtrEngineResume,
 } from "./mrtr-hosted-chat.js";
 import {
@@ -3021,7 +3022,18 @@ export async function runChatEngineLoop(
       // indeterminate outcome pauses. This is the SAME engine that produced the
       // suspension, re-entered on any replica.
       let mrtrPaused = false;
-      if (mrtrResume && !aborted) {
+      if (mrtrResume && !aborted && !hasUnresolvedToolCall(messageHistory, mrtrResume.toolCallId)) {
+        // The resume request's `toolCallId` does not identify an unresolved
+        // tool-call in the resent history (stale, tampered, or already
+        // resolved). Do NOT drive — driving would claim/consume the durable
+        // continuation and then have nowhere to splice the result, losing it.
+        // Pause and let the client reconcile.
+        logger.warn(
+          "[mcpjam-stream-handler] MRTR resume: toolCallId is not an unresolved tool-call; skipping resume",
+          { toolCallId: mrtrResume.toolCallId },
+        );
+        mrtrPaused = true;
+      } else if (mrtrResume && !aborted) {
         const resolution = await mrtrResume.resolve((chunk) =>
           safeWriter.write(chunk),
         );
@@ -3041,8 +3053,18 @@ export async function runChatEngineLoop(
               onToolResult,
             );
             emitTraceSnapshot(safeWriter, messageHistory, tools, traceTurn);
-            // Fall through to the loop: the model now sees the resolved tool
-            // result and produces the final assistant message.
+            // Only run the model once EVERY tool-call in the resent history has
+            // a result. If a sibling tool call in the same assistant step also
+            // suspended to its own continuation, it is still unresolved here;
+            // invoking the model now would send an assistant tool-call with no
+            // matching tool-result (an invalid request) and strand that
+            // sibling's continuation. Keep the turn paused so the client drives
+            // the remaining continuation(s) on subsequent resume requests.
+            if (hasUnresolvedToolCalls(messageHistory)) {
+              mrtrPaused = true;
+            }
+            // Otherwise fall through to the loop: the model now sees the
+            // resolved tool result and produces the final assistant message.
           } else {
             // The browser's resent history lacked the suspended tool-call. Do
             // not run the model on a mismatched turn; pause and let the client
