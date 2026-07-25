@@ -138,6 +138,33 @@ export function computeMrtrBindingFingerprint(args: {
 }
 
 /**
+ * Serialize a value with object keys emitted in a stable (recursively sorted)
+ * order, so the digest below hashes the *values* of the negotiated identity
+ * rather than the JSON property order a given initialize response happened to
+ * use. Two connects to the same server that surface identical capabilities in a
+ * different key order must produce the SAME fingerprint or a legitimate resume
+ * would fail the binding claim closed. Arrays keep their order (semantic);
+ * scalars and null are emitted as-is.
+ */
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value ?? null);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((v) => stableStringify(v)).join(",")}]`;
+  }
+  const entries = Object.keys(value as Record<string, unknown>)
+    .sort()
+    .map(
+      (k) =>
+        `${JSON.stringify(k)}:${stableStringify(
+          (value as Record<string, unknown>)[k],
+        )}`,
+    );
+  return `{${entries.join(",")}}`;
+}
+
+/**
  * Derive the effective-server digest half of the binding fingerprint from a
  * live connection's negotiated identity. Both the SUSPEND site (PR4 direct ops /
  * PR5 chat) and the RESUME route connect to the server, so both compute this
@@ -162,7 +189,10 @@ export function deriveServerConfigDigest(
     | undefined;
   return createHash("sha256")
     .update(
-      JSON.stringify({
+      // Key order in a server's initialize response is not load-bearing —
+      // canonicalize nested capability/version keys so the digest binds values,
+      // not JSON property order (suspend and resume must agree).
+      stableStringify({
         protocolVersion: info?.protocolVersion ?? null,
         transport: info?.transport ?? null,
         serverVersion: info?.serverVersion ?? null,
