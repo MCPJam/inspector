@@ -4208,7 +4208,7 @@
       },
       "EvalRunCreateRequest": {
         "type": "object",
-        "description": "Two valid shapes: `suiteId` (rerun an existing suite, optionally upserting inline `tests` into it), or `suiteName` + `tests` + `serverIds` (create a new suite and run it). Inline `tests` alone \u2014 without a `suiteId` or a `suiteName` \u2014 are rejected with `VALIDATION_ERROR`.",
+        "description": "Three valid shapes: `suiteId` (rerun an existing suite, optionally upserting inline `tests` into it), `suiteName` + `tests` + `serverIds` (create a new suite and run it), or `suiteName` + `tests` + `environmentId` (create a new suite and run it against a project environment, which supplies the servers). Inline `tests` alone \u2014 without a `suiteId` or a `suiteName` \u2014 are rejected with `VALIDATION_ERROR`.",
         "anyOf": [
           {
             "required": [
@@ -4220,6 +4220,18 @@
               "suiteName",
               "tests",
               "serverIds"
+            ],
+            "properties": {
+              "tests": {
+                "minItems": 1
+              }
+            }
+          },
+          {
+            "required": [
+              "suiteName",
+              "tests",
+              "environmentId"
             ],
             "properties": {
               "tests": {
@@ -4251,7 +4263,7 @@
           "serverIds": {
             "type": "array",
             "minItems": 1,
-            "description": "Servers (by ID) the run connects to. Required when creating a new suite; optional on reruns \u2014 when omitted, the run connects the suite's saved server selection (the set its snapshot references). A rerun of a suite with no saved selection is rejected with `VALIDATION_ERROR` (`details.reason: \"NO_SAVED_SERVER_SELECTION\"`).",
+            "description": "Servers (by ID) the run connects to. Required when creating a new suite unless `environmentId` is given (the environment supplies the closed server set, and any `serverIds` sent alongside it are ignored); optional on reruns \u2014 when omitted, the run connects the suite's saved server selection (the set its snapshot references). A rerun of a suite with no saved selection is rejected with `VALIDATION_ERROR` (`details.reason: \"NO_SAVED_SERVER_SELECTION\"`).",
             "items": {
               "type": "string"
             }

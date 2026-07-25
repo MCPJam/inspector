@@ -2762,19 +2762,44 @@ const EXPECTED_REVISION_DESCRIPTION =
  * Resolves by id or name across LIVE **and** archived environments: restore
  * necessarily targets an archived one, and a name-based selector has to be
  * able to find it.
+ *
+ * Archiving frees the name, so a project can legitimately hold an archived
+ * `Staging` and a live `Staging` at once — a flat lookup would call that name
+ * ambiguous and break every name-based operation. So a name match is resolved
+ * against the side the operation is actually for first (`prefer`: live for
+ * everything except restore), and only falls back to the whole listing when
+ * that side has no match — which keeps "get an archived env by name" working
+ * and keeps the not-found message enumerating every environment.
+ *
+ * An exact ID still wins over both, and a name that is ambiguous *within* the
+ * preferred side (two archived `Staging`s for a restore) still reports as
+ * ambiguous, because there it genuinely is.
  */
 async function resolveEnvironmentSelector(
   client: PlatformApiClient,
   project: PlatformProject,
   selector: string,
-  signal: AbortSignal | undefined
+  signal: AbortSignal | undefined,
+  prefer: "live" | "archived" = "live"
 ): Promise<PlatformEnvironment> {
   const page = await client.listEnvironments(
     { projectId: project.id, includeArchived: true },
     { signal }
   );
+  const trimmedSelector = selector.trim();
+  const idMatch = page.items.find((item) => item.id === trimmedSelector);
+  if (idMatch) {
+    return idMatch;
+  }
+  const preferred = page.items.filter(
+    (item) => item.archived === (prefer === "archived")
+  );
+  const normalizedSelector = trimmedSelector.toLocaleLowerCase();
+  const preferredHasName = preferred.some(
+    (item) => item.name?.toLocaleLowerCase() === normalizedSelector
+  );
   return resolveByIdOrName(
-    page.items,
+    preferredHasName ? preferred : page.items,
     selector,
     "Project environment",
     `project "${project.name}"`
@@ -3186,11 +3211,14 @@ export const restoreEnvironmentOperation: PlatformOperation<
       input.project,
       signal
     );
+    // Restore is the one operation whose target is archived by definition, so
+    // a name shared with a live environment must resolve to the archived one.
     const environment = await resolveEnvironmentSelector(
       client,
       project,
       input.environment,
-      signal
+      signal,
+      "archived"
     );
     return client.restoreEnvironment(
       {
