@@ -40,7 +40,7 @@ for your org.
 |---|---|
 | Model | Honored — must be an MCPJam-provided Anthropic model (BYOK fails closed; the CLI maps it to its native alias). |
 | System prompt | Honored (passed to the runtime). |
-| Require tool approval | Honored for **native and host-executed** tools (WS3, `allow-edits`): side-effecting built-ins pause the turn and resume with your decision; reads stay free. The runtime can't pause for **MCP-server** tools, so approval combined with selected MCP servers is rejected pre-flight (`supportsMcpToolApproval: false`). The Behavior tab doesn't offer the toggle for harness hosts (`client/src/lib/harness-capabilities.ts` marks it not enforced). |
+| Require tool approval | Honored for **native and host-executed** tools (WS3): the adapter runs the CLI in its `allow-edits` permission mode, so side-effecting built-ins pause the turn and resume with your decision; reads stay free. The runtime can't pause for **MCP-server** tools, so approval combined with selected MCP servers is rejected pre-flight (`supportsMcpToolApproval: false`). The Behavior tab doesn't offer the toggle for harness hosts (`client/src/lib/harness-capabilities.ts` marks it not enforced). |
 | Selected MCP servers | Honored — delivered via `.mcp.json` through MCPJam's proxy. |
 | Skills | Honored (runtime skills are materialized into the sandbox). |
 | Temperature / other sampling knobs | **Not honored** — the CLI owns its sampling. Grayed out in the UI. |
