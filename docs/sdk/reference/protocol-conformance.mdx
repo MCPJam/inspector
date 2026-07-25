@@ -115,6 +115,7 @@ writeFileSync(
 | `checkIds` | `MCPCheckId[]` | No | all checks | Restrict checks to specific ids |
 | `fetchFn` | `typeof fetch` | No | `fetch` | Custom fetch implementation |
 | `clientName` | `string` | No | SDK default | Custom MCP client name |
+| `protocolVersion` | `string` | No | | Pin the MCP protocol version (e.g. `"2026-07-28"`). Absent means legacy era. See [Protocol era](#protocol-era). |
 
 ## Available categories and check ids
 
