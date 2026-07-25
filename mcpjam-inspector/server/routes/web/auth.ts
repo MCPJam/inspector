@@ -1603,6 +1603,19 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
     timeoutMs?: number;
     guestUnsupportedMessage?: string;
     rpcLogger?: ReturnType<typeof createHostedRpcLogCollector>["rpcLogger"];
+    /**
+     * Per-server MRTR (`input_required`) collector factory (MCP 2026-07-28
+     * §12.5). Threaded to `createAuthorizedManager` so a hosted DIRECT op
+     * (tools/execute, prompts/get, resources/read) can suspend a modern
+     * `input_required` round to the durable continuation store instead of
+     * blocking the worker. Registered SYNCHRONOUSLY at construction (same
+     * microtask discipline as `elicitationCallback`) so `buildCapabilities`
+     * advertises `elicitation` on the initialize wire. Omit to leave the
+     * connection on today's non-MRTR path.
+     */
+    mrtrInputCollectorForServer?: (
+      serverId: string,
+    ) => MrtrInputCollector | undefined;
   }
 ): Promise<{
   manager: InstanceType<typeof MCPClientManager>;
@@ -1701,6 +1714,12 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
       // Resolve the XAA issuer here (we hold the request `Context`) so the
       // manager builder can mint Cross-App Access tokens for `useXaa` servers.
       xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
+      // MRTR direct-op suspend collector (PR4). Registered synchronously with
+      // the same microtask discipline as `elicitationCallback` so `elicitation`
+      // is advertised before the constructor's connects run.
+      ...(options?.mrtrInputCollectorForServer
+        ? { mrtrInputCollectorForServer: options.mrtrInputCollectorForServer }
+        : {}),
     }
   );
 

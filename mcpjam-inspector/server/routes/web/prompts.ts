@@ -5,6 +5,7 @@ import {
   promptsGetSchema,
   withEphemeralConnection,
 } from "./auth.js";
+import { runHostedDirectMrtrOperation } from "./mrtr-direct.js";
 import {
   listPrompts,
   listPromptsMulti,
@@ -27,9 +28,13 @@ prompts.post("/list-multi", async (c) =>
 );
 
 prompts.post("/get", async (c) =>
-  withEphemeralConnection(
+  // Hosted DIRECT prompts/get (§12.3). Suspends to the continuation store on an
+  // `input_required` round (returning a pending outcome) instead of blocking; a
+  // normal get returns its `{ content }` body verbatim as before.
+  runHostedDirectMrtrOperation(
     c,
     promptsGetSchema,
+    { method: "prompts/get" },
     (manager, body, forwardLogMessages) => {
       forwardLogMessages(body.serverId);
       return getPrompt(manager, {

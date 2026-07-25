@@ -7,6 +7,8 @@ import {
   ErrorCode,
   WebRouteError,
 } from "./auth.js";
+import { runHostedDirectMrtrOperation } from "./mrtr-direct.js";
+import { isMrtrSuspendedSignal } from "../../utils/mrtr-hosted-collector.js";
 import { listTools } from "../../utils/route-handlers.js";
 import { getRequestLogger } from "../../utils/request-logger.js";
 import { classifyError } from "../../utils/error-classify.js";
@@ -22,9 +24,16 @@ tools.post("/list", async (c) =>
 );
 
 tools.post("/execute", async (c) =>
-  withEphemeralConnection(
+  // Hosted DIRECT tools/call (§12.3). A modern server can return an
+  // `input_required` result mid-call; the MRTR collector then SUSPENDS the op
+  // to the durable continuation store and this returns a typed
+  // `{ status: "input_required", continuationId, ... }` pending outcome instead
+  // of blocking the worker (§12.5.2). A non-suspending call returns
+  // `{ status: "completed", result }` exactly as before.
+  runHostedDirectMrtrOperation(
     c,
     toolsExecuteSchema,
+    { method: "tools/call" },
     async (manager, body, forwardLogMessages) => {
       if (body.taskOptions) {
         throw new WebRouteError(
@@ -50,10 +59,13 @@ tools.post("/execute", async (c) =>
           body.parameters,
         );
         return {
-          status: "completed",
+          status: "completed" as const,
           result,
         };
       } catch (error) {
+        // A suspend is control flow, not a failed execution — let it propagate
+        // to the MRTR wrapper unlogged so the pair ratio isn't skewed.
+        if (isMrtrSuspendedSignal(error)) throw error;
         getRequestLogger(c, "routes.web.tools").event(
           "mcp.tool.execution.failed",
           {

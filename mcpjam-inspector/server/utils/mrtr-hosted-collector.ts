@@ -137,6 +137,62 @@ export function computeMrtrBindingFingerprint(args: {
     .digest("hex");
 }
 
+/**
+ * Derive the effective-server digest half of the binding fingerprint from a
+ * live connection's negotiated identity. Both the SUSPEND site (PR4 direct ops /
+ * PR5 chat) and the RESUME route connect to the server, so both compute this
+ * identically — a materially different server (name / version / capabilities /
+ * protocol) yields a different digest and a resume against a swapped server
+ * fails the claim closed. Config that never reaches the wire (a rotated bearer
+ * behind the same identity) is intentionally NOT in the digest; the
+ * auth-principal half of {@link computeMrtrBindingFingerprint} covers principal
+ * changes. Single source so suspend and resume never drift.
+ */
+export function deriveServerConfigDigest(
+  manager: { getInitializationInfo: (serverId: string) => unknown },
+  serverId: string,
+): string {
+  const info = manager.getInitializationInfo(serverId) as
+    | {
+        protocolVersion?: string;
+        transport?: string;
+        serverVersion?: unknown;
+        serverCapabilities?: unknown;
+      }
+    | undefined;
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        protocolVersion: info?.protocolVersion ?? null,
+        transport: info?.transport ?? null,
+        serverVersion: info?.serverVersion ?? null,
+        serverCapabilities: info?.serverCapabilities ?? null,
+      }),
+    )
+    .digest("hex");
+}
+
+/**
+ * Resolve the coarse negotiated era string bound to a continuation. MRTR only
+ * ever occurs on a modern (2026-07-28) connection, so this reads the negotiated
+ * protocol version off the live client and falls back to `"modern"` if the
+ * transport hasn't surfaced one. The exact value is not load-bearing for the
+ * fingerprint check on its own (the browser echoes it back verbatim on resume,
+ * so suspend and resume always agree); it exists so a continuation records which
+ * wire era produced it.
+ */
+export function resolveMrtrNegotiatedEra(
+  manager: { getInitializationInfo: (serverId: string) => unknown },
+  serverId: string,
+): string {
+  const info = manager.getInitializationInfo(serverId) as
+    | { protocolVersion?: string }
+    | undefined;
+  return typeof info?.protocolVersion === "string" && info.protocolVersion
+    ? info.protocolVersion
+    : "modern";
+}
+
 // ── Safe display ─────────────────────────────────────────────────────────
 
 function capField(field: string, value: string, cap: number): string {
