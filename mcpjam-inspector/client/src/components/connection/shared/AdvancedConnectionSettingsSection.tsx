@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { ChevronDown, ChevronRight, Plus, X } from "lucide-react";
 import { Input } from "@mcpjam/design-system/input";
 import { Switch } from "@mcpjam/design-system/switch";
@@ -136,6 +137,9 @@ export function AdvancedConnectionSettingsSection({
     if (opt.value === "rc" && !isHttp) return false;
     return true;
   });
+  // Per-instance so several of these forms can be mounted at once without
+  // colliding on a shared element id.
+  const bodyId = useId();
   const selectedDropdownValue: DropdownValue =
     mcpProtocolVersionOverride === "2026-07-28"
       ? "rc"
@@ -144,219 +148,259 @@ export function AdvancedConnectionSettingsSection({
       : "inherit";
 
   return (
-    <div className="space-y-0">
+    <div className="space-y-2">
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full cursor-pointer items-center gap-1.5 py-1 text-left text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+        aria-expanded={showConfiguration}
+        aria-controls={bodyId}
+        className="group flex cursor-pointer items-center gap-1.5 text-left"
       >
         {showConfiguration ? (
-          <ChevronDown className="h-3 w-3" />
+          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground transition-colors group-hover:text-foreground" />
         ) : (
-          <ChevronRight className="h-3 w-3" />
+          <ChevronRight className="h-3.5 w-3.5 text-muted-foreground transition-colors group-hover:text-foreground" />
         )}
-        Connection overrides
+        <span className="text-sm font-medium text-foreground">
+          Connection overrides
+        </span>
       </button>
 
-      {showConfiguration && (
-        <div className="mt-2 space-y-3 border-l-2 border-border/60 pl-3">
-          {/* Timeout */}
-          <div className="space-y-1">
-            <label className="text-xs font-medium text-foreground">
-              Timeout{" "}
-              <span className="font-normal text-muted-foreground">
-                (ms, default {inheritedRequestTimeout})
-              </span>
-            </label>
-            <Input
-              type="number"
-              value={requestTimeout}
-              onChange={(e) => onRequestTimeoutChange(e.target.value)}
-              placeholder={String(inheritedRequestTimeout)}
-              className="h-8 text-xs"
-              min="1000"
-              max="600000"
-              step="1000"
-            />
-          </div>
-
-          {/* Headers */}
-          {showHeaderControls && (
+      {/* Always mounted so `aria-controls` resolves while collapsed. */}
+      <div id={bodyId}>
+        {showConfiguration && (
+          <div className="space-y-4">
+            {/* Timeout */}
             <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-medium text-foreground">
-                  Headers
-                </label>
-                <button
-                  type="button"
-                  onClick={onAddHeader}
-                  disabled={headersHidden}
-                  className="flex items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
-                >
-                  <Plus className="h-3 w-3" />
-                  Add
-                </button>
-              </div>
-              {headersHidden && (
-                <div className="flex items-center justify-between gap-3 rounded border border-border bg-background px-3 py-2">
-                  <div>
-                    <p className="text-xs font-medium text-foreground">
-                      Hidden — Reveal to view
-                    </p>
-                    {headersRevealError && (
-                      <p role="alert" className="mt-1 text-xs text-destructive">
-                        {headersRevealError}
-                      </p>
-                    )}
-                  </div>
+              <label className="text-xs font-medium text-foreground">
+                Timeout{" "}
+                <span className="font-normal text-muted-foreground">
+                  (ms, default {inheritedRequestTimeout})
+                </span>
+              </label>
+              <Input
+                type="number"
+                value={requestTimeout}
+                onChange={(e) => onRequestTimeoutChange(e.target.value)}
+                placeholder={String(inheritedRequestTimeout)}
+                className="h-8 text-xs"
+                min="1000"
+                max="600000"
+                step="1000"
+              />
+            </div>
+
+            {/* Headers. Same row idiom as the env-var editor: monospace
+                key/value pair, muted separator, ghost remove. */}
+            {showHeaderControls && (
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-medium text-foreground">
+                    Headers
+                  </label>
                   <button
                     type="button"
-                    disabled={isRevealingHeaders || !onRevealHeaders}
-                    onClick={onRevealHeaders}
-                    className="rounded border border-border px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={onAddHeader}
+                    disabled={headersHidden}
+                    className="flex items-center gap-1 rounded px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {isRevealingHeaders ? "Revealing..." : "Reveal"}
+                    <Plus className="h-3.5 w-3.5" />
+                    Add
                   </button>
                 </div>
-              )}
-              {customHeaders.length > 0 && (
-                <div className="space-y-1">
-                  {customHeaders.map((header, index) => (
-                    <div
-                      key={header.id ?? `${header.key}-${index}`}
-                      className="flex items-center gap-1.5"
+                {headersHidden && (
+                  <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-muted/30 px-3 py-2.5">
+                    <div>
+                      <p className="text-xs font-medium text-foreground">
+                        Hidden — Reveal to view
+                      </p>
+                      {headersRevealError && (
+                        <p
+                          role="alert"
+                          className="mt-1 text-xs text-destructive"
+                        >
+                          {headersRevealError}
+                        </p>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      disabled={isRevealingHeaders || !onRevealHeaders}
+                      onClick={onRevealHeaders}
+                      className="rounded border border-border bg-background px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      <Input
-                        value={header.key}
-                        onChange={(e) =>
-                          onUpdateHeader(index, "key", e.target.value)
-                        }
-                        placeholder="Key"
-                        className="h-7 flex-1 text-xs"
-                      />
-                      <Input
-                        value={header.value}
-                        onChange={(e) =>
-                          onUpdateHeader(index, "value", e.target.value)
-                        }
-                        placeholder="Value"
-                        className="h-7 flex-1 text-xs"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => onRemoveHeader(index)}
-                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {headersWarning && (
-                <p role="alert" className="text-xs text-amber-700">
-                  {headersWarning}
-                </p>
-              )}
-            </div>
-          )}
-
-          {/* Client capabilities override */}
-          {showClientCapabilitiesControls && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-medium text-foreground">
-                  Capabilities override
-                </label>
-                <Switch
-                  checked={clientCapabilitiesOverrideEnabled}
-                  onCheckedChange={onClientCapabilitiesOverrideEnabledChange}
-                  aria-label="Toggle client capabilities override"
-                  className="scale-90"
-                />
-              </div>
-
-              {clientCapabilitiesOverrideEnabled && (
-                <>
-                  {clientCapabilitiesOverrideError && (
-                    <div className="rounded border border-destructive/30 bg-destructive/5 px-2.5 py-1.5 text-xs text-destructive">
-                      {clientCapabilitiesOverrideError}
-                    </div>
-                  )}
-                  <div className="overflow-hidden rounded border border-border bg-background">
-                    <JsonEditor
-                      rawContent={clientCapabilitiesOverrideText}
-                      onRawChange={onClientCapabilitiesOverrideTextChange}
-                      mode="edit"
-                      showModeToggle={false}
-                      showToolbar={false}
-                      className="h-[160px]"
-                      height="160px"
-                      wrapLongLinesInEdit={false}
-                      showLineNumbers
-                      showValidationErrorInStatusBar={false}
-                    />
+                      {isRevealingHeaders ? "Revealing..." : "Reveal"}
+                    </button>
                   </div>
-                </>
-              )}
-            </div>
-          )}
+                )}
+                {!headersHidden && customHeaders.length === 0 && (
+                  <button
+                    type="button"
+                    onClick={onAddHeader}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-border py-2.5 text-xs text-muted-foreground transition-colors hover:border-foreground/30 hover:bg-muted/40 hover:text-foreground"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Add header
+                  </button>
+                )}
+                {customHeaders.length > 0 && (
+                  <div className="space-y-1.5">
+                    {customHeaders.map((header, index) => (
+                      <div
+                        key={header.id ?? `${header.key}-${index}`}
+                        className="flex items-center gap-1.5"
+                      >
+                        <Input
+                          value={header.key}
+                          onChange={(e) =>
+                            onUpdateHeader(index, "key", e.target.value)
+                          }
+                          placeholder="Header"
+                          spellCheck={false}
+                          autoCapitalize="off"
+                          autoCorrect="off"
+                          aria-label={`Header ${index + 1} name`}
+                          className="h-8 flex-1 font-mono text-xs"
+                        />
+                        <span
+                          aria-hidden="true"
+                          className="shrink-0 select-none text-xs text-muted-foreground/70"
+                        >
+                          :
+                        </span>
+                        <Input
+                          value={header.value}
+                          onChange={(e) =>
+                            onUpdateHeader(index, "value", e.target.value)
+                          }
+                          placeholder="value"
+                          spellCheck={false}
+                          autoCapitalize="off"
+                          autoCorrect="off"
+                          aria-label={`Header ${index + 1} value`}
+                          className="h-8 flex-[1.4] font-mono text-xs"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => onRemoveHeader(index)}
+                          aria-label={
+                            header.key
+                              ? `Remove ${header.key}`
+                              : `Remove header ${index + 1}`
+                          }
+                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-destructive"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {headersWarning && (
+                  <p role="alert" className="text-xs text-amber-700">
+                    {headersWarning}
+                  </p>
+                )}
+              </div>
+            )}
 
-          {/* Per-server MCP protocol-version pin. Tri-state picker:
-              "Latest" → `"2025-11-25"` (legacy adapter + initialize
-              handshake); "2026 RC" → `"2026-07-28"` (stateless RC
-              preview client). The RC option is hidden on non-HTTP
-              transports because MCPJam's current stateless client
-              requires Streamable HTTP. */}
-          {showProtocolVersionControl && (
-            <div className="space-y-1.5">
-              <label
-                className="text-xs font-medium text-foreground"
-                title="Latest: the current stable MCP wire version (2025-11-25). 2026 RC: MCPJam's current 2026-07-28 stateless preview over Streamable HTTP POST."
-              >
-                Protocol version
-              </label>
-              <Select
-                value={selectedDropdownValue}
-                disabled={!canEditProtocolVersion}
-                onValueChange={(next) => {
-                  if (!onMcpProtocolVersionOverrideChange) return;
-                  onMcpProtocolVersionOverrideChange(
-                    next === "rc"
-                      ? "2026-07-28"
-                      : next === "latest"
-                      ? "2025-11-25"
-                      : undefined
-                  );
-                }}
-              >
-                <SelectTrigger className="h-9 w-full text-xs">
-                  <SelectValue placeholder="Latest" />
-                </SelectTrigger>
-                <SelectContent>
-                  {visibleOptions.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {!isHttp && (
-                <p className="text-xs text-muted-foreground">
-                  MCPJam's current 2026 RC preview requires Streamable HTTP —
-                  only Latest is selectable for this transport.
-                </p>
-              )}
-              {!canEditProtocolVersion && (
-                <p className="text-xs text-muted-foreground">
-                  Project configuration must finish loading before setting a
-                  per-server protocol override.
-                </p>
-              )}
-            </div>
-          )}
-        </div>
-      )}
+            {/* Client capabilities override */}
+            {showClientCapabilitiesControls && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-medium text-foreground">
+                    Capabilities override
+                  </label>
+                  <Switch
+                    checked={clientCapabilitiesOverrideEnabled}
+                    onCheckedChange={onClientCapabilitiesOverrideEnabledChange}
+                    aria-label="Toggle client capabilities override"
+                    className="scale-90"
+                  />
+                </div>
+
+                {clientCapabilitiesOverrideEnabled && (
+                  <>
+                    {clientCapabilitiesOverrideError && (
+                      <div className="rounded border border-destructive/30 bg-destructive/5 px-2.5 py-1.5 text-xs text-destructive">
+                        {clientCapabilitiesOverrideError}
+                      </div>
+                    )}
+                    <div className="overflow-hidden rounded border border-border bg-background">
+                      <JsonEditor
+                        rawContent={clientCapabilitiesOverrideText}
+                        onRawChange={onClientCapabilitiesOverrideTextChange}
+                        mode="edit"
+                        showModeToggle={false}
+                        showToolbar={false}
+                        className="h-[160px]"
+                        height="160px"
+                        wrapLongLinesInEdit={false}
+                        showLineNumbers
+                        showValidationErrorInStatusBar={false}
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* Per-server MCP protocol-version pin. Tri-state picker:
+                "Latest" → `"2025-11-25"` (legacy adapter + initialize
+                handshake); "2026 RC" → `"2026-07-28"` (stateless RC
+                preview client). The RC option is hidden on non-HTTP
+                transports because MCPJam's current stateless client
+                requires Streamable HTTP. */}
+            {showProtocolVersionControl && (
+              <div className="space-y-1.5">
+                <label
+                  className="text-xs font-medium text-foreground"
+                  title="Latest: the current stable MCP wire version (2025-11-25). 2026 RC: MCPJam's current 2026-07-28 stateless preview over Streamable HTTP POST."
+                >
+                  Protocol version
+                </label>
+                <Select
+                  value={selectedDropdownValue}
+                  disabled={!canEditProtocolVersion}
+                  onValueChange={(next) => {
+                    if (!onMcpProtocolVersionOverrideChange) return;
+                    onMcpProtocolVersionOverrideChange(
+                      next === "rc"
+                        ? "2026-07-28"
+                        : next === "latest"
+                        ? "2025-11-25"
+                        : undefined
+                    );
+                  }}
+                >
+                  <SelectTrigger className="h-8 w-full text-xs">
+                    <SelectValue placeholder="Latest" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {visibleOptions.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {!isHttp && (
+                  <p className="text-xs text-muted-foreground">
+                    MCPJam's current 2026 RC preview requires Streamable HTTP —
+                    only Latest is selectable for this transport.
+                  </p>
+                )}
+                {!canEditProtocolVersion && (
+                  <p className="text-xs text-muted-foreground">
+                    Project configuration must finish loading before setting a
+                    per-server protocol override.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
