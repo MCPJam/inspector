@@ -137,6 +137,77 @@ export function computeMrtrBindingFingerprint(args: {
     .digest("hex");
 }
 
+/** Minimal shape of the manager needed to derive the binding fingerprint. */
+export interface MrtrFingerprintManager {
+  getInitializationInfo: (serverId: string) => unknown;
+}
+
+/**
+ * Derive the effective-server-config digest half of the binding fingerprint
+ * from a LIVE connection's negotiated identity. Both the suspend site (PR5 chat
+ * loop) and the resume site connect to the server, so both compute this
+ * identically — a materially different server (name / version / capabilities /
+ * protocol) yields a different digest and the resume claim fails closed at the
+ * backend. Config that never reaches the wire (a rotated bearer behind the same
+ * identity) is intentionally NOT in the digest; the auth-principal half covers
+ * principal changes.
+ *
+ * SINGLE SOURCE for both sites — never fork this, or a suspend/resume pair
+ * against the same server could compute different fingerprints and dead-lock a
+ * legitimate resume as "cancelled".
+ */
+export function deriveServerConfigDigest(
+  manager: MrtrFingerprintManager,
+  serverId: string,
+): string {
+  const info = manager.getInitializationInfo(serverId) as
+    | {
+        protocolVersion?: string;
+        transport?: string;
+        serverVersion?: unknown;
+        serverCapabilities?: unknown;
+      }
+    | undefined;
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        protocolVersion: info?.protocolVersion ?? null,
+        transport: info?.transport ?? null,
+        serverVersion: info?.serverVersion ?? null,
+        serverCapabilities: info?.serverCapabilities ?? null,
+      }),
+    )
+    .digest("hex");
+}
+
+/** The negotiated protocol era bound to a continuation, read from the live connection. */
+export function deriveNegotiatedEra(
+  manager: MrtrFingerprintManager,
+  serverId: string,
+): string {
+  const info = manager.getInitializationInfo(serverId) as
+    | { protocolVersion?: string }
+    | undefined;
+  return info?.protocolVersion ?? "unknown";
+}
+
+/**
+ * Compute the full binding fingerprint from a live manager connection. Used by
+ * both the suspend (chat collector) and resume paths so they agree by
+ * construction.
+ */
+export function computeMrtrBindingFingerprintFromManager(
+  manager: MrtrFingerprintManager,
+  args: { serverId: string; negotiatedEra: string; authPrincipal: string },
+): string {
+  return computeMrtrBindingFingerprint({
+    serverId: args.serverId,
+    negotiatedEra: args.negotiatedEra,
+    serverConfigDigest: deriveServerConfigDigest(manager, args.serverId),
+    authPrincipal: args.authPrincipal,
+  });
+}
+
 // ── Safe display ─────────────────────────────────────────────────────────
 
 function capField(field: string, value: string, cap: number): string {
@@ -243,8 +314,17 @@ export interface HostedMrtrCollectorDeps {
   serverId: string;
   serverName?: string;
   chatSessionId?: string;
-  negotiatedEra: string;
-  bindingFingerprint: string;
+  /** The negotiated era, or a thunk resolved AT SUSPEND TIME (post-connect). */
+  negotiatedEra: string | (() => string);
+  /**
+   * The binding fingerprint, or a thunk resolved AT SUSPEND TIME. The chat-loop
+   * collector passes a thunk because the fingerprint needs the negotiated
+   * identity, which only exists after connect — but the collector factory runs
+   * synchronously BEFORE connect (to win the capability-advertise race). The
+   * thunk is evaluated inside the collector invocation, which happens
+   * mid-tool-call, i.e. after connect.
+   */
+  bindingFingerprint: string | (() => string);
   /** Emit a transient `data-mrtr-input-required` part on the turn's stream. */
   emit: (event: MrtrContinuationEvent) => void;
   ttlMs?: number;
@@ -279,6 +359,15 @@ export function createHostedMrtrCollector(
     const displays = buildInputRequestDisplays(inputRequests);
     const resumeState = encode(state);
     const continuationId = mintId();
+    // Resolve the fingerprint now (post-connect) if it was deferred.
+    const bindingFingerprint =
+      typeof deps.bindingFingerprint === "function"
+        ? deps.bindingFingerprint()
+        : deps.bindingFingerprint;
+    const negotiatedEra =
+      typeof deps.negotiatedEra === "function"
+        ? deps.negotiatedEra()
+        : deps.negotiatedEra;
 
     const created = await create(deps.bearer, {
       continuationId,
@@ -287,8 +376,8 @@ export function createHostedMrtrCollector(
       serverId: deps.serverId,
       operationId: state.opId,
       operationMethod: state.method as MrtrOperationMethod,
-      negotiatedEra: deps.negotiatedEra,
-      bindingFingerprint: deps.bindingFingerprint,
+      negotiatedEra,
+      bindingFingerprint,
       resumeState,
       round: state.round,
       maxRounds: state.maxRounds,

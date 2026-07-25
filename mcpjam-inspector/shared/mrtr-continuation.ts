@@ -162,6 +162,43 @@ export interface MrtrElicitationResponse {
   content?: Record<string, unknown>;
 }
 
+/**
+ * The browser's request to resume a suspended hosted-chat MRTR operation
+ * (§12.5, PR5). Rides an ordinary chat turn's body: the browser resends its
+ * client-held `messages` (which still contain the suspended assistant
+ * tool-call, unresolved) plus this descriptor. The server drives the retry leg
+ * against the durable continuation, splices the real tool result into the
+ * identified tool-call, and resumes the agent loop.
+ *
+ * `toolCallId` names WHICH unresolved tool-call slot the driven result fills.
+ * It is a convenience for the splice, not an authorization input: the result
+ * itself comes from the server-driven MCP leg, and the continuation binding is
+ * enforced server-side, so a wrong id only mis-slots the caller's own history.
+ */
+export interface MrtrChatResumeRequest {
+  toolCallId: string;
+  submission: MrtrResumeSubmission;
+}
+
+/**
+ * Structural guard for the hosted MRTR **suspend signal** (thrown by the
+ * suspending collector to unwind a tool call and return control to the worker).
+ *
+ * Detected STRUCTURALLY, never via `instanceof`: the signal is thrown from deep
+ * inside `tool.execute` and must be recognized by the shared tool executor —
+ * which lives in `shared/` and cannot import a `server/` class. The shape
+ * (`code === "MRTR_SUSPENDED"`) is the contract. The shared executor uses this
+ * to RETHROW the signal (like an abort) instead of capturing it as an
+ * error-text tool-result, so the engine can treat it as a durable pause.
+ */
+export function isMrtrSuspendSignalShape(value: unknown): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { code?: unknown }).code === "MRTR_SUSPENDED"
+  );
+}
+
 // ── Type guards ─────────────────────────────────────────────────────────────
 
 function isRecord(value: unknown): value is Record<string, unknown> {

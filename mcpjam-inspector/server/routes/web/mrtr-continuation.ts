@@ -19,7 +19,6 @@
  */
 import { Hono } from "hono";
 import { z } from "zod";
-import { createHash } from "node:crypto";
 import type {
   InputResponses,
   MrtrOperationState,
@@ -41,6 +40,7 @@ import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import {
   computeMrtrBindingFingerprint,
+  deriveServerConfigDigest,
   resumeMrtrContinuationLeg,
 } from "../../utils/mrtr-hosted-collector.js";
 import {
@@ -69,39 +69,6 @@ const resumeSchema = projectServerSchema.extend({
   chatSessionId: z.string().min(1).optional(),
   oauthTokens: z.record(z.string(), z.string()).optional(),
 });
-
-/**
- * Derive the effective-server digest half of the binding fingerprint from the
- * live connection. Both the suspend site (PR5) and this resume path connect to
- * the server, so both can compute it identically from the negotiated identity —
- * a materially different server (name / version / capabilities / protocol)
- * yields a different digest and the claim fails closed. Config that never
- * reaches the wire (a rotated bearer behind the same identity) is intentionally
- * NOT in the digest; the auth-principal half covers principal changes.
- */
-function deriveServerConfigDigest(
-  manager: { getInitializationInfo: (serverId: string) => unknown },
-  serverId: string,
-): string {
-  const info = manager.getInitializationInfo(serverId) as
-    | {
-        protocolVersion?: string;
-        transport?: string;
-        serverVersion?: unknown;
-        serverCapabilities?: unknown;
-      }
-    | undefined;
-  return createHash("sha256")
-    .update(
-      JSON.stringify({
-        protocolVersion: info?.protocolVersion ?? null,
-        transport: info?.transport ?? null,
-        serverVersion: info?.serverVersion ?? null,
-        serverCapabilities: info?.serverCapabilities ?? null,
-      }),
-    )
-    .digest("hex");
-}
 
 /**
  * POST /mrtr/continuation/resume

@@ -45,6 +45,11 @@ import {
   hasUnresolvedToolCalls,
   executeToolCallsFromMessages,
 } from "@/shared/http-tool-calls";
+import { isMrtrSuspendSignalShape } from "@/shared/mrtr-continuation";
+import {
+  spliceMrtrToolResult,
+  type MrtrEngineResume,
+} from "./mrtr-hosted-chat.js";
 import {
   isClientFulfilledToolName,
   type UiToolApprovalClassification,
@@ -491,6 +496,15 @@ export interface MCPJamHandlerOptions {
    * passes `"auto-deny"`.
    */
   approvalMode?: "prompt" | "auto-deny";
+  /**
+   * Hosted MRTR (§12.5, PR5) resume descriptor. Present only on a fresh request
+   * that resumes a suspended tool call: the engine drives one retry leg BEFORE
+   * the first model call, splices the driven result into the identified
+   * tool-call slot, and resumes the loop — or pauses again on a further round /
+   * a terminal (indeterminate / cancelled / expired) outcome. Emulated engine
+   * only; the harness path never suspends through this manager.
+   */
+  mrtrResume?: MrtrEngineResume;
   onConversationComplete?: (
     fullHistory: ModelMessage[],
     turnTrace: PersistedTurnTrace,
@@ -2585,6 +2599,22 @@ async function processOneStep(
       if (isAbortError(error)) {
         throw error;
       }
+      // Hosted MRTR (§12.5): a tool call returned `input_required` and the
+      // suspending collector persisted it to a durable continuation, emitted
+      // the `data-mrtr-input-required` part, and threw to unwind. This is a
+      // PAUSE, not a failure — modeled on the client-fulfilled rail: emit the
+      // finish chunk and return control to the browser WITHOUT blocking,
+      // erroring, or polling. The unresolved tool-call stays in history (the
+      // browser resends it on resume); the epilogue persists it and closes the
+      // stream. The whole point of the durable transport vs legacy elicitation
+      // is that the worker does not hold open awaiting a human.
+      if (isMrtrSuspendSignalShape(error)) {
+        emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
+        if (finishChunk) {
+          writer.write(createClientFinishChunk(finishChunk, traceTurn, "stop"));
+        }
+        return { shouldContinue: false, didEmitFinish: !!finishChunk };
+      }
       const failAbs = Date.now();
       pushBackendStepToolFailureSpans(
         traceTurn.turnSpans,
@@ -2743,6 +2773,7 @@ export async function runChatEngineLoop(
     uiToolApprovals,
     modelVisibleMcpToolResults,
     approvalMode,
+    mrtrResume,
     onConversationComplete,
     onStreamComplete,
     onStreamWriterReady,
@@ -2981,7 +3012,57 @@ export async function runChatEngineLoop(
         }
       }
 
-      while (effectiveSteps() < resolvedMaxSteps) {
+      // ── Hosted MRTR resume pre-phase (§12.5, PR5) ─────────────────────────
+      // A fresh request resuming a suspended tool call drives ONE retry leg
+      // here — before the first model call — against the durable continuation.
+      // On completion the driven result is spliced into the suspended tool-call
+      // slot and the loop runs the model with it (resuming the agent loop to a
+      // final assistant message). A further round re-suspends; a terminal /
+      // indeterminate outcome pauses. This is the SAME engine that produced the
+      // suspension, re-entered on any replica.
+      let mrtrPaused = false;
+      if (mrtrResume && !aborted) {
+        const resolution = await mrtrResume.resolve((chunk) =>
+          safeWriter.write(chunk),
+        );
+        if (resolution.kind === "complete" || resolution.kind === "recover") {
+          const spliced = spliceMrtrToolResult(
+            messageHistory,
+            mrtrResume.toolCallId,
+            resolution.toolResultMessage,
+          );
+          if (spliced) {
+            await emitToolResults(
+              safeWriter,
+              mcpClientManager,
+              [resolution.toolResultMessage],
+              traceTurn,
+              effectiveSteps(),
+              onToolResult,
+            );
+            emitTraceSnapshot(safeWriter, messageHistory, tools, traceTurn);
+            // Fall through to the loop: the model now sees the resolved tool
+            // result and produces the final assistant message.
+          } else {
+            // The browser's resent history lacked the suspended tool-call. Do
+            // not run the model on a mismatched turn; pause and let the client
+            // reconcile.
+            logger.warn(
+              "[mcpjam-stream-handler] MRTR resume: suspended tool-call not found in history; pausing",
+              { toolCallId: mrtrResume.toolCallId },
+            );
+            mrtrPaused = true;
+          }
+        } else {
+          // suspended (another round) or halted (indeterminate / cancelled /
+          // expired): the data part / resolved event was already emitted by the
+          // leg. Pause without a model call — the epilogue emits finish and
+          // persists the (still-unresolved) tool-call.
+          mrtrPaused = true;
+        }
+      }
+
+      while (!mrtrPaused && effectiveSteps() < resolvedMaxSteps) {
         if (aborted) break;
         const { shouldContinue, didEmitFinish } = await processOneStep({
           writer: safeWriter,

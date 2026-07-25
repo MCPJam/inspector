@@ -12,8 +12,19 @@ import {
 } from "../../config.js";
 import {
   HostedElicitationBridge,
+  hostDeclaresElicitation,
   resolveElicitationGate,
 } from "./hosted-elicitation.js";
+import { HostedMrtrBridge } from "../../utils/mrtr-hosted-bridge.js";
+import {
+  resolveMrtrChatResume,
+  type MrtrEngineResume,
+} from "../../utils/mrtr-hosted-chat.js";
+import {
+  HOSTED_MRTR_VERSION,
+  isMrtrResumeSubmission,
+  type MrtrElicitationResponse,
+} from "@/shared/mrtr-continuation";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import {
   validateAppToolEntries,
@@ -55,6 +66,44 @@ import { buildMcpjamPlatformClient } from "./mcpjam-platform-client.js";
 import { logger } from "../../utils/logger.js";
 
 const chatV2 = new Hono();
+
+/**
+ * Parse + shape-validate the browser's `mrtrResume` descriptor (§12.5). Reads
+ * `serverId` (which server the continuation is bound to; the browser has it
+ * from the `data-mrtr-input-required` part) plus the resume submission. Returns
+ * `null` on any structural problem so the route fails fast. Authorization
+ * (ownership, binding, round fence, per-response schema) is re-enforced
+ * server-side against the durable record — this only rejects a broken body.
+ */
+function parseMrtrResumeRequest(value: unknown): {
+  toolCallId: string;
+  serverId: string;
+  continuationId: string;
+  round: number;
+  responses: Record<string, MrtrElicitationResponse>;
+} | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
+  if (typeof v.toolCallId !== "string" || !v.toolCallId) return null;
+  if (typeof v.serverId !== "string" || !v.serverId) return null;
+  const submissionCandidate = {
+    continuationId: v.continuationId,
+    round: v.round,
+    responses: v.responses,
+  };
+  if (!isMrtrResumeSubmission(submissionCandidate)) return null;
+  return {
+    toolCallId: v.toolCallId,
+    serverId: v.serverId,
+    continuationId: submissionCandidate.continuationId as string,
+    round: submissionCandidate.round as number,
+    responses: submissionCandidate.responses as Record<
+      string,
+      MrtrElicitationResponse
+    >,
+  };
+}
 
 chatV2.post("/", async (c) => {
   // NOTE: This route does NOT use handleRoute() because handleMCPJamFreeChatModel
@@ -441,12 +490,60 @@ chatV2.post("/", async (c) => {
       clientVersion: hostedBody.hostedElicitationVersion,
     });
 
+    // ── Hosted MRTR (input_required, §12.5) gate + resume parse ─────────────
+    // MRTR suspend/resume rides the SAME elicitation capability (a round embeds
+    // `elicitation/create`), so it is enabled only alongside elicitation (both
+    // handlers present → legacy + MRTR both work) AND on its own version
+    // handshake so a stale browser fails fast. Emulated MCPJam engine only:
+    // BYOK (AI-SDK-owned loop) and harness (separate MCP plane) do not route a
+    // suspend through this manager, so registering the collector there could
+    // strand a round. `respectToolVisibility` is preserved across the retry
+    // because the SAME manager (same advertised/gated tool set) drives it.
+    const isEmulatedMcpjam =
+      Boolean(modelDefinition.id) &&
+      isHostedCatalogModel(String(modelDefinition.id), modelDefinition.provider) &&
+      !resolvedExecution.harness;
+    const rawMrtrVersion = (rawBody as Record<string, unknown>).hostedMrtrVersion;
+    const mrtrEnabled =
+      isEmulatedMcpjam &&
+      elicitationEnabled &&
+      hostDeclaresElicitation(effectiveClientCapabilities) &&
+      rawMrtrVersion === HOSTED_MRTR_VERSION;
+
+    const rawMrtrResume = (rawBody as Record<string, unknown>).mrtrResume;
+    const mrtrResumeRequest = parseMrtrResumeRequest(rawMrtrResume);
+    if (rawMrtrResume !== undefined && !mrtrResumeRequest) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "Malformed mrtrResume descriptor",
+      );
+    }
+    if (mrtrResumeRequest && !mrtrEnabled) {
+      // A resume for a continuation this turn cannot drive (version mismatch /
+      // wrong engine) must fail fast rather than silently drop it.
+      throw new WebRouteError(
+        409,
+        ErrorCode.VALIDATION_ERROR,
+        "This turn cannot resume an MRTR continuation (version or engine mismatch)",
+      );
+    }
+
+    // Resolve the Convex-valid bearer once for both bridges (NOT the raw
+    // Authorization header: WorkOS API-key callers send an `sk_…` key Convex
+    // cannot verify; this resolves the delegated JWT and passes JWTs through).
+    const convexBearer =
+      elicitationEnabled || mrtrEnabled || mrtrResumeRequest
+        ? await getConvexBearerForRequest(c)
+        : undefined;
+    const mrtrAuthPrincipal =
+      ((c as any).get("userId") as string | undefined) ??
+      ((c as any).get("guestId") as string | undefined) ??
+      "anonymous";
+
     const elicitationBridge = elicitationEnabled
       ? new HostedElicitationBridge({
-          // NOT the raw Authorization header: for WorkOS API-key callers that
-          // is an `sk_…` key Convex cannot verify. This resolves the delegated
-          // JWT for those callers and passes JWTs through untouched.
-          convexBearer: await getConvexBearerForRequest(c),
+          convexBearer: convexBearer!,
           projectId: hostedBody.projectId,
           chatSessionId: hostedBody.chatSessionId,
           serverNamesById:
@@ -454,6 +551,20 @@ chatV2.post("/", async (c) => {
           abortSignal: c.req.raw.signal as AbortSignal | undefined,
         })
       : undefined;
+
+    const mrtrBridge =
+      mrtrEnabled && convexBearer
+        ? new HostedMrtrBridge({
+            bearer: convexBearer,
+            projectId: hostedBody.projectId,
+            ...(hostedBody.chatSessionId
+              ? { chatSessionId: hostedBody.chatSessionId }
+              : {}),
+            serverNamesById:
+              buildServerNamesById(selectedServerIds, selectedServerNames) ?? {},
+            authPrincipal: mrtrAuthPrincipal,
+          })
+        : undefined;
 
     // Membership chat (no share/chatbox token) is the default — the backend
     // authorizes via project ownership for both guest and authed users.
@@ -492,9 +603,57 @@ chatV2.post("/", async (c) => {
               elicitationTimeoutExtensionMs: ELICITATION_TIMEOUT_EXTENSION_MS,
             }
           : {}),
+        // Registered SYNCHRONOUSLY inside createAuthorizedManager (before the
+        // connect microtask) so `buildCapabilities` advertises `elicitation`
+        // for MRTR-capable servers — same race discipline as elicitation.
+        ...(mrtrBridge
+          ? { mrtrInputCollectorForServer: mrtrBridge.mrtrInputCollectorForServer }
+          : {}),
       },
     );
     oauthServerUrls = urls;
+    // Inject the live manager so the collector's fingerprint/era thunks can
+    // read the negotiated identity at suspend time (post-connect).
+    mrtrBridge?.setManager(manager);
+
+    // Build the engine resume descriptor: on a fresh resume request the engine
+    // drives one retry leg (with reconstructed output-schema validation) before
+    // the first model call and splices the result. `resolve` closes over the
+    // freshly-authorized manager for the bound server.
+    const mrtrEngineResume: MrtrEngineResume | undefined =
+      mrtrResumeRequest && convexBearer
+        ? {
+            toolCallId: mrtrResumeRequest.toolCallId,
+            resolve: (emit) =>
+              resolveMrtrChatResume({
+                manager,
+                bearer: convexBearer,
+                serverId: mrtrResumeRequest.serverId,
+                ...(buildServerNamesById(
+                  selectedServerIds,
+                  selectedServerNames,
+                )?.[mrtrResumeRequest.serverId]
+                  ? {
+                      serverName: buildServerNamesById(
+                        selectedServerIds,
+                        selectedServerNames,
+                      )![mrtrResumeRequest.serverId],
+                    }
+                  : {}),
+                toolCallId: mrtrResumeRequest.toolCallId,
+                submission: {
+                  continuationId: mrtrResumeRequest.continuationId,
+                  round: mrtrResumeRequest.round,
+                  responses: mrtrResumeRequest.responses,
+                },
+                authPrincipal: mrtrAuthPrincipal,
+                ...(modelVisibleMcpToolResults
+                  ? { modelVisibleMcpToolResults }
+                  : {}),
+                emit,
+              }),
+          }
+        : undefined;
 
     // SEP-1865 App-Provided Tools: validate the client snapshot at the
     // boundary. Oversize / malformed entries 400 with a clean message
@@ -646,6 +805,8 @@ chatV2.post("/", async (c) => {
           abortSignal: c.req.raw.signal as AbortSignal | undefined,
           rpcCollector,
           elicitationBridge,
+          ...(mrtrBridge ? { mrtrBridge } : {}),
+          ...(mrtrEngineResume ? { mrtrResume: mrtrEngineResume } : {}),
           c,
         },
       });

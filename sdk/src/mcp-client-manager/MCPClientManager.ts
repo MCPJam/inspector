@@ -2476,6 +2476,28 @@ export class MCPClientManager {
   }
 
   /**
+   * Public reconstruction seam for the HOSTED MRTR resume path (§12.5, PR5).
+   *
+   * The hosted continuation transport drives an MRTR retry leg via
+   * `resumeInputRequiredOperation` (the explicit-schema `requestWithSchema`
+   * sender), which — like the local MRTR tool path — bypasses upstream
+   * `callTool`'s output-schema assertion. On resume there is no
+   * `runInputRequiredOperation` loop to carry the `validateResponse` hook, so a
+   * fresh-request resume worker calls this to re-impose the SAME assertion the
+   * local path applies, reusing the SAME `DialectAwareJsonSchemaValidator`
+   * instance rather than a divergent inspector-side re-implementation. Throws a
+   * `TypeError` on a schema mismatch / missing structured content, exactly as
+   * the local path does; a best-effort no-op when the schema can't be resolved.
+   */
+  async assertMrtrToolOutputSchema(
+    serverId: string,
+    toolName: string,
+    result: CallToolResult
+  ): Promise<void> {
+    return this.validateToolOutputSchema(serverId, toolName, result);
+  }
+
+  /**
    * Reconstructs upstream `callTool`'s output-schema assertion on the final
    * complete result of an MRTR tool call (the `requestWithSchema` leg path
    * bypasses it). Best-effort schema resolution: if the tool's `outputSchema`
