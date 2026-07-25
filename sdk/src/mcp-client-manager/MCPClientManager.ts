@@ -546,6 +546,9 @@ export class MCPClientManager {
     this.notificationManager.clearServer(serverId);
     this.elicitationManager.clearServer(serverId);
     this.perRequestLogLevels.delete(serverId);
+    // Purge the MRTR collector too; otherwise a re-registered server inherits
+    // the previous owner's collector closure and stale `elicitation` capability.
+    this.mrtrInputCollectors.delete(serverId);
   }
 
   /**
@@ -2395,7 +2398,13 @@ export class MCPClientManager {
               client.requestWithSchema(
                 req as Request,
                 withInputRequired(defaultResultSchemaForMethod("tools/call")),
-                { ...callOptions, allowInputRequired: true, signal }
+                // Pass `callOptions` through untouched (matching the legacy
+                // `client.callTool(callParams, callOptions)` sibling): it carries
+                // the composed elicitation-timeout watchdog signal. Overwriting
+                // `.signal` with the outer retry `signal` would drop that
+                // watchdog; the outer abort is already enforced by
+                // `runRetriedOperation`'s `awaitWithAbort` wrapper.
+                { ...callOptions, allowInputRequired: true }
               ) as Promise<CallToolResult | InputRequiredResult>
           );
         }

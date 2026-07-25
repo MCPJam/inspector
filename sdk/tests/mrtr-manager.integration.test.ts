@@ -126,12 +126,19 @@ describe("MCPClientManager × modern MRTR fixture over HTTP", () => {
   });
 
   it("leaves the non-MRTR path unchanged when no collector is registered", async () => {
-    // A modern server returning input_required with no collector surfaces the
-    // SDK's typed manual-mode error rather than silently mishandling it.
+    // Without a collector, elicitation is NOT advertised (advertise=enforce), so
+    // the conformant modern server refuses to embed the elicitation request and
+    // rejects with the typed "missing required client capability" protocol error
+    // (-32021) rather than any unrelated failure. Assert on that specific error
+    // so a regression that silently mishandles the no-collector path is caught.
     manager.clearMrtrInputCollector("fixture");
     await connect();
-    await expect(
-      manager.executeTool("fixture", "confirm", { topic: "x" }),
-    ).rejects.toBeTruthy();
+    const error = await manager
+      .executeTool("fixture", "confirm", { topic: "x" })
+      .then(() => undefined, (e: unknown) => e);
+    expect((error as { code?: number })?.code).toBe(-32021);
+    expect((error as { message?: string })?.message).toMatch(
+      /client capabilities do not declare/i,
+    );
   });
 });
