@@ -1,6 +1,6 @@
-import { useId } from "react";
+import { useId, useState } from "react";
 import { Input } from "@mcpjam/design-system/input";
-import { ChevronDown, ChevronRight, Plus, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Eye, EyeOff, Plus, X } from "lucide-react";
 
 interface EnvVarsSectionProps {
   envVars: Array<{ key: string; value: string }>;
@@ -32,13 +32,56 @@ export function EnvVarsSection({
   // without colliding on a shared element id.
   const bodyId = useId();
 
+  // Values render masked so an API key isn't sitting in cleartext for anyone
+  // looking at the screen. This is shoulder-surfing cover, not access control:
+  // the value is already in the form, so the eye is a pure client-side toggle —
+  // no fetch, no round-trip. `defaultVisible` sets the baseline for rows we
+  // haven't heard about yet; `valueOverrides` holds the per-row eye state.
+  const [defaultVisible, setDefaultVisible] = useState(false);
+  const [valueOverrides, setValueOverrides] = useState<Record<number, boolean>>(
+    {}
+  );
+  const isValueVisible = (index: number) =>
+    valueOverrides[index] ?? defaultVisible;
+
+  const toggleValueVisibility = (index: number) => {
+    const next = !isValueVisible(index);
+    setValueOverrides((prev) => ({ ...prev, [index]: next }));
+  };
+
   // Adding from the collapsed state used to append an invisible row — expand
   // first so the new row is always where the click points.
   const handleAdd = () => {
     if (!showEnvVars) {
       onToggle();
     }
+    // The row you're about to type into starts unmasked; masking your own
+    // keystrokes as you enter them helps nobody.
+    setValueOverrides((prev) => ({ ...prev, [envVars.length]: true }));
     onAdd();
+  };
+
+  // Rows are keyed by position, so dropping one has to slide every override
+  // above it down a slot — otherwise the eye state lands on the wrong variable.
+  const handleRemove = (index: number) => {
+    setValueOverrides((prev) => {
+      const next: Record<number, boolean> = {};
+      for (const [key, visible] of Object.entries(prev)) {
+        const at = Number(key);
+        if (at === index) continue;
+        next[at > index ? at - 1 : at] = visible;
+      }
+      return next;
+    });
+    onRemove(index);
+  };
+
+  // Reveal is an explicit "show me the stored values", so the rows it fetches
+  // arrive unmasked. Each eye can put one back.
+  const handleReveal = () => {
+    setDefaultVisible(true);
+    setValueOverrides({});
+    onReveal?.();
   };
 
   return (
@@ -98,9 +141,10 @@ export function EnvVarsSection({
             <button
               type="button"
               disabled={isRevealing || !onReveal}
-              onClick={onReveal}
-              className="rounded border border-border bg-background px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+              onClick={handleReveal}
+              className="flex shrink-0 items-center gap-1.5 rounded border border-border bg-background px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
             >
+              <Eye className="h-3.5 w-3.5" aria-hidden="true" />
               {isRevealing ? "Revealing..." : "Reveal"}
             </button>
           </div>
@@ -109,7 +153,7 @@ export function EnvVarsSection({
         {showEnvVars && !isHidden && envVars.length === 0 && (
           <button
             type="button"
-            onClick={onAdd}
+            onClick={handleAdd}
             className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-border py-2.5 text-xs text-muted-foreground transition-colors hover:border-foreground/30 hover:bg-muted/40 hover:text-foreground"
           >
             <Plus className="h-3.5 w-3.5" />
@@ -120,48 +164,70 @@ export function EnvVarsSection({
         {showEnvVars && envVars.length > 0 && (
           // -mx-1/px-1 keeps focus rings from being clipped by the scroller.
           <div className="-mx-1 max-h-52 space-y-1.5 overflow-y-auto px-1">
-            {envVars.map((envVar, index) => (
-              <div key={index} className="flex items-center gap-1.5">
-                <Input
-                  value={envVar.key}
-                  onChange={(e) => onUpdate(index, "key", e.target.value)}
-                  placeholder="KEY"
-                  spellCheck={false}
-                  autoCapitalize="off"
-                  autoCorrect="off"
-                  aria-label={`Environment variable ${index + 1} name`}
-                  className="h-8 flex-1 font-mono text-xs"
-                />
-                <span
-                  aria-hidden="true"
-                  className="shrink-0 select-none text-xs text-muted-foreground/70"
-                >
-                  =
-                </span>
-                <Input
-                  value={envVar.value}
-                  onChange={(e) => onUpdate(index, "value", e.target.value)}
-                  placeholder="value"
-                  spellCheck={false}
-                  autoCapitalize="off"
-                  autoCorrect="off"
-                  aria-label={`Environment variable ${index + 1} value`}
-                  className="h-8 flex-[1.4] font-mono text-xs"
-                />
-                <button
-                  type="button"
-                  onClick={() => onRemove(index)}
-                  aria-label={
-                    envVar.key
-                      ? `Remove ${envVar.key}`
-                      : `Remove variable ${index + 1}`
-                  }
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-destructive"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            ))}
+            {envVars.map((envVar, index) => {
+              const valueVisible = isValueVisible(index);
+              const label = envVar.key || `variable ${index + 1}`;
+              return (
+                <div key={index} className="flex items-center gap-1.5">
+                  <Input
+                    value={envVar.key}
+                    onChange={(e) => onUpdate(index, "key", e.target.value)}
+                    placeholder="KEY"
+                    spellCheck={false}
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                    aria-label={`Environment variable ${index + 1} name`}
+                    className="h-8 flex-1 font-mono text-xs"
+                  />
+                  <span
+                    aria-hidden="true"
+                    className="shrink-0 select-none text-xs text-muted-foreground/70"
+                  >
+                    =
+                  </span>
+                  <div className="relative flex-[1.4]">
+                    <Input
+                      type={valueVisible ? "text" : "password"}
+                      value={envVar.value}
+                      onChange={(e) => onUpdate(index, "value", e.target.value)}
+                      placeholder="value"
+                      spellCheck={false}
+                      autoCapitalize="off"
+                      autoCorrect="off"
+                      // Keeps the browser's password manager from offering to
+                      // save an MCP server's env var as a login.
+                      autoComplete="off"
+                      aria-label={`Environment variable ${index + 1} value`}
+                      className="h-8 w-full pr-8 font-mono text-xs"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => toggleValueVisibility(index)}
+                      aria-label={
+                        valueVisible
+                          ? `Hide value for ${label}`
+                          : `Show value for ${label}`
+                      }
+                      className="absolute right-0.5 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
+                    >
+                      {valueVisible ? (
+                        <EyeOff className="h-3.5 w-3.5" />
+                      ) : (
+                        <Eye className="h-3.5 w-3.5" />
+                      )}
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleRemove(index)}
+                    aria-label={`Remove ${label}`}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-destructive"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
