@@ -79,8 +79,11 @@ describe("MCPClientManager step-up transport wiring (SEP-2350)", () => {
     // challenge during connect (what `onInsufficientScope: "throw"` produces).
     const challenge = new InsufficientScopeError({
       requiredScope: "read write admin",
-      resourceMetadataUrl:
+      // The client transport constructs this as a `URL` (it parses the
+      // `WWW-Authenticate` header via `new URL(...)`); mirror that here.
+      resourceMetadataUrl: new URL(
         "https://rs.example/.well-known/oauth-protected-resource",
+      ),
     });
     streamableStartError = challenge;
 
