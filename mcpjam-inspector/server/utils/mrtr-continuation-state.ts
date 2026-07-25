@@ -151,9 +151,12 @@ async function postContinuation(
       signal: controller.signal,
     });
   } catch (err) {
-    // Redaction: log the path + a generic message ONLY — never the body, which
-    // carries the opaque resumeState (and thus requestState).
-    logger.error(`[mrtr-continuation] ${pathSuffix} network error`);
+    // Redaction: log the path + the fetch-level exception ONLY — never the
+    // request body, which carries the opaque resumeState (and thus
+    // requestState). `err` here is a transport error (connection refused, DNS,
+    // timeout, abort); it does not contain the body, so surfacing it to
+    // Sentry/console is safe and preserves the concrete cause.
+    logger.error(`[mrtr-continuation] ${pathSuffix} network error`, err);
     return {
       ok: false,
       status: 502,

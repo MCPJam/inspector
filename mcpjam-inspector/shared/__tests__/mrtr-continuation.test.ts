@@ -124,4 +124,14 @@ describe("isMrtrResumeSubmission", () => {
       isMrtrResumeSubmission({ continuationId: "c", round: 0 }),
     ).toBe(false);
   });
+
+  it("rejects an empty responses map (nothing to answer)", () => {
+    expect(
+      isMrtrResumeSubmission({
+        continuationId: "cont-1",
+        round: 0,
+        responses: {},
+      }),
+    ).toBe(false);
+  });
 });

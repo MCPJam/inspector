@@ -38,7 +38,10 @@ import {
   projectServerSchema,
 } from "./auth.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
-import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
+import {
+  WEB_CALL_TIMEOUT_MS,
+  MRTR_RESPONSE_CONTENT_MAX_BYTES,
+} from "../../config.js";
 import {
   computeMrtrBindingFingerprint,
   resumeMrtrContinuationLeg,
@@ -128,6 +131,28 @@ mrtrContinuation.post("/resume", async (c) =>
       );
     }
 
+    // Per-response content cap: the global body limit only bounds the whole
+    // request, so a single `content` between the per-response bound and 1 MiB
+    // would otherwise be stored and forwarded to the MCP server. Reject
+    // oversized content here (never truncate — a truncated response would drive
+    // a different request) before it reaches the store.
+    for (const [key, response] of Object.entries(
+      submissionCandidate.responses,
+    )) {
+      if (response.content === undefined) continue;
+      const bytes = Buffer.byteLength(
+        JSON.stringify(response.content),
+        "utf8",
+      );
+      if (bytes > MRTR_RESPONSE_CONTENT_MAX_BYTES) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          `Response content for "${key}" is ${bytes} bytes, over the ${MRTR_RESPONSE_CONTENT_MAX_BYTES}-byte per-response cap`,
+        );
+      }
+    }
+
     const bearer = await getConvexBearerForRequest(c);
     const { manager, body } = await createManualHostedConnection(
       c,
@@ -157,9 +182,15 @@ mrtrContinuation.post("/resume", async (c) =>
         );
       }
 
+      // The auth-principal half of the binding must differentiate signed-in
+      // principals: bearer-auth sets `mcpjamUserId`/`workosUserId` for WorkOS
+      // sessions and `guestId` for guests (there is no `userId` context var), so
+      // a real per-user id — not a shared "anonymous" — is what fails a
+      // cross-principal resume closed.
       const authPrincipal =
-        ((c as any).get("userId") as string | undefined) ??
-        ((c as any).get("guestId") as string | undefined) ??
+        c.get("mcpjamUserId") ??
+        c.get("workosUserId") ??
+        c.get("guestId") ??
         "anonymous";
       const bindingFingerprint = computeMrtrBindingFingerprint({
         serverId,

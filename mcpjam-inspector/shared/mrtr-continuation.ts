@@ -280,6 +280,10 @@ export function isMrtrResumeSubmission(
     return false;
   }
   if (!isRecord(value.responses)) return false;
+  // One response per request key: an empty map answers nothing and would drive
+  // an empty round, so reject it here (mirrors isMrtrContinuationEvent, which
+  // requires ≥1 inputRequests).
+  if (Object.keys(value.responses).length === 0) return false;
   return Object.values(value.responses).every(
     (r) =>
       isRecord(r) &&
