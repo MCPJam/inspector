@@ -288,14 +288,20 @@ try {
 Returns all tools available on a server.
 
 ```typescript
-listTools(serverId: string): Promise<{ tools: Tool[] }>
+listTools(
+  serverId: string,
+  params?: { cursor?: string },
+  options?: { cacheMode?: CacheMode }
+): Promise<{ tools: Tool[] }>
 ```
 
 #### Parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `serverId` | `string` | The server ID |
+| `serverId` | `string` | The server ID. |
+| `params.cursor` | `string` | Optional pagination cursor. |
+| `options.cacheMode` | `CacheMode` | Per-call cache disposition. `"use"` (default) serves a still-fresh cached entry with zero wire exchange; `"refresh"` always fetches and re-stores; `"bypass"` fetches without consulting or writing the cache. |
 
 #### Returns
 
@@ -305,14 +311,18 @@ listTools(serverId: string): Promise<{ tools: Tool[] }>
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `name` | `string` | Tool identifier |
-| `description` | `string` | Human-readable description |
-| `inputSchema` | `object` | JSON Schema for tool arguments |
+| `name` | `string` | Tool identifier. |
+| `description` | `string` | Human-readable description. |
+| `inputSchema` | `object` | JSON Schema for tool arguments. |
 
 #### Example
 
 ```typescript
+// Default: may serve from cache when the server sent ttlMs > 0
 const tools = await manager.listTools("myServer");
+
+// Always fetch fresh from the server
+const fresh = await manager.listTools("myServer", undefined, { cacheMode: "refresh" });
 
 for (const tool of tools.tools) {
   console.log(`${tool.name}: ${tool.description}`);
