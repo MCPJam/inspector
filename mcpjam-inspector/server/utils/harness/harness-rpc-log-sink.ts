@@ -152,19 +152,37 @@ export async function flushHarnessRpcLogs(): Promise<void> {
   }
 }
 
+export type RpcLogCursor = { serverId: string; sinceMs: number };
+
+export type CrossInstanceRpcLogPage = {
+  entries: CrossInstanceRpcLogEntry[];
+  /** Per-server cursors for the NEXT read. Adopt these verbatim — see below. */
+  cursors: RpcLogCursor[];
+};
+
 /**
- * Read frames OTHER instances wrote for these servers since a cursor. Excludes
- * this instance (its frames arrived via the bus). Best-effort: any failure
- * yields `[]` so a slow/erroring sink never blocks a turn's stream.
+ * Read frames OTHER instances wrote for these servers since a PER-SERVER cursor.
+ * Excludes this instance (its frames arrived via the bus). Best-effort: any
+ * failure yields no entries and UNCHANGED cursors, so a slow/erroring sink never
+ * blocks a turn's stream and never silently skips frames.
+ *
+ * The caller must adopt the returned `cursors` rather than deriving them from
+ * `entries`. Own-instance rows are filtered server-side AFTER the index scan, so
+ * a window full of them yields zero entries while the scan still made progress —
+ * a cursor derived from delivered rows would never advance and that server would
+ * go blind for the rest of the turn.
  */
 export async function readCrossInstanceRpcLogs(args: {
-  serverIds: string[];
-  sinceMs: number;
+  servers: RpcLogCursor[];
   limit?: number;
-}): Promise<CrossInstanceRpcLogEntry[]> {
+}): Promise<CrossInstanceRpcLogPage> {
+  const unchanged: CrossInstanceRpcLogPage = {
+    entries: [],
+    cursors: args.servers,
+  };
   const base = convexBase();
   const token = serviceToken();
-  if (!base || !token || args.serverIds.length === 0) return [];
+  if (!base || !token || args.servers.length === 0) return unchanged;
   try {
     const res = await fetch(new URL("/harness/rpc-logs/read", base), {
       method: "POST",
@@ -173,17 +191,32 @@ export async function readCrossInstanceRpcLogs(args: {
         "x-inspector-service-token": token,
       },
       body: JSON.stringify({
-        serverIds: args.serverIds,
-        sinceMs: args.sinceMs,
+        servers: args.servers,
         excludeInstanceId: INSTANCE_ID,
         ...(args.limit !== undefined ? { limit: args.limit } : {}),
       }),
     });
-    if (!res.ok) return [];
-    const body = (await res.json()) as { entries?: CrossInstanceRpcLogEntry[] };
-    return Array.isArray(body.entries) ? body.entries : [];
+    if (!res.ok) return unchanged;
+    const body = (await res.json()) as {
+      entries?: CrossInstanceRpcLogEntry[];
+      cursors?: RpcLogCursor[];
+    };
+    const cursors = Array.isArray(body.cursors)
+      ? body.cursors.filter(
+          (c): c is RpcLogCursor =>
+            !!c &&
+            typeof c.serverId === "string" &&
+            typeof c.sinceMs === "number" &&
+            Number.isFinite(c.sinceMs)
+        )
+      : [];
+    return {
+      entries: Array.isArray(body.entries) ? body.entries : [],
+      // A response without usable cursors must not rewind or drop progress.
+      cursors: cursors.length > 0 ? cursors : args.servers,
+    };
   } catch {
-    return [];
+    return unchanged;
   }
 }
 

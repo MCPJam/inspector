@@ -209,8 +209,16 @@ const CROSS_INSTANCE_POLL_MS = 1000;
  *
  * The sink read EXCLUDES this process's own instance, so a frame the bus already
  * delivered is never pulled again — the two paths never double-deliver. Dedups
- * on the sink row id (a batch write stamps one `createdAt`, so the cursor
- * advances by `createdAt` with `>=` while the id set prevents re-delivery).
+ * on the sink row id (a batch write stamps one `createdAt`, so cursors are
+ * inclusive and the id set prevents re-delivery of the boundary rows).
+ *
+ * Cursors are PER-SERVER and come from the sink's response — never derived from
+ * the frames we received. Two reasons, both silent-data-loss bugs otherwise:
+ * own-instance rows are filtered server-side AFTER the index scan, so a busy
+ * server can yield zero frames while the scan still advanced (deriving the
+ * cursor from delivered frames would stall that server for the rest of the
+ * turn); and a single global cursor would let a busy server drag a quiet one
+ * past rows it hasn't flushed yet.
  *
  * No-op when the sink isn't configured (single-instance / self-hosted) or the
  * turn has no servers. Best-effort throughout — a slow or erroring sink never
@@ -222,15 +230,19 @@ export function startCrossInstanceRpcLogPoll(
 ): () => void {
   if (serverIds.length === 0 || !isRpcLogSinkConfigured()) return () => {};
   let stopped = false;
-  let sinceMs = Date.now(); // only frames from this turn onward
+  const startedAt = Date.now(); // only frames from this turn onward
+  let cursors = [...new Set(serverIds)].map((serverId) => ({
+    serverId,
+    sinceMs: startedAt,
+  }));
   const seen = new Set<string>(); // sink row ids already delivered
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   const tick = async () => {
     if (stopped) return;
     try {
-      const entries = await readCrossInstanceRpcLogs({ serverIds, sinceMs });
-      for (const e of entries) {
+      const page = await readCrossInstanceRpcLogs({ servers: cursors });
+      for (const e of page.entries) {
         if (seen.has(e.id)) continue;
         seen.add(e.id);
         collector.rpcLogger({
@@ -238,10 +250,11 @@ export function startCrossInstanceRpcLogPoll(
           message: e.message,
           serverId: e.serverId,
         });
-        if (e.createdAt > sinceMs) sinceMs = e.createdAt;
       }
+      cursors = page.cursors;
     } catch {
-      // best-effort; observation-only
+      // Best-effort; observation-only. Cursors stay put, so a failed tick
+      // re-reads rather than skipping frames.
     }
     if (!stopped) {
       timer = setTimeout(tick, CROSS_INSTANCE_POLL_MS);

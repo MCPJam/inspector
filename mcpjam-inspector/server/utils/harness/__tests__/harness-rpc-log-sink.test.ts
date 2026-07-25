@@ -131,40 +131,70 @@ describe("readCrossInstanceRpcLogs", () => {
         createdAt: 5,
       },
     ];
+    const cursors = [{ serverId: "srv-a", sinceMs: 5 }];
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ entries }),
+      json: async () => ({ entries, cursors }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
     const got = await readCrossInstanceRpcLogs({
-      serverIds: ["srv-a"],
-      sinceMs: 0,
+      servers: [{ serverId: "srv-a", sinceMs: 0 }],
     });
-    expect(got).toEqual(entries);
+    expect(got).toEqual({ entries, cursors });
     const body = lastFetchBody(fetchMock);
     expect(body.excludeInstanceId).toBe(getInspectorInstanceId());
-    expect(body).toMatchObject({ serverIds: ["srv-a"], sinceMs: 0 });
+    expect(body).toMatchObject({
+      servers: [{ serverId: "srv-a", sinceMs: 0 }],
+    });
   });
 
-  it("returns [] on a sink error (never blocks the turn)", async () => {
+  it("keeps the caller's cursors when the sink omits them (never rewinds or skips)", async () => {
     configure();
+    const servers = [{ serverId: "srv-a", sinceMs: 42 }];
+    // Malformed/absent cursors must not silently reset progress to 0.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) })
+    );
+    expect(await readCrossInstanceRpcLogs({ servers })).toEqual({
+      entries: [],
+      cursors: servers,
+    });
+  });
+
+  it("returns unchanged cursors on a non-ok response", async () => {
+    configure();
+    const servers = [{ serverId: "srv-a", sinceMs: 42 }];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false }));
+    expect(await readCrossInstanceRpcLogs({ servers })).toEqual({
+      entries: [],
+      cursors: servers,
+    });
+  });
+
+  it("returns no entries on a sink error (never blocks the turn)", async () => {
+    configure();
+    const servers = [{ serverId: "srv-a", sinceMs: 0 }];
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("boom")));
-    expect(
-      await readCrossInstanceRpcLogs({ serverIds: ["srv-a"], sinceMs: 0 })
-    ).toEqual([]);
+    expect(await readCrossInstanceRpcLogs({ servers })).toEqual({
+      entries: [],
+      cursors: servers,
+    });
   });
 
   it("no-ops with no servers or when unconfigured", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    expect(
-      await readCrossInstanceRpcLogs({ serverIds: [], sinceMs: 0 })
-    ).toEqual([]);
+    expect(await readCrossInstanceRpcLogs({ servers: [] })).toEqual({
+      entries: [],
+      cursors: [],
+    });
     configure();
-    expect(
-      await readCrossInstanceRpcLogs({ serverIds: [], sinceMs: 0 })
-    ).toEqual([]);
+    expect(await readCrossInstanceRpcLogs({ servers: [] })).toEqual({
+      entries: [],
+      cursors: [],
+    });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
