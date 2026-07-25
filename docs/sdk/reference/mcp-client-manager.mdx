@@ -425,20 +425,22 @@ Reads the content of a resource.
 ```typescript
 readResource(
   serverId: string,
-  params: { uri: string }
-): Promise<ResourceContent>
+  params: { uri: string },
+  options?: { cacheMode?: CacheMode }
+): Promise<ReadResourceResult>
 ```
 
 #### Parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `serverId` | `string` | The server ID |
-| `params.uri` | `string` | The resource URI to read |
+| `serverId` | `string` | The server ID. |
+| `params.uri` | `string` | The resource URI to read. |
+| `options.cacheMode` | `CacheMode` | Per-call cache disposition. See [`listTools`](#listtools) for values. |
 
 #### Returns
 
-`Promise<ResourceContent>` - The resource content.
+`Promise<ReadResourceResult>` - The resource content.
 
 #### Example
 
