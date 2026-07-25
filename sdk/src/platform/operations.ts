@@ -43,6 +43,9 @@ import type {
   PlatformEvalSuiteDetail,
   PlatformComputerAttached,
   PlatformComputerReset,
+  PlatformEnvironment,
+  PlatformEnvironmentResolved,
+  PlatformEnvironmentUpdateBody,
   PlatformImage,
   PlatformImageBuild,
   PlatformImageBuildStarted,
@@ -2735,6 +2738,465 @@ export const deleteHostOperation: PlatformOperation<
         hostId: host.id,
         // The v1 delete contract is bodyless — the route rejects any field.
         body: {},
+      },
+      { signal }
+    );
+  },
+};
+
+// ── Project Environments ─────────────────────────────────────────────────────
+//
+// Named execution bundles (one host + optional server group + optional pinned
+// skills/plugins) that eval suites and journeys run against. Distinct from the
+// sandbox images below.
+//
+// Every mutation takes `expectedRevision`, the revision last read via
+// get_project_environment / list_project_environments. That is deliberate: it
+// is what stops two concurrent edits from silently clobbering each other.
+
+const ENVIRONMENT_SELECTOR_DESCRIPTION = "Project environment name or ID.";
+const EXPECTED_REVISION_DESCRIPTION =
+  "The `revision` you last read for this environment (from get_project_environment). If the environment changed since, the write is rejected with a conflict instead of overwriting the other edit — re-read and retry.";
+
+/**
+ * Resolves by id or name across LIVE **and** archived environments: restore
+ * necessarily targets an archived one, and a name-based selector has to be
+ * able to find it.
+ */
+async function resolveEnvironmentSelector(
+  client: PlatformApiClient,
+  project: PlatformProject,
+  selector: string,
+  signal: AbortSignal | undefined
+): Promise<PlatformEnvironment> {
+  const page = await client.listEnvironments(
+    { projectId: project.id, includeArchived: true },
+    { signal }
+  );
+  return resolveByIdOrName(
+    page.items,
+    selector,
+    "Project environment",
+    `project "${project.name}"`
+  );
+}
+
+const listEnvironmentsInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  includeArchived: z
+    .boolean()
+    .optional()
+    .describe(
+      "Include archived environments. Off by default; turn it on to find an environment to restore."
+    ),
+});
+export type ListEnvironmentsInput = z.infer<typeof listEnvironmentsInput>;
+
+export type ListEnvironmentsResult = {
+  project: SelectedProjectInfo;
+  items: PlatformEnvironment[];
+  otherProjects: ProjectInfo[];
+};
+
+export const listEnvironmentsOperation: PlatformOperation<
+  ListEnvironmentsInput,
+  ListEnvironmentsResult
+> = {
+  name: "list_project_environments",
+  title: "List MCPJam project environments",
+  description:
+    "List the project environments in an MCPJam project. An environment is a named execution bundle (one host, optionally a standalone server group, pinned skills, and pinned plugin versions) that eval suites and journeys run against. Not a Computer sandbox image.",
+  readOnly: true,
+  inputSchema: listEnvironmentsInput,
+  async execute(input, { client, signal }) {
+    const { project, sortedProjects } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const page = await client.listEnvironments(
+      {
+        projectId: project.id,
+        ...(input.includeArchived !== undefined
+          ? { includeArchived: input.includeArchived }
+          : {}),
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      items: page.items,
+      otherProjects: toOtherProjects(sortedProjects, project.id),
+    };
+  },
+};
+
+const environmentSelectorInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  environment: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(ENVIRONMENT_SELECTOR_DESCRIPTION),
+});
+export type EnvironmentSelectorInput = z.infer<typeof environmentSelectorInput>;
+
+export const getEnvironmentOperation: PlatformOperation<
+  EnvironmentSelectorInput,
+  PlatformEnvironment
+> = {
+  name: "get_project_environment",
+  title: "Show an MCPJam project environment",
+  description:
+    "Show one project environment: its host, optional standalone server group, pinned skill selection, pinned plugin versions, and its current `revision` (which you pass as `expectedRevision` when updating it).",
+  readOnly: true,
+  inputSchema: environmentSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const environment = await resolveEnvironmentSelector(
+      client,
+      project,
+      input.environment,
+      signal
+    );
+    return client.getEnvironment(
+      { projectId: project.id, environmentId: environment.id },
+      { signal }
+    );
+  },
+};
+
+export const resolveEnvironmentOperation: PlatformOperation<
+  EnvironmentSelectorInput,
+  PlatformEnvironmentResolved
+> = {
+  name: "resolve_project_environment",
+  title: "Preview what an MCPJam project environment resolves to",
+  description:
+    "Resolve a project environment to the exact execution inputs a run would use right now: the host's current config, the closed server set (including servers contributed by pinned plugin versions), and the resolved plugin versions. Fails with a conflict if the environment cannot currently produce a runnable configuration — for example a pinned plugin was disabled.",
+  readOnly: true,
+  inputSchema: environmentSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const environment = await resolveEnvironmentSelector(
+      client,
+      project,
+      input.environment,
+      signal
+    );
+    return client.resolveEnvironment(
+      { projectId: project.id, environmentId: environment.id },
+      { signal }
+    );
+  },
+};
+
+const skillSelectionInput = z
+  .object({
+    mode: z.literal("explicit"),
+    skillIds: z
+      .array(z.string().trim().min(1))
+      .min(1)
+      .describe(
+        "Project-shared skill IDs to pin. Skills with supporting files or extra frontmatter, and plugin-component skills, cannot be pinned."
+      ),
+  })
+  .describe(
+    "Explicit pinned skill selection. Cannot be empty — omit the field entirely, or pass null when updating, to mean 'no pinned skills'."
+  );
+
+const pluginVersionIdsInput = z
+  .array(z.string().trim().min(1))
+  .min(1)
+  .describe(
+    "Plugin VERSION IDs to pin. Narrow by design: the plugin must be installed and enabled, the version must be ready, at most one version per plugin, and none of its skills may carry supporting files."
+  );
+
+const createEnvironmentInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Display name for the new environment. Must be unique among the project's live (non-archived) environments."
+    ),
+  description: z
+    .string()
+    .optional()
+    .describe("Optional free-text description."),
+  hostId: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("ID of the host this environment runs against. Required."),
+  serverAttachmentId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Optional standalone server group to pin. Omit to fall back to the host config's own servers."
+    ),
+  skillSelection: skillSelectionInput.optional(),
+  pluginVersionIds: pluginVersionIdsInput.optional(),
+});
+export type CreateEnvironmentInput = z.infer<typeof createEnvironmentInput>;
+
+export const createEnvironmentOperation: PlatformOperation<
+  CreateEnvironmentInput,
+  PlatformEnvironment
+> = {
+  name: "create_project_environment",
+  title: "Create an MCPJam project environment",
+  description:
+    "Create a project environment: a named execution bundle of one host plus an optional standalone server group, pinned skills, and pinned plugin versions. Requires project admin.",
+  readOnly: false,
+  inputSchema: createEnvironmentInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    return client.createEnvironment(
+      {
+        projectId: project.id,
+        body: {
+          name: input.name,
+          ...(input.description !== undefined
+            ? { description: input.description }
+            : {}),
+          hostId: input.hostId,
+          ...(input.serverAttachmentId !== undefined
+            ? { serverAttachmentId: input.serverAttachmentId }
+            : {}),
+          ...(input.skillSelection !== undefined
+            ? { skillSelection: input.skillSelection }
+            : {}),
+          ...(input.pluginVersionIds !== undefined
+            ? { pluginVersionIds: input.pluginVersionIds }
+            : {}),
+        },
+      },
+      { signal }
+    );
+  },
+};
+
+const updateEnvironmentInput = z
+  .object({
+    project: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(PROJECT_SELECTOR_DESCRIPTION),
+    environment: z
+      .string()
+      .trim()
+      .min(1)
+      .describe(ENVIRONMENT_SELECTOR_DESCRIPTION),
+    expectedRevision: z
+      .number()
+      .int()
+      .nonnegative()
+      .describe(EXPECTED_REVISION_DESCRIPTION),
+    name: z.string().trim().min(1).optional().describe("New display name."),
+    description: z
+      .string()
+      .optional()
+      .describe("New description. Pass an empty string to clear it."),
+    hostId: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe("New host for this environment."),
+    serverAttachmentId: z
+      .string()
+      .trim()
+      .min(1)
+      .nullable()
+      .optional()
+      .describe(
+        "New standalone server group, or null to clear the pin and fall back to the host config's servers. Omit to leave unchanged."
+      ),
+    skillSelection: skillSelectionInput
+      .nullable()
+      .optional()
+      .describe(
+        "New pinned skill selection, or null to clear it. Omit to leave unchanged."
+      ),
+    pluginVersionIds: pluginVersionIdsInput
+      .nullable()
+      .optional()
+      .describe(
+        "New pinned plugin versions, or null to clear them. Omit to leave unchanged."
+      ),
+  })
+  .refine(
+    (value) =>
+      value.name !== undefined ||
+      value.description !== undefined ||
+      value.hostId !== undefined ||
+      value.serverAttachmentId !== undefined ||
+      value.skillSelection !== undefined ||
+      value.pluginVersionIds !== undefined,
+    {
+      message:
+        "Provide at least one of `name`, `description`, `hostId`, `serverAttachmentId`, `skillSelection`, or `pluginVersionIds` to update.",
+    }
+  );
+export type UpdateEnvironmentInput = z.infer<typeof updateEnvironmentInput>;
+
+export const updateEnvironmentOperation: PlatformOperation<
+  UpdateEnvironmentInput,
+  PlatformEnvironment
+> = {
+  name: "update_project_environment",
+  title: "Update an MCPJam project environment",
+  description:
+    "Edit a project environment. Only the fields you pass change; pass null for serverAttachmentId, skillSelection, or pluginVersionIds to clear them. Requires `expectedRevision` (read it first with get_project_environment) and project admin.",
+  readOnly: false,
+  inputSchema: updateEnvironmentInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const environment = await resolveEnvironmentSelector(
+      client,
+      project,
+      input.environment,
+      signal
+    );
+    // `!== undefined` (never truthiness) so an explicit null is forwarded as a
+    // CLEAR while an omitted field stays absent and is left unchanged.
+    const body: PlatformEnvironmentUpdateBody = {
+      expectedRevision: input.expectedRevision,
+    };
+    if (input.name !== undefined) body.name = input.name;
+    if (input.description !== undefined) body.description = input.description;
+    if (input.hostId !== undefined) body.hostId = input.hostId;
+    if (input.serverAttachmentId !== undefined)
+      body.serverAttachmentId = input.serverAttachmentId;
+    if (input.skillSelection !== undefined)
+      body.skillSelection = input.skillSelection;
+    if (input.pluginVersionIds !== undefined)
+      body.pluginVersionIds = input.pluginVersionIds;
+    return client.updateEnvironment(
+      { projectId: project.id, environmentId: environment.id, body },
+      { signal }
+    );
+  },
+};
+
+const environmentRevisionInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  environment: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(ENVIRONMENT_SELECTOR_DESCRIPTION),
+  expectedRevision: z
+    .number()
+    .int()
+    .nonnegative()
+    .describe(EXPECTED_REVISION_DESCRIPTION),
+});
+export type EnvironmentRevisionInput = z.infer<typeof environmentRevisionInput>;
+
+export const archiveEnvironmentOperation: PlatformOperation<
+  EnvironmentRevisionInput,
+  PlatformEnvironment
+> = {
+  name: "archive_project_environment",
+  title: "Archive an MCPJam project environment",
+  description:
+    "Archive a project environment. It stops being selectable for runs and frees its name for a new one, but the row is kept and can be restored. Requires project admin.",
+  readOnly: false,
+  mayBeDestructive: true,
+  inputSchema: environmentRevisionInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const environment = await resolveEnvironmentSelector(
+      client,
+      project,
+      input.environment,
+      signal
+    );
+    return client.archiveEnvironment(
+      {
+        projectId: project.id,
+        environmentId: environment.id,
+        expectedRevision: input.expectedRevision,
+      },
+      { signal }
+    );
+  },
+};
+
+export const restoreEnvironmentOperation: PlatformOperation<
+  EnvironmentRevisionInput,
+  PlatformEnvironment
+> = {
+  name: "restore_project_environment",
+  title: "Restore an archived MCPJam project environment",
+  description:
+    "Restore an archived project environment. Fails with a conflict if another live environment took its name in the meantime. Plugin pins whose version no longer exists at all are dropped — compare the returned pluginVersionIds against what you archived. Requires project admin.",
+  readOnly: false,
+  inputSchema: environmentRevisionInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const environment = await resolveEnvironmentSelector(
+      client,
+      project,
+      input.environment,
+      signal
+    );
+    return client.restoreEnvironment(
+      {
+        projectId: project.id,
+        environmentId: environment.id,
+        expectedRevision: input.expectedRevision,
       },
       { signal }
     );

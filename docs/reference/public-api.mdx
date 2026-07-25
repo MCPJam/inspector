@@ -45,6 +45,10 @@ What you can do with it today:
   template like `claude`/`chatgpt`/`cursor`, or from a full host config),
   rename, and delete the named model + capability profiles you run chats and
   eval suites against
+- **Manage a project's environments** — list, read, create, edit, archive, and
+  restore the named execution bundles (host + optional server group + optional
+  pinned skills and plugin versions) that eval suites and journeys run against,
+  and **preview** what one resolves to before launching it
 - **List a project's chatboxes** — name, access mode, attached servers, and
   share link — and **read one chatbox's settings**: model, system prompt,
   tool-approval policy, and resolved servers
@@ -171,6 +175,7 @@ is stable and machine-readable; `message` is human-readable and may change;
 | `FORBIDDEN` | 403 | Key is valid but not allowed to do this |
 | `VALIDATION_ERROR` | 400 | Malformed body or parameters |
 | `NOT_FOUND` | 404 | Unknown project, server, or resource |
+| `CONFLICT` | 409 | The resource isn't in a state that accepts this write — a stale `expectedRevision`, a duplicate name, or an environment that can't currently be launched. Re-read and retry |
 | `FEATURE_NOT_SUPPORTED` | 422 | The target server doesn't support this MCP capability |
 | `RATE_LIMITED` | 429 | Too many requests — see [Rate limits](#rate-limits) |
 | `SERVER_UNREACHABLE` | 502 | Could not connect to the target MCP server |
@@ -212,6 +217,25 @@ and an interactive playground — under **Endpoints** in the sidebar.
 | `GET`, `POST /projects/{projectId}/hosts` | List hosts, or create one from a template or full config |
 | `GET`, `PATCH`, `DELETE /projects/{projectId}/hosts/{hostId}` | Read, rename/edit, or delete a host |
 | `GET /chat-sessions` | Chat sessions (`?projectId=&status=&limit=&before=`) |
+
+**Project environments** — the named execution bundles (one host, optionally a
+standalone server group, optionally pinned skills and plugin versions) that eval
+suites and journeys run against. Reads need project membership; **every write
+needs project admin**. Writes are revisioned: pass the `revision` you last read
+back as `expectedRevision`, and a stale value returns `CONFLICT` (409) instead
+of overwriting a concurrent edit.
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET`, `POST /projects/{projectId}/environments` | List environments (`?includeArchived=true` to include archived ones), or create one |
+| `GET`, `PATCH /projects/{projectId}/environments/{environmentId}` | Read one environment, or edit it (send `null` to clear `serverAttachmentId`, `skillSelection`, or `pluginVersionIds`) |
+| `GET /projects/{projectId}/environments/{environmentId}/resolve` | Preview the host config, closed server set, and pinned plugin versions this environment resolves to right now |
+| `POST /projects/{projectId}/environments/{environmentId}/archive` | Archive it — reversible, and frees the name for a new one |
+| `POST /projects/{projectId}/environments/{environmentId}/restore` | Restore an archived environment |
+
+Archive and restore are explicit sub-actions rather than a `DELETE` because the
+row is kept and restore has real semantics: it re-checks the name and drops
+plugin pins whose version no longer exists.
 
 **Server diagnostics & primitives** (`/projects/{projectId}/servers/{serverId}/...`):
 
@@ -314,7 +338,19 @@ Reruns are even shorter: `{ "suiteId": "..." }` reruns the suite exactly as
 configured, connecting the suite's saved server selection (the `202` response
 lists the resolved `servers`). Pass `serverIds` to override the selection; a
 suite with no saved selection requires it (`VALIDATION_ERROR` with
-`details.reason: "NO_SAVED_SERVER_SELECTION"` otherwise). Per-organization
+`details.reason: "NO_SAVED_SERVER_SELECTION"` otherwise).
+
+To run against a [project environment](#endpoints), pass `environmentId`
+instead. The environment supplies the closed server set — including the servers
+its pinned plugin versions contribute — so `serverIds` isn't required and is
+ignored if sent. The run is pinned to the environment revision resolved at
+launch: if the environment changes in between, the run is rejected with
+`CONFLICT` (409) rather than executing against a different configuration than
+the one whose tools were captured. Use
+`GET /projects/{projectId}/environments/{environmentId}/resolve` to see what it
+will connect before launching.
+
+Per-organization
 concurrency is capped (default **2** concurrent runs); exceeding it returns
 `429` with `details.reason: "CONCURRENT_RUN_LIMIT"` — wait for an active run
 to finish.
