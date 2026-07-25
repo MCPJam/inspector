@@ -503,7 +503,11 @@ export function ResourcesTab({
         setTemplateLoading(false);
       }
     }
-  }, [selectedTemplate, serverName, isServerConnected, getResolvedUri]);
+    // `server` is a dep because the step-up helpers this callback invokes
+    // (`driveStepUpFromError` / `resetStepUpOnSuccess`) close over it; without it
+    // a `403 insufficient_scope` on a template read could step up against a
+    // stale (or `undefined`) server after the active server changed.
+  }, [selectedTemplate, serverName, isServerConnected, getResolvedUri, server]);
 
   // Handle Enter key in template input fields
   const handleTemplateInputKeyDown = (
