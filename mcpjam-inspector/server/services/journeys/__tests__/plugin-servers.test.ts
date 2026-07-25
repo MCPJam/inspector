@@ -83,6 +83,87 @@ describe("resolveTargetPluginServerIds", () => {
     ).resolves.toEqual(["srv_plugin"]);
   });
 
+  // Codex P1. Deploy skew can hand us a shape we don't recognize, and a
+  // permissive read of one is indistinguishable from a clean all-clear —
+  // `{ targets: [{}] }` used to fall through three `?? []` defaults and return
+  // [], silently dropping the plugin. Each required array is asserted
+  // independently so a partial payload can't sneak through on the strength of
+  // the others.
+  it.each([
+    ["an empty target object", {}],
+    [
+      "a target missing servers",
+      { unavailable: [], droppedSnapshotServerIds: [] },
+    ],
+    [
+      "a target missing unavailable",
+      { servers: [], droppedSnapshotServerIds: [] },
+    ],
+    [
+      "a target missing droppedSnapshotServerIds",
+      { servers: [], unavailable: [] },
+    ],
+    [
+      "non-array fields",
+      { servers: {}, unavailable: {}, droppedSnapshotServerIds: {} },
+    ],
+  ])(
+    "rejects %s rather than reading it as 'no plugins'",
+    async (_label, target) => {
+      await expect(
+        resolveTargetPluginServerIds(clientReturning({ targets: [target] }), {
+          runId: "run1",
+          targetId: "environment:e1",
+          snapshotPluginServerIds: ["srv_plugin"],
+        })
+      ).rejects.toThrow(JourneyPluginServersUnavailableError);
+    }
+  );
+
+  it("rejects a response resolved against a DIFFERENT target", async () => {
+    await expect(
+      resolveTargetPluginServerIds(
+        clientReturning({
+          targets: [
+            {
+              targetId: "environment:other",
+              servers: [],
+              unavailable: [],
+              droppedSnapshotServerIds: [],
+            },
+          ],
+        }),
+        {
+          runId: "run1",
+          targetId: "environment:e1",
+          snapshotPluginServerIds: ["srv_plugin"],
+        }
+      )
+    ).rejects.toThrow(/different target/);
+  });
+
+  it("rejects a server entry with no usable id", async () => {
+    await expect(
+      resolveTargetPluginServerIds(
+        clientReturning({
+          targets: [
+            {
+              targetId: "environment:e1",
+              servers: [{ name: "acme:tool" }],
+              unavailable: [],
+              droppedSnapshotServerIds: [],
+            },
+          ],
+        }),
+        {
+          runId: "run1",
+          targetId: "environment:e1",
+          snapshotPluginServerIds: ["srv_plugin"],
+        }
+      )
+    ).rejects.toThrow(/unrecognized server entry/);
+  });
+
   it("throws — naming the plugin — when a pin is no longer usable", async () => {
     const client = clientReturning({
       targets: [

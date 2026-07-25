@@ -151,15 +151,37 @@ export async function resolveTargetPluginServerIds(
     );
   }
   const target = resolution.targets[0];
-  if (!target) {
+
+  // Validate the SHAPE before trusting it. This crosses a deploy boundary, so
+  // an incompatible or truncated payload is a live possibility during skew —
+  // and a permissive read of one is indistinguishable from a clean all-clear.
+  // `{ targets: [{}] }` would satisfy every check above and then fall through
+  // three `?? []` defaults to "no plugins, proceed", silently shrinking the
+  // environment: the exact failure this whole module exists to prevent. The
+  // three arrays are REQUIRED, not optional-with-a-default, because an absent
+  // `unavailable` is "I didn't get told about problems", never "there are
+  // none".
+  if (
+    !target ||
+    !Array.isArray(target.servers) ||
+    !Array.isArray(target.unavailable) ||
+    !Array.isArray(target.droppedSnapshotServerIds)
+  ) {
     throw new JourneyPluginServersUnavailableError(
-      "This journey target's pinned plugins could not be resolved. Re-launch the journey."
+      "This journey target's pinned plugins could not be resolved (unrecognized response). Retry after the backend deploys, or re-launch the journey."
+    );
+  }
+  // A response for a DIFFERENT target would apply the wrong plugin set to this
+  // one. The backend echoes `targetId`; when it does, it must match.
+  if (target.targetId !== undefined && target.targetId !== args.targetId) {
+    throw new JourneyPluginServersUnavailableError(
+      "This journey target's pinned plugins resolved against a different target. Re-launch the journey."
     );
   }
 
   const problems = [
-    ...(target.unavailable ?? []).map(describeUnavailable),
-    ...(target.droppedSnapshotServerIds ?? []).map(
+    ...target.unavailable.map(describeUnavailable),
+    ...target.droppedSnapshotServerIds.map(
       (id) => `a pinned plugin server (${id}) is no longer provided`
     ),
   ];
@@ -171,5 +193,15 @@ export async function resolveTargetPluginServerIds(
     );
   }
 
-  return (target.servers ?? []).map((server) => server.serverId);
+  // Each entry must actually carry an id. A malformed row would otherwise map
+  // to `undefined` and be handed to the connection manager as a server.
+  return target.servers.map((server) => {
+    const serverId = server?.serverId;
+    if (typeof serverId !== "string" || serverId.length === 0) {
+      throw new JourneyPluginServersUnavailableError(
+        "This journey target's pinned plugins resolved to an unrecognized server entry. Retry after the backend deploys, or re-launch the journey."
+      );
+    }
+    return serverId;
+  });
 }
