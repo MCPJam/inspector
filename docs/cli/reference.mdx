@@ -370,6 +370,7 @@ For a cloud authorization server, expose the inspector origin through a tunnel a
 | `--check-timeout <ms>` | No | `15000` | Per-check timeout in milliseconds |
 | `--category <category>` | No | all | Restrict checks to one or more categories |
 | `--check-id <id>` | No | all | Restrict checks to one or more check IDs |
+| `--protocol-version <version>` | No | legacy (2025-era) | Pin the MCP protocol era to conform against (e.g. `2026-07-28`). Unknown or whitespace-only values are rejected as usage errors. |
 | `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |
 
 Use `--format json|human` for raw output and `--reporter json-summary|junit-xml` for CI reports.
