@@ -81,6 +81,40 @@ import {
 // Store original fetch for restoration
 const originalFetch = window.fetch;
 
+const OAUTH_UPSTREAM_URL_HEADER = "x-mcpjam-oauth-upstream-url";
+
+/**
+ * Browser `Response.url` identifies MCPJam's same-origin proxy, not the
+ * upstream OAuth destination fetched by that proxy. Preserve that provenance
+ * out-of-band so the final-URL SSRF guard validates the upstream URL when the
+ * proxy reports one and never mistakes a local Inspector origin for a remote
+ * redirect.
+ */
+const oauthProxyResponses = new WeakMap<
+  Response,
+  { upstreamFinalUrl?: string }
+>();
+
+function markRawOAuthProxyResponse(
+  response: Response
+): Response {
+  oauthProxyResponses.set(response, {
+    upstreamFinalUrl:
+      response.headers.get(OAUTH_UPSTREAM_URL_HEADER) ?? undefined,
+  });
+  return response;
+}
+
+function markReconstructedOAuthProxyResponse(
+  response: Response,
+  upstreamFinalUrl: string | undefined
+): Response {
+  // The reconstructed response contains headers supplied by the upstream OAuth
+  // server. Only trust provenance captured from MCPJam's raw proxy response.
+  oauthProxyResponses.set(response, { upstreamFinalUrl });
+  return response;
+}
+
 interface StoredOAuthDiscoveryState {
   serverUrl: string;
   discoveryState: OAuthDiscoveryState;
@@ -684,7 +718,8 @@ function shouldRetryMcpRequestViaProxy(
 }
 
 async function executeRequestViaProxy(
-  request: HttpHistoryEntry["request"]
+  request: HttpHistoryEntry["request"],
+  serverUrl?: string
 ): Promise<{
   status: number;
   statusText: string;
@@ -715,6 +750,13 @@ async function executeRequestViaProxy(
         : `MCP request proxy failed (${response.status})`;
     throw new Error(message);
   }
+
+  assertFinalResponseUrlAllowed(
+    response.headers.get(OAUTH_UPSTREAM_URL_HEADER) ?? undefined,
+    {
+      allowLoopback: isLoopbackOAuthUrl(serverUrl),
+    }
+  );
 
   const proxied = (await response.json()) as {
     status: number;
@@ -764,8 +806,14 @@ function createTraceResponseFromResult(
  * proxy's job). Re-validate the FINAL URL against the factory guard's policy;
  * an empty/opaque URL can't be inspected and is left to the normal flow.
  */
-function assertFinalResponseUrlAllowed(finalUrl: string | undefined): void {
+function assertFinalResponseUrlAllowed(
+  finalUrl: string | undefined,
+  options: { allowLoopback?: boolean } = {}
+): void {
   if (!finalUrl) return;
+  if (options.allowLoopback && isLoopbackOAuthUrl(finalUrl)) {
+    return;
+  }
   let host: string;
   try {
     host = new URL(finalUrl).hostname;
@@ -797,11 +845,17 @@ function createOAuthRequestExecutor(fetchFn: typeof fetch, serverUrl?: string) {
         headers: request.headers,
         body: serializeOAuthRequestBody(request.body, request.headers),
       });
-      // SSRF defense-in-depth: the factory guard validated the INITIAL url. The
-      // fetch may have already followed a redirect to a private host; reject
-      // CONSUMING that response (a private final URL throws → proxy retry / fail
-      // closed). Does not stop the request itself; DNS-rebind is the proxy's job.
-      assertFinalResponseUrlAllowed(directResponse.url);
+      // SSRF defense-in-depth: the factory guard validated the INITIAL URL. For
+      // direct responses, Response.url is the effective destination. For
+      // same-origin proxy responses, Response.url is MCPJam itself, so validate
+      // the upstream final URL reported by the trusted proxy instead.
+      const proxyResponse = oauthProxyResponses.get(directResponse);
+      const finalUrl = proxyResponse
+        ? proxyResponse.upstreamFinalUrl
+        : directResponse.url;
+      assertFinalResponseUrlAllowed(finalUrl, {
+        allowLoopback: isLoopbackOAuthUrl(serverUrl),
+      });
       response = {
         status: directResponse.status,
         statusText: directResponse.statusText,
@@ -814,7 +868,7 @@ function createOAuthRequestExecutor(fetchFn: typeof fetch, serverUrl?: string) {
         throw error;
       }
 
-      response = await executeRequestViaProxy(request);
+      response = await executeRequestViaProxy(request, serverUrl);
     }
 
     return {
@@ -1436,7 +1490,7 @@ function createOAuthFetchInterceptor(
         });
         entry.response = await createTraceResponseFromFetch(response);
         entry.duration = Date.now() - entry.timestamp;
-        return response;
+        return markRawOAuthProxyResponse(response);
       }
     }
 
@@ -1452,7 +1506,7 @@ function createOAuthFetchInterceptor(
         const response = await authFetch(proxyUrl, { ...init, method: "GET" });
         entry.response = await createTraceResponseFromFetch(response);
         entry.duration = Date.now() - entry.timestamp;
-        return response;
+        return markRawOAuthProxyResponse(response);
       }
 
       // For OAuth endpoints, serialize and proxy the full request
@@ -1473,9 +1527,11 @@ function createOAuthFetchInterceptor(
       if (!response.ok) {
         entry.response = await createTraceResponseFromFetch(response);
         entry.duration = Date.now() - entry.timestamp;
-        return response;
+        return markRawOAuthProxyResponse(response);
       }
 
+      const upstreamFinalUrl =
+        response.headers.get(OAUTH_UPSTREAM_URL_HEADER) ?? undefined;
       const data = await response.json();
       entry.response = createTraceResponseFromResult({
         status: data.status,
@@ -1484,11 +1540,14 @@ function createOAuthFetchInterceptor(
         body: data.body,
       });
       entry.duration = Date.now() - entry.timestamp;
-      return new Response(JSON.stringify(data.body), {
-        status: data.status,
-        statusText: data.statusText,
-        headers: new Headers(data.headers),
-      });
+      return markReconstructedOAuthProxyResponse(
+        new Response(JSON.stringify(data.body), {
+          status: data.status,
+          statusText: data.statusText,
+          headers: new Headers(data.headers),
+        }),
+        upstreamFinalUrl
+      );
     } catch (error) {
       entry.error = {
         message: error instanceof Error ? error.message : String(error),

@@ -14,6 +14,7 @@ import { getRequestLogger } from "../../utils/request-logger.js";
 import { classifyError } from "../../utils/error-classify.js";
 
 const oauthWeb = new Hono();
+const OAUTH_UPSTREAM_URL_HEADER = "X-MCPJam-OAuth-Upstream-URL";
 
 function safeHostname(url: string | undefined): string {
   if (!url) return "unknown";
@@ -123,6 +124,7 @@ oauthWeb.post("/proxy", async (c) => {
       headers,
       httpsOnly: true,
     });
+    c.header(OAUTH_UPSTREAM_URL_HEADER, result.finalUrl);
     return c.json(result);
   } catch (error) {
     getRequestLogger(c, "routes.web.oauth").event("mcp.oauth.proxy.failed", {
@@ -161,6 +163,7 @@ oauthWeb.get("/metadata", async (c) => {
       );
     }
 
+    c.header(OAUTH_UPSTREAM_URL_HEADER, result.finalUrl);
     return c.json(result.metadata);
   } catch (error) {
     getRequestLogger(c, "routes.web.oauth").event("mcp.oauth.proxy.failed", {
