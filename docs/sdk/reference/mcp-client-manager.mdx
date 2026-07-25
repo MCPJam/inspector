@@ -37,6 +37,35 @@ new MCPClientManager(
 |--------|------|-------------|
 | `cacheEventLogger` | `CacheEventLogger` | Callback invoked when a cacheable read verb (`listTools`, `listResources`, `listResourceTemplates`, `listPrompts`, `readResource`) is answered from a local cache entry — a serve that costs zero wire exchange. Receives `{ serverId, method, params, ageMs, scope }`. This is a distinct channel from the wire/RPC log: cache hits never appear on the wire. When unset, behavior is identical to the upstream default. |
 
+#### CacheMode
+
+The `CacheMode` type controls the per-call cache disposition for the five cacheable read verbs:
+
+| Value | Behavior |
+|-------|----------|
+| `"use"` | Default. Serves a still-fresh cached entry with zero wire exchange. An entry is fresh only when the server sent `ttlMs > 0`; without a server-sent `ttlMs`, every call refetches. |
+| `"refresh"` | Always fetches from the server and re-stores the result. |
+| `"bypass"` | Fetches from the server without consulting or writing the cache. |
+
+```typescript
+import { MCPClientManager, type CacheMode, type CacheHitEvent } from "@mcpjam/sdk";
+
+const cacheHits: CacheHitEvent[] = [];
+
+const manager = new MCPClientManager(
+  {
+    myServer: { url: "https://mcp.example.com/mcp" },
+  },
+  {
+    cacheEventLogger: (event: CacheHitEvent) => {
+      // event: { serverId, method, params, ageMs, scope }
+      console.log(`Cache serve: ${event.method} age=${event.ageMs}ms`);
+      cacheHits.push(event);
+    },
+  }
+);
+```
+
 ### Server Configuration Types
 
 #### StdioServerConfig
