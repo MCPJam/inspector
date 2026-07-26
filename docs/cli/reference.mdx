@@ -108,6 +108,8 @@ When `--host` is set, the output includes a `host` field and a `toolsDroppedVisi
 | `--host <id>` | Connect as this host — sends its identity/capabilities/protocol in `initialize`, and rejects app-only tools the host's model can't call. Mutually exclusive with `--client-capabilities`. |
 | `--tool-name <name>` | Name of the tool to call |
 | `--name <name>` | Legacy alias for `--tool-name` |
+| `--interactive` | Drive the `input_required` multi-round-trip loop: render embedded elicitations to the terminal and collect responses from stdin. Cannot be combined with `--tool-args -`, `--tool-args-stdin`, or `--params -`. |
+| `--yes` | With `--interactive`, decline every embedded input request without prompting (non-interactive mode). |
 | `--tool-args <json>` | Tool arguments as inline JSON, `@path`, or `-` for stdin |
 | `--params <json>` | Legacy alias for `--tool-args` |
 | `--tool-args-stdin` | Read tool arguments JSON from stdin |
