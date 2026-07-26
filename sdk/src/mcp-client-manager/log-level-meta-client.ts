@@ -31,6 +31,7 @@ import {
   type ProtocolEra,
   type Request,
   type RequestOptions,
+  type StandardSchemaV1,
 } from "@modelcontextprotocol/client";
 import type {
   ManagedMcpClient,
@@ -148,6 +149,28 @@ export class LogLevelMetaClient implements ManagedMcpClient {
       req.params as Record<string, unknown> | undefined,
     );
     return this.inner.request<T>({ ...req, params } as Request, options);
+  }
+  requestWithSchema<TSchema extends StandardSchemaV1>(
+    req: Request,
+    resultSchema: TSchema,
+    options?: RequestOptions,
+  ): Promise<StandardSchemaV1.InferOutput<TSchema>> {
+    // Same modern per-request logging opt-in as `request`: inject the level
+    // into `params._meta` when a level is set and the era is modern; otherwise
+    // forward untouched. The explicit-schema seam MUST carry this or the MRTR
+    // retry legs would silently lose the per-request log level.
+    const level = this.activeLevel();
+    if (level === undefined) {
+      return this.inner.requestWithSchema(req, resultSchema, options);
+    }
+    const params = this.inject(
+      req.params as Record<string, unknown> | undefined,
+    );
+    return this.inner.requestWithSchema(
+      { ...req, params } as Request,
+      resultSchema,
+      options,
+    );
   }
   listResources(
     params?: Parameters<ManagedMcpClient["listResources"]>[0],

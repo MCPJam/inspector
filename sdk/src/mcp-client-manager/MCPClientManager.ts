@@ -6,13 +6,18 @@ import {
   type CallToolResult,
   Client,
   type ClientOptions,
+  type GetPromptResult,
   InMemoryResponseCacheStore,
+  type JsonSchemaType,
   type LoggingLevel,
+  type ReadResourceResult,
+  type Request,
   SSEClientTransport,
   type ServerCapabilities,
   StreamableHTTPClientTransport,
   type Transport,
   type RequestOptions,
+  withInputRequired,
 } from "@modelcontextprotocol/client";
 // beta.4 moved the Node stdio client transport to the `/stdio` subpath.
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
@@ -115,6 +120,15 @@ import { resolveVersionNegotiation } from "./version-negotiation.js";
 import { DialectAwareJsonSchemaValidator } from "./dialect-aware-json-schema-validator.js";
 import { isStatelessProtocolVersion } from "./mcp-protocol-version.js";
 import { type ManagedMcpClient } from "./managed-mcp-client.js";
+import {
+  DEFAULT_MAX_MRTR_ROUNDS,
+  defaultResultSchemaForMethod,
+  runInputRequiredOperation,
+  type ElicitationContentValidator,
+  type InputRequiredResult,
+  type MrtrInputCollector,
+  type MrtrLegSender,
+} from "./mrtr-driver.js";
 
 
 /**
@@ -163,6 +177,66 @@ export class MCPClientManager {
   // Managers for specific features
   private readonly notificationManager = new NotificationManager();
   private readonly elicitationManager = new ElicitationManager();
+
+  /**
+   * Per-server collectors for the modern multi-round-trip (`input_required`)
+   * loop. When a collector is registered for a server, `executeTool`,
+   * `readResource`, and `getPrompt` drive the manual MRTR loop
+   * (`mrtr-driver.ts`) so an `input_required` result is collected and the
+   * operation retried; when none is registered the verbs keep their exact
+   * pre-MRTR behavior (an `input_required` from a modern server then surfaces
+   * as the SDK's typed `UnsupportedResultType` rather than being silently
+   * mishandled). The collector seam is what PR2 (local UI), PR6 (CLI), and the
+   * hosted PRs plug into.
+   */
+  private readonly mrtrInputCollectors = new Map<string, MrtrInputCollector>();
+
+  /** MCPJam-owned MRTR round cap (see `mrtr-driver.ts`). */
+  private readonly mrtrMaxRounds = DEFAULT_MAX_MRTR_ROUNDS;
+
+  /**
+   * Strict self-validation of collected elicitation content against each
+   * request's `requestedSchema` (§12.1.11). Unlike the tool-output validator,
+   * an unknown JSON-Schema dialect is treated as INVALID (not fail-open):
+   * elicitation content is untrusted, so an exotic dialect must not wave it
+   * through. The dialect-aware validator is constructed per call so the
+   * throwing `onUnknownDialect` never leaks state between validations.
+   */
+  private readonly mrtrElicitationContentValidator: ElicitationContentValidator =
+    (requestedSchema, content) => {
+      if (
+        typeof requestedSchema !== "object" ||
+        requestedSchema === null
+      ) {
+        return { valid: false, error: "requestedSchema is not an object" };
+      }
+      const strict = new DialectAwareJsonSchemaValidator({
+        onUnknownDialect: (dialect) => {
+          throw new Error(
+            `Elicitation content declares unsupported JSON Schema dialect "${dialect}".`
+          );
+        },
+      });
+      let validate;
+      try {
+        validate = strict.getValidator(requestedSchema as JsonSchemaType);
+      } catch (error) {
+        return {
+          valid: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+      const result = validate(content);
+      return { valid: result.valid, error: result.errorMessage };
+    };
+
+  /**
+   * Tool output-schema validator for the MRTR path. `requestWithSchema`
+   * bypasses upstream `callTool`'s output-schema assertion, so we reconstruct
+   * it on the final complete result. Fail-open on an unknown dialect, matching
+   * upstream's tool-output behavior (see `DialectAwareJsonSchemaValidator`).
+   */
+  private readonly mrtrToolOutputValidator = new DialectAwareJsonSchemaValidator();
 
   // Default options
   private readonly defaultClientName: string | undefined;
@@ -472,6 +546,9 @@ export class MCPClientManager {
     this.notificationManager.clearServer(serverId);
     this.elicitationManager.clearServer(serverId);
     this.perRequestLogLevels.delete(serverId);
+    // Purge the MRTR collector too; otherwise a re-registered server inherits
+    // the previous owner's collector closure and stale `elicitation` capability.
+    this.mrtrInputCollectors.delete(serverId);
   }
 
   /**
@@ -698,6 +775,21 @@ export class MCPClientManager {
     taskOptions?: TaskOptions
   ) {
     const request = this.normalizeExecuteToolRequest(options, taskOptions);
+
+    // Modern multi-round-trip: when a collector is registered and this is not a
+    // task-augmented call, drive the manual `input_required` loop. A complete
+    // result on the first leg exits immediately, so legacy servers are
+    // unaffected.
+    const mrtrCollect = this.mrtrInputCollectors.get(serverId);
+    if (mrtrCollect && request.task === undefined) {
+      return this.executeToolWithInputRequired(
+        serverId,
+        { name: toolName, arguments: args },
+        request,
+        mrtrCollect
+      );
+    }
+
     const operation = async (signal?: AbortSignal) => {
       await this.ensureConnected(serverId, signal);
       const client = this.getClientOrThrow(serverId);
@@ -780,6 +872,15 @@ export class MCPClientManager {
     params: ReadResourceParams,
     options?: ClientRequestOptions
   ) {
+    const mrtrCollect = this.mrtrInputCollectors.get(serverId);
+    if (mrtrCollect) {
+      return this.readResourceWithInputRequired(
+        serverId,
+        params,
+        options,
+        mrtrCollect
+      );
+    }
     return this.runRetryableReadOperation(serverId, options, (client) =>
       client.readResource(params, this.withProgressHandler(serverId, options))
     );
@@ -870,6 +971,15 @@ export class MCPClientManager {
     params: GetPromptParams,
     options?: ClientRequestOptions
   ) {
+    const mrtrCollect = this.mrtrInputCollectors.get(serverId);
+    if (mrtrCollect) {
+      return this.getPromptWithInputRequired(
+        serverId,
+        params,
+        options,
+        mrtrCollect
+      );
+    }
     return this.runRetryableReadOperation(serverId, options, (client) =>
       client.getPrompt(params, this.withProgressHandler(serverId, options))
     );
@@ -1094,6 +1204,32 @@ export class MCPClientManager {
         this.elicitationManager.removeFromClient(client);
       }
     }
+  }
+
+  /**
+   * Registers the multi-round-trip (`input_required`) input collector for a
+   * server. Once set, `executeTool` / `readResource` / `getPrompt` drive the
+   * manual MRTR loop: an `input_required` result is validated (undeclared
+   * roots/sampling and unsupported elicitation modes are rejected before any
+   * UI), its embedded requests are handed to `collect`, the collected
+   * responses are self-validated against each `requestedSchema`, and the
+   * operation is retried — up to the MCPJam-owned round cap. `collect` MUST
+   * reject on abort (never return a synthetic decline) and returns
+   * `ElicitResult`-shaped responses keyed by the server's request keys.
+   */
+  setMrtrInputCollector(serverId: string, collect: MrtrInputCollector): void {
+    // Intentionally NOT gated on prior registration: a 2026-07-28 server checks
+    // the request's declared client capabilities before embedding an
+    // elicitation, so a collector must be registrable BEFORE connect for
+    // `elicitation` to be advertised on the connect envelope (see
+    // `buildCapabilities`). Registering for an as-yet-unknown server is a no-op
+    // until that server connects.
+    this.mrtrInputCollectors.set(serverId, collect);
+  }
+
+  /** Removes a server's MRTR input collector. */
+  clearMrtrInputCollector(serverId: string): void {
+    this.mrtrInputCollectors.delete(serverId);
   }
 
   /**
@@ -1356,6 +1492,15 @@ export class MCPClientManager {
       );
       const clientOptions: ClientOptions = {
         capabilities: clientCapabilities,
+        // Manual multi-round-trip mode (2026-07-28 `input_required`, spec §12).
+        // MCPJam drives the loop itself (`mrtr-driver.ts`) so a debugger shows
+        // every round and a hosted worker never blocks while a human answers.
+        // The SDK's automatic driver — and its built-in `maxRounds`/
+        // `InputRequiredRoundsExceeded` cap — applies only to `autoFulfill:
+        // true`; with it off, an `input_required` result surfaces (via
+        // `allowInputRequired: true` on the explicit-schema call) instead of
+        // being auto-fulfilled, and MCPJam owns the round cap.
+        inputRequired: { autoFulfill: false },
         // Dialect-aware replacement for the upstream default validator,
         // which rejects (rather than validates) declared draft-07 schemas
         // and thereby fails tools/call against every v1-SDK server that
@@ -2114,7 +2259,16 @@ export class MCPClientManager {
     serverId: string,
     config: MCPServerConfig
   ): ClientCapabilityOptions {
-    const hasElicitationHandler = this.elicitationManager.hasHandler(serverId);
+    // Advertise `elicitation` when EITHER a legacy elicitation handler OR a
+    // modern MRTR input collector is registered — a 2026-07-28 server checks
+    // the request's declared client capabilities before it will embed an
+    // `elicitation/create` in an `input_required` result, so a collector that
+    // is registered before connect must be reflected here. roots/sampling are
+    // never advertised (this client never fulfils them; MRTR rejects embedded
+    // roots/sampling at the result — advertise = enforce).
+    const hasElicitationHandler =
+      this.elicitationManager.hasHandler(serverId) ||
+      this.mrtrInputCollectors.has(serverId);
     if (config.clientCapabilities) {
       const exactCapabilities = normalizeClientCapabilities(
         config.clientCapabilities
@@ -2204,6 +2358,181 @@ export class MCPClientManager {
       request: options,
       task: taskOptions,
     };
+  }
+
+  // ===========================================================================
+  // Multi-round-trip (`input_required`) drivers — spec §12.
+  //
+  // Each verb's MRTR path drives the shared serializable stepper
+  // (`mrtr-driver.ts`). The wire legs go through a verb-specific SENDER so
+  // Phase-3 helper semantics are preserved: `readResource` keeps the response
+  // cache, tool + prompt legs carry the modern per-request log-level `_meta`
+  // via the `requestWithSchema` decorator, and the final tool result is
+  // re-validated against its output schema (reconstructing what the bypassed
+  // upstream `callTool` would have asserted). The MRTR loop lives OUTSIDE the
+  // per-leg retry/timeout wrappers, so a transient failure on round N retries
+  // only that leg — it never restarts the operation at round zero.
+  // ===========================================================================
+
+  private async executeToolWithInputRequired(
+    serverId: string,
+    callParams: { name: string; arguments?: Record<string, unknown> },
+    request: ExecuteToolRequest,
+    collect: MrtrInputCollector
+  ): Promise<CallToolResult> {
+    const baseOptions = request.request;
+    const retryPolicy = request.retry ?? { retries: 0, retryDelayMs: 0 };
+    const sender: MrtrLegSender<CallToolResult> = (req) =>
+      this.runRetriedOperation(
+        serverId,
+        baseOptions,
+        retryPolicy,
+        async (signal) => {
+          await this.ensureConnected(serverId, signal);
+          const client = this.getClientOrThrow(serverId);
+          const mergedOptions = this.withProgressHandler(serverId, baseOptions);
+          return this.withElicitationTimeoutSuspension(
+            serverId,
+            mergedOptions,
+            (callOptions) =>
+              client.requestWithSchema(
+                req as Request,
+                withInputRequired(defaultResultSchemaForMethod("tools/call")),
+                // Pass `callOptions` through untouched (matching the legacy
+                // `client.callTool(callParams, callOptions)` sibling): it carries
+                // the composed elicitation-timeout watchdog signal. Overwriting
+                // `.signal` with the outer retry `signal` would drop that
+                // watchdog; the outer abort is already enforced by
+                // `runRetriedOperation`'s `awaitWithAbort` wrapper.
+                { ...callOptions, allowInputRequired: true }
+              ) as Promise<CallToolResult | InputRequiredResult>
+          );
+        }
+      );
+
+    return runInputRequiredOperation<CallToolResult>({
+      method: "tools/call",
+      params: callParams,
+      sender,
+      collectInput: collect,
+      validateContent: this.mrtrElicitationContentValidator,
+      validateResponse: (result) =>
+        this.validateToolOutputSchema(serverId, callParams.name, result),
+      requestOptions: baseOptions,
+      maxRounds: this.mrtrMaxRounds,
+      signal: baseOptions?.signal,
+    });
+  }
+
+  private async readResourceWithInputRequired(
+    serverId: string,
+    params: ReadResourceParams,
+    options: ClientRequestOptions | undefined,
+    collect: MrtrInputCollector
+  ): Promise<ReadResourceResult> {
+    const sender: MrtrLegSender<ReadResourceResult> = (req) =>
+      this.runRetryableReadOperation(serverId, options, (client) =>
+        client.readResource(req.params as ReadResourceParams, {
+          ...this.withProgressHandler(serverId, options),
+          allowInputRequired: true,
+        }) as Promise<ReadResourceResult | InputRequiredResult>
+      );
+
+    return runInputRequiredOperation<ReadResourceResult>({
+      method: "resources/read",
+      params: params as Record<string, unknown>,
+      sender,
+      collectInput: collect,
+      validateContent: this.mrtrElicitationContentValidator,
+      requestOptions: options,
+      maxRounds: this.mrtrMaxRounds,
+      signal: options?.signal,
+    });
+  }
+
+  private async getPromptWithInputRequired(
+    serverId: string,
+    params: GetPromptParams,
+    options: ClientRequestOptions | undefined,
+    collect: MrtrInputCollector
+  ): Promise<GetPromptResult> {
+    // Prompts have no helper-only semantics to preserve, so the leg goes
+    // through the explicit-schema `requestWithSchema` seam directly — which
+    // also exercises the modern per-request log-level `_meta` injection end to
+    // end at the manager level.
+    const sender: MrtrLegSender<GetPromptResult> = (req) =>
+      this.runRetryableReadOperation(serverId, options, (client) =>
+        client.requestWithSchema(
+          req as Request,
+          withInputRequired(defaultResultSchemaForMethod("prompts/get")),
+          {
+            ...this.withProgressHandler(serverId, options),
+            allowInputRequired: true,
+          }
+        ) as Promise<GetPromptResult | InputRequiredResult>
+      );
+
+    return runInputRequiredOperation<GetPromptResult>({
+      method: "prompts/get",
+      params: params as Record<string, unknown>,
+      sender,
+      collectInput: collect,
+      validateContent: this.mrtrElicitationContentValidator,
+      requestOptions: options,
+      maxRounds: this.mrtrMaxRounds,
+      signal: options?.signal,
+    });
+  }
+
+  /**
+   * Reconstructs upstream `callTool`'s output-schema assertion on the final
+   * complete result of an MRTR tool call (the `requestWithSchema` leg path
+   * bypasses it). Best-effort schema resolution: if the tool's `outputSchema`
+   * cannot be looked up, a successful call is not failed.
+   */
+  private async validateToolOutputSchema(
+    serverId: string,
+    toolName: string,
+    result: CallToolResult
+  ): Promise<void> {
+    const typed = result as CallToolResult & {
+      structuredContent?: unknown;
+      isError?: boolean;
+    };
+    let outputSchema: unknown;
+    try {
+      await this.ensureConnected(serverId);
+      const client = this.getClientOrThrow(serverId);
+      const list = await client.listTools();
+      const tool = list.tools.find((candidate) => candidate.name === toolName) as
+        | { outputSchema?: unknown }
+        | undefined;
+      outputSchema = tool?.outputSchema;
+    } catch {
+      return;
+    }
+    if (!outputSchema || typeof outputSchema !== "object") {
+      return;
+    }
+    if (typed.isError) {
+      return;
+    }
+    if (typed.structuredContent === undefined) {
+      throw new TypeError(
+        `Tool "${toolName}" has an output schema but did not return structured content.`
+      );
+    }
+    const validate = this.mrtrToolOutputValidator.getValidator(
+      outputSchema as JsonSchemaType
+    );
+    const validation = validate(typed.structuredContent);
+    if (!validation.valid) {
+      throw new TypeError(
+        `Tool "${toolName}" structured content does not match its output schema: ${
+          validation.errorMessage ?? "invalid"
+        }.`
+      );
+    }
   }
 
   private async runRetryableReadOperation<T>(

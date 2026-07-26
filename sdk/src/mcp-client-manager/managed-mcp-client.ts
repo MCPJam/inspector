@@ -39,6 +39,7 @@ import type {
   Request,
   RequestOptions,
   ServerCapabilities,
+  StandardSchemaV1,
   Transport,
 } from "@modelcontextprotocol/client";
 
@@ -150,6 +151,28 @@ export interface ManagedMcpClient {
   // schema overload in alpha.2. Keep the surface narrow; if the manager
   // ever needs an overloaded form, add it then.
   request<T = unknown>(req: Request, options?: RequestOptions): Promise<T>;
+
+  /**
+   * Explicit-schema request — the type-correct path for the modern
+   * multi-round-trip (`input_required`) loop. Forwards to upstream
+   * `Protocol.request`'s second overload
+   * (`request(request, resultSchema, options)`, client `index.d.mts:2198`),
+   * which validates a *complete* result against `resultSchema` while surfacing
+   * a non-complete `input_required` result untouched (paired with
+   * `withInputRequired(resultSchema)` + `options.allowInputRequired`).
+   *
+   * NEW seam (2026-07-28). It exists alongside — never replacing — the generic
+   * `request<T>` above, whose method-dispatch typing cannot express an
+   * `input_required` union (the SDK deliberately does not widen `ResultTypeMap`
+   * for requesters). Decorators MUST forward it: `LogLevelMetaClient` injects
+   * the modern per-request logging `_meta` here exactly as it does for the
+   * other request-bearing methods.
+   */
+  requestWithSchema<TSchema extends StandardSchemaV1>(
+    req: Request,
+    resultSchema: TSchema,
+    options?: RequestOptions
+  ): Promise<StandardSchemaV1.InferOutput<TSchema>>;
 
   // ---- Resources ----
   listResources(
