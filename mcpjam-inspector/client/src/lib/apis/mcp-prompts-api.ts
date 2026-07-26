@@ -17,12 +17,37 @@ export interface BatchPromptsResponse {
   errors?: Record<string, string>;
 }
 
+/** SEP-2549 cache-serve provenance (§11.2) — present ONLY on an actual hit. */
+export type ServedFromCache = { ageMs: number };
+
+/**
+ * `listPrompts` keeps its historical bare-array return shape (many callers
+ * destructure it directly); provenance is attached as a non-enumerable-ish
+ * extra property so it survives without forcing every call site to unwrap an
+ * envelope. Present ONLY when a hit actually occurred.
+ */
+export type PromptListWithProvenance = MCPPrompt[] & {
+  servedFromCache?: ServedFromCache;
+};
+
 export async function listPrompts(
   serverId: string,
-  opts?: { forceHosted?: boolean; cursor?: string },
-): Promise<MCPPrompt[]> {
-  const { prompts } = await listPromptsPage(serverId, opts);
-  return prompts;
+  opts?: { forceHosted?: boolean; cursor?: string; refresh?: boolean },
+): Promise<PromptListWithProvenance> {
+  const { prompts, servedFromCache } = await listPromptsPage(serverId, opts);
+  const withProvenance = prompts as PromptListWithProvenance;
+  if (servedFromCache) {
+    // Non-enumerable so object-spread / for-in / Object.entries over the
+    // bare array stay unchanged (matches the documented contract above);
+    // provenance is still directly accessible as `.servedFromCache`.
+    Object.defineProperty(withProvenance, "servedFromCache", {
+      value: servedFromCache,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return withProvenance;
 }
 
 // Cursor-aware variant of `listPrompts`, additive alongside it: omitting
@@ -31,8 +56,12 @@ export async function listPrompts(
 // has more. This is the plumbing a future paginated Prompts UI would call.
 export async function listPromptsPage(
   serverId: string,
-  opts?: { forceHosted?: boolean; cursor?: string },
-): Promise<{ prompts: MCPPrompt[]; nextCursor?: string }> {
+  opts?: { forceHosted?: boolean; cursor?: string; refresh?: boolean },
+): Promise<{
+  prompts: MCPPrompt[];
+  nextCursor?: string;
+  servedFromCache?: ServedFromCache;
+}> {
   return runByMode({
     forceHosted: opts?.forceHosted,
     hosted: async () => {
@@ -40,6 +69,8 @@ export async function listPromptsPage(
         serverNameOrId: serverId,
         cursor: opts?.cursor,
       });
+      // Hosted direct-ops always bypass the response cache server-side, so no
+      // provenance is ever attached here.
       return {
         prompts: Array.isArray(body?.prompts)
           ? (body.prompts as MCPPrompt[])
@@ -56,6 +87,7 @@ export async function listPromptsPage(
         body: JSON.stringify({
           serverId,
           ...(opts?.cursor ? { cursor: opts.cursor } : {}),
+          ...(opts?.refresh === true ? { refresh: true } : {}),
         }),
       });
 
@@ -75,6 +107,9 @@ export async function listPromptsPage(
           : [],
         ...(typeof body?.nextCursor === "string"
           ? { nextCursor: body.nextCursor }
+          : {}),
+        ...(body?.servedFromCache
+          ? { servedFromCache: body.servedFromCache as ServedFromCache }
           : {}),
       };
     },

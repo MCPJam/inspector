@@ -77,6 +77,7 @@ describe("POST /api/mcp/resource-templates/list", () => {
       expect(mcpClientManager.listResourceTemplates).toHaveBeenCalledWith(
         "test-server",
         undefined,
+        undefined,
       );
     });
 
@@ -104,6 +105,7 @@ describe("POST /api/mcp/resource-templates/list", () => {
       expect(mcpClientManager.listResourceTemplates).toHaveBeenCalledWith(
         "test-server",
         { cursor: "cursor-page-2" },
+        undefined,
       );
     });
   });

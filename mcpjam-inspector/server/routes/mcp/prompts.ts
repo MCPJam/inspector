@@ -6,6 +6,10 @@ import {
   listPromptsMulti,
   getPrompt,
 } from "../../utils/route-handlers.js";
+import {
+  toServedFromCache,
+  withCacheEventCapture,
+} from "../../utils/cache-events.js";
 
 const prompts = new Hono();
 
@@ -15,6 +19,7 @@ prompts.post("/list", async (c) => {
     const body = (await c.req.json()) as {
       serverId?: string;
       cursor?: string;
+      refresh?: boolean;
     };
     if (!body.serverId) {
       return c.json({ success: false, error: "serverId is required" }, 400);
@@ -23,12 +28,18 @@ prompts.post("/list", async (c) => {
     // official beta.4 client auto-pages no-cursor list calls). Passing a
     // cursor returns exactly one raw page, matching the tools/resources
     // routes' cursor parity.
-    return c.json(
-      await listPrompts(c.mcpClientManager, {
-        serverId: body.serverId,
+    const { result, events } = await withCacheEventCapture(() =>
+      listPrompts(c.mcpClientManager, {
+        serverId: body.serverId!,
         cursor: body.cursor,
+        cacheMode: body.refresh === true ? "refresh" : undefined,
       }),
     );
+    const servedFromCache = toServedFromCache(events);
+    return c.json({
+      ...result,
+      ...(servedFromCache ? { servedFromCache } : {}),
+    });
   } catch (error) {
     logger.error("Error fetching prompts", error, { serverId: "unknown" });
     return c.json(

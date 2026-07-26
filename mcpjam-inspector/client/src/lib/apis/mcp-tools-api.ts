@@ -17,10 +17,14 @@ import { executeHostedTool, listHostedTools } from "@/lib/apis/web/tools-api";
 import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
 import { attachToolMetadata } from "@/lib/apis/tool-metadata";
 
+/** SEP-2549 cache-serve provenance (§11.2) — present ONLY on an actual hit. */
+export type ServedFromCache = { ageMs: number };
+
 export type ListToolsResultWithMetadata = ListToolsResult & {
   toolsMetadata?: Record<string, Record<string, any>>;
   tokenCount?: number;
   tokenCountError?: string;
+  servedFromCache?: ServedFromCache;
 };
 
 export type ToolServerMap = Record<string, string>;
@@ -109,16 +113,21 @@ export async function listTools({
   serverId,
   modelId,
   cursor,
+  refresh,
 }: {
   serverId?: string | undefined;
   modelId?: string | undefined;
   cursor?: string | undefined;
+  /** SEP-2549: force a live refetch, bypassing any still-fresh cached entry. */
+  refresh?: boolean | undefined;
 }): Promise<ListToolsResultWithMetadata> {
   return runByMode({
     hosted: async () => {
       if (!serverId) {
         throw new Error("serverId is required in hosted mode");
       }
+      // Hosted direct-ops always bypass the response cache server-side, so
+      // there's never a `servedFromCache` to surface here.
       return attachToolMetadata(await listHostedTools({
         serverNameOrId: serverId,
         modelId,
@@ -129,7 +138,7 @@ export async function listTools({
       const res = await authFetch("/api/mcp/tools/list", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ serverId, modelId, cursor }),
+        body: JSON.stringify({ serverId, modelId, cursor, refresh }),
       });
       let body: any = null;
       try {
