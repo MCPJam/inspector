@@ -1162,7 +1162,14 @@ export function ServersTab({
 
   const activeProject = projects[activeProjectId];
   const sharedProjectId = activeProject?.sharedProjectId;
-  const hostedProjectId = sharedProjectId ?? activeProjectId;
+  // Convex-only. Falling back to `activeProjectId` leaked a LOCAL project id
+  // (a `crypto.randomUUID()` value) into `ServerDetailModal`, which passes it
+  // straight to `projectServerConfig:getConfig` — a `v.id("projects")` arg.
+  // The rejection throws during render and, with no route ErrorBoundary,
+  // took down the whole page when opening a server's Config. Null here is
+  // what every other project-scoped Convex consumer expects for local mode,
+  // and matches `sharedProjectIdForHostScope` on the Add Server modal.
+  const hostedProjectId = sharedProjectId ?? null;
   const { serversRecord: sharedProjectServersRecord } = useRemoteProjectServers(
     {
       projectId: sharedProjectId ?? null,

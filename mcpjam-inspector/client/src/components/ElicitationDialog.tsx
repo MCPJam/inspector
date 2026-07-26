@@ -398,10 +398,18 @@ function RequestingServer({
 }: {
   elicitationRequest: DialogElicitation | null;
 }) {
-  const { serverId, serverName } = elicitationRequest ?? {};
+  const { serverId, serverName, origin } = elicitationRequest ?? {};
   const displayName = serverName?.trim() || serverId;
 
-  if (!displayName) return <>Elicitation Request</>;
+  // Era-honest phrasing: a modern MRTR (`input_required`) request means the
+  // OPERATION needs input to continue, whereas a legacy `elicitation/create`
+  // is an unsolicited question. Same dialog, truthful framing.
+  const verb =
+    origin === "mrtr" ? "needs input to continue" : "is requesting information";
+
+  if (!displayName) {
+    return <>{origin === "mrtr" ? "Operation Needs Input" : "Elicitation Request"}</>;
+  }
 
   return (
     <span className="flex items-center gap-1.5">
@@ -411,7 +419,7 @@ function RequestingServer({
           {serverId}
         </span>
       )}
-      <span className="font-normal">is requesting information</span>
+      <span className="font-normal">{verb}</span>
     </span>
   );
 }

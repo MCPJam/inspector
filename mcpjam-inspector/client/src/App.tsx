@@ -29,7 +29,12 @@ import { CiEvalsTab } from "./components/CiEvalsTab";
 import { ChatboxesTab } from "./components/ChatboxesTab";
 import { SwarmsTab } from "./components/swarms/SwarmsTab";
 import { EmptyState } from "./components/ui/empty-state";
-import { canViewSwarms, useViewerProjectRole } from "./hooks/useProjects";
+import {
+  canManageAsOwnerOrAdmin,
+  canViewSwarms,
+  useViewerProjectRole,
+} from "./hooks/useProjects";
+import { ProjectEnvironmentsRoute } from "./components/project-environments/ProjectEnvironmentsRoute";
 import { SettingsTab } from "./components/SettingsTab";
 import { ApiKeysRoute } from "./components/settings/ApiKeysRoute";
 import { ProjectSettingsTab } from "./components/ProjectSettingsTab";
@@ -203,7 +208,10 @@ import {
   completeHostedOAuthCallback,
   handleOAuthCallback,
 } from "./lib/oauth/mcp-oauth";
-import { buildElectronMcpCallbackUrl } from "./hooks/use-server-state";
+import {
+  buildElectronMcpCallbackUrl,
+  resolveEffectiveWireProtocolVersion,
+} from "./hooks/use-server-state";
 import { disconnectAllRuntimeServers } from "./state/mcp-api";
 import { getEffectiveProjectClientCapabilities } from "./lib/client-config";
 import {
@@ -215,7 +223,6 @@ import {
 import {
   cloneHostTemplateInput,
   gateMcpToolResultImageRenderingByModelVisibility,
-  resolveEffectiveMcpProtocolVersion,
 } from "./lib/client-config-v2";
 import type { ProjectServerConfigDto } from "./lib/project-server-config";
 import { useHostList, useHostMutations } from "@/hooks/useClients";
@@ -514,6 +521,8 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <ChatboxesRoute />;
     case "swarms":
       return <SwarmsRoute />;
+    case "environments":
+      return <EnvironmentsRoute />;
     case "playground":
       return <PlaygroundRoute />;
     case "support":
@@ -888,10 +897,16 @@ export function CaniuseCapabilityRoute() {
 }
 
 export function ComputerRoute() {
-  const { convexProjectId, isAuthenticated } = useAppRouteContext();
+  const { convexProjectId, isAuthenticated, isGuestProjectActor } =
+    useAppRouteContext();
   const [previewedHostId] = usePreviewedHostId(convexProjectId);
   const navigate = useAppNavigate();
   const computersEnabled = useComputersEnabledState();
+
+  // A personal computer is account-scoped. Anonymous guests are provisioned
+  // Convex actors (`isAuthenticated === true`), so member-ness — not raw auth —
+  // is what gates the feature vs. the guest sign-in affordance.
+  const isSignedInMember = isAuthenticated && !isGuestProjectActor;
 
   // Only redirect on an explicit `false`. While PostHog hydrates the flag is
   // `undefined`; bouncing then would strand a flagged-in user who cold-loads
@@ -907,11 +922,11 @@ export function ComputerRoute() {
   const computerView = (
     <ComputerView
       projectId={convexProjectId}
-      isAuthenticated={isAuthenticated}
+      isSignedInMember={isSignedInMember}
     />
   );
 
-  if (!isAuthenticated) {
+  if (!isSignedInMember) {
     return computerView;
   }
 
@@ -977,15 +992,14 @@ export function ToolsRoute() {
         <ToolsTab
           serverConfig={selectedMCPConfig}
           serverName={appState.selectedServer}
+          server={selectedServerEntry ?? undefined}
           serverConnectionStatus={
             selectedServerEntry?.connectionStatus ?? "disconnected"
           }
-          mcpToolResultImageRendering={
-            gateMcpToolResultImageRenderingByModelVisibility(
-              activeHost?.config?.mcpToolResultImageRendering,
-              activeHost?.config?.modelVisibleMcpToolResults
-            )
-          }
+          mcpToolResultImageRendering={gateMcpToolResultImageRenderingByModelVisibility(
+            activeHost?.config?.mcpToolResultImageRendering,
+            activeHost?.config?.modelVisibleMcpToolResults
+          )}
         />
       </div>
     </ActiveHostCapsResolverScope>
@@ -1195,6 +1209,40 @@ export function SwarmsRoute() {
   );
 }
 
+export function EnvironmentsRoute() {
+  // Project environments (host + server group + skills bundles). The page
+  // component itself enforces the `project-environments-enabled` flag —
+  // rendering the standard redirect when off — so a direct `/environments`
+  // URL cannot bypass the sidebar gate. Writes are project-admin only
+  // (`canManageHosts` mirrors the backend's admin gate); everyone else
+  // browses read-only.
+  const { convexProjectId, isAuthenticated } = useAppRouteContext();
+  const { user, isLoading: isWorkOsLoading } = useAuth();
+  const isWorkOsSignedIn = !!user;
+  const { role } = useViewerProjectRole({
+    isAuthenticated,
+    projectId: convexProjectId,
+    viewerEmail: user?.email,
+    identityLoading: isWorkOsLoading,
+  });
+  // Shared with SwarmsTab and unit-tested in `useProjects.test.ts`: WorkOS
+  // viewers take the role-based admin gate; a SETTLED anonymous Convex owner
+  // gets management (they never receive a role); fail-closed while hydrating.
+  const canManage = canManageAsOwnerOrAdmin({
+    isWorkOsSignedIn,
+    role,
+    isAuthenticated,
+    hasProject: !!convexProjectId,
+    identityLoading: isWorkOsLoading,
+  });
+  return (
+    <ProjectEnvironmentsRoute
+      projectId={convexProjectId ?? null}
+      canManage={canManage}
+    />
+  );
+}
+
 export function ResourcesRoute() {
   const { selectedMCPConfig, selectedServerEntry, appState } =
     useAppRouteContext();
@@ -1203,6 +1251,7 @@ export function ResourcesRoute() {
       <ResourcesTab
         serverConfig={selectedMCPConfig}
         serverName={appState.selectedServer}
+        server={selectedServerEntry ?? undefined}
         serverConnectionStatus={
           selectedServerEntry?.connectionStatus ?? "disconnected"
         }
@@ -1219,6 +1268,7 @@ export function PromptsRoute() {
       <PromptsTab
         serverConfig={selectedMCPConfig}
         serverName={appState.selectedServer}
+        server={selectedServerEntry ?? undefined}
         serverConnectionStatus={
           selectedServerEntry?.connectionStatus ?? "disconnected"
         }
@@ -1614,8 +1664,8 @@ export default function App() {
     activeTab === "oauth-flow"
       ? "oauth"
       : activeTab === "xaa-flow" && xaaEnabled === true
-        ? "xaa"
-        : null;
+      ? "xaa"
+      : null;
   const { hidden: hiddenHeaderServers, hide: hideHeaderServer } =
     useHiddenHeaderServers(headerHiddenSurface);
 
@@ -1736,6 +1786,8 @@ export default function App() {
     const code = urlParams.get("code");
     const error = urlParams.get("error");
     const state = urlParams.get("state");
+    // 2R-iss: RFC 9207 issuer identification from the callback URL.
+    const iss = urlParams.get("iss");
 
     let cancelled = false;
     setHostedOAuthHandling(true);
@@ -1824,12 +1876,15 @@ export default function App() {
 
           return completeHostedOAuthCallback(callbackContext, code, {
             callbackState: state,
+            callbackIss: iss,
             onTraceUpdate: handleLiveOAuthTrace,
             authorizationHeader,
           });
         })()
       : handleOAuthCallback(code, {
           onTraceUpdate: handleLiveOAuthTrace,
+          callbackState: state,
+          callbackIss: iss,
         });
 
     completeCallback
@@ -2093,8 +2148,8 @@ export default function App() {
     const names = appState.selectedMultipleServers.length
       ? appState.selectedMultipleServers
       : appState.selectedServer && appState.selectedServer !== "none"
-        ? [appState.selectedServer]
-        : [];
+      ? [appState.selectedServer]
+      : [];
     publishSelectedServerNames(names);
   }, [appState.selectedMultipleServers, appState.selectedServer]);
   const persistRuntimeServerToProjectRef = useRef(
@@ -2551,7 +2606,12 @@ export default function App() {
 
     const mcpProtocolVersionsByServerId: Record<string, McpProtocolVersion> =
       {};
-    for (const serverId of new Set(Object.values(hostedServerIdsByName))) {
+    const seenServerIds = new Set<string>();
+    for (const [serverName, serverId] of Object.entries(
+      hostedServerIdsByName
+    )) {
+      if (seenServerIds.has(serverId)) continue;
+      seenServerIds.add(serverId);
       // Project-server config is the control-plane source for per-server
       // protocol overrides. Host config mirrors it through Convex fan-out,
       // but hosted API calls should not fall back to the host default while
@@ -2566,10 +2626,18 @@ export default function App() {
         isKnownProtocolVersion(rawServerOverride)
           ? rawServerOverride
           : undefined;
-      const effective = resolveEffectiveMcpProtocolVersion(
+      // Share the client resolver's precedence so hosted chat/eval pick up the
+      // 2026 wire era a server carries via its OAuth profile / stamped config —
+      // not just explicit per-server overrides. Otherwise a modal-saved 2026
+      // OAuth server passes the immediate probe but hosted backend connects
+      // fall back to the 2025 initialize path. (`override → config pin →
+      // OAuth-profile 2026 → host default`.)
+      const effective = resolveEffectiveWireProtocolVersion({
+        serverConfig: undefined,
+        server: appState.servers[serverName],
         serverOverride,
-        hostPin
-      );
+        hostPin,
+      });
       if (!effective) continue;
       mcpProtocolVersionsByServerId[serverId] = effective;
     }
@@ -2596,6 +2664,10 @@ export default function App() {
     activeMcpProfile,
     hostedServerIdsByName,
     projectServerConfigDto?.overrides,
+    // The hosted protocol-version map now derives the OAuth-era pin from each
+    // server's config/OAuth profile, so it must recompute when server state
+    // changes (e.g. a modal-saved 2026 profile or a persisted config pin).
+    appState.servers,
   ]);
   useApiContext({
     projectId: convexProjectId,
@@ -2828,7 +2900,9 @@ export default function App() {
         if (hasSurfaceKey && !isAppSurfaceId(requested)) {
           throw createInspectorCommandClientError(
             "invalid_request",
-            `Invalid surface ${JSON.stringify(requested)}. Omit it to snapshot the whole app, or pass a known screen id.`
+            `Invalid surface ${JSON.stringify(
+              requested
+            )}. Omit it to snapshot the whole app, or pass a known screen id.`
           );
         }
 
@@ -2862,8 +2936,8 @@ export default function App() {
         const selectedServers = appState.selectedMultipleServers?.length
           ? appState.selectedMultipleServers
           : focused
-            ? [focused]
-            : [];
+          ? [focused]
+          : [];
         return {
           path: pathname,
           activeTab: pathnameToActiveTab(pathname),
@@ -3768,6 +3842,7 @@ export default function App() {
     hostsTabSelectedHostId,
     isAuthLoading,
     isAuthenticated,
+    isGuestProjectActor,
     isBillingContextPending,
     isLoadingRemoteProjects,
     areServersHydrated,

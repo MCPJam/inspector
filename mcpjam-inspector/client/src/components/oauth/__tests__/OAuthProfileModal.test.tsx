@@ -70,6 +70,35 @@ describe("OAuthProfileModal", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(/already exists/i);
   });
 
+  it("preserves leading/trailing whitespace in a saved client secret", async () => {
+    // Trimming the secret here would silently corrupt one that legitimately
+    // has surrounding whitespace before it's saved or used in the live flow.
+    const user = userEvent.setup();
+    const { onSave } = renderModal();
+
+    await user.clear(screen.getByLabelText(/Server Name/));
+    await user.type(screen.getByLabelText(/Server Name/), "whitespace-secret-target");
+    await user.type(
+      screen.getByLabelText(/Server URL/),
+      "https://oauth.example.com/mcp",
+    );
+    await user.click(screen.getByText("Advanced settings (optional)"));
+    await user.type(
+      screen.getByPlaceholderText("Client Secret (optional)"),
+      " secret ",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" }),
+    );
+
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        formData: expect.objectContaining({ clientSecret: " secret " }),
+        profile: expect.objectContaining({ clientSecret: " secret " }),
+      }),
+    );
+  });
+
   it("allows saving an existing target under its own unchanged name", async () => {
     const user = userEvent.setup();
     const { onSave } = renderModal({
@@ -80,6 +109,32 @@ describe("OAuthProfileModal", () => {
     await user.click(screen.getByRole("button", { name: "Save configuration" }));
 
     expect(onSave).toHaveBeenCalledTimes(1);
+  });
+
+  it("carries the selected 2026 OAuth protocol version onto the saved form data", async () => {
+    // Without oauthProtocolMode on the saved form data, toMCPConfig cannot
+    // stamp the 2026 wire era and hosted chat/eval connects fall back to 2025.
+    const user = userEvent.setup();
+    const server = createServer("oauth-flow-target");
+    (server as any).oauthFlowProfile = {
+      serverUrl: "https://existing.example.com/mcp",
+      clientId: "",
+      clientSecret: "",
+      scopes: "",
+      customHeaders: [],
+      protocolVersion: "2026-07-28",
+    };
+    const { onSave } = renderModal({
+      server,
+      existingServerNames: ["oauth-flow-target"],
+    });
+
+    await user.click(screen.getByRole("button", { name: "Save configuration" }));
+
+    expect(onSave).toHaveBeenCalledTimes(1);
+    const payload = onSave.mock.calls[0][0];
+    expect(payload.formData.oauthProtocolMode).toBe("2026-07-28");
+    expect(payload.profile.protocolVersion).toBe("2026-07-28");
   });
 
   it("blocks a second submit while the first save is still in flight", async () => {

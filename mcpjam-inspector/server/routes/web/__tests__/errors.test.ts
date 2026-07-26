@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { InsufficientScopeError } from "@modelcontextprotocol/client";
 
 import { ErrorCode, WebRouteError, mapRuntimeError } from "../errors.js";
 
@@ -79,5 +80,39 @@ describe("mapRuntimeError", () => {
     const mapped = mapRuntimeError(new Error("Something else went wrong"));
     expect(mapped.status).toBe(500);
     expect(mapped.code).toBe(ErrorCode.INTERNAL_ERROR);
+  });
+
+  it("maps a SEP-2350 insufficient_scope challenge to 403 FORBIDDEN with details.insufficientScope", () => {
+    // A live hosted MCP request that 403s `insufficient_scope` surfaces as an
+    // `InsufficientScopeError`. It carries no numeric status, so without the
+    // dedicated branch it would fall through to the generic 500 and the
+    // client would never see the challenge fields.
+    const mapped = mapRuntimeError(
+      new InsufficientScopeError({
+        requiredScope: "read write admin",
+        resourceMetadataUrl:
+          "https://rs.example/.well-known/oauth-protected-resource",
+      }),
+    );
+    expect(mapped.status).toBe(403);
+    expect(mapped.code).toBe(ErrorCode.FORBIDDEN);
+    expect(mapped.details?.insufficientScope).toEqual({
+      requiredScope: "read write admin",
+      resourceMetadataUrl:
+        "https://rs.example/.well-known/oauth-protected-resource",
+      errorDescription: undefined,
+    });
+  });
+
+  it("recognizes a wrapped insufficient_scope challenge (cause chain) as 403", () => {
+    const inner = new InsufficientScopeError({ requiredScope: "read:tickets" });
+    const outer = new Error("tool call failed");
+    (outer as any).cause = inner;
+    const mapped = mapRuntimeError(outer);
+    expect(mapped.status).toBe(403);
+    expect(mapped.code).toBe(ErrorCode.FORBIDDEN);
+    expect((mapped.details?.insufficientScope as any)?.requiredScope).toBe(
+      "read:tickets",
+    );
   });
 });

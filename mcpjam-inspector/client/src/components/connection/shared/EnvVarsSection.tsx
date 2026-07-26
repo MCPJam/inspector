@@ -1,6 +1,6 @@
-import { Button } from "@mcpjam/design-system/button";
+import { useId } from "react";
 import { Input } from "@mcpjam/design-system/input";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, X } from "lucide-react";
 
 interface EnvVarsSectionProps {
   envVars: Array<{ key: string; value: string }>;
@@ -28,47 +28,63 @@ export function EnvVarsSection({
   onReveal,
 }: EnvVarsSectionProps) {
   const isHidden = hasStoredEnv && envVars.length === 0;
+  // Per-instance so the add and edit forms can be mounted at the same time
+  // without colliding on a shared element id.
+  const bodyId = useId();
+
+  // Adding from the collapsed state used to append an invisible row — expand
+  // first so the new row is always where the click points.
+  const handleAdd = () => {
+    if (!showEnvVars) {
+      onToggle();
+    }
+    onAdd();
+  };
 
   return (
-    <div className="border border-border rounded-lg overflow-hidden">
-      <div className="flex w-full items-center justify-between p-3 transition-colors hover:bg-muted/50">
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-2">
         <button
           type="button"
           onClick={onToggle}
-          className="flex flex-1 items-center gap-2 text-left"
+          aria-expanded={showEnvVars}
+          aria-controls={bodyId}
+          className="group flex items-center gap-1.5 text-left"
         >
           {showEnvVars ? (
-            <ChevronDown className="h-4 w-4 text-muted-foreground" />
+            <ChevronDown className="h-3.5 w-3.5 text-muted-foreground transition-colors group-hover:text-foreground" />
           ) : (
-            <ChevronRight className="h-4 w-4 text-muted-foreground" />
+            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground transition-colors group-hover:text-foreground" />
           )}
           <span className="text-sm font-medium text-foreground">
             Environment Variables
           </span>
           {envVars.length > 0 && (
-            <span className="text-xs text-muted-foreground">
-              ({envVars.length})
+            <span className="rounded-full bg-muted px-1.5 py-px text-[10px] font-medium tabular-nums text-muted-foreground">
+              {envVars.length}
             </span>
           )}
         </button>
-        <Button
+        <button
           type="button"
-          variant="outline"
-          size="sm"
+          onClick={handleAdd}
           disabled={isHidden}
-          onClick={(e) => {
-            e.stopPropagation();
-            onAdd();
-          }}
-          className="text-xs"
+          className="flex items-center gap-1 rounded px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Add Variable
-        </Button>
+          <Plus className="h-3.5 w-3.5" />
+          Add
+        </button>
       </div>
 
-      {showEnvVars && isHidden && (
-        <div className="border-t border-border bg-muted/30 p-4">
-          <div className="flex items-center justify-between gap-3 rounded border border-border bg-background px-3 py-2">
+      <div id={bodyId}>
+        {!showEnvVars && (
+          <p className="text-xs text-muted-foreground">
+            Passed to your MCP server process (e.g. API keys, config values)
+          </p>
+        )}
+
+        {showEnvVars && isHidden && (
+          <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-muted/30 px-3 py-2.5">
             <div>
               <p className="text-xs font-medium text-foreground">
                 Hidden — Reveal to view
@@ -79,58 +95,76 @@ export function EnvVarsSection({
                 </p>
               )}
             </div>
-            <Button
+            <button
               type="button"
-              variant="outline"
-              size="sm"
               disabled={isRevealing || !onReveal}
               onClick={onReveal}
-              className="text-xs"
+              className="rounded border border-border bg-background px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isRevealing ? "Revealing..." : "Reveal"}
-            </Button>
+            </button>
           </div>
-        </div>
-      )}
+        )}
 
-      {showEnvVars && envVars.length > 0 && (
-        <div className="p-4 space-y-2 border-t border-border bg-muted/30 max-h-48 overflow-y-auto">
-          {envVars.map((envVar, index) => (
-            <div key={index} className="flex gap-2 items-center">
-              <Input
-                value={envVar.key}
-                onChange={(e) => onUpdate(index, "key", e.target.value)}
-                placeholder="VARIABLE_NAME"
-                className="flex-1 text-xs"
-              />
-              <Input
-                value={envVar.value}
-                onChange={(e) => onUpdate(index, "value", e.target.value)}
-                placeholder="value"
-                className="flex-1 text-xs"
-              />
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => onRemove(index)}
-                className="px-2 text-xs"
-              >
-                ×
-              </Button>
-            </div>
-          ))}
-        </div>
-      )}
+        {showEnvVars && !isHidden && envVars.length === 0 && (
+          <button
+            type="button"
+            onClick={onAdd}
+            className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-border py-2.5 text-xs text-muted-foreground transition-colors hover:border-foreground/30 hover:bg-muted/40 hover:text-foreground"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Add variable
+          </button>
+        )}
 
-      {!showEnvVars && (
-        <div className="px-3 pb-3">
-          <p className="text-xs text-muted-foreground">
-            Environment variables for your MCP server process (e.g. API keys,
-            config values)
-          </p>
-        </div>
-      )}
+        {showEnvVars && envVars.length > 0 && (
+          // -mx-1/px-1 keeps focus rings from being clipped by the scroller.
+          <div className="-mx-1 max-h-52 space-y-1.5 overflow-y-auto px-1">
+            {envVars.map((envVar, index) => (
+              <div key={index} className="flex items-center gap-1.5">
+                <Input
+                  value={envVar.key}
+                  onChange={(e) => onUpdate(index, "key", e.target.value)}
+                  placeholder="KEY"
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  aria-label={`Environment variable ${index + 1} name`}
+                  className="h-8 flex-1 font-mono text-xs"
+                />
+                <span
+                  aria-hidden="true"
+                  className="shrink-0 select-none text-xs text-muted-foreground/70"
+                >
+                  =
+                </span>
+                <Input
+                  value={envVar.value}
+                  onChange={(e) => onUpdate(index, "value", e.target.value)}
+                  placeholder="value"
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  aria-label={`Environment variable ${index + 1} value`}
+                  className="h-8 flex-[1.4] font-mono text-xs"
+                />
+                <button
+                  type="button"
+                  onClick={() => onRemove(index)}
+                  aria-label={
+                    envVar.key
+                      ? `Remove ${envVar.key}`
+                      : `Remove variable ${index + 1}`
+                  }
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-destructive"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

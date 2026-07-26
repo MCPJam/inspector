@@ -150,10 +150,14 @@ function ThreadCard({
             {thread.visitorDisplayName ?? "Anonymous"}
           </span>
           {thread.synthetic === true ? (
-            <span
-              className="size-1.5 shrink-0 rounded-full bg-muted-foreground/40"
-              aria-label="Synthetic session"
-            />
+            <>
+              <span
+                className="size-1.5 shrink-0 rounded-full bg-muted-foreground/40"
+                aria-label="Synthetic session"
+                role="img"
+              />
+              <SessionReadinessBadge readiness={thread.readiness} />
+            </>
           ) : null}
         </p>
         <span className="flex shrink-0 items-center gap-1 font-mono text-xs text-muted-foreground">
@@ -190,9 +194,6 @@ function ThreadCard({
           <span className="max-w-[140px] truncate text-[10px] text-muted-foreground">
             {thread.personaLabel}
           </span>
-        ) : null}
-        {thread.synthetic === true ? (
-          <SessionReadinessBadge readiness={thread.readiness} />
         ) : null}
         {/* Judge verdict — only when a goalScore exists; absence = ungraded,
             not "broken". readiness = "ran cleanly"; judge = "hit the goal". */}

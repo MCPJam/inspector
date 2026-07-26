@@ -146,7 +146,12 @@ export function OAuthProfileModal({
     }
 
     const trimmedClientId = draft.clientId.trim();
-    const trimmedClientSecret = draft.clientSecret.trim();
+    // Preserve the exact typed secret — only whether there's a real value is
+    // trim-based (whitespace-only counts as none). Trimming the value itself
+    // would silently corrupt a secret with legitimate surrounding whitespace.
+    const trimmedClientSecret = draft.clientSecret.trim()
+      ? draft.clientSecret
+      : "";
     setError(null);
 
     return {
@@ -198,6 +203,12 @@ export function OAuthProfileModal({
       url: validated.trimmedUrl,
       headers: Object.keys(headerMap).length ? headerMap : undefined,
       useOAuth: true,
+      // Carry the chosen OAuth protocol version onto the connection form so
+      // `toMCPConfig` stamps the sessionless 2026 wire era on the saved/synced
+      // server config. Without this, hosted chat/eval/backend connects — which
+      // forward host/per-server MCP pins, not the OAuth profile — fall back to
+      // the 2025 initialize path for a 2026-only server.
+      oauthProtocolMode: draft.protocolVersion,
       oauthScopes: scopesArray,
       clientId: validated.trimmedClientId || undefined,
       clientSecret: validated.trimmedClientSecret || undefined,
@@ -353,6 +364,9 @@ export function OAuthProfileModal({
                       </SelectItem>
                       <SelectItem value="2025-11-25" className="text-xs">
                         2025-11-25 (Latest)
+                      </SelectItem>
+                      <SelectItem value="2026-07-28" className="text-xs">
+                        2026-07-28 (Draft)
                       </SelectItem>
                     </SelectContent>
                   </Select>

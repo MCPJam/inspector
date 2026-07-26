@@ -403,7 +403,13 @@ describe("v1 eval-edit routes", () => {
     )![1];
     expect(args.enabled).toBe(false);
     const body = (await res.json()) as any;
-    expect(body.schedule).toEqual({ enabled: false, intervalMinutes: 60 });
+    expect(body.schedule).toEqual({
+      enabled: false,
+      intervalMinutes: 60,
+      // Project-environment schedule pin (read-only DTO field); this suite
+      // has none.
+      environmentId: null,
+    });
   });
 
   it("re-enabling without interval reuses the suite's saved interval", async () => {

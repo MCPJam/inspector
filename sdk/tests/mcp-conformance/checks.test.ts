@@ -59,6 +59,7 @@ function createTransportContext(fetchFn: typeof fetch) {
       categories: [],
       fetchFn,
       clientName: "mcpjam-sdk-conformance",
+      era: "legacy" as const,
     },
     serverUrl: "https://example.com/mcp",
     fetchFn,
@@ -97,6 +98,7 @@ describe("mcp conformance unit checks", () => {
         fn(
           {
             getClient: vi.fn().mockReturnValue({}),
+            getManagedClient: vi.fn().mockReturnValue({}),
             getInitializationInfo: vi.fn().mockReturnValue({
               protocolVersion: "2025-11-25",
               transport: "streamable-http",

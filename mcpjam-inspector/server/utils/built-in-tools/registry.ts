@@ -179,9 +179,19 @@ export function resolveHostTools(
         );
         continue;
       }
-      // Guests get bash too: the backend accepts guest bearers on
-      // /computers/reserve and contains cost via the guest daily start cap
-      // and the idle-delete sweep.
+      // Anonymous guests get bash ONLY on a host-funded swarm grant
+      // (executionScope.kind === "swarm"), where a member host opted in and
+      // pays under per-swarm caps. On the legacy/personal-project path the
+      // backend now rejects guest reserves (projectComputers
+      // `assertNonGuestComputerActor`, mirroring inspector #3132), so
+      // advertising bash there would only produce a tool that errors — skip it.
+      if (ctx.isGuest && ctx.executionScope?.kind !== "swarm") {
+        logger.debug(
+          "[built-in-tools] bash not advertised to guest actor without a host-funded swarm scope; skipping",
+          { projectId: ctx.projectId }
+        );
+        continue;
+      }
       out[BASH_TOOL_NAME] = buildBashTool({
         authHeader,
         projectId: ctx.projectId,

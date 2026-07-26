@@ -7,6 +7,7 @@ import type {
 } from "@modelcontextprotocol/client";
 import { Wrench } from "lucide-react";
 import { ElicitationDialog } from "./ElicitationDialog";
+import { MrtrElicitationHost } from "./elicitation/MrtrElicitationHost";
 import { EmptyState } from "./ui/empty-state";
 import { navigateApp } from "@/lib/app-navigation";
 import { ThreePanelLayout } from "./ui/three-panel-layout";
@@ -34,6 +35,7 @@ import {
   respondToElicitationApi,
   type ToolExecutionResponse,
   type TaskOptions,
+  type ServedFromCache,
 } from "@/lib/apis/mcp-tools-api";
 import {
   getTaskCapabilities,
@@ -41,6 +43,11 @@ import {
 } from "@/lib/apis/mcp-tasks-api";
 import { trackTask } from "@/lib/task-tracker";
 import { validateToolOutput } from "@/lib/schema-utils";
+import {
+  driveScopeStepUpFromChallenge,
+  resetScopeStepUp,
+} from "@/lib/scope-step-up";
+import type { ServerWithName } from "@/state/app-types";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import { isNormalizedError } from "@mcpjam/sdk/browser";
 import { WebApiError } from "@/lib/apis/web/base";
@@ -95,6 +102,19 @@ export type DialogElicitation = {
   schema?: Record<string, unknown>;
   timestamp: string;
   /**
+   * The era this input request came from, so the dialog can label it honestly:
+   *
+   * - `legacy-request` — an unsolicited server→client `elicitation/create`
+   *   request (the client is answering a question the server asked mid-call).
+   * - `mrtr` — a modern (2026-07-28) multi-round-trip `input_required` result:
+   *   the OPERATION itself needs input before it can complete, and the client
+   *   collects it and retries the original call.
+   *
+   * Optional/additive: surfaces that predate the distinction omit it and get
+   * the neutral legacy phrasing.
+   */
+  origin?: "legacy-request" | "mrtr";
+  /**
    * Identity of the server requesting information (MCP spec MUST: the client
    * must make it clear which server is asking). Optional and additive: local
    * surfaces that don't yet plumb it through fall back to a generic header.
@@ -133,6 +153,13 @@ function normalizeElicitationContent(
 interface ToolsTabProps {
   serverConfig?: MCPServerConfig;
   serverName?: string;
+  /**
+   * The full server entry — needed to drive a SEP-2350 runtime scope step-up
+   * when a tool call returns a `403 insufficient_scope` challenge (issuer +
+   * originally-requested scopes are resolved from it). Optional: surfaces that
+   * don't plumb it through simply never trigger the local step-up.
+   */
+  server?: ServerWithName;
   serverConnectionStatus?: ConnectionStatus;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
 }
@@ -140,6 +167,7 @@ interface ToolsTabProps {
 export function ToolsTab({
   serverConfig,
   serverName,
+  server,
   serverConnectionStatus,
   mcpToolResultImageRendering,
 }: ToolsTabProps) {
@@ -188,6 +216,9 @@ export function ToolsTab({
   const toolFetchVersionRef = useRef(0);
   const taskCapabilitiesFetchVersionRef = useRef(0);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
+  const [servedFromCache, setServedFromCache] = useState<
+    ServedFromCache | undefined
+  >(undefined);
   const isServerConnected =
     serverConnectionStatus === undefined ||
     serverConnectionStatus === "connected";
@@ -272,6 +303,10 @@ export function ToolsTab({
       setTaskCapabilities(null);
     }
     setCursor(undefined);
+    // SEP-2549 provenance describes the currently displayed list; once that
+    // list is cleared (disconnect, server switch, or a reset before a
+    // refresh) the badge must not survive to describe stale/other-server data.
+    setServedFromCache(undefined);
   };
 
   useEffect(() => {
@@ -407,7 +442,7 @@ export function ToolsTab({
     }
   };
 
-  const fetchTools = async (reset = false) => {
+  const fetchTools = async (reset = false, forceRefresh = false) => {
     if (!serverName) {
       logger.warn("Cannot fetch tools: no serverId available");
       return;
@@ -434,6 +469,7 @@ export function ToolsTab({
       const data = await listTools({
         serverId: serverName,
         cursor: reset ? undefined : cursor,
+        refresh: forceRefresh,
       });
       if (fetchVersion !== toolFetchVersionRef.current) return;
       const toolArray = data.tools ?? [];
@@ -442,6 +478,9 @@ export function ToolsTab({
       );
       setTools((prev) => (reset ? dictionary : { ...prev, ...dictionary }));
       setCursor(data.nextCursor);
+      // SEP-2549 provenance: only ever set on an actual hit — a non-hit
+      // fetch clears any stale badge from a previous cached response.
+      setServedFromCache(data.servedFromCache);
       logger.info("Tools fetched", {
         serverId: serverName,
         toolCount: toolArray.length,
@@ -496,6 +535,12 @@ export function ToolsTab({
     return toolName ? tools[toolName]?._meta : undefined;
   };
 
+  // SEP-2350: a successful call clears the bounded step-up counter so a future
+  // legitimate scope step-up starts fresh rather than inheriting a stale count
+  // that would prematurely throw. Called from BOTH success paths — an immediate
+  // `completed` result and a task-augmented `task_created`.
+  const resetStepUpOnSuccess = () => resetScopeStepUp(server);
+
   const handleExecutionResponse = (
     response: ToolExecutionResponse,
     toolName: string
@@ -510,6 +555,8 @@ export function ToolsTab({
       setResponseDurationMs(durationMs);
       const callResult = response.result;
       setResult(callResult);
+
+      resetStepUpOnSuccess();
 
       const rawResult = callResult as unknown as Record<string, unknown>;
       const currentTool = tools[toolName];
@@ -538,6 +585,11 @@ export function ToolsTab({
     // Handle task creation response (MCP Tasks spec 2025-11-25)
     if ("status" in response && response.status === "task_created") {
       const { task, modelImmediateResponse } = response;
+
+      // A task-augmented tool that succeeds lands here, not in the `completed`
+      // branch — reset the step-up counter on this success path too so a stale
+      // count doesn't prematurely throw a later legitimate step-up.
+      resetStepUpOnSuccess();
 
       // Track the task locally so it appears in the Tasks tab
       if (serverName) {
@@ -579,6 +631,18 @@ export function ToolsTab({
       const maybeNormalized = (response as { normalized?: unknown }).normalized;
       setNormalizedError(
         isNormalizedError(maybeNormalized) ? maybeNormalized : null
+      );
+
+      // SEP-2350 runtime scope step-up: the tool call failed with a
+      // `403 insufficient_scope`. Drive the bounded, union-scope
+      // re-authorization for the local (non-hosted) surface. On `reauthorize`
+      // this redirects the browser to the authorization server; `throw` /
+      // `manual` leave the surfaced error in place.
+      // Dedup, the actionable-challenge gate and the in-flight guard all live
+      // in the shared lifecycle, which every surface now routes through.
+      driveScopeStepUpFromChallenge(
+        server,
+        (response as { insufficientScope?: unknown }).insufficientScope,
       );
     }
   };
@@ -741,7 +805,9 @@ export function ToolsTab({
   };
 
   const handleToolRefresh = () => {
-    void fetchTools(true);
+    // Explicit user "Refresh" click ⇒ cacheMode: "refresh" server-side, so it
+    // always re-fetches even if a still-fresh cached entry exists.
+    void fetchTools(true, true);
   };
 
   const filteredSavedRequests = searchQuery.trim()
@@ -761,6 +827,10 @@ export function ToolsTab({
           | Record<string, unknown>
           | undefined,
         timestamp: activeElicitation.timestamp,
+        // This surface's `/execute` bridge answers a legacy server→client
+        // `elicitation/create`; modern `input_required` input is collected by
+        // `MrtrElicitationHost` below (era-labeled `mrtr`).
+        origin: "legacy-request",
       }
     : null;
 
@@ -822,6 +892,7 @@ export function ToolsTab({
       searchQuery={searchQuery}
       onSearchQueryChange={setSearchQuery}
       onRefresh={handleToolRefresh}
+      servedFromCache={servedFromCache}
       onSelectTool={setSelectedTool}
       savedRequests={filteredSavedRequests}
       highlightedRequestId={highlightedRequestId}
@@ -905,6 +976,11 @@ export function ToolsTab({
         onResponse={handleElicitationResponse}
         loading={elicitationLoading}
       />
+
+      {/* Modern MRTR (`input_required`) input rail. When the running tool
+          returns an `input_required` result, the SDK driver collects rounds
+          through this shared dialog and retries the original call. */}
+      <MrtrElicitationHost />
 
       <SaveRequestDialog
         open={isSaveDialogOpen}

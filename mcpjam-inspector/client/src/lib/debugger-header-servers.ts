@@ -7,10 +7,13 @@ export function isOAuthDebuggerHeaderServer(server: ServerWithName): boolean {
   if (server.useXaa === true) return false;
   if (server.useOAuth === false) return false;
 
+  const serverUrl = server.config.url
+    ? server.config.url.toString()
+    : undefined;
   return Boolean(
     server.useOAuth === true ||
       server.oauthTokens ||
-      hasOAuthConfig(server.name) ||
+      hasOAuthConfig(server.name, serverUrl) ||
       server.connectionStatus === "oauth-flow"
   );
 }

@@ -844,6 +844,10 @@ describe("OAuth state machine regressions", () => {
         redirectUrl: REDIRECT_URI,
         requestExecutor: prmExecutor("http://localhost:8000/mcp"),
         resourceIndicatorEnforcement: "reject-rfc9728",
+        // This case isolates RFC 9728 https-scheme enforcement using a loopback
+        // origin; opt into loopback so the SSRF guard (which now blocks loopback
+        // by default) doesn't intercept before the scheme check under test.
+        allowLoopbackMetadataFetch: true,
       });
 
       await machine.proceedToNextStep();

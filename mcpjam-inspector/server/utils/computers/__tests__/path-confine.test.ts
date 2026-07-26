@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { confineToHome, HOME_ROOT } from "../path-confine.js";
+import {
+  confineToHome,
+  resolveWorkingDirectory,
+  HOME_ROOT,
+} from "../path-confine.js";
 
 describe("confineToHome", () => {
   it("accepts the home root itself", () => {
@@ -52,5 +56,44 @@ describe("confineToHome", () => {
 
   it("exposes the home root constant", () => {
     expect(HOME_ROOT).toBe("/home/user");
+  });
+});
+
+describe("resolveWorkingDirectory (COMP-16 workdir contract)", () => {
+  it("treats absent/blank as the box default (undefined, no error)", () => {
+    expect(resolveWorkingDirectory(undefined)).toEqual({ workdir: undefined });
+    expect(resolveWorkingDirectory("")).toEqual({ workdir: undefined });
+    expect(resolveWorkingDirectory("   ")).toEqual({ workdir: undefined });
+  });
+
+  it("accepts and normalizes a directory under the home root", () => {
+    expect(resolveWorkingDirectory("/home/user")).toEqual({
+      workdir: "/home/user",
+    });
+    expect(resolveWorkingDirectory("/home/user/myproject/")).toEqual({
+      workdir: "/home/user/myproject",
+    });
+    // The COMP-14 attachments bucket is a valid workdir (relative paths "just work").
+    expect(resolveWorkingDirectory("/home/user/attachments")).toEqual({
+      workdir: "/home/user/attachments",
+    });
+  });
+
+  it("rejects traversal and absolute escapes with a clear, path-bearing error", () => {
+    for (const bad of [
+      "/etc",
+      "/etc/passwd",
+      "/home/user/../etc",
+      "/home/user/../../root",
+      "/home/user2/secret",
+      "relative/path",
+    ]) {
+      const result = resolveWorkingDirectory(bad);
+      expect("error" in result, bad).toBe(true);
+      if ("error" in result) {
+        expect(result.error).toContain("/home/user");
+        expect(result.error).toContain(bad);
+      }
+    }
   });
 });
