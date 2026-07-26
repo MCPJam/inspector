@@ -4,6 +4,7 @@ import {
   isUnauthorized401,
   type NormalizedError,
 } from "@mcpjam/sdk";
+import { extractInsufficientScopeChallenge } from "../../utils/mcp-error-serialize.js";
 
 export const ErrorCode = {
   UNAUTHORIZED: "UNAUTHORIZED",
@@ -141,6 +142,25 @@ export function mapRuntimeError(error: unknown): WebRouteError {
   const message = parseErrorMessage(error);
   const lower = message.toLowerCase();
   const normalized = describeError(error);
+
+  // SEP-2350 runtime scope step-up. A live MCP request against the hosted
+  // proxy can surface a 403 `insufficient_scope` as an upstream
+  // `InsufficientScopeError` (the SDK builds the transport
+  // `onInsufficientScope: "throw"`). Recognize it BEFORE the generic 500 and
+  // return 403 FORBIDDEN carrying the `WWW-Authenticate` challenge in
+  // `details.insufficientScope`, so `webError` forwards it and the client can
+  // drive the union-scope re-authorization. This single branch covers the
+  // hosted tools / resources / prompts twins, which all rethrow into `onError`.
+  const insufficientScope = extractInsufficientScopeChallenge(error);
+  if (insufficientScope) {
+    return new WebRouteError(
+      403,
+      ErrorCode.FORBIDDEN,
+      message,
+      { insufficientScope },
+      normalized
+    );
+  }
 
   // A raw 401 from the target MCP server is an authorization failure, not an
   // internal error — return the honest status. No `oauthRequired` here: this

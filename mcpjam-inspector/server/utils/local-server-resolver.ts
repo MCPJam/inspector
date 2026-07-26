@@ -2,6 +2,10 @@ import type { Context } from "hono";
 import type { MCPClientManager, MCPServerConfig } from "@mcpjam/sdk";
 import { narrowElicitationToLocalSupport } from "../routes/mcp/elicitation.js";
 import {
+  registerLocalMrtrCollector,
+  withLocalMrtrElicitationCapability,
+} from "../routes/mcp/mrtr.js";
+import {
   describeError,
   isKnownProtocolVersion,
   isUnauthorized401,
@@ -1141,8 +1145,19 @@ export async function executeLocalServerConnect(
     });
   }
 
+  // LOAD-BEARING: register the modern MRTR (`input_required`) input collector
+  // BEFORE connecting. A 2026-07-28 server only embeds `elicitation/create` in
+  // an `input_required` result when the client advertised `elicitation`, and
+  // the SDK advertises it (in `buildCapabilities`) exactly when a collector is
+  // registered at connect time — registering afterward does not re-advertise.
+  registerLocalMrtrCollector(mcpClientManager, serverDisplayName);
+  // The MRTR bridge completes url rounds as well as form rounds, so a
+  // modern-only connection declares both. Gated on the accept-list because the
+  // legacy inbound bridge is form-only — see the helper.
+  const connectConfig = withLocalMrtrElicitationCapability(resolved.config);
+
   try {
-    await mcpClientManager.connectToServer(serverDisplayName, resolved.config);
+    await mcpClientManager.connectToServer(serverDisplayName, connectConfig);
   } catch (error) {
     if (options.removeOnFailure) {
       try {
