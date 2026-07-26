@@ -87,6 +87,16 @@ export const SUPPORTED_ELICITATION_MODES: readonly ElicitationMode[] = [
 ];
 
 /**
+ * The elicitation modes an MRTR round may embed. A thunk defers the lookup to
+ * leg time, which is what a caller deriving the set from the negotiated
+ * `elicitation` capability needs: that capability is only known once the
+ * connection has initialized, which happens inside the first leg.
+ */
+export type MrtrSupportedModes =
+  | readonly ElicitationMode[]
+  | (() => readonly ElicitationMode[]);
+
+/**
  * MCPJam owns the round cap in manual mode; this mirrors the upstream
  * automatic driver's `maxRounds` default so behavior is consistent across
  * modes.
@@ -202,11 +212,17 @@ export class MrtrUnsupportedElicitationModeError extends Error {
   readonly code = "MRTR_UNSUPPORTED_ELICITATION_MODE";
   constructor(
     readonly mode: string,
-    readonly inputKey: string
+    readonly inputKey: string,
+    /**
+     * The modes actually allowed for this connection. Defaults to everything
+     * this client can render; a caller that declared a narrower `elicitation`
+     * capability passes its own set so the message names what was declared.
+     */
+    readonly supportedModes: readonly ElicitationMode[] = SUPPORTED_ELICITATION_MODES
   ) {
     super(
       `Embedded elicitation request "${inputKey}" declared unsupported mode "${mode}" ` +
-        `(supported: ${SUPPORTED_ELICITATION_MODES.join(", ")}).`
+        `(supported: ${supportedModes.join(", ")}).`
     );
     this.name = "MrtrUnsupportedElicitationModeError";
     Object.setPrototypeOf(this, new.target.prototype);
@@ -356,7 +372,7 @@ export function validateInputRequests(
     if (method === "elicitation/create") {
       const mode = (req.params?.mode as string | undefined) ?? "form";
       if (!supportedModes.includes(mode as ElicitationMode)) {
-        throw new MrtrUnsupportedElicitationModeError(mode, key);
+        throw new MrtrUnsupportedElicitationModeError(mode, key, supportedModes);
       }
       continue;
     }
@@ -381,7 +397,10 @@ export function validateRoundResponses(
   const pending = state.pendingInputRequests;
   const pendingKeys = Object.keys(pending);
   for (const key of pendingKeys) {
-    if (!(key in responses)) {
+    // Own-property check: an untrusted server key such as `toString` /
+    // `constructor` must count as missing unless the collector actually
+    // returned it, so a hostile key can't slip through via the prototype chain.
+    if (!Object.prototype.hasOwnProperty.call(responses, key)) {
       throw new MrtrInputValidationError(
         `Missing response for embedded input "${key}".`
       );
@@ -460,7 +479,7 @@ export async function executeInputRequiredLeg<TResult = unknown>(args: {
   currentRoundResponses?: InputResponses;
   signal?: AbortSignal;
   validateContent?: ElicitationContentValidator;
-  supportedElicitationModes?: readonly ElicitationMode[];
+  supportedElicitationModes?: MrtrSupportedModes;
 }): Promise<MrtrLegResult<TResult>> {
   const {
     sender,
@@ -500,16 +519,25 @@ export async function executeInputRequiredLeg<TResult = unknown>(args: {
       {
         rounds: state.maxRounds,
         lastResult: {
+          // `requestState` is opaque and must never be logged (see module
+          // header); an upstream error reporter would serialize it out of
+          // `data`. The round count + request keys are enough for diagnostics.
           inputRequests: raw.inputRequests,
-          requestState: raw.requestState,
         },
       }
     );
   }
 
   const inputRequests = toSafeMap<InputRequests[string]>(raw.inputRequests);
+  // Resolved HERE, after the leg returned — not when the operation was built.
+  // The declared `elicitation` capability is only on record once `initialize`
+  // has run, and it is this first leg that establishes the connection.
+  const resolvedModes =
+    typeof supportedElicitationModes === "function"
+      ? supportedElicitationModes()
+      : supportedElicitationModes;
   // Validate the ENTIRE map before returning (no UI is shown for a bad round).
-  validateInputRequests(inputRequests, supportedElicitationModes);
+  validateInputRequests(inputRequests, resolvedModes);
 
   const nextState: MrtrOperationState = {
     opId: state.opId,
@@ -539,7 +567,7 @@ export function resumeInputRequiredOperation<TResult = unknown>(
     requestOptions?: RequestOptions;
     signal?: AbortSignal;
     validateContent?: ElicitationContentValidator;
-    supportedElicitationModes?: readonly ElicitationMode[];
+    supportedElicitationModes?: MrtrSupportedModes;
   }
 ): Promise<MrtrLegResult<TResult>> {
   const sender =
@@ -584,7 +612,7 @@ export interface RunInputRequiredOptions<TResult = unknown> {
   validateResponse?: MrtrValidateResponse<TResult>;
   /** Strict content validator for accepted elicitation input. */
   validateContent?: ElicitationContentValidator;
-  supportedElicitationModes?: readonly ElicitationMode[];
+  supportedElicitationModes?: MrtrSupportedModes;
   /** MCPJam-owned round cap; defaults to {@link DEFAULT_MAX_MRTR_ROUNDS}. */
   maxRounds?: number;
   /** Abort signal for both the wire-active and local-pending windows. */

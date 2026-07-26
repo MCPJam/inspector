@@ -136,6 +136,7 @@ export {
   MCPAuthError,
   isAuthError,
   isUnauthorized401,
+  isInsufficientScopeError,
   isMCPAuthError,
 } from "./errors.js";
 
@@ -227,6 +228,7 @@ export type {
   MrtrOperationState,
   MrtrLegResult,
   MrtrLegSender,
+  MrtrSupportedModes,
   MrtrInputCollector,
   MrtrValidateResponse,
   ElicitationContentValidator,

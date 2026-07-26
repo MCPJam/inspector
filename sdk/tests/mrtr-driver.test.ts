@@ -263,6 +263,62 @@ describe("undeclared methods and modes (Decision 8)", () => {
     ).rejects.toBeInstanceOf(MrtrUnsupportedElicitationModeError);
   });
 
+  it("rejects a url-mode round when the caller declared form-only", async () => {
+    // Client-side backstop for the spec's server-side MUST NOT ("Servers MUST
+    // NOT send elicitation requests with modes that are not supported by the
+    // client"): a caller that advertised `elicitation: {}` (form-only) must not
+    // be shown a URL consent prompt by a noncompliant server.
+    const { sender } = scriptedSender([
+      inputRequired({
+        k: {
+          method: "elicitation/create",
+          params: { message: "m", mode: "url", url: "https://evil.example" },
+        },
+      }),
+    ]);
+    const collectInput = vi.fn();
+    await expect(
+      runInputRequiredOperation({
+        method: "tools/call",
+        params: { name: "t" },
+        sender,
+        collectInput,
+        supportedElicitationModes: ["form"],
+      }),
+    ).rejects.toBeInstanceOf(MrtrUnsupportedElicitationModeError);
+    // The round is rejected whole: nothing is ever surfaced for collection.
+    expect(collectInput).not.toHaveBeenCalled();
+  });
+
+  it("resolves the mode allowlist lazily, per leg", async () => {
+    // The declared capability is only on record after `initialize`, which
+    // happens inside the first leg — so the allowlist must be read then, not
+    // when the operation is constructed.
+    const { sender } = scriptedSender([
+      inputRequired({
+        k: {
+          method: "elicitation/create",
+          params: { message: "m", mode: "url", url: "https://x" },
+        },
+      }),
+      { ok: true },
+    ]);
+    let connected = false;
+    const modes = vi.fn(() => (connected ? ["form", "url"] : ["form"]));
+    const result = await runInputRequiredOperation({
+      method: "tools/call",
+      params: { name: "t" },
+      sender: async (req, ctx) => {
+        connected = true; // stands in for the handshake the first leg performs
+        return sender(req, ctx);
+      },
+      collectInput: async () => ({ k: { action: "decline" } }) as never,
+      supportedElicitationModes: modes as never,
+    });
+    expect(result).toEqual({ ok: true });
+    expect(modes).toHaveBeenCalled();
+  });
+
   it("accepts url mode and absent mode (defaults to form)", () => {
     expect(() =>
       validateInputRequests({
@@ -414,9 +470,14 @@ describe("abort windows", () => {
     const controller = new AbortController();
     const sender: MrtrLegSender = async (_req, ctx) => {
       controller.abort();
+      // Fail with a DISTINCT (non-AbortError) error if the operation signal was
+      // not forwarded to the leg — otherwise a regression that drops the signal
+      // would still throw AbortError and pass the assertion below.
+      if (!ctx.signal?.aborted) {
+        throw new Error("operation signal was not forwarded to the leg sender");
+      }
       const err = new Error("aborted");
       err.name = "AbortError";
-      if (ctx.signal?.aborted) throw err;
       throw err;
     };
     await expect(

@@ -37,6 +37,7 @@ import {
   recordAppToolInvocation,
 } from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
 import { scrubAppToolResultForModel } from "@/components/chat-v2/thread/mcp-apps/app-tools-sanitizer";
+import { driveScopeStepUp, resetScopeStepUp } from "@/lib/scope-step-up";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvex, useConvexAuth } from "convex/react";
 import { ModelDefinition, type ModelProvider } from "@/shared/types";
@@ -120,6 +121,8 @@ import {
   type HostedElicitationRequestEvent,
   type HostedElicitationUrlRequiredEvent,
 } from "@/shared/hosted-elicitation";
+import {
+} from "@/state/oauth-orchestrator";
 import { respondToChatElicitation } from "@/lib/apis/elicitation-api";
 import {
   isHarnessSessionDataPart,
@@ -739,6 +742,83 @@ function isTraceEventDataPart(
   return part.type === "data-trace-event" && !!part.data;
 }
 
+// SEP-2350: a JSON-RPC message that carries a `result` (and no `error`) is a
+// SUCCESSFUL response — the signal used to clear a server's bounded step-up
+// counter once its grant is proven sufficient again.
+export function isSuccessfulRpcResponse(message: unknown): boolean {
+  if (!message || typeof message !== "object") return false;
+  const m = message as Record<string, unknown>;
+  return "result" in m && !("error" in m);
+}
+
+// SEP-2350: the JSON-RPC `id` correlating a request with its response. Only
+// string/number ids can be matched across the two log frames; a notification
+// (no id) or a malformed id yields `undefined` and never correlates.
+export function rpcMessageId(
+  message: unknown,
+): string | number | undefined {
+  if (!message || typeof message !== "object") return undefined;
+  const id = (message as Record<string, unknown>).id;
+  return typeof id === "string" || typeof id === "number" ? id : undefined;
+}
+
+// SEP-2350: a JSON-RPC message's `method`, present only on requests. Used to
+// pick out the outgoing `tools/call` whose later successful response is the
+// ONLY signal that clears the bounded step-up counter — a `tools/list`,
+// `initialize`, or ping success must NOT reset it, since none of those exercise
+// the scope the step-up widened.
+export function rpcRequestMethod(message: unknown): string | undefined {
+  if (!message || typeof message !== "object") return undefined;
+  const method = (message as Record<string, unknown>).method;
+  return typeof method === "string" ? method : undefined;
+}
+
+/**
+ * SEP-2350: reconcile one hosted RPC log frame against the per-server set of
+ * outgoing `tools/call` request ids, and report whether this frame is the
+ * SUCCESSFUL-`tools/call` signal that should clear the server's bounded step-up
+ * counter. Mutates `pending` in place:
+ *   - `send` + `tools/call` with an id → record the id under `serverId`.
+ *   - `receive` answering a tracked id → EVICT the id (success OR error) so a
+ *     failed `tools/call` — the `insufficient_scope` case — can't linger and
+ *     later false-match a reused id; returns `true` ONLY when that settled
+ *     response is a success (proving the widened grant is now sufficient).
+ * Discovery/handshake successes (`initialize`, `tools/list`, ping) were never
+ * tracked as `tools/call`, so their ids are never in `pending` and can never
+ * return `true`. The caller resolves the server + performs the actual reset.
+ */
+export function reconcileChatToolCallStepUp(
+  pending: Map<string, Set<string | number>>,
+  log: { direction: string; serverId: string; message: unknown },
+): boolean {
+  if (log.direction === "send") {
+    // Track only tool invocations; ids from other methods never gate a reset,
+    // so recording them would only grow the map.
+    if (rpcRequestMethod(log.message) === "tools/call") {
+      const id = rpcMessageId(log.message);
+      if (id !== undefined) {
+        const set =
+          pending.get(log.serverId) ?? new Set<string | number>();
+        set.add(id);
+        pending.set(log.serverId, set);
+      }
+    }
+    return false;
+  }
+  if (log.direction === "receive") {
+    const id = rpcMessageId(log.message);
+    const set = pending.get(log.serverId);
+    if (id !== undefined && set?.has(id)) {
+      set.delete(id);
+      if (set.size === 0) {
+        pending.delete(log.serverId);
+      }
+      return isSuccessfulRpcResponse(log.message);
+    }
+  }
+  return false;
+}
+
 function dedupeTraceToolCalls(
   toolCalls: LiveChatTraceToolCall[] | null | undefined
 ): LiveChatTraceToolCall[] {
@@ -1249,6 +1329,15 @@ export function useChatSession(
   const [urlElicitationRequired, setUrlElicitationRequired] = useState<
     HostedElicitationUrlRequiredEvent[]
   >([]);
+  // SEP-2350: ids of outgoing `tools/call` requests per server (keyed by the
+  // trusted `serverId`), so a later SUCCESSFUL response can be correlated to an
+  // actual tool invocation before resetting that server's bounded step-up
+  // counter. Discovery/handshake successes (`initialize`, `tools/list`, ping)
+  // that fire on post-OAuth reconnect must NOT clear the budget — only a
+  // `tools/call` success proves the widened grant is now sufficient.
+  const chatToolCallRequestIdsRef = useRef<Map<string, Set<string | number>>>(
+    new Map(),
+  );
   const resumedVersionRef = useRef<number | null>(null);
   const restoredToolRenderOverridesRef = useRef<
     Record<string, ToolRenderOverride>
@@ -1402,9 +1491,78 @@ export function useChatSession(
             );
           } else if (event.kind === "url_required") {
             setUrlElicitationRequired((current) => [...current, event]);
+          } else if (event.kind === "insufficient_scope") {
+            // SEP-2350: a tool call in the agent loop failed with a runtime
+            // `403 insufficient_scope`. Drive the bounded, union-scope step-up
+            // re-authorization (`reauthorize` redirects the browser to the
+            // authorization server). Resolve the live server entry from the
+            // same store ToolsTab uses; without it there is no stored issuer /
+            // granted scopes to widen, so skip.
+            //
+            // Chatbox / share-link turns are DELIBERATELY skipped here: their
+            // servers are synthesized in ChatboxChatPage with a placeholder
+            // URL and never inserted into the dashboard appState, so this
+            // lookup returns undefined and the `if (server && ...)` guard below
+            // makes the event a safe no-op. That is correct — a share-link
+            // visitor (even an authenticated one) does not own the host's MCP
+            // servers and cannot re-authorize the owner's OAuth; connect-time
+            // chatbox OAuth is handled separately by `useHostedOAuthGate`.
+            const activeProject =
+              appState?.projects?.[
+                hostedProjectId ?? appState?.activeProjectId ?? ""
+              ];
+            const server =
+              (event.serverName
+                ? (appState?.servers?.[event.serverName] ??
+                  activeProject?.servers?.[event.serverName])
+                : undefined) ??
+              appState?.servers?.[event.serverId] ??
+              activeProject?.servers?.[event.serverId];
+            // The shared lifecycle applies the same actionable-challenge gate
+            // (a `resourceMetadataUrl`-only event is inert in the orchestrator
+            // today and would burn the bounded budget without widening scope)
+            // and the same cross-surface in-flight dedup.
+            driveScopeStepUp(server, {
+              requiredScope: event.requiredScope,
+              resourceMetadataUrl: event.resourceMetadataUrl,
+            });
           }
         } else if (isHostedRpcLogDataPart(part)) {
           ingestHostedRpcLogs([part.data]);
+          // SEP-2350: chat/agent-loop server tool calls resolve server-side, so
+          // (unlike Tools/Resources/Prompts) this hook has no per-call success
+          // return to clear the bounded step-up counter on. The per-server
+          // success signal is a SUCCESSFUL response to an actual `tools/call` —
+          // and ONLY that. A `tools/list`, `initialize`, ping, or logging
+          // success (all of which fire on the post-OAuth reconnect that follows
+          // a step-up redirect) does NOT exercise the widened scope, so clearing
+          // the budget on one would let a server that keeps returning
+          // `insufficient_scope` redirect every turn instead of reaching the
+          // bounded cap. Responses carry no `method`, so correlate by JSON-RPC
+          // id: record outgoing `tools/call` request ids per server, then reset
+          // only when a matching successful response arrives. Same store lookup
+          // the insufficient_scope branch uses (a share-link chatbox resolves to
+          // no server, a safe no-op there).
+          const log = part.data;
+          // Track outgoing `tools/call` ids and evict them on any settled
+          // response; a `true` return means a tracked `tools/call` SUCCEEDED —
+          // the only signal that clears this server's bounded step-up counter.
+          if (
+            reconcileChatToolCallStepUp(chatToolCallRequestIdsRef.current, log)
+          ) {
+            const activeProject =
+              appState?.projects?.[
+                hostedProjectId ?? appState?.activeProjectId ?? ""
+              ];
+            const server =
+              (log.serverName
+                ? (appState?.servers?.[log.serverName] ??
+                  activeProject?.servers?.[log.serverName])
+                : undefined) ??
+              appState?.servers?.[log.serverId] ??
+              activeProject?.servers?.[log.serverId];
+            resetScopeStepUp(server);
+          }
         } else if (isHarnessSessionDataPart(part)) {
           // Cache the harness workdir so the Playground Shell can open a
           // terminal there. Keyed by project + host (both known here).
@@ -1427,7 +1585,7 @@ export function useChatSession(
 
       setLiveTraceState((current) => applyLiveTraceEvent(current, part.data));
     },
-    [hostedProjectId, hostedHostId],
+    [hostedProjectId, hostedHostId, appState],
   );
 
   const syncResumedVersion = useCallback((version: number | null) => {
@@ -2380,6 +2538,18 @@ export function useChatSession(
       widgetModelContext?: WidgetModelContextEntry[];
     }) => {
       const { text, files, metadata, widgetModelContext } = options;
+      // SEP-2350 turn boundary: a new user turn spins up a fresh per-turn MCP
+      // client (`web-chat-turn.ts` disconnects the prior one), and each new
+      // client RESTARTS its numeric JSON-RPC ids from scratch. Any `tools/call`
+      // id still pending from a prior turn — e.g. one whose only reply was an
+      // `insufficient_scope` error with no per-id error response logged — is now
+      // stale, and a later turn's SUCCESSFUL `initialize`/`tools/list` could
+      // reuse that id and wrongly reset the bounded step-up budget. Drop them
+      // here so correlation only ever matches ids minted within the same turn.
+      // (Only genuinely NEW user turns flow through this wrapper; in-turn
+      // continuations — tool-approval responses, tool outputs — reuse the same
+      // client and go through `addToolApprovalResponse`/`addToolOutput`.)
+      chatToolCallRequestIdsRef.current.clear();
       const extra = metadata ? ({ metadata } as { metadata: unknown }) : {};
       pendingWidgetModelContextRef.current =
         widgetModelContext && widgetModelContext.length > 0

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
+import { createElement } from "react";
 
 import { classifySelectedTool, useToolExecution } from "../useToolExecution";
 import {
@@ -7,6 +8,8 @@ import {
   type AppInstance,
   type AppToolDescriptor,
 } from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
+import { AppStateProvider } from "@/state/app-state-context";
+import type { AppState, ServerWithName } from "@/state/app-types";
 
 // --- Mocks ------------------------------------------------------------------
 
@@ -30,6 +33,15 @@ vi.mock("@/lib/apis/mcp-tools-api", () => ({
 const mockReadResource = vi.fn();
 vi.mock("@/lib/apis/mcp-resources-api", () => ({
   readResource: (...args: unknown[]) => mockReadResource(...args),
+}));
+
+const mockApplyToolCallStepUp = vi.fn();
+const mockResetToolCallStepUp = vi.fn();
+vi.mock("@/state/oauth-orchestrator", () => ({
+  applyToolCallStepUp: (...args: unknown[]) =>
+    mockApplyToolCallStepUp(...args),
+  resetToolCallStepUp: (...args: unknown[]) =>
+    mockResetToolCallStepUp(...args),
 }));
 
 // --- Helpers ----------------------------------------------------------------
@@ -89,6 +101,9 @@ beforeEach(() => {
   });
   mockExecuteToolApi.mockReset();
   mockReadResource.mockReset();
+  mockApplyToolCallStepUp.mockReset();
+  mockApplyToolCallStepUp.mockResolvedValue({ action: "throw" });
+  mockResetToolCallStepUp.mockReset();
 });
 
 afterEach(() => {
@@ -450,5 +465,104 @@ describe("useToolExecution app-tool routing", () => {
 
     expect(outcome?.ok).toBe(true);
     expect(callTool).toHaveBeenCalled();
+  });
+});
+
+describe("useToolExecution step-up (SEP-2350)", () => {
+  function withServer(server: ServerWithName) {
+    const appState = {
+      servers: { [server.name]: server },
+    } as unknown as AppState;
+    return ({ children }: { children: React.ReactNode }) =>
+      createElement(AppStateProvider, { appState }, children);
+  }
+
+  const server = {
+    name: "srv-1",
+    connectionStatus: "connected",
+  } as unknown as ServerWithName;
+
+  it("drives applyToolCallStepUp on a 403 insufficient_scope response", async () => {
+    mockExecuteToolApi.mockResolvedValueOnce({
+      error: "Insufficient scope",
+      insufficientScope: {
+        requiredScope: "read write admin",
+        resourceMetadataUrl: "https://rs.example/.well-known",
+      },
+    });
+
+    const { result } = renderHook(
+      () => useToolExecution(makeHookOptions({ selectedTool: "get_weather" })),
+      { wrapper: withServer(server) },
+    );
+
+    await act(async () => {
+      await result.current.executeTool({ parameters: {} });
+    });
+
+    expect(mockApplyToolCallStepUp).toHaveBeenCalledTimes(1);
+    expect(mockApplyToolCallStepUp).toHaveBeenCalledWith(server, {
+      requiredScope: "read write admin",
+      resourceMetadataUrl: "https://rs.example/.well-known",
+    });
+    expect(mockResetToolCallStepUp).not.toHaveBeenCalled();
+  });
+
+  it("resets the step-up counter after a successful call", async () => {
+    mockExecuteToolApi.mockResolvedValueOnce({
+      status: "completed",
+      result: { content: [{ type: "text", text: "ok" }] },
+    });
+
+    const { result } = renderHook(
+      () => useToolExecution(makeHookOptions({ selectedTool: "get_weather" })),
+      { wrapper: withServer(server) },
+    );
+
+    await act(async () => {
+      await result.current.executeTool({ parameters: {} });
+    });
+
+    expect(mockResetToolCallStepUp).toHaveBeenCalledWith(server);
+    expect(mockApplyToolCallStepUp).not.toHaveBeenCalled();
+  });
+
+  it("does not drive step-up for an ordinary error (no challenge)", async () => {
+    mockExecuteToolApi.mockResolvedValueOnce({ error: "Boom" });
+
+    const { result } = renderHook(
+      () => useToolExecution(makeHookOptions({ selectedTool: "get_weather" })),
+      { wrapper: withServer(server) },
+    );
+
+    await act(async () => {
+      await result.current.executeTool({ parameters: {} });
+    });
+
+    expect(mockApplyToolCallStepUp).not.toHaveBeenCalled();
+  });
+
+  it("does not drive step-up for a non-actionable challenge (metadata/errorDescription only, no requiredScope)", async () => {
+    // Same `isActionableStepUpChallenge` gate resources/prompts/chat use: a
+    // challenge with no `requiredScope` cannot widen scope in the orchestrator
+    // today, so redirecting would only burn the bounded step-up budget.
+    mockExecuteToolApi.mockResolvedValueOnce({
+      error: "Insufficient scope",
+      insufficientScope: {
+        resourceMetadataUrl: "https://rs.example/.well-known",
+        errorDescription: "more scope needed",
+      },
+    });
+
+    const { result } = renderHook(
+      () => useToolExecution(makeHookOptions({ selectedTool: "get_weather" })),
+      { wrapper: withServer(server) },
+    );
+
+    await act(async () => {
+      await result.current.executeTool({ parameters: {} });
+    });
+
+    expect(mockApplyToolCallStepUp).not.toHaveBeenCalled();
   });
 });

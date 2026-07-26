@@ -24,6 +24,7 @@ import { MrtrElicitationHost } from "./elicitation/MrtrElicitationHost";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { extractDisplayFromValue } from "@/components/chat-v2/shared/tool-result-text";
 import type { MCPPrompt, MCPServerConfig } from "@mcpjam/sdk/browser";
+import type { ServerWithName } from "@/state/app-types";
 import {
   getPrompt as getPromptApi,
   listPrompts as listPromptsApi,
@@ -38,6 +39,7 @@ import { boundedJsonByteLength } from "@/lib/webmcp/bounded-size";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
 import { clampText } from "@/lib/webmcp/groups/shared";
+import { runWithScopeStepUp } from "@/lib/scope-step-up";
 import type { GetPromptInspectorCommand } from "@/shared/inspector-command.js";
 
 /** Cap the list of prompts a snapshot enumerates (names/titles only). */
@@ -90,6 +92,12 @@ function capPromptContentForTranscript(content: unknown): {
 interface PromptsTabProps {
   serverConfig?: MCPServerConfig;
   serverName?: string;
+  /**
+   * The resolved server entry, needed to drive a SEP-2350 scope step-up on a
+   * `403 insufficient_scope`. Optional: without it a failure just surfaces the
+   * error.
+   */
+  server?: ServerWithName;
   serverConnectionStatus?: ConnectionStatus;
 }
 
@@ -109,6 +117,7 @@ interface FormField {
 export function PromptsTab({
   serverConfig,
   serverName,
+  server,
   serverConnectionStatus,
 }: PromptsTabProps) {
   const [prompts, setPrompts] = useState<MCPPrompt[]>([]);
@@ -280,10 +289,11 @@ export function PromptsTab({
 
       try {
         const resolvedParams = params ?? buildParameters();
-        const data = await getPromptApi(
-          serverName,
-          targetPrompt,
-          resolvedParams,
+        // SEP-2350: the wrapper owns the whole step-up lifecycle — reset the
+        // bounded budget on success, drive the union-scope re-authorization on
+        // a `403 insufficient_scope`, re-throw everything else untouched.
+        const data = await runWithScopeStepUp(server, () =>
+          getPromptApi(serverName, targetPrompt, resolvedParams),
         );
         if (getVersion !== promptGetVersionRef.current) return;
         setPromptContent(data.content);
@@ -298,7 +308,13 @@ export function PromptsTab({
         }
       }
     },
-    [selectedPrompt, serverName, isServerConnected, buildParameters],
+    [
+      selectedPrompt,
+      serverName,
+      isServerConnected,
+      buildParameters,
+      server,
+    ],
   );
 
   const promptNames = prompts.map((prompt) => prompt.name);
@@ -391,8 +407,13 @@ export function PromptsTab({
         // slower render can't overwrite a newer selection's result.
         const getVersion = ++promptGetVersionRef.current;
         try {
-          // SAME api the Run button uses (getPrompt → getPromptApi).
-          const data = await getPromptApi(serverName, target.name, providedArgs);
+          // SAME api AND the same step-up lifecycle as the Run button — an
+          // agent-triggered `403 insufficient_scope` must be able to start a
+          // re-authorization, and an agent-triggered success must clear the
+          // budget, exactly as the on-screen path does.
+          const data = await runWithScopeStepUp(server, () =>
+            getPromptApi(serverName, target.name, providedArgs),
+          );
           // Commit to the on-screen pane only if this is still the newest
           // render; the tool still returns what IT fetched.
           if (getVersion === promptGetVersionRef.current) {

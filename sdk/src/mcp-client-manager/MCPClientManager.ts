@@ -5,6 +5,7 @@
 import {
   type CallToolResult,
   Client,
+  getSupportedElicitationModes,
   type ClientOptions,
   type GetPromptResult,
   InMemoryResponseCacheStore,
@@ -63,7 +64,12 @@ import {
   HTTP_CONNECT_TIMEOUT,
 } from "./constants.js";
 import { isMethodUnavailableError, formatError } from "./error-utils.js";
-import { MCPAuthError, isAuthError, isUnauthorized401 } from "./errors.js";
+import {
+  MCPAuthError,
+  isAuthError,
+  isUnauthorized401,
+  isInsufficientScopeError,
+} from "./errors.js";
 import {
   type RetryPolicy,
   isRetryableTransientError,
@@ -91,6 +97,7 @@ import {
 } from "./notification-handlers.js";
 import { ElicitationManager } from "./elicitation.js";
 import type { DeclaredElicitationCapability } from "./elicitation.js";
+import type { ElicitationMode } from "./types.js";
 import { createElicitationTimeoutSuspension } from "./elicitation-timeout.js";
 import {
   TaskStatusNotificationMethod,
@@ -546,6 +553,9 @@ export class MCPClientManager {
     this.notificationManager.clearServer(serverId);
     this.elicitationManager.clearServer(serverId);
     this.perRequestLogLevels.delete(serverId);
+    // Purge the MRTR collector too; otherwise a re-registered server inherits
+    // the previous owner's collector closure and stale `elicitation` capability.
+    this.mrtrInputCollectors.delete(serverId);
   }
 
   /**
@@ -1770,6 +1780,18 @@ export class MCPClientManager {
       } catch (error) {
         streamableError = error;
         await this.safeCloseTransport(streamableTransport);
+        // SEP-2350: a connect-time `403 insufficient_scope` surfaces here as a
+        // clean `InsufficientScopeError` (transport built
+        // `onInsufficientScope: "throw"` above). Rethrow it immediately —
+        // falling through to the SSE transport would either discard the
+        // challenge (SSE happens to succeed) or downgrade it to a generic
+        // `MCPAuthError` (SSE fails), stripping `requiredScope` /
+        // `resourceMetadataUrl`. SSE cannot repair scope, so there is nothing
+        // to gain by trying it; preserve the original error so the host can
+        // serialize the challenge and drive the union-scope re-authorization.
+        if (isInsufficientScopeError(error)) {
+          throw error;
+        }
       }
     }
 
@@ -2288,6 +2310,41 @@ export class MCPClientManager {
     });
   }
 
+  /**
+   * The elicitation modes an MRTR round may embed for this server, derived from
+   * the `elicitation` capability actually advertised on the wire.
+   *
+   * The spec puts the obligation on the server ("Servers MUST NOT send
+   * elicitation requests with modes that are not supported by the client"), so
+   * this is the client-side backstop against a noncompliant or hostile server —
+   * the same check `assertElicitationModeDeclared` already applies to inbound
+   * `elicitation/create`, which the MRTR path otherwise skipped by defaulting to
+   * every mode this client can render. Without it, a caller pinning an exact
+   * form-only capability could still be shown a URL consent prompt.
+   *
+   * Returned as a thunk: the declaration is only on record after `initialize`,
+   * and the connection is established inside the operation's first leg.
+   */
+  private mrtrSupportedElicitationModes(
+    serverId: string
+  ): () => readonly ElicitationMode[] {
+    return () => {
+      const declared = this.negotiatedElicitationCapability(
+        this.liveClientStates.get(serverId)
+      );
+      // No declaration on record: mirror the inbound path, which allows form
+      // (the legacy default) and rejects url absent an explicit declaration.
+      if (declared === undefined) return ["form"];
+      const { supportsFormMode, supportsUrlMode } = getSupportedElicitationModes(
+        declared as Parameters<typeof getSupportedElicitationModes>[0]
+      );
+      const modes: ElicitationMode[] = [];
+      if (supportsFormMode) modes.push("form");
+      if (supportsUrlMode) modes.push("url");
+      return modes;
+    };
+  }
+
   private hasNegotiatedElicitation(state?: LiveClientState): boolean {
     return this.negotiatedElicitationCapability(state) != null;
   }
@@ -2395,7 +2452,13 @@ export class MCPClientManager {
               client.requestWithSchema(
                 req as Request,
                 withInputRequired(defaultResultSchemaForMethod("tools/call")),
-                { ...callOptions, allowInputRequired: true, signal }
+                // Pass `callOptions` through untouched (matching the legacy
+                // `client.callTool(callParams, callOptions)` sibling): it carries
+                // the composed elicitation-timeout watchdog signal. Overwriting
+                // `.signal` with the outer retry `signal` would drop that
+                // watchdog; the outer abort is already enforced by
+                // `runRetriedOperation`'s `awaitWithAbort` wrapper.
+                { ...callOptions, allowInputRequired: true }
               ) as Promise<CallToolResult | InputRequiredResult>
           );
         }
@@ -2407,6 +2470,8 @@ export class MCPClientManager {
       sender,
       collectInput: collect,
       validateContent: this.mrtrElicitationContentValidator,
+      supportedElicitationModes:
+        this.mrtrSupportedElicitationModes(serverId),
       validateResponse: (result) =>
         this.validateToolOutputSchema(serverId, callParams.name, result),
       requestOptions: baseOptions,
@@ -2435,6 +2500,8 @@ export class MCPClientManager {
       sender,
       collectInput: collect,
       validateContent: this.mrtrElicitationContentValidator,
+      supportedElicitationModes:
+        this.mrtrSupportedElicitationModes(serverId),
       requestOptions: options,
       maxRounds: this.mrtrMaxRounds,
       signal: options?.signal,
@@ -2469,6 +2536,8 @@ export class MCPClientManager {
       sender,
       collectInput: collect,
       validateContent: this.mrtrElicitationContentValidator,
+      supportedElicitationModes:
+        this.mrtrSupportedElicitationModes(serverId),
       requestOptions: options,
       maxRounds: this.mrtrMaxRounds,
       signal: options?.signal,

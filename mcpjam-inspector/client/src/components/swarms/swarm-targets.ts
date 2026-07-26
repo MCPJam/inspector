@@ -11,10 +11,10 @@
  * CONSTRUCTS the host-shaped id for equality; it never parses an opaque id.
  */
 import type {
-  EnvironmentView,
   JourneyHostSummary,
   JourneySnapshotTarget,
 } from "@/lib/swarm-api";
+import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import type { SwarmSessionTargetIdentity } from "@/shared/swarm-session-id";
 import { swarmAttemptChatSessionId } from "@/shared/swarm-session-id";
 
@@ -113,7 +113,7 @@ export function buildSwarmRunTargets(args: {
 export function buildUnrunJourneyTargets(args: {
   hostIds: string[];
   environmentIds?: string[] | null;
-  environments?: EnvironmentView[];
+  environments?: ProjectEnvironmentView[];
   hostName: (hostId: string) => string;
 }): SwarmTargetColumn[] {
   const { hostIds, environmentIds, environments, hostName } = args;

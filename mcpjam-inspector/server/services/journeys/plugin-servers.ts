@@ -128,7 +128,7 @@ export async function resolveTargetPluginServerIds(
     raw = await getConvexClient().query(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- string
       // function refs are the established inspector→Convex pattern (see
-      // services/evals/environment-launch.ts); there is no codegen here.
+      // services/environments/resolve.ts); there is no codegen here.
       "journeyRuns:resolveJourneyRunPluginServersForExecution" as any,
       { runId: args.runId, targetId: args.targetId }
     );

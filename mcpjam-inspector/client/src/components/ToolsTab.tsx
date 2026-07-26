@@ -44,9 +44,9 @@ import {
 import { trackTask } from "@/lib/task-tracker";
 import { validateToolOutput } from "@/lib/schema-utils";
 import {
-  applyToolCallStepUp,
-  resetToolCallStepUp,
-} from "@/state/oauth-orchestrator";
+  driveScopeStepUpFromChallenge,
+  resetScopeStepUp,
+} from "@/lib/scope-step-up";
 import type { ServerWithName } from "@/state/app-types";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import { isNormalizedError } from "@mcpjam/sdk/browser";
@@ -215,11 +215,6 @@ export function ToolsTab({
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const toolFetchVersionRef = useRef(0);
   const taskCapabilitiesFetchVersionRef = useRef(0);
-  // SEP-2350: guards against a second tool run (or a repeated error) kicking off
-  // a duplicate step-up while the first is still in flight — a double redirect
-  // or double counter bump. Keyed by server name so distinct servers never
-  // block each other.
-  const stepUpInFlightRef = useRef<Set<string>>(new Set());
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [servedFromCache, setServedFromCache] = useState<
     ServedFromCache | undefined
@@ -542,18 +537,9 @@ export function ToolsTab({
 
   // SEP-2350: a successful call clears the bounded step-up counter so a future
   // legitimate scope step-up starts fresh rather than inheriting a stale count
-  // that would prematurely throw. Factored so BOTH success paths — an immediate
-  // `completed` result and a task-augmented `task_created` — reset it.
-  const resetStepUpOnSuccess = () => {
-    if (!server) return;
-    try {
-      resetToolCallStepUp(server);
-    } catch (err) {
-      logger.warn("Failed to reset step-up counter", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  };
+  // that would prematurely throw. Called from BOTH success paths — an immediate
+  // `completed` result and a task-augmented `task_created`.
+  const resetStepUpOnSuccess = () => resetScopeStepUp(server);
 
   const handleExecutionResponse = (
     response: ToolExecutionResponse,
@@ -652,32 +638,12 @@ export function ToolsTab({
       // re-authorization for the local (non-hosted) surface. On `reauthorize`
       // this redirects the browser to the authorization server; `throw` /
       // `manual` leave the surfaced error in place.
-      const insufficientScope = (
-        response as { insufficientScope?: import("@/lib/apis/mcp-tools-api").ToolInsufficientScopeChallenge }
-      ).insufficientScope;
-      if (insufficientScope && server) {
-        // Dedup: only one step-up may be in flight per server. Without this a
-        // second tool run (or a repeated error) while the first is still
-        // resolving could fire a duplicate — a double redirect or double
-        // counter bump. The guard clears once the step-up settles.
-        const stepUpKey = server.name;
-        if (!stepUpInFlightRef.current.has(stepUpKey)) {
-          stepUpInFlightRef.current.add(stepUpKey);
-          void applyToolCallStepUp(server, {
-            requiredScope: insufficientScope.requiredScope,
-            resourceMetadataUrl: insufficientScope.resourceMetadataUrl,
-          })
-            .catch((err) => {
-              logger.error("Step-up re-authorization failed", {
-                toolName,
-                error: err instanceof Error ? err.message : String(err),
-              });
-            })
-            .finally(() => {
-              stepUpInFlightRef.current.delete(stepUpKey);
-            });
-        }
-      }
+      // Dedup, the actionable-challenge gate and the in-flight guard all live
+      // in the shared lifecycle, which every surface now routes through.
+      driveScopeStepUpFromChallenge(
+        server,
+        (response as { insufficientScope?: unknown }).insufficientScope,
+      );
     }
   };
 

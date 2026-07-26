@@ -111,6 +111,18 @@ export interface WithEphemeralClientOptions {
   rpcLogger?: RpcLogger;
   /** Retry policy for the ephemeral manager and initial connect. */
   retryPolicy?: RetryPolicy;
+  /**
+   * Runs against the freshly-constructed manager BEFORE the initial
+   * `connectToServer`. Use it to register per-server state that must be present
+   * on the connect envelope — e.g. an MRTR input collector via
+   * `setMrtrInputCollector`, which only advertises `elicitation` when registered
+   * pre-connect (a 2026-07-28 server checks declared client capabilities before
+   * embedding an elicitation).
+   */
+  beforeConnect?: (
+    manager: MCPClientManager,
+    serverId: string
+  ) => void | Promise<void>;
 }
 
 // ── Resources ───────────────────────────────────────────────────────
@@ -384,6 +396,9 @@ export async function withEphemeralClient<T>(
   );
 
   try {
+    if (options?.beforeConnect) {
+      await options.beforeConnect(manager, serverId);
+    }
     await manager.connectToServer(serverId, config);
     return await fn(manager, serverId);
   } finally {

@@ -418,9 +418,29 @@ describe("listAllTools", () => {
 
 // ── withEphemeralClient ─────────────────────────────────────────────
 
-describe.skip("withEphemeralClient", () => {
-  // We can't easily test the full lifecycle without mocking the constructor,
-  // so we test withDisposableManager which covers the cleanup pattern.
+describe("withEphemeralClient", () => {
+  // The full connect lifecycle needs a live transport (see
+  // mrtr-manager.integration.test.ts). Here we lock the `beforeConnect`
+  // contract: it runs inside the lifecycle before `fn`, so a pre-connect
+  // registration (e.g. setMrtrInputCollector) is applied before the operation.
+  it("invokes beforeConnect before fn (and skips fn when it throws)", async () => {
+    const fn = jest.fn();
+    const beforeConnect = jest.fn(() => {
+      throw new Error("before-connect boom");
+    });
+
+    await expect(
+      withEphemeralClient(
+        { command: "node", args: ["-e", ""] } as never,
+        fn as never,
+        { beforeConnect },
+      ),
+    ).rejects.toThrow("before-connect boom");
+
+    expect(beforeConnect).toHaveBeenCalledTimes(1);
+    // connectToServer is never reached, so fn (which follows it) never runs.
+    expect(fn).not.toHaveBeenCalled();
+  });
 });
 
 // ── withDisposableManager ───────────────────────────────────────────
