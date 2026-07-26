@@ -31,6 +31,7 @@ import {
 } from "./auth";
 import { verifyHarnessProxyToken } from "../../utils/harness/harness-proxy-token";
 import { rpcLogBus } from "../../services/rpc-log-bus";
+import { enqueueHarnessRpcLog } from "../../utils/harness/harness-rpc-log-sink";
 import { logger } from "../../utils/logger";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { HOSTED_MODE } from "../../config.js";
@@ -52,7 +53,8 @@ function rateLimited(key: string): boolean {
   if (!bucket || now >= bucket.resetAt) {
     // Opportunistic prune so the map can't grow unbounded.
     if (rateBuckets.size > 5000) {
-      for (const [k, b] of rateBuckets) if (now >= b.resetAt) rateBuckets.delete(k);
+      for (const [k, b] of rateBuckets)
+        if (now >= b.resetAt) rateBuckets.delete(k);
     }
     rateBuckets.set(key, { count: 1, resetAt: now + RATE_WINDOW_MS });
     return false;
@@ -178,27 +180,41 @@ async function handle(c: any) {
           // the local-mode Logs SSE/buffer sees it too. Observation-only —
           // never affects the proxy result: the bus isolates subscribers, and
           // this guard is the belt-and-suspenders so no logging failure can
-          // reach the RPC try/catch below. Cross-instance hosted delivery
-          // needs a shared sink (follow-up issue).
+          // reach the RPC try/catch below.
+          //
+          // COMP-21: ALSO enqueue the frame to the shared Convex sink (batched,
+          // best-effort) so a turn streaming from ANOTHER instance can pull it —
+          // cross-instance fan-in on the scaled hosted plane. The enqueue never
+          // throws to here (own try/catch inside), and the sink no-ops when
+          // Convex isn't configured (single-instance / self-hosted).
           rpcLogger: ({ direction, message, serverId: sid }) => {
+            const timestamp = new Date().toISOString();
             try {
               rpcLogBus.publish({
                 serverId: sid,
                 direction,
-                timestamp: new Date().toISOString(),
+                timestamp,
                 message,
               });
             } catch (error) {
               logger.warn(
                 `[harness-mcp] rpc log publish failed serverId=${sid}: ${
                   error instanceof Error ? error.message : error
-                }`,
+                }`
               );
             }
+            enqueueHarnessRpcLog({
+              serverId: sid,
+              projectId: claims.projectId,
+              organizationId: claims.orgId,
+              direction,
+              loggedAt: timestamp,
+              message,
+            });
           },
-        },
+        }
       ),
-      (manager) => handleJsonRpc(serverId, body, manager, "adapter"),
+      (manager) => handleJsonRpc(serverId, body, manager, "adapter")
     );
     // Notification (no id) → 202 Accepted, no body.
     if (!response) return c.body("Accepted", 202);
@@ -207,7 +223,7 @@ async function handle(c: any) {
     // Log the real cause server-side, but NEVER leak internal exception text to
     // the sandbox — return a generic JSON-RPC error so the client can recover.
     logger.error(
-      `[harness-mcp] proxy error serverId=${serverId}: ${e?.message ?? e}`,
+      `[harness-mcp] proxy error serverId=${serverId}: ${e?.message ?? e}`
     );
     return c.json(
       {
@@ -215,7 +231,7 @@ async function handle(c: any) {
         id: body?.id ?? null,
         error: { code: -32000, message: "harness proxy error" },
       },
-      200,
+      200
     );
   }
 }

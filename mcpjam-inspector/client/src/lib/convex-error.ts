@@ -4,7 +4,7 @@
  * Convex `ConvexError` payloads land on `err.data` (a string, or a record
  * with `message`) — prefer that over `err.message`, which for an application
  * error is the redacted "Server Error"/Request-ID string. Extracted from
- * `EnvironmentsDrawer` so every Convex-backed management surface shares one
+ * `SandboxImagesDrawer` so every Convex-backed management surface shares one
  * error-shaping path.
  */
 export function convexErrMessage(err: unknown, fallback: string): string {

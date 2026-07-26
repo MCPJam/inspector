@@ -19,6 +19,10 @@ import { SelectedToolHeader } from "../ui-playground/SelectedToolHeader";
 import { ParametersForm } from "../ui-playground/ParametersForm";
 import { SchemaViewer } from "@/components/ui/schema-viewer";
 import type { FormField } from "@/lib/tool-form";
+import {
+  CacheProvenanceBadge,
+  type ServedFromCache,
+} from "@/components/ui/cache-provenance-badge";
 
 interface ToolsSidebarProps {
   activeTab: "tools" | "saved";
@@ -33,6 +37,8 @@ interface ToolsSidebarProps {
   searchQuery: string;
   onSearchQueryChange: (q: string) => void;
   onRefresh: () => void;
+  /** SEP-2549 provenance for the most recent fetch — present ONLY on a hit. */
+  servedFromCache?: ServedFromCache;
   onSelectTool: (name: string) => void;
   savedRequests: SavedRequest[];
   highlightedRequestId: string | null;
@@ -75,6 +81,7 @@ export function ToolsSidebar({
   searchQuery,
   onSearchQueryChange,
   onRefresh,
+  servedFromCache,
   onSelectTool,
   savedRequests,
   highlightedRequestId,
@@ -380,6 +387,11 @@ export function ToolsSidebar({
                   : "Search saved requests..."
               }
             />
+            {activeTab === "tools" && servedFromCache && (
+              <div className="mt-1.5">
+                <CacheProvenanceBadge servedFromCache={servedFromCache} />
+              </div>
+            )}
           </div>
 
           {/* List content */}

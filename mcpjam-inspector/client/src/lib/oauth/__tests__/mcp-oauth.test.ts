@@ -621,19 +621,29 @@ describe("mcp-oauth", () => {
       expect(directFetch).not.toHaveBeenCalled();
     });
 
-    it("propagates successful proxy responses correctly", async () => {
+    it("validates the upstream URL instead of mistaking the local metadata proxy for an SSRF redirect", async () => {
+      const upstreamMetadataUrl =
+        "https://example.com/.well-known/oauth-protected-resource/mcp";
       const metadataResponse = new Response(
         JSON.stringify({
           authorization_servers: ["https://auth.example.com"],
         }),
-        { status: 200 }
+        {
+          status: 200,
+          headers: {
+            "X-MCPJam-OAuth-Upstream-URL": upstreamMetadataUrl,
+          },
+        }
       );
+      Object.defineProperty(metadataResponse, "url", {
+        value:
+          "http://localhost:5173/api/mcp/oauth/metadata?url=" +
+          encodeURIComponent(upstreamMetadataUrl),
+      });
       authFetch.mockResolvedValue(metadataResponse);
       mockDiscoverOAuthServerInfo.mockImplementation(
         async (_serverUrl, options) => {
-          const response = await options?.fetchFn?.(
-            "https://example.com/.well-known/oauth-protected-resource/mcp"
-          );
+          const response = await options?.fetchFn?.(upstreamMetadataUrl);
           if (!response) {
             throw new Error("Missing OAuth fetch function");
           }
@@ -655,6 +665,195 @@ describe("mcp-oauth", () => {
         ),
         expect.objectContaining({ method: "GET" })
       );
+    });
+
+    it("rejects a proxied metadata response whose real upstream URL redirected to loopback", async () => {
+      const metadataResponse = new Response(
+        JSON.stringify({
+          authorization_servers: ["https://auth.example.com"],
+        }),
+        {
+          status: 200,
+          headers: {
+            "X-MCPJam-OAuth-Upstream-URL":
+              "http://127.0.0.1:8787/private-metadata",
+          },
+        }
+      );
+      Object.defineProperty(metadataResponse, "url", {
+        value:
+          "http://localhost:5173/api/mcp/oauth/metadata?url=" +
+          encodeURIComponent(
+            "https://example.com/.well-known/oauth-protected-resource/mcp"
+          ),
+      });
+      authFetch.mockResolvedValue(metadataResponse);
+      mockDiscoverOAuthServerInfo.mockImplementation(
+        async (_serverUrl, options) => {
+          const response = await options?.fetchFn?.(
+            "https://example.com/.well-known/oauth-protected-resource/mcp"
+          );
+          if (!response) {
+            throw new Error("Missing OAuth fetch function");
+          }
+          expect(response.ok).toBe(true);
+          return createDiscoveryState();
+        }
+      );
+
+      const { initiateOAuth } = await import("../mcp-oauth");
+      const result = await initiateOAuth({
+        serverName: "test-server",
+        serverUrl: "https://example.com/mcp",
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain(
+        'Refusing OAuth response from private/reserved host "127.0.0.1"'
+      );
+    });
+
+    it("rejects a proxied OAuth endpoint response whose real upstream URL redirected to loopback", async () => {
+      authFetch.mockImplementation(
+        async () =>
+          new Response(
+            JSON.stringify({
+              status: 200,
+              statusText: "OK",
+              headers: { "content-type": "application/json" },
+              body: { access_token: "should-not-be-consumed" },
+              finalUrl: "http://127.0.0.1:8787/private-token",
+            }),
+            {
+              status: 200,
+              headers: {
+                "Content-Type": "application/json",
+                "X-MCPJam-OAuth-Upstream-URL":
+                  "http://127.0.0.1:8787/private-token",
+              },
+            }
+          )
+      );
+      mockDiscoverOAuthServerInfo.mockImplementation(
+        async (_serverUrl, options) => {
+          await options?.fetchFn?.("https://auth.example.com/token", {
+            method: "POST",
+          });
+          return createDiscoveryState();
+        }
+      );
+
+      const { initiateOAuth } = await import("../mcp-oauth");
+      const result = await initiateOAuth({
+        serverName: "test-server",
+        serverUrl: "https://example.com/mcp",
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain(
+        'Refusing OAuth response from private/reserved host "127.0.0.1"'
+      );
+      expect(authFetch).toHaveBeenCalledWith(
+        expect.stringMatching(/\/api\/mcp\/oauth\/proxy$/),
+        expect.objectContaining({ method: "POST" })
+      );
+    });
+
+    it("does not trust a provenance header copied from the upstream OAuth response", async () => {
+      authFetch.mockImplementation(
+        async () =>
+          new Response(
+            JSON.stringify({
+              status: 200,
+              statusText: "OK",
+              headers: {
+                "content-type": "application/json",
+                "x-mcpjam-oauth-upstream-url":
+                  "http://127.0.0.1:8787/spoofed-by-upstream",
+              },
+              body: { access_token: "token" },
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            }
+          )
+      );
+      mockDiscoverOAuthServerInfo.mockImplementation(
+        async (_serverUrl, options) => {
+          const response = await options?.fetchFn?.(
+            "https://auth.example.com/token",
+            { method: "POST" }
+          );
+          if (!response) {
+            throw new Error("Missing OAuth fetch function");
+          }
+          expect(
+            response.headers.get("x-mcpjam-oauth-upstream-url")
+          ).toBe("http://127.0.0.1:8787/spoofed-by-upstream");
+          return createDiscoveryState();
+        }
+      );
+
+      const { initiateOAuth } = await import("../mcp-oauth");
+      const result = await initiateOAuth({
+        serverName: "test-server",
+        serverUrl: "https://example.com/mcp",
+      });
+
+      expect(result.success).toBe(true);
+    });
+
+    it("allows a proxy-reported loopback URL for an explicitly local MCP server", async () => {
+      const localMetadataUrl =
+        "http://127.0.0.1:8787/.well-known/oauth-protected-resource/mcp";
+      const localDiscoveryState = {
+        authorizationServerUrl: "http://127.0.0.1:8788",
+        resourceMetadataUrl: localMetadataUrl,
+        resourceMetadata: {
+          resource: "http://127.0.0.1:8787/mcp",
+          authorization_servers: ["http://127.0.0.1:8788"],
+        },
+        authorizationServerMetadata: {
+          issuer: "http://127.0.0.1:8788",
+          authorization_endpoint: "http://127.0.0.1:8788/authorize",
+          token_endpoint: "http://127.0.0.1:8788/token",
+          registration_endpoint: "http://127.0.0.1:8788/register",
+        },
+      };
+      const metadataResponse = new Response(
+        JSON.stringify(localDiscoveryState.resourceMetadata),
+        {
+          status: 200,
+          headers: {
+            "X-MCPJam-OAuth-Upstream-URL": localMetadataUrl,
+          },
+        }
+      );
+      Object.defineProperty(metadataResponse, "url", {
+        value:
+          "http://localhost:5173/api/mcp/oauth/metadata?url=" +
+          encodeURIComponent(localMetadataUrl),
+      });
+      authFetch.mockResolvedValue(metadataResponse);
+      mockDiscoverOAuthServerInfo.mockImplementation(
+        async (_serverUrl, options) => {
+          const response = await options?.fetchFn?.(localMetadataUrl);
+          if (!response) {
+            throw new Error("Missing OAuth fetch function");
+          }
+          expect(response.ok).toBe(true);
+          return localDiscoveryState;
+        }
+      );
+
+      const { initiateOAuth } = await import("../mcp-oauth");
+      const result = await initiateOAuth({
+        serverName: "test-server",
+        serverUrl: "http://127.0.0.1:8787/mcp",
+      });
+
+      expect(result.success).toBe(true);
     });
 
     it("forwards custom headers during automatic discovery planning", async () => {

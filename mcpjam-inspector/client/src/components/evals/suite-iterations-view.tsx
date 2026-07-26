@@ -3,7 +3,7 @@ import { useMutation, useConvexAuth } from "convex/react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { useHostList } from "@/hooks/useClients";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
-import { useEnvironments } from "@/hooks/useComputerEnvironments";
+import { useSandboxImages } from "@/hooks/useSandboxImages";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { SuiteProjectEnvironmentsPicker } from "./suite-project-environments-picker";
 import { toast } from "sonner";
@@ -392,7 +392,7 @@ export function SuiteIterationsView({
   // fetch the project's environments when the flag is on and we have a project.
   const computersEnabled = useComputersEnabled();
   const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
-  const computerEnvironments = useEnvironments(
+  const computerEnvironments = useSandboxImages(
     computersEnabled && projectId ? projectId : null
   );
   // Hosts available to attach in the header's "+ Attach host" picker. The
@@ -1458,8 +1458,8 @@ export function SuiteIterationsView({
                   <p className="text-[11px] text-muted-foreground/60">
                     Run all fires one run per environment, in this order. An
                     environment bundles one client, an optional server group,
-                    and pinned skills, resolved at launch. The client&apos;s
-                    own skills always apply on top; a suite skills
+                    and pinned skills, resolved at launch. The client&apos;s own
+                    skills always apply on top; a suite skills
                     &quot;exclude&quot; override wins over both.
                   </p>
                 </SettingsSection>

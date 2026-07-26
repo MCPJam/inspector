@@ -4,11 +4,19 @@ import {
   isUnauthorized401,
   type NormalizedError,
 } from "@mcpjam/sdk";
+import { extractInsufficientScopeChallenge } from "../../utils/mcp-error-serialize.js";
 
 export const ErrorCode = {
   UNAUTHORIZED: "UNAUTHORIZED",
   FORBIDDEN: "FORBIDDEN",
   NOT_FOUND: "NOT_FOUND",
+  // A write rejected because the resource isn't in a state that accepts it
+  // (HTTP 409) — the request was well-formed, so VALIDATION_ERROR would
+  // misreport it, and retrying it verbatim won't help. Project Environments
+  // report stale `expectedRevision`, duplicate live names, and archive-state
+  // rejections this way; the more specific ENVIRONMENT_REVISION_CONFLICT below
+  // stays for the hosted UI, and collapses onto this code publicly.
+  CONFLICT: "CONFLICT",
   VALIDATION_ERROR: "VALIDATION_ERROR",
   RATE_LIMITED: "RATE_LIMITED",
   FEATURE_NOT_SUPPORTED: "FEATURE_NOT_SUPPORTED",
@@ -134,6 +142,25 @@ export function mapRuntimeError(error: unknown): WebRouteError {
   const message = parseErrorMessage(error);
   const lower = message.toLowerCase();
   const normalized = describeError(error);
+
+  // SEP-2350 runtime scope step-up. A live MCP request against the hosted
+  // proxy can surface a 403 `insufficient_scope` as an upstream
+  // `InsufficientScopeError` (the SDK builds the transport
+  // `onInsufficientScope: "throw"`). Recognize it BEFORE the generic 500 and
+  // return 403 FORBIDDEN carrying the `WWW-Authenticate` challenge in
+  // `details.insufficientScope`, so `webError` forwards it and the client can
+  // drive the union-scope re-authorization. This single branch covers the
+  // hosted tools / resources / prompts twins, which all rethrow into `onError`.
+  const insufficientScope = extractInsufficientScopeChallenge(error);
+  if (insufficientScope) {
+    return new WebRouteError(
+      403,
+      ErrorCode.FORBIDDEN,
+      message,
+      { insufficientScope },
+      normalized
+    );
+  }
 
   // A raw 401 from the target MCP server is an authorization failure, not an
   // internal error — return the honest status. No `oauthRequired` here: this

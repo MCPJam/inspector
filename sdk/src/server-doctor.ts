@@ -203,7 +203,9 @@ async function collectTools(
   serverId: string
 ): Promise<DoctorToolsCollectionResult> {
   try {
-    const result = await listAllTools(manager, { serverId });
+    // Raw-evidence surface: bypass the SEP-2549 response cache so the doctor
+    // reports the server's live surface, never a cached body.
+    const result = await listAllTools(manager, { serverId, cacheMode: "bypass" });
     const tools =
       result.tools?.map((tool) => {
         const { _meta: _ignoredMeta, ...toolWithoutMeta } = tool;
@@ -230,7 +232,10 @@ async function collectResources(
   serverId: string
 ): Promise<DoctorResourcesCollectionResult> {
   try {
-    const result = await listAllResources(manager, { serverId });
+    const result = await listAllResources(manager, {
+      serverId,
+      cacheMode: "bypass",
+    });
     const resources = result.resources ?? [];
     return {
       resources,
@@ -251,7 +256,10 @@ async function collectPrompts(
   serverId: string
 ): Promise<DoctorPromptsCollectionResult> {
   try {
-    const result = await listAllPrompts(manager, { serverId });
+    const result = await listAllPrompts(manager, {
+      serverId,
+      cacheMode: "bypass",
+    });
     const prompts = result.prompts ?? [];
     return {
       prompts,
@@ -272,7 +280,10 @@ async function collectResourceTemplates(
   serverId: string
 ): Promise<DoctorResourceTemplatesCollectionResult> {
   try {
-    const result = await listAllResourceTemplates(manager, { serverId });
+    const result = await listAllResourceTemplates(manager, {
+      serverId,
+      cacheMode: "bypass",
+    });
     const resourceTemplates = result.resourceTemplates ?? [];
     if (result.unsupported) {
       return {

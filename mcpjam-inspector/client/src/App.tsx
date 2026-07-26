@@ -1251,6 +1251,7 @@ export function ResourcesRoute() {
       <ResourcesTab
         serverConfig={selectedMCPConfig}
         serverName={appState.selectedServer}
+        server={selectedServerEntry ?? undefined}
         serverConnectionStatus={
           selectedServerEntry?.connectionStatus ?? "disconnected"
         }
@@ -1267,6 +1268,7 @@ export function PromptsRoute() {
       <PromptsTab
         serverConfig={selectedMCPConfig}
         serverName={appState.selectedServer}
+        server={selectedServerEntry ?? undefined}
         serverConnectionStatus={
           selectedServerEntry?.connectionStatus ?? "disconnected"
         }

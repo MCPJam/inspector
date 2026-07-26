@@ -27,7 +27,7 @@ vi.mock("../auth", () => ({
   createAuthorizedManager: vi.fn().mockResolvedValue({ manager: mockManager }),
   withManager: async (
     mp: Promise<any>,
-    fn: (m: any) => Promise<any>,
+    fn: (m: any) => Promise<any>
   ): Promise<any> => {
     const r = await mp;
     return fn(r.manager ?? r);
@@ -36,9 +36,11 @@ vi.mock("../auth", () => ({
 
 import { harnessMcp } from "../harness-mcp.js";
 import { signTestProxyToken } from "../../../utils/harness/__tests__/sign-test-token.js";
+import { __resetHarnessRpcLogSinkForTest } from "../../../utils/harness/harness-rpc-log-sink.js";
 
 beforeAll(() => {
-  process.env.COMPUTERS_TERMINAL_TOKEN_SECRET = "test-harness-proxy-secret-32-chars";
+  process.env.COMPUTERS_TERMINAL_TOKEN_SECRET =
+    "test-harness-proxy-secret-32-chars";
 });
 
 const app = new Hono();
@@ -70,18 +72,25 @@ describe("/api/web/harness-mcp", () => {
   });
 
   it("401s a token missing the delegated identity (externalId)", async () => {
-    const noIdentity = signTestProxyToken({ serverId: "srv-a", externalId: "" });
+    const noIdentity = signTestProxyToken({
+      serverId: "srv-a",
+      externalId: "",
+    });
     const res = await post("srv-a", { "X-MCPJam-Proxy-Token": noIdentity });
     expect(res.status).toBe(401);
   });
 
   it("401s a token minted for a different server", async () => {
-    const res = await post("srv-a", { "X-MCPJam-Proxy-Token": webToken("srv-b") });
+    const res = await post("srv-a", {
+      "X-MCPJam-Proxy-Token": webToken("srv-b"),
+    });
     expect(res.status).toBe(401);
   });
 
   it("200s and forwards tools/list through the bridge with a valid web token", async () => {
-    const res = await post("srv-a", { "X-MCPJam-Proxy-Token": webToken("srv-a") });
+    const res = await post("srv-a", {
+      "X-MCPJam-Proxy-Token": webToken("srv-a"),
+    });
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.jsonrpc).toBe("2.0");
@@ -132,7 +141,7 @@ describe("/api/web/harness-mcp", () => {
   // message (MCP 2025-06-18 removed batching; the bridge handles one request).
   it("returns -32600 with id null for a JSON-RPC batch array (NOT 202)", async () => {
     const res = await postRaw(
-      JSON.stringify([{ jsonrpc: "2.0", id: 1, method: "tools/list" }]),
+      JSON.stringify([{ jsonrpc: "2.0", id: 1, method: "tools/list" }])
     );
     expect(res.status).toBe(400);
     const data = await res.json();
@@ -143,7 +152,7 @@ describe("/api/web/harness-mcp", () => {
   // #3041 review: a PRESENT but wrong `jsonrpc` version is malformed → -32600.
   it("returns -32600 for a present but invalid `jsonrpc` version", async () => {
     const res = await postRaw(
-      JSON.stringify({ jsonrpc: "1.0", id: 5, method: "tools/list" }),
+      JSON.stringify({ jsonrpc: "1.0", id: 5, method: "tools/list" })
     );
     expect(res.status).toBe(400);
     const data = await res.json();
@@ -155,7 +164,7 @@ describe("/api/web/harness-mcp", () => {
   // a valid method still forwards through the bridge, it is NOT rejected.
   it("tolerates an absent `jsonrpc` when the method is valid (forwards, no -32600)", async () => {
     const res = await postRaw(
-      JSON.stringify({ id: 8, method: "tools/list", params: {} }),
+      JSON.stringify({ id: 8, method: "tools/list", params: {} })
     );
     expect(res.status).toBe(200);
     const data = await res.json();
@@ -166,7 +175,7 @@ describe("/api/web/harness-mcp", () => {
   // the error response so it stays valid JSON-RPC the client can parse.
   it("normalizes a non-scalar id to null in the error response", async () => {
     const res = await postRaw(
-      JSON.stringify({ jsonrpc: "2.0", id: { bad: 1 }, params: {} }),
+      JSON.stringify({ jsonrpc: "2.0", id: { bad: 1 }, params: {} })
     );
     expect(res.status).toBe(400);
     const data = await res.json();
@@ -179,7 +188,7 @@ describe("/api/web/harness-mcp", () => {
   // into a SUCCESS response, emitting an invalid JSON-RPC id.
   it("rejects a non-scalar id even when the method is valid (NOT a 200)", async () => {
     const res = await postRaw(
-      JSON.stringify({ jsonrpc: "2.0", id: {}, method: "tools/list" }),
+      JSON.stringify({ jsonrpc: "2.0", id: {}, method: "tools/list" })
     );
     expect(res.status).toBe(400);
     const data = await res.json();
@@ -190,7 +199,7 @@ describe("/api/web/harness-mcp", () => {
   // #3041 re-review: non-structured `params` (a scalar) is invalid per JSON-RPC.
   it("rejects non-structured params (scalar) even with a valid method", async () => {
     const res = await postRaw(
-      JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/list", params: 5 }),
+      JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/list", params: 5 })
     );
     expect(res.status).toBe(400);
     const data = await res.json();
@@ -200,7 +209,7 @@ describe("/api/web/harness-mcp", () => {
 
   it("still 202s a real notification (method present, no id)", async () => {
     const res = await postRaw(
-      JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+      JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })
     );
     expect(res.status).toBe(202);
   });
@@ -210,7 +219,9 @@ describe("/api/web/harness-mcp", () => {
     const { rpcLogBus } = await import("../../../services/rpc-log-bus.js");
     (createAuthorizedManager as ReturnType<typeof vi.fn>).mockClear();
 
-    const res = await post("srv-a", { "X-MCPJam-Proxy-Token": webToken("srv-a") });
+    const res = await post("srv-a", {
+      "X-MCPJam-Proxy-Token": webToken("srv-a"),
+    });
     expect(res.status).toBe(200);
 
     // 8th arg = options; the route must hand the manager a logger that lands
@@ -233,5 +244,28 @@ describe("/api/web/harness-mcp", () => {
     }
     expect(seen).toHaveLength(1);
     expect(seen[0]).toMatchObject({ serverId: "srv-a", direction: "send" });
+  });
+
+  // COMP-21: the cross-instance Convex sink is observation-only — a failing sink
+  // must NEVER slow or fail the proxy request. With the sink configured but every
+  // Convex write rejecting, the tool call still succeeds.
+  it("still succeeds when the cross-instance log sink write fails", async () => {
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.example.com");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc-token");
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValue(new Error("convex down"));
+    try {
+      const res = await post("srv-a", {
+        "X-MCPJam-Proxy-Token": webToken("srv-a"),
+      });
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.jsonrpc).toBe("2.0");
+    } finally {
+      fetchSpy.mockRestore();
+      vi.unstubAllEnvs();
+      __resetHarnessRpcLogSinkForTest();
+    }
   });
 });

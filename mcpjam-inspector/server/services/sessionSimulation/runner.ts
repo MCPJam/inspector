@@ -161,6 +161,18 @@ export interface SimulationManagerFactory {
      * opens the session later (live `readResource()` for MCP App widgets).
      */
     connectedServerNames?: string[];
+    /**
+     * Connected server IDs that must NOT be written into
+     * `resumeConfig.selectedServers`. Today: servers contributed by an
+     * environment's pinned PLUGIN versions. The session legitimately connects
+     * them, but `resumeConfig` is a durable reconnect instruction replayed
+     * later with NO plugin lifecycle check — persisting a `plugin_component`
+     * id there would let the Sessions viewer reconnect a disabled or
+     * uninstalled plugin's server, which is exactly the bypass that keeps
+     * those ids out of `hostConfigs.serverIds` in the first place. A plugin
+     * server reaches a run only through a re-gate, never through a stored id.
+     */
+    nonResumableServerIds?: string[];
     /** Async cleanup invoked after the session terminates. */
     dispose: () => Promise<void>;
   }>;
@@ -661,6 +673,8 @@ export async function runSyntheticHostSession(
     dispose = built.dispose;
     const selectedServerIds = built.connectedServerIds;
     const selectedServerNames = built.connectedServerNames;
+    // Servers the session may USE but must not be told to RECONNECT later.
+    const nonResumable = new Set(built.nonResumableServerIds ?? []);
 
     // Mirror chat-v2's direct-chat resumeConfig shape so the Chatbox Sessions
     // viewer can reconnect the same servers when the user opens this session
@@ -677,11 +691,17 @@ export async function runSyntheticHostSession(
       ...(mcpToolResultImageRendering !== undefined
         ? { mcpToolResultImageRendering }
         : {}),
+      // Plugin-contributed servers are filtered OUT (see
+      // `nonResumableServerIds`): resume is replayed with no lifecycle check,
+      // so it must never carry an id that outlives the plugin. Filtering by
+      // INDEX keeps the name/id alignment the contract promises.
       selectedServers:
         Array.isArray(selectedServerNames) &&
         selectedServerNames.length === selectedServerIds.length
-          ? selectedServerNames
-          : selectedServerIds,
+          ? selectedServerNames.filter(
+              (_, i) => !nonResumable.has(selectedServerIds[i]!)
+            )
+          : selectedServerIds.filter((id) => !nonResumable.has(id)),
     };
 
     // Built-in tools from the chatbox host config (e.g. web_search) resolve
@@ -742,18 +762,18 @@ export async function runSyntheticHostSession(
       pinnedSkills === undefined
         ? undefined
         : harness || requireToolApproval || pinnedSkills.length === 0
-          ? { kind: "none" }
-          : {
-              kind: "pinned",
-              skills: pinnedSkills.map(
-                (a): PinnableSkill => ({
-                  name: a.name,
-                  description: a.description,
-                  content: a.content,
-                  contentHash: a.contentHash,
-                }),
-              ),
-            };
+        ? { kind: "none" }
+        : {
+            kind: "pinned",
+            skills: pinnedSkills.map(
+              (a): PinnableSkill => ({
+                name: a.name,
+                description: a.description,
+                content: a.content,
+                contentHash: a.contentHash,
+              })
+            ),
+          };
 
     const prepared = await prepareChatV2({
       mcpClientManager: manager,
@@ -774,9 +794,7 @@ export async function runSyntheticHostSession(
         : {}),
       ...(builtInTools ? { builtInTools } : {}),
       ...(skillsSource ? { skillsSource } : {}),
-      ...(cloudSkillsEnabled
-        ? { cloudSkills: { authHeader, projectId } }
-        : {}),
+      ...(cloudSkillsEnabled ? { cloudSkills: { authHeader, projectId } } : {}),
     });
 
     // One browser context per session: renders MCP App tool results in the
@@ -979,9 +997,7 @@ export async function runSyntheticHostSession(
         ...(persist.synthesisRunId
           ? { synthesisRunId: persist.synthesisRunId }
           : {}),
-        ...(persist.journeyRunId
-          ? { journeyRunId: persist.journeyRunId }
-          : {}),
+        ...(persist.journeyRunId ? { journeyRunId: persist.journeyRunId } : {}),
       });
 
       emit?.({ type: "turn_finish", turnIndex: turn });
@@ -1595,8 +1611,8 @@ export async function drainAssistantTurn(
   const attribution: TurnRunAttribution = synthesisRunId
     ? { synthesisRunId }
     : journeyRunId
-      ? { journeyRunId }
-      : undefined;
+    ? { journeyRunId }
+    : undefined;
 
   // Forward the swarm `journeyRunId` into the hosted `/stream` (or `/stream/org`)
   // body as an extra field. The backend spend writer ignores unknown fields

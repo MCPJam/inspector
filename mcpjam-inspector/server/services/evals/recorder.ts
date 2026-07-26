@@ -17,9 +17,9 @@ import { resolveCaseSuccessPredicates } from "@/shared/eval-matching";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import { ConvexError } from "convex/values";
 import {
-  environmentRevisionConflictError,
-  isEnvironmentRevisionConflict,
-} from "./environment-launch.js";
+  environmentLaunchConflictError,
+  isEnvironmentLaunchConflict,
+} from "../environments/resolve.js";
 
 type IterationStatus = "completed" | "failed" | "cancelled";
 // Run-level (not per-iteration) terminal stop reason, threaded into the
@@ -328,6 +328,8 @@ export const startSuiteRunWithRecorder = async ({
   runGroupId,
   environmentId,
   expectedEnvironmentRevision,
+  expectedEnvironmentHostConfigId,
+  expectedEnvironmentServerIds,
   source,
   idempotencyKey,
 }: {
@@ -397,9 +399,24 @@ export const startSuiteRunWithRecorder = async ({
    * The environment revision `prepareEvalRun` resolved (and captured the
    * tool snapshot against). The mutation compares it to the environment's
    * current revision BEFORE inserting any run row and rejects a mismatch
-   * with structured conflict data — see `environment-launch.ts`.
+   * with structured conflict data — see `services/environments/resolve.ts`.
    */
   expectedEnvironmentRevision?: number;
+  /**
+   * The host config the environment resolved to. The revision alone does NOT
+   * make a launch atomic: an environment pins a `hostId`, and the host can
+   * rotate its config (`hosts:updateHost`) without touching the environment
+   * row. Echoing it lets the mutation reject that drift (`ENV_HOST_DRIFT`).
+   */
+  expectedEnvironmentHostConfigId?: string;
+  /**
+   * The environment's effective (non-plugin + plugin-contributed) server set
+   * at resolve time. Same reason as the host config: editing the pinned
+   * standalone attachment changes what the environment resolves to at an
+   * unchanged revision. Must be the STORED closed set, not the live-healed
+   * projection — the backend re-derives the stored set to compare.
+   */
+  expectedEnvironmentServerIds?: string[];
   /**
    * Run origin persisted on `testSuiteRun.source` for audit attribution.
    * Omitted means 'ui' (backend default); the public /api/v1 surface
@@ -435,6 +452,12 @@ export const startSuiteRunWithRecorder = async ({
         ...(expectedEnvironmentRevision !== undefined
           ? { expectedEnvironmentRevision }
           : {}),
+        ...(expectedEnvironmentHostConfigId !== undefined
+          ? { expectedEnvironmentHostConfigId }
+          : {}),
+        ...(expectedEnvironmentServerIds !== undefined
+          ? { expectedEnvironmentServerIds }
+          : {}),
         ...(source ? { source } : {}),
         ...(idempotencyKey ? { idempotencyKey } : {}),
       }
@@ -448,14 +471,21 @@ export const startSuiteRunWithRecorder = async ({
       throw billing;
     }
     // The environment changed between prepareEvalRun's resolution and the
-    // run-start mutation (`expectedEnvironmentRevision` mismatch): no run
-    // row exists. Interactive callers surface the readable 409; the
-    // scheduled worker's trigger/idempotency path retries naturally.
+    // run-start mutation — either its revision moved, or it resolved
+    // differently at an unchanged revision (host config rotated / pinned
+    // attachment edited). Either way no run row exists. Interactive callers
+    // surface the readable 409; the scheduled worker's trigger/idempotency
+    // path retries naturally.
+    //
+    // Gate on any echo being present, not just the revision: a launch that
+    // sent only the drift echoes still needs its conflict translated.
     if (
-      expectedEnvironmentRevision !== undefined &&
-      isEnvironmentRevisionConflict(error)
+      (expectedEnvironmentRevision !== undefined ||
+        expectedEnvironmentHostConfigId !== undefined ||
+        expectedEnvironmentServerIds !== undefined) &&
+      isEnvironmentLaunchConflict(error)
     ) {
-      throw environmentRevisionConflictError();
+      throw environmentLaunchConflictError(error);
     }
     throw error;
   }
