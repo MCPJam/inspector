@@ -1,10 +1,21 @@
 /**
- * Public v1 computer-environments surface: CRUD + build + attach over a
+ * Public v1 sandbox-images surface: CRUD + build + attach over a
  * project's custom Computer images (a digest-pinned Dockerfile built into an
  * immutable E2B image a member's Computer can boot from).
  *
- * Thin proxies over the same Convex `computerEnvironments:*` / `projectComputers:*`
- * functions the hosted UI uses, called with the request's Convex bearer.
+ * Thin proxies over the same Convex `computerEnvironments:*` /
+ * `projectComputers:*` functions the hosted UI uses, called with the request's
+ * Convex bearer.
+ *
+ * NAMING: the PUBLIC surface says "image" (the OCI term, and what these are) —
+ * `/v1/projects/:projectId/images`. A *Project Environment* is an unrelated
+ * concept (a client + server group + skill/plugin bundle that suites and
+ * journeys run against) and owns the word "environment".
+ *
+ * The Convex function names below are deliberately still
+ * `computerEnvironments:*`: that module lives in the backend repo and was NOT
+ * renamed, so these strings must match it exactly. Do not "tidy" them to match
+ * this file's name — they are a cross-repo contract, not local style.
  *
  * SCOPE NOTE: unlike `hosts:*` (which take the path projectId and scope inside
  * Convex), the env mutations `update/build/promote/delete/builds` take ONLY an
@@ -27,7 +38,7 @@ import { createConvexClients } from "../shared/evals.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 
-const environments = new Hono();
+const images = new Hono();
 
 // ── Convex row shapes (mirror client/src/hooks/useComputerEnvironments.ts) ────
 type BuildRow = {
@@ -105,7 +116,9 @@ function createConvexReadClient(convexAuthToken: string): ConvexHttpClient {
 function translateConvexWriteError(error: unknown): WebRouteError {
   if (error instanceof WebRouteError) return error;
   const message = error instanceof Error ? error.message : String(error);
-  if (/not found|unauthorized|not a member|cannot manage|admin/i.test(message)) {
+  if (
+    /not found|unauthorized|not a member|cannot manage|admin/i.test(message)
+  ) {
     // Convex collapses "project missing", "not a member", "env missing", and
     // the shared-env admin gate into generic errors; keep the v1 message
     // neutral rather than leaking which.
@@ -152,9 +165,12 @@ async function readEnvironmentInProject(
   const readClient = createConvexReadClient(convexAuthToken);
   let env: EnvironmentRow | null;
   try {
-    env = (await readClient.query("computerEnvironments:getEnvironment" as any, {
-      environmentId,
-    } as any)) as EnvironmentRow | null;
+    env = (await readClient.query(
+      "computerEnvironments:getEnvironment" as any,
+      {
+        environmentId,
+      } as any
+    )) as EnvironmentRow | null;
   } catch (error) {
     throw translateConvexWriteError(error);
   }
@@ -180,7 +196,11 @@ async function assertEmptyBody(c: Context) {
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, "Invalid JSON body");
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "Invalid JSON body"
+    );
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new WebRouteError(
@@ -205,14 +225,20 @@ async function assertEmptyBody(c: Context) {
  * schema sees only the caller's fields and rejects unknown keys. `projectId`
  * comes from the path param at the call site, never the body.
  */
-async function readJsonObjectBody(c: Context): Promise<Record<string, unknown>> {
+async function readJsonObjectBody(
+  c: Context
+): Promise<Record<string, unknown>> {
   const text = await c.req.text();
   if (!text || !text.trim()) return {};
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
-    throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, "Invalid JSON body");
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "Invalid JSON body"
+    );
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new WebRouteError(
@@ -244,8 +270,8 @@ const updateEnvironmentSchema = z
 
 // ── Routes ───────────────────────────────────────────────────────────────────
 
-// GET /v1/projects/:projectId/computer-environments — list a project's environments.
-environments.get("/projects/:projectId/computer-environments", async (c) => {
+// GET /v1/projects/:projectId/images — list a project's environments.
+images.get("/projects/:projectId/images", async (c) => {
   const projectId = c.req.param("projectId");
   const readClient = createConvexReadClient(await getConvexBearerForRequest(c));
   let rows: EnvironmentRow[] | null | undefined;
@@ -260,8 +286,8 @@ environments.get("/projects/:projectId/computer-environments", async (c) => {
   return v1PageJson(c, (rows ?? []).map(toEnvironmentDto));
 });
 
-// POST /v1/projects/:projectId/computer-environments — create.
-environments.post("/projects/:projectId/computer-environments", async (c) => {
+// POST /v1/projects/:projectId/images — create.
+images.post("/projects/:projectId/images", async (c) => {
   const projectId = c.req.param("projectId");
   const body = parseWithSchema(
     createEnvironmentSchema,
@@ -281,172 +307,153 @@ environments.post("/projects/:projectId/computer-environments", async (c) => {
   return v1Resource(c, toEnvironmentDto(created), 201);
 });
 
-// GET /v1/projects/:projectId/computer-environments/:environmentId — detail.
-environments.get(
-  "/projects/:projectId/computer-environments/:environmentId",
-  async (c) => {
-    const projectId = c.req.param("projectId");
-    const environmentId = c.req.param("environmentId");
-    const token = await getConvexBearerForRequest(c);
-    const env = await readEnvironmentInProject(token, projectId, environmentId);
-    return v1Resource(c, toEnvironmentDto(env));
-  }
-);
+// GET /v1/projects/:projectId/images/:imageId — detail.
+images.get("/projects/:projectId/images/:imageId", async (c) => {
+  const projectId = c.req.param("projectId");
+  const environmentId = c.req.param("imageId");
+  const token = await getConvexBearerForRequest(c);
+  const env = await readEnvironmentInProject(token, projectId, environmentId);
+  return v1Resource(c, toEnvironmentDto(env));
+});
 
-// PATCH /v1/projects/:projectId/computer-environments/:environmentId — rename / edit Dockerfile.
-environments.patch(
-  "/projects/:projectId/computer-environments/:environmentId",
-  async (c) => {
-    const projectId = c.req.param("projectId");
-    const environmentId = c.req.param("environmentId");
-    const body = parseWithSchema(
-      updateEnvironmentSchema,
-      await readJsonObjectBody(c)
+// PATCH /v1/projects/:projectId/images/:imageId — rename / edit Dockerfile.
+images.patch("/projects/:projectId/images/:imageId", async (c) => {
+  const projectId = c.req.param("projectId");
+  const environmentId = c.req.param("imageId");
+  const body = parseWithSchema(
+    updateEnvironmentSchema,
+    await readJsonObjectBody(c)
+  );
+  const token = await getConvexBearerForRequest(c);
+  // Scope guard: env must belong to this project before we mutate by id.
+  await readEnvironmentInProject(token, projectId, environmentId);
+  const updateArgs: Record<string, unknown> = { environmentId };
+  if (body.name !== undefined) updateArgs.name = body.name;
+  if (body.dockerfile !== undefined) updateArgs.dockerfile = body.dockerfile;
+  const { convexClient } = createConvexClients(token);
+  let updated: EnvironmentRow;
+  try {
+    updated = (await convexClient.mutation(
+      "computerEnvironments:updateEnvironment" as any,
+      updateArgs as any
+    )) as EnvironmentRow;
+  } catch (error) {
+    throw translateConvexWriteError(error);
+  }
+  return v1Resource(c, toEnvironmentDto(updated));
+});
+
+// DELETE /v1/projects/:projectId/images/:imageId
+images.delete("/projects/:projectId/images/:imageId", async (c) => {
+  const projectId = c.req.param("projectId");
+  const environmentId = c.req.param("imageId");
+  await assertEmptyBody(c);
+  const token = await getConvexBearerForRequest(c);
+  await readEnvironmentInProject(token, projectId, environmentId);
+  const { convexClient } = createConvexClients(token);
+  try {
+    await convexClient.mutation(
+      "computerEnvironments:deleteEnvironment" as any,
+      { environmentId } as any
     );
-    const token = await getConvexBearerForRequest(c);
-    // Scope guard: env must belong to this project before we mutate by id.
-    await readEnvironmentInProject(token, projectId, environmentId);
-    const updateArgs: Record<string, unknown> = { environmentId };
-    if (body.name !== undefined) updateArgs.name = body.name;
-    if (body.dockerfile !== undefined) updateArgs.dockerfile = body.dockerfile;
-    const { convexClient } = createConvexClients(token);
-    let updated: EnvironmentRow;
-    try {
-      updated = (await convexClient.mutation(
-        "computerEnvironments:updateEnvironment" as any,
-        updateArgs as any
-      )) as EnvironmentRow;
-    } catch (error) {
-      throw translateConvexWriteError(error);
-    }
-    return v1Resource(c, toEnvironmentDto(updated));
+  } catch (error) {
+    throw translateConvexWriteError(error);
   }
-);
+  return v1Resource(c, { id: environmentId, deleted: true });
+});
 
-// DELETE /v1/projects/:projectId/computer-environments/:environmentId
-environments.delete(
-  "/projects/:projectId/computer-environments/:environmentId",
-  async (c) => {
-    const projectId = c.req.param("projectId");
-    const environmentId = c.req.param("environmentId");
-    await assertEmptyBody(c);
-    const token = await getConvexBearerForRequest(c);
-    await readEnvironmentInProject(token, projectId, environmentId);
-    const { convexClient } = createConvexClients(token);
-    try {
-      await convexClient.mutation(
-        "computerEnvironments:deleteEnvironment" as any,
-        { environmentId } as any
-      );
-    } catch (error) {
-      throw translateConvexWriteError(error);
-    }
-    return v1Resource(c, { id: environmentId, deleted: true });
+// GET /v1/projects/:projectId/images/:imageId/builds
+images.get("/projects/:projectId/images/:imageId/builds", async (c) => {
+  const projectId = c.req.param("projectId");
+  const environmentId = c.req.param("imageId");
+  const token = await getConvexBearerForRequest(c);
+  await readEnvironmentInProject(token, projectId, environmentId);
+  const readClient = createConvexReadClient(token);
+  let rows: BuildRow[] | null | undefined;
+  try {
+    rows = (await readClient.query(
+      "computerEnvironments:listEnvironmentBuilds" as any,
+      { environmentId } as any
+    )) as BuildRow[] | null | undefined;
+  } catch (error) {
+    throw translateConvexWriteError(error);
   }
-);
+  return v1PageJson(c, (rows ?? []).map(toBuildDto));
+});
 
-// GET /v1/projects/:projectId/computer-environments/:environmentId/builds
-environments.get(
-  "/projects/:projectId/computer-environments/:environmentId/builds",
-  async (c) => {
-    const projectId = c.req.param("projectId");
-    const environmentId = c.req.param("environmentId");
-    const token = await getConvexBearerForRequest(c);
-    await readEnvironmentInProject(token, projectId, environmentId);
-    const readClient = createConvexReadClient(token);
-    let rows: BuildRow[] | null | undefined;
-    try {
-      rows = (await readClient.query(
-        "computerEnvironments:listEnvironmentBuilds" as any,
-        { environmentId } as any
-      )) as BuildRow[] | null | undefined;
-    } catch (error) {
-      throw translateConvexWriteError(error);
-    }
-    return v1PageJson(c, (rows ?? []).map(toBuildDto));
+// POST /v1/projects/:projectId/images/:imageId/build — trigger a build.
+images.post("/projects/:projectId/images/:imageId/build", async (c) => {
+  const projectId = c.req.param("projectId");
+  const environmentId = c.req.param("imageId");
+  await assertEmptyBody(c);
+  const token = await getConvexBearerForRequest(c);
+  await readEnvironmentInProject(token, projectId, environmentId);
+  const { convexClient } = createConvexClients(token);
+  let result: { buildId: string; reused: boolean };
+  try {
+    result = (await convexClient.mutation(
+      "computerEnvironments:startEnvironmentBuild" as any,
+      { environmentId } as any
+    )) as { buildId: string; reused: boolean };
+  } catch (error) {
+    throw translateConvexWriteError(error);
   }
-);
+  // 202: the build runs asynchronously; poll the builds list for status.
+  return v1Resource(
+    c,
+    { id: environmentId, buildId: result.buildId, reused: result.reused },
+    202
+  );
+});
 
-// POST /v1/projects/:projectId/computer-environments/:environmentId/build — trigger a build.
-environments.post(
-  "/projects/:projectId/computer-environments/:environmentId/build",
-  async (c) => {
-    const projectId = c.req.param("projectId");
-    const environmentId = c.req.param("environmentId");
-    await assertEmptyBody(c);
-    const token = await getConvexBearerForRequest(c);
-    await readEnvironmentInProject(token, projectId, environmentId);
-    const { convexClient } = createConvexClients(token);
-    let result: { buildId: string; reused: boolean };
-    try {
-      result = (await convexClient.mutation(
-        "computerEnvironments:startEnvironmentBuild" as any,
-        { environmentId } as any
-      )) as { buildId: string; reused: boolean };
-    } catch (error) {
-      throw translateConvexWriteError(error);
-    }
-    // 202: the build runs asynchronously; poll the builds list for status.
-    return v1Resource(
-      c,
-      { id: environmentId, buildId: result.buildId, reused: result.reused },
-      202
-    );
+// POST /v1/projects/:projectId/images/:imageId/promote — share to project.
+images.post("/projects/:projectId/images/:imageId/promote", async (c) => {
+  const projectId = c.req.param("projectId");
+  const environmentId = c.req.param("imageId");
+  await assertEmptyBody(c);
+  const token = await getConvexBearerForRequest(c);
+  await readEnvironmentInProject(token, projectId, environmentId);
+  const { convexClient } = createConvexClients(token);
+  let promoted: EnvironmentRow;
+  try {
+    promoted = (await convexClient.mutation(
+      "computerEnvironments:promoteEnvironmentToProject" as any,
+      { environmentId } as any
+    )) as EnvironmentRow;
+  } catch (error) {
+    throw translateConvexWriteError(error);
   }
-);
+  return v1Resource(c, toEnvironmentDto(promoted));
+});
 
-// POST /v1/projects/:projectId/computer-environments/:environmentId/promote — share to project.
-environments.post(
-  "/projects/:projectId/computer-environments/:environmentId/promote",
-  async (c) => {
-    const projectId = c.req.param("projectId");
-    const environmentId = c.req.param("environmentId");
-    await assertEmptyBody(c);
-    const token = await getConvexBearerForRequest(c);
-    await readEnvironmentInProject(token, projectId, environmentId);
-    const { convexClient } = createConvexClients(token);
-    let promoted: EnvironmentRow;
-    try {
-      promoted = (await convexClient.mutation(
-        "computerEnvironments:promoteEnvironmentToProject" as any,
-        { environmentId } as any
-      )) as EnvironmentRow;
-    } catch (error) {
-      throw translateConvexWriteError(error);
-    }
-    return v1Resource(c, toEnvironmentDto(promoted));
+// POST /v1/projects/:projectId/images/:imageId/use — attach to the caller's computer.
+images.post("/projects/:projectId/images/:imageId/use", async (c) => {
+  const projectId = c.req.param("projectId");
+  const environmentId = c.req.param("imageId");
+  await assertEmptyBody(c);
+  const token = await getConvexBearerForRequest(c);
+  await readEnvironmentInProject(token, projectId, environmentId);
+  const { convexClient } = createConvexClients(token);
+  let computer: { computerId: string; status: string };
+  try {
+    computer = (await convexClient.mutation(
+      "projectComputers:setComputerEnvironment" as any,
+      { projectId, environmentId } as any
+    )) as { computerId: string; status: string };
+  } catch (error) {
+    throw translateConvexWriteError(error);
   }
-);
-
-// POST /v1/projects/:projectId/computer-environments/:environmentId/use — attach to the caller's computer.
-environments.post(
-  "/projects/:projectId/computer-environments/:environmentId/use",
-  async (c) => {
-    const projectId = c.req.param("projectId");
-    const environmentId = c.req.param("environmentId");
-    await assertEmptyBody(c);
-    const token = await getConvexBearerForRequest(c);
-    await readEnvironmentInProject(token, projectId, environmentId);
-    const { convexClient } = createConvexClients(token);
-    let computer: { computerId: string; status: string };
-    try {
-      computer = (await convexClient.mutation(
-        "projectComputers:setComputerEnvironment" as any,
-        { projectId, environmentId } as any
-      )) as { computerId: string; status: string };
-    } catch (error) {
-      throw translateConvexWriteError(error);
-    }
-    return v1Resource(c, {
-      environmentId,
-      computerId: computer.computerId,
-      status: computer.status,
-    });
-  }
-);
+  return v1Resource(c, {
+    // PUBLIC field is `imageId`; the Convex mutation arg above stays
+    // `environmentId` because that is the backend module's parameter name.
+    imageId: environmentId,
+    computerId: computer.computerId,
+    status: computer.status,
+  });
+});
 
 // POST /v1/projects/:projectId/computer/reset — reset the caller's computer to its image.
-environments.post("/projects/:projectId/computer/reset", async (c) => {
+images.post("/projects/:projectId/computer/reset", async (c) => {
   const projectId = c.req.param("projectId");
   await assertEmptyBody(c);
   const token = await getConvexBearerForRequest(c);
@@ -463,4 +470,4 @@ environments.post("/projects/:projectId/computer/reset", async (c) => {
   return v1Resource(c, { projectId, reset: result.reset });
 });
 
-export default environments;
+export default images;

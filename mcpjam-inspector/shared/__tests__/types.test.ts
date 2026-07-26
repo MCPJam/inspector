@@ -7,6 +7,9 @@ import {
   isMCPJamGuestAllowedModel,
   isMCPJamProvidedModel,
   isModelSupported,
+  normalizeOauthProtocolMode,
+  resolveEffectiveOauthProtocolMode,
+  SERVER_FORM_OAUTH_PROTOCOL_MODES,
   SUPPORTED_MODELS,
 } from "../types.js";
 
@@ -119,5 +122,66 @@ describe("MCPJam-provided model classification", () => {
     expect(hosted.every((m) => m.hosted === true)).toBe(true);
     // Every hosted snapshot model is guest-allowed now (guests un-curated).
     expect(hosted.every((m) => m.guestAllowed === true)).toBe(true);
+  });
+});
+
+describe("normalizeOauthProtocolMode (connect-form OAuth protocol)", () => {
+  // Single source for the Add and Edit connect forms — both previously kept
+  // private copies that had to preserve 2026-07-28 in lockstep.
+  it("preserves every concrete protocol era, including the 2026-07-28 draft", () => {
+    expect(normalizeOauthProtocolMode("2025-03-26")).toBe("2025-03-26");
+    expect(normalizeOauthProtocolMode("2025-06-18")).toBe("2025-06-18");
+    expect(normalizeOauthProtocolMode("2025-11-25")).toBe("2025-11-25");
+    expect(normalizeOauthProtocolMode("2026-07-28")).toBe("2026-07-28");
+  });
+
+  it("does not silently degrade a stored 2026-07-28 pin to 2025-11-25", () => {
+    expect(normalizeOauthProtocolMode("2026-07-28")).not.toBe("2025-11-25");
+  });
+
+  it("preserves the deferred 'auto' sentinel through hydration", () => {
+    // "auto" is a valid mode the wire-pin bridge resolves later; coercing it
+    // to a concrete era here would drop the sentinel and make the bridge
+    // unreachable for prefilled/edited servers.
+    expect(normalizeOauthProtocolMode("auto")).toBe("auto");
+  });
+
+  it("falls back to 2025-11-25 for unknowns and undefined", () => {
+    expect(normalizeOauthProtocolMode(undefined)).toBe("2025-11-25");
+    expect(normalizeOauthProtocolMode("garbage")).toBe("2025-11-25");
+  });
+
+  it("derives its accepted set from the single-source tuple", () => {
+    // Every concrete era normalizes to itself; the tuple IS the source the
+    // union and the membership check share, so this guards against drift.
+    for (const era of SERVER_FORM_OAUTH_PROTOCOL_MODES) {
+      expect(normalizeOauthProtocolMode(era)).toBe(era);
+    }
+  });
+});
+
+describe("resolveEffectiveOauthProtocolMode (auto → wire-pin bridge)", () => {
+  it("resolves 'auto' to the 2026 flow only under a 2026-07-28 wire pin", () => {
+    expect(resolveEffectiveOauthProtocolMode("auto", "2026-07-28")).toBe(
+      "2026-07-28"
+    );
+  });
+
+  it("resolves 'auto' to the 2025-11-25 default without a 2026 wire pin", () => {
+    expect(resolveEffectiveOauthProtocolMode("auto", "2025-11-25")).toBe(
+      "2025-11-25"
+    );
+    expect(resolveEffectiveOauthProtocolMode("auto", undefined)).toBe(
+      "2025-11-25"
+    );
+  });
+
+  it("passes an explicit selection straight through — it always wins", () => {
+    expect(resolveEffectiveOauthProtocolMode("2025-06-18", "2026-07-28")).toBe(
+      "2025-06-18"
+    );
+    expect(resolveEffectiveOauthProtocolMode("2026-07-28", undefined)).toBe(
+      "2026-07-28"
+    );
   });
 });

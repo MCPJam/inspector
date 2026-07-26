@@ -144,7 +144,7 @@ describe("POST /api/web/computers/exec", () => {
       projectId: "proj_1",
       command: "echo hello",
       commandId: "call_7",
-      workdir: "/workspace",
+      workdir: "/home/user/workspace",
       timeoutSeconds: 30,
     });
 
@@ -158,7 +158,7 @@ describe("POST /api/web/computers/exec", () => {
       expect.objectContaining({
         sandboxId: "sbx_42",
         command: "echo hello",
-        workdir: "/workspace",
+        workdir: "/home/user/workspace",
         timeoutMs: 30_000,
       })
     );

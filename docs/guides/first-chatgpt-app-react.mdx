@@ -87,7 +87,7 @@ ChatGPT Apps can display interactive widgets inside the chat. Widget resources a
 
 ### The `window.openai` API
 
-`window.openai` provides globals, methods for calling tools, sending follow-ups, managing layout, and much more.
+`window.openai` provides globals and methods for calling tools, sending follow-ups, and managing layout.
 
 Here's a basic React widget structure using the `window.openai` API:
 
@@ -140,7 +140,7 @@ Widgets can request different display modes to optimize their presentation:
 
 - **Inline** (default) - Widget renders within the chat message flow
 - **Picture-in-Picture (PiP)** - Widget floats at the top of the screen, staying visible while scrolling
-- **Fullscreen** - Widget expands to fill the entire viewport for immersive experiences
+- **Fullscreen** - Widget expands to fill the entire viewport
 
 Widgets start in inline mode. To request a different mode:
 
@@ -184,7 +184,7 @@ Without declaring a domain in your CSP, the sandbox will block the request. Only
 
 ## A note on authentication and monetization
 
-Since the purpose of this guide is to get you building your first ChatGPT App, we've kept things simple and skipped authentication and monetization. For production apps, check out [OpenAI's authentication docs](https://developers.openai.com/apps-sdk/build/auth) and [monetization docs](https://developers.openai.com/apps-sdk/build/monetization).
+To keep this guide focused on building your first ChatGPT App, we've skipped authentication and monetization. For production apps, check out [OpenAI's authentication docs](https://developers.openai.com/apps-sdk/build/auth) and [monetization docs](https://developers.openai.com/apps-sdk/build/monetization).
 
 ## Running Your App
 

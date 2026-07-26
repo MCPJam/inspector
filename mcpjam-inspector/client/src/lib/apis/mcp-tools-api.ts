@@ -16,11 +16,19 @@ import { WebApiError } from "@/lib/apis/web/base";
 import { executeHostedTool, listHostedTools } from "@/lib/apis/web/tools-api";
 import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
 import { attachToolMetadata } from "@/lib/apis/tool-metadata";
+import {
+  parseInsufficientScopeChallenge,
+  type InsufficientScopeChallenge,
+} from "@/lib/apis/insufficient-scope";
+
+/** SEP-2549 cache-serve provenance (§11.2) — present ONLY on an actual hit. */
+export type ServedFromCache = { ageMs: number };
 
 export type ListToolsResultWithMetadata = ListToolsResult & {
   toolsMetadata?: Record<string, Record<string, any>>;
   tokenCount?: number;
   tokenCountError?: string;
+  servedFromCache?: ServedFromCache;
 };
 
 export type ToolServerMap = Record<string, string>;
@@ -61,22 +69,44 @@ export type ToolExecutionResponse =
        * ErrorCard directly without re-classifying from `error`.
        */
       normalized?: NormalizedError;
+      /**
+       * SEP-2350 step-up: present when the tool call failed with a runtime
+       * `403 insufficient_scope`. The server transport surfaces the
+       * `WWW-Authenticate` challenge as an `InsufficientScopeError`, which the
+       * `/tools/execute` route serializes onto `mcpError.insufficientScope`.
+       * Consumers pass `requiredScope` into the client step-up
+       * re-authorization (union of previously-requested and challenged scopes,
+       * bounded per session). Untrusted resource-server input — treat as such
+       * when rendering.
+       */
+      insufficientScope?: ToolInsufficientScopeChallenge;
     };
+
+// SEP-2350 challenge plumbing now lives in the surface-agnostic
+// `insufficient-scope` module (shared by tools / resources / prompts). Re-export
+// here under the original names so existing importers stay green.
+export type ToolInsufficientScopeChallenge = InsufficientScopeChallenge;
+export { parseInsufficientScopeChallenge };
 
 export async function listTools({
   serverId,
   modelId,
   cursor,
+  refresh,
 }: {
   serverId?: string | undefined;
   modelId?: string | undefined;
   cursor?: string | undefined;
+  /** SEP-2549: force a live refetch, bypassing any still-fresh cached entry. */
+  refresh?: boolean | undefined;
 }): Promise<ListToolsResultWithMetadata> {
   return runByMode({
     hosted: async () => {
       if (!serverId) {
         throw new Error("serverId is required in hosted mode");
       }
+      // Hosted direct-ops always bypass the response cache server-side, so
+      // there's never a `servedFromCache` to surface here.
       return attachToolMetadata(await listHostedTools({
         serverNameOrId: serverId,
         modelId,
@@ -87,7 +117,7 @@ export async function listTools({
       const res = await authFetch("/api/mcp/tools/list", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ serverId, modelId, cursor }),
+        body: JSON.stringify({ serverId, modelId, cursor, refresh }),
       });
       let body: any = null;
       try {
@@ -137,7 +167,20 @@ export async function executeToolApi(
           error instanceof WebApiError && isNormalizedError(error.normalized)
             ? error.normalized
             : undefined;
-        return { error: message, ...(normalized ? { normalized } : {}) };
+        // Hosted step-up challenge, if the route forwarded one on `details`
+        // (the WebRouteError `details` block WebApiError carries). Best-effort:
+        // omitted when the hosted serializer sends none.
+        const insufficientScope =
+          error instanceof WebApiError
+            ? parseInsufficientScopeChallenge(
+                (error.details as any)?.insufficientScope,
+              )
+            : undefined;
+        return {
+          error: message,
+          ...(normalized ? { normalized } : {}),
+          ...(insufficientScope ? { insufficientScope } : {}),
+        };
       }
     },
     local: async () => {
@@ -160,9 +203,16 @@ export async function executeToolApi(
         const normalized = isNormalizedError(body?.normalized)
           ? (body.normalized as NormalizedError)
           : undefined;
+        // SEP-2350: surface the step-up challenge the /tools/execute route
+        // serialized onto `mcpError.insufficientScope` for a runtime
+        // `403 insufficient_scope`, so consumers can drive union-scope re-auth.
+        const insufficientScope = parseInsufficientScopeChallenge(
+          body?.mcpError?.insufficientScope,
+        );
         return {
           error: message,
           ...(normalized ? { normalized } : {}),
+          ...(insufficientScope ? { insufficientScope } : {}),
         } as ToolExecutionResponse;
       }
 
@@ -215,7 +265,23 @@ export async function respondToElicitationApi(
   } catch {}
   if (!res.ok) {
     const message = body?.error || `Respond failed (${res.status})`;
-    return { error: message } as ToolExecutionResponse;
+    // SEP-2350: an elicitation-resume can ALSO fail with a runtime
+    // `403 insufficient_scope` (the widened-scope call happens after the
+    // elicitation round-trip). The `/respond` route serializes the same
+    // `mcpError.insufficientScope` / `normalized` blocks as `/execute`, so
+    // mirror that narrowing here — otherwise the challenge is dropped and the
+    // resume path can never drive a step-up.
+    const normalized = isNormalizedError(body?.normalized)
+      ? (body.normalized as NormalizedError)
+      : undefined;
+    const insufficientScope = parseInsufficientScopeChallenge(
+      body?.mcpError?.insufficientScope,
+    );
+    return {
+      error: message,
+      ...(normalized ? { normalized } : {}),
+      ...(insufficientScope ? { insufficientScope } : {}),
+    } as ToolExecutionResponse;
   }
   return body as ToolExecutionResponse;
 }
