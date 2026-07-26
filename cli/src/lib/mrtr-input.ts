@@ -25,6 +25,7 @@
 
 import * as readline from "node:readline/promises";
 import type {
+  ElicitationHandler,
   InputResponses,
   MrtrInputCollector,
 } from "@mcpjam/sdk";
@@ -197,9 +198,15 @@ export function buildMrtrBeforeConnect(options: {
     yes: options.yes,
     stdinIsTTY: Boolean(process.stdin.isTTY),
   });
-  const collector = createStdinMrtrCollector({ nonInteractive });
+  const collectorOptions = { nonInteractive };
+  const collector = createStdinMrtrCollector(collectorOptions);
+  const handler = createStdinElicitationHandler(collectorOptions);
   return (manager, serverId) => {
     manager.setMrtrInputCollector(serverId, collector);
+    // Same capability, two deliveries: MRTR on 2026-07-28, an inbound request
+    // on 2025-11-25 and earlier. Both are registered before connect, so the
+    // advertised `elicitation` is answerable whichever version negotiates.
+    manager.setElicitationHandler(serverId, handler);
   };
 }
 
@@ -558,6 +565,42 @@ function coerceFieldValueRaw(
     }
   }
 }
+
+/**
+ * Terminal handler for an ordinary server-to-client `elicitation/create`.
+ *
+ * MRTR replaced server-initiated requests in the 2026-07-28 draft ("Servers
+ * MUST send server-to-client requests using the MRTR pattern"), but every
+ * earlier version a user can still connect to — 2025-06-18 and 2025-11-25 —
+ * delivers elicitation as a real inbound request. Declaring the `elicitation`
+ * capability with only an MRTR collector registered would therefore invite
+ * requests the client answers with "method not found" on exactly those
+ * versions: the server exposes its elicitation-using tools and they then fail
+ * mid-call. Registering this alongside the collector keeps the advertisement
+ * honest on both eras, using the same rendering and consent rules.
+ *
+ * Mode enforcement stays in the SDK, which rejects an inbound mode this client
+ * did not declare before the request ever reaches here.
+ */
+export function createStdinElicitationHandler(
+  options: StdinMrtrCollectorOptions = {},
+): ElicitationHandler {
+  const collector = createStdinMrtrCollector(options);
+  return async (params) => {
+    // Reuse the collector verbatim so the two eras cannot drift apart: one
+    // embedded request under a fixed key, unwrapped back to a bare result.
+    const responses = (await collector({
+      state: {} as never,
+      inputRequests: {
+        [INBOUND_ELICITATION_KEY]: { method: "elicitation/create", params },
+      } as never,
+    })) as Record<string, { action: ElicitAction; content?: Record<string, unknown> }>;
+    return responses[INBOUND_ELICITATION_KEY] as ReturnType<ElicitationHandler>;
+  };
+}
+
+/** Synthetic key for the single request in the inbound-elicitation adapter. */
+const INBOUND_ELICITATION_KEY = "elicitation";
 
 /**
  * Builds a terminal MRTR input collector. Register it via

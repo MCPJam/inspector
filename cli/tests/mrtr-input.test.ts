@@ -10,6 +10,7 @@ import { applyInteractiveElicitationCapability } from "../src/lib/ephemeral.js";
 import {
   buildMrtrBeforeConnect,
   coerceFieldValue,
+  createStdinElicitationHandler,
   createStdinMrtrCollector,
   sanitizeTerminalText,
   MrtrCollectAbortError,
@@ -495,6 +496,7 @@ test("buildMrtrBeforeConnect only registers a collector when interactive", () =>
     {
       setMrtrInputCollector: (serverId: string, collect: unknown) =>
         void registered.push([serverId, collect]),
+      setElicitationHandler: () => {},
     } as never,
     "__cli__",
   );
@@ -665,4 +667,80 @@ test("retry exhaustion declines that request and keeps the other answers", async
   });
   assert.deepEqual(responses.q2, { action: "decline" });
   assert.match(out, /declining this request/);
+});
+
+// ── inbound elicitation/create (2025-11-25 and earlier) ────────────────────
+
+test("interactive registers BOTH an MRTR collector and an inbound handler", () => {
+  // Advertise = enforce across eras: MRTR delivers elicitation on 2026-07-28,
+  // but 2025-11-25 and earlier send a real server-to-client request. Declaring
+  // the capability with only one of the two registered leaves the other era
+  // answering "method not found".
+  const hook = buildMrtrBeforeConnect({ interactive: true, yes: true });
+  const calls: string[] = [];
+  hook?.(
+    {
+      setMrtrInputCollector: () => void calls.push("collector"),
+      setElicitationHandler: () => void calls.push("handler"),
+    } as never,
+    "__cli__",
+  );
+  assert.deepEqual(calls.sort(), ["collector", "handler"]);
+});
+
+test("inbound elicitation handler collects a form answer", async () => {
+  const reader = scriptedReader(["a", "bananas"]);
+  const handler = createStdinElicitationHandler({ reader, write: () => {} });
+  const result = await handler({
+    message: "Which fruit?",
+    requestedSchema: answerSchema,
+  } as never);
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), {
+    action: "accept",
+    content: { answer: "bananas" },
+  });
+});
+
+test("inbound elicitation handler declines rather than throwing", async () => {
+  const reader = scriptedReader(["d"]);
+  const handler = createStdinElicitationHandler({ reader, write: () => {} });
+  const result = await handler({
+    message: "Which fruit?",
+    requestedSchema: answerSchema,
+  } as never);
+  assert.deepEqual(result, { action: "decline" });
+});
+
+test("inbound elicitation handler renders url mode as consent-only", async () => {
+  const reader = scriptedReader(["a"]);
+  let out = "";
+  const handler = createStdinElicitationHandler({
+    reader,
+    write: (t) => {
+      out += t;
+    },
+  });
+  const result = await handler({
+    message: "Finish sign-in",
+    mode: "url",
+    url: "https://auth.example/x",
+  } as never);
+  // URL mode carries no content, and the CLI never auto-opens a browser.
+  assert.deepEqual(result, { action: "accept" });
+  assert.match(out, /https:\/\/auth\.example\/x/);
+});
+
+test("inbound elicitation handler declines without a TTY", async () => {
+  const reader = scriptedReader([]); // must never be consulted
+  const handler = createStdinElicitationHandler({
+    reader,
+    write: () => {},
+    nonInteractive: true,
+  });
+  const result = await handler({
+    message: "Which fruit?",
+    requestedSchema: answerSchema,
+  } as never);
+  assert.deepEqual(result, { action: "decline" });
+  assert.equal(reader.prompts.length, 0);
 });
