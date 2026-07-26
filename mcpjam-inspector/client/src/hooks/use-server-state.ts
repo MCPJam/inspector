@@ -834,6 +834,39 @@ export interface EnsureServersReadyResult {
   reauthServerNames: string[];
 }
 
+/**
+ * The ONLY channel by which secrets travel from form data to persistence.
+ *
+ * `syncServerToConvex` writes `env` / `headers` exclusively from what this
+ * returns, and reads key PRESENCE as intent (absent = leave alone, `{}` =
+ * clear, value = replace). Plain `formData.env` / `formData.headers` never
+ * reach it — they configure the in-memory connection only — which is the trap
+ * every import-shaped producer has to know about; see `ServerFormData.secretPatch`.
+ *
+ * Extracted and exported so that contract is unit-testable in one place rather
+ * than re-derived inline by each caller.
+ */
+export function buildSecretSyncOptions(formData: ServerFormData): {
+  clientSecret?: string;
+  clearClientSecret?: boolean;
+  clearXaaConfig?: boolean;
+  env?: Record<string, string>;
+  headers?: Record<string, string>;
+} {
+  return {
+    ...(formData.clientSecret ? { clientSecret: formData.clientSecret } : {}),
+    ...(formData.clearClientSecret ? { clearClientSecret: true } : {}),
+    // One-shot XAA-config reset (modal moved the server off XAA).
+    ...(formData.clearXaaConfig ? { clearXaaConfig: true } : {}),
+    ...(formData.secretPatch?.env !== undefined
+      ? { env: formData.secretPatch.env }
+      : {}),
+    ...(formData.secretPatch?.headers !== undefined
+      ? { headers: formData.secretPatch.headers }
+      : {}),
+  };
+}
+
 export function useServerState({
   appState,
   dispatch,
@@ -2917,20 +2950,7 @@ export function useServerState({
                 existingServerForSave?.hasClientSecret
             )
           : false;
-      const clientSecretSyncOptions = {
-        ...(formData.clientSecret
-          ? { clientSecret: formData.clientSecret }
-          : {}),
-        ...(formData.clearClientSecret ? { clearClientSecret: true } : {}),
-        // One-shot XAA-config reset (modal moved the server off XAA).
-        ...(formData.clearXaaConfig ? { clearXaaConfig: true } : {}),
-        ...(formData.secretPatch?.env !== undefined
-          ? { env: formData.secretPatch.env }
-          : {}),
-        ...(formData.secretPatch?.headers !== undefined
-          ? { headers: formData.secretPatch.headers }
-          : {}),
-      };
+      const clientSecretSyncOptions = buildSecretSyncOptions(formData);
 
       const serverEntryForSave: ServerWithName = {
         name: formData.name,

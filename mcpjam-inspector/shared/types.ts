@@ -801,6 +801,28 @@ export interface ServerFormData {
   url?: string;
   headers?: Record<string, string>;
   env?: Record<string, string>;
+  /**
+   * EXPLICIT secret write. The plain `env` / `headers` above feed the
+   * in-memory connect only — persistence (Convex) writes secrets exclusively
+   * from this patch, via `buildSecretSyncOptions`, and reads key PRESENCE as
+   * intent:
+   *
+   * - key ABSENT       → leave the stored value untouched (an edit that never
+   *                      opened the secrets section must not clobber it);
+   * - key present `{}`  → explicitly CLEAR the stored value;
+   * - key present, set  → replace the stored value.
+   *
+   * That three-state contract is why the plain fields cannot simply be
+   * persisted as a fallback: there, an untouched edit form and a deliberate
+   * clear are indistinguishable.
+   *
+   * The consequence for producers: anything holding REAL secret values — a JSON
+   * import, a bundle install, a deep link — has to set this too, and only when
+   * the values are non-empty (an empty patch would wipe the credentials of an
+   * existing server with the same name). Setting just `env` / `headers` yields
+   * a server that connects once from memory and comes back credential-less
+   * after a reload, with nothing to indicate anything was dropped.
+   */
   secretPatch?: {
     env?: Record<string, string>;
     headers?: Record<string, string>;
