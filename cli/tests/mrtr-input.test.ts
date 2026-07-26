@@ -800,3 +800,115 @@ test("an ordinary pattern is still checked at the prompt", () => {
   assert.deepEqual(coerceFieldValue("abc", field), { value: "abc" });
   assert.throws(() => coerceFieldValue("AB1", field), /must match/);
 });
+
+// ── declared string formats (email / uri / date / date-time) ───────────────
+
+test("parseElicitationFields carries a declared format", () => {
+  const [field] = parseElicitationFields({
+    type: "object",
+    properties: { contact: { type: "string", format: "email" } },
+    required: ["contact"],
+  });
+  assert.equal(field.constraints?.format, "email");
+});
+
+test("coerceFieldValue re-prompts on an invalid declared format", () => {
+  const email = {
+    key: "contact",
+    type: "string" as const,
+    required: true,
+    constraints: { format: "email" },
+  };
+  assert.throws(() => coerceFieldValue("not-an-email", email), /valid email/);
+  assert.deepEqual(coerceFieldValue("a@b.com", email), { value: "a@b.com" });
+
+  const uri = {
+    key: "u",
+    type: "string" as const,
+    required: true,
+    constraints: { format: "uri" },
+  };
+  assert.throws(() => coerceFieldValue("not a uri", uri), /valid uri/);
+  assert.deepEqual(coerceFieldValue("https://x.example/p", uri), {
+    value: "https://x.example/p",
+  });
+
+  const date = {
+    key: "d",
+    type: "string" as const,
+    required: true,
+    constraints: { format: "date" },
+  };
+  assert.throws(() => coerceFieldValue("2026-13-01", date), /valid date/);
+  // An impossible calendar date is caught, matching Ajv's full-date check.
+  assert.throws(() => coerceFieldValue("2026-02-30", date), /valid date/);
+  assert.deepEqual(coerceFieldValue("2026-07-25", date), { value: "2026-07-25" });
+
+  const dateTime = {
+    key: "dt",
+    type: "string" as const,
+    required: true,
+    constraints: { format: "date-time" },
+  };
+  assert.throws(() => coerceFieldValue("2026-07-25", dateTime), /valid date-time/);
+  assert.deepEqual(coerceFieldValue("2026-07-25T10:30:00Z", dateTime), {
+    value: "2026-07-25T10:30:00Z",
+  });
+
+  // An unrecognized format is not ours to judge — the SDK validator decides.
+  assert.deepEqual(
+    coerceFieldValue("whatever", {
+      key: "x",
+      type: "string",
+      required: true,
+      constraints: { format: "hostname" },
+    }),
+    { value: "whatever" },
+  );
+});
+
+test("the prompt-side format check is never stricter than the SDK validator", async () => {
+  // The invariant that matters: anything this rejects, the real validator must
+  // also reject. A false rejection here is unrecoverable for the user — the
+  // attempts burn down to a decline — while a false acceptance is merely a
+  // missed early re-prompt, caught downstream.
+  const { DialectAwareJsonSchemaValidator } = await import("@mcpjam/sdk");
+  const samples: Array<[string, string[]]> = [
+    ["email", ["a@b.com", "not-an-email", "a@b", "a b@c.com", "x@y.co.uk"]],
+    ["uri", ["https://x.example/p", "not a uri", "mailto:a@b.com", "/relative"]],
+    ["date", ["2026-07-25", "2026-13-01", "2026-02-30", "25-07-2026"]],
+    [
+      "date-time",
+      ["2026-07-25T10:30:00Z", "2026-07-25", "2026-07-25T10:30:00+02:00", "nope"],
+    ],
+  ];
+  for (const [format, values] of samples) {
+    const validator = new DialectAwareJsonSchemaValidator();
+    const validate = validator.getValidator({
+      type: "object",
+      properties: { v: { type: "string", format } },
+      required: ["v"],
+    } as never);
+    for (const value of values) {
+      const sdkAccepts = validate({ v: value }).valid;
+      let promptAccepts = true;
+      try {
+        coerceFieldValue(value, {
+          key: "v",
+          type: "string",
+          required: true,
+          constraints: { format },
+        });
+      } catch {
+        promptAccepts = false;
+      }
+      if (!promptAccepts) {
+        assert.equal(
+          sdkAccepts,
+          false,
+          `prompt rejected ${format} "${value}" that the SDK validator accepts`,
+        );
+      }
+    }
+  }
+});

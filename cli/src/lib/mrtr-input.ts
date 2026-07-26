@@ -72,6 +72,12 @@ export interface ElicitationField {
 
 /** The subset of schema bounds the terminal collector can check as it prompts. */
 export interface FieldConstraints {
+  /**
+   * A declared string format. The elicitation schema supports exactly four
+   * (`email`, `uri`, `date`, `date-time`); anything else is carried but not
+   * checked here, since the SDK validator is the authority.
+   */
+  format?: string;
   minLength?: number;
   maxLength?: number;
   pattern?: string;
@@ -338,12 +344,75 @@ function withConstraints(
   if (typeof prop.pattern === "string" && prop.pattern !== "") {
     constraints.pattern = prop.pattern;
   }
+  if (typeof prop.format === "string" && prop.format !== "") {
+    constraints.format = prop.format;
+  }
   return Object.keys(constraints).length > 0 ? { constraints } : {};
 }
 
 /** True for a schema bound that actually forbids an empty value. */
 function isPositiveInteger(value: unknown): boolean {
   return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
+/**
+ * Checks the four string formats the elicitation schema defines (`email`,
+ * `uri`, `date`, `date-time`). The manager validates collected content with Ajv
+ * configured `validateFormats: true` and `ajv-formats` registered, so an
+ * invalid value is rejected AFTER the whole form is collected — ending the
+ * interactive command with the field's re-prompt attempts unused. Checking here
+ * turns that into one re-prompt.
+ *
+ * Deliberately no stricter than Ajv, and lenient where the two could disagree:
+ * a false rejection here is unrecoverable for the user (attempts burn down to a
+ * decline), whereas anything this lets through is still caught by the
+ * validator. An unrecognized format is not checked at all.
+ */
+function satisfiesStringFormat(value: string, format: string): boolean {
+  switch (format) {
+    case "email": {
+      // Deliberately looser than Ajv's pattern: one @, no whitespace, a dotted
+      // domain. Exotic-but-valid addresses pass through to the validator.
+      const parts = value.split("@");
+      if (parts.length !== 2) return false;
+      const [local, domain] = parts;
+      if (local.length === 0 || domain.length === 0) return false;
+      if (/\s/.test(value)) return false;
+      return domain.includes(".") && !domain.startsWith(".") && !domain.endsWith(".");
+    }
+    case "uri": {
+      // Ajv's `uri` requires an absolute URI; `URL` accepts exactly those.
+      try {
+        new URL(value);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    case "date": {
+      const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+      if (!match) return false;
+      // Round-trip so an impossible calendar date (2026-02-30) is caught, the
+      // same way Ajv's full-date check does.
+      const [, y, m, d] = match;
+      const date = new Date(`${y}-${m}-${d}T00:00:00Z`);
+      return (
+        !Number.isNaN(date.getTime()) &&
+        date.getUTCFullYear() === Number(y) &&
+        date.getUTCMonth() + 1 === Number(m) &&
+        date.getUTCDate() === Number(d)
+      );
+    }
+    case "date-time": {
+      // RFC 3339: a full date, a `T` separator, a time, and an offset or `Z`.
+      if (!/^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+-]\d{2}:\d{2})$/.test(value)) {
+        return false;
+      }
+      return !Number.isNaN(new Date(value).getTime());
+    }
+    default:
+      return true; // Unknown format: not ours to judge.
+  }
 }
 
 /**
@@ -395,6 +464,11 @@ function assertSatisfiesConstraints(
     }
     if (c.maxLength !== undefined && length > c.maxLength) {
       throw new Error(`"${name}" must be at most ${c.maxLength} character(s).`);
+    }
+    if (c.format !== undefined && !satisfiesStringFormat(value, c.format)) {
+      throw new Error(
+        `"${name}" must be a valid ${sanitizeTerminalText(c.format)}.`,
+      );
     }
     if (c.pattern !== undefined && isScreenedPattern(c.pattern)) {
       let re: RegExp | undefined;
