@@ -325,6 +325,7 @@ export function EditServerFormContent({
             isRevealing={revealingEnv}
             revealError={envRevealError}
             onReveal={() => revealSecrets("env")}
+            maskingKey={hostedServerId}
           />
         )}
 
@@ -374,6 +375,7 @@ export function EditServerFormContent({
                 isRevealingHeaders: revealingHeaders,
                 headersRevealError,
                 onRevealHeaders: () => revealSecrets("headers"),
+                maskingKey: hostedServerId,
                 headersWarning: formState.oauthAuthorizationHeaderWarning,
               }
             : {})}

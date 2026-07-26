@@ -11,9 +11,21 @@ import { useState } from "react";
  * Rows are masked unless a row's own eye says otherwise, including the rows a
  * stored-secret reveal brings back — clicking the mask asks *which* values are
  * set, and one eye then asks to read one of them.
+ *
+ * Pass `resetKey` to bind the state to whatever the rows belong to (a server
+ * id, say). Overrides are positional, so a form that swaps in a different
+ * subject's rows while staying mounted would otherwise carry "row 2 is
+ * visible" onto a value nobody uncovered. Changing the key re-masks
+ * everything during render, before the new rows can paint.
  */
-export function useMaskedValues() {
+export function useMaskedValues(resetKey?: string | null) {
   const [overrides, setOverrides] = useState<Record<number, boolean>>({});
+  const [maskedSubject, setMaskedSubject] = useState(resetKey);
+
+  if (resetKey !== maskedSubject) {
+    setMaskedSubject(resetKey);
+    setOverrides({});
+  }
 
   const isVisible = (index: number) => overrides[index] ?? false;
 

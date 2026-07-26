@@ -16,6 +16,10 @@ interface EnvVarsSectionProps {
   isRevealing?: boolean;
   revealError?: string | null;
   onReveal?: () => void;
+  /** Identity of the server these rows belong to. Re-masks everything when it
+   * changes, so a form that swaps servers without remounting can't carry an
+   * uncovered row onto the next server's values. */
+  maskingKey?: string | null;
 }
 
 export function EnvVarsSection({
@@ -29,13 +33,14 @@ export function EnvVarsSection({
   isRevealing = false,
   revealError,
   onReveal,
+  maskingKey,
 }: EnvVarsSectionProps) {
   const isHidden = hasStoredEnv && envVars.length === 0;
   // Per-instance so the add and edit forms can be mounted at the same time
   // without colliding on a shared element id.
   const bodyId = useId();
 
-  const masked = useMaskedValues();
+  const masked = useMaskedValues(maskingKey);
 
   // Adding from the collapsed state used to append an invisible row — expand
   // first so the new row is always where the click points.

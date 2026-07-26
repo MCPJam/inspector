@@ -58,6 +58,10 @@ interface AdvancedConnectionSettingsSectionProps {
   isRevealingHeaders?: boolean;
   headersRevealError?: string | null;
   onRevealHeaders?: () => void;
+  /** Identity of the server these headers belong to. Re-masks everything when
+   * it changes, so a form that swaps servers without remounting can't carry an
+   * uncovered row onto the next server's values. */
+  maskingKey?: string | null;
   clientCapabilitiesOverrideEnabled?: boolean;
   onClientCapabilitiesOverrideEnabledChange?: (enabled: boolean) => void;
   clientCapabilitiesOverrideText?: string;
@@ -108,6 +112,7 @@ export function AdvancedConnectionSettingsSection({
   isRevealingHeaders = false,
   headersRevealError,
   onRevealHeaders,
+  maskingKey,
   clientCapabilitiesOverrideEnabled = false,
   onClientCapabilitiesOverrideEnabledChange,
   clientCapabilitiesOverrideText = "{}",
@@ -127,7 +132,7 @@ export function AdvancedConnectionSettingsSection({
   const headersHidden = hasStoredHeaders && (customHeaders?.length ?? 0) === 0;
   // Header values carry bearer tokens and API keys, so they mask the same way
   // env-var values do. See use-masked-values for why the toggle needs no fetch.
-  const maskedHeaders = useMaskedValues();
+  const maskedHeaders = useMaskedValues(maskingKey);
   const handleAddHeader = () => {
     maskedHeaders.markAdded(customHeaders?.length ?? 0);
     onAddHeader?.();

@@ -61,6 +61,35 @@ describe("useMaskedValues", () => {
     expect(result.current.isVisible(1)).toBe(false);
   });
 
+  it("re-masks everything when the subject changes", () => {
+    // A form that swaps servers without remounting keeps this hook. Overrides
+    // are positional, so "row 1 is visible" would otherwise land on whatever
+    // the next server has at row 1 — a value nobody uncovered.
+    const { result, rerender } = renderHook(
+      ({ key }: { key: string }) => useMaskedValues(key),
+      { initialProps: { key: "server-a" } }
+    );
+
+    act(() => result.current.toggle(1));
+    expect(result.current.isVisible(1)).toBe(true);
+
+    rerender({ key: "server-b" });
+
+    expect(result.current.isVisible(1)).toBe(false);
+  });
+
+  it("leaves overrides alone while the subject holds", () => {
+    const { result, rerender } = renderHook(
+      ({ key }: { key: string }) => useMaskedValues(key),
+      { initialProps: { key: "server-a" } }
+    );
+
+    act(() => result.current.toggle(0));
+    rerender({ key: "server-a" });
+
+    expect(result.current.isVisible(0)).toBe(true);
+  });
+
   it("keeps rows masked no matter how many arrive at once", () => {
     const { result } = renderHook(() => useMaskedValues());
 
