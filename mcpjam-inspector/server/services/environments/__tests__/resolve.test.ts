@@ -78,8 +78,7 @@ describe("environmentServerIds", () => {
     expect(
       environmentServerIds({
         ...RESOLVED_WITH_PLUGIN,
-        servers:
-          undefined as unknown as ResolvedEnvironmentForLaunch["servers"],
+        servers: undefined,
       })
     ).toEqual(["ps_1", "ps_plugin"]);
   });
@@ -89,8 +88,7 @@ describe("environmentServerIds", () => {
       environmentServerIds({
         ...RESOLVED,
         effectiveServerIds: undefined,
-        servers:
-          undefined as unknown as ResolvedEnvironmentForLaunch["servers"],
+        servers: undefined,
       })
     ).toEqual(["ps_1", "ps_2"]);
   });
@@ -105,8 +103,7 @@ describe("environmentServerNames", () => {
     expect(
       environmentServerNames({
         ...RESOLVED,
-        servers:
-          undefined as unknown as ResolvedEnvironmentForLaunch["servers"],
+        servers: undefined,
       })
     ).toEqual([]);
     expect(environmentServerNames({ ...RESOLVED, servers: [] })).toEqual([]);

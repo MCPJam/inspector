@@ -94,13 +94,26 @@ export function useProjectEnvironment(
   projectId: string | null,
   environmentId: string | null
 ): ProjectEnvironmentView | null | undefined {
+  // Same gate as the list hook: without the auth/db-ready checks the query can
+  // fire before the backend identity exists and fail rather than skip.
+  const { isAuthenticated } = useConvexAuth();
+  const isUserReady = useDbUserReady();
+  // Normalize BOTH ids for the same reason: a whitespace-padded value passes a
+  // bare truthiness check but would target a different (invalid) row.
   const normalizedProjectId = projectId?.trim() || null;
+  const normalizedEnvironmentId = environmentId?.trim() || null;
   const enableQuery =
-    shouldQueryProjectId(normalizedProjectId) && Boolean(environmentId);
+    isAuthenticated &&
+    isUserReady &&
+    shouldQueryProjectId(normalizedProjectId) &&
+    Boolean(normalizedEnvironmentId);
   return useQuery(
     "projectEnvironments:getEnvironment" as any,
     enableQuery
-      ? ({ projectId: normalizedProjectId, environmentId } as any)
+      ? ({
+          projectId: normalizedProjectId,
+          environmentId: normalizedEnvironmentId,
+        } as any)
       : "skip"
   ) as ProjectEnvironmentView | null | undefined;
 }

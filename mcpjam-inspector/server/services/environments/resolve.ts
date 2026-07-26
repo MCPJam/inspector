@@ -64,8 +64,15 @@ export interface ResolvedEnvironmentForLaunch {
    * Live-healed connectable projection of `effectiveServerIds`: each id healed
    * to its current live server (delete + re-add-same-name), genuinely-gone
    * servers dropped, deduped by live id, in selection order.
+   *
+   * Optional for deploy skew, like the fields above — an older backend omits
+   * it, which is exactly the case `environmentServerIds` /
+   * `environmentServerNames` fall back for. `resolveEnvironmentForLaunch` does
+   * NOT require it, so typing it required would give a caller that dereferences
+   * `.servers` directly a false guarantee. Note the distinction those helpers
+   * turn on: ABSENT means fall back, present-but-`[]` is a real answer.
    */
-  servers: Array<{ serverId: string; name: string }>;
+  servers?: Array<{ serverId: string; name: string }>;
   serverAttachmentId?: string | null;
 }
 
