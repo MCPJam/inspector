@@ -424,6 +424,10 @@ const content = await manager.readResource("myServer", {
 console.log(content);
 ```
 
+<Note>
+When an MRTR input collector is registered for the server via `setMrtrInputCollector`, `readResource` automatically drives the multi-round-trip loop if the server returns an `input_required` result.
+</Note>
+
 ---
 
 ### listPrompts()
