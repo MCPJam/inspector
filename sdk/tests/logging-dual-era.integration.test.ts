@@ -158,6 +158,7 @@ describe("logging — dual-era delivery", () => {
     manager.setPerRequestLogLevel("srv", "warning");
     await manager.connectToServer("srv", {
       url: served.url,
+      mcpProtocolVersion: "2025-11-25",
       timeout: 10_000,
     });
     expect(manager.getLoggingMechanism("srv")).toBe("setLevel");

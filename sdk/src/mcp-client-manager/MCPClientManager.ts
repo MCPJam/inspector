@@ -1487,9 +1487,13 @@ export class MCPClientManager {
         (!wantsStateless && resolvedProtocolVersion !== undefined
           ? [resolvedProtocolVersion]
           : undefined);
-      const versionNegotiation = resolveVersionNegotiation(
-        resolvedProtocolVersion
-      );
+      // Automatic version negotiation is an HTTP-only default. Explicit
+      // stateful/modern pins keep their exact behavior, while stdio stays on
+      // the historical initialize path (the UI does not expose modern stdio
+      // negotiation yet).
+      const versionNegotiation = this.isStdioConfig(config)
+        ? undefined
+        : resolveVersionNegotiation(resolvedProtocolVersion);
       const clientOptions: ClientOptions = {
         capabilities: clientCapabilities,
         // Manual multi-round-trip mode (2026-07-28 `input_required`, spec §12).

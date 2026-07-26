@@ -6,6 +6,7 @@ import type {
   RegistrationMode,
   XaaClientAuthMethod,
 } from "@/shared/xaa.js";
+import type { ServerFormOAuthProtocolMode } from "@/shared/types.js";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import type {
   ProjectClientConfig,
@@ -62,6 +63,12 @@ export interface ServerWithName {
   enabled?: boolean;
   /** Whether OAuth is explicitly enabled for this server. When false, reconnect skips OAuth flow. */
   useOAuth?: boolean;
+  /**
+   * Canonical OAuth protocol intent. "auto" remains auto across reconnects;
+   * oauthFlowProfile.protocolVersion is the concrete version resolved for the
+   * most recent flow.
+   */
+  oauthProtocolMode?: ServerFormOAuthProtocolMode;
   hasClientSecret?: boolean;
   hasEnv?: boolean;
   hasHeaders?: boolean;

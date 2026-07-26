@@ -508,6 +508,23 @@ describe("OAuth test-profile round-trip (protocol version + registration strateg
     expect(profile.registrationStrategy).toBe("preregistered");
     expect(profile.protocolVersion).toBe("2025-06-18");
     expect(profile.clientId).toBe("client_abc");
+    expect(servers.prereg.oauthProtocolMode).toBe("2025-06-18");
+  });
+
+  it("keeps canonical Auto separate from the last resolved concrete profile", () => {
+    const servers = deserializeServersFromConvex([
+      {
+        name: "auto",
+        enabled: true,
+        useOAuth: true,
+        url: "https://example.test/mcp",
+        oauthProtocolMode: "auto",
+        oauthProtocolVersion: "2026-07-28",
+      },
+    ]);
+
+    expect(servers.auto.oauthProtocolMode).toBe("auto");
+    expect(servers.auto.oauthFlowProfile?.protocolVersion).toBe("2026-07-28");
   });
 
   it("survives a 2026-07-28 draft-era protocol version through the round-trip", () => {

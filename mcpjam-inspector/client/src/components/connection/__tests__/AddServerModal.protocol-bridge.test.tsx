@@ -52,8 +52,8 @@ function submitAddServer(
   return onSubmit.mock.calls[0][0] as ServerFormData;
 }
 
-describe("AddServerModal — default-OAuth × 2026 wire-pin bridge (end to end)", () => {
-  it("submits the 2026 OAuth flow and round-trips a per-server wire pin", () => {
+describe("AddServerModal — OAuth protocol intent persistence", () => {
+  it("preserves Auto and round-trips a per-server wire pin", () => {
     // A prefilled OAuth server pinned to the 2026 wire era, Protocol dropdown
     // left at its default (no explicit oauthProtocolMode).
     const submitted = submitAddServer({
@@ -64,15 +64,13 @@ describe("AddServerModal — default-OAuth × 2026 wire-pin bridge (end to end)"
       mcpProtocolVersionOverride: "2026-07-28",
     });
 
-    // The crux: default OAuth (dropdown untouched) + a 2026-07-28 wire pin
-    // resolves to the 2026 OAuth flow rather than silently degrading to 2025.
-    expect(submitted.oauthProtocolMode).toBe("2026-07-28");
+    expect(submitted.oauthProtocolMode).toBe("auto");
     // The prefilled pin survives the round-trip — the server stays 2026-pinned.
     expect(submitted.mcpProtocolVersionOverride).toBe("2026-07-28");
     expect(submitted.useOAuth).toBe(true);
   });
 
-  it("preserves an explicit 'auto' prefill and resolves it under the wire pin", () => {
+  it("preserves an explicit Auto prefill under a wire pin", () => {
     // Round-2 regression: an "auto" prefill was coerced to 2025-11-25 during
     // hydration (normalizeOauthProtocolMode), dropping the sentinel so the
     // bridge no longer fired. It must survive and resolve against the pin.
@@ -85,11 +83,11 @@ describe("AddServerModal — default-OAuth × 2026 wire-pin bridge (end to end)"
       mcpProtocolVersionOverride: "2026-07-28",
     });
 
-    expect(submitted.oauthProtocolMode).toBe("2026-07-28");
+    expect(submitted.oauthProtocolMode).toBe("auto");
     expect(submitted.mcpProtocolVersionOverride).toBe("2026-07-28");
   });
 
-  it("falls back to the active host's 2026 wire pin when no per-server override is set", () => {
+  it("does not bake an active host pin into the saved OAuth intent", () => {
     // Round-2 P2: with the per-server picker at "Client default"
     // (mcpProtocolVersionOverride undefined), "auto" OAuth must consult the
     // active host's mcpProfile.mcpProtocolVersion before the 2025 default.
@@ -106,12 +104,12 @@ describe("AddServerModal — default-OAuth × 2026 wire-pin bridge (end to end)"
       // No mcpProtocolVersionOverride, no explicit oauthProtocolMode.
     });
 
-    expect(submitted.oauthProtocolMode).toBe("2026-07-28");
+    expect(submitted.oauthProtocolMode).toBe("auto");
     // The per-server override stays unset — only the host default is inherited.
     expect(submitted.mcpProtocolVersionOverride).toBeUndefined();
   });
 
-  it("stays on the 2025 default when neither a per-server nor host pin is 2026", () => {
+  it("stays Auto when neither a per-server nor host pin is present", () => {
     const submitted = submitAddServer({
       name: "unpinned",
       type: "http",
@@ -119,7 +117,7 @@ describe("AddServerModal — default-OAuth × 2026 wire-pin bridge (end to end)"
       useOAuth: true,
     });
 
-    expect(submitted.oauthProtocolMode).toBe("2025-11-25");
+    expect(submitted.oauthProtocolMode).toBe("auto");
     expect(submitted.mcpProtocolVersionOverride).toBeUndefined();
   });
 });

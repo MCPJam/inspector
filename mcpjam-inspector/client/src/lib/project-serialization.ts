@@ -4,6 +4,10 @@ import {
   normalizeOAuthRegistrationStrategy,
 } from "@/lib/oauth/profile";
 import {
+  normalizeOauthProtocolMode,
+  type ServerFormOAuthProtocolMode,
+} from "@/shared/types.js";
+import {
   normalizeAuthMethod,
   normalizeIdentityAssertionFormat,
   normalizeRegistrationMode,
@@ -61,6 +65,9 @@ function serializeServersInternal(
       enabled: server.enabled,
       useOAuth: server.useOAuth,
     };
+    if (server.oauthProtocolMode !== undefined) {
+      serializedServer.oauthProtocolMode = server.oauthProtocolMode;
+    }
 
     if (server.xaaAuthzIssuer !== undefined) {
       serializedServer.xaaAuthzIssuer = server.xaaAuthzIssuer;
@@ -254,6 +261,13 @@ export function deserializeServersFromConvex(
       retryCount: 0,
       enabled: serverData.enabled ?? false,
       useOAuth: serverData.useOAuth ?? false,
+      // New rows persist canonical intent. Old rows only have the concrete
+      // profile/version; treat that concrete value as their intent so this
+      // additive field does not change existing behavior.
+      oauthProtocolMode:
+        serverData.oauthProtocolMode !== undefined
+          ? normalizeOauthProtocolMode(serverData.oauthProtocolMode)
+          : undefined,
       hasClientSecret: serverData.hasClientSecret === true,
       hasEnv: serverData.hasEnv === true,
       hasHeaders: serverData.hasHeaders === true,
@@ -359,6 +373,13 @@ export function deserializeServersFromConvex(
     const flatProtocolVersion = normalizeOAuthProtocolVersion(
       serverData.oauthProtocolVersion,
     );
+    if (
+      server.oauthProtocolMode === undefined &&
+      flatProtocolVersion !== undefined
+    ) {
+      server.oauthProtocolMode =
+        flatProtocolVersion as ServerFormOAuthProtocolMode;
+    }
     const flatRegistrationStrategy = normalizeOAuthRegistrationStrategy(
       serverData.oauthRegistrationStrategy,
     );
@@ -421,6 +442,16 @@ export function serversHaveChanged(
     if (localServer.name !== remoteServer.name) return true;
     if (localServer.enabled !== remoteServer.enabled) return true;
     if (localServer.useOAuth !== remoteServer.useOAuth) return true;
+    const remoteOauthProtocolMode =
+      remoteServer.oauthProtocolMode ??
+      (remoteServer.oauthProtocolVersion !== undefined
+        ? normalizeOauthProtocolMode(remoteServer.oauthProtocolVersion)
+        : undefined);
+    if (
+      (localServer.oauthProtocolMode ?? undefined) !==
+      (remoteOauthProtocolMode ?? undefined)
+    )
+      return true;
 
     const remoteXaaAuthzIssuer =
       remoteServer.xaaAuthzIssuer ?? remoteServer.config?.xaaAuthzIssuer;

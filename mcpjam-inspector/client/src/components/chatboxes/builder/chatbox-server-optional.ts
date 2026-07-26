@@ -11,6 +11,8 @@ export function bootstrapServerToHostedOAuthDescriptor(
     serverUrl: s.serverUrl,
     clientId: s.clientId,
     oauthScopes: s.oauthScopes,
+    oauthProtocolMode: s.oauthProtocolMode,
+    oauthProtocolVersion: s.oauthProtocolVersion,
     optional: Boolean(s.optional),
   };
 }

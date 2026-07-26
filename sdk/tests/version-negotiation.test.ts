@@ -15,14 +15,14 @@ describe("resolveVersionNegotiation", () => {
     expect(resolveVersionNegotiation("2025-03-26")).toBeUndefined();
   });
 
-  it("leaves negotiation at the SDK default when no pin is set", () => {
-    expect(resolveVersionNegotiation(undefined)).toBeUndefined();
+  it("enables automatic era negotiation when no HTTP pin is set", () => {
+    expect(resolveVersionNegotiation(undefined)).toEqual({ mode: "auto" });
   });
 
   it("returns a pin only for versions classified stateless/modern", () => {
     // Guards the mapping against a future protocol-version addition: any known
-    // version either produces a modern pin or stays at the legacy default,
-    // never a malformed shape.
+    // version either produces a modern pin or stays at the exact legacy
+    // handshake, never a malformed shape.
     for (const v of MCP_PROTOCOL_VERSIONS) {
       const out = resolveVersionNegotiation(v);
       if (out !== undefined) {

@@ -31,6 +31,10 @@ import {
 import { slugify } from "@/lib/chatbox-session";
 import { captureCurrentReturnPath, routePaths } from "@/lib/app-navigation";
 import { ingestOAuthTraceLogs } from "@/stores/traffic-log-store";
+import {
+  resolveOAuthProtocolSelection,
+  type ServerFormOAuthProtocolMode,
+} from "@/shared/types.js";
 
 const INLINE_TOKEN_POLL_ATTEMPTS = 15;
 const RESUME_TOKEN_POLL_ATTEMPTS = 24;
@@ -52,6 +56,8 @@ export interface HostedOAuthServerDescriptor {
   serverUrl: string | null;
   clientId: string | null;
   oauthScopes: string[] | null;
+  oauthProtocolMode?: string | null;
+  oauthProtocolVersion?: string | null;
   /** When true, server was opted in after session start (copy / UX hints). */
   optional?: boolean;
 }
@@ -447,11 +453,27 @@ export function useHostedOAuthGate({
       localStorage.setItem(pendingKey, "true");
       localStorage.setItem("mcp-oauth-return-hash", returnPath);
 
+      const canonicalProtocolMode =
+        server.oauthProtocolMode === "auto" ||
+        server.oauthProtocolMode === "2025-03-26" ||
+        server.oauthProtocolMode === "2025-06-18" ||
+        server.oauthProtocolMode === "2025-11-25" ||
+        server.oauthProtocolMode === "2026-07-28"
+          ? (server.oauthProtocolMode as ServerFormOAuthProtocolMode)
+          : undefined;
+      const protocolSelection = resolveOAuthProtocolSelection({
+        mode: canonicalProtocolMode,
+        legacyProtocolVersion: server.oauthProtocolVersion ?? undefined,
+      });
+
       const result = await initiateOAuth({
         serverName: server.serverName,
         serverUrl: server.serverUrl,
         clientId: server.clientId ?? undefined,
         scopes: server.oauthScopes ?? undefined,
+        protocolMode: protocolSelection.mode,
+        protocolVersion: protocolSelection.protocolVersion,
+        protocolResolutionSource: protocolSelection.source,
         onTraceUpdate: (oauthTrace: OAuthTrace) => {
           ingestOAuthTraceLogs({
             serverId: server.serverId,

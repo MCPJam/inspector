@@ -816,7 +816,7 @@ describe("AuthenticationSection", () => {
       expect(screen.getByText("2026-07-28 (Draft)")).toBeInTheDocument();
     });
 
-    it("resolves 'auto' to the 2026 flow when the wire pin is 2026-07-28", () => {
+    it("keeps Auto visible when the wire pin is 2026-07-28", () => {
       render(
         <AuthenticationSection
           {...protocolBaseProps}
@@ -825,13 +825,13 @@ describe("AuthenticationSection", () => {
         />
       );
       openAdvanced();
-      expect(screen.getByText("2026-07-28 (Draft)")).toBeInTheDocument();
+      expect(screen.getByText("Auto")).toBeInTheDocument();
       expect(
-        screen.queryByText("2025-11-25 (Latest)")
+        screen.queryByText("2026-07-28 (Draft)")
       ).not.toBeInTheDocument();
     });
 
-    it("resolves 'auto' to the 2025-11-25 default when no 2026 wire pin", () => {
+    it("keeps Auto visible when no 2026 wire pin exists", () => {
       render(
         <AuthenticationSection
           {...protocolBaseProps}
@@ -840,13 +840,13 @@ describe("AuthenticationSection", () => {
         />
       );
       openAdvanced();
-      expect(screen.getByText("2025-11-25 (Latest)")).toBeInTheDocument();
+      expect(screen.getByText("Auto")).toBeInTheDocument();
       expect(
         screen.queryByText("2026-07-28 (Draft)")
       ).not.toBeInTheDocument();
     });
 
-    it("resolves 'auto' against the host-default pin when no per-server override is set", () => {
+    it("keeps Auto visible under a host-default pin", () => {
       // Mirrors the submit path: with no per-server pin, the preview must
       // resolve against the PROP-FIRST host default (the same value the modal
       // bakes with), even with no ActiveMcpProfileProvider in the tree.
@@ -859,13 +859,13 @@ describe("AuthenticationSection", () => {
         />
       );
       openAdvanced();
-      expect(screen.getByText("2026-07-28 (Draft)")).toBeInTheDocument();
+      expect(screen.getByText("Auto")).toBeInTheDocument();
       expect(
         screen.queryByText("2025-11-25 (Latest)")
       ).not.toBeInTheDocument();
     });
 
-    it("lets a per-server override win over the host-default pin for 'auto'", () => {
+    it("keeps Auto visible when per-server and host pins differ", () => {
       render(
         <AuthenticationSection
           {...protocolBaseProps}
@@ -875,7 +875,7 @@ describe("AuthenticationSection", () => {
         />
       );
       openAdvanced();
-      expect(screen.getByText("2026-07-28 (Draft)")).toBeInTheDocument();
+      expect(screen.getByText("Auto")).toBeInTheDocument();
       expect(screen.queryByText("2025-06-18")).not.toBeInTheDocument();
     });
 

@@ -6,6 +6,7 @@ import {
   MCPOAuthOptions,
 } from "@/lib/oauth/mcp-oauth";
 import { normalizeRegistrationMode } from "@/shared/xaa.js";
+import { resolveOAuthProtocolSelection } from "@/shared/types.js";
 import { ServerWithName } from "./app-types";
 import type { OAuthTrace } from "@/lib/oauth/oauth-trace";
 import {
@@ -151,8 +152,20 @@ function buildReconnectOAuthOptions(
   const oauthConfig = readStoredOAuthConfig(server.name);
   const storedClientInfo = readStoredClientInfo(server.name);
   const profile = server.oauthFlowProfile;
-  const protocolMode =
-    profile?.protocolVersion ?? oauthConfig.protocolMode ?? "auto";
+  const configProtocolVersion =
+    "mcpProtocolVersion" in server.config &&
+    typeof server.config.mcpProtocolVersion === "string"
+      ? server.config.mcpProtocolVersion
+      : undefined;
+  const protocolSelection = resolveOAuthProtocolSelection({
+    mode:
+      server.oauthProtocolMode ??
+      profile?.protocolVersion ??
+      oauthConfig.protocolMode,
+    legacyProtocolVersion: oauthConfig.protocolVersion,
+    wireProtocolVersion: configProtocolVersion,
+    negotiatedProtocolVersion: server.initializationInfo?.protocolVersion,
+  });
   // The CANONICAL per-server registrationMode wins — it can be "auto" (resolve
   // from current server metadata at connect time), while the legacy
   // profile/localStorage values are rollback-compat concretes. Preferring a
@@ -186,11 +199,9 @@ function buildReconnectOAuthOptions(
       storedClientInfo.client_id,
     clientSecret: undefined,
     hasClientSecret: Boolean(server.hasClientSecret),
-    protocolMode,
-    protocolVersion:
-      protocolMode !== "auto"
-        ? protocolMode
-        : profile?.protocolVersion ?? oauthConfig.protocolVersion,
+    protocolMode: protocolSelection.mode,
+    protocolVersion: protocolSelection.protocolVersion,
+    protocolResolutionSource: protocolSelection.source,
     registrationMode,
     registrationStrategy:
       registrationMode !== "auto"

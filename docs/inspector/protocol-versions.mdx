@@ -5,9 +5,7 @@ icon: "git-branch"
 tag: "Preview"
 ---
 
-The inspector can speak more than one version of the MCP protocol. By default (**Automatic**) it negotiates whatever the SDK considers current at connect time, but you can pin a specific version when you want to test how your server behaves against a particular revision — including the **2026-07-28 stateless RC** or any earlier stable release.
-
-This page covers how to pick a version. Automatic per-server version detection is on the roadmap; for now you tell the inspector which version to use.
+The inspector can speak more than one version of the MCP protocol. By default (**Automatic**), unpinned HTTP connections probe `server/discover` for 2026 support and fall back to the legacy `initialize` negotiation. You can also pin a specific version when you want to test an exact revision — including the **2026-07-28 stateless RC** or any earlier stable release.
 
 <Warning>
   **Migration required if you used the old Draft version.** The previous `DRAFT-2026-v1` placeholder has been retired and replaced with the upstream RC literal `2026-07-28`. If you had any servers pinned to `DRAFT-2026-v1`, you must re-select the protocol version in the inspector UI. Stored `DRAFT-2026-v1` pins are rejected by spec-conforming servers with a `-32004 UnsupportedProtocolVersionError`.
@@ -29,7 +27,7 @@ Use the host default when you want every server in a Client to speak the same ve
 
 | Option                    | Stored pin         | Transport                                       | Use it when                                                                                                                                 |
 | ------------------------- | ------------------ | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Automatic**             | none               | —                                               | The SDK picks the wire version at connect time. This is the default; no pin is stored.                                                      |
+| **Automatic**             | none               | HTTP: `server/discover`, then legacy fallback   | Detect 2026 support from the server; otherwise use the version negotiated by `initialize`. This is the default.                             |
 | **2026 RC (2026-07-28)**  | `2026-07-28`       | HTTP in MCPJam's preview (Streamable HTTP POST) | You want to test your server against the stateless RC — no `initialize` handshake, `server/discover` for capabilities, per-request `_meta`. |
 | **Latest (2025-11-25)**   | `2025-11-25`       | HTTP, STDIO, SSE                                | Pin to the current stable release. The initialize handshake offers only this version.                                                       |
 | **2025-06-18**            | `2025-06-18`       | HTTP, STDIO, SSE                                | Test against the June 2025 stable revision.                                                                                                 |
@@ -91,19 +89,20 @@ The pin is applied once the server is created and the connection is established.
 
 The per-server override is the more specific signal — it wins over whatever the Client's MCP Protocol tab says.
 
-## OAuth protocol alignment with the wire pin
+## OAuth protocol alignment with MCP negotiation
 
 When you add or edit an HTTP server with **OAuth 2.0** authentication, the **Authentication → Advanced → Protocol** dropdown lets you choose which OAuth spec era the connect flow uses. The default is **Auto**.
 
-**Auto** resolves the OAuth era from the effective MCP wire pin rather than always using the 2025-11-25 default:
+**Auto** is stored as intent; it is not converted into a permanent concrete pin when you save the server. Each OAuth flow resolves and records one concrete version in this order:
 
-- If the server's per-server wire pin is `2026-07-28`, **Auto** resolves to the **2026-07-28 (Draft)** OAuth flow.
-- If the host Client's default wire pin is `2026-07-28` (and no per-server override is set), **Auto** also resolves to the 2026 flow.
-- Otherwise, **Auto** resolves to `2025-11-25` (the current stable default).
+1. An explicit OAuth protocol selection.
+2. An explicit per-server or host MCP wire pin.
+3. The version freshly detected or negotiated with the MCP server.
+4. `2025-11-25` when a `401` requires OAuth before the server can provide protocol evidence.
 
-An explicit selection in the Protocol dropdown always wins over the wire pin — pick `2025-06-18` and it stays `2025-06-18` regardless of the wire pin.
+The last case is an authentication-gated compatibility fallback, not version detection. If you know an auth-gated server requires the 2026 draft behavior, select `2026-07-28` explicitly.
 
-This keeps OAuth and transport in sync: the 2026-07-28 RC ships the sessionless transport and the updated OAuth spec together, so a server pinned to the 2026 wire era needs the matching OAuth flow to connect successfully.
+OAuth callback security follows the concrete version recorded for that flow. Every version validates `state`. The 2026-07-28 flow also validates a returned RFC 9207 `iss` against the discovered authorization-server issuer; 2025 flows retain compatibility and ignore callback `iss`.
 
 ## What changes when you pick the 2026 RC
 
@@ -127,7 +126,7 @@ The 2026 RC client is a **preview**. A handful of pieces from the SEP family are
 - `subscriptions/listen` (long-lived notification stream)
 - Server-initiated requests via MRTR / `InputRequiredResult` (sampling, elicitation, listRoots embedded in responses)
 - Resumption tokens
-- Backward-compat probes against pre-RC servers — if you point the RC client at an `initialize`-only server it will fail at `server/discover`, not fall back.
+- Automatic HTTP detection falls back to the legacy `initialize` handshake. An explicit 2026 pin remains exact and does not fall back.
 
 For everything else — `tools/list`, `tools/call`, `resources/*`, `prompts/*`, OAuth refresh, custom headers, progress notifications — the RC client behaves like the legacy one.
 

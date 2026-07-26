@@ -48,6 +48,8 @@ export interface ChatboxBootstrapServer {
   serverUrl: string | null;
   clientId: string | null;
   oauthScopes: string[] | null;
+  oauthProtocolMode?: string | null;
+  oauthProtocolVersion?: string | null;
   /** When true, excluded from initial OAuth and chat until enabled by the tester. */
   optional?: boolean;
 }

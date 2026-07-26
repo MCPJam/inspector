@@ -40,10 +40,6 @@ async function serveFixtureOnPort(): Promise<ServedFixture> {
   };
 }
 
-function statusById(checks: MCPCheckResult[]): Record<string, string> {
-  return Object.fromEntries(checks.map((c) => [c.id, c.status]));
-}
-
 function byId(checks: MCPCheckResult[], id: MCPCheckId): MCPCheckResult {
   const found = checks.find((c) => c.id === id);
   if (!found) {
@@ -118,48 +114,41 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
     }
   });
 
-  it("legacy run (no protocolVersion): era gate is inert — every check runs", async () => {
+  it("auto run (no protocolVersion): detects the modern era", async () => {
     const result = await new MCPConformanceTest({
       serverUrl: served.url,
       checkTimeout: 10_000,
     }).run();
 
-    // No check is skipped for era reasons on a legacy run — this is the
-    // "byte-identical to today" guarantee. (We do not assert `passed`: the
-    // dual-era fixture leaves DNS-rebinding protection disabled, so
-    // `localhost-host-rebinding-rejected` fails here exactly as it did
-    // before this PR — a fixture property, not an era regression.)
-    for (const check of result.checks) {
-      expect(check.error?.message ?? "").not.toMatch(ERA_SKIP);
+    expect(result.checks.filter((c) => c.status === "failed")).toEqual([]);
+    expect(result.passed).toBe(true);
+    for (const id of LEGACY_ONLY) {
+      const check = byId(result.checks, id);
+      expect(check.status).toBe("skipped");
+      expect(check.error?.message).toMatch(ERA_SKIP);
     }
-
-    // The legacy-only checks actually execute rather than being skipped away.
-    expect(byId(result.checks, "server-initialize").status).toBe("passed");
-    expect(byId(result.checks, "ping").status).toBe("passed");
-    expect(byId(result.checks, "capabilities-consistent").status).toBe(
-      "passed"
-    );
     for (const id of MODERN_PASSING) {
       expect(byId(result.checks, id).status).toBe("passed");
     }
   });
 
-  it("legacy pin (2025-11-25): identical to the default legacy run", async () => {
-    const unpinned = await new MCPConformanceTest({
-      serverUrl: served.url,
-      checkTimeout: 10_000,
-    }).run();
+  it("legacy pin (2025-11-25): keeps the legacy checks active", async () => {
     const pinned = await new MCPConformanceTest({
       serverUrl: served.url,
       protocolVersion: "2025-11-25",
       checkTimeout: 10_000,
     }).run();
 
-    // Same set of checks, same statuses — the stateful pin routes through the
-    // identical legacy path.
-    expect(statusById(pinned.checks)).toEqual(statusById(unpinned.checks));
     for (const check of pinned.checks) {
       expect(check.error?.message ?? "").not.toMatch(ERA_SKIP);
+    }
+    expect(byId(pinned.checks, "server-initialize").status).toBe("passed");
+    expect(byId(pinned.checks, "ping").status).toBe("passed");
+    expect(byId(pinned.checks, "capabilities-consistent").status).toBe(
+      "passed"
+    );
+    for (const id of MODERN_PASSING) {
+      expect(byId(pinned.checks, id).status).toBe("passed");
     }
   });
 });

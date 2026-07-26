@@ -754,24 +754,81 @@ export function normalizeOauthProtocolMode(
 /**
  * Resolve a connect-form OAuth protocol mode to the concrete era the flow will
  * actually run. An explicit era passes straight through — it always wins. The
- * deferred "auto" sentinel defers to the server's per-server MCP wire-version
- * pin: OAuth and the sessionless transport ship together, so a 2026-07-28 wire
- * pin makes "auto" resolve to the 2026 OAuth flow (the mirror of
- * server-helpers' oauth-mode → wire stamp, #3363); otherwise "auto" resolves
- * to the current default. Single-sourced so the display bridge (which drives
- * the OAuth plan preview) and the submit path (which bakes the era into the
- * saved profile) cannot disagree on where "auto" lands.
+ * deferred "auto" sentinel resolves from concrete MCP evidence. An explicit
+ * wire pin wins, followed by the version negotiated during initialization.
+ * When authentication prevents negotiation there is no version evidence, so
+ * Auto uses the 2025-11-25 compatibility flow.
+ *
+ * Keep the Auto sentinel in persisted form data; callers use this resolver
+ * only when they need the concrete version for an OAuth session or preview.
  */
 export function resolveEffectiveOauthProtocolMode(
   mode: ServerFormOAuthProtocolMode,
-  wireProtocolVersion?: string
+  wireProtocolVersion?: string,
+  negotiatedProtocolVersion?: string
 ): ServerFormOAuthProtocolConcreteMode {
   if (mode !== "auto") {
     return mode;
   }
-  return wireProtocolVersion === "2026-07-28"
-    ? "2026-07-28"
-    : DEFAULT_OAUTH_PROTOCOL_CONCRETE_MODE;
+  if (
+    wireProtocolVersion !== undefined &&
+    isConcreteOauthProtocolMode(wireProtocolVersion)
+  ) {
+    return wireProtocolVersion;
+  }
+  if (
+    negotiatedProtocolVersion !== undefined &&
+    isConcreteOauthProtocolMode(negotiatedProtocolVersion)
+  ) {
+    return negotiatedProtocolVersion;
+  }
+  return DEFAULT_OAUTH_PROTOCOL_CONCRETE_MODE;
+}
+
+/**
+ * Resolve canonical intent plus compatibility data into the concrete version
+ * that must be frozen into one OAuth session. Records created before
+ * `oauthProtocolMode` existed retain their concrete profile as an explicit
+ * choice; new Auto records never reuse a previous flow's concrete result.
+ */
+export function resolveOAuthProtocolSelection(input: {
+  mode?: ServerFormOAuthProtocolMode;
+  legacyProtocolVersion?: string;
+  wireProtocolVersion?: string;
+  negotiatedProtocolVersion?: string;
+}): {
+  mode: ServerFormOAuthProtocolMode;
+  protocolVersion: ServerFormOAuthProtocolConcreteMode;
+  source:
+    | "explicit_oauth"
+    | "wire_pin"
+    | "negotiated"
+    | "auth_gated_fallback";
+} {
+  const mode =
+    input.mode ??
+    (input.legacyProtocolVersion !== undefined &&
+    isConcreteOauthProtocolMode(input.legacyProtocolVersion)
+      ? input.legacyProtocolVersion
+      : "auto");
+  return {
+    mode,
+    protocolVersion: resolveEffectiveOauthProtocolMode(
+      mode,
+      input.wireProtocolVersion,
+      input.negotiatedProtocolVersion
+    ),
+    source:
+      mode !== "auto"
+        ? "explicit_oauth"
+        : input.wireProtocolVersion !== undefined &&
+          isConcreteOauthProtocolMode(input.wireProtocolVersion)
+        ? "wire_pin"
+        : input.negotiatedProtocolVersion !== undefined &&
+          isConcreteOauthProtocolMode(input.negotiatedProtocolVersion)
+        ? "negotiated"
+        : "auth_gated_fallback",
+  };
 }
 
 /**

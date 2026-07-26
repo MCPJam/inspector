@@ -94,6 +94,35 @@ describe("mcp-oauth hosted callback sessions", () => {
     });
   });
 
+  it("rejects a sessionless hosted callback when state does not match", async () => {
+    localStorage.setItem("mcp-oauth-issued-state-asana", "expected-state");
+    localStorage.setItem("mcp-verifier-asana", "verifier");
+    localStorage.setItem(
+      "mcp-client-asana",
+      JSON.stringify({ client_id: "client-id" })
+    );
+
+    const { completeHostedOAuthCallback } = await import("../mcp-oauth");
+    const result = await completeHostedOAuthCallback(
+      {
+        surface: "project",
+        projectId: "ws_1",
+        serverId: "srv_asana",
+        serverName: "asana",
+        serverUrl: "https://mcp.asana.com/sse",
+        accessScope: "project_member",
+        chatboxId: null,
+        returnPath: "#servers",
+        startedAt: Date.now(),
+      },
+      "oauth-code",
+      { callbackState: "attacker-state" }
+    );
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/state.*mismatch/i);
+    expect(authFetchMock).not.toHaveBeenCalled();
+  });
+
   it("allows hosted callbacks to complete when the provider omits state", async () => {
     authFetchMock.mockImplementation((url: string) => {
       if (url === "https://test.convex.site/web/oauth/session/progress") {

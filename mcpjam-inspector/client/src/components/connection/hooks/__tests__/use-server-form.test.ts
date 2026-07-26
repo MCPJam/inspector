@@ -22,13 +22,13 @@ describe("useServerForm", () => {
     // "auto" (not a concrete era) is what makes the wire-pin bridge reachable:
     // a fresh form defers its OAuth era to the server's MCP wire pin instead of
     // hard-pinning 2025-11-25 and stranding a 2026-pinned server on the 2025
-    // flow. The submit path bakes it into a concrete era (see below).
+    // flow. The concrete version is resolved only when OAuth starts.
     const { result } = renderHook(() => useServerForm());
 
     expect(result.current.oauthProtocolMode).toBe("auto");
   });
 
-  describe("default OAuth protocol 'auto' → wire-pin submit bridge", () => {
+  describe("default OAuth protocol Auto persistence", () => {
     const startDefaultOAuthAdd = (result: {
       current: ReturnType<typeof useServerForm>;
     }) => {
@@ -42,33 +42,24 @@ describe("useServerForm", () => {
       });
     };
 
-    it("bakes the 2026 OAuth flow when adding with a 2026-07-28 wire pin", () => {
-      const { result } = renderHook(() => useServerForm());
-      startDefaultOAuthAdd(result);
-
-      expect(
-        result.current.buildFormData({
-          wireProtocolVersionOverride: "2026-07-28",
-        })
-      ).toMatchObject({
-        useOAuth: true,
-        oauthProtocolMode: "2026-07-28",
-      });
-    });
-
-    it("keeps the 2025-11-25 default when there is no 2026 wire pin", () => {
+    it("preserves Auto instead of baking a wire pin into the saved intent", () => {
       const { result } = renderHook(() => useServerForm());
       startDefaultOAuthAdd(result);
 
       expect(result.current.buildFormData()).toMatchObject({
         useOAuth: true,
-        oauthProtocolMode: "2025-11-25",
+        oauthProtocolMode: "auto",
       });
-      expect(
-        result.current.buildFormData({
-          wireProtocolVersionOverride: "2025-11-25",
-        }).oauthProtocolMode
-      ).toBe("2025-11-25");
+    });
+
+    it("keeps Auto when no wire pin exists", () => {
+      const { result } = renderHook(() => useServerForm());
+      startDefaultOAuthAdd(result);
+
+      expect(result.current.buildFormData()).toMatchObject({
+        useOAuth: true,
+        oauthProtocolMode: "auto",
+      });
     });
 
     it("lets an explicit protocol selection win over a 2026 wire pin", () => {
@@ -78,11 +69,9 @@ describe("useServerForm", () => {
         result.current.setOauthProtocolMode("2025-06-18");
       });
 
-      expect(
-        result.current.buildFormData({
-          wireProtocolVersionOverride: "2026-07-28",
-        }).oauthProtocolMode
-      ).toBe("2025-06-18");
+      expect(result.current.buildFormData().oauthProtocolMode).toBe(
+        "2025-06-18"
+      );
     });
   });
 
@@ -1028,14 +1017,7 @@ describe("useServerForm", () => {
       expect(result.current.oauthProtocolMode).toBe("auto");
     });
 
-    // Under a 2026 wire pin the preserved "auto" bakes the 2026 flow…
-    expect(
-      result.current.buildFormData({
-        wireProtocolVersionOverride: "2026-07-28",
-      }).oauthProtocolMode
-    ).toBe("2026-07-28");
-    // …and without a pin it lands on the 2025 default, as before.
-    expect(result.current.buildFormData().oauthProtocolMode).toBe("2025-11-25");
+    expect(result.current.buildFormData().oauthProtocolMode).toBe("auto");
 
     localStorage.removeItem("mcp-oauth-config-Existing OAuth server");
   });
@@ -1066,14 +1048,7 @@ describe("useServerForm", () => {
     // The preserved sentinel is a no-op change (initial snapshot is "auto" too).
     expect(result.current.hasChanges).toBe(false);
 
-    // The submit path resolves it against the wire pin: 2026 under a 2026 pin…
-    expect(
-      result.current.buildFormData({
-        wireProtocolVersionOverride: "2026-07-28",
-      }).oauthProtocolMode
-    ).toBe("2026-07-28");
-    // …and the 2025 default otherwise.
-    expect(result.current.buildFormData().oauthProtocolMode).toBe("2025-11-25");
+    expect(result.current.buildFormData().oauthProtocolMode).toBe("auto");
   });
 
   it("normalizes invalid stored OAuth registration strategies back to auto", async () => {

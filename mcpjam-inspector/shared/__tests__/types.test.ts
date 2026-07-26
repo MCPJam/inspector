@@ -9,6 +9,7 @@ import {
   isModelSupported,
   normalizeOauthProtocolMode,
   resolveEffectiveOauthProtocolMode,
+  resolveOAuthProtocolSelection,
   SERVER_FORM_OAUTH_PROTOCOL_MODES,
   SUPPORTED_MODELS,
 } from "../types.js";
@@ -176,6 +177,16 @@ describe("resolveEffectiveOauthProtocolMode (auto → wire-pin bridge)", () => {
     );
   });
 
+  it("uses fresh negotiated MCP evidence after an absent wire pin", () => {
+    expect(
+      resolveEffectiveOauthProtocolMode(
+        "auto",
+        undefined,
+        "2026-07-28"
+      )
+    ).toBe("2026-07-28");
+  });
+
   it("passes an explicit selection straight through — it always wins", () => {
     expect(resolveEffectiveOauthProtocolMode("2025-06-18", "2026-07-28")).toBe(
       "2025-06-18"
@@ -183,5 +194,32 @@ describe("resolveEffectiveOauthProtocolMode (auto → wire-pin bridge)", () => {
     expect(resolveEffectiveOauthProtocolMode("2026-07-28", undefined)).toBe(
       "2026-07-28"
     );
+  });
+});
+
+describe("resolveOAuthProtocolSelection", () => {
+  it("does not let an Auto flow's previous concrete profile become a pin", () => {
+    expect(
+      resolveOAuthProtocolSelection({
+        mode: "auto",
+        legacyProtocolVersion: "2026-07-28",
+      })
+    ).toEqual({
+      mode: "auto",
+      protocolVersion: "2025-11-25",
+      source: "auth_gated_fallback",
+    });
+  });
+
+  it("retains concrete behavior for records created before mode existed", () => {
+    expect(
+      resolveOAuthProtocolSelection({
+        legacyProtocolVersion: "2026-07-28",
+      })
+    ).toEqual({
+      mode: "2026-07-28",
+      protocolVersion: "2026-07-28",
+      source: "explicit_oauth",
+    });
   });
 });

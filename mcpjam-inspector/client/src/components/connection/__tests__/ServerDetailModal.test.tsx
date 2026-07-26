@@ -736,7 +736,7 @@ describe("ServerDetailModal", () => {
   // preview use), NOT the raw ActiveMcpProfile context — otherwise a modal
   // rendered without an ActiveMcpProfileProvider (context undefined) would
   // save the 2025 default while the chip/host advertise 2026.
-  describe("bakes the Auto OAuth era against the effective wire pin at save", () => {
+  describe("preserves Auto OAuth intent independently of wire pins", () => {
     const renameAndSave = async (name = "test-server-renamed") => {
       const nameInput = screen.getByDisplayValue("test-server");
       fireEvent.change(nameInput, { target: { value: name } });
@@ -747,7 +747,7 @@ describe("ServerDetailModal", () => {
       fireEvent.submit(form!);
     };
 
-    it("saves the 2026 era from the host default when no per-server pin is set", async () => {
+    it("keeps Auto when the host default is pinned to 2026", async () => {
       const onSubmit = vi.fn().mockResolvedValue({
         ok: true,
         serverName: "test-server",
@@ -769,14 +769,14 @@ describe("ServerDetailModal", () => {
           expect.objectContaining({
             authMethod: "auto",
             useOAuth: true,
-            oauthProtocolMode: "2026-07-28",
+            oauthProtocolMode: "auto",
           }),
           "test-server"
         );
       });
     });
 
-    it("saves the current default era when the host is not 2026-pinned", async () => {
+    it("keeps Auto when the host is not pinned", async () => {
       const onSubmit = vi.fn().mockResolvedValue({
         ok: true,
         serverName: "test-server",
@@ -797,20 +797,20 @@ describe("ServerDetailModal", () => {
           expect.objectContaining({
             authMethod: "auto",
             useOAuth: true,
-            oauthProtocolMode: "2025-11-25",
+            oauthProtocolMode: "auto",
           }),
           "test-server"
         );
       });
     });
 
-    it("re-resolves to the 2026 era from a per-server override even when the host default is not 2026", async () => {
+    it("keeps Auto when a per-server wire override is pinned to 2026", async () => {
       const onSubmit = vi.fn().mockResolvedValue({
         ok: true,
         serverName: "test-server",
       });
-      // Per-server wire pin (project-layer override) is 2026 while the host
-      // default is unset — the override must win and bake the 2026 era.
+      // The per-server wire pin controls negotiation but must not replace the
+      // user's canonical OAuth Auto intent.
       mockUseQuery.mockReturnValue({
         projectId: "jh7abc123def456ghi789jk",
         serverIds: ["server_123"],
@@ -836,7 +836,7 @@ describe("ServerDetailModal", () => {
           expect.objectContaining({
             authMethod: "auto",
             useOAuth: true,
-            oauthProtocolMode: "2026-07-28",
+            oauthProtocolMode: "auto",
           }),
           "test-server"
         );

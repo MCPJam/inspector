@@ -484,7 +484,8 @@ describe("mcp-oauth", () => {
     discoveryState: any = createAsanaDiscoveryState(),
     useRegistryOAuthProxy?: boolean,
     serverName: string = "asana",
-    serverUrl: string = "https://mcp.asana.com/v2/mcp"
+    serverUrl: string = "https://mcp.asana.com/v2/mcp",
+    protocolMode?: "2025-11-25" | "2026-07-28"
   ) {
     mockDiscoverOAuthServerInfo
       .mockResolvedValueOnce(discoveryState)
@@ -505,6 +506,7 @@ describe("mcp-oauth", () => {
       serverUrl,
       registryServerId,
       useRegistryOAuthProxy,
+      protocolMode,
     });
 
     expect(result.success).toBe(true);
@@ -1729,6 +1731,71 @@ describe("mcp-oauth", () => {
       expect(mockExchangeAuthorization).toHaveBeenCalledTimes(1);
     });
 
+    it("stops a 2026 issuer mismatch before token exchange", async () => {
+      await seedPendingOAuth(
+        undefined,
+        createAsanaDiscoveryState(),
+        false,
+        "asana",
+        "https://mcp.asana.com/v2/mcp",
+        "2026-07-28"
+      );
+
+      const { handleOAuthCallback } = await import("../mcp-oauth");
+      const result = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+        callbackIss: "https://different.example.com",
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/issuer validation failed/i);
+      expect(mockExchangeAuthorization).not.toHaveBeenCalled();
+    });
+
+    it("keeps 2025 compatibility and exchanges despite an issuer mismatch", async () => {
+      await seedPendingOAuth(
+        undefined,
+        createAsanaDiscoveryState(),
+        false,
+        "asana",
+        "https://mcp.asana.com/v2/mcp",
+        "2025-11-25"
+      );
+
+      const { handleOAuthCallback } = await import("../mcp-oauth");
+      const result = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+        callbackIss: "https://different.example.com",
+      });
+
+      expect(result.success, result.error).toBe(true);
+      expect(mockExchangeAuthorization).toHaveBeenCalledOnce();
+    });
+
+    it("defaults an old stored session without a version to 2025 compatibility", async () => {
+      await seedPendingOAuth(
+        undefined,
+        createAsanaDiscoveryState(),
+        false,
+        "asana",
+        "https://mcp.asana.com/v2/mcp",
+        "2026-07-28"
+      );
+      const storageKey = "mcp-oauth-flow-state-asana";
+      const oldSession = JSON.parse(localStorage.getItem(storageKey) ?? "{}");
+      delete oldSession.protocolVersion;
+      localStorage.setItem(storageKey, JSON.stringify(oldSession));
+
+      const { handleOAuthCallback } = await import("../mcp-oauth");
+      const result = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+        callbackIss: "https://different.example.com",
+      });
+
+      expect(result.success, result.error).toBe(true);
+      expect(mockExchangeAuthorization).toHaveBeenCalledOnce();
+    });
+
     it("preserves one advertised resource string through authorization, callback, storage, and refresh", async () => {
       const serverName = "example";
       const serverUrl = "https://mcp.example.com/api/mcp";
@@ -2714,6 +2781,27 @@ describe("mcp-oauth", () => {
       expect(mockExchangeAuthorization).not.toHaveBeenCalled();
     });
 
+    it("applies the 2026 issuer gate during sessionless callback recovery", async () => {
+      seedAsanaCallback(createAsanaDiscoveryState());
+      localStorage.setItem(
+        "mcp-oauth-config-asana",
+        JSON.stringify({
+          protocolMode: "auto",
+          protocolVersion: "2026-07-28",
+        })
+      );
+
+      const { handleOAuthCallback } = await import("../mcp-oauth");
+      const result = await handleOAuthCallback("oauth-code", {
+        callbackState: "asana-issued-state",
+        callbackIss: "https://different.example.com",
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/issuer validation failed/i);
+      expect(mockExchangeAuthorization).not.toHaveBeenCalled();
+    });
+
     it("rejects PRM metadata that omits its required resource during callback completion", async () => {
       const asana = createAsanaDiscoveryState();
       delete asana.resourceMetadata.resource;
@@ -3321,6 +3409,7 @@ describe("evaluateCallbackSecurity (2R-iss callback gate)", () => {
     expectedState: "s-123",
     recordedIssuer: "https://as.example.com",
     issParameterSupported: true as boolean | undefined,
+    protocolVersion: "2026-07-28" as const,
   };
 
   it("passes when state and iss both match", async () => {
@@ -3371,6 +3460,28 @@ describe("evaluateCallbackSecurity (2R-iss callback gate)", () => {
         ...base,
         callbackIss: null,
         issParameterSupported: undefined,
+      }),
+    ).toEqual({ ok: true });
+  });
+
+  it("ignores a mismatched iss for a 2025 flow", async () => {
+    const { evaluateCallbackSecurity } = await import("../mcp-oauth");
+    expect(
+      evaluateCallbackSecurity({
+        ...base,
+        protocolVersion: "2025-11-25",
+        callbackIss: "https://different.example.com",
+      }),
+    ).toEqual({ ok: true });
+  });
+
+  it("defaults an old session with no version to 2025 compatibility", async () => {
+    const { evaluateCallbackSecurity } = await import("../mcp-oauth");
+    expect(
+      evaluateCallbackSecurity({
+        ...base,
+        protocolVersion: undefined,
+        callbackIss: "https://different.example.com",
       }),
     ).toEqual({ ok: true });
   });
