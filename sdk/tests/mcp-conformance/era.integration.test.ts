@@ -132,6 +132,22 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
     }
   });
 
+  it("raw-only auto run still detects the modern era before raw checks", async () => {
+    const result = await new MCPConformanceTest({
+      serverUrl: served.url,
+      checkIds: ["server-sse-polling-session"],
+      checkTimeout: 10_000,
+    }).run();
+
+    expect(result.passed).toBe(true);
+    expect(result.checks).toHaveLength(1);
+    expect(result.checks[0]).toMatchObject({
+      id: "server-sse-polling-session",
+      status: "skipped",
+    });
+    expect(result.checks[0]?.error?.message).toMatch(ERA_SKIP);
+  });
+
   it("legacy pin (2025-11-25): keeps the legacy checks active", async () => {
     const pinned = await new MCPConformanceTest({
       serverUrl: served.url,

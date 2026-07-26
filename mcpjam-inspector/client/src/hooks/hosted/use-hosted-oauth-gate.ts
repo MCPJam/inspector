@@ -32,8 +32,8 @@ import { slugify } from "@/lib/chatbox-session";
 import { captureCurrentReturnPath, routePaths } from "@/lib/app-navigation";
 import { ingestOAuthTraceLogs } from "@/stores/traffic-log-store";
 import {
+  isServerFormOAuthProtocolMode,
   resolveOAuthProtocolSelection,
-  type ServerFormOAuthProtocolMode,
 } from "@/shared/types.js";
 
 const INLINE_TOKEN_POLL_ATTEMPTS = 15;
@@ -58,8 +58,24 @@ export interface HostedOAuthServerDescriptor {
   oauthScopes: string[] | null;
   oauthProtocolMode?: string | null;
   oauthProtocolVersion?: string | null;
+  wireProtocolVersion?: string | null;
   /** When true, server was opted in after session start (copy / UX hints). */
   optional?: boolean;
+}
+
+export function resolveHostedOAuthProtocolSelection(
+  server: Pick<
+    HostedOAuthServerDescriptor,
+    "oauthProtocolMode" | "oauthProtocolVersion" | "wireProtocolVersion"
+  >
+) {
+  return resolveOAuthProtocolSelection({
+    mode: isServerFormOAuthProtocolMode(server.oauthProtocolMode)
+      ? server.oauthProtocolMode
+      : undefined,
+    legacyProtocolVersion: server.oauthProtocolVersion ?? undefined,
+    wireProtocolVersion: server.wireProtocolVersion ?? undefined,
+  });
 }
 
 function buildHostedOAuthStateMap(
@@ -453,18 +469,8 @@ export function useHostedOAuthGate({
       localStorage.setItem(pendingKey, "true");
       localStorage.setItem("mcp-oauth-return-hash", returnPath);
 
-      const canonicalProtocolMode =
-        server.oauthProtocolMode === "auto" ||
-        server.oauthProtocolMode === "2025-03-26" ||
-        server.oauthProtocolMode === "2025-06-18" ||
-        server.oauthProtocolMode === "2025-11-25" ||
-        server.oauthProtocolMode === "2026-07-28"
-          ? (server.oauthProtocolMode as ServerFormOAuthProtocolMode)
-          : undefined;
-      const protocolSelection = resolveOAuthProtocolSelection({
-        mode: canonicalProtocolMode,
-        legacyProtocolVersion: server.oauthProtocolVersion ?? undefined,
-      });
+      const protocolSelection =
+        resolveHostedOAuthProtocolSelection(server);
 
       const result = await initiateOAuth({
         serverName: server.serverName,

@@ -1719,6 +1719,7 @@ interface HostedOAuthCompletionResponse {
   success: boolean;
   expiresAt?: number | null;
   kind?: "generic" | "registry";
+  protocolVersion?: OAuthProtocolVersion;
   error?: string;
   oauthTrace?: OAuthTrace;
 }
@@ -3297,7 +3298,8 @@ export async function completeHostedOAuthCallback(
             : {
                 serverUrl,
                 protocolVersion:
-                  readStoredOAuthConfig(serverName).protocolVersion,
+                  storedSession?.protocolVersion ??
+                  storedOAuthConfig.protocolVersion,
                 codeVerifier: legacyCodeVerifier,
                 redirectUri: getRedirectUri(),
                 clientInformation: {
@@ -3375,6 +3377,10 @@ export async function completeHostedOAuthCallback(
       : mergeHostedCallbackTrace(result.oauthTrace);
     publishOAuthTraceUpdate(serverName, mergedTrace, options.onTraceUpdate);
     clearOAuthFlowSession(serverName);
+    const completedProtocolVersion =
+      result.protocolVersion ??
+      storedSession?.protocolVersion ??
+      storedOAuthConfig.protocolVersion;
 
     return {
       success: true,
@@ -3382,7 +3388,7 @@ export async function completeHostedOAuthCallback(
       serverConfig: createServerConfig(
         serverUrl,
         undefined,
-        storedOAuthConfig.protocolVersion
+        completedProtocolVersion
       ),
       expiresAt: result.expiresAt ?? null,
       oauthTrace: mergedTrace,

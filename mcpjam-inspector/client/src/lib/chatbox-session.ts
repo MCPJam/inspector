@@ -50,6 +50,8 @@ export interface ChatboxBootstrapServer {
   oauthScopes: string[] | null;
   oauthProtocolMode?: string | null;
   oauthProtocolVersion?: string | null;
+  /** Effective host/per-server MCP wire pin, when one is configured. */
+  wireProtocolVersion?: string | null;
   /** When true, excluded from initial OAuth and chat until enabled by the tester. */
   optional?: boolean;
 }
@@ -357,6 +359,15 @@ export function normalizeChatboxSession(
           oauthScopes: Array.isArray(server.oauthScopes)
             ? server.oauthScopes
             : null,
+          ...(typeof server.oauthProtocolMode === "string"
+            ? { oauthProtocolMode: server.oauthProtocolMode }
+            : {}),
+          ...(typeof server.oauthProtocolVersion === "string"
+            ? { oauthProtocolVersion: server.oauthProtocolVersion }
+            : {}),
+          ...(typeof server.wireProtocolVersion === "string"
+            ? { wireProtocolVersion: server.wireProtocolVersion }
+            : {}),
           optional: Boolean(server.optional),
         })),
       chatUi: normalizeChatUiPayload(payload.chatUi),

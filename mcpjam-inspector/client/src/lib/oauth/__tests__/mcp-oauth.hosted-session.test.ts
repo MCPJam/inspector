@@ -36,10 +36,17 @@ describe("mcp-oauth hosted callback sessions", () => {
 
       if (url === "https://test.convex.site/web/oauth/complete") {
         return Promise.resolve(
-          new Response(JSON.stringify({ success: true, expiresAt: 123 }), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          })
+          new Response(
+            JSON.stringify({
+              success: true,
+              expiresAt: 123,
+              protocolVersion: "2026-07-28",
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            }
+          )
         );
       }
 
@@ -69,6 +76,7 @@ describe("mcp-oauth hosted callback sessions", () => {
 
     expect(result.success).toBe(true);
     expect(result.expiresAt).toBe(123);
+    expect(result.serverConfig?.mcpProtocolVersion).toBe("2026-07-28");
     expect(authFetchMock).toHaveBeenCalledWith(
       "https://test.convex.site/web/oauth/complete",
       expect.any(Object)
@@ -92,6 +100,71 @@ describe("mcp-oauth hosted callback sessions", () => {
       sessionId: "hosted-session-1",
       accessScope: "project_member",
     });
+  });
+
+  it("uses the flow session version for sessionless completion and reconnect", async () => {
+    localStorage.setItem("mcp-oauth-issued-state-asana", "expected-state");
+    localStorage.setItem("mcp-verifier-asana", "verifier");
+    localStorage.setItem(
+      "mcp-client-asana",
+      JSON.stringify({ client_id: "client-id" })
+    );
+    localStorage.setItem(
+      "mcp-oauth-config-asana",
+      JSON.stringify({ protocolVersion: "2025-11-25" })
+    );
+    localStorage.setItem(
+      "mcp-oauth-flow-state-asana",
+      JSON.stringify({
+        version: 1,
+        protocolVersion: "2026-07-28",
+        registrationStrategy: "dcr",
+        state: {
+          recordedIssuer: "https://auth.asana.com",
+          authorizationUrl:
+            "https://auth.asana.com/authorize?resource=https%3A%2F%2Fmcp.asana.com%2Fsse",
+        },
+      })
+    );
+    authFetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          success: true,
+          protocolVersion: "2026-07-28",
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }
+      )
+    );
+
+    const { completeHostedOAuthCallback } = await import("../mcp-oauth");
+    const result = await completeHostedOAuthCallback(
+      {
+        surface: "project",
+        projectId: "ws_1",
+        serverId: "srv_asana",
+        serverName: "asana",
+        serverUrl: "https://mcp.asana.com/sse",
+        accessScope: "project_member",
+        chatboxId: null,
+        returnPath: "#servers",
+        startedAt: Date.now(),
+      },
+      "oauth-code",
+      { callbackState: "expected-state" }
+    );
+
+    expect(result).toMatchObject({ success: true });
+    expect(result.serverConfig?.mcpProtocolVersion).toBe("2026-07-28");
+    const completeCall = authFetchMock.mock.calls.find(
+      ([url]) => url === "https://test.convex.site/web/oauth/complete"
+    );
+    const sentBody = JSON.parse(
+      String((completeCall?.[1] as RequestInit | undefined)?.body)
+    );
+    expect(sentBody.protocolVersion).toBe("2026-07-28");
   });
 
   it("rejects a sessionless hosted callback when state does not match", async () => {

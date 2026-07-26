@@ -722,10 +722,19 @@ export type ServerFormOAuthProtocolMode =
 export const DEFAULT_OAUTH_PROTOCOL_CONCRETE_MODE: ServerFormOAuthProtocolConcreteMode =
   "2025-11-25";
 
-function isConcreteOauthProtocolMode(
+export function isConcreteOauthProtocolMode(
   value: string
 ): value is ServerFormOAuthProtocolConcreteMode {
   return (SERVER_FORM_OAUTH_PROTOCOL_MODES as readonly string[]).includes(value);
+}
+
+export function isServerFormOAuthProtocolMode(
+  value: unknown
+): value is ServerFormOAuthProtocolMode {
+  return (
+    value === "auto" ||
+    (typeof value === "string" && isConcreteOauthProtocolMode(value))
+  );
 }
 
 /**

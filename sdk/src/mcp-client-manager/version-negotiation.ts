@@ -32,8 +32,9 @@ import {
  *   `ClientOptions.supportedProtocolVersions`; this function does not touch
  *   that accept-list.
  * - **No pin** → `{ mode: "auto" }`: probe with `server/discover`, selecting
- *   the modern era only on definitive evidence and otherwise falling back to
- *   the legacy `initialize` handshake.
+ *   the modern era only on definitive evidence. Legacy-compatible probe
+ *   outcomes fall back to the legacy `initialize` handshake; authentication
+ *   failures, other HTTP/network errors, and probe timeouts reject.
  *
  * The manager calls this helper only for HTTP servers. Stdio remains on its
  * historical legacy default until MCPJam explicitly exposes modern stdio

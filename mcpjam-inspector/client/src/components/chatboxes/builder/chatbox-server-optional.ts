@@ -13,6 +13,7 @@ export function bootstrapServerToHostedOAuthDescriptor(
     oauthScopes: s.oauthScopes,
     oauthProtocolMode: s.oauthProtocolMode,
     oauthProtocolVersion: s.oauthProtocolVersion,
+    wireProtocolVersion: s.wireProtocolVersion,
     optional: Boolean(s.optional),
   };
 }

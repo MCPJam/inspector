@@ -206,7 +206,13 @@ async function runClientChecks(
     selectedCheckIds.has(check.id),
   );
 
-  if (selectedClientChecks.length === 0) {
+  // Explicit pins already carry their era into the raw runners. Auto mode
+  // still needs one real MCP connection so raw-only protocol/security/
+  // transport selections use the version the server actually negotiated.
+  if (
+    selectedClientChecks.length === 0 &&
+    config.protocolVersion !== undefined
+  ) {
     return { checks: [], config };
   }
 
@@ -238,6 +244,11 @@ async function runClientChecks(
                   : "legacy",
               }
             : config;
+
+        if (selectedClientChecks.length === 0) {
+          return { checks: [], config: effectiveConfig };
+        }
+
         const [toolsResult, promptsResult, resourcesResult, availableResourceTemplates] =
           await Promise.all([
             safeListTools({ manager, serverId }),
@@ -310,6 +321,13 @@ async function runClientChecks(
     );
 
   } catch (error) {
+    // A raw-only Auto run has no client-backed check on which to report a
+    // failed negotiation. Reject the run instead of silently executing raw
+    // checks with the legacy default after detection failed.
+    if (selectedClientChecks.length === 0) {
+      throw error;
+    }
+
     const checks: MCPCheckResult[] = [];
 
     // Era gate applies even when the connection could not be established: an

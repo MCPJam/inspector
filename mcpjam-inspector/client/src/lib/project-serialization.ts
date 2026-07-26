@@ -443,10 +443,9 @@ export function serversHaveChanged(
     if (localServer.enabled !== remoteServer.enabled) return true;
     if (localServer.useOAuth !== remoteServer.useOAuth) return true;
     const remoteOauthProtocolMode =
-      remoteServer.oauthProtocolMode ??
-      (remoteServer.oauthProtocolVersion !== undefined
-        ? normalizeOauthProtocolMode(remoteServer.oauthProtocolVersion)
-        : undefined);
+      typeof remoteServer.oauthProtocolMode === "string"
+        ? normalizeOauthProtocolMode(remoteServer.oauthProtocolMode)
+        : normalizeOAuthProtocolVersion(remoteServer.oauthProtocolVersion);
     if (
       (localServer.oauthProtocolMode ?? undefined) !==
       (remoteOauthProtocolMode ?? undefined)

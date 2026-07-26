@@ -4,6 +4,7 @@ import {
   getModelById,
   hostedModelDefinitionsFromSnapshot,
   hostedProviderFromCanonicalId,
+  isServerFormOAuthProtocolMode,
   isMCPJamGuestAllowedModel,
   isMCPJamProvidedModel,
   isModelSupported,
@@ -198,6 +199,14 @@ describe("resolveEffectiveOauthProtocolMode (auto → wire-pin bridge)", () => {
 });
 
 describe("resolveOAuthProtocolSelection", () => {
+  it("recognizes every shared protocol mode without a second allowlist", () => {
+    expect(isServerFormOAuthProtocolMode("auto")).toBe(true);
+    for (const mode of SERVER_FORM_OAUTH_PROTOCOL_MODES) {
+      expect(isServerFormOAuthProtocolMode(mode)).toBe(true);
+    }
+    expect(isServerFormOAuthProtocolMode("2099-01-01")).toBe(false);
+  });
+
   it("does not let an Auto flow's previous concrete profile become a pin", () => {
     expect(
       resolveOAuthProtocolSelection({
