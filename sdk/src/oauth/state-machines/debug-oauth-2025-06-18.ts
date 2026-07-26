@@ -696,7 +696,7 @@ export const createDebugOAuthStateMachine = (
             }
             break;
 
-          case "received_401_unauthorized":
+          case "received_401_unauthorized": {
             // Step 3: Extract resource metadata URL and prepare request
             const challengeParams = parseBearerAuthenticateParameters(
               state.wwwAuthenticateHeader,
@@ -746,6 +746,7 @@ export const createDebugOAuthStateMachine = (
             // Automatically proceed to make the actual request
             autoAdvance(50);
             return;
+          }
 
           case "request_resource_metadata":
             // Step 2: Fetch and parse resource metadata using official SDK helper
