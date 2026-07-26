@@ -40,7 +40,7 @@ import {
   environmentServerIds,
   environmentServerNames,
   type ResolvedEnvironmentForLaunch,
-} from "../../services/evals/environment-launch.js";
+} from "../../services/environments/resolve.js";
 import {
   matchOptionsSchema,
   casePredicatesSchema,

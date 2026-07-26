@@ -17,10 +17,10 @@ import { toast } from "@/lib/toast";
 import {
   SWARM_QUERIES,
   DEFAULT_PAGE_SIZE,
-  type EnvironmentView,
   type JourneyRun,
   type JourneyRollup,
 } from "@/lib/swarm-api";
+import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import { useProjectServerAttachments } from "@/hooks/useViews";
 import { JourneyHostLogoMark } from "./journey-host-logo";
 import {
@@ -125,7 +125,7 @@ export function journeyTargetColumns(
   journey: JourneyListJourney,
   hosts: JourneyListHost[],
   latestRun?: JourneyRun | null,
-  environments?: EnvironmentView[],
+  environments?: ProjectEnvironmentView[],
   environmentsEnabled = true
 ): SwarmTargetColumn[] {
   // `nameOf` returns undefined for a host no longer in the project so
@@ -210,7 +210,7 @@ export function JourneyList({
   ) => void;
   onCloseRun: () => void;
   /** Live project environments (flag-gated; undefined when the flag is off). */
-  environments?: EnvironmentView[];
+  environments?: ProjectEnvironmentView[];
   /** `project-environments-enabled` — gates the env edit affordance. */
   environmentsEnabled?: boolean;
 }) {
@@ -269,7 +269,7 @@ function JourneyBlock({
     targetKey: string | null
   ) => void;
   onCloseRun: () => void;
-  environments?: EnvironmentView[];
+  environments?: ProjectEnvironmentView[];
   environmentsEnabled?: boolean;
 }) {
   const {
@@ -626,7 +626,7 @@ function JourneyEnvironmentsEditor({
   environments,
 }: {
   journey: JourneyListJourney;
-  environments: EnvironmentView[];
+  environments: ProjectEnvironmentView[];
 }) {
   const updateJourney = useMutation("journeys:updateJourney" as any);
   const [open, setOpen] = useState(false);

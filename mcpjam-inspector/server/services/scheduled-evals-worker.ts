@@ -34,7 +34,7 @@ import {
   environmentServerNames,
   resolveEnvironmentForLaunch,
   type ResolvedEnvironmentForLaunch,
-} from "./evals/environment-launch.js";
+} from "./environments/resolve.js";
 
 const POLL_INTERVAL_MS = 15_000;
 const POLL_JITTER_MS = 5_000;
