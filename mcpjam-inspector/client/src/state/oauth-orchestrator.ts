@@ -543,28 +543,30 @@ function readServerUrlForStepUp(server: ServerWithName): string | undefined {
 
 /**
  * Validate an UNTRUSTED `resource_metadata` hint (from a `403 insufficient_scope`
- * `WWW-Authenticate` header) before threading it into the OAuth flow. Per RFC
- * 9728 the protected-resource-metadata URL lives at the resource server's own
- * well-known path, so it MUST be same-origin with the server URL. Returns the
- * trimmed hint only when both parse and share an origin; otherwise `undefined`,
- * so a malformed or cross-origin hint falls back to derived discovery rather
- * than steering the client to fetch an attacker-chosen endpoint. (The SDK's
- * discovery additionally enforces the outbound-host allowlist and strips
- * MCP-server auth headers on any cross-origin hop — this is defense in depth
- * for the value we choose to thread.)
+ * `WWW-Authenticate` header) before threading it into the OAuth flow. RFC 9728
+ * permits the protected-resource-metadata document to live on a DIFFERENT origin
+ * than the resource server (e.g. a dedicated metadata host), so this does NOT
+ * require same-origin — dropping a valid cross-origin pointer would force the
+ * flow back to the wrong derived well-known URL, the exact regression this path
+ * fixes. It only requires an absolute `https:` URL (RFC 9728 mandates https).
+ * Returns the trimmed hint when it parses as absolute https; otherwise
+ * `undefined`, so a malformed/relative/non-https hint falls back to derived
+ * discovery. Fetch safety of a cross-origin hint is enforced downstream by the
+ * SDK: the factory's outbound-host allowlist (`assertOutboundOAuthUrlAllowed`
+ * blocks private/reserved hosts → SSRF) and cross-origin MCP-Authorization
+ * header stripping (`mergeHeadersForResourceMetadataRequest`).
  */
-function sameOriginResourceMetadataUrl(
-  serverUrl: string | undefined,
+function validResourceMetadataUrlHint(
   resourceMetadataUrl: string | undefined,
 ): string | undefined {
   const hint = resourceMetadataUrl?.trim();
-  if (!hint || !serverUrl) return undefined;
+  if (!hint) return undefined;
   try {
-    if (new URL(hint).origin === new URL(serverUrl).origin) {
+    if (new URL(hint).protocol === "https:") {
       return hint;
     }
   } catch {
-    // Unparseable server URL or hint — treat as no usable override.
+    // Unparseable / relative hint — treat as no usable override.
   }
   return undefined;
 }
@@ -620,11 +622,11 @@ export async function applyToolCallStepUp(
   const serverUrl = readServerUrlForStepUp(server);
   const issuer = resolveStoredIssuer(server.name, serverUrl);
   const challengedScopes = parseOAuthScopes(challenge.requiredScope);
-  // The challenge's `resource_metadata` hint is untrusted: only use it when it
-  // is same-origin with the server URL (RFC 9728), else fall back to derived
-  // discovery. See {@link sameOriginResourceMetadataUrl}.
-  const resourceMetadataUrl = sameOriginResourceMetadataUrl(
-    serverUrl,
+  // The challenge's `resource_metadata` hint is untrusted: thread it only when
+  // it parses as an absolute https URL (RFC 9728). A valid cross-origin pointer
+  // is honored — the SDK's outbound-host guard + cross-origin header stripping
+  // enforce fetch safety. See {@link validResourceMetadataUrlHint}.
+  const resourceMetadataUrl = validResourceMetadataUrlHint(
     challenge.resourceMetadataUrl,
   );
 

@@ -386,19 +386,40 @@ describe("resolveInsufficientScopeStepUp (SEP-2350)", () => {
     );
   });
 
-  it("applyToolCallStepUp DROPS a cross-origin resourceMetadataUrl (falls back to derived discovery)", async () => {
+  it("applyToolCallStepUp THREADS a valid cross-origin https resourceMetadataUrl (RFC 9728 allows a separate metadata origin)", async () => {
     readStoredOAuthConfigMock.mockReturnValue({ scopes: ["read"] });
     initiateOAuthMock.mockResolvedValue({ success: true });
 
-    // Attacker-supplied hint on a DIFFERENT origin than the server URL.
+    // A legitimate deployment can advertise PRM on a dedicated metadata origin,
+    // DIFFERENT from the server URL. It must be threaded — the SDK's outbound
+    // guard + cross-origin header stripping enforce fetch safety downstream.
+    const resourceMetadataUrl =
+      "https://metadata.asana.com/.well-known/oauth-protected-resource/sse";
+
     const outcome = await applyToolCallStepUp(createServer(), {
       requiredScope: "admin",
-      resourceMetadataUrl:
-        "https://evil.example/.well-known/oauth-protected-resource",
+      resourceMetadataUrl,
     });
 
     expect(outcome.action).toBe("reauthorize");
-    // The cross-origin hint is not threaded — discovery derives the URL itself.
+    expect(initiateOAuthMock).toHaveBeenCalledWith(
+      expect.objectContaining({ resourceMetadataUrl }),
+    );
+  });
+
+  it("applyToolCallStepUp DROPS a non-https resourceMetadataUrl (falls back to derived discovery)", async () => {
+    readStoredOAuthConfigMock.mockReturnValue({ scopes: ["read"] });
+    initiateOAuthMock.mockResolvedValue({ success: true });
+
+    // RFC 9728 mandates https; a non-https (or malformed/relative) hint is not
+    // threaded — discovery derives the URL itself.
+    const outcome = await applyToolCallStepUp(createServer(), {
+      requiredScope: "admin",
+      resourceMetadataUrl:
+        "http://evil.example/.well-known/oauth-protected-resource",
+    });
+
+    expect(outcome.action).toBe("reauthorize");
     expect(initiateOAuthMock).toHaveBeenCalledWith(
       expect.objectContaining({ resourceMetadataUrl: undefined }),
     );
