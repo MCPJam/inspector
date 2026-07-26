@@ -1,3 +1,24 @@
+/**
+ * MCP JSON config import/export.
+ *
+ * The three compatible document shapes — a direct server map, an
+ * `mcp_servers` wrapper (OpenAI plugin `.mcp.json`), and an `mcpServers`
+ * wrapper (MCPJam/Claude-style) — and the stdio-vs-http decision come from
+ * `@mcpjam/sdk/plugin-bundle`'s pure shape primitives. The same functions
+ * back the backend's plugin importer, so a config cannot be read one way here
+ * and another way there.
+ *
+ * POLICY stays here, and is deliberately more permissive than the plugin
+ * path's: the inspector is a debugger, so plain-HTTP URLs, free-form server
+ * names, and real env/header VALUES are all first-class. The SDK's strict
+ * `normalizePluginMcpConfig` rejects or strips all three, which is why this
+ * consumes the shape primitives and reads values off the source config itself.
+ */
+
+import {
+  detectPluginMcpTransport,
+  selectPluginMcpServerMap,
+} from "@mcpjam/sdk/plugin-bundle";
 import { ServerFormData } from "@/shared/types.js";
 import { ServerWithName } from "@/state/app-types";
 
@@ -13,14 +34,7 @@ export interface JsonConfig {
   mcpServers: Record<string, JsonServerConfig>;
 }
 
-/**
- * The wrapper shape a pasted/uploaded config used. Mirrors the MCP config
- * normalization in `@mcpjam/sdk`'s plugin-bundle parser
- * (sdk/src/plugin-bundle/mcp-config.ts, `normalizePluginMcpConfig`): a direct
- * server map, an `mcp_servers` wrapper (OpenAI plugin docs), or an
- * `mcpServers` wrapper (MCPJam/Claude style) all resolve to the same
- * `Record<serverName, config>` through this one code path.
- */
+/** The wrapper shape a pasted/uploaded config used. */
 export type JsonConfigShape = "direct" | "mcp_servers" | "mcpServers";
 
 export type ResolvedJsonServerMap =
@@ -33,62 +47,49 @@ export type ResolvedJsonServerMap =
  * `validateJsonConfig` both go through here, so they can never disagree about
  * which shapes are accepted.
  *
- * Shape-detection semantics intentionally mirror the SDK plugin-bundle parser
- * (which the backend runs on imported plugin bundles):
- * - declaring BOTH `mcp_servers` and `mcpServers` is an error;
- * - a bare single server object (top-level string `command`/`url`) is
- *   rejected — only string values indicate that shape, since a direct map may
- *   legitimately contain a server NAMED "url" or "command" (object value);
- * - anything else that is a plain object is treated as a direct server map.
+ * The detection itself is `selectPluginMcpServerMap` from the SDK — the very
+ * function the backend's plugin importer uses — so the two paths agree by
+ * CONSTRUCTION rather than by two implementations being kept in step. This
+ * wrapper only adapts the result to the shape/message contract the inspector's
+ * import UI already renders.
  */
 export function resolveJsonServerMap(config: unknown): ResolvedJsonServerMap {
-  if (config === null || typeof config !== "object" || Array.isArray(config)) {
-    return { ok: false, error: "Configuration must be a JSON object" };
+  const selection = selectPluginMcpServerMap(config);
+  if (!selection.ok) {
+    return { ok: false, error: messageForSelectionFailure(selection) };
   }
-  const record = config as Record<string, unknown>;
+  return {
+    ok: true,
+    shape: selection.wrapperKey ?? "direct",
+    servers: Object.fromEntries(
+      selection.servers.map((entry) => [entry.key, entry.config]),
+    ),
+  };
+}
 
-  const hasSnake = record.mcp_servers !== undefined;
-  const hasCamel = record.mcpServers !== undefined;
-  if (hasSnake && hasCamel) {
-    return {
-      ok: false,
-      error:
-        'Configuration declares both "mcp_servers" and "mcpServers"; use only one',
-    };
+/**
+ * Render an SDK selection failure using the wording this import UI has always
+ * shown. Branches on the typed `reason` — the SDK's `message` is written for a
+ * plugin bundle author and is not a contract, and `code` alone cannot separate
+ * the three `MCP_INVALID_CONFIG` cases.
+ */
+function messageForSelectionFailure(
+  selection: Extract<
+    ReturnType<typeof selectPluginMcpServerMap>,
+    { ok: false }
+  >,
+): string {
+  switch (selection.reason) {
+    case "duplicate-wrapper":
+      return 'Configuration declares both "mcp_servers" and "mcpServers"; use only one';
+    case "bare-server-config":
+      return 'Configuration looks like a single server config; wrap it in "mcpServers": { "server-name": { ... } }';
+    case "server-map-not-an-object":
+      // Preserves the long-standing message for a malformed `mcpServers` value.
+      return 'missing or invalid "mcpServers" property';
+    case "document-not-an-object":
+      return "Configuration must be a JSON object";
   }
-
-  let shape: JsonConfigShape = "direct";
-  let serverMap: unknown = record;
-  if (hasSnake) {
-    shape = "mcp_servers";
-    serverMap = record.mcp_servers;
-  } else if (hasCamel) {
-    shape = "mcpServers";
-    serverMap = record.mcpServers;
-  } else if (
-    typeof record.command === "string" ||
-    typeof record.url === "string"
-  ) {
-    return {
-      ok: false,
-      error:
-        'Configuration looks like a single server config; wrap it in "mcpServers": { "server-name": { ... } }',
-    };
-  }
-
-  if (
-    serverMap === null ||
-    typeof serverMap !== "object" ||
-    Array.isArray(serverMap)
-  ) {
-    // Preserves the long-standing message for a malformed `mcpServers` value.
-    return {
-      ok: false,
-      error: `missing or invalid "${shape}" property`,
-    };
-  }
-
-  return { ok: true, shape, servers: serverMap as Record<string, unknown> };
 }
 
 /**
@@ -98,6 +99,129 @@ export function resolveJsonServerMap(config: unknown): ResolvedJsonServerMap {
  */
 function isServerConfigRecord(value: unknown): value is JsonServerConfig {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+/** Keep only string-valued entries — env/header values are always strings. */
+function stringRecord(value: unknown): Record<string, string> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  const out: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof entry === "string") out[key] = entry;
+  }
+  return out;
+}
+
+/**
+ * Imported secret values must ride BOTH channels.
+ *
+ * `env`/`headers` on the form data feed the in-memory connection, but the
+ * cloud persist path (`syncServerToConvex`) only writes them when the caller
+ * passes an explicit `secretPatch`: the connect path always hands it a
+ * `secretOptions` object, and without the patch key `headersForPayload` /
+ * `envForPayload` resolve to `undefined` and the fields are dropped from the
+ * payload. An import that set only `env`/`headers` would therefore connect
+ * once and then 401 after a reload — exactly the failure header preservation
+ * was meant to remove. The server FORM sets both for the same reason.
+ *
+ * Only non-empty values get a patch: an explicit empty patch is a command to
+ * CLEAR the stored values, and re-importing a config must never wipe
+ * credentials already attached to an existing server of the same name.
+ */
+function secretPatchFor(
+  key: "env" | "headers",
+  values: Record<string, string>,
+): Pick<ServerFormData, "secretPatch"> {
+  return Object.keys(values).length > 0
+    ? { secretPatch: { [key]: values } }
+    : {};
+}
+
+/**
+ * Convert one source server config to form data, or explain why it can't be.
+ *
+ * stdio-vs-http comes from `detectPluginMcpTransport`, so an explicit
+ * `type`/`transport` discriminator wins over guessing from `command`/`url` and
+ * every spelling of Streamable HTTP classifies the same way the backend's
+ * importer classifies it. Env and header VALUES are carried through verbatim:
+ * this is the user's own config being loaded into a debugger, not a bundle
+ * being persisted.
+ */
+function toServerFormData(
+  name: string,
+  config: unknown,
+): { ok: true; server: ServerFormData } | { ok: false; error: string } {
+  if (!isServerConfigRecord(config)) {
+    return { ok: false, error: `Invalid server config for "${name}"` };
+  }
+  const record = config as unknown as Record<string, unknown>;
+
+  const detected = detectPluginMcpTransport(record, name);
+  if (!detected.ok) {
+    if (detected.code === "MCP_AMBIGUOUS_TRANSPORT") {
+      return {
+        ok: false,
+        error: `Server "${name}" cannot have both "command" and "url" properties`,
+      };
+    }
+    if (record.type === undefined && record.transport === undefined) {
+      return {
+        ok: false,
+        error: `Server "${name}" must have either "command" or "url" property`,
+      };
+    }
+    return { ok: false, error: `Server "${name}": ${detected.message}` };
+  }
+
+  if (detected.transport === "stdio") {
+    const command = record.command;
+    if (typeof command !== "string" || command.length === 0) {
+      return {
+        ok: false,
+        error: `Server "${name}" must have either "command" or "url" property`,
+      };
+    }
+    const args = Array.isArray(record.args)
+      ? record.args.filter((arg): arg is string => typeof arg === "string")
+      : [];
+    const env = stringRecord(record.env);
+    return {
+      ok: true,
+      server: {
+        name,
+        type: "stdio",
+        command,
+        args,
+        env,
+        ...secretPatchFor("env", env),
+      },
+    };
+  }
+
+  const url = record.url;
+  if (typeof url !== "string" || url.length === 0) {
+    return {
+      ok: false,
+      error: `Server "${name}" must have either "command" or "url" property`,
+    };
+  }
+  // Headers survive the import, on both the in-memory and the persisted
+  // channel. Silently dropping an Authorization header turns an otherwise
+  // valid import into a confusing 401 at connect time.
+  const headers = stringRecord(record.headers);
+  return {
+    ok: true,
+    server: {
+      name,
+      type: "http",
+      url,
+      headers,
+      env: {},
+      useOAuth: false,
+      ...secretPatchFor("headers", headers),
+    },
+  };
 }
 
 /**
@@ -162,38 +286,12 @@ export function parseJsonConfig(jsonContent: string): ServerFormData[] {
     for (const [serverName, rawServerConfig] of Object.entries(
       resolved.servers,
     )) {
-      if (!isServerConfigRecord(rawServerConfig)) {
-        console.warn(`Skipping invalid server config for "${serverName}"`);
+      const mapped = toServerFormData(serverName, rawServerConfig);
+      if (!mapped.ok) {
+        console.warn(`Skipping server "${serverName}": ${mapped.error}`);
         continue;
       }
-      const serverConfig = rawServerConfig;
-
-      // Determine server type based on config
-      if (serverConfig.type === "sse" || serverConfig.url) {
-        // HTTP/SSE server
-        servers.push({
-          name: serverName,
-          type: "http",
-          url: serverConfig.url || "",
-          headers: {},
-          env: {},
-          useOAuth: false,
-        });
-      } else if (serverConfig.command) {
-        // STDIO server (MCP default format)
-        servers.push({
-          name: serverName,
-          type: "stdio",
-          command: serverConfig.command,
-          args: serverConfig.args || [],
-          env: serverConfig.env || {},
-        });
-      } else {
-        console.warn(
-          `Skipping server "${serverName}": missing required command`,
-        );
-        continue;
-      }
+      servers.push(mapped.server);
     }
 
     return servers;
@@ -231,34 +329,11 @@ export function validateJsonConfig(jsonContent: string): {
       };
     }
 
-    // Validate each server config
+    // Validate each server config through the SAME mapping `parseJsonConfig`
+    // uses, so validation can never accept something the import then skips.
     for (const [serverName, serverConfig] of Object.entries(resolved.servers)) {
-      if (!isServerConfigRecord(serverConfig)) {
-        return {
-          success: false,
-          error: `Invalid server config for "${serverName}"`,
-        };
-      }
-
-      const configObj = serverConfig;
-      const hasCommand =
-        configObj.command && typeof configObj.command === "string";
-      const hasUrl = configObj.url && typeof configObj.url === "string";
-      const isSse = configObj.type === "sse";
-
-      if (!hasCommand && !hasUrl && !isSse) {
-        return {
-          success: false,
-          error: `Server "${serverName}" must have either "command" or "url" property`,
-        };
-      }
-
-      if (hasCommand && hasUrl) {
-        return {
-          success: false,
-          error: `Server "${serverName}" cannot have both "command" and "url" properties`,
-        };
-      }
+      const mapped = toServerFormData(serverName, serverConfig);
+      if (!mapped.ok) return { success: false, error: mapped.error };
     }
 
     return { success: true };
