@@ -542,3 +542,127 @@ test("interactive honors an exact capability set that declares elicitation", () 
   // Host fidelity: an exact set is advertised verbatim, modes included.
   assert.deepEqual(config.clientCapabilities, exact);
 });
+
+// ── schema constraints are checked at the prompt ───────────────────────────
+
+test("parseElicitationFields carries the checkable schema bounds", () => {
+  const [text, count] = parseElicitationFields({
+    type: "object",
+    properties: {
+      code: { type: "string", minLength: 2, maxLength: 4, pattern: "^[a-z]+$" },
+      count: { type: "integer", minimum: 1, maximum: 3 },
+    },
+    required: ["code", "count"],
+  });
+  assert.deepEqual(text.constraints, {
+    minLength: 2,
+    maxLength: 4,
+    pattern: "^[a-z]+$",
+  });
+  assert.deepEqual(count.constraints, { minimum: 1, maximum: 3 });
+});
+
+test("coerceFieldValue rejects out-of-bound answers so the field re-prompts", () => {
+  const code = {
+    key: "code",
+    type: "string" as const,
+    required: true,
+    constraints: { minLength: 2, maxLength: 4, pattern: "^[a-z]+$" },
+  };
+  assert.throws(() => coerceFieldValue("a", code), /at least 2/);
+  assert.throws(() => coerceFieldValue("abcde", code), /at most 4/);
+  assert.throws(() => coerceFieldValue("AB", code), /must match/);
+  assert.deepEqual(coerceFieldValue("abc", code), { value: "abc" });
+
+  const count = {
+    key: "count",
+    type: "number" as const,
+    required: true,
+    constraints: { minimum: 1, maximum: 3 },
+  };
+  assert.throws(() => coerceFieldValue("0", count), />= 1/);
+  assert.throws(() => coerceFieldValue("9", count), /<= 3/);
+  assert.deepEqual(coerceFieldValue("2", count), { value: 2 });
+
+  const picks = {
+    key: "picks",
+    type: "array" as const,
+    required: true,
+    enumValues: ["a", "b", "c"],
+    constraints: { minItems: 2, maxItems: 2 },
+  };
+  assert.throws(() => coerceFieldValue("a", picks), /at least 2/);
+  assert.throws(() => coerceFieldValue("a,b,c", picks), /at most 2/);
+  assert.deepEqual(coerceFieldValue("a,b", picks), { value: ["a", "b"] });
+});
+
+test("a bad answer re-prompts instead of failing the operation", async () => {
+  const reader = scriptedReader(["a", "x", "abc"]);
+  let out = "";
+  const collector = createStdinMrtrCollector({
+    reader,
+    write: (t) => {
+      out += t;
+    },
+  });
+  const responses = (await collector({
+    state: {} as never,
+    inputRequests: {
+      q: {
+        method: "elicitation/create",
+        params: {
+          message: "Code?",
+          requestedSchema: {
+            type: "object",
+            properties: { code: { type: "string", minLength: 2 } },
+            required: ["code"],
+          },
+        },
+      },
+    } as unknown as InputRequests,
+  })) as InputResponses;
+  assert.match(out, /at least 2/);
+  assert.deepEqual(JSON.parse(JSON.stringify(responses.q)), {
+    action: "accept",
+    content: { code: "abc" },
+  });
+});
+
+// ── exhausted retries decline, they never reject the round ─────────────────
+
+test("retry exhaustion declines that request and keeps the other answers", async () => {
+  // q1 answers cleanly; q2 exhausts its attempts on an un-coercible number.
+  const reader = scriptedReader(["a", "bananas", "a", "x", "y", "z"]);
+  let out = "";
+  const collector = createStdinMrtrCollector({
+    reader,
+    maxFieldAttempts: 3,
+    write: (t) => {
+      out += t;
+    },
+  });
+  const responses = (await collector({
+    state: {} as never,
+    inputRequests: {
+      ...elicit("q1"),
+      q2: {
+        method: "elicitation/create",
+        params: {
+          message: "How many?",
+          requestedSchema: {
+            type: "object",
+            properties: { n: { type: "number" } },
+            required: ["n"],
+          },
+        },
+      },
+    } as unknown as InputRequests,
+  })) as InputResponses;
+  // The earlier key's work survives — throwing would have discarded it.
+  assert.deepEqual(JSON.parse(JSON.stringify(responses.q1)), {
+    action: "accept",
+    content: { answer: "bananas" },
+  });
+  assert.deepEqual(responses.q2, { action: "decline" });
+  assert.match(out, /declining this request/);
+});

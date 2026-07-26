@@ -60,6 +60,24 @@ export interface ElicitationField {
    * answer there omits the key, which is the more useful default).
    */
   allowEmpty?: boolean;
+  /**
+   * Range/length bounds carried over from the requested schema, checked while
+   * collecting so a violation costs one re-prompt instead of failing the whole
+   * operation later: the SDK validates the completed content strictly, and by
+   * then the field's remaining attempts are gone.
+   */
+  constraints?: FieldConstraints;
+}
+
+/** The subset of schema bounds the terminal collector can check as it prompts. */
+export interface FieldConstraints {
+  minLength?: number;
+  maxLength?: number;
+  pattern?: string;
+  minimum?: number;
+  maximum?: number;
+  minItems?: number;
+  maxItems?: number;
 }
 
 /**
@@ -258,6 +276,7 @@ export function parseElicitationFields(requestedSchema: unknown): ElicitationFie
         ...(required.has(key) && !isPositiveInteger(prop.minItems)
           ? { allowEmpty: true }
           : {}),
+        ...withConstraints(prop),
       });
       continue;
     }
@@ -282,14 +301,98 @@ export function parseElicitationFields(requestedSchema: unknown): ElicitationFie
       !isPositiveInteger(prop.minLength)
         ? { allowEmpty: true }
         : {}),
+      ...withConstraints(prop),
     });
   }
   return fields;
 }
 
+/**
+ * Picks the schema bounds the collector can enforce at the prompt. Omitted
+ * entirely when the schema carries none, so a field object stays minimal.
+ */
+function withConstraints(
+  prop: Record<string, unknown>,
+): { constraints: FieldConstraints } | Record<string, never> {
+  const constraints: FieldConstraints = {};
+  for (const key of [
+    "minLength",
+    "maxLength",
+    "minimum",
+    "maximum",
+    "minItems",
+    "maxItems",
+  ] as const) {
+    const value = prop[key];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      constraints[key] = value;
+    }
+  }
+  if (typeof prop.pattern === "string" && prop.pattern !== "") {
+    constraints.pattern = prop.pattern;
+  }
+  return Object.keys(constraints).length > 0 ? { constraints } : {};
+}
+
 /** True for a schema bound that actually forbids an empty value. */
 function isPositiveInteger(value: unknown): boolean {
   return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
+/**
+ * Enforces the schema bounds the SDK would otherwise reject only after the
+ * whole form is collected. Throwing here re-prompts the single offending field,
+ * which is what the user can actually act on.
+ */
+function assertSatisfiesConstraints(
+  value: unknown,
+  field: ElicitationField,
+): void {
+  const c = field.constraints;
+  if (!c) return;
+  const name = sanitizeTerminalText(field.title ?? field.key);
+
+  if (typeof value === "string") {
+    if (c.minLength !== undefined && value.length < c.minLength) {
+      throw new Error(`"${name}" must be at least ${c.minLength} character(s).`);
+    }
+    if (c.maxLength !== undefined && value.length > c.maxLength) {
+      throw new Error(`"${name}" must be at most ${c.maxLength} character(s).`);
+    }
+    if (c.pattern !== undefined) {
+      let re: RegExp | undefined;
+      try {
+        re = new RegExp(c.pattern);
+      } catch {
+        re = undefined; // Un-compilable server pattern: leave it to the SDK.
+      }
+      if (re && !re.test(value)) {
+        throw new Error(
+          `"${name}" must match ${sanitizeTerminalText(c.pattern)}.`,
+        );
+      }
+    }
+    return;
+  }
+
+  if (typeof value === "number") {
+    if (c.minimum !== undefined && value < c.minimum) {
+      throw new Error(`"${name}" must be >= ${c.minimum}.`);
+    }
+    if (c.maximum !== undefined && value > c.maximum) {
+      throw new Error(`"${name}" must be <= ${c.maximum}.`);
+    }
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    if (c.minItems !== undefined && value.length < c.minItems) {
+      throw new Error(`"${name}" needs at least ${c.minItems} item(s).`);
+    }
+    if (c.maxItems !== undefined && value.length > c.maxItems) {
+      throw new Error(`"${name}" takes at most ${c.maxItems} item(s).`);
+    }
+  }
 }
 
 /**
@@ -354,6 +457,16 @@ function extractEnum(
  * omitted). Throws on an un-coercible answer so the caller can re-prompt.
  */
 export function coerceFieldValue(
+  raw: string,
+  field: ElicitationField,
+): { skip: true } | { value: unknown } {
+  const coerced = coerceFieldValueRaw(raw, field);
+  if ("value" in coerced) assertSatisfiesConstraints(coerced.value, field);
+  return coerced;
+}
+
+/** Type coercion only; {@link coerceFieldValue} adds the constraint check. */
+function coerceFieldValueRaw(
   raw: string,
   field: ElicitationField,
 ): { skip: true } | { value: unknown } {
@@ -433,7 +546,7 @@ export function coerceFieldValue(
       }
       const itemType = field.itemType ?? "string";
       const coerced = parts.map((part) => {
-        const one = coerceFieldValue(part, {
+        const one = coerceFieldValueRaw(part, {
           key: field.key,
           type: itemType,
           required: true,
@@ -591,10 +704,14 @@ async function collectOne(
       } catch (error) {
         ctx.write(`  ${(error as Error).message}\n`);
         if (attempt === ctx.maxFieldAttempts) {
-          throw new Error(
-            `Could not collect a valid value for "${sanitizeTerminalText(field.key)}" after ` +
-              `${ctx.maxFieldAttempts} attempts.`,
+          // Decline, never reject: an unanswerable field is a response (§12.1),
+          // and throwing here would discard the answers already collected for
+          // the other keys in this round. Only a real abort rejects.
+          ctx.write(
+            `  Giving up on "${sanitizeTerminalText(field.key)}" after ` +
+              `${ctx.maxFieldAttempts} attempts; declining this request.\n`,
           );
+          return { action: "decline" };
         }
       }
     }
