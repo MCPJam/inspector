@@ -11,6 +11,7 @@ import {
 } from "../../utils/oauth-proxy.js";
 
 const oauth = new Hono();
+const OAUTH_UPSTREAM_URL_HEADER = "X-MCPJam-OAuth-Upstream-URL";
 
 function safeHostname(url: string | undefined): string {
   if (!url) return "unknown";
@@ -88,6 +89,7 @@ oauth.post("/proxy", async (c) => {
     const { url, method, body, headers } = await c.req.json();
     proxyUrl = url;
     const result = await executeOAuthProxy({ url, method, body, headers });
+    c.header(OAUTH_UPSTREAM_URL_HEADER, result.finalUrl);
     return c.json(result);
   } catch (error) {
     const targetUrlHost = safeHostname(proxyUrl);
@@ -140,6 +142,7 @@ oauth.get("/metadata", async (c) => {
       );
     }
 
+    c.header(OAUTH_UPSTREAM_URL_HEADER, result.finalUrl);
     return c.json(result.metadata);
   } catch (error) {
     const targetUrlHost = safeHostname(metadataUrl);

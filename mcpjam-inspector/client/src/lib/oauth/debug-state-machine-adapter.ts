@@ -2,6 +2,7 @@ import {
   DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
   createOAuthStateMachine,
   getBrowserDebugDynamicRegistrationMetadata,
+  isLoopbackOAuthUrl,
   type OAuthFlowState,
   type OAuthProtocolVersion,
   type OAuthRequestExecutor,
@@ -212,7 +213,12 @@ export function createInspectorOAuthStateMachine(
     hasClientSecret,
     ...machineConfig
   } = config;
-  const explicitClientSecret = preregisteredClientSecret?.trim() || undefined;
+  // Preserve the exact typed secret — trimming would silently change one
+  // that legitimately has leading/trailing whitespace before it's used to
+  // authenticate the live token exchange below.
+  const explicitClientSecret = preregisteredClientSecret?.trim()
+    ? preregisteredClientSecret
+    : undefined;
   const resolveHostedClientSecret = createHostedClientSecretResolver(config);
 
   return createOAuthStateMachine({
@@ -220,6 +226,12 @@ export function createInspectorOAuthStateMachine(
     hasClientSecret: Boolean(explicitClientSecret) || Boolean(hasClientSecret),
     redirectUrl: getDebugRedirectUrl(),
     requestExecutor: createDebugRequestExecutor(),
+    // The debugger is a local-dev inspection surface: when the server under
+    // test is itself loopback (e.g. a `127.0.0.1` dev MCP server), its metadata
+    // fetches must be permitted. Mirror the Connect flow — allow loopback only
+    // when the debugged server URL is loopback; the guard still blocks
+    // LAN/link-local/reserved destinations regardless.
+    allowLoopbackMetadataFetch: isLoopbackOAuthUrl(machineConfig.serverUrl),
     // One step per "Continue" click: `scheduleAutoAdvance` is intentionally not
     // provided. The SDK state machines call it via optional chaining, so when
     // it is absent each `proceedToNextStep()` stops at the next step instead of

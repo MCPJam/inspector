@@ -29,6 +29,8 @@ import type { ModelVisibleMcpToolResults } from "@mcpjam/sdk/host-config/interna
 import { runHarnessTurn } from "./harness/run-harness-turn.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import type { ExecutionScope } from "./execution-scope.js";
+import type { PinnedSkillArtifact } from "../../shared/skill-types.js";
+import type { RuntimeSkill } from "./harness/runtime-skills.js";
 import type { HarnessMcpProxyStrategy } from "./harness/harness-proxy-strategy.js";
 import {
   buildFinishChunk,
@@ -413,11 +415,14 @@ export interface MCPJamHandlerOptions {
    */
   builtInTools?: ToolSet;
   /**
-   * WS5 foundation: reusable instruction bundles for the harness runtime,
-   * forwarded to `new HarnessAgent({ skills })`. Harness-only (emulated ignores).
-   * Empty/unset today — hosted-mode skills authoring is a separate workstream.
+   * The host's configured computer working directory (`hostConfig.computer
+   * .workdir`), COMP-16. Single source of truth for WHERE commands run on the
+   * box: the chat `bash` tool already reads it via `builtInTools`; the harness
+   * path needs it separately here to root its Shell under the same directory
+   * (the harness framework then nests a per-session `<workdir>/claude-code-<id>`
+   * subdir). Absent ⇒ the box default (`/home/user`). Confined server-side.
    */
-  skills?: unknown[];
+  computerWorkdir?: string;
   authHeader?: string;
   chatboxId?: string;
   accessVersion?: number;
@@ -434,6 +439,26 @@ export interface MCPJamHandlerOptions {
    */
   journeyRunId?: string;
   hostId?: string;
+  /**
+   * Pinned harness skills (Project Environments — env-based swarm targets
+   * only). When set — even EMPTY — the harness turn delivers exactly these
+   * pinned artifacts and SKIPS the live `fetchRuntimeSkills` query; its
+   * `skillsHash` derives from the pinned artifact fingerprints. Undefined ⇒
+   * the legacy live-pool fetch. HARNESS-ONLY: the emulated engine receives
+   * pinned skills via prepareChatV2's `skillsSource` instead (which THROWS on
+   * harness+pinned — the two paths are deliberately disjoint).
+   */
+  pinnedHarnessSkills?: PinnedSkillArtifact[];
+  /**
+   * Resolved Project-Environment skills for THIS turn (Phase 1.4). When set —
+   * even EMPTY — the harness turn delivers exactly these and SKIPS the live
+   * project-wide `fetchRuntimeSkills` query. Ranks BELOW `pinnedHarnessSkills`
+   * (a pinned run's reproducibility outranks a live environment resolution) and
+   * ABOVE the legacy live fetch; see `harness/skill-delivery.ts` for the single
+   * place that precedence is written down. An empty override is semantic: the
+   * environment delivers no skills, which is not the same as "ask the project".
+   */
+  runtimeSkillsOverride?: RuntimeSkill[];
   /**
    * Phase 3 execution scope from the server-resolved runtime config (chatbox OR
    * host-by-id). Threaded into the harness path (sandbox reserve, runtime skills,
