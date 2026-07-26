@@ -18,8 +18,28 @@ import {
 import { type ManagedMcpClient } from "./managed-mcp-client.js";
 import { DialectAwareJsonSchemaValidator } from "./dialect-aware-json-schema-validator.js";
 import { OfficialSdkClientAdapter } from "./official-sdk-client-adapter.js";
+import {
+  LogLevelMetaClient,
+  type LogLevelProvider,
+} from "./log-level-meta-client.js";
 import type { McpProtocolVersion } from "./mcp-protocol-version.js";
 import type { RpcLogger } from "./types.js";
+
+export type { LogLevelProvider };
+
+/**
+ * Wrap an adapter in the `LogLevelMetaClient` decorator when a
+ * `logLevelProvider` is supplied, else return the adapter untouched. Keeping
+ * this here means both factory entry points get the decorator identically.
+ */
+function withLogLevelMeta(
+  adapter: ManagedMcpClient,
+  logLevelProvider?: LogLevelProvider,
+): ManagedMcpClient {
+  return logLevelProvider
+    ? new LogLevelMetaClient(adapter, logLevelProvider)
+    : adapter;
+}
 
 // Re-export so consumers can `import { McpProtocolVersion } from "@mcpjam/sdk"`
 // rather than reaching into the protocol-version module.
@@ -29,6 +49,13 @@ export type { McpProtocolVersion };
 export interface CreateManagedMcpClientArgs {
   clientInfo: Implementation;
   clientOptions?: ClientOptions;
+  /**
+   * Optional live accessor for this server's per-request log level. When
+   * provided, the returned client is wrapped in `LogLevelMetaClient`, which
+   * injects `LOG_LEVEL_META_KEY` into `params._meta` on the modern era only
+   * (legacy uses `logging/setLevel`). Omit to opt a connection out entirely.
+   */
+  logLevelProvider?: LogLevelProvider;
 }
 
 /**
@@ -54,15 +81,25 @@ export function createManagedMcpClient(
       args.clientOptions.jsonSchemaValidator ??
       new DialectAwareJsonSchemaValidator(),
   });
-  return new OfficialSdkClientAdapter(inner);
+  return withLogLevelMeta(
+    new OfficialSdkClientAdapter(inner),
+    args.logLevelProvider,
+  );
 }
 
 /**
  * Helper for callers that already have an upstream `Client`. Wraps without
- * re-constructing.
+ * re-constructing. Pass `logLevelProvider` to layer on the modern
+ * per-request logging opt-in (see {@link CreateManagedMcpClientArgs}).
  */
-export function wrapLegacyClient(client: Client): ManagedMcpClient {
-  return new OfficialSdkClientAdapter(client);
+export function wrapLegacyClient(
+  client: Client,
+  logLevelProvider?: LogLevelProvider,
+): ManagedMcpClient {
+  return withLogLevelMeta(
+    new OfficialSdkClientAdapter(client),
+    logLevelProvider,
+  );
 }
 
 export type { RpcLogger };

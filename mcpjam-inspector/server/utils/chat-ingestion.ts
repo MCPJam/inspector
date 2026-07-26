@@ -251,6 +251,14 @@ interface PersistChatSessionOptions {
    */
   journeyRunId?: string;
   hostId?: string;
+  /**
+   * Opaque swarm execution-target id (Project Environments). Echoed verbatim
+   * from the pinned snapshot target so the backend can bind the session to the
+   * exact target when two targets share a host. Absent for legacy runs and
+   * pre-environments snapshots (the backend's host-only fallback still keys
+   * those).
+   */
+  targetId?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -451,6 +459,7 @@ export async function persistChatSessionToConvex(
           ? { journeyRunId: options.journeyRunId }
           : {}),
         ...(options.hostId ? { hostId: options.hostId } : {}),
+        ...(options.targetId ? { targetId: options.targetId } : {}),
       }),
     });
 

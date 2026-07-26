@@ -389,7 +389,6 @@ export function AddServerModal({
               onChange={(e) => formState.setName(e.target.value)}
               placeholder="my-mcp-server"
               required
-              className="h-10"
             />
           </div>
 

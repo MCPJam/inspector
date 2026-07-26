@@ -55,6 +55,10 @@ vi.mock("convex/react", () => ({
   }),
   useMutation: () => vi.fn().mockResolvedValue(undefined),
   useAction: () => vi.fn().mockResolvedValue(undefined),
+  // Pulled in via useProjectEnvironments (env-suite fan-out labels); the
+  // handlers under test never enable that query (flag off ⇒ "skip").
+  useQuery: () => undefined,
+  useConvexAuth: () => ({ isAuthenticated: false, isLoading: false }),
 }));
 
 // Mock useAiProviderKeys (mutable for replay-without-keys coverage)

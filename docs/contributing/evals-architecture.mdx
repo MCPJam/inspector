@@ -1,16 +1,48 @@
 ---
 title: "Evals System Architecture"
-description: "Comprehensive guide to the evaluation system architecture in MCPJam Inspector"
+description: "How the evals system is wired: the Inspector runner, the SDK reporter, the eval-ingest API, and the predicate gate"
 icon: "flask-conical"
 ---
 
-# Evals System Architecture
+The evals system spans three surfaces that share one backend:
 
-The Evals system in MCPJam Inspector is a testing framework for evaluating MCP (Model Context Protocol) server implementations. This guide covers the architecture, data flows, and key components so you can contribute.
+- **Inspector Evaluate UI** — author suites and cases, run them hosted, inspect traces. See [Evaluate](/inspector/evals) for the product view.
+- **`@mcpjam/sdk`** — run evals in your own process (`EvalTest` / `EvalSuite`) and upload results. See [Running Evals](/sdk/concepts/running-evals).
+- **`mcpjam` CLI** — author, start, and inspect hosted runs from a terminal (`mcpjam eval …`). See the [command reference](/cli/reference#eval-commands).
 
-<Note>
-**Heads up.** Some of the diagrams and file paths below predate the chat-v2 / hostConfig consolidation. The current architecture is summarized in the [HostConfig consolidation](#hostconfig-consolidation) section directly below; treat that as the canonical reference when it conflicts with the older sections.
-</Note>
+This page covers the wiring underneath: where results enter the system, how host configuration stays consistent across surfaces, and where the code lives.
+
+## The big picture
+
+```mermaid
+graph TB
+    subgraph Clients
+        SDK["@mcpjam/sdk reporter<br/>(local eval runs)"]
+        CLI["mcpjam CLI<br/>(hosted runs)"]
+        UI[Inspector Evaluate UI]
+    end
+
+    subgraph Gateway["Inspector server (Hono)"]
+        INGEST["/api/v1/projects/:projectId/eval-ingest/*<br/>(routes/v1/eval-ingest.ts)"]
+        RUNNER["Eval runner<br/>(services/evals-runner.ts + services/evals/*)"]
+    end
+
+    subgraph Backend["MCPJam backend (Convex)"]
+        CONVEX["/v1/evals/ingest/*<br/>+ suites / cases / iterations"]
+    end
+
+    SDK -->|"POST results (sk_ key)"| INGEST
+    CLI -->|"platform API"| CONVEX
+    UI --> RUNNER
+    INGEST -->|"delegated org JWT"| CONVEX
+    RUNNER -->|recorder| CONVEX
+    RUNNER -->|MCPClientManager| MCP[MCP servers]
+```
+
+Two distinct write paths matter:
+
+1. **Ingestion** — externally produced results (SDK auto-save, manual reporting APIs, artifact uploads) enter through the `eval-ingest` HTTP surface.
+2. **Hosted runs** — the Inspector's own runner executes iterations server-side and persists through its recorder; the CLI's `eval run` starts these hosted runs via the platform API.
 
 ## HostConfig consolidation
 
@@ -57,13 +89,13 @@ Inside `@mcpjam/sdk`, the executor surface was renamed in 1.11 to align with MCP
 
 `HostRunner` snapshots the host once at construction; `HostRuntime` re-snapshots on every `.run()`, so mid-eval mutation to the bound `Host` is captured per-iteration. Each `IterationResult` carries `hostSnapshot?: HostJson` and a derived metadata stamp (`buildHostSnapshotMetadata`) that is additively merged into `EvalResultInput.metadata` (existing keys are never overwritten — conflicting host keys are namespaced under `host.<key>`).
 
-When the MCPJam backend advertises the `evalsHostConfig` capability at `GET /sdk/v1/info`, the SDK eval reporter additionally sends `{ hostConfig, hostConfigHash }` at the run boundary:
+The SDK eval reporter additionally sends `{ hostConfig, hostConfigHash }` at the run boundary. The v1 ingest surface always accepts the pair — the old per-`baseUrl` capability probe is gone:
 
-- `POST /sdk/v1/evals/runs/start` (chunked path) — body includes the pair when the capability probe succeeds and iteration snapshots are homogeneous.
-- `POST /sdk/v1/evals/report` (one-shot path) — same.
-- `POST /sdk/v1/evals/runs/:id/iterations` (chunked append) and `POST /sdk/v1/evals/runs/:id/finalize` — **never** carry the pair (per-run, not per-batch).
+- `POST /api/v1/projects/:projectId/eval-ingest/runs/start` (chunked path) — body includes the pair when iteration snapshots are homogeneous.
+- `POST /api/v1/projects/:projectId/eval-ingest/report` (one-shot path) — same.
+- `POST /api/v1/projects/:projectId/eval-ingest/runs/iterations` and `…/runs/finalize` — **never** carry the pair (per-run, not per-batch).
 
-Source order, run-level only: `iteration.hostSnapshot` → `executor.getHostSnapshot?.()` → `MCPJamReportingConfig.host`. Pass-1 homogeneity gate: send only when all available iteration snapshots canonicalize to the same hash; heterogeneous runs omit (per-iteration wire support is a later stage). Capability probe is **fail-safe to "no capability"** on any error.
+Source order, run-level only: `iteration.hostSnapshot` → `executor.getHostSnapshot?.()` → `MCPJamReportingConfig.host`. Today `EvalResultInput` carries no `hostSnapshot` field, so the shipped reporter resolves executor → explicit host. The iteration slot and its homogeneity gate (send only when all snapshots canonicalize to the same hash) are reserved for when per-iteration capture reaches the wire shape; see the comment in `resolveWireHostConfigForRun` (`sdk/src/report-eval-results.ts`). Errors thrown while resolving or canonicalizing the snapshot log a warning and omit the pair rather than failing the upload. Two cases drop it silently by design: heterogeneous iteration snapshots, and an explicit `host` whose `toJSON()` fails (see `resolveRunLevelHostSnapshot` in `sdk/src/sdk-evals-host-config-source.ts`).
 
 `hostConfigHash` is a transport-integrity check — the backend re-runs `normalizeSdkEvalHostConfigForWire → canonicalizeHostConfigV2 → computeHostConfigHashV2` and rejects on mismatch. It is **not** the persisted storage id; suite-resolved Convex `Id<'servers'>` are layered on top at storage time, so the persisted `hostConfigsV2` row's hash differs from the wire hash by design.
 
@@ -74,966 +106,78 @@ Source order, run-level only: `iteration.hostSnapshot` → `executor.getHostSnap
 
 A canonicalize-time guard in the SDK rejects sandbox shapes that leak a `deny` key. Don't reuse `SandboxCspPolicy` / `SandboxPermissionsPolicy` for persisted host configs.
 
----
+## Result ingestion API (`eval-ingest`)
 
-## Overview
+External results enter through five `POST` endpoints, implemented as a thin proxy in `mcpjam-inspector/server/routes/v1/eval-ingest.ts` over the Convex `/v1/evals/ingest/*` surface:
 
-The Evals system allows developers to:
+| Endpoint | Purpose |
+|----------|---------|
+| `POST /api/v1/projects/:projectId/eval-ingest/report` | One-shot upload of a complete run |
+| `POST /api/v1/projects/:projectId/eval-ingest/runs/start` | Open a run for chunked upload |
+| `POST /api/v1/projects/:projectId/eval-ingest/runs/iterations` | Append a batch of iterations |
+| `POST /api/v1/projects/:projectId/eval-ingest/runs/finalize` | Close the run and compute the verdict |
+| `POST /api/v1/projects/:projectId/eval-ingest/artifacts/upload-url` | Mint an upload URL for large blobs (widget HTML snapshots) |
 
-- **Run automated tests** against MCP servers to validate tool implementations
-- **Generate test cases** using AI based on available server tools
-- **Track results** in real-time with detailed metrics and analytics
-- **Compare expected vs actual behavior** using agentic LLM loops
+Proxy behavior worth knowing when debugging:
 
-### Key Features
+- The caller authenticates like any `/api/v1` route (typically an `sk_` API key); the proxy forwards to Convex with a **delegated org-scoped JWT**, not the caller's credential.
+- A literal `default` in the `:projectId` segment is stripped from the payload so the backend resolves the org's Default project; any other value overwrites `payload.projectId`.
+- The proxy caps request bodies at 6 MiB (the backend enforces its own 5 MiB limit) and times out after 60 s; status and body pass through verbatim.
 
-- Multi-step wizard UI for test configuration
-- Support for multiple LLM providers (OpenAI, Anthropic, DeepSeek, Ollama)
-- Real-time result tracking via MCPJamBackend
-- AI-powered test case generation
-- Agentic execution with up to 20 conversation turns
-- Token usage and performance metrics
+<Warning>
+The legacy `/sdk/v1/evals/*` endpoints and the project API keys (`mcpjam_…`) that protected them are **retired**. The backend answers those routes with `410 Gone`. Everything ingests through `eval-ingest` with `sk_…` keys — see [API keys](/reference/api-keys).
+</Warning>
 
----
+## SDK reporter
 
-## Architecture Overview
+`sdk/src/report-eval-results.ts` implements the client side of ingestion (types in `sdk/src/eval-reporting-types.ts`; API reference in [Saving Eval Results](/sdk/reference/eval-reporting)):
 
-The Evals system is composed of three main layers:
+- **Auth** — `Authorization: Bearer <sk_ key>`, resolved from `input.apiKey ?? MCPJAM_API_KEY`. Base URL from `input.baseUrl ?? MCPJAM_BASE_URL` (default `https://app.mcpjam.com`); project from `input.project ?? MCPJAM_PROJECT_ID` (default `default`).
+- **Flow** — widget snapshots upload first (via `artifacts/upload-url`); then, if the run fits in one request (≤ 200 results and ≤ 1 MiB), a single `report` call; otherwise `runs/start` → chunked `runs/iterations` → `runs/finalize`.
+- **Retry** — 429/5xx, network errors, and timeouts retry with base delays of 250/750/1750 ms plus ±20% jitter. Billing-limit errors never retry. If `runs/start` reports the run already completed (idempotent reuse), the reporter short-circuits.
 
-```mermaid
-graph TB
-    subgraph Client["Client Layer (React + Vite)"]
-        A[EvalRunner Component]
-        B[EvalsResultsTab Component]
-        C[Suite Views & Iterations]
-    end
+## Predicate gate
 
-    subgraph Server["Server Layer (Hono.js)"]
-        D[POST /api/mcp/evals/run]
-        E[POST /api/mcp/evals/generate-tests]
-        F[eval-agent.ts]
-    end
+The deterministic pass/fail layer lives in `@mcpjam/sdk/predicates` (`sdk/src/predicates/`), browser-safe so the Inspector GUI runner and the `mcpjam eval` CLI share one implementation:
 
-    subgraph Execution["Execution Layer"]
-        H[evals-runner.ts - Core Orchestrator]
-        I[evaluator.ts - Result Comparison]
-        J[RunRecorder - DB Interface]
-        K[MCPClientManager]
-    end
+- `types.ts` — the `Predicate` union (12 types) plus Zod schemas. The union grows only when a real corpus task demands it.
+- `evaluate.ts` — `evaluatePredicate` / `evaluatePredicates` / `evaluateTurnChecks`, pure functions over an `IterationTranscript`.
+- `transcript.ts` — builds transcripts from traces (`buildIterationTranscript`, `buildTurnTranscript`).
+- `argMatcher.ts` — reuses the same argument engine as `expectedToolCalls` matching, so both agree on what "args match" means.
 
-    subgraph Backend["MCPJamBackend"]
-        L[EvalSuite Table]
-        M[EvalCase Table]
-        N[EvalIteration Table]
-        O[Convex Actions]
-    end
+Constraints that bite contributors:
 
-    A -->|POST requests| D
-    A -->|POST requests| E
-    B -->|Query subscriptions| L
-    C -->|Query subscriptions| M
-    C -->|Query subscriptions| N
+- **Convex mirror.** `mcpjam-backend/convex/lib/predicates.ts` hand-mirrors the union (Convex cannot import `@mcpjam/sdk`). Parity is proven by the JSON fixtures in `sdk/tests/fixtures/predicates-parity-fixtures.json` and their backend sibling — adding a predicate type means editing both validators and the fixtures in the same PR.
+- **Turn scoping.** Every predicate kind is turn-scopable except `tokenBudgetUnder` (per-turn token usage is not reliably captured); the list is `TURN_SCOPABLE_PREDICATE_KINDS`, also mirrored in the backend.
+- **Verdict rows.** The runner persists one `{ predicate, passed, reason, scope? }` row per predicate under `testIteration.metadata.predicates`.
 
-    D --> H
-    E --> F
+Per-case predicate resolution (suite defaults vs `inherit` / `replace` / `extend` overrides) is centralized in `mcpjam-inspector/shared/eval-matching.ts` (`resolveCaseSuccessPredicates`).
 
-    H --> J
-    J --> O
-    O --> L
-    O --> M
-    O --> N
+## Where the code lives
 
-    H --> K
-    K -->|Tool execution| P[MCP Servers]
+| Area | Location |
+|------|----------|
+| SDK eval primitives | `sdk/src/EvalTest.ts`, `sdk/src/EvalSuite.ts`, `sdk/src/eval-result-mapping.ts` |
+| SDK reporting | `sdk/src/report-eval-results.ts`, `sdk/src/eval-reporting-types.ts`, `sdk/src/upload-eval-artifact.ts` |
+| Predicates | `sdk/src/predicates/` |
+| Host config core | `sdk/src/host-config/` |
+| Ingestion proxy | `mcpjam-inspector/server/routes/v1/eval-ingest.ts` |
+| Suite/case/run routes | `mcpjam-inspector/server/routes/shared/evals.ts` |
+| Hosted runner | `mcpjam-inspector/server/services/evals-runner.ts` |
+| Runner internals | `mcpjam-inspector/server/services/evals/` (`recorder.ts`, `step-handlers.ts`, `iteration-verdict.ts`, `finalize-iteration.ts`, …) |
+| Shared matching logic | `mcpjam-inspector/shared/eval-matching.ts` |
+| Evaluate UI | `mcpjam-inspector/client/src/components/evals/` |
+| CLI commands | `cli/src/commands/eval.ts` |
 
-    F -->|LLM call| Q[Backend LLM]
-```
-
----
-
-## System Components
-
-### 1. Client Layer (UI)
-
-#### **EvalRunner Component** (`client/src/components/evals/eval-runner.tsx`)
-
-The primary UI for configuring and launching evaluation runs.
-
-**Architecture: 4-Step Wizard**
-
-```mermaid
-stateDiagram-v2
-    [*] --> SelectServers: Start
-    SelectServers --> ChooseModel: Next
-    ChooseModel --> DefineTests: Next
-    DefineTests --> ReviewRun: Next
-    ReviewRun --> [*]: Execute
-
-    ReviewRun --> DefineTests: Back
-    DefineTests --> ChooseModel: Back
-    ChooseModel --> SelectServers: Back
-```
-
-**Step Details:**
-
-1. **Select Servers**: Choose from connected MCP servers
-   - Filters: Only shows connected servers
-   - Validation: At least one server required
-
-2. **Choose Model**: Select LLM provider and model
-   - Providers: OpenAI, Anthropic, DeepSeek, Ollama, MCPJam
-   - Credential check: Validates API keys via `hasToken()`
-
-3. **Define Tests**: Create or generate test cases
-   - Manual entry: Title, query, expected tool calls, number of runs
-   - AI generation: Click "Generate Tests" to create 6 test cases (2 easy, 2 medium, 2 hard)
-
-4. **Review & Run**: Confirm and execute
-   - Displays summary of configuration
-   - POST to `/api/mcp/evals/run`
-
-#### **Results Components** (`client/src/components/evals/*`)
-
-Real-time display of evaluation results.
-
-**Component Hierarchy:**
-
-```
-EvalsResultsTab
-├─ SuitesOverview (List of all suites)
-│  └─ SuiteRow (Individual suite card)
-│
-└─ SuiteIterationsView (Detailed view)
-   ├─ Test case aggregates
-   └─ IterationCard (Individual run results)
-      └─ IterationDetails (Expandable details)
-```
-
-**Data Flow:**
-
-```mermaid
-sequenceDiagram
-    participant UI as EvalsResultsTab
-    participant Convex
-
-    UI->>Convex: Query evals:getCurrentUserEvalTestSuitesWithMetadata
-    Convex-->>UI: {testSuites[], metadata}
-
-    UI->>UI: User selects suite
-
-    UI->>Convex: Query evals:getAllTestCasesAndIterationsBySuite
-    Convex-->>UI: {testCases[], iterations[]}
-
-    UI->>UI: Aggregate by test case
-    UI->>UI: Render iteration details
-```
-
----
-
-### 2. Server Layer (API)
-
-#### **Evals Routes** (`server/routes/mcp/evals.ts`)
-
-HTTP API endpoints for eval execution and test generation.
-
-##### **Endpoint: POST `/api/mcp/evals/run`**
-
-**Request Schema:**
-
-```typescript
-{
-  tests: Array<{
-    title: string
-    query: string
-    runs: number
-    model: string
-    provider: string
-    expectedToolCalls: string[]
-    advancedConfig?: {
-      system?: string
-      temperature?: number
-      toolChoice?: string
-    }
-  }>
-  serverIds: string[]
-  modelApiKey?: string | null
-  convexAuthToken: string
-}
-```
-
-**Processing Flow:**
-
-```mermaid
-flowchart TD
-    A[Receive POST /evals/run] --> B{Validate with Zod}
-    B -->|Invalid| C[Return 400 error]
-    B -->|Valid| D[Resolve server IDs]
-    D --> E{Check server status}
-    E -->|Not connected| F[Throw error]
-    E -->|Connected| G[Call runEvalSuiteWithAiSdk async]
-    G --> H[Return success immediately]
-
-    G --> I[Background execution continues...]
-```
-
-**Key Functions:**
-
-- `resolveServerIdsOrThrow()`: Case-insensitive server ID matching
-- `runEvalSuiteWithAiSdk()`: Executes eval suite in background using AI SDK
-
-##### **Endpoint: POST `/api/mcp/evals/generate-tests`**
-
-**Request Schema:**
-
-```typescript
-{
-  serverIds: string[]
-  convexAuthToken: string
-}
-```
-
-**Processing Flow:**
-
-```mermaid
-flowchart TD
-    A[Receive POST /evals/generate-tests] --> B{Validate with Zod}
-    B -->|Invalid| C[Return 400 error]
-    B -->|Valid| D[Resolve server IDs]
-    D --> E[Collect tools from servers]
-    E --> F{Tools found?}
-    F -->|No| G[Return 400 error]
-    F -->|Yes| H[Call generateTestCases]
-    H --> I[Return generated tests]
-```
-
-#### **Test Generation Agent** (`server/services/eval-agent.ts`)
-
-Generates test cases using backend LLM.
-
-**Algorithm:**
-
-1. Groups tools by server ID
-2. Creates system prompt with MCP agent instructions
-3. Creates user prompt with tool definitions and requirements
-4. Calls backend LLM (meta-llama/llama-3.3-70b-instruct)
-5. Parses JSON response
-6. Returns 6 test cases (2 easy, 2 medium, 2 hard)
-
-**LLM Prompt Structure:**
-
-```
-System: You are an MCP agent testing assistant...
-
-User:
-Available tools:
-[Tool definitions with schemas]
-
-Requirements:
-- 2 EASY test cases (single tool, straightforward)
-- 2 MEDIUM test cases (2-3 tools, some complexity)
-- 2 HARD test cases (3+ tools, complex workflows)
-
-Return JSON array of test cases.
-```
-
----
-
-### 3. CLI Layer (Execution Engine)
-
-#### **Runner** (`evals-cli/src/evals/runner.ts`)
-
-The core orchestrator that executes evaluation tests.
-
-**Entry Points:**
-
-1. `runEvalsWithApiKey()`: CLI mode with API key authentication
-2. `runEvalsWithAuth()`: UI mode with Convex authentication
-
-**Execution Flow:**
-
-```mermaid
-flowchart TD
-    A[Start runEvalsWithAuth] --> B[Validate configs]
-    B --> C[Create MCP Client via Mastra]
-    C --> D[List tools from all servers]
-    D --> E[Create RunRecorder]
-    E --> F[Pre-create suite in DB]
-
-    F --> G{For each test case}
-    G --> H[Record test case in DB]
-    H --> I{For each run iteration}
-    I --> J[Start iteration in DB]
-    J --> K[Determine execution path]
-
-    K --> L{Is MCPJam model?}
-    L -->|Yes| M[runIterationViaBackend]
-    L -->|No| N[runIteration local]
-
-    M --> O[Execute agentic loop]
-    N --> O
-
-    O --> P[Evaluate results]
-    P --> Q[Finish iteration in DB]
-
-    Q --> R{More iterations?}
-    R -->|Yes| I
-    R -->|No| S{More test cases?}
-    S -->|Yes| G
-    S -->|No| T[Complete suite]
-```
-
-**Agentic Loop (Local Models):**
-
-```mermaid
-sequenceDiagram
-    participant Runner as runner.ts
-    participant LLM as LLM Provider
-    participant MCP as MCP Client
-    participant DB as Database
-
-    Runner->>LLM: streamText(prompt, tools)
-
-    loop Up to 20 turns
-        LLM-->>Runner: Response with tool calls
-        Runner->>Runner: Extract tool names & inputs
-
-        loop For each tool call
-            Runner->>MCP: Execute tool
-            MCP-->>Runner: Tool result
-            Runner->>Runner: Add to message history
-        end
-
-        Runner->>LLM: Continue with tool results
-        LLM-->>Runner: Next response
-
-        alt finishReason !== "tool-calls"
-            break Exit loop
-        end
-    end
-
-    Runner->>Runner: Evaluate: expected vs actual
-    Runner->>DB: Update iteration with results
-```
-
-**Key Features:**
-
-- Max 20 conversation turns to prevent infinite loops
-- Token usage tracking (prompt + completion)
-- Duration measurement
-- Tool call recording
-
-#### **Evaluator** (`evals-cli/src/evals/evaluator.ts`)
-
-Compares expected vs actual tool calls to determine pass/fail status.
-
-**Logic:**
-
-```typescript
-function evaluateResults(
-  expectedToolCalls: string[],
-  actualToolCalls: string[],
-): {
-  passed: boolean;
-  missing: string[];
-  unexpected: string[];
-} {
-  const passed = expectedToolCalls.every((tool) =>
-    actualToolCalls.includes(tool),
-  );
-
-  const missing = expectedToolCalls.filter(
-    (tool) => !actualToolCalls.includes(tool),
-  );
-
-  const unexpected = actualToolCalls.filter(
-    (tool) => !expectedToolCalls.includes(tool),
-  );
-
-  return { passed, missing, unexpected };
-}
-```
-
-**Pass Criteria:**
-
-- ✅ All expected tools must be called
-- ⚠️ Additional unexpected tools are allowed (marked but don't fail)
-
-#### **RunRecorder** (`evals-cli/src/db/tests.ts`)
-
-Database interface for persisting evaluation results.
-
-**Two Modes:**
-
-1. **API Key Mode** (`createRunRecorder`): Uses CLI-based database client
-2. **Auth Mode** (`createRunRecorderWithAuth`): Uses Convex HTTP client
-
-**Methods:**
-
-```typescript
-interface RunRecorder {
-  ensureSuite(config: EvalConfig): Promise<{
-    suiteId: string;
-    caseIdsByTitle: Map<string, string>;
-  }>;
-
-  recordTestCase(
-    suiteId: string,
-    testCase: TestCase,
-  ): Promise<string | undefined>;
-
-  startIteration(testCaseId: string): Promise<string | undefined>;
-
-  finishIteration(
-    iterationId: string,
-    result: {
-      result: "passed" | "failed" | "cancelled";
-      actualToolCalls: string[];
-      tokensUsed: number;
-      durationMs: number;
-    },
-  ): Promise<void>;
-}
-```
-
-**Database Flow:**
-
-```mermaid
-sequenceDiagram
-    participant Runner as runner.ts
-    participant Recorder as RunRecorder
-    participant Convex
-
-    Runner->>Recorder: ensureSuite(config)
-    Recorder->>Convex: precreateEvalSuiteWithAuth
-    Convex-->>Recorder: {suiteId, caseIds}
-    Recorder-->>Runner: {suiteId, caseIdsByTitle}
-
-    loop For each test case
-        Runner->>Recorder: recordTestCase(suiteId, testCase)
-        Recorder-->>Runner: testCaseId
-
-        loop For each iteration
-            Runner->>Recorder: startIteration(testCaseId)
-            Recorder->>Convex: Create iteration (status: running)
-            Convex-->>Recorder: iterationId
-            Recorder-->>Runner: iterationId
-
-            Runner->>Runner: Execute test...
-
-            Runner->>Recorder: finishIteration(iterationId, result)
-            Recorder->>Convex: Update iteration (status: completed)
-        end
-    end
-```
-
----
-
-## Data Models
-
-### Database Schema
-
-```mermaid
-erDiagram
-    EvalSuite ||--o{ EvalCase : contains
-    EvalCase ||--o{ EvalIteration : has
-
-    EvalSuite {
-        string _id
-        string createdBy
-        object config
-        number _creationTime
-    }
-
-    EvalCase {
-        string _id
-        string evalTestSuiteId
-        string title
-        string query
-        string provider
-        string model
-        array expectedToolCalls
-        object advancedConfig
-    }
-
-    EvalIteration {
-        string _id
-        string testCaseId
-        string status
-        string result
-        array actualToolCalls
-        array missing
-        array unexpected
-        number tokensUsed
-        number durationMs
-        number startedAt
-        number updatedAt
-        number createdAt
-    }
-```
-
-### TypeScript Interfaces
-
-```typescript
-// Suite configuration
-type EvalSuite = {
-  _id: string;
-  createdBy: string; // User ID from auth
-  config: {
-    tests: EvalCase[];
-    environment: {
-      servers: string[];
-    };
-  };
-  _creationTime: number;
-};
-
-// Individual test case
-type EvalCase = {
-  _id: string;
-  evalTestSuiteId: string; // FK to EvalSuite
-  title: string;
-  query: string;
-  provider: string;
-  model: string;
-  expectedToolCalls: string[];
-  advancedConfig?: {
-    system?: string;
-    temperature?: number;
-    toolChoice?: string;
-  };
-};
-
-// Single test run result
-type EvalIteration = {
-  _id: string;
-  testCaseId: string; // FK to EvalCase
-  status: "pending" | "running" | "completed" | "failed" | "cancelled";
-  result: "pending" | "passed" | "failed" | "cancelled";
-  actualToolCalls: string[];
-  missing: string[]; // Expected tools not called
-  unexpected: string[]; // Unexpected tools called
-  tokensUsed: number;
-  durationMs: number;
-  startedAt?: number;
-  updatedAt: number;
-  createdAt: number;
-};
-```
-
----
-
-## Integration Points
-
-### LLM Providers
-
-The system supports multiple execution paths based on the selected model:
-
-```mermaid
-flowchart TD
-    A[Model Selection] --> B{Provider Type}
-
-    B -->|OpenAI| C[AI SDK: @ai-sdk/openai]
-    B -->|Anthropic| D[AI SDK: @ai-sdk/anthropic]
-    B -->|DeepSeek| E[AI SDK: @ai-sdk/openai compat]
-    B -->|Ollama| F[AI SDK: @ai-sdk/ollama]
-    B -->|MCPJam| G[MCPJam Backend: /stream]
-
-    C --> H[generateText via AI SDK]
-    D --> H
-    E --> H
-    F --> H
-
-    G --> I[runIterationViaBackend]
-
-    H --> J[Single-step execution]
-    I --> K[Multi-step agentic loop]
-```
-
-**Provider Configuration:**
-
-```typescript
-// OpenAI
-{
-  provider: "openai",
-  apiKey: "sk-...",
-  model: "gpt-4"
-}
-
-// Anthropic
-{
-  provider: "anthropic",
-  apiKey: "sk-ant-...",
-  model: "claude-3-5-sonnet-20241022"
-}
-
-// MCPJam (Backend)
-{
-  provider: "@mcpjam/meta-llama",
-  model: "@mcpjam/llama-3.3-70b-instruct"
-  // Uses Convex auth token instead of API key
-}
-```
-
-**AI SDK Integration:**
-
-The system now uses Vercel's AI SDK (`ai` package) for LLM interactions:
-
-- `generateText()`: Single-step text generation with tool calling
-- `createLlmModel()`: Helper to create provider-specific model instances
-- Automatic tool call extraction and evaluation
-- Built-in token usage tracking
-
-### MCP Server Integration
-
-**Connection Workflow:**
-
-```mermaid
-sequenceDiagram
-    participant UI as UI
-    participant CM as MCPClientManager
-    participant Server as MCP Server
-
-    UI->>CM: listServers()
-    CM-->>UI: ["server1", "server2"]
-
-    UI->>CM: getConnectionStatus("server1")
-    CM-->>UI: "connected"
-
-    UI->>CM: listTools("server1")
-    CM->>Server: tools/list
-    Server-->>CM: {tools: [...]}
-    CM-->>UI: {tools: [...]}
-
-    Note over UI,Server: During eval execution...
-
-    UI->>Runner: Execute eval
-    Runner->>CM: getToolsForAiSdk(serverIds)
-    CM-->>Runner: ToolSet (AI SDK format)
-    Runner->>Server: Execute tool via AI SDK
-    Server-->>Runner: {result: ...}
-```
-
-**Transport Support:**
-
-1. **STDIO**: Command execution with stdin/stdout
-
-   ```typescript
-   {
-     transport: "stdio",
-     command: "node",
-     args: ["server.js"]
-   }
-   ```
-
-2. **HTTP/SSE**: Server-Sent Events
-
-   ```typescript
-   {
-     transport: "sse",
-     endpoint: "http://localhost:3000/sse"
-   }
-   ```
-
-3. **Streamable HTTP**: Custom streaming protocol
-   ```typescript
-   {
-     transport: "streamable-http",
-     endpoint: "http://localhost:3000/stream"
-   }
-   ```
-
-### MCPJam Backend
-
-**Database Actions:**
-
-```typescript
-// Pre-create suite with all test cases and iterations
-evals:precreateEvalSuiteWithAuth(
-  config: EvalConfig,
-  userId: string
-): Promise<{
-  suiteId: string
-  caseIdsByTitle: Map<string, string>
-}>
-
-// Update iteration results
-evals:updateEvalTestIterationResultWithAuth(
-  iterationId: string,
-  result: {
-    result: "passed" | "failed" | "cancelled"
-    actualToolCalls: string[]
-    missing: string[]
-    unexpected: string[]
-    tokensUsed: number
-    durationMs: number
-  }
-): Promise<void>
-
-// Query user's suites
-evals:getCurrentUserEvalTestSuitesWithMetadata(): Promise<{
-  testSuites: EvalSuite[]
-  metadata: {
-    iterationsPassed: number
-    iterationsFailed: number
-  }
-}>
-
-// Query suite details
-evals:getAllTestCasesAndIterationsBySuite(
-  suiteId: string
-): Promise<{
-  testCases: EvalCase[]
-  iterations: EvalIteration[]
-}>
-```
-
----
-
-## Contributing Guide
-
-### Adding a New LLM Provider
-
-1. **Add AI SDK provider package**:
-
-```bash
-npm install @ai-sdk/my-provider
-```
-
-2. **Update model creation** in `server/utils/chat-helpers.ts`:
-
-```typescript
-import { createMyProvider } from "@ai-sdk/my-provider";
-
-export function createLlmModel(
-  modelDefinition: ModelDefinition,
-  apiKey: string,
-) {
-  switch (modelDefinition.provider) {
-    case "myProvider":
-      const myProvider = createMyProvider({ apiKey });
-      return myProvider(modelDefinition.id);
-    // ...
-  }
-}
-```
-
-3. **Add to UI model list** in `shared/types.ts`:
-
-```typescript
-const availableModels: ModelDefinition[] = [
-  {
-    provider: "MyProvider",
-    providerId: "myProvider",
-    models: [{ name: "My Model", id: "my-model-v1" }],
-  },
-];
-```
-
-### Adding a New MCP Transport
-
-1. **Update MCPClientManager** in `sdk/` to support the new transport type:
-
-```typescript
-// Add transport configuration to server config
-type MyTransportConfig = {
-  type: "my-transport";
-  endpoint: string;
-  // Add transport-specific config
-};
-```
-
-2. **Implement transport connection logic** in MCPClientManager:
-
-```typescript
-async connectServer(serverId: string, config: ServerConfig) {
-  if (config.transport.type === "my-transport") {
-    // Implement connection logic
-  }
-}
-```
-
-3. **Ensure tool execution** works with the new transport in `getToolsForAiSdk()`
-
-### Debugging Evals
-
-**Enable verbose logging:**
-
-```typescript
-// In evals-runner.ts
-console.log("AI SDK Response:", result);
-console.log("Tool Calls:", result.toolCalls);
-console.log("Message History:", result.response?.messages);
-```
-
-**Inspect MCP client:**
-
-```typescript
-// In evals-runner.ts
-console.log("Available tools:", tools);
-console.log("Server IDs:", serverIds);
-console.log(
-  "Tools for AI SDK:",
-  await mcpClientManager.getToolsForAiSdk(serverIds),
-);
-```
-
-### Testing Changes
-
-**Test via UI:**
-
-1. Start development server: `npm run dev`
-2. Navigate to "Run evals" tab
-3. Configure and execute test
-4. Check browser console for errors
-5. View results in "Eval results" tab
-6. Monitor server logs for execution details
-
-**Test server-side execution:**
-
-```typescript
-// In server/services/evals-runner.ts
-console.log("Starting eval suite:", tests.length, "tests");
-console.log("Using servers:", serverIds);
-console.log("Model API key provided:", !!modelApiKey);
-```
-
-### Common Issues
-
-**Issue: Test cases are not created**
-
-- Check Convex auth token validity
-- Verify `CONVEX_URL` and `CONVEX_HTTP_URL` environment variables
-- Inspect browser network tab for failed requests
-
-**Issue: Tools are not being called**
-
-- Verify server connection status in ClientManager
-- Check tool definitions in `listTools()` response
-- Ensure tool names match exactly (case-sensitive)
-
-**Issue: Backend LLM fails**
-
-- Confirm `/streaming` endpoint is accessible
-- Check Convex auth token in request headers
-- Verify model ID format (`@mcpjam/...`)
-
----
-
-## Performance Considerations
-
-### Optimization Strategies
-
-1. **Parallel Execution**: Run multiple test cases concurrently
-
-   ```typescript
-   await Promise.all(testCases.map((testCase) => runTestCase(testCase)));
-   ```
-
-2. **Tool Batching**: Execute independent tools in parallel
-
-   ```typescript
-   const results = await Promise.all(
-     toolCalls.map((call) => mcpClient.callTool(call)),
-   );
-   ```
-
-3. **Database Batching**: Batch iteration updates
-
-   ```typescript
-   await Promise.all(iterations.map((it) => recorder.finishIteration(it)));
-   ```
-
-4. **Caching**: Cache tool definitions between iterations
-   ```typescript
-   const toolsCache = new Map<string, Tool[]>();
-   ```
-
-### Metrics
-
-Key performance indicators:
-
-- **Average iteration duration**: Time from start to finish
-- **Token usage per iteration**: Prompt + completion tokens
-- **Tool execution time**: Time spent in MCP calls
-- **Database write time**: Time to persist results
-- **LLM response time**: Time for each model call
-
-Monitor these in the UI via `helpers.ts` aggregation functions.
-
----
-
-## Security Considerations
-
-### API Key Management
-
-- **Never commit API keys** to version control
-- Store keys in **localStorage** (client) or **environment variables** (CLI)
-- Use **Convex auth tokens** for backend models (no API key exposure)
-
-### Input Validation
-
-All inputs are validated with **Zod schemas**:
-
-```typescript
-// Example: Test case validation
-const TestCaseSchema = z.object({
-  title: z.string().min(1).max(200),
-  query: z.string().min(1),
-  runs: z.number().int().positive().max(100),
-  expectedToolCalls: z.array(z.string()).min(1),
-});
-```
-
-### Error Handling
-
-- **Never expose internal errors** to the client
-- **Sanitize error messages** before logging
-- **Catch all exceptions** in async functions
-- **Validate all external inputs** (LLM responses, tool results)
-
----
-
-## Future Enhancements
-
-Potential areas for contribution:
-
-1. **Parallel Test Execution**: Run multiple test cases simultaneously
-2. **Custom Evaluators**: Support for user-defined pass/fail criteria
-3. **Retry Logic**: Automatic retry on transient failures
-4. **Result Comparison**: Compare results across different models
-5. **Historical Analysis**: Trend analysis of eval performance over time
-6. **Export Results**: Download results as CSV/JSON
-7. **Shareable Suites**: Share test configurations with team members
-8. **Scheduling**: Run evals on a schedule (cron-like)
-
----
-
-## Glossary
-
-| Term                 | Definition                                                       |
-| -------------------- | ---------------------------------------------------------------- |
-| **Eval Suite**       | A collection of test cases executed together                     |
-| **Test Case**        | A single test with a query and expected tool calls               |
-| **Iteration**        | One execution of a test case (test cases can have multiple runs) |
-| **Agentic Loop**     | Iterative LLM conversation with tool calling                     |
-| **Tool Call**        | Invocation of an MCP server tool by the LLM                      |
-| **Expected Tools**   | Tools that should be called for a test to pass                   |
-| **Actual Tools**     | Tools that were actually called during execution                 |
-| **Missing Tools**    | Expected tools that were not called (causes failure)             |
-| **Unexpected Tools** | Tools called but not expected (logged, doesn't fail)             |
-| **RunRecorder**      | Interface for persisting eval results to database                |
-| **MCPClientManager** | Manager for MCP server connections and tool execution            |
-| **AI SDK**           | Vercel's AI SDK for LLM interactions and tool calling            |
-
----
+<Note>
+Earlier revisions of this page documented the pre-consolidation architecture — `/api/mcp/evals/run` routes, the `evals-cli/` execution engine, and backend test generation via `meta-llama`. Those subsystems are retired; consult git history if you need them.
+</Note>
 
 ## Resources
 
 - **MCP Specification**: [https://spec.modelcontextprotocol.io](https://spec.modelcontextprotocol.io)
 - **Vercel AI SDK**: [https://sdk.vercel.ai](https://sdk.vercel.ai)
 - **Convex Database**: [https://convex.dev](https://convex.dev)
-
----
 
 ## Questions?
 

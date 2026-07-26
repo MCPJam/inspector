@@ -70,6 +70,35 @@ describe("OAuthProfileModal", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(/already exists/i);
   });
 
+  it("preserves leading/trailing whitespace in a saved client secret", async () => {
+    // Trimming the secret here would silently corrupt one that legitimately
+    // has surrounding whitespace before it's saved or used in the live flow.
+    const user = userEvent.setup();
+    const { onSave } = renderModal();
+
+    await user.clear(screen.getByLabelText(/Server Name/));
+    await user.type(screen.getByLabelText(/Server Name/), "whitespace-secret-target");
+    await user.type(
+      screen.getByLabelText(/Server URL/),
+      "https://oauth.example.com/mcp",
+    );
+    await user.click(screen.getByText("Advanced settings (optional)"));
+    await user.type(
+      screen.getByPlaceholderText("Client Secret (optional)"),
+      " secret ",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Save configuration" }),
+    );
+
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        formData: expect.objectContaining({ clientSecret: " secret " }),
+        profile: expect.objectContaining({ clientSecret: " secret " }),
+      }),
+    );
+  });
+
   it("allows saving an existing target under its own unchanged name", async () => {
     const user = userEvent.setup();
     const { onSave } = renderModal({

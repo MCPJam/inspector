@@ -72,6 +72,10 @@ import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { createOffsetInterval } from "@/shared/eval-trace";
 import { getCanonicalModelId } from "@/shared/types";
 import { createE2BHarnessSandboxProvider } from "./e2b-sandbox-provider.js";
+import {
+  resolveWorkingDirectory,
+  HOME_ROOT,
+} from "../computers/path-confine.js";
 import { resolveHarnessSandbox } from "./resolve-sandbox.js";
 import {
   fetchRuntimeSkills,
@@ -80,6 +84,8 @@ import {
   claudeCodeSafeSkills,
 } from "./runtime-skills.js";
 import { materializeSkillFiles } from "./materialize-skill-files.js";
+import { materializePinnedSkillFiles } from "./pinned-harness-skills.js";
+import { selectHarnessSkillSource } from "./skill-delivery.js";
 import { materializeSkillFrontmatter } from "./materialize-skill-frontmatter.js";
 import {
   reconcileSkillDirs,
@@ -330,7 +336,10 @@ export async function runHarnessTurn(
     harness,
     harnessMcpProxy,
     builtInTools,
+    computerWorkdir,
     executionScope,
+    pinnedHarnessSkills,
+    runtimeSkillsOverride,
   } = options;
   // Canonicalize the model id up front (bare hosted ids like `gpt-5-nano` →
   // `openai/gpt-5-nano`). Everything downstream — supportsModel, the adapter's
@@ -596,10 +605,23 @@ export async function runHarnessTurn(
       // reuses the stored hash (no resume churn, no empty-hash commit). The skills
       // fingerprint is tracked SEPARATELY from `runtimeFingerprint` precisely so
       // "unknown" (failure) is distinguishable from "" (empty project).
+      // OVERRIDING MODES (see `selectHarnessSkillSource` for the precedence):
+      // `pinned` (eval/swarm frozen artifacts) and `environment` (a Project
+      // Environment's resolved artifacts) each supply the authoritative set —
+      // even EMPTY — so the live skills query is SKIPPED entirely and
+      // `skillsHash` derives from the supplied artifacts. Legacy callers
+      // (neither present) keep the live tri-state fetch unchanged.
+      const skillSource = selectHarnessSkillSource({
+        pinnedHarnessSkills,
+        runtimeSkillsOverride,
+      });
+      const skillsArePinned = skillSource.mode === "pinned";
       const skillsFetch =
-        projectId && authHeader
-          ? await fetchRuntimeSkills(authHeader, projectId, executionScope)
-          : { ok: true as const, skills: [] };
+        skillSource.mode !== "live"
+          ? { ok: true as const, skills: skillSource.skills }
+          : projectId && authHeader
+            ? await fetchRuntimeSkills(authHeader, projectId, executionScope)
+            : { ok: true as const, skills: [] };
       const runtimeSkills = skillsFetch.ok ? skillsFetch.skills : null;
       const skillsHash =
         runtimeSkills !== null ? skillsFingerprint(runtimeSkills) : undefined;
@@ -779,8 +801,23 @@ export async function runHarnessTurn(
       const auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl);
       tBroker = Date.now();
 
-      // 4. Assemble the harness over the host's E2B computer.
-      const sandbox = createE2BHarnessSandboxProvider({ sandboxId });
+      // 4. Assemble the harness over the host's E2B computer. Root the Shell at
+      // the host-configured working directory (COMP-16) — the same
+      // `computer.workdir` the chat bash tool honors — confined under
+      // /home/user, defaulting to the box home. The harness framework nests a
+      // per-session `<workdir>/claude-code-<sessionId>` dir beneath it, so both
+      // planes share one configured root even though the Shell gets its own
+      // session subdir. An escaping value falls back to the default rather than
+      // failing the turn (the UI + bash path already reject escapes loudly).
+      const resolvedHarnessWorkdir = resolveWorkingDirectory(computerWorkdir);
+      const defaultWorkingDirectory =
+        "error" in resolvedHarnessWorkdir
+          ? HOME_ROOT
+          : resolvedHarnessWorkdir.workdir ?? HOME_ROOT;
+      const sandbox = createE2BHarnessSandboxProvider({
+        sandboxId,
+        defaultWorkingDirectory,
+      });
       // (permissionMode was computed above, before the runtime fingerprint.)
 
       // The adapter maps the host modelId to the harness's native model and
@@ -877,11 +914,33 @@ export async function runHarnessTurn(
               skillsHash: skillsHash ?? "",
               ...(abortSignal ? { signal: abortSignal } : {}),
             }).catch(() => {});
+            // PINNED MODE: supporting files ride INLINE on the pinned
+            // artifacts (P0.2 host-channel plugin skills) — never the live
+            // file query. Env-channel entries are SKILL.md-only under P0.3.
+            // Always invoked (not gated on `some(files)`): the writer also
+            // PRUNES stale files so a reused box matches the pinned snapshot
+            // exactly — a skill whose file set became empty must still have its
+            // prior-run orphans removed.
+            if (skillsArePinned) {
+              await materializePinnedSkillFiles({
+                session,
+                artifacts: pinnedHarnessSkills!,
+                ...(abortSignal ? { signal: abortSignal } : {}),
+              }).catch(() => {});
+            }
             // Materialize supporting files AFTER reconcile (the adapter wrote each
             // SKILL.md; reconcile removed stale managed dirs). Fetched here rather
             // than at turn start to keep the zero-file fast path free. Fully
             // fail-soft; guest/swarm scope uses the execution-scoped file query.
-            if (projectId && authHeader && runtimeSkills.length > 0) {
+            //
+            // ENVIRONMENT MODE lands here too, on purpose. The file query stays
+            // PROJECT-WIDE while the delivered skill set is the environment's:
+            // `materializeSkillFiles` filters every file through
+            // `skillNamesById`, which is built from `runtimeSkills` alone, so a
+            // file belonging to a project skill the environment did NOT deliver
+            // is skipped and its dir is never created. An empty environment set
+            // short-circuits on the `length > 0` guard above and fetches nothing.
+            else if (projectId && authHeader && runtimeSkills.length > 0) {
               // Tri-state: `{ ok: false }` ⇒ the fetch FAILED (transient). Skip
               // materialization then — an empty file set would otherwise prune
               // every delivered skill's on-box files. `{ ok: true, files: [] }`

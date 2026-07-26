@@ -49,6 +49,7 @@ import {
 import { EffectiveProtocolVersionChip } from "./shared/EffectiveProtocolVersionChip";
 import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
 import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
+import { shouldQueryProjectId } from "@/hooks/useProjects";
 
 export type ServerDetailTab =
   | "overview"
@@ -129,9 +130,15 @@ export function ServerDetailModal({
   // round-trip rather than a server-update. Read/write here so the
   // form control inside `EditServerFormContent` can stay a pure prop
   // consumer.
+  // Only a real Convex project id may reach this query — `getConfig` validates
+  // `projectId` as `v.id("projects")`, and a LOCAL id (UUID, or a `local_` /
+  // `project_` placeholder) makes it reject during render. Same guard every
+  // other project-scoped Convex consumer uses; callers in local mode should
+  // pass null, but this keeps a stray local id from taking down the page.
+  const canQueryProjectServerConfig = shouldQueryProjectId(projectId);
   const projectServerConfigDto = useQuery(
     "projectServerConfig:getConfig" as never,
-    projectId ? ({ projectId } as never) : "skip"
+    canQueryProjectServerConfig ? ({ projectId } as never) : "skip"
   ) as ProjectServerConfigDto | null | undefined;
   const setProjectServerConfigMutation = useMutation(
     "projectServerConfig:setConfig" as never
@@ -171,7 +178,9 @@ export function ServerDetailModal({
   const resolvedHostDefaultMcpProtocolVersion: McpProtocolVersion | undefined =
     hostDefaultMcpProtocolVersion ?? activeMcpProfile?.mcpProtocolVersion;
   const canEditMcpProtocolVersionOverride = Boolean(
-    projectId && serverId && projectServerConfigDto !== undefined
+    canQueryProjectServerConfig &&
+      serverId &&
+      projectServerConfigDto !== undefined
   );
   const protocolOverrideAutoEnrolledRef = useRef<
     Map<string, ProtocolOverrideAutoEnrollRecord>
@@ -208,7 +217,7 @@ export function ServerDetailModal({
   const handleMcpProtocolVersionOverrideChange = async (
     next: McpProtocolVersion | undefined
   ): Promise<void> => {
-    if (!projectId) {
+    if (!canQueryProjectServerConfig || !projectId) {
       toast.error(
         "Wire mode override requires a project context; cannot save without projectId."
       );

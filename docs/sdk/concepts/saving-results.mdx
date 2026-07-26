@@ -65,7 +65,7 @@ await manager.connectToServer("asana");
 
 const agent = new HostRunner({
   tools: await manager.getTools(),
-  model: "openai/gpt-4o-mini",
+  model: "openai/gpt-5.6-sol",
   apiKey: process.env.OPENAI_API_KEY!,
   mcpClientManager: manager,
 });

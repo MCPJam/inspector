@@ -1,6 +1,6 @@
-# Plan: Computer Environments — Inspector UI + CLI API
+# Plan: Computer sandbox images — Inspector UI + CLI API
 
-Branch: `feat/computer-environments` (off current `origin/main`).
+Branch: `feat/images` (off current `origin/main`).
 
 ## Context
 
@@ -41,14 +41,17 @@ function already exists and is reachable as-is.
 
 ## Backend functions consumed (all deployed; no changes)
 
-`computerEnvironments`: `listEnvironments(projectId)`, `getEnvironment(environmentId)`,
+`computerEnvironments` — **NOT renamed by the images rename; these literals are
+a cross-repo contract with the mcpjam-backend Convex module and must match it
+exactly**: `listEnvironments(projectId)`, `getEnvironment(environmentId)`,
 `listEnvironmentBuilds(environmentId)`, `createEnvironment(projectId,name,dockerfile)`,
 `updateEnvironment(environmentId,name?,dockerfile?)`, `startEnvironmentBuild(environmentId)`,
 `promoteEnvironmentToProject(environmentId)`, `deleteEnvironment(environmentId)`.
 `projectComputers`: `getComputerStatus(projectId)` (→ `environmentId`),
 `setComputerEnvironment(projectId, environmentId | null)`, `resetComputer(projectId)`.
 
-`EnvironmentView` (returned by list/get) includes: `environmentId`, `projectId`,
+`SandboxImageView` (returned by list/get) includes: `environmentId` (the Convex
+row's own field name), `projectId`,
 `name`, `dockerfile`, `sharing` (`'user'|'project'`), `isOwner`, `currentBuild`
 (status/error/logPreview/…). **Note it does NOT expose a "can manage shared" /
 admin flag** — see UI step 6.
@@ -72,17 +75,17 @@ Design system `@mcpjam/design-system`: `Button`, `Badge`, `Sheet`, `Dialog`,
 Monaco. `projectId` comes from `useAppRouteContext()` and is passed into
 `ComputerView` as a prop today.
 
-1. **`…/client/src/hooks/useComputerEnvironments.ts`** — mirror
-   `useProjectComputer.ts` (string-id `useQuery`/`useMutation`): `useEnvironments`,
-   `useEnvironment`, `useEnvironmentBuilds`, `useCreateEnvironment`,
-   `useUpdateEnvironment`, `useStartEnvironmentBuild`, `usePromoteEnvironment`,
-   `useDeleteEnvironment`, `useSetComputerEnvironment`, `useResetComputer`. Declare
+1. **`…/client/src/hooks/useSandboxImages.ts`** — mirror
+   `useProjectComputer.ts` (string-id `useQuery`/`useMutation`): `useSandboxImages`,
+   `useSandboxImage`, `useSandboxImageBuilds`, `useCreateSandboxImage`,
+   `useUpdateSandboxImage`, `useStartSandboxImageBuild`, `usePromoteSandboxImage`,
+   `useDeleteSandboxImage`, `useSetComputerSandboxImage`, `useResetComputer`. Declare
    matching TS view types.
 2. **`ComputerView.tsx`** — add an **Image** strip between the subtitle and the
    usage meter: current image name (resolve `getComputerStatus().environmentId`
-   via `useEnvironments`), **[Change ▾]** (opens drawer), **[Reset]** (confirm →
+   via `useSandboxImages`), **[Change ▾]** (opens drawer), **[Reset]** (confirm →
    `resetComputer`, enabled only Ready/asleep).
-3. **`…/components/computer/EnvironmentsDrawer.tsx`** — design-system `Sheet`.
+3. **`…/components/computer/SandboxImagesDrawer.tsx`** — design-system `Sheet`.
    - **Create is first-class**: an empty state ("No environments yet — create one
      to customize your computer's image. [+ New environment]") AND a persistent
      **[+ New environment]** in the list. New opens a fresh editor (name +
@@ -99,13 +102,13 @@ Monaco. `projectId` comes from `useAppRouteContext()` and is passed into
 5. **States**: empty, building (spinner + log), failed (error + log + retry), and
    **attach-rejected** (surface the backend's incompatible-builder / not-ready
    error as a clean toast).
-6. **Admin controls — optimistic, not pre-disabled.** `EnvironmentView` has
+6. **Admin controls — optimistic, not pre-disabled.** `SandboxImageView` has
    `isOwner` but no "can manage shared." So: for a **draft**, gate edit/build/
    delete on `isOwner`; for a **shared** env, render the controls **optimistically**
    and map the backend's permission error (thrown by `canManageSharedEnvironments`)
    to a clean toast ("Only project admins can manage shared environments"). Do not
    pretend the client knows admin status. (Follow-up option: add a `canManage`
-   field to `EnvironmentView` in the backend for nicer UX — out of scope here.)
+   field to `SandboxImageView` in the backend for nicer UX — out of scope here.)
 7. **Tests**: mirror `…/components/computer/__tests__/ComputerView.test.tsx` —
    render states, hook mocks, the attach-rejected toast path.
 
@@ -120,12 +123,12 @@ Mirror the `hosts` stack: command (`cli/src/commands/hosts.ts`) → SDK operatio
 → v1 route (`mcpjam-inspector/server/routes/v1/hosts.ts`, mounted in
 `…/routes/v1/index.ts`).
 
-1. **`mcpjam-inspector/server/routes/v1/computer-environments.ts`** (Hono), mounted
+1. **`mcpjam-inspector/server/routes/v1/images.ts`** (Hono), mounted
    in `…/routes/v1/index.ts`, **kept off the guest allowlist**. Each handler:
    `getConvexBearerForRequest(c)` → `ConvexHttpClient.setAuth` →
    `client.query/mutation("computerEnvironments:…" | "projectComputers:…")` → v1
    envelope (reuse `v1Resource`/`v1PageJson`/`v1Error`). Endpoints under
-   `/projects/:projectId/computer-environments`:
+   `/projects/:projectId/images`:
    - `GET` (list), `POST` (create), `GET/PATCH/DELETE /:envId`,
      `POST /:envId/build`, `GET /:envId/builds`, `POST /:envId/promote`,
      `POST /:envId/use` → `setComputerEnvironment`, plus
@@ -134,18 +137,17 @@ Mirror the `hosts` stack: command (`cli/src/commands/hosts.ts`) → SDK operatio
      (`update`/`build`/`promote`/`delete`) authorize by the *env's* project, not
      the URL's `:projectId`. So before any `/:envId` call, the adapter MUST
      `getEnvironment(envId)` and assert `env.projectId === :projectId`, else `404`
-     — otherwise a user with access to projects A and B could `PATCH
-     /projects/A/.../envB` and mutate B's env via an A-scoped URL. (Cleaner
+     — otherwise a user with access to projects A and B could
+     `PATCH /projects/A/.../envB` and mutate B's env via an A-scoped URL. (Cleaner
      long-term: backend project-scoped variants that take `(projectId, envId)`;
      tracked as a follow-up, not needed for this PR.)
-2. **`sdk/src/platform/client.ts`** — HTTP methods: `listEnvironments`,
-   `getEnvironment`, `createEnvironment`, `updateEnvironment`, `deleteEnvironment`,
-   `buildEnvironment`, `listEnvironmentBuilds`, `promoteEnvironment`,
-   `useEnvironment`, `resetComputer`.
+2. **`sdk/src/platform/client.ts`** — HTTP methods: `listImages`, `getImage`,
+   `createImage`, `updateImage`, `deleteImage`, `buildImage`, `listImageBuilds`,
+   `promoteImage`, `useImage`, `resetComputer`.
 3. **`sdk/src/platform/operations.ts`** — operations with zod input schemas +
    `resolveProjectOrThrow(client, input.project, signal)`.
-4. **`cli/src/commands/environments.ts`**, registered in `cli/src/index.ts`:
-   `mcpjam env list|get|create|edit|build|logs|use|reset|promote|delete`.
+4. **`cli/src/commands/images.ts`**, registered in `cli/src/index.ts`:
+   `mcpjam images list|get|create|edit|build|logs|use|reset|promote|delete`.
    `create`/`edit` read the Dockerfile from `--file <path>` or stdin (the "edit
    them with the CLI" requirement); `--format json` like the rest.
 5. **OpenAPI:** add entries for every new route to **`docs/reference/openapi.json`**
@@ -163,8 +165,8 @@ Mirror the `hosts` stack: command (`cli/src/commands/hosts.ts`) → SDK operatio
   → build (stub ⇒ instant on dev) → attach → reset → delete. With
   `COMPUTERS_PROVIDER=e2b` + default stub builder, confirm attach is rejected with
   a clean error. Real builds need `COMPUTERS_ENV_BUILDER=e2b` on the deployment.
-- **CLI**: with an `sk_` key — `mcpjam env create --file Dockerfile`,
-  `mcpjam env build <name>`, `mcpjam env logs <name>`, `mcpjam env use <name>`;
+- **CLI**: with an `sk_` key — `mcpjam images create --file Dockerfile`,
+  `mcpjam images build <name>`, `mcpjam images logs <name>`, `mcpjam images use <name>`;
   guest token → 401.
 - typecheck + lint each package; **openapi-drift** + the new route/CLI tests pass.
 

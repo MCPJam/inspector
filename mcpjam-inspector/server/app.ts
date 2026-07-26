@@ -25,6 +25,7 @@ import { MCPClientManager } from "@mcpjam/sdk";
 import { initElicitationCallback } from "./routes/mcp/elicitation.js";
 import { rpcLogBus } from "./services/rpc-log-bus.js";
 import { progressStore } from "./services/progress-store.js";
+import { cacheEventLogger } from "./utils/cache-events.js";
 import { inspectorCommandBus } from "./services/inspector-command-bus.js";
 import { CORS_ORIGINS, HOSTED_MODE, ALLOWED_HOSTS } from "./config.js";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser.js";
@@ -161,6 +162,10 @@ export async function createHonoApp() {
           timestamp: new Date().toISOString(),
         });
       },
+      // SEP-2549 cache-serve provenance — a channel SEPARATE from rpcLogger
+      // (see server/utils/cache-events.ts). Routes opt in per-request via
+      // `withCacheEventCapture`; this callback is a no-op outside that scope.
+      cacheEventLogger,
     }
   );
 

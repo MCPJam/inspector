@@ -1,10 +1,15 @@
+import { useEffect, useState } from "react";
 import { Switch } from "@mcpjam/design-system/switch";
+import { Input } from "@mcpjam/design-system/input";
 import type { HostConfigInputV2 } from "@/lib/client-config-v2";
 import { FieldRow, FocusBlock } from "./primitives";
 import { useBuiltInToolCatalog } from "@/hooks/useBuiltInToolCatalog";
 import {
   attachComputerPatch,
   detachComputerPatch,
+  setComputerWorkdirPatch,
+  validateComputerWorkdir,
+  DEFAULT_COMPUTER_WORKDIR,
 } from "@/lib/host-config-computer";
 
 interface ComputerTabProps {
@@ -43,6 +48,22 @@ export function ComputerTab({
   const lockedByHarness =
     draft.harness !== undefined && draft.computer !== undefined;
 
+  // Working directory (COMP-16). Locally-buffered text so keystrokes don't
+  // re-hash the whole host config; committed on blur. The stored value clears to
+  // undefined at the default, so the placeholder shows the effective default.
+  const attached = draft.computer !== undefined;
+  const storedWorkdir = draft.computer?.workdir ?? "";
+  const [workdirText, setWorkdirText] = useState(storedWorkdir);
+  useEffect(() => {
+    // Re-sync when the draft changes underneath us (host switch, external edit).
+    setWorkdirText(storedWorkdir);
+  }, [storedWorkdir]);
+  const workdirError = validateComputerWorkdir(workdirText);
+  const commitWorkdir = () => {
+    if (workdirError) return; // keep the invalid text visible for correction
+    update(setComputerWorkdirPatch(draft, workdirText));
+  };
+
   return (
     <div className="flex flex-col gap-4">
       <FocusBlock title="Computer">
@@ -68,6 +89,43 @@ export function ComputerTab({
             />
           }
         />
+        {attached && (
+          <FieldRow
+            label="Working directory"
+            description={
+              "Where the bash tool runs and the terminal opens (the harness " +
+              "Shell runs in a per-session folder beneath it). Must be under " +
+              "/home/user; chat attachments land in /home/user/attachments, so " +
+              "the default keeps relative paths working."
+            }
+            control={
+              <div className="flex flex-col items-end gap-1">
+                <Input
+                  value={workdirText}
+                  onChange={(e) => setWorkdirText(e.target.value)}
+                  onBlur={commitWorkdir}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      commitWorkdir();
+                    }
+                  }}
+                  placeholder={DEFAULT_COMPUTER_WORKDIR}
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  aria-label="Working directory"
+                  aria-invalid={workdirError ? true : undefined}
+                  disabled={readOnly}
+                  className="w-64 font-mono text-xs"
+                />
+                {workdirError && (
+                  <span className="text-xs text-red-500">{workdirError}</span>
+                )}
+              </div>
+            }
+          />
+        )}
       </FocusBlock>
     </div>
   );

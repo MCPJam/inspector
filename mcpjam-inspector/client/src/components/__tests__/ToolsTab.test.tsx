@@ -181,6 +181,7 @@ describe("ToolsTab", () => {
         expect(mockListTools).toHaveBeenCalledWith({
           serverId: "test-server",
           cursor: undefined,
+          refresh: false,
         });
       });
     });
@@ -820,6 +821,7 @@ describe("ToolsTab", () => {
         expect(mockListTools).toHaveBeenCalledWith({
           serverId: "server-1",
           cursor: undefined,
+          refresh: false,
         });
       });
 
@@ -835,6 +837,7 @@ describe("ToolsTab", () => {
         expect(mockListTools).toHaveBeenCalledWith({
           serverId: "server-2",
           cursor: undefined,
+          refresh: false,
         });
       });
     });

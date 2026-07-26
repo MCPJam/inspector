@@ -311,7 +311,12 @@ export const OAuthFlowTab = ({
       customHeaders,
       registrationStrategy,
       preregisteredClientId: profile.clientId.trim() || undefined,
-      preregisteredClientSecret: profile.clientSecret.trim() || undefined,
+      // Preserve the exact typed secret — trimming would silently change a
+      // secret that legitimately has leading/trailing whitespace before it
+      // ever reaches the live OAuth token exchange.
+      preregisteredClientSecret: profile.clientSecret.trim()
+        ? profile.clientSecret
+        : undefined,
       hasClientSecret: Boolean(activeServer?.hasClientSecret),
     });
   }, [
