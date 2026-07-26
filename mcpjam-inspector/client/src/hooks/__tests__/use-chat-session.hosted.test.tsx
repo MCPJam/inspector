@@ -3,6 +3,7 @@ import { generateId } from "ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatSession } from "../use-chat-session";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
+import { useHarnessWorkdirStore } from "@/stores/harness-workdir-store";
 import { useUiToolsRegistry } from "@/lib/webmcp/ui-tools-registry";
 
 const mockState = vi.hoisted(() => ({
@@ -1353,6 +1354,88 @@ describe("useChatSession — environment execution target", () => {
     );
     expect(hostMode.result.current.submitBlocked).toBe(true);
     hostMode.unmount();
+    unmount();
+  });
+
+  it("caches the harness workdir under the PRESENTATION host, not the project fallback", () => {
+    // An environment target carries no `hostId` on the wire (the server
+    // re-resolves the host from the environment), so the workdir cache used to
+    // land under the project key — while the Playground Shell reads it by the
+    // environment's resolved host id. The terminal then opened at the box home
+    // instead of inside the harness session directory.
+    useHarnessWorkdirStore.setState({ byKey: {} });
+    const { unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedContext: {
+          ...environmentContext,
+          presentationHostId: "host_env",
+        },
+      })
+    );
+
+    act(() => {
+      mockState.latestOnData?.({
+        type: "data-harness-session",
+        data: { workdir: "/home/user/claude-code-abc" },
+      });
+    });
+
+    // `h:<hostId>` is the store's own key shape, and the rail reads it with the
+    // previewed host id — which in environment mode IS the environment's host.
+    expect(useHarnessWorkdirStore.getState().byKey["h:host_env"]).toBe(
+      "/home/user/claude-code-abc"
+    );
+    unmount();
+  });
+
+  it("aborts a send whose target changed while the name→id preflight was in flight", async () => {
+    // The preflight is async and the transport body is built from the LATEST
+    // props when the request finally goes out. A message composed against a
+    // host would otherwise resume into the environment the user just selected
+    // and run against a different bundle entirely.
+    let resolvePreflight!: (value: Array<{ serverId: string }>) => void;
+    const ensureServerIds = vi.fn(
+      () =>
+        new Promise<Array<{ serverId: string }>>((resolve) => {
+          resolvePreflight = resolve;
+        })
+    );
+
+    const { result, rerender, unmount } = renderHook(
+      ({ inEnvironment }: { inEnvironment: boolean }) =>
+        useChatSession({
+          selectedServers: ["server-a"],
+          hostedContext: inEnvironment
+            ? environmentContext
+            : {
+                projectId: "project-1",
+                selectedServerIds: [],
+                requiresWebChatApi: true,
+                hostId: "host_1",
+                ensureServerIds,
+              },
+        }),
+      { initialProps: { inEnvironment: false } }
+    );
+    mockState.authFetch.mockClear();
+
+    let sendPromise: Promise<void> | undefined;
+    act(() => {
+      sendPromise = result.current.sendMessage({ text: "hi" });
+    });
+    expect(ensureServerIds).toHaveBeenCalledWith(["server-a"]);
+
+    // The user switches to an environment before the preflight settles.
+    rerender({ inEnvironment: true });
+    resolvePreflight([{ serverId: "id-a" }]);
+    await act(async () => {
+      await sendPromise;
+    });
+
+    // Fail CLOSED: nothing goes out. The user resends against the target they
+    // can actually see.
+    expect(mockState.authFetch).not.toHaveBeenCalled();
     unmount();
   });
 });

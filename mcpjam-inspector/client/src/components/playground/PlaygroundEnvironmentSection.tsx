@@ -5,6 +5,7 @@ import { Label } from "@mcpjam/design-system/label";
 import { cn } from "@/lib/utils";
 import { track } from "@/lib/analytics";
 import { EnvironmentPicker } from "@/components/project-environments/environment-picker";
+import { pluralize } from "@/components/chat-v2/shared/chat-helpers";
 import type { PlaygroundEnvironmentState } from "@/hooks/use-playground-environment";
 
 /**
@@ -26,11 +27,6 @@ import type { PlaygroundEnvironmentState } from "@/hooks/use-playground-environm
  * plugin-contributed servers are deliberately hidden from
  * `servers:getProjectServers`, so the name-keyed catalog cannot represent them.
  */
-/** `1 server`, `0 servers` — the counts strip renders three of these. */
-function plural(count: number, noun: string): string {
-  return `${count} ${noun}${count === 1 ? "" : "s"}`;
-}
-
 export function PlaygroundEnvironmentSection({
   projectId,
   environment,
@@ -87,7 +83,15 @@ export function PlaygroundEnvironmentSection({
 
   return (
     <div
-      className={cn("flex min-w-0 flex-col gap-1.5", className)}
+      // Hard width cap, because the header slot that renders this is
+      // `shrink-0`: without one, an environment with many server chips grows
+      // the section until the Clear control and the header's trailing controls
+      // are pushed out of the viewport. Capped here rather than in the header
+      // so the section stays self-contained wherever it is slotted.
+      className={cn(
+        "flex w-full min-w-0 max-w-[26rem] flex-col gap-1.5",
+        className
+      )}
       data-testid="playground-environment-section"
     >
       <div className="flex min-w-0 items-center gap-1.5">
@@ -144,9 +148,9 @@ export function PlaygroundEnvironmentSection({
             </span>
             <span>·</span>
             <span data-testid="playground-environment-counts">
-              {plural(preview.capabilities.serverCount, "server")} ·{" "}
-              {plural(preview.capabilities.skillCount, "skill")} ·{" "}
-              {plural(preview.capabilities.pluginCount, "plugin")}
+              {pluralize(preview.capabilities.serverCount, "server")} ·{" "}
+              {pluralize(preview.capabilities.skillCount, "skill")} ·{" "}
+              {pluralize(preview.capabilities.pluginCount, "plugin")}
             </span>
             {hasExplicitOverride ? (
               <span
@@ -182,23 +186,26 @@ export function PlaygroundEnvironmentSection({
               <AlertTriangle className="mt-[1px] size-3 shrink-0" aria-hidden />
               <span>
                 {preview.host.hostName ?? "This client"} can't consume skills —
-                the {preview.capabilities.skillCount} skill
-                {preview.capabilities.skillCount === 1 ? "" : "s"} in this
-                environment won't reach the model on these turns.
+                the {pluralize(preview.capabilities.skillCount, "skill")} in
+                this environment won't reach the model on these turns.
               </span>
             </p>
           ) : null}
 
           {servers.length > 0 ? (
             <div
-              className="flex flex-wrap items-center gap-1.5"
+              // One scrolling row instead of an unbounded wrap: an environment
+              // can resolve to a dozen servers (host picks + plugin-contributed
+              // ones), and stacking them would push the chat surface down the
+              // page on every render of the header.
+              className="flex max-w-full flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5"
               data-testid="playground-environment-servers"
             >
               {servers.map((server) => (
                 <Label
                   key={server.serverId}
                   className={cn(
-                    "flex cursor-pointer items-center gap-1 rounded-full border border-border/60 px-1.5 py-0.5 text-[11px] font-normal",
+                    "flex shrink-0 cursor-pointer items-center gap-1 rounded-full border border-border/60 px-1.5 py-0.5 text-[11px] font-normal",
                     server.enabled ? "bg-muted/40" : "opacity-55",
                     disabled && "cursor-not-allowed opacity-60"
                   )}

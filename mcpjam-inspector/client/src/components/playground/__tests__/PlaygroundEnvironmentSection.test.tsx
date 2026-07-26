@@ -93,6 +93,7 @@ function environmentState(
     preview,
     isPreviewLoading: false,
     previewError: null,
+    isResolutionPending: false,
     refreshPreview: vi.fn(),
     serverOverrideIds: null,
     hasExplicitOverride: false,
@@ -156,6 +157,34 @@ describe("PlaygroundEnvironmentSection", () => {
     expect(
       screen.getByTestId("playground-environment-counts").textContent
     ).not.toContain("1 plugins");
+  });
+
+  it("stays within a bounded width no matter how many servers resolve", () => {
+    // The header slot that renders this section is `shrink-0`, so an unbounded
+    // section pushes the Clear control and the header's trailing controls out
+    // of reach. The cap lives here (self-contained) and the server chips scroll
+    // inside it instead of wrapping the chat surface down the page.
+    const servers = Array.from({ length: 12 }, (_, index) => ({
+      serverId: `srv_${index}`,
+      name: `Server number ${index}`,
+      source: "host_or_group" as const,
+      enabled: true,
+    }));
+    render(
+      <PlaygroundEnvironmentSection
+        projectId="proj_1"
+        environment={environmentState({ servers })}
+      />
+    );
+
+    const section = screen.getByTestId("playground-environment-section");
+    expect(section.className).toContain("max-w-[26rem]");
+    const serverRow = screen.getByTestId("playground-environment-servers");
+    expect(serverRow.className).toContain("overflow-x-auto");
+    expect(serverRow.className).toContain("flex-nowrap");
+    expect(serverRow.className).not.toContain("flex-wrap");
+    // Every chip is still reachable — clamped, not truncated away.
+    expect(serverRow.children.length).toBe(12);
   });
 
   it("shows no modified badge and no reset until an override exists", () => {

@@ -44,13 +44,22 @@ export function ConnectEnvironmentsStrip({
 }) {
   const enabled = useProjectEnvironmentsEnabled();
   const { isAuthenticated } = useConvexAuth();
+  // Normalize ONCE, then feed every hook the same value. `useProjectEnvironments`
+  // trims internally, so a whitespace-padded id renders rows — while `useHostList`
+  // and the previewed-environment storage would key off the raw string, leaving
+  // every card labeled "Unknown client" and writing the selection under a scope
+  // the Playground never reads.
+  const normalizedProjectId = projectId?.trim() || null;
   // Live rows only — an archived environment can't be launched.
-  const environments = useProjectEnvironments(enabled ? projectId : null);
+  const environments = useProjectEnvironments(
+    enabled ? normalizedProjectId : null
+  );
   const { hosts } = useHostList({
     isAuthenticated,
-    projectId: enabled ? projectId : null,
+    projectId: enabled ? normalizedProjectId : null,
   });
-  const [, setPreviewedEnvironmentId] = usePreviewedEnvironmentId(projectId);
+  const [, setPreviewedEnvironmentId] =
+    usePreviewedEnvironmentId(normalizedProjectId);
 
   const hostNamesById = useMemo(
     () => new Map(hosts.map((host) => [host.hostId, host.name])),
@@ -60,7 +69,7 @@ export function ConnectEnvironmentsStrip({
   // Render nothing at all when there is nothing to offer: an empty strip on the
   // Connect canvas is pure noise for the (currently large) majority of projects
   // with no environments.
-  if (!enabled || !projectId) return null;
+  if (!enabled || !normalizedProjectId) return null;
   if (!environments || environments.length === 0) return null;
 
   return (

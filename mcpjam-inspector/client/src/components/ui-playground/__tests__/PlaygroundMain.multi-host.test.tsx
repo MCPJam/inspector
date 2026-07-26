@@ -1525,6 +1525,36 @@ describe("PlaygroundMain — environment mode", () => {
     expect(hostedContext?.ensureServerIds).toBeUndefined();
   });
 
+  it("blocks sends while the selected environment is still resolving", () => {
+    // Activating the target is synchronous; the scope re-key and the
+    // preview→previewed-host sync are not. A turn submitted in that window
+    // carries the NEW environment id with the PREVIOUS host's model, system
+    // prompt and approval setting, and the scope reset that follows can drop
+    // the in-flight message.
+    environmentsFlag.value = true;
+    environmentPreviewFixture.value = null;
+    localStorage.setItem(
+      "mcp-previewed-environment-id",
+      JSON.stringify({ default: "env_1" }),
+    );
+    multiHostFixture.hostList = [{ hostId: "h-A", name: "Host A" }];
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    expect(mockChatInput.mock.calls.at(-1)![0].submitDisabled).toBe(true);
+  });
+
+  it("re-opens sends once the environment has resolved", () => {
+    // Control for the gate above — it must be a transition gate, not a
+    // permanent block on environment mode.
+    selectEnvironment();
+    multiHostFixture.hostList = [{ hostId: "h-A", name: "Host A" }];
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    expect(mockChatInput.mock.calls.at(-1)![0].submitDisabled).toBe(false);
+  });
+
   it("exits multi-host comparison when an environment is selected", () => {
     // An environment names exactly one host; comparison exists to run one turn
     // against several. Both being true would misreport what ran.

@@ -57,6 +57,22 @@ export interface PlaygroundEnvironmentState {
   preview: EnvironmentPreview | null;
   isPreviewLoading: boolean;
   previewError: string | null;
+  /**
+   * True while an environment is selected but has not yet resolved to a usable
+   * preview (initial resolve, or the gap after switching to a different one).
+   *
+   * The caller GATES SENDS on this. Activating the target is synchronous but
+   * everything that has to agree with it is not: the chat scope re-keys on the
+   * new `executionTarget`, and the environment's host only becomes the
+   * previewed host once the preview lands. A turn submitted inside that window
+   * would carry the new environment id together with the PREVIOUS host's model,
+   * system prompt and approval setting, and the scope reset that follows can
+   * discard the in-flight message.
+   *
+   * A preview ERROR does not count as pending: there is nothing left to wait
+   * for, and the backend is the authority on whether that environment can run.
+   */
+  isResolutionPending: boolean;
   refreshPreview: () => void;
   /** `null` ⇒ follow the environment. An array (INCLUDING `[]`) ⇒ explicit. */
   serverOverrideIds: string[] | null;
@@ -142,11 +158,14 @@ export function usePlaygroundEnvironment(
       if (!flagEnabled) return;
       // The effect above also clears on the resulting id change; doing it here
       // too keeps the transition atomic for a caller that reads the state in
-      // the same tick (and is idempotent).
-      setServerOverrideIds(null);
+      // the same tick. CONDITIONAL on the id actually changing, though —
+      // re-picking the environment that is already selected is a no-op
+      // selection, and clearing an explicit server override on it would throw
+      // away a per-turn choice the user never asked to undo.
+      if (next !== environmentId) setServerOverrideIds(null);
       setStoredEnvironmentId(next);
     },
-    [flagEnabled, setStoredEnvironmentId]
+    [flagEnabled, environmentId, setStoredEnvironmentId]
   );
 
   const clearEnvironment = useCallback(() => {
@@ -183,6 +202,7 @@ export function usePlaygroundEnvironment(
     preview: isEnvironmentMode ? preview : null,
     isPreviewLoading: isEnvironmentMode && isLoading,
     previewError: isEnvironmentMode ? error : null,
+    isResolutionPending: isEnvironmentMode && !preview && !error,
     refreshPreview: refresh,
     serverOverrideIds,
     hasExplicitOverride: serverOverrideIds !== null,

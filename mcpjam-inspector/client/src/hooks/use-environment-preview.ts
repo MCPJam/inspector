@@ -111,36 +111,66 @@ export function useEnvironmentPreview(
    * against the NEW revision while the UI still displayed the old host,
    * counts and server checkboxes, and toggling one of those stale boxes
    * would materialize an override out of obsolete server ids.
+   *
+   * It is NOT a complete staleness signal, and deliberately so: the referenced
+   * host's config and an attached server group's membership are both live and
+   * neither bumps this revision. See the focus-refetch effect below for why
+   * that residual window is bounded and left to a refetch rather than a
+   * subscription.
    */
   revision?: number | null
 ): UseEnvironmentPreviewResult {
-  const [preview, setPreview] = useState<EnvironmentPreview | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Committed state carries the TARGET it describes. Everything returned below
+  // is derived by comparing that target against the current one, so an
+  // environment-id change blanks the preview in the very same render that
+  // changes the id — a `useEffect` that cleared it afterwards would still let
+  // one committed frame show the previous environment's name, host, counts and
+  // server checkboxes, and a click landing on those stale checkboxes would
+  // materialize an override out of another environment's server ids.
+  //
+  // The key deliberately excludes `revision`: a live EDIT of the SAME
+  // environment must not blank the panel (live-config semantics), it must swap
+  // the contents when the new body arrives.
+  const [committed, setCommitted] = useState<{
+    key: string | null;
+    preview: EnvironmentPreview | null;
+    error: string | null;
+    isLoading: boolean;
+  }>({ key: null, preview: null, error: null, isLoading: false });
   const [refreshToken, setRefreshToken] = useState(0);
   // Guards against a slow response for environment A landing after the user
   // already switched to B — the stale body would describe the wrong bundle.
   const requestSeqRef = useRef(0);
 
+  const normalizedProjectId = projectId?.trim() || null;
+  const normalizedEnvironmentId = environmentId?.trim() || null;
+  const targetKey =
+    normalizedProjectId &&
+    shouldQueryProjectId(normalizedProjectId) &&
+    normalizedEnvironmentId
+      ? `${normalizedProjectId}::${normalizedEnvironmentId}`
+      : null;
+
   useEffect(() => {
-    const normalizedProjectId = projectId?.trim() || null;
-    const normalizedEnvironmentId = environmentId?.trim() || null;
     const seq = ++requestSeqRef.current;
     // `shouldQueryProjectId`, not a bare truthiness check: a local/placeholder
     // project id during a project transition is well-formed but not
     // queryable, and would surface as a spurious "couldn't be resolved" error.
-    if (
-      !normalizedProjectId ||
-      !shouldQueryProjectId(normalizedProjectId) ||
-      !normalizedEnvironmentId
-    ) {
-      setPreview(null);
-      setError(null);
-      setIsLoading(false);
+    if (!targetKey || !normalizedProjectId || !normalizedEnvironmentId) {
+      setCommitted({
+        key: null,
+        preview: null,
+        error: null,
+        isLoading: false,
+      });
       return;
     }
     let active = true;
-    setIsLoading(true);
+    setCommitted((current) =>
+      current.key === targetKey
+        ? { ...current, isLoading: true }
+        : { key: targetKey, preview: null, error: null, isLoading: true }
+    );
     (async () => {
       try {
         const response = await authFetch(
@@ -151,32 +181,87 @@ export function useEnvironmentPreview(
         const payload = await response.json().catch(() => null);
         if (!active || seq !== requestSeqRef.current) return;
         if (!response.ok) {
-          setPreview(null);
-          setError(
-            readErrorMessage(payload, "This environment couldn't be resolved.")
-          );
+          setCommitted({
+            key: targetKey,
+            preview: null,
+            error: readErrorMessage(
+              payload,
+              "This environment couldn't be resolved."
+            ),
+            isLoading: false,
+          });
           return;
         }
-        setPreview(payload as EnvironmentPreview);
-        setError(null);
+        setCommitted({
+          key: targetKey,
+          preview: payload as EnvironmentPreview,
+          error: null,
+          isLoading: false,
+        });
       } catch (caught) {
         if (!active || seq !== requestSeqRef.current) return;
-        setPreview(null);
-        setError(
-          caught instanceof Error
-            ? caught.message
-            : "This environment couldn't be resolved."
-        );
-      } finally {
-        if (active && seq === requestSeqRef.current) setIsLoading(false);
+        setCommitted({
+          key: targetKey,
+          preview: null,
+          error:
+            caught instanceof Error
+              ? caught.message
+              : "This environment couldn't be resolved.",
+          isLoading: false,
+        });
       }
     })();
     return () => {
       active = false;
     };
-  }, [projectId, environmentId, revision, refreshToken]);
+  }, [
+    targetKey,
+    normalizedProjectId,
+    normalizedEnvironmentId,
+    revision,
+    refreshToken,
+  ]);
 
   const refresh = useCallback(() => setRefreshToken((n) => n + 1), []);
+
+  // Refetch when the tab regains focus.
+  //
+  // The `revision` dependency above only catches edits to the environment ROW.
+  // It does NOT catch the two other things a preview depends on: the referenced
+  // host's config rotating, or an attached server group's membership changing —
+  // neither bumps the environment's revision. That residual staleness is
+  // bounded rather than silent: a per-turn override naming a server that is no
+  // longer resolvable is REJECTED by the backend's runtime override validation
+  // (`validateRuntimeServerOverride` — an id must be in the freshly resolved
+  // base or an ordinary live project server), so the worst case is a stale
+  // DISPLAY followed by a refused turn, never a turn that quietly runs the
+  // wrong bundle. That is why this is a focus refetch and not a subscription or
+  // a poll: it closes the common "edited in another tab, came back" case for
+  // one request, and the expensive mechanism would buy only a faster redraw.
+  useEffect(() => {
+    if (!targetKey) return;
+    const onFocus = () => {
+      if (document.visibilityState === "hidden") return;
+      setRefreshToken((n) => n + 1);
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
+  }, [targetKey]);
+
+  const matchesTarget = committed.key === targetKey;
+  const preview = matchesTarget ? committed.preview : null;
+  const error = matchesTarget ? committed.error : null;
+  // Pending-for-a-new-target counts as loading, so the section shows
+  // "Resolving environment…" across the switch instead of an empty gap.
+  const isLoading = targetKey
+    ? matchesTarget
+      ? committed.isLoading
+      : true
+    : false;
 
   return { preview, isLoading, error, refresh };
 }

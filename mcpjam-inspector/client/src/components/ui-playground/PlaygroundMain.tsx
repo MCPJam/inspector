@@ -856,6 +856,14 @@ export function PlaygroundMain({
             // Deliberately NO `ensureServerIds`: resolving environment servers
             // by NAME would fail for plugin-contributed ones and bypass plugin
             // lifecycle semantics for the rest.
+            //
+            // NOT a second execution pointer — a client-side cache key. The
+            // environment's host is already the previewed host (presentation
+            // only), and host-keyed client caches (the harness workdir the
+            // Shell opens a terminal in) are read by that id, so the write side
+            // has to know it. The server still resolves the host from the
+            // environment.
+            ...(previewedHostId ? { presentationHostId: previewedHostId } : {}),
           }
         : {
             // Resolve/persist selected server names → Convex ids before a hosted
@@ -1554,6 +1562,19 @@ export function PlaygroundMain({
     isThreadEmpty: !effectiveHasMessages,
   });
   composerOnResetRef.current = composer.onSessionReset;
+  // Project Environments (Phase 2). Selecting an environment activates the new
+  // `executionTarget` synchronously, but the things that must agree with it do
+  // not land in the same tick: the chat scope re-keys on the new target, and
+  // the environment's host only becomes the previewed host once the preview
+  // resolves. A turn submitted inside that window carries the NEW environment
+  // id with the PREVIOUS host's model, system prompt and approval setting, and
+  // the scope reset that follows can drop the in-flight message. Block SENDS
+  // (not typing) until the transition has settled.
+  const isEnvironmentTargetPending =
+    isEnvironmentMode &&
+    (playgroundEnvironment.isResolutionPending ||
+      !isSessionBootstrapComplete ||
+      (!!environmentHostId && previewedHostId !== environmentHostId));
   const { composerDisabled, sendBlocked } = getChatComposerInteractivity({
     isStreamingActive: isStreamingActive || isPreparingServerForSend,
     composerDisabled:
@@ -1562,7 +1583,8 @@ export function PlaygroundMain({
       disableChatInput ||
       submitBlocked ||
       composer.submitGatedByServer ||
-      isPreparingServerForSend,
+      isPreparingServerForSend ||
+      isEnvironmentTargetPending,
   });
 
   // Mirror of the `canEnableMultiModel` cleanup below: when the multi-host
@@ -3450,7 +3472,9 @@ export function PlaygroundMain({
       disableChatInput ||
       submitBlocked ||
       composer.submitGatedByServer ||
-      isPreparingServerForSend,
+      isPreparingServerForSend ||
+      // Same environment-transition gate as `sharedChatInputProps` above.
+      isEnvironmentTargetPending,
     tokenUsage,
     selectedServers,
     mcpToolsTokenCount,

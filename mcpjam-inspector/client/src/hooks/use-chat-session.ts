@@ -1283,6 +1283,10 @@ export function useChatSession(
   const hostedOAuthTokens = hostedContext?.oauthTokens;
   const hostedChatboxId = hostedContext?.chatboxId;
   const hostedHostId = hostedContext?.hostId;
+  // CACHE KEYING ONLY — see `HostedRuntimeContext.presentationHostId`. Never
+  // added to a request body or to `hostedTargetKey`: the execution target must
+  // stay a single statement.
+  const hostedPresentationHostId = hostedContext?.presentationHostId ?? null;
   // Project Environments (Phase 2). When present this REPLACES the legacy
   // `hostId` pointer on the wire — `normalizeExecutionTarget` rejects a body
   // carrying both rather than shadowing one with the other.
@@ -1315,6 +1319,12 @@ export function useChatSession(
         }
       : {}),
   });
+  // Always-current mirror of the target key, read at both ends of the send-time
+  // preflight await. The transport body is built from the LATEST props when the
+  // request finally goes out, so a target the user changed mid-preflight would
+  // silently receive a message composed for the previous one.
+  const hostedTargetKeyRef = useRef(hostedTargetKeyValue);
+  hostedTargetKeyRef.current = hostedTargetKeyValue;
   const hostedAccessVersion = hostedContext?.accessVersion;
   const hostedChatboxSurface = hostedContext?.chatboxSurface;
   // Published-chatbox runtime sessions must use the org-aware web engine
@@ -1628,12 +1638,16 @@ export function useChatSession(
           }
         } else if (isHarnessSessionDataPart(part)) {
           // Cache the harness workdir so the Playground Shell can open a
-          // terminal there. Keyed by project + host (both known here).
+          // terminal there. Keyed by project + host — and on an ENVIRONMENT
+          // turn there is no `hostedHostId` (the target carries no host
+          // pointer), so fall back to the presentation host: that is the id the
+          // rail reads by, and without it the workdir lands under the project
+          // key and the terminal opens at the box home instead.
           useHarnessWorkdirStore
             .getState()
             .setWorkdir(
               hostedProjectId ?? null,
-              hostedHostId ?? null,
+              hostedHostId ?? hostedPresentationHostId ?? null,
               part.data.workdir,
             );
         } else if (isHarnessResetDataPart(part)) {
@@ -1648,7 +1662,7 @@ export function useChatSession(
 
       setLiveTraceState((current) => applyLiveTraceEvent(current, part.data));
     },
-    [hostedProjectId, hostedHostId, appState],
+    [hostedProjectId, hostedHostId, hostedPresentationHostId, appState],
   );
 
   const syncResumedVersion = useCallback((version: number | null) => {
@@ -2676,8 +2690,22 @@ export function useChatSession(
           hostedEnsureServerIds &&
           serverNamesSnapshot.length > 0
         ) {
+          const targetAtSend = hostedTargetKeyRef.current;
           try {
             const resolved = await hostedEnsureServerIds(serverNamesSnapshot);
+            // The user changed what this Playground runs against (host → an
+            // environment, or a different host) while the preflight was in
+            // flight. The transport that would now carry this message belongs
+            // to the NEW target, so sending would run a message composed for
+            // one bundle against another. Fail closed and let the user resend.
+            if (hostedTargetKeyRef.current !== targetAtSend) {
+              pendingWidgetModelContextRef.current = undefined;
+              resolvedHostedServersRef.current = null;
+              toast.error(
+                "The chat target changed while this message was being prepared. Send it again to run it against the current selection.",
+              );
+              return;
+            }
             resolvedHostedServersRef.current = {
               serverIds: resolved.map((r) => r.serverId),
               serverNames: serverNamesSnapshot,

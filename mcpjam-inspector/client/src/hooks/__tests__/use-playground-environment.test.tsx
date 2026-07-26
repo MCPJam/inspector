@@ -294,4 +294,93 @@ describe("usePlaygroundEnvironment — select vs edit", () => {
       result.current.servers.find((s) => s.serverId === "srv_a")?.enabled
     ).toBe(false);
   });
+
+  it("re-selecting the environment that is ALREADY selected keeps the override", async () => {
+    // Picking the current entry out of the picker is a no-op selection, not an
+    // environment change. Clearing the per-turn narrowing on it would discard a
+    // choice the user never asked to undo.
+    const { result } = await renderEnvironment();
+    act(() => result.current.selectEnvironment("env_1"));
+    await waitFor(() => expect(result.current.preview).not.toBeNull());
+    act(() => result.current.setServerEnabled("srv_a", false));
+    expect(result.current.serverOverrideIds).toEqual(["srv_plugin"]);
+
+    act(() => result.current.selectEnvironment("env_1"));
+
+    expect(result.current.serverOverrideIds).toEqual(["srv_plugin"]);
+    expect(result.current.environmentOverrides).toEqual({
+      serverIds: ["srv_plugin"],
+    });
+  });
+});
+
+describe("usePlaygroundEnvironment — nothing stale across a transition", () => {
+  it("blanks the previous environment's preview the instant the id changes", async () => {
+    const { result } = await renderEnvironment();
+    act(() => result.current.selectEnvironment("env_1"));
+    await waitFor(() =>
+      expect(result.current.preview?.environment.environmentId).toBe("env_1")
+    );
+
+    // env_2's resolve never lands. The panel must NOT keep describing env_1 in
+    // the meantime: its name, host, counts and — worst — its server checkboxes
+    // belong to a different bundle, and a click on one of those would build an
+    // override out of the wrong environment's server ids.
+    mockFetch.mockReturnValue(new Promise(() => {}));
+    act(() => result.current.selectEnvironment("env_2"));
+
+    expect(result.current.preview).toBeNull();
+    expect(result.current.servers).toEqual([]);
+    expect(result.current.isPreviewLoading).toBe(true);
+    // …and the caller can see the target isn't ready, so sends stay gated.
+    expect(result.current.isResolutionPending).toBe(true);
+  });
+
+  it("never reports one project's environment under another project's id", async () => {
+    localStorage.setItem(
+      "mcp-previewed-environment-id",
+      JSON.stringify({ proj_1: "env_1" })
+    );
+    const seen: Array<string | null> = [];
+    const { rerender } = renderHook(
+      ({ projectId }: { projectId: string }) => {
+        const state = usePlaygroundEnvironment(projectId);
+        seen.push(state.environmentId);
+        return state;
+      },
+      { initialProps: { projectId: "proj_1" } }
+    );
+    await waitFor(() => expect(seen).toContain("env_1"));
+
+    const before = seen.length;
+    rerender({ projectId: "proj_2" });
+
+    // proj_2 has no previewed environment. Carrying proj_1's id through even
+    // one committed render would put the Playground into environment mode for
+    // an environment the new project doesn't own — and ask the server to
+    // resolve it under the new project id.
+    expect(seen.slice(before)).not.toContain("env_1");
+    for (const call of mockFetch.mock.calls) {
+      expect(String(call[0])).not.toContain("projectId=proj_2");
+    }
+  });
+
+  it("refetches on tab focus, because the row revision isn't the whole truth", async () => {
+    // A rotated host config or a changed server-group membership does not bump
+    // the environment row's revision, so the revision dependency alone can't
+    // see them. A focus refetch closes the common "edited in another tab" case
+    // without a subscription or a poll.
+    const { result } = await renderEnvironment();
+    act(() => result.current.selectEnvironment("env_1"));
+    await waitFor(() => expect(result.current.preview).not.toBeNull());
+    const callsBefore = mockFetch.mock.calls.length;
+
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+
+    await waitFor(() =>
+      expect(mockFetch.mock.calls.length).toBeGreaterThan(callsBefore)
+    );
+  });
 });
