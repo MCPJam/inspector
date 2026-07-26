@@ -95,6 +95,27 @@ describe("listSkills", () => {
     );
   });
 
+  it("still calls an unattributed plugin skill a plugin skill, not a project one", async () => {
+    // Mislabelling it "project" would be a false claim about where the model's
+    // instructions came from.
+    const { tools } = getEffectiveSkillToolsAndPrompt(
+      set({
+        pluginSkills: [
+          {
+            ref: "summarize",
+            skillId: "sk_a",
+            name: "summarize",
+            description: "Summarize",
+            content: "body",
+            aggregateHash: "agg",
+            files: [],
+          },
+        ],
+      })
+    );
+    expect(await run(tools.listSkills, {})).toContain("**summarize** (plugin)");
+  });
+
   it("says the turn has no skills rather than inventing a project-wide list", async () => {
     const { tools } = getEffectiveSkillToolsAndPrompt(set());
     expect(await run(tools.listSkills, {})).toBe(

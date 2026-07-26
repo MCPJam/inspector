@@ -54,18 +54,22 @@ function pluginOf(skill: EffectiveSkill): RuntimePluginSkill["plugin"] {
   return (skill as RuntimePluginSkill).plugin;
 }
 
-/** Human-readable provenance for the discovery listing. */
-function originLabel(skill: EffectiveSkill): string {
+/**
+ * Human-readable provenance for the discovery listing.
+ *
+ * `isPlugin` is passed rather than inferred from `skill.plugin`, because a
+ * plugin skill whose attribution failed has no `plugin` — labelling it
+ * "project" would be a false claim about where the model's instructions came
+ * from. It says "plugin" with the revision omitted instead.
+ */
+function originLabel(skill: EffectiveSkill, isPlugin: boolean): string {
+  if (!isPlugin) return "project";
   const plugin = pluginOf(skill);
-  if (plugin) {
-    // A short bundle-hash prefix, not the full hash: enough to tell two
-    // revisions apart in a listing without spending the budget on 64 chars.
-    const revision = plugin.bundleHash
-      ? `@${plugin.bundleHash.slice(0, 8)}`
-      : "";
-    return `plugin ${plugin.name}${revision}`;
-  }
-  return "project";
+  if (!plugin) return "plugin";
+  // A short bundle-hash prefix, not the full hash: enough to tell two revisions
+  // apart in a listing without spending the budget on 64 chars.
+  const revision = plugin.bundleHash ? `@${plugin.bundleHash.slice(0, 8)}` : "";
+  return `plugin ${plugin.name}${revision}`;
 }
 
 interface SkillLookup {
@@ -137,6 +141,7 @@ function findFile(
  */
 function buildListing(
   skills: EffectiveSkill[],
+  pluginRefs: Set<string>,
   modelContextTokens: number | undefined
 ): { text: string; omittedRefs: string[] } {
   if (skills.length === 0) {
@@ -147,7 +152,7 @@ function buildListing(
     skills.map((skill) => ({
       ref: skill.ref,
       description: skill.description,
-      origin: originLabel(skill),
+      origin: originLabel(skill, pluginRefs.has(skill.ref)),
     })),
     budgetChars
   );
@@ -171,11 +176,17 @@ function buildListing(
 
 export function createEffectiveSkillTools(args: {
   skills: EffectiveSkill[];
+  /** Refs that came through the PLUGIN channel — see {@link originLabel}. */
+  pluginRefs: Set<string>;
   modelContextTokens?: number;
   signal?: AbortSignal;
 }) {
   const lookup = buildLookup(args.skills);
-  const listing = buildListing(args.skills, args.modelContextTokens);
+  const listing = buildListing(
+    args.skills,
+    args.pluginRefs,
+    args.modelContextTokens
+  );
   if (listing.omittedRefs.length > 0) {
     logger.warn(
       "[effective-skills] skill metadata budget exceeded; skills omitted from discovery",
@@ -318,6 +329,9 @@ export function getEffectiveSkillToolsAndPrompt(
   return {
     tools: createEffectiveSkillTools({
       skills,
+      pluginRefs: new Set(
+        capabilities.pluginSkills.map((skill) => skill.ref)
+      ),
       ...(options?.modelContextTokens !== undefined
         ? { modelContextTokens: options.modelContextTokens }
         : {}),
