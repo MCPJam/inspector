@@ -861,13 +861,20 @@ export const createDebugOAuthStateMachine = (
 
             try {
               // Pass an explicit metadata URL to discovery ONLY when it was
-              // header/override-sourced (not derived from the server URL): a
-              // fresh `WWW-Authenticate` header, or a SEP-2350 caller override.
-              // A derived URL is left undefined so discovery keeps its
-              // well-known + fallback behavior.
+              // EXPLICITLY sourced — a SEP-2350 caller override, OR the fresh
+              // `WWW-Authenticate` header's own `resource_metadata` param — not
+              // when it was DERIVED from the server URL. A `WWW-Authenticate`
+              // header can be present yet omit `resource_metadata`, in which
+              // case `state.resourceMetadataUrl` holds the derived well-known
+              // URL; passing that as an explicit option would defeat discovery's
+              // well-known + fallback behavior, so leave `metadataOptions`
+              // undefined for a derived URL.
+              const explicitResourceMetadataUrl =
+                overrideResourceMetadataUrl ||
+                parseBearerAuthenticateParameters(state.wwwAuthenticateHeader)
+                  .resource_metadata;
               const metadataOptions =
-                (state.wwwAuthenticateHeader || overrideResourceMetadataUrl) &&
-                state.resourceMetadataUrl
+                explicitResourceMetadataUrl && state.resourceMetadataUrl
                   ? { resourceMetadataUrl: state.resourceMetadataUrl }
                   : undefined;
 
