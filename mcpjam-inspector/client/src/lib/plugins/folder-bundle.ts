@@ -321,6 +321,12 @@ export async function buildPluginZip(
 //    parsing ZIP64 structures — which is also why a configured `maxEntries`
 //    must stay below 0xFFFF (validated at the API boundary): at or above
 //    the sentinel the 16-bit field can no longer represent the real count.
+//    The scan tolerates trailing bytes after the EOCD, because jszip does
+//    (a stricter scan would fail OPEN: junk-suffixed archives would skip
+//    this screen while still loading). Residual: under that tolerance a
+//    forged signature inside entry data could shadow-count, but the
+//    backward scan prefers the real (outermost) EOCD and the backend's
+//    yauzl count stays authoritative.
 // 2. COLLAPSED-DUPLICATE DETECTION — when the raw record count exceeds
 //    jszip's deduplicated entry count, duplicate/colliding names were
 //    silently merged last-wins; surfaced as PATH_DUPLICATE, the same code
@@ -362,11 +368,18 @@ export async function buildPluginZip(
  * from the raw bytes, before jszip parses (and name-deduplicates) anything.
  *
  * The EOCD (`PK\x05\x06`) is 22 bytes plus an up-to-65535-byte trailing
- * comment, so it is scanned backward within the last 65557 bytes; a match
- * only counts when its comment-length field spans exactly to the end of the
- * file (rules out the signature appearing inside entry data). Returns
- * `undefined` when no EOCD is found — jszip's own "corrupted zip" error then
- * surfaces from `loadAsync`.
+ * comment, scanned backward within the last 65557 bytes. TOLERANCE MUST
+ * MATCH THE PARSER BEING GUARDED: jszip's loader accepts trailing bytes
+ * after the EOCD (it only warns), so requiring the comment to span exactly
+ * to EOF would fail OPEN — a valid archive plus one appended junk byte
+ * would skip this screen entirely while `loadAsync` still succeeds. A
+ * candidate therefore only needs its comment length to FIT in the remaining
+ * bytes; the backward scan picks the LAST (outermost) such signature. A
+ * forged signature inside entry data could in principle shadow-count under
+ * this tolerance, but it sits before the real EOCD so the backward scan
+ * prefers the real one, and the backend's yauzl count stays authoritative
+ * regardless. Returns `undefined` only when no plausible EOCD exists (jszip
+ * then fails `loadAsync` on its own).
  */
 function readEocdTotalEntries(bytes: Uint8Array): number | undefined {
   const EOCD_SIZE = 22;
@@ -376,7 +389,7 @@ function readEocdTotalEntries(bytes: Uint8Array): number | undefined {
   for (let i = bytes.length - EOCD_SIZE; i >= lowest; i--) {
     if (view.getUint32(i, true) !== 0x06054b50) continue;
     const commentLength = view.getUint16(i + 20, true);
-    if (i + EOCD_SIZE + commentLength !== bytes.length) continue;
+    if (commentLength > bytes.length - (i + EOCD_SIZE)) continue;
     // Offset 10: total central-directory records across all disks.
     return view.getUint16(i + 10, true);
   }
@@ -431,10 +444,17 @@ interface JsZipInternalStream {
   pause(): JsZipInternalStream;
 }
 
-/** jszip keeps the central-directory uncompressed size on an internal field. */
-function declaredUncompressedSize(entry: JsZipEntryInternals): number {
+/**
+ * jszip keeps the central-directory uncompressed size on an internal field.
+ * Returns `undefined` when the internal is unavailable — callers must fall
+ * back to their own hard cap, NOT zero: a zero cap would abort every
+ * legitimate read if a future jszip stops populating `_data`.
+ */
+function declaredUncompressedSize(
+  entry: JsZipEntryInternals,
+): number | undefined {
   const size = entry._data?.uncompressedSize;
-  return typeof size === "number" && size >= 0 ? size : 0;
+  return typeof size === "number" && size >= 0 ? size : undefined;
 }
 
 /**
@@ -450,7 +470,9 @@ function readEntryBounded(
   rawName: string,
   maxBytes: number,
 ): Promise<Uint8Array> {
-  const cap = Math.min(maxBytes, declaredUncompressedSize(entry));
+  // When the declared size is unavailable, fall back to the hard cap —
+  // never 0, which would abort every legitimate read.
+  const cap = Math.min(maxBytes, declaredUncompressedSize(entry) ?? maxBytes);
   return new Promise<Uint8Array>((resolve, reject) => {
     const stream = entry.internalStream("uint8array");
     const chunks: Uint8Array[] = [];
@@ -566,7 +588,7 @@ export async function createZipPluginFileSource(
     const kind = entryKind(rawName, record.unixPermissions);
     entries.push({
       path: rawName,
-      size: kind === "file" ? declaredUncompressedSize(record) : 0,
+      size: kind === "file" ? (declaredUncompressedSize(record) ?? 0) : 0,
       kind,
     });
     if (kind !== "directory") {
