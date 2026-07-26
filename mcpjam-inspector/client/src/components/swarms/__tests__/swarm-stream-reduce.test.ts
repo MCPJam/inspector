@@ -148,3 +148,44 @@ describe("resolveSwarmCellOutcome", () => {
     ).toBe("succeeded");
   });
 });
+
+describe("reduceSwarmStreamEvent — per-target keying (D2)", () => {
+  it("keys cells by targetId ?? hostId: two SAME-HOST env targets stay distinct", () => {
+    let state = empty();
+    state = reduceSwarmStreamEvent(
+      state,
+      evt({
+        type: "attempt_status",
+        status: "running",
+        targetId: "environment:e1",
+        chatSessionId: "synth_run_1_env_e1_0",
+      }),
+    );
+    state = reduceSwarmStreamEvent(
+      state,
+      evt({
+        type: "attempt_status",
+        status: "failed",
+        targetId: "environment:e2",
+        chatSessionId: "synth_run_1_env_e2_0",
+      }),
+    );
+    // Same hostId ("host_a") on both — but the cells never merge.
+    expect(state.cellStatus[swarmCellKey("environment:e1", 0)]).toBe("running");
+    expect(state.cellStatus[swarmCellKey("environment:e2", 0)]).toBe("failed");
+    expect(state.cellStatus[swarmCellKey("host_a", 0)]).toBeUndefined();
+    // Envelope keeps the targetId for downstream consumers.
+    expect(state.sessions["synth_run_1_env_e1_0"]?.envelope.targetId).toBe(
+      "environment:e1",
+    );
+  });
+
+  it("legacy events (no targetId) keep keying by hostId — byte-compatible", () => {
+    let state = empty();
+    state = reduceSwarmStreamEvent(
+      state,
+      evt({ type: "attempt_status", status: "succeeded" }),
+    );
+    expect(state.cellStatus[swarmCellKey("host_a", 0)]).toBe("succeeded");
+  });
+});

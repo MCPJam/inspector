@@ -132,7 +132,7 @@ export interface UsePersistedHostReturn {
 export function usePersistedHost(
   projectId: string | null,
 ): UsePersistedHostReturn {
-  const [previewedHostId] = usePreviewedHostId(projectId);
+  const [previewedHostId, setPreviewedHostId] = usePreviewedHostId(projectId);
   const [storedHostIds, setStoredHostIdsState] = useState<string[]>([]);
   const [multiHostEnabled, setMultiHostEnabledState] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
@@ -207,17 +207,38 @@ export function usePersistedHost(
     [previewedHostId, storedHostIds],
   );
 
-  const setSelectedHostIds = useCallback((hostIds: string[]) => {
-    const normalized = normalizeSelectedHostIds(hostIds);
-    // React state is the source of truth for the compare-column line-up
-    // during in-app writes; the array-mirror effect above persists it.
-    // The lead (previewed host) is owned by `usePreviewedHostId` /
-    // `savePreviewedHostId`; this setter intentionally does NOT touch
-    // the lead — promotion goes through `replaceLeadHostId`. Mutating
-    // the lead from here would be the same anti-pattern that grew the
-    // model array on every host switch.
-    setStoredHostIdsState(normalized);
-  }, []);
+  const setSelectedHostIds = useCallback(
+    (hostIds: string[]) => {
+      const normalized = normalizeSelectedHostIds(hostIds);
+      // React state is the source of truth for the compare-column line-up
+      // during in-app writes; the array-mirror effect above persists it.
+      // The lead (previewed host) is owned by `usePreviewedHostId` /
+      // `savePreviewedHostId`; this setter does NOT promote a different
+      // lead — promotion goes through `replaceLeadHostId`. Mutating the
+      // lead from here would be the same anti-pattern that grew the model
+      // array on every host switch.
+      setStoredHostIdsState(normalized);
+
+      // ...with exactly one exception: an in-app write that DROPS the
+      // lead from a non-empty line-up. `deriveSelectedHostIds` cannot
+      // tell "the array dropped the lead" apart from "an external
+      // `savePreviewedHostId` moved the lead without rotating the array",
+      // so it would resurrect the dropped lead at slot 0 — clobbering the
+      // host that legitimately moved up and making the lead impossible to
+      // uncheck in the picker. An explicit array write is authoritative
+      // about the line-up, so the lead follows it to the new slot 0.
+      //
+      // Clearing the array to `[]` is deliberately NOT a lead change: the
+      // empty array means "fall back to the lead as the single implicit
+      // selection" (see `PlaygroundMain.handleMultiModelEnabledChange`),
+      // so the lead has to survive.
+      if (normalized.length === 0) return;
+      if (!previewedHostId) return;
+      if (normalized.includes(previewedHostId)) return;
+      setPreviewedHostId(normalized[0]);
+    },
+    [previewedHostId, setPreviewedHostId],
+  );
 
   const setMultiHostEnabled = useCallback((enabled: boolean) => {
     setMultiHostEnabledState(enabled);

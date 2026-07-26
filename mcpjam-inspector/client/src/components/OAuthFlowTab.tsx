@@ -311,7 +311,12 @@ export const OAuthFlowTab = ({
       customHeaders,
       registrationStrategy,
       preregisteredClientId: profile.clientId.trim() || undefined,
-      preregisteredClientSecret: profile.clientSecret.trim() || undefined,
+      // Preserve the exact typed secret — trimming would silently change a
+      // secret that legitimately has leading/trailing whitespace before it
+      // ever reaches the live OAuth token exchange.
+      preregisteredClientSecret: profile.clientSecret.trim()
+        ? profile.clientSecret
+        : undefined,
       hasClientSecret: Boolean(activeServer?.hasClientSecret),
     });
   }, [
@@ -451,7 +456,11 @@ export const OAuthFlowTab = ({
   ]);
 
   useEffect(() => {
-    const processOAuthCallback = (code: string, state: string | undefined) => {
+    const processOAuthCallback = (
+      code: string,
+      state: string | undefined,
+      iss?: string | undefined
+    ) => {
       if (processedCodeRef.current === code) {
         return;
       }
@@ -490,6 +499,10 @@ export const OAuthFlowTab = ({
 
       updateOAuthFlowState({
         authorizationCode: code,
+        // 2R-iss / review F8: record the RFC 9207 `iss` so the machine's
+        // authorization-response issuer step validates it (it reads
+        // `state.authorizationResponseIss`) instead of leaving it unset.
+        authorizationResponseIss: iss,
         error: undefined,
       });
 
@@ -505,7 +518,7 @@ export const OAuthFlowTab = ({
       }
 
       if (event.data?.type === "OAUTH_CALLBACK" && event.data?.code) {
-        processOAuthCallback(event.data.code, event.data.state);
+        processOAuthCallback(event.data.code, event.data.state, event.data.iss);
       }
     };
 
@@ -537,8 +550,9 @@ export const OAuthFlowTab = ({
 
         const code = parsed.searchParams.get("code");
         const state = parsed.searchParams.get("state");
+        const iss = parsed.searchParams.get("iss");
         if (code) {
-          processOAuthCallback(code, state ?? undefined);
+          processOAuthCallback(code, state ?? undefined, iss ?? undefined);
         }
       } catch (error) {
         console.error("Failed to process Electron OAuth callback:", error);
@@ -550,7 +564,11 @@ export const OAuthFlowTab = ({
       channel = new BroadcastChannel("oauth_callback_channel");
       channel.onmessage = (event) => {
         if (event.data?.type === "OAUTH_CALLBACK" && event.data?.code) {
-          processOAuthCallback(event.data.code, event.data.state);
+          processOAuthCallback(
+            event.data.code,
+            event.data.state,
+            event.data.iss
+          );
         }
       };
     } catch (error) {

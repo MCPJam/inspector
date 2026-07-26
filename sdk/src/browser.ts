@@ -169,6 +169,34 @@ export type {
   ProbeTransportResult,
 } from "./server-probe.js";
 export { runOAuthStateMachine } from "./oauth/state-machines/runner.js";
+// SSRF host classification (shared hardening): the browser executor re-validates
+// the FINAL response URL after redirects using the same RFC 6890 policy the
+// factory guard applies to the initial request URL.
+export {
+  assertOutboundOAuthUrlAllowed,
+  isPrivateHost,
+  isDisallowedIpAddress,
+  isLoopbackOAuthUrl,
+  OAuthOutboundUrlBlockedError,
+} from "./oauth/ssrf-guard.js";
+// RFC 9207 authorization-response `iss` validation. Era-agnostic (validating a
+// present `iss` is permitted on every version), so the browser callback gate
+// reuses it across 2025/2026 flows.
+export {
+  validateAuthorizationResponseIssuer,
+  type AuthorizationResponseIssuerCheck,
+} from "./oauth/state-machines/debug-oauth-2026-07-28.js";
+// SEP-2350 runtime scope step-up core (2R-stepup): scope union, insufficient-
+// scope challenge parsing, and the §10.5 interactive/M2M/debugger policy split.
+// Era-agnostic — the step-up decision lives at the runtime request boundary.
+export {
+  computeScopeUnion,
+  parseInsufficientScopeChallenge,
+  resolveStepUpAction,
+  type InsufficientScopeChallenge,
+  type StepUpAuthMode,
+  type StepUpAction,
+} from "./oauth/state-machines/shared/challenges.js";
 export type {
   OAuthAuthorizationRequestResult,
   OAuthStateMachineRunConfig,
@@ -300,6 +328,7 @@ export type {
   RegistrationStrategy2025_03_26,
   RegistrationStrategy2025_06_18,
   RegistrationStrategy2025_11_25,
+  RegistrationStrategy2026_07_28,
 } from "./oauth/state-machines/types.js";
 
 // MCP conformance transport support — pure predicate, safe for the browser.

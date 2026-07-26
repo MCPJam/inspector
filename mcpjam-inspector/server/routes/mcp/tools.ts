@@ -6,7 +6,27 @@ import type {
 } from "@modelcontextprotocol/client";
 import "../../types/hono"; // Type extensions
 import { listTools as listToolsShared } from "../../utils/route-handlers.js";
-import { describeError } from "@mcpjam/sdk";
+import {
+  extractInsufficientScopeChallenge,
+  serializeMcpError,
+  jsonError,
+  type InsufficientScopeChallenge,
+} from "../../utils/mcp-error-serialize.js";
+
+// Re-exported so existing importers (and
+// `__tests__/tools.serialize-error.test.ts`) keep resolving these from
+// `mcp/tools`; the implementations now live in the shared serializer used by
+// every route surface that can receive a `403 insufficient_scope` (SEP-2350).
+export {
+  extractInsufficientScopeChallenge,
+  serializeMcpError,
+  jsonError,
+  type InsufficientScopeChallenge,
+};
+import {
+  toServedFromCache,
+  withCacheEventCapture,
+} from "../../utils/cache-events.js";
 
 const tools = new Hono();
 
@@ -89,48 +109,13 @@ function getExecutionDurationMs(context: ExecutionContext): number {
   return Math.max(0, Date.now() - context.startedAtMs);
 }
 
-function serializeMcpError(error: unknown) {
-  const anyErr = error as any;
-  const base = {
-    name: anyErr?.name ?? "Error",
-    message: anyErr?.message ?? String(error),
-    code: anyErr?.code ?? anyErr?.error?.code,
-    data: anyErr?.data ?? anyErr?.error?.data,
-  } as Record<string, unknown>;
-  const cause = anyErr?.cause;
-  if (cause && typeof cause === "object") {
-    base.cause = {
-      name: (cause as any)?.name,
-      message: (cause as any)?.message,
-      code: (cause as any)?.code,
-      data: (cause as any)?.data,
-    };
-  }
-  if (process.env.NODE_ENV === "development" && anyErr?.stack) {
-    base.stack = anyErr.stack;
-  }
-  return base;
-}
-
-function jsonError(c: any, error: unknown, fallbackStatus = 500) {
-  const details = serializeMcpError(error);
-  const status =
-    typeof (error as any)?.status === "number"
-      ? (error as any).status
-      : fallbackStatus;
-  const normalized = describeError(error);
-  return c.json(
-    { error: details.message as string, mcpError: details, normalized },
-    status,
-  );
-}
-
 tools.post("/list", async (c) => {
   try {
-    const { serverId, modelId, cursor } = (await c.req.json()) as {
+    const { serverId, modelId, cursor, refresh } = (await c.req.json()) as {
       serverId?: string;
       modelId?: string;
       cursor?: string;
+      refresh?: boolean;
     };
     if (!serverId) {
       return c.json({ error: "serverId is required" }, 400);
@@ -159,13 +144,19 @@ tools.post("/list", async (c) => {
       return c.json({ tools: [], toolsMetadata: {}, tokenCount: undefined });
     }
 
-    return c.json(
-      await listToolsShared(c.mcpClientManager, {
+    const { result, events } = await withCacheEventCapture(() =>
+      listToolsShared(c.mcpClientManager, {
         serverId: normalizedServerId,
         modelId,
         cursor,
+        cacheMode: refresh === true ? "refresh" : undefined,
       }),
     );
+    const servedFromCache = toServedFromCache(events);
+    return c.json({
+      ...result,
+      ...(servedFromCache ? { servedFromCache } : {}),
+    });
   } catch (error) {
     return jsonError(c, error, 500);
   }

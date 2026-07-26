@@ -43,3 +43,38 @@ export function confineToHome(
   if (normalized.split("/").includes("..")) return null;
   return normalized;
 }
+
+/**
+ * The single working-directory contract for a computer (COMP-16). One
+ * `hostConfig.computer.workdir` governs WHERE commands run on the box —
+ * honored identically by the chat `bash` tool, the harness Shell, and the web
+ * terminal PTY, rather than three competing settings.
+ *
+ * Resolution:
+ *   - absent / blank ⇒ `{ workdir: undefined }` — use the box default (`$HOME`,
+ *     i.e. `/home/user`); callers that need an explicit path use `?? HOME_ROOT`.
+ *   - present ⇒ must `confineToHome`; a value that escapes (`..`, `/etc`, a
+ *     sibling like `/home/user2`) returns `{ error }` with a clear message the
+ *     caller surfaces, instead of silently running somewhere unexpected.
+ *
+ * This is the server-side confinement the COMP-16 acceptance criteria require;
+ * the host-config UI validates the same rule for immediate feedback, but the
+ * exec-time check here is the authoritative one (a value can reach exec from an
+ * older client, the API, or a hand-edited host config).
+ */
+export function resolveWorkingDirectory(
+  raw: string | undefined
+): { workdir: string | undefined } | { error: string } {
+  if (raw === undefined || raw.trim() === "") {
+    return { workdir: undefined };
+  }
+  const confined = confineToHome(raw);
+  if (!confined) {
+    return {
+      error:
+        `Working directory "${raw}" must resolve under ${HOME_ROOT} ` +
+        `(no "..", absolute escapes like /etc, or sibling prefixes).`,
+    };
+  }
+  return { workdir: confined };
+}

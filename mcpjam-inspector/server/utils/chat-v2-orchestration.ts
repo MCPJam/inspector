@@ -34,6 +34,7 @@ import { getSkillToolsAndPrompt } from "./skill-tools.js";
 import {
   getCloudSkillToolsAndPrompt,
   getPinnedSkillToolsAndPrompt,
+  getResolvedSkillToolsAndPrompt,
 } from "./computers/cloud-skill-tools.js";
 import type { PinnableSkill } from "../../shared/skill-types.js";
 import { logger } from "./logger.js";
@@ -684,14 +685,26 @@ export interface PrepareChatV2Options {
    */
   cloudSkills?: { authHeader: string; projectId: string };
   /**
-   * Explicit skill source, ABOVE the cloud/HOSTED/local chain. Set ONLY by eval
-   * runners: `pinned` mints frozen in-memory tools over snapshotted content
-   * (zero network in execute), `none` suppresses skills entirely. Chat callers
-   * never set it → the existing precedence is byte-identical. `pinned` tools
-   * bypass approval (pure reads of frozen content under an auto-deny eval run).
+   * Explicit skill source, ABOVE the cloud/HOSTED/local chain. Chat callers on
+   * the legacy paths never set it → the existing precedence is byte-identical.
+   *
+   *  - `pinned`   — EVAL RUNNERS ONLY. Frozen in-memory tools over snapshotted
+   *    content (zero network in execute). Tools bypass approval: pure reads of
+   *    frozen content under an auto-deny eval run.
+   *  - `resolved` — a Project-Environment turn (Phase 1.4). Same in-memory
+   *    delivery, DIFFERENT policy: this is an ordinary interactive turn, so the
+   *    skill tools follow the host's normal `requireToolApproval` rule. The eval
+   *    approval exemption is deliberately NOT inherited — a user watching their
+   *    own turn should still get the approval prompt they configured.
+   *  - `none`     — suppress skills entirely.
+   *
+   * `resolved` and `pinned` are separate kinds rather than one "in-memory" kind
+   * with a flag precisely because that approval divergence is the whole
+   * distinction, and a shared kind would make it a caller's job to remember.
    */
   skillsSource?:
     | { kind: "pinned"; skills: PinnableSkill[] }
+    | { kind: "resolved"; skills: PinnableSkill[] }
     | { kind: "none" };
 }
 
@@ -922,9 +935,11 @@ export async function prepareChatV2(
     filterAppOnlyTools(mcpTools, mcpClientManager);
   }
   // Skills source, in precedence order:
-  //   0. skillsSource set (EVAL RUNNERS ONLY) ⇒ pinned frozen tools or none.
-  //      Above everything; chat callers never set it, so the chain below is
-  //      byte-identical for them. Pinned tools bypass approval (decision 12).
+  //   0. skillsSource set ⇒ in-memory tools (`pinned` for eval runs,
+  //      `resolved` for a Project-Environment turn) or none. Above everything;
+  //      legacy chat callers never set it, so the chain below is byte-identical
+  //      for them. Only PINNED tools bypass approval (decision 12) — `resolved`
+  //      is an interactive turn and keeps the host's approval rule.
   //   1. cloudSkills set ⇒ the caller's Computer (E2B sandbox) — hosted path
   //      with a provisioned computer. Lazy discovery (no upfront wake).
   //   2. HOSTED_MODE without a computer ⇒ no skills (local FS unavailable).
@@ -942,7 +957,9 @@ export async function prepareChatV2(
     skillsSource
       ? skillsSource.kind === "pinned"
         ? getPinnedSkillToolsAndPrompt(skillsSource.skills)
-        : { tools: {}, systemPromptSection: "" }
+        : skillsSource.kind === "resolved"
+          ? getResolvedSkillToolsAndPrompt(skillsSource.skills)
+          : { tools: {}, systemPromptSection: "" }
       : cloudSkills
         ? getCloudSkillToolsAndPrompt({
             authHeader: cloudSkills.authHeader,

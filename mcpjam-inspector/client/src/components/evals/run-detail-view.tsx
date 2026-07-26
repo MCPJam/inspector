@@ -48,7 +48,8 @@ import {
   type RunTrendPoint,
 } from "./run-insight-rail";
 import { runDetailMetaLabelClass } from "./run-detail-typography";
-import { useEnvironments } from "@/hooks/useComputerEnvironments";
+import { useSandboxImages } from "@/hooks/useSandboxImages";
+import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -425,7 +426,7 @@ export function RunDetailView({
     runComputerEnv?.environmentId ??
     selectedRunDetails.configSnapshot?.environment?.computerEnvironmentId ??
     null;
-  const runEnvironments = useEnvironments(
+  const runEnvironments = useSandboxImages(
     runComputerEnvId ? selectedRunDetails.projectId ?? null : null
   );
   // Friendly name when resolvable; otherwise the RAW id (never truncated — it's
@@ -433,6 +434,14 @@ export function RunDetailView({
   const runComputerEnvLabel = runComputerEnvId
     ? runEnvironments?.find((e) => e.environmentId === runComputerEnvId)
         ?.name ?? runComputerEnvId
+    : null;
+  // Project-environment provenance frozen at run start (name + revision) —
+  // renders the "Environment" chip. Distinct from the sandbox-image pin
+  // above, whose chip reads "Sandbox image". Flag-gated so the rollback
+  // kill-switch hides env names/revisions on retained historical runs too.
+  const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
+  const runProjectEnvironmentRef = projectEnvironmentsEnabled
+    ? selectedRunDetails.configSnapshot?.environmentRef ?? null
     : null;
   const {
     result: goalCompletionResult,
@@ -707,9 +716,28 @@ export function RunDetailView({
         </div>
       ) : null}
 
-      {runComputerEnvId ? (
+      {runProjectEnvironmentRef ? (
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <span className={runDetailMetaLabelClass}>Environment</span>
+          <span
+            className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-2 py-0.5 text-xs"
+            title={runProjectEnvironmentRef.environmentId}
+          >
+            <span className="text-foreground">
+              {runProjectEnvironmentRef.name}
+            </span>
+            <span className="font-mono text-[10px] text-muted-foreground">
+              rev {runProjectEnvironmentRef.revision}
+            </span>
+          </span>
+        </div>
+      ) : null}
+
+      {runComputerEnvId ? (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          {/* "Sandbox image", not "Environment" — project environments own
+              that word now (naming decision 2026-07-24). */}
+          <span className={runDetailMetaLabelClass}>Sandbox image</span>
           <span
             className="inline-flex items-center gap-1.5 rounded-md border border-border/60 px-2 py-0.5 text-xs"
             title={

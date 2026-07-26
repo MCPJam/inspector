@@ -37,6 +37,15 @@ export interface CloudSkillListItem {
   aggregateHash: string;
   /** Wire-tolerant (see {@link normalizeProvenance}); absent ⇒ 'authored'. */
   provenance?: string;
+  /**
+   * Whether this skill can be pinned into a project environment's
+   * `skillSelection` (backend P0.3 metadata: rejects `plugin_component`
+   * skills, supporting files, extra frontmatter). Forwarded verbatim through
+   * `/api/web/skills/list` so pickers can disable ineligible rows with the
+   * backend-aligned reason instead of failing at save time. Absent on older
+   * backends (wire-tolerant).
+   */
+  pinnability?: { ok: true } | { ok: false; reason: string };
   createdAt: number;
   updatedAt: number;
 }

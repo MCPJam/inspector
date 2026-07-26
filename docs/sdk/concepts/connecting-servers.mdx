@@ -148,7 +148,7 @@ Always disconnect servers when you're done, especially in tests. This cleans up 
 
 ## Working with Multiple Servers
 
-A key strength of `MCPClientManager` is managing multiple servers simultaneously:
+`MCPClientManager` can manage multiple servers at once:
 
 ```typescript
 const manager = new MCPClientManager({
@@ -184,7 +184,7 @@ const allTools = await manager.getTools();
 
 ## Executing Tools Directly
 
-You can call tools without involving an LLM—useful for unit tests:
+You can call tools without involving an LLM, useful for unit tests:
 
 ```typescript
 // Direct tool execution
