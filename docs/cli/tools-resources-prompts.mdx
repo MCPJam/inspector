@@ -20,6 +20,25 @@ Valid host IDs match the presets in the Inspector: `claude`, `chatgpt`, `cursor`
 
 **Conflict with `--client-capabilities`:** `--host` and `--client-capabilities` both set the exact advertised capabilities and cannot be combined. The CLI exits with a usage error if both are passed.
 
+## Interactive multi-round-trip (`input_required`)
+
+Add `--interactive` to `tools call`, `prompts get`, or `resources read` to handle servers that return an `input_required` result. When the server embeds an elicitation request, the CLI renders it to the terminal and collects your response from stdin, then retries the original operation — repeating for as many rounds as the server needs.
+
+```bash
+mcpjam tools call --url https://your-server.com/mcp \
+  --tool-name book_flight \
+  --tool-args '{}' \
+  --interactive
+```
+
+**How prompts appear:** The server's message is printed to stderr, followed by a consent prompt (`[a]ccept / [d]ecline / [c]ancel`). For form fields, each field is prompted in turn with its type shown in brackets. For URL-mode elicitations, the URL is printed as plain text and you are asked for consent — the CLI never opens a browser automatically.
+
+**Non-interactive fallback (`--yes`):** Pass `--yes` alongside `--interactive` to decline every embedded input request without prompting. This is also the automatic behavior when stdin is not a TTY or the `CI` environment variable is set — the CLI declines cleanly rather than blocking.
+
+**Stdin conflict:** `--interactive` reads answers from stdin, so it cannot be combined with `--tool-args -`, `--tool-args-stdin`, or `--prompt-args -`. Pass arguments as inline JSON or `@path` instead.
+
+**Capability advertisement:** `--interactive` advertises `elicitation: { form, url }` in the MCP `initialize` handshake. If you also pass `--client-capabilities` or `--host` and that exact set omits `elicitation`, the CLI exits with a usage error — add `"elicitation": { "form": {}, "url": {} }` to the pinned set or drop `--interactive`.
+
 ## Tools
 
 ### List tools
