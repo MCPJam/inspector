@@ -608,3 +608,15 @@ export function getHarnessAdapter(id: string): HarnessRuntimeAdapter {
 export function registeredHarnessIds(): HarnessId[] {
   return Object.keys(HARNESS_ADAPTERS) as HarnessId[];
 }
+
+/**
+ * Whether a harness id can deliver skills at all, WITHOUT throwing on an
+ * unknown id. Surfaces that DESCRIBE a turn (environment preview, telemetry)
+ * need this before the turn runs, and describing a turn must never be the thing
+ * that fails the request — an unrecognized harness reports `false` ("we cannot
+ * say skills would be delivered"), the same honest answer a skills-incapable
+ * adapter gives today (Codex: `supportsSkills: false`).
+ */
+export function harnessSupportsSkills(id: string): boolean {
+  return isHarnessId(id) ? HARNESS_ADAPTERS[id].supportsSkills : false;
+}

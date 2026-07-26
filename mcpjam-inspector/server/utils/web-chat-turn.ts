@@ -65,6 +65,10 @@ import {
   type PersistedTurnTrace,
 } from "./chat-ingestion.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
+import {
+  toPinnableSkill,
+  type RuntimeSkill,
+} from "./harness/runtime-skills.js";
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-helpers.js";
 import { ErrorCode, WebRouteError } from "./../routes/web/errors.js";
 import { readUrlElicitations } from "@/shared/http-tool-calls";
@@ -160,6 +164,16 @@ export interface WebChatTurnPersistContext {
    * behavior.
    */
   captureToolSnapshot?: boolean;
+  /**
+   * Resolved Project-Environment skills for this turn (Phase 1.4), HARNESS
+   * side. Forwarded verbatim to `handleMCPJamFreeChatModel` → `runHarnessTurn`,
+   * where presence (even empty) skips the live project-wide skills fetch.
+   *
+   * It lives on the persist context rather than the prepare inputs because the
+   * harness path is reached through the persist/stream half of this helper —
+   * the same place `harness` and `executionScope` already travel.
+   */
+  runtimeSkillsOverride?: RuntimeSkill[];
 }
 
 /**
@@ -196,6 +210,19 @@ export interface WebChatTurnPrepareInputs {
    * actually has a computer. See `chat-v2-orchestration.ts`.
    */
   cloudSkills?: { authHeader: string; projectId: string };
+  /**
+   * Resolved Project-Environment skills for this turn (Phase 1.4), EMULATED
+   * side. When set (even empty) they are the only skills the emulated engine
+   * advertises: `prepareChatV2` receives them as `skillsSource: "resolved"`,
+   * which sits above the cloud/HOSTED/local chain. Callers must NOT also set
+   * `cloudSkills` — that would double-deliver (an environment-scoped
+   * `loadSkill` plus a project-wide one).
+   *
+   * Ignored when `harness` is set: a harness turn delivers skills natively
+   * through the adapter (see `WebChatTurnPersistContext.runtimeSkillsOverride`),
+   * and advertising emulated skill tools there is a prompt/tool mismatch.
+   */
+  runtimeSkillsOverride?: RuntimeSkill[];
 }
 
 /** Runtime knobs (auth, abort, rpc collector, Hono context for cleanup). */
@@ -334,6 +361,18 @@ export async function streamWebChatTurn(
       uiTools: prepare.uiTools,
       builtInTools: prepare.builtInTools,
       ...(prepare.cloudSkills ? { cloudSkills: prepare.cloudSkills } : {}),
+      // Environment-resolved skills outrank the cloud/HOSTED/local chain for the
+      // EMULATED engine only. On a harness turn the adapter delivers them
+      // natively, so advertising `listSkills`/`loadSkill` on top would describe
+      // a second, different delivery of the same set to the same model.
+      ...(prepare.runtimeSkillsOverride !== undefined && !prepare.harness
+        ? {
+            skillsSource: {
+              kind: "resolved" as const,
+              skills: prepare.runtimeSkillsOverride.map(toPinnableSkill),
+            },
+          }
+        : {}),
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
@@ -751,6 +790,11 @@ export async function streamWebChatTurn(
     ),
     modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
     ...(persist.harness ? { harness: persist.harness } : {}),
+    // Presence is semantic (even an empty array): the harness turn then skips
+    // the live project-wide skills fetch entirely.
+    ...(persist.runtimeSkillsOverride !== undefined
+      ? { runtimeSkillsOverride: persist.runtimeSkillsOverride }
+      : {}),
     ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
     // Forwarded SEPARATELY (also merged into `tools` for the emulated engine)
     // so the harness path can hand MCPJam's server-executed built-ins
