@@ -63,8 +63,13 @@ function issueError(
   ]);
 }
 
-/** `Blob.arrayBuffer` with a `FileReader` fallback (older WebKit/jsdom). */
-async function readFileBytes(file: File): Promise<Uint8Array> {
+/**
+ * `Blob.arrayBuffer` with a `FileReader` fallback (older WebKit/jsdom).
+ * Exported because the Add-plugin dialog reads a user-picked `.zip` through
+ * the same path before handing the bytes to the ZIP source — one file-reading
+ * behavior, one fallback.
+ */
+export async function readSelectedFileBytes(file: File): Promise<Uint8Array> {
   if (typeof file.arrayBuffer === "function") {
     return new Uint8Array(await file.arrayBuffer());
   }
@@ -168,7 +173,7 @@ export function createFolderPluginFileSource(
           `selected file ${path} exceeds the ${maxBytes}-byte read limit`,
         );
       }
-      const bytes = await readFileBytes(file);
+      const bytes = await readSelectedFileBytes(file);
       if (bytes.byteLength > maxBytes) {
         throw new Error(
           `selected file ${path} exceeds the ${maxBytes}-byte read limit`,
