@@ -107,6 +107,43 @@ export class MrtrDisplayTooLargeError extends Error {
   }
 }
 
+/**
+ * Raised when a safe-display field is rejected on grounds other than size —
+ * today, a URL-mode elicitation whose scheme is not navigable. Distinct from
+ * {@link MrtrDisplayTooLargeError} so the reason reads honestly in logs and the
+ * two failures stay separable.
+ */
+export class MrtrDisplayRejectedError extends Error {
+  readonly code = "MRTR_DISPLAY_REJECTED";
+  constructor(readonly field: string, reason: string) {
+    super(`MRTR display field "${field}" was rejected: ${reason}`);
+    this.name = "MrtrDisplayRejectedError";
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+/**
+ * A URL-mode elicitation target the browser may be asked to navigate to.
+ *
+ * MCP 2026-07-28 requires the CLIENT to "show the full URL to the user for
+ * examination before consent" and to "highlight the domain of the URL" — a
+ * `javascript:` or `data:` URL has no domain to show and is not an out-of-band
+ * destination at all; rendered as an anchor it is simply script injection. The
+ * spec constrains the server ("MUST contain a valid URL", "SHOULD use HTTPS
+ * URLs for non-development environments") but does not enumerate a client-side
+ * scheme allowlist, so this is MCPJam hardening against a hostile server rather
+ * than a spec MUST. `http:` stays allowed for local/dev servers.
+ */
+export function isNavigableElicitationUrl(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  try {
+    const { protocol } = new URL(value);
+    return protocol === "https:" || protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
 // ── Binding fingerprint ──────────────────────────────────────────────────
 
 /**
@@ -173,6 +210,16 @@ export function buildInputRequestDisplays(
     );
     if (mode === "url") {
       const url = typeof params.url === "string" ? params.url : "";
+      // Fail closed on a non-navigable scheme, at the PRODUCER: this value is
+      // persisted and emitted to the browser as a navigation target, so a
+      // hostile server's `javascript:`/`data:` URL must never leave the server
+      // — the same treatment the byte caps get.
+      if (!isNavigableElicitationUrl(url)) {
+        throw new MrtrDisplayRejectedError(
+          `${key}.url`,
+          "URL-mode elicitation must be an http(s) URL",
+        );
+      }
       displays.push({
         key,
         mode: "url",

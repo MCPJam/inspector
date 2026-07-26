@@ -67,6 +67,24 @@ describe("buildInputRequestDisplays", () => {
     });
   });
 
+  it("rejects a url-mode elicitation whose scheme is not navigable", () => {
+    const withUrl = (url: string) =>
+      ({
+        q1: { method: "elicitation/create", params: { mode: "url", message: "Go", url } },
+      }) as never;
+    // A hostile server must not get a script URL persisted or emitted.
+    expect(() => buildInputRequestDisplays(withUrl("javascript:alert(1)"))).toThrow(
+      /rejected/i,
+    );
+    expect(() => buildInputRequestDisplays(withUrl("data:text/html,<script>"))).toThrow(
+      /rejected/i,
+    );
+    expect(() => buildInputRequestDisplays(withUrl(""))).toThrow(/rejected/i);
+    // http(s) still passes — http for local/dev servers.
+    expect(buildInputRequestDisplays(withUrl("https://x.test/a"))).toHaveLength(1);
+    expect(buildInputRequestDisplays(withUrl("http://localhost:1/a"))).toHaveLength(1);
+  });
+
   it("rejects an oversized field rather than truncating", () => {
     expect(() =>
       buildInputRequestDisplays(

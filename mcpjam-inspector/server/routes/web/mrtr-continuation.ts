@@ -93,7 +93,10 @@ const resumeSchema = projectServerSchema.extend({
  * retarget: `resumeSchema` carries no URL and the endpoint is resolved
  * server-side from `projectId` + `serverId`, so it takes a legitimate config
  * edit racing a suspended round. Closing it means folding a stable digest of the
- * RESOLVED endpoint (origin + path) in below.
+ * RESOLVED endpoint (origin + path) into the hash below — which needs the URL
+ * surfaced out of `createManualHostedConnection` (it returns only the manager
+ * and body today), and the SAME term added at the PR5 suspend site, since a
+ * fingerprint only fails closed while both halves compute it identically.
  */
 function deriveServerConfigDigest(
   manager: { getInitializationInfo: (serverId: string) => unknown },
@@ -120,7 +123,10 @@ function deriveServerConfigDigest(
 }
 
 /**
- * POST /mrtr/continuation/resume
+ * POST /mrtr/resume  (mounted: `web.route("/mrtr", …)` → `/api/web/mrtr/resume`)
+ *
+ * Not to be confused with the FROZEN Convex-side `/web/mrtr/continuation/*`
+ * contract this calls out to — that is the backend store, not this route.
  *
  * Claim the record, idempotently submit the browser's response, and drive one
  * retry leg. Returns the resume outcome (completed result, another
@@ -130,7 +136,12 @@ mrtrContinuation.post("/resume", async (c) =>
   handleRoute(c, async () => {
     const rawBody = await readJsonBody<Record<string, unknown>>(c);
 
-    // Shape-gate the browser submission before it reaches the store.
+    // Shape-gate the browser submission BEFORE connecting, so a malformed or
+    // oversized payload never costs a server connect. This gate runs on the raw
+    // body; the value that actually reaches the store and the wire is the
+    // Zod-parsed `body.responses` below, which additionally strips unknown keys.
+    // (The raw cap is a superset of the parsed one, so passing here implies
+    // passing there.)
     const submissionCandidate = {
       continuationId: rawBody.continuationId,
       round: rawBody.round,
@@ -179,13 +190,20 @@ mrtrContinuation.post("/resume", async (c) =>
       const submission: MrtrResumeSubmission = {
         continuationId: body.continuationId,
         round: body.round,
-        responses: submissionCandidate.responses,
+        // The Zod-normalized values, NOT the raw ones that merely passed the
+        // structural predicate above: `elicitationResponseSchema` strips keys
+        // the contract does not declare, and it must be that narrowed shape
+        // that reaches the store and the MCP server.
+        responses: body.responses,
       };
 
       // Warm the connection so the client exists AND its negotiated identity is
-      // available for the fingerprint. listTools is not an MRTR verb, so it can
-      // never itself return input_required.
-      await manager.listTools(serverId);
+      // available for the fingerprint. `ping` is deliberately capability-NEUTRAL:
+      // this route resumes all three MRTR verbs, so probing with `listTools`
+      // would fail a prompt-only or resource-only server that never advertised
+      // `tools` — before the continuation was even claimed. `ping` is also not
+      // an MRTR verb, so it can never itself return `input_required`.
+      await manager.pingServer(serverId);
       const client = manager.getManagedClient(serverId);
       if (!client) {
         throw new WebRouteError(
@@ -216,7 +234,15 @@ mrtrContinuation.post("/resume", async (c) =>
         state: MrtrOperationState,
         responses: InputResponses,
       ): Promise<MrtrLegResult<unknown>> =>
-        resumeInputRequiredOperation(client, state, responses);
+        // The timeout is EXPLICIT, not inherited. This drives the managed client
+        // directly rather than through a manager verb, so the manager's
+        // `withTimeout` injection does not apply and the leg would otherwise
+        // fall back to the upstream SDK's own default. That would break the
+        // lease budget `MRTR_CONTINUATION_LEASE_TTL_MS` is derived from — a leg
+        // outrunning the budget can lose its lease after the wire has left.
+        resumeInputRequiredOperation(client, state, responses, {
+          requestOptions: { timeout: WEB_CALL_TIMEOUT_MS },
+        });
 
       const outcome = await resumeMrtrContinuationLeg({
         bearer,
@@ -237,7 +263,7 @@ mrtrContinuation.post("/resume", async (c) =>
 );
 
 /**
- * POST /mrtr/continuation/cancel
+ * POST /mrtr/cancel  (mounted: `web.route("/mrtr", …)` → `/api/web/mrtr/cancel`)
  *
  * Durable cancel: the original `AbortSignal` no longer exists after suspension,
  * so a user closing the dialog must be able to withdraw the continuation from a
