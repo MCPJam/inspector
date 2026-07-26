@@ -116,15 +116,37 @@ function OpenChangeProbe({
   );
 }
 
-function ProviderIntentControlledModelSelector() {
+// Mirrors the shape the reporter hit: the free tier is out of credits and the
+// user's Anthropic key exposes the whole BYOK list in SUPPORTED_MODELS order —
+// Claude Fable 5 first, and (like every own-provider row) not marked disabled
+// even when the key has no access to it.
+const byokIntentModels: ModelDefinition[] = [
+  {
+    id: "anthropic/claude-haiku-4.5",
+    name: "Claude Haiku 4.5 (Free)",
+    provider: "anthropic",
+    hosted: true,
+    disabled: true,
+    disabledReason: "You're out of credits. Top up or use your own key.",
+  },
+  { id: "claude-fable-5", name: "Claude Fable 5", provider: "anthropic" },
+  { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", provider: "anthropic" },
+  { id: "gpt-5-mini", name: "GPT-5 Mini", provider: "openai" },
+];
+
+function ProviderIntentControlledModelSelector({
+  availableModels = outOfCreditsModels,
+}: {
+  availableModels?: ModelDefinition[];
+} = {}) {
   const [currentModel, setCurrentModel] = useState<ModelDefinition>(
-    outOfCreditsModels[0]!
+    availableModels[0]!
   );
 
   return (
     <ModelSelector
       currentModel={currentModel}
-      availableModels={outOfCreditsModels}
+      availableModels={availableModels}
       onModelChange={setCurrentModel}
       respondToProviderTabIntent
     />
@@ -134,6 +156,7 @@ function ProviderIntentControlledModelSelector() {
 describe("ModelSelector", () => {
   beforeEach(() => {
     useModelPickerIntentStore.setState({ openProvidersTabNonce: 0 });
+    localStorage.clear();
   });
 
   it("keeps the popover open when multiple models are enabled", async () => {
@@ -235,7 +258,7 @@ describe("ModelSelector", () => {
     expect(screen.getAllByText("Claude 3.7 Sonnet").length).toBeGreaterThan(0);
   });
 
-  it("selects the first enabled provider model when the BYOK intent opens providers", async () => {
+  it("selects an enabled provider model when the BYOK intent opens providers", async () => {
     render(<ProviderIntentControlledModelSelector />);
 
     act(() => {
@@ -249,5 +272,74 @@ describe("ModelSelector", () => {
     expect(screen.getByPlaceholderText("Search models")).toBeInTheDocument();
     expect(screen.getByText("OpenAI")).toBeInTheDocument();
     expect(screen.queryByText("Anthropic")).not.toBeInTheDocument();
+  });
+
+  // BACK2-628: the hand-off used to take the first row of the "Your providers"
+  // list, which is Claude Fable 5 — a model the reporter's Anthropic key had
+  // no access to, so their first tool call failed every chat.
+  it("does not fall to the first own-provider row on the BYOK intent", async () => {
+    render(
+      <ProviderIntentControlledModelSelector
+        availableModels={byokIntentModels}
+      />
+    );
+
+    act(() => {
+      useModelPickerIntentStore.getState().requestOpenProvidersTab();
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("model-selector-trigger")
+      ).toHaveTextContent("Haiku 4.5");
+    });
+    expect(screen.getByTestId("model-selector-trigger")).not.toHaveTextContent(
+      "Fable"
+    );
+  });
+
+  it("restores the last own-provider model on the BYOK intent", async () => {
+    localStorage.setItem("mcp-inspector-last-own-provider-model", "gpt-5-mini");
+
+    render(
+      <ProviderIntentControlledModelSelector
+        availableModels={byokIntentModels}
+      />
+    );
+
+    act(() => {
+      useModelPickerIntentStore.getState().requestOpenProvidersTab();
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("model-selector-trigger")
+      ).toHaveTextContent("GPT-5 Mini");
+    });
+  });
+
+  it("leaves an own-provider selection alone when the BYOK intent fires", async () => {
+    const onModelChange = vi.fn();
+
+    render(
+      <ModelSelector
+        // Already on their own key — the reporter's state after manually
+        // picking Haiku. Re-selecting here is what made the choice look
+        // like it never stuck.
+        currentModel={byokIntentModels[2]!}
+        availableModels={byokIntentModels}
+        onModelChange={onModelChange}
+        respondToProviderTabIntent
+      />
+    );
+
+    act(() => {
+      useModelPickerIntentStore.getState().requestOpenProvidersTab();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText("Search models")).toBeInTheDocument();
+    });
+    expect(onModelChange).not.toHaveBeenCalled();
   });
 });

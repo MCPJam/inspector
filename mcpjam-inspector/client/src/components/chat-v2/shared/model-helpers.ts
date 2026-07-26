@@ -365,6 +365,14 @@ export const getDefaultModel = (
     "anthropic/claude-haiku-4.5",
     "openai/gpt-5-mini",
     "meta-llama/llama-4-scout",
+    // BYOK counterparts of the hosted picks above. A "Your providers"-only
+    // list matched none of the hosted ids and fell through to Sonnet 3.7 —
+    // or, with no anthropic key, all the way to `availableModels[0]`, which
+    // is whatever sorts first in SUPPORTED_MODELS (Claude Fable 5). A BYOK
+    // key that has no access to that model then fails on the first tool
+    // call. See BACK2-628.
+    Model.CLAUDE_HAIKU_4_5, // anthropic
+    Model.GPT_5_MINI, // openai
     Model.CLAUDE_3_7_SONNET_LATEST, // anthropic
     Model.GPT_4_1, // openai
     Model.GEMINI_2_5_PRO, // google
@@ -378,3 +386,36 @@ export const getDefaultModel = (
   }
   return availableModels[0];
 };
+
+/**
+ * Pick which "Your providers" model to land on when the out-of-credits
+ * hand-off switches the user off the free tier.
+ *
+ * Order:
+ *   1. the own-provider model they last chose, when it is still available
+ *      (the user's own answer beats any heuristic);
+ *   2. `getDefaultModel`'s priority list, restricted to own-provider rows;
+ *   3. the first selectable row.
+ *
+ * Step 3 used to be the only step. Own-provider models are never marked
+ * `disabled` — availability is inferred from "the user has a key for this
+ * provider at all", not from what that key can actually reach — so the
+ * previous `.find(m => !m.disabled)` could not screen out a model the key
+ * has no access to, and alphabetical provider order plus SUPPORTED_MODELS
+ * order made that Claude Fable 5 every time. See BACK2-628.
+ */
+export function pickOwnProviderModel(
+  configuredModels: ModelDefinition[],
+  lastUsedModelId?: string | null
+): ModelDefinition | undefined {
+  const selectable = configuredModels.filter((model) => !model.disabled);
+  if (selectable.length === 0) return undefined;
+
+  const lastUsed = lastUsedModelId?.trim();
+  if (lastUsed) {
+    const match = selectable.find((model) => String(model.id) === lastUsed);
+    if (match) return match;
+  }
+
+  return getDefaultModel(selectable);
+}

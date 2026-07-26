@@ -377,6 +377,7 @@ export function ChatTabV2({
     chatSessionId,
     selectedModel,
     setSelectedModel,
+    isSelectedModelResolved,
     selectedModelIds,
     setSelectedModelIds,
     multiModelEnabled,
@@ -1330,6 +1331,16 @@ export function ChatTabV2({
       return;
     }
 
+    // `selectedModel` is a derived fallback until the persisted id resolves
+    // against `availableModels` — which it can't while an org-managed
+    // provider config is still loading. Mirroring the fallback into storage
+    // here is what wiped the user's own-provider model on every load, so
+    // they landed back on the free tier (and, out of credits, back in the
+    // BYOK hand-off) chat after chat. See BACK2-628.
+    if (!isSelectedModelResolved) {
+      return;
+    }
+
     const sanitizedIds = resolvedSelectedModels.map((model) =>
       String(model.id)
     );
@@ -1349,6 +1360,7 @@ export function ChatTabV2({
     }
   }, [
     canEnableMultiModel,
+    isSelectedModelResolved,
     multiModelEnabled,
     resolvedSelectedModels,
     selectedModel,

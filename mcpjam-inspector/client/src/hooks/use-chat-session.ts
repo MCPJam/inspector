@@ -46,6 +46,7 @@ import {
 } from "@/hooks/use-ai-provider-keys";
 import { useCustomProviders } from "@/hooks/use-custom-providers";
 import { usePersistedModel } from "@/hooks/use-persisted-model";
+import { saveLastOwnProviderModelId } from "@/lib/selected-model-storage";
 import {
   getDefaultModel,
   isMCPJamProvidedModelMenuItem,
@@ -345,6 +346,14 @@ export interface UseChatSessionReturn {
   // Model state
   selectedModel: ModelDefinition;
   setSelectedModel: (model: ModelDefinition) => void;
+  /**
+   * False while the persisted selection has not (yet) matched an entry in
+   * `availableModels` — notably during the first renders after a load, when
+   * an org-managed provider config is still in flight. `selectedModel` is a
+   * derived fallback in that window; callers must not write it back to
+   * storage. See BACK2-628.
+   */
+  isSelectedModelResolved: boolean;
   selectedModelIds: string[];
   setSelectedModelIds: (modelIds: string[]) => void;
   multiModelEnabled: boolean;
@@ -1543,6 +1552,23 @@ export function useChatSession(
     return resolveSelectableModel(selectedModelId) ?? fallback;
   }, [availableModels, initialModelId, selectableModels, selectedModelId]);
 
+  // Whether the persisted lead selection actually resolved against
+  // `availableModels`. It does NOT while an org-managed provider config is in
+  // flight: that's a Convex query, so for the first render(s) after a load
+  // `composeAvailableModels` takes the local-BYOK branch and the user's
+  // org-key model simply isn't in the list yet. `selectedModel` is a derived
+  // fallback during that window, and any caller that mirrors it back into
+  // storage would overwrite the real choice — which is what made an
+  // own-provider model look like it never survived a new chat. See
+  // BACK2-628.
+  const isSelectedModelResolved = useMemo(() => {
+    if (initialModelId) return true;
+    if (!selectedModelId) return true;
+    return availableModels.some(
+      (model) => String(model.id) === selectedModelId
+    );
+  }, [availableModels, initialModelId, selectedModelId]);
+
   const tokenCountSelectionKey = useMemo(() => {
     if (!selectedModel?.id || !selectedModel?.provider) return "";
     const modelId = isMCPJamProvidedModelMenuItem(selectedModel)
@@ -1556,6 +1582,13 @@ export function useChatSession(
     (model: ModelDefinition) => {
       if (initialModelId) {
         return;
+      }
+      // Remember own-provider picks separately from the lead selection so the
+      // out-of-credits → "bring your own key" hand-off can restore the model
+      // the user actually wants instead of re-deriving one from list order.
+      // See `loadLastOwnProviderModelId` / BACK2-628.
+      if (!isMCPJamProvidedModelMenuItem(model)) {
+        saveLastOwnProviderModelId(String(model.id));
       }
       setSelectedModelId(String(model.id));
     },
@@ -3031,6 +3064,7 @@ export function useChatSession(
     // Model state
     selectedModel,
     setSelectedModel,
+    isSelectedModelResolved,
     selectedModelIds,
     setSelectedModelIds,
     multiModelEnabled,

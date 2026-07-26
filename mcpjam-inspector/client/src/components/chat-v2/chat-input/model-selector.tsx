@@ -30,7 +30,9 @@ import {
   getLogoProvider,
   getProviderDisplayName,
   isMCPJamProvidedModelMenuItem,
+  pickOwnProviderModel,
 } from "@/components/chat-v2/shared/model-helpers";
+import { loadLastOwnProviderModelId } from "@/lib/selected-model-storage";
 import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 
 interface ModelSelectorProps {
@@ -320,11 +322,8 @@ export function ModelSelector({
     );
     return { provided, configured };
   }, [modelGroups]);
-  const firstEnabledConfiguredModel = useMemo(
-    () =>
-      modelSections.configured
-        .flatMap((group) => group.models)
-        .find((model) => !model.disabled),
+  const configuredModels = useMemo(
+    () => modelSections.configured.flatMap((group) => group.models),
     [modelSections]
   );
   const selectedLimitReached =
@@ -344,15 +343,34 @@ export function ModelSelector({
       setIsOpen(true);
     }
 
-    if (
-      providersTabNonce !== selectedProvidersTabNonceRef.current &&
-      firstEnabledConfiguredModel
-    ) {
-      selectedProvidersTabNonceRef.current = providersTabNonce;
-      onModelChange(firstEnabledConfiguredModel);
+    if (providersTabNonce === selectedProvidersTabNonceRef.current) {
+      return;
     }
+
+    // Already on an own-provider model: the user's standing choice wins.
+    // Re-selecting here overwrote a working BYOK pick every time the
+    // out-of-credits dialog reopened, which is what made the selection look
+    // like it never persisted across chats (BACK2-628).
+    if (!isMCPJamProvidedModelMenuItem(currentModel)) {
+      selectedProvidersTabNonceRef.current = providersTabNonce;
+      return;
+    }
+
+    const nextModel = pickOwnProviderModel(
+      configuredModels,
+      loadLastOwnProviderModelId()
+    );
+    // No own-provider models resolved yet (keys still loading). Leave the
+    // nonce unconsumed so this settles once the list arrives.
+    if (!nextModel) {
+      return;
+    }
+
+    selectedProvidersTabNonceRef.current = providersTabNonce;
+    onModelChange(nextModel);
   }, [
-    firstEnabledConfiguredModel,
+    configuredModels,
+    currentModel,
     onModelChange,
     providersTabNonce,
     respondToProviderTabIntent,
