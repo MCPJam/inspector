@@ -116,7 +116,7 @@ describe("resolveElicitationGate", () => {
 
   it("enables a direct turn from the body when the client speaks v1", () => {
     const gate = resolveElicitationGate({
-      isChatboxSession: false,
+      hostAuthoritative: false,
       hostClientCapabilities: undefined,
       bodyClientCapabilities: ON,
       clientVersion: 1,
@@ -129,7 +129,25 @@ describe("resolveElicitationGate", () => {
     // THE security property: a share-link visitor controls the body. If the
     // published host has elicitation off, no body can switch it on.
     const gate = resolveElicitationGate({
-      isChatboxSession: true,
+      hostAuthoritative: true,
+      hostClientCapabilities: OFF,
+      bodyClientCapabilities: ON,
+      clientVersion: 1,
+    });
+    expect(gate.enabled).toBe(false);
+    expect(gate.effectiveClientCapabilities).toBe(OFF);
+  });
+
+  it("ignores the body for an ENVIRONMENT turn too", () => {
+    // An environment turn is host-authoritative for the same structural
+    // reason: the server decides what the environment resolves to, so the
+    // capability declaration must come from that resolution rather than the
+    // caller. Deliberately NOT symmetric with model / prompt / temperature /
+    // approval, which stay body-overridable on an environment turn as
+    // ephemeral Playground tweaks — a capability changes what goes on the
+    // initialize wire, which is not a per-turn preference.
+    const gate = resolveElicitationGate({
+      hostAuthoritative: true,
       hostClientCapabilities: OFF,
       bodyClientCapabilities: ON,
       clientVersion: 1,
@@ -140,7 +158,7 @@ describe("resolveElicitationGate", () => {
 
   it("honors a chatbox host that DOES declare elicitation", () => {
     const gate = resolveElicitationGate({
-      isChatboxSession: true,
+      hostAuthoritative: true,
       hostClientCapabilities: ON,
       bodyClientCapabilities: undefined,
       clientVersion: 1,
@@ -153,7 +171,7 @@ describe("resolveElicitationGate", () => {
     // Backend predating the runtime-config field → absent → off, never "trust
     // the body instead".
     const gate = resolveElicitationGate({
-      isChatboxSession: true,
+      hostAuthoritative: true,
       hostClientCapabilities: undefined,
       bodyClientCapabilities: ON,
       clientVersion: 1,
@@ -168,7 +186,7 @@ describe("resolveElicitationGate", () => {
       // Catalog hosts already declare elicitation; without the handshake an old
       // bundle would hang for a TTL on any server that elicits.
       const gate = resolveElicitationGate({
-        isChatboxSession: false,
+        hostAuthoritative: false,
         hostClientCapabilities: undefined,
         bodyClientCapabilities: ON,
         clientVersion: clientVersion as number | undefined,
@@ -183,7 +201,7 @@ describe("resolveElicitationGate", () => {
   it("stays off when the host does not declare it, even at v1", () => {
     expect(
       resolveElicitationGate({
-        isChatboxSession: false,
+        hostAuthoritative: false,
         hostClientCapabilities: undefined,
         bodyClientCapabilities: OFF,
         clientVersion: 1,

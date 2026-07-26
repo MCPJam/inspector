@@ -145,6 +145,19 @@ chatV2.post("/", async (c) => {
     // True when this turn flows through a chatbox surface. sourceType +
     // accessScope decisions hinge on this.
     const isChatboxSession = executionTarget.kind === "chatbox";
+    // True when the execution context was RESOLVED SERVER-SIDE, so its host
+    // config — not the request body — is authoritative for capability
+    // declarations. Chatbox (a share-link visitor controls the body) and
+    // Project Environment (the server decides what the environment resolves
+    // to) both qualify.
+    //
+    // Deliberately narrower than "the environment wins everything": model,
+    // prompt, temperature and approval stay body-overridable on an environment
+    // turn, because those are ephemeral Playground tweaks. A capability
+    // declaration is not a preference — it changes what the SDK advertises on
+    // the initialize wire — so it follows the resolved host either way.
+    const isHostAuthoritative =
+      isChatboxSession || executionTarget.kind === "environment";
 
     if (!Array.isArray(messages) || messages.length === 0) {
       throw new WebRouteError(
@@ -534,7 +547,7 @@ chatV2.post("/", async (c) => {
       effectiveClientCapabilities,
       enabled: elicitationEnabled,
     } = resolveElicitationGate({
-      isChatboxSession,
+      hostAuthoritative: isHostAuthoritative,
       hostClientCapabilities: hostRuntimeConfig?.clientCapabilities,
       bodyClientCapabilities: hostedBody.clientCapabilities,
       clientVersion: hostedBody.hostedElicitationVersion,
