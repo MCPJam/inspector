@@ -628,6 +628,7 @@ export const createDebugOAuthStateMachine = (
     clientIdMetadataUrl,
     customScopes,
     customHeaders,
+    resourceMetadataUrl: overrideResourceMetadataUrl,
     authMode,
     hasClientSecret = false,
     strictConformance = false,
@@ -914,13 +915,18 @@ export const createDebugOAuthStateMachine = (
             }
             break;
 
-          case "received_401_unauthorized":
+          case "received_401_unauthorized": {
             // Step 3: Extract resource metadata URL and prepare request
             const challengeParams = parseBearerAuthenticateParameters(
               state.wwwAuthenticateHeader,
             );
+            // SEP-2350: a caller-supplied PRM URL (the step-up challenge's
+            // `resource_metadata` hint) wins over the value re-derived from the
+            // fresh `WWW-Authenticate` header, so a server that points its
+            // metadata elsewhere is honored on re-authorization. Absent an
+            // override this is exactly today's behavior.
             let extractedResourceMetadataUrl =
-              challengeParams.resource_metadata;
+              overrideResourceMetadataUrl || challengeParams.resource_metadata;
 
             // Fallback to building the URL if not found in header
             if (!extractedResourceMetadataUrl && state.serverUrl) {
@@ -959,6 +965,7 @@ export const createDebugOAuthStateMachine = (
             // Automatically proceed to make the actual request
             autoAdvance(50);
             return;
+          }
 
           case "request_resource_metadata":
             // Step 2: Fetch and parse resource metadata using official SDK helper
@@ -1048,8 +1055,21 @@ export const createDebugOAuthStateMachine = (
             };
 
             try {
+              // Pass an explicit metadata URL to discovery ONLY when it was
+              // EXPLICITLY sourced — a SEP-2350 caller override, OR the fresh
+              // `WWW-Authenticate` header's own `resource_metadata` param — not
+              // when it was DERIVED from the server URL. A `WWW-Authenticate`
+              // header can be present yet omit `resource_metadata`, in which
+              // case `state.resourceMetadataUrl` holds the derived well-known
+              // URL; passing that as an explicit option would defeat discovery's
+              // well-known + fallback behavior, so leave `metadataOptions`
+              // undefined for a derived URL.
+              const explicitResourceMetadataUrl =
+                overrideResourceMetadataUrl ||
+                parseBearerAuthenticateParameters(state.wwwAuthenticateHeader)
+                  .resource_metadata;
               const metadataOptions =
-                state.wwwAuthenticateHeader && state.resourceMetadataUrl
+                explicitResourceMetadataUrl && state.resourceMetadataUrl
                   ? { resourceMetadataUrl: state.resourceMetadataUrl }
                   : undefined;
 
