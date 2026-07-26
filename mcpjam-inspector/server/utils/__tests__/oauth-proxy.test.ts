@@ -1,23 +1,64 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { EventEmitter } from "node:events";
+import { Readable } from "node:stream";
 import { executeOAuthProxy, OAuthProxyError } from "../oauth-proxy.js";
 
-// Mock dns.resolve4/resolve6 to return empty by default (public hostname)
-vi.mock("node:dns/promises", () => ({
-  default: {
-    resolve4: vi.fn().mockResolvedValue([]),
-    resolve6: vi.fn().mockResolvedValue([]),
-  },
+const httpRequestMock = vi.hoisted(() => vi.fn());
+const httpsRequestMock = vi.hoisted(() => vi.fn());
+const dnsLookupMock = vi.hoisted(() => vi.fn());
+
+vi.mock("node:dns", () => ({
+  lookup: dnsLookupMock,
+}));
+vi.mock("node:http", () => ({
+  default: { request: httpRequestMock },
+  request: httpRequestMock,
+}));
+vi.mock("node:https", () => ({
+  default: { request: httpsRequestMock },
+  request: httpsRequestMock,
 }));
 
-// Mock fetch globally so valid URLs don't make real requests
-const fetchMock = vi.fn().mockResolvedValue({
-  status: 200,
-  statusText: "OK",
-  headers: new Headers(),
-  json: async () => ({ ok: true }),
-  text: async () => "",
+function installSuccessfulRequestMock(requestMock: ReturnType<typeof vi.fn>) {
+  requestMock.mockImplementation(
+    (
+      _url: URL,
+      _options: unknown,
+      onResponse: (response: Readable) => void,
+    ) => {
+      const request = new EventEmitter() as EventEmitter & {
+        end: () => void;
+        write: () => void;
+      };
+      request.write = vi.fn();
+      request.end = () => {
+        queueMicrotask(() => {
+          const response = Readable.from([JSON.stringify({ ok: true })]);
+          Object.assign(response, {
+            statusCode: 200,
+            statusMessage: "OK",
+            headers: { "content-type": "application/json" },
+          });
+          onResponse(response);
+        });
+      };
+      return request;
+    },
+  );
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  dnsLookupMock.mockImplementation(
+    (
+      _hostname: string,
+      _options: unknown,
+      callback: (error: Error | null, addresses: unknown) => void,
+    ) => callback(null, [{ address: "93.184.216.34", family: 4 }]),
+  );
+  installSuccessfulRequestMock(httpRequestMock);
+  installSuccessfulRequestMock(httpsRequestMock);
 });
-vi.stubGlobal("fetch", fetchMock);
 
 describe("validateUrl — private IP blocking (httpsOnly)", () => {
   const privateHosts = [
@@ -51,14 +92,6 @@ describe("validateUrl — private IP blocking (httpsOnly)", () => {
   }
 
   it("allows https://example.com/foo when httpsOnly", async () => {
-    fetchMock.mockResolvedValueOnce({
-      status: 200,
-      statusText: "OK",
-      headers: new Headers(),
-      json: async () => ({ ok: true }),
-      text: async () => "",
-    });
-
     const result = await executeOAuthProxy({
       url: "https://example.com/foo",
       httpsOnly: true,
@@ -66,15 +99,7 @@ describe("validateUrl — private IP blocking (httpsOnly)", () => {
     expect(result.status).toBe(200);
   });
 
-  it("allows http://127.0.0.1 when httpsOnly is false (no IP blocking)", async () => {
-    fetchMock.mockResolvedValueOnce({
-      status: 200,
-      statusText: "OK",
-      headers: new Headers(),
-      json: async () => ({ ok: true }),
-      text: async () => "",
-    });
-
+  it("allows an explicit loopback URL when httpsOnly is false", async () => {
     const result = await executeOAuthProxy({
       url: "http://127.0.0.1",
       httpsOnly: false,
@@ -85,14 +110,6 @@ describe("validateUrl — private IP blocking (httpsOnly)", () => {
 
 describe("IPv6 checks must not false-positive on hostnames", () => {
   it("allows https://fdroid.org (hostname starts with 'fd')", async () => {
-    fetchMock.mockResolvedValueOnce({
-      status: 200,
-      statusText: "OK",
-      headers: new Headers(),
-      json: async () => ({ ok: true }),
-      text: async () => "",
-    });
-
     const result = await executeOAuthProxy({
       url: "https://fdroid.org/foo",
       httpsOnly: true,
@@ -101,14 +118,6 @@ describe("IPv6 checks must not false-positive on hostnames", () => {
   });
 
   it("allows https://fc-example.com (hostname starts with 'fc')", async () => {
-    fetchMock.mockResolvedValueOnce({
-      status: 200,
-      statusText: "OK",
-      headers: new Headers(),
-      json: async () => ({ ok: true }),
-      text: async () => "",
-    });
-
     const result = await executeOAuthProxy({
       url: "https://fc-example.com/foo",
       httpsOnly: true,
@@ -117,14 +126,6 @@ describe("IPv6 checks must not false-positive on hostnames", () => {
   });
 
   it("allows https://fe90.example.com (hostname matches fe80::/10 regex)", async () => {
-    fetchMock.mockResolvedValueOnce({
-      status: 200,
-      statusText: "OK",
-      headers: new Headers(),
-      json: async () => ({ ok: true }),
-      text: async () => "",
-    });
-
     const result = await executeOAuthProxy({
       url: "https://fe90.example.com/foo",
       httpsOnly: true,
@@ -145,37 +146,30 @@ describe("IPv6 checks must not false-positive on hostnames", () => {
   });
 });
 
-describe("DNS validation — fetch preserves original hostname for TLS", () => {
-  it("uses the original hostname in the fetch URL (not the resolved IP)", async () => {
-    const dns = await import("node:dns/promises");
-    vi.mocked(dns.default.resolve4).mockResolvedValueOnce(["93.184.216.34"]);
-    vi.mocked(dns.default.resolve6).mockResolvedValueOnce([]);
-
-    fetchMock.mockResolvedValueOnce({
-      status: 200,
-      statusText: "OK",
-      headers: new Headers(),
-      json: async () => ({ ok: true }),
-      text: async () => "",
-    });
-
+describe("DNS validation — pinned request preserves original hostname for TLS", () => {
+  it("uses the original hostname while pinning the validated address", async () => {
     await executeOAuthProxy({
       url: "https://example.com/path",
       httpsOnly: true,
     });
 
-    // fetch must use the original hostname so TLS cert validation works
-    const calledUrl = fetchMock.mock.calls[fetchMock.mock.calls.length - 1][0];
-    expect(calledUrl).toContain("example.com");
-    expect(calledUrl).not.toContain("93.184.216.34");
+    expect(httpsRequestMock.mock.calls[0][0]).toEqual(
+      new URL("https://example.com/path"),
+    );
+    expect(httpsRequestMock.mock.calls[0][1].servername).toBe("example.com");
+    expect(httpsRequestMock.mock.calls[0][1].lookup).toBeTypeOf("function");
   });
 });
 
 describe("DNS rebinding protection (httpsOnly)", () => {
   it("blocks a hostname that resolves to a private IPv4", async () => {
-    const dns = await import("node:dns/promises");
-    vi.mocked(dns.default.resolve4).mockResolvedValueOnce(["127.0.0.1"]);
-    vi.mocked(dns.default.resolve6).mockResolvedValueOnce([]);
+    dnsLookupMock.mockImplementationOnce(
+      (
+        _hostname: string,
+        _options: unknown,
+        callback: (error: Error | null, addresses: unknown) => void,
+      ) => callback(null, [{ address: "127.0.0.1", family: 4 }]),
+    );
 
     await expect(
       executeOAuthProxy({
@@ -186,9 +180,13 @@ describe("DNS rebinding protection (httpsOnly)", () => {
   });
 
   it("blocks a hostname that resolves to a private IPv6", async () => {
-    const dns = await import("node:dns/promises");
-    vi.mocked(dns.default.resolve4).mockResolvedValueOnce([]);
-    vi.mocked(dns.default.resolve6).mockResolvedValueOnce(["::1"]);
+    dnsLookupMock.mockImplementationOnce(
+      (
+        _hostname: string,
+        _options: unknown,
+        callback: (error: Error | null, addresses: unknown) => void,
+      ) => callback(null, [{ address: "::1", family: 6 }]),
+    );
 
     await expect(
       executeOAuthProxy({

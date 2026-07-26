@@ -98,7 +98,9 @@ describe("PromptsTab", () => {
       );
 
       await waitFor(() => {
-        expect(mockListPrompts).toHaveBeenCalledWith("test-server");
+        expect(mockListPrompts).toHaveBeenCalledWith("test-server", {
+          refresh: false,
+        });
       });
     });
 

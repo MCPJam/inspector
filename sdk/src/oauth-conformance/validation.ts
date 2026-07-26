@@ -1,4 +1,5 @@
 import { DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL } from "../oauth/client-identity.js";
+import { getSupportedRegistrationStrategies } from "../oauth/state-machines/factory.js";
 import type {
   NormalizedOAuthConformanceConfig,
   OAuthConformanceAuthConfig,
@@ -59,8 +60,8 @@ export function normalizeOAuthConformanceConfig(
   );
 
   if (
-    config.protocolVersion !== "2025-11-25" &&
-    config.registrationStrategy === "cimd"
+    config.registrationStrategy === "cimd" &&
+    !getSupportedRegistrationStrategies(config.protocolVersion).includes("cimd")
   ) {
     throw new Error(
       `CIMD registration is not supported for protocol version ${config.protocolVersion}`,

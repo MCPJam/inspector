@@ -260,6 +260,57 @@ test("buildOAuthConformanceConfig rejects unsupported combinations", () => {
   );
 });
 
+test("buildOAuthLoginSnapshotConfig pins the 2026-07-28 stateless wire era", () => {
+  const config = buildOAuthConformanceConfig({
+    url: "https://example.com/mcp",
+    protocolVersion: "2026-07-28",
+    registration: "cimd",
+    authMode: "interactive",
+  });
+
+  const snapshotConfig = buildOAuthLoginSnapshotConfig(config, {
+    completed: true,
+    serverUrl: "https://example.com/mcp",
+    protocolVersion: "2026-07-28",
+    registrationStrategy: "cimd",
+    protocolMode: "2026-07-28",
+    registrationMode: "cimd",
+    authMode: "interactive",
+    redirectUrl: "https://app.example.com/callback",
+    currentStep: "complete",
+    credentials: { accessToken: "access-token", clientId: "client-id" },
+    state: { currentStep: "complete", httpHistory: [], infoLogs: [] } as any,
+  } as any);
+
+  assert.equal("url" in snapshotConfig, true);
+  assert.equal((snapshotConfig as any).mcpProtocolVersion, "2026-07-28");
+});
+
+test("buildOAuthLoginSnapshotConfig falls back to the requested 2026 protocol when the login throws before a result", () => {
+  const config = buildOAuthConformanceConfig({
+    url: "https://example.com/mcp",
+    protocolVersion: "2026-07-28",
+    registration: "cimd",
+    authMode: "interactive",
+  });
+
+  // No result — mirrors `runOAuthLogin` throwing during 2026 discovery.
+  const snapshotConfig = buildOAuthLoginSnapshotConfig(config, undefined);
+
+  assert.equal((snapshotConfig as any).mcpProtocolVersion, "2026-07-28");
+});
+
+test("buildOAuthConformanceConfig accepts CIMD for the 2026-07-28 protocol", () => {
+  const config = buildOAuthConformanceConfig({
+    url: "https://example.com/mcp",
+    protocolVersion: "2026-07-28",
+    registration: "cimd",
+  });
+
+  assert.equal(config.registrationStrategy, "cimd");
+  assert.equal(config.auth?.mode, "interactive");
+});
+
 test("buildOAuthConformanceConfig rejects an invalid redirectUrl", () => {
   assert.throws(
     () =>

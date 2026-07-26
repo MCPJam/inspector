@@ -77,6 +77,7 @@ describe("web routes — oauth requires bearer token", () => {
       statusText: "OK",
       headers: {},
       body: { ok: true },
+      finalUrl: "https://example.com/token",
     });
 
     const response = await postJson(
@@ -93,12 +94,17 @@ describe("web routes — oauth requires bearer token", () => {
       statusText: "OK",
       headers: {},
       body: { ok: true },
+      finalUrl: "https://example.com/token",
     });
+    expect(response.headers.get("x-mcpjam-oauth-upstream-url")).toBe(
+      "https://example.com/token"
+    );
   });
 
   it("GET /metadata succeeds with bearer token", async () => {
     fetchOAuthMetadataMock.mockResolvedValueOnce({
       metadata: { issuer: "https://example.com" },
+      finalUrl: "https://example.com/.well-known/oauth",
     });
 
     const response = await getJson(
@@ -110,6 +116,9 @@ describe("web routes — oauth requires bearer token", () => {
 
     expect(status).toBe(200);
     expect(data).toEqual({ issuer: "https://example.com" });
+    expect(response.headers.get("x-mcpjam-oauth-upstream-url")).toBe(
+      "https://example.com/.well-known/oauth"
+    );
   });
 });
 

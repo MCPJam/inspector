@@ -1,6 +1,6 @@
 ---
 title: "CI / CD"
-description: "Run MCP health checks and OAuth conformance in GitHub Actions, GitLab CI, and other CI environments"
+description: "Run MCP health checks, conformance suites, and evals in GitHub Actions, GitLab CI, and other CI environments"
 icon: "circle-check"
 ---
 
@@ -353,3 +353,79 @@ mcp-oauth-conformance:
 ```
 
 See [OAuth Conformance](/cli/oauth-conformance) for details on the config file format.
+
+---
+
+## Evals in CI
+
+There are two ways to wire MCPJam evals into a pipeline: trigger a **hosted eval run** with the CLI, or run evals **locally with the SDK** and upload the results. Both authenticate with an MCPJam API key (`sk_…`) from **Settings → API keys**.
+
+### Trigger a hosted eval suite
+
+`mcpjam eval run` starts an asynchronous run of a suite that lives in your MCPJam project. It prints a `runId` and returns immediately — the iterations execute on the MCPJam platform, not in your CI job. Check on the run with `mcpjam eval status`.
+
+**Secrets needed:**
+
+| Secret | Description |
+|---|---|
+| `MCPJAM_API_KEY` | MCPJam API key (`sk_…`) |
+
+```yaml
+      - name: Start eval run
+        env:
+          MCPJAM_API_KEY: ${{ secrets.MCPJAM_API_KEY }}
+        run: |
+          npx -y @mcpjam/cli@latest eval run \
+            --suite "Nightly regression" \
+            --project "My project" \
+            --format json > eval-run.json
+          echo "Started run $(jq -r '.runId' eval-run.json)"
+```
+
+Poll `eval status` until `run.status` is terminal (`completed`, `failed`, or `cancelled`), then gate the job on `run.result`:
+
+```yaml
+      - name: Wait for eval result
+        env:
+          MCPJAM_API_KEY: ${{ secrets.MCPJAM_API_KEY }}
+        run: |
+          RUN_ID=$(jq -r '.runId' eval-run.json)
+          ATTEMPTS=0
+          MAX_ATTEMPTS=60   # ~30 minutes at one poll per 30 s
+          while :; do
+            npx -y @mcpjam/cli@latest eval status \
+              --run "$RUN_ID" \
+              --project "My project" \
+              --format json > eval-status.json
+            STATUS=$(jq -r '.run.status' eval-status.json)
+            case "$STATUS" in completed|failed|cancelled) break;; esac
+            ATTEMPTS=$((ATTEMPTS + 1))
+            if [ "$ATTEMPTS" -ge "$MAX_ATTEMPTS" ]; then
+              echo "Timed out waiting for eval run (last status: $STATUS)"
+              exit 1
+            fi
+            sleep 30
+          done
+          jq '.run.summary' eval-status.json
+          [ "$(jq -r '.run.result' eval-status.json)" = "passed" ]
+```
+
+<Note>
+The eval verdict does not control the exit code — `eval run` and `eval status` exit non-zero on API, transport, and usage errors instead. The pass/fail verdict lives in the JSON payload (`run.result`), so the final assertion above is what fails the job.
+</Note>
+
+Hosted runs execute LLM iterations on the platform and consume your organization's credits or configured provider keys. See the [`eval` command reference](/cli/reference#eval-commands) for the rest of the surface (`eval cancel`, `eval iterations`, `eval trace`, `eval cases`, and more).
+
+### Upload SDK eval results
+
+If you instead run evals inside your own CI job with [`@mcpjam/sdk`](/sdk/concepts/running-evals) (`EvalTest` / `EvalSuite`), set `MCPJAM_API_KEY` and results upload automatically to the CI Evals dashboard (pass-rate trends, per-model breakdowns, and a full trace per iteration):
+
+```yaml
+      - name: Run SDK evals
+        env:
+          MCPJAM_API_KEY: ${{ secrets.MCPJAM_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: npx vitest run evals/
+```
+
+See [Save Results to MCPJam](/sdk/concepts/saving-results) for auto-save, the manual reporting APIs, CI metadata (branch, commit SHA, run URL), and artifact upload (JUnit XML, Jest/Vitest JSON).

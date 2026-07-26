@@ -146,6 +146,34 @@ describe("oauth conformance unit checks", () => {
     });
   });
 
+  it("probes 2026-07-28 with a stateless tools/list request, not initialize", async () => {
+    const trackedRequest = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      statusText: "Unauthorized",
+      body: { error: "invalid_token" },
+    });
+
+    const result = await runInvalidTokenCheck({
+      ...(baseNegativeInput as any),
+      config: {
+        ...baseNegativeInput.config,
+        protocolVersion: "2026-07-28",
+      },
+      trackedRequest,
+    });
+
+    const request = trackedRequest.mock.calls[0][0];
+    expect(request.body.method).toBe("tools/list");
+    expect(request.headers["Mcp-Method"]).toBe("tools/list");
+    expect(request.headers["MCP-Protocol-Version"]).toBe("2026-07-28");
+    // The 401 must still classify as a passing invalid-token check.
+    expect(result).toMatchObject({
+      step: "oauth_invalid_token",
+      status: "passed",
+    });
+  });
+
   it("passes when the authorization endpoint rejects a mismatched redirect_uri", async () => {
     const result = await runInvalidAuthorizeRedirectCheck({
       ...(baseNegativeInput as any),

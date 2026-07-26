@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Hono } from "hono";
 import resources from "../resources.js";
+import { cacheEventLogger } from "../../../utils/cache-events.js";
 
 // Mock MCPClientManager
 const createMockMcpClientManager = (overrides: Record<string, any> = {}) => ({
@@ -102,9 +103,12 @@ describe("POST /api/mcp/resources/list", () => {
       const data = await res.json();
       expect(data.nextCursor).toBe("cursor-page-3");
 
+      // Third arg is the SEP-2549 cache-options object — `undefined` here
+      // since this request didn't set `refresh`.
       expect(mcpClientManager.listResources).toHaveBeenCalledWith(
         "test-server",
         { cursor: "cursor-page-2" },
+        undefined,
       );
     });
 
@@ -118,6 +122,7 @@ describe("POST /api/mcp/resources/list", () => {
       expect(res.status).toBe(200);
       expect(mcpClientManager.listResources).toHaveBeenCalledWith(
         "test-server",
+        undefined,
         undefined,
       );
     });
@@ -139,6 +144,59 @@ describe("POST /api/mcp/resources/list", () => {
       const data = await res.json();
       expect(data.success).toBe(false);
       expect(data.error).toBe("Resource listing failed");
+    });
+  });
+
+  describe("SEP-2549 cache provenance", () => {
+    it("threads refresh:true as cacheMode: \"refresh\"", async () => {
+      const res = await app.request("/api/mcp/resources/list", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serverId: "test-server", refresh: true }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(mcpClientManager.listResources).toHaveBeenCalledWith(
+        "test-server",
+        undefined,
+        { cacheMode: "refresh" },
+      );
+    });
+
+    it("omits servedFromCache when no cache hit occurred", async () => {
+      const res = await app.request("/api/mcp/resources/list", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serverId: "test-server" }),
+      });
+
+      const data = await res.json();
+      expect(data.servedFromCache).toBeUndefined();
+    });
+
+    it("surfaces servedFromCache when the manager reports a fresh serve", async () => {
+      // Simulate the SDK's `ObservableResponseCache` firing the shared
+      // `cacheEventLogger` during the manager call — this is exactly what a
+      // real cache hit looks like from the route's perspective, since the
+      // route wraps the call in `withCacheEventCapture`.
+      mcpClientManager.listResources.mockImplementation(async () => {
+        cacheEventLogger({
+          serverId: "test-server",
+          method: "resources/list",
+          params: "",
+          ageMs: 1234,
+        });
+        return { resources: [], nextCursor: undefined };
+      });
+
+      const res = await app.request("/api/mcp/resources/list", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serverId: "test-server" }),
+      });
+
+      const data = await res.json();
+      expect(data.servedFromCache).toEqual({ ageMs: 1234 });
     });
   });
 });
@@ -201,6 +259,7 @@ describe("POST /api/mcp/resources/read", () => {
         {
           uri: "file:///test.txt",
         },
+        undefined,
       );
     });
 

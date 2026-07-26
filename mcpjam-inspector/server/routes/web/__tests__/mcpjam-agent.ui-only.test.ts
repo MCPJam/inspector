@@ -90,6 +90,16 @@ describe("web routes — mcpjam-agent is UI-only", () => {
     expect(args.prepare.systemPrompt).toContain("`ui_*` tools");
   });
 
+  it("steers product questions to docs-first, then offer-before-acting", async () => {
+    const args = await postAgentTurn();
+    expect(args.prepare.systemPrompt).toContain(
+      "search the MCPJam documentation first",
+    );
+    expect(args.prepare.systemPrompt).toContain("wait for a yes before acting");
+    // Brevity + honesty rails for the same answer path.
+    expect(args.prepare.systemPrompt).toContain("lead with the answer");
+  });
+
   it("ships the app atlas so the model knows what screens exist", async () => {
     const args = await postAgentTurn();
     expect(args.prepare.systemPrompt).toContain("screen by screen");

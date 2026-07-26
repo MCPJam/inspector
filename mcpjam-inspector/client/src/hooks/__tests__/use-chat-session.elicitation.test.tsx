@@ -1,6 +1,9 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createElement } from "react";
 import { useChatSession } from "../use-chat-session";
+import { AppStateProvider } from "@/state/app-state-context";
+import type { AppState, ServerWithName } from "@/state/app-types";
 
 const mockState = vi.hoisted(() => ({
   chatOnData: null as ((part: unknown) => void) | null,
@@ -61,6 +64,11 @@ function formRequest(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
+
+const mockApplyToolCallStepUp = vi.hoisted(() => vi.fn());
+vi.mock("@/state/oauth-orchestrator", () => ({
+  applyToolCallStepUp: (...args: unknown[]) => mockApplyToolCallStepUp(...args),
+}));
 
 vi.mock("@/lib/config", () => ({ HOSTED_MODE: false }));
 
@@ -172,6 +180,30 @@ async function renderChatSession() {
   return rendered;
 }
 
+// Variant that wraps the hook in an AppStateProvider so the SEP-2350 chat
+// step-up can resolve a live server entry (the un-wrapped variant leaves
+// appState null, which the branch treats as "no issuer to widen — skip").
+async function renderChatSessionWithServers(
+  servers: Record<string, ServerWithName>,
+) {
+  const appState = {
+    servers,
+    projects: {},
+    activeProjectId: "",
+  } as unknown as AppState;
+  const rendered = renderHook(
+    () => useChatSession({ selectedServers: ["server-1"] }),
+    {
+      wrapper: ({ children }: { children: React.ReactNode }) =>
+        createElement(AppStateProvider, { appState }, children),
+    },
+  );
+  await waitFor(() => {
+    expect(mockState.chatOnData).not.toBeNull();
+  });
+  return rendered;
+}
+
 describe("useChatSession elicitation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -179,6 +211,9 @@ describe("useChatSession elicitation", () => {
     mockState.chatStatus = "ready";
     mockState.idCounter = 0;
     mockState.convexMutation.mockResolvedValue({ ok: true } as never);
+    // Default: step-up settles immediately so the per-server in-flight guard
+    // clears. The dedupe test overrides this with a never-resolving promise.
+    mockApplyToolCallStepUp.mockResolvedValue({ action: "throw" });
   });
 
   it("queues a streamed request", async () => {
@@ -274,6 +309,73 @@ describe("useChatSession elicitation", () => {
     });
 
     expect(result.current.pendingElicitations).toHaveLength(0);
+    expect(result.current.urlElicitationRequired).toHaveLength(0);
+  });
+
+  it("drives step-up on a SEP-2350 insufficient_scope part when the server resolves", async () => {
+    const server = {
+      name: "GitHub",
+      connectionStatus: "connected",
+    } as unknown as ServerWithName;
+    await renderChatSessionWithServers({ GitHub: server });
+
+    act(() => {
+      mockState.chatOnData?.(
+        elicitationPart({
+          kind: "insufficient_scope",
+          serverId: "srv-1",
+          serverName: "GitHub",
+          toolCallId: "call-7",
+          requiredScope: "read write admin",
+          resourceMetadataUrl: "https://rs.example/.well-known",
+        }),
+      );
+    });
+
+    expect(mockApplyToolCallStepUp).toHaveBeenCalledTimes(1);
+    expect(mockApplyToolCallStepUp).toHaveBeenCalledWith(server, {
+      requiredScope: "read write admin",
+      resourceMetadataUrl: "https://rs.example/.well-known",
+    });
+  });
+
+  it("dedupes a re-delivered insufficient_scope part per server", async () => {
+    const server = {
+      name: "GitHub",
+      connectionStatus: "connected",
+    } as unknown as ServerWithName;
+    // Never resolve, so the in-flight guard stays held across both deliveries.
+    mockApplyToolCallStepUp.mockReturnValue(new Promise(() => {}));
+    await renderChatSessionWithServers({ GitHub: server });
+
+    const part = elicitationPart({
+      kind: "insufficient_scope",
+      serverId: "srv-1",
+      serverName: "GitHub",
+      requiredScope: "read",
+    });
+    act(() => {
+      mockState.chatOnData?.(part);
+      mockState.chatOnData?.(part);
+    });
+
+    expect(mockApplyToolCallStepUp).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not drive step-up when no server resolves (challenge still safe)", async () => {
+    const { result } = await renderChatSession();
+
+    act(() => {
+      mockState.chatOnData?.(
+        elicitationPart({
+          kind: "insufficient_scope",
+          serverId: "srv-unknown",
+          requiredScope: "read",
+        }),
+      );
+    });
+
+    expect(mockApplyToolCallStepUp).not.toHaveBeenCalled();
     expect(result.current.urlElicitationRequired).toHaveLength(0);
   });
 

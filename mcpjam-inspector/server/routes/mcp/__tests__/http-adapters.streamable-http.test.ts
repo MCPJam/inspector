@@ -84,6 +84,7 @@ describe("Phase 0 transport gate: adapter-http vs a Streamable-HTTP client", () 
   it("SATISFIES the core request/response flow (initialize → tools/list → tools/call)", async () => {
     // initialize
     const initRes = await post({
+      jsonrpc: "2.0",
       id: 1,
       method: "initialize",
       params: { protocolVersion: "2025-06-18" },
@@ -99,7 +100,12 @@ describe("Phase 0 transport gate: adapter-http vs a Streamable-HTTP client", () 
     }
 
     // tools/list
-    const listRes = await post({ id: 2, method: "tools/list", params: {} });
+    const listRes = await post({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/list",
+      params: {},
+    });
     {
       const { status, data } = await expectJson(listRes);
       expect(status).toBe(200);
@@ -108,6 +114,7 @@ describe("Phase 0 transport gate: adapter-http vs a Streamable-HTTP client", () 
 
     // tools/call
     const callRes = await post({
+      jsonrpc: "2.0",
       id: 3,
       method: "tools/call",
       params: { name: "echo", arguments: { text: "hi" } },
@@ -119,8 +126,100 @@ describe("Phase 0 transport gate: adapter-http vs a Streamable-HTTP client", () 
     }
   });
 
+  it("returns a JSON-RPC -32700 parse error for garbage bytes (NOT 202)", async () => {
+    const res = await app.request("/api/mcp/adapter-http/test-server", {
+      method: "POST",
+      headers: STREAMABLE_HTTP_HEADERS,
+      body: "this is not json {{{",
+    });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data).toEqual({
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32700, message: "Parse error" },
+    });
+  });
+
+  it("returns a JSON-RPC -32600 invalid request when method is missing (NOT 202)", async () => {
+    const res = await post({ id: 7, params: {} });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error.code).toBe(-32600);
+    expect(data.id).toBe(7);
+  });
+
+  it("still 202s a real notification (method present, no id)", async () => {
+    const res = await post({
+      jsonrpc: "2.0",
+      method: "notifications/initialized",
+    });
+    expect(res.status).toBe(202);
+  });
+
+  // #3041 review: a JSON-RPC batch (top-level array) is not a supported MCP
+  // message (MCP 2025-06-18 removed batching; the bridge handles one request).
+  it("returns -32600 with id null for a JSON-RPC batch array (NOT 202)", async () => {
+    const res = await post([{ jsonrpc: "2.0", id: 1, method: "tools/list" }]);
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error.code).toBe(-32600);
+    expect(data.id).toBe(null);
+  });
+
+  // #3041 review: a PRESENT but wrong `jsonrpc` version is malformed → -32600;
+  // an ABSENT version is tolerated (spec-lenient tunneled clients) and forwards.
+  it("returns -32600 for a present but invalid `jsonrpc` version", async () => {
+    const res = await post({ jsonrpc: "1.0", id: 5, method: "tools/list" });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error.code).toBe(-32600);
+    expect(data.id).toBe(5);
+  });
+
+  it("tolerates an absent `jsonrpc` when the method is valid (forwards, no -32600)", async () => {
+    const res = await post({ id: 8, method: "tools/list", params: {} });
+    const { status, data } = await expectJson(res);
+    expect(status).toBe(200);
+    expect(data.result.tools).toEqual([{ name: "echo", inputSchema: {} }]);
+  });
+
+  // #3041 review: a non-scalar id normalizes to null in the error response.
+  it("normalizes a non-scalar id to null in the error response", async () => {
+    const res = await post({ jsonrpc: "2.0", id: [1, 2], params: {} });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error.code).toBe(-32600);
+    expect(data.id).toBe(null);
+  });
+
+  // #3041 re-review: a non-scalar id on an otherwise-VALID request must be
+  // rejected at the gate, not echoed verbatim into a 200 success response.
+  it("rejects a non-scalar id even when the method is valid (NOT a 200)", async () => {
+    const res = await post({ jsonrpc: "2.0", id: {}, method: "tools/list" });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error.code).toBe(-32600);
+    expect(data.id).toBe(null);
+  });
+
+  // #3041 re-review: non-structured `params` (a scalar) is invalid per JSON-RPC.
+  it("rejects non-structured params (scalar) even with a valid method", async () => {
+    const res = await post({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/list",
+      params: 5,
+    });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error.code).toBe(-32600);
+    expect(data.id).toBe(3);
+  });
+
   it("returns NO Mcp-Session-Id header → a Streamable-HTTP client must treat the server as stateless (LIVE-SPIKE UNKNOWN: does Claude Code accept that?)", async () => {
     const res = await post({
+      jsonrpc: "2.0",
       id: 1,
       method: "initialize",
       params: { protocolVersion: "2025-06-18" },

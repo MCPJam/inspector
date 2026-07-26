@@ -15,7 +15,8 @@ const prompts = new Hono();
 
 prompts.post("/list", async (c) =>
   withEphemeralConnection(c, promptsListSchema, (manager, body) =>
-    listPrompts(manager, body),
+    // Hosted direct-ops read the server's live surface — never a cached body.
+    listPrompts(manager, { ...body, cacheMode: "bypass" }),
   ),
 );
 
@@ -26,12 +27,17 @@ prompts.post("/list-multi", async (c) =>
 );
 
 prompts.post("/get", async (c) =>
-  withEphemeralConnection(c, promptsGetSchema, (manager, body) =>
-    getPrompt(manager, {
-      serverId: body.serverId,
-      name: body.promptName,
-      arguments: body.arguments,
-    }),
+  withEphemeralConnection(
+    c,
+    promptsGetSchema,
+    (manager, body, forwardLogMessages) => {
+      forwardLogMessages(body.serverId);
+      return getPrompt(manager, {
+        serverId: body.serverId,
+        name: body.promptName,
+        arguments: body.arguments,
+      });
+    },
   ),
 );
 
