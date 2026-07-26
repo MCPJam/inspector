@@ -136,6 +136,7 @@ export {
   MCPAuthError,
   isAuthError,
   isUnauthorized401,
+  isInsufficientScopeError,
   isMCPAuthError,
 } from "./errors.js";
 
@@ -201,3 +202,38 @@ export {
   isKnownProtocolVersion,
   isStatelessProtocolVersion,
 } from "./mcp-protocol-version.js";
+
+// Multi-round-trip (`input_required`) manual driver — spec §12 (new exports).
+export {
+  DEFAULT_MAX_MRTR_ROUNDS,
+  SUPPORTED_ELICITATION_MODES,
+  executeInputRequiredLeg,
+  resumeInputRequiredOperation,
+  runInputRequiredOperation,
+  initInputRequiredState,
+  makeRequestWithSchemaLegSender,
+  defaultResultSchemaForMethod,
+  validateInputRequests,
+  validateRoundResponses,
+  isMaxRoundsExceeded,
+  isUnsupportedResultType,
+  MrtrUndeclaredInputError,
+  MrtrUnsupportedElicitationModeError,
+  MrtrInputValidationError,
+  isInputRequiredResult,
+  withInputRequired,
+} from "./mrtr-driver.js";
+export type {
+  MrtrMethod,
+  MrtrOperationState,
+  MrtrLegResult,
+  MrtrLegSender,
+  MrtrSupportedModes,
+  MrtrInputCollector,
+  MrtrValidateResponse,
+  ElicitationContentValidator,
+  RunInputRequiredOptions,
+  InputRequiredResult,
+  InputRequests,
+  InputResponses,
+} from "./mrtr-driver.js";
