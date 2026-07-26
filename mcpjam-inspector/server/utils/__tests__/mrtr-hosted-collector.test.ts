@@ -546,6 +546,59 @@ describe("resumeMrtrContinuationLeg", () => {
     expect(store.calls.cancel).toHaveLength(1);
   });
 
+  it("reports indeterminate when the next round's state cannot be encoded after a side-effecting leg", async () => {
+    // The store write would SUCCEED here — the failure is ours (the next state
+    // will not encode). The wire still left, so a durable `failed` would invite
+    // a restart of something that may have executed.
+    const store = makeFakeStore({
+      continuationId: "cont-1",
+      state: makeState(),
+      sideEffecting: true,
+    });
+    const outcome = await resumeMrtrContinuationLeg({
+      bearer: "b",
+      submission,
+      bindingFingerprint: "fp",
+      driveLeg: async (): Promise<MrtrLegResult<unknown>> => ({
+        status: "input_required",
+        state: makeState({ round: 1 }),
+      }),
+      encode: (() => {
+        throw new Error("resumeState too large");
+      }) as never,
+      ...store.deps,
+    });
+    expect(outcome.outcome).toBe("indeterminate");
+    // Marked indeterminate, NOT durably finalized as failed.
+    expect(store.calls.cancel).toHaveLength(1);
+    expect(store.calls.finalize).toEqual([]);
+  });
+
+  it("still finalizes failed on an encode error for a NON-side-effecting op", async () => {
+    const store = makeFakeStore({
+      continuationId: "cont-1",
+      state: makeState(),
+      sideEffecting: false,
+    });
+    const outcome = await resumeMrtrContinuationLeg({
+      bearer: "b",
+      submission,
+      bindingFingerprint: "fp",
+      driveLeg: async (): Promise<MrtrLegResult<unknown>> => ({
+        status: "input_required",
+        state: makeState({ round: 1 }),
+      }),
+      encode: (() => {
+        throw new Error("resumeState too large");
+      }) as never,
+      ...store.deps,
+    });
+    // Nothing side-effecting happened, so the precise terminal reason is kept.
+    expect(outcome.outcome).toBe("failed");
+    expect(store.calls.finalize).toEqual(["failed"]);
+    expect(store.calls.cancel).toHaveLength(0);
+  });
+
   it("keeps the ordinary mapping when a store write fails on a NON-side-effecting op", async () => {
     // Nothing side-effecting left the wire, so this is safely replayable and
     // must stay `cancelled`/`failed` rather than being escalated.

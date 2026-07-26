@@ -585,6 +585,42 @@ export async function resumeMrtrContinuationLeg(
     };
   };
 
+  /**
+   * Same rule as {@link postWireFailure}, for a failure that is OURS rather than
+   * the store's — we successfully reached the store, but cannot carry the
+   * operation forward (its next state will not encode, its display will not
+   * render). The distinction that matters is unchanged: `driveLeg` has already
+   * returned, so for a side-effecting operation the wire left and a durable
+   * `failed` would invite a restart of something that may have executed. Mark it
+   * indeterminate instead. A non-side-effecting operation is safely replayable
+   * and still finalizes `failed` with its precise terminal reason.
+   */
+  const postWireLocalFailure = async (
+    reason: string,
+    terminalReason: string,
+  ): Promise<ResumeMrtrOutcome> => {
+    if (cs.sideEffecting) {
+      await cancel(deps.bearer, {
+        continuationId,
+        reason: "post_wire_local_error_indeterminate",
+      });
+      emitResolved(deps, continuationId, "failed", true);
+      return {
+        outcome: "indeterminate",
+        reason: `MCP leg left the wire but the continuation could not be carried forward: ${reason}`,
+      };
+    }
+    await finalize(deps.bearer, {
+      continuationId,
+      leaseId,
+      expectedStateVersion: stateVersion,
+      status: "failed",
+      terminalReason,
+    });
+    emitResolved(deps, continuationId, "failed");
+    return { outcome: "failed", reason };
+  };
+
   // Round fence: a submission for a different round is stale.
   if (round !== cs.round) {
     // …EXCEPT the one recoverable stale round: the immediately preceding one.
@@ -699,36 +735,20 @@ export async function resumeMrtrContinuationLeg(
   try {
     nextBlob = encode(nextState);
   } catch (err) {
-    await finalize(deps.bearer, {
-      continuationId,
-      leaseId,
-      expectedStateVersion: stateVersion,
-      status: "failed",
-      terminalReason: "resume_state_encode_error",
-    });
-    emitResolved(deps, continuationId, "failed");
-    return {
-      outcome: "failed",
-      reason: err instanceof Error ? err.message : "resumeState encode error",
-    };
+    return postWireLocalFailure(
+      err instanceof Error ? err.message : "resumeState encode error",
+      "resume_state_encode_error",
+    );
   }
 
   let displays: MrtrInputRequestDisplay[];
   try {
     displays = buildInputRequestDisplays(nextState.pendingInputRequests);
   } catch (err) {
-    await finalize(deps.bearer, {
-      continuationId,
-      leaseId,
-      expectedStateVersion: stateVersion,
-      status: "failed",
-      terminalReason: "resume_display_error",
-    });
-    emitResolved(deps, continuationId, "failed");
-    return {
-      outcome: "failed",
-      reason: err instanceof Error ? err.message : "display build error",
-    };
+    return postWireLocalFailure(
+      err instanceof Error ? err.message : "display build error",
+      "resume_display_error",
+    );
   }
 
   const rs = await resuspend(deps.bearer, {

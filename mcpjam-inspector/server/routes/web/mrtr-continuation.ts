@@ -203,7 +203,14 @@ mrtrContinuation.post("/resume", async (c) =>
       // would fail a prompt-only or resource-only server that never advertised
       // `tools` — before the continuation was even claimed. `ping` is also not
       // an MRTR verb, so it can never itself return `input_required`.
-      await manager.pingServer(serverId);
+      //
+      // The timeout is explicit for the same reason as `driveLeg` below, and it
+      // is NOT inherited here even though the manager was built with one:
+      // `listTools` applies `withTimeout` inside its own callback, but
+      // `pingServer` forwards its options straight to `client.ping`, so an
+      // unbounded probe would sit on the upstream SDK default while a connected
+      // server stops answering.
+      await manager.pingServer(serverId, { timeout: WEB_CALL_TIMEOUT_MS });
       const client = manager.getManagedClient(serverId);
       if (!client) {
         throw new WebRouteError(
