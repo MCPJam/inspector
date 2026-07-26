@@ -752,6 +752,28 @@ export function isSuccessfulRpcResponse(message: unknown): boolean {
   return "result" in m && !("error" in m);
 }
 
+// SEP-2350: the JSON-RPC `id` correlating a request with its response. Only
+// string/number ids can be matched across the two log frames; a notification
+// (no id) or a malformed id yields `undefined` and never correlates.
+export function rpcMessageId(
+  message: unknown,
+): string | number | undefined {
+  if (!message || typeof message !== "object") return undefined;
+  const id = (message as Record<string, unknown>).id;
+  return typeof id === "string" || typeof id === "number" ? id : undefined;
+}
+
+// SEP-2350: a JSON-RPC message's `method`, present only on requests. Used to
+// pick out the outgoing `tools/call` whose later successful response is the
+// ONLY signal that clears the bounded step-up counter — a `tools/list`,
+// `initialize`, or ping success must NOT reset it, since none of those exercise
+// the scope the step-up widened.
+export function rpcRequestMethod(message: unknown): string | undefined {
+  if (!message || typeof message !== "object") return undefined;
+  const method = (message as Record<string, unknown>).method;
+  return typeof method === "string" ? method : undefined;
+}
+
 function dedupeTraceToolCalls(
   toolCalls: LiveChatTraceToolCall[] | null | undefined
 ): LiveChatTraceToolCall[] {
@@ -1266,6 +1288,15 @@ export function useChatSession(
   // `insufficient_scope` part (or a second failing tool call) can't fire a
   // duplicate redirect / double counter bump while the first is in flight.
   const chatStepUpInFlightRef = useRef<Set<string>>(new Set());
+  // SEP-2350: ids of outgoing `tools/call` requests per server (keyed by the
+  // trusted `serverId`), so a later SUCCESSFUL response can be correlated to an
+  // actual tool invocation before resetting that server's bounded step-up
+  // counter. Discovery/handshake successes (`initialize`, `tools/list`, ping)
+  // that fire on post-OAuth reconnect must NOT clear the budget — only a
+  // `tools/call` success proves the widened grant is now sufficient.
+  const chatToolCallRequestIdsRef = useRef<Map<string, Set<string | number>>>(
+    new Map(),
+  );
   const resumedVersionRef = useRef<number | null>(null);
   const restoredToolRenderOverridesRef = useRef<
     Record<string, ToolRenderOverride>
@@ -1472,36 +1503,61 @@ export function useChatSession(
           ingestHostedRpcLogs([part.data]);
           // SEP-2350: chat/agent-loop server tool calls resolve server-side, so
           // (unlike Tools/Resources/Prompts) this hook has no per-call success
-          // return to clear the bounded step-up counter on. A successful
-          // JSON-RPC RESPONSE from a server in the traffic log is the available
-          // per-server success signal: it proves the current grant is
-          // sufficient, so reset that server's counter — otherwise a stale
-          // count left by an earlier step-up would prematurely cap a later
-          // legitimate challenge for a different scope. Gated on a successful
-          // response so an error reply never clears the budget; the same store
-          // lookup the insufficient_scope branch uses (a share-link chatbox
-          // resolves to no server, making this a safe no-op there).
+          // return to clear the bounded step-up counter on. The per-server
+          // success signal is a SUCCESSFUL response to an actual `tools/call` —
+          // and ONLY that. A `tools/list`, `initialize`, ping, or logging
+          // success (all of which fire on the post-OAuth reconnect that follows
+          // a step-up redirect) does NOT exercise the widened scope, so clearing
+          // the budget on one would let a server that keeps returning
+          // `insufficient_scope` redirect every turn instead of reaching the
+          // bounded cap. Responses carry no `method`, so correlate by JSON-RPC
+          // id: record outgoing `tools/call` request ids per server, then reset
+          // only when a matching successful response arrives. Same store lookup
+          // the insufficient_scope branch uses (a share-link chatbox resolves to
+          // no server, a safe no-op there).
           const log = part.data;
-          if (
+          if (log.direction === "send") {
+            // Track only tool invocations; ids from other methods never gate a
+            // reset, so recording them would only grow the map.
+            if (rpcRequestMethod(log.message) === "tools/call") {
+              const id = rpcMessageId(log.message);
+              if (id !== undefined) {
+                const pending =
+                  chatToolCallRequestIdsRef.current.get(log.serverId) ??
+                  new Set<string | number>();
+                pending.add(id);
+                chatToolCallRequestIdsRef.current.set(log.serverId, pending);
+              }
+            }
+          } else if (
             log.direction === "receive" &&
             isSuccessfulRpcResponse(log.message)
           ) {
-            const activeProject =
-              appState?.projects?.[
-                hostedProjectId ?? appState?.activeProjectId ?? ""
-              ];
-            const server =
-              (log.serverName
-                ? (appState?.servers?.[log.serverName] ??
-                  activeProject?.servers?.[log.serverName])
-                : undefined) ??
-              appState?.servers?.[log.serverId] ??
-              activeProject?.servers?.[log.serverId];
-            if (server) {
-              try {
-                resetToolCallStepUp(server);
-              } catch {
-                // best-effort; a failed reset must not disrupt log ingestion
+            const id = rpcMessageId(log.message);
+            const pending = chatToolCallRequestIdsRef.current.get(log.serverId);
+            // Reset ONLY when this success answers a tracked `tools/call`.
+            if (id !== undefined && pending?.has(id)) {
+              pending.delete(id);
+              if (pending.size === 0) {
+                chatToolCallRequestIdsRef.current.delete(log.serverId);
+              }
+              const activeProject =
+                appState?.projects?.[
+                  hostedProjectId ?? appState?.activeProjectId ?? ""
+                ];
+              const server =
+                (log.serverName
+                  ? (appState?.servers?.[log.serverName] ??
+                    activeProject?.servers?.[log.serverName])
+                  : undefined) ??
+                appState?.servers?.[log.serverId] ??
+                activeProject?.servers?.[log.serverId];
+              if (server) {
+                try {
+                  resetToolCallStepUp(server);
+                } catch {
+                  // best-effort; a failed reset must not disrupt log ingestion
+                }
               }
             }
           }

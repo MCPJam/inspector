@@ -2,7 +2,64 @@ import { describe, expect, it } from "vitest";
 import {
   areHostedSessionScopesEqual,
   isSuccessfulRpcResponse,
+  rpcMessageId,
+  rpcRequestMethod,
 } from "../use-chat-session";
+
+// SEP-2350: the chat step-up counter is cleared ONLY when a successful
+// `tools/call` response arrives — never on a `tools/list`/`initialize`/ping
+// success (all of which fire on the post-OAuth reconnect after a redirect).
+// Responses carry no `method`, so the hook correlates the response `id` to a
+// previously-seen outgoing `tools/call` request. These two helpers are the
+// building blocks of that gate: `rpcRequestMethod` picks out the outgoing
+// `tools/call` to track, and `rpcMessageId` provides the correlation key.
+describe("tools/call reset correlation helpers (SEP-2350)", () => {
+  it("rpcRequestMethod picks out tools/call but not discovery/handshake methods", () => {
+    expect(
+      rpcRequestMethod({ jsonrpc: "2.0", id: 1, method: "tools/call" }),
+    ).toBe("tools/call");
+    // A tools/list / initialize / ping success must NOT be treated as a
+    // tool invocation — the hook never tracks their ids, so a later success
+    // for them can never reset the budget.
+    expect(
+      rpcRequestMethod({ jsonrpc: "2.0", id: 2, method: "tools/list" }),
+    ).toBe("tools/list");
+    expect(
+      rpcRequestMethod({ jsonrpc: "2.0", id: 3, method: "initialize" }),
+    ).toBe("initialize");
+    // A response frame carries no method, so it can never be mistaken for the
+    // request that gates tracking.
+    expect(rpcRequestMethod({ jsonrpc: "2.0", id: 1, result: {} })).toBe(
+      undefined,
+    );
+  });
+
+  it("rpcMessageId returns string/number ids and nothing else (correlation key)", () => {
+    expect(rpcMessageId({ jsonrpc: "2.0", id: 7, result: {} })).toBe(7);
+    expect(rpcMessageId({ jsonrpc: "2.0", id: "abc", result: {} })).toBe("abc");
+    // A notification (no id) or a malformed id can't be correlated across the
+    // request/response pair, so it never gates a reset.
+    expect(rpcMessageId({ jsonrpc: "2.0", method: "notifications/foo" })).toBe(
+      undefined,
+    );
+    expect(rpcMessageId({ jsonrpc: "2.0", id: { nested: true } })).toBe(
+      undefined,
+    );
+    expect(rpcMessageId(null)).toBe(undefined);
+  });
+
+  it("a tools/list success is a successful response but is never a tracked tools/call", () => {
+    // Demonstrates the gate: isSuccessfulRpcResponse is true for a tools/list
+    // reply, yet because only tools/call request ids are tracked, its id is
+    // never in the pending set — so it cannot reset the budget.
+    const toolsListResponse = { jsonrpc: "2.0", id: 42, result: { tools: [] } };
+    expect(isSuccessfulRpcResponse(toolsListResponse)).toBe(true);
+    // The correlated request was a tools/list, which the hook never records.
+    expect(
+      rpcRequestMethod({ jsonrpc: "2.0", id: 42, method: "tools/list" }),
+    ).not.toBe("tools/call");
+  });
+});
 
 // PR3 (Claude Code harness host): switching the previewed host in the Playground
 // must FORK the session — otherwise turns under host B append onto host A's
