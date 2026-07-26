@@ -501,6 +501,10 @@ const prompt = await manager.getPrompt("myServer", {
 console.log(prompt.messages);
 ```
 
+<Note>
+When an MRTR input collector is registered for the server via `setMrtrInputCollector`, `getPrompt` automatically drives the multi-round-trip loop if the server returns an `input_required` result.
+</Note>
+
 ---
 
 ### getTools()
