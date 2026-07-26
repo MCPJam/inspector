@@ -229,6 +229,83 @@ describe("parseJsonConfig", () => {
       expect(result[0]).toMatchObject({ name: "url", command: "node" });
     });
   });
+
+  describe("transport classification (SDK detectPluginMcpTransport)", () => {
+    it.each([
+      ["streamable-http", "streamable-http"],
+      ["streamable_http", "streamable_http"],
+      ["streamableHttp", "streamableHttp"],
+      ["uppercase", "STREAMABLE_HTTP"],
+      ["http", "http"],
+      ["sse", "sse"],
+    ])("classifies %s as an HTTP server", (_label, type) => {
+      const json = JSON.stringify({
+        mcpServers: { remote: { type, url: "https://x.example.com/mcp" } },
+      });
+      expect(parseJsonConfig(json)[0].type).toBe("http");
+    });
+
+    it("honours an explicit stdio discriminator over a stray url guess", () => {
+      const json = JSON.stringify({
+        mcpServers: { local: { transport: "stdio", command: "node" } },
+      });
+      expect(parseJsonConfig(json)[0].type).toBe("stdio");
+    });
+
+    it("skips a server declaring an unknown transport", () => {
+      const json = JSON.stringify({
+        mcpServers: {
+          good: { command: "node" },
+          bad: { type: "carrier-pigeon", url: "https://x.example.com" },
+        },
+      });
+      const result = parseJsonConfig(json);
+      expect(result.map((s) => s.name)).toEqual(["good"]);
+    });
+  });
+
+  describe("value preservation", () => {
+    it("preserves HTTP headers", () => {
+      // stdio `env` values have always survived the import; dropping headers
+      // turned an otherwise valid import into a 401 at connect time.
+      const json = JSON.stringify({
+        mcp_servers: {
+          remote: {
+            url: "https://mcp.example.com/mcp",
+            headers: { Authorization: "Bearer abc", "X-Trace": "1" },
+          },
+        },
+      });
+
+      expect(parseJsonConfig(json)[0].headers).toEqual({
+        Authorization: "Bearer abc",
+        "X-Trace": "1",
+      });
+    });
+
+    it("drops non-string env and header values", () => {
+      const json = JSON.stringify({
+        mcpServers: {
+          local: { command: "node", env: { OK: "1", BAD: 7, ALSO_BAD: null } },
+        },
+      });
+
+      expect(parseJsonConfig(json)[0].env).toEqual({ OK: "1" });
+    });
+
+    it("keeps plain-HTTP URLs and free-form server names", () => {
+      // The inspector is a debugger: the SDK's strict plugin rules (HTTPS
+      // only, kebab-ish server keys) must not leak into this import path.
+      const json = JSON.stringify({
+        mcpServers: { "My Local Server": { url: "http://192.168.1.10/mcp" } },
+      });
+
+      const result = parseJsonConfig(json);
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe("My Local Server");
+      expect(result[0].url).toBe("http://192.168.1.10/mcp");
+    });
+  });
 });
 
 describe("validateJsonConfig", () => {
