@@ -22,7 +22,10 @@
  */
 
 import type {
+  CacheableRequestOptions,
   CallToolResult,
+  CompleteRequest,
+  CompleteResult,
   EmptyResult,
   GetPromptResult,
   Implementation,
@@ -31,10 +34,12 @@ import type {
   ListResourceTemplatesResult,
   ListToolsResult,
   LoggingLevel,
+  ProtocolEra,
   ReadResourceResult,
   Request,
   RequestOptions,
   ServerCapabilities,
+  StandardSchemaV1,
   Transport,
 } from "@modelcontextprotocol/client";
 
@@ -116,11 +121,24 @@ export interface ManagedMcpClient {
   getServerCapabilities(): ServerCapabilities | undefined;
   getServerVersion(): Implementation | undefined;
   getInstructions(): string | undefined;
+  /**
+   * The negotiated protocol era (`"legacy"` | `"modern"`), or `undefined`
+   * before `initialize` completes. OPTIONAL because not every adapter can
+   * report it — only the `OfficialSdkClientAdapter` passes it through from
+   * upstream `Client.getProtocolEra()`. Consumers (the `LogLevelMetaClient`
+   * decorator, the `getLoggingMechanism` helper) MUST treat an absent method
+   * or `undefined` as "era unknown — do not apply modern-only behavior".
+   */
+  getProtocolEra?(): ProtocolEra | undefined;
 
   // ---- Tool calls ----
+  // The five cacheable verbs (SEP-2549) widen their options to
+  // `CacheableRequestOptions` so a caller can thread `cacheMode` through to
+  // the underlying client. The upstream `Client` methods already accept this
+  // shape; `OfficialSdkClientAdapter` forwards verbatim.
   listTools(
     params?: { cursor?: string },
-    options?: RequestOptions
+    options?: CacheableRequestOptions
   ): Promise<ListToolsResult>;
   callTool(
     params: { name: string; arguments?: Record<string, unknown> },
@@ -134,29 +152,61 @@ export interface ManagedMcpClient {
   // ever needs an overloaded form, add it then.
   request<T = unknown>(req: Request, options?: RequestOptions): Promise<T>;
 
+  /**
+   * Explicit-schema request — the type-correct path for the modern
+   * multi-round-trip (`input_required`) loop. Forwards to upstream
+   * `Protocol.request`'s second overload
+   * (`request(request, resultSchema, options)`, client `index.d.mts:2198`),
+   * which validates a *complete* result against `resultSchema` while surfacing
+   * a non-complete `input_required` result untouched (paired with
+   * `withInputRequired(resultSchema)` + `options.allowInputRequired`).
+   *
+   * NEW seam (2026-07-28). It exists alongside — never replacing — the generic
+   * `request<T>` above, whose method-dispatch typing cannot express an
+   * `input_required` union (the SDK deliberately does not widen `ResultTypeMap`
+   * for requesters). Decorators MUST forward it: `LogLevelMetaClient` injects
+   * the modern per-request logging `_meta` here exactly as it does for the
+   * other request-bearing methods.
+   */
+  requestWithSchema<TSchema extends StandardSchemaV1>(
+    req: Request,
+    resultSchema: TSchema,
+    options?: RequestOptions
+  ): Promise<StandardSchemaV1.InferOutput<TSchema>>;
+
   // ---- Resources ----
   listResources(
     params?: { cursor?: string },
-    options?: RequestOptions
+    options?: CacheableRequestOptions
   ): Promise<ListResourcesResult>;
   readResource(
     params: { uri: string },
-    options?: RequestOptions
+    options?: CacheableRequestOptions
   ): Promise<ReadResourceResult>;
   listResourceTemplates(
     params?: { cursor?: string },
-    options?: RequestOptions
+    options?: CacheableRequestOptions
   ): Promise<ListResourceTemplatesResult>;
 
   // ---- Prompts ----
   listPrompts(
     params?: { cursor?: string },
-    options?: RequestOptions
+    options?: CacheableRequestOptions
   ): Promise<ListPromptsResult>;
   getPrompt(
     params: { name: string; arguments?: Record<string, string> },
     options?: RequestOptions
   ): Promise<GetPromptResult>;
+
+  // ---- Completions ----
+  // Used by the conformance suite's `completion-complete` check. Passthrough
+  // to upstream `Client.complete`; self-skips when the server does not
+  // advertise the optional completions capability, so this is never invoked
+  // against a server that lacks it.
+  complete(
+    params: CompleteRequest["params"],
+    options?: RequestOptions
+  ): Promise<CompleteResult>;
 
   // ---- Health ----
   ping(options?: RequestOptions): Promise<EmptyResult>;

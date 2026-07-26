@@ -17,6 +17,10 @@ import type {
   PlatformEvalStepResult,
   PlatformComputerAttached,
   PlatformComputerReset,
+  PlatformEnvironment,
+  PlatformEnvironmentCreateBody,
+  PlatformEnvironmentResolved,
+  PlatformEnvironmentUpdateBody,
   PlatformImage,
   PlatformImageBuild,
   PlatformImageBuildStarted,
@@ -259,6 +263,145 @@ export class PlatformApiClient {
         params.projectId
       )}/hosts/${encodeURIComponent(params.hostId)}`,
       { body: params.body ?? {} },
+      options
+    );
+  }
+
+  // ── Project Environments ─────────────────────────────────────────────
+  //
+  // Named execution bundles (host + optional server group + optional pinned
+  // skills/plugins) that eval suites and journeys run against. Distinct from
+  // the sandbox images below.
+  //
+  // Reads need project membership; every write needs project ADMIN. All
+  // mutations take the `expectedRevision` you last read — a stale value is a
+  // 409 CONFLICT, never a silent overwrite.
+
+  listEnvironments(
+    params: { projectId: string; includeArchived?: boolean },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformEnvironment>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/environments`,
+      {
+        query: params.includeArchived ? { includeArchived: "true" } : undefined,
+      },
+      options
+    );
+  }
+
+  getEnvironment(
+    params: { projectId: string; environmentId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEnvironment> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/environments/${encodeURIComponent(params.environmentId)}`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * The launch preview: the host config, closed server set, and pinned plugin
+   * versions this environment resolves to right now. A resolvable-today
+   * failure (a disabled pinned plugin, an empty server set) is a 409 whose
+   * `details.code` carries the specific `ENV_*` reason.
+   */
+  resolveEnvironment(
+    params: { projectId: string; environmentId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEnvironmentResolved> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/environments/${encodeURIComponent(params.environmentId)}/resolve`,
+      {},
+      options
+    );
+  }
+
+  createEnvironment(
+    params: { projectId: string; body: PlatformEnvironmentCreateBody },
+    options?: RequestOptions
+  ): Promise<PlatformEnvironment> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(params.projectId)}/environments`,
+      { body: params.body },
+      options
+    );
+  }
+
+  /**
+   * Only the fields you pass change. Pass `null` for `serverAttachmentId`,
+   * `skillSelection`, or `pluginVersionIds` to CLEAR them; omitting a field
+   * leaves it alone.
+   */
+  updateEnvironment(
+    params: {
+      projectId: string;
+      environmentId: string;
+      body: PlatformEnvironmentUpdateBody;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformEnvironment> {
+    return this.request(
+      "PATCH",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/environments/${encodeURIComponent(params.environmentId)}`,
+      { body: params.body },
+      options
+    );
+  }
+
+  /**
+   * Archive (not delete): the row is kept and can be restored. Archiving frees
+   * the name for a new live environment.
+   */
+  archiveEnvironment(
+    params: {
+      projectId: string;
+      environmentId: string;
+      expectedRevision: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformEnvironment> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/environments/${encodeURIComponent(params.environmentId)}/archive`,
+      { body: { expectedRevision: params.expectedRevision } },
+      options
+    );
+  }
+
+  /**
+   * Restore an archived environment. Fails with 409 if the name was taken
+   * while it was archived. Plugin pins whose version rows no longer exist at
+   * all are dropped — compare the returned `pluginVersionIds` against what you
+   * archived to detect that.
+   */
+  restoreEnvironment(
+    params: {
+      projectId: string;
+      environmentId: string;
+      expectedRevision: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformEnvironment> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/environments/${encodeURIComponent(params.environmentId)}/restore`,
+      { body: { expectedRevision: params.expectedRevision } },
       options
     );
   }

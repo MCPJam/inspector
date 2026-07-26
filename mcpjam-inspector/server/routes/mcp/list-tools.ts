@@ -1,6 +1,10 @@
 import { Hono } from "hono";
 import "../../types/hono";
 import { logger } from "../../utils/logger";
+import {
+  toServedFromCache,
+  withCacheEventCapture,
+} from "../../utils/cache-events.js";
 
 const listTools = new Hono();
 
@@ -33,7 +37,10 @@ function mergeToolMetadata(
 listTools.post("/", async (c) => {
   try {
     const body = await c.req.json();
-    const { serverIds } = body;
+    const { serverIds, refresh } = body as {
+      serverIds?: unknown;
+      refresh?: boolean;
+    };
 
     if (!Array.isArray(serverIds) || serverIds.length === 0) {
       return c.json({ error: "serverIds must be a non-empty array" }, 400);
@@ -50,38 +57,60 @@ listTools.post("/", async (c) => {
       _meta?: Record<string, unknown>;
     }> = [];
 
-    for (const serverId of serverIds) {
-      // Check if server is connected
-      if (clientManager.getConnectionStatus(serverId) !== "connected") {
-        continue;
-      }
+    const { events } = await withCacheEventCapture(async () => {
+      for (const serverId of serverIds) {
+        // Check if server is connected
+        if (clientManager.getConnectionStatus(serverId) !== "connected") {
+          continue;
+        }
 
-      try {
-        const { tools } = await clientManager.listTools(serverId);
-        const toolsMetadata = clientManager.getAllToolsMetadata(serverId);
-        const serverTools = tools.map((tool: any) => {
-          const mergedMeta = mergeToolMetadata(
-            tool._meta as Record<string, unknown> | undefined,
-            toolsMetadata?.[tool.name] as Record<string, unknown> | undefined,
-          );
-          return {
-            name: tool.name,
-            description: tool.description,
-            inputSchema: tool.inputSchema,
+        try {
+          // No cursor here is deliberate, not a "only page 1" bug: the
+          // official beta.4 client auto-pages no-cursor `listTools` calls
+          // under the hood, so this already returns the server's COMPLETE
+          // tool list. Cursor plumbing exists elsewhere (MCPClientManager.
+          // listTools(serverId, { cursor }), the /api/mcp/prompts + resource
+          // templates routes) for callers that want one raw page — don't
+          // "fix" this call site into single-page behavior.
+          const { tools } = await clientManager.listTools(
             serverId,
-            ...(mergedMeta ? { _meta: mergedMeta } : {}),
-          };
-        });
-        allTools.push(...serverTools);
-      } catch (error) {
-        logger.warn(`Failed to list tools for server ${serverId}`, {
-          serverId,
-          error: error instanceof Error ? error.message : String(error),
-        });
+            undefined,
+            { cacheMode: refresh === true ? "refresh" : undefined },
+          );
+          const toolsMetadata = clientManager.getAllToolsMetadata(serverId);
+          const serverTools = tools.map((tool: any) => {
+            const mergedMeta = mergeToolMetadata(
+              tool._meta as Record<string, unknown> | undefined,
+              toolsMetadata?.[tool.name] as
+                | Record<string, unknown>
+                | undefined,
+            );
+            return {
+              name: tool.name,
+              description: tool.description,
+              inputSchema: tool.inputSchema,
+              serverId,
+              ...(mergedMeta ? { _meta: mergedMeta } : {}),
+            };
+          });
+          allTools.push(...serverTools);
+        } catch (error) {
+          logger.warn(`Failed to list tools for server ${serverId}`, {
+            serverId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
-    }
+    });
 
-    return c.json({ tools: allTools });
+    // Batch endpoint spans multiple servers — surface a single top-level
+    // annotation when ANY server in the batch served from cache (per-tool
+    // provenance isn't worth the shape churn for this aggregate response).
+    const servedFromCache = toServedFromCache(events);
+    return c.json({
+      tools: allTools,
+      ...(servedFromCache ? { servedFromCache } : {}),
+    });
   } catch (error) {
     logger.error("Error in /list-tools", error);
     return c.json(

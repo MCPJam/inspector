@@ -102,6 +102,18 @@ export {
   type McpProtocolVersion,
 } from "./mcp-client-manager/index.js";
 
+// Response cache (SEP-2549) — per-call disposition + serve provenance
+export type {
+  CacheMode,
+  CacheScope,
+  CacheHitEvent,
+  CacheEventLogger,
+} from "./mcp-client-manager/index.js";
+export {
+  ObservableResponseCache,
+  type ObservableResponseCacheOptions,
+} from "./mcp-client-manager/index.js";
+
 // Error classes
 export {
   MCPError,
@@ -687,3 +699,40 @@ export type {
   OpenAiAppsCapabilities,
   McpAppsCapabilities,
 } from "./host-config/index.js";
+
+// Multi-round-trip (`input_required`) manual driver — MCP 2026-07-28 spec §12.
+// New public exports only (API stability): the serializable stepper, the
+// convenience loop, guards, error classes, and the re-exported upstream
+// primitives (`isInputRequiredResult` / `withInputRequired`).
+export {
+  DEFAULT_MAX_MRTR_ROUNDS,
+  SUPPORTED_ELICITATION_MODES,
+  executeInputRequiredLeg,
+  resumeInputRequiredOperation,
+  runInputRequiredOperation,
+  initInputRequiredState,
+  makeRequestWithSchemaLegSender,
+  defaultResultSchemaForMethod,
+  validateInputRequests,
+  validateRoundResponses,
+  isMaxRoundsExceeded,
+  isUnsupportedResultType,
+  MrtrUndeclaredInputError,
+  MrtrUnsupportedElicitationModeError,
+  MrtrInputValidationError,
+  isInputRequiredResult,
+  withInputRequired,
+} from "./mcp-client-manager/index.js";
+export type {
+  MrtrMethod,
+  MrtrOperationState,
+  MrtrLegResult,
+  MrtrLegSender,
+  MrtrInputCollector,
+  MrtrValidateResponse,
+  ElicitationContentValidator,
+  RunInputRequiredOptions,
+  InputRequiredResult,
+  InputRequests,
+  InputResponses,
+} from "./mcp-client-manager/index.js";

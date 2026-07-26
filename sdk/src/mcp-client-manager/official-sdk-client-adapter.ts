@@ -22,6 +22,7 @@ import type {
   Client,
   Request,
   RequestOptions,
+  StandardSchemaV1,
 } from "@modelcontextprotocol/client";
 import type {
   ManagedMcpClient,
@@ -75,6 +76,11 @@ export class OfficialSdkClientAdapter implements ManagedMcpClient {
   getInstructions() {
     return this.inner.getInstructions();
   }
+  getProtocolEra() {
+    // Upstream `Client.getProtocolEra()` returns the negotiated era once
+    // `initialize` completes (`undefined` before). Pure pass-through.
+    return this.inner.getProtocolEra();
+  }
 
   // ---- RPC ----
   listTools(
@@ -99,6 +105,21 @@ export class OfficialSdkClientAdapter implements ManagedMcpClient {
     // form. We're a generic boundary — the caller has narrowed to a method
     // literal it understands, so cast to the pass-through form.
     return this.inner.request(req as never, options as never) as Promise<T>;
+  }
+  requestWithSchema<TSchema extends StandardSchemaV1>(
+    req: Request,
+    resultSchema: TSchema,
+    options?: RequestOptions,
+  ): Promise<StandardSchemaV1.InferOutput<TSchema>> {
+    // Upstream `Protocol.request`'s explicit-result-schema overload
+    // (`request(request, resultSchema, options)`). Pure pass-through: the
+    // schema validates a complete result and lets a non-complete
+    // `input_required` result surface untouched.
+    return this.inner.request(
+      req as never,
+      resultSchema as never,
+      options as never,
+    ) as Promise<StandardSchemaV1.InferOutput<TSchema>>;
   }
   listResources(
     params?: Parameters<Client["listResources"]>[0],
@@ -138,6 +159,14 @@ export class OfficialSdkClientAdapter implements ManagedMcpClient {
   ) {
     return this.inner.getPrompt(params, options) as ReturnType<
       ManagedMcpClient["getPrompt"]
+    >;
+  }
+  complete(
+    params: Parameters<Client["complete"]>[0],
+    options?: Parameters<Client["complete"]>[1],
+  ) {
+    return this.inner.complete(params, options) as ReturnType<
+      ManagedMcpClient["complete"]
     >;
   }
   ping(options?: Parameters<Client["ping"]>[0]) {

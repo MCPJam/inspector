@@ -14,7 +14,7 @@ export const RESOURCE_CHECKS: MCPClientCheckDefinition[] = [
     async run(ctx) {
       const startedAt = Date.now();
       try {
-        const result = await ctx.manager.listResources(ctx.serverId);
+        const result = await ctx.manager.listResources(ctx.serverId, undefined, { cacheMode: "bypass" });
         const invalidResources = (result.resources ?? [])
           .map((resource, index) => ({ resource, index }))
           .filter(({ resource }) => !resource.uri || !resource.name)

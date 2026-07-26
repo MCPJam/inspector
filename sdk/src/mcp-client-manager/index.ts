@@ -58,6 +58,18 @@ export type {
   ClientCapabilityOptions,
 } from "./types.js";
 
+// Types - Response cache (SEP-2549) provenance
+export type {
+  CacheMode,
+  CacheScope,
+  CacheHitEvent,
+  CacheEventLogger,
+} from "./types.js";
+export {
+  ObservableResponseCache,
+  type ObservableResponseCacheOptions,
+} from "./observable-response-cache.js";
+
 // Types - MCP result aliases
 export type {
   MCPPromptListResult,
@@ -148,6 +160,7 @@ export {
   ResourceListChangedNotificationMethod,
   ResourceUpdatedNotificationMethod,
   PromptListChangedNotificationMethod,
+  LoggingMessageNotificationMethod,
 } from "./notification-handlers.js";
 
 // ManagedMcpClient: interface + adapters + factory for 2026-07-28
@@ -170,6 +183,10 @@ export {
 } from "./managed-mcp-client.js";
 export { OfficialSdkClientAdapter } from "./official-sdk-client-adapter.js";
 export {
+  LogLevelMetaClient,
+  type LogLevelProvider,
+} from "./log-level-meta-client.js";
+export {
   DialectAwareJsonSchemaValidator,
   type DialectAwareJsonSchemaValidatorOptions,
 } from "./dialect-aware-json-schema-validator.js";
@@ -185,3 +202,37 @@ export {
   isKnownProtocolVersion,
   isStatelessProtocolVersion,
 } from "./mcp-protocol-version.js";
+
+// Multi-round-trip (`input_required`) manual driver — spec §12 (new exports).
+export {
+  DEFAULT_MAX_MRTR_ROUNDS,
+  SUPPORTED_ELICITATION_MODES,
+  executeInputRequiredLeg,
+  resumeInputRequiredOperation,
+  runInputRequiredOperation,
+  initInputRequiredState,
+  makeRequestWithSchemaLegSender,
+  defaultResultSchemaForMethod,
+  validateInputRequests,
+  validateRoundResponses,
+  isMaxRoundsExceeded,
+  isUnsupportedResultType,
+  MrtrUndeclaredInputError,
+  MrtrUnsupportedElicitationModeError,
+  MrtrInputValidationError,
+  isInputRequiredResult,
+  withInputRequired,
+} from "./mrtr-driver.js";
+export type {
+  MrtrMethod,
+  MrtrOperationState,
+  MrtrLegResult,
+  MrtrLegSender,
+  MrtrInputCollector,
+  MrtrValidateResponse,
+  ElicitationContentValidator,
+  RunInputRequiredOptions,
+  InputRequiredResult,
+  InputRequests,
+  InputResponses,
+} from "./mrtr-driver.js";

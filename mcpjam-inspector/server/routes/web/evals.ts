@@ -7,7 +7,7 @@ import {
   environmentServerNames,
   resolveEnvironmentForLaunch,
   type ResolvedEnvironmentForLaunch,
-} from "../../services/evals/environment-launch.js";
+} from "../../services/environments/resolve.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { detachPreparedEvalRun } from "../../services/evals/detached-run.js";
 import { prepareSuiteReplayFromRun } from "../../services/evals/replay-suite-run.js";

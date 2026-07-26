@@ -1,4 +1,4 @@
-import type { MCPCheckResult } from "../types.js";
+import type { MCPCheckEra, MCPCheckResult } from "../types.js";
 
 type CheckMetadata = Pick<
   MCPCheckResult,
@@ -55,4 +55,17 @@ export function skippedResult(
 
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Canonical skip reason for a check that does not apply to the run's era.
+ * Shared by the client-backed `eraGate` and the raw-HTTP runners so the
+ * message is identical across both tracks.
+ */
+export function eraSkipMessage(
+  era: MCPCheckEra,
+  protocolVersion: string | undefined,
+): string {
+  const pin = protocolVersion ?? "default";
+  return `Not applicable to the ${era} era (run pinned to ${pin})`;
 }
