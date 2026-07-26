@@ -1519,8 +1519,8 @@ export function useChatSession(
               appState?.servers?.[event.serverId] ??
               activeProject?.servers?.[event.serverId];
             // The shared lifecycle applies the same actionable-challenge gate
-            // (a `resourceMetadataUrl`-only event is inert in the orchestrator
-            // today and would burn the bounded budget without widening scope)
+            // (a `requiredScope` OR a `resourceMetadataUrl` is now actionable —
+            // discovery consumes the PRM pointer, SEP-2350 follow-up to #3427)
             // and the same cross-surface in-flight dedup.
             driveScopeStepUp(server, {
               requiredScope: event.requiredScope,

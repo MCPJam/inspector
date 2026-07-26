@@ -90,12 +90,18 @@ describe("isActionableStepUpChallenge (SEP-2350)", () => {
     ).toBe(true);
   });
 
-  it("is NOT actionable for a resourceMetadataUrl-only challenge (inert in the orchestrator today — would burn the budget without widening scope)", () => {
+  it("is actionable for a resourceMetadataUrl-only challenge (discovery now consumes the PRM pointer — SEP-2350 follow-up to #3427)", () => {
     expect(
       isActionableStepUpChallenge({
         resourceMetadataUrl: "https://rs.example/.well-known",
       }),
-    ).toBe(false);
+    ).toBe(true);
+  });
+
+  it("is NOT actionable for a whitespace-only resourceMetadataUrl", () => {
+    expect(isActionableStepUpChallenge({ resourceMetadataUrl: "   " })).toBe(
+      false,
+    );
   });
 
   it("is actionable when a requiredScope accompanies a resourceMetadataUrl", () => {

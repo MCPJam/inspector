@@ -46,19 +46,14 @@ export function parseInsufficientScopeChallenge(
 
 /**
  * Whether a parsed challenge can actually DRIVE a step-up re-authorization.
- * Requires a non-empty `requiredScope` — the scope to fold into the re-auth
- * union. A `resourceMetadataUrl` is deliberately NOT sufficient on its own:
- * the step-up orchestrator currently reads only `requiredScope` and never
- * fetches the protected-resource-metadata endpoint, so a metadata-only
- * challenge would redirect and burn the bounded one-attempt step-up budget
- * without adding any scope. An `errorDescription`-only challenge is likewise
- * display-only. Every surface gates the ACTION on this predicate while still
- * surfacing the underlying error text for the user/model.
- *
- * TODO(SEP-2350): broaden to also accept a `resourceMetadataUrl`-only challenge
- * once discovery consumes it (fetches the PRM endpoint to resolve the scopes) —
- * a deferred core follow-up. Until then, requiring `requiredScope` keeps the
- * bounded budget from being spent on a redirect that cannot widen scope.
+ * Actionable when it names a non-empty `requiredScope` (the scope to fold into
+ * the re-auth union) OR a non-empty `resourceMetadataUrl` — a protected-
+ * resource-metadata pointer the OAuth flow now consumes to discover the
+ * server's authoritative scopes/AS at a non-default location (SEP-2350
+ * follow-up to #3427). An `errorDescription`-only challenge stays display-only:
+ * there is nothing to re-authorize with, so redirecting for it would burn the
+ * bounded one-attempt budget. Every surface gates the ACTION on this predicate
+ * while still surfacing the underlying error text for the user/model.
  */
 export function isActionableStepUpChallenge(
   challenge: InsufficientScopeChallenge | undefined,
@@ -66,9 +61,12 @@ export function isActionableStepUpChallenge(
   // Trim before the non-empty check: a whitespace-only `requiredScope` (e.g.
   // `"   "`) is truthy but parses to zero scopes downstream (the orchestrator
   // splits on `[,\s]+` and drops empties), so treating it as actionable would
-  // burn the bounded step-up budget on a redirect that widens nothing. Such a
-  // value is display-only, like a `resourceMetadataUrl`/`errorDescription`.
-  return Boolean(challenge?.requiredScope?.trim());
+  // burn the bounded step-up budget on a redirect that widens nothing. The
+  // same trim guards a whitespace-only `resourceMetadataUrl`. Such values are
+  // display-only, like an `errorDescription`.
+  return Boolean(
+    challenge?.requiredScope?.trim() || challenge?.resourceMetadataUrl?.trim(),
+  );
 }
 
 /**
