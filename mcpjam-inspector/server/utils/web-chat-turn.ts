@@ -84,6 +84,7 @@ import {
   bridgeHarnessRpcLogsToCollector,
   startCrossInstanceRpcLogPoll,
 } from "./../routes/web/hosted-rpc-logs.js";
+import { buildServerNamesById } from "./../routes/web/auth.js";
 import type { CustomProviderConfig } from "./chat-helpers.js";
 import { getClientIp } from "./client-ip.js";
 import { convertToMcpjamModelMessages } from "./mcp-tool-result-model-output.js";
@@ -358,6 +359,17 @@ export async function streamWebChatTurn(
   // even for a host that never advertised elicitation (hence has no bridge).
   let scopeChallengeWriter: ElicitationChunkWriter | null = null;
 
+  // SEP-2350 id→display-name map for the writer-only step-up fallback (no
+  // elicitation bridge). Built from the SAME `selectedServerIds`/
+  // `selectedServerNames` pair the bridge uses (`chat-v2.ts`), so a hosted
+  // dashboard turn — whose `serverId` is a Convex document id — resolves to the
+  // display name the client keys `appState.servers` by. Without this the
+  // fallback would emit an id-only event that never matches the name-keyed
+  // client store and step-up would silently no-op.
+  const scopeStepUpServerNamesById =
+    buildServerNamesById(persist.selectedServerIds, persist.selectedServerNames) ??
+    {};
+
   /**
    * Observe tool-call failures from ANY engine to surface out-of-band notices.
    *
@@ -427,11 +439,13 @@ export async function streamWebChatTurn(
                   runtime.elicitationBridge.emitInsufficientScope(challenge);
                 } else {
                   // No bridge (elicitation unadvertised): still surface the
-                  // step-up display-only on the raw writer. Server name is
-                  // omitted; the client resolves it from `serverId`.
+                  // step-up display-only on the raw writer. Resolve the display
+                  // name from the same id→name map the bridge uses so a hosted
+                  // Convex `serverId` matches the name-keyed client store; the
+                  // client falls back to `serverId` only when no name resolves.
                   emitInsufficientScopeChunk(
                     scopeChallengeWriter,
-                    undefined,
+                    scopeStepUpServerNamesById[serverId],
                     challenge,
                   );
                 }
