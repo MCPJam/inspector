@@ -10,6 +10,7 @@ import type {
   ConfidentialCimdProvider,
   ElicitationCallback,
   HttpServerConfig,
+  MrtrInputCollector,
   RpcLogger,
   UnauthorizedRefreshHandler,
   XaaEnterprisePolicy,
@@ -909,6 +910,29 @@ export async function createAuthorizedManager(
      * (SDK-side watchdog). Only meaningful alongside `elicitationCallback`.
      */
     elicitationTimeoutExtensionMs?: number;
+    /**
+     * Per-server MRTR (`input_required`) input collector factory (MCP
+     * 2026-07-28 §12.5). Returns the collector for a given serverId, or
+     * `undefined` to leave that server on today's non-MRTR path.
+     *
+     * Registered SYNCHRONOUSLY below for the SAME reason as
+     * `elicitationCallback`: a 2026-07-28 server only embeds an elicitation
+     * when the client advertised the capability at connect, and the manager
+     * constructor kicks off connects in a microtask — so a collector registered
+     * after `await createAuthorizedManager(...)` loses the race and
+     * `buildCapabilities` strips `elicitation` before the round can ever occur.
+     * Registering here always wins.
+     *
+     * For HOSTED surfaces this collector SUSPENDS (persists an
+     * `MrtrOperationState` to the continuation store, emits a
+     * `data-mrtr-input-required` part, and throws `MrtrSuspendedSignal` to
+     * return control) rather than blocking the worker on a human answer — the
+     * whole point of the durable continuation transport (see
+     * `server/utils/mrtr-hosted-collector.ts`).
+     */
+    mrtrInputCollectorForServer?: (
+      serverId: string,
+    ) => MrtrInputCollector | undefined;
   }
 ): Promise<AuthorizedManagerResult> {
   const serverNamesById = buildServerNamesById(serverIds, options?.serverNames);
@@ -1338,6 +1362,17 @@ export async function createAuthorizedManager(
   // wins that race; registering after an await never does.
   if (options?.elicitationCallback) {
     manager.setElicitationCallback(options.elicitationCallback);
+  }
+  // ALSO synchronous, same microtask-race discipline: register each server's
+  // MRTR collector before the constructor's connects run, so `buildCapabilities`
+  // advertises `elicitation` on the initialize wire for MRTR-capable servers.
+  if (options?.mrtrInputCollectorForServer) {
+    for (const serverId of uniqueServerIds) {
+      const collector = options.mrtrInputCollectorForServer(serverId);
+      if (collector) {
+        manager.setMrtrInputCollector(serverId, collector);
+      }
+    }
   }
   return {
     manager,
