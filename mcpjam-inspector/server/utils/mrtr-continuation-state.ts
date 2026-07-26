@@ -93,6 +93,13 @@ export interface ClaimedContinuationState {
   round: number;
   maxRounds: number;
   attempt: number;
+  /**
+   * The record's deadline, when the backend supplies it. The FROZEN PR3a claim
+   * payload does not currently guarantee it (only create/resuspend return
+   * `expiresAt`), so readers MUST treat absence as "unknown" and never as
+   * "expired". Declared here so it flows through automatically if PR3a adds it.
+   */
+  expiresAt?: number;
 }
 
 /** Uniform failure envelope. `status` is the HTTP status the backend returned. */

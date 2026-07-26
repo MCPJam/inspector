@@ -185,6 +185,10 @@ function makeFakeStore(seed: {
   sideEffecting?: boolean;
   bindingFingerprint?: string;
   round?: number;
+  expiresAt?: number;
+  /** Inject a store-write failure to exercise the post-wire outcome mapping. */
+  failFinalize?: { status: number; error: string };
+  failResuspend?: { status: number; error: string };
 }) {
   let stateVersion = 1;
   let attempt = 0;
@@ -210,6 +214,7 @@ function makeFakeStore(seed: {
     round: seed.round ?? seed.state.round,
     maxRounds: seed.state.maxRounds,
     attempt: 0,
+    ...(seed.expiresAt !== undefined ? { expiresAt: seed.expiresAt } : {}),
   };
 
   return {
@@ -244,6 +249,9 @@ function makeFakeStore(seed: {
       }) as never,
       resuspend: (async (_bearer: string, args: { round: number }) => {
         calls.resuspend.push(args.round);
+        if (seed.failResuspend) {
+          return { ok: false as const, ...seed.failResuspend };
+        }
         stateVersion += 1;
         return {
           ok: true as const,
@@ -255,6 +263,9 @@ function makeFakeStore(seed: {
       }) as never,
       finalize: (async (_bearer: string, args: { status: string }) => {
         calls.finalize.push(args.status);
+        if (seed.failFinalize) {
+          return { ok: false as const, ...seed.failFinalize };
+        }
         stateVersion += 1;
         return { ok: true as const, stateVersion, status: args.status };
       }) as never,
@@ -413,6 +424,131 @@ describe("resumeMrtrContinuationLeg", () => {
     });
     expect(outcome).toMatchObject({ outcome: "failed", status: 409 });
     expect(store.calls.release).toBe(1);
+  });
+
+  it("replays the current round when the browser retries the round before it", async () => {
+    // The store advanced to round 1 (a resuspend the browser never saw); the
+    // browser can only retry round 0. That must re-serve round 1, not strand the
+    // continuation until its TTL.
+    const store = makeFakeStore({
+      continuationId: "cont-1",
+      state: makeState({ round: 1 }),
+      round: 1,
+      expiresAt: 9_000,
+    });
+    const driveLeg = vi.fn();
+    const emitted: MrtrContinuationEvent[] = [];
+    const outcome = await resumeMrtrContinuationLeg({
+      bearer: "b",
+      submission: { ...submission, round: 0 },
+      bindingFingerprint: "fp",
+      driveLeg: driveLeg as never,
+      emit: (e) => emitted.push(e),
+      ...store.deps,
+    });
+    expect(outcome).toMatchObject({
+      outcome: "input_required",
+      round: 1,
+      expiresAt: 9_000,
+    });
+    // Read-only recovery: no leg, no submit, no write — just the lease released.
+    expect(driveLeg).not.toHaveBeenCalled();
+    expect(store.calls.submit).toBe(0);
+    expect(store.calls.resuspend).toEqual([]);
+    expect(store.calls.finalize).toEqual([]);
+    expect(store.calls.release).toBe(1);
+    const evt = emitted.find((e) => e.kind === "input_required");
+    expect(evt).toBeDefined();
+    expect(JSON.stringify(evt)).not.toContain(SECRET);
+  });
+
+  it("omits expiresAt on a replay when the claim payload carries no deadline", async () => {
+    // Absence must read as "unknown", never as an invented/expired deadline.
+    const store = makeFakeStore({
+      continuationId: "cont-1",
+      state: makeState({ round: 1 }),
+      round: 1,
+    });
+    const emitted: MrtrContinuationEvent[] = [];
+    const outcome = await resumeMrtrContinuationLeg({
+      bearer: "b",
+      submission: { ...submission, round: 0 },
+      bindingFingerprint: "fp",
+      driveLeg: (async () => ({ status: "complete", result: {} })) as never,
+      emit: (e) => emitted.push(e),
+      ...store.deps,
+    });
+    expect(outcome).toMatchObject({ outcome: "input_required", round: 1 });
+    expect(outcome).not.toHaveProperty("expiresAt");
+    // No fabricated deadline reaches the browser event either.
+    expect(emitted.find((e) => e.kind === "input_required")).toBeUndefined();
+  });
+
+  it("reports indeterminate when finalize fails after a completed side-effecting leg", async () => {
+    const store = makeFakeStore({
+      continuationId: "cont-1",
+      state: makeState(),
+      sideEffecting: true,
+      failFinalize: { status: 409, error: "lease expired" },
+    });
+    const outcome = await resumeMrtrContinuationLeg({
+      bearer: "b",
+      submission,
+      bindingFingerprint: "fp",
+      driveLeg: async (): Promise<MrtrLegResult<unknown>> => ({
+        status: "complete",
+        result: { ok: true },
+      }),
+      ...store.deps,
+    });
+    // The tool definitively ran; a durability failure must NOT read as
+    // `cancelled`/`failed`, which would invite a double-executing retry.
+    expect(outcome).toMatchObject({ outcome: "indeterminate", result: { ok: true } });
+    expect(store.calls.cancel).toHaveLength(1);
+  });
+
+  it("reports indeterminate when resuspend fails after a side-effecting leg", async () => {
+    const store = makeFakeStore({
+      continuationId: "cont-1",
+      state: makeState(),
+      sideEffecting: true,
+      failResuspend: { status: 409, error: "version conflict" },
+    });
+    const outcome = await resumeMrtrContinuationLeg({
+      bearer: "b",
+      submission,
+      bindingFingerprint: "fp",
+      driveLeg: async (): Promise<MrtrLegResult<unknown>> => ({
+        status: "input_required",
+        state: makeState({ round: 1 }),
+      }),
+      ...store.deps,
+    });
+    expect(outcome.outcome).toBe("indeterminate");
+    expect(store.calls.cancel).toHaveLength(1);
+  });
+
+  it("keeps the ordinary mapping when a store write fails on a NON-side-effecting op", async () => {
+    // Nothing side-effecting left the wire, so this is safely replayable and
+    // must stay `cancelled`/`failed` rather than being escalated.
+    const store = makeFakeStore({
+      continuationId: "cont-1",
+      state: makeState(),
+      sideEffecting: false,
+      failFinalize: { status: 409, error: "version conflict" },
+    });
+    const outcome = await resumeMrtrContinuationLeg({
+      bearer: "b",
+      submission,
+      bindingFingerprint: "fp",
+      driveLeg: async (): Promise<MrtrLegResult<unknown>> => ({
+        status: "complete",
+        result: { ok: true },
+      }),
+      ...store.deps,
+    });
+    expect(outcome).toMatchObject({ outcome: "cancelled", status: 409 });
+    expect(store.calls.cancel).toHaveLength(0);
   });
 });
 

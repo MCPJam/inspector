@@ -338,13 +338,26 @@ export type ResumeMrtrOutcome =
       outcome: "input_required";
       round: number;
       displays: MrtrInputRequestDisplay[];
-      expiresAt: number;
+      /**
+       * Absent when the round is being REPLAYED from a claim rather than freshly
+       * re-suspended: the claim payload does not carry the record's deadline, so
+       * absence means "unknown", never "already expired". (If PR3a adds
+       * `expiresAt` to the claim payload it flows through automatically.)
+       */
+      expiresAt?: number;
     }
   | {
       outcome: "failed" | "cancelled" | "expired" | "indeterminate";
       reason: string;
       /** HTTP status to surface (defaults per outcome). */
       status?: number;
+      /**
+       * Present only when the MCP leg COMPLETED but the durable record could not
+       * be finalized: the result is real and in hand, the store just does not
+       * know it. Callers may surface it, but MUST treat the continuation as
+       * indeterminate and never re-drive a side-effecting operation on it.
+       */
+      result?: unknown;
     };
 
 export interface ResumeMrtrDeps {
@@ -410,6 +423,53 @@ function emitResolved(
 }
 
 /**
+ * Re-serve the round the store is currently parked on, for a browser replaying
+ * the round before it. Read-only: no leg is driven and nothing is written, so
+ * this cannot double-execute anything. Returns `null` when the parked state
+ * cannot be rendered (corrupt blob, oversized display), leaving the caller to
+ * fall through to the ordinary stale-round rejection.
+ */
+function replayCurrentRound(
+  cs: ClaimedContinuationState,
+  decode: typeof decodeResumeState,
+  deps: ResumeMrtrDeps,
+  continuationId: string,
+): ResumeMrtrOutcome | null {
+  try {
+    const parked = decode(cs.resumeState as string);
+    const displays = buildInputRequestDisplays(parked.pendingInputRequests);
+    if (displays.length === 0) return null;
+    // The claim payload carries no deadline; only emit the browser event when
+    // the backend did supply one, rather than inventing an `expiresAt` the UI
+    // would render as an expiry. The HTTP outcome below is the direct path's
+    // actual channel either way.
+    if (cs.expiresAt !== undefined) {
+      deps.emit?.(
+        makeInputRequiredEvent({
+          continuationId,
+          serverId: cs.serverId,
+          serverName: deps.serverName,
+          method: cs.operationMethod,
+          operationLabel: operationLabel(parked),
+          round: cs.round,
+          displays,
+          expiresAt: cs.expiresAt,
+          chatSessionId: cs.chatSessionId,
+        }),
+      );
+    }
+    return {
+      outcome: "input_required",
+      round: cs.round,
+      displays,
+      ...(cs.expiresAt !== undefined ? { expiresAt: cs.expiresAt } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Resume one suspended MRTR round. Idempotent for a duplicate browser submit of
  * the same round: the response is submitted round-keyed to the store (which
  * de-dupes), and a caller that retries lands on the same claim → same outcome.
@@ -449,9 +509,51 @@ export async function resumeMrtrContinuationLeg(
   const cs: ClaimedContinuationState = claimed.state;
   let stateVersion = claimed.stateVersion;
 
+  /**
+   * Outcome for a store write that fails AFTER the MCP leg already went out.
+   *
+   * `mapError` is wrong here for a side-effecting operation: the wire left, so
+   * the operation may have (or, on a completed leg, definitely did) execute.
+   * Reporting `failed`/`cancelled` invites the caller to retry and double-
+   * execute it. Only durability failed, so resolve as `indeterminate` and mark
+   * the record indeterminate best-effort (`cancel` needs no lease — the lease
+   * is exactly what may have just been lost). A non-side-effecting operation is
+   * safe to replay, so it keeps the ordinary mapping.
+   */
+  const postWireFailure = async (
+    e: ContinuationCallError,
+    result?: unknown,
+  ): Promise<ResumeMrtrOutcome> => {
+    if (!cs.sideEffecting) return mapError(e);
+    await cancel(deps.bearer, {
+      continuationId,
+      reason: "post_wire_store_error_indeterminate",
+    });
+    emitResolved(deps, continuationId, "failed", true);
+    return {
+      outcome: "indeterminate",
+      reason: `MCP leg left the wire but the continuation could not be persisted: ${e.error}`,
+      status: e.status,
+      ...(result !== undefined ? { result } : {}),
+    };
+  };
+
   // Round fence: a submission for a different round is stale.
   if (round !== cs.round) {
-    await release(deps.bearer, { continuationId, leaseId });
+    // …EXCEPT the one recoverable stale round: the immediately preceding one.
+    // If the browser's submit for round N succeeded but the HTTP response was
+    // lost, the store already advanced to N+1 and the browser can only retry N.
+    // Failing that retry strands the continuation — it sits awaiting answers the
+    // browser was never shown until the TTL expires. Replay the current round's
+    // display instead. This drives no leg and writes nothing: it only re-serves
+    // what `resuspend` already durably recorded.
+    if (round === cs.round - 1 && cs.resumeState) {
+      const replay = replayCurrentRound(cs, decode, deps, continuationId);
+      await release(deps.bearer, { continuationId, leaseId });
+      if (replay) return replay;
+    } else {
+      await release(deps.bearer, { continuationId, leaseId });
+    }
     return {
       outcome: "failed",
       reason: `stale round: submitted ${round}, pending ${cs.round}`,
@@ -537,7 +639,9 @@ export async function resumeMrtrContinuationLeg(
       expectedStateVersion: stateVersion,
       status: "completed",
     });
-    if (!fin.ok) return mapError(fin);
+    // The leg COMPLETED: for a side-effecting op the tool definitively ran, so a
+    // finalize failure is a durability failure, not an execution failure.
+    if (!fin.ok) return postWireFailure(fin, leg.result);
     emitResolved(deps, continuationId, "completed");
     return { outcome: "completed", result: leg.result };
   }
@@ -587,7 +691,11 @@ export async function resumeMrtrContinuationLeg(
     round: nextState.round,
     resumeState: nextBlob,
   });
-  if (!rs.ok) return mapError(rs);
+  // Same post-wire rule as the finalize path: the leg already went out (the
+  // server answered with another `input_required`), so a side-effecting op that
+  // cannot be re-suspended is indeterminate, not `failed` — the caller must not
+  // re-drive it from round zero.
+  if (!rs.ok) return postWireFailure(rs);
 
   deps.emit?.(
     makeInputRequiredEvent({

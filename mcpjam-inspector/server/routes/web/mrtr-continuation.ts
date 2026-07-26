@@ -81,6 +81,19 @@ const resumeSchema = projectServerSchema.extend({
  * yields a different digest and the claim fails closed. Config that never
  * reaches the wire (a rotated bearer behind the same identity) is intentionally
  * NOT in the digest; the auth-principal half covers principal changes.
+ *
+ * KNOWN GAP (tracked, not closed here): the digest covers only server-REPORTED
+ * initialization metadata, so it does not distinguish two endpoints that report
+ * identical protocol / version / capabilities. If a project's server URL is
+ * edited between suspend and resume, the claim can still succeed and the old
+ * opaque `requestState` plus the original params would be replayed at the new
+ * endpoint — which MCP 2026-07-28 constrains ("Both the `inputRequests` and
+ * `requestState` fields affect only the client's retry of the original request.
+ * They MUST NOT be used for any other request"). This is NOT a caller-controlled
+ * retarget: `resumeSchema` carries no URL and the endpoint is resolved
+ * server-side from `projectId` + `serverId`, so it takes a legitimate config
+ * edit racing a suspended round. Closing it means folding a stable digest of the
+ * RESOLVED endpoint (origin + path) in below.
  */
 function deriveServerConfigDigest(
   manager: { getInitializationInfo: (serverId: string) => unknown },

@@ -125,10 +125,26 @@ export const ELICITATION_TIMEOUT_EXTENSION_MS = ELICITATION_FORM_TTL_MS + 30_000
 // across a whole round before the continuation is expired and scrubbed.
 /** How long a suspended MRTR continuation survives awaiting a human answer. */
 export const MRTR_CONTINUATION_TTL_MS = 10 * 60_000;
-/** Lease TTL for a single resume claim; a resume that stalls past this is swept. */
-export const MRTR_CONTINUATION_LEASE_TTL_MS = 60_000;
 /** Deadline for a single Convex continuation-store call. */
 export const MRTR_CONTINUATION_ROUTE_TIMEOUT_MS = 10_000;
+/**
+ * Lease TTL for a single resume claim; a resume that stalls past this is swept.
+ *
+ * DERIVED, not a round number: one resume leg can legally spend
+ * `claim + submit + mark-wire-started + (finalize | resuspend)` store calls at
+ * the full route deadline each, plus one MCP leg at the full call timeout. A
+ * flat 60s lease is exactly that worst case, so a slow-but-legal side-effecting
+ * resume could lose its lease *after* the wire left and before it could
+ * finalize — the store would 409 an operation that actually executed. Keep the
+ * headroom term below any time this budget or `WEB_CALL_TIMEOUT_MS` grows.
+ *
+ * (`heartbeatContinuation` in `utils/mrtr-continuation-state.ts` is the other
+ * half of the frozen PR3a contract and stays unused by design: PR3b's leg is
+ * bounded by the budget above. A PR5 leg that can outrun this — a long-running
+ * task-backed operation — must heartbeat rather than widen this constant.)
+ */
+export const MRTR_CONTINUATION_LEASE_TTL_MS =
+  4 * MRTR_CONTINUATION_ROUTE_TIMEOUT_MS + WEB_CALL_TIMEOUT_MS + 60_000;
 /**
  * Hard byte cap on the serialized opaque `resumeState` blob (the encoded
  * `MrtrOperationState`). Oversized state is rejected at the codec, never
