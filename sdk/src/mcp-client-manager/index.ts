@@ -228,6 +228,7 @@ export type {
   MrtrOperationState,
   MrtrLegResult,
   MrtrLegSender,
+  MrtrSupportedModes,
   MrtrInputCollector,
   MrtrValidateResponse,
   ElicitationContentValidator,

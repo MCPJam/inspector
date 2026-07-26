@@ -5,6 +5,7 @@
 import {
   type CallToolResult,
   Client,
+  getSupportedElicitationModes,
   type ClientOptions,
   type GetPromptResult,
   InMemoryResponseCacheStore,
@@ -96,6 +97,7 @@ import {
 } from "./notification-handlers.js";
 import { ElicitationManager } from "./elicitation.js";
 import type { DeclaredElicitationCapability } from "./elicitation.js";
+import type { ElicitationMode } from "./types.js";
 import { createElicitationTimeoutSuspension } from "./elicitation-timeout.js";
 import {
   TaskStatusNotificationMethod,
@@ -2308,6 +2310,41 @@ export class MCPClientManager {
     });
   }
 
+  /**
+   * The elicitation modes an MRTR round may embed for this server, derived from
+   * the `elicitation` capability actually advertised on the wire.
+   *
+   * The spec puts the obligation on the server ("Servers MUST NOT send
+   * elicitation requests with modes that are not supported by the client"), so
+   * this is the client-side backstop against a noncompliant or hostile server —
+   * the same check `assertElicitationModeDeclared` already applies to inbound
+   * `elicitation/create`, which the MRTR path otherwise skipped by defaulting to
+   * every mode this client can render. Without it, a caller pinning an exact
+   * form-only capability could still be shown a URL consent prompt.
+   *
+   * Returned as a thunk: the declaration is only on record after `initialize`,
+   * and the connection is established inside the operation's first leg.
+   */
+  private mrtrSupportedElicitationModes(
+    serverId: string
+  ): () => readonly ElicitationMode[] {
+    return () => {
+      const declared = this.negotiatedElicitationCapability(
+        this.liveClientStates.get(serverId)
+      );
+      // No declaration on record: mirror the inbound path, which allows form
+      // (the legacy default) and rejects url absent an explicit declaration.
+      if (declared === undefined) return ["form"];
+      const { supportsFormMode, supportsUrlMode } = getSupportedElicitationModes(
+        declared as Parameters<typeof getSupportedElicitationModes>[0]
+      );
+      const modes: ElicitationMode[] = [];
+      if (supportsFormMode) modes.push("form");
+      if (supportsUrlMode) modes.push("url");
+      return modes;
+    };
+  }
+
   private hasNegotiatedElicitation(state?: LiveClientState): boolean {
     return this.negotiatedElicitationCapability(state) != null;
   }
@@ -2433,6 +2470,8 @@ export class MCPClientManager {
       sender,
       collectInput: collect,
       validateContent: this.mrtrElicitationContentValidator,
+      supportedElicitationModes:
+        this.mrtrSupportedElicitationModes(serverId),
       validateResponse: (result) =>
         this.validateToolOutputSchema(serverId, callParams.name, result),
       requestOptions: baseOptions,
@@ -2461,6 +2500,8 @@ export class MCPClientManager {
       sender,
       collectInput: collect,
       validateContent: this.mrtrElicitationContentValidator,
+      supportedElicitationModes:
+        this.mrtrSupportedElicitationModes(serverId),
       requestOptions: options,
       maxRounds: this.mrtrMaxRounds,
       signal: options?.signal,
@@ -2495,6 +2536,8 @@ export class MCPClientManager {
       sender,
       collectInput: collect,
       validateContent: this.mrtrElicitationContentValidator,
+      supportedElicitationModes:
+        this.mrtrSupportedElicitationModes(serverId),
       requestOptions: options,
       maxRounds: this.mrtrMaxRounds,
       signal: options?.signal,
