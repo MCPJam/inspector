@@ -414,9 +414,14 @@ describe("abort windows", () => {
     const controller = new AbortController();
     const sender: MrtrLegSender = async (_req, ctx) => {
       controller.abort();
+      // Fail with a DISTINCT (non-AbortError) error if the operation signal was
+      // not forwarded to the leg — otherwise a regression that drops the signal
+      // would still throw AbortError and pass the assertion below.
+      if (!ctx.signal?.aborted) {
+        throw new Error("operation signal was not forwarded to the leg sender");
+      }
       const err = new Error("aborted");
       err.name = "AbortError";
-      if (ctx.signal?.aborted) throw err;
       throw err;
     };
     await expect(

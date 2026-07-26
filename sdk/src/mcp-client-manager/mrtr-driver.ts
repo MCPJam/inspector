@@ -381,7 +381,10 @@ export function validateRoundResponses(
   const pending = state.pendingInputRequests;
   const pendingKeys = Object.keys(pending);
   for (const key of pendingKeys) {
-    if (!(key in responses)) {
+    // Own-property check: an untrusted server key such as `toString` /
+    // `constructor` must count as missing unless the collector actually
+    // returned it, so a hostile key can't slip through via the prototype chain.
+    if (!Object.prototype.hasOwnProperty.call(responses, key)) {
       throw new MrtrInputValidationError(
         `Missing response for embedded input "${key}".`
       );
@@ -500,8 +503,10 @@ export async function executeInputRequiredLeg<TResult = unknown>(args: {
       {
         rounds: state.maxRounds,
         lastResult: {
+          // `requestState` is opaque and must never be logged (see module
+          // header); an upstream error reporter would serialize it out of
+          // `data`. The round count + request keys are enough for diagnostics.
           inputRequests: raw.inputRequests,
-          requestState: raw.requestState,
         },
       }
     );
