@@ -10,6 +10,21 @@ function valueInput(name: string) {
   return screen.getByLabelText(`Environment variable ${name} value`);
 }
 
+const HIDDEN_MASK = "••••••••••••";
+
+/** A covered row shows a fixed twelve dots whatever it holds, so the mask never
+ * encodes the length of the value under it, and is read-only because the box is
+ * showing a decoy. */
+function expectMasked(input: HTMLElement) {
+  expect(input).toHaveValue(HIDDEN_MASK);
+  expect(input).toHaveAttribute("readonly");
+}
+
+function expectUncovered(input: HTMLElement, value: string) {
+  expect(input).toHaveValue(value);
+  expect(input).not.toHaveAttribute("readonly");
+}
+
 /** Mirrors how the add/edit forms own the rows, so index-shifting on remove is
  * exercised against real state rather than a static array. */
 function Harness({
@@ -49,17 +64,56 @@ describe("EnvVarsSection value masking", () => {
       <Harness initial={[{ key: "OPENAI_API_KEY", value: "sk-proj-secret" }]} />
     );
 
-    expect(valueInput("1")).toHaveAttribute("type", "password");
+    // Twelve dots for a fourteen-character key: the mask is the same width
+    // whatever it covers.
+    expectMasked(valueInput("1"));
 
     await user.click(
       screen.getByRole("button", { name: "Show value for OPENAI_API_KEY" })
     );
-    expect(valueInput("1")).toHaveAttribute("type", "text");
+    expectUncovered(valueInput("1"), "sk-proj-secret");
 
     await user.click(
       screen.getByRole("button", { name: "Hide value for OPENAI_API_KEY" })
     );
-    expect(valueInput("1")).toHaveAttribute("type", "password");
+    expectMasked(valueInput("1"));
+  });
+
+  it("masks a long and a short value to the same width", () => {
+    render(
+      <Harness
+        initial={[
+          { key: "SHORT", value: "ab" },
+          { key: "LONG", value: "sk-proj-aVeryLongSecretIndeed-0123456789" },
+        ]}
+      />
+    );
+
+    expect(valueInput("1")).toHaveValue(valueInput("2").getAttribute("value"));
+    expectMasked(valueInput("1"));
+    expectMasked(valueInput("2"));
+  });
+
+  it("refuses edits while a value is covered", async () => {
+    const user = userEvent.setup();
+    const onUpdate = vi.fn();
+    render(
+      <EnvVarsSection
+        envVars={[{ key: "TOKEN", value: "secret" }]}
+        showEnvVars
+        onToggle={vi.fn()}
+        onAdd={vi.fn()}
+        onRemove={vi.fn()}
+        onUpdate={onUpdate}
+      />
+    );
+
+    // The box is showing a decoy, so keystrokes must not reach `onUpdate` —
+    // they would write the mask back over the real value.
+    await user.type(valueInput("1"), "xyz");
+
+    expect(onUpdate).not.toHaveBeenCalled();
+    expectMasked(valueInput("1"));
   });
 
   it("leaves a newly added row unmasked so it can be typed into", async () => {
@@ -68,7 +122,7 @@ describe("EnvVarsSection value masking", () => {
 
     await user.click(screen.getByRole("button", { name: "Add variable" }));
 
-    expect(valueInput("1")).toHaveAttribute("type", "text");
+    expectUncovered(valueInput("1"), "");
   });
 
   it("keeps eye state on the right row after one is removed", async () => {
@@ -88,8 +142,8 @@ describe("EnvVarsSection value masking", () => {
     await user.click(screen.getByRole("button", { name: "Show value for THIRD" }));
     await user.click(screen.getByRole("button", { name: "Remove SECOND" }));
 
-    expect(valueInput("1")).toHaveAttribute("type", "password");
-    expect(valueInput("2")).toHaveAttribute("type", "text");
+    expectMasked(valueInput("1"));
+    expectUncovered(valueInput("2"), "three");
     expect(
       screen.getByRole("button", { name: "Hide value for THIRD" })
     ).toBeInTheDocument();
@@ -157,7 +211,7 @@ describe("EnvVarsSection value masking", () => {
       "LOG_LEVEL"
     );
     // ...while the values stay covered until an eye asks for one.
-    expect(valueInput("1")).toHaveAttribute("type", "password");
-    expect(valueInput("2")).toHaveAttribute("type", "password");
+    expectMasked(valueInput("1"));
+    expectMasked(valueInput("2"));
   });
 });

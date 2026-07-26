@@ -3,6 +3,20 @@ import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { AdvancedConnectionSettingsSection } from "../shared/AdvancedConnectionSettingsSection";
 
+const HIDDEN_MASK = "••••••••••••";
+
+/** Covered header rows draw a fixed twelve dots regardless of what they hold,
+ * and are read-only because the box is showing a decoy. */
+function expectMasked(input: HTMLElement) {
+  expect(input).toHaveValue(HIDDEN_MASK);
+  expect(input).toHaveAttribute("readonly");
+}
+
+function expectUncovered(input: HTMLElement, value: string) {
+  expect(input).toHaveValue(value);
+  expect(input).not.toHaveAttribute("readonly");
+}
+
 describe("AdvancedConnectionSettingsSection", () => {
   it("renders the collapsed connection overrides toggle", () => {
     const onToggle = vi.fn();
@@ -82,24 +96,20 @@ describe("AdvancedConnectionSettingsSection", () => {
     it("masks header values until the eye is clicked", () => {
       renderHeaders([{ key: "X-API-Key", value: "super-secret" }]);
 
-      const value = screen.getByLabelText("Header 1 value");
-      expect(value).toHaveAttribute("type", "password");
+      expectMasked(screen.getByLabelText("Header 1 value"));
 
       fireEvent.click(
         screen.getByRole("button", { name: "Show value for X-API-Key" }),
       );
-      expect(screen.getByLabelText("Header 1 value")).toHaveAttribute(
-        "type",
-        "text",
+      expectUncovered(
+        screen.getByLabelText("Header 1 value"),
+        "super-secret",
       );
 
       fireEvent.click(
         screen.getByRole("button", { name: "Hide value for X-API-Key" }),
       );
-      expect(screen.getByLabelText("Header 1 value")).toHaveAttribute(
-        "type",
-        "password",
-      );
+      expectMasked(screen.getByLabelText("Header 1 value"));
     });
 
     it("keeps a stored-header reveal behind an eye affordance", () => {
@@ -165,10 +175,7 @@ describe("AdvancedConnectionSettingsSection", () => {
       );
 
       expect(screen.getByLabelText("Header 1 name")).toHaveValue("X-API-Key");
-      expect(screen.getByLabelText("Header 1 value")).toHaveAttribute(
-        "type",
-        "password",
-      );
+      expectMasked(screen.getByLabelText("Header 1 value"));
     });
 
     /** The parent owns the rows, so add/remove bookkeeping only runs for real
@@ -210,10 +217,7 @@ describe("AdvancedConnectionSettingsSection", () => {
 
       fireEvent.click(screen.getByRole("button", { name: "Add header" }));
 
-      expect(screen.getByLabelText("Header 1 value")).toHaveAttribute(
-        "type",
-        "text",
-      );
+      expectUncovered(screen.getByLabelText("Header 1 value"), "");
       expect(
         screen.getByRole("button", { name: "Hide value for header 1" }),
       ).toBeInTheDocument();
@@ -237,14 +241,8 @@ describe("AdvancedConnectionSettingsSection", () => {
       );
       fireEvent.click(screen.getByRole("button", { name: "Remove SECOND" }));
 
-      expect(screen.getByLabelText("Header 1 value")).toHaveAttribute(
-        "type",
-        "password",
-      );
-      expect(screen.getByLabelText("Header 2 value")).toHaveAttribute(
-        "type",
-        "text",
-      );
+      expectMasked(screen.getByLabelText("Header 1 value"));
+      expectUncovered(screen.getByLabelText("Header 2 value"), "three");
       expect(
         screen.getByRole("button", { name: "Hide value for THIRD" }),
       ).toBeInTheDocument();
