@@ -254,6 +254,22 @@ const MRTR_ELICITATION_CAPABILITY = { form: {}, url: {} } as const;
  * modern. An `auto` accept-list that still permits a legacy answer stays
  * form-only — fail closed. Lifting this needs the legacy bridge to carry url
  * (it can reuse the same consent dialog), not a wider declaration here.
+ *
+ * TWO signals can prove "modern", and they are not interchangeable:
+ *
+ *  - The per-server wire pin (`mcpProtocolVersion`) — how a user actually
+ *    selects 2026-07-28 in the UI. The SDK routes on it alone for non-stdio
+ *    configs (`wantsStateless` in `MCPClientManager.connectToServer`): a
+ *    stateless pin goes to the preview client no matter what the accept-list
+ *    says, so it settles the era outright. It is ignored for stdio, so it
+ *    proves nothing there.
+ *  - The initialize accept-list (`supportedProtocolVersions`, from
+ *    `hostConfig.mcpProfile.initialize`) — the only signal on stdio, and the
+ *    fallback when no pin is stamped.
+ *
+ * Checking only the accept-list (as the first cut did) left every pinned
+ * 2026-07-28 HTTP server advertising bare `{}`, i.e. form-only, which is
+ * precisely the failure this helper exists to prevent.
  */
 export function withLocalMrtrElicitationCapability<T extends MCPServerConfig>(
   config: T,
@@ -263,16 +279,7 @@ export function withLocalMrtrElicitationCapability<T extends MCPServerConfig>(
   if ((config as { clientCapabilities?: unknown }).clientCapabilities) {
     return config;
   }
-  const accepted = (config as { supportedProtocolVersions?: unknown })
-    .supportedProtocolVersions;
-  if (!Array.isArray(accepted) || accepted.length === 0) return config;
-  const modernOnly = accepted.every(
-    (version) =>
-      typeof version === "string" &&
-      isKnownProtocolVersion(version) &&
-      isStatelessProtocolVersion(version),
-  );
-  if (!modernOnly) return config;
+  if (!isModernOnlyLocalConnection(config)) return config;
 
   const capabilities = ((config as { capabilities?: Record<string, unknown> })
     .capabilities ?? {}) as Record<string, unknown>;
@@ -292,6 +299,37 @@ export function withLocalMrtrElicitationCapability<T extends MCPServerConfig>(
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+/** Modern iff known AND off the closed stateful list (validate, then route). */
+function isModernVersion(version: unknown): boolean {
+  return (
+    typeof version === "string" &&
+    isKnownProtocolVersion(version) &&
+    isStatelessProtocolVersion(version)
+  );
+}
+
+/**
+ * `true` iff this connection cannot land on a pre-2026 version. Fail-closed:
+ * an unrecognized, absent, or mixed-era signal answers `false`.
+ */
+function isModernOnlyLocalConnection(config: MCPServerConfig): boolean {
+  // The SDK only consults `mcpProtocolVersion` for non-stdio configs, so a pin
+  // on a stdio server says nothing about the negotiated era — fall through to
+  // the accept-list there.
+  const isStdio = "command" in config;
+  const pin = (config as { mcpProtocolVersion?: unknown }).mcpProtocolVersion;
+  if (!isStdio && pin !== undefined) {
+    // A stateless pin routes to the preview client outright; a stateful one
+    // routes legacy regardless of the accept-list. Either way the pin decides.
+    return isModernVersion(pin);
+  }
+
+  const accepted = (config as { supportedProtocolVersions?: unknown })
+    .supportedProtocolVersions;
+  if (!Array.isArray(accepted) || accepted.length === 0) return false;
+  return accepted.every(isModernVersion);
 }
 
 /**

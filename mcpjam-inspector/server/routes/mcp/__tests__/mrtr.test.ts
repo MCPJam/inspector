@@ -260,6 +260,57 @@ describe("advertised elicitation capability", () => {
     expect(bogus.capabilities?.elicitation).toBeUndefined();
   });
 
+  it("declares url from the per-server wire pin alone (no accept-list)", () => {
+    // How a user actually selects 2026-07-28: the version dropdown stamps
+    // `mcpProtocolVersion`, NOT `supportedProtocolVersions` (that one only
+    // comes from `hostConfig.mcpProfile.initialize`). Gating on the accept-list
+    // alone left every pinned modern server advertising bare `{}` — form-only —
+    // so url rounds died at the SDK's mode backstop before the consent dialog.
+    const config = withLocalMrtrElicitationCapability({
+      url: new URL("https://example.test/mcp"),
+      mcpProtocolVersion: "2026-07-28",
+    } as never) as { capabilities?: Record<string, unknown> };
+    expect(config.capabilities?.elicitation).toEqual({ form: {}, url: {} });
+  });
+
+  it("a stateful pin stays form-only even with a modern accept-list", () => {
+    // The SDK routes on the pin alone for non-stdio configs, so a 2025-11-25
+    // pin lands on the legacy client whatever the accept-list proposes. The
+    // combination is ambiguous config — fail closed.
+    const config = withLocalMrtrElicitationCapability({
+      url: new URL("https://example.test/mcp"),
+      mcpProtocolVersion: "2025-11-25",
+      supportedProtocolVersions: modern,
+    } as never) as { capabilities?: Record<string, unknown> };
+    expect(config.capabilities?.elicitation).toBeUndefined();
+  });
+
+  it("ignores the pin on stdio and falls back to the accept-list", () => {
+    // `MCPClientManager` reads `mcpProtocolVersion` for non-stdio configs only,
+    // so a pin on a stdio server proves nothing about the negotiated era.
+    const pinOnly = withLocalMrtrElicitationCapability({
+      command: "node",
+      args: ["server.js"],
+      mcpProtocolVersion: "2026-07-28",
+    } as never) as { capabilities?: Record<string, unknown> };
+    expect(pinOnly.capabilities?.elicitation).toBeUndefined();
+
+    const withList = withLocalMrtrElicitationCapability({
+      command: "node",
+      args: ["server.js"],
+      supportedProtocolVersions: modern,
+    } as never) as { capabilities?: Record<string, unknown> };
+    expect(withList.capabilities?.elicitation).toEqual({ form: {}, url: {} });
+  });
+
+  it("stays form-only on an unknown pin", () => {
+    const config = withLocalMrtrElicitationCapability({
+      url: new URL("https://example.test/mcp"),
+      mcpProtocolVersion: "2099-01-01",
+    } as never) as { capabilities?: Record<string, unknown> };
+    expect(config.capabilities?.elicitation).toBeUndefined();
+  });
+
   it("leaves an exact client capability set untouched", () => {
     // A host profile pins exactly what that host advertises; widening it would
     // defeat the point of the pin.
