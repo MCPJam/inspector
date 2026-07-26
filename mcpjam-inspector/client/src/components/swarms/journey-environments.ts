@@ -7,7 +7,7 @@
  * backend keeps `hostIds` as inactive compatibility data on env-based journeys
  * and reads it again only after a clear-to-legacy.
  */
-import type { EnvironmentView } from "@/lib/swarm-api";
+import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 
 export const MAX_ENVIRONMENTS_PER_JOURNEY = 10;
 
@@ -15,7 +15,7 @@ export const MAX_ENVIRONMENTS_PER_JOURNEY = 10;
  * ids (not in the live list) resolve to nothing. */
 export function compatHostIdsForEnvironments(
   environmentIds: string[],
-  environments: EnvironmentView[],
+  environments: ProjectEnvironmentView[],
 ): string[] {
   const out: string[] = [];
   for (const environmentId of environmentIds) {
@@ -34,7 +34,7 @@ export function compatHostIdsForEnvironments(
  */
 export function buildEnvJourneyPayload(
   environmentIds: string[],
-  environments: EnvironmentView[],
+  environments: ProjectEnvironmentView[],
 ): { environmentIds: string[]; hostIds: string[] } | null {
   if (environmentIds.length === 0) return null;
   // Reject unresolved ids rather than silently persisting them: every selected
@@ -57,7 +57,7 @@ export function buildEnvJourneyPayload(
  */
 export function buildClearToLegacyPayload(
   currentEnvironmentIds: string[],
-  environments: EnvironmentView[],
+  environments: ProjectEnvironmentView[],
 ): { environmentIds: null; hostIds: string[] } | null {
   const hostIds = compatHostIdsForEnvironments(
     currentEnvironmentIds,

@@ -74,12 +74,12 @@ import {
   SWARM_QUERIES,
   DEFAULT_PAGE_SIZE,
   swarmAttemptChatSessionId,
-  type EnvironmentView,
   type JourneyRun,
   type JourneyRollup,
   type JourneySessionRow,
   type PersonaTrackRecord,
 } from "@/lib/swarm-api";
+import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import {
   buildSwarmRunTargets,
   findTargetCellForChatSessionId,
@@ -222,7 +222,7 @@ function useProjectEnvironmentsList(
     // or UUID project id during a project transition would 500 the Convex arg
     // validator, so skip until the id is a real queryable project.
     enabled && shouldQueryProjectId(projectId) ? ({ projectId } as any) : "skip"
-  ) as EnvironmentView[] | undefined;
+  ) as ProjectEnvironmentView[] | undefined;
 }
 function usePersonaTrackRecord(personaRefId: string | null) {
   return useQuery(
@@ -1574,7 +1574,7 @@ function NewJourneyButton({
   projectId: string;
   hosts: HostItem[];
   /** Live project environments (flag-gated; empty when the flag is off). */
-  environments: EnvironmentView[];
+  environments: ProjectEnvironmentView[];
   /** Gates the env-mode toggle (`project-environments-enabled`). */
   environmentsEnabled: boolean;
   onCreate: (draft: {
