@@ -2,9 +2,47 @@ import { describe, expect, it } from "vitest";
 import {
   areHostedSessionScopesEqual,
   isSuccessfulRpcResponse,
+  reconcileChatToolCallStepUp,
   rpcMessageId,
   rpcRequestMethod,
 } from "../use-chat-session";
+
+type StepUpLog = {
+  direction: string;
+  serverId: string;
+  message: unknown;
+};
+
+const send = (serverId: string, id: string | number): StepUpLog => ({
+  direction: "send",
+  serverId,
+  message: { jsonrpc: "2.0", id, method: "tools/call", params: {} },
+});
+const receiveSuccess = (serverId: string, id: string | number): StepUpLog => ({
+  direction: "receive",
+  serverId,
+  message: { jsonrpc: "2.0", id, result: {} },
+});
+const receiveError = (serverId: string, id: string | number): StepUpLog => ({
+  direction: "receive",
+  serverId,
+  message: {
+    jsonrpc: "2.0",
+    id,
+    error: { code: -32000, message: "insufficient_scope" },
+  },
+});
+const receiveToolsListSuccess = (
+  serverId: string,
+  id: string | number,
+): StepUpLog => ({
+  // A tools/list REPLY carries no method — indistinguishable on the wire from
+  // any other success; correlation is purely by id, which is why a reused id
+  // matters. This is the frame a post-OAuth reconnect would emit.
+  direction: "receive",
+  serverId,
+  message: { jsonrpc: "2.0", id, result: { tools: [] } },
+});
 
 // SEP-2350: the chat step-up counter is cleared ONLY when a successful
 // `tools/call` response arrives — never on a `tools/list`/`initialize`/ping
@@ -129,5 +167,74 @@ describe("isSuccessfulRpcResponse — chat step-up reset gate", () => {
     expect(isSuccessfulRpcResponse(null)).toBe(false);
     expect(isSuccessfulRpcResponse("result")).toBe(false);
     expect(isSuccessfulRpcResponse(undefined)).toBe(false);
+  });
+});
+
+// SEP-2350: the id-correlation reducer that drives the bounded chat step-up
+// reset. Guards the two ways a stale/failed `tools/call` id could otherwise
+// false-match a later reused id and wrongly clear the budget.
+describe("reconcileChatToolCallStepUp — chat step-up reset correlation", () => {
+  it("resets ONLY when a tracked tools/call SUCCEEDS", () => {
+    const pending = new Map<string, Set<string | number>>();
+    // Outgoing tool call is recorded, not yet a reset.
+    expect(reconcileChatToolCallStepUp(pending, send("srv", 7))).toBe(false);
+    expect(pending.get("srv")?.has(7)).toBe(true);
+    // Its successful reply is the one signal that clears the budget, and the id
+    // is evicted so it can't fire twice.
+    expect(reconcileChatToolCallStepUp(pending, receiveSuccess("srv", 7))).toBe(
+      true,
+    );
+    expect(pending.has("srv")).toBe(false);
+  });
+
+  it("evicts a FAILED tools/call id without resetting, so a later reused id can't false-match", () => {
+    const pending = new Map<string, Set<string | number>>();
+    reconcileChatToolCallStepUp(pending, send("srv", 5));
+    // The insufficient_scope error settles the call: evict, never reset.
+    expect(reconcileChatToolCallStepUp(pending, receiveError("srv", 5))).toBe(
+      false,
+    );
+    expect(pending.has("srv")).toBe(false);
+    // A later turn's tools/list reconnect success REUSES id 5 (fresh per-turn
+    // client restarts numeric ids). It must NOT reset — the id was already
+    // evicted when the tool call failed.
+    expect(
+      reconcileChatToolCallStepUp(pending, receiveToolsListSuccess("srv", 5)),
+    ).toBe(false);
+  });
+
+  it("a turn-boundary clear() drops a lingering id whose error was never logged, so a reused-id success does NOT reset", () => {
+    const pending = new Map<string, Set<string | number>>();
+    reconcileChatToolCallStepUp(pending, send("srv", 3));
+    expect(pending.get("srv")?.has(3)).toBe(true);
+    // The tool call fails at the transport level with no per-id error frame
+    // logged; the wrapped sendMessage clears the map at the next turn boundary.
+    pending.clear();
+    // The new turn's reconnect reuses id 3 for a tools/list success.
+    expect(
+      reconcileChatToolCallStepUp(pending, receiveToolsListSuccess("srv", 3)),
+    ).toBe(false);
+  });
+
+  it("never resets for a response id that was never a tracked tools/call (e.g. initialize / tools/list)", () => {
+    const pending = new Map<string, Set<string | number>>();
+    // No prior tools/call send for id 1 — a discovery/handshake success alone
+    // can never clear the budget.
+    expect(
+      reconcileChatToolCallStepUp(pending, receiveSuccess("srv", 1)),
+    ).toBe(false);
+  });
+
+  it("scopes pending ids per server (an id matched under a different serverId does not reset)", () => {
+    const pending = new Map<string, Set<string | number>>();
+    reconcileChatToolCallStepUp(pending, send("srvA", 9));
+    // Same id, different server — not the call we tracked.
+    expect(
+      reconcileChatToolCallStepUp(pending, receiveSuccess("srvB", 9)),
+    ).toBe(false);
+    // The original server's success still resets.
+    expect(
+      reconcileChatToolCallStepUp(pending, receiveSuccess("srvA", 9)),
+    ).toBe(true);
   });
 });

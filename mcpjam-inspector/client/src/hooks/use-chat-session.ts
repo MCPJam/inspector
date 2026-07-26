@@ -774,6 +774,52 @@ export function rpcRequestMethod(message: unknown): string | undefined {
   return typeof method === "string" ? method : undefined;
 }
 
+/**
+ * SEP-2350: reconcile one hosted RPC log frame against the per-server set of
+ * outgoing `tools/call` request ids, and report whether this frame is the
+ * SUCCESSFUL-`tools/call` signal that should clear the server's bounded step-up
+ * counter. Mutates `pending` in place:
+ *   - `send` + `tools/call` with an id → record the id under `serverId`.
+ *   - `receive` answering a tracked id → EVICT the id (success OR error) so a
+ *     failed `tools/call` — the `insufficient_scope` case — can't linger and
+ *     later false-match a reused id; returns `true` ONLY when that settled
+ *     response is a success (proving the widened grant is now sufficient).
+ * Discovery/handshake successes (`initialize`, `tools/list`, ping) were never
+ * tracked as `tools/call`, so their ids are never in `pending` and can never
+ * return `true`. The caller resolves the server + performs the actual reset.
+ */
+export function reconcileChatToolCallStepUp(
+  pending: Map<string, Set<string | number>>,
+  log: { direction: string; serverId: string; message: unknown },
+): boolean {
+  if (log.direction === "send") {
+    // Track only tool invocations; ids from other methods never gate a reset,
+    // so recording them would only grow the map.
+    if (rpcRequestMethod(log.message) === "tools/call") {
+      const id = rpcMessageId(log.message);
+      if (id !== undefined) {
+        const set =
+          pending.get(log.serverId) ?? new Set<string | number>();
+        set.add(id);
+        pending.set(log.serverId, set);
+      }
+    }
+    return false;
+  }
+  if (log.direction === "receive") {
+    const id = rpcMessageId(log.message);
+    const set = pending.get(log.serverId);
+    if (id !== undefined && set?.has(id)) {
+      set.delete(id);
+      if (set.size === 0) {
+        pending.delete(log.serverId);
+      }
+      return isSuccessfulRpcResponse(log.message);
+    }
+  }
+  return false;
+}
+
 function dedupeTraceToolCalls(
   toolCalls: LiveChatTraceToolCall[] | null | undefined
 ): LiveChatTraceToolCall[] {
@@ -1516,48 +1562,28 @@ export function useChatSession(
           // the insufficient_scope branch uses (a share-link chatbox resolves to
           // no server, a safe no-op there).
           const log = part.data;
-          if (log.direction === "send") {
-            // Track only tool invocations; ids from other methods never gate a
-            // reset, so recording them would only grow the map.
-            if (rpcRequestMethod(log.message) === "tools/call") {
-              const id = rpcMessageId(log.message);
-              if (id !== undefined) {
-                const pending =
-                  chatToolCallRequestIdsRef.current.get(log.serverId) ??
-                  new Set<string | number>();
-                pending.add(id);
-                chatToolCallRequestIdsRef.current.set(log.serverId, pending);
-              }
-            }
-          } else if (
-            log.direction === "receive" &&
-            isSuccessfulRpcResponse(log.message)
+          // Track outgoing `tools/call` ids and evict them on any settled
+          // response; a `true` return means a tracked `tools/call` SUCCEEDED —
+          // the only signal that clears this server's bounded step-up counter.
+          if (
+            reconcileChatToolCallStepUp(chatToolCallRequestIdsRef.current, log)
           ) {
-            const id = rpcMessageId(log.message);
-            const pending = chatToolCallRequestIdsRef.current.get(log.serverId);
-            // Reset ONLY when this success answers a tracked `tools/call`.
-            if (id !== undefined && pending?.has(id)) {
-              pending.delete(id);
-              if (pending.size === 0) {
-                chatToolCallRequestIdsRef.current.delete(log.serverId);
-              }
-              const activeProject =
-                appState?.projects?.[
-                  hostedProjectId ?? appState?.activeProjectId ?? ""
-                ];
-              const server =
-                (log.serverName
-                  ? (appState?.servers?.[log.serverName] ??
-                    activeProject?.servers?.[log.serverName])
-                  : undefined) ??
-                appState?.servers?.[log.serverId] ??
-                activeProject?.servers?.[log.serverId];
-              if (server) {
-                try {
-                  resetToolCallStepUp(server);
-                } catch {
-                  // best-effort; a failed reset must not disrupt log ingestion
-                }
+            const activeProject =
+              appState?.projects?.[
+                hostedProjectId ?? appState?.activeProjectId ?? ""
+              ];
+            const server =
+              (log.serverName
+                ? (appState?.servers?.[log.serverName] ??
+                  activeProject?.servers?.[log.serverName])
+                : undefined) ??
+              appState?.servers?.[log.serverId] ??
+              activeProject?.servers?.[log.serverId];
+            if (server) {
+              try {
+                resetToolCallStepUp(server);
+              } catch {
+                // best-effort; a failed reset must not disrupt log ingestion
               }
             }
           }
@@ -2536,6 +2562,18 @@ export function useChatSession(
       widgetModelContext?: WidgetModelContextEntry[];
     }) => {
       const { text, files, metadata, widgetModelContext } = options;
+      // SEP-2350 turn boundary: a new user turn spins up a fresh per-turn MCP
+      // client (`web-chat-turn.ts` disconnects the prior one), and each new
+      // client RESTARTS its numeric JSON-RPC ids from scratch. Any `tools/call`
+      // id still pending from a prior turn — e.g. one whose only reply was an
+      // `insufficient_scope` error with no per-id error response logged — is now
+      // stale, and a later turn's SUCCESSFUL `initialize`/`tools/list` could
+      // reuse that id and wrongly reset the bounded step-up budget. Drop them
+      // here so correlation only ever matches ids minted within the same turn.
+      // (Only genuinely NEW user turns flow through this wrapper; in-turn
+      // continuations — tool-approval responses, tool outputs — reuse the same
+      // client and go through `addToolApprovalResponse`/`addToolOutput`.)
+      chatToolCallRequestIdsRef.current.clear();
       const extra = metadata ? ({ metadata } as { metadata: unknown }) : {};
       pendingWidgetModelContextRef.current =
         widgetModelContext && widgetModelContext.length > 0
