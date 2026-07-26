@@ -180,11 +180,7 @@ describe("resolveEffectiveOauthProtocolMode (auto → wire-pin bridge)", () => {
 
   it("uses fresh negotiated MCP evidence after an absent wire pin", () => {
     expect(
-      resolveEffectiveOauthProtocolMode(
-        "auto",
-        undefined,
-        "2026-07-28"
-      )
+      resolveEffectiveOauthProtocolMode("auto", undefined, "2026-07-28")
     ).toBe("2026-07-28");
   });
 
@@ -195,6 +191,54 @@ describe("resolveEffectiveOauthProtocolMode (auto → wire-pin bridge)", () => {
     expect(resolveEffectiveOauthProtocolMode("2026-07-28", undefined)).toBe(
       "2026-07-28"
     );
+  });
+});
+
+describe("auto resolves against an older wire pin", () => {
+  // Behavior change worth pinning down: "auto" used to collapse every
+  // non-2026 wire pin to 2025-11-25. It now returns the pinned era, so an
+  // Auto server pinned to an older revision runs THAT era's OAuth flow.
+  it.each(["2025-03-26", "2025-06-18", "2025-11-25", "2026-07-28"] as const)(
+    "auto + a %s wire pin resolves to that era",
+    (pin) => {
+      expect(resolveEffectiveOauthProtocolMode("auto", pin)).toBe(pin);
+    }
+  );
+
+  it("carries the older pin through the full selection, tagged as wire_pin", () => {
+    expect(
+      resolveOAuthProtocolSelection({
+        mode: "auto",
+        wireProtocolVersion: "2025-06-18",
+      })
+    ).toEqual({
+      mode: "auto",
+      protocolVersion: "2025-06-18",
+      source: "wire_pin",
+    });
+  });
+
+  it("prefers an explicit OAuth selection over an older wire pin", () => {
+    expect(
+      resolveOAuthProtocolSelection({
+        mode: "2026-07-28",
+        wireProtocolVersion: "2025-03-26",
+      })
+    ).toEqual({
+      mode: "2026-07-28",
+      protocolVersion: "2026-07-28",
+      source: "explicit_oauth",
+    });
+  });
+
+  it("prefers an explicit wire pin over a freshly negotiated version", () => {
+    expect(
+      resolveOAuthProtocolSelection({
+        mode: "auto",
+        wireProtocolVersion: "2025-06-18",
+        negotiatedProtocolVersion: "2026-07-28",
+      }).protocolVersion
+    ).toBe("2025-06-18");
   });
 });
 
