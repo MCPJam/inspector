@@ -32,13 +32,24 @@ export async function fetchHarnessProxyTokens(args: {
   bearer: string;
   signal?: AbortSignal;
 }): Promise<HarnessProxyTokensResult> {
-  const url = new URL(
-    "/web/harness/mcp-proxy-token",
-    getConvexHttpUrl()
-  ).toString();
-  const authorization = args.bearer.startsWith("Bearer ")
-    ? args.bearer
-    : `Bearer ${args.bearer}`;
+  // Missing/invalid endpoint config must stay on the result contract (like the
+  // network-error path below), not escape as a throw.
+  let url: string;
+  try {
+    url = new URL(
+      "/web/harness/mcp-proxy-token",
+      getConvexHttpUrl(),
+    ).toString();
+  } catch (err) {
+    logger.error("[harness-proxy-token] endpoint not configured", err);
+    return {
+      ok: false,
+      status: 500,
+      error: "Harness mcp-proxy-token endpoint is not configured",
+    };
+  }
+  const bearer = args.bearer.trim();
+  const authorization = /^bearer\s/i.test(bearer) ? bearer : `Bearer ${bearer}`;
 
   let response: Response;
   try {
@@ -71,11 +82,15 @@ export async function fetchHarnessProxyTokens(args: {
     };
   }
 
-  if (
-    !response.ok ||
-    payload?.ok !== true ||
-    typeof payload?.tokens !== "object"
-  ) {
+  // `typeof null === "object"` and arrays pass a bare typeof check — require a
+  // real record of string tokens so malformed payloads stay on the error path.
+  const tokens = payload?.tokens;
+  const tokensValid =
+    !!tokens &&
+    typeof tokens === "object" &&
+    !Array.isArray(tokens) &&
+    Object.values(tokens).every((t) => typeof t === "string");
+  if (!response.ok || payload?.ok !== true || !tokensValid) {
     return {
       ok: false,
       status: response.ok ? 502 : response.status,
@@ -86,5 +101,5 @@ export async function fetchHarnessProxyTokens(args: {
     };
   }
 
-  return { ok: true, tokens: payload.tokens as Record<string, string> };
+  return { ok: true, tokens: tokens as Record<string, string> };
 }

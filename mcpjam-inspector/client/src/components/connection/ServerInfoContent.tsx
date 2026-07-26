@@ -42,9 +42,11 @@ export function ServerInfoContent({
   const [hostedTokenError, setHostedTokenError] = useState<string | null>(null);
   const hostedRevealRequestIdRef = useRef(0);
 
+  const serverUrl =
+    "url" in server.config ? server.config.url?.toString() : undefined;
   const storedTokensState = server.oauthTokens
     ? { tokens: undefined, isInvalid: false }
-    : getStoredTokensState(server.name);
+    : getStoredTokensState(server.name, serverUrl);
   const oauthTokens = server.oauthTokens ?? storedTokensState.tokens;
   const hasInvalidStoredAuthData =
     server.oauthTokens == null && storedTokensState.isInvalid;
@@ -489,6 +491,13 @@ export function ServerInfoContent({
             MCP Protocol Version
           </div>
           <div className="text-sm">{protocolVersion}</div>
+          {protocolVersion === "2026-07-28" && (
+            <div className="text-xs text-muted-foreground mt-1">
+              As of 2026-07-28, <code>logging/setLevel</code> is deprecated
+              (SEP-2577). This server already uses the modern per-request
+              opt-in instead — see the Logs panel's log-level control.
+            </div>
+          )}
         </div>
       )}
 

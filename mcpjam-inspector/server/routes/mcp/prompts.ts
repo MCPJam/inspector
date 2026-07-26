@@ -6,19 +6,41 @@ import {
   listPromptsMulti,
   getPrompt,
 } from "../../utils/route-handlers.js";
+import { jsonError } from "../../utils/mcp-error-serialize.js";
+import {
+  toServedFromCache,
+  withCacheEventCapture,
+} from "../../utils/cache-events.js";
 
 const prompts = new Hono();
 
 // List prompts endpoint
 prompts.post("/list", async (c) => {
   try {
-    const body = (await c.req.json()) as { serverId?: string };
+    const body = (await c.req.json()) as {
+      serverId?: string;
+      cursor?: string;
+      refresh?: boolean;
+    };
     if (!body.serverId) {
       return c.json({ success: false, error: "serverId is required" }, 400);
     }
-    return c.json(
-      await listPrompts(c.mcpClientManager, body as { serverId: string }),
+    // Cursor is optional — omitted, this returns the full aggregate (the
+    // official beta.4 client auto-pages no-cursor list calls). Passing a
+    // cursor returns exactly one raw page, matching the tools/resources
+    // routes' cursor parity.
+    const { result, events } = await withCacheEventCapture(() =>
+      listPrompts(c.mcpClientManager, {
+        serverId: body.serverId!,
+        cursor: body.cursor,
+        cacheMode: body.refresh === true ? "refresh" : undefined,
+      }),
     );
+    const servedFromCache = toServedFromCache(events);
+    return c.json({
+      ...result,
+      ...(servedFromCache ? { servedFromCache } : {}),
+    });
   } catch (error) {
     logger.error("Error fetching prompts", error, { serverId: "unknown" });
     return c.json(
@@ -98,13 +120,10 @@ prompts.post("/get", async (c) => {
     );
   } catch (error) {
     logger.error("Error getting prompt", error);
-    return c.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : "Unknown error",
-      },
-      500,
-    );
+    // SEP-2350: surface a 403 `insufficient_scope` challenge (on
+    // `mcpError.insufficientScope`) so the client can drive the union-scope
+    // step-up re-authorization; ordinary errors keep the 500 fallback.
+    return jsonError(c, error, 500);
   }
 });
 

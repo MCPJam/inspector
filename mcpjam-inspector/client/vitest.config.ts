@@ -36,6 +36,12 @@ const sdkWidgetRuntimeEntry = path.resolve(
   rootDir,
   "../sdk/src/widget-runtime/index.ts",
 );
+// Shared OpenAI plugin-bundle parser, aliased to source for the same reason:
+// its package export points at dist, which a clean checkout has not built.
+const sdkPluginBundleEntry = path.resolve(
+  rootDir,
+  "../sdk/src/plugin-bundle/index.ts",
+);
 // Resolve @mcpjam/chat-ui from source (its published exports point at dist,
 // which a clean checkout hasn't built). Mirrors the SDK source aliases above.
 const chatUiEntry = path.resolve(rootDir, "../chat-ui/src/index.ts");
@@ -139,6 +145,10 @@ export default defineConfig({
       {
         find: "@mcpjam/sdk/widget-runtime",
         replacement: sdkWidgetRuntimeEntry,
+      },
+      {
+        find: "@mcpjam/sdk/plugin-bundle",
+        replacement: sdkPluginBundleEntry,
       },
       {
         find: "@mcpjam/sdk/host-compat",

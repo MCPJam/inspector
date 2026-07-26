@@ -13,6 +13,7 @@
 import {
   SECRET_FIELD_NAME,
   sanitizeUnknownRecord,
+  type PluginIssueCode,
   type PluginIssueCollector,
 } from "./validation.js";
 
@@ -300,55 +301,96 @@ function normalizeOAuthHint(
   return hint;
 }
 
+/**
+ * Result of {@link detectPluginMcpTransport}. `ok: false` carries the same
+ * stable issue code the strict plugin path reports, so a caller with a
+ * different policy can decide for itself whether to skip, warn, or fail.
+ */
+export type PluginMcpTransportDetection =
+  | { ok: true; transport: "stdio" | "http" }
+  | { ok: false; code: PluginIssueCode; message: string };
+
+/**
+ * Decide whether a single server configuration is stdio or http, from an
+ * explicit `type`/`transport` discriminator when present and otherwise from
+ * the presence of `command` vs `url`.
+ *
+ * Pure and policy-free: it reports what the shape says and never applies the
+ * plugin path's stricter rules (HTTPS, server-key format, secret stripping).
+ * The strict plugin normalizer and the inspector's MCP-JSON import share this
+ * one function so `type: "streamable_http"`, `sse`, and a bare `command`/`url`
+ * are classified identically everywhere. `message` is caller-facing text; the
+ * `code` is the stable contract.
+ */
+export function detectPluginMcpTransport(
+  config: unknown,
+  serverKey = "server"
+): PluginMcpTransportDetection {
+  if (config === null || typeof config !== "object" || Array.isArray(config)) {
+    return {
+      ok: false,
+      code: "MCP_INVALID_SERVER",
+      message: `server "${serverKey}": configuration must be an object`,
+    };
+  }
+  const record = config as Record<string, unknown>;
+  const declared = record.type ?? record.transport;
+  if (declared !== undefined) {
+    if (typeof declared !== "string") {
+      return {
+        ok: false,
+        code: "MCP_UNKNOWN_TRANSPORT",
+        message: `server "${serverKey}": transport must be a string`,
+      };
+    }
+    // The MCP spec names the transport "Streamable HTTP" but leaves the
+    // config spelling to each implementation, so `streamable-http`,
+    // `streamable_http`, and `streamableHttp` are all in the wild. Fold
+    // separators away entirely rather than only underscores, so every casing
+    // resolves the same. Widening only ADDS accepted spellings — nothing that
+    // classified before now fails.
+    const normalized = declared.toLowerCase().replace(/[\s_-]/g, "");
+    if (normalized === "stdio") return { ok: true, transport: "stdio" };
+    if (
+      normalized === "http" ||
+      normalized === "sse" ||
+      normalized === "streamablehttp"
+    ) {
+      return { ok: true, transport: "http" };
+    }
+    return {
+      ok: false,
+      code: "MCP_UNKNOWN_TRANSPORT",
+      message: `server "${serverKey}": unknown transport "${declared}"`,
+    };
+  }
+  const hasCommand = record.command !== undefined;
+  const hasUrl = record.url !== undefined;
+  if (hasCommand && hasUrl) {
+    return {
+      ok: false,
+      code: "MCP_AMBIGUOUS_TRANSPORT",
+      message: `server "${serverKey}": declares both "command" and "url"`,
+    };
+  }
+  if (hasCommand) return { ok: true, transport: "stdio" };
+  if (hasUrl) return { ok: true, transport: "http" };
+  return {
+    ok: false,
+    code: "MCP_UNKNOWN_TRANSPORT",
+    message: `server "${serverKey}": declares neither "command" nor "url"`,
+  };
+}
+
 function detectTransport(
   serverKey: string,
   componentKey: string,
   record: Record<string, unknown>,
   issues: PluginIssueCollector
 ): "stdio" | "http" | null {
-  const declared = record.type ?? record.transport;
-  if (declared !== undefined) {
-    if (typeof declared !== "string") {
-      issues.error(
-        "MCP_UNKNOWN_TRANSPORT",
-        `server "${serverKey}": transport must be a string`,
-        { componentKey }
-      );
-      return null;
-    }
-    const normalized = declared.toLowerCase().replace(/_/g, "-");
-    if (normalized === "stdio") return "stdio";
-    if (
-      normalized === "http" ||
-      normalized === "sse" ||
-      normalized === "streamable-http"
-    ) {
-      return "http";
-    }
-    issues.error(
-      "MCP_UNKNOWN_TRANSPORT",
-      `server "${serverKey}": unknown transport "${declared}"`,
-      { componentKey }
-    );
-    return null;
-  }
-  const hasCommand = record.command !== undefined;
-  const hasUrl = record.url !== undefined;
-  if (hasCommand && hasUrl) {
-    issues.error(
-      "MCP_AMBIGUOUS_TRANSPORT",
-      `server "${serverKey}": declares both "command" and "url"`,
-      { componentKey }
-    );
-    return null;
-  }
-  if (hasCommand) return "stdio";
-  if (hasUrl) return "http";
-  issues.error(
-    "MCP_UNKNOWN_TRANSPORT",
-    `server "${serverKey}": declares neither "command" nor "url"`,
-    { componentKey }
-  );
+  const detected = detectPluginMcpTransport(record, serverKey);
+  if (detected.ok) return detected.transport;
+  issues.error(detected.code, detected.message, { componentKey });
   return null;
 }
 
@@ -540,6 +582,124 @@ function normalizeServer(
   };
 }
 
+/** Which wrapper held the server map; `null` = the document IS the map. */
+export type PluginMcpWrapperKey = "mcp_servers" | "mcpServers" | null;
+
+export interface PluginMcpServerEntry {
+  key: string;
+  /**
+   * The server's configuration exactly as it appeared in the source document
+   * — VALUES INTACT. This is the caller's own input handed back in a uniform
+   * shape, not a normalized DTO: it may carry env values, header values, and
+   * other credentials. Never persist it or fold it into a hash. Use
+   * {@link normalizePluginMcpConfig} when you need the value-free form.
+   */
+  config: unknown;
+}
+
+/**
+ * Why shape selection failed. Distinct from `code` because several of these
+ * share one persisted issue code: `code` is the stable contract the backend
+ * stores, `reason` is a typed discriminator a caller can branch on to render
+ * its own guidance without matching on message text.
+ */
+export type PluginMcpSelectionFailureReason =
+  | "document-not-an-object"
+  | "duplicate-wrapper"
+  | "bare-server-config"
+  | "server-map-not-an-object";
+
+export type PluginMcpServerMapSelection =
+  | { ok: true; wrapperKey: PluginMcpWrapperKey; servers: PluginMcpServerEntry[] }
+  | {
+      ok: false;
+      code: PluginIssueCode;
+      reason: PluginMcpSelectionFailureReason;
+      message: string;
+    };
+
+/**
+ * Resolve which of the three compatible document shapes a `.mcp.json`-style
+ * config uses — a direct server map, an `mcp_servers` wrapper (current OpenAI
+ * plugin docs), or an `mcpServers` wrapper (MCPJam/Claude-style) — and return
+ * its entries in declaration order.
+ *
+ * Pure and policy-free: entries come back unfiltered and unvalidated, so a
+ * caller that tolerates server names or URLs the plugin path rejects (the
+ * inspector's MCP-JSON import) keeps them, while
+ * {@link normalizePluginMcpConfig} layers the strict plugin rules on top.
+ * Sharing this function is what makes the OpenAI direct and `mcp_servers`
+ * shapes import identically everywhere.
+ */
+export function selectPluginMcpServerMap(
+  raw: unknown
+): PluginMcpServerMapSelection {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return {
+      ok: false,
+      code: "MCP_INVALID_CONFIG",
+      reason: "document-not-an-object",
+      message: "MCP configuration must be a JSON object",
+    };
+  }
+  const record = raw as Record<string, unknown>;
+
+  const hasSnake = record.mcp_servers !== undefined;
+  const hasCamel = record.mcpServers !== undefined;
+  if (hasSnake && hasCamel) {
+    return {
+      ok: false,
+      code: "MCP_DUPLICATE_WRAPPER",
+      reason: "duplicate-wrapper",
+      message: `configuration declares both "mcp_servers" and "mcpServers"`,
+    };
+  }
+
+  let wrapperKey: PluginMcpWrapperKey = null;
+  let serverMap: unknown = record;
+  if (hasSnake) {
+    wrapperKey = "mcp_servers";
+    serverMap = record.mcp_servers;
+  } else if (hasCamel) {
+    wrapperKey = "mcpServers";
+    serverMap = record.mcpServers;
+  } else if (
+    typeof record.command === "string" ||
+    typeof record.url === "string"
+  ) {
+    // A single bare server config is not a server map. Only string
+    // command/url values indicate that shape — a direct map may legitimately
+    // contain a server NAMED "url" or "command" (whose value is an object).
+    return {
+      ok: false,
+      code: "MCP_INVALID_CONFIG",
+      reason: "bare-server-config",
+      message: "expected a map of server name to configuration",
+    };
+  }
+
+  if (
+    serverMap === null ||
+    typeof serverMap !== "object" ||
+    Array.isArray(serverMap)
+  ) {
+    return {
+      ok: false,
+      code: "MCP_INVALID_CONFIG",
+      reason: "server-map-not-an-object",
+      message: "server map must be a JSON object",
+    };
+  }
+
+  return {
+    ok: true,
+    wrapperKey,
+    servers: Object.entries(serverMap as Record<string, unknown>).map(
+      ([key, config]) => ({ key, config })
+    ),
+  };
+}
+
 /**
  * Normalize a parsed `.mcp.json` document. Returns the normalized servers
  * (without `configHash`, which the parser computes) in declaration order.
@@ -550,60 +710,14 @@ export function normalizePluginMcpConfig(
 ): Array<Omit<ParsedPluginServer, "configHash">> {
   const { sourcePath, issues } = context;
 
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-    issues.error(
-      "MCP_INVALID_CONFIG",
-      "MCP configuration must be a JSON object",
-      { path: sourcePath }
-    );
-    return [];
-  }
-  const record = raw as Record<string, unknown>;
-
-  const hasSnake = record.mcp_servers !== undefined;
-  const hasCamel = record.mcpServers !== undefined;
-  if (hasSnake && hasCamel) {
-    issues.error(
-      "MCP_DUPLICATE_WRAPPER",
-      `configuration declares both "mcp_servers" and "mcpServers"`,
-      { path: sourcePath }
-    );
-    return [];
-  }
-
-  let serverMap: unknown = record;
-  if (hasSnake) serverMap = record.mcp_servers;
-  else if (hasCamel) serverMap = record.mcpServers;
-  else if (
-    typeof record.command === "string" ||
-    typeof record.url === "string"
-  ) {
-    // A single bare server config is not a server map. Only string
-    // command/url values indicate that shape — a direct map may legitimately
-    // contain a server NAMED "url" or "command" (whose value is an object).
-    issues.error(
-      "MCP_INVALID_CONFIG",
-      "expected a map of server name to configuration",
-      { path: sourcePath }
-    );
-    return [];
-  }
-
-  if (
-    serverMap === null ||
-    typeof serverMap !== "object" ||
-    Array.isArray(serverMap)
-  ) {
-    issues.error("MCP_INVALID_CONFIG", "server map must be a JSON object", {
-      path: sourcePath,
-    });
+  const selection = selectPluginMcpServerMap(raw);
+  if (!selection.ok) {
+    issues.error(selection.code, selection.message, { path: sourcePath });
     return [];
   }
 
   const servers: Array<Omit<ParsedPluginServer, "configHash">> = [];
-  for (const [serverKey, config] of Object.entries(
-    serverMap as Record<string, unknown>
-  )) {
+  for (const { key: serverKey, config } of selection.servers) {
     if (!SERVER_KEY.test(serverKey)) {
       issues.error(
         "MCP_INVALID_SERVER_NAME",
