@@ -41,6 +41,14 @@ export type {
 } from "./mcp-client-manager/index.js";
 
 // Tool and task types
+// The schema validator the manager itself uses for elicitation content, so a
+// downstream surface can check an answer against the same authority it will be
+// judged by instead of reimplementing (and drifting from) its configuration.
+export {
+  DialectAwareJsonSchemaValidator,
+  CspSafeDialectAwareJsonSchemaValidator,
+} from "./mcp-client-manager/index.js";
+
 export type {
   Tool,
   ToolExecuteOptions,
@@ -121,6 +129,7 @@ export {
   isAuthError,
   isMCPAuthError,
   isUnauthorized401,
+  isInsufficientScopeError,
 } from "./mcp-client-manager/index.js";
 export type { RetryPolicy } from "./retry.js";
 export {
@@ -727,6 +736,7 @@ export type {
   MrtrOperationState,
   MrtrLegResult,
   MrtrLegSender,
+  MrtrSupportedModes,
   MrtrInputCollector,
   MrtrValidateResponse,
   ElicitationContentValidator,

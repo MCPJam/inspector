@@ -146,20 +146,39 @@ export const useMrtrElicitationStore = create<MrtrElicitationState>(
     },
 
     respond: async (opId, responsesByKey) => {
+      // Capture the exact round we are answering BEFORE the POST. A fast server
+      // can install the next round (N+1) under the same opId while this fetch is
+      // in flight; we must drop only the answered `roundKey`, never every round
+      // sharing the operation id (that would silently delete the newer round and
+      // strand its still-pending server-side collector).
+      const answeredRoundKey = get().rounds.find(
+        (r) => r.opId === opId,
+      )?.roundKey;
       set({ responding: true });
       try {
-        await authFetch("/api/mcp/mrtr/respond", {
+        const res = await authFetch("/api/mcp/mrtr/respond", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ opId, responses: responsesByKey }),
         });
-        // Optimistically drop the op; the `mrtr_input_complete` SSE event is
-        // idempotent with this. Clear collection progress: the round we just
-        // submitted is done, so a later round of the same op starts clean.
-        set((s) => ({
-          rounds: s.rounds.filter((r) => r.opId !== opId),
-          collection: null,
-        }));
+        // A 4xx/5xx (session auth failure, key-set rejection, unknown op) means
+        // the server-side collector is still pending: KEEP the round — and its
+        // collection progress — so the user can correct/retry from the last key
+        // rather than optimistically clearing a live dialog.
+        if (!res.ok) {
+          throw new Error(`MRTR respond failed (${res.status})`);
+        }
+        // Optimistically drop ONLY the answered round; the `mrtr_input_complete`
+        // SSE event is idempotent with this. Clear collection progress for that
+        // same round only: a later round (possibly already installed under this
+        // opId while the POST was in flight) keeps its own in-progress answers.
+        if (answeredRoundKey) {
+          set((s) => ({
+            rounds: s.rounds.filter((r) => r.roundKey !== answeredRoundKey),
+            collection:
+              s.collection?.roundKey === answeredRoundKey ? null : s.collection,
+          }));
+        }
       } finally {
         set({ responding: false });
       }

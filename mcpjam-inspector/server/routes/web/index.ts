@@ -15,6 +15,7 @@ import swarmRuns from "./swarm-runs.js";
 import { harnessMcp } from "./harness-mcp.js";
 import apps from "./apps.js";
 import evals from "./evals.js";
+import environments from "./environments.js";
 import oauthWeb from "./oauth.js";
 import serverSecretsWeb from "./server-secrets.js";
 import exporter from "./export.js";
@@ -27,6 +28,7 @@ import apiKeys from "./api-keys.js";
 import computers from "./computers.js";
 import skills from "./skills.js";
 import caniuse from "./caniuse.js";
+import mrtrContinuation from "./mrtr-continuation.js";
 import { fetchRemoteGuestJwks } from "../../utils/guest-session-source.js";
 
 const web = new Hono();
@@ -41,6 +43,10 @@ web.use("/chatboxes/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 // API it fronts is LAUNCHER-gated + project-member-gated server-side.
 web.use("/swarm/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/evals/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+// Project Environment reads — member-gated server-side by the Convex query the
+// route fronts; client exposure is gated by the `project-environments-enabled`
+// flag. Read-only and narrowly projected (never the full runtime spec).
+web.use("/environments/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/chat-v2", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/mcpjam-agent", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use(
@@ -51,6 +57,10 @@ web.use(
 web.use("/chat-history/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/conformance/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/checks/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+// Hosted MRTR continuation resume/cancel (MCP 2026-07-28 §12.5). Bearer +
+// guest rate limit like every MCP-operation route; the resume path re-drives a
+// tool/prompt/resource leg against a freshly-authorized manager.
+web.use("/mrtr/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/server/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 // `/computers/exec` runs commands — bearer required. `/computers/config` is
 // deliberately open: it returns only a boolean and a public URL, and the
@@ -73,6 +83,7 @@ web.route("/chatboxes", chatboxes);
 web.route("/chatboxes", chatboxSessions);
 web.route("/swarm", swarmRuns);
 web.route("/evals", evals);
+web.route("/environments", environments);
 web.route("/export", exporter);
 // Voice transcription handles user-bearer forwarding and guest fallback inside
 // the proxy route so local/npx users can spend MCPJam credits without BYOK.
@@ -94,6 +105,7 @@ web.route("/guest-token", guestToken);
 web.route("/chat-history", chatHistory);
 web.route("/conformance", conformanceWeb);
 web.route("/checks", checks);
+web.route("/mrtr", mrtrContinuation);
 // `/computers/terminal` (the WS) is registered on the root app in
 // server/index.ts — only /config and /exec live on this sub-router.
 web.route("/computers", computers);

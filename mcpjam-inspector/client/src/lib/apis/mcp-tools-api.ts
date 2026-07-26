@@ -16,6 +16,10 @@ import { WebApiError } from "@/lib/apis/web/base";
 import { executeHostedTool, listHostedTools } from "@/lib/apis/web/tools-api";
 import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
 import { attachToolMetadata } from "@/lib/apis/tool-metadata";
+import {
+  parseInsufficientScopeChallenge,
+  type InsufficientScopeChallenge,
+} from "@/lib/apis/insufficient-scope";
 
 /** SEP-2549 cache-serve provenance (§11.2) — present ONLY on an actual hit. */
 export type ServedFromCache = { ageMs: number };
@@ -78,36 +82,11 @@ export type ToolExecutionResponse =
       insufficientScope?: ToolInsufficientScopeChallenge;
     };
 
-/** The `WWW-Authenticate` step-up challenge surfaced on a failed tool call. */
-export type ToolInsufficientScopeChallenge = {
-  requiredScope?: string;
-  resourceMetadataUrl?: string;
-  errorDescription?: string;
-};
-
-/**
- * Narrow an untrusted `mcpError.insufficientScope` payload to the challenge
- * shape. Returns `undefined` unless at least one string field is present, so a
- * malformed or empty block never masquerades as an actionable step-up.
- */
-export function parseInsufficientScopeChallenge(
-  raw: unknown,
-): ToolInsufficientScopeChallenge | undefined {
-  if (!raw || typeof raw !== "object") {
-    return undefined;
-  }
-  const r = raw as Record<string, unknown>;
-  const requiredScope =
-    typeof r.requiredScope === "string" ? r.requiredScope : undefined;
-  const resourceMetadataUrl =
-    typeof r.resourceMetadataUrl === "string" ? r.resourceMetadataUrl : undefined;
-  const errorDescription =
-    typeof r.errorDescription === "string" ? r.errorDescription : undefined;
-  if (!requiredScope && !resourceMetadataUrl && !errorDescription) {
-    return undefined;
-  }
-  return { requiredScope, resourceMetadataUrl, errorDescription };
-}
+// SEP-2350 challenge plumbing now lives in the surface-agnostic
+// `insufficient-scope` module (shared by tools / resources / prompts). Re-export
+// here under the original names so existing importers stay green.
+export type ToolInsufficientScopeChallenge = InsufficientScopeChallenge;
+export { parseInsufficientScopeChallenge };
 
 export async function listTools({
   serverId,

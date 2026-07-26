@@ -15,6 +15,11 @@ import {
 } from "@/lib/apis/mcp-tools-api";
 import { readResource } from "@/lib/apis/mcp-resources-api";
 import {
+  driveScopeStepUpFromChallenge,
+  resetScopeStepUp,
+} from "@/lib/scope-step-up";
+import { useOptionalSharedAppState } from "@/state/app-state-context";
+import {
   mcpCallToolResultToModelOutput,
   mcpCallToolResultToModelOutputWithLinkedResources,
   type McpModelVisibleToolResultPolicy,
@@ -218,6 +223,27 @@ export function useToolExecution({
     setPendingExecution(null);
   }, []);
 
+  // SEP-2350 step-up. Resolve the live server entry (non-throwing: the hook is
+  // exercised in tests without an AppStateProvider) so the orchestrator can read
+  // its stored issuer + originally-granted scopes on a `403 insufficient_scope`.
+  const sharedAppState = useOptionalSharedAppState();
+  const resetStepUpOnSuccess = useCallback(
+    (name: string | undefined) => {
+      resetScopeStepUp(name ? sharedAppState?.servers[name] : undefined);
+    },
+    [sharedAppState],
+  );
+
+  const driveStepUpFromResponse = useCallback(
+    (name: string | undefined, response: ToolExecutionResponse) => {
+      driveScopeStepUpFromChallenge(
+        name ? sharedAppState?.servers[name] : undefined,
+        (response as { insufficientScope?: unknown }).insufficientScope,
+      );
+    },
+    [sharedAppState],
+  );
+
   const storeCompletedToolResult = useCallback(
     (
       effectiveToolName: string,
@@ -320,6 +346,9 @@ export function useToolExecution({
           });
 
           setExecutionError(response.error);
+          // SEP-2350: on a `403 insufficient_scope`, drive the union-scope
+          // step-up re-authorization for this server.
+          driveStepUpFromResponse(effectiveServerName, response);
           return {
             ok: false,
             toolName: effectiveToolName,
@@ -378,6 +407,9 @@ export function useToolExecution({
           success: true,
         });
 
+        // SEP-2350: a successful call clears the bounded step-up counter.
+        resetStepUpOnSuccess(effectiveServerName);
+
         return {
           ok: true,
           toolName: effectiveToolName,
@@ -417,6 +449,8 @@ export function useToolExecution({
       setIsExecuting,
       storeCompletedToolResult,
       modelVisibleMcpToolResults,
+      driveStepUpFromResponse,
+      resetStepUpOnSuccess,
     ]
   );
 

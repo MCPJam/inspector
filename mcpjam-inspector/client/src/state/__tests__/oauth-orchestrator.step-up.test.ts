@@ -365,4 +365,85 @@ describe("resolveInsufficientScopeStepUp (SEP-2350)", () => {
         .action,
     ).toBe("reauthorize");
   });
+
+  it("applyToolCallStepUp forwards a SAME-ORIGIN resourceMetadataUrl into the fresh OAuth flow", async () => {
+    readStoredOAuthConfigMock.mockReturnValue({ scopes: ["read"] });
+    initiateOAuthMock.mockResolvedValue({ success: true });
+
+    // Same origin as the server URL (https://mcp.asana.com/sse) — RFC 9728.
+    const resourceMetadataUrl =
+      "https://mcp.asana.com/.well-known/oauth-protected-resource/tenant-a/sse";
+
+    const outcome = await applyToolCallStepUp(createServer(), {
+      requiredScope: "admin",
+      resourceMetadataUrl,
+    });
+
+    expect(outcome.action).toBe("reauthorize");
+    // The challenge's metadata URL is threaded down to PRM discovery.
+    expect(initiateOAuthMock).toHaveBeenCalledWith(
+      expect.objectContaining({ resourceMetadataUrl }),
+    );
+  });
+
+  it("applyToolCallStepUp THREADS a valid cross-origin https resourceMetadataUrl (RFC 9728 allows a separate metadata origin)", async () => {
+    readStoredOAuthConfigMock.mockReturnValue({ scopes: ["read"] });
+    initiateOAuthMock.mockResolvedValue({ success: true });
+
+    // A legitimate deployment can advertise PRM on a dedicated metadata origin,
+    // DIFFERENT from the server URL. It must be threaded — the SDK's outbound
+    // guard + cross-origin header stripping enforce fetch safety downstream.
+    const resourceMetadataUrl =
+      "https://metadata.asana.com/.well-known/oauth-protected-resource/sse";
+
+    const outcome = await applyToolCallStepUp(createServer(), {
+      requiredScope: "admin",
+      resourceMetadataUrl,
+    });
+
+    expect(outcome.action).toBe("reauthorize");
+    expect(initiateOAuthMock).toHaveBeenCalledWith(
+      expect.objectContaining({ resourceMetadataUrl }),
+    );
+  });
+
+  it("applyToolCallStepUp DROPS a non-https resourceMetadataUrl (falls back to derived discovery)", async () => {
+    readStoredOAuthConfigMock.mockReturnValue({ scopes: ["read"] });
+    initiateOAuthMock.mockResolvedValue({ success: true });
+
+    // RFC 9728 mandates https; a non-https (or malformed/relative) hint is not
+    // threaded — discovery derives the URL itself.
+    const outcome = await applyToolCallStepUp(createServer(), {
+      requiredScope: "admin",
+      resourceMetadataUrl:
+        "http://evil.example/.well-known/oauth-protected-resource",
+    });
+
+    expect(outcome.action).toBe("reauthorize");
+    expect(initiateOAuthMock).toHaveBeenCalledWith(
+      expect.objectContaining({ resourceMetadataUrl: undefined }),
+    );
+  });
+
+  it("applyToolCallStepUp threads a resourceMetadataUrl-only challenge (no requiredScope) once the gate broadens", async () => {
+    // The server previously requested read+write; a metadata-only challenge
+    // still re-authorizes with those scopes and carries the metadata URL down.
+    persistRequestedScopes("asana", ISSUER, ["read", "write"]);
+    initiateOAuthMock.mockResolvedValue({ success: true });
+
+    const resourceMetadataUrl =
+      "https://mcp.asana.com/.well-known/oauth-protected-resource/tenant-b/sse";
+
+    const outcome = await applyToolCallStepUp(createServer(), {
+      resourceMetadataUrl,
+    });
+
+    expect(outcome.action).toBe("reauthorize");
+    expect(initiateOAuthMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scopes: ["read", "write"],
+        resourceMetadataUrl,
+      }),
+    );
+  });
 });
