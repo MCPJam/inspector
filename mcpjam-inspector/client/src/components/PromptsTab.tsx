@@ -23,14 +23,6 @@ import { ThreePanelLayout } from "./ui/three-panel-layout";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { extractDisplayFromValue } from "@/components/chat-v2/shared/tool-result-text";
 import type { MCPPrompt, MCPServerConfig } from "@mcpjam/sdk/browser";
-import {
-  insufficientScopeFromError,
-  isActionableStepUpChallenge,
-} from "@/lib/apis/insufficient-scope";
-import {
-  applyToolCallStepUp,
-  resetToolCallStepUp,
-} from "@/state/oauth-orchestrator";
 import type { ServerWithName } from "@/state/app-types";
 import {
   getPrompt as getPromptApi,
@@ -46,6 +38,7 @@ import { boundedJsonByteLength } from "@/lib/webmcp/bounded-size";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
 import { clampText } from "@/lib/webmcp/groups/shared";
+import { runWithScopeStepUp } from "@/lib/scope-step-up";
 import type { GetPromptInspectorCommand } from "@/shared/inspector-command.js";
 
 /** Cap the list of prompts a snapshot enumerates (names/titles only). */
@@ -139,51 +132,9 @@ export function PromptsTab({
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
   const promptsFetchVersionRef = useRef(0);
   const promptGetVersionRef = useRef(0);
-  // SEP-2350: dedupes step-up per server (no double redirect / double counter
-  // bump while the first is in flight).
-  const stepUpInFlightRef = useRef<Set<string>>(new Set());
   const isServerConnected =
     serverConnectionStatus === undefined ||
     serverConnectionStatus === "connected";
-
-  // A successful get clears the bounded step-up counter so a future legitimate
-  // scope step-up starts fresh.
-  const resetStepUpOnSuccess = useCallback(() => {
-    if (!server) return;
-    try {
-      resetToolCallStepUp(server);
-    } catch {
-      // best-effort; must not mask a successful get
-    }
-  }, [server]);
-
-  // Drive the bounded, union-scope re-authorization when a get failed with a
-  // `403 insufficient_scope`. `reauthorize` redirects the browser; `throw` /
-  // `manual` leave the surfaced error in place.
-  const driveStepUpFromError = useCallback(
-    (err: unknown) => {
-      if (!server) return;
-      const challenge = insufficientScopeFromError(err);
-      // Only a scope-bearing (or resource-metadata) challenge is worth a
-      // redirect; an errorDescription-only challenge would consume the
-      // one-attempt step-up budget with nothing to widen.
-      if (!isActionableStepUpChallenge(challenge)) return;
-      const stepUpKey = server.name;
-      if (stepUpInFlightRef.current.has(stepUpKey)) return;
-      stepUpInFlightRef.current.add(stepUpKey);
-      void applyToolCallStepUp(server, {
-        requiredScope: challenge.requiredScope,
-        resourceMetadataUrl: challenge.resourceMetadataUrl,
-      })
-        .catch(() => {
-          // step-up failure is surfaced via the get error already set
-        })
-        .finally(() => {
-          stepUpInFlightRef.current.delete(stepUpKey);
-        });
-    },
-    [server],
-  );
 
   const selectedPromptData = useMemo(() => {
     return prompts.find((prompt) => prompt.name === selectedPrompt) ?? null;
@@ -337,21 +288,19 @@ export function PromptsTab({
 
       try {
         const resolvedParams = params ?? buildParameters();
-        const data = await getPromptApi(
-          serverName,
-          targetPrompt,
-          resolvedParams,
+        // SEP-2350: the wrapper owns the whole step-up lifecycle — reset the
+        // bounded budget on success, drive the union-scope re-authorization on
+        // a `403 insufficient_scope`, re-throw everything else untouched.
+        const data = await runWithScopeStepUp(server, () =>
+          getPromptApi(serverName, targetPrompt, resolvedParams),
         );
         if (getVersion !== promptGetVersionRef.current) return;
         setPromptContent(data.content);
-        resetStepUpOnSuccess();
       } catch (err) {
         if (getVersion !== promptGetVersionRef.current) return;
         const message =
           err instanceof Error ? err.message : `Error getting prompt: ${err}`;
         setError(message);
-        // SEP-2350: on a `403 insufficient_scope`, drive the union-scope step-up.
-        driveStepUpFromError(err);
       } finally {
         if (getVersion === promptGetVersionRef.current) {
           setLoading(false);
@@ -363,8 +312,7 @@ export function PromptsTab({
       serverName,
       isServerConnected,
       buildParameters,
-      resetStepUpOnSuccess,
-      driveStepUpFromError,
+      server,
     ],
   );
 
@@ -458,8 +406,13 @@ export function PromptsTab({
         // slower render can't overwrite a newer selection's result.
         const getVersion = ++promptGetVersionRef.current;
         try {
-          // SAME api the Run button uses (getPrompt → getPromptApi).
-          const data = await getPromptApi(serverName, target.name, providedArgs);
+          // SAME api AND the same step-up lifecycle as the Run button — an
+          // agent-triggered `403 insufficient_scope` must be able to start a
+          // re-authorization, and an agent-triggered success must clear the
+          // budget, exactly as the on-screen path does.
+          const data = await runWithScopeStepUp(server, () =>
+            getPromptApi(serverName, target.name, providedArgs),
+          );
           // Commit to the on-screen pane only if this is still the newest
           // render; the tool still returns what IT fetched.
           if (getVersion === promptGetVersionRef.current) {

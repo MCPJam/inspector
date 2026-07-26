@@ -27,14 +27,6 @@ import {
   listResources,
   readResource as readResourceApi,
 } from "@/lib/apis/mcp-resources-api";
-import {
-  insufficientScopeFromError,
-  isActionableStepUpChallenge,
-} from "@/lib/apis/insufficient-scope";
-import {
-  applyToolCallStepUp,
-  resetToolCallStepUp,
-} from "@/state/oauth-orchestrator";
 import type { ServerWithName } from "@/state/app-types";
 import { listResourceTemplates } from "@/lib/apis/mcp-resource-templates-api";
 import {
@@ -48,6 +40,7 @@ import { boundedJsonByteLength } from "@/lib/webmcp/bounded-size";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
 import { clampText } from "@/lib/webmcp/groups/shared";
+import { runWithScopeStepUp } from "@/lib/scope-step-up";
 import type { ReadResourceInspectorCommand } from "@/shared/inspector-command.js";
 
 /** Cap the list of primitives a snapshot enumerates (uris/names only). */
@@ -226,46 +219,6 @@ export function ResourcesTab({
   const resourceReadVersionRef = useRef(0);
   const templatesFetchVersionRef = useRef(0);
   const templateReadVersionRef = useRef(0);
-  // SEP-2350: guards against a repeated read error kicking off a duplicate
-  // step-up (double redirect / double counter bump) while the first is still in
-  // flight. Keyed by server name so distinct servers never block each other.
-  const stepUpInFlightRef = useRef<Set<string>>(new Set());
-
-  // A successful read clears the bounded step-up counter so a future legitimate
-  // scope step-up starts fresh rather than inheriting a stale count.
-  const resetStepUpOnSuccess = () => {
-    if (!server) return;
-    try {
-      resetToolCallStepUp(server);
-    } catch {
-      // best-effort; a failed reset must not mask a successful read
-    }
-  };
-
-  // Drive the bounded, union-scope re-authorization when a read failed with a
-  // `403 insufficient_scope`. Deduped per server; `reauthorize` redirects the
-  // browser to the authorization server, `throw` / `manual` leave the error.
-  const driveStepUpFromError = (err: unknown) => {
-    if (!server) return;
-    const challenge = insufficientScopeFromError(err);
-    // Only a challenge that names a scope (or a resource-metadata URL to
-    // discover one) is worth a redirect; an errorDescription-only challenge
-    // would burn the one-attempt budget with nothing to widen.
-    if (!isActionableStepUpChallenge(challenge)) return;
-    const stepUpKey = server.name;
-    if (stepUpInFlightRef.current.has(stepUpKey)) return;
-    stepUpInFlightRef.current.add(stepUpKey);
-    void applyToolCallStepUp(server, {
-      requiredScope: challenge.requiredScope,
-      resourceMetadataUrl: challenge.resourceMetadataUrl,
-    })
-      .catch(() => {
-        // step-up failure is surfaced via the read error already set
-      })
-      .finally(() => {
-        stepUpInFlightRef.current.delete(stepUpKey);
-      });
-  };
   const isServerConnected =
     serverConnectionStatus === undefined ||
     serverConnectionStatus === "connected";
@@ -474,15 +427,17 @@ export function ResourcesTab({
     const readVersion = ++resourceReadVersionRef.current;
 
     try {
-      const data = await readResourceApi(serverName, uri);
+      // SEP-2350: the wrapper owns the whole step-up lifecycle — reset the
+      // bounded budget on success, drive the union-scope re-authorization on a
+      // `403 insufficient_scope`, re-throw everything else untouched.
+      const data = await runWithScopeStepUp(server, () =>
+        readResourceApi(serverName, uri),
+      );
       if (readVersion !== resourceReadVersionRef.current) return;
       setResourceContent(data?.content ?? null);
-      resetStepUpOnSuccess();
     } catch (err) {
       if (readVersion !== resourceReadVersionRef.current) return;
       setError(`Error reading resource: ${err}`);
-      // SEP-2350: on a `403 insufficient_scope`, drive the union-scope step-up.
-      driveStepUpFromError(err);
     } finally {
       if (readVersion === resourceReadVersionRef.current) {
         setLoading(false);
@@ -525,24 +480,22 @@ export function ResourcesTab({
 
     try {
       const uri = getResolvedUri();
-      const data = await readResourceApi(serverName, uri);
+      const data = await runWithScopeStepUp(server, () =>
+        readResourceApi(serverName, uri),
+      );
       if (readVersion !== templateReadVersionRef.current) return;
       setTemplateContent(data?.content ?? null);
-      resetStepUpOnSuccess();
     } catch (err) {
       if (readVersion !== templateReadVersionRef.current) return;
       setTemplateError(`Error reading resource: ${err}`);
-      // SEP-2350: on a `403 insufficient_scope`, drive the union-scope step-up.
-      driveStepUpFromError(err);
     } finally {
       if (readVersion === templateReadVersionRef.current) {
         setTemplateLoading(false);
       }
     }
-    // `server` is a dep because the step-up helpers this callback invokes
-    // (`driveStepUpFromError` / `resetStepUpOnSuccess`) close over it; without it
-    // a `403 insufficient_scope` on a template read could step up against a
-    // stale (or `undefined`) server after the active server changed.
+    // `server` is a dep because `runWithScopeStepUp` takes it: without it a
+    // `403 insufficient_scope` on a template read could step up against a stale
+    // (or `undefined`) server after the active server changed.
   }, [selectedTemplate, serverName, isServerConnected, getResolvedUri, server]);
 
   // Handle Enter key in template input fields
@@ -694,8 +647,13 @@ export function ResourcesTab({
           ? ++templateReadVersionRef.current
           : ++resourceReadVersionRef.current;
         try {
-          // SAME api the Read button uses (readResource → readResourceApi).
-          const data = await readResourceApi(serverName, uri);
+          // SAME api AND the same step-up lifecycle as the Read button — an
+          // agent-triggered `403 insufficient_scope` must be able to start a
+          // re-authorization, and an agent-triggered success must clear the
+          // budget, exactly as the on-screen path does.
+          const data = await runWithScopeStepUp(server, () =>
+            readResourceApi(serverName, uri),
+          );
           const content = data?.content ?? null;
           // Only commit to the on-screen pane if this is still the newest read
           // for it; the tool still returns what IT fetched regardless.

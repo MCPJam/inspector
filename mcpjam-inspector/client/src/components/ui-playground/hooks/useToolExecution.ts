@@ -6,7 +6,7 @@
  * execution state for chat injection.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { FormField } from "@/lib/tool-form";
 import { buildParametersFromFields } from "@/lib/tool-form";
 import {
@@ -15,13 +15,9 @@ import {
 } from "@/lib/apis/mcp-tools-api";
 import { readResource } from "@/lib/apis/mcp-resources-api";
 import {
-  isActionableStepUpChallenge,
-  parseInsufficientScopeChallenge,
-} from "@/lib/apis/insufficient-scope";
-import {
-  applyToolCallStepUp,
-  resetToolCallStepUp,
-} from "@/state/oauth-orchestrator";
+  driveScopeStepUpFromChallenge,
+  resetScopeStepUp,
+} from "@/lib/scope-step-up";
 import { useOptionalSharedAppState } from "@/state/app-state-context";
 import {
   mcpCallToolResultToModelOutput,
@@ -231,48 +227,19 @@ export function useToolExecution({
   // exercised in tests without an AppStateProvider) so the orchestrator can read
   // its stored issuer + originally-granted scopes on a `403 insufficient_scope`.
   const sharedAppState = useOptionalSharedAppState();
-  // Dedupes step-up per server (no double redirect / double counter bump while
-  // the first is in flight).
-  const stepUpInFlightRef = useRef<Set<string>>(new Set());
-
   const resetStepUpOnSuccess = useCallback(
     (name: string | undefined) => {
-      const server = name ? sharedAppState?.servers[name] : undefined;
-      if (!server) return;
-      try {
-        resetToolCallStepUp(server);
-      } catch {
-        // best-effort; must not mask a successful execution
-      }
+      resetScopeStepUp(name ? sharedAppState?.servers[name] : undefined);
     },
     [sharedAppState],
   );
 
   const driveStepUpFromResponse = useCallback(
     (name: string | undefined, response: ToolExecutionResponse) => {
-      const server = name ? sharedAppState?.servers[name] : undefined;
-      if (!server) return;
-      const challenge = parseInsufficientScopeChallenge(
+      driveScopeStepUpFromChallenge(
+        name ? sharedAppState?.servers[name] : undefined,
         (response as { insufficientScope?: unknown }).insufficientScope,
       );
-      // Only drive a redirect for an ACTIONABLE challenge (one carrying a
-      // `requiredScope` to widen). A metadata-only / errorDescription-only
-      // challenge would burn the bounded step-up budget without adding scope —
-      // same gate resources/prompts/chat use.
-      if (!isActionableStepUpChallenge(challenge)) return;
-      const stepUpKey = server.name;
-      if (stepUpInFlightRef.current.has(stepUpKey)) return;
-      stepUpInFlightRef.current.add(stepUpKey);
-      void applyToolCallStepUp(server, {
-        requiredScope: challenge.requiredScope,
-        resourceMetadataUrl: challenge.resourceMetadataUrl,
-      })
-        .catch(() => {
-          // step-up failure is surfaced via the execution error already set
-        })
-        .finally(() => {
-          stepUpInFlightRef.current.delete(stepUpKey);
-        });
     },
     [sharedAppState],
   );

@@ -22,6 +22,9 @@ import type {
   InspectorCommandResponse,
 } from "@/shared/inspector-command.js";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
+import { McpRequestError } from "@/lib/apis/insufficient-scope";
+import { __resetScopeStepUpInFlightForTests } from "@/lib/scope-step-up";
+import type { ServerWithName } from "@/state/app-types";
 
 const SECRET_BODY = "SECRET-PROMPT-BODY-do-not-leak";
 
@@ -39,6 +42,15 @@ vi.mock("@/components/ui/json-editor", () => ({
 }));
 vi.mock("@/components/logger-view", () => ({
   LoggerView: () => <div data-testid="logger-view" />,
+}));
+
+const { mockApplyToolCallStepUp, mockResetToolCallStepUp } = vi.hoisted(() => ({
+  mockApplyToolCallStepUp: vi.fn(),
+  mockResetToolCallStepUp: vi.fn(),
+}));
+vi.mock("@/state/oauth-orchestrator", () => ({
+  applyToolCallStepUp: (...a: unknown[]) => mockApplyToolCallStepUp(...a),
+  resetToolCallStepUp: (...a: unknown[]) => mockResetToolCallStepUp(...a),
 }));
 
 import { PromptsTab } from "@/components/PromptsTab";
@@ -64,12 +76,14 @@ async function dispatch(command: Omit<InspectorCommand, "id">) {
 
 async function renderLoaded(props?: {
   status?: "connected" | "disconnected";
+  server?: ServerWithName;
 }) {
   render(
     <PromptsTab
       serverConfig={serverConfig}
       serverName="srv"
       serverConnectionStatus={props?.status ?? "connected"}
+      server={props?.server}
     />,
   );
   if (props?.status === "disconnected") return;
@@ -179,5 +193,66 @@ describe("PromptsTab — agent bridge handler", () => {
     expect((snapshot as any).data.selectedPromptArgumentNames).toContain(
       "topic",
     );
+  });
+});
+
+
+/** The resolved server entry the step-up lifecycle needs. */
+const stepUpServer = { name: "srv" } as unknown as ServerWithName;
+
+describe("PromptsTab — agent-driven step-up lifecycle (SEP-2350)", () => {
+  // The defect these pin: the agent handler called the same API as the button
+  // while skipping the step-up lifecycle entirely, so an agent-triggered
+  // `403 insufficient_scope` could not start a re-authorization, and an
+  // agent-triggered success left the bounded budget stale for a later,
+  // legitimate step-up on another screen.
+  beforeEach(() => {
+    __resetScopeStepUpInFlightForTests();
+  });
+
+  it("drives the step-up when an agent-driven render hits a 403", async () => {
+    mockGetPrompt.mockRejectedValueOnce(
+      new McpRequestError("Forbidden", {
+        status: 403,
+        insufficientScope: { requiredScope: "files:write" },
+      }),
+    );
+    await renderLoaded({ server: stepUpServer });
+    const response = await dispatch({
+      type: "getPrompt",
+      payload: { prompt: "summarize", arguments: { topic: "MCP" } },
+    });
+    // The failure is still reported to the agent exactly as before …
+    expect(response).toMatchObject({
+      status: "error",
+      error: { code: "execution_failed" },
+    });
+    // … and the re-authorization is now actually driven.
+    expect(mockApplyToolCallStepUp).toHaveBeenCalledTimes(1);
+    expect(mockApplyToolCallStepUp.mock.calls[0][1]).toMatchObject({
+      requiredScope: "files:write",
+    });
+  });
+
+  it("resets the budget when an agent-driven render succeeds", async () => {
+    await renderLoaded({ server: stepUpServer });
+    const response = await dispatch({
+      type: "getPrompt",
+      payload: { prompt: "summarize", arguments: { topic: "MCP" } },
+    });
+    expect(response).toMatchObject({ status: "success" });
+    // A stale budget would otherwise suppress a later legitimate step-up.
+    expect(mockResetToolCallStepUp).toHaveBeenCalledWith(stepUpServer);
+  });
+
+  it("leaves an ordinary failure alone", async () => {
+    mockGetPrompt.mockRejectedValueOnce(new Error("network down"));
+    await renderLoaded({ server: stepUpServer });
+    await dispatch({
+      type: "getPrompt",
+      payload: { prompt: "summarize", arguments: { topic: "MCP" } },
+    });
+    expect(mockApplyToolCallStepUp).not.toHaveBeenCalled();
+    expect(mockResetToolCallStepUp).not.toHaveBeenCalled();
   });
 });

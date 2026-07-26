@@ -37,6 +37,7 @@ import {
   recordAppToolInvocation,
 } from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
 import { scrubAppToolResultForModel } from "@/components/chat-v2/thread/mcp-apps/app-tools-sanitizer";
+import { driveScopeStepUp, resetScopeStepUp } from "@/lib/scope-step-up";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvex, useConvexAuth } from "convex/react";
 import { ModelDefinition, type ModelProvider } from "@/shared/types";
@@ -121,8 +122,6 @@ import {
   type HostedElicitationUrlRequiredEvent,
 } from "@/shared/hosted-elicitation";
 import {
-  applyToolCallStepUp,
-  resetToolCallStepUp,
 } from "@/state/oauth-orchestrator";
 import { respondToChatElicitation } from "@/lib/apis/elicitation-api";
 import {
@@ -1330,10 +1329,6 @@ export function useChatSession(
   const [urlElicitationRequired, setUrlElicitationRequired] = useState<
     HostedElicitationUrlRequiredEvent[]
   >([]);
-  // SEP-2350: dedupes the chat step-up per server so a re-delivered
-  // `insufficient_scope` part (or a second failing tool call) can't fire a
-  // duplicate redirect / double counter bump while the first is in flight.
-  const chatStepUpInFlightRef = useRef<Set<string>>(new Set());
   // SEP-2350: ids of outgoing `tools/call` requests per server (keyed by the
   // trusted `serverId`), so a later SUCCESSFUL response can be correlated to an
   // actual tool invocation before resetting that server's bounded step-up
@@ -1523,27 +1518,14 @@ export function useChatSession(
                 : undefined) ??
               appState?.servers?.[event.serverId] ??
               activeProject?.servers?.[event.serverId];
-            // Requires a `requiredScope` to add — a `resourceMetadataUrl`-only
-            // event is inert in the orchestrator today and would burn the
-            // bounded budget without widening scope (mirrors the shared
-            // `isActionableStepUpChallenge` gate).
-            if (server && event.requiredScope) {
-              const stepUpKey = server.name;
-              if (!chatStepUpInFlightRef.current.has(stepUpKey)) {
-                chatStepUpInFlightRef.current.add(stepUpKey);
-                void applyToolCallStepUp(server, {
-                  requiredScope: event.requiredScope,
-                  resourceMetadataUrl: event.resourceMetadataUrl,
-                })
-                  .catch(() => {
-                    // A failed step-up leaves the model-facing tool error in
-                    // place; nothing else to surface here.
-                  })
-                  .finally(() => {
-                    chatStepUpInFlightRef.current.delete(stepUpKey);
-                  });
-              }
-            }
+            // The shared lifecycle applies the same actionable-challenge gate
+            // (a `resourceMetadataUrl`-only event is inert in the orchestrator
+            // today and would burn the bounded budget without widening scope)
+            // and the same cross-surface in-flight dedup.
+            driveScopeStepUp(server, {
+              requiredScope: event.requiredScope,
+              resourceMetadataUrl: event.resourceMetadataUrl,
+            });
           }
         } else if (isHostedRpcLogDataPart(part)) {
           ingestHostedRpcLogs([part.data]);
@@ -1579,13 +1561,7 @@ export function useChatSession(
                 : undefined) ??
               appState?.servers?.[log.serverId] ??
               activeProject?.servers?.[log.serverId];
-            if (server) {
-              try {
-                resetToolCallStepUp(server);
-              } catch {
-                // best-effort; a failed reset must not disrupt log ingestion
-              }
-            }
+            resetScopeStepUp(server);
           }
         } else if (isHarnessSessionDataPart(part)) {
           // Cache the harness workdir so the Playground Shell can open a
