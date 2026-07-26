@@ -305,6 +305,22 @@ export interface BaseOAuthStateMachineConfig {
   clientIdMetadataUrl?: string;
   customScopes?: string;
   customHeaders?: Record<string, string>;
+  /**
+   * SEP-2350 step-up: an explicit protected-resource-metadata (PRM) URL to
+   * discover from, sourced from a `WWW-Authenticate` `resource_metadata` hint
+   * (e.g. the `403 insufficient_scope` challenge a runtime tool call surfaced).
+   * When set, PRM discovery uses it verbatim instead of deriving the URL from
+   * the server URL's well-known path — so a server that points its metadata
+   * elsewhere (Asana) is honored on re-authorization. `undefined` (the default)
+   * is today's behavior: derive from the fresh `WWW-Authenticate` header or the
+   * server URL. The 2025-03-26 machine has no PRM step and ignores this field.
+   *
+   * The caller is responsible for validating this untrusted hint (the client
+   * step-up path only threads a value on the SAME ORIGIN as the server URL);
+   * the shared executor additionally enforces the outbound-host allowlist and
+   * the discovery request strips MCP-server auth headers when it hops origin.
+   */
+  resourceMetadataUrl?: string;
   authMode?: OAuthAuthMode;
   strictConformance?: boolean;
   // What to do at PRM discovery when the advertised resource indicator is not

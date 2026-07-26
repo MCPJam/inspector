@@ -542,14 +542,39 @@ describe("useToolExecution step-up (SEP-2350)", () => {
     expect(mockApplyToolCallStepUp).not.toHaveBeenCalled();
   });
 
-  it("does not drive step-up for a non-actionable challenge (metadata/errorDescription only, no requiredScope)", async () => {
+  it("drives step-up for a resourceMetadataUrl-only challenge (discovery now consumes the PRM pointer — SEP-2350 follow-up to #3427)", async () => {
     // Same `isActionableStepUpChallenge` gate resources/prompts/chat use: a
-    // challenge with no `requiredScope` cannot widen scope in the orchestrator
-    // today, so redirecting would only burn the bounded step-up budget.
+    // `resourceMetadataUrl` is now actionable on its own — the OAuth flow
+    // discovers the server's authoritative scopes/AS from it.
     mockExecuteToolApi.mockResolvedValueOnce({
       error: "Insufficient scope",
       insufficientScope: {
         resourceMetadataUrl: "https://rs.example/.well-known",
+      },
+    });
+
+    const { result } = renderHook(
+      () => useToolExecution(makeHookOptions({ selectedTool: "get_weather" })),
+      { wrapper: withServer(server) },
+    );
+
+    await act(async () => {
+      await result.current.executeTool({ parameters: {} });
+    });
+
+    expect(mockApplyToolCallStepUp).toHaveBeenCalledTimes(1);
+    expect(mockApplyToolCallStepUp).toHaveBeenCalledWith(server, {
+      requiredScope: undefined,
+      resourceMetadataUrl: "https://rs.example/.well-known",
+    });
+  });
+
+  it("does not drive step-up for an errorDescription-only challenge (nothing to re-authorize with)", async () => {
+    // Neither a `requiredScope` nor a `resourceMetadataUrl` — redirecting would
+    // only burn the bounded step-up budget.
+    mockExecuteToolApi.mockResolvedValueOnce({
+      error: "Insufficient scope",
+      insufficientScope: {
         errorDescription: "more scope needed",
       },
     });

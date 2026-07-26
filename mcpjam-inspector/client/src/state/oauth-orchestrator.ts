@@ -147,6 +147,14 @@ function buildReconnectOAuthOptions(
    * loop. Only used when a caller drives a scope step-up.
    */
   stepUpScopes?: string[],
+  /**
+   * SEP-2350 step-up: the `resource_metadata` URL a `403 insufficient_scope`
+   * challenge advertised, ALREADY validated same-origin by the caller. When
+   * present the fresh OAuth flow discovers protected-resource metadata from
+   * this URL instead of re-deriving it from the server URL — so a server that
+   * points its metadata elsewhere (Asana) is honored on re-authorization.
+   */
+  resourceMetadataUrl?: string,
 ): MCPOAuthOptions {
   const oauthConfig = readStoredOAuthConfig(server.name);
   const storedClientInfo = readStoredClientInfo(server.name);
@@ -173,6 +181,9 @@ function buildReconnectOAuthOptions(
     serverName: server.name,
     serverUrl,
     scopes: effectiveScopes,
+    // Preserve `undefined` as the default so a non-step-up reconnect never
+    // pins an override and discovery keeps deriving the URL as it does today.
+    resourceMetadataUrl: nonEmptyString(resourceMetadataUrl),
     resourceUrl: nonEmptyString(profile?.resourceUrl) ?? oauthConfig.resourceUrl,
     customHeaders:
       profileHeadersToRecord(profile?.customHeaders) ??
@@ -220,6 +231,13 @@ export async function ensureAuthorizedForReconnect(
      * ({@link resolveInsufficientScopeStepUp}).
      */
     stepUpScopes?: string[];
+    /**
+     * SEP-2350 step-up: the `resource_metadata` URL the challenge advertised,
+     * ALREADY validated same-origin by the caller ({@link applyToolCallStepUp}).
+     * Threaded into the fresh OAuth flow so PRM discovery uses it instead of
+     * re-deriving from the server URL. `undefined` keeps today's behavior.
+     */
+    resourceMetadataUrl?: string;
   },
 ): Promise<OAuthResult> {
   // If server is explicitly configured without OAuth, skip OAuth flow entirely
@@ -268,7 +286,12 @@ export async function ensureAuthorizedForReconnect(
   // Fallback to a fresh OAuth flow if URL is present
   // This may redirect away; the hook should reflect oauth-flow state
   if (url) {
-    const opts = buildReconnectOAuthOptions(server, url, options?.stepUpScopes);
+    const opts = buildReconnectOAuthOptions(
+      server,
+      url,
+      options?.stepUpScopes,
+      options?.resourceMetadataUrl,
+    );
     clearOAuthData(server.name);
     options?.beforeRedirect?.(opts);
     opts.onTraceUpdate = options?.onTraceUpdate;
@@ -518,6 +541,36 @@ function readServerUrlForStepUp(server: ServerWithName): string | undefined {
   }
 }
 
+/**
+ * Validate an UNTRUSTED `resource_metadata` hint (from a `403 insufficient_scope`
+ * `WWW-Authenticate` header) before threading it into the OAuth flow. RFC 9728
+ * permits the protected-resource-metadata document to live on a DIFFERENT origin
+ * than the resource server (e.g. a dedicated metadata host), so this does NOT
+ * require same-origin — dropping a valid cross-origin pointer would force the
+ * flow back to the wrong derived well-known URL, the exact regression this path
+ * fixes. It only requires an absolute `https:` URL (RFC 9728 mandates https).
+ * Returns the trimmed hint when it parses as absolute https; otherwise
+ * `undefined`, so a malformed/relative/non-https hint falls back to derived
+ * discovery. Fetch safety of a cross-origin hint is enforced downstream by the
+ * SDK: the factory's outbound-host allowlist (`assertOutboundOAuthUrlAllowed`
+ * blocks private/reserved hosts → SSRF) and cross-origin MCP-Authorization
+ * header stripping (`mergeHeadersForResourceMetadataRequest`).
+ */
+function validResourceMetadataUrlHint(
+  resourceMetadataUrl: string | undefined,
+): string | undefined {
+  const hint = resourceMetadataUrl?.trim();
+  if (!hint) return undefined;
+  try {
+    if (new URL(hint).protocol === "https:") {
+      return hint;
+    }
+  } catch {
+    // Unparseable / relative hint — treat as no usable override.
+  }
+  return undefined;
+}
+
 function readOriginalOAuthScopes(
   server: ServerWithName,
 ): string[] | undefined {
@@ -566,8 +619,16 @@ export async function applyToolCallStepUp(
     beforeRedirect?: (oauthOptions: MCPOAuthOptions) => void;
   },
 ): Promise<ToolCallStepUpOutcome> {
-  const issuer = resolveStoredIssuer(server.name, readServerUrlForStepUp(server));
+  const serverUrl = readServerUrlForStepUp(server);
+  const issuer = resolveStoredIssuer(server.name, serverUrl);
   const challengedScopes = parseOAuthScopes(challenge.requiredScope);
+  // The challenge's `resource_metadata` hint is untrusted: thread it only when
+  // it parses as an absolute https URL (RFC 9728). A valid cross-origin pointer
+  // is honored — the SDK's outbound-host guard + cross-origin header stripping
+  // enforce fetch safety. See {@link validResourceMetadataUrlHint}.
+  const resourceMetadataUrl = validResourceMetadataUrlHint(
+    challenge.resourceMetadataUrl,
+  );
 
   const decision = resolveInsufficientScopeStepUp({
     serverName: server.name,
@@ -593,6 +654,7 @@ export async function applyToolCallStepUp(
     // ready-unauthenticated instead of redirecting for the widened scopes.
     interactiveOAuthConfirmed: true,
     stepUpScopes: decision.scopes,
+    resourceMetadataUrl,
     onTraceUpdate: options?.onTraceUpdate,
     beforeRedirect: options?.beforeRedirect,
   });
