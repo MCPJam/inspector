@@ -131,6 +131,31 @@ The 2026 RC client is a **preview**. A handful of pieces from the SEP family are
 
 For everything else — `tools/list`, `tools/call`, `resources/*`, `prompts/*`, OAuth refresh, custom headers, progress notifications — the RC client behaves like the legacy one.
 
+## Multi-round input (MCP 2026-07-28 `input_required`)
+
+The 2026-07-28 spec (§12.5) lets a `tools/call`, `prompts/get`, or `resources/read` return an `input_required` result instead of a final answer. The server embeds one or more `elicitation/create` requests in the response, and the client must collect the human's answers before retrying the operation.
+
+The inspector supports this for the hosted playground. When a connected 2026-07-28 server returns `input_required`:
+
+1. The operation is **suspended** — the worker does not block waiting for a human answer.
+2. A dialog appears in the playground showing each embedded prompt (a form or a URL to open).
+3. You fill in the form fields (or complete the URL flow) and submit.
+4. The inspector resumes the operation with your answers and drives the next retry leg.
+5. If the server returns another `input_required`, the dialog reappears for the next round. This continues until the operation completes, fails, or is cancelled.
+
+### Cancelling a suspended operation
+
+If you close the dialog without answering, or navigate away, you can cancel the suspended operation. The inspector sends a cancel request to the continuation store; the operation resolves as cancelled rather than hanging until its expiry.
+
+### What the server must do
+
+For the inspector to advertise the `elicitation` capability (which gates `input_required` rounds), the server must be connected over HTTP with the `2026-07-28` protocol version. The inspector registers the collector before the connection is established, so the capability is present on the wire from the first request.
+
+### Limitations
+
+- **Sampling and listRoots `input_required`** are not yet supported. Only `tools/call`, `prompts/get`, and `resources/read` enter the multi-round loop.
+- The direct-resume path (this PR) is the transport primitive. Full chat/agent-loop integration — where the transcript is updated and the model turn resumes — is a later phase.
+
 ## Recommended testing flow
 
 1. Build a Client called something like `2026 RC sandbox` with **MCP Protocol → 2026 RC** as the host default.
