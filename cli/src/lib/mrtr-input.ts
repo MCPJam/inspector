@@ -347,6 +347,30 @@ function isPositiveInteger(value: unknown): boolean {
 }
 
 /**
+ * Conservative screen before running a SERVER-supplied regex on this thread.
+ *
+ * The pattern check here is only an early re-prompt convenience — the SDK's
+ * schema validator is what actually enforces `pattern`. That makes it a bad
+ * trade to evaluate a pattern shaped for catastrophic backtracking (`(a+)+$`
+ * and friends), which would hang the interactive prompt. Anything with a
+ * quantified group that is itself quantified, a backreference, or an
+ * implausible length is skipped: the field simply collects without the early
+ * check and the SDK decides.
+ *
+ * This is not a general ReDoS defense — the SDK-side validator still evaluates
+ * the same untrusted pattern, which is a broader issue than this prompt path.
+ */
+function isScreenedPattern(pattern: string): boolean {
+  if (pattern.length > 200) return false;
+  if (/\\\d/.test(pattern)) return false; // backreference
+  // A group closing into a quantifier that is itself under a quantifier, e.g.
+  // `(a+)+`, `(a*)*`, `(a+|b)*` — the classic exponential shapes.
+  if (/\([^()]*[+*][^()]*\)\s*[+*{]/.test(pattern)) return false;
+  if (/\)\s*[+*]\s*[+*]/.test(pattern)) return false;
+  return true;
+}
+
+/**
  * Enforces the schema bounds the SDK would otherwise reject only after the
  * whole form is collected. Throwing here re-prompts the single offending field,
  * which is what the user can actually act on.
@@ -360,13 +384,19 @@ function assertSatisfiesConstraints(
   const name = sanitizeTerminalText(field.title ?? field.key);
 
   if (typeof value === "string") {
-    if (c.minLength !== undefined && value.length < c.minLength) {
+    // Code points, not UTF-16 units: JSON Schema counts characters the way
+    // `Array.from` iterates, so a single astral character (an emoji) is 1 here
+    // and 2 under `.length`. Counting units would reject input the SDK's
+    // validator — the real authority — accepts, and after the retry limit that
+    // turns a schema-valid answer into a decline.
+    const length = Array.from(value).length;
+    if (c.minLength !== undefined && length < c.minLength) {
       throw new Error(`"${name}" must be at least ${c.minLength} character(s).`);
     }
-    if (c.maxLength !== undefined && value.length > c.maxLength) {
+    if (c.maxLength !== undefined && length > c.maxLength) {
       throw new Error(`"${name}" must be at most ${c.maxLength} character(s).`);
     }
-    if (c.pattern !== undefined) {
+    if (c.pattern !== undefined && isScreenedPattern(c.pattern)) {
       let re: RegExp | undefined;
       try {
         re = new RegExp(c.pattern);

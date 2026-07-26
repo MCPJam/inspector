@@ -744,3 +744,59 @@ test("inbound elicitation handler declines without a TTY", async () => {
   assert.deepEqual(result, { action: "decline" });
   assert.equal(reader.prompts.length, 0);
 });
+
+// ── constraint checks match the SDK validator's semantics ──────────────────
+
+test("string length is counted in code points, like JSON Schema", () => {
+  const field = {
+    key: "s",
+    type: "string" as const,
+    required: true,
+    constraints: { maxLength: 2 },
+  };
+  // Two astral characters are 2 characters to a JSON Schema validator and 4
+  // UTF-16 units to `.length`; counting units would reject a valid answer.
+  assert.deepEqual(coerceFieldValue("\u{1F600}\u{1F600}", field), {
+    value: "\u{1F600}\u{1F600}",
+  });
+  assert.throws(() => coerceFieldValue("\u{1F600}\u{1F600}\u{1F600}", field));
+
+  const min = {
+    key: "s",
+    type: "string" as const,
+    required: true,
+    constraints: { minLength: 2 },
+  };
+  assert.deepEqual(coerceFieldValue("\u{1F600}\u{1F600}", min), {
+    value: "\u{1F600}\u{1F600}",
+  });
+  assert.throws(() => coerceFieldValue("\u{1F600}", min));
+});
+
+test("a catastrophic server pattern is skipped, not evaluated", () => {
+  // `(a+)+$` against a non-matching string is exponential. The prompt-side
+  // pattern check is only a convenience, so screened-out patterns collect
+  // without it and the SDK validator decides.
+  const field = {
+    key: "s",
+    type: "string" as const,
+    required: true,
+    constraints: { pattern: "(a+)+$" },
+  };
+  const started = process.hrtime.bigint();
+  const result = coerceFieldValue("a".repeat(40) + "!", field);
+  const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+  assert.deepEqual(result, { value: "a".repeat(40) + "!" });
+  assert.ok(elapsedMs < 250, `took ${elapsedMs}ms — pattern was evaluated`);
+});
+
+test("an ordinary pattern is still checked at the prompt", () => {
+  const field = {
+    key: "s",
+    type: "string" as const,
+    required: true,
+    constraints: { pattern: "^[a-z]+$" },
+  };
+  assert.deepEqual(coerceFieldValue("abc", field), { value: "abc" });
+  assert.throws(() => coerceFieldValue("AB1", field), /must match/);
+});
