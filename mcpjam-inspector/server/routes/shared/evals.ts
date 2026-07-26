@@ -45,10 +45,11 @@ import {
 } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "../../services/evals/convex-sanitize.js";
 import {
+  environmentEffectiveServerIds,
   environmentServerIds,
   resolveEnvironmentForLaunch,
   type ResolvedEnvironmentForLaunch,
-} from "../../services/evals/environment-launch.js";
+} from "../../services/environments/resolve.js";
 import {
   countModelSteps,
   isModelFree,
@@ -1640,7 +1641,18 @@ export async function prepareEvalRun(
     namedHostId,
     runGroupId,
     environmentId,
+    // All three preconditions come from the SAME resolution the tool snapshot
+    // was captured against. The revision alone is not enough: an environment
+    // pins a `hostId` and optionally an attachment, both dereferenced live, so
+    // a host-config rotation or a server-group edit changes what the
+    // environment resolves to at an unchanged revision. Echoing all three lets
+    // the mutation reject that drift instead of starting a run whose tool
+    // snapshot describes a different configuration than it executes.
     expectedEnvironmentRevision: environmentLaunch?.environmentRef.revision,
+    expectedEnvironmentHostConfigId: environmentLaunch?.hostConfigId,
+    expectedEnvironmentServerIds: environmentLaunch
+      ? environmentEffectiveServerIds(environmentLaunch)
+      : undefined,
     source,
     idempotencyKey,
   });

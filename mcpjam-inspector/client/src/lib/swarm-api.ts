@@ -90,21 +90,11 @@ export interface JourneySnapshotTarget {
 }
 
 /**
- * Hand-mirrored `projectEnvironments:listEnvironments` row subset the Swarms
- * surface needs (picker labels + compat-host recompute). `skillSelection` is
- * inline per backend #767 (no skill-group ref).
+ * NOTE: a project environment row is `ProjectEnvironmentView` from
+ * `@/hooks/useProjectEnvironments` — the ONE client mirror. Import it from
+ * there; do not redeclare the shape here. A second copy is how
+ * `pluginVersionIds` went missing and a phantom `hostName` appeared.
  */
-export interface EnvironmentView {
-  environmentId: string;
-  projectId: string;
-  name: string;
-  description?: string;
-  hostId: string;
-  serverAttachmentId?: string | null;
-  skillSelection?: { mode: "explicit"; skillIds: string[] } | null;
-  revision: number;
-  archivedAt?: number;
-}
 
 /**
  * Aggregated goal-completion judge rollup — backend `GoalScoreSummary`
