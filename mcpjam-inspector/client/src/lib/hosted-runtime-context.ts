@@ -1,3 +1,8 @@
+import type {
+  EnvironmentOverrides,
+  HostedExecutionTarget,
+} from "@/shared/execution-target";
+
 export type HostedRuntimeContext = {
   projectId?: string | null;
   selectedServerIds?: string[];
@@ -11,6 +16,29 @@ export type HostedRuntimeContext = {
    * previewed host forks the chat session.
    */
   hostId?: string;
+  /**
+   * Project Environments (Phase 2). What this session executes against, as ONE
+   * serializable pointer. Mutually exclusive with `hostId` and `chatboxId`:
+   * `normalizeExecutionTarget` REJECTS a body carrying both rather than picking
+   * a winner, so a surface that sets an environment target must stop sending
+   * `hostId` (the environment's host is still fine to use for *presentation* —
+   * model chip, harness built-ins — it just must not be a second statement
+   * about what to run).
+   *
+   * Absent ⇒ unchanged legacy behavior (`hostId` / `chatboxId` / ad-hoc).
+   */
+  executionTarget?: HostedExecutionTarget;
+  /**
+   * Per-turn narrowing of an environment's server set. Sent ONLY when the user
+   * explicitly overrode the environment: `undefined` means "follow the
+   * environment", `{ serverIds: [] }` means "run with no MCP servers", and the
+   * backend keeps those distinct. Never inferred from `selectedServerIds` —
+   * that field describes the UI selection, not override intent.
+   *
+   * Only meaningful alongside an `executionTarget` of kind `"environment"`;
+   * ingress rejects it otherwise.
+   */
+  environmentOverrides?: EnvironmentOverrides;
   /**
    * Resolved chatbox identity (post-redeem). Threaded into every
    * chatbox-aware request body and cache key.

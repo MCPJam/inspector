@@ -1216,3 +1216,143 @@ describe("useChatSession hosted mode", () => {
     unmount();
   });
 });
+
+// ── Project Environments — Phase 2.3 (request serialization) ────────────────
+//
+// The wire contract these cover is not "an extra optional field". It is a
+// closed union that `normalizeExecutionTarget` REJECTS ambiguity in, plus an
+// override envelope whose absent / `[]` distinction is load-bearing all the way
+// to the backend resolver. Both are exactly the kind of thing that regresses
+// silently — a body that still carries `hostId` 400s, and a body that always
+// carries `environmentOverrides` would pin the environment's own set as if the
+// user had chosen it.
+describe("useChatSession — environment execution target", () => {
+  const environmentContext = {
+    projectId: "project-1",
+    selectedServerIds: ["server-id-1"],
+    requiresWebChatApi: true,
+    executionTarget: { kind: "environment" as const, environmentId: "env_1" },
+  };
+
+  it("sends executionTarget and NEVER a legacy hostId alongside it", () => {
+    const { unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: environmentContext,
+      })
+    );
+
+    const body = lastTransportOptions.body();
+    expect(body).toMatchObject({
+      executionTarget: { kind: "environment", environmentId: "env_1" },
+    });
+    // `hostId` + `executionTarget` is a 400, not a precedence question.
+    expect(body).not.toHaveProperty("hostId");
+    unmount();
+  });
+
+  it("omits environmentOverrides entirely before the user overrides anything", () => {
+    const { unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: environmentContext,
+      })
+    );
+
+    // Absent ⇒ "resolve the environment's own server set". Sending an envelope
+    // here would freeze whatever the set happened to be at page load.
+    expect(lastTransportOptions.body()).not.toHaveProperty(
+      "environmentOverrides"
+    );
+    unmount();
+  });
+
+  it("sends an EMPTY explicit override as an override, not as absence", () => {
+    const { unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: {
+          ...environmentContext,
+          environmentOverrides: { serverIds: [] },
+        },
+      })
+    );
+
+    // `[]` means "run this turn with no MCP servers" and must survive the trip.
+    expect(lastTransportOptions.body()).toMatchObject({
+      environmentOverrides: { serverIds: [] },
+    });
+    unmount();
+  });
+
+  it("forwards an explicit narrowing by id", () => {
+    const { unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: {
+          ...environmentContext,
+          environmentOverrides: { serverIds: ["srv_a", "srv_b"] },
+        },
+      })
+    );
+
+    expect(lastTransportOptions.body()).toMatchObject({
+      environmentOverrides: { serverIds: ["srv_a", "srv_b"] },
+    });
+    unmount();
+  });
+
+  it("never runs the name→id persistence preflight for an environment turn", async () => {
+    // Environment servers already carry authoritative Convex ids, and
+    // plugin-contributed ones are deliberately hidden from
+    // `servers:getProjectServers` — resolving them BY NAME would fail outright
+    // or persist a shadow copy that bypasses plugin lifecycle semantics.
+    const ensureServerIds = vi.fn(async () => [
+      { serverName: "server-1", serverId: "server-id-1" },
+    ]);
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: { ...environmentContext, ensureServerIds },
+      })
+    );
+
+    await act(async () => {
+      await result.current.sendMessage("hello");
+    });
+
+    expect(ensureServerIds).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it("does not gate submit on browser-resolved server ids", async () => {
+    // The hosted environment path is server-connected: the backend resolves and
+    // connects the set. Requiring one browser-known id per selected server would
+    // never open for a plugin-contributed environment.
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1", "hidden-plugin-server"],
+        hostedContext: { ...environmentContext, selectedServerIds: [] },
+      })
+    );
+
+    await waitFor(() => expect(result.current.submitBlocked).toBe(false));
+
+    // Control: the same shape WITHOUT an environment target stays blocked,
+    // because that path really does need one Convex id per selected server.
+    const hostMode = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1", "hidden-plugin-server"],
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: [],
+          requiresWebChatApi: true,
+          hostId: "host_1",
+        },
+      })
+    );
+    expect(hostMode.result.current.submitBlocked).toBe(true);
+    hostMode.unmount();
+    unmount();
+  });
+});

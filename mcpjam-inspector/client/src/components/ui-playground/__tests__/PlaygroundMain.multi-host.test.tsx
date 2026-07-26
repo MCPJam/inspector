@@ -114,9 +114,31 @@ vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => ({
   },
 }));
 
+// Project Environments (Phase 2) is flag-gated; default OFF so every existing
+// multi-host assertion keeps exercising the unchanged host path.
+const { environmentsFlag, environmentPreviewFixture } = vi.hoisted(() => ({
+  environmentsFlag: { value: false as boolean | undefined },
+  environmentPreviewFixture: { value: null as unknown },
+}));
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({ capture: vi.fn() }),
-  useFeatureFlagEnabled: () => false,
+  useFeatureFlagEnabled: (flag: string) =>
+    flag === "project-environments-enabled" ? environmentsFlag.value : false,
+}));
+// The preview is a network read (`/api/web/environments/:id/preview`); the
+// fixture stands in for the resolver so the test drives what the environment
+// resolves to.
+vi.mock("@/hooks/use-environment-preview", () => ({
+  useEnvironmentPreview: (
+    projectId: string | null,
+    environmentId: string | null,
+  ) => ({
+    preview:
+      projectId && environmentId ? environmentPreviewFixture.value : null,
+    isLoading: false,
+    error: null,
+    refresh: vi.fn(),
+  }),
 }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
@@ -231,8 +253,12 @@ const mockUseChatSession = {
   submitBlocked: false,
 } as any;
 
+let capturedChatSessionOptions: any = null;
 vi.mock("@/hooks/use-chat-session", () => ({
-  useChatSession: () => mockUseChatSession,
+  useChatSession: (options: any) => {
+    capturedChatSessionOptions = options;
+    return mockUseChatSession;
+  },
 }));
 
 vi.mock("use-stick-to-bottom", () => {
@@ -547,6 +573,9 @@ describe("PlaygroundMain — multi-host render path", () => {
     // test mutates this to force `convexProjectId !== activeProjectId`.
     mockSharedAppState.projects = {};
     mockSharedAppState.activeProjectId = "default";
+    capturedChatSessionOptions = null;
+    environmentsFlag.value = false;
+    environmentPreviewFixture.value = null;
   });
 
   it("selects MCPJam as the previewed client when no current client is selected", async () => {
@@ -1405,5 +1434,110 @@ describe("PlaygroundMain — multi-host render path", () => {
     render(<PlaygroundMain {...defaultProps} />);
 
     expect(screen.queryByTestId("playground-multi-host-grid")).toBeNull();
+  });
+});
+
+// ── Project Environments — Phase 2 (Playground integration) ────────────────
+describe("PlaygroundMain — environment mode", () => {
+  const defaultProps = {
+    activeProjectId: "default",
+    serverName: "test-server",
+    pendingExecution: null,
+    onExecutionInjected: vi.fn(),
+  };
+
+  const preview = {
+    specVersion: 1,
+    environment: { environmentId: "env_1", name: "Staging", revision: 3 },
+    host: {
+      hostId: "h-A",
+      hostName: "Host A",
+      hostConfigId: "cfg_1",
+      modelId: null,
+      hostStyle: null,
+      harness: null,
+    },
+    servers: [
+      { serverId: "srv_plugin", name: "Docs", source: "plugin" as const },
+    ],
+    skills: [],
+    plugins: [],
+    capabilities: {
+      requireToolApproval: null,
+      respectToolVisibility: null,
+      progressiveToolDiscovery: null,
+      builtInToolIds: [],
+      hasComputer: false,
+      serverCount: 1,
+      skillCount: 0,
+      skillDelivery: "emulated" as const,
+      pluginCount: 0,
+      serversOverridden: false,
+    },
+  };
+
+  function selectEnvironment() {
+    environmentsFlag.value = true;
+    environmentPreviewFixture.value = preview;
+    localStorage.setItem(
+      "mcp-previewed-environment-id",
+      JSON.stringify({ default: "env_1" }),
+    );
+  }
+
+  it("does not touch the hosted context while the flag is off", () => {
+    // Everything shipped before this phase was inert; that must stay true for
+    // users without the flag even if they somehow have a persisted selection.
+    localStorage.setItem(
+      "mcp-previewed-environment-id",
+      JSON.stringify({ default: "env_1" }),
+    );
+    environmentPreviewFixture.value = preview;
+    multiHostFixture.hostList = [{ hostId: "h-A", name: "Host A" }];
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    expect(capturedChatSessionOptions?.hostedContext?.executionTarget).toBe(
+      undefined,
+    );
+  });
+
+  it("targets the environment and stops sending a legacy hostId", () => {
+    selectEnvironment();
+    multiHostFixture.hostList = [{ hostId: "h-A", name: "Host A" }];
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    const hostedContext = capturedChatSessionOptions?.hostedContext;
+    expect(hostedContext?.executionTarget).toEqual({
+      kind: "environment",
+      environmentId: "env_1",
+    });
+    // `hostId` + `executionTarget` in one body is a 400, not a precedence
+    // question — the environment's host is presentation only.
+    expect(hostedContext?.hostId).toBeUndefined();
+    // No override until the user asks for one.
+    expect(hostedContext?.environmentOverrides).toBeUndefined();
+    // The environment's servers resolve server-side (some are plugin-owned and
+    // invisible to the browser catalog), so the turn must use /api/web/chat-v2
+    // and must NOT run the name→id persistence preflight.
+    expect(hostedContext?.requiresWebChatApi).toBe(true);
+    expect(hostedContext?.ensureServerIds).toBeUndefined();
+  });
+
+  it("exits multi-host comparison when an environment is selected", () => {
+    // An environment names exactly one host; comparison exists to run one turn
+    // against several. Both being true would misreport what ran.
+    selectEnvironment();
+    multiHostFixture.multiHostEnabled = true;
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+
+    render(<PlaygroundMain {...defaultProps} />);
+
+    expect(mockSetMultiHostEnabled).toHaveBeenCalledWith(false);
   });
 });

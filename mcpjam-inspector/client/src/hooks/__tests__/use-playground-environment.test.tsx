@@ -1,0 +1,266 @@
+/**
+ * Playground environment mode — the override tri-state and the
+ * select-vs-edit distinction (Project Environments, Phase 2.1).
+ *
+ * These two rules are the whole reason this hook exists, and both are the kind
+ * that a "simplifying" refactor breaks silently:
+ *
+ *   - `null` (follow the environment) and `[]` (explicitly no servers) are
+ *     DIFFERENT. Collapsing them re-enables servers the user just turned off.
+ *   - Selecting a different environment clears the override; a live EDIT of the
+ *     same environment does not. Environments are live config.
+ */
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const { mockFlagValue, mockFetch } = vi.hoisted(() => ({
+  mockFlagValue: { value: true as boolean | undefined },
+  mockFetch: vi.fn(),
+}));
+
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: () => mockFlagValue.value,
+}));
+vi.mock("@/lib/session-token", () => ({ authFetch: mockFetch }));
+
+import { usePlaygroundEnvironment } from "../use-playground-environment";
+
+function previewPayload(
+  environmentId: string,
+  servers: Array<{ serverId: string; name: string; source?: string }>,
+  revision = 1
+) {
+  return {
+    specVersion: 1,
+    environment: { environmentId, name: `Env ${environmentId}`, revision },
+    host: {
+      hostId: "host_1",
+      hostName: "Claude Code",
+      hostConfigId: "cfg_1",
+      modelId: null,
+      hostStyle: null,
+      harness: "claude_code",
+    },
+    servers: servers.map((s) => ({
+      ...s,
+      source: s.source ?? "host_or_group",
+    })),
+    skills: [],
+    plugins: [],
+    capabilities: {
+      requireToolApproval: null,
+      respectToolVisibility: null,
+      progressiveToolDiscovery: null,
+      builtInToolIds: [],
+      hasComputer: false,
+      serverCount: servers.length,
+      skillCount: 0,
+      skillDelivery: "harness",
+      pluginCount: 0,
+      serversOverridden: false,
+    },
+  };
+}
+
+function respondWith(payload: unknown) {
+  mockFetch.mockResolvedValue({
+    ok: true,
+    json: async () => payload,
+  } as unknown as Response);
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  localStorage.clear();
+  mockFlagValue.value = true;
+  respondWith(
+    previewPayload("env_1", [
+      { serverId: "srv_a", name: "Alpha" },
+      // Plugin-contributed: intentionally absent from
+      // `servers:getProjectServers`, so it can only ever travel by id.
+      { serverId: "srv_plugin", name: "Docs", source: "plugin" },
+    ])
+  );
+});
+
+async function renderEnvironment(projectId: string | null = "proj_1") {
+  const rendered = renderHook(() => usePlaygroundEnvironment(projectId));
+  return rendered;
+}
+
+describe("usePlaygroundEnvironment — mode", () => {
+  it("is inert until an environment is selected", async () => {
+    const { result } = await renderEnvironment();
+    expect(result.current.isEnvironmentMode).toBe(false);
+    expect(result.current.executionTarget).toBeUndefined();
+    expect(result.current.environmentOverrides).toBeUndefined();
+  });
+
+  it("fails closed when the feature flag is off, even with a persisted id", async () => {
+    localStorage.setItem(
+      "mcp-previewed-environment-id",
+      JSON.stringify({ proj_1: "env_1" })
+    );
+    mockFlagValue.value = false;
+    const { result } = await renderEnvironment();
+    expect(result.current.isEnvironmentMode).toBe(false);
+    expect(result.current.executionTarget).toBeUndefined();
+    // And it never even asks the server what the environment resolves to.
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("selecting an environment produces exactly one environment target", async () => {
+    const { result } = await renderEnvironment();
+    act(() => result.current.selectEnvironment("env_1"));
+    await waitFor(() => expect(result.current.preview).not.toBeNull());
+    expect(result.current.isEnvironmentMode).toBe(true);
+    expect(result.current.executionTarget).toEqual({
+      kind: "environment",
+      environmentId: "env_1",
+    });
+    // Reads go through the browser-reachable preview route — never /api/v1.
+    expect(String(mockFetch.mock.calls[0][0])).toBe(
+      "/api/web/environments/env_1/preview?projectId=proj_1"
+    );
+  });
+
+  it("clearing the environment returns to host/ad-hoc mode", async () => {
+    const { result } = await renderEnvironment();
+    act(() => result.current.selectEnvironment("env_1"));
+    await waitFor(() => expect(result.current.isEnvironmentMode).toBe(true));
+    act(() => result.current.clearEnvironment());
+    await waitFor(() => expect(result.current.isEnvironmentMode).toBe(false));
+    expect(result.current.executionTarget).toBeUndefined();
+  });
+});
+
+describe("usePlaygroundEnvironment — the override tri-state", () => {
+  it("sends no override at all until the user touches a server", async () => {
+    const { result } = await renderEnvironment();
+    act(() => result.current.selectEnvironment("env_1"));
+    await waitFor(() => expect(result.current.preview).not.toBeNull());
+
+    expect(result.current.serverOverrideIds).toBeNull();
+    expect(result.current.hasExplicitOverride).toBe(false);
+    expect(result.current.environmentOverrides).toBeUndefined();
+    // Every environment server shows enabled — that's the environment's own set.
+    expect(result.current.servers.map((s) => s.enabled)).toEqual([true, true]);
+  });
+
+  it("turning one server off materializes the FULL set minus that server", async () => {
+    // Not `[srv_plugin]`. The first toggle has to seed from the environment's
+    // own set or "turn one off" would silently read as "keep only this one".
+    const { result } = await renderEnvironment();
+    act(() => result.current.selectEnvironment("env_1"));
+    await waitFor(() => expect(result.current.preview).not.toBeNull());
+
+    act(() => result.current.setServerEnabled("srv_a", false));
+    expect(result.current.serverOverrideIds).toEqual(["srv_plugin"]);
+    expect(result.current.hasExplicitOverride).toBe(true);
+    expect(result.current.environmentOverrides).toEqual({
+      serverIds: ["srv_plugin"],
+    });
+  });
+
+  it("turning every server off is an EMPTY override, not an absent one", async () => {
+    const { result } = await renderEnvironment();
+    act(() => result.current.selectEnvironment("env_1"));
+    await waitFor(() => expect(result.current.preview).not.toBeNull());
+
+    act(() => result.current.setServerEnabled("srv_a", false));
+    act(() => result.current.setServerEnabled("srv_plugin", false));
+
+    expect(result.current.serverOverrideIds).toEqual([]);
+    expect(result.current.hasExplicitOverride).toBe(true);
+    // `{ serverIds: [] }` — the turn runs with no MCP servers, which is a
+    // choice the user made and not the same as "use the environment's set".
+    expect(result.current.environmentOverrides).toEqual({ serverIds: [] });
+  });
+
+  it("reset returns to null (follow the environment), not to an empty array", async () => {
+    const { result } = await renderEnvironment();
+    act(() => result.current.selectEnvironment("env_1"));
+    await waitFor(() => expect(result.current.preview).not.toBeNull());
+
+    act(() => result.current.setServerEnabled("srv_a", false));
+    act(() => result.current.resetServersToEnvironment());
+
+    expect(result.current.serverOverrideIds).toBeNull();
+    expect(result.current.hasExplicitOverride).toBe(false);
+    expect(result.current.environmentOverrides).toBeUndefined();
+  });
+
+  it("carries plugin-contributed servers by ID, never by name", async () => {
+    const { result } = await renderEnvironment();
+    act(() => result.current.selectEnvironment("env_1"));
+    await waitFor(() => expect(result.current.preview).not.toBeNull());
+
+    act(() => result.current.setServerEnabled("srv_a", false));
+    // The hidden plugin server survives the override as a Convex id. It has no
+    // representation in the browser's name-keyed project-server catalog, so a
+    // name-shaped override would have dropped it here.
+    expect(result.current.environmentOverrides?.serverIds).toEqual([
+      "srv_plugin",
+    ]);
+    expect(
+      result.current.servers.find((s) => s.serverId === "srv_plugin")?.source
+    ).toBe("plugin");
+  });
+});
+
+describe("usePlaygroundEnvironment — select vs edit", () => {
+  it("selecting a DIFFERENT environment clears the override", async () => {
+    const { result } = await renderEnvironment();
+    act(() => result.current.selectEnvironment("env_1"));
+    await waitFor(() => expect(result.current.preview).not.toBeNull());
+    act(() => result.current.setServerEnabled("srv_a", false));
+    expect(result.current.hasExplicitOverride).toBe(true);
+
+    respondWith(previewPayload("env_2", [{ serverId: "srv_z", name: "Zeta" }]));
+    act(() => result.current.selectEnvironment("env_2"));
+    await waitFor(() =>
+      expect(result.current.preview?.environment.environmentId).toBe("env_2")
+    );
+
+    expect(result.current.serverOverrideIds).toBeNull();
+    expect(result.current.environmentOverrides).toBeUndefined();
+  });
+
+  it("a live EDIT of the same environment keeps the override and updates the base", async () => {
+    const { result } = await renderEnvironment();
+    act(() => result.current.selectEnvironment("env_1"));
+    await waitFor(() => expect(result.current.preview).not.toBeNull());
+    act(() => result.current.setServerEnabled("srv_a", false));
+
+    // Someone edits the environment on /environments: new revision, a server
+    // added. Live-config semantics — the conversation and the user's per-turn
+    // narrowing both survive.
+    respondWith(
+      previewPayload(
+        "env_1",
+        [
+          { serverId: "srv_a", name: "Alpha" },
+          { serverId: "srv_plugin", name: "Docs", source: "plugin" },
+          { serverId: "srv_new", name: "New" },
+        ],
+        2
+      )
+    );
+    act(() => result.current.refreshPreview());
+    await waitFor(() =>
+      expect(result.current.preview?.environment.revision).toBe(2)
+    );
+
+    // The refreshed base is visible…
+    expect(result.current.servers.map((s) => s.serverId)).toEqual([
+      "srv_a",
+      "srv_plugin",
+      "srv_new",
+    ]);
+    // …and the override was NOT erased.
+    expect(result.current.serverOverrideIds).toEqual(["srv_plugin"]);
+    expect(
+      result.current.servers.find((s) => s.serverId === "srv_a")?.enabled
+    ).toBe(false);
+  });
+});

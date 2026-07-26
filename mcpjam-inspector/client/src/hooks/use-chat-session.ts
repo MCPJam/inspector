@@ -137,6 +137,7 @@ import type {
   ModelVisibleMcpToolResults,
 } from "@/lib/client-config-v2";
 import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
+import type { HostedExecutionTarget } from "@/shared/execution-target";
 import {
   buildResolvedServerBatchRequest,
   getApiContextRevision,
@@ -1192,9 +1193,42 @@ function areAuthHeadersEqual(
 
 type HostedSessionScope = {
   projectId?: string | null;
+  /**
+   * ONE stable key for "what this session executes against", replacing the
+   * previous pair of independently-compared `chatboxId` / `hostId` fields:
+   *
+   *   `host:<hostId>` | `environment:<environmentId>` |
+   *   `chatbox:<chatboxId>` | `adhoc:<projectId>`
+   *
+   * Namespacing matters — the id spaces are different Convex tables, and a bare
+   * id comparison would call a host and an environment that happen to share an
+   * id string the same session.
+   *
+   * What is deliberately NOT in the key:
+   *   - the environment `revision`. Environments are LIVE config: editing one
+   *     mid-conversation changes what the next turn resolves to, which is the
+   *     feature. Only changing WHICH environment is selected forks.
+   *   - `accessVersion` (see below).
+   */
+  targetKey?: string;
+};
+
+/** Build the {@link HostedSessionScope} target key. Exported for tests. */
+export function hostedTargetKey(input: {
+  projectId?: string | null;
   chatboxId?: string;
   hostId?: string;
-};
+  executionTarget?: HostedExecutionTarget;
+}): string {
+  if (input.executionTarget) {
+    return input.executionTarget.kind === "environment"
+      ? `environment:${input.executionTarget.environmentId}`
+      : `host:${input.executionTarget.hostId}`;
+  }
+  if (input.chatboxId) return `chatbox:${input.chatboxId}`;
+  if (input.hostId) return `host:${input.hostId}`;
+  return `adhoc:${input.projectId ?? ""}`;
+}
 
 // `accessVersion` is intentionally NOT part of the scope. The chat-reset
 // path uses this comparison to decide when to blow away `chatSessionId` /
@@ -1204,18 +1238,15 @@ type HostedSessionScope = {
 // keeps the same chatbox and the same conversation; tearing the chat down on
 // those bumps would defeat the purpose of the recovery path.
 //
-// `hostId` IS part of the scope: switching the previewed host in the Playground
-// (same project, no chatbox) resolves future turns against a different host —
-// so the transcript must fork rather than append host B's turns onto host A's.
+// The execution TARGET is part of the scope: switching the previewed host — or,
+// from Phase 2, the previewed environment — in the Playground (same project)
+// resolves future turns against a different configuration, so the transcript
+// must fork rather than append target B's turns onto target A's.
 export function areHostedSessionScopesEqual(
   a: HostedSessionScope,
   b: HostedSessionScope
 ): boolean {
-  return (
-    a.projectId === b.projectId &&
-    a.chatboxId === b.chatboxId &&
-    a.hostId === b.hostId
-  );
+  return a.projectId === b.projectId && a.targetKey === b.targetKey;
 }
 
 function isAuthDeniedError(error: unknown): boolean {
@@ -1252,6 +1283,38 @@ export function useChatSession(
   const hostedOAuthTokens = hostedContext?.oauthTokens;
   const hostedChatboxId = hostedContext?.chatboxId;
   const hostedHostId = hostedContext?.hostId;
+  // Project Environments (Phase 2). When present this REPLACES the legacy
+  // `hostId` pointer on the wire — `normalizeExecutionTarget` rejects a body
+  // carrying both rather than shadowing one with the other.
+  const hostedExecutionTarget = hostedContext?.executionTarget;
+  const hostedEnvironmentId =
+    hostedExecutionTarget?.kind === "environment"
+      ? hostedExecutionTarget.environmentId
+      : undefined;
+  // Only ever sent when the caller explicitly overrode. Absent and
+  // `{ serverIds: [] }` mean different things all the way down to the backend
+  // resolver, so this must never be defaulted to an empty envelope.
+  const hostedEnvironmentOverrides = hostedContext?.environmentOverrides;
+  const hostedTargetHostId =
+    hostedExecutionTarget?.kind === "host"
+      ? hostedExecutionTarget.hostId
+      : undefined;
+  // Derived from PRIMITIVES, not from the `executionTarget` object: callers
+  // build that object inline, so a fresh identity every render would churn any
+  // effect that depended on it.
+  const hostedTargetKeyValue = hostedTargetKey({
+    projectId: hostedProjectId,
+    chatboxId: hostedChatboxId,
+    hostId: hostedTargetHostId ?? hostedHostId,
+    ...(hostedEnvironmentId
+      ? {
+          executionTarget: {
+            kind: "environment" as const,
+            environmentId: hostedEnvironmentId,
+          },
+        }
+      : {}),
+  });
   const hostedAccessVersion = hostedContext?.accessVersion;
   const hostedChatboxSurface = hostedContext?.chatboxSurface;
   // Published-chatbox runtime sessions must use the org-aware web engine
@@ -1432,7 +1495,7 @@ export function useChatSession(
   );
   const lastResolvedHostedScopeRef = useRef<HostedSessionScope>({
     projectId: undefined,
-    chatboxId: undefined,
+    targetKey: undefined,
   });
   const pendingSessionHydrationRef = useRef<PendingSessionHydration | null>(
     null
@@ -1892,11 +1955,32 @@ export function useChatSession(
         // and therefore only advertises `elicitation` — when it sees this.
         hostedElicitationVersion: HOSTED_ELICITATION_VERSION,
         ...(isHostedDirectChat ? { directVisibility } : {}),
-        // Host-bound direct preview: forward the saved host id so the server
-        // re-resolves the host's authoritative runtime config (harness/computer
-        // included). Only on the direct path — chatbox sessions own their host
-        // via chatboxId and the server ignores hostId when chatboxId is set.
-        ...(isHostedDirectChat && hostedHostId ? { hostId: hostedHostId } : {}),
+        // What this turn executes against. EXACTLY ONE of these two shapes ever
+        // ships: `normalizeExecutionTarget` 400s on `hostId` + `executionTarget`
+        // rather than picking a winner, because a body with both is a client bug
+        // and silently honoring one is how a user ends up watching a turn run
+        // against a configuration they didn't choose.
+        //
+        // Environment target: `environmentOverrides` rides along ONLY when the
+        // caller explicitly overrode. `selectedServerIds` above still describes
+        // the UI selection during migration, and the server deliberately ignores
+        // it for an environment target — override intent is never inferred from
+        // it.
+        ...(hostedExecutionTarget
+          ? {
+              executionTarget: hostedExecutionTarget,
+              ...(hostedEnvironmentId && hostedEnvironmentOverrides
+                ? { environmentOverrides: hostedEnvironmentOverrides }
+                : {}),
+            }
+          : // Host-bound direct preview: forward the saved host id so the server
+            // re-resolves the host's authoritative runtime config (harness /
+            // computer included). Only on the direct path — chatbox sessions own
+            // their host via chatboxId and the server ignores hostId when
+            // chatboxId is set.
+            isHostedDirectChat && hostedHostId
+            ? { hostId: hostedHostId }
+            : {}),
         ...(hostedChatboxId && hostedChatboxSurface
           ? { surface: hostedChatboxSurface }
           : {}),
@@ -1934,7 +2018,16 @@ export function useChatSession(
                 // Host-bound direct preview: forward the saved host id so the
                 // server re-resolves harness/computer authoritatively. Direct
                 // path only — omitted when a chatbox owns the host.
-                ...(!hostedChatboxId && hostedHostId
+                //
+                // NO `executionTarget` here, by design: the local /api/mcp
+                // engine cannot resolve an environment (it has no Convex read
+                // for the bundle) and 400s on the target. Environment-mode
+                // surfaces set `requiresWebChatApi`, which routes them to
+                // /api/web/chat-v2 above, so this branch is unreachable in
+                // environment mode — and if a caller ever gets it wrong, the
+                // turn runs as a plain host turn rather than silently claiming
+                // to be an environment run.
+                ...(!hostedChatboxId && !hostedExecutionTarget && hostedHostId
                   ? { hostId: hostedHostId }
                   : {}),
                 // Pass projectId for BYOK direct-chat history persistence
@@ -2045,6 +2138,9 @@ export function useChatSession(
     hostedOAuthTokens,
     hostedChatboxId,
     hostedHostId,
+    hostedExecutionTarget,
+    hostedEnvironmentId,
+    hostedEnvironmentOverrides,
     hostedAccessVersion,
     hostedChatboxSurface,
     getOllamaBaseUrl,
@@ -2568,8 +2664,15 @@ export function useChatSession(
         // names they were resolved from, even if the user edits the selection
         // while the preflight is in flight.
         const serverNamesSnapshot = selectedServers;
+        // NEVER for an environment target. The environment's servers already
+        // carry authoritative Convex ids and are re-resolved server-side; some
+        // of them are plugin-contributed and deliberately absent from
+        // `servers:getProjectServers`, so resolving them BY NAME would either
+        // fail outright or persist a shadow copy that bypasses plugin lifecycle
+        // semantics. Environment servers travel by id or not at all.
         if (
           usesWebEngine &&
+          !hostedEnvironmentId &&
           hostedEnsureServerIds &&
           serverNamesSnapshot.length > 0
         ) {
@@ -2607,6 +2710,7 @@ export function useChatSession(
     [
       baseSendMessage,
       hostedEnsureServerIds,
+      hostedEnvironmentId,
       selectedServers,
       selectedModelUsesOrgRuntime,
       hostedRequiresWebChatApi,
@@ -2865,10 +2969,9 @@ export function useChatSession(
       if (active) {
         const previousAuthHeaders = lastResolvedAuthHeadersRef.current;
         const previousHostedScope = lastResolvedHostedScopeRef.current;
-        const currentHostedScope = {
+        const currentHostedScope: HostedSessionScope = {
           projectId: hostedProjectId,
-          chatboxId: hostedChatboxId,
-          hostId: hostedHostId,
+          targetKey: hostedTargetKeyValue,
         };
         const hasResolvedBefore = hasResolvedAuthHeadersRef.current;
         const authHeadersChanged =
@@ -2908,9 +3011,18 @@ export function useChatSession(
     // version, and the scope-equality check inside the effect no longer
     // reads it either, so the effect body is exhaustive-deps-clean
     // without it.
+    //
+    // `hostedEnvironmentId` IS a dependency: the effect is the only path that
+    // acts on a scope change, so without it selecting a different environment
+    // would resolve the next turn against the new bundle while appending to the
+    // previous one's transcript. (`hostedHostId` is a long-standing omission
+    // here — adding it is a behavior change for host switching and is out of
+    // scope for Phase 2; the target key covers it the moment it lands.)
   }, [
     getAccessToken,
     hostedChatboxId,
+    hostedEnvironmentId,
+    hostedTargetKeyValue,
     hostedProjectId,
     isAuthenticated,
     isHostedGuest,
@@ -3125,10 +3237,18 @@ export function useChatSession(
   // pre-resolved id per selected server is NOT required up front — requiring
   // it would keep submit blocked forever for servers the preflight exists to
   // persist (they only get ids once a send runs).
+  // An ENVIRONMENT target is server-connected: the backend resolves and
+  // connects the server set itself from one atomic read, so there is no browser
+  // connection state to wait on and no name→id preflight to run. Gating submit
+  // on `hostedSelectedServerIds` here would block environments whose servers are
+  // plugin-contributed — those are intentionally hidden from
+  // `servers:getProjectServers`, so they can never appear in the browser's
+  // name-keyed catalog and the gate would never open.
   const hostedContextNotReady =
     orgOrHostedContextRequired &&
     (!hostedProjectId ||
-      (selectedServerIdsRequired &&
+      (!hostedEnvironmentId &&
+        selectedServerIdsRequired &&
         selectedServers.length > 0 &&
         !hostedEnsureServerIds &&
         hostedSelectedServerIds.length !== selectedServers.length));

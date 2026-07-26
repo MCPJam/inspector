@@ -98,6 +98,7 @@ import {
 } from "@/hooks/useAutoConnectProjectServers";
 import { useHost } from "@/hooks/useClients";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
+import { ConnectEnvironmentsStrip } from "./project-environments/ConnectEnvironmentsStrip";
 import { useProjectServers as useViewProjectServers } from "@/hooks/useViews";
 import { Project } from "@/state/app-types";
 import {
@@ -1856,6 +1857,8 @@ export function ServersTab({
 
           {renderQuickConnectSection()}
 
+          <ConnectEnvironmentsStrip projectId={sharedProjectIdForHostScope} />
+
           {/* Server Cards Grid (drag-and-drop reorderable, order saved to localStorage only) */}
           <DndContext
             sensors={sensors}
@@ -1989,6 +1992,8 @@ export function ServersTab({
       </div>
 
       {renderQuickConnectSection()}
+
+      <ConnectEnvironmentsStrip projectId={sharedProjectIdForHostScope} />
 
       {/* Empty State */}
       <Card className="p-12 text-center">

@@ -112,6 +112,9 @@ import {
   gateMcpToolResultImageRenderingByModelVisibility,
 } from "@/lib/client-config-v2";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
+import { usePlaygroundEnvironment } from "@/hooks/use-playground-environment";
+import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { PlaygroundEnvironmentSection } from "@/components/playground/PlaygroundEnvironmentSection";
 import { useHarnessBuiltinTools } from "@/hooks/useHarnessBuiltinTools";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useComputerAttachmentUpload } from "@/hooks/useComputerAttachmentUpload";
@@ -734,6 +737,16 @@ export function PlaygroundMain({
   const [previewedHostId, setPreviewedHostId] = usePreviewedHostId(
     convexProjectId ?? activeProjectId
   );
+  // Same storage scope as `usePersistedHost` / `usePreviewedHostId` below.
+  // Hoisted above `useChatSession` because the environment target has to be in
+  // the hosted context before the first transport body is built.
+  const multiHostProjectId = convexProjectId ?? activeProjectId ?? null;
+  // Project Environments (Phase 2). Flag-gated and fail-closed inside the hook;
+  // outside environment mode every field below is inert and the Playground
+  // behaves exactly as it does today.
+  const playgroundEnvironment = usePlaygroundEnvironment(multiHostProjectId);
+  const isEnvironmentMode = playgroundEnvironment.isEnvironmentMode;
+  const environmentsEnabled = useProjectEnvironmentsEnabled();
   const { host: previewedHost } = useHost({
     isAuthenticated: isConvexAuthenticated,
     hostId: previewedHostId,
@@ -822,20 +835,44 @@ export function PlaygroundMain({
       projectId: convexProjectId,
       selectedServerIds: hostedSelectedServerIds,
       oauthTokens: hostedOAuthTokens,
-      // Resolve/persist selected server names → Convex ids before a hosted
-      // harness send (ad-hoc/App servers included), so the proxy never sees a
-      // display name. Absent in isolated embeds → falls back to the
-      // pre-resolved selection above.
-      ...(playgroundServerActions?.ensureHostedServerIdsForNames
+      // ENVIRONMENT MODE (Phase 2) and host mode are mutually exclusive on the
+      // wire — `normalizeExecutionTarget` 400s a body carrying both pointers.
+      ...(isEnvironmentMode
         ? {
-            ensureServerIds:
-              playgroundServerActions.ensureHostedServerIdsForNames,
+            executionTarget: playgroundEnvironment.executionTarget,
+            // Only present when the user explicitly overrode the server set.
+            ...(playgroundEnvironment.environmentOverrides
+              ? {
+                  environmentOverrides:
+                    playgroundEnvironment.environmentOverrides,
+                }
+              : {}),
+            // The environment's servers resolve by Convex id server-side (and
+            // some are plugin-contributed, i.e. invisible to the browser's
+            // catalog), so the turn MUST go through /api/web/chat-v2 — the local
+            // /api/mcp engine cannot connect them and rejects the target
+            // outright.
+            requiresWebChatApi: true,
+            // Deliberately NO `ensureServerIds`: resolving environment servers
+            // by NAME would fail for plugin-contributed ones and bypass plugin
+            // lifecycle semantics for the rest.
           }
-        : {}),
-      // Forward the previewed host id so the server re-resolves its
-      // authoritative runtime config (harness/computer) for this direct
-      // session, and so switching hosts forks the chat session.
-      ...(previewedHostId ? { hostId: previewedHostId } : {}),
+        : {
+            // Resolve/persist selected server names → Convex ids before a hosted
+            // harness send (ad-hoc/App servers included), so the proxy never
+            // sees a display name. Absent in isolated embeds → falls back to the
+            // pre-resolved selection above.
+            ...(playgroundServerActions?.ensureHostedServerIdsForNames
+              ? {
+                  ensureServerIds:
+                    playgroundServerActions.ensureHostedServerIdsForNames,
+                }
+              : {}),
+            // Forward the previewed host id so the server re-resolves its
+            // authoritative runtime config (harness/computer) for this direct
+            // session, and so switching hosts forks the chat session.
+            ...(previewedHostId ? { hostId: previewedHostId } : {}),
+          }),
     },
     // Source the host-level toggle from the previewed host's resolved
     // DTO so flipping it in the host's Agent → Behavior tab takes
@@ -1065,13 +1102,39 @@ export function PlaygroundMain({
   // dispatch same-tab events on `saveSelectedHostIds` (deliberate, per
   // the Phase-1 multi-select regression fix); lifting state to this
   // common parent is the correct fix instead of adding event traffic.
-  const multiHostProjectId = convexProjectId ?? activeProjectId ?? null;
   const {
     selectedHostIds,
     setSelectedHostIds,
     multiHostEnabled,
     setMultiHostEnabled,
   } = usePersistedHost(multiHostProjectId);
+
+  // Environment mode ⇒ single host, always.
+  //
+  //  1. Multi-host comparison is switched OFF. Comparison runs one turn against
+  //     several hosts; an environment names exactly one, so the two states
+  //     cannot both be true without one of them lying about what ran.
+  //  2. The environment's host becomes the PREVIEWED host — for PRESENTATION
+  //     only (model chip, harness built-ins, host chrome). It is not sent as a
+  //     `hostId` on the wire; `executionTarget` is the single statement about
+  //     what executes, and the server re-resolves this host from the
+  //     environment itself.
+  const environmentHostId = playgroundEnvironment.preview?.host.hostId ?? null;
+  useEffect(() => {
+    if (!isEnvironmentMode) return;
+    if (multiHostEnabled) setMultiHostEnabled(false);
+    if (environmentHostId && previewedHostId !== environmentHostId) {
+      setPreviewedHostId(environmentHostId);
+    }
+  }, [
+    isEnvironmentMode,
+    environmentHostId,
+    multiHostEnabled,
+    setMultiHostEnabled,
+    previewedHostId,
+    setPreviewedHostId,
+  ]);
+
   const { hosts: hostList, isLoading: hostListLoading } = useHostList({
     isAuthenticated: isConvexAuthenticated,
     projectId: multiHostProjectId,
@@ -1165,7 +1228,12 @@ export function PlaygroundMain({
         .filter((host): host is HostDetail => host !== null),
     [hostSlots, selectedHostIds.length]
   );
-  const canEnableMultiHost = hostList.length > 1 && !isSharedSession;
+  // `!isEnvironmentMode`: comparison and environment mode are mutually
+  // exclusive in v1 (see the effect above). Withdrawing the affordance also
+  // drives the existing "reset a stale persisted multiHostEnabled" effect
+  // below, so the two can't be re-enabled behind the environment's back.
+  const canEnableMultiHost =
+    hostList.length > 1 && !isSharedSession && !isEnvironmentMode;
 
   // Lead identity check — we cannot compact away the lead slot. If
   // `selectedHostIds[0]` is still loading from Convex, the resolved
@@ -3740,6 +3808,19 @@ export function PlaygroundMain({
             isMultiModelLayoutMode={isMultiModelLayoutMode}
             leadHostInMultiHost={
               isMultiHostMode ? leadHost?.name ?? null : null
+            }
+            // Project Environments (Phase 2.5). The header's leading slot is the
+            // Playground's only always-rendered chrome row, so the Environments
+            // section lives here rather than beside the run pill's client chip
+            // (which is a popover and would hide the resolved bundle behind a
+            // click). Flag-gated, fail-closed.
+            leading={
+              environmentsEnabled && !isSharedSession ? (
+                <PlaygroundEnvironmentSection
+                  projectId={multiHostProjectId}
+                  environment={playgroundEnvironment}
+                />
+              ) : null
             }
             // The standalone "Compare" host picker moved into the chat-input
             // run pill (see `hostCompare` in `sharedChatInputProps`). Single-host
