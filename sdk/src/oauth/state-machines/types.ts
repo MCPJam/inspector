@@ -221,6 +221,65 @@ export const EMPTY_OAUTH_FLOW_STATE: OAuthFlowState = {
   tokenEndpointAuthMethod: undefined,
 };
 
+/**
+ * Builds a fully-cleared flow state for `resetFlow`. State updates MERGE over
+ * the prior state (see runner.ts `updateState`), so a reset that only spreads
+ * `EMPTY_OAUTH_FLOW_STATE` (whose optional fields are absent, not `undefined`)
+ * leaves every prior credential, token, discovery result, and recorded issuer
+ * in place. This helper enumerates EVERY optional `OAuthFlowState` field as an
+ * explicit `undefined` so the merge overwrites — nothing leaks across a reset —
+ * and returns fresh empty arrays so no history/log array is shared. Add new
+ * fields here whenever `OAuthFlowState` grows.
+ */
+export function buildResetFlowState(): OAuthFlowState {
+  return {
+    isInitiatingAuth: false,
+    currentStep: "idle",
+
+    // Discovery / challenge
+    serverUrl: undefined,
+    wwwAuthenticateHeader: undefined,
+    challengedScopes: undefined,
+    resourceMetadataUrl: undefined,
+    resourceMetadata: undefined,
+    resourceIndicator: undefined,
+    authorizationServerUrl: undefined,
+    authorizationServerMetadata: undefined,
+
+    // Client registration
+    clientId: undefined,
+    clientSecret: undefined,
+    tokenEndpointAuthMethod: undefined,
+
+    // PKCE
+    codeVerifier: undefined,
+    codeChallenge: undefined,
+    codeChallengeMethod: undefined,
+
+    // Authorization
+    authorizationUrl: undefined,
+    authorizationCode: undefined,
+    state: undefined,
+    recordedIssuer: undefined,
+    authorizationResponseIss: undefined,
+    requestedScopes: undefined,
+
+    // Tokens
+    accessToken: undefined,
+    refreshToken: undefined,
+    tokenType: undefined,
+    expiresIn: undefined,
+
+    // Raw request/response + history
+    lastRequest: undefined,
+    lastResponse: undefined,
+    httpHistory: [],
+    infoLogs: [],
+
+    error: undefined,
+  };
+}
+
 // State machine interface
 export interface OAuthStateMachine {
   state: OAuthFlowState;
@@ -246,6 +305,22 @@ export interface BaseOAuthStateMachineConfig {
   clientIdMetadataUrl?: string;
   customScopes?: string;
   customHeaders?: Record<string, string>;
+  /**
+   * SEP-2350 step-up: an explicit protected-resource-metadata (PRM) URL to
+   * discover from, sourced from a `WWW-Authenticate` `resource_metadata` hint
+   * (e.g. the `403 insufficient_scope` challenge a runtime tool call surfaced).
+   * When set, PRM discovery uses it verbatim instead of deriving the URL from
+   * the server URL's well-known path — so a server that points its metadata
+   * elsewhere (Asana) is honored on re-authorization. `undefined` (the default)
+   * is today's behavior: derive from the fresh `WWW-Authenticate` header or the
+   * server URL. The 2025-03-26 machine has no PRM step and ignores this field.
+   *
+   * The caller is responsible for validating this untrusted hint (the client
+   * step-up path only threads a value on the SAME ORIGIN as the server URL);
+   * the shared executor additionally enforces the outbound-host allowlist and
+   * the discovery request strips MCP-server auth headers when it hops origin.
+   */
+  resourceMetadataUrl?: string;
   authMode?: OAuthAuthMode;
   strictConformance?: boolean;
   // What to do at PRM discovery when the advertised resource indicator is not

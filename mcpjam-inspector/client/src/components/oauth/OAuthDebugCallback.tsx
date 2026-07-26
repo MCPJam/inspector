@@ -56,13 +56,16 @@ export default function OAuthDebugCallback() {
     if (callbackParams.successful && callbackParams.code) {
       hasAttemptedSendRef.current = true;
       try {
-        const stateParam = new URLSearchParams(window.location.search).get(
-          "state",
-        );
+        const callbackSearch = new URLSearchParams(window.location.search);
+        const stateParam = callbackSearch.get("state");
+        // 2R-iss: forward the RFC 9207 `iss` so the opener can validate it
+        // against the recorded issuer before redeeming the code.
+        const issParam = callbackSearch.get("iss");
         const message = {
           type: "OAUTH_CALLBACK",
           code: callbackParams.code,
           state: stateParam,
+          iss: issParam,
         };
 
         // Method 1: Try window.opener (works most of the time)

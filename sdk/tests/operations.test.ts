@@ -49,9 +49,11 @@ describe("listResources", () => {
       cursor: "cur",
     });
 
-    expect(manager.listResources).toHaveBeenCalledWith("srv", {
-      cursor: "cur",
-    });
+    expect(manager.listResources).toHaveBeenCalledWith(
+      "srv",
+      { cursor: "cur" },
+      undefined,
+    );
     expect(result.resources).toHaveLength(1);
     expect(result.nextCursor).toBe("next");
   });
@@ -60,7 +62,11 @@ describe("listResources", () => {
     const manager = createMockManager();
     await listResources(manager, { serverId: "srv" });
 
-    expect(manager.listResources).toHaveBeenCalledWith("srv", undefined);
+    expect(manager.listResources).toHaveBeenCalledWith(
+      "srv",
+      undefined,
+      undefined,
+    );
   });
 
   it("defaults resources to empty array when undefined", async () => {
@@ -89,9 +95,11 @@ describe("readResource", () => {
       uri: "file:///test.txt",
     });
 
-    expect(manager.readResource).toHaveBeenCalledWith("srv", {
-      uri: "file:///test.txt",
-    });
+    expect(manager.readResource).toHaveBeenCalledWith(
+      "srv",
+      { uri: "file:///test.txt" },
+      undefined,
+    );
     expect(result.content).toEqual(content);
   });
 });
@@ -212,7 +220,11 @@ describe("listTools", () => {
 
     await listTools(manager, { serverId: "srv", cursor: "cur" });
 
-    expect(manager.listTools).toHaveBeenCalledWith("srv", { cursor: "cur" });
+    expect(manager.listTools).toHaveBeenCalledWith(
+      "srv",
+      { cursor: "cur" },
+      undefined,
+    );
   });
 
   it("defaults tools to empty array when undefined", async () => {
@@ -276,10 +288,18 @@ describe("pagination guards", () => {
       echo: { executionCount: 1 },
       draw: { title: "Draw" },
     });
-    expect(manager.listTools).toHaveBeenNthCalledWith(1, "srv", undefined);
-    expect(manager.listTools).toHaveBeenNthCalledWith(2, "srv", {
-      cursor: "cursor-1",
-    });
+    expect(manager.listTools).toHaveBeenNthCalledWith(
+      1,
+      "srv",
+      undefined,
+      undefined,
+    );
+    expect(manager.listTools).toHaveBeenNthCalledWith(
+      2,
+      "srv",
+      { cursor: "cursor-1" },
+      undefined,
+    );
   });
 });
 
@@ -398,9 +418,29 @@ describe("listAllTools", () => {
 
 // ── withEphemeralClient ─────────────────────────────────────────────
 
-describe.skip("withEphemeralClient", () => {
-  // We can't easily test the full lifecycle without mocking the constructor,
-  // so we test withDisposableManager which covers the cleanup pattern.
+describe("withEphemeralClient", () => {
+  // The full connect lifecycle needs a live transport (see
+  // mrtr-manager.integration.test.ts). Here we lock the `beforeConnect`
+  // contract: it runs inside the lifecycle before `fn`, so a pre-connect
+  // registration (e.g. setMrtrInputCollector) is applied before the operation.
+  it("invokes beforeConnect before fn (and skips fn when it throws)", async () => {
+    const fn = jest.fn();
+    const beforeConnect = jest.fn(() => {
+      throw new Error("before-connect boom");
+    });
+
+    await expect(
+      withEphemeralClient(
+        { command: "node", args: ["-e", ""] } as never,
+        fn as never,
+        { beforeConnect },
+      ),
+    ).rejects.toThrow("before-connect boom");
+
+    expect(beforeConnect).toHaveBeenCalledTimes(1);
+    // connectToServer is never reached, so fn (which follows it) never runs.
+    expect(fn).not.toHaveBeenCalled();
+  });
 });
 
 // ── withDisposableManager ───────────────────────────────────────────

@@ -37,7 +37,7 @@ Uploaded iterations have a single boolean `passed` that drives pass rate on the 
 
 **Manual `reportEvalResults`:** If you build `results[]` yourself and set `passed` explicitly, MCPJam stores your values as-is. The execution gate applies to code paths that **compute** `passed` from prompts, traces, and iterations.
 
-**Programmatic reuse:** `@mcpjam/sdk` also exports `finalizePassedForEval`, `traceIndicatesToolExecutionFailure`, `isCallToolResultError`, `traceMessagePartIndicatesToolFailure`, `classifyToolFailurePart`, and `extractToolErrors` for custom ingestion pipelines. The `@mcpjam/sdk/predicates` sub-package exports the full predicate evaluator (`evaluatePredicate`, `evaluatePredicates`, `allPredicatesPassed`, `buildIterationTranscript`) and all predicate types.
+**Programmatic reuse:** `@mcpjam/sdk` also exports `finalizePassedForEval`, `traceIndicatesToolExecutionFailure`, `isCallToolResultError`, and `traceMessagePartIndicatesToolFailure` for custom ingestion pipelines. The `@mcpjam/sdk/predicates` subpath exports the full predicate evaluator (`evaluatePredicate`, `evaluatePredicates`, `allPredicatesPassed`, `buildIterationTranscript`), the tool-error extractor `extractToolErrors`, and all predicate types.
 
 ---
 
@@ -337,9 +337,22 @@ type ReportEvalResultsInput = MCPJamReportingConfig & {
   agent?: {
     getServerReplayConfigs?: () => MCPServerReplayConfig[] | undefined;
   };
+  executor?: {
+    getHostSnapshot?: () => HostJson | undefined;
+  };
   mcpClientManager?: MCPClientManager;
 };
 ```
+
+Fields specific to `ReportEvalResultsInput` (everything else comes from [`MCPJamReportingConfig`](#mcpjamreportingconfig)):
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `suiteName` | `string` | Yes | Suite name for the run |
+| `results` | `EvalResultInput[]` | Yes | The results to upload |
+| `agent` | `{ getServerReplayConfigs?: () => MCPServerReplayConfig[] \| undefined }` | No | Preferred replay source for manual reporting; use an executor (`HostRunner` / `HostRuntime`) created with `mcpClientManager` so results can include [`widgetSnapshots`](/sdk/reference/prompt-result#mcp-app-widget-snapshots) from [`PromptResult.toEvalResult()`](/sdk/reference/prompt-result). Field name predates the Stage 4 rename; any `HostExecutor` is accepted. |
+| `executor` | `{ getHostSnapshot?: () => HostJson \| undefined }` | No | Host-snapshot fallback for the run-level host config. Consulted when no per-iteration `hostSnapshot` is available; any object exposing `getHostSnapshot()` (e.g. `HostRunner`, `HostRuntime`) qualifies. See [Run-level host snapshot](#run-level-host-snapshot) |
+| `mcpClientManager` | `MCPClientManager` | No | Replay source when no `agent` is provided; does not populate `widgetSnapshots` unless your `results[].widgetSnapshots` or trace payloads already include them |
 
 ### MCPJamReportingConfig
 
@@ -362,9 +375,9 @@ type ReportEvalResultsInput = MCPJamReportingConfig & {
 | `ci` | `EvalCiMetadata` | No | CI/CD pipeline context |
 | `expectedIterations` | `number` | No | Expected total iterations for progress tracking |
 | `tags` | `string[]` | No | Free-form tags attached to the run for filtering in the MCPJam dashboard |
-| `agent` | `{ getServerReplayConfigs?: () => MCPServerReplayConfig[] \| undefined }` | No | Preferred replay source for manual reporting; use an executor (HostRunner / HostRuntime) created with `mcpClientManager` so results can include [`widgetSnapshots`](/sdk/reference/prompt-result#mcp-app-widget-snapshots) from [`PromptResult.toEvalResult()`](/sdk/reference/prompt-result). Field name predates the Stage 4 rename; any `HostExecutor` is accepted. |
-| `mcpClientManager` | `MCPClientManager` | No | Replay source when no `agent` is provided; does not populate `widgetSnapshots` unless your `results[].widgetSnapshots` or trace payloads already include them |
 | `host` | `Host` | No | Explicit host snapshot override. The reporter prefers `iteration.hostSnapshot` (per-iteration capture from `HostRuntime`) and falls back to `executor.getHostSnapshot?.()`; supply `host` only when neither source is available. See [Run-level host snapshot](#run-level-host-snapshot) below. |
+
+The replay sources `agent` and `mcpClientManager` are fields of [`ReportEvalResultsInput`](#reportevalresultsinput), not of `MCPJamReportingConfig` — pass them on the reporting call itself.
 
 ### Run-level host snapshot
 
@@ -382,7 +395,7 @@ POST /api/v1/projects/{projectId}/eval-ingest/runs/start
 
 **Source order (highest priority first):**
 
-1. `iteration.hostSnapshot` — per-iteration capture from `HostRuntime` (Stage 4). Reflects the bound `Host` state at the iteration's end.
+1. `iteration.hostSnapshot` — per-iteration capture from `HostRuntime` (Stage 4). Reflects the bound `Host` state at the iteration's end. Not yet carried by `EvalResultInput`, so today the reporter falls through to 2 and 3.
 2. `executor.getHostSnapshot?.()` — fallback for executors that don't expose per-iteration snapshots.
 3. `MCPJamReportingConfig.host` — explicit override, compatibility path.
 
@@ -435,17 +448,17 @@ Advanced replay override. Most users should not construct this manually.
 | `trace` | `EvalTraceInput` | No | Conversation trace |
 | `externalIterationId` | `string` | No | Custom iteration ID |
 | `externalCaseId` | `string` | No | Custom case ID |
-| `metadata` | `Record<string, unknown>` | No | Custom metadata. When `successPredicates` are evaluated, the runner persists `{ predicate, passed, reason }[]` under `metadata.predicates` automatically. |
-| `successPredicates` | `Predicate[]` | No | State-based predicate gate evaluated over the iteration transcript. See [Predicate gate](#predicate-gate). |
+| `metadata` | `Record<string, string \| number \| boolean>` | No | Custom metadata; values must be scalars. When the runner evaluates a case's predicates, it persists `{ predicate, passed, reason, scope? }[]` under `metadata.predicates` automatically. |
 | `isNegativeTest` | `boolean` | No | Whether this is a negative test |
+| `advancedConfig` | `Record<string, unknown>` | No | Advanced case configuration recorded with the iteration (e.g. `steps`, `system`, `temperature`) |
 | `matchOptions` | `EvalMatchOptions` | No | Per-result match options. When present, the inspector snapshots these onto the iteration so historical pass/fail computation honors them. See [`EvalMatchOptions`](/sdk/reference/validators#evalmatchoptions) |
 | `widgetSnapshots` | `EvalWidgetSnapshotInput[]` | No | MCP App HTML replay payloads (typically from [`getWidgetSnapshots()`](/sdk/reference/prompt-result#mcp-app-widget-snapshots) on [`PromptResult`](/sdk/reference/prompt-result)). Omitted when not using MCP Apps or when `HostRunner` had no `mcpClientManager` |
 
 ### Predicate gate
 
-`successPredicates` adds a deterministic, state-based assertion layer on top of tool-call matching. Each predicate is a pure function of the iteration transcript — same transcript, same verdict — which makes it suitable as a CI release gate.
+Predicates add a deterministic, state-based assertion layer on top of tool-call matching. Each predicate is a pure function of the iteration transcript — same transcript, same verdict — which makes it suitable as a CI release gate.
 
-A case passes the predicate gate iff **all** predicates pass. An absent or empty list means no predicate gate (the case is judged solely by tool-call matching and `failOnToolError`).
+Predicates are authored on the suite or case (in the corpus JSON, or through the Inspector's per-case **Checks** editor). `EvalResultInput` has no predicate field. The runner evaluates them and persists per-predicate verdicts under [`metadata.predicates`](#predicate-results-in-metadata). A case passes the predicate gate iff **all** predicates pass. An absent or empty list means no predicate gate (the case is judged solely by tool-call matching and `failOnToolError`).
 
 #### Predicate types
 
@@ -454,11 +467,15 @@ A case passes the predicate gate iff **all** predicates pass. An absent or empty
 | `toolCalledWith` | `toolName`, `args` ([`ArgMatcher`](#argmatcher)), `minCount?` | A call to `toolName` whose args satisfy `args` occurred at least `minCount` (default 1) times. |
 | `toolCalledAtLeastOnce` | `toolName` | `toolName` was called at least once (args irrelevant). |
 | `toolNeverCalled` | `toolName` | `toolName` was never called (forbidden-tool check). |
+| `firstToolWas` | `toolName` | The first tool call observed in the transcript was `toolName`. |
 | `responseContains` | `needle`, `caseSensitive?` | The final assistant message contains `needle`. Case-insensitive by default. |
 | `responseMatches` | `pattern` | The final assistant message matches the regular expression `pattern` (regex source string, no flags). |
 | `noToolErrors` | — | No tool produced an error (neither MCP `isError: true` nor a JSON-RPC/transport failure). |
 | `finalAssistantMessageNonEmpty` | — | The final assistant message is a non-empty, non-whitespace string. |
-| `tokenBudgetUnder` | `tokens` | Total token usage for the iteration is strictly under `tokens`. Fails closed when usage is unavailable. |
+| `tokenBudgetUnder` | `tokens` | Total token usage for the iteration is strictly under `tokens`. Fails when usage was not measured. |
+| `widgetRendered` | `toolName?` | At least one MCP App widget render observation (narrowed to `toolName` when set) has `status === "rendered"`. Fails when the iteration recorded no render observations in scope. |
+| `widgetRenderLatencyUnder` | `ms`, `toolName?` | Every rendered widget observation (narrowed to `toolName` when set) mounted in strictly under `ms` milliseconds. Fails when nothing in scope rendered — an unrendered widget has no latency to check. |
+| `widgetNoConsoleErrors` | `toolName?` | No widget render observation (narrowed to `toolName` when set) captured console errors. Fails when the iteration recorded no render observations in scope. |
 
 #### ArgMatcher
 
@@ -469,9 +486,9 @@ Used by `toolCalledWith` to specify expected arguments and matching mode.
 | `args` | `Record<string, unknown>` | Expected argument shape. |
 | `argumentMatching` | `"partial" \| "exact" \| "ignore"` | Matching mode. `"partial"` (default) checks only the keys present in `args`; `"exact"` requires deep equality; `"ignore"` skips argument comparison. |
 
-#### Fail-closed behavior
+#### A predicate never passes by default
 
-Malformed predicates (unknown type, missing required fields, invalid `minCount`, empty `needle`/`pattern`) always fail the case rather than silently passing. `responseMatches` also fails closed on patterns with nested quantifiers (ReDoS guard) and on messages exceeding 100,000 characters.
+A predicate that cannot be evaluated fails the case instead of silently passing. That covers malformed predicates (unknown type, missing required fields, invalid `minCount`, empty `needle`/`pattern`) and predicates with nothing to measure: `tokenBudgetUnder` when usage was not captured, and the `widget*` predicates when the iteration recorded no render observations. `responseMatches` also rejects patterns with nested quantifiers (ReDoS guard) and messages over 100,000 characters.
 
 #### Example
 
@@ -516,6 +533,7 @@ type PredicateResult = {
   predicate: Predicate;   // The authored predicate (sensitive arg keys are redacted)
   passed: boolean;
   reason: string;         // Structured explanation, e.g. "tool "book_flight" called with matching args"
+  scope?: { kind: "turn"; promptIndex: number }; // Absent = case-level; present = authored on one prompt turn
 };
 ```
 

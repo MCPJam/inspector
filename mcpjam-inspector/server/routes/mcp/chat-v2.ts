@@ -299,6 +299,21 @@ chatV2.post("/", async (c) => {
       surface: bodySurface,
       hostId: bodyHostId,
     } = body;
+    // Local execution cannot run a Project Environment, and must say so rather
+    // than quietly ignoring the target and running an ad-hoc turn. Resolving an
+    // environment needs a member-authorized Convex read plus the hosted
+    // authorization plane that primes the manager from the resolved server set;
+    // this route has neither. Fail clearly, at ingress, before anything else
+    // reads the body.
+    if ((body as { executionTarget?: unknown }).executionTarget !== undefined) {
+      return c.json(
+        {
+          error:
+            "Project Environments can't run on local /api/mcp execution — use the hosted chat route.",
+        },
+        400
+      );
+    }
     const isChatboxSession = Boolean(bodyChatboxId);
     const chatSessionSourceType: "chatbox" | "direct" = isChatboxSession
       ? "chatbox"
@@ -697,6 +712,12 @@ chatV2.post("/", async (c) => {
         ? {
             authHeader: builtInAuthHeader,
             projectId: body.projectId,
+            // A request with no user-supplied Authorization is an anonymous
+            // guest (the route mints a production guest bearer for it), so the
+            // resolver withholds bash on the personal-project path — matching
+            // web/chat-v2's `isGuest: Boolean(c.get("guestId"))`. Bash is kept
+            // only for a host-funded swarm executionScope.
+            isGuest: !requestAuthHeader,
             ...(executionScope ? { executionScope } : {}),
             ...(body.chatSessionId
               ? { chatSessionId: body.chatSessionId }
@@ -704,6 +725,15 @@ chatV2.post("/", async (c) => {
           }
         : null,
     );
+
+    // COMP-16: the host-configured computer working directory — the SAME
+    // `computer.workdir` the bash tool runs in — threaded into the harness path
+    // so its Shell roots under the same directory. Server-resolved config only.
+    const computerWorkdir = (
+      hostRuntimeConfig as { computer?: { workdir?: unknown } } | undefined
+    )?.computer?.workdir;
+    const harnessComputerWorkdir =
+      typeof computerWorkdir === "string" ? computerWorkdir : undefined;
 
     let prepared;
     try {
@@ -857,6 +887,10 @@ chatV2.post("/", async (c) => {
         // Server-executed built-ins forwarded separately so the harness path
         // can hand them to HarnessAgent (MCP-server tools arrive via .mcp.json).
         ...(builtInTools ? { builtInTools } : {}),
+        // COMP-16: root the harness Shell at the configured working directory.
+        ...(harnessComputerWorkdir
+          ? { computerWorkdir: harnessComputerWorkdir }
+          : {}),
         projectId: body.projectId,
         // Phase 3: thread the runtime-config execution scope into the harness
         // path (sandbox reserve, skills, broker, session-state, commit).

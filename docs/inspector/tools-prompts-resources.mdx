@@ -31,6 +31,7 @@ Test your MCP tools by manually invoking them with custom parameters:
 - **Invoke tools** - Trigger tools with custom input parameters
 - **View results** - See tool outputs, including widget responses for ChatGPT apps and MCP apps
 - **Elicitation support** - Handle elicitation requests from tools with a spec-complete form dialog
+- **Multi-round input** - Tools that return `input_required` (MCP 2026-07-28) collect the needed input through the same dialog and retry automatically
 - **Save requests** - Save frequently used tool invocations for quick testing
 - **Quality badges** - See per-tool quality indicators in the sidebar for tools with definition issues
 
@@ -45,6 +46,28 @@ When a tool triggers an MCP elicitation request, a dialog appears asking you to 
 - **Unsupported shapes** — Nested objects and other schema shapes outside the MCP elicitation spec fall back to a plain JSON textarea so you can still answer by hand.
 
 **Decline** and **Cancel** are always available and bypass validation — they send the corresponding action to the server without any parameters.
+
+### Multi-round input (MCP 2026-07-28 `input_required`)
+
+When a tool call returns an `input_required` result (MCP 2026-07-28 §12), the inspector collects the embedded elicitation input through the same dialog and automatically retries the original call with your answers. This is distinct from the legacy `elicitation/create` flow:
+
+- **Dialog title** — shows "Operation Needs Input" (vs "Elicitation Request" for legacy requests).
+- **Dialog header** — reads "[server] needs input to continue" (vs "[server] is requesting information").
+- **Multiple keys per round** — if the server embeds more than one input request in a single round, the dialog walks through them one at a time and submits all answers together.
+- **Automatic retry** — after you respond, the inspector retries the original `tools/call` with your answers attached. You do not need to re-invoke the tool manually.
+- **Decline and Cancel** — send the corresponding action back to the server; the server decides whether to abort or continue.
+
+This behavior applies to local connections. The inspector must be connected to the server before the tool is invoked; the `elicitation` capability is advertised at connect time.
+
+### OAuth scope step-up on tool calls
+
+When a tool call returns a `403 insufficient_scope` error, the Tools tab automatically triggers a re-authorization flow. Inspector unions the scopes from your original OAuth grant with the scopes the server challenged, then redirects you to the authorization server to approve the expanded set. After you return from the consent screen, re-run the tool.
+
+The step-up is bounded per browser session: if re-authorization does not resolve the scope error after the allowed number of attempts, Inspector surfaces the error instead of redirecting again. The counter resets when a tool call succeeds, so a future legitimate scope challenge starts fresh. Opening a new browser session also resets the counter.
+
+<Note>
+Runtime scope step-up is only available on the local (non-hosted) tool-call surface. The hosted path does not yet forward the scope challenge.
+</Note>
 
 ### Tool quality badges
 
@@ -70,6 +93,7 @@ Inspect your MCP server's resources:
 - **Browse resources** - View all available resources with names, URIs, and MIME types
 - **Read resources** - Fetch and view resource content
 - **Resource templates** - Test templated resources with dynamic parameters
+- **Multi-round input** - Resources that return `input_required` (MCP 2026-07-28) collect the needed input through the elicitation dialog and retry the read automatically
 
 ### Agent tool: `ui_read_resource`
 
@@ -91,6 +115,7 @@ Test your MCP prompts:
 - **View prompts** - Browse prompt names, descriptions, and parameters
 - **Fetch prompts** - Retrieve prompt content with custom arguments
 - **Use in Playground** - Type `/` in the Playground to insert prompts directly into the conversation
+- **Multi-round input** - Prompts that return `input_required` (MCP 2026-07-28) collect the needed input through the elicitation dialog and retry the fetch automatically
 
 ### Agent tool: `ui_get_prompt`
 

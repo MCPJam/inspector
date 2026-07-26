@@ -504,6 +504,48 @@ describe("chat-ingestion", () => {
     expect(body.sourceType).toBe("direct");
     expect(body.directVisibility).toBe("project");
   });
+
+  it("serializes targetId onto the ingest body for per-target (environment) attribution", async () => {
+    await persistChatSessionToConvex({
+      chatSessionId: "session-env-target",
+      modelId: "openai/gpt-4o-mini",
+      modelSource: "byok",
+      authHeader: "Bearer bearer-token",
+      sourceType: "swarm",
+      origin: "swarm",
+      journeyRunId: "run-1",
+      hostId: "host-1",
+      targetId: "target-a",
+      startedAt: 1,
+    });
+
+    const request = (global.fetch as any).mock.calls[0]?.[1];
+    const body = JSON.parse((request?.body as string) ?? "{}");
+
+    // Two environment targets can share ONE host, so `hostId` alone cannot
+    // attribute the session — `targetId` must reach the backend.
+    expect(body.hostId).toBe("host-1");
+    expect(body.targetId).toBe("target-a");
+  });
+
+  it("omits targetId from the ingest body when not supplied (legacy host targets)", async () => {
+    await persistChatSessionToConvex({
+      chatSessionId: "session-legacy-target",
+      modelId: "openai/gpt-4o-mini",
+      modelSource: "byok",
+      authHeader: "Bearer bearer-token",
+      sourceType: "swarm",
+      origin: "swarm",
+      journeyRunId: "run-1",
+      hostId: "host-1",
+      startedAt: 1,
+    });
+
+    const request = (global.fetch as any).mock.calls[0]?.[1];
+    const body = JSON.parse((request?.body as string) ?? "{}");
+
+    expect("targetId" in body).toBe(false);
+  });
 });
 
 describe("buildDirectHostConfig", () => {
