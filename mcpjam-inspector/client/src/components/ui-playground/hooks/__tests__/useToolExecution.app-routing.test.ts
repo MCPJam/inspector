@@ -541,4 +541,28 @@ describe("useToolExecution step-up (SEP-2350)", () => {
 
     expect(mockApplyToolCallStepUp).not.toHaveBeenCalled();
   });
+
+  it("does not drive step-up for a non-actionable challenge (metadata/errorDescription only, no requiredScope)", async () => {
+    // Same `isActionableStepUpChallenge` gate resources/prompts/chat use: a
+    // challenge with no `requiredScope` cannot widen scope in the orchestrator
+    // today, so redirecting would only burn the bounded step-up budget.
+    mockExecuteToolApi.mockResolvedValueOnce({
+      error: "Insufficient scope",
+      insufficientScope: {
+        resourceMetadataUrl: "https://rs.example/.well-known",
+        errorDescription: "more scope needed",
+      },
+    });
+
+    const { result } = renderHook(
+      () => useToolExecution(makeHookOptions({ selectedTool: "get_weather" })),
+      { wrapper: withServer(server) },
+    );
+
+    await act(async () => {
+      await result.current.executeTool({ parameters: {} });
+    });
+
+    expect(mockApplyToolCallStepUp).not.toHaveBeenCalled();
+  });
 });

@@ -14,7 +14,10 @@ import {
   type ToolExecutionResponse,
 } from "@/lib/apis/mcp-tools-api";
 import { readResource } from "@/lib/apis/mcp-resources-api";
-import { parseInsufficientScopeChallenge } from "@/lib/apis/insufficient-scope";
+import {
+  isActionableStepUpChallenge,
+  parseInsufficientScopeChallenge,
+} from "@/lib/apis/insufficient-scope";
 import {
   applyToolCallStepUp,
   resetToolCallStepUp,
@@ -252,7 +255,11 @@ export function useToolExecution({
       const challenge = parseInsufficientScopeChallenge(
         (response as { insufficientScope?: unknown }).insufficientScope,
       );
-      if (!challenge) return;
+      // Only drive a redirect for an ACTIONABLE challenge (one carrying a
+      // `requiredScope` to widen). A metadata-only / errorDescription-only
+      // challenge would burn the bounded step-up budget without adding scope —
+      // same gate resources/prompts/chat use.
+      if (!isActionableStepUpChallenge(challenge)) return;
       const stepUpKey = server.name;
       if (stepUpInFlightRef.current.has(stepUpKey)) return;
       stepUpInFlightRef.current.add(stepUpKey);
