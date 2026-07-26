@@ -16,8 +16,14 @@ resources.post("/list", async (c) =>
 );
 
 resources.post("/read", async (c) =>
-  withEphemeralConnection(c, resourcesReadSchema, (manager, body) =>
-    readResource(manager, { ...body, cacheMode: "bypass" }),
+  withEphemeralConnection(
+    c,
+    resourcesReadSchema,
+    (manager, body, forwardLogMessages) => {
+      forwardLogMessages(body.serverId);
+      // Hosted direct-ops read the server's live surface — never a cached body.
+      return readResource(manager, { ...body, cacheMode: "bypass" });
+    },
   ),
 );
 

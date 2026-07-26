@@ -159,6 +159,7 @@ export {
   ResourceListChangedNotificationMethod,
   ResourceUpdatedNotificationMethod,
   PromptListChangedNotificationMethod,
+  LoggingMessageNotificationMethod,
 } from "./notification-handlers.js";
 
 // ManagedMcpClient: interface + adapters + factory for 2026-07-28
@@ -180,6 +181,10 @@ export {
   PaginatedToolHeaderDiscoveryUnsupported,
 } from "./managed-mcp-client.js";
 export { OfficialSdkClientAdapter } from "./official-sdk-client-adapter.js";
+export {
+  LogLevelMetaClient,
+  type LogLevelProvider,
+} from "./log-level-meta-client.js";
 export {
   DialectAwareJsonSchemaValidator,
   type DialectAwareJsonSchemaValidatorOptions,

@@ -308,6 +308,115 @@ export interface PlatformHostDeleted {
   deleted: true;
 }
 
+// ── Project Environments ─────────────────────────────────────────────────────
+//
+// A named, project-scoped, live-editable execution bundle that eval suites and
+// journeys run against: one host, an optional standalone server group, an
+// optional pinned skill selection, and optional pinned plugin versions.
+//
+// NOT a `PlatformImage` (a Computer sandbox base image), and not the eval-suite
+// `environment` servers bag — this is the concept that owns the word.
+//
+// Environments are REVISIONED for optimistic concurrency: every mutation takes
+// the `expectedRevision` you last read, and a stale value is rejected with 409
+// CONFLICT rather than clobbering a concurrent edit.
+
+/**
+ * An explicit, pinned skill selection. Empty lists are rejected — clear the
+ * field (`null` on update) to mean "no pinned skills".
+ */
+export interface PlatformEnvironmentSkillSelection {
+  mode: "explicit";
+  skillIds: string[];
+}
+
+export interface PlatformEnvironment {
+  id: string;
+  projectId: string;
+  name: string;
+  description?: string;
+  hostId: string;
+  /** Set only when the environment pins a standalone server group. */
+  serverAttachmentId?: string;
+  skillSelection?: PlatformEnvironmentSkillSelection;
+  /**
+   * Pinned plugin VERSIONS. Narrow by design: a version is pinnable only when
+   * its plugin is installed and enabled, the version is `ready`, at most one
+   * version per plugin is pinned, and none of its skills carry supporting
+   * files. Not a general-purpose plugin list.
+   */
+  pluginVersionIds?: string[];
+  /** Pass back as `expectedRevision` on the next mutation. */
+  revision: number;
+  /** Archived environments cannot be edited or launched until restored. */
+  archived: boolean;
+  archivedAt?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface PlatformEnvironmentCreateBody {
+  name: string;
+  description?: string;
+  hostId: string;
+  serverAttachmentId?: string;
+  skillSelection?: PlatformEnvironmentSkillSelection;
+  pluginVersionIds?: string[];
+}
+
+/**
+ * Update body. Three-state on the clearable fields: omit to leave unchanged,
+ * pass `null` to CLEAR, pass a value to set. An empty array is rejected — it is
+ * not a way to clear.
+ */
+export interface PlatformEnvironmentUpdateBody {
+  /** Required: the revision you last read. Stale ⇒ 409 CONFLICT. */
+  expectedRevision: number;
+  name?: string;
+  /** An empty string clears the description. */
+  description?: string;
+  hostId?: string;
+  serverAttachmentId?: string | null;
+  skillSelection?: PlatformEnvironmentSkillSelection | null;
+  pluginVersionIds?: string[] | null;
+}
+
+/** Body for the archive/restore sub-actions — the precondition only. */
+export interface PlatformEnvironmentRevisionBody {
+  expectedRevision: number;
+}
+
+/**
+ * What an environment resolves to right now: the host's current config, the
+ * closed server set, and the pinned plugin versions. The same resolution an
+ * eval run performs, exposed so an external runner can connect the exact set
+ * before launching.
+ */
+export interface PlatformEnvironmentResolved {
+  environment: { id: string; name: string; revision: number };
+  hostId: string;
+  hostName: string;
+  /** The host's config at resolve time — hosts rotate configs live. */
+  hostConfigId: string;
+  serverAttachmentId?: string;
+  /** The closed NON-plugin server set. */
+  selectedServerIds: string[];
+  /**
+   * `selectedServerIds` plus the servers contributed by pinned plugin
+   * versions — the set a run actually connects. Identical to
+   * `selectedServerIds` when the environment pins no plugins.
+   */
+  effectiveServerIds: string[];
+  pluginVersions: Array<{
+    pluginId: string;
+    pluginVersionId: string;
+    name: string;
+    bundleHash: string;
+  }>;
+  /** Connectable projection of `effectiveServerIds`, healed to live servers. */
+  servers: Array<{ serverId: string; name: string }>;
+}
+
 // ── Sandbox images ───────────────────────────────────────────────────────────
 //
 // A project's custom Computer base image: a Dockerfile plus its builds. Named

@@ -9,6 +9,13 @@ export const ErrorCode = {
   UNAUTHORIZED: "UNAUTHORIZED",
   FORBIDDEN: "FORBIDDEN",
   NOT_FOUND: "NOT_FOUND",
+  // A write rejected because the resource isn't in a state that accepts it
+  // (HTTP 409) — the request was well-formed, so VALIDATION_ERROR would
+  // misreport it, and retrying it verbatim won't help. Project Environments
+  // report stale `expectedRevision`, duplicate live names, and archive-state
+  // rejections this way; the more specific ENVIRONMENT_REVISION_CONFLICT below
+  // stays for the hosted UI, and collapses onto this code publicly.
+  CONFLICT: "CONFLICT",
   VALIDATION_ERROR: "VALIDATION_ERROR",
   RATE_LIMITED: "RATE_LIMITED",
   FEATURE_NOT_SUPPORTED: "FEATURE_NOT_SUPPORTED",

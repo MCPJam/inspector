@@ -35,11 +35,21 @@
  * UPSTREAM_ERROR/TOOL_TIMEOUT are NOT public; they collapse to
  * SERVER_UNREACHABLE/TIMEOUT at the boundary (see INTERNAL_TO_V1_CODE). Adding
  * codes is backward-compatible; removing or repurposing one is breaking.
+ *
+ * CONFLICT (409) covers a write rejected because the resource is not in a state
+ * that accepts it — the caller's request was well-formed, so VALIDATION_ERROR
+ * would misreport it, and retrying verbatim will not help. Project Environments
+ * are the first surface to need it: they use optimistic concurrency, so a stale
+ * `expectedRevision` must be distinguishable from bad input. It also carries the
+ * environment name collisions and archive-state rejections the backend reports
+ * with the same code, and the run-start `ENVIRONMENT_REVISION_CONFLICT`, which
+ * previously had no public mapping and so surfaced as a 500.
  */
 export const V1_ERROR_CODES = [
   "UNAUTHORIZED",
   "FORBIDDEN",
   "NOT_FOUND",
+  "CONFLICT",
   "VALIDATION_ERROR",
   "RATE_LIMITED",
   "FEATURE_NOT_SUPPORTED",
@@ -76,6 +86,7 @@ export const V1_ERROR_STATUS: Record<V1ErrorCode, number> = {
   UNAUTHORIZED: 401,
   FORBIDDEN: 403,
   NOT_FOUND: 404,
+  CONFLICT: 409,
   VALIDATION_ERROR: 400,
   RATE_LIMITED: 429,
   FEATURE_NOT_SUPPORTED: 422,
@@ -95,6 +106,7 @@ export const INTERNAL_TO_V1_CODE: Record<string, V1ErrorCode> = {
   UNAUTHORIZED: "UNAUTHORIZED",
   FORBIDDEN: "FORBIDDEN",
   NOT_FOUND: "NOT_FOUND",
+  CONFLICT: "CONFLICT",
   VALIDATION_ERROR: "VALIDATION_ERROR",
   RATE_LIMITED: "RATE_LIMITED",
   FEATURE_NOT_SUPPORTED: "FEATURE_NOT_SUPPORTED",
@@ -104,6 +116,11 @@ export const INTERNAL_TO_V1_CODE: Record<string, V1ErrorCode> = {
   UPSTREAM_ERROR: "SERVER_UNREACHABLE",
   OAUTH_REQUIRED: "OAUTH_REQUIRED",
   TOOL_TIMEOUT: "TIMEOUT",
+  // The eval run-start revision conflict. Internally its own code so the
+  // hosted UI can render a bespoke "environment changed — retry" message;
+  // publicly it is just a CONFLICT. Without this entry it fell through
+  // `mapInternalCode`'s default and reached API callers as a 500.
+  ENVIRONMENT_REVISION_CONFLICT: "CONFLICT",
 };
 
 export function mapInternalCode(code: string | undefined | null): V1ErrorCode {
