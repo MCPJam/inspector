@@ -365,4 +365,64 @@ describe("resolveInsufficientScopeStepUp (SEP-2350)", () => {
         .action,
     ).toBe("reauthorize");
   });
+
+  it("applyToolCallStepUp forwards a SAME-ORIGIN resourceMetadataUrl into the fresh OAuth flow", async () => {
+    readStoredOAuthConfigMock.mockReturnValue({ scopes: ["read"] });
+    initiateOAuthMock.mockResolvedValue({ success: true });
+
+    // Same origin as the server URL (https://mcp.asana.com/sse) — RFC 9728.
+    const resourceMetadataUrl =
+      "https://mcp.asana.com/.well-known/oauth-protected-resource/tenant-a/sse";
+
+    const outcome = await applyToolCallStepUp(createServer(), {
+      requiredScope: "admin",
+      resourceMetadataUrl,
+    });
+
+    expect(outcome.action).toBe("reauthorize");
+    // The challenge's metadata URL is threaded down to PRM discovery.
+    expect(initiateOAuthMock).toHaveBeenCalledWith(
+      expect.objectContaining({ resourceMetadataUrl }),
+    );
+  });
+
+  it("applyToolCallStepUp DROPS a cross-origin resourceMetadataUrl (falls back to derived discovery)", async () => {
+    readStoredOAuthConfigMock.mockReturnValue({ scopes: ["read"] });
+    initiateOAuthMock.mockResolvedValue({ success: true });
+
+    // Attacker-supplied hint on a DIFFERENT origin than the server URL.
+    const outcome = await applyToolCallStepUp(createServer(), {
+      requiredScope: "admin",
+      resourceMetadataUrl:
+        "https://evil.example/.well-known/oauth-protected-resource",
+    });
+
+    expect(outcome.action).toBe("reauthorize");
+    // The cross-origin hint is not threaded — discovery derives the URL itself.
+    expect(initiateOAuthMock).toHaveBeenCalledWith(
+      expect.objectContaining({ resourceMetadataUrl: undefined }),
+    );
+  });
+
+  it("applyToolCallStepUp threads a resourceMetadataUrl-only challenge (no requiredScope) once the gate broadens", async () => {
+    // The server previously requested read+write; a metadata-only challenge
+    // still re-authorizes with those scopes and carries the metadata URL down.
+    persistRequestedScopes("asana", ISSUER, ["read", "write"]);
+    initiateOAuthMock.mockResolvedValue({ success: true });
+
+    const resourceMetadataUrl =
+      "https://mcp.asana.com/.well-known/oauth-protected-resource/tenant-b/sse";
+
+    const outcome = await applyToolCallStepUp(createServer(), {
+      resourceMetadataUrl,
+    });
+
+    expect(outcome.action).toBe("reauthorize");
+    expect(initiateOAuthMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scopes: ["read", "write"],
+        resourceMetadataUrl,
+      }),
+    );
+  });
 });

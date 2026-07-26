@@ -1589,6 +1589,14 @@ export interface MCPOAuthOptions {
   serverUrl: string;
   scopes?: string[];
   customHeaders?: Record<string, string>;
+  /**
+   * SEP-2350 step-up: an explicit protected-resource-metadata URL (validated
+   * same-origin by the caller) to discover from, sourced from a `403
+   * insufficient_scope` challenge's `resource_metadata` hint. Threaded into the
+   * OAuth state machine so PRM discovery honors a non-default metadata location
+   * on re-authorization. `undefined` keeps today's derive-from-server-URL flow.
+   */
+  resourceMetadataUrl?: string;
   resourceUrl?: string;
   clientId?: string;
   clientSecret?: string;
@@ -2862,6 +2870,10 @@ export async function initiateOAuth(
       clientIdMetadataUrl: DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
       customScopes: requestedScope,
       customHeaders: options.customHeaders,
+      // SEP-2350 step-up: honor a caller-supplied (same-origin validated)
+      // protected-resource-metadata URL from the challenge instead of deriving
+      // it from the server URL. `undefined` keeps today's discovery behavior.
+      resourceMetadataUrl: options.resourceMetadataUrl,
       authMode: "interactive",
       onTraceUpdate: ({ trace: snapshot }) => {
         emitTraceSnapshot(snapshot);
