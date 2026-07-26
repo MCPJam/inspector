@@ -152,6 +152,18 @@ export interface StartPluginImportArgs {
    * caps length, so passing a file/folder name is safe.
    */
   sourceLabel?: string;
+  /**
+   * Called with the new import id the moment `createImport` resolves —
+   * BEFORE inspection runs.
+   *
+   * `startImport` drives inspection itself (the backend does not schedule it),
+   * so an inspect rejection rejects the whole call and the caller would never
+   * learn the id of the row that WAS created. Without it there is nothing to
+   * resume and the only recovery is a second upload creating a second import
+   * row. Callers that offer "retry" must adopt the id from here, not only from
+   * the resolved result.
+   */
+  onImportCreated?: (importId: string) => void;
 }
 
 export interface StartPluginImportResult {
@@ -293,6 +305,14 @@ export function usePluginImportActions(): PluginImportActions {
         bundleStorageId,
         sourceLabel: args.sourceLabel,
       });
+      // Hand the id over before inspection can throw (see `onImportCreated`).
+      // A caller-thrown callback must not swallow an import that DID get
+      // created, so its failure is contained rather than propagated.
+      try {
+        args.onImportCreated?.(importId);
+      } catch {
+        // ignore — the id is still returned below on the success path.
+      }
       const inspect = await inspectImport(importId);
       return { importId, inspect };
     },

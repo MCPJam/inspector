@@ -22,6 +22,7 @@ import {
   parsePluginBundleFromZip,
   readSelectedFileBytes,
 } from "@/lib/plugins/folder-bundle";
+import { assertPluginBundleWithinCap } from "@/lib/plugins/plugin-api";
 import {
   PluginApiError,
   type PluginCommitResult,
@@ -68,6 +69,13 @@ import {
  * 3. **`reused: true` is not a fresh install.** Re-importing identical bytes
  *    is content-addressed and returns the SAME ready version; the summary says
  *    so rather than implying a new revision was created.
+ *
+ * Every async step is generation-guarded (`runRef`). `reset()` bumps the
+ * generation, and each post-await state write is dropped when the generation
+ * moved — otherwise an in-flight `startImport` settling AFTER a project switch
+ * would write the OLD project's import id back into a modal now bound to a new
+ * project, and the user (still an admin there) could preview and commit it
+ * into the wrong project.
  */
 
 type Busy = "preflight" | "importing" | "committing" | null;
@@ -163,8 +171,21 @@ export function AddPluginModal({
   const [commitResult, setCommitResult] = useState<PluginCommitResult | null>(
     null,
   );
+  /**
+   * The `setActive` of the most recent commit ATTEMPT, so a retry repeats the
+   * user's choice. Hardcoding `true` here would silently upgrade an
+   * "Install only" into an activation the moment a commit had to be retried.
+   */
+  const [lastCommitSetActive, setLastCommitSetActive] = useState(true);
   const zipInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+  /**
+   * Generation token for every async step. Bumped by `reset()`; each async op
+   * captures it before its first await and drops all later state writes when
+   * it no longer matches. `useState` cannot do this — a settled promise would
+   * still write with the closure's stale values.
+   */
+  const runRef = useRef(0);
 
   const row = usePluginImport(importId);
   // Post-install component health. Only meaningful once the row completed —
@@ -176,7 +197,10 @@ export function AddPluginModal({
   // A plugin is installed when the IMPORT ROW says so. Deriving it from the
   // local commit promise (or from any client-side component tally) would let
   // the UI claim an install before the version was flipped ready.
-  const isInstalled = row?.status === "completed" && !!row.pluginVersionId;
+  // Both ids are required: the completion callback hands them out, and a
+  // guard that only checked one would leave the other's read unearned.
+  const isInstalled =
+    row?.status === "completed" && !!row.pluginId && !!row.pluginVersionId;
 
   const previewedRef = useRef<string | null>(null);
   useEffect(() => {
@@ -201,11 +225,15 @@ export function AddPluginModal({
   }, [isInstalled, row, onInstalled]);
 
   const reset = useCallback(() => {
+    // Invalidate anything already in flight before clearing state, so a
+    // promise that settles later cannot repopulate what we just cleared.
+    runRef.current += 1;
     setSelected(null);
     setImportId(null);
     setBusy(null);
     setFailure(null);
     setCommitResult(null);
+    setLastCommitSetActive(true);
     previewedRef.current = null;
     installedRef.current = null;
     if (zipInputRef.current) zipInputRef.current.value = "";
@@ -218,37 +246,55 @@ export function AddPluginModal({
     reset();
   }, [projectId, reset]);
 
-  const handleZipPicked = useCallback(
-    async (file: File) => {
-      setFailure(null);
-      setBusy("preflight");
-      try {
-        const zipBytes = await readSelectedFileBytes(file);
-        const parsed = await parsePluginBundleFromZip(zipBytes);
-        setSelected({
-          kind: "zip",
-          label: file.name,
-          zipBytes,
-          bundleHash: parsed.bundleHash,
-          warnings: parsed.warnings,
-        });
-      } catch (error) {
-        setSelected(null);
-        setFailure(toUiFailure(error, "That ZIP is not a valid plugin bundle."));
-      } finally {
-        setBusy(null);
-      }
-    },
-    [],
-  );
-
-  const handleFolderPicked = useCallback(async (files: File[]) => {
+  const handleZipPicked = useCallback(async (file: File) => {
+    const run = runRef.current;
     setFailure(null);
     setBusy("preflight");
     try {
+      // Size-gate on the File's OWN metadata, before a single byte is read.
+      // Reading then parsing materializes the whole archive (twice, once
+      // inflated), so a multi-GB pick would exhaust the renderer preflighting
+      // a bundle the 25 MB compressed cap could never have accepted. A File
+      // IS a Blob, so this is the same helper — and the same
+      // ARCHIVE_TOO_LARGE_COMPRESSED code — `startImport` applies before
+      // minting an upload URL.
+      assertPluginBundleWithinCap(file);
+      const zipBytes = await readSelectedFileBytes(file);
+      const parsed = await parsePluginBundleFromZip(zipBytes);
+      if (runRef.current !== run) return;
+      setSelected({
+        kind: "zip",
+        label: file.name,
+        zipBytes,
+        bundleHash: parsed.bundleHash,
+        warnings: parsed.warnings,
+      });
+    } catch (error) {
+      if (runRef.current !== run) return;
+      setSelected(null);
+      setFailure(toUiFailure(error, "That ZIP is not a valid plugin bundle."));
+    } finally {
+      if (runRef.current === run) setBusy(null);
+    }
+  }, []);
+
+  const handleFolderPicked = useCallback(async (files: File[]) => {
+    const run = runRef.current;
+    setFailure(null);
+    setBusy("preflight");
+    try {
+      // No size pre-gate here, unlike the ZIP path, and deliberately so: the
+      // folder source's `list()` reports `File.size` METADATA with no read,
+      // and the SDK parser's phase 1 (`validateBundleEntries`) throws on entry
+      // count, per-file size, and total uncompressed size before phase 2 reads
+      // any content. The selection is therefore already bounded by the shared
+      // limits, and a second cap here would be a redundant rule that could
+      // drift from them.
+      //
       // Validates AND builds the uploadable ZIP from exactly the entries the
       // parser judged, so the backend inspects the same facts.
       const { parsed, zipBytes } = await folderSelectionToPluginZip(files);
+      if (runRef.current !== run) return;
       const rootName =
         (files[0] as { webkitRelativePath?: string })?.webkitRelativePath?.split(
           "/",
@@ -261,17 +307,19 @@ export function AddPluginModal({
         warnings: parsed.warnings,
       });
     } catch (error) {
+      if (runRef.current !== run) return;
       setSelected(null);
       setFailure(
         toUiFailure(error, "That folder is not a valid plugin bundle."),
       );
     } finally {
-      setBusy(null);
+      if (runRef.current === run) setBusy(null);
     }
   }, []);
 
   const startImport = useCallback(async () => {
     if (!selected || !projectId) return;
+    const run = runRef.current;
     setFailure(null);
     setBusy("importing");
     track("plugin_import_started", {
@@ -284,7 +332,18 @@ export function AddPluginModal({
         projectId,
         bundle: selected.zipBytes,
         sourceLabel: selected.label,
+        // Adopt the id the MOMENT the row exists, not when the whole
+        // upload→inspect sequence resolves. `startImport` drives inspection
+        // itself, so a transient inspect rejection would otherwise take the
+        // id down with it and the only "retry" left would be a second upload
+        // creating a second import row — exactly the resume this dialog
+        // promises not to lose.
+        onImportCreated: (createdImportId) => {
+          if (runRef.current !== run) return;
+          setImportId(createdImportId);
+        },
       });
+      if (runRef.current !== run) return;
       setImportId(result.importId);
       if (result.inspect.status === "failed") {
         const code = result.inspect.failureCode ?? "INSPECT_FAILED";
@@ -298,24 +357,29 @@ export function AddPluginModal({
         setFailure({ code, message: "The bundle could not be inspected." });
       }
     } catch (error) {
+      if (runRef.current !== run) return;
       const uiFailure = toUiFailure(error, "The plugin import failed.");
       track("plugin_import_failed", {
         location: "add_plugin_modal",
+        // The upload/createImport steps happen before an id exists, so the id's
+        // presence is what distinguishes an inspect failure from an earlier one.
         phase: "upload",
         code: sanitizePluginCode(uiFailure.code),
       });
       setFailure(uiFailure);
     } finally {
-      setBusy(null);
+      if (runRef.current === run) setBusy(null);
     }
   }, [actions, projectId, selected]);
 
   const resumeInspect = useCallback(async () => {
     if (!importId) return;
+    const run = runRef.current;
     setFailure(null);
     setBusy("importing");
     try {
       const result = await actions.inspectImport(importId);
+      if (runRef.current !== run) return;
       if (result.status === "failed") {
         setFailure({
           code: result.failureCode ?? "INSPECT_FAILED",
@@ -323,19 +387,25 @@ export function AddPluginModal({
         });
       }
     } catch (error) {
+      if (runRef.current !== run) return;
       setFailure(toUiFailure(error, "The bundle could not be inspected."));
     } finally {
-      setBusy(null);
+      if (runRef.current === run) setBusy(null);
     }
   }, [actions, importId]);
 
   const commit = useCallback(
     async (setActive: boolean) => {
       if (!importId) return;
+      const run = runRef.current;
       setFailure(null);
+      // Remembered BEFORE the await so a retry repeats this choice even if the
+      // attempt never comes back.
+      setLastCommitSetActive(setActive);
       setBusy("committing");
       try {
         const result = await actions.commitImport(importId, { setActive });
+        if (runRef.current !== run) return;
         setCommitResult(result);
         if (result.status === "failed") {
           const code = result.failureCode ?? "COMMIT_FAILED";
@@ -354,6 +424,7 @@ export function AddPluginModal({
           ...(row?.preview ? pluginPreviewAnalyticsProps(row.preview) : {}),
         });
       } catch (error) {
+        if (runRef.current !== run) return;
         const uiFailure = toUiFailure(error, "The plugin could not be installed.");
         track("plugin_import_failed", {
           location: "add_plugin_modal",
@@ -362,7 +433,7 @@ export function AddPluginModal({
         });
         setFailure(uiFailure);
       } finally {
-        setBusy(null);
+        if (runRef.current === run) setBusy(null);
       }
     },
     [actions, importId, row?.preview],
@@ -379,7 +450,12 @@ export function AddPluginModal({
       return selected ? { label: "Try again", run: startImport } : null;
     }
     if (row.status === "preview_ready") {
-      return { label: "Retry install", run: () => commit(true) };
+      // Repeat the FAILED attempt's choice: retrying an "Install only" must
+      // not quietly activate the revision.
+      return {
+        label: "Retry install",
+        run: () => commit(lastCommitSetActive),
+      };
     }
     if (row.status === "uploaded" || row.status === "inspecting") {
       return { label: "Resume inspection", run: resumeInspect };
@@ -398,7 +474,15 @@ export function AddPluginModal({
           },
         }
       : null;
-  }, [commit, importId, resumeInspect, row, selected, startImport]);
+  }, [
+    commit,
+    importId,
+    lastCommitSetActive,
+    resumeInspect,
+    row,
+    selected,
+    startImport,
+  ]);
 
   const handleOpenChange = (next: boolean) => {
     if (!next) {

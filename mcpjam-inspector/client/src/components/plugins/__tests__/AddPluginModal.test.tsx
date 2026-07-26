@@ -18,10 +18,16 @@ const h = vi.hoisted(() => ({
   commitImport: vi.fn(),
   track: vi.fn(),
   parseZip: vi.fn(),
+  readBytes: vi.fn(),
+  /** Every id the modal actually subscribed with, in order. */
+  usedImportIds: [] as Array<string | null | undefined>,
 }));
 
 vi.mock("@/hooks/usePluginImportApi", () => ({
-  usePluginImport: () => h.row.value,
+  usePluginImport: (importId?: string | null) => {
+    h.usedImportIds.push(importId);
+    return h.row.value;
+  },
   usePluginSetupStatus: () => h.setupStatus.value,
   usePluginImportActions: () => ({
     startImport: h.startImport,
@@ -35,7 +41,7 @@ vi.mock("@/lib/analytics", () => ({ track: h.track }));
 vi.mock("@/lib/plugins/folder-bundle", () => ({
   parsePluginBundleFromZip: h.parseZip,
   folderSelectionToPluginZip: vi.fn(),
-  readSelectedFileBytes: async () => new Uint8Array([1, 2, 3]),
+  readSelectedFileBytes: h.readBytes,
 }));
 
 import { AddPluginModal } from "../AddPluginModal";
@@ -117,10 +123,15 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.row.value = undefined;
   h.setupStatus.value = undefined;
+  h.usedImportIds.length = 0;
+  h.readBytes.mockResolvedValue(new Uint8Array([1, 2, 3]));
   h.parseZip.mockResolvedValue({ bundleHash: "aa11bb22cc33dd44", warnings: [] });
-  h.startImport.mockResolvedValue({
-    importId: "imp_1",
-    inspect: { importId: "imp_1", status: "preview_ready" },
+  h.startImport.mockImplementation(async (args: any) => {
+    args?.onImportCreated?.("imp_1");
+    return {
+      importId: "imp_1",
+      inspect: { importId: "imp_1", status: "preview_ready" },
+    };
   });
   h.commitImport.mockResolvedValue({
     importId: "imp_1",
@@ -223,9 +234,12 @@ describe("AddPluginModal — retry resumes", () => {
   });
 
   it("resumes inspection for an import that never got inspected", async () => {
-    h.startImport.mockResolvedValue({
-      importId: "imp_1",
-      inspect: { importId: "imp_1", status: "failed", failureCode: "TIMEOUT" },
+    h.startImport.mockImplementation(async (args: any) => {
+      args?.onImportCreated?.("imp_1");
+      return {
+        importId: "imp_1",
+        inspect: { importId: "imp_1", status: "failed", failureCode: "TIMEOUT" },
+      };
     });
     const view = render(
       <AddPluginModal isOpen onClose={vi.fn()} projectId="p_1" />,
@@ -304,5 +318,135 @@ describe("AddPluginModal — local mode", () => {
       expect(screen.getByTestId("add-plugin-no-project")).toBeTruthy(),
     );
     expect(screen.queryByTestId("add-plugin-choose-zip")).toBeNull();
+  });
+});
+
+describe("AddPluginModal — oversized bundles never reach the renderer", () => {
+  it("rejects a ZIP over the compressed cap before reading or parsing it", async () => {
+    render(<AddPluginModal isOpen onClose={vi.fn()} projectId="p_1" />);
+    const huge = new File([new Uint8Array([1])], "huge.zip");
+    // A real multi-GB File cannot be constructed in jsdom; the cap reads
+    // `Blob.size`, so overriding it exercises the same branch.
+    Object.defineProperty(huge, "size", { value: 26 * 1024 * 1024 });
+    const input = document.querySelector(
+      'input[type="file"][accept*="zip"]',
+    ) as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(input, { target: { files: [huge] } });
+    });
+    const panel = await screen.findByTestId("add-plugin-failure");
+    expect(panel.textContent).toContain("ARCHIVE_TOO_LARGE_COMPRESSED");
+    // Neither the read nor the parse ran: no bytes were materialized.
+    expect(h.readBytes).not.toHaveBeenCalled();
+    expect(h.parseZip).not.toHaveBeenCalled();
+  });
+});
+
+describe("AddPluginModal — a stale import cannot resurface under a new project", () => {
+  it("drops an import that resolves after the project changed", async () => {
+    let releaseImport: (() => void) | null = null;
+    h.startImport.mockImplementation(async (args: any) => {
+      await new Promise<void>((resolve) => {
+        releaseImport = resolve;
+      });
+      args?.onImportCreated?.("imp_old_project");
+      return {
+        importId: "imp_old_project",
+        inspect: { importId: "imp_old_project", status: "preview_ready" },
+      };
+    });
+
+    const view = render(
+      <AddPluginModal isOpen onClose={vi.fn()} projectId="p_old" />,
+    );
+    const input = document.querySelector(
+      'input[type="file"][accept*="zip"]',
+    ) as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(input, {
+        target: { files: [new File([new Uint8Array([1])], "demo.zip")] },
+      });
+    });
+    await screen.findByTestId("add-plugin-selected-source");
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("add-plugin-continue"));
+    });
+
+    // Switch projects while the import is still in flight, then let it land.
+    view.rerender(<AddPluginModal isOpen onClose={vi.fn()} projectId="p_new" />);
+    await act(async () => {
+      releaseImport?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // The old project's row must not be adopted, from the callback OR the
+    // resolved result: the source picker is back and nothing is subscribed.
+    expect(h.usedImportIds).not.toContain("imp_old_project");
+    expect(screen.getByTestId("add-plugin-choose-zip")).toBeTruthy();
+    expect(screen.queryByTestId("add-plugin-progress")).toBeNull();
+  });
+});
+
+describe("AddPluginModal — the import id survives an inspect failure", () => {
+  it("resumes the created import instead of uploading a second one", async () => {
+    // `startImport` drives inspection, so a rejecting inspect rejects the
+    // whole call — the id must still have arrived via onImportCreated.
+    h.startImport.mockImplementation(async (args: any) => {
+      args?.onImportCreated?.("imp_1");
+      throw new Error("inspect action timed out");
+    });
+    const view = render(
+      <AddPluginModal isOpen onClose={vi.fn()} projectId="p_1" />,
+    );
+    const input = document.querySelector(
+      'input[type="file"][accept*="zip"]',
+    ) as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(input, {
+        target: { files: [new File([new Uint8Array([1])], "demo.zip")] },
+      });
+    });
+    await screen.findByTestId("add-plugin-selected-source");
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("add-plugin-continue"));
+    });
+    await screen.findByTestId("add-plugin-failure");
+
+    h.row.value = importRow({ status: "uploaded", preview: undefined });
+    view.rerender(<AddPluginModal isOpen onClose={vi.fn()} projectId="p_1" />);
+    h.startImport.mockClear();
+    h.inspectImport.mockResolvedValue({
+      importId: "imp_1",
+      status: "preview_ready",
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("add-plugin-retry"));
+    });
+    expect(h.inspectImport).toHaveBeenCalledWith("imp_1");
+    expect(h.startImport).not.toHaveBeenCalled();
+  });
+});
+
+describe("AddPluginModal — retry repeats the chosen install mode", () => {
+  it("does not activate the revision when the failed attempt was Install only", async () => {
+    h.commitImport.mockRejectedValueOnce(new Error("network blip"));
+    await reachPreview();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("add-plugin-install-only"));
+    });
+    await screen.findByTestId("add-plugin-failure");
+
+    h.commitImport.mockResolvedValue({
+      importId: "imp_1",
+      status: "completed",
+      pluginVersionId: "pv_1",
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("add-plugin-retry"));
+    });
+    expect(h.commitImport).toHaveBeenLastCalledWith("imp_1", {
+      setActive: false,
+    });
   });
 });

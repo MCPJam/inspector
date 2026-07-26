@@ -85,16 +85,13 @@ function Section({
 }
 
 function RequirementLine({ requirement }: { requirement: PluginSetupRequirement }) {
-  const kindLabel =
-    requirement.kind === "env"
-      ? "env"
-      : requirement.kind === "header"
-        ? "header"
-        : "oauth";
   return (
     <li className="flex items-center gap-2 text-xs">
       <code className="rounded bg-muted px-1 py-0.5">{requirement.name}</code>
-      <span className="text-muted-foreground">{kindLabel}</span>
+      {/* Echo the declared kind verbatim. Mapping it through a ternary meant
+          any kind this client does not know yet fell through to "oauth" —
+          claiming an authorization requirement the bundle never declared. */}
+      <span className="text-muted-foreground">{requirement.kind}</span>
       {requirement.required ? null : (
         <span className="text-muted-foreground">optional</span>
       )}
