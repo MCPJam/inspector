@@ -232,7 +232,12 @@ Declaring both `mcp_servers` and `mcpServers` in the same file is an error. A ba
 
 ### Mixing STDIO and HTTP/SHTTP servers
 
-You can mix STDIO and HTTP (Streamable HTTP / SHTTP) server entries in the same config. Each entry's transport is inferred from its fields: `command` + `args` means STDIO, `url` means HTTP/SHTTP.
+You can mix STDIO and HTTP (Streamable HTTP / SHTTP) server entries in the same config. Transport is determined as follows:
+
+1. If the entry has an explicit `type` or `transport` field, that wins.
+2. Otherwise it is inferred from the other fields: `command` means STDIO, `url` means HTTP/SHTTP.
+
+Accepted values for `type`/`transport` are `stdio`, `http`, `sse`, and all common spellings of Streamable HTTP (`streamable-http`, `streamable_http`, `streamableHttp`). An unrecognised value causes that server entry to be skipped.
 
 ```json config.json
 {
@@ -253,6 +258,8 @@ You can mix STDIO and HTTP (Streamable HTTP / SHTTP) server entries in the same 
   }
 }
 ```
+
+`headers` on HTTP entries and `env` on STDIO entries are preserved through the import and kept for subsequent connections — re-importing a config will not clear credentials already stored for a server of the same name.
 
 The terminal and desktop installs accept both shapes in the same file. The hosted web app accepts HTTP/SHTTP entries only — STDIO entries are ignored because the hosted runtime cannot spawn local processes.
 
