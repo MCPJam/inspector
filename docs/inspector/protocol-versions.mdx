@@ -125,7 +125,7 @@ If your server already speaks `2026-07-28`, you mostly won't notice. A few thing
 The 2026 RC client is a **preview**. A handful of pieces from the SEP family aren't wired up yet — if you try them, the inspector throws a labeled error instead of silently no-op'ing:
 
 - `subscriptions/listen` (long-lived notification stream)
-- Server-initiated requests via MRTR / `InputRequiredResult` for sampling and listRoots embedded in responses (elicitation via `input_required` is supported — see [Multi-round input](#multi-round-input-mcp-2026-07-28-input_required))
+- `InputRequiredResult` for **sampling** and **listRoots** embedded in responses (MRTR `input_required` for `tools/call`, `prompts/get`, and `resources/read` is supported — see [Multi-round input](#multi-round-input-mcp-2026-07-28-input_required))
 - Resumption tokens
 - Backward-compat probes against pre-RC servers — if you point the RC client at an `initialize`-only server it will fail at `server/discover`, not fall back.
 
