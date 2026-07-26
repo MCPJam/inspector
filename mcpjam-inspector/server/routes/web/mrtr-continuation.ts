@@ -123,6 +123,35 @@ function deriveServerConfigDigest(
 }
 
 /**
+ * Collapse the per-server `oauthTokens` map onto the single-server
+ * `oauthAccessToken` this route actually connects with.
+ *
+ * A continuation is bound to exactly ONE server, so the resume body carries
+ * `serverId` (not `serverIds`) — and `resolveConnectionParams` therefore takes
+ * its single-server branch, which reads only `oauthAccessToken` and drops
+ * `oauthTokens` on the floor. Hosted chat holds the per-server map, so a caller
+ * that sends it would have had its token silently discarded: the fresh resume
+ * connection then fails OAuth-required before the continuation could be claimed,
+ * stranding the suspended operation until it expired. Declaring a field the
+ * route ignores is the bug; honor it here rather than accept it and drop it.
+ *
+ * An explicit `oauthAccessToken` wins — it is the more specific field.
+ */
+function normalizeResumeOAuth(
+  rawBody: Record<string, unknown>,
+): Record<string, unknown> {
+  if (typeof rawBody.oauthAccessToken === "string") return rawBody;
+  const serverId = rawBody.serverId;
+  const tokens = rawBody.oauthTokens;
+  if (typeof serverId !== "string" || tokens === null || typeof tokens !== "object") {
+    return rawBody;
+  }
+  const token = (tokens as Record<string, unknown>)[serverId];
+  if (typeof token !== "string" || !token) return rawBody;
+  return { ...rawBody, oauthAccessToken: token };
+}
+
+/**
  * POST /mrtr/resume  (mounted: `web.route("/mrtr", …)` → `/api/web/mrtr/resume`)
  *
  * Not to be confused with the FROZEN Convex-side `/web/mrtr/continuation/*`
@@ -180,7 +209,7 @@ mrtrContinuation.post("/resume", async (c) =>
     const bearer = await getConvexBearerForRequest(c);
     const { manager, body } = await createManualHostedConnection(
       c,
-      rawBody,
+      normalizeResumeOAuth(rawBody),
       resumeSchema,
       { timeoutMs: WEB_CALL_TIMEOUT_MS },
     );

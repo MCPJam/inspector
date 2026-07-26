@@ -1,12 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MrtrOperationState } from "@mcpjam/sdk";
 import {
   MrtrResumeStateDecodeError,
   MrtrResumeStateTooLargeError,
+  claimContinuation,
   decodeResumeState,
   encodeResumeState,
   redactContinuationForLog,
 } from "../mrtr-continuation-state";
+import { MRTR_CONTINUATION_ROUTE_TIMEOUT_MS } from "../../config";
 
 const SECRET = "OPAQUE_REQUEST_STATE_DO_NOT_LOG";
 
@@ -86,5 +88,48 @@ describe("redactContinuationForLog", () => {
       serverId: "srv-1",
       operationMethod: "tools/call",
     });
+  });
+});
+
+describe("continuation route deadline", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("bounds the response BODY read, not just the headers", async () => {
+    // `fetch` resolves once headers arrive. A backend that then stalls the body
+    // must still hit the route deadline — otherwise the call hangs forever,
+    // parking a resume worker and holding its lease until the continuation dies.
+    process.env.CONVEX_HTTP_URL = "https://convex.test";
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+      const signal = init.signal as AbortSignal;
+      return {
+        ok: true,
+        status: 200,
+        json: () =>
+          new Promise((_resolve, reject) => {
+            signal.addEventListener(
+              "abort",
+              () => reject(new Error("body aborted")),
+              { once: true },
+            );
+          }),
+      } as unknown as Response;
+    });
+
+    const pending = claimContinuation("bearer", {
+      continuationId: "cont-1",
+      bindingFingerprint: "fp",
+      leaseId: "lease-1",
+    });
+    await vi.advanceTimersByTimeAsync(MRTR_CONTINUATION_ROUTE_TIMEOUT_MS + 50);
+    const result = await pending;
+
+    expect(result.ok).toBe(false);
+    // Reported as a deadline, not mislabeled as a non-JSON body.
+    expect((result as { status: number }).status).toBe(504);
+    expect((result as { error: string }).error).toMatch(/deadline/i);
   });
 });

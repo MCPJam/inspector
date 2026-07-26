@@ -148,6 +148,10 @@ async function postContinuation(
     if (signal.aborted) controller.abort();
     else signal.addEventListener("abort", onAbort, { once: true });
   }
+  const clearDeadline = () => {
+    clearTimeout(deadline);
+    signal?.removeEventListener("abort", onAbort);
+  };
 
   let response: Response;
   try {
@@ -164,25 +168,39 @@ async function postContinuation(
     // timeout, abort); it does not contain the body, so surfacing it to
     // Sentry/console is safe and preserves the concrete cause.
     logger.error(`[mrtr-continuation] ${pathSuffix} network error`, err);
+    clearDeadline();
     return {
       ok: false,
       status: 502,
       error: "Failed to reach mrtr continuation endpoint",
     };
-  } finally {
-    clearTimeout(deadline);
-    signal?.removeEventListener("abort", onAbort);
   }
 
+  // NOTE: the deadline stays armed through the body read and is cleared only
+  // below. `fetch` resolves as soon as the response HEADERS arrive, so clearing
+  // it here would leave `response.json()` unbounded — a backend or intermediary
+  // that sends headers and then stalls the body would hang the call forever
+  // despite the documented route bound, parking a resume worker and holding its
+  // lease until the continuation expired. Aborting the controller mid-read
+  // rejects `json()`, which the catch below reports as a deadline.
   let payload: any = null;
   try {
     payload = await response.json();
   } catch {
+    if (controller.signal.aborted) {
+      return {
+        ok: false,
+        status: 504,
+        error: `continuation/${pathSuffix} exceeded the ${MRTR_CONTINUATION_ROUTE_TIMEOUT_MS}ms route deadline while reading the response body`,
+      };
+    }
     return {
       ok: false,
       status: response.ok ? 502 : response.status,
       error: `continuation/${pathSuffix} returned ${response.status} with non-JSON body`,
     };
+  } finally {
+    clearDeadline();
   }
   if (!response.ok || payload?.ok !== true) {
     return {
