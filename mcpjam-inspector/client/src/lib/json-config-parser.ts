@@ -14,6 +14,93 @@ export interface JsonConfig {
 }
 
 /**
+ * The wrapper shape a pasted/uploaded config used. Mirrors the MCP config
+ * normalization in `@mcpjam/sdk`'s plugin-bundle parser
+ * (sdk/src/plugin-bundle/mcp-config.ts, `normalizePluginMcpConfig`): a direct
+ * server map, an `mcp_servers` wrapper (OpenAI plugin docs), or an
+ * `mcpServers` wrapper (MCPJam/Claude style) all resolve to the same
+ * `Record<serverName, config>` through this one code path.
+ */
+export type JsonConfigShape = "direct" | "mcp_servers" | "mcpServers";
+
+export type ResolvedJsonServerMap =
+  | { ok: true; shape: JsonConfigShape; servers: Record<string, unknown> }
+  | { ok: false; error: string };
+
+/**
+ * Resolve a parsed JSON document to its server map. Single source of truth for
+ * the three compatible source shapes — `parseJsonConfig` and
+ * `validateJsonConfig` both go through here, so they can never disagree about
+ * which shapes are accepted.
+ *
+ * Shape-detection semantics intentionally mirror the SDK plugin-bundle parser
+ * (which the backend runs on imported plugin bundles):
+ * - declaring BOTH `mcp_servers` and `mcpServers` is an error;
+ * - a bare single server object (top-level string `command`/`url`) is
+ *   rejected — only string values indicate that shape, since a direct map may
+ *   legitimately contain a server NAMED "url" or "command" (object value);
+ * - anything else that is a plain object is treated as a direct server map.
+ */
+export function resolveJsonServerMap(config: unknown): ResolvedJsonServerMap {
+  if (config === null || typeof config !== "object" || Array.isArray(config)) {
+    return { ok: false, error: "Configuration must be a JSON object" };
+  }
+  const record = config as Record<string, unknown>;
+
+  const hasSnake = record.mcp_servers !== undefined;
+  const hasCamel = record.mcpServers !== undefined;
+  if (hasSnake && hasCamel) {
+    return {
+      ok: false,
+      error:
+        'Configuration declares both "mcp_servers" and "mcpServers"; use only one',
+    };
+  }
+
+  let shape: JsonConfigShape = "direct";
+  let serverMap: unknown = record;
+  if (hasSnake) {
+    shape = "mcp_servers";
+    serverMap = record.mcp_servers;
+  } else if (hasCamel) {
+    shape = "mcpServers";
+    serverMap = record.mcpServers;
+  } else if (
+    typeof record.command === "string" ||
+    typeof record.url === "string"
+  ) {
+    return {
+      ok: false,
+      error:
+        'Configuration looks like a single server config; wrap it in "mcpServers": { "server-name": { ... } }',
+    };
+  }
+
+  if (
+    serverMap === null ||
+    typeof serverMap !== "object" ||
+    Array.isArray(serverMap)
+  ) {
+    // Preserves the long-standing message for a malformed `mcpServers` value.
+    return {
+      ok: false,
+      error: `missing or invalid "${shape}" property`,
+    };
+  }
+
+  return { ok: true, shape, servers: serverMap as Record<string, unknown> };
+}
+
+/**
+ * Shared per-entry guard: a server config must be a plain object (not null,
+ * not an array). Used by both `parseJsonConfig` and `validateJsonConfig` so
+ * the two paths cannot silently diverge.
+ */
+function isServerConfigRecord(value: unknown): value is JsonServerConfig {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
  * Formats ServerWithName objects to JSON config format
  * @param serversObj - Record of server names to ServerWithName objects
  * @returns JsonConfig object ready for export
@@ -53,29 +140,33 @@ export function formatJsonConfig(
 }
 
 /**
- * Parses a JSON config file and converts it to ServerFormData array
+ * Parses a JSON config file and converts it to ServerFormData array.
+ * Accepts a direct server map, an `mcp_servers` wrapper, or an `mcpServers`
+ * wrapper — all three resolve through `resolveJsonServerMap` and then share
+ * the same per-server mapping, so identical server configs import identically
+ * regardless of wrapper shape.
  * @param jsonContent - The JSON string content
  * @returns Array of ServerFormData objects
  */
 export function parseJsonConfig(jsonContent: string): ServerFormData[] {
   try {
-    const config: JsonConfig = JSON.parse(jsonContent);
+    const config: unknown = JSON.parse(jsonContent);
 
-    if (!config.mcpServers || typeof config.mcpServers !== "object") {
-      throw new Error(
-        'Invalid JSON config: missing or invalid "mcpServers" property',
-      );
+    const resolved = resolveJsonServerMap(config);
+    if (!resolved.ok) {
+      throw new Error(`Invalid JSON config: ${resolved.error}`);
     }
 
     const servers: ServerFormData[] = [];
 
-    for (const [serverName, serverConfig] of Object.entries(
-      config.mcpServers,
+    for (const [serverName, rawServerConfig] of Object.entries(
+      resolved.servers,
     )) {
-      if (!serverConfig || typeof serverConfig !== "object") {
+      if (!isServerConfigRecord(rawServerConfig)) {
         console.warn(`Skipping invalid server config for "${serverName}"`);
         continue;
       }
+      const serverConfig = rawServerConfig;
 
       // Determine server type based on config
       if (serverConfig.type === "sse" || serverConfig.url) {
@@ -115,7 +206,8 @@ export function parseJsonConfig(jsonContent: string): ServerFormData[] {
 }
 
 /**
- * Validates a JSON config file without parsing it
+ * Validates a JSON config file without parsing it. Accepts the same three
+ * shapes as `parseJsonConfig` (shared `resolveJsonServerMap` code path).
  * @param jsonContent - The JSON string content
  * @returns Validation result with success status and error message
  */
@@ -124,35 +216,31 @@ export function validateJsonConfig(jsonContent: string): {
   error?: string;
 } {
   try {
-    const config = JSON.parse(jsonContent);
+    const config: unknown = JSON.parse(jsonContent);
 
-    if (!config.mcpServers || typeof config.mcpServers !== "object") {
-      return {
-        success: false,
-        error: 'Missing or invalid "mcpServers" property',
-      };
+    const resolved = resolveJsonServerMap(config);
+    if (!resolved.ok) {
+      return { success: false, error: resolved.error };
     }
 
-    const serverNames = Object.keys(config.mcpServers);
+    const serverNames = Object.keys(resolved.servers);
     if (serverNames.length === 0) {
       return {
         success: false,
-        error: 'No servers found in "mcpServers" object',
+        error: "No servers found in the configuration",
       };
     }
 
     // Validate each server config
-    for (const [serverName, serverConfig] of Object.entries(
-      config.mcpServers,
-    )) {
-      if (!serverConfig || typeof serverConfig !== "object") {
+    for (const [serverName, serverConfig] of Object.entries(resolved.servers)) {
+      if (!isServerConfigRecord(serverConfig)) {
         return {
           success: false,
           error: `Invalid server config for "${serverName}"`,
         };
       }
 
-      const configObj = serverConfig as JsonServerConfig;
+      const configObj = serverConfig;
       const hasCommand =
         configObj.command && typeof configObj.command === "string";
       const hasUrl = configObj.url && typeof configObj.url === "string";
