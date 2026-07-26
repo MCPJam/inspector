@@ -51,6 +51,15 @@ export interface ElicitationField {
    * when the items are NOT enum-constrained. Defaults to `"string"`.
    */
   itemType?: "string" | "number" | "integer" | "boolean";
+  /**
+   * Whether a blank answer is a schema-VALID value for this required field
+   * rather than a miss: a required string with no positive `minLength` accepts
+   * `""`, and a required array with no positive `minItems` accepts `[]`.
+   * Rejecting those would make the elicitation impossible to complete, since a
+   * required key can't be skipped. Always false for optional fields (a blank
+   * answer there omits the key, which is the more useful default).
+   */
+  allowEmpty?: boolean;
 }
 
 /**
@@ -98,6 +107,21 @@ interface LooseElicitRequest {
 }
 
 /**
+ * Strips terminal control sequences from server-supplied text before it is
+ * rendered next to a consent prompt.
+ *
+ * Elicitation messages, URLs, field labels and choice lists are attacker-
+ * controlled: a raw `ESC[` sequence could repaint the screen, hide the real URL
+ * the user is approving, or forge the `[a]pprove / [d]ecline` line. Everything
+ * except tab is removed from the C0/C1 ranges (newlines included — a message is
+ * rendered as one line so it cannot push the prompt out of view), and DEL too.
+ */
+export function sanitizeTerminalText(value: string): string {
+  // eslint-disable-next-line no-control-regex
+  return value.replace(/[\u0000-\u0008\u000A-\u001F\u007F-\u009F]/g, " ");
+}
+
+/**
  * Decides whether the interactive verb must fall back to a clean decline. True
  * when the user asked for it (`--yes`), when running under CI, or when stdin is
  * not a TTY (piped / redirected with no `--yes` — nothing to prompt).
@@ -111,6 +135,54 @@ export function resolveNonInteractive(args: {
   const env = args.env ?? process.env;
   if (env.CI || env.MCPJAM_NON_INTERACTIVE) return true;
   return args.stdinIsTTY !== true;
+}
+
+/**
+ * The `elicitation` client capability an interactive verb must advertise.
+ *
+ * Bare `{}` is form-ONLY under the spec's mode semantics (and under this repo's
+ * own `getSupportedElicitationModes` check), so a client that leaves it bare
+ * never legitimately receives the url-mode request the terminal collector
+ * implements. The collector handles both modes, so both are declared —
+ * advertise exactly what is enforced.
+ */
+export const INTERACTIVE_ELICITATION_CAPABILITY = {
+  form: {},
+  url: {},
+} as const;
+
+/**
+ * Builds the `beforeConnect` hook that registers a terminal MRTR input
+ * collector when `--interactive` is set. Registration happens **before** the
+ * manager connects so `elicitation` is advertised on the connect envelope — a
+ * 2026-07-28 server only embeds `input_required` elicitations for a client that
+ * declared the capability. Without `--interactive`, no collector is registered
+ * and the verb behaves exactly as before (legacy fast path unchanged).
+ *
+ * Note there is no `--quiet` sink here: interactive output is the server's
+ * message, the URL under consent, the choice list and the validation errors —
+ * suppressing it would leave the user answering prompts they cannot read. It
+ * all goes to stderr, so `--quiet`\'s actual contract (a clean, machine-readable
+ * stdout) is unaffected.
+ */
+export function buildMrtrBeforeConnect(options: {
+  interactive?: boolean;
+  yes?: boolean;
+}):
+  | ((
+      manager: import("@mcpjam/sdk").MCPClientManager,
+      serverId: string,
+    ) => void)
+  | undefined {
+  if (!options.interactive) return undefined;
+  const nonInteractive = resolveNonInteractive({
+    yes: options.yes,
+    stdinIsTTY: Boolean(process.stdin.isTTY),
+  });
+  const collector = createStdinMrtrCollector({ nonInteractive });
+  return (manager, serverId) => {
+    manager.setMrtrInputCollector(serverId, collector);
+  };
 }
 
 /**
@@ -183,6 +255,9 @@ export function parseElicitationFields(requestedSchema: unknown): ElicitationFie
         ...(itemEnum ? { enumValues: itemEnum.values } : {}),
         ...(itemEnum?.names ? { enumNames: itemEnum.names } : {}),
         ...(itemEnum ? {} : { itemType }),
+        ...(required.has(key) && !isPositiveInteger(prop.minItems)
+          ? { allowEmpty: true }
+          : {}),
       });
       continue;
     }
@@ -196,9 +271,25 @@ export function parseElicitationFields(requestedSchema: unknown): ElicitationFie
           : rawType === "boolean"
             ? "boolean"
             : "string";
-    fields.push({ key, type, required: required.has(key), title, description });
+    fields.push({
+      key,
+      type,
+      required: required.has(key),
+      title,
+      description,
+      ...(type === "string" &&
+      required.has(key) &&
+      !isPositiveInteger(prop.minLength)
+        ? { allowEmpty: true }
+        : {}),
+    });
   }
   return fields;
+}
+
+/** True for a schema bound that actually forbids an empty value. */
+function isPositiveInteger(value: unknown): boolean {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
 }
 
 /**
@@ -269,9 +360,17 @@ export function coerceFieldValue(
   const trimmed = raw.trim();
   if (trimmed === "") {
     if (field.required) {
-      throw new Error(`"${field.key}" is required.`);
+      // A blank answer is the schema-valid empty value when the field permits
+      // one (`minLength`/`minItems` absent or zero) — rejecting it would leave
+      // the required key unanswerable. Arrays fall through to the array case,
+      // which produces `[]`.
+      if (field.allowEmpty && field.type === "string") return { value: "" };
+      if (!(field.allowEmpty && field.type === "array")) {
+        throw new Error(`"${sanitizeTerminalText(field.key)}" is required.`);
+      }
+    } else {
+      return { skip: true };
     }
-    return { skip: true };
   }
 
   switch (field.type) {
@@ -291,7 +390,7 @@ export function coerceFieldValue(
       const lowered = trimmed.toLowerCase();
       if (["y", "yes", "true", "1"].includes(lowered)) return { value: true };
       if (["n", "no", "false", "0"].includes(lowered)) return { value: false };
-      throw new Error(`Enter yes/no for "${field.key}".`);
+      throw new Error(`Enter yes/no for "${sanitizeTerminalText(field.key)}".`);
     }
     case "enum": {
       const values = field.enumValues ?? [];
@@ -302,7 +401,7 @@ export function coerceFieldValue(
         return { value: values[idx - 1] };
       }
       throw new Error(
-        `Choose one of: ${values.join(", ")} (or its number).`,
+        `Choose one of: ${sanitizeTerminalText(values.join(", "))} (or its number).`,
       );
     }
     case "array": {
@@ -314,8 +413,9 @@ export function coerceFieldValue(
         .map((p) => p.trim())
         .filter((p) => p !== "");
       if (parts.length === 0) {
-        if (field.required) throw new Error(`"${field.key}" is required.`);
-        return { skip: true };
+        if (!field.required) return { skip: true };
+        if (field.allowEmpty) return { value: [] };
+        throw new Error(`"${sanitizeTerminalText(field.key)}" is required.`);
       }
       const values = field.enumValues;
       if (values && values.length > 0) {
@@ -326,7 +426,7 @@ export function coerceFieldValue(
             return values[idx - 1];
           }
           throw new Error(
-            `Choose from: ${values.join(", ")} (comma-separated values or numbers).`,
+            `Choose from: ${sanitizeTerminalText(values.join(", "))} (comma-separated values or numbers).`,
           );
         });
         return { value: selected };
@@ -421,13 +521,22 @@ async function collectOne(
   const message = typeof params.message === "string" ? params.message : undefined;
   const mode = params.mode === "url" ? "url" : "form";
 
+  // Everything the server supplies is sanitized before it reaches the terminal:
+  // it renders right next to the consent prompt, so a raw escape sequence could
+  // hide the URL being approved or forge the prompt line itself.
   ctx.write("\n");
-  ctx.write(message ? `${message}\n` : `Input requested ("${key}"):\n`);
+  ctx.write(
+    message
+      ? `${sanitizeTerminalText(message)}\n`
+      : `Input requested ("${sanitizeTerminalText(key)}"):\n`,
+  );
 
   if (mode === "url") {
     const url = typeof params.url === "string" ? params.url : "(no URL provided)";
     // Plain text only — the CLI never auto-opens a browser.
-    ctx.write(`Open this URL to continue, then confirm below:\n  ${url}\n`);
+    ctx.write(
+      `Open this URL to continue, then confirm below:\n  ${sanitizeTerminalText(url)}\n`,
+    );
     const action = await askAction(ctx.reader, ctx.write, ctx.signal, {
       acceptLabel: "approve",
     });
@@ -445,19 +554,30 @@ async function collectOne(
   // Null-prototype: field keys are server-assigned and untrusted (see above).
   const content: Record<string, unknown> = Object.create(null);
   for (const field of fields) {
-    const label = field.title ?? field.key;
-    if (field.description) ctx.write(`  ${field.description}\n`);
+    const label = sanitizeTerminalText(field.title ?? field.key);
+    if (field.description)
+      ctx.write(`  ${sanitizeTerminalText(field.description)}\n`);
     if (field.type === "enum" || field.type === "array") {
       const values = field.enumValues ?? [];
       values.forEach((value, index) => {
         const name = field.enumNames?.[index];
-        ctx.write(`    ${index + 1}) ${value}${name ? ` — ${name}` : ""}\n`);
+        // Display only — the raw value is what gets matched and sent back.
+        ctx.write(
+          `    ${index + 1}) ${sanitizeTerminalText(value)}` +
+            `${name ? ` — ${sanitizeTerminalText(name)}` : ""}\n`,
+        );
       });
       if (field.type === "array") {
         ctx.write(`    (comma-separated for multiple)\n`);
       }
     }
-    const suffix = field.required ? "" : " (optional, blank to skip)";
+    const suffix = !field.required
+      ? " (optional, blank to skip)"
+      : field.allowEmpty
+        ? field.type === "array"
+          ? " (required, blank for none)"
+          : " (required, blank for empty)"
+        : "";
     let coerced: { skip: true } | { value: unknown } | undefined;
     for (let attempt = 1; attempt <= ctx.maxFieldAttempts; attempt += 1) {
       throwIfAborted(ctx.signal);
@@ -472,7 +592,7 @@ async function collectOne(
         ctx.write(`  ${(error as Error).message}\n`);
         if (attempt === ctx.maxFieldAttempts) {
           throw new Error(
-            `Could not collect a valid value for "${field.key}" after ` +
+            `Could not collect a valid value for "${sanitizeTerminalText(field.key)}" after ` +
               `${ctx.maxFieldAttempts} attempts.`,
           );
         }

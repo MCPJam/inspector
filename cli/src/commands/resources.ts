@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import { listResources, readResource } from "@mcpjam/sdk";
 import { withEphemeralManager } from "../lib/ephemeral.js";
-import { buildMrtrBeforeConnect } from "./tools.js";
+import { buildMrtrBeforeConnect } from "../lib/mrtr-input.js";
 import { createCliRpcLogCollector } from "../lib/rpc-logs.js";
 import { withRpcLogsIfRequested } from "../lib/rpc-helpers.js";
 import {
@@ -111,7 +111,8 @@ export function registerResourcesCommands(program: Command): void {
         rpcLogger: collector?.rpcLogger,
         retryPolicy,
         host: host?.connection,
-        beforeConnect: buildMrtrBeforeConnect(options, globalOptions),
+        beforeConnect: buildMrtrBeforeConnect(options),
+        interactiveElicitation: options.interactive === true,
       },
     );
 

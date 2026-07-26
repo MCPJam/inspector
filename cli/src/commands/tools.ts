@@ -6,10 +6,7 @@ import {
 } from "@mcpjam/sdk";
 import { writeCommandDebugArtifact } from "../lib/debug-artifact.js";
 import { withEphemeralManager } from "../lib/ephemeral.js";
-import {
-  createStdinMrtrCollector,
-  resolveNonInteractive,
-} from "../lib/mrtr-input.js";
+import { buildMrtrBeforeConnect } from "../lib/mrtr-input.js";
 import {
   buildInspectorServerName,
   findInspectorRenderError,
@@ -78,39 +75,6 @@ interface ToolsCallOptions extends SharedServerTargetOptions {
   theme?: string;
   locale?: string;
   timeZone?: string;
-}
-
-/**
- * Builds the `beforeConnect` hook that registers a terminal MRTR input
- * collector when `--interactive` is set. Registration happens **before** the
- * manager connects so `elicitation` is advertised on the connect envelope — a
- * 2026-07-28 server only embeds `input_required` elicitations for a client that
- * declared the capability. Without `--interactive`, no collector is registered
- * and the verb behaves exactly as before (legacy fast path unchanged).
- */
-export function buildMrtrBeforeConnect(
-  options: { interactive?: boolean; yes?: boolean },
-  globalOptions: Pick<GlobalOptions, "quiet">,
-):
-  | ((
-      manager: import("@mcpjam/sdk").MCPClientManager,
-      serverId: string,
-    ) => void)
-  | undefined {
-  if (!options.interactive) return undefined;
-  const nonInteractive = resolveNonInteractive({
-    yes: options.yes,
-    stdinIsTTY: Boolean(process.stdin.isTTY),
-  });
-  const collector = createStdinMrtrCollector({
-    nonInteractive,
-    write: globalOptions.quiet
-      ? () => {}
-      : (text: string) => void process.stderr.write(text),
-  });
-  return (manager, serverId) => {
-    manager.setMrtrInputCollector(serverId, collector);
-  };
 }
 
 export function registerToolsCommands(program: Command): void {
@@ -310,6 +274,16 @@ export function registerToolsCommands(program: Command): void {
       );
     }
     const paramsInput = options.toolArgsStdin ? "-" : resolvedParamsInput;
+    if (options.interactive && paramsInput === "-") {
+      // Both would read `process.stdin`: the JSON parse drains it first, so the
+      // collector would hit EOF (or, on a TTY, a stream the user already closed)
+      // and could never answer an embedded elicitation.
+      throw usageError(
+        "--interactive cannot be used together with tool parameters read from " +
+          "stdin (--tool-args-stdin or --tool-args/--params -): interactive " +
+          "answers are read from stdin too. Pass the parameters as JSON or @path.",
+      );
+    }
     const params = parseJsonRecord(paramsInput, "Tool parameters") ?? {};
     const targetSummary = summarizeServerDoctorTarget(target, config);
     const shouldValidateResponse = options.validateResponse === true;
@@ -360,7 +334,8 @@ export function registerToolsCommands(program: Command): void {
           timeout: globalOptions.timeout,
           rpcLogger: primaryCollector?.rpcLogger,
           host: host?.connection,
-          beforeConnect: buildMrtrBeforeConnect(options, globalOptions),
+          beforeConnect: buildMrtrBeforeConnect(options),
+          interactiveElicitation: options.interactive === true,
         },
       );
     } catch (error) {
