@@ -49,6 +49,17 @@ import {
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { type ExecutionScope } from "../../utils/execution-scope.js";
 import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availability.js";
+import { harnessSupportsSkills } from "../../utils/harness/registry.js";
+import { normalizeExecutionTarget } from "@/shared/execution-target";
+import { createConvexClient } from "../../services/evals/route-helpers.js";
+import {
+  resolveEnvironmentForRuntime,
+  runtimeServerIds,
+  runtimeServerNames,
+  runtimeServersAreOverridden,
+  runtimeSkills as environmentRuntimeSkills,
+  type ResolvedEnvironmentRuntime,
+} from "../../services/environments/runtime.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
 import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
 import { buildMcpjamPlatformClient } from "./mcpjam-platform-client.js";
@@ -90,6 +101,11 @@ chatV2.post("/", async (c) => {
       // opaque pointer the client may forward; `harness` itself is never trusted
       // from the body.
       hostId?: string;
+      // Phase 1.1 execution target. Normalized (together with the legacy
+      // `hostId` and the access-bearing `chatboxId`) into one closed internal
+      // union below; ambiguous combinations are rejected, never shadowed.
+      executionTarget?: unknown;
+      environmentOverrides?: unknown;
     };
 
     const {
@@ -106,9 +122,42 @@ chatV2.post("/", async (c) => {
       surface,
       hostId,
     } = body;
+    // ONE closed execution target, resolved at ingress. `chatboxId` + an
+    // explicit `executionTarget` (and `hostId` + `executionTarget`) are
+    // REJECTED rather than resolved by branch precedence — see
+    // `shared/execution-target.ts` for why silent shadowing is the failure mode
+    // this normalizer exists to prevent.
+    const normalizedTarget = normalizeExecutionTarget({
+      chatboxId,
+      executionTarget: body.executionTarget,
+      environmentOverrides: body.environmentOverrides,
+      hostId,
+      projectId: hostedBody.projectId,
+    });
+    if (!normalizedTarget.ok) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        normalizedTarget.error,
+      );
+    }
+    const executionTarget = normalizedTarget.target;
     // True when this turn flows through a chatbox surface. sourceType +
     // accessScope decisions hinge on this.
-    const isChatboxSession = Boolean(chatboxId);
+    const isChatboxSession = executionTarget.kind === "chatbox";
+    // True when the execution context was RESOLVED SERVER-SIDE, so its host
+    // config — not the request body — is authoritative for capability
+    // declarations. Chatbox (a share-link visitor controls the body) and
+    // Project Environment (the server decides what the environment resolves
+    // to) both qualify.
+    //
+    // Deliberately narrower than "the environment wins everything": model,
+    // prompt, temperature and approval stay body-overridable on an environment
+    // turn, because those are ephemeral Playground tweaks. A capability
+    // declaration is not a preference — it changes what the SDK advertises on
+    // the initialize wire — so it follows the resolved host either way.
+    const isHostAuthoritative =
+      isChatboxSession || executionTarget.kind === "environment";
 
     if (!Array.isArray(messages) || messages.length === 0) {
       throw new WebRouteError(
@@ -140,7 +189,29 @@ chatV2.post("/", async (c) => {
     // `result.drift`. Pure refactor — `host-execution-context.test.ts`
     // locks the shape.
     let hostRuntimeConfig: Record<string, unknown> | null = null;
-    if (isChatboxSession && chatboxId) {
+    // Set for an environment target only. Once resolved it is the SINGLE
+    // source for this turn's host config, server set, and skills — nothing
+    // downstream may fall back to the body's `selectedServerIds`.
+    let environmentSpec: ResolvedEnvironmentRuntime | null = null;
+    if (executionTarget.kind === "environment") {
+      // One atomic member-read: host runtime config + closed server set +
+      // composed skill union + pinned plugin versions, at one revision. The
+      // browser never supplies any of it.
+      environmentSpec = await resolveEnvironmentForRuntime(
+        // `sk_…` API-key bearers can't query Convex directly; this resolves the
+        // delegated JWT (and passes JWTs through untouched), same as the eval
+        // launch path.
+        createConvexClient(await getConvexBearerForRequest(c)),
+        {
+          projectId: hostedBody.projectId,
+          environmentId: executionTarget.environmentId,
+          ...(executionTarget.overrides
+            ? { overrides: executionTarget.overrides }
+            : {}),
+        },
+      );
+      hostRuntimeConfig = environmentSpec.host.runtimeConfig;
+    } else if (isChatboxSession && chatboxId) {
       const runtime = await fetchChatboxRuntimeConfig({
         chatboxId,
         bearer: bearerToken,
@@ -173,7 +244,8 @@ chatV2.post("/", async (c) => {
           `Couldn't load this chatbox's settings, so the turn was stopped to avoid running with the wrong configuration. ${runtime.error}`
         );
       }
-    } else if (!isChatboxSession && hostId) {
+    } else if (executionTarget.kind === "host") {
+      const targetHostId = executionTarget.hostId;
       // Host-bound direct session (Playground). The host config — including the
       // server-authoritative `harness`/`computer` — is the source of truth for
       // execution shaping. Unlike the chatbox path, FAIL CLOSED here: if we
@@ -181,7 +253,7 @@ chatV2.post("/", async (c) => {
       // emulated engine, because the host may be a harness host and running
       // emulated would misrepresent it as the real Claude Code runtime.
       const runtime = await fetchHostRuntimeConfig({
-        hostId,
+        hostId: targetHostId,
         bearer: bearerToken,
         signal: c.req.raw.signal as AbortSignal | undefined,
       });
@@ -194,7 +266,7 @@ chatV2.post("/", async (c) => {
         logger.warn(
           "[chat-v2] host runtime-config fetch failed; failing closed",
           {
-            hostId,
+            hostId: targetHostId,
             status: runtime.status,
             error: runtime.error,
           },
@@ -206,6 +278,37 @@ chatV2.post("/", async (c) => {
         );
       }
     }
+
+    // ── The turn's effective server set ─────────────────────────────────────
+    // For an environment target this REPLACES the body's `selectedServerIds`
+    // everywhere below — manager authorization/connection, name mapping and
+    // elicitation, prepareChatV2, persistence/resume config, telemetry and the
+    // tool snapshot. Resolving an environment and then still handing the raw
+    // body list to the manager would connect a set the environment never
+    // authorized, which is precisely the hole the atomic resolution closes.
+    const effectiveServerIds = environmentSpec
+      ? runtimeServerIds(environmentSpec)
+      : selectedServerIds;
+    // Names stay index-aligned with the ids. An empty array (older backend
+    // without the name-carrying projection) makes `buildServerNamesById` return
+    // undefined, and the manager falls back to showing the id — the same
+    // degradation the legacy path already has when a client omits names.
+    const environmentServerNameList = environmentSpec
+      ? runtimeServerNames(environmentSpec)
+      : undefined;
+    const effectiveServerNames = environmentSpec
+      ? environmentServerNameList && environmentServerNameList.length > 0
+        ? environmentServerNameList
+        : undefined
+      : selectedServerNames;
+    // The environment's composed skill union, in the shape both engines
+    // consume. Presence — not length — is what makes it authoritative, so an
+    // environment that resolves zero skills delivers zero, and never falls back
+    // to the project-wide pool.
+    const environmentSkills = environmentSpec
+      ? environmentRuntimeSkills(environmentSpec)
+      : undefined;
+
     // Enterprise-managed authorization policy. Server-authoritative wherever
     // a backend host config exists (chatbox / host-bound turns above — the
     // same fail-closed fetch that owns harness/computer): a tampered body
@@ -338,9 +441,13 @@ chatV2.post("/", async (c) => {
         requireToolApproval,
         // Use the SERVER-resolved host server list, not the request body — a
         // stale/tampered request mustn't send an empty array to bypass the
-        // "no MCP servers" fail-closed gate.
-        hasSelectedMcpServers:
-          (resolvedExecution.selectedServerIds ?? selectedServerIds).length > 0,
+        // "no MCP servers" fail-closed gate. An environment target's resolved
+        // set outranks even the host config's own list: it IS the set we are
+        // about to connect.
+        hasSelectedMcpServers: environmentSpec
+          ? effectiveServerIds.length > 0
+          : (resolvedExecution.selectedServerIds ?? selectedServerIds).length >
+            0,
         modelEligible: isHostedCatalogModel(
           String(modelDefinition.id),
           modelDefinition.provider,
@@ -417,7 +524,12 @@ chatV2.post("/", async (c) => {
     // on such a host is rejected by the availability preflight above, so gate
     // on the actual engine (harness id + canonicalized model), not host config
     // alone.
-    const cloudSkillsEnabled = shouldEnableCloudSkillTools({
+    // An environment target NEVER also enables the project-wide cloud skill
+    // tools: its resolved union is authoritative and is delivered through
+    // `runtimeSkillsOverride`. Wiring both would double-deliver — an
+    // environment-scoped `loadSkill` alongside a project-wide one, with the
+    // model free to pull skills the environment deliberately excluded.
+    const cloudSkillsEnabled = !environmentSpec && shouldEnableCloudSkillTools({
       isGuest: Boolean(c.get("guestId")),
       harness: resolvedExecution.harness,
       modelId: String(modelDefinition.id),
@@ -435,7 +547,7 @@ chatV2.post("/", async (c) => {
       effectiveClientCapabilities,
       enabled: elicitationEnabled,
     } = resolveElicitationGate({
-      isChatboxSession,
+      hostAuthoritative: isHostAuthoritative,
       hostClientCapabilities: hostRuntimeConfig?.clientCapabilities,
       bodyClientCapabilities: hostedBody.clientCapabilities,
       clientVersion: hostedBody.hostedElicitationVersion,
@@ -450,7 +562,8 @@ chatV2.post("/", async (c) => {
           projectId: hostedBody.projectId,
           chatSessionId: hostedBody.chatSessionId,
           serverNamesById:
-            buildServerNamesById(selectedServerIds, selectedServerNames) ?? {},
+            buildServerNamesById(effectiveServerIds, effectiveServerNames) ??
+            {},
           abortSignal: c.req.raw.signal as AbortSignal | undefined,
         })
       : undefined;
@@ -467,7 +580,7 @@ chatV2.post("/", async (c) => {
       callerContextFromHono(c),
       bearerToken,
       hostedBody.projectId,
-      selectedServerIds,
+      effectiveServerIds,
       WEB_STREAM_TIMEOUT_MS,
       hostedBody.oauthTokens,
       // Chatbox: advertise the HOST's capabilities, not the body's, so the
@@ -478,7 +591,7 @@ chatV2.post("/", async (c) => {
         chatboxId,
         accessVersion,
         rpcLogger: rpcCollector.rpcLogger,
-        serverNames: selectedServerNames,
+        serverNames: effectiveServerNames,
         initializePins,
         mcpProtocolVersionsByServerId,
         xaaPolicy,
@@ -548,15 +661,48 @@ chatV2.post("/", async (c) => {
       // covered) and captureServerEvent drops it rather than mis-attribute;
       // the client `send_message` still fires, so the block-rate ratio stays
       // directionally correct.
+      // Environment-target telemetry rides the same event. Recorded here rather
+      // than at resolve time so it describes a turn that actually STARTED, and
+      // so `skill_delivery` can name the engine that will carry the skills:
+      // `harness_unsupported` is the honest answer for a skills-incapable
+      // adapter (Codex today) — the skills resolved, and nothing delivered them.
+      const skillDelivery = environmentSpec
+        ? resolvedExecution.harness
+          ? harnessSupportsSkills(resolvedExecution.harness)
+            ? "harness"
+            : "harness_unsupported"
+          : "emulated"
+        : undefined;
       captureServerEvent(c, "send_message_server", {
         origin,
         source_type: sourceType,
+        ...(environmentSpec
+          ? {
+              environment_id: environmentSpec.environmentRef.environmentId,
+              environment_name: environmentSpec.environmentRef.name,
+              environment_revision: environmentSpec.environmentRef.revision,
+              environment_host_id: environmentSpec.host.hostId,
+              environment_host_config_id:
+                environmentSpec.host.hostConfigId ?? null,
+              environment_overridden:
+                runtimeServersAreOverridden(environmentSpec),
+              environment_base_server_count:
+                environmentSpec.servers.baseEffectiveServerIds?.length ??
+                environmentSpec.servers.effectiveServerIds.length,
+              environment_effective_server_count: effectiveServerIds.length,
+              environment_skill_count: environmentSkills?.length ?? 0,
+              environment_skill_delivery: skillDelivery,
+              environment_plugin_version_ids: (
+                environmentSpec.pluginVersions ?? []
+              ).map((plugin) => plugin.pluginVersionId),
+            }
+          : {}),
       });
 
       return await streamWebChatTurn({
         manager,
         prepare: {
-          selectedServerIds,
+          selectedServerIds: effectiveServerIds,
           modelDefinition,
           systemPrompt,
           temperature,
@@ -591,6 +737,12 @@ chatV2.post("/", async (c) => {
                 },
               }
             : {}),
+          // Emulated-engine delivery of the environment's resolved skills.
+          // Mutually exclusive with `cloudSkills` above (gated on the same
+          // `environmentSpec`), and ignored by the helper on a harness turn.
+          ...(environmentSkills !== undefined
+            ? { runtimeSkillsOverride: environmentSkills }
+            : {}),
         },
         persist: {
           chatSessionId: body.chatSessionId,
@@ -607,6 +759,11 @@ chatV2.post("/", async (c) => {
           originalMessages: messages,
           ...(resolvedExecution.harness
             ? { harness: resolvedExecution.harness }
+            : {}),
+          // Harness-engine delivery of the environment's resolved skills.
+          // Presence (even empty) is what makes it authoritative downstream.
+          ...(environmentSkills !== undefined
+            ? { runtimeSkillsOverride: environmentSkills }
             : {}),
           ...(isDirectChat ? { directVisibility: body.directVisibility } : {}),
           // Closure receives `resolvedTemperature` from inside the helper,
@@ -629,11 +786,11 @@ chatV2.post("/", async (c) => {
                     resolvedExecution.modelVisibleMcpToolResults,
                   mcpToolResultImageRendering:
                     resolvedExecution.mcpToolResultImageRendering,
-                  selectedServerIds,
+                  selectedServerIds: effectiveServerIds,
                 })
             : null,
-          selectedServerNames,
-          selectedServerIds,
+          selectedServerNames: effectiveServerNames,
+          selectedServerIds: effectiveServerIds,
           systemPrompt,
           temperature,
           requireToolApproval,

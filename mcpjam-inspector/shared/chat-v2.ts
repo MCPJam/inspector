@@ -4,9 +4,30 @@ import type {
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
 } from "@mcpjam/sdk/host-config";
+import type {
+  EnvironmentOverrides,
+  HostedExecutionTarget,
+} from "./execution-target";
 
 export interface ChatV2Request {
   messages: UIMessage[];
+  /**
+   * WHAT this turn executes against (Project Environments — Phase 1.1). One
+   * pointer, ids only; the server re-resolves the authoritative configuration.
+   *
+   * Mutually exclusive with the legacy top-level `hostId` and with the
+   * access-bearing `chatboxId` — the hosted ingress REJECTS those combinations
+   * rather than picking a winner (`shared/execution-target.ts`). Absent ⇒ the
+   * legacy behavior is unchanged.
+   */
+  executionTarget?: HostedExecutionTarget;
+  /**
+   * Per-turn narrowing of an environment target's server set. Only valid
+   * alongside an `environment` execution target. Absent means "use the
+   * environment"; `[]` means "no MCP servers this turn" — the two are
+   * deliberately different.
+   */
+  environmentOverrides?: EnvironmentOverrides;
   chatSessionId?: string;
   directVisibility?: "private" | "project";
   surface?: "preview" | "share_link";

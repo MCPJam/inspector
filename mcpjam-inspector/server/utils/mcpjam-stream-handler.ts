@@ -30,6 +30,7 @@ import { runHarnessTurn } from "./harness/run-harness-turn.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import type { ExecutionScope } from "./execution-scope.js";
 import type { PinnedSkillArtifact } from "../../shared/skill-types.js";
+import type { RuntimeSkill } from "./harness/runtime-skills.js";
 import type { HarnessMcpProxyStrategy } from "./harness/harness-proxy-strategy.js";
 import {
   buildFinishChunk,
@@ -448,6 +449,16 @@ export interface MCPJamHandlerOptions {
    * harness+pinned — the two paths are deliberately disjoint).
    */
   pinnedHarnessSkills?: PinnedSkillArtifact[];
+  /**
+   * Resolved Project-Environment skills for THIS turn (Phase 1.4). When set —
+   * even EMPTY — the harness turn delivers exactly these and SKIPS the live
+   * project-wide `fetchRuntimeSkills` query. Ranks BELOW `pinnedHarnessSkills`
+   * (a pinned run's reproducibility outranks a live environment resolution) and
+   * ABOVE the legacy live fetch; see `harness/skill-delivery.ts` for the single
+   * place that precedence is written down. An empty override is semantic: the
+   * environment delivers no skills, which is not the same as "ask the project".
+   */
+  runtimeSkillsOverride?: RuntimeSkill[];
   /**
    * Phase 3 execution scope from the server-resolved runtime config (chatbox OR
    * host-by-id). Threaded into the harness path (sandbox reserve, runtime skills,
