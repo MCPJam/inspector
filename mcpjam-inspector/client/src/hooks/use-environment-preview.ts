@@ -238,17 +238,36 @@ export function useEnvironmentPreview(
   // wrong bundle. That is why this is a focus refetch and not a subscription or
   // a poll: it closes the common "edited in another tab, came back" case for
   // one request, and the expensive mechanism would buy only a faster redraw.
+  //
+  // Both signals are needed and neither subsumes the other: backgrounding the
+  // tab fires only `visibilitychange`, switching to another application leaves
+  // the tab "visible" and fires only `blur`/`focus`. Returning from a
+  // backgrounded tab, though, fires BOTH — so the refetch is driven off an
+  // explicit away→back EDGE rather than off either event directly. Refetching
+  // per event would issue two requests for one return, and the loser is not
+  // free: it flips `isLoading` a second time, which now gates sends.
   useEffect(() => {
     if (!targetKey) return;
-    const onFocus = () => {
-      if (document.visibilityState === "hidden") return;
+    let isAway = false;
+    const markAway = () => {
+      isAway = true;
+    };
+    const onReturn = () => {
+      if (document.visibilityState === "hidden") {
+        isAway = true;
+        return;
+      }
+      if (!isAway) return;
+      isAway = false;
       setRefreshToken((n) => n + 1);
     };
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onFocus);
+    window.addEventListener("blur", markAway);
+    window.addEventListener("focus", onReturn);
+    document.addEventListener("visibilitychange", onReturn);
     return () => {
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onFocus);
+      window.removeEventListener("blur", markAway);
+      window.removeEventListener("focus", onReturn);
+      document.removeEventListener("visibilitychange", onReturn);
     };
   }, [targetKey]);
 

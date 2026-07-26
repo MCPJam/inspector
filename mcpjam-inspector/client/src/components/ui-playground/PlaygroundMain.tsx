@@ -1570,9 +1570,20 @@ export function PlaygroundMain({
   // id with the PREVIOUS host's model, system prompt and approval setting, and
   // the scope reset that follows can drop the in-flight message. Block SENDS
   // (not typing) until the transition has settled.
+  //
+  // `isPreviewLoading` is load-bearing separately from `isResolutionPending`
+  // and the host comparison, and covers the case neither can see: a live EDIT
+  // of the SELECTED environment. That refetch deliberately KEEPS the previous
+  // body on screen (live-config semantics), so mid-flight `preview` is the
+  // STALE one — `isResolutionPending` is false because a preview exists, and
+  // `environmentHostId` still reads the OLD host, which the previewed host
+  // already matches. If the edit repointed the environment at a different
+  // host, every clause would read "settled" while the next turn resolves
+  // server-side against the new host.
   const isEnvironmentTargetPending =
     isEnvironmentMode &&
     (playgroundEnvironment.isResolutionPending ||
+      playgroundEnvironment.isPreviewLoading ||
       !isSessionBootstrapComplete ||
       (!!environmentHostId && previewedHostId !== environmentHostId));
   const { composerDisabled, sendBlocked } = getChatComposerInteractivity({

@@ -365,11 +365,84 @@ describe("usePlaygroundEnvironment — nothing stale across a transition", () =>
     }
   });
 
-  it("refetches on tab focus, because the row revision isn't the whole truth", async () => {
+  it("refetches on return to the tab, because the row revision isn't the whole truth", async () => {
     // A rotated host config or a changed server-group membership does not bump
     // the environment row's revision, so the revision dependency alone can't
-    // see them. A focus refetch closes the common "edited in another tab" case
-    // without a subscription or a poll.
+    // see them. A refetch on return closes the common "edited in another tab"
+    // case without a subscription or a poll.
+    const { result } = await renderEnvironment();
+    act(() => result.current.selectEnvironment("env_1"));
+    await waitFor(() => expect(result.current.preview).not.toBeNull());
+    const callsBefore = mockFetch.mock.calls.length;
+
+    // Switching to another APPLICATION: the tab stays visible, so only the
+    // window blur/focus pair fires.
+    act(() => {
+      window.dispatchEvent(new Event("blur"));
+      window.dispatchEvent(new Event("focus"));
+    });
+
+    await waitFor(() =>
+      expect(mockFetch.mock.calls.length).toBeGreaterThan(callsBefore)
+    );
+  });
+
+  it("returning from a backgrounded tab refetches ONCE, not once per event", async () => {
+    // Backgrounding and returning fires BOTH `visibilitychange` and `focus`.
+    // Refetching per event would issue two requests for one return, and the
+    // loser isn't free: it flips `isLoading` a second time, which gates sends.
+    const { result } = await renderEnvironment();
+    act(() => result.current.selectEnvironment("env_1"));
+    await waitFor(() => expect(result.current.preview).not.toBeNull());
+    const callsBefore = mockFetch.mock.calls.length;
+
+    const visibility = { value: "visible" };
+    const original = Object.getOwnPropertyDescriptor(
+      Document.prototype,
+      "visibilityState"
+    );
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => visibility.value,
+    });
+    try {
+      act(() => {
+        visibility.value = "hidden";
+        window.dispatchEvent(new Event("blur"));
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      // Two SEPARATE `act` blocks on purpose. The browser delivers
+      // `visibilitychange` and `focus` as distinct tasks, so React commits
+      // between them — batching them into one block would let a
+      // refetch-per-event implementation collapse to a single effect run and
+      // pass this test without coalescing anything.
+      visibility.value = "visible";
+      act(() => {
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      act(() => {
+        window.dispatchEvent(new Event("focus"));
+      });
+
+      await waitFor(() =>
+        expect(mockFetch.mock.calls.length).toBe(callsBefore + 1)
+      );
+      // Hold past any second in-flight request the pair could have started.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(mockFetch.mock.calls.length).toBe(callsBefore + 1);
+    } finally {
+      if (original) {
+        Object.defineProperty(document, "visibilityState", original);
+      } else {
+        delete (document as unknown as Record<string, unknown>).visibilityState;
+      }
+    }
+  });
+
+  it("does not refetch on a focus event the tab never left", async () => {
+    // A bare `focus` with no preceding away signal is not a return — e.g. a
+    // window that was already frontmost. Treating it as one would refetch on
+    // incidental focus churn and flip the send gate each time.
     const { result } = await renderEnvironment();
     act(() => result.current.selectEnvironment("env_1"));
     await waitFor(() => expect(result.current.preview).not.toBeNull());
@@ -378,9 +451,8 @@ describe("usePlaygroundEnvironment — nothing stale across a transition", () =>
     act(() => {
       window.dispatchEvent(new Event("focus"));
     });
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
-    await waitFor(() =>
-      expect(mockFetch.mock.calls.length).toBeGreaterThan(callsBefore)
-    );
+    expect(mockFetch.mock.calls.length).toBe(callsBefore);
   });
 });
