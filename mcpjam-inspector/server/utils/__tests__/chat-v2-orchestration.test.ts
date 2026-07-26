@@ -1255,3 +1255,37 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
     expect(legacyDefault).toContain("applies immediately");
   });
 });
+
+describe("prepareChatV2 — pinned skills × harness (Project Environments guard)", () => {
+  it("THROWS on harness + skillsSource pinned (harness pinned skills must ride the harness path, never this branch)", async () => {
+    const manager = mockManager({});
+    await expect(
+      prepareChatV2({
+        mcpClientManager: manager,
+        selectedServers: [],
+        modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+        systemPrompt: "Base prompt.",
+        harness: "claude-code" as any,
+        skillsSource: {
+          kind: "pinned",
+          skills: [
+            { name: "s", description: "d", content: "c", contentHash: "h" },
+          ],
+        },
+      }),
+    ).rejects.toThrow(/Pinned skills are not supported on harness/);
+  });
+
+  it("accepts harness + skillsSource none (a deliberately skill-less env target)", async () => {
+    const manager = mockManager({});
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: [],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      harness: "claude-code" as any,
+      skillsSource: { kind: "none" },
+    });
+    expect(Object.keys(result.allTools)).toEqual([]);
+  });
+});

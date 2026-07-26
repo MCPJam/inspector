@@ -85,7 +85,13 @@ function RightRailTabbed({
   // Read with the SAME key the chat stream writes (previewedHostId), not
   // hostConfig.id — those are different identifiers and would never match.
   const streamedWorkdir = useHarnessWorkdir(projectId, hostId);
-  const harnessCwd = isHarnessHost ? streamedWorkdir : undefined;
+  // COMP-16: open the terminal in the configured working directory. For a
+  // harness host use the streamed per-session dir; for a plain computer host
+  // fall back to the host-configured `computer.workdir` (the same dir the bash
+  // tool runs in) so the Shell opens where the model works.
+  const harnessCwd = isHarnessHost
+    ? streamedWorkdir
+    : hostConfig?.computer?.workdir;
   // Only offer "Open terminal" once the data-plane config has resolved to a
   // usable plane — opening while it's still loading mounts the terminal at the
   // page origin; opening with no plane reserves a computer it can't reach.

@@ -107,6 +107,49 @@ export function buildSuiteHostRunPlans(
   );
 }
 
+export type SuiteRunPlan = SuiteHostRunPlan & {
+  /** Set on environment plans; forwarded on the run request wire. */
+  environmentId?: string;
+  /** Display-only (toasts/labels); the server re-resolves authoritatively. */
+  environmentName?: string;
+};
+
+/**
+ * Run-all fan-out plans. When the suite has attached project environments,
+ * the ENVIRONMENT axis replaces the host axis: one plan per environment, in
+ * attach order, carrying `{environmentId, environmentName}` ONLY —
+ * `serverIds` stays EMPTY because `listEnvironments` intentionally returns
+ * pointers, not a closed execution set. The Inspector server performs the
+ * authoritative resolution (P0.1 `resolveEnvironmentForLaunch`) and returns
+ * a readable auth/connection error for that exact closed set; any browser
+ * readiness check is advisory only. Suites without environments delegate to
+ * {@link buildSuiteHostRunPlans} unchanged.
+ */
+export function buildSuiteRunPlans(
+  suite: {
+    environment?: { servers?: string[] } | undefined;
+    hostAttachments?: EvalSuite["hostAttachments"];
+    serverAttachment?: EvalSuite["serverAttachment"];
+    environmentIds?: string[];
+  },
+  environments?: Array<{ environmentId: string; name: string }>,
+  fallbackServerIds?: string[],
+): SuiteRunPlan[] {
+  const envIds = suite.environmentIds ?? [];
+  if (envIds.length > 0) {
+    return envIds.map((environmentId) => ({
+      namedHostId: undefined,
+      hostName: null,
+      serverIds: [],
+      environmentId,
+      environmentName:
+        environments?.find((e) => e.environmentId === environmentId)?.name ??
+        environmentId,
+    }));
+  }
+  return buildSuiteHostRunPlans(suite, fallbackServerIds);
+}
+
 export function getSelectedSuiteHostRunPlan(
   suite: {
     environment?: { servers?: string[] } | undefined;

@@ -111,9 +111,30 @@ describe("Inspector OAuth adapter pre-registered client secret", () => {
     expect(config.hasClientSecret).toBe(true);
     const creds = await config.loadPreregisteredCredentials(loaderInput);
     expect(creds.clientId).toBe("client_from_profile");
-    expect(creds.clientSecret).toBe("explicit-secret");
+    // The exact typed secret is used in the live token exchange, including
+    // any leading/trailing whitespace — trimming it would silently
+    // authenticate with a different secret than the one the user entered.
+    expect(creds.clientSecret).toBe("  explicit-secret  ");
     expect(fetchOAuthClientSecret).not.toHaveBeenCalled();
     expect(tryResolveProjectServer).not.toHaveBeenCalled();
+  });
+
+  it("treats a whitespace-only profile secret as absent and falls back to Convex", async () => {
+    tryResolveProjectServer.mockReturnValue({
+      projectId: "proj_1",
+      serverId: "srv_1",
+    });
+    fetchOAuthClientSecret.mockResolvedValue({ clientSecret: "shhh" });
+
+    const config = buildMachineConfig({
+      preregisteredClientId: "client_from_profile",
+      preregisteredClientSecret: "   ",
+      hasClientSecret: true,
+    });
+
+    const creds = await config.loadPreregisteredCredentials(loaderInput);
+    expect(creds.clientSecret).toBe("shhh");
+    expect(fetchOAuthClientSecret).toHaveBeenCalled();
   });
 
   it("pairs a profile clientId with the Convex-backed secret", async () => {

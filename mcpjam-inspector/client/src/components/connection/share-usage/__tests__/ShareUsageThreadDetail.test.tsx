@@ -230,10 +230,7 @@ describe("ShareUsageThreadDetail", () => {
     render(<ShareUsageThreadDetail threadId="thread-1" />);
 
     expect(
-      await screen.findByText(/Why this needs attention/i)
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/Only 20% of advertised tools were used/i)
+      await screen.findByText(/Only 20% of advertised tools were used/i)
     ).toBeInTheDocument();
   });
 

@@ -200,12 +200,26 @@ export type EvalSuite = {
   serverAttachmentId?: string;
   /** Hydrated by the backend resolver when serverAttachmentId is set. */
   serverAttachment?: EvalServerAttachment;
+  /**
+   * Attach-ordered project environments (`projectEnvironments` docs). When
+   * non-empty, Run all fans out ONE run per environment (replacing
+   * hostAttachments as the fan-out axis — env pointers win over the legacy
+   * host/server pointers above). The backend resolves each environment at
+   * run start; the client never derives servers from these ids.
+   */
+  environmentIds?: string[];
   /** Synthetic-monitor schedule; absent ⇒ never scheduled. */
   schedule?: {
     intervalMinutes: number;
     enabled: boolean;
     state: "active" | "paused_quota" | "paused_auth" | "paused_failures";
     consecutiveFailures?: number;
+    /**
+     * Multi-environment suites pin the schedule to ONE member environment
+     * (required by `setSuiteSchedule`); single-env suites may omit it and
+     * the run-start default applies.
+     */
+    environmentId?: string;
   };
 };
 
@@ -488,6 +502,19 @@ export type EvalSuiteRun = {
       baseImageDigests: string[];
       provider: "e2b" | "stub";
     };
+    /**
+     * Project-environment provenance: the environment this run resolved at
+     * start, frozen with the revision it resolved. Drives the run-detail
+     * "Environment" chip (name + rev). Distinct from `computerEnvironment`
+     * above, which is the sandbox-image pin ("Sandbox image" chip).
+     */
+    environmentRef?: {
+      environmentId: string;
+      name: string;
+      revision: number;
+    };
+    /** The environment's standalone server-group pointer at resolve time. */
+    environmentServerAttachmentId?: string;
     /**
      * Suite-level judge config snapshotted at run-create. The run-detail
      * card reads `modelUsed` / `threshold` from here when displaying the

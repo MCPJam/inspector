@@ -246,7 +246,7 @@ describe("useServerForm", () => {
     expect(built.clearClientSecret).toBeUndefined();
   });
 
-  it("rejects a short client secret for pre-registered XAA", () => {
+  it("allows a short client secret for pre-registered XAA", () => {
     const { result } = renderHook(() => useServerForm());
 
     act(() => {
@@ -258,10 +258,8 @@ describe("useServerForm", () => {
       result.current.setClientSecret("short");
     });
 
-    expect(result.current.validateForm()).toBe(
-      "Client Secret must be at least 8 characters if provided"
-    );
-    expect(result.current.authConfigurationBlocksSubmit).toBe(true);
+    expect(result.current.validateForm()).toBeNull();
+    expect(result.current.authConfigurationBlocksSubmit).toBe(false);
   });
 
   it("emits confidential CIMD when the local capability is available", () => {
@@ -1279,6 +1277,63 @@ describe("useServerForm", () => {
     });
 
     expect(result.current.preregisteredOauthBlocksSubmit).toBe(false);
+  });
+
+  describe("validateClientSecret", () => {
+    it("allows an empty client secret (public/PKCE client)", () => {
+      const { result } = renderHook(() => useServerForm());
+      expect(result.current.validateClientSecret("")).toBeNull();
+    });
+
+    it("rejects a whitespace-only client secret", () => {
+      const { result } = renderHook(() => useServerForm());
+      expect(result.current.validateClientSecret("   ")).toBe(
+        "Client Secret cannot be only whitespace",
+      );
+    });
+
+    it("allows a single-character client secret", () => {
+      const { result } = renderHook(() => useServerForm());
+      expect(result.current.validateClientSecret("a")).toBeNull();
+    });
+
+    it("allows the reported repro value ('banana', 6 characters)", () => {
+      const { result } = renderHook(() => useServerForm());
+      expect(result.current.validateClientSecret("banana")).toBeNull();
+    });
+
+    it("still allows client secrets 8+ characters long", () => {
+      const { result } = renderHook(() => useServerForm());
+      expect(
+        result.current.validateClientSecret("a-long-enough-secret"),
+      ).toBeNull();
+    });
+
+    it("does not affect validateClientId's own minimum-length rule", () => {
+      const { result } = renderHook(() => useServerForm());
+      expect(result.current.validateClientId("ab")).toBe(
+        "Client ID must be at least 3 characters",
+      );
+      expect(result.current.validateClientId("abc")).toBeNull();
+    });
+  });
+
+  it("preserves leading/trailing whitespace in the saved client secret", () => {
+    // buildFormData() only trims to check whether a replacement was typed
+    // at all (see validateClientSecret above) — it must not trim the value
+    // it actually saves, or a secret that legitimately has surrounding
+    // whitespace gets silently corrupted.
+    const { result } = renderHook(() => useServerForm());
+
+    act(() => {
+      result.current.setType("http");
+      result.current.setAuthType("oauth");
+      result.current.setOauthRegistrationMode("preregistered");
+      result.current.setClientId("client-id");
+      result.current.setClientSecret(" secret ");
+    });
+
+    expect(result.current.buildFormData().clientSecret).toBe(" secret ");
   });
 
   it("represents a stored client secret without exposing the value", async () => {
