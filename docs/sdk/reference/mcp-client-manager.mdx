@@ -554,6 +554,86 @@ console.log(result.getText());
 
 ---
 
+### setMrtrInputCollector()
+
+Registers an input collector for the MCP 2026-07-28 multi-round-trip (`input_required`) flow on a server. Once registered, `executeTool`, `readResource`, and `getPrompt` automatically drive the MRTR loop: when a server returns an `input_required` result carrying embedded elicitation requests, the collector is called to gather responses, and the original operation is retried with those responses until a complete result is returned.
+
+Register the collector **before** calling `connectToServer` so the `elicitation` capability is advertised to the server on connect.
+
+```typescript
+setMrtrInputCollector(serverId: string, collect: MrtrInputCollector): void
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `serverId` | `string` | The server ID to register the collector for. |
+| `collect` | `MrtrInputCollector` | Async function that receives the current operation state and embedded input requests, and returns responses keyed by the server's request keys. Must reject (never return a synthetic decline) when the provided `signal` is aborted. |
+
+#### MrtrInputCollector signature
+
+```typescript
+type MrtrInputCollector = (request: {
+  state: MrtrOperationState;
+  inputRequests: InputRequests;
+  signal?: AbortSignal;
+}) => Promise<InputResponses>;
+```
+
+#### Example
+
+```typescript
+import { MCPClientManager, type MrtrInputCollector } from "@mcpjam/sdk";
+
+const manager = new MCPClientManager();
+
+const collector: MrtrInputCollector = async ({ inputRequests, signal }) => {
+  const responses: Record<string, unknown> = {};
+  for (const [key, req] of Object.entries(inputRequests)) {
+    // Collect user input for each embedded elicitation request.
+    // Reject on abort — never return a synthetic decline.
+    responses[key] = { action: "accept", content: { answer: await promptUser(req, signal) } };
+  }
+  return responses;
+};
+
+// Register before connecting so `elicitation` is advertised on connect.
+manager.setMrtrInputCollector("myServer", collector);
+await manager.connectToServer("myServer", { url: "https://mcp.example.com/mcp", mcpProtocolVersion: "2026-07-28" });
+
+// executeTool now drives the MRTR loop automatically when the server returns input_required.
+const result = await manager.executeTool("myServer", "confirm", { topic: "deployment" });
+```
+
+<Note>
+The collector is also called for `readResource` and `getPrompt` when those operations return `input_required`. Registering a collector advertises the `elicitation` capability to the server; `roots` and `sampling` are never advertised.
+</Note>
+
+---
+
+### clearMrtrInputCollector()
+
+Removes a server's MRTR input collector. After clearing, `executeTool`, `readResource`, and `getPrompt` revert to their pre-MRTR behavior for that server.
+
+```typescript
+clearMrtrInputCollector(serverId: string): void
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `serverId` | `string` | The server ID whose collector should be removed. |
+
+#### Example
+
+```typescript
+manager.clearMrtrInputCollector("myServer");
+```
+
+---
+
 ### getToolsForAiSdk()
 
 Returns tools in Vercel AI SDK format, ready to pass directly to `generateText()` or `streamText()`. App-only tools are filtered out by default per SEP-1865.
