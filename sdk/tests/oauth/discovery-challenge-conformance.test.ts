@@ -126,4 +126,97 @@ describe("OAuth escalation conformance to the original WWW-Authenticate challeng
     const authUrl = new URL(state.authorizationUrl!);
     expect(authUrl.searchParams.get("scope")).toBe("files:read files:write");
   });
+
+  // SEP-2350 follow-up (deferred "Finding F" from #3427): when a runtime
+  // `403 insufficient_scope` challenge carried a `resource_metadata` hint, the
+  // step-up re-authorization threads it into the machine as
+  // `resourceMetadataUrl`. It MUST win over the value re-derived from the fresh
+  // re-probe's WWW-Authenticate header, so a server whose escalation metadata
+  // lives at a non-default URL (Asana) is honored instead of ignored.
+  it("prefers the SEP-2350 resourceMetadataUrl override over the fresh 401's resource_metadata hint (2025-11-25)", async () => {
+    const OVERRIDE_RESOURCE_METADATA_URL =
+      "https://mcp.example.com/.well-known/oauth-protected-resource/tenant-b/mcp";
+    const FRESH_401_RESOURCE_METADATA_URL =
+      "https://mcp.example.com/.well-known/oauth-protected-resource";
+
+    let state = {
+      ...EMPTY_OAUTH_FLOW_STATE,
+      currentStep: "request_without_token" as const,
+      serverUrl: SERVER_URL,
+      httpHistory: [
+        {
+          step: "request_without_token" as const,
+          timestamp: Date.now(),
+          request: {
+            method: "POST",
+            url: SERVER_URL,
+            headers: {},
+            body: { method: "initialize" },
+          },
+        },
+      ],
+      infoLogs: [],
+    };
+
+    const requestExecutor = jest.fn().mockImplementation((request: any) => {
+      // First hop: the unauthenticated re-probe returns a 401 whose
+      // WWW-Authenticate points at the DEFAULT (non-tenant) metadata URL.
+      if (request.url === SERVER_URL) {
+        return Promise.resolve({
+          ok: false,
+          status: 401,
+          statusText: "Unauthorized",
+          headers: {
+            "www-authenticate": `Bearer resource_metadata="${FRESH_401_RESOURCE_METADATA_URL}", scope="files:read"`,
+          },
+          body: null,
+        });
+      }
+      // Second hop: the PRM GET. Whatever URL it targets is echoed back so the
+      // assertion can prove which one the machine chose.
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: { "content-type": "application/json" },
+        body: {
+          resource: SERVER_URL,
+          authorization_servers: ["https://auth.example.com"],
+          scopes_supported: ["files:read", "files:write"],
+        },
+      });
+    });
+
+    const machine = createOAuthStateMachine({
+      protocolVersion: "2025-11-25",
+      registrationStrategy: "dcr",
+      state,
+      getState: () => state,
+      updateState: (updates) => {
+        state = { ...state, ...updates };
+      },
+      serverUrl: SERVER_URL,
+      serverName: "Test Server",
+      redirectUrl: REDIRECT_URI,
+      requestExecutor,
+      // The step-up override (same origin as the server URL, per the client
+      // guard). It must beat the fresh header's default URL below.
+      resourceMetadataUrl: OVERRIDE_RESOURCE_METADATA_URL,
+      dynamicRegistration: {
+        client_name: "Test Client",
+      },
+    });
+
+    // request_without_token -> received_401_unauthorized
+    await machine.proceedToNextStep();
+    expect(state.currentStep).toBe("received_401_unauthorized");
+
+    // received_401_unauthorized -> request_resource_metadata (prepares the GET)
+    await machine.proceedToNextStep();
+
+    // The override was used, NOT the fresh 401's resource_metadata hint.
+    expect(state.resourceMetadataUrl).toBe(OVERRIDE_RESOURCE_METADATA_URL);
+    expect(state.resourceMetadataUrl).not.toBe(FRESH_401_RESOURCE_METADATA_URL);
+    expect(state.lastRequest?.url).toBe(OVERRIDE_RESOURCE_METADATA_URL);
+  });
 });

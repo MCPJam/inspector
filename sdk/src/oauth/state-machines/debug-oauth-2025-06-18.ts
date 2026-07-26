@@ -425,6 +425,7 @@ export const createDebugOAuthStateMachine = (
     dynamicRegistration,
     customScopes,
     customHeaders,
+    resourceMetadataUrl: overrideResourceMetadataUrl,
     authMode,
     hasClientSecret = false,
     strictConformance = false,
@@ -700,8 +701,13 @@ export const createDebugOAuthStateMachine = (
             const challengeParams = parseBearerAuthenticateParameters(
               state.wwwAuthenticateHeader,
             );
+            // SEP-2350: a caller-supplied PRM URL (the step-up challenge's
+            // `resource_metadata` hint) wins over the value re-derived from the
+            // fresh `WWW-Authenticate` header, so a server that points its
+            // metadata elsewhere is honored on re-authorization. Absent an
+            // override this is exactly today's behavior.
             let extractedResourceMetadataUrl =
-              challengeParams.resource_metadata;
+              overrideResourceMetadataUrl || challengeParams.resource_metadata;
 
             // Fallback to building the URL if not found in header
             if (!extractedResourceMetadataUrl && state.serverUrl) {
@@ -853,8 +859,14 @@ export const createDebugOAuthStateMachine = (
             };
 
             try {
+              // Pass an explicit metadata URL to discovery ONLY when it was
+              // header/override-sourced (not derived from the server URL): a
+              // fresh `WWW-Authenticate` header, or a SEP-2350 caller override.
+              // A derived URL is left undefined so discovery keeps its
+              // well-known + fallback behavior.
               const metadataOptions =
-                state.wwwAuthenticateHeader && state.resourceMetadataUrl
+                (state.wwwAuthenticateHeader || overrideResourceMetadataUrl) &&
+                state.resourceMetadataUrl
                   ? { resourceMetadataUrl: state.resourceMetadataUrl }
                   : undefined;
 
