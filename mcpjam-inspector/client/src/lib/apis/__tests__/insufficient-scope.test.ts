@@ -90,9 +90,18 @@ describe("isActionableStepUpChallenge (SEP-2350)", () => {
     ).toBe(true);
   });
 
-  it("is actionable when a resourceMetadataUrl is present", () => {
+  it("is NOT actionable for a resourceMetadataUrl-only challenge (inert in the orchestrator today — would burn the budget without widening scope)", () => {
     expect(
       isActionableStepUpChallenge({
+        resourceMetadataUrl: "https://rs.example/.well-known",
+      }),
+    ).toBe(false);
+  });
+
+  it("is actionable when a requiredScope accompanies a resourceMetadataUrl", () => {
+    expect(
+      isActionableStepUpChallenge({
+        requiredScope: "read:tickets",
         resourceMetadataUrl: "https://rs.example/.well-known",
       }),
     ).toBe(true);

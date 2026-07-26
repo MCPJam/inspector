@@ -1446,7 +1446,11 @@ export function useChatSession(
                 : undefined) ??
               appState?.servers?.[event.serverId] ??
               activeProject?.servers?.[event.serverId];
-            if (server && (event.requiredScope || event.resourceMetadataUrl)) {
+            // Requires a `requiredScope` to add — a `resourceMetadataUrl`-only
+            // event is inert in the orchestrator today and would burn the
+            // bounded budget without widening scope (mirrors the shared
+            // `isActionableStepUpChallenge` gate).
+            if (server && event.requiredScope) {
               const stepUpKey = server.name;
               if (!chatStepUpInFlightRef.current.has(stepUpKey)) {
                 chatStepUpInFlightRef.current.add(stepUpKey);

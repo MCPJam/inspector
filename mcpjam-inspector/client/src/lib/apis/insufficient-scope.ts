@@ -45,18 +45,25 @@ export function parseInsufficientScopeChallenge(
 }
 
 /**
- * Whether a parsed challenge can actually DRIVE a step-up re-authorization. Only
- * a `requiredScope` (the scope to add to the union) or a `resourceMetadataUrl`
- * (a protected-resource-metadata endpoint to discover the challenged scopes
- * from) is actionable. An `errorDescription`-only challenge is display-only —
- * redirecting for it would burn the bounded one-attempt step-up budget with no
- * scope to widen — so every surface gates the ACTION on this predicate while
- * still surfacing the underlying error text for the user/model.
+ * Whether a parsed challenge can actually DRIVE a step-up re-authorization.
+ * Requires a non-empty `requiredScope` — the scope to fold into the re-auth
+ * union. A `resourceMetadataUrl` is deliberately NOT sufficient on its own:
+ * the step-up orchestrator currently reads only `requiredScope` and never
+ * fetches the protected-resource-metadata endpoint, so a metadata-only
+ * challenge would redirect and burn the bounded one-attempt step-up budget
+ * without adding any scope. An `errorDescription`-only challenge is likewise
+ * display-only. Every surface gates the ACTION on this predicate while still
+ * surfacing the underlying error text for the user/model.
+ *
+ * TODO(SEP-2350): broaden to also accept a `resourceMetadataUrl`-only challenge
+ * once discovery consumes it (fetches the PRM endpoint to resolve the scopes) —
+ * a deferred core follow-up. Until then, requiring `requiredScope` keeps the
+ * bounded budget from being spent on a redirect that cannot widen scope.
  */
 export function isActionableStepUpChallenge(
   challenge: InsufficientScopeChallenge | undefined,
 ): challenge is InsufficientScopeChallenge {
-  return Boolean(challenge?.requiredScope || challenge?.resourceMetadataUrl);
+  return Boolean(challenge?.requiredScope);
 }
 
 /**

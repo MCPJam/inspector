@@ -407,17 +407,14 @@ export async function streamWebChatTurn(
               const insufficientScope =
                 extractInsufficientScopeChallenge(error);
               // Only emit a step-up notice the client can ACT on: a
-              // `requiredScope` (scope to add) or a `resourceMetadataUrl` (a PRM
-              // endpoint to discover scopes from). An errorDescription-only
-              // challenge carries nothing to widen — redirecting for it would
-              // burn the bounded one-attempt budget — so it stays plain error
-              // text the model already sees, consistent with every other
-              // surface's actionable-challenge gate.
-              if (
-                insufficientScope &&
-                (insufficientScope.requiredScope ||
-                  insufficientScope.resourceMetadataUrl)
-              ) {
+              // `requiredScope` (the scope to fold into the re-auth union). A
+              // `resourceMetadataUrl`-only or errorDescription-only challenge
+              // carries nothing the orchestrator can widen today — redirecting
+              // for it would burn the bounded one-attempt budget — so it stays
+              // plain error text the model already sees, consistent with the
+              // shared `isActionableStepUpChallenge` gate. (Broaden to accept a
+              // metadata-only challenge once discovery consumes it — SEP-2350.)
+              if (insufficientScope && insufficientScope.requiredScope) {
                 const challenge = {
                   serverId,
                   toolCallId: options?.toolCallId,
