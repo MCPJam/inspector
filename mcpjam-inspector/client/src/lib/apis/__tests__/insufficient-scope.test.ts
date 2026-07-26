@@ -113,6 +113,11 @@ describe("isActionableStepUpChallenge (SEP-2350)", () => {
     ).toBe(false);
   });
 
+  it("is NOT actionable for a whitespace-only requiredScope (parses to zero scopes — would burn the budget without widening)", () => {
+    expect(isActionableStepUpChallenge({ requiredScope: "   " })).toBe(false);
+    expect(isActionableStepUpChallenge({ requiredScope: "\t\n" })).toBe(false);
+  });
+
   it("is NOT actionable for undefined", () => {
     expect(isActionableStepUpChallenge(undefined)).toBe(false);
   });

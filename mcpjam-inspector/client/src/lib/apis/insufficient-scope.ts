@@ -63,7 +63,12 @@ export function parseInsufficientScopeChallenge(
 export function isActionableStepUpChallenge(
   challenge: InsufficientScopeChallenge | undefined,
 ): challenge is InsufficientScopeChallenge {
-  return Boolean(challenge?.requiredScope);
+  // Trim before the non-empty check: a whitespace-only `requiredScope` (e.g.
+  // `"   "`) is truthy but parses to zero scopes downstream (the orchestrator
+  // splits on `[,\s]+` and drops empties), so treating it as actionable would
+  // burn the bounded step-up budget on a redirect that widens nothing. Such a
+  // value is display-only, like a `resourceMetadataUrl`/`errorDescription`.
+  return Boolean(challenge?.requiredScope?.trim());
 }
 
 /**
