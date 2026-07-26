@@ -283,6 +283,44 @@ describe("parseJsonConfig", () => {
       });
     });
 
+    it("patches imported headers so they reach the persisted server", () => {
+      // `headers` alone only feeds the in-memory connection: the cloud sync
+      // path writes header values ONLY from an explicit secretPatch, so
+      // without this the server 401s after a reload.
+      const json = JSON.stringify({
+        mcpServers: {
+          remote: {
+            url: "https://mcp.example.com/mcp",
+            headers: { Authorization: "Bearer abc" },
+          },
+        },
+      });
+
+      expect(parseJsonConfig(json)[0].secretPatch).toEqual({
+        headers: { Authorization: "Bearer abc" },
+      });
+    });
+
+    it("patches imported env so it reaches the persisted server", () => {
+      const json = JSON.stringify({
+        mcpServers: { local: { command: "node", env: { API_KEY: "k" } } },
+      });
+
+      expect(parseJsonConfig(json)[0].secretPatch).toEqual({
+        env: { API_KEY: "k" },
+      });
+    });
+
+    it.each([
+      ["an http server with no headers", { url: "https://x.example.com/mcp" }],
+      ["a stdio server with no env", { command: "node" }],
+    ])("omits the secret patch for %s", (_label, config) => {
+      // An explicit empty patch CLEARS stored values; re-importing a config
+      // must never wipe credentials already attached to that server.
+      const json = JSON.stringify({ mcpServers: { s: config } });
+      expect(parseJsonConfig(json)[0].secretPatch).toBeUndefined();
+    });
+
     it("drops non-string env and header values", () => {
       const json = JSON.stringify({
         mcpServers: {

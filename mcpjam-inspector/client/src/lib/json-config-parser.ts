@@ -114,6 +114,31 @@ function stringRecord(value: unknown): Record<string, string> {
 }
 
 /**
+ * Imported secret values must ride BOTH channels.
+ *
+ * `env`/`headers` on the form data feed the in-memory connection, but the
+ * cloud persist path (`syncServerToConvex`) only writes them when the caller
+ * passes an explicit `secretPatch`: the connect path always hands it a
+ * `secretOptions` object, and without the patch key `headersForPayload` /
+ * `envForPayload` resolve to `undefined` and the fields are dropped from the
+ * payload. An import that set only `env`/`headers` would therefore connect
+ * once and then 401 after a reload — exactly the failure header preservation
+ * was meant to remove. The server FORM sets both for the same reason.
+ *
+ * Only non-empty values get a patch: an explicit empty patch is a command to
+ * CLEAR the stored values, and re-importing a config must never wipe
+ * credentials already attached to an existing server of the same name.
+ */
+function secretPatchFor(
+  key: "env" | "headers",
+  values: Record<string, string>,
+): Pick<ServerFormData, "secretPatch"> {
+  return Object.keys(values).length > 0
+    ? { secretPatch: { [key]: values } }
+    : {};
+}
+
+/**
  * Convert one source server config to form data, or explain why it can't be.
  *
  * stdio-vs-http comes from `detectPluginMcpTransport`, so an explicit
@@ -160,6 +185,7 @@ function toServerFormData(
     const args = Array.isArray(record.args)
       ? record.args.filter((arg): arg is string => typeof arg === "string")
       : [];
+    const env = stringRecord(record.env);
     return {
       ok: true,
       server: {
@@ -167,7 +193,8 @@ function toServerFormData(
         type: "stdio",
         command,
         args,
-        env: stringRecord(record.env),
+        env,
+        ...secretPatchFor("env", env),
       },
     };
   }
@@ -179,18 +206,20 @@ function toServerFormData(
       error: `Server "${name}" must have either "command" or "url" property`,
     };
   }
+  // Headers survive the import, on both the in-memory and the persisted
+  // channel. Silently dropping an Authorization header turns an otherwise
+  // valid import into a confusing 401 at connect time.
+  const headers = stringRecord(record.headers);
   return {
     ok: true,
     server: {
       name,
       type: "http",
       url,
-      // Headers survive the import. stdio `env` values always did, and
-      // silently dropping an Authorization header turns an otherwise valid
-      // import into a confusing 401 at connect time.
-      headers: stringRecord(record.headers),
+      headers,
       env: {},
       useOAuth: false,
+      ...secretPatchFor("headers", headers),
     },
   };
 }
