@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { authFetch } from "@/lib/session-token";
+import { shouldQueryProjectId } from "@/hooks/useProjects";
 
 /**
  * Client mirror of the server's `EnvironmentPreview`
@@ -102,7 +103,16 @@ function readErrorMessage(payload: unknown, fallback: string): string {
  */
 export function useEnvironmentPreview(
   projectId: string | null,
-  environmentId: string | null
+  environmentId: string | null,
+  /**
+   * The selected row's current `revision`, from the reactive Convex list.
+   * Passing it makes an edit — in another tab, or by a collaborator —
+   * refetch the preview. Without it the next turn would resolve server-side
+   * against the NEW revision while the UI still displayed the old host,
+   * counts and server checkboxes, and toggling one of those stale boxes
+   * would materialize an override out of obsolete server ids.
+   */
+  revision?: number | null
 ): UseEnvironmentPreviewResult {
   const [preview, setPreview] = useState<EnvironmentPreview | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -116,7 +126,14 @@ export function useEnvironmentPreview(
     const normalizedProjectId = projectId?.trim() || null;
     const normalizedEnvironmentId = environmentId?.trim() || null;
     const seq = ++requestSeqRef.current;
-    if (!normalizedProjectId || !normalizedEnvironmentId) {
+    // `shouldQueryProjectId`, not a bare truthiness check: a local/placeholder
+    // project id during a project transition is well-formed but not
+    // queryable, and would surface as a spurious "couldn't be resolved" error.
+    if (
+      !normalizedProjectId ||
+      !shouldQueryProjectId(normalizedProjectId) ||
+      !normalizedEnvironmentId
+    ) {
       setPreview(null);
       setError(null);
       setIsLoading(false);
@@ -157,7 +174,7 @@ export function useEnvironmentPreview(
     return () => {
       active = false;
     };
-  }, [projectId, environmentId, refreshToken]);
+  }, [projectId, environmentId, revision, refreshToken]);
 
   const refresh = useCallback(() => setRefreshToken((n) => n + 1), []);
 

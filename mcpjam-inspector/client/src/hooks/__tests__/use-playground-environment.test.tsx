@@ -13,15 +13,21 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockFlagValue, mockFetch } = vi.hoisted(() => ({
+const { mockFlagValue, mockFetch, mockEnvironments } = vi.hoisted(() => ({
   mockFlagValue: { value: true as boolean | undefined },
   mockFetch: vi.fn(),
+  mockEnvironments: { value: [] as Array<Record<string, unknown>> },
 }));
 
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => mockFlagValue.value,
 }));
 vi.mock("@/lib/session-token", () => ({ authFetch: mockFetch }));
+// The hook reads the selected row's `revision` from the reactive list so an
+// edit elsewhere refetches the preview; the list is Convex-backed, so stub it.
+vi.mock("@/hooks/useProjectEnvironments", () => ({
+  useProjectEnvironments: () => mockEnvironments.value,
+}));
 
 import { usePlaygroundEnvironment } from "../use-playground-environment";
 
@@ -209,6 +215,31 @@ describe("usePlaygroundEnvironment — the override tri-state", () => {
 });
 
 describe("usePlaygroundEnvironment — select vs edit", () => {
+  it("refetches when the selected row's revision moves (edited elsewhere)", async () => {
+    // Another tab or a collaborator edits the environment. Without watching
+    // the revision, the next turn resolves server-side against the NEW
+    // revision while the UI still shows the old servers — and toggling one of
+    // those stale checkboxes would build an override from obsolete ids.
+    mockEnvironments.value = [{ environmentId: "env_1", revision: 1 }];
+    const { result, rerender } = await renderEnvironment();
+    act(() => result.current.selectEnvironment("env_1"));
+    await waitFor(() => expect(result.current.preview).not.toBeNull());
+    const callsAfterSelect = mockFetch.mock.calls.length;
+
+    respondWith(
+      previewPayload("env_1", [{ serverId: "srv_a", name: "Alpha" }], 2)
+    );
+    mockEnvironments.value = [{ environmentId: "env_1", revision: 2 }];
+    rerender();
+
+    await waitFor(() =>
+      expect(mockFetch.mock.calls.length).toBeGreaterThan(callsAfterSelect)
+    );
+    await waitFor(() =>
+      expect(result.current.preview?.environment.revision).toBe(2)
+    );
+  });
+
   it("selecting a DIFFERENT environment clears the override", async () => {
     const { result } = await renderEnvironment();
     act(() => result.current.selectEnvironment("env_1"));

@@ -1087,8 +1087,17 @@ export function PlaygroundMain({
 
     return selectedModel ? [selectedModel] : [];
   }, [multiModelAvailableModels, selectedModel, selectedModelIds]);
+  // `!isEnvironmentMode`: like multi-HOST below, model comparison is mutually
+  // exclusive with environment mode in v1. Each comparison card runs its own
+  // request against `hostId`, so leaving it enabled would silently execute the
+  // cards against the host instead of the environment. Withdrawing the
+  // affordance also drives the "reset a stale persisted multiModelEnabled"
+  // effect below, so it cannot be re-enabled behind the environment's back.
   const canEnableMultiModel =
-    enableMultiModelChat && availableModels.length > 1 && !isSharedSession;
+    enableMultiModelChat &&
+    availableModels.length > 1 &&
+    !isSharedSession &&
+    !isEnvironmentMode;
 
   // Phase 4 (multi-host plan): read multi-host state in parallel to
   // multi-model. Lead host is derived inside `usePersistedHost` from the
@@ -3819,6 +3828,12 @@ export function PlaygroundMain({
                 <PlaygroundEnvironmentSection
                   projectId={multiHostProjectId}
                   environment={playgroundEnvironment}
+                  // Switching environments forks the chat scope and exits
+                  // comparison mode. Doing that mid-turn would strand the
+                  // in-flight request — its results vanish from the UI and the
+                  // Stop control goes with them. Same gate the chat-input
+                  // client selector uses.
+                  disabled={isStreamingActive || isPreparingServerForSend}
                 />
               ) : null
             }

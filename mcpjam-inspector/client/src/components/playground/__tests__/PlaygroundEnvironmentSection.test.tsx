@@ -113,6 +113,24 @@ beforeEach(() => {
 });
 
 describe("PlaygroundEnvironmentSection", () => {
+  it("disables every control while a turn is in flight", () => {
+    // Switching environments forks the chat scope and exits comparison mode.
+    // Mid-turn that strands the in-flight request: its results vanish and the
+    // Stop control goes with them. PlaygroundMain passes
+    // `isStreamingActive || isPreparingServerForSend` here.
+    render(
+      <PlaygroundEnvironmentSection
+        projectId="p1"
+        environment={environmentState()}
+        disabled
+      />
+    );
+    for (const button of screen.getAllByRole("button")) {
+      expect(button).toBeDisabled();
+    }
+  });
+
+
   it("names the environment, its revision, its client and its counts", () => {
     render(
       <PlaygroundEnvironmentSection
@@ -133,7 +151,11 @@ describe("PlaygroundEnvironmentSection", () => {
     ).toContain("4 skills");
     expect(
       screen.getByTestId("playground-environment-counts").textContent
-    ).toContain("1 plugins");
+    ).toContain("1 plugin");
+    // Singular, not "1 plugins" — three counts render through the same helper.
+    expect(
+      screen.getByTestId("playground-environment-counts").textContent
+    ).not.toContain("1 plugins");
   });
 
   it("shows no modified badge and no reset until an override exists", () => {

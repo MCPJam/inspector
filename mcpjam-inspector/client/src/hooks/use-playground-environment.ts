@@ -10,6 +10,7 @@ import {
   type EnvironmentPreviewServer,
 } from "@/hooks/use-environment-preview";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 
 /**
  * Playground "environment mode" (Project Environments — Phase 2.1).
@@ -104,9 +105,24 @@ export function usePlaygroundEnvironment(
     setServerOverrideIds(null);
   }, [environmentId]);
 
+  // The reactive list is already the client's source of truth for environment
+  // rows, so the selected row's `revision` comes for free — no extra query.
+  // Feeding it to the preview makes an edit elsewhere (another tab, a
+  // collaborator) refetch, instead of leaving the UI describing a bundle the
+  // next turn will no longer run.
+  const environments = useProjectEnvironments(flagEnabled ? projectId : null);
+  const selectedRevision = useMemo(() => {
+    if (!environmentId) return null;
+    return (
+      environments?.find((env) => env.environmentId === environmentId)
+        ?.revision ?? null
+    );
+  }, [environments, environmentId]);
+
   const { preview, isLoading, error, refresh } = useEnvironmentPreview(
     flagEnabled ? projectId : null,
-    environmentId
+    environmentId,
+    selectedRevision
   );
 
   const servers = useMemo(() => {

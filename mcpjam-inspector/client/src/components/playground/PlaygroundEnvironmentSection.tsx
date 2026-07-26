@@ -26,6 +26,11 @@ import type { PlaygroundEnvironmentState } from "@/hooks/use-playground-environm
  * plugin-contributed servers are deliberately hidden from
  * `servers:getProjectServers`, so the name-keyed catalog cannot represent them.
  */
+/** `1 server`, `0 servers` — the counts strip renders three of these. */
+function plural(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
 export function PlaygroundEnvironmentSection({
   projectId,
   environment,
@@ -59,7 +64,13 @@ export function PlaygroundEnvironmentSection({
   const lastTrackedHostIdRef = useRef<string | null>(null);
   const resolvedHostId = preview?.host.hostId ?? null;
   useEffect(() => {
-    if (!isEnvironmentMode || !resolvedHostId) return;
+    if (!isEnvironmentMode || !resolvedHostId) {
+      // Leaving environment mode CLOSES the dedupe window. Without this,
+      // select A → clear → select A again emits once, quietly undercounting
+      // adoption of the very surface this event measures.
+      if (!isEnvironmentMode) lastTrackedHostIdRef.current = null;
+      return;
+    }
     if (lastTrackedHostIdRef.current === resolvedHostId) return;
     lastTrackedHostIdRef.current = resolvedHostId;
     try {
@@ -133,9 +144,9 @@ export function PlaygroundEnvironmentSection({
             </span>
             <span>·</span>
             <span data-testid="playground-environment-counts">
-              {preview.capabilities.serverCount} servers ·{" "}
-              {preview.capabilities.skillCount} skills ·{" "}
-              {preview.capabilities.pluginCount} plugins
+              {plural(preview.capabilities.serverCount, "server")} ·{" "}
+              {plural(preview.capabilities.skillCount, "skill")} ·{" "}
+              {plural(preview.capabilities.pluginCount, "plugin")}
             </span>
             {hasExplicitOverride ? (
               <span
