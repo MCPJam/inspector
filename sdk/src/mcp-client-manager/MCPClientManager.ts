@@ -63,7 +63,12 @@ import {
   HTTP_CONNECT_TIMEOUT,
 } from "./constants.js";
 import { isMethodUnavailableError, formatError } from "./error-utils.js";
-import { MCPAuthError, isAuthError, isUnauthorized401 } from "./errors.js";
+import {
+  MCPAuthError,
+  isAuthError,
+  isUnauthorized401,
+  isInsufficientScopeError,
+} from "./errors.js";
 import {
   type RetryPolicy,
   isRetryableTransientError,
@@ -1773,6 +1778,18 @@ export class MCPClientManager {
       } catch (error) {
         streamableError = error;
         await this.safeCloseTransport(streamableTransport);
+        // SEP-2350: a connect-time `403 insufficient_scope` surfaces here as a
+        // clean `InsufficientScopeError` (transport built
+        // `onInsufficientScope: "throw"` above). Rethrow it immediately —
+        // falling through to the SSE transport would either discard the
+        // challenge (SSE happens to succeed) or downgrade it to a generic
+        // `MCPAuthError` (SSE fails), stripping `requiredScope` /
+        // `resourceMetadataUrl`. SSE cannot repair scope, so there is nothing
+        // to gain by trying it; preserve the original error so the host can
+        // serialize the challenge and drive the union-scope re-authorization.
+        if (isInsufficientScopeError(error)) {
+          throw error;
+        }
       }
     }
 

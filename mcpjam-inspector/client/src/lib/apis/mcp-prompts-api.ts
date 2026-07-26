@@ -7,6 +7,11 @@ import {
 } from "@/lib/apis/web/prompts-api";
 import { resolveHostedServerId } from "@/lib/apis/web/context";
 import { runByMode } from "@/lib/apis/mode-client";
+import { WebApiError } from "@/lib/apis/web/base";
+import {
+  McpRequestError,
+  parseInsufficientScopeChallenge,
+} from "@/lib/apis/insufficient-scope";
 
 export interface PromptContentResponse {
   content: any;
@@ -122,12 +127,29 @@ export async function getPrompt(
   args?: Record<string, string>,
 ): Promise<PromptContentResponse> {
   return runByMode({
-    hosted: async () =>
-      (await getHostedPrompt({
-        serverNameOrId: serverId,
-        promptName: name,
-        arguments: args,
-      })) as PromptContentResponse,
+    hosted: async () => {
+      try {
+        return (await getHostedPrompt({
+          serverNameOrId: serverId,
+          promptName: name,
+          arguments: args,
+        })) as PromptContentResponse;
+      } catch (error) {
+        // SEP-2350: rethrow as an McpRequestError carrying the challenge the
+        // hosted 403 forwarded on `details.insufficientScope`.
+        const insufficientScope =
+          error instanceof WebApiError
+            ? parseInsufficientScopeChallenge(
+                (error.details as any)?.insufficientScope,
+              )
+            : undefined;
+        const message = error instanceof Error ? error.message : String(error);
+        throw new McpRequestError(message, {
+          insufficientScope,
+          status: error instanceof WebApiError ? error.status : undefined,
+        });
+      }
+    },
     local: async () => {
       const res = await authFetch("/api/mcp/prompts/get", {
         method: "POST",
@@ -142,7 +164,14 @@ export async function getPrompt(
 
       if (!res.ok) {
         const message = body?.error || `Get prompt failed (${res.status})`;
-        throw new Error(message);
+        // SEP-2350: the /prompts/get route serializes a 403 challenge onto
+        // `mcpError.insufficientScope` (via jsonError). Surface it for step-up.
+        throw new McpRequestError(message, {
+          insufficientScope: parseInsufficientScopeChallenge(
+            body?.mcpError?.insufficientScope,
+          ),
+          status: res.status,
+        });
       }
 
       return body as PromptContentResponse;

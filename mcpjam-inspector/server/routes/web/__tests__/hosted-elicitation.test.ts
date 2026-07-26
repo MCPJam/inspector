@@ -531,4 +531,42 @@ describe("HostedElicitationBridge", () => {
 
     expect(events()).toHaveLength(0);
   });
+
+  it("emits insufficient_scope for a 403 challenge without creating a rendezvous row", async () => {
+    stubFetch({});
+    const { writer, events } = makeWriter();
+    const bridge = makeBridge();
+    bridge.attachStreamWriter(writer);
+
+    bridge.emitInsufficientScope({
+      serverId: "srv-1",
+      toolCallId: "call-42",
+      requiredScope: "read write admin",
+      resourceMetadataUrl: "https://rs.example/.well-known",
+    });
+
+    expect(events()).toContainEqual(
+      expect.objectContaining({
+        kind: "insufficient_scope",
+        serverId: "srv-1",
+        serverName: "GitHub",
+        toolCallId: "call-42",
+        requiredScope: "read write admin",
+        resourceMetadataUrl: "https://rs.example/.well-known",
+      }),
+    );
+    // Display-only: no JSON-RPC response is owed on the error path.
+    expect(mutation).not.toHaveBeenCalled();
+  });
+
+  it("drops an insufficient_scope with no challenge fields rather than emit an empty notice", async () => {
+    stubFetch({});
+    const { writer, events } = makeWriter();
+    const bridge = makeBridge();
+    bridge.attachStreamWriter(writer);
+
+    bridge.emitInsufficientScope({ serverId: "srv-1", toolCallId: "call-1" });
+
+    expect(events()).toHaveLength(0);
+  });
 });

@@ -68,17 +68,23 @@ import type { HarnessSessionCommitPayload } from "./harness/harness-session-stat
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-helpers.js";
 import { ErrorCode, WebRouteError } from "./../routes/web/errors.js";
 import { readUrlElicitations } from "@/shared/http-tool-calls";
+import { extractInsufficientScopeChallenge } from "./mcp-error-serialize.js";
 import {
   classifyUiToolApprovals,
   type UiToolApprovalClassification,
 } from "@/shared/client-fulfilled-tools";
 import { isRenderedUiContextText } from "@/shared/ui-context";
 import type { createHostedRpcLogCollector } from "./../routes/web/hosted-rpc-logs.js";
-import type { HostedElicitationBridge } from "./../routes/web/hosted-elicitation.js";
+import {
+  emitInsufficientScopeChunk,
+  type ElicitationChunkWriter,
+  type HostedElicitationBridge,
+} from "./../routes/web/hosted-elicitation.js";
 import {
   bridgeHarnessRpcLogsToCollector,
   startCrossInstanceRpcLogPoll,
 } from "./../routes/web/hosted-rpc-logs.js";
+import { buildServerNamesById } from "./../routes/web/auth.js";
 import type { CustomProviderConfig } from "./chat-helpers.js";
 import { getClientIp } from "./client-ip.js";
 import { convertToMcpjamModelMessages } from "./mcp-tool-result-model-output.js";
@@ -347,8 +353,25 @@ export async function streamWebChatTurn(
     effectiveUiTools,
   } = prepared;
 
+  // The raw per-turn stream writer, captured at `onStreamWriterReady` below.
+  // Present for EVERY turn that produces a stream, independent of the
+  // elicitation gate — so the display-only `insufficient_scope` notice can fire
+  // even for a host that never advertised elicitation (hence has no bridge).
+  let scopeChallengeWriter: ElicitationChunkWriter | null = null;
+
+  // SEP-2350 id→display-name map for the writer-only step-up fallback (no
+  // elicitation bridge). Built from the SAME `selectedServerIds`/
+  // `selectedServerNames` pair the bridge uses (`chat-v2.ts`), so a hosted
+  // dashboard turn — whose `serverId` is a Convex document id — resolves to the
+  // display name the client keys `appState.servers` by. Without this the
+  // fallback would emit an id-only event that never matches the name-keyed
+  // client store and step-up would silently no-op.
+  const scopeStepUpServerNamesById =
+    buildServerNamesById(persist.selectedServerIds, persist.selectedServerNames) ??
+    {};
+
   /**
-   * Surface `-32042 URLElicitationRequiredError` from ANY engine.
+   * Observe tool-call failures from ANY engine to surface out-of-band notices.
    *
    * Wrapped here, on the tool set, rather than in the engines: `prepareChatV2`
    * builds this set once and all three consumers share it (MCPJam-free,
@@ -358,40 +381,82 @@ export async function streamWebChatTurn(
    * fine and silently never fired for BYOK users, who advertise and handle
    * elicitation like everyone else.
    *
+   * Wrapped UNCONDITIONALLY (not gated on the elicitation bridge): each emit
+   * guards on its own channel. `url_required` still rides the bridge only, so it
+   * stays a no-op without one — identical to before. `insufficient_scope` is a
+   * display-only step-up notice that must fire whether or not elicitation was
+   * advertised, so it falls back to the raw stream writer when there is no
+   * bridge (SEP-2350).
+   *
    * Rethrows always: this only observes. The engines' own error handling still
    * produces the tool result the model sees.
    */
-  const allTools = runtime.elicitationBridge
-    ? (Object.fromEntries(
-        Object.entries(preparedTools as Record<string, any>).map(
-          ([name, tool]) => {
-            if (typeof tool?.execute !== "function") return [name, tool];
-            const execute = tool.execute.bind(tool);
-            return [
-              name,
-              {
-                ...tool,
-                execute: async (input: unknown, options: any) => {
-                  try {
-                    return await execute(input, options);
-                  } catch (error) {
-                    const elicitations = readUrlElicitations(error);
-                    if (elicitations) {
-                      runtime.elicitationBridge?.emitUrlRequired({
-                        serverId: (tool as any)._serverId ?? "unknown",
-                        toolCallId: options?.toolCallId,
-                        elicitations,
-                      });
-                    }
-                    throw error;
-                  }
-                },
-              },
-            ];
-          }
-        )
-      ) as typeof preparedTools)
-    : preparedTools;
+  const allTools = Object.fromEntries(
+    Object.entries(preparedTools as Record<string, any>).map(([name, tool]) => {
+      if (typeof tool?.execute !== "function") return [name, tool];
+      const execute = tool.execute.bind(tool);
+      return [
+        name,
+        {
+          ...tool,
+          execute: async (input: unknown, options: any) => {
+            try {
+              return await execute(input, options);
+            } catch (error) {
+              const serverId = (tool as any)._serverId ?? "unknown";
+              const elicitations = readUrlElicitations(error);
+              if (elicitations) {
+                runtime.elicitationBridge?.emitUrlRequired({
+                  serverId,
+                  toolCallId: options?.toolCallId,
+                  elicitations,
+                });
+              }
+              // SEP-2350: a runtime `403 insufficient_scope` thrown here is
+              // about to be collapsed by the AI-SDK into a model-facing
+              // error-text part, so route the challenge out-of-band on the
+              // display channel. The client drives the union-scope step-up.
+              const insufficientScope =
+                extractInsufficientScopeChallenge(error);
+              // Only emit a step-up notice the client can ACT on: a
+              // `requiredScope` (the scope to fold into the re-auth union). A
+              // `resourceMetadataUrl`-only or errorDescription-only challenge
+              // carries nothing the orchestrator can widen today — redirecting
+              // for it would burn the bounded one-attempt budget — so it stays
+              // plain error text the model already sees, consistent with the
+              // shared `isActionableStepUpChallenge` gate. (Broaden to accept a
+              // metadata-only challenge once discovery consumes it — SEP-2350.)
+              if (insufficientScope && insufficientScope.requiredScope) {
+                const challenge = {
+                  serverId,
+                  toolCallId: options?.toolCallId,
+                  requiredScope: insufficientScope.requiredScope,
+                  resourceMetadataUrl: insufficientScope.resourceMetadataUrl,
+                  errorDescription: insufficientScope.errorDescription,
+                };
+                if (runtime.elicitationBridge) {
+                  // Bridge enriches with the server name from its id→name map.
+                  runtime.elicitationBridge.emitInsufficientScope(challenge);
+                } else {
+                  // No bridge (elicitation unadvertised): still surface the
+                  // step-up display-only on the raw writer. Resolve the display
+                  // name from the same id→name map the bridge uses so a hosted
+                  // Convex `serverId` matches the name-keyed client store; the
+                  // client falls back to `serverId` only when no name resolves.
+                  emitInsufficientScopeChunk(
+                    scopeChallengeWriter,
+                    scopeStepUpServerNamesById[serverId],
+                    challenge,
+                  );
+                }
+              }
+              throw error;
+            }
+          },
+        },
+      ];
+    })
+  ) as typeof preparedTools;
 
   const widgetModelContextSystemPrompt = buildWidgetModelContextSystemPrompt(
     prepare.widgetModelContext ?? []
@@ -583,6 +648,7 @@ export async function streamWebChatTurn(
         onConversationComplete,
         onStreamComplete: cleanupStream,
         onStreamWriterReady: (writer) => {
+          scopeChallengeWriter = writer;
           runtime.rpcCollector?.attachStreamWriter(writer);
           runtime.elicitationBridge?.attachStreamWriter(writer);
         },
@@ -618,6 +684,7 @@ export async function streamWebChatTurn(
       onConversationComplete,
       onStreamComplete: cleanupStream,
       onStreamWriterReady: (writer) => {
+        scopeChallengeWriter = writer;
         runtime.rpcCollector?.attachStreamWriter(writer);
         runtime.elicitationBridge?.attachStreamWriter(writer);
       },
@@ -705,6 +772,7 @@ export async function streamWebChatTurn(
       await cleanupStream();
     },
     onStreamWriterReady: (writer) => {
+      scopeChallengeWriter = writer;
       runtime.rpcCollector?.attachStreamWriter(writer);
       // NOTE: for HARNESS hosts this writer exists but elicitation still won't
       // fire — harness MCP traffic goes through separate /api/web/harness-mcp

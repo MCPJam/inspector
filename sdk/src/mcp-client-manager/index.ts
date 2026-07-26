@@ -136,6 +136,7 @@ export {
   MCPAuthError,
   isAuthError,
   isUnauthorized401,
+  isInsufficientScopeError,
   isMCPAuthError,
 } from "./errors.js";
 
