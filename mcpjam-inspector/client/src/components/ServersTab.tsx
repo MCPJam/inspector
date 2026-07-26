@@ -38,6 +38,9 @@ import {
 import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
 
 import { JsonImportModal } from "./connection/JsonImportModal";
+import { AddPluginModal } from "./plugins/AddPluginModal";
+import { PluginsSection } from "./plugins/PluginsSection";
+import { usePluginsEnabled } from "@/hooks/usePluginsEnabled";
 import { ServerFormData } from "@/shared/types.js";
 import {
   createInspectorCommandClientError,
@@ -885,6 +888,11 @@ export function ServersTab({
     Partial<ServerFormData> | undefined
   >(undefined);
   const [isImportingJson, setIsImportingJson] = useState(false);
+  // Connect → Add plugin (INS-2). Flag-gated behind `plugins-enabled`
+  // (fail-closed); the modal itself stays MOUNTED while the flag is on so an
+  // in-flight import survives closing the dialog and resumes on reopen.
+  const isPluginsEnabled = usePluginsEnabled();
+  const [isAddingPlugin, setIsAddingPlugin] = useState(false);
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
   const persistedLoggerFocus = readPersistedLoggerFocus(activeProjectId);
@@ -1647,6 +1655,16 @@ export function ServersTab({
     setIsActionMenuOpen(false);
   };
 
+  // Deliberately NOT behind `serverCreationGate`: importing a plugin creates
+  // plugin-component servers, which are a plugin version's read-only
+  // projection rather than standalone catalog servers, and the backend gates
+  // import on project-admin authorization instead.
+  const handleAddPluginClick = () => {
+    track("add_plugin_button_clicked", { location: "servers_tab" });
+    setIsAddingPlugin(true);
+    setIsActionMenuOpen(false);
+  };
+
   const renderServerActionsMenu = () => (
     <>
       <HoverCard
@@ -1683,6 +1701,17 @@ export function ServersTab({
               <FileText className="h-4 w-4 mr-2" />
               Import JSON
             </Button>
+            {isPluginsEnabled ? (
+              <Button
+                variant="ghost"
+                className="justify-start"
+                onClick={handleAddPluginClick}
+                data-testid="servers-tab-add-plugin"
+              >
+                <Package className="h-4 w-4 mr-2" />
+                Add plugin
+              </Button>
+            ) : null}
           </div>
         </HoverCardContent>
       </HoverCard>
@@ -1822,6 +1851,15 @@ export function ServersTab({
     );
   };
 
+  // Installed plugin GROUP cards, above the standalone server grid. Plugin
+  // component servers never appear in that grid (the backend excludes
+  // `lifecycleScope: 'plugin_component'` rows from the standalone list), so
+  // this section is the only place their health is visible on Connect.
+  const renderPluginsSection = () =>
+    isPluginsEnabled ? (
+      <PluginsSection projectId={sharedProjectIdForHostScope} />
+    ) : null;
+
   const renderConnectedContent = () => (
     <ResizablePanelGroup direction="horizontal" className="flex-1">
       {/* Main Server List Panel */}
@@ -1855,6 +1893,8 @@ export function ServersTab({
           </div>
 
           {renderQuickConnectSection()}
+
+          {renderPluginsSection()}
 
           {/* Server Cards Grid (drag-and-drop reorderable, order saved to localStorage only) */}
           <DndContext
@@ -1990,6 +2030,8 @@ export function ServersTab({
 
       {renderQuickConnectSection()}
 
+      {renderPluginsSection()}
+
       {/* Empty State */}
       <Card className="p-12 text-center">
         <div className="mx-auto max-w-sm">
@@ -2112,6 +2154,17 @@ export function ServersTab({
         onClose={() => setIsImportingJson(false)}
         onImport={handleJsonImport}
       />
+
+      {/* Add Plugin Modal. Mounted (not conditionally rendered) while the
+          flag is on so an import in flight — or a preview awaiting a
+          decision — survives closing the dialog and resumes on reopen. */}
+      {isPluginsEnabled ? (
+        <AddPluginModal
+          isOpen={isAddingPlugin}
+          onClose={() => setIsAddingPlugin(false)}
+          projectId={sharedProjectIdForHostScope}
+        />
+      ) : null}
 
       {detailModalServer && (
         <ServerDetailModal
