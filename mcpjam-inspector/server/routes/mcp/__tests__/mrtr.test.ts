@@ -9,6 +9,7 @@ import {
   registerLocalMrtrCollector,
   submitMrtrResponses,
   pendingMrtrRoundCount,
+  withLocalMrtrElicitationCapability,
 } from "../mrtr.js";
 
 /**
@@ -216,5 +217,72 @@ describe("collector round-trip", () => {
     const unknown = submitMrtrResponses("nope", { q: { action: "accept", content: {} } });
     expect(unknown.ok).toBe(false);
     if (!unknown.ok) expect(unknown.status).toBe(404);
+  });
+});
+
+describe("advertised elicitation capability", () => {
+  // Bare `{}` is form-ONLY under the spec's back-compat rule, and the SDK
+  // derives the MRTR mode allowlist from what was advertised — so leaving it
+  // bare makes every url round fail validation before `UrlElicitationConsent`
+  // is ever reached. The two eras share one capability on the wire, so `url`
+  // may only be declared when no legacy version can be negotiated.
+  const modern = ["2026-07-28"];
+  const mixed = ["2026-07-28", "2025-11-25"];
+
+  it("declares both modes on a modern-only connection", () => {
+    const config = withLocalMrtrElicitationCapability({
+      url: new URL("https://example.test/mcp"),
+      supportedProtocolVersions: modern,
+    } as never) as { capabilities?: Record<string, unknown> };
+    expect(config.capabilities?.elicitation).toEqual({ form: {}, url: {} });
+  });
+
+  it("stays form-only when a legacy version can still be negotiated", () => {
+    // `auto` proposes 2026-07-28 but accepts 2025-11-25, whose inbound
+    // `elicitation/create` is fulfilled by the form-only legacy bridge.
+    const config = withLocalMrtrElicitationCapability({
+      url: new URL("https://example.test/mcp"),
+      supportedProtocolVersions: mixed,
+    } as never) as { capabilities?: Record<string, unknown> };
+    expect(config.capabilities?.elicitation).toBeUndefined();
+  });
+
+  it("stays form-only with no accept-list and with an unknown version", () => {
+    const noList = withLocalMrtrElicitationCapability({
+      url: new URL("https://example.test/mcp"),
+    } as never) as { capabilities?: Record<string, unknown> };
+    expect(noList.capabilities?.elicitation).toBeUndefined();
+
+    const bogus = withLocalMrtrElicitationCapability({
+      url: new URL("https://example.test/mcp"),
+      supportedProtocolVersions: ["2099-01-01"],
+    } as never) as { capabilities?: Record<string, unknown> };
+    expect(bogus.capabilities?.elicitation).toBeUndefined();
+  });
+
+  it("leaves an exact client capability set untouched", () => {
+    // A host profile pins exactly what that host advertises; widening it would
+    // defeat the point of the pin.
+    const exact = { elicitation: {} };
+    const config = withLocalMrtrElicitationCapability({
+      url: new URL("https://example.test/mcp"),
+      supportedProtocolVersions: modern,
+      clientCapabilities: exact,
+    } as never) as {
+      clientCapabilities?: Record<string, unknown>;
+      capabilities?: Record<string, unknown>;
+    };
+    expect(config.clientCapabilities).toBe(exact);
+    expect(config.capabilities?.elicitation).toBeUndefined();
+  });
+
+  it("preserves other declared capabilities", () => {
+    const config = withLocalMrtrElicitationCapability({
+      url: new URL("https://example.test/mcp"),
+      supportedProtocolVersions: modern,
+      capabilities: { roots: { listChanged: true } },
+    } as never) as { capabilities?: Record<string, unknown> };
+    expect(config.capabilities?.roots).toEqual({ listChanged: true });
+    expect(config.capabilities?.elicitation).toEqual({ form: {}, url: {} });
   });
 });

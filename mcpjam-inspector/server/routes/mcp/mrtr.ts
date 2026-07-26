@@ -4,8 +4,13 @@ import type {
   InputRequests,
   InputResponses,
   MCPClientManager,
+  MCPServerConfig,
   MrtrInputCollector,
   MrtrOperationState,
+} from "@mcpjam/sdk";
+import {
+  isKnownProtocolVersion,
+  isStatelessProtocolVersion,
 } from "@mcpjam/sdk";
 import { logger } from "../../utils/logger";
 
@@ -218,6 +223,76 @@ function makeCollector(serverId: string): MrtrInputCollector {
 // Per-manager set of server ids whose collector is already registered. WeakMap
 // so a discarded manager (hot reload) is collected with its set.
 const registered = new WeakMap<MCPClientManager, Set<string>>();
+
+/**
+ * The `elicitation` capability a local MRTR connection may advertise.
+ *
+ * The MRTR bridge completes BOTH modes — form rounds through
+ * `ElicitationDialog`, url rounds through `UrlElicitationConsent` — so on a
+ * modern connection it is honest to declare both. Bare `{}` means form-ONLY
+ * under the spec's back-compat rule, and the SDK now derives the MRTR mode
+ * allowlist from what was actually advertised, so leaving it bare makes every
+ * url round fail validation before the consent dialog is ever reached.
+ */
+const MRTR_ELICITATION_CAPABILITY = { form: {}, url: {} } as const;
+
+/**
+ * Widens the advertised `elicitation` capability to include `url` — but ONLY
+ * when the connection cannot land on a pre-2026 version.
+ *
+ * The two eras share ONE capability on the wire, and they are fulfilled by
+ * different bridges. On 2026-07-28 elicitation arrives exclusively inside an
+ * `input_required` result ("Servers MUST send server-to-client requests using
+ * the MRTR pattern"), which the MRTR bridge handles in both modes. On
+ * 2025-11-25 and earlier it arrives as an inbound `elicitation/create`, which
+ * the legacy SSE bridge fulfils — and that one is form-only: it broadcasts
+ * `{requestId, message, schema}` with no url, so a url request would ask the
+ * user to approve a destination they cannot see.
+ *
+ * Capabilities are sent in `initialize`, before the negotiated version is
+ * known, so declaring `url` is only safe when every acceptable version is
+ * modern. An `auto` accept-list that still permits a legacy answer stays
+ * form-only — fail closed. Lifting this needs the legacy bridge to carry url
+ * (it can reuse the same consent dialog), not a wider declaration here.
+ */
+export function withLocalMrtrElicitationCapability<T extends MCPServerConfig>(
+  config: T,
+): T {
+  // An exact set (host profile / explicit client capabilities) is advertised
+  // verbatim — widening it would defeat the point of pinning one.
+  if ((config as { clientCapabilities?: unknown }).clientCapabilities) {
+    return config;
+  }
+  const accepted = (config as { supportedProtocolVersions?: unknown })
+    .supportedProtocolVersions;
+  if (!Array.isArray(accepted) || accepted.length === 0) return config;
+  const modernOnly = accepted.every(
+    (version) =>
+      typeof version === "string" &&
+      isKnownProtocolVersion(version) &&
+      isStatelessProtocolVersion(version),
+  );
+  if (!modernOnly) return config;
+
+  const capabilities = ((config as { capabilities?: Record<string, unknown> })
+    .capabilities ?? {}) as Record<string, unknown>;
+  return {
+    ...config,
+    capabilities: {
+      ...capabilities,
+      elicitation: {
+        ...MRTR_ELICITATION_CAPABILITY,
+        ...(isPlainObject(capabilities.elicitation)
+          ? capabilities.elicitation
+          : {}),
+      },
+    },
+  } as T;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
 
 /**
  * Idempotently registers the MRTR input collector for `serverId` on `manager`.
