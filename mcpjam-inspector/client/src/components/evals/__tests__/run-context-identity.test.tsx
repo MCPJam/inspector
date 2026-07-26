@@ -1,0 +1,340 @@
+/**
+ * Environment-first run identity (Project Environments, Phase 3).
+ *
+ * The results surfaces used to key and label every run by `namedHostId`, so
+ * two environments resolving to the same host were indistinguishable and an
+ * environment run was labelled by its host. These tests pin the replacement
+ * semantics:
+ *
+ *   - the grouping key is the ENVIRONMENT ID, never the revision (an
+ *     environment is live-editable, so every edit bumps the revision — keying
+ *     on it would shatter a suite's history into singletons);
+ *   - the exact revision belongs on an individual RUN row;
+ *   - a group header never claims one arbitrary revision;
+ *   - legacy runs with no `environmentRef` keep today's host label.
+ */
+import { describe, expect, it, vi } from "vitest";
+import { renderWithProviders, screen } from "@/test";
+import {
+  hasEnvironmentRun,
+  runContextKey,
+  runContextKeys,
+  runContextLabel,
+  runContextRevisionSummary,
+  runRevisionLabel,
+  getEnvironmentConflictMessage,
+} from "../helpers";
+import { resolveCaseRunBatchHost } from "../runs/group-case-iterations";
+import { SuiteRunsList } from "../suite-runs-list";
+import type { EvalIteration, EvalSuiteRun } from "../types";
+
+// The chips are flag-gated exactly like the run-detail "Environment" row.
+// Flag ON is the state under test; the OFF path is asserted separately below
+// via the pure helpers, which are never gated.
+vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
+  useProjectEnvironmentsEnabled: () => true,
+  useProjectEnvironmentsEnabledState: () => true,
+  PROJECT_ENVIRONMENTS_FEATURE_FLAG: "project-environments-enabled",
+}));
+
+function envRun(
+  id: string,
+  environmentId: string,
+  name: string,
+  revision: number,
+  overrides: Partial<EvalSuiteRun> = {}
+): EvalSuiteRun {
+  return {
+    _id: id,
+    suiteId: "suite-1",
+    createdBy: "user-1",
+    runNumber: 1,
+    configRevision: "1",
+    configSnapshot: {
+      tests: [],
+      // NOTE: `environment.servers` is the unrelated legacy server-name bag —
+      // it must never be read as environment identity.
+      environment: { servers: ["server-1"] },
+      environmentRef: { environmentId, name, revision },
+    },
+    status: "completed",
+    result: "passed",
+    createdAt: 1_000,
+    completedAt: 2_000,
+    summary: { total: 1, passed: 1, failed: 0, passRate: 100 },
+    ...overrides,
+  } as EvalSuiteRun;
+}
+
+function hostRun(
+  id: string,
+  namedHostId: string | undefined,
+  overrides: Partial<EvalSuiteRun> = {}
+): EvalSuiteRun {
+  return {
+    _id: id,
+    suiteId: "suite-1",
+    createdBy: "user-1",
+    runNumber: 1,
+    configRevision: "1",
+    configSnapshot: { tests: [], environment: { servers: ["server-1"] } },
+    status: "completed",
+    result: "passed",
+    createdAt: 1_000,
+    completedAt: 2_000,
+    summary: { total: 1, passed: 1, failed: 0, passRate: 100 },
+    ...(namedHostId ? { namedHostId } : {}),
+    ...overrides,
+  } as EvalSuiteRun;
+}
+
+describe("runContextKey", () => {
+  it("keys an environment run by environment id, NOT by revision", () => {
+    const rev1 = envRun("r1", "env-a", "Staging", 1);
+    const rev9 = envRun("r2", "env-a", "Staging", 9);
+    expect(runContextKey(rev1)).toBe("environment:env-a");
+    expect(runContextKey(rev9)).toBe("environment:env-a");
+    expect(runContextKey(rev1)).toBe(runContextKey(rev9));
+  });
+
+  it("keeps ONE group for one environment across several revisions", () => {
+    const runs = [
+      envRun("r1", "env-a", "Staging", 1),
+      envRun("r2", "env-a", "Staging", 2),
+      envRun("r3", "env-a", "Staging", 7),
+    ];
+    expect(runContextKeys(runs)).toEqual(["environment:env-a"]);
+  });
+
+  it("keeps two environments that resolve to the SAME host in SEPARATE groups", () => {
+    // Both environments point at host-claude; only the environment id differs.
+    const runs = [
+      envRun("r1", "env-a", "Staging", 3, { namedHostId: "host-claude" }),
+      envRun("r2", "env-b", "Prod", 3, { namedHostId: "host-claude" }),
+    ];
+    expect(runContextKeys(runs)).toEqual([
+      "environment:env-a",
+      "environment:env-b",
+    ]);
+    expect(runContextKeys(runs)).toHaveLength(2);
+  });
+
+  it("falls back to namedHostId for legacy runs, and to a stable sentinel with neither", () => {
+    expect(runContextKey(hostRun("r1", "host-claude"))).toBe(
+      "host:host-claude"
+    );
+    expect(runContextKey(hostRun("r2", undefined))).toBe("host:none");
+  });
+
+  it("does not conflate a host-keyed run with an environment-keyed one", () => {
+    expect(runContextKey(hostRun("r1", "host-claude"))).not.toBe(
+      runContextKey(envRun("r2", "host-claude", "Staging", 1))
+    );
+  });
+});
+
+describe("runContextLabel / runRevisionLabel", () => {
+  it("labels an environment run by its frozen environment name", () => {
+    expect(runContextLabel(envRun("r1", "env-a", "Staging", 4))).toBe(
+      "Staging"
+    );
+  });
+
+  it("labels a legacy run by the resolved host name", () => {
+    const names = new Map<string, string | null>([["host-claude", "Claude"]]);
+    expect(runContextLabel(hostRun("r1", "host-claude"), names)).toBe("Claude");
+  });
+
+  it("falls back to a truncated host id when the host name is unresolvable", () => {
+    // Unattached / deleted host: not in the map, and a `null` entry must fall
+    // through too (Map.get returning null is not "no name available").
+    expect(runContextLabel(hostRun("r1", "host-claude-0123456789"))).toBe(
+      "host-cla"
+    );
+    expect(
+      runContextLabel(
+        hostRun("r1", "host-claude-0123456789"),
+        new Map([["host-claude-0123456789", null]])
+      )
+    ).toBe("host-cla");
+  });
+
+  it("returns null when a run names neither an environment nor a host", () => {
+    expect(runContextLabel(hostRun("r1", undefined))).toBeNull();
+  });
+
+  it("puts the exact revision on the run — and never on a legacy run", () => {
+    expect(runRevisionLabel(envRun("r1", "env-a", "Staging", 4))).toBe("rev 4");
+    expect(runRevisionLabel(hostRun("r2", "host-claude"))).toBeNull();
+  });
+});
+
+describe("runContextRevisionSummary (group header)", () => {
+  it("never claims one arbitrary revision when the group spans several", () => {
+    const summary = runContextRevisionSummary([
+      envRun("r1", "env-a", "Staging", 2),
+      envRun("r2", "env-a", "Staging", 5),
+      envRun("r3", "env-a", "Staging", 7),
+    ]);
+    expect(summary).toBe("rev 2–7");
+    // Explicitly NOT any single member revision.
+    expect(summary).not.toBe("rev 2");
+    expect(summary).not.toBe("rev 5");
+    expect(summary).not.toBe("rev 7");
+  });
+
+  it("shows a single revision only when every run agrees", () => {
+    expect(
+      runContextRevisionSummary([
+        envRun("r1", "env-a", "Staging", 3),
+        envRun("r2", "env-b", "Prod", 3),
+      ])
+    ).toBe("rev 3");
+  });
+
+  it("is null for a legacy group", () => {
+    expect(
+      runContextRevisionSummary([
+        hostRun("r1", "host-a"),
+        hostRun("r2", "host-b"),
+      ])
+    ).toBeNull();
+    expect(hasEnvironmentRun([hostRun("r1", "host-a")])).toBe(false);
+    expect(hasEnvironmentRun([envRun("r1", "env-a", "Staging", 1)])).toBe(true);
+  });
+});
+
+describe("resolveCaseRunBatchHost (case history)", () => {
+  const batch = { key: "suite:run-1", iterations: [] as EvalIteration[] };
+
+  it("names an environment batch by the environment + its exact revision", () => {
+    const resolved = resolveCaseRunBatchHost(batch, {
+      runsById: new Map([["run-1", envRun("run-1", "env-a", "Staging", 6)]]),
+    });
+    expect(resolved).toEqual({
+      hostName: "Staging",
+      environmentId: "env-a",
+      revisionLabel: "rev 6",
+    });
+  });
+
+  it("prefers the environment over the host the environment resolved to", () => {
+    const resolved = resolveCaseRunBatchHost(batch, {
+      runsById: new Map([
+        [
+          "run-1",
+          envRun("run-1", "env-a", "Staging", 6, {
+            namedHostId: "host-claude",
+          }),
+        ],
+      ]),
+      hostNamesById: new Map([["host-claude", "Claude"]]),
+    });
+    expect(resolved?.hostName).toBe("Staging");
+    expect(resolved?.environmentId).toBe("env-a");
+  });
+
+  it("keeps the legacy host label for a run with no environmentRef", () => {
+    const resolved = resolveCaseRunBatchHost(batch, {
+      runsById: new Map([["run-1", hostRun("run-1", "host-claude")]]),
+      hostNamesById: new Map([["host-claude", "Claude"]]),
+    });
+    expect(resolved).toEqual({ hostId: "host-claude", hostName: "Claude" });
+  });
+
+  it("suppresses environment identity when the kill-switch is off", () => {
+    const resolved = resolveCaseRunBatchHost(batch, {
+      runsById: new Map([
+        [
+          "run-1",
+          envRun("run-1", "env-a", "Staging", 6, {
+            namedHostId: "host-claude",
+          }),
+        ],
+      ]),
+      hostNamesById: new Map([["host-claude", "Claude"]]),
+      projectEnvironmentsEnabled: false,
+    });
+    expect(resolved).toEqual({ hostId: "host-claude", hostName: "Claude" });
+  });
+});
+
+describe("SuiteRunsList mixed host/environment history", () => {
+  it("renders both, each labelled by its own context", () => {
+    renderWithProviders(
+      <SuiteRunsList
+        runs={[
+          envRun("envrun00", "env-a", "Staging", 4, {
+            createdAt: 20_000,
+            completedAt: 21_000,
+          }),
+          hostRun("hostrun0", "host-claude", {
+            createdAt: 10_000,
+            completedAt: 11_000,
+          }),
+        ]}
+        allIterations={[]}
+        hostNamesById={new Map([["host-claude", "Claude"]])}
+        onRunClick={vi.fn()}
+      />
+    );
+
+    // Environment run → environment name + its exact revision.
+    expect(screen.getByText("Staging")).toBeInTheDocument();
+    expect(screen.getByText("rev 4")).toBeInTheDocument();
+    // Legacy run → today's host label, unchanged.
+    expect(screen.getByText("Claude")).toBeInTheDocument();
+  });
+
+  it("labels a multi-environment launch group by its axis, claiming no revision", () => {
+    renderWithProviders(
+      <SuiteRunsList
+        runs={[
+          envRun("grpa0000", "env-a", "Staging", 2, {
+            runGroupId: "g-1",
+            createdAt: 20_000,
+            completedAt: 21_000,
+          }),
+          envRun("grpb0000", "env-b", "Prod", 7, {
+            runGroupId: "g-1",
+            createdAt: 20_100,
+            completedAt: 21_100,
+          }),
+        ]}
+        allIterations={[]}
+        onRunClick={vi.fn()}
+      />
+    );
+
+    const header = screen.getByText(/Run group g/i).closest("button");
+    expect(header).not.toBeNull();
+    // The collapsed group header names the axis only — no revision, and no
+    // single environment standing in for the whole group.
+    expect(header!.textContent).toContain("2 environments");
+    expect(header!.textContent).not.toMatch(/rev \d/);
+  });
+});
+
+describe("getEnvironmentConflictMessage", () => {
+  it("recognises the environment-drift 409 and returns its readable message", () => {
+    const error = Object.assign(
+      new Error("Environment changed — retry the run."),
+      {
+        code: "ENVIRONMENT_REVISION_CONFLICT",
+      }
+    );
+    expect(getEnvironmentConflictMessage(error)).toBe(
+      "Environment changed — retry the run."
+    );
+  });
+
+  it("ignores unrelated failures", () => {
+    expect(getEnvironmentConflictMessage(new Error("boom"))).toBeNull();
+    expect(
+      getEnvironmentConflictMessage(
+        Object.assign(new Error("nope"), { code: "VALIDATION_ERROR" })
+      )
+    ).toBeNull();
+    expect(getEnvironmentConflictMessage(undefined)).toBeNull();
+  });
+});
