@@ -348,6 +348,10 @@ console.log(result); // 8
 - Error if arguments are invalid
 - Error if tool execution fails
 
+<Note>
+When an MRTR input collector is registered for the server via `setMrtrInputCollector`, `executeTool` automatically drives the multi-round-trip loop if the server returns an `input_required` result. The collector is invoked once per round; the operation retries until a complete result is returned or the round cap (default 10) is exceeded.
+</Note>
+
 ---
 
 ### listResources()
