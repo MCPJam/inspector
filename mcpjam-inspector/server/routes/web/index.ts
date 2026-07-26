@@ -15,6 +15,7 @@ import swarmRuns from "./swarm-runs.js";
 import { harnessMcp } from "./harness-mcp.js";
 import apps from "./apps.js";
 import evals from "./evals.js";
+import environments from "./environments.js";
 import oauthWeb from "./oauth.js";
 import serverSecretsWeb from "./server-secrets.js";
 import exporter from "./export.js";
@@ -41,6 +42,10 @@ web.use("/chatboxes/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 // API it fronts is LAUNCHER-gated + project-member-gated server-side.
 web.use("/swarm/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/evals/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+// Project Environment reads — member-gated server-side by the Convex query the
+// route fronts; client exposure is gated by the `project-environments-enabled`
+// flag. Read-only and narrowly projected (never the full runtime spec).
+web.use("/environments/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/chat-v2", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/mcpjam-agent", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use(
@@ -73,6 +78,7 @@ web.route("/chatboxes", chatboxes);
 web.route("/chatboxes", chatboxSessions);
 web.route("/swarm", swarmRuns);
 web.route("/evals", evals);
+web.route("/environments", environments);
 web.route("/export", exporter);
 // Voice transcription handles user-bearer forwarding and guest fallback inside
 // the proxy route so local/npx users can spend MCPJam credits without BYOK.
