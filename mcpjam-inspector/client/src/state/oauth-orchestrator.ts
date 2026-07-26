@@ -630,6 +630,20 @@ export async function applyToolCallStepUp(
     challenge.resourceMetadataUrl,
   );
 
+  // A METADATA-ONLY challenge (a `resource_metadata` pointer with NO
+  // `requiredScope`) intentionally re-authorizes with the EXISTING scopes.
+  // `challengedScopes` is empty, so the union below is just the user's
+  // previously-requested/consented scopes, which flow to the fresh grant as its
+  // requested scope value. This is deliberate, not a bug: a metadata-only
+  // `insufficient_scope` names no scope to widen to — it is a "you discovered
+  // PRM from the wrong place, rediscover it here" signal (the corrected
+  // `resourceMetadataUrl` may point at a different issuer/resource). Requesting
+  // the corrected PRM's full `scopes_supported` instead would over-grant scopes
+  // the server never asked for and the user never consented to; re-requesting
+  // the original scopes against the CORRECTED metadata is the least-privilege,
+  // intent-preserving step-up (and is not a no-op — discovery, AS, and token
+  // audience can all change). If the corrected metadata still resolves to the
+  // same insufficient scopes, the bounded retry stops the loop by design.
   const decision = resolveInsufficientScopeStepUp({
     serverName: server.name,
     issuer,
