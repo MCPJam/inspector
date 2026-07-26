@@ -363,18 +363,25 @@ describe("web chat-v2 — environment execution target", () => {
     const args = prepareChatV2Mock.mock.calls.at(-1)![0];
     // Project-wide cloud skills would double-deliver alongside the resolved set.
     expect(args.cloudSkills).toBeUndefined();
-    expect(args.skillsSource).toEqual({
-      kind: "resolved",
-      skills: [
-        {
-          name: "release-notes",
-          description: "Write release notes",
-          content: "env skill body",
-          contentHash: "agg_env",
-          provenance: "authored",
-        },
-      ],
-    });
+    // INS-3: the emulated engine now receives the whole EffectiveCapabilitySet
+    // rather than a flat skill list, because its tools address skills by REF
+    // (`<plugin>/<skill>` for a plugin skill). This environment pins no
+    // plugins, so the one resolved skill is standalone and its ref is its name.
+    expect(args.skillsSource.kind).toBe("resolved");
+    expect(args.skillsSource.capabilities.standaloneSkills).toEqual([
+      {
+        ref: "release-notes",
+        skillId: "sk_env",
+        name: "release-notes",
+        description: "Write release notes",
+        content: "env skill body",
+        aggregateHash: "agg_env",
+        channels: ["environment"],
+        files: [],
+      },
+    ]);
+    expect(args.skillsSource.capabilities.pluginSkills).toEqual([]);
+    expect(args.skillsSource.capabilities.problems).toEqual([]);
   });
 
   it("hands the resolved skills to the HARNESS engine instead when the host runs one", async () => {

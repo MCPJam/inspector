@@ -34,8 +34,9 @@ import { getSkillToolsAndPrompt } from "./skill-tools.js";
 import {
   getCloudSkillToolsAndPrompt,
   getPinnedSkillToolsAndPrompt,
-  getResolvedSkillToolsAndPrompt,
 } from "./computers/cloud-skill-tools.js";
+import { getEffectiveSkillToolsAndPrompt } from "./computers/effective-skill-tools.js";
+import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { PinnableSkill } from "../../shared/skill-types.js";
 import { logger } from "./logger.js";
 import { isGPT5Model, type ModelDefinition } from "@/shared/types";
@@ -691,11 +692,15 @@ export interface PrepareChatV2Options {
    *  - `pinned`   — EVAL RUNNERS ONLY. Frozen in-memory tools over snapshotted
    *    content (zero network in execute). Tools bypass approval: pure reads of
    *    frozen content under an auto-deny eval run.
-   *  - `resolved` — a Project-Environment turn (Phase 1.4). Same in-memory
-   *    delivery, DIFFERENT policy: this is an ordinary interactive turn, so the
-   *    skill tools follow the host's normal `requireToolApproval` rule. The eval
+   *  - `resolved` — a Project-Environment turn. Same in-memory delivery,
+   *    DIFFERENT policy: this is an ordinary interactive turn, so the skill
+   *    tools follow the host's normal `requireToolApproval` rule. The eval
    *    approval exemption is deliberately NOT inherited — a user watching their
-   *    own turn should still get the approval prompt they configured.
+   *    own turn should still get the approval prompt they configured. It
+   *    carries the whole `EffectiveCapabilitySet` rather than a skill list
+   *    (INS-3) because the tools address skills by REF: a plugin skill is
+   *    `<plugin>/<skill>`, and the origin/file metadata the ref surface needs
+   *    lives on the set, not on a flattened `PinnableSkill`.
    *  - `none`     — suppress skills entirely.
    *
    * `resolved` and `pinned` are separate kinds rather than one "in-memory" kind
@@ -704,7 +709,7 @@ export interface PrepareChatV2Options {
    */
   skillsSource?:
     | { kind: "pinned"; skills: PinnableSkill[] }
-    | { kind: "resolved"; skills: PinnableSkill[] }
+    | { kind: "resolved"; capabilities: EffectiveCapabilitySet }
     | { kind: "none" };
 }
 
@@ -958,7 +963,14 @@ export async function prepareChatV2(
       ? skillsSource.kind === "pinned"
         ? getPinnedSkillToolsAndPrompt(skillsSource.skills)
         : skillsSource.kind === "resolved"
-          ? getResolvedSkillToolsAndPrompt(skillsSource.skills)
+          ? getEffectiveSkillToolsAndPrompt(skillsSource.capabilities, {
+              // The discovery listing is budgeted against THIS model's context
+              // (INS-3 / OpenAI's 2% rule). `contextLength` is optional on a
+              // model definition; the budget helper falls back to 8,000 chars.
+              ...(modelDefinition.contextLength !== undefined
+                ? { modelContextTokens: modelDefinition.contextLength }
+                : {}),
+            })
           : { tools: {}, systemPromptSection: "" }
       : cloudSkills
         ? getCloudSkillToolsAndPrompt({

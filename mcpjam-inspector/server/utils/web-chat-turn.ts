@@ -65,10 +65,8 @@ import {
   type PersistedTurnTrace,
 } from "./chat-ingestion.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
-import {
-  toPinnableSkill,
-  type RuntimeSkill,
-} from "./harness/runtime-skills.js";
+import { type RuntimeSkill } from "./harness/runtime-skills.js";
+import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-helpers.js";
 import { ErrorCode, WebRouteError } from "./../routes/web/errors.js";
 import { readUrlElicitations } from "@/shared/http-tool-calls";
@@ -221,8 +219,22 @@ export interface WebChatTurnPrepareInputs {
    * Ignored when `harness` is set: a harness turn delivers skills natively
    * through the adapter (see `WebChatTurnPersistContext.runtimeSkillsOverride`),
    * and advertising emulated skill tools there is a prompt/tool mismatch.
+   *
+   * INS-3: this stays the HARNESS-shaped list (name/description/content, which
+   * is all an adapter writes to disk). The emulated side takes
+   * {@link WebChatTurnPrepareInput.effectiveCapabilities} instead, because its
+   * tools address skills by ref and need the plugin origin this list drops.
    */
   runtimeSkillsOverride?: RuntimeSkill[];
+  /**
+   * The turn's resolved `EffectiveCapabilitySet` (INS-3). Set alongside
+   * `runtimeSkillsOverride` for an environment turn; drives the EMULATED skill
+   * tools (ref-addressed, plugin-origin-aware, supporting-file capable).
+   *
+   * Presence is what makes it authoritative — a set that resolves zero skills
+   * advertises zero, and never falls back to the project-wide pool.
+   */
+  effectiveCapabilities?: EffectiveCapabilitySet;
 }
 
 /** Runtime knobs (auth, abort, rpc collector, Hono context for cleanup). */
@@ -365,11 +377,11 @@ export async function streamWebChatTurn(
       // EMULATED engine only. On a harness turn the adapter delivers them
       // natively, so advertising `listSkills`/`loadSkill` on top would describe
       // a second, different delivery of the same set to the same model.
-      ...(prepare.runtimeSkillsOverride !== undefined && !prepare.harness
+      ...(prepare.effectiveCapabilities !== undefined && !prepare.harness
         ? {
             skillsSource: {
               kind: "resolved" as const,
-              skills: prepare.runtimeSkillsOverride.map(toPinnableSkill),
+              capabilities: prepare.effectiveCapabilities,
             },
           }
         : {}),
