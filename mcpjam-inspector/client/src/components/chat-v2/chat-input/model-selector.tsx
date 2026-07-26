@@ -38,7 +38,13 @@ import { useModelPickerIntentStore } from "@/stores/model-picker-intent-store";
 interface ModelSelectorProps {
   currentModel: ModelDefinition;
   availableModels: ModelDefinition[];
-  onModelChange: (model: ModelDefinition) => void;
+  /** `userInitiated` marks a pick made from this menu, as opposed to the
+   * out-of-credits hand-off below deriving one. Only the former should update
+   * the remembered own-provider model. */
+  onModelChange: (
+    model: ModelDefinition,
+    options?: { userInitiated?: boolean }
+  ) => void;
   onOpenChange?: (open: boolean) => void;
   disabled?: boolean;
   isLoading?: boolean;
@@ -367,6 +373,8 @@ export function ModelSelector({
     }
 
     selectedProvidersTabNonceRef.current = providersTabNonce;
+    // Derived, not picked — deliberately not `userInitiated`, so restoring a
+    // remembered model doesn't count as choosing it again.
     onModelChange(nextModel);
   }, [
     configuredModels,
@@ -394,7 +402,7 @@ export function ModelSelector({
     }
 
     if (nextChange.type === "single") {
-      onModelChange(nextChange.nextModel);
+      onModelChange(nextChange.nextModel, { userInitiated: true });
       setIsOpen(false);
     } else {
       onSelectedModelsChange?.(nextChange.selectedModels);

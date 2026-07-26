@@ -302,6 +302,16 @@ export interface TokenUsage {
   totalTokens: number;
 }
 
+export interface SetSelectedModelOptions {
+  /**
+   * True only when this came from the model menu. Restores — a history
+   * session, an eval hand-off — go through the same setter but must not
+   * update the remembered own-provider model, or opening an old thread would
+   * silently re-aim the next out-of-credits hand-off. See BACK2-628.
+   */
+  userInitiated?: boolean;
+}
+
 export interface UseChatSessionReturn {
   /**
    * Elicitation requests whose tool call is blocked on this user right now.
@@ -345,7 +355,10 @@ export interface UseChatSessionReturn {
 
   // Model state
   selectedModel: ModelDefinition;
-  setSelectedModel: (model: ModelDefinition) => void;
+  setSelectedModel: (
+    model: ModelDefinition,
+    options?: SetSelectedModelOptions
+  ) => void;
   /**
    * False while the persisted selection has not (yet) matched an entry in
    * `availableModels` — notably during the first renders after a load, when
@@ -1579,7 +1592,7 @@ export function useChatSession(
   const lastObservedTokenCountSelectionKeyRef = useRef<string | null>(null);
 
   const setSelectedModel = useCallback(
-    (model: ModelDefinition) => {
+    (model: ModelDefinition, options?: SetSelectedModelOptions) => {
       if (initialModelId) {
         return;
       }
@@ -1587,7 +1600,13 @@ export function useChatSession(
       // out-of-credits → "bring your own key" hand-off can restore the model
       // the user actually wants instead of re-deriving one from list order.
       // See `loadLastOwnProviderModelId` / BACK2-628.
-      if (!isMCPJamProvidedModelMenuItem(model)) {
+      //
+      // Only a pick from the menu counts. This setter is also how a history
+      // session and an eval hand-off restore *their* model, and letting those
+      // write would mean opening an old thread silently re-aims the next
+      // hand-off at whatever that thread happened to run on. Off by default so
+      // a new caller has to say it meant it.
+      if (options?.userInitiated && !isMCPJamProvidedModelMenuItem(model)) {
         saveLastOwnProviderModelId(String(model.id));
       }
       setSelectedModelId(String(model.id));

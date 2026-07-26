@@ -136,20 +136,35 @@ const byokIntentModels: ModelDefinition[] = [
 
 function ProviderIntentControlledModelSelector({
   availableModels = outOfCreditsModels,
+  onChange,
 }: {
   availableModels?: ModelDefinition[];
+  onChange?: (
+    model: ModelDefinition,
+    options?: { userInitiated?: boolean }
+  ) => void;
 } = {}) {
   const [currentModel, setCurrentModel] = useState<ModelDefinition>(
     availableModels[0]!
   );
 
   return (
-    <ModelSelector
-      currentModel={currentModel}
-      availableModels={availableModels}
-      onModelChange={setCurrentModel}
-      respondToProviderTabIntent
-    />
+    <>
+      {/* The trigger label can't distinguish the free Haiku row from the BYOK
+          one — `compactModelLabel` strips the "(Free)" suffix, so both render
+          as "Claude Haiku 4.5" and an assertion on the label would pass even
+          if the hand-off never moved. Assert on the id instead. */}
+      <span data-testid="current-model-id">{String(currentModel.id)}</span>
+      <ModelSelector
+        currentModel={currentModel}
+        availableModels={availableModels}
+        onModelChange={(model, options) => {
+          setCurrentModel(model);
+          onChange?.(model, options);
+        }}
+        respondToProviderTabIntent
+      />
+    </>
   );
 }
 
@@ -288,14 +303,13 @@ describe("ModelSelector", () => {
       useModelPickerIntentStore.getState().requestOpenProvidersTab();
     });
 
+    // The BYOK Haiku, not `anthropic/claude-haiku-4.5` (the disabled free row
+    // it started on) and not `claude-fable-5` (the first own-provider row).
     await waitFor(() => {
-      expect(
-        screen.getByTestId("model-selector-trigger")
-      ).toHaveTextContent("Haiku 4.5");
+      expect(screen.getByTestId("current-model-id")).toHaveTextContent(
+        "claude-haiku-4-5"
+      );
     });
-    expect(screen.getByTestId("model-selector-trigger")).not.toHaveTextContent(
-      "Fable"
-    );
   });
 
   it("restores the last own-provider model on the BYOK intent", async () => {
@@ -312,10 +326,59 @@ describe("ModelSelector", () => {
     });
 
     await waitFor(() => {
-      expect(
-        screen.getByTestId("model-selector-trigger")
-      ).toHaveTextContent("GPT-5 Mini");
+      expect(screen.getByTestId("current-model-id")).toHaveTextContent(
+        "gpt-5-mini"
+      );
     });
+  });
+
+  // The remembered own-provider model must only move when the user picks one.
+  // A history session or an eval hand-off restores through the same callback,
+  // and letting those write would re-aim the next hand-off at whatever that
+  // thread happened to run on.
+  it("does not mark the BYOK hand-off as a user pick", async () => {
+    const onChange = vi.fn();
+
+    render(
+      <ProviderIntentControlledModelSelector
+        availableModels={byokIntentModels}
+        onChange={onChange}
+      />
+    );
+
+    act(() => {
+      useModelPickerIntentStore.getState().requestOpenProvidersTab();
+    });
+
+    await waitFor(() => expect(onChange).toHaveBeenCalled());
+    expect(onChange.mock.calls[0]?.[1]?.userInitiated).toBeFalsy();
+  });
+
+  it("marks a pick from the menu as user-initiated", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+
+    render(
+      <ProviderIntentControlledModelSelector
+        availableModels={byokIntentModels}
+        onChange={onChange}
+      />
+    );
+
+    // Own-provider rows live behind the "Your providers" tab, which the
+    // out-of-credits intent is what opens. That hand-off is the first call;
+    // the menu click below is the one under test.
+    act(() => {
+      useModelPickerIntentStore.getState().requestOpenProvidersTab();
+    });
+    await user.click(
+      await screen.findByRole("option", { name: /gpt-5 mini/i })
+    );
+
+    await waitFor(() => expect(onChange.mock.calls.length).toBeGreaterThan(1));
+    const lastCall = onChange.mock.calls.at(-1);
+    expect(String(lastCall?.[0]?.id)).toBe("gpt-5-mini");
+    expect(lastCall?.[1]?.userInitiated).toBe(true);
   });
 
   it("leaves an own-provider selection alone when the BYOK intent fires", async () => {
