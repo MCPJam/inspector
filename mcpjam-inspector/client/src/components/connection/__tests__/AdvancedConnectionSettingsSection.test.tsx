@@ -103,6 +103,7 @@ describe("AdvancedConnectionSettingsSection", () => {
     });
 
     it("keeps a stored-header reveal behind an eye affordance", () => {
+      const onRevealHeaders = vi.fn();
       render(
         <AdvancedConnectionSettingsSection
           showConfiguration={true}
@@ -115,14 +116,59 @@ describe("AdvancedConnectionSettingsSection", () => {
           onRemoveHeader={vi.fn()}
           onUpdateHeader={vi.fn()}
           hasStoredHeaders
-          onRevealHeaders={vi.fn()}
+          onRevealHeaders={onRevealHeaders}
         />,
       );
 
+      // Stored headers carry bearer tokens, so expanding the section may not
+      // decrypt them — the mask is the only thing wired to the fetch.
+      expect(onRevealHeaders).not.toHaveBeenCalled();
       // The mask is decorative, so the only name for it is the button's.
       expect(
         screen.getByRole("button", { name: "Reveal saved headers" }),
       ).toBeEnabled();
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Reveal saved headers" }),
+      );
+      expect(onRevealHeaders).toHaveBeenCalledTimes(1);
+    });
+
+    it("names revealed headers without unmasking them", () => {
+      function StoredHeadersHarness() {
+        const [customHeaders, setCustomHeaders] = useState<
+          Array<{ key: string; value: string }>
+        >([]);
+        return (
+          <AdvancedConnectionSettingsSection
+            showConfiguration={true}
+            onToggle={vi.fn()}
+            requestTimeout="10000"
+            onRequestTimeoutChange={vi.fn()}
+            inheritedRequestTimeout={10000}
+            customHeaders={customHeaders}
+            onAddHeader={vi.fn()}
+            onRemoveHeader={vi.fn()}
+            onUpdateHeader={vi.fn()}
+            hasStoredHeaders={customHeaders.length === 0}
+            onRevealHeaders={() =>
+              setCustomHeaders([{ key: "X-API-Key", value: "super-secret" }])
+            }
+          />
+        );
+      }
+
+      render(<StoredHeadersHarness />);
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Reveal saved headers" }),
+      );
+
+      expect(screen.getByLabelText("Header 1 name")).toHaveValue("X-API-Key");
+      expect(screen.getByLabelText("Header 1 value")).toHaveAttribute(
+        "type",
+        "password",
+      );
     });
 
     /** The parent owns the rows, so add/remove bookkeeping only runs for real

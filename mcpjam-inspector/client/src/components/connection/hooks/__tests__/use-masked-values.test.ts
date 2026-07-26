@@ -64,8 +64,9 @@ describe("useMaskedValues", () => {
   it("keeps rows masked no matter how many arrive at once", () => {
     const { result } = renderHook(() => useMaskedValues());
 
-    // Stored rows land here after a fetch the user didn't explicitly ask for,
-    // so nothing may unmask itself — only a row's own eye can.
+    // A reveal drops the whole stored set in at once. That click asked which
+    // values are set, not to read them, so nothing may unmask itself — only a
+    // row's own eye can.
     expect(result.current.isVisible(0)).toBe(false);
     expect(result.current.isVisible(4)).toBe(false);
 

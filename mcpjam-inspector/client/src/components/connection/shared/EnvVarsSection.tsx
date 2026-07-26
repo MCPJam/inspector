@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef } from "react";
+import { useId } from "react";
 import { Input } from "@mcpjam/design-system/input";
 import { ChevronDown, ChevronRight, Plus, X } from "lucide-react";
 import { useMaskedValues } from "../hooks/use-masked-values";
@@ -52,19 +52,11 @@ export function EnvVarsSection({
     onRemove(index);
   };
 
-  // Stored values are fetched as soon as the section is opened, so the rows can
-  // show which variables are set instead of a single anonymous mask. The values
-  // still arrive masked: opening a disclosure asks what is configured, not to
-  // read the secrets. Guarded by a ref so a failed fetch doesn't re-fire on
-  // every render — the mask stays clickable as the retry.
-  const autoRevealRequested = useRef(false);
-  useEffect(() => {
-    if (!showEnvVars || !isHidden || !onReveal || autoRevealRequested.current) {
-      return;
-    }
-    autoRevealRequested.current = true;
-    onReveal();
-  }, [showEnvVars, isHidden, onReveal]);
+  // Stored values stay on the server until the mask is clicked. Expanding this
+  // section must not fetch them: `onReveal` decrypts the whole secret set and
+  // drops it into form state, so binding it to a disclosure would turn an
+  // idle chevron click into a secret access. One click on the mask then buys
+  // both things at once — the rows arrive named, and still masked.
 
   return (
     <div className="space-y-2">

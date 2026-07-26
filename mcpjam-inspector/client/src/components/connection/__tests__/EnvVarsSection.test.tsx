@@ -95,7 +95,32 @@ describe("EnvVarsSection value masking", () => {
     ).toBeInTheDocument();
   });
 
-  it("fetches stored values on open and names the rows without unmasking them", () => {
+  it("does not fetch stored values just because the section is open", () => {
+    // `onReveal` decrypts the server's whole secret set, so expanding the
+    // disclosure must not fire it — only the mask may.
+    const onReveal = vi.fn();
+    render(
+      <EnvVarsSection
+        envVars={[]}
+        showEnvVars
+        onToggle={vi.fn()}
+        onAdd={vi.fn()}
+        onRemove={vi.fn()}
+        onUpdate={vi.fn()}
+        hasStoredEnv
+        onReveal={onReveal}
+      />
+    );
+
+    expect(onReveal).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "Reveal saved environment variables" })
+    ).toBeInTheDocument();
+  });
+
+  it("names the rows on reveal without unmasking them", async () => {
+    const user = userEvent.setup();
+
     function RevealHarness() {
       const [envVars, setEnvVars] = useState<EnvVar[]>([]);
       return (
@@ -106,7 +131,7 @@ describe("EnvVarsSection value masking", () => {
           onAdd={vi.fn()}
           onRemove={vi.fn()}
           onUpdate={vi.fn()}
-          hasStoredEnv
+          hasStoredEnv={envVars.length === 0}
           onReveal={() =>
             setEnvVars([
               { key: "TOKEN", value: "revealed" },
@@ -119,8 +144,12 @@ describe("EnvVarsSection value masking", () => {
 
     render(<RevealHarness />);
 
-    // No click: opening the section is what fetches them. The point is that the
-    // user can see *which* variables are set, so the keys are readable...
+    await user.click(
+      screen.getByRole("button", { name: "Reveal saved environment variables" })
+    );
+
+    // One click buys both halves: which variables are set, so the keys are
+    // readable...
     expect(screen.getByLabelText("Environment variable 1 name")).toHaveValue(
       "TOKEN"
     );
@@ -130,43 +159,5 @@ describe("EnvVarsSection value masking", () => {
     // ...while the values stay covered until an eye asks for one.
     expect(valueInput("1")).toHaveAttribute("type", "password");
     expect(valueInput("2")).toHaveAttribute("type", "password");
-  });
-
-  it("does not re-fire the fetch when it fails", () => {
-    // The mask doubles as the retry, so a failed fetch leaves `hasStoredEnv`
-    // set. Without the guard the effect would fire on every render.
-    const onReveal = vi.fn();
-    const { rerender } = render(
-      <EnvVarsSection
-        envVars={[]}
-        showEnvVars
-        onToggle={vi.fn()}
-        onAdd={vi.fn()}
-        onRemove={vi.fn()}
-        onUpdate={vi.fn()}
-        hasStoredEnv
-        revealError="Couldn't reveal saved secrets."
-        onReveal={onReveal}
-      />
-    );
-
-    rerender(
-      <EnvVarsSection
-        envVars={[]}
-        showEnvVars
-        onToggle={vi.fn()}
-        onAdd={vi.fn()}
-        onRemove={vi.fn()}
-        onUpdate={vi.fn()}
-        hasStoredEnv
-        revealError="Couldn't reveal saved secrets."
-        onReveal={onReveal}
-      />
-    );
-
-    expect(onReveal).toHaveBeenCalledTimes(1);
-    expect(
-      screen.getByRole("button", { name: "Reveal saved environment variables" })
-    ).toBeInTheDocument();
   });
 });

@@ -9,8 +9,8 @@ import { useState } from "react";
  * pure client state — the eye never costs a round-trip.
  *
  * Rows are masked unless a row's own eye says otherwise, including the rows a
- * stored-secret fetch brings back — opening a section is a request to see what
- * is configured, not to read the secrets.
+ * stored-secret reveal brings back — clicking the mask asks *which* values are
+ * set, and one eye then asks to read one of them.
  */
 export function useMaskedValues() {
   const [overrides, setOverrides] = useState<Record<number, boolean>>({});
