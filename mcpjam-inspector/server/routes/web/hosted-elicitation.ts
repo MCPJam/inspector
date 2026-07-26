@@ -606,13 +606,21 @@ export function hostDeclaresElicitation(
  *
  * Two independent gates, both required:
  *
- * 1. **Capability, from the right authority.** For a chatbox turn the published
- *    host wins — a share-link visitor controls the request body, so reading
+ * 1. **Capability, from the right authority.** When the execution context is
+ *    server-resolved — a chatbox, or a Project Environment — the resolved host
+ *    wins. A share-link visitor controls the request body, so reading
  *    capabilities from it would let anyone switch elicitation on for a host
- *    whose owner has it off. (Same host-wins reasoning chat-v2 already applies
- *    to model/approval.) A backend predating `clientCapabilities` on
- *    runtime-config omits it → treated as absent → fail closed. For a direct
- *    turn the body IS the owner's own host config, sent by their own client.
+ *    whose owner has it off; and an environment's whole point is that the
+ *    server decides what it resolves to. A backend predating
+ *    `clientCapabilities` on runtime-config omits it → treated as absent →
+ *    fail closed. For a plain host-preview or ad-hoc turn the body IS the
+ *    owner's own host config, sent by their own client.
+ *
+ *    NOTE this is a CAPABILITY declaration, not a user preference. It is
+ *    deliberately host-authoritative for environments even though model /
+ *    prompt / temperature / approval stay body-overridable there (ephemeral
+ *    Playground tweaks) — advertising `elicitation` changes what the SDK puts
+ *    on the initialize wire, which is not a per-turn preference to tweak.
  *
  * 2. **Client handshake.** Catalog hosts (claude-code, cursor, vscode, …)
  *    ALREADY declare `elicitation`, so honoring it for every client would make
@@ -621,7 +629,11 @@ export function hostDeclaresElicitation(
  *    the callback; everyone else keeps today's fail-fast behavior.
  */
 export function resolveElicitationGate(args: {
-  isChatboxSession: boolean;
+  /**
+   * True when the execution context was resolved server-side (chatbox or
+   * Project Environment) and its host config is therefore authoritative.
+   */
+  hostAuthoritative: boolean;
   /** `clientCapabilities` from the chatbox/host runtime-config (authoritative). */
   hostClientCapabilities: unknown;
   /** `clientCapabilities` from the request body (owner-supplied on direct turns). */
@@ -633,7 +645,9 @@ export function resolveElicitationGate(args: {
   enabled: boolean;
 } {
   const effectiveClientCapabilities = (
-    args.isChatboxSession ? args.hostClientCapabilities : args.bodyClientCapabilities
+    args.hostAuthoritative
+      ? args.hostClientCapabilities
+      : args.bodyClientCapabilities
   ) as Record<string, unknown> | undefined;
 
   return {
