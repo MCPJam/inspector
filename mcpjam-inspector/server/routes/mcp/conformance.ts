@@ -132,6 +132,8 @@ conformance.post("/apps", async (c) => {
       return c.json({ success: false, ...resolved }, 400);
     }
 
+    assertHttpSupported("apps", resolved.config);
+
     // MCPClientManager stores `url` as a URL object; the SDK expects a string.
     const serverConfig = { ...resolved.config } as MCPServerConfig;
     if ("url" in serverConfig && serverConfig.url) {

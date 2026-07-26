@@ -592,9 +592,7 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
     const promises: Promise<void>[] = [];
     if (httpServerNow) {
       promises.push(runProtocol(runToken, currentServer.name));
-    }
-    promises.push(runApps(runToken, currentServer.name));
-    if (httpServerNow) {
+      promises.push(runApps(runToken, currentServer.name));
       promises.push(runOAuth(runToken, currentServer));
     }
 

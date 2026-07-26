@@ -55,7 +55,9 @@ export function canRunConformance(
         ? { supported: true }
         : { supported: false, reason: HTTP_ONLY_REASON };
     case "apps":
-      return { supported: true };
+      return isHttpServerConfig(config)
+        ? { supported: true }
+        : { supported: false, reason: HTTP_ONLY_REASON };
     default: {
       const exhaustive: never = suite;
       return {
