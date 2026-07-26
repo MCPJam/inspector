@@ -28,6 +28,10 @@ import {
   readResource as readResourceApi,
 } from "@/lib/apis/mcp-resources-api";
 import { listResourceTemplates } from "@/lib/apis/mcp-resource-templates-api";
+import {
+  CacheProvenanceBadge,
+  type ServedFromCache,
+} from "@/components/ui/cache-provenance-badge";
 import { parseTemplate } from "url-template";
 import { HOSTED_MODE } from "@/lib/config";
 import type { ConnectionStatus } from "@/state/app-types";
@@ -180,6 +184,12 @@ export function ResourcesTab({
   const [error, setError] = useState<string>("");
   const [nextCursor, setNextCursor] = useState<string | undefined>(undefined);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [resourcesServedFromCache, setResourcesServedFromCache] = useState<
+    ServedFromCache | undefined
+  >(undefined);
+  const [templatesServedFromCache, setTemplatesServedFromCache] = useState<
+    ServedFromCache | undefined
+  >(undefined);
 
   // Templates state
   const [templates, setTemplates] = useState<MCPResourceTemplate[]>([]);
@@ -248,6 +258,10 @@ export function ResourcesTab({
     setTemplateContent(null);
     setTemplateError("");
     setTemplateOverrides({});
+    // SEP-2549 provenance describes the currently displayed lists; clear it
+    // whenever those lists are emptied so a badge cannot outlive its data.
+    setResourcesServedFromCache(undefined);
+    setTemplatesServedFromCache(undefined);
   };
 
   // Fetch resources and templates on mount
@@ -268,7 +282,11 @@ export function ResourcesTab({
     }
   }, [activeTab]);
 
-  const fetchResources = async (cursor?: string, append = false) => {
+  const fetchResources = async (
+    cursor?: string,
+    append = false,
+    forceRefresh = false,
+  ) => {
     if (!serverName) return;
     if (!isServerConnected) {
       resetLoadedResourceState();
@@ -284,11 +302,16 @@ export function ResourcesTab({
       setSelectedResource("");
       setResourceContent(null);
       setNextCursor(undefined);
+      // Clear stale provenance at the start of a non-append (re)fetch so a
+      // failed/in-flight refresh cannot keep showing the previous badge.
+      setResourcesServedFromCache(undefined);
     }
     const fetchVersion = ++resourcesFetchVersionRef.current;
 
     try {
-      const result = await listResources(serverName, cursor);
+      const result = await listResources(serverName, cursor, {
+        refresh: forceRefresh,
+      });
       if (fetchVersion !== resourcesFetchVersionRef.current) return;
       const serverResources: MCPResource[] = Array.isArray(result.resources)
         ? result.resources
@@ -308,6 +331,7 @@ export function ResourcesTab({
         }
       }
       setNextCursor(result.nextCursor);
+      setResourcesServedFromCache(result.servedFromCache);
     } catch (err) {
       if (fetchVersion !== resourcesFetchVersionRef.current) return;
       setError(`Network error fetching resources: ${err}`);
@@ -319,7 +343,7 @@ export function ResourcesTab({
     }
   };
 
-  const fetchTemplates = async () => {
+  const fetchTemplates = async (forceRefresh = false) => {
     if (!serverName) return;
     if (!isServerConnected) {
       resetLoadedResourceState();
@@ -332,12 +356,18 @@ export function ResourcesTab({
     setSelectedTemplate("");
     setTemplateOverrides({});
     setTemplateContent(null);
+    // Clear stale provenance at the start of a template (re)fetch so a
+    // failed/in-flight refresh cannot keep showing the previous badge.
+    setTemplatesServedFromCache(undefined);
     const fetchVersion = ++templatesFetchVersionRef.current;
 
     try {
-      const serverTemplates = await listResourceTemplates(serverName);
+      const serverTemplates = await listResourceTemplates(serverName, {
+        refresh: forceRefresh,
+      });
       if (fetchVersion !== templatesFetchVersionRef.current) return;
       setTemplates(serverTemplates);
+      setTemplatesServedFromCache(serverTemplates.servedFromCache);
     } catch (err) {
       if (fetchVersion !== templatesFetchVersionRef.current) return;
       setTemplateError(`Could not fetch resource templates: ${err}`);
@@ -730,14 +760,22 @@ export function ResourcesTab({
             )}
           </div>
 
+          <CacheProvenanceBadge
+            servedFromCache={
+              activeTab === "resources"
+                ? resourcesServedFromCache
+                : templatesServedFromCache
+            }
+          />
+
           {/* Action buttons */}
           <div className="ml-auto flex items-center gap-0.5 text-muted-foreground/80">
             <Button
               onClick={() => {
                 if (activeTab === "resources") {
-                  fetchResources();
+                  fetchResources(undefined, false, true);
                 } else {
-                  fetchTemplates();
+                  fetchTemplates(true);
                 }
               }}
               variant="ghost"

@@ -49,9 +49,11 @@ describe("listResources", () => {
       cursor: "cur",
     });
 
-    expect(manager.listResources).toHaveBeenCalledWith("srv", {
-      cursor: "cur",
-    });
+    expect(manager.listResources).toHaveBeenCalledWith(
+      "srv",
+      { cursor: "cur" },
+      undefined,
+    );
     expect(result.resources).toHaveLength(1);
     expect(result.nextCursor).toBe("next");
   });
@@ -60,7 +62,11 @@ describe("listResources", () => {
     const manager = createMockManager();
     await listResources(manager, { serverId: "srv" });
 
-    expect(manager.listResources).toHaveBeenCalledWith("srv", undefined);
+    expect(manager.listResources).toHaveBeenCalledWith(
+      "srv",
+      undefined,
+      undefined,
+    );
   });
 
   it("defaults resources to empty array when undefined", async () => {
@@ -89,9 +95,11 @@ describe("readResource", () => {
       uri: "file:///test.txt",
     });
 
-    expect(manager.readResource).toHaveBeenCalledWith("srv", {
-      uri: "file:///test.txt",
-    });
+    expect(manager.readResource).toHaveBeenCalledWith(
+      "srv",
+      { uri: "file:///test.txt" },
+      undefined,
+    );
     expect(result.content).toEqual(content);
   });
 });
@@ -212,7 +220,11 @@ describe("listTools", () => {
 
     await listTools(manager, { serverId: "srv", cursor: "cur" });
 
-    expect(manager.listTools).toHaveBeenCalledWith("srv", { cursor: "cur" });
+    expect(manager.listTools).toHaveBeenCalledWith(
+      "srv",
+      { cursor: "cur" },
+      undefined,
+    );
   });
 
   it("defaults tools to empty array when undefined", async () => {
@@ -276,10 +288,18 @@ describe("pagination guards", () => {
       echo: { executionCount: 1 },
       draw: { title: "Draw" },
     });
-    expect(manager.listTools).toHaveBeenNthCalledWith(1, "srv", undefined);
-    expect(manager.listTools).toHaveBeenNthCalledWith(2, "srv", {
-      cursor: "cursor-1",
-    });
+    expect(manager.listTools).toHaveBeenNthCalledWith(
+      1,
+      "srv",
+      undefined,
+      undefined,
+    );
+    expect(manager.listTools).toHaveBeenNthCalledWith(
+      2,
+      "srv",
+      { cursor: "cursor-1" },
+      undefined,
+    );
   });
 });
 

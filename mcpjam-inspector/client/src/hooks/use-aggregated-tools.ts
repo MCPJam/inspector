@@ -85,7 +85,7 @@ export function useAggregatedTools(
   // when the server set toggles or `refetch` is called mid-request.
   const fetchTokenRef = useRef(0);
 
-  const fetchAll = useCallback(async () => {
+  const fetchAll = useCallback(async (forceRefresh = false) => {
     const names = serverNamesRef.current;
     const token = ++fetchTokenRef.current;
     if (names.length === 0) {
@@ -128,7 +128,7 @@ export function useAggregatedTools(
     const results = await Promise.all(
       fetchableNames.map(async (serverId) => {
         try {
-          const data = await listTools({ serverId });
+          const data = await listTools({ serverId, refresh: forceRefresh });
           return { serverId, tools: data.tools ?? [], error: null as null };
         } catch (err) {
           const message =
@@ -166,6 +166,11 @@ export function useAggregatedTools(
     void fetchAll();
   }, [fetchAll]);
 
+  // `refetch` is the explicit user-triggered path — force a live re-fetch
+  // (cacheMode: "refresh") rather than silently reusing a still-fresh cached
+  // entry. The mount/server-change effect above stays on the default "use".
+  const refetch = useCallback(() => fetchAll(true), [fetchAll]);
+
   const flat = useMemo<ServerScopedTool[]>(() => {
     const entries: ServerScopedTool[] = [];
     for (const [serverId, tools] of Object.entries(toolsByServer)) {
@@ -194,6 +199,6 @@ export function useAggregatedTools(
     collidingNames,
     loadingByServer,
     errorByServer,
-    refetch: fetchAll,
+    refetch,
   };
 }

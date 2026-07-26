@@ -22,6 +22,7 @@
  */
 
 import type {
+  CacheableRequestOptions,
   CallToolResult,
   CompleteRequest,
   CompleteResult,
@@ -33,6 +34,7 @@ import type {
   ListResourceTemplatesResult,
   ListToolsResult,
   LoggingLevel,
+  ProtocolEra,
   ReadResourceResult,
   Request,
   RequestOptions,
@@ -118,11 +120,24 @@ export interface ManagedMcpClient {
   getServerCapabilities(): ServerCapabilities | undefined;
   getServerVersion(): Implementation | undefined;
   getInstructions(): string | undefined;
+  /**
+   * The negotiated protocol era (`"legacy"` | `"modern"`), or `undefined`
+   * before `initialize` completes. OPTIONAL because not every adapter can
+   * report it — only the `OfficialSdkClientAdapter` passes it through from
+   * upstream `Client.getProtocolEra()`. Consumers (the `LogLevelMetaClient`
+   * decorator, the `getLoggingMechanism` helper) MUST treat an absent method
+   * or `undefined` as "era unknown — do not apply modern-only behavior".
+   */
+  getProtocolEra?(): ProtocolEra | undefined;
 
   // ---- Tool calls ----
+  // The five cacheable verbs (SEP-2549) widen their options to
+  // `CacheableRequestOptions` so a caller can thread `cacheMode` through to
+  // the underlying client. The upstream `Client` methods already accept this
+  // shape; `OfficialSdkClientAdapter` forwards verbatim.
   listTools(
     params?: { cursor?: string },
-    options?: RequestOptions
+    options?: CacheableRequestOptions
   ): Promise<ListToolsResult>;
   callTool(
     params: { name: string; arguments?: Record<string, unknown> },
@@ -139,21 +154,21 @@ export interface ManagedMcpClient {
   // ---- Resources ----
   listResources(
     params?: { cursor?: string },
-    options?: RequestOptions
+    options?: CacheableRequestOptions
   ): Promise<ListResourcesResult>;
   readResource(
     params: { uri: string },
-    options?: RequestOptions
+    options?: CacheableRequestOptions
   ): Promise<ReadResourceResult>;
   listResourceTemplates(
     params?: { cursor?: string },
-    options?: RequestOptions
+    options?: CacheableRequestOptions
   ): Promise<ListResourceTemplatesResult>;
 
   // ---- Prompts ----
   listPrompts(
     params?: { cursor?: string },
-    options?: RequestOptions
+    options?: CacheableRequestOptions
   ): Promise<ListPromptsResult>;
   getPrompt(
     params: { name: string; arguments?: Record<string, string> },

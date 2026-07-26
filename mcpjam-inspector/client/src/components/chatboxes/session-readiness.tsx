@@ -6,18 +6,17 @@
  * client-side trace parsing is fallback/test-only). Nothing here re-parses the
  * trace.
  *
- *   - `SessionReadinessBadge` — compact verdict pill for synthetic session rows
+ *   - `SessionReadinessBadge` — compact verdict dot for synthetic session rows
  *   - `SessionInsightBar`      — findings strip atop a synthetic session detail
  */
 
+import type { ReactNode } from "react";
+import { Info, Loader2, XCircle } from "lucide-react";
 import {
-  AlertTriangle,
-  CheckCircle2,
-  Loader2,
-  ShieldAlert,
-  ShieldCheck,
-  XCircle,
-} from "lucide-react";
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
 
 // ── types (mirror convex/lib/sessionReadiness.ts) ─────────────────────────────
 
@@ -83,25 +82,22 @@ export interface SessionReadinessRollup {
 
 const VERDICT_META: Record<
   ReadinessVerdict,
-  { label: string; pill: string; text: string; Icon: typeof ShieldCheck }
+  { label: string; dot: string; text: string }
 > = {
   ready: {
     label: "Ready",
-    pill: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+    dot: "bg-emerald-500",
     text: "text-emerald-600 dark:text-emerald-400",
-    Icon: ShieldCheck,
   },
   needs_attention: {
     label: "Needs attention",
-    pill: "bg-amber-500/10 text-amber-700 dark:text-amber-400",
+    dot: "bg-amber-500",
     text: "text-amber-600 dark:text-amber-400",
-    Icon: AlertTriangle,
   },
   not_ready: {
     label: "Not ready",
-    pill: "bg-red-500/10 text-red-700 dark:text-red-400",
+    dot: "bg-red-500",
     text: "text-red-600 dark:text-red-400",
-    Icon: ShieldAlert,
   },
 };
 
@@ -118,7 +114,7 @@ function formatLatency(ms: number | null | undefined): string | null {
 const LOW_COVERAGE_THRESHOLD = 0.5;
 
 /** When the server omits `issues[]`, derive human explanations from denormalized fields. */
-function explainReadinessIssues(
+export function explainReadinessIssues(
   readiness: SessionReadiness,
 ): SessionReadinessIssue[] {
   if ((readiness.issues?.length ?? 0) > 0) {
@@ -203,6 +199,79 @@ function explainReadinessIssues(
   return fallbacks;
 }
 
+/** Tooltip copy for list-row dots and the detail-bar info trigger. */
+export function buildReadinessDetailLines(
+  readiness: SessionReadiness,
+): string[] {
+  const verdict = readiness.verdict ?? "ready";
+  const meta = VERDICT_META[verdict];
+  const lines = [meta.label];
+
+  if (readiness.issueCount > 0) {
+    lines.push(
+      `${readiness.issueCount} issue${readiness.issueCount === 1 ? "" : "s"}`,
+    );
+  }
+  if (readiness.status === "partial") {
+    lines.push("Partial analysis — tool inventory was unavailable");
+  }
+  if (typeof readiness.toolCallCount === "number") {
+    lines.push(
+      `${readiness.toolErrorCount ?? 0}/${readiness.toolCallCount} tool calls failed`,
+    );
+  }
+  const coverage = coveragePct(readiness.coverageRatio);
+  if (coverage) {
+    lines.push(`${coverage} tool coverage`);
+  }
+  if ((readiness.hallucinatedTools?.length ?? 0) > 0) {
+    lines.push(
+      `${readiness.hallucinatedTools!.length} undeclared tool${readiness.hallucinatedTools!.length === 1 ? "" : "s"}`,
+    );
+  }
+  const latency = formatLatency(readiness.hostLatencyMs);
+  if (latency) {
+    lines.push(`${latency} client latency`);
+  }
+
+  for (const issue of explainReadinessIssues(readiness)) {
+    if (!lines.includes(issue.message)) {
+      lines.push(issue.message);
+    }
+  }
+
+  if (readiness.status === "failed" && readiness.errorMessage) {
+    lines.push(readiness.errorMessage);
+  }
+
+  return lines;
+}
+
+function ReadinessDetailTooltip({
+  readiness,
+  children,
+}: {
+  readiness: SessionReadiness;
+  children: ReactNode;
+}) {
+  const lines = buildReadinessDetailLines(readiness);
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent
+        variant="muted"
+        side="bottom"
+        align="start"
+        className="max-w-xs space-y-1 px-3 py-2"
+      >
+        {lines.map((line) => (
+          <p key={line}>{line}</p>
+        ))}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 // ── badge (session row) ───────────────────────────────────────────────────────
 
 export function SessionReadinessBadge({
@@ -214,57 +283,52 @@ export function SessionReadinessBadge({
 
   if (readiness.status === "pending") {
     return (
-      <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground">
-        <Loader2 className="size-2.5 animate-spin" />
-        Analyzing
-      </span>
+      <ReadinessDetailTooltip readiness={readiness}>
+        <span
+          className="inline-flex shrink-0 items-center text-muted-foreground"
+          aria-label="Analyzing readiness"
+        >
+          <Loader2 className="size-2.5 animate-spin" />
+        </span>
+      </ReadinessDetailTooltip>
     );
   }
   if (readiness.status === "failed") {
     return (
-      <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground">
-        <XCircle className="size-2.5" />
-        Readiness failed
-      </span>
+      <ReadinessDetailTooltip readiness={readiness}>
+        <span
+          className="inline-flex shrink-0 items-center text-muted-foreground"
+          aria-label="Readiness analysis failed"
+        >
+          <XCircle className="size-2.5" />
+        </span>
+      </ReadinessDetailTooltip>
     );
   }
 
   const verdict = readiness.verdict ?? "ready";
+  if (verdict === "ready" && readiness.status !== "partial") {
+    return null;
+  }
+
   const meta = VERDICT_META[verdict];
-  const { Icon } = meta;
+  const label =
+    readiness.issueCount > 0
+      ? `${meta.label}, ${readiness.issueCount} issue${readiness.issueCount === 1 ? "" : "s"}`
+      : meta.label;
+
   return (
-    <span
-      className={`inline-flex items-center gap-0.5 text-[10px] font-medium ${meta.text}`}
-      title={
-        readiness.status === "partial"
-          ? "Partial readiness — tool inventory was unavailable"
-          : undefined
-      }
-    >
-      <Icon className="size-2.5" />
-      {meta.label}
-      {readiness.issueCount > 0 ? ` · ${readiness.issueCount}` : ""}
-      {readiness.status === "partial" ? " · partial" : ""}
-    </span>
+    <ReadinessDetailTooltip readiness={readiness}>
+      <span
+        className={`inline-block size-1.5 shrink-0 rounded-full ${meta.dot}`}
+        aria-label={label}
+        role="img"
+      />
+    </ReadinessDetailTooltip>
   );
 }
 
 // ── insight bar (session detail) ──────────────────────────────────────────────
-
-const ISSUE_ICON: Record<
-  SessionReadinessIssue["severity"],
-  typeof AlertTriangle
-> = {
-  error: XCircle,
-  warning: AlertTriangle,
-  info: CheckCircle2,
-};
-
-const ISSUE_TONE: Record<SessionReadinessIssue["severity"], string> = {
-  error: "text-red-600 dark:text-red-400",
-  warning: "text-amber-600 dark:text-amber-400",
-  info: "text-muted-foreground",
-};
 
 export function SessionInsightBar({
   readiness,
@@ -275,108 +339,73 @@ export function SessionInsightBar({
 
   if (readiness.status === "pending") {
     return (
-      <div className="flex items-center gap-2 border-b bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
-        <Loader2 className="size-3.5 animate-spin" />
-        Readiness analysis in progress…
+      <div className="flex items-center gap-2 border-b px-4 py-2 text-xs text-muted-foreground">
+        <Loader2 className="size-3 animate-spin" />
+        Analyzing readiness…
       </div>
     );
   }
   if (readiness.status === "failed") {
     return (
-      <div className="flex items-center gap-2 border-b bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
-        <XCircle className="size-3.5" />
-        Readiness analysis failed
-        {readiness.errorMessage ? `: ${readiness.errorMessage}` : ""}
+      <div className="flex items-center gap-2 border-b px-4 py-2 text-xs text-muted-foreground">
+        <XCircle className="size-3 shrink-0" />
+        <span className="truncate">
+          Readiness unavailable
+          {readiness.errorMessage ? `: ${readiness.errorMessage}` : ""}
+        </span>
       </div>
     );
   }
 
   const verdict = readiness.verdict ?? "ready";
+  if (verdict === "ready" && readiness.status !== "partial") {
+    return null;
+  }
+
   const meta = VERDICT_META[verdict];
-  const { Icon } = meta;
-  const coverage = coveragePct(readiness.coverageRatio);
   const issues = explainReadinessIssues(readiness);
-  const showFindings =
-    verdict !== "ready" || issues.length > 0 || readiness.status === "partial";
-  const findingsLabel =
-    verdict === "ready"
-      ? "Readiness"
-      : verdict === "not_ready"
-        ? "Why this is not ready"
-        : "Why this needs attention";
+  const primaryIssue =
+    issues[0]?.message ??
+    (readiness.status === "partial"
+      ? "Tool inventory was unavailable — coverage could not be fully verified."
+      : meta.label);
+  const detailLines = buildReadinessDetailLines(readiness);
+  const hasExtraDetail = detailLines.length > 1;
 
   return (
-    <div className="border-b bg-muted/20 px-4 py-2.5">
-      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-        {findingsLabel}
+    <div
+      className="flex items-start gap-2.5 border-b px-4 py-2"
+      data-testid="session-insight-bar"
+    >
+      <span
+        className={`mt-1.5 size-1.5 shrink-0 rounded-full ${meta.dot}`}
+        aria-hidden
+      />
+      <p className={`min-w-0 flex-1 text-xs leading-snug ${meta.text}`}>
+        {primaryIssue}
       </p>
-      <div className="flex flex-wrap items-center gap-2 text-xs">
-        <span
-          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium ${meta.pill}`}
-        >
-          <Icon className="size-3" />
-          {meta.label}
-        </span>
-        {typeof readiness.toolCallCount === "number" ? (
-          <span className="text-muted-foreground">
-            {readiness.toolErrorCount ?? 0}/{readiness.toolCallCount} tool calls
-            failed
-          </span>
-        ) : null}
-        {coverage ? (
-          <>
-            <span className="text-muted-foreground/40">·</span>
-            <span className="text-muted-foreground">
-              {coverage} tool coverage
-            </span>
-          </>
-        ) : null}
-        {readiness.status === "partial" ? (
-          <>
-            <span className="text-muted-foreground/40">·</span>
-            <span className="text-muted-foreground/80">
-              tool inventory unavailable
-            </span>
-          </>
-        ) : null}
-        {(readiness.hallucinatedTools?.length ?? 0) > 0 ? (
-          <>
-            <span className="text-muted-foreground/40">·</span>
-            <span className="text-red-600 dark:text-red-400">
-              {readiness.hallucinatedTools!.length} undeclared tool
-              {readiness.hallucinatedTools!.length === 1 ? "" : "s"}
-            </span>
-          </>
-        ) : null}
-        {formatLatency(readiness.hostLatencyMs) ? (
-          <>
-            <span className="text-muted-foreground/40">·</span>
-            <span
-              className="text-muted-foreground"
-              title="Client-response latency (server work time across turns; excludes the persona driver's own LLM time)"
+      {hasExtraDetail ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              className="mt-0.5 shrink-0 rounded-sm p-0.5 text-muted-foreground/50 transition-colors hover:text-muted-foreground"
+              aria-label="Readiness details"
             >
-              {formatLatency(readiness.hostLatencyMs)} client latency
-            </span>
-          </>
-        ) : null}
-      </div>
-      {showFindings && issues.length > 0 ? (
-        <ul className="mt-2 space-y-1">
-          {issues.map((issue, i) => {
-            const IssueIcon = ISSUE_ICON[issue.severity];
-            return (
-              <li
-                key={`${issue.code}-${i}`}
-                className={`flex items-start gap-1.5 text-xs ${
-                  ISSUE_TONE[issue.severity]
-                }`}
-              >
-                <IssueIcon className="mt-0.5 size-3 shrink-0" />
-                <span>{issue.message}</span>
-              </li>
-            );
-          })}
-        </ul>
+              <Info className="size-3.5" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent
+            variant="muted"
+            side="bottom"
+            align="end"
+            className="max-w-xs space-y-1 px-3 py-2"
+          >
+            {detailLines.map((line) => (
+              <p key={line}>{line}</p>
+            ))}
+          </TooltipContent>
+        </Tooltip>
       ) : null}
     </div>
   );
