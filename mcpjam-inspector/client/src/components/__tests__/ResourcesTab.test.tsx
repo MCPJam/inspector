@@ -103,6 +103,7 @@ describe("ResourcesTab", () => {
         expect(mockListResources).toHaveBeenCalledWith(
           "test-server",
           undefined,
+          { refresh: false },
         );
       });
     });

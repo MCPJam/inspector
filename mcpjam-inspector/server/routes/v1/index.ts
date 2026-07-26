@@ -21,6 +21,7 @@ import exporter from "./export.js";
 import evals from "./evals.js";
 import hosts from "./hosts.js";
 import harness from "./harness.js";
+import environments from "./environments.js";
 import sandboxImages from "./images.js";
 import evalIngest from "./eval-ingest.js";
 import oauth from "./oauth.js";
@@ -144,8 +145,13 @@ v1.route("/", exporter);
 v1.route("/", evals);
 v1.route("/", hosts);
 v1.route("/", harness);
-// Computer environments stay OFF the guest allowlist (no GUEST_ALLOWED_V1_RULES
-// entry) — every operation requires an authenticated, project-scoped caller.
+// Project Environments (named execution bundles for suites and journeys) stay
+// OFF the guest allowlist — reads need project membership and every write needs
+// project admin. Distinct from the Computer sandbox images below.
+v1.route("/", environments);
+// Computer sandbox images stay OFF the guest allowlist (no
+// GUEST_ALLOWED_V1_RULES entry) — every operation requires an authenticated,
+// project-scoped caller.
 v1.route("/", sandboxImages);
 v1.route("/", evalIngest);
 v1.route("/", oauth);

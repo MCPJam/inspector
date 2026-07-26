@@ -30,6 +30,10 @@ const defaultImplementations = {
   getConnectionStatus: () => "connected",
   getInitializationInfo: () => null,
   addNotificationHandler: () => undefined,
+  onLogMessage: () => undefined,
+  setLoggingLevel: async () => undefined,
+  setPerRequestLogLevel: () => undefined,
+  getLoggingMechanism: () => "none" as const,
 
   // Tools
   listTools: async () => ({ tools: [] }),

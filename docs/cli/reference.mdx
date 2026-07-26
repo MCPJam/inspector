@@ -508,6 +508,127 @@ Provide either `--template` or `--file`/`--json`, not both.
 
 ---
 
+## `environments` commands
+
+Manage **project environments** in your hosted MCPJam projects. A project environment is a named, live-editable execution bundle — one host, optionally a standalone server group, optionally a pinned skill selection and pinned plugin versions — that eval suites and journeys run against.
+
+<Note>
+A project environment is not a Computer sandbox image (those are `mcpjam images`), and not the STDIO environment variables you pass with `--env`.
+</Note>
+
+All `environments` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam login`. Reading requires project membership; **creating, updating, archiving, and restoring require project admin** — a key bound to a non-admin gets a `FORBIDDEN` error on those.
+
+### Shared platform flags
+
+| Flag | Description |
+|------|-------------|
+| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+
+### The revision workflow
+
+Environments use optimistic concurrency. Every write takes `--expected-revision`, the `revision` you last read:
+
+```bash
+mcpjam environments get --environment Staging          # note the "revision" field
+mcpjam environments update --environment Staging --expected-revision 3 --name Prod
+```
+
+If someone else changed the environment in between, the write fails with a `CONFLICT` error (HTTP 409) instead of overwriting their edit — re-read it and retry. `CONFLICT` also covers a duplicate name and archive-state errors (archiving something already archived, editing something archived), so read the message.
+
+### `environments list`
+
+| Flag | Description |
+|------|-------------|
+| `--project <id-or-name>` | Project name or ID (defaults to the most recently updated project) |
+| `--include-archived` | Include archived environments (needed to find one to restore) |
+
+### `environments get`
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--environment <id-or-name>` | Yes | Environment name or ID |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `environments resolve`
+
+Preview what the environment resolves to right now: the host's current config, the closed server set, and the pinned plugin versions. Fails with `CONFLICT` when the environment can't currently produce a runnable configuration (for example a pinned plugin was disabled); `details.code` carries the specific reason.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--environment <id-or-name>` | Yes | Environment name or ID |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `environments create`
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--name <name>` | Yes\* | Display name; must be unique among the project's live environments |
+| `--host-id <id>` | Yes\* | ID of the host this environment runs against |
+| `--project <id-or-name>` | No | Project name or ID |
+| `--description <text>` | No | Optional description |
+| `--file <path>` | No | Environment JSON file (or `-` for stdin) |
+| `--json <json>` | No | Inline environment JSON (or `@file`, or `-`) |
+
+\* `--name` and `--host-id` may instead be supplied inside `--file`/`--json`; explicit flags override the same key in the JSON body. Use the JSON body for the structured fields that have no flag — `serverAttachmentId`, `skillSelection`, and `pluginVersionIds`:
+
+```bash
+mcpjam environments create --project Acme --json '{
+  "name": "Staging",
+  "hostId": "h_123",
+  "skillSelection": { "mode": "explicit", "skillIds": ["sk_1"] }
+}'
+```
+
+### `environments update`
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--environment <id-or-name>` | Yes | Environment name or ID |
+| `--expected-revision <n>` | Yes | The revision you last read (from `environments get`) |
+| `--project <id-or-name>` | No | Project name or ID |
+| `--name <name>` | No | New display name |
+| `--host-id <id>` | No | New host |
+| `--description <text>` | No | New description (empty string clears it) |
+| `--file <path>` | No | Environment JSON with the fields to change (or `-` for stdin) |
+| `--json <json>` | No | Inline environment JSON (or `@file`, or `-`) |
+
+Only the fields you pass change. To **clear** `serverAttachmentId`, `skillSelection`, or `pluginVersionIds`, send an explicit `null` in the JSON body — an empty array is rejected, it is not a way to clear:
+
+```bash
+mcpjam environments update --environment Staging --expected-revision 3 \
+  --json '{ "pluginVersionIds": null }'
+```
+
+### `environments archive`
+
+Archiving is reversible and frees the name for a new environment; the row is kept.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--environment <id-or-name>` | Yes | Environment name or ID |
+| `--expected-revision <n>` | Yes | The revision you last read |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `environments restore`
+
+Fails with `CONFLICT` if another live environment took the name while this one was archived. Plugin pins whose version no longer exists at all are dropped on restore — compare the returned `pluginVersionIds` against what you archived.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--environment <id-or-name>` | Yes | Environment name or ID |
+| `--expected-revision <n>` | Yes | The revision you last read (use `environments list --include-archived`) |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### What can be pinned
+
+Both pin fields are narrower than they look:
+
+- **`skillSelection`** accepts project-shared skills only. Personal skills, skills with supporting files or extra frontmatter, and plugin-component skills are all rejected.
+- **`pluginVersionIds`** accepts a plugin version only when its plugin is installed and enabled, the version is `ready`, at most one version per plugin is pinned, and none of the version's skills carry supporting files.
+
+---
+
 ## `images` commands
 
 Manage custom Computer sandbox images (Dockerfiles) in your hosted MCPJam projects. All `images` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam login`.

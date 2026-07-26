@@ -20,11 +20,46 @@ vi.mock("@/lib/apis/web/context", () => ({
     resolveHostedServerIdMock(...args),
 }));
 
-import { listPromptsForServers } from "../mcp-prompts-api";
+import { listPromptsForServers, listPromptsPage } from "../mcp-prompts-api";
 
 describe("mcp-prompts-api hosted mode", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("forwards cursor and maps nextCursor on the hosted page path", async () => {
+    listHostedPromptsMock.mockResolvedValueOnce({
+      prompts: [{ name: "draw" }],
+      nextCursor: "page-2",
+    });
+
+    const result = await listPromptsPage("Excalidraw (App)", {
+      cursor: "page-1",
+    });
+
+    expect(listHostedPromptsMock).toHaveBeenCalledWith({
+      serverNameOrId: "Excalidraw (App)",
+      cursor: "page-1",
+    });
+    expect(result).toEqual({
+      prompts: [{ name: "draw" }],
+      nextCursor: "page-2",
+    });
+  });
+
+  it("omits nextCursor when the hosted response has none", async () => {
+    listHostedPromptsMock.mockResolvedValueOnce({
+      prompts: [{ name: "draw" }],
+    });
+
+    const result = await listPromptsPage("Excalidraw (App)");
+
+    expect(listHostedPromptsMock).toHaveBeenCalledWith({
+      serverNameOrId: "Excalidraw (App)",
+      cursor: undefined,
+    });
+    expect(result).toEqual({ prompts: [{ name: "draw" }] });
+    expect("nextCursor" in result).toBe(false);
   });
 
   it("keeps the batch hosted path for hosted guests", async () => {

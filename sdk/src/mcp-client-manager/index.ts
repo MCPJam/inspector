@@ -58,6 +58,18 @@ export type {
   ClientCapabilityOptions,
 } from "./types.js";
 
+// Types - Response cache (SEP-2549) provenance
+export type {
+  CacheMode,
+  CacheScope,
+  CacheHitEvent,
+  CacheEventLogger,
+} from "./types.js";
+export {
+  ObservableResponseCache,
+  type ObservableResponseCacheOptions,
+} from "./observable-response-cache.js";
+
 // Types - MCP result aliases
 export type {
   MCPPromptListResult,
@@ -147,6 +159,7 @@ export {
   ResourceListChangedNotificationMethod,
   ResourceUpdatedNotificationMethod,
   PromptListChangedNotificationMethod,
+  LoggingMessageNotificationMethod,
 } from "./notification-handlers.js";
 
 // ManagedMcpClient: interface + adapters + factory for 2026-07-28
@@ -168,6 +181,10 @@ export {
   PaginatedToolHeaderDiscoveryUnsupported,
 } from "./managed-mcp-client.js";
 export { OfficialSdkClientAdapter } from "./official-sdk-client-adapter.js";
+export {
+  LogLevelMetaClient,
+  type LogLevelProvider,
+} from "./log-level-meta-client.js";
 export {
   DialectAwareJsonSchemaValidator,
   type DialectAwareJsonSchemaValidatorOptions,
