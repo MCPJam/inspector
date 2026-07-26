@@ -429,8 +429,8 @@ export async function streamWebChatTurn(
               // `isActionableStepUpChallenge` gate.
               if (
                 insufficientScope &&
-                (insufficientScope.requiredScope ||
-                  insufficientScope.resourceMetadataUrl)
+                (insufficientScope.requiredScope?.trim() ||
+                  insufficientScope.resourceMetadataUrl?.trim())
               ) {
                 const challenge = {
                   serverId,
