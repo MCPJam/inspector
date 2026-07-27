@@ -395,6 +395,42 @@ describe("client-only archive screen", () => {
     });
   });
 
+  it("still screens archives with trailing bytes after the EOCD (jszip tolerates them)", async () => {
+    const withTrailingJunk = (zip: Uint8Array, junk: number[]): Uint8Array => {
+      const out = new Uint8Array(zip.length + junk.length);
+      out.set(zip, 0);
+      out.set(junk, zip.length);
+      return out;
+    };
+
+    // An over-count bomb must still be rejected by the raw record count...
+    const bomb = withTrailingJunk(
+      buildRawZip(Array.from({ length: 1001 }, () => "dup.txt")),
+      [0x00],
+    );
+    await expect(createZipPluginFileSource(bomb)).rejects.toMatchObject({
+      name: "PluginBundleError",
+      code: "BUNDLE_TOO_MANY_ENTRIES",
+      message: expect.stringContaining("1001"),
+    });
+
+    // ...a duplicate pair must still be detected...
+    await expectIssueCode(
+      createZipPluginFileSource(
+        withTrailingJunk(buildRawZip(["dup.txt", "dup.txt"]), [0x01, 0x02]),
+      ),
+      "PATH_DUPLICATE",
+    );
+
+    // ...and a clean junk-suffixed archive still parses with the same hash.
+    const files = bundleFiles({ mcpServers: MCP_SERVERS });
+    const clean = await parsePluginBundleFromFiles(files);
+    const suffixed = await parsePluginBundleFromZip(
+      withTrailingJunk(await buildPluginZip(files), [0xde, 0xad]),
+    );
+    expect(suffixed.bundleHash).toBe(clean.bundleHash);
+  });
+
   it("rejects a configured maxEntries at or above the ZIP64 sentinel", async () => {
     await expect(
       createZipPluginFileSource(buildRawZip(["a.txt"]), {

@@ -216,6 +216,60 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
     },
   },
   {
+    id: "modern-client-handshake",
+    category: "core",
+    title: "Modern Client Handshake",
+    description:
+      "The official client negotiates the modern revision and receives the server identity and capabilities.",
+    async run(ctx) {
+      const startedAt = Date.now();
+      const info = ctx.initializationInfo;
+      if (!info) {
+        return failedResult(
+          this,
+          Date.now() - startedAt,
+          "Initialization info is unavailable after connecting to the server",
+        );
+      }
+
+      // The modern era has no `initialize`; discovery is what the client
+      // performed to get here, so this is the client-provable half of the
+      // discovery requirement. The wire-level half (`server/discover`'s exact
+      // result shape) is asserted by `modern-server-discover`.
+      const problems: string[] = [];
+      if (info.protocolVersion !== ctx.config.protocolVersion) {
+        problems.push(
+          `negotiated protocol version ${String(info.protocolVersion)} does not match the pinned ${String(ctx.config.protocolVersion)}`,
+        );
+      }
+      if (!info.serverCapabilities) {
+        problems.push("server capabilities are missing");
+      }
+      if (!info.serverVersion?.name) {
+        problems.push("server identity (name) is missing");
+      }
+
+      if (problems.length > 0) {
+        return failedResult(
+          this,
+          Date.now() - startedAt,
+          `Modern handshake is incomplete: ${problems.join("; ")}`,
+          {
+            protocolVersion: info.protocolVersion,
+            serverVersion: info.serverVersion as Record<string, unknown>,
+          },
+        );
+      }
+
+      return passedResult(this, Date.now() - startedAt, {
+        protocolVersion: info.protocolVersion,
+        transport: info.transport,
+        serverCapabilities: info.serverCapabilities as Record<string, unknown>,
+        serverVersion: info.serverVersion as Record<string, unknown>,
+      });
+    },
+  },
+  {
     id: "capabilities-consistent",
     category: "core",
     title: "Capabilities Consistent",

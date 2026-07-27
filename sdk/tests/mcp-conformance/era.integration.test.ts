@@ -54,7 +54,6 @@ const ERA_SKIP = /Not applicable to the .* era/;
 const LEGACY_ONLY: MCPCheckId[] = [
   "server-initialize",
   "ping",
-  "capabilities-consistent",
   "server-sse-polling-session",
   "server-accepts-multiple-post-streams",
   "server-sse-streams-functional",
@@ -64,11 +63,58 @@ const LEGACY_ONLY: MCPCheckId[] = [
 
 // Neutral checks that carry real surface on the modern fixture — must pass.
 const MODERN_PASSING: MCPCheckId[] = [
+  "capabilities-consistent",
   "tools-list",
   "tools-input-schemas-valid",
   "prompts-list",
   "resources-list",
   "protocol-invalid-method-error",
+];
+
+// Phase 7 §15.3 modern MUST checks the conforming beta.4 fixture satisfies.
+const MODERN_MUST_PASSING: MCPCheckId[] = [
+  "modern-client-handshake",
+  "modern-server-discover",
+  "modern-result-type-present",
+  "modern-cacheable-result-hints",
+  "modern-protocol-version-header-mismatch",
+  "modern-method-header-mismatch",
+  "modern-name-header-mismatch",
+  "modern-unsupported-version-error",
+  "modern-removed-methods-not-found",
+  "modern-resource-not-found-invalid-params",
+  "modern-logs-require-log-level",
+  "modern-no-session-id",
+];
+
+// The two-fact rule: a raw rejection check must record the HTTP status AND the
+// in-band JSON-RPC code separately, because the SDK delivers a 400 carrying a
+// well-formed JSON-RPC error body IN-BAND — official-client evidence alone
+// cannot tell those two facts apart.
+const RAW_REJECTIONS: Array<{
+  id: MCPCheckId;
+  httpStatus: number;
+  jsonRpcCode: number;
+}> = [
+  {
+    id: "modern-protocol-version-header-mismatch",
+    httpStatus: 400,
+    jsonRpcCode: -32020,
+  },
+  { id: "modern-method-header-mismatch", httpStatus: 400, jsonRpcCode: -32020 },
+  { id: "modern-name-header-mismatch", httpStatus: 400, jsonRpcCode: -32020 },
+  {
+    id: "modern-unsupported-version-error",
+    httpStatus: 400,
+    jsonRpcCode: -32022,
+  },
+  {
+    // A missing resource is an ordinary in-band failure: HTTP 200 with -32602.
+    // Asserting only "it errored" would hide a server that answered 400.
+    id: "modern-resource-not-found-invalid-params",
+    httpStatus: 200,
+    jsonRpcCode: -32602,
+  },
 ];
 
 describe("MCP conformance × era-awareness against the dual-era fixture", () => {
@@ -104,6 +150,57 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
     for (const id of MODERN_PASSING) {
       expect(byId(result.checks, id).status).toBe("passed");
     }
+
+    // §15.3: the conforming modern fixture passes the modern MUST set.
+    for (const id of MODERN_MUST_PASSING) {
+      expect([id, byId(result.checks, id).status]).toEqual([id, "passed"]);
+    }
+
+    // Raw rejections record HTTP status and in-band JSON-RPC code separately.
+    for (const { id, httpStatus, jsonRpcCode } of RAW_REJECTIONS) {
+      expect(byId(result.checks, id).details).toMatchObject({
+        httpStatus,
+        jsonRpcCode,
+      });
+    }
+
+    // The unsupported-version rejection must also advertise what IS supported.
+    expect(
+      byId(result.checks, "modern-unsupported-version-error").details
+    ).toMatchObject({ supportedVersions: ["2026-07-28"] });
+
+    // Every removed 2025 method answers -32601 with modern HTTP behavior.
+    expect(
+      byId(result.checks, "modern-removed-methods-not-found").details
+    ).toMatchObject({
+      removedMethods: {
+        initialize: { httpStatus: 404, jsonRpcCode: -32601 },
+        ping: { httpStatus: 404, jsonRpcCode: -32601 },
+        "logging/setLevel": { httpStatus: 404, jsonRpcCode: -32601 },
+      },
+    });
+
+    // The subscription checks are honest skips until the Phase 5
+    // `subscriptions/listen` surface lands — a skip is safe, a false failure
+    // never is.
+    for (const id of [
+      "modern-subscription-ack-precedes-notifications",
+      "modern-subscription-filter-and-tagging",
+      "modern-subscription-graceful-close",
+    ] as const) {
+      const check = byId(result.checks, id);
+      expect(check.status).toBe("skipped");
+      expect(check.error?.message).toMatch(/subscriptions\/listen/);
+    }
+
+    // §15.4: readiness advice is reported but never changes the verdict.
+    expect(result.readiness.length).toBeGreaterThan(0);
+    for (const item of result.readiness) {
+      expect(item.severity).toBe("warning");
+      expect(["SHOULD", "RECOMMENDED", "MAY"]).toContain(item.specStrength);
+      expect(item.message.length).toBeGreaterThan(0);
+    }
+    expect(result.passed).toBe(true);
 
     // The fixture advertises no logging/completions capability, so these
     // both-era checks self-skip on capability (NOT the era gate).
@@ -155,7 +252,16 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
       checkTimeout: 10_000,
     }).run();
 
+    // Only the modern-only checks may be era-skipped on a legacy pin; every
+    // pre-Phase-7 check keeps its original status.
     for (const check of pinned.checks) {
+      if (check.id.startsWith("modern-")) {
+        expect(check.status).toBe("skipped");
+        expect(check.error?.message).toMatch(
+          /Not applicable to the legacy era/
+        );
+        continue;
+      }
       expect(check.error?.message ?? "").not.toMatch(ERA_SKIP);
     }
     expect(byId(pinned.checks, "server-initialize").status).toBe("passed");
