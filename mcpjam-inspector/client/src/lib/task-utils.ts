@@ -20,10 +20,18 @@ import type { PrimitiveType } from "./task-tracker";
  * `inputRequests`. The era-native object stays available as `raw` so the
  * debugger can show wire truth.
  */
+/**
+ * Synthetic status for a tracked handle the server no longer knows (`-32602`).
+ * It is not a wire status: it only ever originates from the local tracker.
+ */
+export const UNAVAILABLE_STATUS = "unavailable" as const;
+
+export type TaskDisplayStatus = Task["status"] | typeof UNAVAILABLE_STATUS;
+
 export interface NormalizedTask {
   wire: TasksWire;
   taskId: string;
-  status: Task["status"];
+  status: TaskDisplayStatus;
   statusMessage?: string;
   createdAt: string;
   lastUpdatedAt: string;
@@ -32,6 +40,8 @@ export interface NormalizedTask {
   result?: unknown;
   error?: { code: number; message: string; data?: unknown };
   inputRequests?: Record<string, unknown>;
+  /** Local-only: the server answered `-32602` for this handle. */
+  expired?: boolean;
   raw: Record<string, unknown>;
 }
 
@@ -72,7 +82,7 @@ export interface StatusConfig {
   animate: boolean;
 }
 
-export const STATUS_CONFIG: Record<Task["status"], StatusConfig> = {
+export const STATUS_CONFIG: Record<TaskDisplayStatus, StatusConfig> = {
   working: {
     icon: Loader2,
     color: "text-info",
@@ -103,7 +113,36 @@ export const STATUS_CONFIG: Record<Task["status"], StatusConfig> = {
     bgColor: "bg-muted",
     animate: false,
   },
+  [UNAVAILABLE_STATUS]: {
+    icon: Slash,
+    color: "text-muted-foreground",
+    bgColor: "bg-muted",
+    animate: false,
+  },
 };
+
+/**
+ * Renders a tracked handle the server has forgotten straight from tracker
+ * state — no network read, since re-polling it can only fail again.
+ */
+export function expiredPlaceholderTask(tracked: {
+  taskId: string;
+  wire: TasksWire;
+  createdAt: string;
+}): NormalizedTask {
+  return {
+    wire: tracked.wire,
+    taskId: tracked.taskId,
+    status: UNAVAILABLE_STATUS,
+    statusMessage:
+      "The server no longer knows this task (expired, purged, or forgotten across sessions).",
+    createdAt: tracked.createdAt,
+    lastUpdatedAt: tracked.createdAt,
+    ttl: null,
+    expired: true,
+    raw: { taskId: tracked.taskId },
+  };
+}
 
 // Primitive type configuration
 export const PRIMITIVE_TYPE_CONFIG: Record<

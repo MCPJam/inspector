@@ -53,7 +53,11 @@ function migrate(parsed: unknown): TrackedTask[] {
   }
   const stored = parsed as StoredShape | null;
   if (!stored || !Array.isArray(stored.tasks)) return [];
-  return stored.tasks.filter((task) => task && task.taskId && task.serverId);
+  return stored.tasks
+    .filter((task) => task && task.taskId && task.serverId)
+    // A stored entry without a wire tag predates the extension; defaulting
+    // keeps `wire` non-optional at runtime (identity depends on it).
+    .map((task) => (task.wire ? task : { ...task, wire: "legacy" as const }));
 }
 
 function loadTasks(): TrackedTask[] {

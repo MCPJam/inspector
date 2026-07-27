@@ -46,6 +46,21 @@ export type TasksWire = "none" | "legacy" | "extension";
  */
 const FIRST_EXTENSION_VERSION = "2026-07-28";
 
+/**
+ * Whether a negotiated version is in the era that can carry the tasks
+ * extension. Fails closed on unknown/missing versions, so era-gated wire
+ * hacks (result rewriting, routing headers) never fire on older traffic.
+ */
+export function isTasksExtensionEra(
+  protocolVersion: string | undefined
+): boolean {
+  return (
+    !!protocolVersion &&
+    isKnownProtocolVersion(protocolVersion) &&
+    protocolVersion >= FIRST_EXTENSION_VERSION
+  );
+}
+
 /** The only version that carries the in-core (legacy) tasks utility. */
 const LEGACY_TASKS_VERSION = "2025-11-25";
 

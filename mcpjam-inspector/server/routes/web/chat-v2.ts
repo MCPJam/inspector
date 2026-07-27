@@ -1014,6 +1014,11 @@ chatV2.post("/", async (c) => {
           ...(environmentSkills !== undefined
             ? { runtimeSkillsOverride: environmentSkills }
             : {}),
+          // INS-7: the same resolution, unflattened, for Computer delivery —
+          // supporting files (the flat list drops them, and the project-wide
+          // file query cannot return a plugin skill's) and the pinned plugin
+          // versions that fork an incompatible resumed sandbox.
+          ...(effectiveCapabilities ? { effectiveCapabilities } : {}),
           ...(isDirectChat ? { directVisibility: body.directVisibility } : {}),
           // Closure receives `resolvedTemperature` from inside the helper,
           // preserving the legacy behavior where chat-v2 fed the post-
