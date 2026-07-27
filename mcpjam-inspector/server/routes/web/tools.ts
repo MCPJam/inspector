@@ -1,15 +1,16 @@
 import { Hono } from "hono";
+import { isMCPTasksWireError } from "@mcpjam/sdk";
 import { captureServerEvent } from "../../utils/analytics.js";
 import {
   toolsListSchema,
   toolsExecuteSchema,
   withEphemeralConnection,
-  ErrorCode,
-  WebRouteError,
 } from "./auth.js";
+import { ErrorCode, WebRouteError } from "./errors.js";
 import { runHostedDirectMrtrOperation } from "./mrtr-direct.js";
 import { isMrtrSuspendedSignal } from "../../utils/mrtr-hosted-collector.js";
 import { listTools } from "../../utils/route-handlers.js";
+import { detectCreatedTask } from "../../utils/task-route-handlers.js";
 import { getRequestLogger } from "../../utils/request-logger.js";
 import { classifyError } from "../../utils/error-classify.js";
 
@@ -35,14 +36,6 @@ tools.post("/execute", async (c) =>
     toolsExecuteSchema,
     { method: "tools/call" },
     async (manager, body, forwardLogMessages) => {
-      if (body.taskOptions) {
-        throw new WebRouteError(
-          400,
-          ErrorCode.FEATURE_NOT_SUPPORTED,
-          "Task-augmented tool execution is not supported in hosted mode",
-        );
-      }
-
       // Server twin of the client's `execute_tool` — captured at attempt
       // time (like the client) so the pair ratio isn't skewed by failures.
       captureServerEvent(c, "execute_tool_server", {
@@ -53,11 +46,27 @@ tools.post("/execute", async (c) =>
       forwardLogMessages(body.serverId);
 
       try {
-        const result = await manager.executeTool(
-          body.serverId,
-          body.toolName,
-          body.parameters,
-        );
+        // Task creation is awaited here, INSIDE the ephemeral connection: the
+        // CreateTaskResult must be in hand before the `finally` disconnect.
+        // Durability past that point is the MCP server's spec obligation —
+        // the task must be readable via `tasks/get` from a fresh connection.
+        const result = body.allowTaskResult
+          ? await manager.executeTool(
+              body.serverId,
+              body.toolName,
+              body.parameters,
+              { allowTaskResult: true },
+            )
+          : await manager.executeTool(
+              body.serverId,
+              body.toolName,
+              body.parameters,
+              undefined,
+              body.taskOptions,
+            );
+        const created = detectCreatedTask(manager, body.serverId, result);
+        if (created) return created;
+
         return {
           status: "completed" as const,
           result,
@@ -66,6 +75,18 @@ tools.post("/execute", async (c) =>
         // A suspend is control flow, not a failed execution — let it propagate
         // to the MRTR wrapper unlogged so the pair ratio isn't skewed.
         if (isMrtrSuspendedSignal(error)) throw error;
+        // Same taxonomy as /api/web/tasks/*: a task request the resolved wire
+        // cannot serve is a client-actionable 400, never a 500 — PR5's client
+        // treats non-TASKS_UNSUPPORTED failures as transient and would
+        // otherwise retry a wire mismatch forever.
+        if (isMCPTasksWireError(error)) {
+          throw new WebRouteError(
+            400,
+            ErrorCode.TASKS_UNSUPPORTED,
+            error.message,
+            { wire: error.wire },
+          );
+        }
         getRequestLogger(c, "routes.web.tools").event(
           "mcp.tool.execution.failed",
           {

@@ -648,6 +648,21 @@ export {
   MCP_APPS_CHECK_IDS,
 } from "./apps-conformance/index.js";
 
+// MCP Tasks conformance
+export { MCPTasksConformanceTest } from "./tasks-conformance/index.js";
+export type {
+  MCPTasksCheckCategory,
+  MCPTasksCheckId,
+  MCPTasksCheckResult,
+  MCPTasksCheckStatus,
+  MCPTasksConformanceConfig,
+  MCPTasksConformanceResult,
+} from "./tasks-conformance/index.js";
+export {
+  MCP_TASKS_CHECK_CATEGORIES,
+  MCP_TASKS_CHECK_IDS,
+} from "./tasks-conformance/index.js";
+
 export type {
   ConformanceResult,
   ConformanceStepId,

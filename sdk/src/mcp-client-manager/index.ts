@@ -168,7 +168,48 @@ export {
   resolveTasksWire,
   serverDeclaresTasksExtension,
 } from "./tasks-dispatch.js";
-export type { TasksWire } from "./tasks-dispatch.js";
+export { resolveTasksSupport } from "./tasks-dispatch.js";
+export type { TasksWire, TasksSupport } from "./tasks-dispatch.js";
+
+// io.modelcontextprotocol/tasks (SEP-2663) extension wire.
+export {
+  CLIENT_CAPABILITIES_META_KEY,
+  TasksExtGetMethod,
+  TasksExtUpdateMethod,
+  TasksExtCancelMethod,
+  TasksExtNotificationMethod,
+  buildTasksExtensionRequestMeta,
+  withTasksExtensionDeclaration,
+  getTaskExt,
+  updateTaskExt,
+  cancelTaskExt,
+} from "./tasks-ext.js";
+export type {
+  TaskExt,
+  TaskExtStatus,
+  TaskExtError,
+  DetailedTaskExt,
+  CreateTaskExtResult,
+  GetTaskExtResult,
+  UpdateTaskExtResult,
+  CancelTaskExtResult,
+  TaskExtNotificationParams,
+  TaskExtResultType,
+} from "./tasks-ext-types.js";
+export { TERMINAL_TASK_EXT_STATUSES } from "./tasks-ext-types.js";
+export {
+  InvalidTaskExtPayloadError,
+  isCreateTaskExtResult,
+  assertCreateTaskExtResult,
+  assertGetTaskExtResult,
+  assertDetailedTaskExt,
+  parseTaskExtNotificationParams,
+} from "./tasks-ext-guards.js";
+export {
+  TASK_CREATED_META_KEY,
+  wrapFetchForTaskRouting,
+  wrapTransportForTaskResults,
+} from "./transport-utils.js";
 
 // Notification schemas (for advanced use cases)
 export {

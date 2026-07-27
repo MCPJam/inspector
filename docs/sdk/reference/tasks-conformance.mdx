@@ -1,0 +1,169 @@
+---
+title: "MCP Tasks Conformance SDK"
+description: "Programmatic MCP Tasks wire validation with MCPTasksConformanceTest"
+icon: "list-checks"
+---
+
+The MCP Tasks Conformance SDK lets you validate the MCP Tasks wire your server exposes: which wire the connection resolves to, whether declaration hygiene holds, and whether the server honours the observable parts of the contract.
+
+Use it when you want the same checks as the CLI's [`tasks conformance`](/cli/tasks-conformance) command, but inside your own test runner or CI pipeline.
+
+<Note>
+  Tasks conformance provokes and then polls a real task, so it requires a
+  persistent connection. It is not available in hosted mode.
+</Note>
+
+## Import
+
+```typescript
+import {
+  MCPTasksConformanceTest,
+  toConformanceReport,
+  renderConformanceReportJUnitXml,
+  renderConformanceReportJson,
+} from "@mcpjam/sdk";
+```
+
+## Basic usage
+
+```typescript
+const test = new MCPTasksConformanceTest({
+  url: "https://your-server.com/mcp",
+  timeout: 30_000,
+});
+
+const result = await test.run();
+
+console.log(result.passed);              // true
+console.log(result.summary);            // "7/7 checks passed, 0 failed, 0 skipped"
+console.log(result.discovery.wire);     // "extension" | "legacy" | "none"
+```
+
+Pass a tool name when your server's tools carry no task metadata (the extension wire):
+
+```typescript
+const test = new MCPTasksConformanceTest({
+  url: "https://your-server.com/mcp",
+  toolName: "long_job",
+  timeout: 30_000,
+});
+```
+
+For a stdio server:
+
+```typescript
+const test = new MCPTasksConformanceTest({
+  command: "node",
+  args: ["server.js"],
+  timeout: 30_000,
+});
+```
+
+## MCPTasksConformanceConfig
+
+`MCPTasksConformanceConfig` extends the standard `MCPServerConfig`, so it accepts the same HTTP and stdio connection settings as `MCPClientManager`.
+
+Additional properties:
+
+| Property | Type | Required | Default | Description |
+|----------|------|----------|---------|-------------|
+| `checkIds` | `MCPTasksCheckId[]` | No | all checks | Run only the selected checks. |
+| `toolName` | `string` | No | auto-detected | Tool used to provoke a task. Required for servers whose tools carry no task metadata (the extension wire). |
+| `toolArguments` | `Record<string, unknown>` | No | `{}` | Arguments passed to the probe tool. |
+| `pollTimeoutMs` | `number` | No | `30000` | Upper bound on polling a created task to a terminal status. |
+
+Example with a focused check set:
+
+```typescript
+const test = new MCPTasksConformanceTest({
+  url: "https://your-server.com/mcp",
+  toolName: "long_job",
+  toolArguments: { seconds: 1 },
+  pollTimeoutMs: 10_000,
+  checkIds: ["tasks-wire-resolvable", "tasks-ttl-shape"],
+});
+```
+
+## Check ids
+
+| Check id | Category | What it asserts |
+|---|---|---|
+| `tasks-wire-resolvable` | `dispatch` | The negotiated protocol version and capabilities resolve to exactly one tasks wire. |
+| `tasks-declaration-hygiene` | `dispatch` | Outbound requests carry `params.task` only on the legacy wire and the extension declaration only on the extension wire. |
+| `tasks-result-type-discipline` | `creation` | A task-eligible `tools/call` returns either a normal tool result or a flat `CreateTaskResult` with `resultType: "task"` and a non-empty `taskId`. |
+| `tasks-undeclared-capability-rejected` | `creation` | On the extension wire, an undeclared `tools/call` must not come back as a task. |
+| `tasks-ttl-shape` | `lifecycle` | TTL and poll interval use the era-native shapes: `ttlMs`/`pollIntervalMs` on the extension, `ttl`/`pollInterval` on the legacy wire. |
+| `tasks-inline-result` | `lifecycle` | A completed extension task carries its result inline on `tasks/get`; a legacy task exposes it via `tasks/result`. |
+| `tasks-mcp-name-routing` | `lifecycle` | Over HTTP, `tasks/get` is sent with `Mcp-Name` set to the task id. |
+
+## Result shape
+
+`run()` returns an `MCPTasksConformanceResult`.
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `passed` | `boolean` | Whether all selected checks passed (no failures). |
+| `target` | `string` | URL or stdio command under test. |
+| `checks` | `MCPTasksCheckResult[]` | Individual check results. |
+| `summary` | `string` | Human-readable summary. |
+| `durationMs` | `number` | Total duration. |
+| `categorySummary` | `Record<"dispatch" \| "creation" \| "lifecycle", ...>` | Pass/fail counts by category. |
+| `discovery` | object | Wire, protocol version, and tool counts discovered during the run. |
+
+The `discovery` object includes:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `wire` | `"extension" \| "legacy" \| "none"` | Resolved tasks wire. |
+| `protocolVersion` | `string \| undefined` | Negotiated MCP protocol version. |
+| `toolCount` | `number` | Total tools listed. |
+| `taskCapableToolCount` | `number` | Tools with `execution.taskSupport` metadata. |
+| `probedTool` | `string \| undefined` | Name of the tool used to provoke a task. |
+| `createdTaskId` | `string \| undefined` | Task id returned by the probe tool call. |
+
+Each `MCPTasksCheckResult` includes:
+
+- `id`
+- `category`
+- `title`
+- `description`
+- `status` — `"passed"`, `"failed"`, or `"skipped"`
+- `durationMs`
+- optional `details`
+- optional `warnings`
+- optional `error`
+
+## CI reporting
+
+Use the shared reporting helpers to produce JUnit XML or JSON artifacts:
+
+```typescript
+import { writeFileSync } from "node:fs";
+
+const test = new MCPTasksConformanceTest({
+  url: "https://your-server.com/mcp",
+  toolName: "long_job",
+});
+
+const result = await test.run();
+const report = toConformanceReport(result);
+
+writeFileSync(
+  "tasks-conformance.junit.xml",
+  renderConformanceReportJUnitXml(report),
+);
+writeFileSync(
+  "tasks-conformance.report.json",
+  JSON.stringify(renderConformanceReportJson(report), null, 2),
+);
+```
+
+`toConformanceReport` accepts protocol, OAuth, apps, and tasks results and normalizes them into a single report shape, so the SDK and CLI JUnit output are byte-identical for the same result.
+
+## Notes
+
+- Declaration hygiene is asserted against captured outbound JSON-RPC bytes, not re-derived from intent.
+- The `tasks-undeclared-capability-rejected` check applies to the extension wire only and is skipped on the legacy wire.
+- The `tasks-mcp-name-routing` check applies to HTTP transports only and is skipped for stdio servers.
+- Checks that require a created task are skipped when no task-capable tool is found and no `toolName` is provided.
+- Exit code from the CLI is `1` when `result.passed` is `false`.
