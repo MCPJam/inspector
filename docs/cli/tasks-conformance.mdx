@@ -1,0 +1,154 @@
+---
+title: "MCP Tasks Conformance"
+description: "Validate MCP Tasks wire behavior — legacy and SEP-2663 extension — from the CLI"
+icon: "list-checks"
+---
+
+The `tasks conformance` command validates the MCP Tasks wire your server exposes: which wire the connection resolves to, whether declaration hygiene holds for that wire, and whether the server honours the observable parts of the contract (result-type discipline, undeclared capability handling, TTL shapes, inline results, and `Mcp-Name` routing for HTTP transports).
+
+<Note>
+  Tasks conformance provokes and then polls a real task, so it requires a
+  persistent connection. It is not available in hosted mode.
+</Note>
+
+## Quick start
+
+```bash
+mcpjam tasks conformance --url https://your-server.com/mcp
+```
+
+For a local stdio server:
+
+```bash
+mcpjam tasks conformance --command node --args server.js --cwd /path/to/project
+```
+
+When your server's tools carry no task metadata (the extension wire), pass the tool name explicitly:
+
+```bash
+mcpjam tasks conformance \
+  --url https://your-server.com/mcp \
+  --tool-name long_job
+```
+
+Emit CI-friendly JUnit XML:
+
+```bash
+mcpjam tasks conformance \
+  --url https://your-server.com/mcp \
+  --reporter junit-xml > tasks-report.xml
+```
+
+## What it checks
+
+| Check id | Category | What it asserts |
+|---|---|---|
+| `tasks-wire-resolvable` | `dispatch` | The negotiated protocol version and capabilities resolve to exactly one tasks wire. |
+| `tasks-declaration-hygiene` | `dispatch` | Outbound requests carry `params.task` only on the legacy wire and the extension declaration only on the extension wire. |
+| `tasks-result-type-discipline` | `creation` | A task-eligible `tools/call` returns either a normal tool result or a flat `CreateTaskResult` with `resultType: "task"` and a non-empty `taskId`. |
+| `tasks-undeclared-capability-rejected` | `creation` | On the extension wire, an undeclared `tools/call` must not come back as a task; the server must answer normally or reject with `-32003`. |
+| `tasks-ttl-shape` | `lifecycle` | TTL and poll interval use the era-native shapes: `ttlMs`/`pollIntervalMs` on the extension, `ttl`/`pollInterval` on the legacy wire. |
+| `tasks-inline-result` | `lifecycle` | A completed extension task carries its result inline on `tasks/get`; a legacy task exposes it via `tasks/result`. |
+| `tasks-mcp-name-routing` | `lifecycle` | Over HTTP, `tasks/get` is sent with `Mcp-Name` set to the task id. |
+
+## Categories and check ids
+
+Three categories are available:
+
+- `dispatch`
+- `creation`
+- `lifecycle`
+
+Use `--category` to run a subset by category, or `--check-id` to run specific checks:
+
+```bash
+# Dispatch checks only
+mcpjam tasks conformance \
+  --url https://your-server.com/mcp \
+  --category dispatch
+
+# Specific checks
+mcpjam tasks conformance \
+  --url https://your-server.com/mcp \
+  --check-id tasks-ttl-shape \
+  --check-id tasks-inline-result
+```
+
+<Note>
+  If you pass both `--category` and `--check-id`, the explicit `--check-id`
+  selection wins.
+</Note>
+
+## Options
+
+| Flag | Description |
+|------|-------------|
+| `--category <category>` | Check category to run. Repeat for multiple. Default: all. |
+| `--check-id <id>` | Specific check id to run. Repeat for multiple. Default: all. |
+| `--tool-name <tool>` | Tool used to provoke a task. Required for servers whose tools carry no task metadata (the extension wire). |
+| `--tool-args <json>` | Tool arguments as a JSON object. |
+| `--poll-timeout <ms>` | How long to poll a created task for a terminal status. Default: `30000`. |
+| `--reporter <reporter>` | Structured reporter output: `json-summary` or `junit-xml`. |
+
+## Example output
+
+```bash
+mcpjam tasks conformance \
+  --url https://your-server.com/mcp \
+  --tool-name long_job \
+  --format json
+```
+
+Typical success summary:
+
+```json
+{
+  "passed": true,
+  "summary": "7/7 checks passed, 0 failed, 0 skipped",
+  "discovery": {
+    "protocolVersion": "2026-07-28",
+    "wire": "extension",
+    "toolCount": 3,
+    "taskCapableToolCount": 1,
+    "probedTool": "long_job",
+    "createdTaskId": "task-abc123"
+  }
+}
+```
+
+## Shared connection flags
+
+`tasks conformance` uses the same shared target flags as the rest of the CLI:
+
+| Flag | Description |
+|------|-------------|
+| `--transport <transport>` | Explicit transport type (`http` or `stdio`) |
+| `--url <url>` | HTTP MCP server URL |
+| `--access-token <token>` | Bearer access token |
+| `--oauth-access-token <token>` | OAuth bearer access token |
+| `--refresh-token <token>` | OAuth refresh token |
+| `--client-id <id>` | OAuth client ID (with `--refresh-token`) |
+| `--client-secret <secret>` | OAuth client secret (with `--refresh-token`) |
+| `--header <header>` | HTTP header in `Key: Value` format (repeatable) |
+| `--client-capabilities <json>` | Client capabilities as inline JSON, `@path`, or `-` for stdin |
+| `--command <command>` | Command for a stdio server |
+| `--args <arg...>` | Preferred stdio command arguments |
+| `--command-args <arg>` | Legacy stdio command argument (repeatable) |
+| `-e, --env <env...>` | Stdio environment `KEY=VALUE` values |
+| `--cwd <path>` | Working directory for the stdio child process |
+
+`--transport` is optional; without it, `--url` implies HTTP and `--command` implies stdio.
+
+## Notes
+
+- Exit codes are CI-friendly: `0` when all selected checks pass, `1` when any check fails, and `2` for invalid command usage.
+- Declaration hygiene is asserted against captured outbound JSON-RPC bytes, not re-derived from intent.
+- The undeclared-capability check (`tasks-undeclared-capability-rejected`) applies to the extension wire only and is skipped on the legacy wire.
+- The `tasks-mcp-name-routing` check applies to HTTP transports only and is skipped for stdio servers.
+- Checks that require a created task are skipped when no task-capable tool is found and no `--tool-name` is provided.
+
+## Related commands
+
+- [Apps conformance](/cli/apps-conformance) for MCP Apps surface validation
+- [Server inspection](/cli/server-inspection) for breadth-first connectivity and capability triage
+- [Command reference](/cli/reference) for the full flag list
