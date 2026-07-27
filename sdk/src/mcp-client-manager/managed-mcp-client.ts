@@ -132,6 +132,16 @@ export interface ManagedMcpClient {
    * or `undefined` as "era unknown — do not apply modern-only behavior".
    */
   getProtocolEra?(): ProtocolEra | undefined;
+  /**
+   * The negotiated protocol version wire literal (e.g. `"2025-11-25"`), or
+   * `undefined` before `initialize` completes. OPTIONAL for the same reason
+   * as `getProtocolEra()`: only adapters over an upstream `Client` can report
+   * it (upstream `Client.getNegotiatedProtocolVersion()`, client
+   * `index.d.mts:2047`). Consumers MUST treat an absent method or
+   * `undefined` as "version unknown" and fail closed rather than assuming a
+   * version — never read the private `transport._protocolVersion`.
+   */
+  getNegotiatedProtocolVersion?(): string | undefined;
 
   // ---- Tool calls ----
   // The five cacheable verbs (SEP-2549) widen their options to

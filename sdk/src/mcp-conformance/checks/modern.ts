@@ -51,6 +51,18 @@ import {
   type JsonRpcErrorShape,
   type RawHttpResult,
 } from "../raw-http.js";
+import {
+  filterRequests,
+  isSubscriptionNotificationMethod,
+  observeListenStream,
+  subscriptionTagOf,
+  LISTEN_METHOD,
+  LISTEN_OBSERVATION_WINDOW_MS,
+  SUBSCRIPTION_ACK_METHOD,
+  type ListenObservation,
+  type SubscriptionFilterWire,
+  type SubscriptionNotificationMethod,
+} from "../raw-listen.js";
 
 /** Wire revision the modern checks frame their probes with when unpinned. */
 const MODERN_WIRE_VERSION = "2026-07-28";
@@ -194,26 +206,20 @@ const MODERN_CHECK_METADATA = {
 } as const satisfies Record<string, CheckMeta>;
 
 /**
- * The three subscription checks are authored as explicit skips.
+ * The three subscription MUST checks, all driven off ONE observed
+ * `subscriptions/listen` stream (see `raw-listen.ts`).
  *
- * They can only be driven through the Phase 5 `subscriptions/listen` surface,
- * which is not on main yet: the managed client has no listen seam, and the raw
- * harness deliberately buffers a bounded response, so it cannot hold a
- * long-lived stream open to observe ack-before-notification ordering. Shipping
- * them as live probes today would mean guessing at the stream seam — and a
- * false FAILURE against a conforming server is never acceptable, while a skip
- * carrying its reason is always safe. They are wired into `CHECK_ERAS` and the
- * registry now so the modern set is complete and turning them on is a
- * body-only change.
+ * They are on the raw path for the same reason as their neighbours here: the
+ * official client hides exactly the facts they assert. `McpSubscription`
+ * surfaces the honored filter and a `closed` promise — not the ORDER of the
+ * frames, not the `_meta` subscription-id tag, and not the completion result
+ * as a distinct observation. Only the wire proves those.
  */
-const SUBSCRIPTION_PLACEHOLDER_IDS = [
+export const SUBSCRIPTION_CHECK_IDS = [
   "modern-subscription-ack-precedes-notifications",
   "modern-subscription-filter-and-tagging",
   "modern-subscription-graceful-close",
 ] as const;
-
-const SUBSCRIPTION_PLACEHOLDER_REASON =
-  "Requires the Phase 5 subscriptions/listen surface, which is not available in this build; skipped rather than reported as a failure";
 
 function isModernCheckId(id: MCPCheckId): id is ModernCheckId {
   return id in MODERN_CHECK_METADATA;
@@ -302,6 +308,13 @@ interface ModernRunState {
   observed: RawHttpResult[];
   /** The `server/discover` probe, run at most once per run. */
   discover?: RawHttpResult;
+  /**
+   * The single `subscriptions/listen` observation the three subscription
+   * checks share. One stream, three assertions: opening a stream per check
+   * would triple the traffic and — worse — let the checks disagree about what
+   * the server did, since each stream is a fresh subscription.
+   */
+  subscription?: Promise<SubscriptionProbe>;
 }
 
 async function discoverOnce(
@@ -1012,6 +1025,315 @@ async function runNoSessionIdCheck(
       });
 }
 
+/**
+ * Outcome of the shared subscription probe: either an observed stream, or a
+ * reason none could be observed. A reason is always a SKIP for all three
+ * checks — "this server has nothing to subscribe to" and "this server would
+ * not open a stream" are not violations of the three MUSTs asserted here, and
+ * a check that failed on them would be reporting a conformance failure it did
+ * not observe.
+ */
+type SubscriptionProbe =
+  | { kind: "observed"; observation: ListenObservation }
+  | { kind: "unavailable"; reason: string; details?: Record<string, unknown> };
+
+/**
+ * The filter to request, derived from what the server ADVERTISES. Asking for
+ * a notification type the server never advertised would make the honored
+ * filter narrower than the requested one for a legitimate reason, muddying
+ * the filtering assertion; asking for exactly the advertised set keeps
+ * "requested" and "should be honored" the same thing.
+ */
+function subscribableFilter(
+  ctx: RawHttpCheckContext,
+  discover: RawHttpResult
+): SubscriptionFilterWire {
+  const capabilities = advertisedCapabilities(discover);
+  const listChanged = (key: "tools" | "prompts" | "resources"): boolean => {
+    const capability = capabilities[key];
+    return (
+      capability !== null &&
+      typeof capability === "object" &&
+      (capability as Record<string, unknown>).listChanged === true
+    );
+  };
+  const resources = capabilities.resources as
+    | Record<string, unknown>
+    | undefined;
+  const watchedUri = ctx.surface?.resourceUris[0];
+
+  return {
+    ...(listChanged("tools") ? { toolsListChanged: true } : {}),
+    ...(listChanged("prompts") ? { promptsListChanged: true } : {}),
+    ...(listChanged("resources") ? { resourcesListChanged: true } : {}),
+    ...(resources?.subscribe === true && watchedUri
+      ? { resourceSubscriptions: [watchedUri] }
+      : {}),
+  };
+}
+
+function isEmptyFilter(filter: SubscriptionFilterWire): boolean {
+  return (
+    !filter.toolsListChanged &&
+    !filter.promptsListChanged &&
+    !filter.resourcesListChanged &&
+    (filter.resourceSubscriptions?.length ?? 0) === 0
+  );
+}
+
+async function probeSubscription(
+  ctx: RawHttpCheckContext,
+  state: ModernRunState
+): Promise<SubscriptionProbe> {
+  const filter = subscribableFilter(ctx, await discoverOnce(ctx, state));
+  if (isEmptyFilter(filter)) {
+    return {
+      kind: "unavailable",
+      reason: `Server advertises no subscribable notification type (tools/prompts/resources listChanged, or resources.subscribe with a listed resource), so no ${LISTEN_METHOD} stream can be opened`,
+    };
+  }
+
+  const observation = await observeListenStream(ctx, {
+    id: 8000,
+    filter,
+    protocolVersion: protocolVersion(ctx),
+    maxMs: Math.min(ctx.config.checkTimeout, LISTEN_OBSERVATION_WINDOW_MS),
+  });
+
+  if (observation.outcome === "not-a-stream") {
+    const code = (
+      observation.json as { error?: { code?: unknown } } | undefined
+    )?.error?.code;
+    return {
+      kind: "unavailable",
+      reason: `Server did not open a ${LISTEN_METHOD} stream (HTTP ${observation.status}, content-type "${observation.contentType}"), so the subscription MUSTs could not be observed`,
+      details: { httpStatus: observation.status, jsonRpcCode: code },
+    };
+  }
+  if (observation.outcome === "stream-error") {
+    return {
+      kind: "unavailable",
+      reason: `The ${LISTEN_METHOD} stream could not be read to a stopping point (${observation.streamError}); reported as a skip rather than a conformance failure`,
+      details: { httpStatus: observation.status },
+    };
+  }
+
+  return { kind: "observed", observation };
+}
+
+function subscriptionOnce(
+  ctx: RawHttpCheckContext,
+  state: ModernRunState
+): Promise<SubscriptionProbe> {
+  state.subscription ??= probeSubscription(ctx, state);
+  return state.subscription;
+}
+
+/** The change notifications the stream carried, in wire order. */
+function subscriptionNotifications(observation: ListenObservation): Array<{
+  index: number;
+  method: SubscriptionNotificationMethod;
+  message: Record<string, unknown>;
+}> {
+  return observation.messages.flatMap((message, index) =>
+    typeof message.method === "string" &&
+    isSubscriptionNotificationMethod(message.method)
+      ? [{ index, method: message.method, message }]
+      : []
+  );
+}
+
+function observationDetails(
+  observation: ListenObservation
+): Record<string, unknown> {
+  return {
+    subscriptionId: observation.subscriptionId,
+    requestedFilter: observation.requestedFilter,
+    messageCount: observation.messages.length,
+    streamOutcome: observation.outcome,
+    observedMs: observation.observedMs,
+  };
+}
+
+async function runSubscriptionAckOrderingCheck(
+  ctx: RawHttpCheckContext,
+  state: ModernRunState
+): Promise<MCPCheckResult> {
+  const meta =
+    MODERN_CHECK_METADATA["modern-subscription-ack-precedes-notifications"];
+  const startedAt = Date.now();
+  const probe = await subscriptionOnce(ctx, state);
+  if (probe.kind === "unavailable") {
+    return skippedResult(meta, probe.reason, probe.details);
+  }
+
+  const { observation } = probe;
+  const ackIndex = observation.messages.findIndex(
+    (message) => message.method === SUBSCRIPTION_ACK_METHOD
+  );
+  const notifications = subscriptionNotifications(observation);
+  const firstNotification = notifications[0];
+  const details = {
+    ...observationDetails(observation),
+    ackIndex,
+    firstNotificationIndex: firstNotification?.index ?? -1,
+  };
+
+  if (ackIndex === -1 && notifications.length === 0) {
+    return skippedResult(
+      meta,
+      `The ${LISTEN_METHOD} stream carried neither an acknowledgement nor a notification within ${observation.observedMs}ms, so the ordering MUST was never exercised`,
+      details
+    );
+  }
+  if (ackIndex === -1) {
+    return failedResult(
+      meta,
+      Date.now() - startedAt,
+      `Server emitted ${notifications.length} subscription notification(s) but never sent ${SUBSCRIPTION_ACK_METHOD}`,
+      details
+    );
+  }
+  if (firstNotification && firstNotification.index < ackIndex) {
+    return failedResult(
+      meta,
+      Date.now() - startedAt,
+      `Server emitted ${firstNotification.method} before ${SUBSCRIPTION_ACK_METHOD} (notification at frame ${firstNotification.index}, acknowledgement at frame ${ackIndex})`,
+      details
+    );
+  }
+
+  return passedResult(meta, Date.now() - startedAt, {
+    ...details,
+    notificationCount: notifications.length,
+    acknowledgedFilter: (
+      observation.messages[ackIndex] as { params?: Record<string, unknown> }
+    ).params?.notifications,
+  });
+}
+
+async function runSubscriptionFilterAndTaggingCheck(
+  ctx: RawHttpCheckContext,
+  state: ModernRunState
+): Promise<MCPCheckResult> {
+  const meta = MODERN_CHECK_METADATA["modern-subscription-filter-and-tagging"];
+  const startedAt = Date.now();
+  const probe = await subscriptionOnce(ctx, state);
+  if (probe.kind === "unavailable") {
+    return skippedResult(meta, probe.reason, probe.details);
+  }
+
+  const { observation } = probe;
+  if (observation.messages.length === 0) {
+    return skippedResult(
+      meta,
+      `The ${LISTEN_METHOD} stream carried no message within ${observation.observedMs}ms, so neither filtering nor tagging could be observed`,
+      observationDetails(observation)
+    );
+  }
+
+  const problems: string[] = [];
+  const untagged: Array<{ index: number; method: unknown; tag: unknown }> = [];
+
+  for (const [index, message] of observation.messages.entries()) {
+    const tag = subscriptionTagOf(message);
+    // A server that stamps the id as a string still identifies the stream
+    // unambiguously; only a MISSING or DIFFERENT id is a violation.
+    if (
+      tag === undefined ||
+      String(tag) !== String(observation.subscriptionId)
+    ) {
+      untagged.push({
+        index,
+        method: message.method ?? "(result)",
+        tag,
+      });
+    }
+  }
+  if (untagged.length > 0) {
+    problems.push(
+      `${untagged.length} message(s) were not tagged with the subscription id ${observation.subscriptionId}`
+    );
+  }
+
+  const unrequested = subscriptionNotifications(observation).filter(
+    ({ method, message }) =>
+      !filterRequests(
+        observation.requestedFilter,
+        method,
+        (message.params as { uri?: unknown } | undefined)?.uri
+      )
+  );
+  if (unrequested.length > 0) {
+    problems.push(
+      `${
+        unrequested.length
+      } notification(s) were of a type the subscription never requested: ${[
+        ...new Set(unrequested.map(({ method }) => method)),
+      ].join(", ")}`
+    );
+  }
+
+  const details = {
+    ...observationDetails(observation),
+    notificationMethods: subscriptionNotifications(observation).map(
+      ({ method }) => method
+    ),
+    untaggedMessages: untagged,
+  };
+
+  return problems.length > 0
+    ? failedResult(
+        meta,
+        Date.now() - startedAt,
+        `Subscription stream violated the filtering/tagging MUST: ${problems.join(
+          "; "
+        )}`,
+        details
+      )
+    : passedResult(meta, Date.now() - startedAt, details);
+}
+
+async function runSubscriptionGracefulCloseCheck(
+  ctx: RawHttpCheckContext,
+  state: ModernRunState
+): Promise<MCPCheckResult> {
+  const meta = MODERN_CHECK_METADATA["modern-subscription-graceful-close"];
+  const startedAt = Date.now();
+  const probe = await subscriptionOnce(ctx, state);
+  if (probe.kind === "unavailable") {
+    return skippedResult(meta, probe.reason, probe.details);
+  }
+
+  const { observation } = probe;
+  const details = {
+    ...observationDetails(observation),
+    completionResult: observation.completionResult,
+  };
+
+  if (observation.outcome === "completed") {
+    return passedResult(meta, Date.now() - startedAt, details);
+  }
+  if (observation.outcome === "stream-ended") {
+    // The body ended cleanly: the server chose to end the subscription, and
+    // the completion result is what the spec says that choice looks like on
+    // the wire. An UNCLEAN end never reaches here — it is a `stream-error`,
+    // which the probe reports as a skip.
+    return failedResult(
+      meta,
+      Date.now() - startedAt,
+      `Server closed the ${LISTEN_METHOD} stream without returning the completion result for subscription ${observation.subscriptionId}`,
+      details
+    );
+  }
+
+  return skippedResult(
+    meta,
+    `The subscription was still open after ${observation.observedMs}ms. A graceful close is server-initiated, so a client-side probe cannot induce one; reported as a skip rather than a failure`,
+    details
+  );
+}
+
 async function runModernCheck(
   id: ModernCheckId,
   ctx: RawHttpCheckContext,
@@ -1047,12 +1369,11 @@ async function runModernCheck(
     case "modern-no-session-id":
       return await runNoSessionIdCheck(ctx, state);
     case "modern-subscription-ack-precedes-notifications":
+      return await runSubscriptionAckOrderingCheck(ctx, state);
     case "modern-subscription-filter-and-tagging":
+      return await runSubscriptionFilterAndTaggingCheck(ctx, state);
     case "modern-subscription-graceful-close":
-      return skippedResult(
-        MODERN_CHECK_METADATA[id],
-        SUBSCRIPTION_PLACEHOLDER_REASON
-      );
+      return await runSubscriptionGracefulCloseCheck(ctx, state);
   }
 }
 
@@ -1130,4 +1451,4 @@ export const MODERN_CHECK_IDS = Object.keys(
   MODERN_CHECK_METADATA
 ) as ModernCheckId[];
 
-export { MODERN_CHECK_METADATA, SUBSCRIPTION_PLACEHOLDER_IDS };
+export { MODERN_CHECK_METADATA };
