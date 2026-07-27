@@ -361,6 +361,15 @@ function deriveEndpointIdentity(config: unknown): unknown {
 }
 
 /**
+ * Minimal shape of the manager needed to derive the binding fingerprint — both
+ * the negotiated identity and the resolved endpoint the connection points at.
+ */
+export interface MrtrFingerprintManager {
+  getInitializationInfo: (serverId: string) => unknown;
+  getServerConfig: (serverId: string) => unknown;
+}
+
+/**
  * Derive the effective-server digest half of the binding fingerprint. Both the
  * SUSPEND site (PR4 direct ops / PR5 chat) and the RESUME route connect to the
  * server, so both compute this identically — a materially different server
@@ -382,10 +391,7 @@ function deriveEndpointIdentity(config: unknown): unknown {
  * fingerprint only fails closed while both halves compute it identically.
  */
 export function deriveServerConfigDigest(
-  manager: {
-    getInitializationInfo: (serverId: string) => unknown;
-    getServerConfig: (serverId: string) => unknown;
-  },
+  manager: MrtrFingerprintManager,
   serverId: string,
 ): string {
   const info = manager.getInitializationInfo(serverId) as
@@ -431,6 +437,25 @@ export function resolveMrtrNegotiatedEra(
   return typeof info?.protocolVersion === "string" && info.protocolVersion
     ? info.protocolVersion
     : "modern";
+}
+
+/**
+ * Compute the full binding fingerprint from a live manager connection. Used by
+ * both the suspend (chat collector) and resume paths so they agree by
+ * construction — never fork the digest derivation, or a suspend/resume pair
+ * against the same server could compute different fingerprints and dead-lock a
+ * legitimate resume as "cancelled".
+ */
+export function computeMrtrBindingFingerprintFromManager(
+  manager: MrtrFingerprintManager,
+  args: { serverId: string; negotiatedEra: string; authPrincipal: string },
+): string {
+  return computeMrtrBindingFingerprint({
+    serverId: args.serverId,
+    negotiatedEra: args.negotiatedEra,
+    serverConfigDigest: deriveServerConfigDigest(manager, args.serverId),
+    authPrincipal: args.authPrincipal,
+  });
 }
 
 // ── Safe display ─────────────────────────────────────────────────────────
@@ -549,8 +574,17 @@ export interface HostedMrtrCollectorDeps {
   serverId: string;
   serverName?: string;
   chatSessionId?: string;
-  negotiatedEra: string;
-  bindingFingerprint: string;
+  /** The negotiated era, or a thunk resolved AT SUSPEND TIME (post-connect). */
+  negotiatedEra: string | (() => string);
+  /**
+   * The binding fingerprint, or a thunk resolved AT SUSPEND TIME. The chat-loop
+   * collector passes a thunk because the fingerprint needs the negotiated
+   * identity, which only exists after connect — but the collector factory runs
+   * synchronously BEFORE connect (to win the capability-advertise race). The
+   * thunk is evaluated inside the collector invocation, which happens
+   * mid-tool-call, i.e. after connect.
+   */
+  bindingFingerprint: string | (() => string);
   /** Emit a transient `data-mrtr-input-required` part on the turn's stream. */
   emit: (event: MrtrContinuationEvent) => void;
   ttlMs?: number;
@@ -585,6 +619,15 @@ export function createHostedMrtrCollector(
     const displays = buildInputRequestDisplays(inputRequests);
     const resumeState = encode(state);
     const continuationId = mintId();
+    // Resolve the fingerprint now (post-connect) if it was deferred.
+    const bindingFingerprint =
+      typeof deps.bindingFingerprint === "function"
+        ? deps.bindingFingerprint()
+        : deps.bindingFingerprint;
+    const negotiatedEra =
+      typeof deps.negotiatedEra === "function"
+        ? deps.negotiatedEra()
+        : deps.negotiatedEra;
 
     const created = await create(deps.bearer, {
       continuationId,
@@ -593,8 +636,8 @@ export function createHostedMrtrCollector(
       serverId: deps.serverId,
       operationId: state.opId,
       operationMethod: state.method as MrtrOperationMethod,
-      negotiatedEra: deps.negotiatedEra,
-      bindingFingerprint: deps.bindingFingerprint,
+      negotiatedEra,
+      bindingFingerprint,
       resumeState,
       round: state.round,
       maxRounds: state.maxRounds,
