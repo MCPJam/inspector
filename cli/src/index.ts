@@ -17,6 +17,7 @@ import { registerXaaCommands } from "./commands/xaa.js";
 import { registerPromptCommands } from "./commands/prompts.js";
 import { registerResourcesCommands } from "./commands/resources.js";
 import { registerServerCommands } from "./commands/server.js";
+import { registerSubscriptionsCommands } from "./commands/subscriptions.js";
 import { registerTelemetryCommands } from "./commands/telemetry.js";
 import { registerTasksCommands } from "./commands/tasks.js";
 import { registerToolsCommands } from "./commands/tools.js";
@@ -76,6 +77,7 @@ export async function main(
   registerServerCommands(program);
   registerToolsCommands(program);
   registerResourcesCommands(program);
+  registerSubscriptionsCommands(program);
   registerCompatCommands(program);
   registerPromptCommands(program);
   registerAppsCommands(program);

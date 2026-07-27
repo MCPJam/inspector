@@ -3,6 +3,7 @@ import type { Command } from "commander";
 import {
   buildImageOperation,
   createImageOperation,
+  validateImageBlueprintOperation,
   deleteImageOperation,
   getImageOperation,
   listImagesOperation,
@@ -70,8 +71,8 @@ async function runPlatformCommand<TOutput>(
   }
 }
 
-/** Read Dockerfile TEXT (not JSON) from a path, or stdin when `--file -`. */
-function loadDockerfileText(file: string): string {
+/** Read blueprint YAML TEXT (not JSON) from a path, or stdin when `--file -`. */
+function loadBlueprintText(file: string): string {
   let text: string;
   try {
     text = file === "-" ? readFileSync(0, "utf8") : readFileSync(file, "utf8");
@@ -103,7 +104,7 @@ export function registerImagesCommands(program: Command): void {
   const env = program
     .command("images")
     .description(
-      "List, build, and manage custom Computer sandbox images (Dockerfiles) in your hosted MCPJam projects"
+      "List, build, and manage custom Computer sandbox images (blueprints) in your hosted MCPJam projects"
     );
 
   addPlatformOptions(
@@ -132,7 +133,7 @@ export function registerImagesCommands(program: Command): void {
     env
       .command("get")
       .description(
-        "Show one sandbox image's Dockerfile and latest build status"
+        "Show one sandbox image's blueprint and latest build status"
       )
       .requiredOption("--image <id-or-name>", "Sandbox image name or ID")
       .option("--project <id-or-name>", "Project name or ID")
@@ -159,12 +160,12 @@ export function registerImagesCommands(program: Command): void {
     env
       .command("create")
       .description(
-        "Create a sandbox image from a Dockerfile (--file, or - for stdin)"
+        "Create a sandbox image from a blueprint YAML file (--file, or - for stdin)"
       )
       .requiredOption("--name <name>", "Display name for the new sandbox image")
       .requiredOption(
         "--file <path>",
-        "Dockerfile path, or - to read it from stdin"
+        "Blueprint YAML path, or - to read it from stdin"
       )
       .option("--project <id-or-name>", "Project name or ID")
   ).action(
@@ -177,11 +178,11 @@ export function registerImagesCommands(program: Command): void {
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
-      const dockerfile = loadDockerfileText(options.file);
+      const blueprint = loadBlueprintText(options.file);
       const input = validateInput(createImageOperation, {
         project: options.project,
         name: options.name,
-        dockerfile,
+        blueprint,
       });
       const result = await runPlatformCommand(
         options,
@@ -195,12 +196,44 @@ export function registerImagesCommands(program: Command): void {
 
   addPlatformOptions(
     env
+      .command("validate")
+      .description(
+        "Lint a blueprint YAML file without saving it (--file, or - for stdin)"
+      )
+      .requiredOption(
+        "--file <path>",
+        "Blueprint YAML path, or - to read it from stdin"
+      )
+      .option("--project <id-or-name>", "Project name or ID")
+  ).action(
+    async (
+      options: PlatformOptions & { project?: string; file: string },
+      command
+    ) => {
+      const globalOptions = getGlobalOptions(command);
+      const blueprint = loadBlueprintText(options.file);
+      const input = validateInput(validateImageBlueprintOperation, {
+        project: options.project,
+        blueprint,
+      });
+      const result = await runPlatformCommand(
+        options,
+        globalOptions.timeout,
+        ({ client, signal }) =>
+          validateImageBlueprintOperation.execute(input, { client, signal })
+      );
+      writeResult(result, globalOptions.format);
+    }
+  );
+
+  addPlatformOptions(
+    env
       .command("edit")
-      .description("Edit a sandbox image's name and/or Dockerfile")
+      .description("Edit a sandbox image's name and/or blueprint")
       .requiredOption("--image <id-or-name>", "Sandbox image name or ID")
       .option("--project <id-or-name>", "Project name or ID")
       .option("--name <name>", "New display name")
-      .option("--file <path>", "Replacement Dockerfile path (or - for stdin)")
+      .option("--file <path>", "Replacement blueprint YAML path (or - for stdin)")
   ).action(
     async (
       options: PlatformOptions & {
@@ -212,15 +245,15 @@ export function registerImagesCommands(program: Command): void {
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
-      const dockerfile =
+      const blueprint =
         options.file !== undefined
-          ? loadDockerfileText(options.file)
+          ? loadBlueprintText(options.file)
           : undefined;
       const input = validateInput(updateImageOperation, {
         project: options.project,
         image: options.image,
         ...(options.name !== undefined ? { name: options.name } : {}),
-        ...(dockerfile !== undefined ? { dockerfile } : {}),
+        ...(blueprint !== undefined ? { blueprint } : {}),
       });
       const result = await runPlatformCommand(
         options,
