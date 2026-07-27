@@ -1,0 +1,249 @@
+---
+title: "Subscriptions"
+description: "Stream MCP subscription notifications as NDJSON with mcpjam subscriptions listen"
+icon: "radio"
+---
+
+`mcpjam subscriptions listen` opens a long-lived MCP subscription stream and prints every event as newline-delimited JSON (NDJSON) on stdout. It targets the MCP 2026-07-28 `subscriptions/listen` protocol.
+
+## Basic usage
+
+Select at least one subscription interest, then point the command at your server:
+
+```bash
+# Watch for tool-list changes
+mcpjam subscriptions listen \
+  --url https://your-server.com/mcp \
+  --tools-list-changed
+
+# Watch all list-changed notifications at once
+mcpjam subscriptions listen \
+  --url https://your-server.com/mcp \
+  --list-changed
+
+# Watch a specific resource URI
+mcpjam subscriptions listen \
+  --url https://your-server.com/mcp \
+  --resource-uri file:///path/to/file.txt
+
+# Combine interests
+mcpjam subscriptions listen \
+  --url https://your-server.com/mcp \
+  --tools-list-changed \
+  --resource-uri file:///a.txt \
+  --resource-uri file:///b.txt
+```
+
+Press **Ctrl-C** to cancel the subscription and exit with code `0`.
+
+## Subscription interests
+
+| Flag | Description |
+|------|-------------|
+| `--tools-list-changed` | Subscribe to `notifications/tools/list_changed` |
+| `--prompts-list-changed` | Subscribe to `notifications/prompts/list_changed` |
+| `--resources-list-changed` | Subscribe to `notifications/resources/list_changed` |
+| `--list-changed` | Shorthand for all three list-changed notifications |
+| `--resource-uri <uri...>` | Watch a resource URI for `notifications/resources/updated`. Pass multiple values or repeat the flag. |
+
+At least one interest is required; the command exits with a usage error if none are provided.
+
+## Output format
+
+**stdout carries only NDJSON events** — one JSON object per line, in both `--format json` and `--format human`. Human-readable status messages go to stderr and are suppressed by `--quiet`.
+
+This design keeps stdout safe to pipe directly into `jq` or a CI step:
+
+```bash
+mcpjam subscriptions listen --url $URL --list-changed \
+  | jq 'select(.type == "notification")'
+```
+
+### Event types
+
+Every event has a `type` field and an `at` timestamp (Unix milliseconds).
+
+#### `subscription.opened`
+
+Emitted when the stream is first opened (and again on each re-listen attempt).
+
+```json
+{
+  "type": "subscription.opened",
+  "localSubscriptionId": "local-0",
+  "era": "modern",
+  "requestedFilter": { "toolsListChanged": true },
+  "rejectedInterests": [],
+  "relistenAttempt": 0,
+  "at": 1720000000000
+}
+```
+
+#### `subscription.acknowledged`
+
+Emitted as its own event when the server confirms which subset of the requested filter it will honor. This is separate from notifications — it is the server's statement of what it agreed to deliver.
+
+```json
+{
+  "type": "subscription.acknowledged",
+  "localSubscriptionId": "local-0",
+  "subscriptionId": "listen:0",
+  "requestedFilter": { "toolsListChanged": true },
+  "acknowledgedFilter": { "toolsListChanged": true },
+  "rejectedInterests": [],
+  "at": 1720000000050
+}
+```
+
+#### `notification`
+
+A delivered notification. Carries both the MCPJam-local stream id and the MCP subscription id.
+
+```json
+{
+  "type": "notification",
+  "localSubscriptionId": "local-0",
+  "subscriptionId": "listen:0",
+  "method": "notifications/tools/list_changed",
+  "kind": "tools-list-changed",
+  "at": 1720000001000
+}
+```
+
+For `notifications/resources/updated`, the event also includes a `uri` field:
+
+```json
+{
+  "type": "notification",
+  "localSubscriptionId": "local-0",
+  "subscriptionId": "listen:0",
+  "method": "notifications/resources/updated",
+  "kind": "resource-updated",
+  "uri": "file:///path/to/file.txt",
+  "at": 1720000001000
+}
+```
+
+#### `notification.rejected`
+
+A notification the coordinator received but did not deliver (for example, it arrived outside the acknowledged filter).
+
+```json
+{
+  "type": "notification.rejected",
+  "localSubscriptionId": "local-0",
+  "subscriptionId": "listen:0",
+  "method": "notifications/prompts/list_changed",
+  "reason": "unrequested-type",
+  "at": 1720000001000
+}
+```
+
+#### `subscription.relisten`
+
+Emitted when a remote loss triggers a re-listen attempt (only when `--relisten` is set). Reports the attempt number, the budget, and the backoff delay so the wait is visible rather than a silent gap.
+
+```json
+{
+  "type": "subscription.relisten",
+  "localSubscriptionId": "local-0",
+  "attempt": 1,
+  "maxAttempts": 3,
+  "delayMs": 500,
+  "at": 1720000002000
+}
+```
+
+#### `subscription.closed`
+
+Emitted when a stream ends, with the outcome and close reason.
+
+```json
+{
+  "type": "subscription.closed",
+  "localSubscriptionId": "local-0",
+  "subscriptionId": "listen:0",
+  "outcome": "graceful",
+  "closeReason": "graceful",
+  "relistenAttempt": 0,
+  "at": 1720000005000
+}
+```
+
+#### `summary`
+
+Always the last event on stdout. Summarizes the run.
+
+```json
+{
+  "type": "summary",
+  "outcome": "graceful",
+  "exitCode": 0,
+  "notifications": 3,
+  "rejectedNotifications": 0,
+  "relistenAttempts": 0,
+  "streams": 1,
+  "at": 1720000005001
+}
+```
+
+## Outcomes and exit codes
+
+Close reasons are distinct outcomes with distinct exit codes — not one "disconnected" bucket:
+
+| Outcome | Cause | Exit code |
+|---------|-------|-----------|
+| `graceful` | Server completed the subscription | `0` |
+| `cancelled` | Local abort — Ctrl-C, `--duration-ms`, or `--max-notifications` | `0` |
+| `remote` | Unexpected stream loss; re-listens disabled or exhausted | `1` (`SUBSCRIPTION_REMOTE_CLOSED`) |
+| `error` | The subscription failed to open | `1` (`SUBSCRIPTION_FAILED`) |
+
+## Bounding the stream
+
+Stop the stream automatically after a notification count or a wall-clock budget:
+
+```bash
+# Stop after 10 notifications
+mcpjam subscriptions listen --url $URL --list-changed --max-notifications 10
+
+# Stop after 60 seconds
+mcpjam subscriptions listen --url $URL --list-changed --duration-ms 60000
+```
+
+Both produce a `cancelled` outcome and exit `0`.
+
+## Re-listen on remote loss
+
+By default, an unexpected remote loss ends the run immediately with exit code `1`. This is intentional: a debugger that silently reopens a lost stream hides the loss, which is usually the fact you are chasing.
+
+Pass `--relisten <count>` to opt into bounded re-listen with exponential backoff:
+
+```bash
+mcpjam subscriptions listen \
+  --url https://your-server.com/mcp \
+  --list-changed \
+  --relisten 3 \
+  --relisten-delay-ms 500 \
+  --relisten-max-delay-ms 5000
+```
+
+Each re-listen attempt emits a `subscription.relisten` event on stdout with the delay so the wait is visible. If all attempts are exhausted, the run ends with the `remote` outcome and exit code `1`.
+
+`--relisten-delay-ms` and `--relisten-max-delay-ms` require `--relisten` with a positive count; passing them without `--relisten` is a usage error.
+
+## CI usage
+
+Because stdout is pure NDJSON, the command integrates cleanly into CI pipelines:
+
+```bash
+# Capture the summary and check the outcome
+summary=$(mcpjam subscriptions listen --url $URL --list-changed --max-notifications 1 \
+  | tail -1)
+echo "$summary" | jq '.outcome'
+
+# Filter for notifications only
+mcpjam subscriptions listen --url $URL --list-changed --duration-ms 5000 \
+  | jq 'select(.type == "notification") | .method'
+```
+
+Exit code `0` means `graceful` or `cancelled`; exit code `1` means `remote` or `error`. Use `--quiet` to suppress stderr status lines in CI.
