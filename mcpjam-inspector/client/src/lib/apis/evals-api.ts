@@ -344,7 +344,17 @@ async function postEvalRequest<TResponse>(
           ? limitKind
           : undefined,
     });
-    throw new Error(message);
+    // Carry the route's machine-readable `code` onto the Error. The message
+    // alone can't be branched on (it's prose the server may reword), and the
+    // eval fan-out summarises failures per plan — without this, a launch
+    // rejected by the environment-drift 409
+    // (ENVIRONMENT_REVISION_CONFLICT) is indistinguishable from any other
+    // failure. Purely additive: `message` is unchanged.
+    const error = new Error(message);
+    if (typeof errorBody?.code === "string") {
+      (error as Error & { code?: string }).code = errorBody.code;
+    }
+    throw error;
   }
 
   return body as TResponse;

@@ -383,6 +383,8 @@ When **Tool Approval** is on, the model pauses before `diagnose_server`, `call_s
 
 When an MCP server needs additional input from you mid-tool-call, it can pause execution and ask a question. The Playground renders these requests as modal dialogs and resumes the tool call once you respond.
 
+This applies to both model-initiated tool calls and tool calls triggered by an MCP App widget. When an App widget's tool call returns `input_required`, the same elicitation dialog appears overlaid above the widget — the App keeps rendering underneath — and only the final result is returned to the widget once all rounds are complete.
+
 ### Form elicitation
 
 The server presents a form with fields defined by its schema. Fill in the fields and click **Accept** to submit your answer, or **Decline** to refuse. The tool call continues (or fails gracefully) based on your response.

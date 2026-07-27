@@ -26,7 +26,6 @@ import { EnvVarsSection } from "./shared/EnvVarsSection";
 import { HostedConnectionTypeControl } from "./shared/HostedConnectionTypeControl";
 import { findProjectByAnyId, type Project } from "@/state/app-types";
 import { useOptionalSharedAppState } from "@/state/app-state-context";
-import { useActiveMcpProfile } from "@/contexts/active-mcp-profile-context";
 
 interface AddServerModalProps {
   isOpen: boolean;
@@ -121,11 +120,6 @@ export function AddServerModal({
   projectId = null,
 }: AddServerModalProps) {
   const appState = useOptionalSharedAppState();
-  // Active host's mcpProfile — the host-level wire pin that "auto" OAuth
-  // falls back to when no per-server override is set (see handleSubmit and
-  // AuthenticationSection's serverMcpProtocolVersion prop). Provided by the
-  // Servers tab's ActiveMcpProfileProvider; undefined in local/CLI contexts.
-  const activeMcpProfile = useActiveMcpProfile();
   const activeProject = findProjectByAnyId(
     appState?.projects,
     appState?.activeProjectId,
@@ -346,15 +340,7 @@ export function AddServerModal({
     }
 
     const finalFormData: ServerFormData = {
-      ...formState.buildFormData({
-        // Resolve a default ("auto") OAuth protocol against the effective wire
-        // pin so a 2026-07-28-pinned server submits the 2026 OAuth flow, not
-        // the 2025 default. Precedence mirrors AuthenticationSection's preview:
-        // the per-server pin wins, else the active host's mcpProfile pin. An
-        // explicit dropdown selection still wins over both.
-        wireProtocolVersionOverride:
-          mcpProtocolVersionOverride ?? activeMcpProfile?.mcpProtocolVersion,
-      }),
+      ...formState.buildFormData(),
       ...(mcpProtocolVersionOverride !== undefined
         ? { mcpProtocolVersionOverride }
         : {}),

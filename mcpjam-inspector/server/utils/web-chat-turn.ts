@@ -65,10 +65,8 @@ import {
   type PersistedTurnTrace,
 } from "./chat-ingestion.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
-import {
-  toPinnableSkill,
-  type RuntimeSkill,
-} from "./harness/runtime-skills.js";
+import { type RuntimeSkill } from "./harness/runtime-skills.js";
+import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-helpers.js";
 import { ErrorCode, WebRouteError } from "./../routes/web/errors.js";
 import { readUrlElicitations } from "@/shared/http-tool-calls";
@@ -84,6 +82,8 @@ import {
   type ElicitationChunkWriter,
   type HostedElicitationBridge,
 } from "./../routes/web/hosted-elicitation.js";
+import type { HostedMrtrBridge } from "./mrtr-hosted-bridge.js";
+import type { MrtrEngineResume } from "./mrtr-hosted-chat.js";
 import {
   bridgeHarnessRpcLogsToCollector,
   startCrossInstanceRpcLogPoll,
@@ -98,6 +98,32 @@ import {
 } from "./harness/harness-proxy-strategy.js";
 
 type RpcCollector = ReturnType<typeof createHostedRpcLogCollector>;
+
+/**
+ * The direct-chat `resumeConfig.selectedServers` list.
+ *
+ * Names when the browser supplied an index-aligned set, ids otherwise — and
+ * `nonResumableServerIds` filtered out BY INDEX, never by value: two servers
+ * can share a display name, and filtering names by value would drop the wrong
+ * entry (the same rule `services/journeys/plugin-servers.ts` follows).
+ */
+export function resumableServers(persist: {
+  selectedServerIds: string[];
+  selectedServerNames?: string[];
+  nonResumableServerIds?: string[];
+}): string[] {
+  const aligned =
+    Array.isArray(persist.selectedServerNames) &&
+    persist.selectedServerNames.length === persist.selectedServerIds.length
+      ? persist.selectedServerNames
+      : persist.selectedServerIds;
+  const excluded = persist.nonResumableServerIds;
+  if (!excluded || excluded.length === 0) return aligned;
+  const nonResumable = new Set(excluded);
+  return aligned.filter(
+    (_, index) => !nonResumable.has(persist.selectedServerIds[index]!)
+  );
+}
 
 /**
  * Persistence context for a web-chat turn — everything `persistChatSessionToConvex`
@@ -146,6 +172,21 @@ export interface WebChatTurnPersistContext {
   selectedServerNames?: string[];
   /** Required for `resumeConfig.selectedServers` fallback on direct chat. */
   selectedServerIds: string[];
+  /**
+   * Server ids that ran this turn but must NOT be written into
+   * `resumeConfig.selectedServers` — today, plugin-contributed servers.
+   *
+   * `resumeConfig` is a DURABLE reconnect instruction the Sessions viewer
+   * replays with no plugin lifecycle check, so a plugin server id stored here
+   * outlives the plugin's disable/uninstall and re-attaches it — the same
+   * bypass that keeps `plugin_component` ids out of `hostConfigs.serverIds`
+   * (and that `services/journeys/plugin-servers.ts` already filters for journeys).
+   * It is also how a Playground's EPHEMERAL plugin narrowing would leak into a
+   * durable record: whatever the user toggled off this turn would be written
+   * down as the session's server set. Which plugin versions ran stays
+   * recorded as trace provenance; it is never a restorable pin.
+   */
+  nonResumableServerIds?: string[];
   /** Resolved per-turn config — forwarded into `resumeConfig`. */
   systemPrompt?: string;
   temperature?: number;
@@ -221,8 +262,22 @@ export interface WebChatTurnPrepareInputs {
    * Ignored when `harness` is set: a harness turn delivers skills natively
    * through the adapter (see `WebChatTurnPersistContext.runtimeSkillsOverride`),
    * and advertising emulated skill tools there is a prompt/tool mismatch.
+   *
+   * INS-3: this stays the HARNESS-shaped list (name/description/content, which
+   * is all an adapter writes to disk). The emulated side takes
+   * {@link WebChatTurnPrepareInput.effectiveCapabilities} instead, because its
+   * tools address skills by ref and need the plugin origin this list drops.
    */
   runtimeSkillsOverride?: RuntimeSkill[];
+  /**
+   * The turn's resolved `EffectiveCapabilitySet` (INS-3). Set alongside
+   * `runtimeSkillsOverride` for an environment turn; drives the EMULATED skill
+   * tools (ref-addressed, plugin-origin-aware, supporting-file capable).
+   *
+   * Presence is what makes it authoritative — a set that resolves zero skills
+   * advertises zero, and never falls back to the project-wide pool.
+   */
+  effectiveCapabilities?: EffectiveCapabilitySet;
 }
 
 /** Runtime knobs (auth, abort, rpc collector, Hono context for cleanup). */
@@ -240,6 +295,20 @@ export interface WebChatTurnRuntime {
    * client speaks the hosted-elicitation handshake; see `chat-v2.ts`.
    */
   elicitationBridge?: HostedElicitationBridge;
+  /**
+   * Hosted MRTR (§12.5, PR5) bridge — attached to the stream writer so the
+   * suspending collector can emit `data-mrtr-input-required` parts. Present only
+   * for emulated-engine turns whose host declares elicitation AND whose client
+   * speaks the MRTR handshake. Continuations are durable, so unlike the
+   * elicitation bridge it is NOT disposed at end of turn.
+   */
+  mrtrBridge?: HostedMrtrBridge;
+  /**
+   * Hosted MRTR resume descriptor — forwarded to the emulated engine only. On a
+   * fresh resume request the engine drives one retry leg before the first model
+   * call and splices the driven result. Emulated MCPJam engine only.
+   */
+  mrtrResume?: MrtrEngineResume;
   /** Hono context (needed for getClientIp fallback / future hooks). */
   c: Context;
 }
@@ -365,11 +434,16 @@ export async function streamWebChatTurn(
       // EMULATED engine only. On a harness turn the adapter delivers them
       // natively, so advertising `listSkills`/`loadSkill` on top would describe
       // a second, different delivery of the same set to the same model.
-      ...(prepare.runtimeSkillsOverride !== undefined && !prepare.harness
+      ...(prepare.effectiveCapabilities !== undefined && !prepare.harness
         ? {
             skillsSource: {
               kind: "resolved" as const,
-              skills: prepare.runtimeSkillsOverride.map(toPinnableSkill),
+              capabilities: prepare.effectiveCapabilities,
+              // So a supporting-file read stops when the client disconnects
+              // instead of holding a worker for its full fetch timeout.
+              ...(runtime.abortSignal
+                ? { abortSignal: runtime.abortSignal }
+                : {}),
             },
           }
         : {}),
@@ -612,12 +686,7 @@ export async function streamWebChatTurn(
                 modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
                 mcpToolResultImageRendering:
                   persist.mcpToolResultImageRendering,
-                selectedServers:
-                  Array.isArray(persist.selectedServerNames) &&
-                  persist.selectedServerNames.length ===
-                    persist.selectedServerIds.length
-                    ? persist.selectedServerNames
-                    : persist.selectedServerIds,
+                selectedServers: resumableServers(persist),
               },
               ...(resolvedHostConfig ? { hostConfig: resolvedHostConfig } : {}),
             }
@@ -801,6 +870,11 @@ export async function streamWebChatTurn(
       ? { runtimeSkillsOverride: persist.runtimeSkillsOverride }
       : {}),
     ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
+    // Hosted MRTR (§12.5) resume: emulated engine only. On a fresh resume
+    // request the engine drives one retry leg (reconstructing tool
+    // output-schema validation) before the first model call, splices the
+    // driven result, and resumes the loop to a final assistant message.
+    ...(runtime.mrtrResume ? { mrtrResume: runtime.mrtrResume } : {}),
     // Forwarded SEPARATELY (also merged into `tools` for the emulated engine)
     // so the harness path can hand MCPJam's server-executed built-ins
     // (web_search) to HarnessAgent without the MCP-server tools, which the
@@ -828,6 +902,8 @@ export async function streamWebChatTurn(
       // requests, not this turn's manager, so the callback is never invoked.
       // Attaching is harmless and keeps the three sites uniform.
       runtime.elicitationBridge?.attachStreamWriter(writer);
+      // MRTR suspend emits `data-mrtr-input-required` on this same stream.
+      runtime.mrtrBridge?.attachStreamWriter(writer);
       if (persist.harness && runtime.rpcCollector && !stopHarnessRpcLogBridge) {
         stopHarnessRpcLogBridge = bridgeHarnessRpcLogsToCollector(
           persist.selectedServerIds,
