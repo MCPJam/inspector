@@ -61,7 +61,10 @@ import {
   type ResolvedEnvironmentRuntime,
 } from "../../services/environments/runtime.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
-import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
+import {
+  narrowHostComputer,
+  resolveHostTools,
+} from "../../utils/built-in-tools/registry.js";
 import { buildMcpjamPlatformClient } from "./mcpjam-platform-client.js";
 import { logger } from "../../utils/logger.js";
 
@@ -516,7 +519,10 @@ chatV2.post("/", async (c) => {
     // Cloud skills are a Convex-backed PROJECT resource (no computer needed), so
     // the emulated chat path wires the listSkills/loadSkill tools for any
     // signed-in member with a project. Gate only on:
-    //   - not a guest (a share-link/chatbox guest gets no skill tools), and
+    //   - guests need a computer/VM attached (a plain share-link/chatbox guest
+    //     gets no skill tools, but a guest with a sandbox does — they can run
+    //     bash there, and cloud skills let them drive advanced automation too),
+    //     and
     //   - the turn will NOT run a real harness runtime — Claude Code delivers
     //     skills via the adapter `skills` param instead (Codex delivers none),
     //     so advertising the tools here would be a prompt/tool mismatch.
@@ -531,6 +537,14 @@ chatV2.post("/", async (c) => {
     // model free to pull skills the environment deliberately excluded.
     const cloudSkillsEnabled = !environmentSpec && shouldEnableCloudSkillTools({
       isGuest: Boolean(c.get("guestId")),
+      // A guest's VM access is the same signal that produces the bash tool: a
+      // `computer` resource on the server-resolved runtime config.
+      hasComputer:
+        narrowHostComputer(
+          hostRuntimeConfig
+            ? (hostRuntimeConfig as { computer?: unknown }).computer
+            : undefined,
+        ) != null,
       harness: resolvedExecution.harness,
       modelId: String(modelDefinition.id),
       // Provider is required so bare hosted ids canonicalize — without it a
