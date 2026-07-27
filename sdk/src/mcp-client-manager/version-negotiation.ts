@@ -32,23 +32,27 @@ import {
  *   `ClientOptions.supportedProtocolVersions`; this function does not touch
  *   that accept-list.
  * - **No pin** → `{ mode: "auto" }`: probe with `server/discover`, selecting
- *   the modern era only on definitive evidence. Legacy-compatible probe
- *   outcomes fall back to the legacy `initialize` handshake; authentication
- *   failures, other HTTP/network errors, and probe timeouts reject.
+ *   the modern era only on definitive modern evidence. Fallback is
+ *   deliberately broad — per the official client's documented contract,
+ *   definitive legacy signals AND anything unrecognized (opaque `400`, `404`,
+ *   `405`, `406`, `5xx`, `-32601`) fall back to the plain `initialize`
+ *   handshake on the same connection, byte-equivalent to a 2025 client.
+ *   Exactly two outcomes fail the connect instead of falling back: a network
+ *   outage, and a probe timeout on HTTP (silence from a deployed server
+ *   indicates an outage, not a legacy server; on stdio a timeout IS a legacy
+ *   signal and falls back).
  *
  * The manager calls this helper only for HTTP servers. Stdio remains on its
  * historical legacy default until MCPJam explicitly exposes modern stdio
  * negotiation.
  */
 export function resolveVersionNegotiation(
-  mcpProtocolVersion: McpProtocolVersion | undefined,
+  mcpProtocolVersion: McpProtocolVersion | undefined
 ): VersionNegotiationOptions | undefined {
   if (mcpProtocolVersion === undefined) {
     return { mode: "auto" };
   }
-  if (
-    isStatelessProtocolVersion(mcpProtocolVersion)
-  ) {
+  if (isStatelessProtocolVersion(mcpProtocolVersion)) {
     return { mode: { pin: mcpProtocolVersion } };
   }
   return undefined;
