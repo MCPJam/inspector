@@ -154,6 +154,60 @@ Test your MCP prompts:
 - **Use in Playground** - Type `/` in the Playground to insert prompts directly into the conversation
 - **Multi-round input** - Prompts that return `input_required` (MCP 2026-07-28) collect the needed input through the elicitation dialog and retry the fetch automatically
 
+## Tasks
+
+The **Tasks** tab shows background tasks created by tool calls on servers that support the MCP Tasks spec. Tasks are tracked locally in your browser so they survive page reloads and server restarts.
+
+<Note>
+  The Tasks tab is only available in local (non-hosted) mode. Tasks are not yet available in the hosted app.
+</Note>
+
+### Wire badge
+
+Every task displays a small badge showing which tasks wire it was created on:
+
+| Badge | Meaning |
+|-------|---------|
+| `legacy` | Created via the 2025-11-25 in-core tasks utility |
+| `extension` | Created via the 2026-07-28+ tasks extension |
+
+### Tasks not supported
+
+If the connected server does not declare any tasks capability on the negotiated protocol version, the Tasks tab shows a **Tasks not supported** message and makes no task requests.
+
+### Task list and polling
+
+- **Legacy wire** — The inspector fetches the task list from the server via `tasks/list` (when the server supports it) and merges it with locally tracked tasks. Progress notifications are polled automatically while working tasks are present.
+- **Extension wire** — The server has no `tasks/list`. The local tracker is the task list. Each tracked task is hydrated individually via `tasks/get`, which returns the task's current status, result, error, and any pending input requests inline.
+
+### Inline results (extension wire)
+
+On the extension wire, `tasks/get` returns the result, error, or pending input requests directly in the response. The inspector reads these inline fields and never calls `tasks/result` separately.
+
+### Input required
+
+When a task reaches `input_required` status, the inspector shows an elicitation dialog for any `elicitation/create` requests embedded in the task's `inputRequests` snapshot:
+
+- **Legacy wire** — The server sends an `elicitation/create` notification with `relatedTaskId` in the metadata. The inspector handles it through the same elicitation flow as tool calls.
+- **Extension wire** — The `inputRequests` snapshot is re-sent on every `tasks/get` poll. The inspector walks through unanswered `elicitation/create` entries one at a time and submits responses via `tasks/update`. Answered keys are remembered per task so a re-sent snapshot does not re-prompt for already-answered entries. Sampling and roots requests in the snapshot are shown as a count but cannot be answered from the inspector.
+
+### Cancellation
+
+Clicking **Cancel** on a working task sends a `tasks/cancel` request:
+
+- **Legacy wire** — The server returns the updated task. The task list refreshes to show the new status.
+- **Extension wire** — Cancellation is cooperative: the server acknowledges the request with an empty response and may still complete, fail, or purge the task. After the ack, the inspector shows a **Cancellation requested** banner on the task and pauses automatic polling. Use the manual refresh button to check the current status.
+
+### Expired task handles
+
+If a `tasks/get` call returns a JSON-RPC `-32602` error (the server no longer knows the task), the inspector marks the handle as **expired** rather than silently removing it. Expired tasks:
+
+- Remain visible in the task list with an `unavailable` status badge.
+- Are never re-polled (the server has forgotten them).
+- Can be dismissed manually.
+
+This preserves the task handle so you can see what happened instead of having it disappear without explanation. Transient errors (network failures, 5xx responses) do not mark a task expired — the handle is kept and re-polled on the next refresh.
+
 ## JSON-RPC Logging
 
 All communication between MCPJam and your MCP server is logged in real-time:
