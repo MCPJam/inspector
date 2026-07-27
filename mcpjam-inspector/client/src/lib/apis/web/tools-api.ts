@@ -1,5 +1,6 @@
 import { webPost } from "./base";
 import { buildServerRequest } from "./context";
+import { webPostWithMrtr } from "./mrtr-api";
 
 export async function listHostedTools(request: {
   serverNameOrId: string;
@@ -21,10 +22,20 @@ export async function executeHostedTool(request: {
   taskOptions?: Record<string, unknown>;
 }): Promise<any> {
   const serverRequest = buildServerRequest(request.serverNameOrId);
-  return webPost("/api/web/tools/execute", {
-    ...serverRequest,
-    toolName: request.toolName,
-    parameters: request.parameters,
-    ...(request.taskOptions ? { taskOptions: request.taskOptions } : {}),
-  });
+  // Carries the hosted-MRTR handshake and drives any `input_required` rounds
+  // (§12.5) through the shared dialog rail before resolving, so this still
+  // settles with a single `{ status: "completed", result }` envelope.
+  return webPostWithMrtr(
+    "/api/web/tools/execute",
+    {
+      ...serverRequest,
+      toolName: request.toolName,
+      parameters: request.parameters,
+      ...(request.taskOptions ? { taskOptions: request.taskOptions } : {}),
+    },
+    {
+      serverNameOrId: request.serverNameOrId,
+      wrapResult: (result) => ({ status: "completed", result }),
+    },
+  );
 }

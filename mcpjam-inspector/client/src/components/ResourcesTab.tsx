@@ -16,6 +16,7 @@ import {
 import { EmptyState } from "./ui/empty-state";
 import { ThreePanelLayout } from "./ui/three-panel-layout";
 import { MrtrElicitationHost } from "./elicitation/MrtrElicitationHost";
+import { HostedMrtrHost } from "./elicitation/HostedMrtrHost";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { extractDisplayFromValue } from "@/components/chat-v2/shared/tool-result-text";
 import type {
@@ -1200,6 +1201,7 @@ export function ResourcesTab({
           return `input_required`; the SDK driver collects rounds through this
           shared dialog and retries the read. */}
       <MrtrElicitationHost />
+      <HostedMrtrHost />
     </>
   );
 }
