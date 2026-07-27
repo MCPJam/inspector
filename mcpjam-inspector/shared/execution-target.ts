@@ -36,8 +36,19 @@ export type HostedExecutionTarget =
  * environment's own server set", `[]` means "run this turn with no MCP servers".
  * The backend resolver enforces the same distinction, and it never widens
  * authorization (see `validateRuntimeServerOverride`).
+ *
+ * `pluginVersionIds` (INS-4) applies the same tri-state to the environment's
+ * pinned plugin versions, with one extra rule: it is a RETAINED SUBSET, so it
+ * can only ever narrow. A version the environment does not pin is rejected
+ * rather than resolved — a Playground override is a request, not a grant, and
+ * the only backend contract that composes a plugin's servers AND its skills is
+ * the environment's own resolution. Neither field is ever persisted: both are
+ * per-turn Playground header state, like model and temperature.
  */
-export type EnvironmentOverrides = { serverIds?: string[] };
+export type EnvironmentOverrides = {
+  serverIds?: string[];
+  pluginVersionIds?: string[];
+};
 
 /**
  * The closed union every hosted chat ingress normalizes to. Unlike the public
@@ -105,9 +116,10 @@ function parseHostedExecutionTarget(
 }
 
 /**
- * Parse the per-turn override envelope. An absent envelope and an envelope with
- * an absent `serverIds` both mean "no override"; `{ serverIds: [] }` is a real,
- * meaningful override.
+ * Parse the per-turn override envelope. An absent envelope and an envelope
+ * whose fields are all absent both mean "no override"; `{ serverIds: [] }` and
+ * `{ pluginVersionIds: [] }` are real, meaningful overrides ("no servers" /
+ * "no plugins this turn").
  */
 function parseEnvironmentOverrides(
   value: unknown
@@ -119,17 +131,43 @@ function parseEnvironmentOverrides(
     return { ok: false, error: "environmentOverrides must be an object" };
   }
   const serverIds = (value as { serverIds?: unknown }).serverIds;
-  if (serverIds === undefined) return { ok: true };
-  if (
-    !Array.isArray(serverIds) ||
-    serverIds.some((id) => nonEmptyString(id) === undefined)
-  ) {
-    return {
-      ok: false,
-      error: "environmentOverrides.serverIds must be an array of server ids",
-    };
+  const pluginVersionIds = (value as { pluginVersionIds?: unknown })
+    .pluginVersionIds;
+  if (serverIds !== undefined) {
+    if (
+      !Array.isArray(serverIds) ||
+      serverIds.some((id) => nonEmptyString(id) === undefined)
+    ) {
+      return {
+        ok: false,
+        error: "environmentOverrides.serverIds must be an array of server ids",
+      };
+    }
   }
-  return { ok: true, overrides: { serverIds: serverIds as string[] } };
+  if (pluginVersionIds !== undefined) {
+    if (
+      !Array.isArray(pluginVersionIds) ||
+      pluginVersionIds.some((id) => nonEmptyString(id) === undefined)
+    ) {
+      return {
+        ok: false,
+        error:
+          "environmentOverrides.pluginVersionIds must be an array of plugin version ids",
+      };
+    }
+  }
+  if (serverIds === undefined && pluginVersionIds === undefined) {
+    return { ok: true };
+  }
+  return {
+    ok: true,
+    overrides: {
+      ...(serverIds !== undefined ? { serverIds: serverIds as string[] } : {}),
+      ...(pluginVersionIds !== undefined
+        ? { pluginVersionIds: pluginVersionIds as string[] }
+        : {}),
+    },
+  };
 }
 
 /**
