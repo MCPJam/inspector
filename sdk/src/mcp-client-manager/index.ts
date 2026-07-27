@@ -65,6 +65,12 @@ export type {
   CacheHitEvent,
   CacheEventLogger,
 } from "./types.js";
+// Phase 5 auto-negotiation-activation telemetry (new exports only).
+export type {
+  NegotiationOutcomeEvent,
+  NegotiationOutcomeLogger,
+  ConfiguredNegotiationMode,
+} from "./types.js";
 export {
   ObservableResponseCache,
   type ObservableResponseCacheOptions,
@@ -138,6 +144,7 @@ export {
   isUnauthorized401,
   isInsufficientScopeError,
   isMCPAuthError,
+  unwrapEraNegotiationCause,
   MCPTasksWireError,
   isMCPTasksWireError,
 } from "./errors.js";

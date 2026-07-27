@@ -151,6 +151,22 @@ export type RequestEventMap = {
 
 export type SystemEventMap = {
   "mcp.connection.closed_with_pending_requests": { errorCode: string };
+  /**
+   * Auto-negotiation outcome, one line per connection attempt. Carries the
+   * full dimension set — configured mode + negotiated era + transport +
+   * surface + outcome + failure class — and no request payloads.
+   * Low-cardinality by construction.
+   */
+  "mcp.connection.negotiated": {
+    surface: string;
+    serverId: string;
+    transport: "http" | "stdio";
+    configuredMode: "auto" | "modern-pin" | "legacy";
+    outcome: "connected" | "failed";
+    negotiatedEra?: "legacy" | "modern";
+    negotiatedProtocolVersion?: string;
+    failureClass?: string;
+  };
   "process.unhandled_rejection": { errorCode: string };
   // Aggregated PostHog relay proxy counters, one line per flush interval
   // (see routes/relay.ts). Low-cardinality by construction; never emitted

@@ -117,6 +117,12 @@ export type {
   CacheHitEvent,
   CacheEventLogger,
 } from "./mcp-client-manager/index.js";
+// Phase 5 auto-negotiation-activation telemetry (new exports only).
+export type {
+  NegotiationOutcomeEvent,
+  NegotiationOutcomeLogger,
+  ConfiguredNegotiationMode,
+} from "./mcp-client-manager/index.js";
 export {
   ObservableResponseCache,
   type ObservableResponseCacheOptions,
@@ -130,6 +136,7 @@ export {
   isMCPAuthError,
   isUnauthorized401,
   isInsufficientScopeError,
+  unwrapEraNegotiationCause,
   MCPTasksWireError,
   isMCPTasksWireError,
 } from "./mcp-client-manager/index.js";

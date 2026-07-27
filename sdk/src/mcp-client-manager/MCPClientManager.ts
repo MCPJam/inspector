@@ -52,6 +52,8 @@ import type {
   ProgressHandler,
   RpcLogger,
   CacheEventLogger,
+  NegotiationOutcomeLogger,
+  ConfiguredNegotiationMode,
   Tool,
   AiSdkTool,
 } from "./types.js";
@@ -70,6 +72,8 @@ import {
   isAuthError,
   isUnauthorized401,
   isInsufficientScopeError,
+  unwrapEraNegotiationCause,
+  classifyNegotiationFailureClass,
 } from "./errors.js";
 import {
   type RetryPolicy,
@@ -299,6 +303,7 @@ export class MCPClientManager {
   private readonly defaultRpcLogger?: RpcLogger;
   private readonly defaultProgressHandler?: ProgressHandler;
   private readonly cacheEventLogger?: CacheEventLogger;
+  private readonly negotiationOutcomeLogger?: NegotiationOutcomeLogger;
   private readonly defaultRetryPolicy: RetryPolicy;
   private readonly lazyConnect: boolean;
   private readonly elicitationTimeoutExtensionMs: number;
@@ -331,6 +336,7 @@ export class MCPClientManager {
     this.defaultRpcLogger = options.rpcLogger;
     this.defaultProgressHandler = options.progressHandler;
     this.cacheEventLogger = options.cacheEventLogger;
+    this.negotiationOutcomeLogger = options.negotiationOutcomeLogger;
     this.defaultRetryPolicy = normalizeRetryPolicy(options.retryPolicy);
     this.lazyConnect = options.lazyConnect ?? false;
     this.elicitationTimeoutExtensionMs = Math.max(
@@ -554,7 +560,12 @@ export class MCPClientManager {
     this.liveClientStates.set(serverId, state);
 
     try {
-      return await retryPromise;
+      const client = await retryPromise;
+      this.emitNegotiationOutcome(serverId, config, "connected", undefined);
+      return client;
+    } catch (error) {
+      this.emitNegotiationOutcome(serverId, config, "failed", error);
+      throw error;
     } finally {
       cleanup();
       const latestState = this.liveClientStates.get(serverId);
@@ -564,6 +575,69 @@ export class MCPClientManager {
           this.liveClientStates.delete(serverId);
         }
       }
+    }
+  }
+
+  /**
+   * Emit one auto-negotiation telemetry event for a completed connection
+   * attempt. Fires only when a `negotiationOutcomeLogger` is wired, and NEVER
+   * throws into the connect path (a telemetry failure must not break a
+   * connection). Carries no request payloads.
+   */
+  private emitNegotiationOutcome(
+    serverId: string,
+    config: MCPServerConfig,
+    outcome: "connected" | "failed",
+    error: unknown
+  ): void {
+    const logger = this.negotiationOutcomeLogger;
+    if (!logger) {
+      return;
+    }
+    try {
+      const transport: "http" | "stdio" = this.isStdioConfig(config)
+        ? "stdio"
+        : "http";
+      const resolvedPin = this.isStdioConfig(config)
+        ? undefined
+        : config.mcpProtocolVersion;
+      const negotiation = resolveVersionNegotiation(resolvedPin);
+      const configuredMode: ConfiguredNegotiationMode =
+        negotiation === undefined
+          ? "legacy"
+          : negotiation.mode === "auto"
+            ? "auto"
+            : "modern-pin";
+
+      let negotiatedEra: "legacy" | "modern" | undefined;
+      let negotiatedProtocolVersion: string | undefined;
+      let failureClass: string | undefined;
+      if (outcome === "connected") {
+        negotiatedProtocolVersion =
+          this.getInitializationInfo(serverId)?.protocolVersion;
+        negotiatedEra = this.getManagedClient(serverId)?.getProtocolEra?.();
+      } else {
+        // Unwrap an auto-probe `SdkError(EraNegotiationFailed)` so the class
+        // reported is the real transport error (e.g. `UnauthorizedError`),
+        // not the opaque negotiation wrapper.
+        failureClass = classifyNegotiationFailureClass(
+          unwrapEraNegotiationCause(error)
+        );
+      }
+
+      logger({
+        serverId,
+        transport,
+        configuredMode,
+        outcome,
+        ...(negotiatedEra !== undefined ? { negotiatedEra } : {}),
+        ...(negotiatedProtocolVersion !== undefined
+          ? { negotiatedProtocolVersion }
+          : {}),
+        ...(failureClass !== undefined ? { failureClass } : {}),
+      });
+    } catch {
+      // Telemetry must never disturb connection control flow.
     }
   }
 
@@ -1766,9 +1840,12 @@ export class MCPClientManager {
       // re-validating. Predicate-based routing — stateful pins (or no
       // pin) route through the legacy upstream Client path; stateless
       // pins route through the preview client.
-      const resolvedProtocolVersion = !this.isStdioConfig(config)
-        ? config.mcpProtocolVersion
-        : undefined;
+      // stdio configs never carry a pin (`mcpProtocolVersion` is HTTP-only,
+      // and the UI does not expose a modern stdio pin), so the stdio pin is
+      // always undefined. HTTP keeps its per-server pin.
+      const resolvedProtocolVersion = this.isStdioConfig(config)
+        ? undefined
+        : config.mcpProtocolVersion;
       const wantsStateless =
         resolvedProtocolVersion !== undefined &&
         isStatelessProtocolVersion(resolvedProtocolVersion);
@@ -1785,13 +1862,14 @@ export class MCPClientManager {
         (!wantsStateless && resolvedProtocolVersion !== undefined
           ? [resolvedProtocolVersion]
           : undefined);
-      // Automatic version negotiation is an HTTP-only default. Explicit
-      // stateful/modern pins keep their exact behavior, while stdio stays on
-      // the historical initialize path (the UI does not expose modern stdio
-      // negotiation yet).
-      const versionNegotiation = this.isStdioConfig(config)
-        ? undefined
-        : resolveVersionNegotiation(resolvedProtocolVersion);
+      // Automatic era negotiation is always on and transport-agnostic: an
+      // unconfigured connection resolves to `{ mode: "auto" }` on both HTTP
+      // and stdio (on stdio the `server/discover` probe runs on a sibling
+      // process). Explicit pins are honored identically — a modern pin
+      // negotiates modern with no legacy fallback, a legacy pin is byte-stable.
+      const versionNegotiation = resolveVersionNegotiation(
+        resolvedProtocolVersion
+      );
       const clientOptions: ClientOptions = {
         capabilities: clientCapabilities,
         // Manual multi-round-trip mode (2026-07-28 `input_required`, spec §12).
@@ -2233,7 +2311,24 @@ export class MCPClientManager {
       await this.awaitWithAbort(state.connectPromise, signal);
       return;
     }
-    await this.connectToServerOnce(serverId, signal);
+    // Implicit reconnect boundary: a registered-but-disconnected server (after
+    // an earlier disconnect or a failed connect) reaches a fresh connection
+    // attempt here WITHOUT flowing through `connectToServer`'s try/catch. Emit
+    // the negotiation outcome so every real attempt reports exactly once. The
+    // in-flight `retryPromise`/`connectPromise` guards above make this mutually
+    // exclusive with `connectToServer`'s emission, so no attempt double-emits.
+    const config = this.getServerConfig(serverId);
+    try {
+      await this.connectToServerOnce(serverId, signal);
+      if (config) {
+        this.emitNegotiationOutcome(serverId, config, "connected", undefined);
+      }
+    } catch (error) {
+      if (config) {
+        this.emitNegotiationOutcome(serverId, config, "failed", error);
+      }
+      throw error;
+    }
   }
 
   private getClientOrThrow(serverId: string): ManagedMcpClient {
