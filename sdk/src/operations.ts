@@ -16,7 +16,6 @@ import type {
   MCPServerConfig,
   RpcLogger,
   RetryPolicy,
-  VersionNegotiationActivation,
 } from "./mcp-client-manager/index.js";
 import { isMethodUnavailableError } from "./mcp-client-manager/index.js";
 
@@ -112,13 +111,6 @@ export interface WithEphemeralClientOptions {
   rpcLogger?: RpcLogger;
   /** Retry policy for the ephemeral manager and initial connect. */
   retryPolicy?: RetryPolicy;
-  /**
-   * Phase 5 auto-negotiation activation for this ephemeral connection. Default
-   * OFF (SDK legacy default). Diagnostic surfaces that must DETECT the era a
-   * server actually speaks for an unconfigured run (conformance) pass
-   * `{ enabled: true }` so an absent pin resolves to `auto`.
-   */
-  versionNegotiationActivation?: VersionNegotiationActivation;
   /**
    * Runs against the freshly-constructed manager BEFORE the initial
    * `connectToServer`. Use it to register per-server state that must be present
@@ -400,9 +392,6 @@ export async function withEphemeralClient<T>(
       lazyConnect: true,
       retryPolicy: options?.retryPolicy,
       ...(options?.rpcLogger ? { rpcLogger: options.rpcLogger } : {}),
-      ...(options?.versionNegotiationActivation
-        ? { versionNegotiationActivation: options.versionNegotiationActivation }
-        : {}),
     }
   );
 

@@ -82,68 +82,39 @@ describe("MCPClientManager × dual-era fixture over HTTP", () => {
     ).toBe("hello from the fixture");
   });
 
-  it("stays on the legacy handshake for an unconfigured HTTP connection when activation is OFF (default)", async () => {
-    // Phase 5 safety invariant: with the activation flag OFF (the manager
-    // default), an unconfigured connection must NOT auto-probe into the
-    // modern era — behavior is byte-identical to the pre-activation legacy
-    // default. The dual-era fixture serves both eras, so a plain
-    // `initialize` handshake negotiates a stateful (2025-era) version.
+  it("auto-detects the modern era for an unconfigured HTTP connection (always on)", async () => {
+    // Automatic negotiation is always on: a bare manager with no pin probes
+    // `server/discover` and lands on the modern era against the dual-era
+    // fixture. This is the behavior main already ships for HTTP (#3441).
     await manager.connectToServer("fixture", {
       url: served.url,
       timeout: 10_000,
     });
 
-    const version = manager.getInitializationInfo("fixture")?.protocolVersion;
-    expect(version).not.toBe("2026-07-28");
+    expect(manager.getInitializationInfo("fixture")?.protocolVersion).toBe(
+      "2026-07-28",
+    );
     expect(manager.getManagedClient("fixture")?.getProtocolEra?.()).toBe(
-      "legacy",
+      "modern",
     );
 
     const tools = await manager.listTools("fixture");
     expect(tools.tools.map((t) => t.name)).toContain("echo");
   });
 
-  it("auto-detects the modern era for an unconfigured HTTP connection when activation is ON", async () => {
-    const activated = new MCPClientManager(
-      {},
-      { versionNegotiationActivation: { enabled: true } },
-    );
-    try {
-      await activated.connectToServer("fixture", {
-        url: served.url,
-        timeout: 10_000,
-      });
-
-      expect(activated.getInitializationInfo("fixture")?.protocolVersion).toBe(
-        "2026-07-28",
-      );
-      expect(activated.getManagedClient("fixture")?.getProtocolEra?.()).toBe(
-        "modern",
-      );
-
-      const tools = await activated.listTools("fixture");
-      expect(tools.tools.map((t) => t.name)).toContain("echo");
-    } finally {
-      await activated.disconnectAllServers().catch(() => {});
-    }
-  });
-
-  it("emits a negotiation-outcome telemetry event with the checklist fields", async () => {
+  it("emits a negotiation-outcome telemetry event with the required fields", async () => {
     const events: NegotiationOutcomeEvent[] = [];
-    const activated = new MCPClientManager(
+    const observed = new MCPClientManager(
       {},
-      {
-        versionNegotiationActivation: { enabled: true },
-        negotiationOutcomeLogger: (e) => events.push(e),
-      },
+      { negotiationOutcomeLogger: (e) => events.push(e) },
     );
     try {
-      await activated.connectToServer("fixture", {
+      await observed.connectToServer("fixture", {
         url: served.url,
         timeout: 10_000,
       });
     } finally {
-      await activated.disconnectAllServers().catch(() => {});
+      await observed.disconnectAllServers().catch(() => {});
     }
 
     expect(events).toHaveLength(1);
@@ -152,7 +123,6 @@ describe("MCPClientManager × dual-era fixture over HTTP", () => {
     expect(event).toMatchObject({
       serverId: "fixture",
       transport: "http",
-      activationEnabled: true,
       configuredMode: "auto",
       outcome: "connected",
       negotiatedEra: "modern",

@@ -156,11 +156,7 @@ import {
 } from "./result-guards.js";
 import { wrapLegacyClient } from "./managed-mcp-client-factory.js";
 import { ObservableResponseCache } from "./observable-response-cache.js";
-import {
-  resolveActivatedVersionNegotiation,
-  DEFAULT_VERSION_NEGOTIATION_ACTIVATION,
-  type VersionNegotiationActivation,
-} from "./version-negotiation.js";
+import { resolveVersionNegotiation } from "./version-negotiation.js";
 import { DialectAwareJsonSchemaValidator } from "./dialect-aware-json-schema-validator.js";
 import { isStatelessProtocolVersion } from "./mcp-protocol-version.js";
 import { type ManagedMcpClient } from "./managed-mcp-client.js";
@@ -310,11 +306,6 @@ export class MCPClientManager {
   private readonly defaultRetryPolicy: RetryPolicy;
   private readonly lazyConnect: boolean;
   private readonly elicitationTimeoutExtensionMs: number;
-  /**
-   * Phase 5 activation policy for AUTOMATIC era negotiation of unconfigured
-   * connections. Default OFF (see {@link DEFAULT_VERSION_NEGOTIATION_ACTIVATION}).
-   */
-  private readonly versionNegotiationActivation: VersionNegotiationActivation;
 
   // Progress token counter for uniqueness
   private progressTokenCounter = 0;
@@ -347,9 +338,6 @@ export class MCPClientManager {
     this.negotiationOutcomeLogger = options.negotiationOutcomeLogger;
     this.defaultRetryPolicy = normalizeRetryPolicy(options.retryPolicy);
     this.lazyConnect = options.lazyConnect ?? false;
-    this.versionNegotiationActivation =
-      options.versionNegotiationActivation ??
-      DEFAULT_VERSION_NEGOTIATION_ACTIVATION;
     this.elicitationTimeoutExtensionMs = Math.max(
       0,
       options.elicitationTimeoutExtensionMs ??
@@ -590,10 +578,10 @@ export class MCPClientManager {
   }
 
   /**
-   * Emit one Phase 5 auto-negotiation-activation telemetry event for a
-   * completed connection attempt. Fires only when a `negotiationOutcomeLogger`
-   * is wired, and NEVER throws into the connect path (a telemetry failure must
-   * not break a connection). Carries no request payloads.
+   * Emit one auto-negotiation telemetry event for a completed connection
+   * attempt. Fires only when a `negotiationOutcomeLogger` is wired, and NEVER
+   * throws into the connect path (a telemetry failure must not break a
+   * connection). Carries no request payloads.
    */
   private emitNegotiationOutcome(
     serverId: string,
@@ -612,11 +600,7 @@ export class MCPClientManager {
       const resolvedPin = this.isStdioConfig(config)
         ? undefined
         : config.mcpProtocolVersion;
-      const negotiation = resolveActivatedVersionNegotiation(
-        resolvedPin,
-        transport,
-        this.versionNegotiationActivation
-      );
+      const negotiation = resolveVersionNegotiation(resolvedPin);
       const configuredMode: ConfiguredNegotiationMode =
         negotiation === undefined
           ? "legacy"
@@ -647,7 +631,6 @@ export class MCPClientManager {
       logger({
         serverId,
         transport,
-        activationEnabled: this.versionNegotiationActivation.enabled,
         configuredMode,
         outcome,
         ...(negotiatedEra !== undefined ? { negotiatedEra } : {}),
@@ -1860,12 +1843,9 @@ export class MCPClientManager {
       // re-validating. Predicate-based routing — stateful pins (or no
       // pin) route through the legacy upstream Client path; stateless
       // pins route through the preview client.
-      const transportKind = this.isStdioConfig(config) ? "stdio" : "http";
       // stdio configs never carry a pin (`mcpProtocolVersion` is HTTP-only,
-      // and the UI does not expose a modern stdio pin). So the stdio pin is
-      // always undefined; under activation that undefined resolves to `auto`
-      // (the double-spawn probe), and OFF it stays on the legacy initialize
-      // path. HTTP keeps its per-server pin exactly as before.
+      // and the UI does not expose a modern stdio pin), so the stdio pin is
+      // always undefined. HTTP keeps its per-server pin.
       const resolvedProtocolVersion = this.isStdioConfig(config)
         ? undefined
         : config.mcpProtocolVersion;
@@ -1885,16 +1865,13 @@ export class MCPClientManager {
         (!wantsStateless && resolvedProtocolVersion !== undefined
           ? [resolvedProtocolVersion]
           : undefined);
-      // Phase 5 activation policy (default OFF). With activation OFF this is
-      // byte-identical to the pre-activation default: stdio stays on the
-      // historical initialize path and an unconfigured HTTP connection uses
-      // the exact legacy handshake (explicit pins still honored). With
-      // activation ON, unconfigured connections auto-negotiate on both
-      // transports. Explicit pins are honored regardless of the flag.
-      const versionNegotiation = resolveActivatedVersionNegotiation(
-        resolvedProtocolVersion,
-        transportKind,
-        this.versionNegotiationActivation
+      // Automatic era negotiation is always on and transport-agnostic: an
+      // unconfigured connection resolves to `{ mode: "auto" }` on both HTTP
+      // and stdio (on stdio the `server/discover` probe runs on a sibling
+      // process). Explicit pins are honored identically — a modern pin
+      // negotiates modern with no legacy fallback, a legacy pin is byte-stable.
+      const versionNegotiation = resolveVersionNegotiation(
+        resolvedProtocolVersion
       );
       const clientOptions: ClientOptions = {
         capabilities: clientCapabilities,

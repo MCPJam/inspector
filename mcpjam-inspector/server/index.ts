@@ -20,7 +20,6 @@ import {
 } from "./env";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy";
 import { cacheEventLogger } from "./utils/cache-events";
-import { versionNegotiationActivation } from "./utils/version-negotiation-activation";
 import { negotiationTelemetryLogger } from "./utils/negotiation-telemetry";
 
 // Security imports
@@ -304,8 +303,7 @@ const mcpClientManager = new MCPClientManager(
     // (see server/utils/cache-events.ts). Routes opt in per-request via
     // `withCacheEventCapture`; this callback is a no-op outside that scope.
     cacheEventLogger,
-    // Phase 5 auto-negotiation activation (default OFF) + its telemetry.
-    versionNegotiationActivation: versionNegotiationActivation(),
+    // Auto-negotiation outcome telemetry (always-on negotiation).
     negotiationOutcomeLogger: negotiationTelemetryLogger("local-inspector"),
   }
 );

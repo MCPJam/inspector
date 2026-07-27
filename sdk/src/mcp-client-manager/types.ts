@@ -21,7 +21,6 @@ import type {
 // beta.4 moved the stdio transport params to the `/stdio` subpath.
 import type { StdioServerParameters } from "@modelcontextprotocol/client/stdio";
 import type { RetryPolicy } from "../retry.js";
-import type { VersionNegotiationActivation } from "./version-negotiation.js";
 import type { RefreshTokenOAuthProvider } from "./refresh-token-auth-provider.js";
 import type { ToolSet } from "ai";
 
@@ -111,8 +110,6 @@ export interface NegotiationOutcomeEvent {
   serverId: string;
   /** Transport the attempt used. */
   transport: "http" | "stdio";
-  /** Whether auto-negotiation activation was ON for this connection. */
-  activationEnabled: boolean;
   /** The negotiation mode the client was actually asked to use. */
   configuredMode: ConfiguredNegotiationMode;
   /** Whether the connection established or failed. */
@@ -527,20 +524,6 @@ export interface MCPClientManagerOptions {
    * (e.g. connectReplayManagerServers) to avoid racing eager connects.
    */
   lazyConnect?: boolean;
-  /**
-   * Phase 5 exit-gate activation of AUTOMATIC era negotiation for UNCONFIGURED
-   * connections (no explicit `mcpProtocolVersion` pin). Default OFF: an
-   * unconfigured connection uses the SDK legacy default and stdio never
-   * auto-negotiates — byte-identical to the pre-activation behavior. When
-   * `{ enabled: true }`, unconfigured connections resolve to `auto` on both
-   * HTTP and stdio. Explicit pins are always honored regardless of this flag.
-   *
-   * This is deliberately a per-manager option, not a global: each surface
-   * (local / hosted / CLI / conformance) decides whether to opt in, wired
-   * from the repo's flag mechanism, so flipping the default is a reviewed
-   * step rather than a code-wide behavior change.
-   */
-  versionNegotiationActivation?: VersionNegotiationActivation;
 }
 
 // ============================================================================

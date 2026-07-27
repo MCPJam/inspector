@@ -259,15 +259,6 @@ export {
   isStatelessProtocolVersion,
 } from "./mcp-protocol-version.js";
 
-// Phase 5 exit-gate: flag-gated activation of automatic era negotiation for
-// unconfigured connections. New exports only. Default OFF.
-export {
-  resolveActivatedVersionNegotiation,
-  DEFAULT_VERSION_NEGOTIATION_ACTIVATION,
-  type VersionNegotiationActivation,
-  type ConnectionTransportKind,
-} from "./version-negotiation.js";
-
 // Era-neutral subscription coordinator (2026-07-28 `subscriptions/listen`
 // + legacy list-changed/`resources/subscribe`). New exports only.
 export {

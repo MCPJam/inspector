@@ -1,13 +1,12 @@
 /**
- * Phase 5 auto-negotiation-activation TELEMETRY wiring.
+ * Auto-negotiation outcome TELEMETRY wiring.
  *
  * Bridges the SDK's per-connection {@link NegotiationOutcomeLogger} (a local
  * provenance callback the `MCPClientManager` fires once per connect attempt)
  * to the existing Axiom system-event pipeline via `getSystemLogger`. It does
  * NOT invent a parallel pipeline — it forwards the SDK-supplied dimensions
  * (configured mode, negotiated era/version, transport, outcome, failure class)
- * and stamps the `surface` the connection was made from, satisfying the
- * activation-checklist telemetry requirement.
+ * and stamps the `surface` the connection was made from.
  *
  * The SDK guards the callback (it never throws into connect); this layer also
  * swallows its own errors so telemetry can never disturb a connection.
@@ -43,7 +42,6 @@ export function negotiationTelemetryLogger(
         surface,
         serverId: event.serverId,
         transport: event.transport,
-        activationEnabled: event.activationEnabled,
         configuredMode: event.configuredMode,
         outcome: event.outcome,
         ...(event.negotiatedEra !== undefined

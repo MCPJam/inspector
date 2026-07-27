@@ -130,9 +130,8 @@ function createServerConfig(
     timeout: config.checkTimeout,
     // Flows through the negotiation resolver: a modern (stateless) pin makes
     // the underlying Client negotiate the 2026 era so a modern-only server can
-    // connect at all. Absent ⇒ `auto` (this ephemeral connection enables
-    // Phase 5 activation — see the `withEphemeralClient` options below), so an
-    // unconfigured conformance run detects the era the server negotiates.
+    // connect at all. Absent ⇒ `auto` (automatic negotiation is always on), so
+    // an unconfigured conformance run detects the era the server negotiates.
     mcpProtocolVersion: config.protocolVersion,
   };
 }
@@ -360,12 +359,6 @@ async function runClientChecks(
       {
         clientName: config.clientName,
         timeout: config.checkTimeout,
-        // Conformance is a DIAGNOSTIC surface: for an unconfigured (no
-        // `protocolVersion`) run it must DETECT the era the server actually
-        // negotiates, so activation is ON here independent of the product
-        // default. An explicit pin is still honored exactly (the flag only
-        // governs the absent-pin case), so this does not change pinned runs.
-        versionNegotiationActivation: { enabled: true },
       },
     );
 
