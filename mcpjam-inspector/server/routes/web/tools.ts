@@ -1,10 +1,12 @@
 import { Hono } from "hono";
+import { isMCPTasksWireError } from "@mcpjam/sdk";
 import { captureServerEvent } from "../../utils/analytics.js";
 import {
   toolsListSchema,
   toolsExecuteSchema,
   withEphemeralConnection,
 } from "./auth.js";
+import { ErrorCode, WebRouteError } from "./errors.js";
 import { runHostedDirectMrtrOperation } from "./mrtr-direct.js";
 import { isMrtrSuspendedSignal } from "../../utils/mrtr-hosted-collector.js";
 import { listTools } from "../../utils/route-handlers.js";
@@ -73,6 +75,18 @@ tools.post("/execute", async (c) =>
         // A suspend is control flow, not a failed execution — let it propagate
         // to the MRTR wrapper unlogged so the pair ratio isn't skewed.
         if (isMrtrSuspendedSignal(error)) throw error;
+        // Same taxonomy as /api/web/tasks/*: a task request the resolved wire
+        // cannot serve is a client-actionable 400, never a 500 — PR5's client
+        // treats non-TASKS_UNSUPPORTED failures as transient and would
+        // otherwise retry a wire mismatch forever.
+        if (isMCPTasksWireError(error)) {
+          throw new WebRouteError(
+            400,
+            ErrorCode.TASKS_UNSUPPORTED,
+            error.message,
+            { wire: error.wire },
+          );
+        }
         getRequestLogger(c, "routes.web.tools").event(
           "mcp.tool.execution.failed",
           {
