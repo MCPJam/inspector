@@ -147,6 +147,16 @@ export type RequestEventMap = {
     computerId: string;
     errorCode: string;
   };
+  // HOSTED subscription passthrough stream closed (routes/web/subscriptions.ts,
+  // MCP 2026-07-28 §13.4). One line per stream close, carrying duration + close
+  // reason — NEVER a notification payload (§13.4 item 9 / "do not do").
+  "subscription.stream.closed": {
+    era: "legacy" | "modern";
+    closeReason: "graceful" | "remote" | "local-abort" | "error";
+    durationMs: number;
+    notificationCount: number;
+    reconnectAttempt: number;
+  };
 };
 
 export type SystemEventMap = {
