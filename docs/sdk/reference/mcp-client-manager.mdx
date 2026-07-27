@@ -316,7 +316,9 @@ Executes a tool and returns the result.
 executeTool(
   serverId: string,
   toolName: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  options?: ClientRequestOptions,
+  task?: { ttl?: number }
 ): Promise<unknown>
 ```
 
@@ -327,19 +329,32 @@ executeTool(
 | `serverId` | `string` | The server ID |
 | `toolName` | `string` | Name of the tool to execute |
 | `args` | `Record<string, unknown>` | Arguments to pass to the tool |
+| `options` | `ClientRequestOptions` | Optional request options (e.g. timeout) |
+| `task` | `{ ttl?: number }` | Optional. When provided, sends the call as a task-augmented `tools/call` on the 2025-11-25 legacy tasks wire. `ttl` is the task time-to-live in milliseconds. |
 
 #### Returns
 
-`Promise<unknown>` - The tool's return value (type depends on the tool).
+`Promise<unknown>` - The tool's return value. When `task` is provided and the server creates a task, the result is a `CreateTaskResult` containing a `task` object with a `taskId`.
 
 #### Example
 
 ```typescript
+// Plain tool call
 const result = await manager.executeTool("myServer", "add", {
   a: 5,
   b: 3,
 });
 console.log(result); // 8
+
+// Task-augmented call (requires a 2025-11-25 server with tasks capability)
+const taskResult = await manager.executeTool(
+  "myServer",
+  "long_running_tool",
+  {},
+  undefined,
+  { ttl: 60_000 }
+);
+console.log(taskResult.task.taskId);
 ```
 
 #### Throws
@@ -347,6 +362,7 @@ console.log(result); // 8
 - Error if tool doesn't exist
 - Error if arguments are invalid
 - Error if tool execution fails
+- `MCPTasksWireError` if `task` is provided but the server does not speak the 2025-11-25 legacy tasks wire
 
 ---
 
