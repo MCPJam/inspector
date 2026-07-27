@@ -379,6 +379,174 @@ if ("taskId" in maybeTask) {
 
 ---
 
+### getTasksSupport()
+
+Returns the full tasks capability matrix for a connection. Use this to determine which tasks wire a server speaks and which operations are available before calling any tasks methods.
+
+```typescript
+getTasksSupport(serverId: string): TasksSupport
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `serverId` | `string` | The server ID |
+
+#### Returns
+
+`TasksSupport` — an object describing the connection's tasks capabilities:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `wire` | `"none" \| "legacy" \| "extension"` | Which tasks wire the server speaks. `"legacy"` = 2025-11-25 in-core tasks; `"extension"` = `io.modelcontextprotocol/tasks` (SEP-2663, 2026-07-28+); `"none"` = no tasks support. |
+| `toolCalls` | `boolean` | Whether a `tools/call` may produce a task on this connection. |
+| `list` | `boolean` | Whether `tasks/list` exists (legacy wire only). |
+| `cancel` | `boolean` | Whether `tasks/cancel` may be sent. |
+| `update` | `boolean` | Whether `tasks/update` exists (extension wire only). |
+| `inlineResult` | `boolean` | Whether a completed `tasks/get` carries its result inline (extension wire only). |
+
+#### Example
+
+```typescript
+const support = manager.getTasksSupport("myServer");
+
+if (support.wire === "extension") {
+  // Use getTaskExt / updateTask / cancelTaskExt
+} else if (support.wire === "legacy") {
+  // Use legacy tasks/get, tasks/list, tasks/cancel
+} else {
+  // No tasks support
+}
+```
+
+---
+
+### getTaskExt()
+
+Fetches a task by ID on the `io.modelcontextprotocol/tasks` extension wire (2026-07-28+). A completed task carries its `result` inline; an expired or unknown task raises the server's `-32602`.
+
+```typescript
+getTaskExt(
+  serverId: string,
+  taskId: string,
+  options?: ClientRequestOptions
+): Promise<GetTaskExtResult>
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `serverId` | `string` | The server ID |
+| `taskId` | `string` | The task ID returned by `executeTool` |
+| `options` | `ClientRequestOptions` | Optional request options |
+
+#### Returns
+
+`Promise<GetTaskExtResult>` — the task with its current status. When `status` is `"completed"`, the `result` field contains the inline tool result. When `status` is `"input_required"`, the `inputRequests` field contains the pending input requests.
+
+#### Example
+
+```typescript
+const task = await manager.getTaskExt("myServer", "task-abc");
+
+if (task.status === "completed") {
+  console.log(task.result);
+} else if (task.status === "input_required") {
+  // Submit responses via updateTask
+}
+```
+
+#### Throws
+
+- `TypeError` if the server does not speak the extension wire
+
+---
+
+### updateTask()
+
+Submits input responses for a task on the extension wire. The result is an empty acknowledgement — re-poll `getTaskExt` for the updated status.
+
+```typescript
+updateTask(
+  serverId: string,
+  taskId: string,
+  inputResponses: InputResponses,
+  options?: ClientRequestOptions
+): Promise<UpdateTaskExtResult>
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `serverId` | `string` | The server ID |
+| `taskId` | `string` | The task ID |
+| `inputResponses` | `InputResponses` | Keyed map of input responses (partial responses are allowed) |
+| `options` | `ClientRequestOptions` | Optional request options |
+
+#### Returns
+
+`Promise<UpdateTaskExtResult>` — an empty acknowledgement object. The ack confirms the request was accepted; it carries no task state. Re-poll `getTaskExt` for the post-update status.
+
+#### Example
+
+```typescript
+await manager.updateTask("myServer", "task-abc", {
+  k1: { action: "accept", content: { city: "Madrid" } },
+});
+
+// Re-poll for updated status
+const updated = await manager.getTaskExt("myServer", "task-abc");
+```
+
+#### Throws
+
+- `TypeError` if the server does not speak the extension wire
+
+---
+
+### cancelTaskExt()
+
+Cancels a task on the extension wire. Cancellation is cooperative — the server may complete the task normally or keep working. Re-poll `getTaskExt` rather than treating the ack as the task's new state.
+
+```typescript
+cancelTaskExt(
+  serverId: string,
+  taskId: string,
+  options?: ClientRequestOptions
+): Promise<Record<string, unknown>>
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `serverId` | `string` | The server ID |
+| `taskId` | `string` | The task ID to cancel |
+| `options` | `ClientRequestOptions` | Optional request options |
+
+#### Returns
+
+`Promise<Record<string, unknown>>` — an empty acknowledgement. Re-poll `getTaskExt` to observe the actual task state after cancellation.
+
+#### Example
+
+```typescript
+await manager.cancelTaskExt("myServer", "task-abc");
+
+// Re-poll to confirm cancellation
+const task = await manager.getTaskExt("myServer", "task-abc");
+console.log(task.status); // "cancelled" or still "working"
+```
+
+#### Throws
+
+- `TypeError` if the server does not speak the extension wire
+
+---
+
 ### listResources()
 
 Returns all resources available on a server.
