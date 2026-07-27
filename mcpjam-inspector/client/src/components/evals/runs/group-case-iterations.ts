@@ -10,7 +10,12 @@
  * Batches are newest-first (by latest iteration createdAt); iterations within a
  * batch are ordered by `iterationNumber` (falling back to createdAt).
  */
-import { formatRunId } from "../helpers";
+import {
+  formatRunId,
+  runEnvironmentRef,
+  runRevisionLabel,
+  type RunContextSource,
+} from "../helpers";
 import type { EvalIteration } from "../types";
 
 export interface CaseRunBatch {
@@ -60,9 +65,20 @@ export function caseRunBatchTrigger(
   return batch.key.startsWith("suite:") ? "suite" : "quick";
 }
 
+/**
+ * Which CONTEXT produced a run batch. Named `…Host` for continuity, but the
+ * identity is the run's execution context: a project environment when the
+ * parent run carries `configSnapshot.environmentRef`, otherwise the legacy
+ * host. Two environments sharing a host stay distinct here because
+ * `environmentId` differs.
+ */
 export type CaseRunBatchHost = {
   hostId?: string;
   hostName: string;
+  /** Set only for environment-backed batches; the grouping identity. */
+  environmentId?: string;
+  /** The exact revision this batch's run pinned, e.g. `"rev 4"`. */
+  revisionLabel?: string;
 };
 
 /** Parse the suite run id embedded in a batch key (`suite:<id>`). */
@@ -73,19 +89,27 @@ export function suiteRunIdFromBatchKey(key: string): string | null {
 }
 
 /**
- * Resolve which host produced a run batch, when we can do so confidently.
+ * Resolve which CONTEXT produced a run batch, when we can do so confidently.
  *
- * - Suite batches: read `namedHostId` from the parent suite run.
+ * - Suite batches launched from a project environment: the environment's frozen
+ *   name + the exact revision the run pinned. Takes precedence over the host —
+ *   an environment run carries no `namedHostId`, and two environments resolving
+ *   to the same host must not collapse into one label.
+ * - Suite batches (legacy): read `namedHostId` from the parent suite run.
  * - Attachment-less suites: fall back to the suite's default host label.
  * - Quick runs on multi-host suites: omitted (no durable host stamp on iterations).
+ *
+ * `projectEnvironmentsEnabled` mirrors the run-detail kill-switch: with it off,
+ * environment identity is suppressed and the legacy host path applies.
  */
 export function resolveCaseRunBatchHost(
   batch: Pick<CaseRunBatch, "key" | "iterations">,
   options: {
-    runsById?: Map<string, { namedHostId?: string }>;
+    runsById?: Map<string, RunContextSource>;
     hostNamesById?: Map<string, string | null>;
     defaultHostLabel?: string | null;
     hasHostAttachments?: boolean;
+    projectEnvironmentsEnabled?: boolean;
   } = {},
 ): CaseRunBatchHost | null {
   const {
@@ -93,11 +117,21 @@ export function resolveCaseRunBatchHost(
     hostNamesById,
     defaultHostLabel,
     hasHostAttachments = false,
+    projectEnvironmentsEnabled = true,
   } = options;
 
   const suiteRunId = suiteRunIdFromBatchKey(batch.key);
   if (suiteRunId && runsById) {
     const run = runsById.get(suiteRunId);
+    const environmentRef =
+      run && projectEnvironmentsEnabled ? runEnvironmentRef(run) : null;
+    if (run && environmentRef) {
+      return {
+        hostName: environmentRef.name,
+        environmentId: environmentRef.environmentId,
+        revisionLabel: runRevisionLabel(run) ?? undefined,
+      };
+    }
     if (run?.namedHostId) {
       const hostName =
         hostNamesById?.get(run.namedHostId) ?? formatRunId(run.namedHostId);

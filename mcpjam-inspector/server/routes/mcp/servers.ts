@@ -7,6 +7,7 @@ import {
   parseLocalConnectRequestBody,
   respondWithLocalRouteError,
 } from "../../utils/local-server-resolver.js";
+import { releasePluginLease } from "../../services/plugins/local-stdio.js";
 
 function hasBearerAuthorizationHeader(headers: unknown): boolean {
   if (!headers || typeof headers !== "object") {
@@ -182,6 +183,9 @@ servers.delete("/:serverId", async (c) => {
     }
 
     mcpClientManager.removeServer(serverId);
+    // The plugin bundle this entry may have been running from is now
+    // unreferenced, so cache GC may reclaim it. No-op for ordinary servers.
+    releasePluginLease(serverId);
 
     return c.json({
       success: true,

@@ -46,6 +46,12 @@ interface CrossHostDashboardProps {
   sortControlInHeader?: boolean;
   /** Per-host cross-host verdicts (group view only); keyed by namedHostId. */
   hostVerdicts?: HostVerdictMap;
+  /**
+   * `namedHostId` → display name for hosts with no suite attachment (the
+   * resolved host of an environment-backed run, or a detached one). Owned by
+   * the parent so this component stays queryless.
+   */
+  hostNamesById?: Map<string, string | null>;
 }
 
 export function CrossHostDashboard({
@@ -64,9 +70,11 @@ export function CrossHostDashboard({
   onCaseRowSortChange,
   sortControlInHeader = false,
   hostVerdicts,
+  hostNamesById,
 }: CrossHostDashboardProps) {
   const data = useCrossHostData(suite, cases, runs, allIterations, {
     cellTrends,
+    hostNamesById,
   });
   // Advisory judge verdicts indexed by run → caseKey, so each cell shows the
   // verdict from its own run next to the deterministic pass/fail.
