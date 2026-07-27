@@ -189,6 +189,11 @@ export type {
   TaskExtStatus,
   TaskExtError,
   DetailedTaskExt,
+  WorkingTaskExt,
+  InputRequiredTaskExt,
+  CompletedTaskExt,
+  FailedTaskExt,
+  CancelledTaskExt,
   CreateTaskExtResult,
   GetTaskExtResult,
   UpdateTaskExtResult,
@@ -199,12 +204,20 @@ export type {
 export { TERMINAL_TASK_EXT_STATUSES } from "./tasks-ext-types.js";
 export {
   InvalidTaskExtPayloadError,
+  isInvalidTaskExtPayloadError,
   isCreateTaskExtResult,
   assertCreateTaskExtResult,
   assertGetTaskExtResult,
   assertDetailedTaskExt,
+  assertTaskExtAck,
   parseTaskExtNotificationParams,
 } from "./tasks-ext-guards.js";
+export {
+  TASK_EXT_INPUT_REQUEST_METHODS,
+  isRecognizedInputRequestMethod,
+  describeTaskExtInputRequests,
+} from "./tasks-ext-schemas.js";
+export type { TaskExtInputRequestMethod } from "./tasks-ext-schemas.js";
 export {
   TASK_CREATED_META_KEY,
   wrapFetchForTaskRouting,

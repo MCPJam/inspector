@@ -4,13 +4,20 @@ import { MCPClientManager } from "../src/mcp-client-manager";
 import {
   resolveTasksSupport,
   resolveTasksWire,
+  serverDeclaresTasksExtension,
 } from "../src/mcp-client-manager/tasks-dispatch.js";
 import { buildTasksExtensionRequestMeta } from "../src/mcp-client-manager/tasks-ext.js";
 import {
   assertGetTaskExtResult,
+  assertTaskExtAck,
   isCreateTaskExtResult,
   InvalidTaskExtPayloadError,
 } from "../src/mcp-client-manager/tasks-ext-guards.js";
+import {
+  describeTaskExtInputRequests,
+  isRecognizedInputRequestMethod,
+} from "../src/mcp-client-manager/tasks-ext-schemas.js";
+import { MCPTasksWireError } from "../src/mcp-client-manager/errors.js";
 import {
   TASK_CREATED_META_KEY,
   rewriteTaskResultMessage,
@@ -433,6 +440,322 @@ describe("runtime validation", () => {
     expect(isCreateTaskExtResult({ resultType: "task", taskId: "a" })).toBe(true);
     expect(isCreateTaskExtResult({ taskId: "a" })).toBe(false);
     expect(isCreateTaskExtResult({ resultType: "complete" })).toBe(false);
+  });
+});
+
+/**
+ * The status-discriminated union (`DetailedTask`, schema.ts:217-222 /
+ * schema.json `anyOf` with per-variant `required`; tasks.md:330-336 states each
+ * as a MUST).
+ */
+describe("DetailedTask status union", () => {
+  const base = {
+    taskId: "task-1",
+    createdAt: "2026-07-27T00:00:00Z",
+    lastUpdatedAt: "2026-07-27T00:01:00Z",
+    ttlMs: null,
+  };
+
+  const inputRequest = {
+    method: "elicitation/create",
+    params: { message: "need input", requestedSchema: { type: "object" } },
+  };
+
+  it("accepts every variant with its required status payload", () => {
+    expect(assertGetTaskExtResult({ ...base, status: "working" }).status).toBe(
+      "working"
+    );
+    expect(
+      assertGetTaskExtResult({ ...base, status: "cancelled" }).status
+    ).toBe("cancelled");
+
+    const inputRequired = assertGetTaskExtResult({
+      ...base,
+      status: "input_required",
+      inputRequests: { k1: inputRequest },
+    });
+    expect(inputRequired.inputRequests?.k1).toEqual(inputRequest);
+
+    const completed = assertGetTaskExtResult({
+      ...base,
+      status: "completed",
+      result: { content: [{ type: "text", text: "done" }] },
+    });
+    expect(completed.result).toEqual({
+      content: [{ type: "text", text: "done" }],
+    });
+
+    const failed = assertGetTaskExtResult({
+      ...base,
+      status: "failed",
+      statusMessage: "rate limited",
+      error: { code: -32603, message: "API rate limit exceeded" },
+    });
+    expect(failed.error).toEqual({
+      code: -32603,
+      message: "API rate limit exceeded",
+    });
+    // `statusMessage` is only a SHOULD on `failed` — it stays optional.
+    expect(
+      assertGetTaskExtResult({
+        ...base,
+        status: "failed",
+        error: { code: -32603, message: "boom" },
+      }).statusMessage
+    ).toBeUndefined();
+  });
+
+  it("rejects a variant that is missing its required status payload", () => {
+    expect(() =>
+      assertGetTaskExtResult({ ...base, status: "completed" })
+    ).toThrow(InvalidTaskExtPayloadError);
+    expect(() => assertGetTaskExtResult({ ...base, status: "failed" })).toThrow(
+      InvalidTaskExtPayloadError
+    );
+    expect(() =>
+      assertGetTaskExtResult({ ...base, status: "input_required" })
+    ).toThrow(InvalidTaskExtPayloadError);
+  });
+
+  it("rejects a base field that is missing entirely", () => {
+    const { ttlMs: _ttlMs, ...noTtl } = base;
+    expect(() =>
+      assertGetTaskExtResult({ ...noTtl, status: "working" })
+    ).toThrow(InvalidTaskExtPayloadError);
+    const { createdAt: _createdAt, ...noCreatedAt } = base;
+    expect(() =>
+      assertGetTaskExtResult({ ...noCreatedAt, status: "working" })
+    ).toThrow(InvalidTaskExtPayloadError);
+  });
+
+  it("accepts the response with AND without resultType:'complete'", () => {
+    // tasks.md:338 says MUST, but `resultType` is absent from schema.json and
+    // every DetailedTask variant is `additionalProperties: false` — schema and
+    // prose conflict, so neither presence nor absence may be rejected.
+    const withDiscriminator = assertGetTaskExtResult({
+      ...base,
+      resultType: "complete",
+      status: "working",
+    });
+    expect((withDiscriminator as any).resultType).toBe("complete");
+    expect(
+      (assertGetTaskExtResult({ ...base, status: "working" }) as any).resultType
+    ).toBeUndefined();
+  });
+
+  it("keeps isError:true a COMPLETED task, never failed", () => {
+    // tasks.md:837, :891-892 — only an underlying JSON-RPC error is `failed`.
+    const task = assertGetTaskExtResult({
+      ...base,
+      status: "completed",
+      result: {
+        content: [{ type: "text", text: "Failed to process request" }],
+        isError: true,
+      },
+    });
+    expect(task.status).toBe("completed");
+    expect((task.result as any).isError).toBe(true);
+    expect(task.error).toBeUndefined();
+  });
+
+  it("accepts a non-integer, negative or shrinking ttlMs / pollIntervalMs", () => {
+    // schema.json says plain `"number"`, and both MAY change over a task's
+    // lifetime (tasks.md:304, :340) — a changed value is not an anomaly.
+    const first = assertGetTaskExtResult({
+      ...base,
+      status: "working",
+      ttlMs: 1500.5,
+      pollIntervalMs: 250.25,
+    });
+    expect(first.ttlMs).toBe(1500.5);
+
+    const shrunk = assertGetTaskExtResult({
+      ...base,
+      status: "working",
+      ttlMs: -1,
+      pollIntervalMs: 0,
+    });
+    expect(shrunk.ttlMs).toBe(-1);
+    expect(shrunk.pollIntervalMs).toBe(0);
+  });
+
+  it("carries method + wire + a safe summary on an invalid payload", () => {
+    try {
+      assertGetTaskExtResult({ ...base, status: "completed" });
+      throw new Error("expected a throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(InvalidTaskExtPayloadError);
+      const invalid = error as InvalidTaskExtPayloadError;
+      expect(invalid.method).toBe("tasks/get");
+      expect(invalid.wire).toBe("extension");
+      expect(invalid.summary.length).toBeGreaterThan(0);
+      expect(invalid.issues.length).toBeGreaterThan(0);
+      // Not a wire error: an invalid payload must not be collapsed into
+      // "this connection cannot do tasks".
+      expect(invalid).not.toBeInstanceOf(MCPTasksWireError);
+    }
+  });
+});
+
+describe("inputRequests validation", () => {
+  const base = {
+    taskId: "task-1",
+    status: "input_required",
+    createdAt: "2026-07-27T00:00:00Z",
+    lastUpdatedAt: "2026-07-27T00:00:00Z",
+    ttlMs: null,
+  };
+
+  it("preserves an unrecognized method instead of failing the payload", () => {
+    const task = assertGetTaskExtResult({
+      ...base,
+      inputRequests: {
+        k1: { method: "roots/list" },
+        k2: { method: "com.example/futureRequest", params: { x: 1 } },
+      },
+    });
+    expect(Object.keys(task.inputRequests ?? {})).toEqual(["k1", "k2"]);
+    expect(describeTaskExtInputRequests(task.inputRequests)).toEqual([
+      { key: "k1", method: "roots/list", recognized: true },
+      { key: "k2", method: "com.example/futureRequest", recognized: false },
+    ]);
+    expect(isRecognizedInputRequestMethod("sampling/createMessage")).toBe(true);
+    expect(isRecognizedInputRequestMethod("elicitation/create")).toBe(true);
+    expect(isRecognizedInputRequestMethod("nope")).toBe(false);
+  });
+
+  it("rejects an entry without a string method", () => {
+    expect(() =>
+      assertGetTaskExtResult({ ...base, inputRequests: { k1: { method: 7 } } })
+    ).toThrow(InvalidTaskExtPayloadError);
+    expect(() =>
+      assertGetTaskExtResult({ ...base, inputRequests: { k1: "nope" } })
+    ).toThrow(InvalidTaskExtPayloadError);
+    expect(() =>
+      assertGetTaskExtResult({ ...base, inputRequests: [] })
+    ).toThrow(InvalidTaskExtPayloadError);
+  });
+
+  it("keeps hostile keys as data and never pollutes a prototype", () => {
+    // JSON.parse (not an object literal) so `__proto__` arrives as a real own
+    // property, exactly as it would off the wire.
+    const payload = JSON.parse(
+      `{"taskId":"task-1","status":"input_required","createdAt":"t","lastUpdatedAt":"t","ttlMs":null,
+        "inputRequests":{
+          "__proto__":{"method":"roots/list","polluted":true},
+          "constructor":{"method":"roots/list"},
+          "prototype":{"method":"roots/list"},
+          "ok":{"method":"elicitation/create"}
+        }}`
+    );
+    const task = assertGetTaskExtResult(payload);
+    const requests = task.inputRequests as Record<string, unknown>;
+
+    expect(Object.getPrototypeOf(requests)).toBeNull();
+    expect(Object.keys(requests).sort()).toEqual([
+      "__proto__",
+      "constructor",
+      "ok",
+      "prototype",
+    ]);
+    expect(({} as any).polluted).toBeUndefined();
+    expect((Object.prototype as any).polluted).toBeUndefined();
+    expect(Object.getPrototypeOf({})).toBe(Object.prototype);
+  });
+});
+
+describe("server capability declaration", () => {
+  const rows: Array<[string, unknown, boolean]> = [
+    ["empty settings object", {}, true],
+    ["non-empty settings object", { someSetting: 1 }, true],
+    ["boolean true", true, false],
+    ["string", "x", false],
+    ["array", [], false],
+    ["null", null, false],
+    ["number", 1, false],
+  ];
+
+  for (const [label, value, expected] of rows) {
+    it(`${label} → ${expected ? "declared" : "not declared"}`, () => {
+      const caps = { tools: {}, extensions: { [EXT_ID]: value } } as never;
+      expect(serverDeclaresTasksExtension(caps)).toBe(expected);
+      expect(resolveTasksWire("2026-07-28", caps)).toBe(
+        expected ? "extension" : "none"
+      );
+    });
+  }
+
+  it("an absent key is not a declaration", () => {
+    expect(
+      serverDeclaresTasksExtension({ tools: {}, extensions: {} } as never)
+    ).toBe(false);
+  });
+});
+
+describe("empty acknowledgements", () => {
+  it("accepts an empty object and any object body", () => {
+    expect(assertTaskExtAck({}, "tasks/update result")).toEqual({});
+    expect(assertTaskExtAck({ _meta: { a: 1 } }, "tasks/update result")).toEqual(
+      { _meta: { a: 1 } }
+    );
+    // A transport that surfaced "no result" as undefined normalizes to `{}`.
+    expect(assertTaskExtAck(undefined, "tasks/update result")).toEqual({});
+  });
+
+  it("rejects a non-object ack", () => {
+    for (const bad of [null, [], "ok", 1, true]) {
+      expect(() => assertTaskExtAck(bad, "tasks/update result")).toThrow(
+        InvalidTaskExtPayloadError
+      );
+    }
+  });
+
+  it("tasks/update and tasks/cancel reject a non-object server ack", async () => {
+    for (const bad of [[], "ok", null]) {
+      const { manager, serverId } = seedManager({
+        protocolVersion: "2026-07-28",
+        capabilities: EXT_CAPS as never,
+        requestResult: bad,
+      });
+      await expect(
+        manager.updateTask(serverId, "task-7", {} as never)
+      ).rejects.toThrow(InvalidTaskExtPayloadError);
+      await expect(manager.cancelTaskExt(serverId, "task-7")).rejects.toThrow(
+        InvalidTaskExtPayloadError
+      );
+    }
+  });
+});
+
+describe("wire guards raise a typed tasks-wire error", () => {
+  // A bare TypeError would map to a 500, which hosted clients treat as
+  // TRANSIENT and retry forever against a server that can never serve it.
+  it("extension reads/writes on a non-extension wire", async () => {
+    const { manager, serverId } = seedManager({
+      protocolVersion: "2025-11-25",
+      capabilities: LEGACY_CAPS as never,
+    });
+    await expect(manager.getTaskExt(serverId, "t")).rejects.toBeInstanceOf(
+      MCPTasksWireError
+    );
+    await expect(
+      manager.updateTask(serverId, "t", {} as never)
+    ).rejects.toBeInstanceOf(MCPTasksWireError);
+    await expect(manager.cancelTaskExt(serverId, "t")).rejects.toBeInstanceOf(
+      MCPTasksWireError
+    );
+  });
+
+  it("declaring task eligibility with no tasks wire", async () => {
+    const { manager, serverId } = seedManager({
+      protocolVersion: "2026-07-28",
+      capabilities: { tools: {} } as never,
+    });
+    await expect(
+      manager.executeTool(serverId, "slow_tool", {}, {
+        allowTaskResult: true,
+      } as never)
+    ).rejects.toBeInstanceOf(MCPTasksWireError);
   });
 });
 

@@ -1656,8 +1656,13 @@ export class MCPClientManager {
   private assertExtensionTasksWire(serverId: string, method: string): void {
     const wire = this.getTasksWire(serverId);
     if (wire !== "extension") {
-      throw new TypeError(
-        `Server "${serverId}" does not speak the io.modelcontextprotocol/tasks extension (resolved wire: "${wire}"); refusing to send ${method}.`
+      // Typed, NOT a bare TypeError: routes map `isMCPTasksWireError` onto a
+      // 400 `TASKS_UNSUPPORTED` (a permanent, non-retryable condition). A
+      // TypeError becomes a 500, which hosted clients treat as transient and
+      // retry forever against a server that can never serve the request.
+      throw new MCPTasksWireError(
+        `Server "${serverId}" does not speak the io.modelcontextprotocol/tasks extension (resolved wire: "${wire}"); refusing to send ${method}.`,
+        wire
       );
     }
   }
@@ -1687,8 +1692,9 @@ export class MCPClientManager {
       // `task: {ttl?}` instead. Nothing to add.
       return callParams;
     }
-    throw new TypeError(
-      `Server "${serverId}" has no tasks wire (resolved wire: "none"); refusing to declare task eligibility on tools/call.`
+    throw new MCPTasksWireError(
+      `Server "${serverId}" has no tasks wire (resolved wire: "none"); refusing to declare task eligibility on tools/call.`,
+      wire
     );
   }
 

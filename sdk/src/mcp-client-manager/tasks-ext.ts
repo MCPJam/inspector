@@ -41,7 +41,10 @@ import { CLIENT_CAPABILITIES_META_KEY } from "@modelcontextprotocol/client";
 import { mergeClientCapabilities } from "./capabilities.js";
 import type { ManagedMcpClient } from "./managed-mcp-client.js";
 import type { ClientCapabilityOptions, ClientRequestOptions } from "./types.js";
-import { assertGetTaskExtResult } from "./tasks-ext-guards.js";
+import {
+  assertGetTaskExtResult,
+  assertTaskExtAck,
+} from "./tasks-ext-guards.js";
 import type {
   CancelTaskExtResult,
   GetTaskExtResult,
@@ -137,7 +140,9 @@ export async function updateTaskExt(
     },
     ctx.options
   );
-  return raw ?? {};
+  // Validated as an object only: the ack carries no task state, so anything
+  // that is not an object is a wire violation rather than a task to render.
+  return assertTaskExtAck(raw, "tasks/update result", TasksExtUpdateMethod);
 }
 
 /**
@@ -159,5 +164,5 @@ export async function cancelTaskExt(
     },
     ctx.options
   );
-  return raw ?? {};
+  return assertTaskExtAck(raw, "tasks/cancel result", TasksExtCancelMethod);
 }
