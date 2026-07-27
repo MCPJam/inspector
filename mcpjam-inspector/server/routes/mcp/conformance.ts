@@ -15,6 +15,7 @@ import {
   completeOAuthConformance,
   runAppsConformance,
   runProtocolConformance,
+  runTasksConformance,
   startOAuthConformance,
   submitOAuthConformanceCode,
 } from "../shared/conformance";
@@ -142,6 +143,60 @@ conformance.post("/apps", async (c) => {
     return c.json({ success: true, result });
   } catch (error) {
     logger.error("[Conformance Apps]", error);
+    return c.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
+      500,
+    );
+  }
+});
+
+// ── POST /tasks ─────────────────────────────────────────────────────────
+
+const tasksSchema = z.object({
+  serverId: z.string().min(1),
+  /** Tool used to provoke a task; required on the extension wire, where tools
+   *  carry no task metadata to pick from. */
+  toolName: z.string().min(1).optional(),
+  toolArguments: z.record(z.unknown()).optional(),
+  pollTimeoutMs: z.number().int().positive().max(120_000).optional(),
+});
+
+conformance.post("/tasks", async (c) => {
+  try {
+    const body = await c.req.json();
+    const parsed = tasksSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json(
+        {
+          success: false,
+          error: parsed.error.issues[0]?.message ?? "Invalid request",
+        },
+        400,
+      );
+    }
+
+    const { serverId, ...runOptions } = parsed.data;
+    const resolved = resolveServerConfig(c.mcpClientManager, serverId);
+    if ("error" in resolved) {
+      return c.json({ success: false, ...resolved }, 400);
+    }
+
+    // MCPClientManager stores `url` as a URL object; the SDK expects a string.
+    const serverConfig = { ...resolved.config } as MCPServerConfig;
+    if ("url" in serverConfig && serverConfig.url) {
+      (serverConfig as any).url = String(serverConfig.url);
+    }
+
+    const { result } = await runTasksConformance({
+      ...serverConfig,
+      ...runOptions,
+    });
+    return c.json({ success: true, result });
+  } catch (error) {
+    logger.error("[Conformance Tasks]", error);
     return c.json(
       {
         success: false,

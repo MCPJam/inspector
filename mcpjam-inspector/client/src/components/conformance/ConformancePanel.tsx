@@ -18,16 +18,20 @@ import type {
   MCPAppsConformanceResult,
   MCPCheckResult,
   MCPAppsCheckResult,
+  MCPTasksConformanceResult,
+  MCPTasksCheckResult,
   OAuthConformanceStepResult,
 } from "@mcpjam/sdk";
 // Import from the browser-safe SDK entry — the top-level `@mcpjam/sdk` pulls
 // Node-only transitive deps (MCP client SDK uses `node:stream`, etc.) which
 // break the Vite browser bundle.
 import { canRunConformance } from "@mcpjam/sdk/browser";
+import { isHostedMode } from "@/lib/apis/mode-client";
 import type { OAuthConformanceStartResult } from "@/lib/apis/mcp-conformance-api";
 import {
   runProtocolConformance,
   runAppsConformance,
+  runTasksConformance,
   startOAuthConformance,
   submitOAuthConformanceCode,
   completeOAuthConformance,
@@ -48,6 +52,10 @@ interface ProtocolSuiteState extends SuiteState {
 
 interface AppsSuiteState extends SuiteState {
   result?: MCPAppsConformanceResult;
+}
+
+interface TasksSuiteState extends SuiteState {
+  result?: MCPTasksConformanceResult;
 }
 
 interface OAuthSuiteState extends SuiteState {
@@ -82,6 +90,19 @@ function createProtocolState(server: ServerWithName): ProtocolSuiteState {
 }
 
 function createAppsState(server: ServerWithName): AppsSuiteState {
+  return suiteState("apps", server);
+}
+
+function createTasksState(server: ServerWithName): TasksSuiteState {
+  // Tasks conformance provokes and then polls a real task, which needs a
+  // persistent connection: hosted mode reconnects per request.
+  if (isHostedMode()) {
+    return {
+      status: "unavailable",
+      unavailableReason:
+        "Tasks conformance requires a persistent connection (run it from the local inspector)",
+    };
+  }
   return suiteState("apps", server);
 }
 
@@ -129,7 +150,11 @@ function formatDetailValue(value: unknown) {
   }
 }
 
-function CheckRow({ check }: { check: MCPCheckResult | MCPAppsCheckResult }) {
+function CheckRow({
+  check,
+}: {
+  check: MCPCheckResult | MCPAppsCheckResult | MCPTasksCheckResult;
+}) {
   const [expanded, setExpanded] = useState(false);
   const detailEntries = Object.entries(check.details ?? {});
   const warnings = "warnings" in check ? check.warnings : undefined;
@@ -312,6 +337,9 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
   const [apps, setApps] = useState<AppsSuiteState>(() =>
     createAppsState(server),
   );
+  const [tasks, setTasks] = useState<TasksSuiteState>(() =>
+    createTasksState(server),
+  );
   const [oauth, setOAuth] = useState<OAuthSuiteState>(() =>
     createOAuthState(server),
   );
@@ -348,6 +376,7 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
       setRunVersion((value) => value + 1);
       setProtocol(createProtocolState(server));
       setApps(createAppsState(server));
+      setTasks(createTasksState(server));
       setOAuth(createOAuthState(server));
       activeServerNameRef.current = effectiveServerName;
     },
@@ -395,6 +424,24 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
       } catch (err) {
         if (!isRunActive(runToken, serverName)) return;
         setApps({
+          status: "error",
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    },
+    [isRunActive],
+  );
+
+  const runTasks = useCallback(
+    async (runToken: number, serverName: string) => {
+      setTasks({ status: "running" });
+      try {
+        const { result } = await runTasksConformance(serverName);
+        if (!isRunActive(runToken, serverName)) return;
+        setTasks({ status: "done", result });
+      } catch (err) {
+        if (!isRunActive(runToken, serverName)) return;
+        setTasks({
           status: "error",
           error: err instanceof Error ? err.message : String(err),
         });
@@ -587,6 +634,7 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
     setRunVersion((value) => value + 1);
     setProtocol(createProtocolState(currentServer));
     setApps(createAppsState(currentServer));
+    setTasks(createTasksState(currentServer));
     setOAuth(createOAuthState(currentServer));
 
     const promises: Promise<void>[] = [];
@@ -594,16 +642,20 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
       promises.push(runProtocol(runToken, currentServer.name));
     }
     promises.push(runApps(runToken, currentServer.name));
+    if (!isHostedMode()) {
+      promises.push(runTasks(runToken, currentServer.name));
+    }
     if (httpServerNow) {
       promises.push(runOAuth(runToken, currentServer));
     }
 
     await Promise.allSettled(promises);
-  }, [beginRun, runApps, runOAuth, runProtocol, server]);
+  }, [beginRun, runApps, runOAuth, runProtocol, runTasks, server]);
 
   const isRunning =
     protocol.status === "running" ||
     apps.status === "running" ||
+    tasks.status === "running" ||
     oauth.status === "running";
 
   return (
@@ -612,7 +664,7 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
         <div className="space-y-1">
           <h2 className="text-lg font-semibold">Conformance</h2>
           <p className="text-sm text-muted-foreground">
-            Run Protocol, Apps, and OAuth checks against {server.name}.
+            Run Protocol, Apps, Tasks, and OAuth checks against {server.name}.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -666,6 +718,19 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
                 {apps.result.summary}
               </div>
               {apps.result.checks.map((check) => (
+                <CheckRow key={`${runVersion}-${check.id}`} check={check} />
+              ))}
+            </div>
+          ) : null}
+        </SuiteSection>
+
+        <SuiteSection title="Tasks" state={tasks}>
+          {tasks.result ? (
+            <div>
+              <div className="px-1 py-1 text-[10px] text-muted-foreground">
+                {tasks.result.summary} (wire: {tasks.result.discovery.wire})
+              </div>
+              {tasks.result.checks.map((check) => (
                 <CheckRow key={`${runVersion}-${check.id}`} check={check} />
               ))}
             </div>
