@@ -72,16 +72,44 @@ asked to confirm, then the terminal closes and the machine hibernates. It wakes
 automatically the next time you open the terminal or an agent calls the `bash`
 tool.
 
-## Environments
+## Sandbox images
 
-An environment is a custom Docker image your computer boots from, defined by a
-small Dockerfile (allowlisted base images, `FROM` + `RUN` only). Build it, then
-**Use on computer** to boot from it. Environments can be kept private to you or
-shared with the whole project. Manage them from **Change** on the image strip.
+A sandbox image is a custom image your computer boots from, defined by a
+**blueprint** — a small YAML file:
+
+```yaml
+# base must be an allowlisted official image (debian, ubuntu, node, python)
+# pinned by an immutable @sha256 digest.
+base: debian:bookworm-slim@sha256:<64-hex-digest>
+
+# Baked into the image at build time.
+initialize:
+  - name: Install tooling
+    run: apt-get update && apt-get install -y git jq
+
+# Handed to the agent as reference — NEVER run automatically. If deps look
+# stale, the agent can run these itself via bash.
+maintenance:
+  - name: Refresh deps
+    run: cd ~/app && npm install
+
+# Model-facing notes, injected into the agent's context whenever a chat
+# turn runs with the bash tool on a computer booted from this image.
+knowledge:
+  - name: Test notes
+    contents: Run `make test` before pushing.
+```
+
+The editor lints as you type (the backend is the single validator; the CLI has
+`mcpjam images validate` for the same check). Build the image, then **Use on
+computer** to boot from it. `base` / `initialize` edits need a re-build;
+`maintenance` / `knowledge` edits take effect at the next chat turn without
+one. Images can be kept private to you or shared with the whole project.
+Manage them from **Change** on the image strip.
 
 <Note>
-  Environment definitions (their Dockerfiles) live in the project database, not
-  on any one computer's disk — see [Data & persistence](#data-and-persistence).
+  Image definitions (their blueprints) live in the project database, not on
+  any one computer's disk — see [Data & persistence](#data-and-persistence).
 </Note>
 
 ## Data & persistence
@@ -120,9 +148,9 @@ These live in the project database (Convex), not on the computer's disk, so they
 are unaffected by reset, image changes, or deletion:
 
 - **Cloud skills** attached to the project.
-- **Environment Dockerfiles** — the definitions of your custom images. Deleting
-  a computer never deletes your environments; you can boot a fresh computer from
-  the same image again.
+- **Image blueprints** — the definitions of your custom images. Deleting a
+  computer never deletes your sandbox images; you can boot a fresh computer
+  from the same image again.
 
 ### The no-backup caveat
 
