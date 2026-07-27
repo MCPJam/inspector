@@ -131,9 +131,12 @@ describe("ToolsTab", () => {
     mockUseQuery.mockReturnValue(undefined);
     mockListTools.mockResolvedValue({ tools: [] });
     mockGetTaskCapabilities.mockResolvedValue({
-      supportsToolCalls: false,
-      supportsList: false,
-      supportsCancel: false,
+      wire: "legacy",
+      toolCalls: false,
+      list: false,
+      cancel: false,
+      update: false,
+      inlineResult: false,
     });
     mockApplyToolCallStepUp.mockResolvedValue({
       action: "reauthorize",
@@ -288,9 +291,12 @@ describe("ToolsTab", () => {
       const serverConfig = createServerConfig();
 
       mockGetTaskCapabilities.mockResolvedValue({
-        supportsToolCalls: true,
-        supportsList: false,
-        supportsCancel: false,
+        wire: "legacy",
+        toolCalls: true,
+        list: false,
+        cancel: false,
+        update: false,
+        inlineResult: false,
       });
       mockListTools.mockResolvedValue({
         tools: [
@@ -552,6 +558,7 @@ describe("ToolsTab", () => {
           "test-server",
           "greet",
           expect.any(Object),
+          undefined,
           undefined
         );
       });
