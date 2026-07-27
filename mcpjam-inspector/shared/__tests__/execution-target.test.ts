@@ -143,6 +143,74 @@ describe("normalizeExecutionTarget", () => {
     }
   });
 
+  it("carries the ephemeral plugin narrowing with the same tri-state", () => {
+    // Absent ⇒ the environment's own pins.
+    const absent = normalizeExecutionTarget({
+      executionTarget: { kind: "environment", environmentId: "env_1" },
+      environmentOverrides: { serverIds: ["ps_1"] },
+      projectId: "p_1",
+    });
+    expect(
+      absent.ok &&
+        absent.target.kind === "environment" &&
+        absent.target.overrides
+    ).toEqual({ serverIds: ["ps_1"] });
+
+    // `[]` ⇒ "run this turn with none of the environment's plugins".
+    const none = normalizeExecutionTarget({
+      executionTarget: { kind: "environment", environmentId: "env_1" },
+      environmentOverrides: { pluginVersionIds: [] },
+      projectId: "p_1",
+    });
+    expect(none.ok && none.target).toEqual({
+      kind: "environment",
+      environmentId: "env_1",
+      overrides: { pluginVersionIds: [] },
+    });
+
+    const both = normalizeExecutionTarget({
+      executionTarget: { kind: "environment", environmentId: "env_1" },
+      environmentOverrides: { serverIds: [], pluginVersionIds: ["pv_1"] },
+      projectId: "p_1",
+    });
+    expect(both.ok && both.target).toEqual({
+      kind: "environment",
+      environmentId: "env_1",
+      overrides: { serverIds: [], pluginVersionIds: ["pv_1"] },
+    });
+  });
+
+  it("rejects a malformed plugin override envelope", () => {
+    const result = normalizeExecutionTarget({
+      executionTarget: { kind: "environment", environmentId: "env_1" },
+      environmentOverrides: { pluginVersionIds: ["ok", null] },
+      projectId: "p_1",
+    });
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.error).toMatch(/pluginVersionIds/);
+  });
+
+  it("rejects a plugin override sent without an environment target", () => {
+    const result = normalizeExecutionTarget({
+      executionTarget: { kind: "host", hostId: "host_1" },
+      environmentOverrides: { pluginVersionIds: ["pv_1"] },
+      projectId: "p_1",
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("gives an ephemeral plugin override no route into a chatbox turn", () => {
+    // There is no Playground → Chatbox path: a chatbox is 1:1 with its host and
+    // resolves its own configuration server-side. A body that pairs the two is
+    // rejected rather than silently applied to a share-link-reachable turn.
+    const result = normalizeExecutionTarget({
+      chatboxId: "cb_1",
+      environmentOverrides: { pluginVersionIds: ["pv_1"] },
+      projectId: "p_1",
+    });
+    expect(result.ok).toBe(false);
+  });
+
   it("rejects a malformed override envelope", () => {
     const result = normalizeExecutionTarget({
       executionTarget: { kind: "environment", environmentId: "env_1" },
