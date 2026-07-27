@@ -47,6 +47,14 @@ Before you confirm the install, MCPJam shows a preview of what the bundle declar
 MCPJam never reads credential values from the bundle. The setup section lists the names of required environment variables and headers so you know what to configure after installing — values are always provided by you, per server.
 </Note>
 
+### Local component caching (desktop only)
+
+When you import a plugin on the desktop app, MCPJam caches the bundle's files locally so its stdio components can launch without the original folder. The cache is keyed by the bundle's content hash, not by where you kept the folder, so you can move or delete the source after importing.
+
+The cached files are verified against the backend's pinned hash on every launch. If the files have been altered since they were cached, the component refuses to start and shows an actionable error — re-importing the plugin restores a verified copy.
+
+If you install MCPJam on a second machine, or reinstall it, local components report **bundle not materialized** until you re-import the same bundle on that machine. Hosted web cannot run stdio components at all and shows a **Local runtime required** notice instead.
+
 ### Content-addressed re-import
 
 If you import a bundle whose bytes are identical to one already stored, MCPJam reuses the existing revision instead of creating a new one. The success screen says **Already imported** rather than **Plugin installed** to make this clear.
