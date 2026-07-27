@@ -110,6 +110,7 @@
               "cli/xaa",
               "cli/apps-conformance",
               "cli/tools-resources-prompts",
+              "cli/subscriptions",
               "cli/ci",
               "cli/telemetry"
             ]
