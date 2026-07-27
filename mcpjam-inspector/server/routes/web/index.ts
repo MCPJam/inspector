@@ -30,6 +30,7 @@ import computers from "./computers.js";
 import skills from "./skills.js";
 import caniuse from "./caniuse.js";
 import mrtrContinuation from "./mrtr-continuation.js";
+import subscriptions from "./subscriptions.js";
 import { fetchRemoteGuestJwks } from "../../utils/guest-session-source.js";
 
 const web = new Hono();
@@ -63,6 +64,10 @@ web.use("/checks/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 // guest rate limit like every MCP-operation route; the resume path re-drives a
 // tool/prompt/resource leg against a freshly-authorized manager.
 web.use("/mrtr/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+// Hosted `subscriptions/listen` passthrough (MCP 2026-07-28 §13.4). A long-lived
+// SSE stream — bearer + guest rate limit like every MCP-operation route; the
+// per-actor concurrent-stream cap lives inside the router.
+web.use("/subscriptions/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/server/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 // `/computers/exec` runs commands — bearer required. `/computers/config` is
 // deliberately open: it returns only a boolean and a public URL, and the
@@ -109,6 +114,7 @@ web.route("/chat-history", chatHistory);
 web.route("/conformance", conformanceWeb);
 web.route("/checks", checks);
 web.route("/mrtr", mrtrContinuation);
+web.route("/subscriptions", subscriptions);
 // `/computers/terminal` (the WS) is registered on the root app in
 // server/index.ts — only /config and /exec live on this sub-router.
 web.route("/computers", computers);

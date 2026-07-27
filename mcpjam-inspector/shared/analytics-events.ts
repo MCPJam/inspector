@@ -37,6 +37,12 @@ export const ANALYTICS_EVENTS = {
   eval_suite_run_started: { source: "client" },
   eval_suite_run_started_server: { source: "server" },
 
+  // --- Subscriptions (MCP 2026-07-28 §13.4 hosted passthrough) ---
+  // Server-only aggregate feature-usage signal, fired when a hosted
+  // subscription stream is accepted. Carries era/transport only — NEVER a
+  // notification payload.
+  subscription_stream_opened_server: { source: "server" },
+
   // --- Skills (exemplar migrated area) ---
   skill_deleted: { source: "client" },
   skill_promoted: { source: "client" },
