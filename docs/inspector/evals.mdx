@@ -225,6 +225,8 @@ When two or more host configurations are attached to a suite, a **By case / By h
 
 ### Run view
 
+When a run was launched from a project environment, the run detail header shows an **Environment** row (name and pinned revision) above the **Client** row. The environment is the run's identity; the client shows how the environment resolved. For legacy host-backed runs, only the **Client** row appears.
+
 - **Per-iteration row** with case, model, pass/fail, tokens, duration, and the tool calls that actually happened.
 - **Expected vs actual** tool calls side-by-side when an iteration fails. For failed iterations, a **Categorized diff** above the raw Expected/Actual grids groups discrepancies into four categories:
   - **Missing** — expected tool calls that were never made
