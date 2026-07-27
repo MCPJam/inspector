@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, afterEach } from "vitest";
+import { beforeEach, describe, expect, it, vi, afterEach } from "vitest";
 import {
   MCPTasksConformanceTest,
   MCP_TASKS_CHECK_IDS,
@@ -74,20 +74,42 @@ function extensionManager(overrides: Record<string, unknown> = {}) {
     getNegotiatedProtocolVersion: () => "2026-07-28",
     getServerCapabilities: () => ({ tools: {}, extensions: { [EXT_ID]: {} } }),
     listTools: async () => ({ tools: [{ name: "long_job", inputSchema: {} }] }),
-    executeTool: async () => ({ resultType: "task", taskId: "task-1" }),
-    getTaskExt: async () => task,
-    getClient: () => ({
-      request: async () => {
-        throw Object.assign(new Error("missing capability"), {
-          code: -32003,
-        });
-      },
-    }),
+    // A conformant server only creates a task when the call declared
+    // eligibility; an undeclared call is answered normally.
+    executeTool: async (
+      _serverId: string,
+      _toolName: string,
+      _args: unknown,
+      options?: { allowTaskResult?: boolean }
+    ) =>
+      options?.allowTaskResult
+        ? { resultType: "task", taskId: "task-1" }
+        : { resultType: "complete", content: [{ type: "text", text: "sync" }] },
+    // The Mcp-Name check reads the headers the transport actually sent, so the
+    // fake performs the HTTP round trip its real counterpart would.
+    getTaskExt: async (_serverId: string, taskId: string) => {
+      await fetch("https://example.test/mcp", {
+        method: "POST",
+        headers: { "mcp-name": taskId, "mcp-method": "tasks/get" },
+        body: "{}",
+      });
+      return task;
+    },
     ...overrides,
   } as Record<string, unknown>;
 }
 
+// The Mcp-Name check instruments `globalThis.fetch`; no test talks to a real
+// network, so the fake transport round trip resolves locally.
+beforeEach(() => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response("{}", { status: 200 }))
+  );
+});
+
 afterEach(() => {
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
@@ -229,9 +251,10 @@ describe("MCPTasksConformanceTest", () => {
     ).toContain("INLINE");
   });
 
-  it("fails when tasks/get without the declaration is accepted", async () => {
+  it("fails when the server creates a task the client never declared for", async () => {
     const manager = extensionManager({
-      getClient: () => ({ request: async () => ({ taskId: "task-1" }) }),
+      // Returns a task whether or not the call declared eligibility.
+      executeTool: async () => ({ resultType: "task", taskId: "task-1" }),
     });
 
     const result = await runAgainst(manager, {

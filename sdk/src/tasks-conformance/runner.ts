@@ -62,7 +62,7 @@ const CHECK_METADATA: Record<
     category: "creation",
     title: "Undeclared Capability Rejected",
     description:
-      "On the extension wire, a tasks/get sent without the client capability declaration is rejected with -32003.",
+      "On the extension wire, a tools/call that does NOT declare the tasks capability never comes back as a task (the server either answers normally or rejects with -32003).",
   },
   "tasks-ttl-shape": {
     id: "tasks-ttl-shape",
@@ -315,6 +315,40 @@ export function validateTaskTtlShape(wire: TasksWire, task: unknown): string[] {
   return violations;
 }
 
+/**
+ * Runs `fn` with `globalThis.fetch` instrumented so the headers the transport
+ * actually put on the wire can be asserted. The SDK builds its own task-routing
+ * fetch wrapper inside the transport, so this global seam is the only place a
+ * caller can observe the finished request.
+ */
+async function captureTaskRequestHeaders(
+  fn: () => Promise<unknown>
+): Promise<{ headers?: Record<string, string>; error?: unknown }> {
+  const original = globalThis.fetch;
+  let headers: Record<string, string> | undefined;
+
+  globalThis.fetch = (async (input: any, init?: any) => {
+    const request = new Request(input, init);
+    const seen: Record<string, string> = {};
+    request.headers.forEach((value, key) => {
+      seen[key.toLowerCase()] = value;
+    });
+    if (seen["mcp-name"] !== undefined || seen["mcp-method"] !== undefined) {
+      headers = seen;
+    }
+    return original(input, init);
+  }) as typeof globalThis.fetch;
+
+  try {
+    await fn();
+    return headers === undefined ? {} : { headers };
+  } catch (error) {
+    return headers === undefined ? { error } : { headers, error };
+  } finally {
+    globalThis.fetch = original;
+  }
+}
+
 const TERMINAL_STATUSES = new Set([
   "completed",
   "failed",
@@ -488,35 +522,39 @@ export class MCPTasksConformanceTest {
 
           if (selected.has("tasks-undeclared-capability-rejected")) {
             const stepStartedAt = Date.now();
-            if (wire !== "extension" || !createdTaskId) {
+            if (wire !== "extension" || !probeTool) {
               checks.push(
                 skipped(
                   "tasks-undeclared-capability-rejected",
                   wire === "extension"
-                    ? "no task was created to probe with"
+                    ? "no probe tool available"
                     : "check applies to the extension wire only"
                 )
               );
             } else {
-              const outcome = await this.probeUndeclaredGet(
+              // The meaningful target is UNDECLARED CREATION: SEP-2663 lets a
+              // server answer a read without the declaration, but it must not
+              // turn a call that never declared eligibility into a task. A
+              // -32003 rejection is equally conformant.
+              const outcome = await this.probeUndeclaredCreation(
                 manager,
                 serverId,
-                createdTaskId
+                probeTool.name
               );
               checks.push(
-                outcome.rejected
-                  ? passed(
+                outcome.taskCreated
+                  ? failed(
                       "tasks-undeclared-capability-rejected",
                       Date.now() - stepStartedAt,
-                      { code: outcome.code }
+                      "tools/call without the tasks capability declaration returned a CreateTaskResult; the server must not create a task the client never declared eligibility for",
+                      { taskId: outcome.taskId }
                     )
-                  : failed(
+                  : passed(
                       "tasks-undeclared-capability-rejected",
                       Date.now() - stepStartedAt,
-                      outcome.code === undefined
-                        ? "tasks/get without the capability declaration succeeded; the server must reject it with -32003"
-                        : `tasks/get without the capability declaration failed with ${outcome.code}; expected -32003`,
-                      { code: outcome.code }
+                      outcome.code === -32003
+                        ? { rejectedWith: -32003 }
+                        : { answeredWithoutTask: true }
                     )
               );
             }
@@ -635,29 +673,43 @@ export class MCPTasksConformanceTest {
                 )
               );
             } else {
-              // The transport injects `Mcp-Name: <taskId>` for tasks/*; a
-              // successful read is the observable proof the server accepted
-              // the routed request.
-              try {
-                await manager.getTaskExt(serverId, createdTaskId);
-                checks.push(
-                  passed("tasks-mcp-name-routing", Date.now() - stepStartedAt, {
-                    taskId: createdTaskId,
-                  })
-                );
-              } catch (error) {
-                checks.push(
-                  failed(
-                    "tasks-mcp-name-routing",
-                    Date.now() - stepStartedAt,
-                    `tasks/get routed with Mcp-Name was rejected: ${errorMessage(
-                      error
-                    )}`,
-                    undefined,
-                    error
-                  )
-                );
-              }
+              // The spec requirement is about the OUTBOUND request, so the
+              // header itself is captured rather than inferred from a
+              // successful read (a server that ignores the header would make a
+              // read-only assertion pass vacuously).
+              const observed = await captureTaskRequestHeaders(() =>
+                manager.getTaskExt(serverId, createdTaskId)
+              );
+              const name = observed.headers?.["mcp-name"];
+              const method = observed.headers?.["mcp-method"];
+              checks.push(
+                observed.error !== undefined
+                  ? failed(
+                      "tasks-mcp-name-routing",
+                      Date.now() - stepStartedAt,
+                      `tasks/get routed with Mcp-Name was rejected: ${errorMessage(
+                        observed.error
+                      )}`,
+                      { mcpName: name, mcpMethod: method },
+                      observed.error
+                    )
+                  : name === createdTaskId
+                    ? passed(
+                        "tasks-mcp-name-routing",
+                        Date.now() - stepStartedAt,
+                        { mcpName: name, mcpMethod: method }
+                      )
+                    : failed(
+                        "tasks-mcp-name-routing",
+                        Date.now() - stepStartedAt,
+                        observed.headers === undefined
+                          ? "no HTTP request was observed for tasks/get, so Mcp-Name could not be verified"
+                          : `tasks/get was sent with Mcp-Name ${JSON.stringify(
+                              name
+                            )}; the extension requires the task id`,
+                        { mcpName: name, mcpMethod: method }
+                      )
+              );
             }
           }
 
@@ -738,30 +790,29 @@ export class MCPTasksConformanceTest {
   }
 
   /**
-   * Sends a raw `tasks/get` WITHOUT the extension declaration. The manager
-   * always declares, so this goes through the connection's client directly.
+   * Runs a `tools/call` WITHOUT the extension declaration (`allowTaskResult`
+   * omitted, so the manager sends no capability envelope) and reports whether
+   * the server nonetheless created a task.
    */
-  private async probeUndeclaredGet(
+  private async probeUndeclaredCreation(
     manager: MCPClientManager,
     serverId: string,
-    taskId: string
-  ): Promise<{ rejected: boolean; code?: number }> {
-    // The public task APIs always attach the extension declaration, so the
-    // undeclared probe goes through the raw client.
-    const client = manager.getClient(serverId) as
-      | { request?: (payload: unknown, schema?: unknown) => Promise<unknown> }
-      | undefined;
-    const request = client?.request;
-
-    if (!request) return { rejected: false };
-
+    toolName: string
+  ): Promise<{ taskCreated: boolean; taskId?: string; code?: number }> {
     try {
-      await request.call(client, { method: "tasks/get", params: { taskId } });
-      return { rejected: false };
+      const result = await manager.executeTool(
+        serverId,
+        toolName,
+        this.config.toolArguments ?? {}
+      );
+      const taskId = this.extractTaskId("extension", result);
+      return taskId === undefined
+        ? { taskCreated: false }
+        : { taskCreated: true, taskId };
     } catch (error) {
       const code = errorCode(error);
       return {
-        rejected: code === -32003,
+        taskCreated: false,
         ...(code === undefined ? {} : { code }),
       };
     }
