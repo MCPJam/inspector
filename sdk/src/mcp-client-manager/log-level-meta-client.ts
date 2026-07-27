@@ -215,6 +215,22 @@ export class LogLevelMetaClient implements ManagedMcpClient {
     return this.inner.unsubscribeResource(this.inject(params), options);
   }
 
+  listen(
+    filter: Parameters<NonNullable<ManagedMcpClient["listen"]>>[0],
+    options?: RequestOptions,
+  ) {
+    // Long-lived stream, not a request leg: the modern per-request logging
+    // `_meta` has no meaning here (log records ride their originating
+    // request's stream), so this forwards verbatim.
+    const inner = this.inner.listen?.bind(this.inner);
+    if (!inner) {
+      throw new Error(
+        "The wrapped client does not implement subscriptions/listen.",
+      );
+    }
+    return inner(filter, options);
+  }
+
   complete(
     params: Parameters<ManagedMcpClient["complete"]>[0],
     options?: RequestOptions,
