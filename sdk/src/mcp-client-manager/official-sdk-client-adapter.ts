@@ -188,6 +188,12 @@ export class OfficialSdkClientAdapter implements ManagedMcpClient {
       ManagedMcpClient["unsubscribeResource"]
     >;
   }
+  listen(
+    filter: Parameters<Client["listen"]>[0],
+    options?: Parameters<Client["listen"]>[1],
+  ) {
+    return this.inner.listen(filter, options);
+  }
   async setLoggingLevel(
     level: Parameters<Client["setLoggingLevel"]>[0],
     options?: Parameters<Client["setLoggingLevel"]>[1],
