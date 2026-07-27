@@ -116,12 +116,43 @@ describe("isMrtrResumeSubmission", () => {
     ).toBe(false);
   });
 
-  it("rejects a non-integer-shaped round or missing responses", () => {
+  it("rejects a non-integer round (string, fractional, negative) or missing responses", () => {
+    const responses = { q1: { action: "accept" as const } };
     expect(
-      isMrtrResumeSubmission({ continuationId: "c", round: "0", responses: {} }),
+      isMrtrResumeSubmission({ continuationId: "c", round: "0", responses }),
+    ).toBe(false);
+    // The store fences on a discrete round, so 1.5 is as malformed as "0".
+    expect(
+      isMrtrResumeSubmission({ continuationId: "c", round: 1.5, responses }),
+    ).toBe(false);
+    expect(
+      isMrtrResumeSubmission({ continuationId: "c", round: -1, responses }),
     ).toBe(false);
     expect(
       isMrtrResumeSubmission({ continuationId: "c", round: 0 }),
+    ).toBe(false);
+  });
+
+  it("rejects a url-mode display whose scheme is not navigable", () => {
+    const event = (url: string) => ({
+      ...inputRequired,
+      inputRequests: [{ key: "q1", mode: "url", message: "Authorize", url }],
+    });
+    // A hostile server's script URL must not survive the boundary guard.
+    expect(isMrtrContinuationEvent(event("javascript:alert(1)"))).toBe(false);
+    expect(isMrtrContinuationEvent(event("data:text/html,<script>"))).toBe(false);
+    expect(isMrtrContinuationEvent(event("not a url"))).toBe(false);
+    expect(isMrtrContinuationEvent(event("https://x.test/authorize"))).toBe(true);
+    expect(isMrtrContinuationEvent(event("http://localhost:3000/a"))).toBe(true);
+  });
+
+  it("rejects an empty responses map (nothing to answer)", () => {
+    expect(
+      isMrtrResumeSubmission({
+        continuationId: "cont-1",
+        round: 0,
+        responses: {},
+      }),
     ).toBe(false);
   });
 });

@@ -107,6 +107,43 @@ export class MrtrDisplayTooLargeError extends Error {
   }
 }
 
+/**
+ * Raised when a safe-display field is rejected on grounds other than size —
+ * today, a URL-mode elicitation whose scheme is not navigable. Distinct from
+ * {@link MrtrDisplayTooLargeError} so the reason reads honestly in logs and the
+ * two failures stay separable.
+ */
+export class MrtrDisplayRejectedError extends Error {
+  readonly code = "MRTR_DISPLAY_REJECTED";
+  constructor(readonly field: string, reason: string) {
+    super(`MRTR display field "${field}" was rejected: ${reason}`);
+    this.name = "MrtrDisplayRejectedError";
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+/**
+ * A URL-mode elicitation target the browser may be asked to navigate to.
+ *
+ * MCP 2026-07-28 requires the CLIENT to "show the full URL to the user for
+ * examination before consent" and to "highlight the domain of the URL" — a
+ * `javascript:` or `data:` URL has no domain to show and is not an out-of-band
+ * destination at all; rendered as an anchor it is simply script injection. The
+ * spec constrains the server ("MUST contain a valid URL", "SHOULD use HTTPS
+ * URLs for non-development environments") but does not enumerate a client-side
+ * scheme allowlist, so this is MCPJam hardening against a hostile server rather
+ * than a spec MUST. `http:` stays allowed for local/dev servers.
+ */
+export function isNavigableElicitationUrl(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  try {
+    const { protocol } = new URL(value);
+    return protocol === "https:" || protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
 // ── Binding fingerprint ──────────────────────────────────────────────────
 
 /**
@@ -174,6 +211,22 @@ function stableStringify(value: unknown): string {
  * behind the same identity) is intentionally NOT in the digest; the
  * auth-principal half of {@link computeMrtrBindingFingerprint} covers principal
  * changes. Single source so suspend and resume never drift.
+ *
+ * KNOWN GAP (tracked, not closed here): the digest covers only server-REPORTED
+ * initialization metadata, so it does not distinguish two endpoints that report
+ * identical protocol / version / capabilities. If a project's server URL is
+ * edited between suspend and resume, the claim can still succeed and the old
+ * opaque `requestState` plus the original params would be replayed at the new
+ * endpoint — which MCP 2026-07-28 constrains ("Both the `inputRequests` and
+ * `requestState` fields affect only the client's retry of the original request.
+ * They MUST NOT be used for any other request"). This is NOT a caller-controlled
+ * retarget: the resume body carries no URL and the endpoint is resolved
+ * server-side from `projectId` + `serverId`, so it takes a legitimate config
+ * edit racing a suspended round. Closing it means folding a stable digest of the
+ * RESOLVED endpoint (origin + path) into the hash below — which needs the URL
+ * surfaced out of `createManualHostedConnection` (it returns only the manager
+ * and body today), and the SAME term added at every suspend site, since a
+ * fingerprint only fails closed while both halves compute it identically.
  */
 export function deriveServerConfigDigest(
   manager: { getInitializationInfo: (serverId: string) => unknown },
@@ -259,6 +312,16 @@ export function buildInputRequestDisplays(
     );
     if (mode === "url") {
       const url = typeof params.url === "string" ? params.url : "";
+      // Fail closed on a non-navigable scheme, at the PRODUCER: this value is
+      // persisted and emitted to the browser as a navigation target, so a
+      // hostile server's `javascript:`/`data:` URL must never leave the server
+      // — the same treatment the byte caps get.
+      if (!isNavigableElicitationUrl(url)) {
+        throw new MrtrDisplayRejectedError(
+          `${key}.url`,
+          "URL-mode elicitation must be an http(s) URL",
+        );
+      }
       displays.push({
         key,
         mode: "url",
@@ -424,13 +487,26 @@ export type ResumeMrtrOutcome =
       outcome: "input_required";
       round: number;
       displays: MrtrInputRequestDisplay[];
-      expiresAt: number;
+      /**
+       * Absent when the round is being REPLAYED from a claim rather than freshly
+       * re-suspended: the claim payload does not carry the record's deadline, so
+       * absence means "unknown", never "already expired". (If PR3a adds
+       * `expiresAt` to the claim payload it flows through automatically.)
+       */
+      expiresAt?: number;
     }
   | {
       outcome: "failed" | "cancelled" | "expired" | "indeterminate";
       reason: string;
       /** HTTP status to surface (defaults per outcome). */
       status?: number;
+      /**
+       * Present only when the MCP leg COMPLETED but the durable record could not
+       * be finalized: the result is real and in hand, the store just does not
+       * know it. Callers may surface it, but MUST treat the continuation as
+       * indeterminate and never re-drive a side-effecting operation on it.
+       */
+      result?: unknown;
     };
 
 export interface ResumeMrtrDeps {
@@ -496,6 +572,53 @@ function emitResolved(
 }
 
 /**
+ * Re-serve the round the store is currently parked on, for a browser replaying
+ * the round before it. Read-only: no leg is driven and nothing is written, so
+ * this cannot double-execute anything. Returns `null` when the parked state
+ * cannot be rendered (corrupt blob, oversized display), leaving the caller to
+ * fall through to the ordinary stale-round rejection.
+ */
+function replayCurrentRound(
+  cs: ClaimedContinuationState,
+  decode: typeof decodeResumeState,
+  deps: ResumeMrtrDeps,
+  continuationId: string,
+): ResumeMrtrOutcome | null {
+  try {
+    const parked = decode(cs.resumeState as string);
+    const displays = buildInputRequestDisplays(parked.pendingInputRequests);
+    if (displays.length === 0) return null;
+    // The claim payload carries no deadline; only emit the browser event when
+    // the backend did supply one, rather than inventing an `expiresAt` the UI
+    // would render as an expiry. The HTTP outcome below is the direct path's
+    // actual channel either way.
+    if (cs.expiresAt !== undefined) {
+      deps.emit?.(
+        makeInputRequiredEvent({
+          continuationId,
+          serverId: cs.serverId,
+          serverName: deps.serverName,
+          method: cs.operationMethod,
+          operationLabel: operationLabel(parked),
+          round: cs.round,
+          displays,
+          expiresAt: cs.expiresAt,
+          chatSessionId: cs.chatSessionId,
+        }),
+      );
+    }
+    return {
+      outcome: "input_required",
+      round: cs.round,
+      displays,
+      ...(cs.expiresAt !== undefined ? { expiresAt: cs.expiresAt } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Resume one suspended MRTR round. Idempotent for a duplicate browser submit of
  * the same round: the response is submitted round-keyed to the store (which
  * de-dupes), and a caller that retries lands on the same claim → same outcome.
@@ -535,9 +658,87 @@ export async function resumeMrtrContinuationLeg(
   const cs: ClaimedContinuationState = claimed.state;
   let stateVersion = claimed.stateVersion;
 
+  /**
+   * Outcome for a store write that fails AFTER the MCP leg already went out.
+   *
+   * `mapError` is wrong here for a side-effecting operation: the wire left, so
+   * the operation may have (or, on a completed leg, definitely did) execute.
+   * Reporting `failed`/`cancelled` invites the caller to retry and double-
+   * execute it. Only durability failed, so resolve as `indeterminate` and mark
+   * the record indeterminate best-effort (`cancel` needs no lease — the lease
+   * is exactly what may have just been lost). A non-side-effecting operation is
+   * safe to replay, so it keeps the ordinary mapping.
+   */
+  const postWireFailure = async (
+    e: ContinuationCallError,
+    result?: unknown,
+  ): Promise<ResumeMrtrOutcome> => {
+    if (!cs.sideEffecting) return mapError(e);
+    await cancel(deps.bearer, {
+      continuationId,
+      reason: "post_wire_store_error_indeterminate",
+    });
+    emitResolved(deps, continuationId, "failed", true);
+    return {
+      outcome: "indeterminate",
+      reason: `MCP leg left the wire but the continuation could not be persisted: ${e.error}`,
+      status: e.status,
+      ...(result !== undefined ? { result } : {}),
+    };
+  };
+
+  /**
+   * Same rule as {@link postWireFailure}, for a failure that is OURS rather than
+   * the store's — we successfully reached the store, but cannot carry the
+   * operation forward (its next state will not encode, its display will not
+   * render). The distinction that matters is unchanged: `driveLeg` has already
+   * returned, so for a side-effecting operation the wire left and a durable
+   * `failed` would invite a restart of something that may have executed. Mark it
+   * indeterminate instead. A non-side-effecting operation is safely replayable
+   * and still finalizes `failed` with its precise terminal reason.
+   */
+  const postWireLocalFailure = async (
+    reason: string,
+    terminalReason: string,
+  ): Promise<ResumeMrtrOutcome> => {
+    if (cs.sideEffecting) {
+      await cancel(deps.bearer, {
+        continuationId,
+        reason: "post_wire_local_error_indeterminate",
+      });
+      emitResolved(deps, continuationId, "failed", true);
+      return {
+        outcome: "indeterminate",
+        reason: `MCP leg left the wire but the continuation could not be carried forward: ${reason}`,
+      };
+    }
+    await finalize(deps.bearer, {
+      continuationId,
+      leaseId,
+      expectedStateVersion: stateVersion,
+      status: "failed",
+      terminalReason,
+    });
+    emitResolved(deps, continuationId, "failed");
+    return { outcome: "failed", reason };
+  };
+
   // Round fence: a submission for a different round is stale.
   if (round !== cs.round) {
-    await release(deps.bearer, { continuationId, leaseId });
+    // …EXCEPT the one recoverable stale round: the immediately preceding one.
+    // If the browser's submit for round N succeeded but the HTTP response was
+    // lost, the store already advanced to N+1 and the browser can only retry N.
+    // Failing that retry strands the continuation — it sits awaiting answers the
+    // browser was never shown until the TTL expires. Replay the current round's
+    // display instead. This drives no leg and writes nothing: it only re-serves
+    // what `resuspend` already durably recorded.
+    if (round === cs.round - 1 && cs.resumeState) {
+      const replay = replayCurrentRound(cs, decode, deps, continuationId);
+      await release(deps.bearer, { continuationId, leaseId });
+      if (replay) return replay;
+    } else {
+      await release(deps.bearer, { continuationId, leaseId });
+    }
     return {
       outcome: "failed",
       reason: `stale round: submitted ${round}, pending ${cs.round}`,
@@ -623,7 +824,9 @@ export async function resumeMrtrContinuationLeg(
       expectedStateVersion: stateVersion,
       status: "completed",
     });
-    if (!fin.ok) return mapError(fin);
+    // The leg COMPLETED: for a side-effecting op the tool definitively ran, so a
+    // finalize failure is a durability failure, not an execution failure.
+    if (!fin.ok) return postWireFailure(fin, leg.result);
     emitResolved(deps, continuationId, "completed");
     return { outcome: "completed", result: leg.result };
   }
@@ -634,36 +837,20 @@ export async function resumeMrtrContinuationLeg(
   try {
     nextBlob = encode(nextState);
   } catch (err) {
-    await finalize(deps.bearer, {
-      continuationId,
-      leaseId,
-      expectedStateVersion: stateVersion,
-      status: "failed",
-      terminalReason: "resume_state_encode_error",
-    });
-    emitResolved(deps, continuationId, "failed");
-    return {
-      outcome: "failed",
-      reason: err instanceof Error ? err.message : "resumeState encode error",
-    };
+    return postWireLocalFailure(
+      err instanceof Error ? err.message : "resumeState encode error",
+      "resume_state_encode_error",
+    );
   }
 
   let displays: MrtrInputRequestDisplay[];
   try {
     displays = buildInputRequestDisplays(nextState.pendingInputRequests);
   } catch (err) {
-    await finalize(deps.bearer, {
-      continuationId,
-      leaseId,
-      expectedStateVersion: stateVersion,
-      status: "failed",
-      terminalReason: "resume_display_error",
-    });
-    emitResolved(deps, continuationId, "failed");
-    return {
-      outcome: "failed",
-      reason: err instanceof Error ? err.message : "display build error",
-    };
+    return postWireLocalFailure(
+      err instanceof Error ? err.message : "display build error",
+      "resume_display_error",
+    );
   }
 
   const rs = await resuspend(deps.bearer, {
@@ -673,7 +860,11 @@ export async function resumeMrtrContinuationLeg(
     round: nextState.round,
     resumeState: nextBlob,
   });
-  if (!rs.ok) return mapError(rs);
+  // Same post-wire rule as the finalize path: the leg already went out (the
+  // server answered with another `input_required`), so a side-effecting op that
+  // cannot be re-suspended is indeterminate, not `failed` — the caller must not
+  // re-drive it from round zero.
+  if (!rs.ok) return postWireFailure(rs);
 
   deps.emit?.(
     makeInputRequiredEvent({

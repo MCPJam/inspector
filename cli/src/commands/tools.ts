@@ -6,6 +6,7 @@ import {
 } from "@mcpjam/sdk";
 import { writeCommandDebugArtifact } from "../lib/debug-artifact.js";
 import { withEphemeralManager } from "../lib/ephemeral.js";
+import { buildMrtrBeforeConnect } from "../lib/mrtr-input.js";
 import {
   buildInspectorServerName,
   findInspectorRenderError,
@@ -53,6 +54,8 @@ import {
 interface ToolsCallOptions extends SharedServerTargetOptions {
   toolName?: string;
   name?: string;
+  interactive?: boolean;
+  yes?: boolean;
   toolArgs?: string;
   toolArgsStdin?: boolean;
   params?: string;
@@ -162,6 +165,14 @@ export function registerToolsCommands(program: Command): void {
       .option("--tool-name <tool>", "Tool name")
       .option("--name <tool>", "Alias for --tool-name")
       .option(
+        "--interactive",
+        "Drive the modern input_required (multi-round-trip) loop: render embedded elicitations to the terminal and collect responses from stdin",
+      )
+      .option(
+        "--yes",
+        "With --interactive, run non-interactively: decline every embedded input request instead of prompting",
+      )
+      .option(
         "--tool-args <json>",
         "Tool parameter object as JSON, @path, or - for stdin",
       )
@@ -263,6 +274,16 @@ export function registerToolsCommands(program: Command): void {
       );
     }
     const paramsInput = options.toolArgsStdin ? "-" : resolvedParamsInput;
+    if (options.interactive && paramsInput === "-") {
+      // Both would read `process.stdin`: the JSON parse drains it first, so the
+      // collector would hit EOF (or, on a TTY, a stream the user already closed)
+      // and could never answer an embedded elicitation.
+      throw usageError(
+        "--interactive cannot be used together with tool parameters read from " +
+          "stdin (--tool-args-stdin or --tool-args/--params -): interactive " +
+          "answers are read from stdin too. Pass the parameters as JSON or @path.",
+      );
+    }
     const params = parseJsonRecord(paramsInput, "Tool parameters") ?? {};
     const targetSummary = summarizeServerDoctorTarget(target, config);
     const shouldValidateResponse = options.validateResponse === true;
@@ -313,6 +334,8 @@ export function registerToolsCommands(program: Command): void {
           timeout: globalOptions.timeout,
           rpcLogger: primaryCollector?.rpcLogger,
           host: host?.connection,
+          beforeConnect: buildMrtrBeforeConnect(options),
+          interactiveElicitation: options.interactive === true,
         },
       );
     } catch (error) {
