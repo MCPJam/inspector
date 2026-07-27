@@ -175,6 +175,28 @@ export function computeMrtrBindingFingerprint(args: {
 }
 
 /**
+ * Traversal bounds for {@link stableStringify}. Its input is a HOSTILE server's
+ * initialize response (`serverCapabilities` / `serverVersion` are echoed from
+ * the wire), so an unbounded recursive sort is a server-controlled way to blow
+ * the worker's stack or pin its CPU on every suspend AND every resume. Both
+ * limits sit orders of magnitude above any legitimate capabilities object.
+ */
+const FINGERPRINT_MAX_DEPTH = 24;
+const FINGERPRINT_MAX_NODES = 4096;
+
+/** Raised when a server's initialize metadata exceeds the traversal bounds. */
+export class MrtrFingerprintTooComplexError extends Error {
+  readonly code = "MRTR_FINGERPRINT_TOO_COMPLEX";
+  constructor(limit: string) {
+    super(
+      `MRTR binding fingerprint aborted: server initialization metadata exceeded ${limit}.`,
+    );
+    this.name = "MrtrFingerprintTooComplexError";
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+/**
  * Serialize a value with object keys emitted in a stable (recursively sorted)
  * order, so the digest below hashes the *values* of the negotiated identity
  * rather than the JSON property order a given initialize response happened to
@@ -182,13 +204,32 @@ export function computeMrtrBindingFingerprint(args: {
  * different key order must produce the SAME fingerprint or a legitimate resume
  * would fail the binding claim closed. Arrays keep their order (semantic);
  * scalars and null are emitted as-is.
+ *
+ * Bounded by depth and node count: over either limit it THROWS rather than
+ * truncates. Truncation would be worse than failing — two different oversized
+ * metadata blobs could collapse to the same prefix and bind a continuation to a
+ * server it does not actually match. Failing closed just refuses the round.
  */
-function stableStringify(value: unknown): string {
+function stableStringify(
+  value: unknown,
+  depth = 0,
+  budget: { nodes: number } = { nodes: FINGERPRINT_MAX_NODES },
+): string {
+  if (depth > FINGERPRINT_MAX_DEPTH) {
+    throw new MrtrFingerprintTooComplexError(
+      `the ${FINGERPRINT_MAX_DEPTH}-level nesting limit`,
+    );
+  }
+  if (budget.nodes-- <= 0) {
+    throw new MrtrFingerprintTooComplexError(
+      `the ${FINGERPRINT_MAX_NODES}-node traversal limit`,
+    );
+  }
   if (value === null || typeof value !== "object") {
     return JSON.stringify(value ?? null);
   }
   if (Array.isArray(value)) {
-    return `[${value.map((v) => stableStringify(v)).join(",")}]`;
+    return `[${value.map((v) => stableStringify(v, depth + 1, budget)).join(",")}]`;
   }
   const entries = Object.keys(value as Record<string, unknown>)
     .sort()
@@ -196,40 +237,101 @@ function stableStringify(value: unknown): string {
       (k) =>
         `${JSON.stringify(k)}:${stableStringify(
           (value as Record<string, unknown>)[k],
+          depth + 1,
+          budget,
         )}`,
     );
   return `{${entries.join(",")}}`;
 }
 
 /**
- * Derive the effective-server digest half of the binding fingerprint from a
- * live connection's negotiated identity. Both the SUSPEND site (PR4 direct ops /
- * PR5 chat) and the RESUME route connect to the server, so both compute this
- * identically — a materially different server (name / version / capabilities /
- * protocol) yields a different digest and a resume against a swapped server
- * fails the claim closed. Config that never reaches the wire (a rotated bearer
- * behind the same identity) is intentionally NOT in the digest; the
- * auth-principal half of {@link computeMrtrBindingFingerprint} covers principal
- * changes. Single source so suspend and resume never drift.
+ * The one place suspend and resume derive the auth principal half of the
+ * binding. `bearer-auth` sets `mcpjamUserId` + `workosUserId` for a signed-in
+ * WorkOS session and `guestId` for a guest — there is NO `userId` context var,
+ * so reading one would silently resolve every signed-in caller to the shared
+ * `"anonymous"` on one side of the binding and to a real id on the other,
+ * failing every legitimate signed-in resume closed. Shared so the two sites
+ * cannot drift apart again.
+ */
+export function resolveMrtrAuthPrincipal(c: {
+  get?: (key: string) => unknown;
+}): string {
+  const pick = (key: string): string | undefined => {
+    const value = c.get?.(key);
+    return typeof value === "string" && value ? value : undefined;
+  };
+  return (
+    pick("mcpjamUserId") ?? pick("workosUserId") ?? pick("guestId") ?? "anonymous"
+  );
+}
+
+/**
+ * Reduce a resolved server config to the identity of the ENDPOINT it actually
+ * talks to, so the digest below binds *where* the operation ran and not merely
+ * what the peer claimed to be. Deliberately narrow:
  *
- * KNOWN GAP (tracked, not closed here): the digest covers only server-REPORTED
- * initialization metadata, so it does not distinguish two endpoints that report
- * identical protocol / version / capabilities. If a project's server URL is
- * edited between suspend and resume, the claim can still succeed and the old
- * opaque `requestState` plus the original params would be replayed at the new
- * endpoint — which MCP 2026-07-28 constrains ("Both the `inputRequests` and
- * `requestState` fields affect only the client's retry of the original request.
- * They MUST NOT be used for any other request"). This is NOT a caller-controlled
- * retarget: the resume body carries no URL and the endpoint is resolved
- * server-side from `projectId` + `serverId`, so it takes a legitimate config
- * edit racing a suspended round. Closing it means folding a stable digest of the
- * RESOLVED endpoint (origin + path) into the hash below — which needs the URL
- * surfaced out of `createManualHostedConnection` (it returns only the manager
- * and body today), and the SAME term added at every suspend site, since a
+ * - HTTP: `origin + pathname + search`. Origin and path are the retarget
+ *   vector; the query string is included because it routes on some servers
+ *   (`?tenant=`). Hash fragments and userinfo are dropped — they never reach
+ *   the wire as a destination.
+ * - stdio: the executable and its argv, which are the equivalent identity.
+ *
+ * Credentials and headers are intentionally EXCLUDED: an access token rotating
+ * behind the same endpoint is not a server swap, and folding it in would fail
+ * every legitimate resume that straddles a refresh. Principal changes are
+ * covered by the auth-principal half of {@link computeMrtrBindingFingerprint}.
+ */
+function deriveEndpointIdentity(config: unknown): unknown {
+  const cfg = config as
+    | { url?: unknown; command?: unknown; args?: unknown }
+    | undefined;
+  if (!cfg) return null;
+  if (typeof cfg.url === "string" && cfg.url) {
+    try {
+      const url = new URL(cfg.url);
+      return { kind: "http", endpoint: `${url.origin}${url.pathname}${url.search}` };
+    } catch {
+      // Unparseable URL: bind the raw string rather than silently dropping the
+      // term — a changed endpoint must still change the digest.
+      return { kind: "http", endpoint: cfg.url };
+    }
+  }
+  if (typeof cfg.command === "string" && cfg.command) {
+    return {
+      kind: "stdio",
+      command: cfg.command,
+      args: Array.isArray(cfg.args) ? cfg.args.map((a) => String(a)) : [],
+    };
+  }
+  return null;
+}
+
+/**
+ * Derive the effective-server digest half of the binding fingerprint. Both the
+ * SUSPEND site (PR4 direct ops / PR5 chat) and the RESUME route connect to the
+ * server, so both compute this identically — a materially different server
+ * fails the claim closed. Two terms:
+ *
+ * 1. the RESOLVED endpoint the connection points at (see
+ *    {@link deriveEndpointIdentity}), and
+ * 2. the negotiated identity the peer reported (protocol / transport / version
+ *    / capabilities).
+ *
+ * The endpoint term is what makes a server SWAP fail closed. Server-reported
+ * metadata alone does not distinguish two endpoints running the same
+ * implementation, so a project's server URL edited between suspend and resume
+ * would otherwise still claim successfully and replay the old opaque
+ * `requestState` plus the original params at the new endpoint — which MCP
+ * 2026-07-28 forbids: "Both the `inputRequests` and `requestState` fields
+ * affect only the client's retry of the original request. They MUST NOT be used
+ * for any other request." Single source so suspend and resume never drift; a
  * fingerprint only fails closed while both halves compute it identically.
  */
 export function deriveServerConfigDigest(
-  manager: { getInitializationInfo: (serverId: string) => unknown },
+  manager: {
+    getInitializationInfo: (serverId: string) => unknown;
+    getServerConfig: (serverId: string) => unknown;
+  },
   serverId: string,
 ): string {
   const info = manager.getInitializationInfo(serverId) as
@@ -246,6 +348,7 @@ export function deriveServerConfigDigest(
       // canonicalize nested capability/version keys so the digest binds values,
       // not JSON property order (suspend and resume must agree).
       stableStringify({
+        endpoint: deriveEndpointIdentity(manager.getServerConfig(serverId)),
         protocolVersion: info?.protocolVersion ?? null,
         transport: info?.transport ?? null,
         serverVersion: info?.serverVersion ?? null,

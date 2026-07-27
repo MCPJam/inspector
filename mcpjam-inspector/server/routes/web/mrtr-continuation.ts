@@ -44,6 +44,7 @@ import {
 import {
   computeMrtrBindingFingerprint,
   deriveServerConfigDigest,
+  resolveMrtrAuthPrincipal,
   resumeMrtrContinuationLeg,
 } from "../../utils/mrtr-hosted-collector.js";
 import {
@@ -201,15 +202,9 @@ mrtrContinuation.post("/resume", async (c) =>
       }
 
       // The auth-principal half of the binding must differentiate signed-in
-      // principals: bearer-auth sets `mcpjamUserId`/`workosUserId` for WorkOS
-      // sessions and `guestId` for guests (there is no `userId` context var), so
-      // a real per-user id — not a shared "anonymous" — is what fails a
-      // cross-principal resume closed.
-      const authPrincipal =
-        c.get("mcpjamUserId") ??
-        c.get("workosUserId") ??
-        c.get("guestId") ??
-        "anonymous";
+      // principals, and must resolve IDENTICALLY at the suspend site — hence the
+      // shared helper rather than a second hand-rolled lookup here.
+      const authPrincipal = resolveMrtrAuthPrincipal(c);
       const bindingFingerprint = computeMrtrBindingFingerprint({
         serverId,
         negotiatedEra: body.negotiatedEra,
@@ -244,7 +239,16 @@ mrtrContinuation.post("/resume", async (c) =>
       // the outcome shape + a bounded result for local/testing surfaces.
       return { ok: true, ...outcome };
     } finally {
-      await manager.disconnectAllServers();
+      // Teardown is CLEANUP, never the outcome. This `finally` runs AFTER a leg
+      // has already gone out and the store has been written; an awaited
+      // rejection here would replace a real resume outcome (a completed result,
+      // or an `indeterminate` the user must be told about) with a transport
+      // teardown error, inviting a retry of something that already executed.
+      await manager.disconnectAllServers().catch((error: unknown) => {
+        logger.warn("[mrtr-continuation] disconnect failed after resume", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
     }
   }),
 );

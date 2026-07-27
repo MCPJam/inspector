@@ -49,9 +49,11 @@ import {
   createHostedMrtrCollector,
   deriveServerConfigDigest,
   isMrtrSuspendedSignal,
+  resolveMrtrAuthPrincipal,
   resolveMrtrNegotiatedEra,
   type HostedMrtrCollectorDeps,
 } from "../../utils/mrtr-hosted-collector.js";
+import { logger } from "../../utils/logger.js";
 import {
   HOSTED_MRTR_VERSION,
   isCompatibleMrtrVersion,
@@ -180,10 +182,9 @@ export async function runHostedDirectMrtrOperation<S extends z.ZodTypeAny, R>(
       typeof rawBody.projectId === "string" ? rawBody.projectId : "";
     const serverName =
       typeof rawBody.serverName === "string" ? rawBody.serverName : undefined;
-    const authPrincipal =
-      (c.get?.("userId") as string | undefined) ??
-      (c.get?.("guestId") as string | undefined) ??
-      "anonymous";
+    // Shared with the resume route — the two halves of the binding must resolve
+    // the principal the SAME way or every signed-in resume fails closed.
+    const authPrincipal = resolveMrtrAuthPrincipal(c);
 
     // The collector runs during the verb call — strictly AFTER the holder below
     // is populated — so it can read the manager's post-connect negotiated
@@ -271,7 +272,19 @@ export async function runHostedDirectMrtrOperation<S extends z.ZodTypeAny, R>(
     } finally {
       // Disconnect BEFORE building the envelope so `_rpcLogs` reflects records
       // flushed during teardown — parity with `withEphemeralConnection`.
-      await manager.disconnectAllServers();
+      //
+      // Teardown is CLEANUP, never the outcome. An awaited rejection in a
+      // `finally` replaces whatever the try produced, so an unguarded disconnect
+      // failure would turn an already-persisted suspend into a route error: the
+      // browser never learns the `continuationId`, the durable row sits awaiting
+      // input until its TTL, and a user retrying the direct op repeats its
+      // initial side effects. Log it and return the outcome we actually have.
+      await manager.disconnectAllServers().catch((error: unknown) => {
+        logger.warn("[mrtr-direct] disconnect failed after operation", {
+          serverId: targetServerId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
     }
     return c.json(attachHostedRpcLogs(outcome, rpcCollector), 200);
   } catch (error) {

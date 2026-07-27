@@ -68,8 +68,10 @@ const fakeCreate: NonNullable<HostedDirectMrtrSeams["createContinuation"]> = (as
  * synchronously, and hands back a manager whose negotiated identity is fixed so
  * the binding fingerprint is deterministic.
  */
-function makeFakeConnect() {
-  const disconnect = vi.fn(async () => {});
+function makeFakeConnect(
+  disconnectImpl: () => Promise<void> = async () => {},
+) {
+  const disconnect = vi.fn(disconnectImpl);
   let seenCollectorFactory:
     | ((serverId: string) => unknown | undefined)
     | undefined;
@@ -93,6 +95,9 @@ function makeFakeConnect() {
         serverVersion: { name: "srv", version: "1.0" },
         serverCapabilities: { elicitation: {} },
       }),
+      // The resolved endpoint is part of the binding digest, so a server swap
+      // between suspend and resume fails the claim closed.
+      getServerConfig: () => ({ url: "https://srv.example.com/mcp" }),
       setPerRequestLogLevel: () => {},
       disconnectAllServers: disconnect,
     };
@@ -147,7 +152,9 @@ describe("runHostedDirectMrtrOperation — suspend", () => {
         parameters: {},
         hostedMrtrVersion: HOSTED_MRTR_VERSION,
       },
-      { userId: "user-1" },
+      // `bearer-auth` sets `mcpjamUserId` for a signed-in WorkOS session — the
+      // same var the resume route binds on.
+      { mcpjamUserId: "user-1" },
     );
 
     // The verb simulates the SDK invoking the registered collector on an
@@ -185,6 +192,50 @@ describe("runHostedDirectMrtrOperation — suspend", () => {
     // The opaque requestState never reaches the browser.
     expect(JSON.stringify(payload)).not.toContain(SECRET);
     // The worker returned + cleaned up (did not block on a human).
+    expect(fake.disconnect).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("runHostedDirectMrtrOperation — teardown is cleanup, not the outcome", () => {
+  it("still returns the pending outcome when disconnect fails", async () => {
+    // The continuation is already durable at this point. Letting the awaited
+    // teardown rejection replace the response would strand the row and invite a
+    // retry that repeats the operation's initial side effects.
+    const fake = makeFakeConnect(async () => {
+      throw new Error("transport teardown exploded");
+    });
+    const { ctx, captured } = makeCtx(
+      {
+        projectId: "proj-1",
+        serverId: "srv-1",
+        toolName: "do_thing",
+        parameters: {},
+        hostedMrtrVersion: HOSTED_MRTR_VERSION,
+      },
+      { mcpjamUserId: "user-1" },
+    );
+
+    const runVerb = async (manager: any) => {
+      const state = makeState();
+      return manager.__collector({
+        state,
+        inputRequests: state.pendingInputRequests,
+      });
+    };
+
+    await runHostedDirectMrtrOperation(
+      ctx as never,
+      {} as never,
+      { method: "tools/call" },
+      runVerb,
+      { rpcLogs: false, seams: seams(fake.connect) },
+    );
+
+    expect(captured.status).toBe(200);
+    expect(captured.payload).toMatchObject({
+      status: "input_required",
+      continuationId: "cont-42",
+    });
     expect(fake.disconnect).toHaveBeenCalledTimes(1);
   });
 });
