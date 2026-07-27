@@ -57,7 +57,7 @@ When a tool call returns an `input_required` result (MCP 2026-07-28 §12), the i
 - **Automatic retry** — after you respond, the inspector retries the original `tools/call` with your answers attached. You do not need to re-invoke the tool manually.
 - **Decline and Cancel** — send the corresponding action back to the server; the server decides whether to abort or continue.
 
-This behavior applies to local connections. The inspector must be connected to the server before the tool is invoked; the `elicitation` capability is advertised at connect time.
+This behavior applies to both local and hosted connections. On local connections, the inspector must be connected to the server before the tool is invoked; the `elicitation` capability is advertised at connect time. On hosted connections, the operation suspends to a durable continuation — the stream ends while the round is pending, and your answer re-drives the turn automatically. A page reload abandons any pending hosted round; the server expires the continuation on its own timeout.
 
 ### OAuth scope step-up on tool calls
 
