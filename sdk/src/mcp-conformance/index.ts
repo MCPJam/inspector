@@ -45,6 +45,28 @@ export type {
   RawSseEvent,
 } from "./raw-capture.js";
 
+// §15.3 subscription MUSTs: the bounded, incremental `subscriptions/listen`
+// observation seam. Separate from the buffering raw-HTTP harness on purpose —
+// that one reads a response to completion and so cannot hold a stream open.
+export {
+  filterRequests,
+  isSubscriptionNotificationMethod,
+  observeListenStream,
+  subscriptionTagOf,
+  LISTEN_IDLE_WINDOW_MS,
+  LISTEN_METHOD,
+  LISTEN_OBSERVATION_WINDOW_MS,
+  SUBSCRIPTION_ACK_METHOD,
+  SUBSCRIPTION_NOTIFICATION_FILTER_KEYS,
+} from "./raw-listen.js";
+export type {
+  ListenObservation,
+  ListenObservationOptions,
+  ListenObservationOutcome,
+  SubscriptionFilterWire,
+  SubscriptionNotificationMethod,
+} from "./raw-listen.js";
+
 export {
   canRunConformance,
   isHttpServerConfig,

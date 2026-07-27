@@ -80,6 +80,8 @@ import {
 import { applyPluginVersionOverride } from "../../services/environments/plugin-override.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
 import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
+import { BASH_TOOL_NAME } from "../../utils/built-in-tools/bash.js";
+import { maybeAppendEnvironmentContext } from "../../utils/computers/environment-context.js";
 import { buildMcpjamPlatformClient } from "./mcpjam-platform-client.js";
 import { logger } from "../../utils/logger.js";
 
@@ -622,6 +624,18 @@ chatV2.post("/", async (c) => {
       },
     );
 
+    // Blueprint knowledge/maintenance: when this turn advertises bash, append
+    // the pinned image's model-facing context to the system prompt. Tri-state
+    // fetch inside — a Convex blip degrades to "no extra context", never a
+    // broken turn. No-op (and no fetch) when bash isn't advertised.
+    const effectiveSystemPrompt = await maybeAppendEnvironmentContext({
+      systemPrompt,
+      hasBashTool: Boolean(builtInTools?.[BASH_TOOL_NAME]),
+      bearer: bearerToken,
+      projectId: hostedBody.projectId,
+      ...(executionScope ? { executionScope } : {}),
+    });
+
     // COMP-16: the host-configured computer working directory — the SAME
     // `computer.workdir` the bash tool runs in — threaded into the harness path
     // so its Shell roots under the same directory. Server-resolved config only.
@@ -946,7 +960,7 @@ chatV2.post("/", async (c) => {
         prepare: {
           selectedServerIds: effectiveServerIds,
           modelDefinition,
-          systemPrompt,
+          systemPrompt: effectiveSystemPrompt,
           temperature,
           requireToolApproval,
           respectToolVisibility,
@@ -1055,6 +1069,10 @@ chatV2.post("/", async (c) => {
           effectiveCapabilities.pluginServerIds.length > 0
             ? { nonResumableServerIds: effectiveCapabilities.pluginServerIds }
             : {}),
+          // Persisted resume config keeps the RAW user prompt; the blueprint
+          // env block is turn-injected (added to `prepare` above), not user
+          // configuration — otherwise a resumed turn would carry stale image
+          // context and re-append it. Matches the mcp chat-v2 route.
           systemPrompt,
           temperature,
           requireToolApproval,
