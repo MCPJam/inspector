@@ -62,6 +62,16 @@ import {
   emitToolOutput,
 } from "../chat-stream-chunks.js";
 import { mergeMcpToolOriginMetadata } from "@/shared/mcp-tool-origin-metadata";
+import {
+  pluginOriginByServerId,
+  type RuntimePluginVersion,
+} from "../../services/environments/effective-capabilities.js";
+import {
+  capabilitySkillFiles,
+  pluginSkillDeliverySummary,
+  pluginVersionsFingerprint,
+  selectDeliverableServerIds,
+} from "./plugin-delivery.js";
 import { logger } from "../logger.js";
 import type {
   ChatEngineLoopResult,
@@ -135,14 +145,26 @@ async function buildHarnessProxyMcpJsonFromManager(args: {
   authHeader: string;
   projectId: string;
   strategy: HarnessMcpProxyStrategy;
+  /** Plugin origin per server id (INS-7). A plugin-contributed server that
+   *  can't be delivered fails the turn instead of being skipped. */
+  pluginOrigins?: Record<string, RuntimePluginVersion>;
 }) {
-  const { manager, selectedServerIds, authHeader, projectId, strategy } = args;
-  const configured = selectedServerIds.filter((id) => {
-    if (manager.getServerConfig(id)) return true;
-    logger.warn(
-      `[harness] selected server has no live config; skipping serverId=${id}`
-    );
-    return false;
+  const {
+    manager,
+    selectedServerIds,
+    authHeader,
+    projectId,
+    strategy,
+    pluginOrigins,
+  } = args;
+  const configured = selectDeliverableServerIds({
+    selectedServerIds,
+    hasLiveConfig: (id) => Boolean(manager.getServerConfig(id)),
+    ...(pluginOrigins ? { pluginOrigins } : {}),
+    onSkipped: (id) =>
+      logger.warn(
+        `[harness] selected server has no live config; skipping serverId=${id}`
+      ),
   });
 
   const inputs: HarnessProxyServerInput[] = [];
@@ -291,11 +313,28 @@ export function harnessRuntimeFingerprint(parts: {
   modelId: string;
   selectedServers?: string[];
   permissionMode: string;
+  /**
+   * INS-7: the plugin versions materialized for this turn. A resumed session
+   * keeps whatever plugin runtime was delivered when it was CREATED, so an
+   * environment that now pins a different version — or the same version with
+   * different bundle content — is not resume-compatible and must fork.
+   *
+   * Neither existing dimension covers this. The server-id set does not: a new
+   * immutable version can expose the SAME materialized server ids. `skillsHash`
+   * does not either: it folds skill text, not the bundle a skill's supporting
+   * files and component servers come from.
+   *
+   * Appended ONLY when non-empty, so a plugin-less turn hashes byte-identically
+   * to before this dimension existed and its sessions keep resuming.
+   */
+  pluginVersions?: RuntimePluginVersion[];
 }): string {
+  const pluginDimension = pluginVersionsFingerprint(parts.pluginVersions ?? []);
   const s = [
     String(HARNESS_RUNTIME_COMPAT_VERSION),
     (parts.selectedServers ?? []).slice().sort().join(","),
     parts.permissionMode,
+    ...(pluginDimension ? [pluginDimension] : []),
   ].join("");
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) {
@@ -340,6 +379,7 @@ export async function runHarnessTurn(
     executionScope,
     pinnedHarnessSkills,
     runtimeSkillsOverride,
+    effectiveCapabilities,
   } = options;
   // Canonicalize the model id up front (bare hosted ids like `gpt-5-nano` →
   // `openai/gpt-5-nano`). Everything downstream — supportsModel, the adapter's
@@ -589,6 +629,16 @@ export async function runHarnessTurn(
               authHeader,
               projectId,
               strategy: harnessMcpProxy ?? { plane: "local-mcp" },
+              // INS-7: plugin-contributed servers ride this SAME proxy path as
+              // ordinary server ids (they are ordinary server ids) — the origin
+              // map only decides how a delivery failure is reported.
+              ...(effectiveCapabilities
+                ? {
+                    pluginOrigins: pluginOriginByServerId(
+                      effectiveCapabilities
+                    ),
+                  }
+                : {}),
             })
           : { mcpJson: { mcpServers: {} }, keyToServerId: {} };
 
@@ -643,6 +693,12 @@ export async function runHarnessTurn(
         modelId,
         selectedServers: selectedServers ?? [],
         permissionMode,
+        // INS-7: fold the plugin runtime in, so a version upgrade / bundle
+        // change forks the session instead of resuming onto a sandbox that
+        // still holds the previously delivered plugin material.
+        ...(effectiveCapabilities
+          ? { pluginVersions: effectiveCapabilities.pluginVersions }
+          : {}),
       });
       const ownerType: HarnessOwnerRef["ownerType"] | undefined =
         sourceType === "chatbox"
@@ -933,13 +989,53 @@ export async function runHarnessTurn(
             // than at turn start to keep the zero-file fast path free. Fully
             // fail-soft; guest/swarm scope uses the execution-scoped file query.
             //
-            // ENVIRONMENT MODE lands here too, on purpose. The file query stays
-            // PROJECT-WIDE while the delivered skill set is the environment's:
+            // ENVIRONMENT MODE (INS-7): files come from the SAME resolution
+            // that produced the skills, not from a second query.
+            //
+            // This is not just an efficiency: the project-wide file query
+            // (`projectSkills:listSkillFilesForRuntime`) filters rows through
+            // `isStandaloneSkill`, which excludes `plugin_component` rows by
+            // construction — so a plugin skill delivered to a Computer reached
+            // the box as a bare SKILL.md, with its `scripts/` and `references/`
+            // silently absent. The resolved spec carries those files with signed
+            // URLs minted in the same atomic read, so delivery consumes them.
+            //
+            // Presence of the capability set is authoritative (an empty file
+            // list is a real "no supporting files" and still runs, so orphans
+            // from a previous turn get pruned) — the tri-state fetch-failure
+            // concern below does not apply, because there is no second fetch to
+            // fail.
+            else if (
+              effectiveCapabilities !== undefined &&
+              runtimeSkills.length > 0
+            ) {
+              await materializeSkillFiles({
+                session,
+                files: capabilitySkillFiles(effectiveCapabilities),
+                skillNamesById: new Map(
+                  runtimeSkills.map((s) => [s.skillId, s.name])
+                ),
+                computerId: String(computerId),
+                ...(abortSignal ? { signal: abortSignal } : {}),
+              }).catch(() => {});
+              const pluginSkills = pluginSkillDeliverySummary(
+                effectiveCapabilities
+              );
+              if (pluginSkills.length > 0) {
+                // Provenance, not a pin: which plugin material this sandbox was
+                // given. Never re-read to restore anything.
+                logger.info("[harness] delivered plugin skills", {
+                  computerId: String(computerId),
+                  skills: pluginSkills,
+                });
+              }
+            }
+            // LEGACY / non-environment mode. The file query stays PROJECT-WIDE
+            // while the delivered skill set may be narrower:
             // `materializeSkillFiles` filters every file through
             // `skillNamesById`, which is built from `runtimeSkills` alone, so a
-            // file belonging to a project skill the environment did NOT deliver
-            // is skipped and its dir is never created. An empty environment set
-            // short-circuits on the `length > 0` guard above and fetches nothing.
+            // file belonging to a project skill this turn did NOT deliver is
+            // skipped and its dir is never created.
             else if (projectId && authHeader && runtimeSkills.length > 0) {
               // Tri-state: `{ ok: false }` ⇒ the fetch FAILED (transient). Skip
               // materialization then — an empty file set would otherwise prune
