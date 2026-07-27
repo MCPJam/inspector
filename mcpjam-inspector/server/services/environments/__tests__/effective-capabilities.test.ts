@@ -38,6 +38,7 @@ function attribution(
   return {
     serverOrigins: new Map(),
     skillOrigins: new Map(),
+    unattributedVersionIds: [],
     ...overrides,
   };
 }
@@ -91,6 +92,58 @@ describe("resolveEffectiveCapabilities — servers", () => {
 
     expect(set.pluginServerIds).toEqual(["srv_plugin"]);
     expect(set.explicitServerIds).toEqual(["srv_extra"]);
+  });
+
+  it("never lets a stale attribution reclassify a server the backend called non-plugin", () => {
+    // Attribution decides what we SAY about a server, never what it IS. A torn
+    // or stale map that still lists an id the backend explicitly labelled
+    // `host_or_group` must not move it into the plugin set.
+    const set = resolveEffectiveCapabilities(
+      spec({
+        servers: {
+          pluginServerIds: [],
+          effectiveServerIds: ["srv_host"],
+          connectable: [
+            { serverId: "srv_host", name: "Host", source: "host_or_group" },
+          ],
+        },
+      }),
+      attribution({ serverOrigins: new Map([["srv_host", PLUGIN_A]]) })
+    );
+
+    expect(set.pluginServerIds).toEqual([]);
+    expect(set.explicitServerIds).toEqual(["srv_host"]);
+    expect(set.servers[0].plugin).toBeUndefined();
+  });
+
+  it("does the same for an override-sourced server", () => {
+    const set = resolveEffectiveCapabilities(
+      spec({
+        servers: {
+          effectiveServerIds: ["srv_extra"],
+          connectable: [
+            { serverId: "srv_extra", name: "Extra", source: "override" },
+          ],
+        },
+      }),
+      attribution({ serverOrigins: new Map([["srv_extra", PLUGIN_A]]) })
+    );
+    expect(set.pluginServerIds).toEqual([]);
+    expect(set.servers[0].plugin).toBeUndefined();
+  });
+
+  it("uses attribution to classify only when the backend omitted `source`", () => {
+    const set = resolveEffectiveCapabilities(
+      spec({
+        servers: {
+          effectiveServerIds: ["srv_x"],
+          connectable: [{ serverId: "srv_x", name: "X", source: undefined }],
+        },
+      }),
+      attribution({ serverOrigins: new Map([["srv_x", PLUGIN_A]]) })
+    );
+    expect(set.pluginServerIds).toEqual(["srv_x"]);
+    expect(set.servers[0].plugin).toEqual(PLUGIN_A);
   });
 
   it("falls back to raw ids when an older backend omits the connectable projection", () => {
@@ -252,6 +305,26 @@ describe("resolveEffectiveCapabilities — degraded attribution", () => {
     expect(set.problems).toEqual([
       expect.objectContaining({ code: "plugin_origin_unavailable" }),
     ]);
+  });
+
+  it("reports a PARTIAL attribution instead of passing a short map off as complete", () => {
+    // pv_b resolved for the environment but not for the probe. Its components
+    // still run; losing their provenance silently is the exact failure
+    // `problems` exists to prevent.
+    const set = resolveEffectiveCapabilities(
+      spec({ pluginVersions: [PLUGIN_A, PLUGIN_B] }),
+      attribution({
+        serverOrigins: new Map([["srv_a", PLUGIN_A]]),
+        unattributedVersionIds: ["pv_b"],
+      })
+    );
+
+    expect(set.problems).toEqual([
+      expect.objectContaining({ code: "plugin_origin_unavailable" }),
+    ]);
+    expect(set.problems[0].message).toContain("1 of this turn's 2");
+    // The attribution we DID get is still used.
+    expect(set.pluginVersions).toEqual([PLUGIN_A, PLUGIN_B]);
   });
 
   it("reports no problem when there was nothing to attribute", () => {

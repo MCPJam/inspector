@@ -38,6 +38,15 @@ export interface SkillMetadataEntry {
   /** The model-facing identity (bare name or `<plugin>/<skill>`). */
   ref: string;
   description: string;
+  /**
+   * Provenance rendered in the same line (`plugin alpha@aaaa1111`, `project`).
+   *
+   * Charged as part of the entry's fixed cost. It is NOT decoration: a plugin
+   * origin runs 20-30 characters, so leaving it uncharged overshoots the cap by
+   * an amount that GROWS with the number of plugin skills — the exact case the
+   * budget exists for.
+   */
+  origin?: string;
 }
 
 export interface SkillMetadataBudgetResult<T extends SkillMetadataEntry> {
@@ -73,9 +82,10 @@ export function skillMetadataBudgetChars(modelContextTokens?: number): number {
 /**
  * Fit a discovery listing into `budgetChars`.
  *
- * Cost is charged per entry as `ref + description` plus a small fixed overhead
- * for the line's own punctuation, so the accounting tracks what is actually
- * emitted rather than the raw description length.
+ * Cost is charged per entry as `ref + origin + description` plus the line's own
+ * punctuation, matching the emitted `- **<ref>** (<origin>): <description>\n`
+ * exactly — the accounting must track what is actually emitted, or the budget
+ * silently permits more than it claims.
  *
  * Two passes, in the plan's order:
  *   1. Admit entries at full description while they fit.
@@ -88,8 +98,11 @@ export function applySkillMetadataBudget<T extends SkillMetadataEntry>(
   entries: T[],
   budgetChars: number
 ): SkillMetadataBudgetResult<T> {
-  /** Bullet, bold markers, parentheses and the ": " separator of one line. */
-  const LINE_OVERHEAD_CHARS = 12;
+  /**
+   * The punctuation of `- **<ref>** (<origin>): <description>\n`:
+   * `- **` + `** (` + `): ` + the newline = 12 characters.
+   */
+  const LINE_PUNCTUATION_CHARS = 12;
 
   const admitted: T[] = [];
   const truncatedRefs: string[] = [];
@@ -97,7 +110,10 @@ export function applySkillMetadataBudget<T extends SkillMetadataEntry>(
   let spent = 0;
 
   for (const entry of entries) {
-    const fixed = entry.ref.length + LINE_OVERHEAD_CHARS;
+    const fixed =
+      entry.ref.length +
+      (entry.origin?.length ?? 0) +
+      LINE_PUNCTUATION_CHARS;
     const full = fixed + entry.description.length;
     if (spent + full <= budgetChars) {
       admitted.push(entry);

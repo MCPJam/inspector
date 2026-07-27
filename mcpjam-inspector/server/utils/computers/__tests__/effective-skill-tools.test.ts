@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getEffectiveSkillToolsAndPrompt } from "../effective-skill-tools";
+import { skillMetadataBudgetChars } from "../skill-metadata-budget";
 import type { EffectiveCapabilitySet } from "../../../services/environments/effective-capabilities";
 
 const PLUGIN_A = {
@@ -121,6 +122,38 @@ describe("listSkills", () => {
     expect(await run(tools.listSkills, {})).toBe(
       "No skills are available for this turn."
     );
+  });
+
+  it("emits a listing that actually fits the budget, origin labels included", async () => {
+    // The accounting is only worth having if the STRING obeys it. Plugin
+    // origins ("plugin alpha@aaaa1111") are ~25 chars each, so an uncharged
+    // origin overshoots by an amount that grows with the plugin-skill count.
+    const many = Array.from({ length: 30 }, (_, index) => ({
+      ref: `alpha/skill-${index}`,
+      skillId: `sk_${index}`,
+      name: `skill-${index}`,
+      description: "d".repeat(120),
+      content: "body",
+      aggregateHash: "agg",
+      files: [],
+      plugin: PLUGIN_A,
+    }));
+    const modelContextTokens = 25_000; // 2% × 4 chars/token = 2,000 chars.
+    const budgetChars = skillMetadataBudgetChars(modelContextTokens);
+    const { tools } = getEffectiveSkillToolsAndPrompt(
+      set({ pluginSkills: many }),
+      { modelContextTokens }
+    );
+
+    const listing = await run(tools.listSkills, {});
+    // The omission notice is deliberately outside the budget (it reports that
+    // the budget bit), as is the "Available skills:" header; measure the lines.
+    const body = listing
+      .replace(/^Available skills:\n\n/, "")
+      .replace(/\n\n\(\d+ more skills? could not be listed[^)]*\)$/, "");
+    expect(body.length).toBeLessThanOrEqual(budgetChars);
+    // And the origin really is in the measured text, or the assertion is empty.
+    expect(body).toContain("(plugin alpha@aaaa1111)");
   });
 
   it("states that skills were dropped when the metadata budget omits them", async () => {

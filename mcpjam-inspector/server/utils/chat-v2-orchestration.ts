@@ -709,7 +709,18 @@ export interface PrepareChatV2Options {
    */
   skillsSource?:
     | { kind: "pinned"; skills: PinnableSkill[] }
-    | { kind: "resolved"; capabilities: EffectiveCapabilitySet }
+    | {
+        kind: "resolved";
+        capabilities: EffectiveCapabilitySet;
+        /**
+         * The turn's abort signal. Carried HERE rather than added to
+         * `PrepareChatV2Options` because this is the only consumer: a skill
+         * supporting-file read fetches a signed `_storage` URL, and without it
+         * that fetch runs its full 30s timeout after the client has already
+         * disconnected.
+         */
+        abortSignal?: AbortSignal;
+      }
     | { kind: "none" };
 }
 
@@ -964,6 +975,9 @@ export async function prepareChatV2(
         ? getPinnedSkillToolsAndPrompt(skillsSource.skills)
         : skillsSource.kind === "resolved"
           ? getEffectiveSkillToolsAndPrompt(skillsSource.capabilities, {
+              ...(skillsSource.abortSignal
+                ? { signal: skillsSource.abortSignal }
+                : {}),
               // The discovery listing is budgeted against THIS model's context
               // (INS-3 / OpenAI's 2% rule). `contextLength` is optional on a
               // model definition; the budget helper falls back to 8,000 chars.

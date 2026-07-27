@@ -538,8 +538,13 @@ describe("web chat-v2 — plugin capability attribution", () => {
 
   afterEach(() => {
     global.fetch = originalFetch;
-    process.env.CONVEX_HTTP_URL = originalConvexHttpUrl;
-    process.env.CONVEX_URL = originalConvexUrl;
+    // `delete` on absent, never assignment: Node coerces an assigned
+    // `undefined` to the literal string "undefined", which a later test in the
+    // same worker would happily build a Convex client against.
+    if (originalConvexHttpUrl === undefined) delete process.env.CONVEX_HTTP_URL;
+    else process.env.CONVEX_HTTP_URL = originalConvexHttpUrl;
+    if (originalConvexUrl === undefined) delete process.env.CONVEX_URL;
+    else process.env.CONVEX_URL = originalConvexUrl;
   });
 
   it("namespaces the plugin skill and attributes its server to the pinned version", async () => {

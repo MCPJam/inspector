@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConvexHttpClient } from "convex/browser";
 import { fetchPluginRuntimeAttribution } from "../plugin-attribution";
 
@@ -21,6 +21,7 @@ describe("fetchPluginRuntimeAttribution", () => {
     expect(result).toEqual({
       serverOrigins: new Map(),
       skillOrigins: new Map(),
+      unattributedVersionIds: [],
     });
   });
 
@@ -131,6 +132,27 @@ describe("fetchPluginRuntimeAttribution", () => {
     });
     expect(result?.serverOrigins.size).toBe(1);
     expect(result?.serverOrigins.has("srv_b")).toBe(true);
+    // The short map must ANNOUNCE that it is short — a caller that read only
+    // `serverOrigins` would otherwise present pv_a's servers as origin-free.
+    expect(result?.unattributedVersionIds).toEqual(["pv_a"]);
+  });
+
+  it("gives up on a read that never settles instead of hanging the turn", async () => {
+    vi.useFakeTimers();
+    try {
+      // A Convex query that never resolves — the failure the deadline exists
+      // for. Without it the chat route blocks forever before the turn starts.
+      const client = clientWith(() => new Promise(() => {}));
+      const pending = fetchPluginRuntimeAttribution(client, {
+        projectId: "prj",
+        pluginVersionIds: ["pv_a"],
+      });
+      await vi.advanceTimersByTimeAsync(5_000);
+      // Fails CLOSED, exactly like every other probe failure.
+      await expect(pending).resolves.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("tolerates a missing bundleHash without dropping the origin", async () => {
@@ -146,5 +168,10 @@ describe("fetchPluginRuntimeAttribution", () => {
       pluginVersionIds: ["pv_a"],
     });
     expect(result?.serverOrigins.get("srv_a")?.bundleHash).toBeNull();
+    expect(result?.unattributedVersionIds).toEqual([]);
   });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });

@@ -60,7 +60,36 @@ export interface PluginRuntimeAttribution {
   serverOrigins: Map<string, AttributedPluginVersion>;
   /** Materialized skill id → its namespaced ref + contributing version. */
   skillOrigins: Map<string, AttributedPluginSkill>;
+  /**
+   * Pinned versions the probe could not attribute — because they became
+   * unavailable between the environment resolution and this read, or answered
+   * in a shape we could not parse.
+   *
+   * NON-EMPTY MEANS THE MAPS ABOVE ARE INCOMPLETE. A caller must surface that
+   * (as a capability problem), never treat a short map as a complete answer:
+   * the affected servers and skills still run, and silently losing their
+   * provenance is exactly the failure `problems` exists to prevent.
+   */
+  unattributedVersionIds: string[];
 }
+
+/**
+ * How long the whole attribution fan-out may take before we give up.
+ *
+ * `ConvexHttpClient.query` has no per-call deadline, so without this a Convex
+ * read that never settles blocks the chat route BEFORE the turn starts — the
+ * user's send hangs forever for the sake of a provenance LABEL. Five seconds is
+ * far beyond a small indexed read and far below anything a person would wait
+ * through; on expiry we return `null` and the turn runs with origin unreported,
+ * the same as every other failure here.
+ *
+ * The timed-out queries are left to settle on their own rather than aborted via
+ * `setFetchOptions`: that setter mutates the SHARED client the route also uses
+ * for the environment resolution, so an attribution deadline would silently
+ * become that read's deadline too. Dangling reads are harmless — they are pure
+ * queries whose results we drop.
+ */
+const ATTRIBUTION_TIMEOUT_MS = 5_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -143,19 +172,33 @@ export async function fetchPluginRuntimeAttribution(
   args: { projectId: string; pluginVersionIds: string[] }
 ): Promise<PluginRuntimeAttribution | null> {
   if (args.pluginVersionIds.length === 0) {
-    return { serverOrigins: new Map(), skillOrigins: new Map() };
+    return {
+      serverOrigins: new Map(),
+      skillOrigins: new Map(),
+      unattributedVersionIds: [],
+    };
   }
   let probed: Array<Awaited<ReturnType<typeof probeOneVersion>>>;
   try {
-    probed = await Promise.all(
-      args.pluginVersionIds.map((id) =>
-        probeOneVersion(client, args.projectId, id)
-      )
-    );
+    probed = await Promise.race([
+      Promise.all(
+        args.pluginVersionIds.map((id) =>
+          probeOneVersion(client, args.projectId, id)
+        )
+      ),
+      // Rejects on expiry, landing in the same catch as any other failure.
+      new Promise<never>((_resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error("attribution probe timed out")),
+          ATTRIBUTION_TIMEOUT_MS
+        );
+        timer.unref?.();
+      }),
+    ]);
   } catch (error) {
-    // Includes the deploy-skew case (`Could not find public function`). One
-    // failed probe poisons the whole map: a partial map would silently present
-    // an unattributed plugin server as an ordinary one.
+    // Includes the deploy-skew case (`Could not find public function`) and the
+    // deadline above. One failed probe poisons the whole map: a partial map
+    // would silently present an unattributed plugin server as an ordinary one.
     logger.warn(
       "[plugin-attribution] probe failed; running without plugin origin",
       { error: error instanceof Error ? error.message : String(error) }
@@ -165,8 +208,14 @@ export async function fetchPluginRuntimeAttribution(
 
   const serverOrigins = new Map<string, AttributedPluginVersion>();
   const skillOrigins = new Map<string, AttributedPluginSkill>();
-  for (const result of probed) {
-    if (!result) continue;
+  const unattributedVersionIds: string[] = [];
+  for (const [index, result] of probed.entries()) {
+    if (!result) {
+      // The version resolved for the environment but not for this probe — a
+      // torn read. Its components still run; we just cannot name their origin.
+      unattributedVersionIds.push(args.pluginVersionIds[index]);
+      continue;
+    }
     for (const serverId of result.serverIds) {
       // First pin wins, matching the backend's dedupe of `effectiveServerIds`
       // in pin order. Two versions of the same plugin can materialize the same
@@ -185,5 +234,5 @@ export async function fetchPluginRuntimeAttribution(
       }
     }
   }
-  return { serverOrigins, skillOrigins };
+  return { serverOrigins, skillOrigins, unattributedVersionIds };
 }

@@ -161,7 +161,9 @@ function buildListing(
     (entry) => `- **${entry.ref}** (${entry.origin}): ${entry.description}`
   );
   // Absence is semantic: say that skills were dropped rather than presenting a
-  // short list as if it were the whole set.
+  // short list as if it were the whole set. This notice is deliberately emitted
+  // OUTSIDE the budget — it exists precisely to report that the budget bit, so
+  // suppressing it to fit would hide the omission it announces.
   const notice =
     omittedRefs.length > 0
       ? `\n\n(${omittedRefs.length} more skill${

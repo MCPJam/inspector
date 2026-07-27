@@ -382,6 +382,11 @@ export async function streamWebChatTurn(
             skillsSource: {
               kind: "resolved" as const,
               capabilities: prepare.effectiveCapabilities,
+              // So a supporting-file read stops when the client disconnects
+              // instead of holding a worker for its full fetch timeout.
+              ...(runtime.abortSignal
+                ? { abortSignal: runtime.abortSignal }
+                : {}),
             },
           }
         : {}),

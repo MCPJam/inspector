@@ -85,6 +85,30 @@ describe("applySkillMetadataBudget", () => {
     expect(result.omittedRefs).toEqual(["big"]);
   });
 
+  it("charges the origin label, not just ref + description", () => {
+    // Same ref and description, one with an origin: the origin must cost.
+    const withoutOrigin = applySkillMetadataBudget(
+      [
+        { ref: "a", description: "x".repeat(50) },
+        { ref: "b", description: "y".repeat(50) },
+      ],
+      140
+    );
+    const withOrigin = applySkillMetadataBudget(
+      [
+        { ref: "a", description: "x".repeat(50), origin: "plugin alpha@aaaa1111" },
+        { ref: "b", description: "y".repeat(50), origin: "plugin alpha@aaaa1111" },
+      ],
+      140
+    );
+    expect(withoutOrigin.truncatedRefs).toEqual([]);
+    expect(withoutOrigin.omittedRefs).toEqual([]);
+    // The uncharged version fit both entries; charging the origin does not.
+    expect(
+      withOrigin.truncatedRefs.length + withOrigin.omittedRefs.length
+    ).toBeGreaterThan(0);
+  });
+
   it("preserves extra fields on the entries it admits", () => {
     const result = applySkillMetadataBudget(
       [{ ref: "alpha", description: "x".repeat(500), origin: "plugin a" }],

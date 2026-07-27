@@ -157,11 +157,20 @@ export function resolveEffectiveCapabilities(
   const problems: RuntimeCapabilityProblem[] = [];
   const pinned = spec.pluginVersions ?? [];
 
-  if (attribution === null && pinned.length > 0) {
+  // Both "no attribution at all" and "attribution missing some pins" are the
+  // same fact to a consumer: some of what runs has no stated origin. A short
+  // map reported as complete is the silence `problems` exists to prevent.
+  const unattributedCount =
+    attribution === null
+      ? pinned.length
+      : attribution.unattributedVersionIds.length;
+  if (unattributedCount > 0) {
     problems.push({
       code: "plugin_origin_unavailable",
       message:
-        "This turn's pinned plugin versions could not be attributed to their servers and skills. Tools and skills still run; their plugin origin is not shown.",
+        unattributedCount === pinned.length
+          ? "This turn's pinned plugin versions could not be attributed to their servers and skills. Tools and skills still run; their plugin origin is not shown."
+          : `${unattributedCount} of this turn's ${pinned.length} pinned plugin versions could not be attributed to their servers and skills. Those tools and skills still run; their plugin origin is not shown.`,
     });
   }
 
@@ -198,12 +207,16 @@ export function resolveEffectiveCapabilities(
   const pluginServerIds: string[] = [];
   for (const entry of connectable) {
     const origin = attribution?.serverOrigins.get(entry.serverId);
-    // `source === 'plugin'` is the backend's own verdict and outranks our
-    // hint; the hint covers older backends that omit `source`.
+    // The backend's `source` is the verdict, in BOTH directions: an entry it
+    // labelled `host_or_group` or `override` stays non-plugin even if a stale
+    // or torn attribution map still has an entry for that id. Attribution feeds
+    // what we SAY about a server, never how we classify it. Our own signals —
+    // the attribution map and the base `pluginServerIds` hint — apply only when
+    // an older backend omitted `source` entirely.
     const isPlugin =
       entry.source === "plugin" ||
-      origin !== undefined ||
-      (entry.source === undefined && pluginIdHint.has(entry.serverId));
+      (entry.source === undefined &&
+        (origin !== undefined || pluginIdHint.has(entry.serverId)));
     if (isPlugin) {
       pluginServerIds.push(entry.serverId);
     } else {
@@ -213,7 +226,12 @@ export function resolveEffectiveCapabilities(
       serverId: entry.serverId,
       name: entry.name,
       source: entry.source ?? null,
-      ...(origin ? { plugin: toRuntimePluginVersion(origin) } : {}),
+      // Gated on `isPlugin` for the same reason the classification is: a stale
+      // attribution entry must not stamp a plugin origin onto the trace frames
+      // of a server the backend called `host_or_group` or `override`.
+      ...(isPlugin && origin
+        ? { plugin: toRuntimePluginVersion(origin) }
+        : {}),
     });
   }
 

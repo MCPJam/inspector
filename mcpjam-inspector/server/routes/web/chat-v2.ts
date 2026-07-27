@@ -237,11 +237,20 @@ chatV2.post("/", async (c) => {
         environmentSpec,
         attribution,
       );
-      for (const problem of effectiveCapabilities.problems) {
-        logger.warn("[chat-v2] effective capability problem", {
+      if (effectiveCapabilities.problems.length > 0) {
+        // Codes and ids only, never `problem.message` — those messages
+        // interpolate the skill's own NAME, which is user-authored content and
+        // is held out of the provenance telemetry below for the same reason.
+        // One aggregated line, so a collision-heavy environment does not emit
+        // an entry per problem per turn.
+        logger.warn("[chat-v2] effective capability problems", {
           environmentId: environmentSpec.environmentRef.environmentId,
-          code: problem.code,
-          message: problem.message,
+          codes: effectiveCapabilities.problems.map(
+            (problem) => problem.code,
+          ),
+          skillIds: effectiveCapabilities.problems.flatMap((problem) =>
+            "skillId" in problem ? [problem.skillId] : [],
+          ),
         });
       }
       // Plugin origin on every RPC frame this turn produces, so a trace answers
