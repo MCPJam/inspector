@@ -1,6 +1,16 @@
 import type { MCPListTasksResult, MCPTask } from "@mcpjam/sdk/browser";
 import { authFetch } from "@/lib/session-token";
 import { ensureLocalMode, runByMode } from "@/lib/apis/mode-client";
+import { WebApiError } from "@/lib/apis/web/base";
+import {
+  cancelHostedTask,
+  getHostedTask,
+  getHostedTaskCapabilities,
+  getHostedTaskResult,
+  getHostedTasksBatch,
+  listHostedTasks,
+  updateHostedTask,
+} from "@/lib/apis/web/tasks-api";
 
 // Re-export SDK types for convenience
 export type Task = MCPTask;
@@ -38,12 +48,36 @@ export class TaskUnknownOrExpiredError extends Error {
   readonly code = "task-unknown-or-expired";
 }
 
+/**
+ * Hosted task-gone signal. `TASK_NOT_FOUND` is the route's stable code for a
+ * server that no longer knows the task; a structureless 404 (no code) means an
+ * older replica without the task routes and must NOT be mistaken for it.
+ */
+function rethrowHostedTaskError(error: unknown): never {
+  if (error instanceof WebApiError && error.code === "TASK_NOT_FOUND") {
+    throw new TaskUnknownOrExpiredError(error.message);
+  }
+  throw error;
+}
+
 export async function listTasks(
   serverId: string,
   cursor?: string,
 ): Promise<ListTasksResult> {
-  ensureLocalMode("Tasks are not supported in hosted mode");
+  return runByMode({
+    hosted: () =>
+      listHostedTasks({
+        serverNameOrId: serverId,
+        cursor,
+      }) as Promise<ListTasksResult>,
+    local: () => listTasksLocal(serverId, cursor),
+  });
+}
 
+async function listTasksLocal(
+  serverId: string,
+  cursor?: string,
+): Promise<ListTasksResult> {
   const res = await authFetch("/api/mcp/tasks/list", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -65,8 +99,40 @@ export async function getTask(
   serverId: string,
   taskId: string,
 ): Promise<TaskEnvelope> {
-  ensureLocalMode("Tasks are not supported in hosted mode");
+  return runByMode({
+    hosted: async () => {
+      try {
+        return (await getHostedTask({
+          serverNameOrId: serverId,
+          taskId,
+        })) as TaskEnvelope;
+      } catch (error) {
+        rethrowHostedTaskError(error);
+      }
+    },
+    local: () => getTaskLocal(serverId, taskId),
+  });
+}
 
+/** Hosted-only: read every tracked task for one server over one connection. */
+export interface TaskBatchEntry {
+  taskId: string;
+  task?: Record<string, unknown>;
+  error?: string;
+  code?: string;
+}
+
+export async function getTasksBatch(
+  serverId: string,
+  taskIds: string[],
+): Promise<{ wire: TasksWire; tasks: TaskBatchEntry[] }> {
+  return getHostedTasksBatch({ serverNameOrId: serverId, taskIds });
+}
+
+async function getTaskLocal(
+  serverId: string,
+  taskId: string,
+): Promise<TaskEnvelope> {
   const res = await authFetch("/api/mcp/tasks/get", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -95,8 +161,27 @@ export async function updateTask(
   taskId: string,
   inputResponses: Record<string, unknown>,
 ): Promise<TaskEnvelope> {
-  ensureLocalMode("Tasks are not supported in hosted mode");
+  return runByMode({
+    hosted: async () => {
+      try {
+        return (await updateHostedTask({
+          serverNameOrId: serverId,
+          taskId,
+          inputResponses,
+        })) as TaskEnvelope;
+      } catch (error) {
+        rethrowHostedTaskError(error);
+      }
+    },
+    local: () => updateTaskLocal(serverId, taskId, inputResponses),
+  });
+}
 
+async function updateTaskLocal(
+  serverId: string,
+  taskId: string,
+  inputResponses: Record<string, unknown>,
+): Promise<TaskEnvelope> {
   const res = await authFetch("/api/mcp/tasks/update", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -123,8 +208,16 @@ export async function getTaskResult(
   serverId: string,
   taskId: string,
 ): Promise<unknown> {
-  ensureLocalMode("Tasks are not supported in hosted mode");
+  return runByMode({
+    hosted: () => getHostedTaskResult({ serverNameOrId: serverId, taskId }),
+    local: () => getTaskResultLocal(serverId, taskId),
+  });
+}
 
+async function getTaskResultLocal(
+  serverId: string,
+  taskId: string,
+): Promise<unknown> {
   const res = await authFetch("/api/mcp/tasks/result", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -149,8 +242,16 @@ export async function cancelTask(
   serverId: string,
   taskId: string,
 ): Promise<{ wire: TasksWire; task: Task | null }> {
-  ensureLocalMode("Tasks are not supported in hosted mode");
+  return runByMode({
+    hosted: () => cancelHostedTask({ serverNameOrId: serverId, taskId }),
+    local: () => cancelTaskLocal(serverId, taskId),
+  });
+}
 
+async function cancelTaskLocal(
+  serverId: string,
+  taskId: string,
+): Promise<{ wire: TasksWire; task: Task | null }> {
   const res = await authFetch("/api/mcp/tasks/cancel", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -175,10 +276,10 @@ export async function getTaskCapabilities(
   serverId: string,
 ): Promise<TasksSupport> {
   return runByMode({
-    hosted: async () => {
-      void serverId;
-      return NO_TASKS_SUPPORT;
-    },
+    hosted: () =>
+      getHostedTaskCapabilities({
+        serverNameOrId: serverId,
+      }) as Promise<TasksSupport>,
     local: async () => {
       const res = await authFetch("/api/mcp/tasks/capabilities", {
         method: "POST",
@@ -212,11 +313,21 @@ export interface ProgressEvent {
 }
 
 // Get the latest progress for a server
+// Hosted connections are ephemeral, so there is no notification stream to
+// collect progress from: polling is the spec-guaranteed path and the hosted
+// UI hides progress entirely.
 export async function getLatestProgress(
   serverId: string,
 ): Promise<ProgressEvent | null> {
-  ensureLocalMode("Tasks are not supported in hosted mode");
+  return runByMode({
+    hosted: async () => null,
+    local: () => getLatestProgressLocal(serverId),
+  });
+}
 
+async function getLatestProgressLocal(
+  serverId: string,
+): Promise<ProgressEvent | null> {
   const res = await authFetch("/api/mcp/tasks/progress", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -238,8 +349,15 @@ export async function getLatestProgress(
 export async function getAllProgress(
   serverId: string,
 ): Promise<ProgressEvent[]> {
-  ensureLocalMode("Tasks are not supported in hosted mode");
+  return runByMode({
+    hosted: async () => [],
+    local: () => getAllProgressLocal(serverId),
+  });
+}
 
+async function getAllProgressLocal(
+  serverId: string,
+): Promise<ProgressEvent[]> {
   const res = await authFetch("/api/mcp/tasks/progress/all", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

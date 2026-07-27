@@ -1,4 +1,9 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import { isHostedMode } from "@/lib/apis/mode-client";
+import {
+  HOSTED_TASK_BATCH_LIMIT,
+  hostedPollIntervalMs,
+} from "@/shared/hosted-tasks";
 import { Button } from "@mcpjam/design-system/button";
 import { Badge } from "@mcpjam/design-system/badge";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
@@ -24,6 +29,7 @@ import {
   updateTask,
   cancelTask,
   getLatestProgress,
+  getTasksBatch,
   getTaskCapabilities,
   TaskUnknownOrExpiredError,
   type ProgressEvent,
@@ -32,7 +38,6 @@ import {
 import {
   getTrackedTasksForServer,
   getTrackedTaskById,
-  untrackTask,
   markTaskExpired,
   clearTrackedTasksForServer,
   getDismissedTaskIds,
@@ -136,6 +141,9 @@ export function TasksTab({
 
   const wire = taskCapabilities?.wire ?? "none";
   const isExtensionWire = wire === "extension";
+  // Hosted reads go through ephemeral per-request connections: batch them and
+  // never poll faster than the floor, because each tick is a full connect.
+  const hosted = isHostedMode();
 
   const selectedTask = useMemo(() => {
     return tasks.find((t) => t.taskId === selectedTaskId) ?? null;
@@ -227,8 +235,14 @@ export function TasksTab({
   // Priority: user override > server suggestion > user default
   // Per MCP Tasks spec: "Requestors SHOULD respect the pollInterval provided in responses"
   // But we allow user to explicitly override if they want
-  const pollInterval =
+  const requestedPollInterval =
     userOverride ?? serverSuggestedPollInterval ?? userPollInterval;
+  const pollInterval = hosted
+    ? hostedPollIntervalMs(
+        requestedPollInterval,
+        serverSuggestedPollInterval ?? undefined,
+      )
+    : requestedPollInterval;
   const usingServerInterval =
     serverSuggestedPollInterval !== null && userOverride === null;
 
@@ -292,26 +306,60 @@ export function TasksTab({
 
       // Get locally tracked tasks and fetch their current status
       const trackedTasks = getTrackedTasksForServer(serverName);
-      const trackedTaskStatuses = await Promise.all(
-        trackedTasks
-          .filter((t) => !serverTaskIds.has(t.taskId)) // Skip if already in server list
-          .filter((t) => !dismissedIds.has(t.taskId)) // Skip dismissed tasks
-          .map(async (tracked) => {
+      const pendingIds = trackedTasks
+        .filter((t) => !serverTaskIds.has(t.taskId))
+        .filter((t) => !dismissedIds.has(t.taskId))
+        .map((t) => t.taskId);
+
+      const onUnknownTask = (taskId: string) => {
+        // Unknown/expired is not an error: flag it and keep the handle so the
+        // user sees what happened instead of a silent removal. Any other
+        // failure (transient connect, structureless 404 from an older hosted
+        // replica) keeps the handle untouched and retries on the next tick.
+        markTaskExpired(taskId, serverName);
+      };
+
+      let trackedTaskStatuses: (NormalizedTask | null)[];
+      if (hosted && pendingIds.length > 0) {
+        // One ephemeral connection per server per tick instead of one per task.
+        const batches: string[][] = [];
+        for (let i = 0; i < pendingIds.length; i += HOSTED_TASK_BATCH_LIMIT) {
+          batches.push(pendingIds.slice(i, i + HOSTED_TASK_BATCH_LIMIT));
+        }
+        const entries = (
+          await Promise.all(
+            batches.map(async (ids) => {
+              try {
+                return (await getTasksBatch(serverName, ids)).tasks;
+              } catch {
+                return [];
+              }
+            }),
+          )
+        ).flat();
+        trackedTaskStatuses = entries.map((entry) => {
+          if (entry.code === "task-unknown-or-expired") {
+            onUnknownTask(entry.taskId);
+            return null;
+          }
+          if (!entry.task) return null;
+          return normalizeTask(wire, entry.task);
+        });
+      } else {
+        trackedTaskStatuses = await Promise.all(
+          pendingIds.map(async (taskId) => {
             try {
-              const envelope = await getTask(serverName, tracked.taskId);
+              const envelope = await getTask(serverName, taskId);
               return normalizeTask(envelope.wire, envelope.task);
             } catch (err) {
               if (err instanceof TaskUnknownOrExpiredError) {
-                // Unknown/expired is not an error: flag it and keep the handle
-                // so the user sees what happened instead of a silent removal.
-                markTaskExpired(tracked.taskId, serverName);
-                return null;
+                onUnknownTask(taskId);
               }
-              untrackTask(tracked.taskId, serverName);
               return null;
             }
           }),
-      );
+        );
+      }
 
       // Merge server tasks with tracked tasks (tracked tasks first for recency)
       // Filter out dismissed tasks from server results
@@ -337,7 +385,7 @@ export function TasksTab({
     } finally {
       setFetchingTasks(false);
     }
-  }, [serverName, taskCapabilities]);
+  }, [serverName, taskCapabilities, hosted, wire]);
 
   // Handle elicitation response from the dialog
   const handleElicitationResponse = useCallback(
@@ -563,8 +611,9 @@ export function TasksTab({
   // Poll for progress when there are working tasks (only when tab is active)
   useEffect(() => {
     if (!serverName || !isActive) return;
-    // Progress notifications are a legacy in-core affordance.
-    if (isExtensionWire) return;
+    // Progress notifications are a legacy in-core affordance, and hosted
+    // connections are ephemeral so there is no notification stream at all.
+    if (isExtensionWire || hosted) return;
 
     // Check if any task is currently working
     const hasWorkingTasks = tasks.some((t) => t.status === "working");
@@ -589,7 +638,7 @@ export function TasksTab({
     const interval = setInterval(fetchProgress, 500);
 
     return () => clearInterval(interval);
-  }, [serverName, tasks, isActive, isExtensionWire]);
+  }, [serverName, tasks, isActive, isExtensionWire, hosted]);
 
   // Agent bridge: SNAPSHOT-ONLY (no tools). Tasks is a read-only view of a
   // server's long-running tasks (agentTools kind "none") the agent may OBSERVE.
@@ -810,8 +859,10 @@ export function TasksTab({
                           <span className="text-[10px] text-muted-foreground">
                             {formatRelativeTime(task.createdAt)}
                           </span>
-                          {/* Inline progress for working tasks */}
-                          {task.status === "working" && (
+                          {/* Inline progress for working tasks. Hosted polls
+                              through ephemeral connections, so no progress
+                              notifications ever arrive. */}
+                          {task.status === "working" && !hosted && (
                             <TaskInlineProgress
                               serverId={serverName}
                               startedAt={task.createdAt}
@@ -963,6 +1014,16 @@ export function TasksTab({
                   <RefreshCw className="h-4 w-4 text-muted-foreground animate-spin mb-2" />
                   <p className="text-xs text-muted-foreground">
                     Fetching result...
+                  </p>
+                </div>
+              ) : selectedTask.status === "input_required" &&
+                hosted &&
+                !isExtensionWire ? (
+                <div className="h-full flex flex-col items-center justify-center text-center">
+                  <AlertCircle className="h-4 w-4 text-warning mb-2" />
+                  <p className="text-xs text-muted-foreground">
+                    This task requires an interactive session (use the local
+                    inspector)
                   </p>
                 </div>
               ) : selectedTask.status === "input_required" ? (

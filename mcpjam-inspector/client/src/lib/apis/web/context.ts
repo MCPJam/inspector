@@ -3,6 +3,10 @@ import { getGuestBearerToken } from "@/lib/guest-session";
 import { CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE } from "@/lib/client-config";
 import { BootstrapNotReadyError } from "@/lib/app-ready";
 import {
+  clearTrackedTasksForScope,
+  setTrackedTaskScope,
+} from "@/lib/task-tracker";
+import {
   getDefaultClientCapabilities,
   type McpProtocolVersion,
   type XaaEnterprisePolicy,
@@ -127,6 +131,16 @@ function shouldPreferGuestBearer(): boolean {
 }
 
 export function setApiContext(next: ApiContext | null): void {
+  // Task handles are bearer-ish and scoped to the actor that created them:
+  // rescope the tracker on every context change, and drop the previous
+  // actor's handles when the project/org actually changes (logout, switch).
+  const previousProjectId = apiContext.projectId ?? undefined;
+  const nextProjectId = next?.projectId ?? undefined;
+  if (previousProjectId && previousProjectId !== nextProjectId) {
+    clearTrackedTasksForScope(previousProjectId);
+  }
+  setTrackedTaskScope(nextProjectId);
+
   apiContext = next
     ? {
         ...next,
