@@ -5,7 +5,7 @@ icon: "git-branch"
 tag: "Preview"
 ---
 
-The inspector can speak more than one version of the MCP protocol. By default (**Automatic**), unpinned HTTP connections probe `server/discover` for 2026 support and fall back to the legacy `initialize` negotiation. You can also pin a specific version when you want to test an exact revision — including the **2026-07-28 stateless RC** or any earlier stable release.
+The inspector can speak more than one version of the MCP protocol. By default (**Automatic**), unpinned connections probe `server/discover` for 2026 support and fall back to the legacy `initialize` negotiation — on both HTTP and stdio. You can also pin a specific version when you want to test an exact revision — including the **2026-07-28 stateless RC** or any earlier stable release.
 
 <Warning>
   **Migration required if you used the old Draft version.** The previous `DRAFT-2026-v1` placeholder has been retired and replaced with the upstream RC literal `2026-07-28`. If you had any servers pinned to `DRAFT-2026-v1`, you must re-select the protocol version in the inspector UI. Stored `DRAFT-2026-v1` pins are rejected by spec-conforming servers with a `-32004 UnsupportedProtocolVersionError`.
