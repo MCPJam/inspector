@@ -1,8 +1,5 @@
 import type { HttpServerConfig } from "../mcp-client-manager/index.js";
-import {
-  isKnownProtocolVersion,
-  isStatelessProtocolVersion,
-} from "../mcp-client-manager/mcp-protocol-version.js";
+import { isKnownProtocolVersion } from "../mcp-client-manager/mcp-protocol-version.js";
 import {
   listPrompts,
   listResources,
@@ -11,6 +8,7 @@ import {
 } from "../operations.js";
 import { CORE_CHECKS } from "./checks/core.js";
 import { RESOURCE_CHECKS } from "./checks/resources.js";
+import { MODERN_CHECK_METADATA, runModernChecks } from "./checks/modern.js";
 import { runProtocolChecks } from "./checks/protocol.js";
 import { runSecurityChecks } from "./checks/security.js";
 import { runTransportChecks } from "./checks/transport.js";
@@ -31,10 +29,20 @@ import type {
   MCPClientCheckDefinition,
   MCPConformanceConfig,
   MCPConformanceResult,
+  MCPReadinessWarning,
+  MCPServerSurfaceSnapshot,
   NormalizedMCPConformanceConfig,
+  RawHttpCheckContext,
 } from "./types.js";
 import { CHECK_ERAS, MCP_CHECK_CATEGORIES } from "./types.js";
-import { normalizeMCPConformanceConfig } from "./validation.js";
+import {
+  collectClientReadiness,
+  collectRawReadiness,
+} from "./readiness.js";
+import {
+  eraForProtocolVersion,
+  normalizeMCPConformanceConfig,
+} from "./validation.js";
 
 const CLIENT_CHECKS = [
   ...CORE_CHECKS,
@@ -52,6 +60,12 @@ const RAW_CHECK_CATEGORY_ENTRIES: ReadonlyArray<
   ["server-sse-polling-session", "transport"],
   ["server-accepts-multiple-post-streams", "transport"],
   ["server-sse-streams-functional", "transport"],
+  ...Object.values(MODERN_CHECK_METADATA).map(
+    (check): readonly [MCPCheckId, MCPCheckCategory] => [
+      check.id,
+      check.category,
+    ],
+  ),
 ];
 
 const CHECK_CATEGORY_BY_ID = new Map<MCPCheckId, MCPCheckCategory>(
@@ -201,6 +215,8 @@ async function runClientChecks(
 ): Promise<{
   checks: MCPCheckResult[];
   config: NormalizedMCPConformanceConfig;
+  surface?: MCPServerSurfaceSnapshot;
+  readiness: MCPReadinessWarning[];
 }> {
   const selectedClientChecks = CLIENT_CHECKS.filter((check) =>
     selectedCheckIds.has(check.id),
@@ -213,7 +229,7 @@ async function runClientChecks(
     selectedClientChecks.length === 0 &&
     config.protocolVersion !== undefined
   ) {
-    return { checks: [], config };
+    return { checks: [], config, readiness: [] };
   }
 
   try {
@@ -239,15 +255,9 @@ async function runClientChecks(
             ? {
                 ...config,
                 protocolVersion: negotiatedProtocolVersion,
-                era: isStatelessProtocolVersion(negotiatedProtocolVersion)
-                  ? "modern"
-                  : "legacy",
+                era: eraForProtocolVersion(negotiatedProtocolVersion),
               }
             : config;
-
-        if (selectedClientChecks.length === 0) {
-          return { checks: [], config: effectiveConfig };
-        }
 
         const [toolsResult, promptsResult, resourcesResult, availableResourceTemplates] =
           await Promise.all([
@@ -257,17 +267,43 @@ async function runClientChecks(
             safeListResourceTemplates({ manager, serverId }),
           ]);
 
+        // A server may answer a list method with an unusable payload; the
+        // snapshot models "nothing discovered" rather than throwing, so a
+        // missing optional surface never aborts the run.
+        const tools = toolsResult?.tools ?? [];
+        const prompts = promptsResult?.prompts ?? [];
+        const resources = resourcesResult?.resources ?? [];
+
+        const surface: MCPServerSurfaceSnapshot = {
+          tools,
+          toolNames: tools.map((tool) => tool.name),
+          promptNames: prompts.map((prompt) => prompt.name),
+          resourceUris: resources.map((resource) => resource.uri),
+          resourceTemplateUris: availableResourceTemplates,
+          serverCapabilities: initializationInfo?.serverCapabilities as
+            | Record<string, unknown>
+            | undefined,
+        };
+
         const ctx: MCPClientCheckContext = {
           manager,
           client,
           serverId,
           config: effectiveConfig,
           initializationInfo,
-          availableTools: toolsResult.tools.map((tool) => tool.name),
-          availablePrompts: promptsResult.prompts.map((prompt) => prompt.name),
-          availableResources: resourcesResult.resources.map((resource) => resource.uri),
+          availableTools: surface.toolNames,
+          availablePrompts: surface.promptNames,
+          availableResources: surface.resourceUris,
           availableResourceTemplates,
         };
+
+        // Readiness is advisory and must not perturb the verdict, so it is
+        // gathered before the checks run and never consulted again.
+        const readiness = await collectClientReadiness(ctx, surface);
+
+        if (selectedClientChecks.length === 0) {
+          return { checks: [], config: effectiveConfig, surface, readiness };
+        }
 
         const results: MCPCheckResult[] = [];
         let connectionLost = false;
@@ -312,7 +348,12 @@ async function runClientChecks(
           }
         }
 
-        return { checks: results, config: effectiveConfig };
+        return {
+          checks: results,
+          config: effectiveConfig,
+          surface,
+          readiness,
+        };
       },
       {
         clientName: config.clientName,
@@ -362,6 +403,7 @@ async function runClientChecks(
               )),
         ),
         config,
+        readiness: [],
       };
     }
 
@@ -395,7 +437,7 @@ async function runClientChecks(
       }
     }
 
-    return { checks, config };
+    return { checks, config, readiness: [] };
   }
 }
 
@@ -414,16 +456,25 @@ export class MCPConformanceTest {
       selectedCheckIds,
     );
 
-    const rawContext = {
+    const rawContext: RawHttpCheckContext = {
       config: clientRun.config,
       serverUrl: clientRun.config.serverUrl,
       fetchFn: clientRun.config.fetchFn,
+      surface: clientRun.surface,
     };
 
-    const [protocolChecks, securityChecks, transportChecks] = await Promise.all([
+    const [
+      protocolChecks,
+      securityChecks,
+      transportChecks,
+      modernChecks,
+      rawReadiness,
+    ] = await Promise.all([
       runProtocolChecks(rawContext, selectedCheckIds),
       runSecurityChecks(rawContext, selectedCheckIds),
       runTransportChecks(rawContext, selectedCheckIds),
+      runModernChecks(rawContext, selectedCheckIds),
+      collectRawReadiness(rawContext),
     ]);
 
     const checks = [
@@ -431,16 +482,20 @@ export class MCPConformanceTest {
       ...protocolChecks,
       ...securityChecks,
       ...transportChecks,
+      ...modernChecks,
     ];
     const categorySummary = summarizeChecks(checks);
 
     return {
+      // Readiness is deliberately absent from this expression: the verdict is
+      // a statement about MUSTs only (§15.4).
       passed: checks.every((check) => check.status !== "failed"),
       serverUrl: this.config.serverUrl,
       checks,
       summary: buildSummary(checks),
       durationMs: Date.now() - startedAt,
       categorySummary,
+      readiness: [...clientRun.readiness, ...rawReadiness],
     };
   }
 }

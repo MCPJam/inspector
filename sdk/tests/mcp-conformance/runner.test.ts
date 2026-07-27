@@ -1,4 +1,5 @@
 import {
+  CHECK_ERAS,
   MCP_CHECK_IDS,
   MCPConformanceTest,
 } from "../../src/mcp-conformance/index.js";
@@ -18,7 +19,20 @@ describe("MCPConformanceTest", () => {
 
       expect(result.passed).toBe(true);
       expect(result.checks).toHaveLength(MCP_CHECK_IDS.length);
-      expect(result.checks.every((check) => check.status === "passed")).toBe(true);
+      // Byte-identity guard: on a legacy server every check that applies to
+      // the legacy era still passes exactly as it did before Phase 7, and the
+      // modern-only checks are era-SKIPPED (never passed, never failed).
+      for (const check of result.checks) {
+        const applies = CHECK_ERAS[check.id].includes("legacy");
+        expect([check.id, check.status]).toEqual([
+          check.id,
+          applies ? "passed" : "skipped",
+        ]);
+      }
+      // Readiness is advisory only: it never contributes to the verdict.
+      expect(
+        result.readiness.every((item) => item.severity === "warning"),
+      ).toBe(true);
       expect(result.categorySummary.core.passed).toBe(5);
       expect(result.categorySummary.protocol.passed).toBe(1);
       expect(result.categorySummary.tools.passed).toBe(2);
