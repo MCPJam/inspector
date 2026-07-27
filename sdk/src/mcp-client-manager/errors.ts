@@ -101,27 +101,86 @@ function getNumericStatus(error: unknown): number | undefined {
 }
 
 /**
+ * The `SdkErrorCode` value the upstream client raises when AUTOMATIC version
+ * negotiation cannot establish an era (no modern overlap, or the
+ * `server/discover` probe itself failed). Matched by its stable string VALUE
+ * so recognition survives minification / cross-bundle boundaries without
+ * importing the runtime `SdkErrorCode` enum.
+ */
+const ERA_NEGOTIATION_FAILED_CODE = "ERA_NEGOTIATION_FAILED";
+
+/** True when `error` is an `SdkError(EraNegotiationFailed)` wrapper. */
+function isEraNegotiationError(error: unknown): boolean {
+  return (
+    !!error &&
+    typeof error === "object" &&
+    (error as { code?: unknown }).code === ERA_NEGOTIATION_FAILED_CODE
+  );
+}
+
+/**
+ * Unwrap the underlying transport error carried by an auto-negotiation probe
+ * failure.
+ *
+ * With auto activation an UNCONFIGURED connection probes with
+ * `server/discover`; when that probe hits an OAuth-gated endpoint the upstream
+ * client raises `SdkError(EraNegotiationFailed)` carrying the real transport
+ * error (e.g. `UnauthorizedError`) at `error.data.cause`. 401 recovery and
+ * connection telemetry must see the real 401 through that wrapper rather than
+ * treating the whole connect as an opaque negotiation failure — otherwise an
+ * unconfigured connect to a protected server would surface a generic
+ * negotiation error instead of triggering OAuth.
+ *
+ * Returns the innermost non-wrapper error; returns the input UNCHANGED when it
+ * is not an era-negotiation wrapper — so with activation OFF (where no probe,
+ * and therefore no wrapper, ever occurs) behavior is byte-identical.
+ */
+export function unwrapEraNegotiationCause(error: unknown): unknown {
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  while (isEraNegotiationError(current) && !seen.has(current)) {
+    seen.add(current);
+    const data = (current as { data?: unknown }).data;
+    const dataCause =
+      data && typeof data === "object"
+        ? (data as { cause?: unknown }).cause
+        : undefined;
+    const next = dataCause ?? (current as { cause?: unknown }).cause;
+    if (next === undefined || next === current) {
+      break;
+    }
+    current = next;
+  }
+  return current;
+}
+
+/**
  * Strictly detects HTTP 401 authorization failures.
  *
  * Unlike isAuthError, this intentionally does not treat 403 or generic
  * auth-looking messages as refreshable. OAuth refresh can repair an expired or
  * rejected access token; it cannot repair insufficient scope.
+ *
+ * Sees through an `SdkError(EraNegotiationFailed)` wrapper so an auto-probe
+ * 401 (unconfigured connect to an OAuth-gated server) is recognized — see
+ * {@link unwrapEraNegotiationCause}.
  */
 export function isUnauthorized401(error: unknown): boolean {
-  const numericStatus = getNumericStatus(error);
+  const target = unwrapEraNegotiationCause(error);
+  const numericStatus = getNumericStatus(target);
   if (numericStatus !== undefined) {
     return numericStatus === 401;
   }
 
-  if (!(error instanceof Error)) {
+  if (!(target instanceof Error)) {
     return false;
   }
 
-  if (error.name === "UnauthorizedError") {
+  if (target.name === "UnauthorizedError") {
     return true;
   }
 
-  const message = error.message.toLowerCase();
+  const message = target.message.toLowerCase();
   return /\b(?:http|status)[:\s-]*401\b/i.test(message);
 }
 
@@ -164,6 +223,9 @@ export function isAuthError(error: unknown): {
   isAuth: boolean;
   statusCode?: number;
 } {
+  // See through an auto-negotiation probe wrapper so a wrapped 401/403 is
+  // still classified as an auth error (identity for non-wrapped errors).
+  error = unwrapEraNegotiationCause(error);
   if (!(error instanceof Error)) {
     return { isAuth: false };
   }

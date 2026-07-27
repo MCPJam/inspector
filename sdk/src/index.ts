@@ -109,6 +109,13 @@ export {
   isStatelessProtocolVersion,
   type McpProtocolVersion,
 } from "./mcp-client-manager/index.js";
+// Phase 5 exit-gate: flag-gated auto-negotiation activation (default OFF).
+export {
+  resolveActivatedVersionNegotiation,
+  DEFAULT_VERSION_NEGOTIATION_ACTIVATION,
+  type VersionNegotiationActivation,
+  type ConnectionTransportKind,
+} from "./mcp-client-manager/index.js";
 
 // Response cache (SEP-2549) — per-call disposition + serve provenance
 export type {
@@ -116,6 +123,12 @@ export type {
   CacheScope,
   CacheHitEvent,
   CacheEventLogger,
+} from "./mcp-client-manager/index.js";
+// Phase 5 auto-negotiation-activation telemetry (new exports only).
+export type {
+  NegotiationOutcomeEvent,
+  NegotiationOutcomeLogger,
+  ConfiguredNegotiationMode,
 } from "./mcp-client-manager/index.js";
 export {
   ObservableResponseCache,
@@ -130,6 +143,7 @@ export {
   isMCPAuthError,
   isUnauthorized401,
   isInsufficientScopeError,
+  unwrapEraNegotiationCause,
   MCPTasksWireError,
   isMCPTasksWireError,
 } from "./mcp-client-manager/index.js";

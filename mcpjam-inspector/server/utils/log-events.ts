@@ -151,6 +151,23 @@ export type RequestEventMap = {
 
 export type SystemEventMap = {
   "mcp.connection.closed_with_pending_requests": { errorCode: string };
+  /**
+   * Phase 5 auto-negotiation-activation outcome, one line per connection
+   * attempt. Carries the full activation-checklist dimension set — configured
+   * mode + negotiated era + transport + surface + outcome + failure class —
+   * and no request payloads. Low-cardinality by construction.
+   */
+  "mcp.connection.negotiated": {
+    surface: string;
+    serverId: string;
+    transport: "http" | "stdio";
+    activationEnabled: boolean;
+    configuredMode: "auto" | "modern-pin" | "legacy";
+    outcome: "connected" | "failed";
+    negotiatedEra?: "legacy" | "modern";
+    negotiatedProtocolVersion?: string;
+    failureClass?: string;
+  };
   "process.unhandled_rejection": { errorCode: string };
   // Aggregated PostHog relay proxy counters, one line per flush interval
   // (see routes/relay.ts). Low-cardinality by construction; never emitted

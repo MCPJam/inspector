@@ -62,6 +62,8 @@ import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-aut
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup.js";
 import { fetchRemoteGuestJwks } from "./utils/guest-session-source.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy.js";
+import { versionNegotiationActivation } from "./utils/version-negotiation-activation.js";
+import { negotiationTelemetryLogger } from "./utils/negotiation-telemetry.js";
 import { initXAAIdpKeyPair, setXaaIdpLogger } from "@mcpjam/sdk";
 import { requestLogContextMiddleware } from "./middleware/request-log-context.js";
 import {
@@ -166,6 +168,9 @@ export async function createHonoApp() {
       // (see server/utils/cache-events.ts). Routes opt in per-request via
       // `withCacheEventCapture`; this callback is a no-op outside that scope.
       cacheEventLogger,
+      // Phase 5 auto-negotiation activation (default OFF) + its telemetry.
+      versionNegotiationActivation: versionNegotiationActivation(),
+      negotiationOutcomeLogger: negotiationTelemetryLogger("local-inspector"),
     }
   );
 

@@ -57,3 +57,88 @@ export function resolveVersionNegotiation(
   }
   return undefined;
 }
+
+/**
+ * The transport an outbound connection uses. Auto-negotiation on stdio spawns
+ * the server binary a SECOND time for the probe (a sibling process); HTTP
+ * probes with an extra `server/discover` request on the same origin. The
+ * distinction is load-bearing for activation policy — see
+ * {@link resolveActivatedVersionNegotiation}.
+ */
+export type ConnectionTransportKind = "http" | "stdio";
+
+/**
+ * Phase 5 exit-gate activation policy for AUTOMATIC era negotiation of
+ * UNCONFIGURED connections (no explicit `mcpProtocolVersion` pin).
+ *
+ * This is the product-level switch the migration plan (§13 "Auto-default
+ * activation") calls for: flipping unconfigured connections from the exact
+ * legacy `initialize` handshake to `versionNegotiation: { mode: "auto" }`
+ * changes DEFAULT connection behavior for every user, so it is gated rather
+ * than flipped in place. It is deliberately DEFAULT-OFF; the on-by-default
+ * flip is a separate reviewed step.
+ *
+ * Scope of the switch: it governs the UNCONFIGURED case only. Explicit pins
+ * are always honored regardless of activation — an explicit legacy pin stays
+ * byte-stable, and an explicit modern pin still negotiates the modern era
+ * (failing rather than silently falling back to legacy).
+ */
+export interface VersionNegotiationActivation {
+  /**
+   * Master switch. `false` (the default) ⇒ an unconfigured connection uses
+   * the SDK legacy default and stdio never auto-negotiates — byte-identical
+   * to the pre-activation behavior. `true` ⇒ unconfigured connections
+   * resolve to `auto` on BOTH transports.
+   */
+  enabled: boolean;
+}
+
+/**
+ * The default activation policy: OFF. Sharing one frozen value keeps every
+ * unconfigured construction site (SDK tests, CLI, hosted) byte-identical to
+ * the legacy default until a surface explicitly opts in.
+ */
+export const DEFAULT_VERSION_NEGOTIATION_ACTIVATION: VersionNegotiationActivation =
+  Object.freeze({ enabled: false });
+
+/**
+ * Resolve `ClientOptions.versionNegotiation` for a connection, applying the
+ * Phase 5 activation policy on top of {@link resolveVersionNegotiation}.
+ *
+ * - **Activation OFF** (default) — byte-identical to the pre-activation
+ *   default:
+ *   - `stdio` → `undefined` (the historical `initialize` path; stdio never
+ *     auto-negotiates);
+ *   - `http` with an explicit pin → the pin is honored exactly
+ *     (`resolveVersionNegotiation`): a modern pin negotiates modern (no
+ *     legacy fallback), a legacy pin stays byte-stable;
+ *   - `http` with NO pin → `undefined` (the exact legacy handshake, **not**
+ *     `auto`).
+ * - **Activation ON** — unconfigured connections auto-negotiate on BOTH
+ *   transports; explicit pins are still honored exactly. This is simply
+ *   {@link resolveVersionNegotiation} applied uniformly to http and stdio.
+ *
+ * The activation flag NEVER changes an explicit-pin outcome; it only decides
+ * whether the UNCONFIGURED case (and stdio at all) reaches `auto`.
+ */
+export function resolveActivatedVersionNegotiation(
+  mcpProtocolVersion: McpProtocolVersion | undefined,
+  transport: ConnectionTransportKind,
+  activation: VersionNegotiationActivation = DEFAULT_VERSION_NEGOTIATION_ACTIVATION
+): VersionNegotiationOptions | undefined {
+  if (!activation.enabled) {
+    // Deactivated: stdio stays on the historical initialize path, and an
+    // unconfigured HTTP connection uses the exact legacy handshake rather
+    // than probing. Explicit HTTP pins still route through the mapping so a
+    // modern pin fails-not-falls-back and a legacy pin is byte-stable.
+    if (transport === "stdio") {
+      return undefined;
+    }
+    if (mcpProtocolVersion === undefined) {
+      return undefined;
+    }
+    return resolveVersionNegotiation(mcpProtocolVersion);
+  }
+  // Activated: unconfigured → auto on both transports; explicit pins honored.
+  return resolveVersionNegotiation(mcpProtocolVersion);
+}

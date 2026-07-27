@@ -65,6 +65,12 @@ export type {
   CacheHitEvent,
   CacheEventLogger,
 } from "./types.js";
+// Phase 5 auto-negotiation-activation telemetry (new exports only).
+export type {
+  NegotiationOutcomeEvent,
+  NegotiationOutcomeLogger,
+  ConfiguredNegotiationMode,
+} from "./types.js";
 export {
   ObservableResponseCache,
   type ObservableResponseCacheOptions,
@@ -138,6 +144,7 @@ export {
   isUnauthorized401,
   isInsufficientScopeError,
   isMCPAuthError,
+  unwrapEraNegotiationCause,
   MCPTasksWireError,
   isMCPTasksWireError,
 } from "./errors.js";
@@ -210,6 +217,15 @@ export {
   isKnownProtocolVersion,
   isStatelessProtocolVersion,
 } from "./mcp-protocol-version.js";
+
+// Phase 5 exit-gate: flag-gated activation of automatic era negotiation for
+// unconfigured connections. New exports only. Default OFF.
+export {
+  resolveActivatedVersionNegotiation,
+  DEFAULT_VERSION_NEGOTIATION_ACTIVATION,
+  type VersionNegotiationActivation,
+  type ConnectionTransportKind,
+} from "./version-negotiation.js";
 
 // Era-neutral subscription coordinator (2026-07-28 `subscriptions/listen`
 // + legacy list-changed/`resources/subscribe`). New exports only.

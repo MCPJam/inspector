@@ -52,6 +52,8 @@ import type {
   ProgressHandler,
   RpcLogger,
   CacheEventLogger,
+  NegotiationOutcomeLogger,
+  ConfiguredNegotiationMode,
   Tool,
   AiSdkTool,
 } from "./types.js";
@@ -70,6 +72,7 @@ import {
   isAuthError,
   isUnauthorized401,
   isInsufficientScopeError,
+  unwrapEraNegotiationCause,
 } from "./errors.js";
 import {
   type RetryPolicy,
@@ -129,7 +132,11 @@ import {
 } from "./result-guards.js";
 import { wrapLegacyClient } from "./managed-mcp-client-factory.js";
 import { ObservableResponseCache } from "./observable-response-cache.js";
-import { resolveVersionNegotiation } from "./version-negotiation.js";
+import {
+  resolveActivatedVersionNegotiation,
+  DEFAULT_VERSION_NEGOTIATION_ACTIVATION,
+  type VersionNegotiationActivation,
+} from "./version-negotiation.js";
 import { DialectAwareJsonSchemaValidator } from "./dialect-aware-json-schema-validator.js";
 import { isStatelessProtocolVersion } from "./mcp-protocol-version.js";
 import { type ManagedMcpClient } from "./managed-mcp-client.js";
@@ -275,9 +282,15 @@ export class MCPClientManager {
   private readonly defaultRpcLogger?: RpcLogger;
   private readonly defaultProgressHandler?: ProgressHandler;
   private readonly cacheEventLogger?: CacheEventLogger;
+  private readonly negotiationOutcomeLogger?: NegotiationOutcomeLogger;
   private readonly defaultRetryPolicy: RetryPolicy;
   private readonly lazyConnect: boolean;
   private readonly elicitationTimeoutExtensionMs: number;
+  /**
+   * Phase 5 activation policy for AUTOMATIC era negotiation of unconfigured
+   * connections. Default OFF (see {@link DEFAULT_VERSION_NEGOTIATION_ACTIVATION}).
+   */
+  private readonly versionNegotiationActivation: VersionNegotiationActivation;
 
   // Progress token counter for uniqueness
   private progressTokenCounter = 0;
@@ -307,8 +320,12 @@ export class MCPClientManager {
     this.defaultRpcLogger = options.rpcLogger;
     this.defaultProgressHandler = options.progressHandler;
     this.cacheEventLogger = options.cacheEventLogger;
+    this.negotiationOutcomeLogger = options.negotiationOutcomeLogger;
     this.defaultRetryPolicy = normalizeRetryPolicy(options.retryPolicy);
     this.lazyConnect = options.lazyConnect ?? false;
+    this.versionNegotiationActivation =
+      options.versionNegotiationActivation ??
+      DEFAULT_VERSION_NEGOTIATION_ACTIVATION;
     this.elicitationTimeoutExtensionMs = Math.max(
       0,
       options.elicitationTimeoutExtensionMs ??
@@ -530,7 +547,12 @@ export class MCPClientManager {
     this.liveClientStates.set(serverId, state);
 
     try {
-      return await retryPromise;
+      const client = await retryPromise;
+      this.emitNegotiationOutcome(serverId, config, "connected", undefined);
+      return client;
+    } catch (error) {
+      this.emitNegotiationOutcome(serverId, config, "failed", error);
+      throw error;
     } finally {
       cleanup();
       const latestState = this.liveClientStates.get(serverId);
@@ -540,6 +562,78 @@ export class MCPClientManager {
           this.liveClientStates.delete(serverId);
         }
       }
+    }
+  }
+
+  /**
+   * Emit one Phase 5 auto-negotiation-activation telemetry event for a
+   * completed connection attempt. Fires only when a `negotiationOutcomeLogger`
+   * is wired, and NEVER throws into the connect path (a telemetry failure must
+   * not break a connection). Carries no request payloads.
+   */
+  private emitNegotiationOutcome(
+    serverId: string,
+    config: MCPServerConfig,
+    outcome: "connected" | "failed",
+    error: unknown
+  ): void {
+    const logger = this.negotiationOutcomeLogger;
+    if (!logger) {
+      return;
+    }
+    try {
+      const transport: "http" | "stdio" = this.isStdioConfig(config)
+        ? "stdio"
+        : "http";
+      const resolvedPin = this.isStdioConfig(config)
+        ? undefined
+        : config.mcpProtocolVersion;
+      const negotiation = resolveActivatedVersionNegotiation(
+        resolvedPin,
+        transport,
+        this.versionNegotiationActivation
+      );
+      const configuredMode: ConfiguredNegotiationMode =
+        negotiation === undefined
+          ? "legacy"
+          : negotiation.mode === "auto"
+            ? "auto"
+            : "modern-pin";
+
+      let negotiatedEra: "legacy" | "modern" | undefined;
+      let negotiatedProtocolVersion: string | undefined;
+      let failureClass: string | undefined;
+      if (outcome === "connected") {
+        negotiatedProtocolVersion =
+          this.getInitializationInfo(serverId)?.protocolVersion;
+        negotiatedEra = this.getManagedClient(serverId)?.getProtocolEra?.();
+      } else {
+        // Unwrap an auto-probe `SdkError(EraNegotiationFailed)` so the class
+        // reported is the real transport error (e.g. `UnauthorizedError`),
+        // not the opaque negotiation wrapper.
+        const cause = unwrapEraNegotiationCause(error);
+        failureClass =
+          (cause && typeof cause === "object"
+            ? ((cause as { name?: unknown }).name as string | undefined) ??
+              ((cause as { code?: unknown }).code as string | undefined)
+            : undefined) ??
+          (typeof cause === "string" ? cause : "unknown");
+      }
+
+      logger({
+        serverId,
+        transport,
+        activationEnabled: this.versionNegotiationActivation.enabled,
+        configuredMode,
+        outcome,
+        ...(negotiatedEra !== undefined ? { negotiatedEra } : {}),
+        ...(negotiatedProtocolVersion !== undefined
+          ? { negotiatedProtocolVersion }
+          : {}),
+        ...(failureClass !== undefined ? { failureClass } : {}),
+      });
+    } catch {
+      // Telemetry must never disturb connection control flow.
     }
   }
 
@@ -1526,9 +1620,15 @@ export class MCPClientManager {
       // re-validating. Predicate-based routing — stateful pins (or no
       // pin) route through the legacy upstream Client path; stateless
       // pins route through the preview client.
-      const resolvedProtocolVersion = !this.isStdioConfig(config)
-        ? config.mcpProtocolVersion
-        : undefined;
+      const transportKind = this.isStdioConfig(config) ? "stdio" : "http";
+      // stdio configs never carry a pin (`mcpProtocolVersion` is HTTP-only,
+      // and the UI does not expose a modern stdio pin). So the stdio pin is
+      // always undefined; under activation that undefined resolves to `auto`
+      // (the double-spawn probe), and OFF it stays on the legacy initialize
+      // path. HTTP keeps its per-server pin exactly as before.
+      const resolvedProtocolVersion = this.isStdioConfig(config)
+        ? undefined
+        : config.mcpProtocolVersion;
       const wantsStateless =
         resolvedProtocolVersion !== undefined &&
         isStatelessProtocolVersion(resolvedProtocolVersion);
@@ -1545,13 +1645,17 @@ export class MCPClientManager {
         (!wantsStateless && resolvedProtocolVersion !== undefined
           ? [resolvedProtocolVersion]
           : undefined);
-      // Automatic version negotiation is an HTTP-only default. Explicit
-      // stateful/modern pins keep their exact behavior, while stdio stays on
-      // the historical initialize path (the UI does not expose modern stdio
-      // negotiation yet).
-      const versionNegotiation = this.isStdioConfig(config)
-        ? undefined
-        : resolveVersionNegotiation(resolvedProtocolVersion);
+      // Phase 5 activation policy (default OFF). With activation OFF this is
+      // byte-identical to the pre-activation default: stdio stays on the
+      // historical initialize path and an unconfigured HTTP connection uses
+      // the exact legacy handshake (explicit pins still honored). With
+      // activation ON, unconfigured connections auto-negotiate on both
+      // transports. Explicit pins are honored regardless of the flag.
+      const versionNegotiation = resolveActivatedVersionNegotiation(
+        resolvedProtocolVersion,
+        transportKind,
+        this.versionNegotiationActivation
+      );
       const clientOptions: ClientOptions = {
         capabilities: clientCapabilities,
         // Manual multi-round-trip mode (2026-07-28 `input_required`, spec §12).

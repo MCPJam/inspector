@@ -21,6 +21,8 @@ import {
   createHostedRpcLogCollector,
 } from "./hosted-rpc-logs.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
+import { versionNegotiationActivation } from "../../utils/version-negotiation-activation.js";
+import { negotiationTelemetryLogger } from "../../utils/negotiation-telemetry.js";
 import { setRequestLogContext } from "../../utils/request-logger.js";
 import { logger } from "../../utils/logger.js";
 import {
@@ -952,6 +954,9 @@ export async function createAuthorizedManager(
           defaultTimeout: timeoutMs,
           rpcLogger: options?.rpcLogger,
           retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
+          // Phase 5 auto-negotiation activation (default OFF) + telemetry.
+          versionNegotiationActivation: versionNegotiationActivation(),
+          negotiationOutcomeLogger: negotiationTelemetryLogger("hosted-direct"),
         }
       ),
       oauthServerUrls: {},
@@ -1359,6 +1364,9 @@ export async function createAuthorizedManager(
     defaultTimeout: timeoutMs,
     rpcLogger: options?.rpcLogger,
     retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
+    // Phase 5 auto-negotiation activation (default OFF) + telemetry.
+    versionNegotiationActivation: versionNegotiationActivation(),
+    negotiationOutcomeLogger: negotiationTelemetryLogger("hosted-direct"),
     ...(options?.elicitationTimeoutExtensionMs !== undefined
       ? { elicitationTimeoutExtensionMs: options.elicitationTimeoutExtensionMs }
       : {}),

@@ -21,6 +21,7 @@ import type {
 // beta.4 moved the stdio transport params to the `/stdio` subpath.
 import type { StdioServerParameters } from "@modelcontextprotocol/client/stdio";
 import type { RetryPolicy } from "../retry.js";
+import type { VersionNegotiationActivation } from "./version-negotiation.js";
 import type { RefreshTokenOAuthProvider } from "./refresh-token-auth-provider.js";
 import type { ToolSet } from "ai";
 
@@ -83,6 +84,58 @@ export interface CacheHitEvent {
  * hit the wire; see `ObservableResponseCache`.
  */
 export type CacheEventLogger = (event: CacheHitEvent) => void;
+
+/**
+ * The activation-resolved negotiation mode a connection actually requested of
+ * the underlying client:
+ *  - `"auto"` — unconfigured connection under activation (probed);
+ *  - `"modern-pin"` — an explicit modern (`2026-07-28`) pin;
+ *  - `"legacy"` — the exact legacy `initialize` handshake (unconfigured with
+ *    activation OFF, or any explicit legacy pin).
+ */
+export type ConfiguredNegotiationMode = "auto" | "modern-pin" | "legacy";
+
+/**
+ * One connection-attempt outcome, emitted by the manager for Phase 5
+ * auto-negotiation-activation telemetry. This is a LOCAL provenance channel
+ * (like {@link CacheEventLogger}) — the manager NEVER emits analytics itself;
+ * each surface wires this to its own PostHog/Axiom pipeline and stamps the
+ * `surface` dimension there.
+ *
+ * The fields are exactly the activation-checklist telemetry requirement:
+ * configured mode + negotiated era + transport + outcome + failure class.
+ * (`surface` is added by the consumer.) It carries NO request payloads.
+ */
+export interface NegotiationOutcomeEvent {
+  /** The server whose connection was attempted. */
+  serverId: string;
+  /** Transport the attempt used. */
+  transport: "http" | "stdio";
+  /** Whether auto-negotiation activation was ON for this connection. */
+  activationEnabled: boolean;
+  /** The negotiation mode the client was actually asked to use. */
+  configuredMode: ConfiguredNegotiationMode;
+  /** Whether the connection established or failed. */
+  outcome: "connected" | "failed";
+  /** Negotiated era once connected (`undefined` on failure / unknown). */
+  negotiatedEra?: "legacy" | "modern";
+  /** Negotiated wire protocol version once connected (`undefined` on failure). */
+  negotiatedProtocolVersion?: string;
+  /**
+   * Coarse, non-PII failure class on failure — the era-negotiation-unwrapped
+   * error's `name` (or `code`), e.g. `"UnauthorizedError"`,
+   * `"EraNegotiationFailed"`, `"TypeError"`. `undefined` on success.
+   */
+  failureClass?: string;
+}
+
+/**
+ * Callback invoked once per connection attempt with its negotiation outcome.
+ * Distinct channel from {@link RpcLogger}/{@link CacheEventLogger}; never
+ * throws into the connect path (the manager guards it). Unset ⇒ no telemetry
+ * and byte-identical connect behavior.
+ */
+export type NegotiationOutcomeLogger = (event: NegotiationOutcomeEvent) => void;
 
 /**
  * MCPJam response-cache POLICY (SEP-2549). This is the single source of truth
@@ -444,6 +497,15 @@ export interface MCPClientManagerOptions {
    * byte-identical to not wiring a cache observer.
    */
   cacheEventLogger?: CacheEventLogger;
+  /**
+   * Optional per-connection negotiation-outcome sink (Phase 5 activation
+   * telemetry). Fires once per connection attempt with the configured
+   * negotiation mode, negotiated era/version, transport, outcome, and failure
+   * class. The manager guards it (never throws into connect). Unset ⇒ no
+   * telemetry, byte-identical connect behavior. The consumer stamps the
+   * `surface` dimension and forwards to PostHog/Axiom.
+   */
+  negotiationOutcomeLogger?: NegotiationOutcomeLogger;
   /** Default retry policy for retryable manager operations */
   retryPolicy?: RetryPolicy;
   /**
@@ -465,6 +527,20 @@ export interface MCPClientManagerOptions {
    * (e.g. connectReplayManagerServers) to avoid racing eager connects.
    */
   lazyConnect?: boolean;
+  /**
+   * Phase 5 exit-gate activation of AUTOMATIC era negotiation for UNCONFIGURED
+   * connections (no explicit `mcpProtocolVersion` pin). Default OFF: an
+   * unconfigured connection uses the SDK legacy default and stdio never
+   * auto-negotiates — byte-identical to the pre-activation behavior. When
+   * `{ enabled: true }`, unconfigured connections resolve to `auto` on both
+   * HTTP and stdio. Explicit pins are always honored regardless of this flag.
+   *
+   * This is deliberately a per-manager option, not a global: each surface
+   * (local / hosted / CLI / conformance) decides whether to opt in, wired
+   * from the repo's flag mechanism, so flipping the default is a reviewed
+   * step rather than a code-wide behavior change.
+   */
+  versionNegotiationActivation?: VersionNegotiationActivation;
 }
 
 // ============================================================================
