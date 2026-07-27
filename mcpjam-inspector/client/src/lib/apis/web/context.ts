@@ -3,6 +3,10 @@ import { getGuestBearerToken } from "@/lib/guest-session";
 import { CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE } from "@/lib/client-config";
 import { BootstrapNotReadyError } from "@/lib/app-ready";
 import {
+  clearTrackedTasksForScope,
+  setTrackedTaskScope,
+} from "@/lib/task-tracker";
+import {
   getDefaultClientCapabilities,
   type McpProtocolVersion,
   type XaaEnterprisePolicy,
@@ -127,6 +131,26 @@ function shouldPreferGuestBearer(): boolean {
 }
 
 export function setApiContext(next: ApiContext | null): void {
+  // Task handles are bearer-ish and scoped to the actor that created them:
+  // rescope the tracker on every context change, and drop the previous
+  // actor's handles when the project/org actually changes (logout, switch).
+  //
+  // Only an actual actor change clears them: `useApiContext` tears the context
+  // down (`setApiContext(null)`) on every dependency change and remounts it
+  // immediately, so treating "scope went away" as a logout would delete live
+  // task handles on ordinary re-renders. A clear therefore requires a
+  // different, DEFINED next scope.
+  const previousProjectId = apiContext.projectId ?? undefined;
+  const nextProjectId = next?.projectId ?? undefined;
+  if (
+    previousProjectId &&
+    nextProjectId &&
+    previousProjectId !== nextProjectId
+  ) {
+    clearTrackedTasksForScope(previousProjectId);
+  }
+  setTrackedTaskScope(nextProjectId);
+
   apiContext = next
     ? {
         ...next,

@@ -1,18 +1,41 @@
 /**
- * Hosted tasks constants shared by the server routes and the client poller.
- *
- * Hosted tasks are polled with a reconnect per tick (authorize → connect →
- * `tasks/get-batch` → disconnect), so these two numbers are the cost control:
- * the batch cap bounds one tick to a single connection per server, and the
- * poll floor bounds how often a tick can happen. They live in `shared/` so the
- * client cannot drift from what the route enforces.
+ * Hosted task polling constants, shared by the client poller and the hosted
+ * routes' batch schema so the two can never drift.
  */
-
-/** One connection per server per TasksTab tick — the main hosted cost control. */
-export const HOSTED_TASK_BATCH_MAX = 50;
 
 /**
- * Lower bound (ms) for hosted polling, under the user-configurable interval
- * and under any server-suggested `pollIntervalMs`. Not configurable by env.
+ * Floor for hosted poll ticks. Every hosted poll is a full
+ * authorize → connect → request → disconnect round trip, so a user-configured
+ * interval below this would multiply connection cost for no added fidelity.
+ * The effective interval is `max(userInterval, HOSTED_TASK_POLL_FLOOR_MS)`,
+ * further widened by a server-advertised `pollIntervalMs`.
  */
 export const HOSTED_TASK_POLL_FLOOR_MS = 2000;
+
+/**
+ * Maximum task IDs per `/get-batch` call — one connection per server per tick
+ * is the main hosted cost control. The route schema enforces the same number
+ * (it imports this constant, aliased as `HOSTED_TASK_BATCH_MAX`).
+ */
+export const HOSTED_TASK_BATCH_LIMIT = 50;
+
+/** Route-side alias for {@link HOSTED_TASK_BATCH_LIMIT}. */
+export const HOSTED_TASK_BATCH_MAX = HOSTED_TASK_BATCH_LIMIT;
+
+/**
+ * Server-side task age at which the client stops tracking a handle even if it
+ * was never resolved: task IDs are bearer-ish and unbounded growth in
+ * localStorage helps nobody.
+ */
+export const TRACKED_TASK_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+export function hostedPollIntervalMs(
+  userIntervalMs: number,
+  serverPollIntervalMs?: number,
+): number {
+  return Math.max(
+    userIntervalMs,
+    HOSTED_TASK_POLL_FLOOR_MS,
+    serverPollIntervalMs ?? 0,
+  );
+}

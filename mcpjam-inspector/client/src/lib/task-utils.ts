@@ -180,8 +180,14 @@ export function formatElapsedTime(startTime: string): string {
   }
 }
 
-export function isTerminalStatus(status: Task["status"]): boolean {
+export function isTerminalStatus(status: TaskDisplayStatus): boolean {
+  // "unavailable" (expired/forgotten placeholder) is terminal for every
+  // consumer: it is never re-polled, never counts as active, and offers no
+  // cancel affordance.
   return (
-    status === "completed" || status === "failed" || status === "cancelled"
+    status === "completed" ||
+    status === "failed" ||
+    status === "cancelled" ||
+    status === UNAVAILABLE_STATUS
   );
 }
