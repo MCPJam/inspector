@@ -6,15 +6,21 @@
  *
  * Everything that CAN go through the real client (`MCPClientManager`, no mocked
  * `ManagedMcpClient`) does — negotiation, `tools/call` task creation, the
- * per-request declaration, the `CreateTaskResult` unwrap.
+ * per-request declaration, the `CreateTaskResult` unwrap, and — since the
+ * explicit-result-schema carrier (`tasks-ext.ts`) plus the era-gate shadow
+ * (`tasks-ext-era-gate.ts`) landed — the whole `tasks/get|update|cancel`
+ * lifecycle.
  *
- * The `tasks/get|update|cancel` legs currently cannot: see the
- * "client-side blocker" describe below, which pins the exact beta.4 behavior
- * that stops them. Until that is resolved those MUSTs are proved with
- * {@link RawTasksWire} — a hand-built JSON-RPC driver that emits the same bytes
- * `tasks-ext.ts` + `wrapFetchForTaskRouting` would (per-request capability
- * declaration in `_meta`, `Mcp-Name`/`Mcp-Method` routing headers), so the
- * server-side contract is genuinely exercised end-to-end over a socket.
+ * {@link RawTasksWire} survives for the cases the real client CANNOT produce
+ * by construction, each marked at its use site:
+ *   - undeclared requests (`-32003`): our client always attaches the
+ *     per-request eligibility declaration, so an undeclared extension request
+ *     is unreachable through it;
+ *   - payloads beta.4's decoder rewrites or refuses before `tasks-ext.ts` sees
+ *     them (`resultType: "task"` on a `tasks/get`, or an absent `resultType`),
+ *     where the point of the test is the bytes on the wire.
+ * It emits the same bytes the SDK does (declaration in `params._meta`,
+ * `Mcp-Name`/`Mcp-Method` routing headers).
  */
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -169,6 +175,22 @@ function inputRequestsOf(task: Record<string, unknown>) {
     | undefined;
 }
 
+/**
+ * `tasks/get` through the REAL client, widened to a bag so a test can assert
+ * on fields the status-discriminated union hides (a `working` task has no
+ * `result` in the type, and a debugger test wants to prove that on the value).
+ */
+async function getTask(
+  manager: MCPClientManager,
+  taskId: string,
+  serverId = SERVER_ID
+): Promise<Record<string, unknown>> {
+  return (await manager.getTaskExt(serverId, taskId)) as unknown as Record<
+    string,
+    unknown
+  >;
+}
+
 describe("tasks extension wire — negotiation (real client)", () => {
   it("resolves the extension wire from the advertised capability", async () => {
     const fixture = await serve();
@@ -308,88 +330,26 @@ describe("tasks extension wire — task creation (real client)", () => {
   });
 });
 
-/**
- * KNOWN CLIENT-SIDE BLOCKER (report, do not fix here — `sdk/src` is owned by
- * another agent).
- *
- * `@modelcontextprotocol/client` beta.4 derives its "spec method universe"
- * from the union of the era registries and era-gates every member at send
- * time (`_assertOutboundRequestInEra`). `tasks/get`, `tasks/cancel`,
- * `tasks/result` and `tasks/list` are members via the **2025-11-25** registry
- * and are absent from the 2026-07-28 registry, so on an extension-era
- * connection the client refuses to put them on the wire — the extension's own
- * `tasks/get` and `tasks/cancel` are collateral damage of the in-core
- * utility's deletion. `_requestWithSchema` asserts too ("an explicit schema
- * never smuggles a deleted method onto the wire"), so passing a result schema
- * is not a way out for those two.
- *
- * `tasks/update` is in NEITHER registry, so it is era-blind — but
- * `client.request()` refuses non-spec methods without an explicit result
- * schema, and `tasks-ext.ts` calls the schema-less overload.
- *
- * Net effect today: `MCPClientManager.getTaskExt` / `updateTask` /
- * `cancelTaskExt` cannot reach a conforming SEP-2663 server at all. These
- * tests pin the current behavior so the fix is visible when it lands.
- */
-describe("tasks extension wire — client-side blocker (beta.4)", () => {
-  it("blocks tasks/get and tasks/cancel as methods deleted from the 2026 era", async () => {
-    const fixture = await serve();
-    const manager = await connect(fixture.url);
-    const taskId = (await createTask(manager)).taskId as string;
-
-    await expect(manager.getTaskExt(SERVER_ID, taskId)).rejects.toMatchObject({
-      code: "METHOD_NOT_SUPPORTED_BY_PROTOCOL_VERSION",
-    });
-    await expect(
-      manager.cancelTaskExt(SERVER_ID, taskId)
-    ).rejects.toMatchObject({
-      code: "METHOD_NOT_SUPPORTED_BY_PROTOCOL_VERSION",
-    });
-  });
-
-  it("blocks tasks/update for want of an explicit result schema", async () => {
-    const fixture = await serve();
-    const manager = await connect(fixture.url);
-    const taskId = (await createTask(manager)).taskId as string;
-
-    await expect(
-      manager.updateTask(SERVER_ID, taskId, {} as never)
-    ).rejects.toThrow(/'tasks\/update' is not a spec method/);
-  });
-
-  it("leaves the server untouched — nothing reached the wire", async () => {
-    const fixture = await serve();
-    const manager = await connect(fixture.url);
-    const taskId = (await createTask(manager)).taskId as string;
-
-    await manager.getTaskExt(SERVER_ID, taskId).catch(() => {});
-    await manager.updateTask(SERVER_ID, taskId, {} as never).catch(() => {});
-    await manager.cancelTaskExt(SERVER_ID, taskId).catch(() => {});
-
-    expect(
-      fixture.received.filter((r) => r.method.startsWith("tasks/"))
-    ).toEqual([]);
-  });
-});
-
-describe("tasks extension wire — full lifecycle", () => {
+describe("tasks extension wire — full lifecycle (real client)", () => {
   it("drives create → poll → input_required → update → completed → cancel", async () => {
     const fixture = await serve();
     const manager = await connect(fixture.url);
-    const wire = new RawTasksWire(fixture.url);
 
-    // Creation goes through the REAL client.
     const taskId = (await createTask(manager)).taskId as string;
 
     // Poll 1: still working, no status payload.
-    const first = await wire.get(taskId);
-    expect(first).toMatchObject({ resultType: "complete", status: "working" });
+    const first = await getTask(manager, taskId);
+    expect(first).toMatchObject({ taskId, status: "working" });
     expect(first.result).toBeUndefined();
     expect(first.inputRequests).toBeUndefined();
     expect(first.error).toBeUndefined();
+    // beta.4's 2026 decoder consumes `resultType` off every complete result,
+    // so a task read through the real client never carries it (the raw wire
+    // value is asserted in the `resultType on tasks/* results` describe).
+    expect(first).not.toHaveProperty("resultType");
 
     // Poll 2: input_required, carrying the keyed snapshot.
-    const second = await wire.get(taskId);
+    const second = await getTask(manager, taskId);
     expect(second.status).toBe("input_required");
     expect(Object.keys(inputRequestsOf(second) ?? {})).toEqual([
       DEFAULT_INPUT_REQUEST_KEY,
@@ -402,27 +362,26 @@ describe("tasks extension wire — full lifecycle", () => {
     expect(second.pollIntervalMs).toBe(20);
 
     // Poll 3: the SAME snapshot is re-sent while the request is outstanding.
-    const third = await wire.get(taskId);
+    const third = await getTask(manager, taskId);
     expect(third.status).toBe("input_required");
-    expect(third.inputRequests).toEqual(second.inputRequests);
+    expect(inputRequestsOf(third)).toEqual(inputRequestsOf(second));
 
     // tasks/update — an EMPTY acknowledgement, not a task.
-    const ack = await wire.update(taskId, {
+    const ack = await manager.updateTask(SERVER_ID, taskId, {
       [DEFAULT_INPUT_REQUEST_KEY]: {
         action: "accept",
         content: { input: "Luca" },
       },
-    });
-    expect(ack.error).toBeUndefined();
-    expect(ack.result).toEqual({ resultType: "complete" });
+    } as never);
+    expect(ack).toEqual({});
 
     // Eventual consistency: the status moves only on a LATER poll.
-    const fourth = await wire.get(taskId);
+    const fourth = await getTask(manager, taskId);
     expect(fourth.status).toBe("working");
     expect(fourth.inputRequests).toBeUndefined();
 
     // Completed, with the tool result INLINE (there is no tasks/result).
-    const fifth = await wire.get(taskId);
+    const fifth = await getTask(manager, taskId);
     expect(fifth.status).toBe("completed");
     expect(fifth.result).toEqual({
       content: [{ type: "text", text: "Hello, Luca!" }],
@@ -430,23 +389,45 @@ describe("tasks extension wire — full lifecycle", () => {
     });
 
     // A terminal task sticks.
-    expect((await wire.get(taskId)).status).toBe("completed");
+    expect((await getTask(manager, taskId)).status).toBe("completed");
 
     // tasks/cancel is likewise an empty ack.
-    const cancelAck = await wire.cancel(taskId);
-    expect(cancelAck.error).toBeUndefined();
-    expect(cancelAck.result).toEqual({ resultType: "complete" });
+    expect(await manager.cancelTaskExt(SERVER_ID, taskId)).toEqual({});
+  });
+
+  it("declares the extension on every tasks/* request it sends", async () => {
+    const fixture = await serve();
+    const manager = await connect(fixture.url);
+    const taskId = (await createTask(manager)).taskId as string;
+
+    await manager.getTaskExt(SERVER_ID, taskId);
+    await manager.updateTask(SERVER_ID, taskId, {} as never);
+    await manager.cancelTaskExt(SERVER_ID, taskId);
+
+    const routed = fixture.received.filter((r) =>
+      r.method.startsWith("tasks/")
+    );
+    expect(routed).toHaveLength(3);
+    for (const request of routed) {
+      // tasks.md:27-41 — the eligibility declaration is required on EVERY
+      // extension operation, not just the `tools/call` that creates the task.
+      const declared = (request.params?._meta as Record<string, unknown>)[
+        "io.modelcontextprotocol/clientCapabilities"
+      ] as { extensions?: Record<string, unknown> };
+      expect(declared.extensions, request.method).toHaveProperty(
+        TASKS_EXTENSION_ID
+      );
+    }
   });
 
   it("carries Mcp-Name: <taskId> on every routed tasks/* request", async () => {
     const fixture = await serve();
     const manager = await connect(fixture.url);
-    const wire = new RawTasksWire(fixture.url);
 
     const taskId = (await createTask(manager)).taskId as string;
-    await wire.get(taskId);
-    await wire.update(taskId, {});
-    await wire.cancel(taskId);
+    await manager.getTaskExt(SERVER_ID, taskId);
+    await manager.updateTask(SERVER_ID, taskId, {} as never);
+    await manager.cancelTaskExt(SERVER_ID, taskId);
 
     const routed = fixture.received.filter((r) =>
       ["tasks/get", "tasks/update", "tasks/cancel"].includes(r.method)
@@ -457,9 +438,12 @@ describe("tasks extension wire — full lifecycle", () => {
       "tasks/cancel",
     ]);
     for (const request of routed) {
-      // tasks.md:511 — the Streamable HTTP routing binding.
-      expect(request.headers["mcp-name"]).toBe(taskId);
-      expect(request.headers["mcp-method"]).toBe(request.method);
+      // tasks.md:511 — the Streamable HTTP routing binding, a MUST for all
+      // three methods.
+      expect(request.headers["mcp-name"], request.method).toBe(taskId);
+      expect(request.headers["mcp-method"], request.method).toBe(
+        request.method
+      );
     }
   });
 
@@ -474,12 +458,12 @@ describe("tasks extension wire — full lifecycle", () => {
     const second = await connect(fixture.url, "second");
     expect(second.getTasksWire("second")).toBe("extension");
 
-    const task = await new RawTasksWire(fixture.url).get(taskId);
+    const task = await getTask(second, taskId, "second");
     expect(task).toMatchObject({ taskId, status: "working" });
   });
 });
 
-describe("tasks extension wire — status variants", () => {
+describe("tasks extension wire — status variants (real client)", () => {
   it("reports a JSON-RPC execution fault as failed + error", async () => {
     const fixture = await serve({
       tools: { [TASK_TOOL_NAME]: taskTool(failedTaskPhases()) },
@@ -487,7 +471,7 @@ describe("tasks extension wire — status variants", () => {
     const manager = await connect(fixture.url);
     const taskId = (await createTask(manager)).taskId as string;
 
-    const task = await new RawTasksWire(fixture.url).get(taskId);
+    const task = await getTask(manager, taskId);
     expect(task.status).toBe("failed");
     expect(task.error).toEqual({
       code: -32603,
@@ -504,7 +488,7 @@ describe("tasks extension wire — status variants", () => {
     const manager = await connect(fixture.url);
     const taskId = (await createTask(manager)).taskId as string;
 
-    const task = await new RawTasksWire(fixture.url).get(taskId);
+    const task = await getTask(manager, taskId);
     // tasks.md:837 — `failed` is strictly for JSON-RPC-level faults.
     expect(task.status).toBe("completed");
     expect(task.error).toBeUndefined();
@@ -516,14 +500,12 @@ describe("tasks extension wire — status variants", () => {
       tools: { [TASK_TOOL_NAME]: taskTool(cancellablePhases()) },
     });
     const manager = await connect(fixture.url);
-    const wire = new RawTasksWire(fixture.url);
     const taskId = (await createTask(manager)).taskId as string;
 
-    expect((await wire.get(taskId)).status).toBe("working");
-    const ack = await wire.cancel(taskId);
-    expect(ack.result).toEqual({ resultType: "complete" });
+    expect((await getTask(manager, taskId)).status).toBe("working");
+    expect(await manager.cancelTaskExt(SERVER_ID, taskId)).toEqual({});
 
-    const task = await wire.get(taskId);
+    const task = await getTask(manager, taskId);
     expect(task.status).toBe("cancelled");
     expect(task.result).toBeUndefined();
     expect(task.error).toBeUndefined();
@@ -534,13 +516,12 @@ describe("tasks extension wire — status variants", () => {
       tools: { [TASK_TOOL_NAME]: taskTool(oddNumbersPhases()) },
     });
     const manager = await connect(fixture.url);
-    const wire = new RawTasksWire(fixture.url);
     const taskId = (await createTask(manager)).taskId as string;
 
     const ttls: unknown[] = [];
     const intervals: unknown[] = [];
     for (let i = 0; i < 4; i += 1) {
-      const task = await wire.get(taskId);
+      const task = await getTask(manager, taskId);
       ttls.push(task.ttlMs);
       intervals.push(task.pollIntervalMs);
     }
@@ -552,7 +533,7 @@ describe("tasks extension wire — status variants", () => {
   });
 });
 
-describe("tasks extension wire — input requests", () => {
+describe("tasks extension wire — input requests (real client)", () => {
   it("keeps unanswered keys outstanding across a partial update", async () => {
     const fixture = await serve({
       tools: {
@@ -570,10 +551,9 @@ describe("tasks extension wire — input requests", () => {
       },
     });
     const manager = await connect(fixture.url);
-    const wire = new RawTasksWire(fixture.url);
     const taskId = (await createTask(manager)).taskId as string;
 
-    const first = await wire.get(taskId);
+    const first = await getTask(manager, taskId);
     expect(Object.keys(inputRequestsOf(first) ?? {}).sort()).toEqual([
       "city",
       DEFAULT_INPUT_REQUEST_KEY,
@@ -581,20 +561,22 @@ describe("tasks extension wire — input requests", () => {
 
     // Answer one key, plus a key that was never issued: tasks.md:379 says the
     // server ignores unknown keys, and the task stays `input_required`.
-    await wire.update(taskId, {
+    await manager.updateTask(SERVER_ID, taskId, {
       [DEFAULT_INPUT_REQUEST_KEY]: { action: "accept", content: {} },
       never_issued: { action: "accept", content: {} },
-    });
+    } as never);
 
-    const second = await wire.get(taskId);
+    const second = await getTask(manager, taskId);
     expect(second.status).toBe("input_required");
     expect(Object.keys(inputRequestsOf(second) ?? {})).toEqual(["city"]);
     expect(fixture.task(taskId)?.answeredKeys).toEqual([
       DEFAULT_INPUT_REQUEST_KEY,
     ]);
 
-    await wire.update(taskId, { city: { action: "accept", content: {} } });
-    expect((await wire.get(taskId)).status).toBe("completed");
+    await manager.updateTask(SERVER_ID, taskId, {
+      city: { action: "accept", content: {} },
+    } as never);
+    expect((await getTask(manager, taskId)).status).toBe("completed");
   });
 
   it("surfaces unknown-method and prototype-polluting keys without polluting", async () => {
@@ -612,7 +594,7 @@ describe("tasks extension wire — input requests", () => {
     const manager = await connect(fixture.url);
     const taskId = (await createTask(manager)).taskId as string;
 
-    const task = await new RawTasksWire(fixture.url).get(taskId);
+    const task = await getTask(manager, taskId);
     const requests = inputRequestsOf(task) ?? {};
     expect(Object.keys(requests).sort()).toEqual([
       "__proto__",
@@ -623,35 +605,46 @@ describe("tasks extension wire — input requests", () => {
     expect(requests.unknown_method).toMatchObject({
       method: "tasks/definitely-not-a-real-method",
     });
-    // Nothing leaked onto a prototype.
+    // Nothing leaked onto a prototype: the guard rebuilds the map on a NULL
+    // prototype (`tasks-ext-schemas.ts toSafeInputRequests`).
     expect(({} as Record<string, unknown>).method).toBeUndefined();
-    expect(Object.getPrototypeOf(requests)).not.toHaveProperty("method");
+    expect(Object.getPrototypeOf(requests)).toBeNull();
   });
 });
 
 describe("tasks extension wire — protocol errors", () => {
-  it("raises -32602 for an unknown task id on tasks/get", async () => {
+  it("surfaces -32602 for an unknown task id on tasks/get (real client)", async () => {
     const fixture = await serve();
-    const response = await new RawTasksWire(fixture.url).send(
-      "tasks/get",
-      { taskId: "no-such-task" },
-      { routeBy: "no-such-task" }
+    const manager = await connect(fixture.url);
+
+    // tasks.md:795 — a MUST for `tasks/get`. The server error must reach the
+    // caller as a typed rejection, not as a task.
+    await expect(
+      manager.getTaskExt(SERVER_ID, "no-such-task")
+    ).rejects.toMatchObject({ code: -32602 });
+    await expect(manager.getTaskExt(SERVER_ID, "no-such-task")).rejects.toThrow(
+      /Task not found/
     );
-    expect(response.error?.code).toBe(-32602);
-    expect(response.error?.message).toMatch(/Task not found/);
   });
 
-  it("allows a non--32602 code on tasks/update and tasks/cancel (SHOULD only)", async () => {
-    // tasks.md:795 — `-32602` is a MUST for `tasks/get` but only a SHOULD for
-    // the mutations, so a different code there is still compliant.
+  it("surfaces a non--32602 code on tasks/update and tasks/cancel (SHOULD only, real client)", async () => {
+    // tasks.md:795 — `-32602` is only a SHOULD for the mutations, so a
+    // different code there is still compliant and must pass through verbatim.
     const fixture = await serve({ unknownTaskCodeForMutations: -32603 });
-    const wire = new RawTasksWire(fixture.url);
+    const manager = await connect(fixture.url);
 
-    expect((await wire.update("no-such-task", {})).error?.code).toBe(-32603);
-    expect((await wire.cancel("no-such-task")).error?.code).toBe(-32603);
+    await expect(
+      manager.updateTask(SERVER_ID, "no-such-task", {} as never)
+    ).rejects.toMatchObject({ code: -32603 });
+    await expect(
+      manager.cancelTaskExt(SERVER_ID, "no-such-task")
+    ).rejects.toMatchObject({ code: -32603 });
   });
 
   it("rejects undeclared tasks/get, tasks/update and tasks/cancel with -32003", async () => {
+    // RAW BY CONSTRUCTION: `tasks-ext.ts` attaches the eligibility declaration
+    // to every extension request, so the real client can never emit an
+    // undeclared one. The server-side MUST is still worth pinning.
     const fixture = await serve();
     const wire = new RawTasksWire(fixture.url);
 
@@ -669,6 +662,8 @@ describe("tasks extension wire — protocol errors", () => {
   });
 
   it("rejects an undeclared task-filtered subscriptions/listen with -32003", async () => {
+    // RAW BY CONSTRUCTION: same reason as above — the undeclared leg is
+    // unreachable through our client.
     const fixture = await serve();
     const wire = new RawTasksWire(fixture.url);
 
@@ -695,6 +690,15 @@ describe("tasks extension wire — protocol errors", () => {
   });
 });
 
+/**
+ * Server-side misbehavior. The cases that stay on {@link RawTasksWire} are the
+ * ones whose POINT is the bytes: beta.4's 2026 decoder consumes/validates
+ * `resultType` before `tasks-ext.ts` can see the payload (it rejects an absent
+ * one outright, and `wrapTransportForTaskResults` rewrites `resultType:
+ * "task"` into a create-task envelope), so reading them through the real
+ * client would assert the SDK's reaction, not what the server sent. Where the
+ * SDK's reaction IS the interesting property, the test uses the real client.
+ */
 describe("tasks extension wire — misbehaving server", () => {
   it("can answer an undeclared tasks/get (negative case for the -32003 rule)", async () => {
     const fixture = await serve({
@@ -744,18 +748,23 @@ describe("tasks extension wire — misbehaving server", () => {
     );
   });
 
-  it("can turn a healthy task malformed mid-flight", async () => {
+  it("can turn a healthy task malformed mid-flight, and the real client refuses the poll", async () => {
     const fixture = await serve();
     const manager = await connect(fixture.url);
     const taskId = (await createTask(manager)).taskId as string;
-    const wire = new RawTasksWire(fixture.url);
 
-    expect((await wire.get(taskId)).status).toBe("working");
+    expect((await getTask(manager, taskId)).status).toBe("working");
     fixture.misbehave({ status: "in_progress", omitTaskFields: ["ttlMs"] });
 
-    const task = await wire.get(taskId);
-    expect(task.status).toBe("in_progress");
-    expect(task).not.toHaveProperty("ttlMs");
+    // A connection that was healthy a poll ago is not trusted afterwards: the
+    // guard re-validates every `tasks/get` result.
+    await expect(manager.getTaskExt(SERVER_ID, taskId)).rejects.toThrow(
+      /not a valid io\.modelcontextprotocol\/tasks payload/
+    );
+    // …and the raw wire confirms what the server actually sent.
+    const raw = await new RawTasksWire(fixture.url).get(taskId);
+    expect(raw.status).toBe("in_progress");
+    expect(raw).not.toHaveProperty("ttlMs");
   });
 
   it("can send resultType: task on a tasks/get result", async () => {
@@ -763,6 +772,9 @@ describe("tasks extension wire — misbehaving server", () => {
     const manager = await connect(fixture.url);
     const taskId = (await createTask(manager)).taskId as string;
 
+    // RAW: `wrapTransportForTaskResults` rewrites any `resultType: "task"`
+    // response before the client decodes it, so the wire value is only
+    // observable off the socket.
     const task = await new RawTasksWire(fixture.url).get(taskId);
     // tasks.md:102 — `"task"` MUST NOT appear on anything but CreateTaskResult.
     expect(task.resultType).toBe("task");
@@ -776,10 +788,15 @@ describe("tasks extension wire — misbehaving server", () => {
     const manager = await connect(fixture.url);
     const taskId = (await createTask(manager)).taskId as string;
 
-    const task = await new RawTasksWire(fixture.url).get(taskId);
-    expect(task.status).toBe("completed");
+    const raw = await new RawTasksWire(fixture.url).get(taskId);
+    expect(raw.status).toBe("completed");
     // A `completed` task MUST carry `result` (tasks.md:330).
-    expect(task.result).toBeUndefined();
+    expect(raw.result).toBeUndefined();
+    // The real client refuses the variant-incomplete payload rather than
+    // rendering a completed task with no result.
+    await expect(manager.getTaskExt(SERVER_ID, taskId)).rejects.toThrow(
+      /not a valid io\.modelcontextprotocol\/tasks payload/
+    );
   });
 
   it("can fabricate a task for an id that was never issued", async () => {
@@ -791,6 +808,8 @@ describe("tasks extension wire — misbehaving server", () => {
 
 describe("tasks extension wire — resultType on tasks/* results", () => {
   it("carries resultType: complete by default (the prose MUST)", async () => {
+    // RAW: the decoder strips `resultType` off a complete result, so the real
+    // client can never observe it (the lifecycle test pins that absence).
     const fixture = await serve();
     const manager = await connect(fixture.url);
     const taskId = (await createTask(manager)).taskId as string;
@@ -808,6 +827,8 @@ describe("tasks extension wire — resultType on tasks/* results", () => {
   it("can omit it entirely (the schema-literal reading)", async () => {
     // `resultType` appears nowhere in the pinned schema, and each
     // `DetailedTask` variant is rendered `additionalProperties: false`.
+    // RAW: beta.4's 2026 decoder REQUIRES `resultType` on every result
+    // ("missing-resultType"), so this reading is only observable off the wire.
     const fixture = await serve({ emitTaskResultType: false });
     const manager = await connect(fixture.url);
     const taskId = (await createTask(manager)).taskId as string;

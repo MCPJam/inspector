@@ -23,6 +23,7 @@ import {
   type LogLevelProvider,
 } from "./log-level-meta-client.js";
 import type { McpProtocolVersion } from "./mcp-protocol-version.js";
+import { installTasksExtensionEraGateShadow } from "./tasks-ext-era-gate.js";
 import type { RpcLogger } from "./types.js";
 
 export type { LogLevelProvider };
@@ -39,6 +40,28 @@ function withLogLevelMeta(
   return logLevelProvider
     ? new LogLevelMetaClient(adapter, logLevelProvider)
     : adapter;
+}
+
+/**
+ * The single seam at which an upstream `Client` becomes a `ManagedMcpClient`,
+ * and therefore the single place the `io.modelcontextprotocol/tasks` era-gate
+ * shadow is installed: `tasks-ext.ts`'s three extension calls are typed
+ * against `ManagedMcpClient`, so every client that can ever issue them passes
+ * through here (both entry points below, including the manager's own
+ * `new Client(...)`, which arrives via `wrapLegacyClient`).
+ *
+ * The shadow is narrowly scoped and throws if upstream's private member moved
+ * — see `tasks-ext-era-gate.ts` for the full rationale and the bump checklist.
+ */
+function manage(
+  client: Client,
+  logLevelProvider?: LogLevelProvider,
+): ManagedMcpClient {
+  installTasksExtensionEraGateShadow(client);
+  return withLogLevelMeta(
+    new OfficialSdkClientAdapter(client),
+    logLevelProvider,
+  );
 }
 
 // Re-export so consumers can `import { McpProtocolVersion } from "@mcpjam/sdk"`
@@ -81,10 +104,7 @@ export function createManagedMcpClient(
       args.clientOptions.jsonSchemaValidator ??
       new DialectAwareJsonSchemaValidator(),
   });
-  return withLogLevelMeta(
-    new OfficialSdkClientAdapter(inner),
-    args.logLevelProvider,
-  );
+  return manage(inner, args.logLevelProvider);
 }
 
 /**
@@ -96,10 +116,7 @@ export function wrapLegacyClient(
   client: Client,
   logLevelProvider?: LogLevelProvider,
 ): ManagedMcpClient {
-  return withLogLevelMeta(
-    new OfficialSdkClientAdapter(client),
-    logLevelProvider,
-  );
+  return manage(client, logLevelProvider);
 }
 
 export type { RpcLogger };

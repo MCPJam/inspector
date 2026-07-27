@@ -1925,6 +1925,10 @@ export class MCPClientManager {
       // Wire the modern per-request logging opt-in. The provider reads the
       // per-server level live, so `setPerRequestLogLevel` takes effect with no
       // reconnect; the decorator itself only injects on the modern era.
+      // `wrapLegacyClient` also installs the `io.modelcontextprotocol/tasks`
+      // era-gate shadow on this instance — the extension methods this manager
+      // exposes (`getTaskExt` / `updateTask` / `cancelTaskExt`) cannot reach a
+      // 2026-07-28 server without it. See `tasks-ext-era-gate.ts`.
       const managedClient: ManagedMcpClient = wrapLegacyClient(
         upstreamClient,
         () => this.perRequestLogLevels.get(serverId),
