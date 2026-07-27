@@ -1,5 +1,9 @@
 import type { HttpServerConfig } from "../mcp-client-manager/index.js";
 import {
+  isKnownProtocolVersion,
+  isStatelessProtocolVersion,
+} from "../mcp-client-manager/mcp-protocol-version.js";
+import {
   listPrompts,
   listResources,
   listTools,
@@ -194,17 +198,26 @@ async function safeListResources(
 async function runClientChecks(
   config: NormalizedMCPConformanceConfig,
   selectedCheckIds: Set<MCPCheckId>,
-): Promise<MCPCheckResult[]> {
+): Promise<{
+  checks: MCPCheckResult[];
+  config: NormalizedMCPConformanceConfig;
+}> {
   const selectedClientChecks = CLIENT_CHECKS.filter((check) =>
     selectedCheckIds.has(check.id),
   );
 
-  if (selectedClientChecks.length === 0) {
-    return [];
+  // Explicit pins already carry their era into the raw runners. Auto mode
+  // still needs one real MCP connection so raw-only protocol/security/
+  // transport selections use the version the server actually negotiated.
+  if (
+    selectedClientChecks.length === 0 &&
+    config.protocolVersion !== undefined
+  ) {
+    return { checks: [], config };
   }
 
   try {
-    const checks = await withEphemeralClient(
+    return await withEphemeralClient(
       createServerConfig(config),
       async (manager, serverId) => {
         // `getManagedClient()` works for every era — the modern pin and the
@@ -218,6 +231,24 @@ async function runClientChecks(
         }
 
         const initializationInfo = manager.getInitializationInfo(serverId);
+        const negotiatedProtocolVersion = initializationInfo?.protocolVersion;
+        const effectiveConfig: NormalizedMCPConformanceConfig =
+          config.protocolVersion === undefined &&
+          negotiatedProtocolVersion !== undefined &&
+          isKnownProtocolVersion(negotiatedProtocolVersion)
+            ? {
+                ...config,
+                protocolVersion: negotiatedProtocolVersion,
+                era: isStatelessProtocolVersion(negotiatedProtocolVersion)
+                  ? "modern"
+                  : "legacy",
+              }
+            : config;
+
+        if (selectedClientChecks.length === 0) {
+          return { checks: [], config: effectiveConfig };
+        }
+
         const [toolsResult, promptsResult, resourcesResult, availableResourceTemplates] =
           await Promise.all([
             safeListTools({ manager, serverId }),
@@ -230,7 +261,7 @@ async function runClientChecks(
           manager,
           client,
           serverId,
-          config,
+          config: effectiveConfig,
           initializationInfo,
           availableTools: toolsResult.tools.map((tool) => tool.name),
           availablePrompts: promptsResult.prompts.map((prompt) => prompt.name),
@@ -245,7 +276,11 @@ async function runClientChecks(
           // Era gate first: an era-inapplicable check is a deterministic skip
           // that never runs `check.run`, so it neither observes nor affects
           // the `connectionLost` sequencing below.
-          const eraSkip = eraGate(check, config.era, config.protocolVersion);
+          const eraSkip = eraGate(
+            check,
+            effectiveConfig.era,
+            effectiveConfig.protocolVersion,
+          );
           if (eraSkip) {
             results.push(eraSkip);
             continue;
@@ -277,7 +312,7 @@ async function runClientChecks(
           }
         }
 
-        return results;
+        return { checks: results, config: effectiveConfig };
       },
       {
         clientName: config.clientName,
@@ -285,8 +320,14 @@ async function runClientChecks(
       },
     );
 
-    return checks;
   } catch (error) {
+    // A raw-only Auto run has no client-backed check on which to report a
+    // failed negotiation. Reject the run instead of silently executing raw
+    // checks with the legacy default after detection failed.
+    if (selectedClientChecks.length === 0) {
+      throw error;
+    }
+
     const checks: MCPCheckResult[] = [];
 
     // Era gate applies even when the connection could not be established: an
@@ -310,15 +351,18 @@ async function runClientChecks(
     // (every check applies to `legacy`, so `firstApplicableCheck` is always
     // defined), keeping the legacy path byte-identical to pre-era-awareness.
     if (!firstApplicableCheck) {
-      return selectedClientChecks.map((check, index) =>
-        index === 0
-          ? failedResult(check, 0, errorMessage(error), undefined, error)
-          : (eraGate(check, config.era, config.protocolVersion) ??
-            skippedResult(
-              check,
-              "Skipping check because the MCP client session could not be established",
-            )),
-      );
+      return {
+        checks: selectedClientChecks.map((check, index) =>
+          index === 0
+            ? failedResult(check, 0, errorMessage(error), undefined, error)
+            : (eraGate(check, config.era, config.protocolVersion) ??
+              skippedResult(
+                check,
+                "Skipping check because the MCP client session could not be established",
+              )),
+        ),
+        config,
+      };
     }
 
     for (const check of selectedClientChecks) {
@@ -351,7 +395,7 @@ async function runClientChecks(
       }
     }
 
-    return checks;
+    return { checks, config };
   }
 }
 
@@ -365,15 +409,15 @@ export class MCPConformanceTest {
   async run(): Promise<MCPConformanceResult> {
     const startedAt = Date.now();
     const selectedCheckIds = buildCheckSelection(this.config);
-    const clientChecks = await runClientChecks(
+    const clientRun = await runClientChecks(
       this.config,
       selectedCheckIds,
     );
 
     const rawContext = {
-      config: this.config,
-      serverUrl: this.config.serverUrl,
-      fetchFn: this.config.fetchFn,
+      config: clientRun.config,
+      serverUrl: clientRun.config.serverUrl,
+      fetchFn: clientRun.config.fetchFn,
     };
 
     const [protocolChecks, securityChecks, transportChecks] = await Promise.all([
@@ -382,7 +426,12 @@ export class MCPConformanceTest {
       runTransportChecks(rawContext, selectedCheckIds),
     ]);
 
-    const checks = [...clientChecks, ...protocolChecks, ...securityChecks, ...transportChecks];
+    const checks = [
+      ...clientRun.checks,
+      ...protocolChecks,
+      ...securityChecks,
+      ...transportChecks,
+    ];
     const categorySummary = summarizeChecks(checks);
 
     return {

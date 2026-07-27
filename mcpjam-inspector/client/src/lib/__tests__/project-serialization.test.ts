@@ -4,7 +4,6 @@ import {
   serversHaveChanged,
   serializeServersForPersistence,
   serializeServersForSharing,
-  deserializeServersFromConvex,
 } from "../project-serialization";
 import type { ServerWithName } from "@/state/app-types";
 
@@ -508,6 +507,23 @@ describe("OAuth test-profile round-trip (protocol version + registration strateg
     expect(profile.registrationStrategy).toBe("preregistered");
     expect(profile.protocolVersion).toBe("2025-06-18");
     expect(profile.clientId).toBe("client_abc");
+    expect(servers.prereg.oauthProtocolMode).toBe("2025-06-18");
+  });
+
+  it("keeps canonical Auto separate from the last resolved concrete profile", () => {
+    const servers = deserializeServersFromConvex([
+      {
+        name: "auto",
+        enabled: true,
+        useOAuth: true,
+        url: "https://example.test/mcp",
+        oauthProtocolMode: "auto",
+        oauthProtocolVersion: "2026-07-28",
+      },
+    ]);
+
+    expect(servers.auto.oauthProtocolMode).toBe("auto");
+    expect(servers.auto.oauthFlowProfile?.protocolVersion).toBe("2026-07-28");
   });
 
   it("survives a 2026-07-28 draft-era protocol version through the round-trip", () => {
@@ -561,6 +577,33 @@ describe("OAuth test-profile round-trip (protocol version + registration strateg
     expect(profile.registrationStrategy).toBeUndefined();
     expect(profile.protocolVersion).toBeUndefined();
     expect(profile.clientId).toBe("client_abc");
+  });
+
+  it("does not repeatedly resync an unknown future flat protocol version", () => {
+    const local: Record<string, ServerWithName> = {
+      future: {
+        name: "future",
+        enabled: true,
+        useOAuth: true,
+        retryCount: 0,
+        lastConnectionTime: new Date(),
+        connectionStatus: "disconnected",
+        config: { url: new URL("https://example.test/mcp") },
+      } as ServerWithName,
+    };
+
+    expect(
+      serversHaveChanged(local, [
+        {
+          name: "future",
+          enabled: true,
+          useOAuth: true,
+          url: "https://example.test/mcp",
+          oauthProtocolMode: null,
+          oauthProtocolVersion: "2099-01-01",
+        },
+      ])
+    ).toBe(false);
   });
 
   it("legacy rows without the columns keep no strategy on the profile", () => {
