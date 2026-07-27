@@ -11,6 +11,13 @@ import {
   skippedResult,
   passedResult,
 } from "./helpers.js";
+import {
+  DEFAULT_LEGACY_PROTOCOL_VERSION,
+  legacyHeaders,
+  legacyInitialize,
+  rawRequest,
+  type RawHttpResult,
+} from "../raw-http.js";
 
 type TransportCheckId = keyof typeof TRANSPORT_CHECK_METADATA;
 
@@ -43,241 +50,30 @@ const TRANSPORT_CHECK_METADATA = {
   Pick<MCPCheckResult, "id" | "category" | "title" | "description">
 >;
 
-function buildBaseHeaders(ctx: RawHttpCheckContext): Record<string, string> {
-  return {
-    ...(ctx.config.customHeaders ?? {}),
-    ...(ctx.config.accessToken
-      ? { Authorization: `Bearer ${ctx.config.accessToken}` }
-      : {}),
-  };
+/**
+ * SSE framing, body decoding, timeouts, and auth headers all come from the
+ * shared raw harness (§15.5). This module used to carry its own incremental
+ * SSE reader (`processSseLines` / `readSseEvents`) and its own response
+ * decoder; both were deleted in favor of `rawRequest`, whose capture reports
+ * `sse` frames parsed by the ONE `parseSseEvents` implementation.
+ */
+
+function isOk(result: RawHttpResult): boolean {
+  return result.status >= 200 && result.status < 300;
 }
 
-function withSessionHeaders(
-  headers: Record<string, string>,
-  sessionId?: string,
-): Record<string, string> {
-  return sessionId
-    ? {
-        ...headers,
-        "mcp-session-id": sessionId,
-      }
-    : headers;
-}
-
-async function fetchWithTimeout(
-  fetchFn: typeof fetch,
-  input: string,
-  init: RequestInit,
-  timeoutMs: number,
-): Promise<Response> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    return await fetchFn(input, {
-      ...init,
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
-
-type SseEvent = {
-  id?: string;
-  event?: string;
-  data: string;
-  retry?: number;
-};
-
-function processSseLines(
-  buffer: string,
-  events: SseEvent[],
-  current: SseEvent,
-  seenFields: { value: boolean },
-): string {
-  const endedWithDelimiter = /\r?\n\r?\n$/.test(buffer);
-  const lines = buffer.split(/\r?\n/);
-  const remainder = lines.pop() ?? "";
-
-  const flushEvent = () => {
-    if (!seenFields.value) {
-      return;
-    }
-
-    events.push({
-      ...current,
-      data: current.data,
-    });
-    current.id = undefined;
-    current.event = undefined;
-    current.data = "";
-    current.retry = undefined;
-    seenFields.value = false;
-  };
-
-  for (const line of lines) {
-    if (line === "") {
-      flushEvent();
-      continue;
-    }
-
-    if (line.startsWith(":")) {
-      continue;
-    }
-
-    const separatorIndex = line.indexOf(":");
-    const field =
-      separatorIndex === -1 ? line : line.slice(0, separatorIndex);
-    const rawValue =
-      separatorIndex === -1 ? "" : line.slice(separatorIndex + 1);
-    const value = rawValue.startsWith(" ") ? rawValue.slice(1) : rawValue;
-
-    seenFields.value = true;
-
-    switch (field) {
-      case "id":
-        current.id = value;
-        break;
-      case "event":
-        current.event = value;
-        break;
-      case "data":
-        current.data = current.data ? `${current.data}\n${value}` : value;
-        break;
-      case "retry": {
-        const retry = Number(value);
-        if (Number.isFinite(retry)) {
-          current.retry = retry;
-        }
-        break;
-      }
-      default:
-        break;
-    }
-  }
-
-  if (endedWithDelimiter && seenFields.value) {
-    flushEvent();
-  }
-
-  return remainder;
-}
-
-async function readSseEvents(
-  response: Response,
-  timeoutMs: number,
-): Promise<SseEvent[]> {
-  if (!response.body) {
-    return [];
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  const events: SseEvent[] = [];
-  let buffer = "";
-  const current: SseEvent = { data: "" };
-  const seenFields = { value: false };
-
-  const readWithTimeout = async () => {
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-
-    try {
-      return await Promise.race([
-        reader.read(),
-        new Promise<ReadableStreamReadResult<Uint8Array>>((_, reject) => {
-          timeoutId = setTimeout(
-            () =>
-              reject(new Error(`SSE stream read timed out after ${timeoutMs}ms`)),
-            timeoutMs,
-          );
-        }),
-      ]);
-    } finally {
-      if (timeoutId !== undefined) {
-        clearTimeout(timeoutId);
-      }
-    }
-  };
-
-  try {
-    while (true) {
-      const { value, done } = await readWithTimeout();
-      if (done) {
-        break;
-      }
-
-      buffer += decoder.decode(value, { stream: true });
-      buffer = processSseLines(buffer, events, current, seenFields);
-    }
-  } finally {
-    try {
-      await reader.cancel();
-    } catch {
-      // Best effort stream cleanup.
-    }
-  }
-
-  if (buffer.length > 0) {
-    processSseLines(`${buffer}\n`, events, current, seenFields);
-  }
-
-  return events;
-}
-
-async function parseResponseBody(response: Response): Promise<unknown> {
-  const text = await response.text();
-  if (!text) {
-    return undefined;
-  }
-
-  try {
-    return JSON.parse(text);
-  } catch {
-    return text;
-  }
-}
-
-async function initializeSession(
-  ctx: RawHttpCheckContext,
-): Promise<{
+async function initializeSession(ctx: RawHttpCheckContext): Promise<{
   ok: boolean;
   status: number;
   sessionId?: string;
   body: unknown;
 }> {
-  const response = await fetchWithTimeout(
-    ctx.fetchFn,
-    ctx.serverUrl,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json, text/event-stream",
-        ...buildBaseHeaders(ctx),
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        method: "initialize",
-        params: {
-          protocolVersion: ctx.config.protocolVersion ?? "2025-11-25",
-          capabilities: {},
-          clientInfo: {
-            name: "mcpjam-sdk-conformance",
-            version: "1.0.0",
-          },
-        },
-      }),
-    },
-    ctx.config.checkTimeout,
-  );
-
+  const { result, sessionId } = await legacyInitialize(ctx);
   return {
-    ok: response.ok,
-    status: response.status,
-    sessionId: response.headers.get("mcp-session-id") ?? undefined,
-    body: await parseResponseBody(response),
+    ok: isOk(result),
+    status: result.status,
+    sessionId,
+    body: result.json ?? (result.bodyText || undefined),
   };
 }
 
@@ -289,18 +85,10 @@ async function terminateSession(
     return;
   }
 
-  await fetchWithTimeout(
-    ctx.fetchFn,
-    ctx.serverUrl,
-    {
-      method: "DELETE",
-      headers: withSessionHeaders({
-        Accept: "application/json, text/event-stream",
-        ...buildBaseHeaders(ctx),
-      }, sessionId),
-    },
-    ctx.config.checkTimeout,
-  ).catch(() => undefined);
+  await rawRequest(ctx, {
+    method: "DELETE",
+    headers: legacyHeaders({ sessionId }),
+  }).catch(() => undefined);
 }
 
 export async function runTransportChecks(
@@ -446,45 +234,44 @@ export async function runTransportChecks(
       const multiStreamStartedAt = Date.now();
       const settledResponses = await Promise.allSettled(
         Array.from({ length: 3 }).map((_, index) =>
-          fetchWithTimeout(
-            ctx.fetchFn,
-            ctx.serverUrl,
-            {
-              method: "POST",
-              headers: withSessionHeaders({
-                "Content-Type": "application/json",
-                Accept: "text/event-stream, application/json",
-                "mcp-protocol-version":
-                  ctx.config.protocolVersion ?? "2025-11-25",
-                ...buildBaseHeaders(ctx),
-              }, activeSessionId),
-              body: JSON.stringify({
-                jsonrpc: "2.0",
-                id: 1000 + index,
-                method: "tools/list",
-                params: {},
+          rawRequest(ctx, {
+            headers: {
+              ...legacyHeaders({
+                protocolVersion:
+                  ctx.config.protocolVersion ??
+                  DEFAULT_LEGACY_PROTOCOL_VERSION,
+                sessionId: activeSessionId,
               }),
+              Accept: "text/event-stream, application/json",
             },
-            ctx.config.checkTimeout,
-          ),
+            body: {
+              jsonrpc: "2.0",
+              id: 1000 + index,
+              method: "tools/list",
+              params: {},
+            },
+          }),
         ),
       );
 
       const responses = settledResponses.map((result) =>
         result.status === "fulfilled" ? result.value : undefined,
       );
+      // A broken response BODY is not a rejected request: the capture keeps the
+      // status line, so acceptance and stream health stay separate facts (the
+      // `server-sse-streams-functional` check owns `bodyError`).
       const requestErrors = settledResponses.map((result) =>
         result.status === "rejected" ? errorMessage(result.reason) : undefined,
       );
       const statuses = responses.map((response) => response?.status ?? null);
       const contentTypes = responses.map(
-        (response) => response?.headers.get("content-type") ?? "",
+        (response) => response?.headers["content-type"] ?? "",
       );
       const allAccepted =
         requestErrors.every((error) => error === undefined) &&
-        responses.every((response) => response?.ok === true);
+        responses.every((response) => response !== undefined && isOk(response));
       const responseFailures = responses.some(
-        (response) => response !== undefined && !response.ok,
+        (response) => response !== undefined && !isOk(response),
       );
       const requestOutcomeSummary = statuses.map(
         (status, index) => status ?? `error:${requestErrors[index] ?? "unknown"}`,
@@ -520,10 +307,10 @@ export async function runTransportChecks(
           .filter(
             (
               candidate,
-            ): candidate is { response: Response; index: number } =>
+            ): candidate is { response: RawHttpResult; index: number } =>
               candidate.response !== undefined &&
-              candidate.response.ok &&
-              (candidate.response.headers.get("content-type") ?? "").includes(
+              isOk(candidate.response) &&
+              (candidate.response.headers["content-type"] ?? "").includes(
                 "text/event-stream",
               ),
           );
@@ -552,20 +339,17 @@ export async function runTransportChecks(
                 ),
           );
         } else {
-          const settledEventReads = await Promise.allSettled(
-            sseResponses.map(async ({ response }) => {
-              const events = await readSseEvents(
-                response,
-                Math.min(ctx.config.checkTimeout, 2_000),
-              );
-              return events.length;
-            }),
+          // The frames were already parsed off each capture by the shared
+          // harness, so "readable" is now a property of the recorded exchange
+          // rather than a second pass over the live stream. Only DELIMITED
+          // frames count: a stream cut mid-frame leaves an unterminated tail,
+          // which is not a delivered event.
+          const eventCounts = sseResponses.map(
+            ({ response }) =>
+              response.sse?.filter((event) => event.terminated).length ?? 0,
           );
-          const eventCounts = settledEventReads.map((result) =>
-            result.status === "fulfilled" ? result.value : 0,
-          );
-          const readErrors = settledEventReads.map((result) =>
-            result.status === "rejected" ? errorMessage(result.reason) : undefined,
+          const readErrors = sseResponses.map(
+            ({ response }) => response.bodyError,
           );
           const allStreamsReadable =
             requestErrors.every((error) => error === undefined) &&

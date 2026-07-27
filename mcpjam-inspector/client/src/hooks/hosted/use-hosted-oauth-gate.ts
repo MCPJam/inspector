@@ -31,6 +31,10 @@ import {
 import { slugify } from "@/lib/chatbox-session";
 import { captureCurrentReturnPath, routePaths } from "@/lib/app-navigation";
 import { ingestOAuthTraceLogs } from "@/stores/traffic-log-store";
+import {
+  isServerFormOAuthProtocolMode,
+  resolveOAuthProtocolSelection,
+} from "@/shared/types.js";
 
 const INLINE_TOKEN_POLL_ATTEMPTS = 15;
 const RESUME_TOKEN_POLL_ATTEMPTS = 24;
@@ -52,8 +56,26 @@ export interface HostedOAuthServerDescriptor {
   serverUrl: string | null;
   clientId: string | null;
   oauthScopes: string[] | null;
+  oauthProtocolMode?: string | null;
+  oauthProtocolVersion?: string | null;
+  wireProtocolVersion?: string | null;
   /** When true, server was opted in after session start (copy / UX hints). */
   optional?: boolean;
+}
+
+export function resolveHostedOAuthProtocolSelection(
+  server: Pick<
+    HostedOAuthServerDescriptor,
+    "oauthProtocolMode" | "oauthProtocolVersion" | "wireProtocolVersion"
+  >
+) {
+  return resolveOAuthProtocolSelection({
+    mode: isServerFormOAuthProtocolMode(server.oauthProtocolMode)
+      ? server.oauthProtocolMode
+      : undefined,
+    legacyProtocolVersion: server.oauthProtocolVersion ?? undefined,
+    wireProtocolVersion: server.wireProtocolVersion ?? undefined,
+  });
 }
 
 function buildHostedOAuthStateMap(
@@ -447,11 +469,17 @@ export function useHostedOAuthGate({
       localStorage.setItem(pendingKey, "true");
       localStorage.setItem("mcp-oauth-return-hash", returnPath);
 
+      const protocolSelection =
+        resolveHostedOAuthProtocolSelection(server);
+
       const result = await initiateOAuth({
         serverName: server.serverName,
         serverUrl: server.serverUrl,
         clientId: server.clientId ?? undefined,
         scopes: server.oauthScopes ?? undefined,
+        protocolMode: protocolSelection.mode,
+        protocolVersion: protocolSelection.protocolVersion,
+        protocolResolutionSource: protocolSelection.source,
         onTraceUpdate: (oauthTrace: OAuthTrace) => {
           ingestOAuthTraceLogs({
             serverId: server.serverId,
