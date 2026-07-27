@@ -25,6 +25,7 @@ const {
   getInitializationInfoMock,
   mockUseDbUserReady,
   posthogCaptureMock,
+  projectServerConfigDtoMock,
 } = vi.hoisted(() => ({
   reconnectServerMock: vi.fn(),
   tryResolveProjectServerMock: vi.fn<
@@ -34,6 +35,9 @@ const {
   getInitializationInfoMock: vi.fn(),
   mockUseDbUserReady: vi.fn(() => true),
   posthogCaptureMock: vi.fn(),
+  // Stands in for the `projectServerConfig:getConfig` subscription — the
+  // control-plane row the protocol-version pin is written to.
+  projectServerConfigDtoMock: vi.fn<() => unknown>(() => undefined),
 }));
 
 vi.mock("sonner", () => ({
@@ -42,6 +46,10 @@ vi.mock("sonner", () => ({
 
 vi.mock("convex/react", () => ({
   useConvex: () => ({ query: vi.fn() }),
+  // Honor Convex's "skip" sentinel so a test that doesn't provision a
+  // shared project id sees `undefined`, exactly like production.
+  useQuery: (_name: unknown, args: unknown) =>
+    args === "skip" ? undefined : projectServerConfigDtoMock(),
 }));
 
 vi.mock("@/contexts/db-user-ready-context", () => ({
@@ -97,7 +105,12 @@ vi.mock("@/stores/ui-playground-store", () => ({
   },
 }));
 
-vi.mock("../useProjects", () => ({
+vi.mock("../useProjects", async (importOriginal) => ({
+  // Real `shouldQueryProjectId` — the pin subscription gates on it, so
+  // stubbing it would hide a genuine skip.
+  shouldQueryProjectId: (
+    await importOriginal<typeof import("../useProjects")>()
+  ).shouldQueryProjectId,
   useServerMutations: () => ({
     createServer: vi.fn(),
     createServerIfMissing: vi.fn(),
@@ -108,12 +121,17 @@ vi.mock("../useProjects", () => ({
   }),
 }));
 
+// Convex-shaped id: not a UUID, no `local_`/`project_` prefix, so
+// `shouldQueryProjectId` accepts it and the pin subscription runs.
+const SHARED_PROJECT_ID = "jd7demoproject000000000001";
+
 function buildConnectedAppState(): AppState {
   return {
     projects: {
       default: {
         id: "default",
         name: "Default",
+        sharedProjectId: SHARED_PROJECT_ID,
         servers: {
           "demo-server": {
             name: "demo-server",
@@ -235,6 +253,7 @@ beforeEach(() => {
   });
   mockUseDbUserReady.mockReturnValue(true);
   posthogCaptureMock.mockReset();
+  projectServerConfigDtoMock.mockReturnValue(undefined);
 });
 
 describe("useServerState mcpProtocolVersion re-validation", () => {
@@ -439,5 +458,108 @@ describe("useServerState mcpProtocolVersion re-validation", () => {
 
     await flushAsyncWork(10);
     expect(reconnectServerMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Regression: issue #3453. The per-server pin is WRITTEN to the
+ * `projectServerConfig` row but only mirrored onto
+ * `activeHostConfig.serverConnectionOverrides` via Convex fan-out, which
+ * lands later. A reconnect fired in that window used to read the stale
+ * mirror and silently connect on the host default — for the reporter, a
+ * legacy handshake instead of the 2026 pin they had just selected.
+ */
+describe("useServerState per-server pin resolution (control-plane first)", () => {
+  function dtoWithOverride(version: string | undefined) {
+    return {
+      serverIds: ["srv_demo"],
+      overrides: version
+        ? { srv_demo: { mcpProtocolVersionOverride: version } }
+        : {},
+    };
+  }
+
+  function lastConnectionDefaults() {
+    const lastCall =
+      reconnectServerMock.mock.calls[reconnectServerMock.mock.calls.length - 1];
+    return lastCall?.[2]?.connectionDefaults;
+  }
+
+  it("connects with the just-saved pin while the host mirror is still stale", async () => {
+    reconnectServerMock.mockResolvedValue({
+      success: true,
+      initInfo: { serverCapabilities: {} },
+    });
+
+    const dispatch = vi.fn();
+    // No pin anywhere yet.
+    const { rerender } = renderRevalidationHook(dispatch, {
+      profile: undefined,
+      hostConfig: buildHostConfig(),
+    });
+    await flushAsyncWork(5);
+    expect(reconnectServerMock).not.toHaveBeenCalled();
+
+    // The save lands on the control-plane row. The host config is
+    // deliberately left WITHOUT the override — this is the fan-out window.
+    projectServerConfigDtoMock.mockReturnValue(dtoWithOverride("2026-07-28"));
+    rerender({ profile: undefined, hostConfig: buildHostConfig() });
+
+    await waitFor(() => {
+      expect(reconnectServerMock).toHaveBeenCalledTimes(1);
+    });
+    expect(lastConnectionDefaults()?.mcpProtocolVersion).toBe("2026-07-28");
+  });
+
+  it("does not let a stale host default override the just-saved pin", async () => {
+    reconnectServerMock.mockResolvedValue({
+      success: true,
+      initInfo: { serverCapabilities: {} },
+    });
+
+    const dispatch = vi.fn();
+    const { rerender } = renderRevalidationHook(dispatch, {
+      profile: { mcpProtocolVersion: "2025-11-25" },
+      hostConfig: buildHostConfig(),
+    });
+    await flushAsyncWork(5);
+
+    projectServerConfigDtoMock.mockReturnValue(dtoWithOverride("2026-07-28"));
+    rerender({
+      profile: { mcpProtocolVersion: "2025-11-25" },
+      hostConfig: buildHostConfig(),
+    });
+
+    await waitFor(() => {
+      expect(reconnectServerMock).toHaveBeenCalledTimes(1);
+    });
+    expect(lastConnectionDefaults()?.mcpProtocolVersion).toBe("2026-07-28");
+  });
+
+  it("falls back to the host mirror while the control-plane row is loading", async () => {
+    reconnectServerMock.mockResolvedValue({
+      success: true,
+      initInfo: { serverCapabilities: {} },
+    });
+
+    const dispatch = vi.fn();
+    // DTO stays `undefined` (query in flight) for the whole test.
+    const { rerender } = renderRevalidationHook(dispatch, {
+      profile: undefined,
+      hostConfig: buildHostConfig(),
+    });
+    await flushAsyncWork(5);
+
+    rerender({
+      profile: undefined,
+      hostConfig: buildHostConfig({
+        srv_demo: { mcpProtocolVersionOverride: "2026-07-28" },
+      }),
+    });
+
+    await waitFor(() => {
+      expect(reconnectServerMock).toHaveBeenCalledTimes(1);
+    });
+    expect(lastConnectionDefaults()?.mcpProtocolVersion).toBe("2026-07-28");
   });
 });
