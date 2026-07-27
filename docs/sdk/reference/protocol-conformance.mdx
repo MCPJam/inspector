@@ -145,6 +145,11 @@ Check ids:
 - `server-sse-polling-session`
 - `server-accepts-multiple-post-streams`
 - `server-sse-streams-functional`
+- `modern-subscription-ack-precedes-notifications`
+- `modern-subscription-filter-and-tagging`
+- `modern-subscription-graceful-close`
+
+The three `modern-subscription-*` checks require protocol version `2026-07-28` and are era-skipped on legacy runs. They open one live `subscriptions/listen` stream and assert that the acknowledgement precedes every notification, every message carries the subscription id, and a stream that ends does so with the completion result. A check skips — never fails — when the server advertises nothing subscribable, refuses to open a stream, or keeps the subscription open past the observation window.
 
 ## Result types
 
