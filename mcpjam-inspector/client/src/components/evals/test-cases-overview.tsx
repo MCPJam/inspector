@@ -127,6 +127,12 @@ interface TestCasesOverviewProps {
   generateTestCasesDisabledReason?: string;
   isGeneratingTestCases?: boolean;
   onCreateTestCase?: () => void;
+  /**
+   * `namedHostId` → display name for hosts with no suite attachment — the
+   * resolved host of an environment-backed run, or a detached one. Owned by
+   * the parent (project host list) so this component stays queryless.
+   */
+  hostNamesById?: Map<string, string | null>;
 }
 
 export function TestCasesOverview({
@@ -154,6 +160,7 @@ export function TestCasesOverview({
   generateTestCasesDisabledReason,
   isGeneratingTestCases = false,
   onCreateTestCase,
+  hostNamesById,
 }: TestCasesOverviewProps) {
   const convex = useConvex();
   // A one-host matrix is pointless, so the cross-host view is only offered when
@@ -368,6 +375,7 @@ export function TestCasesOverview({
     effectiveCases,
     runs ?? [],
     effectiveIterations,
+    { hostNamesById },
   );
   const clientColumns = useMemo(
     () =>
@@ -526,6 +534,7 @@ export function TestCasesOverview({
               expanded
               onTestCaseClick={onTestCaseClick}
               onDeleteTestCasesBatch={onDeleteTestCasesBatch}
+              hostNamesById={hostNamesById}
             />
           </div>
         ) : (
