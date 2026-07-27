@@ -168,11 +168,13 @@ tools.post("/execute", async (c) => {
     toolName,
     parameters = {},
     taskOptions,
+    allowTaskResult,
   } = (await c.req.json()) as {
     serverId?: string;
     toolName?: string;
     parameters?: Record<string, unknown>;
     taskOptions?: { ttl?: number };
+    allowTaskResult?: boolean;
   };
 
   if (!serverId) return c.json({ error: "serverId is required" }, 400);
@@ -198,13 +200,17 @@ tools.post("/execute", async (c) => {
     serverId,
     toolName,
     startedAtMs,
-    execPromise: manager.executeTool(
-      serverId,
-      toolName,
-      parameters,
-      undefined, // options
-      taskOptions, // task options for background task creation
-    ) as unknown as Promise<ListToolsResult>,
+    execPromise: (allowTaskResult
+      ? manager.executeTool(serverId, toolName, parameters, {
+          allowTaskResult: true,
+        })
+      : manager.executeTool(
+          serverId,
+          toolName,
+          parameters,
+          undefined, // options
+          taskOptions, // task options for background task creation
+        )) as unknown as Promise<ListToolsResult>,
     queue: [],
   };
 
@@ -260,10 +266,27 @@ tools.post("/execute", async (c) => {
       const modelImmediateResponse =
         result?._meta?.["io.modelcontextprotocol/model-immediate-response"];
 
+      // Managers that predate wire dispatch only ever spoke the legacy wire.
+      const wire = manager.getTasksWire
+        ? manager.getTasksWire(serverId)
+        : "legacy";
+
+      // Extension wire: the CreateTaskResult is flat (`resultType: "task"`).
+      if (wire === "extension" && result?.resultType === "task") {
+        return c.json({
+          status: "task_created",
+          wire,
+          task: result,
+          durationMs: getExecutionDurationMs(context),
+          modelImmediateResponse,
+        });
+      }
+
       // Standard MCP Tasks spec format: top-level task property
       if (result?.task?.taskId && result?.task?.status) {
         return c.json({
           status: "task_created",
+          wire,
           task: result.task,
           durationMs: getExecutionDurationMs(context),
           // Include model-immediate-response if provided by server
@@ -271,13 +294,17 @@ tools.post("/execute", async (c) => {
         });
       }
 
-      // Check for task info in _meta["modelcontextprotocol.io/task"] or _meta["io.modelcontextprotocol/related-task"]
+      // Heuristic _meta fallback for legacy servers only: on the extension
+      // wire a related-task pointer is not a creation signal.
       const metaTask =
-        result?._meta?.["modelcontextprotocol.io/task"] ||
-        result?._meta?.["io.modelcontextprotocol/related-task"];
+        wire === "legacy"
+          ? result?._meta?.["modelcontextprotocol.io/task"] ||
+            result?._meta?.["io.modelcontextprotocol/related-task"]
+          : undefined;
       if (metaTask?.taskId && metaTask?.status) {
         return c.json({
           status: "task_created",
+          wire,
           task: {
             taskId: metaTask.taskId,
             status: metaTask.status,

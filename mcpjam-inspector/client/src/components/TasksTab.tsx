@@ -21,16 +21,19 @@ import {
   listTasks,
   getTask,
   getTaskResult,
+  updateTask,
   cancelTask,
   getLatestProgress,
   getTaskCapabilities,
+  TaskUnknownOrExpiredError,
   type ProgressEvent,
-  type TaskCapabilities,
+  type TasksSupport,
 } from "@/lib/apis/mcp-tasks-api";
 import {
   getTrackedTasksForServer,
   getTrackedTaskById,
   untrackTask,
+  markTaskExpired,
   clearTrackedTasksForServer,
   getDismissedTaskIds,
   dismissTasksForServer,
@@ -40,7 +43,12 @@ import { Input } from "@mcpjam/design-system/input";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@mcpjam/design-system/tooltip";
 import { Progress } from "@mcpjam/design-system/progress";
 import { TaskInlineProgress } from "./tasks/TaskInlineProgress";
-import { STATUS_CONFIG, formatRelativeTime } from "@/lib/task-utils";
+import {
+  STATUS_CONFIG,
+  formatRelativeTime,
+  normalizeTask,
+  type NormalizedTask,
+} from "@/lib/task-utils";
 import { useTaskElicitation } from "@/hooks/use-task-elicitation";
 import { ElicitationDialog } from "./ElicitationDialog";
 import type { DialogElicitation } from "./ToolsTab";
@@ -85,7 +93,7 @@ export function TasksTab({
   serverName,
   isActive = true,
 }: TasksTabProps) {
-  const [tasks, setTasks] = useState<Task[]>([]);
+  const [tasks, setTasks] = useState<NormalizedTask[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string>("");
   const [taskResult, setTaskResult] = useState<unknown>(null);
   const [pendingRequest, setPendingRequest] = useState<unknown>(null);
@@ -112,13 +120,22 @@ export function TasksTab({
   // Task capabilities from server (MCP Tasks spec 2025-11-25)
   // undefined = not yet fetched, null = server doesn't support, object = loaded
   const [taskCapabilities, setTaskCapabilities] = useState<
-    TaskCapabilities | null | undefined
+    TasksSupport | null | undefined
   >(undefined);
+  // Extension cancellation is cooperative: after the empty ack the task may
+  // keep working, complete, or be purged. Stop auto-polling and say so.
+  const [cancellationRequested, setCancellationRequested] = useState<
+    Set<string>
+  >(new Set());
+  const [submittingInput, setSubmittingInput] = useState(false);
   // Track the task ID for pending input_required requests to avoid race conditions
   const pendingInputRequestTaskIdRef = useRef<string | null>(null);
 
   // Collapsible sidebar state
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
+
+  const wire = taskCapabilities?.wire ?? "none";
+  const isExtensionWire = wire === "extension";
 
   const selectedTask = useMemo(() => {
     return tasks.find((t) => t.taskId === selectedTaskId) ?? null;
@@ -164,7 +181,7 @@ export function TasksTab({
   } = useTaskElicitation(isActive);
 
   // Convert hook elicitation to DialogElicitation format for the dialog
-  const dialogElicitation: DialogElicitation | null = taskElicitation
+  const legacyDialogElicitation: DialogElicitation | null = taskElicitation
     ? {
         requestId: taskElicitation.requestId,
         message: taskElicitation.message,
@@ -172,6 +189,40 @@ export function TasksTab({
         timestamp: taskElicitation.timestamp,
       }
     : null;
+
+  // Extension wire: `inputRequests` is a keyed snapshot re-sent on every poll.
+  // Only elicitation entries are answerable here (sampling/roots are rejected,
+  // matching the MRTR collector's Decision-8 rule).
+  const extensionInputRequest = useMemo(() => {
+    if (!isExtensionWire || selectedTask?.status !== "input_required") {
+      return null;
+    }
+    const entries = Object.entries(selectedTask.inputRequests ?? {});
+    for (const [key, value] of entries) {
+      const request = value as {
+        method?: string;
+        params?: { message?: string; requestedSchema?: unknown };
+      };
+      if (request?.method === "elicitation/create") {
+        return { key, request };
+      }
+    }
+    return null;
+  }, [isExtensionWire, selectedTask]);
+
+  const extensionDialogElicitation: DialogElicitation | null =
+    extensionInputRequest
+      ? {
+          requestId: extensionInputRequest.key,
+          message: extensionInputRequest.request.params?.message ?? "",
+          schema: extensionInputRequest.request.params?.requestedSchema as
+            | Record<string, unknown>
+            | undefined,
+          timestamp: selectedTask?.lastUpdatedAt ?? "",
+          origin: "mrtr",
+          serverId: serverName,
+        }
+      : null;
 
   // Priority: user override > server suggestion > user default
   // Per MCP Tasks spec: "Requestors SHOULD respect the pollInterval provided in responses"
@@ -232,7 +283,8 @@ export function TasksTab({
       let serverResult: { tasks: Task[] } = { tasks: [] };
       let serverTaskIds = new Set<string>();
 
-      if (taskCapabilities?.supportsList) {
+      // The extension has no tasks/list: the tracker is the list.
+      if (taskCapabilities?.list) {
         // Server supports tasks/list - fetch from server
         serverResult = await listTasks(serverName);
         serverTaskIds = new Set(serverResult.tasks.map((t) => t.taskId));
@@ -246,10 +298,16 @@ export function TasksTab({
           .filter((t) => !dismissedIds.has(t.taskId)) // Skip dismissed tasks
           .map(async (tracked) => {
             try {
-              return await getTask(serverName, tracked.taskId);
-            } catch {
-              // Task no longer exists on server, remove from tracking
-              untrackTask(tracked.taskId);
+              const envelope = await getTask(serverName, tracked.taskId);
+              return normalizeTask(envelope.wire, envelope.task);
+            } catch (err) {
+              if (err instanceof TaskUnknownOrExpiredError) {
+                // Unknown/expired is not an error: flag it and keep the handle
+                // so the user sees what happened instead of a silent removal.
+                markTaskExpired(tracked.taskId, serverName);
+                return null;
+              }
+              untrackTask(tracked.taskId, serverName);
               return null;
             }
           }),
@@ -257,9 +315,13 @@ export function TasksTab({
 
       // Merge server tasks with tracked tasks (tracked tasks first for recency)
       // Filter out dismissed tasks from server results
-      const allTasks = [
-        ...trackedTaskStatuses.filter((t): t is Task => t !== null),
-        ...serverResult.tasks.filter((t) => !dismissedIds.has(t.taskId)),
+      const allTasks: NormalizedTask[] = [
+        ...trackedTaskStatuses.filter((t): t is NormalizedTask => t !== null),
+        ...serverResult.tasks
+          .filter((t) => !dismissedIds.has(t.taskId))
+          .map((t) =>
+            normalizeTask("legacy", t as unknown as Record<string, unknown>),
+          ),
       ];
 
       // Sort by createdAt descending (most recent first)
@@ -327,6 +389,16 @@ export function TasksTab({
 
     try {
       await cancelTask(serverName, selectedTaskId);
+      if (isExtensionWire) {
+        // Cooperative cancel: the ack is empty, so record the request and
+        // stop polling by default rather than waiting for a `cancelled` that
+        // may never arrive.
+        setCancellationRequested((prev) =>
+          new Set(prev).add(selectedTaskId),
+        );
+        setAutoRefresh(false);
+        userDisabledAutoRefresh.current = true;
+      }
       // Refresh task list to get updated status
       await fetchTasks();
     } catch (err) {
@@ -334,7 +406,50 @@ export function TasksTab({
     } finally {
       setCancelling(false);
     }
-  }, [serverName, selectedTaskId, fetchTasks]);
+  }, [serverName, selectedTaskId, fetchTasks, isExtensionWire]);
+
+  // Extension input_required: submit responses to the keyed inputRequests
+  // snapshot via tasks/update. Partial responses are allowed.
+  const handleSubmitInputResponses = useCallback(
+    async (inputResponses: Record<string, unknown>) => {
+      if (!serverName || !selectedTaskId) return;
+      setSubmittingInput(true);
+      setError("");
+      try {
+        await updateTask(serverName, selectedTaskId, inputResponses);
+        await fetchTasks();
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to submit task input",
+        );
+      } finally {
+        setSubmittingInput(false);
+      }
+    },
+    [serverName, selectedTaskId, fetchTasks],
+  );
+
+  const handleExtensionInputResponse = useCallback(
+    async (
+      action: "accept" | "decline" | "cancel",
+      parameters?: Record<string, unknown>,
+    ) => {
+      if (!extensionInputRequest) return;
+      // Partial responses are allowed: answer the key the user just handled.
+      await handleSubmitInputResponses({
+        [extensionInputRequest.key]: {
+          method: "elicitation/create",
+          result: {
+            action,
+            ...(action === "accept" && parameters
+              ? { content: parameters }
+              : {}),
+          },
+        },
+      });
+    },
+    [extensionInputRequest, handleSubmitInputResponses],
+  );
 
   // Fetch task capabilities when server changes
   // Per MCP Tasks spec (2025-11-25): clients SHOULD check capabilities before using task features
@@ -392,6 +507,13 @@ export function TasksTab({
   // Per MCP Tasks spec: when task is input_required, tasks/result returns the pending request
   // Per MCP Tasks spec: for failed tasks, tasks/result returns the JSON-RPC error
   useEffect(() => {
+    // Extension wire: tasks/get already carried the result (or the JSON-RPC
+    // error, or the inputRequests snapshot) inline — never fetch a result.
+    if (isExtensionWire) {
+      setTaskResult(selectedTask?.result ?? selectedTask?.error ?? null);
+      setPendingRequest(selectedTask?.inputRequests ?? null);
+      return;
+    }
     if (
       selectedTask?.status === "completed" ||
       selectedTask?.status === "failed"
@@ -430,11 +552,19 @@ export function TasksTab({
       setPendingRequest(null);
       pendingInputRequestTaskIdRef.current = null;
     }
-  }, [selectedTaskId, selectedTask?.status, fetchTaskResult, serverName]);
+  }, [
+    selectedTaskId,
+    selectedTask,
+    isExtensionWire,
+    fetchTaskResult,
+    serverName,
+  ]);
 
   // Poll for progress when there are working tasks (only when tab is active)
   useEffect(() => {
     if (!serverName || !isActive) return;
+    // Progress notifications are a legacy in-core affordance.
+    if (isExtensionWire) return;
 
     // Check if any task is currently working
     const hasWorkingTasks = tasks.some((t) => t.status === "working");
@@ -459,7 +589,7 @@ export function TasksTab({
     const interval = setInterval(fetchProgress, 500);
 
     return () => clearInterval(interval);
-  }, [serverName, tasks, isActive]);
+  }, [serverName, tasks, isActive, isExtensionWire]);
 
   // Agent bridge: SNAPSHOT-ONLY (no tools). Tasks is a read-only view of a
   // server's long-running tasks (agentTools kind "none") the agent may OBSERVE.
@@ -490,6 +620,19 @@ export function TasksTab({
         icon={ListTodo}
         title="No Server Selected"
         description="Connect to an MCP server to browse and manage its tasks."
+      />
+    );
+  }
+
+  // No tasks wire at all (pre-2025-11-25, or a server that declares neither
+  // the in-core utility nor the extension): there is nothing to show and no
+  // task request may be sent.
+  if (taskCapabilities !== undefined && wire === "none") {
+    return (
+      <EmptyState
+        icon={ListTodo}
+        title="Tasks not supported"
+        description="This server does not offer tasks on the negotiated protocol version."
       />
     );
   }
@@ -707,6 +850,9 @@ export function TasksTab({
               <code className="font-mono font-semibold text-foreground bg-muted px-2 py-1 rounded-md border border-border text-xs">
                 {selectedTask.taskId}
               </code>
+              <Badge variant="outline" className="text-xs">
+                {selectedTask.wire}
+              </Badge>
               {selectedTask.ttl !== null && (
                 <Badge variant="outline" className="text-xs">
                   TTL: {selectedTask.ttl}ms
@@ -742,6 +888,13 @@ export function TasksTab({
 
           {/* Task Details */}
           <div className="px-6 py-4 bg-muted/50 border-b border-border space-y-3">
+            {cancellationRequested.has(selectedTask.taskId) && (
+              <p className="text-xs text-warning">
+                Cancellation requested. Cancellation is cooperative: the task
+                may still complete or be removed. Automatic polling is paused —
+                refresh manually to check.
+              </p>
+            )}
             <div className="grid grid-cols-2 gap-4 text-xs">
               <div>
                 <span className="text-muted-foreground">Created:</span>
@@ -921,9 +1074,13 @@ export function TasksTab({
       {/* Per MCP Tasks spec (2025-11-25): when a task needs input, server sends */}
       {/* elicitation requests with relatedTaskId in the metadata */}
       <ElicitationDialog
-        elicitationRequest={dialogElicitation}
-        onResponse={handleElicitationResponse}
-        loading={elicitationResponding}
+        elicitationRequest={extensionDialogElicitation ?? legacyDialogElicitation}
+        onResponse={
+          extensionDialogElicitation
+            ? handleExtensionInputResponse
+            : handleElicitationResponse
+        }
+        loading={elicitationResponding || submittingInput}
       />
     </>
   );

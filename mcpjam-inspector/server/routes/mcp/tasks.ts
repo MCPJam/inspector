@@ -1,10 +1,31 @@
 import { Hono } from "hono";
 import "../../types/hono";
 import { progressStore } from "../../services/progress-store";
+import { logger } from "../../utils/logger";
 
 const tasks = new Hono();
 
-// List all tasks for a server
+/**
+ * Tasks exist on two mutually incompatible wires: the 2025-11-25 in-core
+ * utility ("legacy") and the io.modelcontextprotocol/tasks extension
+ * ("extension", 2026-07-28+). Every route below dispatches on the wire the
+ * SDK resolved for the connection; `wire: "none"` means the connection has no
+ * tasks surface at all and task routes must not touch the network.
+ */
+
+const TASK_UNKNOWN_OR_EXPIRED = "task-unknown-or-expired";
+
+// JSON-RPC -32602 on a task read means the server no longer knows the task
+// (expired, purged after cancellation, or forgotten with the session).
+function isUnknownTaskError(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return code === -32602;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Unknown error";
+}
+
 tasks.post("/list", async (c) => {
   try {
     const { serverId, cursor } = (await c.req.json()) as {
@@ -16,18 +37,21 @@ tasks.post("/list", async (c) => {
       return c.json({ error: "serverId is required" }, 400);
     }
 
+    const support = c.mcpClientManager.getTasksSupport(serverId);
+    if (!support.list) {
+      // The extension has no tasks/list: the client-side tracker is the list.
+      // Answering locally keeps this the single seam a future registry fills.
+      return c.json({ tasks: [], wire: support.wire });
+    }
+
     const result = await c.mcpClientManager.listTasks(serverId, cursor);
-    return c.json(result);
+    return c.json({ ...result, wire: support.wire });
   } catch (error) {
-    console.error("Error listing tasks:", error);
-    return c.json(
-      { error: error instanceof Error ? error.message : "Unknown error" },
-      500,
-    );
+    logger.error("Error listing tasks", error);
+    return c.json({ error: errorMessage(error) }, 500);
   }
 });
 
-// Get a specific task
 tasks.post("/get", async (c) => {
   try {
     const { serverId, taskId } = (await c.req.json()) as {
@@ -38,20 +62,37 @@ tasks.post("/get", async (c) => {
     if (!serverId) return c.json({ error: "serverId is required" }, 400);
     if (!taskId) return c.json({ error: "taskId is required" }, 400);
 
-    const result = await c.mcpClientManager.getTask(serverId, taskId);
-    return c.json(result);
+    const support = c.mcpClientManager.getTasksSupport(serverId);
+    if (support.wire === "none") {
+      return c.json({ error: "Server has no tasks wire" }, 400);
+    }
+
+    try {
+      const task =
+        support.wire === "extension"
+          ? await c.mcpClientManager.getTaskExt(serverId, taskId)
+          : await c.mcpClientManager.getTask(serverId, taskId);
+      return c.json({ wire: support.wire, task });
+    } catch (error) {
+      if (isUnknownTaskError(error)) {
+        return c.json(
+          {
+            error: errorMessage(error),
+            code: TASK_UNKNOWN_OR_EXPIRED,
+            wire: support.wire,
+          },
+          404,
+        );
+      }
+      throw error;
+    }
   } catch (error) {
-    console.error("Error getting task:", error);
-    return c.json(
-      { error: error instanceof Error ? error.message : "Unknown error" },
-      500,
-    );
+    logger.error("Error getting task", error);
+    return c.json({ error: errorMessage(error) }, 500);
   }
 });
 
-// Get task result (for completed tasks)
-// Per MCP Tasks spec: tasks/result returns the underlying request's result directly,
-// with io.modelcontextprotocol/related-task in _meta
+// Legacy only: the extension carries the result inline on tasks/get.
 tasks.post("/result", async (c) => {
   try {
     const { serverId, taskId } = (await c.req.json()) as {
@@ -62,13 +103,22 @@ tasks.post("/result", async (c) => {
     if (!serverId) return c.json({ error: "serverId is required" }, 400);
     if (!taskId) return c.json({ error: "taskId is required" }, 400);
 
+    const support = c.mcpClientManager.getTasksSupport(serverId);
+    if (support.wire !== "legacy") {
+      return c.json(
+        {
+          error:
+            "tasks/result exists only on the 2025-11-25 wire; use tasks/get (the result is inline)",
+          wire: support.wire,
+        },
+        400,
+      );
+    }
+
     const result = await c.mcpClientManager.getTaskResult(serverId, taskId);
 
-    // Per MCP Tasks spec (2025-11-25), the result should include the related task metadata
-    // The SDK returns the raw result, we ensure the metadata is present
     const resultWithMeta = result as Record<string, unknown> | null;
     if (resultWithMeta && typeof resultWithMeta === "object") {
-      // Ensure _meta exists and contains the related task info
       if (!resultWithMeta._meta) {
         resultWithMeta._meta = {};
       }
@@ -79,16 +129,60 @@ tasks.post("/result", async (c) => {
 
     return c.json(result);
   } catch (error) {
-    console.error("Error getting task result:", error);
-    return c.json(
-      { error: error instanceof Error ? error.message : "Unknown error" },
-      500,
-    );
+    logger.error("Error getting task result", error);
+    return c.json({ error: errorMessage(error) }, 500);
   }
 });
 
-// Cancel a task
-// Per MCP Tasks spec (2025-11-25): only attempt cancel if server declares tasks.cancel capability
+// Extension only: submit responses to the keyed inputRequests snapshot.
+tasks.post("/update", async (c) => {
+  try {
+    const { serverId, taskId, inputResponses } = (await c.req.json()) as {
+      serverId?: string;
+      taskId?: string;
+      inputResponses?: Record<string, unknown>;
+    };
+
+    if (!serverId) return c.json({ error: "serverId is required" }, 400);
+    if (!taskId) return c.json({ error: "taskId is required" }, 400);
+    if (!inputResponses || typeof inputResponses !== "object") {
+      return c.json({ error: "inputResponses is required" }, 400);
+    }
+
+    const support = c.mcpClientManager.getTasksSupport(serverId);
+    if (!support.update) {
+      return c.json(
+        { error: "Server does not support tasks/update", wire: support.wire },
+        400,
+      );
+    }
+
+    try {
+      const task = await c.mcpClientManager.updateTask(
+        serverId,
+        taskId,
+        inputResponses as never,
+      );
+      return c.json({ wire: support.wire, task });
+    } catch (error) {
+      if (isUnknownTaskError(error)) {
+        return c.json(
+          {
+            error: errorMessage(error),
+            code: TASK_UNKNOWN_OR_EXPIRED,
+            wire: support.wire,
+          },
+          404,
+        );
+      }
+      throw error;
+    }
+  } catch (error) {
+    logger.error("Error updating task", error);
+    return c.json({ error: errorMessage(error) }, 500);
+  }
+});
+
 tasks.post("/cancel", async (c) => {
   try {
     const { serverId, taskId } = (await c.req.json()) as {
@@ -99,95 +193,80 @@ tasks.post("/cancel", async (c) => {
     if (!serverId) return c.json({ error: "serverId is required" }, 400);
     if (!taskId) return c.json({ error: "taskId is required" }, 400);
 
-    // Check if server supports cancel operation before attempting
-    if (!c.mcpClientManager.supportsTasksCancel(serverId)) {
+    const support = c.mcpClientManager.getTasksSupport(serverId);
+    if (!support.cancel) {
       return c.json(
         {
           error:
             "Server does not support task cancellation (tasks.cancel capability not declared)",
+          wire: support.wire,
         },
         400,
       );
     }
 
-    const result = await c.mcpClientManager.cancelTask(serverId, taskId);
-    return c.json(result);
+    if (support.wire === "extension") {
+      // The extension ack is empty and cancellation is cooperative: report the
+      // request, let the caller re-poll for the eventual status.
+      await c.mcpClientManager.cancelTaskExt(serverId, taskId);
+      return c.json({ wire: support.wire, task: null });
+    }
+
+    const task = await c.mcpClientManager.cancelTask(serverId, taskId);
+    return c.json({ wire: support.wire, task });
   } catch (error) {
-    console.error("Error cancelling task:", error);
-    return c.json(
-      { error: error instanceof Error ? error.message : "Unknown error" },
-      500,
-    );
+    logger.error("Error cancelling task", error);
+    return c.json({ error: errorMessage(error) }, 500);
   }
 });
 
-// Get task capabilities for a server (MCP Tasks spec 2025-11-25)
-// Returns what task-related features the server supports
 tasks.post("/capabilities", async (c) => {
   try {
-    const { serverId } = (await c.req.json()) as {
-      serverId?: string;
-    };
+    const { serverId } = (await c.req.json()) as { serverId?: string };
 
     if (!serverId) return c.json({ error: "serverId is required" }, 400);
 
-    const capabilities = {
-      // Server supports task-augmented tools/call requests
-      supportsToolCalls: c.mcpClientManager.supportsTasksForToolCalls(serverId),
-      // Server supports tasks/list operation
-      supportsList: c.mcpClientManager.supportsTasksList(serverId),
-      // Server supports tasks/cancel operation
-      supportsCancel: c.mcpClientManager.supportsTasksCancel(serverId),
-    };
+    const support = c.mcpClientManager.getTasksSupport(serverId);
 
-    return c.json(capabilities);
+    return c.json({
+      ...support,
+      // Legacy boolean shape, kept one release for older clients.
+      supportsToolCalls: support.toolCalls,
+      supportsList: support.list,
+      supportsCancel: support.cancel,
+    });
   } catch (error) {
-    console.error("Error getting task capabilities:", error);
-    return c.json(
-      { error: error instanceof Error ? error.message : "Unknown error" },
-      500,
-    );
+    logger.error("Error getting task capabilities", error);
+    return c.json({ error: errorMessage(error) }, 500);
   }
 });
 
-// Get latest progress for a server
-// Returns the most recent progress notification received
+// Progress is local-only: hosted connections are ephemeral per request.
 tasks.post("/progress", async (c) => {
   try {
-    const { serverId } = (await c.req.json()) as {
-      serverId?: string;
-    };
+    const { serverId } = (await c.req.json()) as { serverId?: string };
 
     if (!serverId) return c.json({ error: "serverId is required" }, 400);
 
     const progress = progressStore.getLatestProgress(serverId);
     return c.json({ progress: progress ?? null });
   } catch (error) {
-    console.error("Error getting progress:", error);
-    return c.json(
-      { error: error instanceof Error ? error.message : "Unknown error" },
-      500,
-    );
+    logger.error("Error getting progress", error);
+    return c.json({ error: errorMessage(error) }, 500);
   }
 });
 
-// Get all active progress for a server
 tasks.post("/progress/all", async (c) => {
   try {
-    const { serverId } = (await c.req.json()) as {
-      serverId?: string;
-    };
+    const { serverId } = (await c.req.json()) as { serverId?: string };
 
     if (!serverId) return c.json({ error: "serverId is required" }, 400);
 
     const allProgress = progressStore.getAllProgress(serverId);
     return c.json({ progress: allProgress });
   } catch (error) {
-    console.error("Error getting all progress:", error);
-    return c.json(
-      { error: error instanceof Error ? error.message : "Unknown error" },
-      500,
-    );
+    logger.error("Error getting all progress", error);
+    return c.json({ error: errorMessage(error) }, 500);
   }
 });
 
