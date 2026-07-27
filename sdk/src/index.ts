@@ -130,6 +130,8 @@ export {
   isMCPAuthError,
   isUnauthorized401,
   isInsufficientScopeError,
+  MCPTasksWireError,
+  isMCPTasksWireError,
 } from "./mcp-client-manager/index.js";
 export type { RetryPolicy } from "./retry.js";
 export {
@@ -758,12 +760,14 @@ export type {
 
 // Era-neutral subscription coordinator (2026-07-28 `subscriptions/listen` +
 // legacy list-changed / `resources/subscribe`) — spec §13. Re-exported at the
-// package root so local surfaces (the Inspector's subscription bridge) can own
-// the stream without reaching into the client-manager subpath.
+// package root so local surfaces (the Inspector's subscription bridge) own the
+// stream, and consumers outside the SDK (the CLI's listen mode) can drive it,
+// without reaching into the client-manager subpath. New exports only.
 export {
   SubscriptionCoordinator,
   DEFAULT_SUBSCRIPTION_RECONNECT_POLICY,
   SUBSCRIPTION_ID_META_KEY,
+  SubscriptionsAcknowledgedNotificationMethod,
   diffAcknowledgement,
   resolveRequestedFilter,
 } from "./mcp-client-manager/index.js";

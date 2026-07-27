@@ -921,10 +921,25 @@ export class SubscriptionCoordinator {
     try {
       handle = await listen(cloneFilter(requested));
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      stream.closedAt = this.now();
+      stream.error = message;
+      if (reconnectAttempt > 0) {
+        // A re-listen whose open fails is still the SAME unexpected remote
+        // loss, not a new kind of failure: a server that is still down when
+        // the backoff expires is precisely what the attempt budget is for.
+        // Ending the sequence on the first failed re-open would spend one
+        // attempt and report `error`, hiding the loss the user is chasing.
+        stream.status = "remote-closed";
+        stream.closeReason = "remote";
+        this.emitStream(stream);
+        if (this.currentLocalId === stream.localId) {
+          void this.enqueue(() => this.scheduleRelisten(stream));
+        }
+        return;
+      }
       stream.status = "error";
       stream.closeReason = "error";
-      stream.error = error instanceof Error ? error.message : String(error);
-      stream.closedAt = this.now();
       this.emitStream(stream);
       return;
     }
