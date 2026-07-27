@@ -1494,9 +1494,13 @@ export class MCPClientManager {
         (!wantsStateless && resolvedProtocolVersion !== undefined
           ? [resolvedProtocolVersion]
           : undefined);
-      const versionNegotiation = resolveVersionNegotiation(
-        resolvedProtocolVersion
-      );
+      // Automatic version negotiation is an HTTP-only default. Explicit
+      // stateful/modern pins keep their exact behavior, while stdio stays on
+      // the historical initialize path (the UI does not expose modern stdio
+      // negotiation yet).
+      const versionNegotiation = this.isStdioConfig(config)
+        ? undefined
+        : resolveVersionNegotiation(resolvedProtocolVersion);
       const clientOptions: ClientOptions = {
         capabilities: clientCapabilities,
         // Manual multi-round-trip mode (2026-07-28 `input_required`, spec §12).
@@ -2542,6 +2546,28 @@ export class MCPClientManager {
       maxRounds: this.mrtrMaxRounds,
       signal: options?.signal,
     });
+  }
+
+  /**
+   * Public reconstruction seam for the HOSTED MRTR resume path (§12.5, PR5).
+   *
+   * The hosted continuation transport drives an MRTR retry leg via
+   * `resumeInputRequiredOperation` (the explicit-schema `requestWithSchema`
+   * sender), which — like the local MRTR tool path — bypasses upstream
+   * `callTool`'s output-schema assertion. On resume there is no
+   * `runInputRequiredOperation` loop to carry the `validateResponse` hook, so a
+   * fresh-request resume worker calls this to re-impose the SAME assertion the
+   * local path applies, reusing the SAME `DialectAwareJsonSchemaValidator`
+   * instance rather than a divergent inspector-side re-implementation. Throws a
+   * `TypeError` on a schema mismatch / missing structured content, exactly as
+   * the local path does; a best-effort no-op when the schema can't be resolved.
+   */
+  async assertMrtrToolOutputSchema(
+    serverId: string,
+    toolName: string,
+    result: CallToolResult
+  ): Promise<void> {
+    return this.validateToolOutputSchema(serverId, toolName, result);
   }
 
   /**

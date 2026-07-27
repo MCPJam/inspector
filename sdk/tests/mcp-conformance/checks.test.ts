@@ -136,6 +136,18 @@ describe("mcp conformance unit checks", () => {
   });
 
   it("reports protocol checks in the protocol category", async () => {
+    mockedOperations.withEphemeralClient.mockImplementation(
+      async (_config, fn) =>
+        fn(
+          {
+            getManagedClient: vi.fn().mockReturnValue({}),
+            getInitializationInfo: vi.fn().mockReturnValue({
+              protocolVersion: "2025-11-25",
+            }),
+          } as any,
+          "server-1",
+        ),
+    );
     const fetchFn = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
 

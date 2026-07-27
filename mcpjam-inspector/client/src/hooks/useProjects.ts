@@ -49,6 +49,7 @@ export interface RemoteServer {
   useOAuth?: boolean;
   oauthScopes?: string[];
   clientId?: string;
+  oauthProtocolMode?: string;
   oauthProtocolVersion?: string;
   oauthRegistrationStrategy?: string;
   hasClientSecret?: boolean;
