@@ -23,6 +23,7 @@ import {
   readSelectedFileBytes,
 } from "@/lib/plugins/folder-bundle";
 import { assertPluginBundleWithinCap } from "@/lib/plugins/plugin-api";
+import { materializePluginBundleLocally } from "@/lib/plugins/local-materialize";
 import {
   PluginApiError,
   type PluginCommitResult,
@@ -423,6 +424,27 @@ export function AddPluginModal({
           reused: result.reused === true,
           ...(row?.preview ? pluginPreviewAnalyticsProps(row.preview) : {}),
         });
+
+        // Seed the desktop bundle cache while the archive is still in memory:
+        // this is the only moment its bytes exist on this machine, and after
+        // it the plugin's local components can launch without ever needing the
+        // user's folder again. Best-effort by design — the install itself
+        // already succeeded, and a connect attempt reports an
+        // un-materialized bundle with its own actionable error.
+        if (selected && projectId && result.pluginVersionId) {
+          const seeded = await materializePluginBundleLocally({
+            projectId,
+            pluginVersionId: result.pluginVersionId,
+            bundleHash: selected.bundleHash,
+            zipBytes: selected.zipBytes,
+          });
+          if (runRef.current === run && seeded.error) {
+            setFailure({
+              code: "LOCAL_MATERIALIZE_FAILED",
+              message: `The plugin was installed, but its files could not be cached for local components: ${seeded.error}`,
+            });
+          }
+        }
       } catch (error) {
         if (runRef.current !== run) return;
         const uiFailure = toUiFailure(error, "The plugin could not be installed.");
@@ -436,7 +458,7 @@ export function AddPluginModal({
         if (runRef.current === run) setBusy(null);
       }
     },
-    [actions, importId, row?.preview],
+    [actions, importId, projectId, row?.preview, selected],
   );
 
   /**
