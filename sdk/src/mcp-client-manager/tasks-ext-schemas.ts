@@ -1,4 +1,8 @@
 /**
+ * PIN: modelcontextprotocol/ext-tasks @ 2c1425d9a288b9b1f489430fe1e00bb392b47e48
+ * (`schema/draft/schema.json`). Re-diff against that commit when re-syncing.
+ */
+/**
  * Runtime validation for `io.modelcontextprotocol/tasks` (SEP-2663) payloads.
  *
  * VENDORED-FROM-SEP-2663-DRAFT — zod mirrors of the extension's
@@ -71,11 +75,8 @@ export const createTaskExtResultSchema = taskExtSchema.extend({
 
 export const getTaskExtResultSchema = detailedTaskExtSchema;
 
-export const taskExtNotificationParamsSchema = z
-  .object({
-    taskId: z.string().min(1),
-    status: taskExtStatusSchema,
-    statusMessage: z.string().optional(),
-    _meta: z.record(z.string(), z.unknown()).optional(),
-  })
-  .loose();
+/**
+ * `notifications/tasks` params. SEP-2663 delivers a full `DetailedTask`, so the
+ * notification body validates against the same schema as `tasks/get`.
+ */
+export const taskExtNotificationParamsSchema = detailedTaskExtSchema;

@@ -205,6 +205,8 @@ export function ToolsTab({
     description?: string;
   }>({ title: "" });
   const [executeAsTask, setExecuteAsTask] = useState(false);
+  /** Server the extension "allow task response" default was applied for. */
+  const extensionTaskDefaultAppliedRef = useRef<string | undefined>(undefined);
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
   // Task capabilities from server (MCP Tasks spec 2025-11-25)
   const [taskCapabilities, setTaskCapabilities] =
@@ -406,8 +408,13 @@ export function ToolsTab({
         supportsCancel: capabilities.cancel,
       });
       // The extension is a per-request declaration, not a mode: default the
-      // toggle on when the server advertises it.
-      if (capabilities.wire === "extension") {
+      // toggle on when the server advertises it — but only once per server, so
+      // a capability refresh cannot silently re-enable a user's opt-out.
+      if (
+        capabilities.wire === "extension" &&
+        extensionTaskDefaultAppliedRef.current !== serverName
+      ) {
+        extensionTaskDefaultAppliedRef.current = serverName;
         setExecuteAsTask(true);
       }
     } catch (err) {

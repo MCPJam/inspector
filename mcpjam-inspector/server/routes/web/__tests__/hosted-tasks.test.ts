@@ -233,7 +233,8 @@ describe("hosted /api/web/tasks", () => {
 
       const res = await post("/result", { taskId: "t1" });
 
-      expect(res.status).toBe(500);
+      expect(res.status).toBe(400);
+      expect((await res.json()).error.code).toBe("TASKS_UNSUPPORTED");
       expect(getTaskResult).not.toHaveBeenCalled();
     });
 
@@ -246,7 +247,7 @@ describe("hosted /api/web/tasks", () => {
 
       const res = await post("/update", { taskId: "t1", inputResponses: {} });
 
-      expect(res.status).toBe(500);
+      expect(res.status).toBe(400);
       expect(updateTask).not.toHaveBeenCalled();
     });
 
@@ -259,7 +260,7 @@ describe("hosted /api/web/tasks", () => {
         cancelTaskExt,
       });
 
-      expect((await post("/cancel", { taskId: "t1" })).status).toBe(500);
+      expect((await post("/cancel", { taskId: "t1" })).status).toBe(400);
       expect(cancelTaskExt).not.toHaveBeenCalled();
     });
 
@@ -311,5 +312,48 @@ describe("hosted /api/web/tasks", () => {
 
     expect(res.status).toBe(400);
     expect(lifecycle).toEqual([]);
+  });
+  it("maps an unsupported wire onto a 400 TASKS_UNSUPPORTED, not a 500", async () => {
+    setManager({
+      getTasksSupport: vi.fn().mockReturnValue({
+        wire: "none",
+        toolCalls: false,
+        list: false,
+        cancel: false,
+        update: false,
+        inlineResult: false,
+      }),
+    });
+
+    const res = await post("/get", { taskId: "t1" });
+
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatchObject({
+      code: "TASKS_UNSUPPORTED",
+      wire: "none",
+    });
+    expect(lifecycle).toEqual(["connect", "disconnect"]);
+  });
+
+  it("rejects taskOptions and allowTaskResult together (different wires)", async () => {
+    const { toolsExecuteSchema } = await import("../auth.js");
+
+    expect(
+      toolsExecuteSchema.safeParse({
+        projectId: "p1",
+        serverId: "s1",
+        toolName: "t",
+        taskOptions: { ttl: 1000 },
+        allowTaskResult: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      toolsExecuteSchema.safeParse({
+        projectId: "p1",
+        serverId: "s1",
+        toolName: "t",
+        allowTaskResult: true,
+      }).success,
+    ).toBe(true);
   });
 });

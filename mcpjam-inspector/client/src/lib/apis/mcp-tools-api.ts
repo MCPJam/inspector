@@ -156,6 +156,7 @@ export async function executeToolApi(
           toolName,
           parameters,
           taskOptions: taskOptions as Record<string, unknown> | undefined,
+          allowTaskResult,
         })) as ToolExecutionResponse;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

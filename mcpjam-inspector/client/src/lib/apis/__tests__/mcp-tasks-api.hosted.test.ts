@@ -126,4 +126,53 @@ describe("mcp-tasks-api (hosted mode)", () => {
     await expect(getAllProgress("my-server")).resolves.toEqual([]);
     expect(authFetchMock).not.toHaveBeenCalled();
   });
+  it("forwards the extension allowTaskResult declaration on hosted tool execution", async () => {
+    const { executeToolApi } = await import("../mcp-tools-api");
+    authFetchMock.mockResolvedValue(jsonResponse({ status: "completed" }));
+
+    await executeToolApi("my-server", "long_running", {}, undefined, true);
+
+    expect(lastCall().path).toBe("/api/web/tools/execute");
+    expect(lastCall().body).toMatchObject({
+      toolName: "long_running",
+      allowTaskResult: true,
+    });
+    expect(lastCall().body.taskOptions).toBeUndefined();
+  });
+
+  it("keeps tracked task handles across a transient context teardown", async () => {
+    const { trackTask, getTrackedTasksForServer } = await import(
+      "@/lib/task-tracker"
+    );
+    trackTask(
+      {
+        taskId: "t1",
+        serverId: "my-server",
+        wire: "extension",
+        toolName: "long_running",
+        createdAt: new Date().toISOString(),
+      } as never,
+    );
+    expect(getTrackedTasksForServer("my-server")).toHaveLength(1);
+
+    // `useApiContext` nulls the context on every dependency change and
+    // immediately restores it: that must not look like a logout.
+    setApiContext(null);
+    setApiContext({
+      projectId: "project-1",
+      isAuthenticated: true,
+      serverIdsByName: { "my-server": "server-1" },
+    } as never);
+
+    expect(getTrackedTasksForServer("my-server")).toHaveLength(1);
+
+    // An actual actor change does drop the previous actor's handles.
+    setApiContext({
+      projectId: "project-2",
+      isAuthenticated: true,
+      serverIdsByName: { "my-server": "server-1" },
+    } as never);
+
+    expect(getTrackedTasksForServer("my-server")).toHaveLength(0);
+  });
 });

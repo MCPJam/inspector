@@ -3,6 +3,7 @@ import "../../types/hono";
 import { progressStore } from "../../services/progress-store";
 import { logger } from "../../utils/logger";
 import {
+  TasksFeatureError,
   UnknownTaskError,
   cancelTaskForWire,
   getTaskForWire,
@@ -32,6 +33,16 @@ function requireIds(body: { serverId?: string; taskId?: string }) {
   return null;
 }
 
+/**
+ * A tasks request the resolved wire cannot serve is a caller/feature error:
+ * 400 with the resolved wire, never a 500.
+ */
+function featureErrorResponse(error: unknown) {
+  return error instanceof TasksFeatureError
+    ? ({ body: { error: error.message, code: error.code, wire: error.wire } , status: 400 } as const)
+    : null;
+}
+
 tasks.post("/list", async (c) => {
   try {
     const { serverId, cursor } = (await c.req.json()) as {
@@ -44,6 +55,8 @@ tasks.post("/list", async (c) => {
       await listTasksForWire(c.mcpClientManager, { serverId, cursor }),
     );
   } catch (error) {
+    const feature = featureErrorResponse(error);
+    if (feature) return c.json(feature.body, feature.status);
     logger.error("Error listing tasks", error);
     return c.json({ error: errorMessage(error) }, 500);
   }
@@ -68,12 +81,9 @@ tasks.post("/get", async (c) => {
         404,
       );
     }
+    const feature = featureErrorResponse(error);
+    if (feature) return c.json(feature.body, feature.status);
     logger.error("Error getting task", error);
-    // A connection with no tasks wire is a client mistake, not a server fault.
-    const support = c.mcpClientManager.getTasksSupport(body.serverId as string);
-    if (support.wire === "none") {
-      return c.json({ error: errorMessage(error), wire: "none" }, 400);
-    }
     return c.json({ error: errorMessage(error) }, 500);
   }
 });
@@ -104,6 +114,8 @@ tasks.post("/result", async (c) => {
       }),
     );
   } catch (error) {
+    const feature = featureErrorResponse(error);
+    if (feature) return c.json(feature.body, feature.status);
     logger.error("Error getting task result", error);
     return c.json({ error: errorMessage(error) }, 500);
   }
@@ -145,6 +157,8 @@ tasks.post("/update", async (c) => {
         404,
       );
     }
+    const feature = featureErrorResponse(error);
+    if (feature) return c.json(feature.body, feature.status);
     logger.error("Error updating task", error);
     return c.json({ error: errorMessage(error) }, 500);
   }
@@ -175,6 +189,8 @@ tasks.post("/cancel", async (c) => {
       }),
     );
   } catch (error) {
+    const feature = featureErrorResponse(error);
+    if (feature) return c.json(feature.body, feature.status);
     logger.error("Error cancelling task", error);
     return c.json({ error: errorMessage(error) }, 500);
   }
