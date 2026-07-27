@@ -70,6 +70,19 @@ The step-up is bounded per browser session: if re-authorization does not resolve
 Runtime scope step-up is only available on the local (non-hosted) tool-call surface. The hosted path does not yet forward the scope challenge.
 </Note>
 
+### Background task execution
+
+When a server declares the MCP Tasks capability, the tool parameters panel shows an extra control that lets you run the tool as a background task instead of waiting for an inline result.
+
+The control adapts to the tasks wire the server negotiated:
+
+| Wire | Control shown | What it does |
+|------|--------------|--------------|
+| **Legacy** (2025-11-25 in-core) | **Run as task** checkbox + optional TTL field | Sends `params.task` in the `tools/call` request; the server creates a task and returns a `task_created` response. The TTL field sets how long the server should keep the task alive (0 = no expiration). |
+| **Extension** (2026-07-28+) | **Allow task response** checkbox (default ON) | Declares that a task response is acceptable; the server decides whether to respond inline or as a task. No TTL is sent. |
+
+When a tool call produces a `task_created` response, the inspector tracks the task locally and it appears in the **Tasks** tab.
+
 ### Tool quality badges
 
 When enabled, each tool in the sidebar may display a small badge showing the number of quality findings for that tool:
