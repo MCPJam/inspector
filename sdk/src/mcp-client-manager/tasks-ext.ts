@@ -41,15 +41,12 @@ import { CLIENT_CAPABILITIES_META_KEY } from "@modelcontextprotocol/client";
 import { mergeClientCapabilities } from "./capabilities.js";
 import type { ManagedMcpClient } from "./managed-mcp-client.js";
 import type { ClientCapabilityOptions, ClientRequestOptions } from "./types.js";
-import {
-  assertGetTaskExtResult,
-  assertDetailedTaskExt,
-} from "./tasks-ext-guards.js";
+import { assertGetTaskExtResult } from "./tasks-ext-guards.js";
 import type {
   CancelTaskExtResult,
-  DetailedTaskExt,
   GetTaskExtResult,
   InputResponses,
+  UpdateTaskExtResult,
 } from "./tasks-ext-types.js";
 
 export { MCP_TASKS_EXTENSION_ID } from "./tasks-dispatch.js";
@@ -120,13 +117,17 @@ export async function getTaskExt(
   return assertGetTaskExtResult(raw);
 }
 
-/** `tasks/update` — submit (possibly partial) `inputResponses` for a task. */
+/**
+ * `tasks/update` — submit (possibly partial) `inputResponses` for a task. The
+ * result is an EMPTY, eventually-consistent acknowledgement (`UpdateTaskResult
+ * = Result`), so it must not be validated as a task; re-poll `tasks/get`.
+ */
 export async function updateTaskExt(
   ctx: TasksExtCallContext,
   taskId: string,
   inputResponses: InputResponses
-): Promise<DetailedTaskExt> {
-  const raw = await ctx.client.request(
+): Promise<UpdateTaskExtResult> {
+  const raw = await ctx.client.request<UpdateTaskExtResult>(
     {
       method: TasksExtUpdateMethod,
       params: withTasksExtensionDeclaration(
@@ -136,7 +137,7 @@ export async function updateTaskExt(
     },
     ctx.options
   );
-  return assertDetailedTaskExt(raw, "tasks/update result");
+  return raw ?? {};
 }
 
 /**

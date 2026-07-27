@@ -1,4 +1,12 @@
 /**
+ * PIN: the ext-tasks repo (spec-only, private, unpublished) was NOT available
+ * in the authoring environment, so no upstream commit SHA can be recorded here.
+ * These shapes were hand-written from the SEP-2663 draft as summarized in the
+ * restoration plan (`specification/draft/tasks.md`, `schema/draft/schema.ts`).
+ * Record the SHA — or delete these files for the published package — as soon as
+ * either is reachable.
+ */
+/**
  * Vendored types for the `io.modelcontextprotocol/tasks` extension
  * (SEP-2663).
  *
@@ -95,10 +103,12 @@ export interface GetTaskExtResult extends DetailedTaskExt {
   resultType?: "complete";
 }
 
-/** `tasks/update` result (submitting `inputResponses`). */
-export interface UpdateTaskExtResult extends DetailedTaskExt {
-  resultType?: "complete";
-}
+/**
+ * `tasks/update` result — per SEP-2663 `UpdateTaskResult = Result`: an EMPTY,
+ * eventually-consistent acknowledgement. It carries no task state, so callers
+ * must re-poll `tasks/get` for the post-update status.
+ */
+export type UpdateTaskExtResult = Record<string, unknown>;
 
 /**
  * `tasks/cancel` result — an EMPTY acknowledgement. Cancellation is
@@ -107,10 +117,11 @@ export interface UpdateTaskExtResult extends DetailedTaskExt {
  */
 export type CancelTaskExtResult = Record<string, unknown>;
 
-/** `notifications/tasks` body (optional; delivered via `subscriptions/listen`). */
-export interface TaskExtNotificationParams {
-  taskId: string;
-  status: TaskExtStatus;
-  statusMessage?: string;
+/**
+ * `notifications/tasks` body (optional; delivered via `subscriptions/listen`).
+ * SEP-2663 carries a full `DetailedTask`, so the extra task fields are part of
+ * the payload rather than an unrelated envelope.
+ */
+export interface TaskExtNotificationParams extends DetailedTaskExt {
   _meta?: Record<string, unknown>;
 }

@@ -126,12 +126,14 @@ import {
   updateTaskExt,
   withTasksExtensionDeclaration,
 } from "./tasks-ext.js";
-import { assertCreateTaskExtResult } from "./tasks-ext-guards.js";
+import {
+  assertCreateTaskExtResult,
+  parseTaskExtNotificationParams,
+} from "./tasks-ext-guards.js";
 import type {
-  CreateTaskExtResult,
-  DetailedTaskExt,
   GetTaskExtResult,
   InputResponses as TaskExtInputResponses,
+  UpdateTaskExtResult as TaskExtUpdateResult,
 } from "./tasks-ext-types.js";
 import {
   convertMCPToolsToVercelTools,
@@ -833,7 +835,9 @@ export class MCPClientManager {
         request,
         mrtrCollect
       );
-      return this.unwrapCreatedTaskExt(mrtrResult) ?? mrtrResult;
+      return (
+        this.unwrapCreatedTaskExt(serverId, request, mrtrResult) ?? mrtrResult
+      );
     }
 
     const operation = async (signal?: AbortSignal) => {
@@ -883,7 +887,9 @@ export class MCPClientManager {
         mergedOptions,
         (callOptions) => client.callTool(callParams, callOptions)
       );
-      return this.unwrapCreatedTaskExt(plainResult) ?? plainResult;
+      return (
+        this.unwrapCreatedTaskExt(serverId, request, plainResult) ?? plainResult
+      );
     };
 
     return this.runRetriedOperation(
@@ -1200,12 +1206,24 @@ export class MCPClientManager {
     this.addNotificationHandler(
       serverId,
       TaskStatusNotificationMethod,
-      handler
+      (notification) => {
+        if (this.getTasksWire(serverId) !== "legacy") return;
+        handler(notification);
+      }
     );
     this.addNotificationHandler(
       serverId,
       TasksExtNotificationMethod,
-      handler
+      (notification) => {
+        // Untrusted body: only a valid `DetailedTask` reaches the handler, and
+        // only on a connection that actually negotiated the extension.
+        if (this.getTasksWire(serverId) !== "extension") return;
+        const params = parseTaskExtNotificationParams(
+          (notification as { params?: unknown }).params
+        );
+        if (!params) return;
+        handler(notification);
+      }
     );
   }
 
@@ -1392,6 +1410,10 @@ export class MCPClientManager {
     taskId: string,
     options?: ClientRequestOptions
   ) {
+    // Legacy-form reads carry no per-request extension declaration, so a
+    // conforming extension server MUST answer `-32003`: refuse locally instead
+    // and send nothing (callers dispatch on `getTasksWire`).
+    this.assertLegacyTasksReadWire(serverId, "tasks/get");
     return this.runRetryableReadOperation(serverId, options, (client) =>
       tasksGetTask(client, taskId, this.withTimeout(serverId, options))
     );
@@ -1406,8 +1428,9 @@ export class MCPClientManager {
     options?: ClientRequestOptions
   ) {
     if (this.getTasksWire(serverId) === "extension") {
-      throw new TypeError(
-        `Server "${serverId}" speaks the io.modelcontextprotocol/tasks extension, which has no tasks/result; use getTaskExt() — a completed task carries its result inline.`
+      throw new MCPTasksWireError(
+        `Server "${serverId}" speaks the io.modelcontextprotocol/tasks extension, which has no tasks/result; use getTaskExt() — a completed task carries its result inline.`,
+        "extension"
       );
     }
     return this.runRetryableReadOperation(serverId, options, (client) =>
@@ -1423,6 +1446,7 @@ export class MCPClientManager {
     taskId: string,
     options?: ClientRequestOptions
   ) {
+    this.assertLegacyTasksReadWire(serverId, "tasks/cancel");
     await this.ensureConnected(serverId);
     const client = this.getClientOrThrow(serverId);
     return tasksCancelTask(client, taskId, this.withTimeout(serverId, options));
@@ -1502,13 +1526,16 @@ export class MCPClientManager {
     });
   }
 
-  /** `tasks/update` — submit (possibly partial) `inputResponses`. */
+  /**
+   * `tasks/update` — submit (possibly partial) `inputResponses`. Resolves with
+   * the spec's empty acknowledgement: re-poll `getTaskExt` for the new status.
+   */
   async updateTask(
     serverId: string,
     taskId: string,
     inputResponses: TaskExtInputResponses,
     options?: ClientRequestOptions
-  ): Promise<DetailedTaskExt> {
+  ): Promise<TaskExtUpdateResult> {
     await this.ensureConnected(serverId);
     const client = this.getClientOrThrow(serverId);
     this.assertExtensionTasksWire(serverId, "tasks/update");
@@ -1598,21 +1625,39 @@ export class MCPClientManager {
    * always valid on the extension wire.
    */
   private unwrapCreatedTaskExt(
+    serverId: string,
+    request: ExecuteToolRequest,
     result: unknown
   ): Record<string, unknown> | undefined {
+    // Gate: only a call that declared task eligibility on the extension wire
+    // can yield a task. Without this, any server on any version could write the
+    // smuggling key into an ordinary result and fabricate a task envelope.
+    if (
+      request.allowTaskResult !== true ||
+      this.getTasksWire(serverId) !== "extension"
+    ) {
+      return undefined;
+    }
     const meta = (result as { _meta?: Record<string, unknown> } | undefined)
       ?._meta;
     const raw = meta?.[TASK_CREATED_META_KEY];
     if (raw === undefined) {
       return undefined;
     }
-    const task: CreateTaskExtResult = assertCreateTaskExtResult(raw);
-    return {
-      ...task,
-      _meta: {
-        "io.modelcontextprotocol/model-immediate-response": `Task ${task.taskId} created with status: ${task.status}`,
-      },
-    };
+    // The server's own `_meta` is preserved verbatim — SEP-2663 has no
+    // `model-immediate-response` concept, so nothing is synthesized here.
+    return { ...assertCreateTaskExtResult(raw) } as Record<string, unknown>;
+  }
+
+  /** Guards the legacy-form `tasks/*` read methods against other wires. */
+  private assertLegacyTasksReadWire(serverId: string, method: string): void {
+    const wire = this.getTasksWire(serverId);
+    if (wire !== "legacy") {
+      throw new MCPTasksWireError(
+        `Server "${serverId}" does not speak the 2025-11-25 tasks wire (resolved wire: "${wire}"); refusing to send a legacy-form ${method}.`,
+        wire
+      );
+    }
   }
 
   private assertLegacyTasksWire(serverId: string): void {
