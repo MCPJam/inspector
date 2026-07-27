@@ -213,7 +213,9 @@ Opening the Evaluate tab takes you directly into the most recent suite's dashboa
 - **Cases tab** — every case with its latest verdict and a quick replay button.
 - **Executions tab** — a flat, filterable list of every individual test execution across all cases, sorted most-recent-first. Each row shows the case name, result (passed/failed/pending/cancelled), and timestamp. Click any row to open it in the compare view.
 
-When you run a suite against multiple host configurations at once, the Runs list groups them into a single collapsible **run group** row showing mean accuracy and longest duration across all hosts. Expand it to inspect each host's individual run.
+When you run a suite against multiple execution contexts at once — multiple host configurations or multiple project environments — the Runs list groups them into a single collapsible **run group** row showing mean accuracy and longest duration. The group badge shows the number of distinct contexts: **N environments** for environment-backed runs, or **N clients** for host-backed runs. Expand the group to inspect each context's individual run.
+
+For environment-backed run groups, the group header shows the environment name and a revision range when the group spans multiple edits (for example, **Staging · rev 2–4**). The exact revision each run pinned appears on the individual run row. Two environments that resolve to the same host are always kept as separate groups.
 
 The **Runs / Cases** segmented control switches between the run history list and the test-cases overview. **Performance by Model** in the run summary appears only when more than one model was used. To compare two runs, check their boxes in the Runs list and click **Compare**.
 
