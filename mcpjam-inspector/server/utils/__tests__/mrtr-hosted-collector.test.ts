@@ -9,6 +9,7 @@ import {
   isMrtrSuspendedSignal,
   resolveMrtrAuthPrincipal,
   resumeMrtrContinuationLeg,
+  settleMrtrTeardown,
 } from "../mrtr-hosted-collector";
 import {
   encodeResumeState,
@@ -244,6 +245,66 @@ describe("resolveMrtrAuthPrincipal", () => {
     expect(resolveMrtrAuthPrincipal(ctx({ guestId: "g-1" }))).toBe("g-1");
     expect(resolveMrtrAuthPrincipal(ctx({ userId: "u-1" }))).toBe("anonymous");
     expect(resolveMrtrAuthPrincipal(ctx({}))).toBe("anonymous");
+  });
+});
+
+describe("settleMrtrTeardown", () => {
+  it("returns normally on a clean disconnect", async () => {
+    const disconnect = vi.fn(async () => {});
+    await expect(settleMrtrTeardown(disconnect, "[t]")).resolves.toBeUndefined();
+    expect(disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("swallows a rejection so cleanup cannot replace the outcome", async () => {
+    await expect(
+      settleMrtrTeardown(async () => {
+        throw new Error("teardown exploded");
+      }, "[t]"),
+    ).resolves.toBeUndefined();
+  });
+
+  it("swallows a synchronous throw too", async () => {
+    await expect(
+      settleMrtrTeardown(() => {
+        throw new Error("threw before returning a promise");
+      }, "[t]"),
+    ).resolves.toBeUndefined();
+  });
+
+  it("gives up on a disconnect that never settles", async () => {
+    // The route's `finally` must not hold the response hostage to a transport
+    // that never finishes closing: the outcome is already determined.
+    let settled = false;
+    const promise = settleMrtrTeardown(
+      () => new Promise<void>(() => {}),
+      "[t]",
+      5,
+    ).then(() => {
+      settled = true;
+    });
+    await promise;
+    expect(settled).toBe(true);
+  });
+
+  it("does not leave an unhandled rejection when the timeout wins first", async () => {
+    // The `.catch` must sit on the teardown promise itself, not on the race —
+    // otherwise a late rejection escapes after the bound has already resolved.
+    const onUnhandled = vi.fn();
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      await settleMrtrTeardown(
+        () =>
+          new Promise<void>((_resolve, reject) =>
+            setTimeout(() => reject(new Error("late failure")), 15),
+          ),
+        "[t]",
+        5,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(onUnhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
   });
 });
 

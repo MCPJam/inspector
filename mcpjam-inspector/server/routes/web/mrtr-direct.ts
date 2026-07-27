@@ -51,9 +51,9 @@ import {
   isMrtrSuspendedSignal,
   resolveMrtrAuthPrincipal,
   resolveMrtrNegotiatedEra,
+  settleMrtrTeardown,
   type HostedMrtrCollectorDeps,
 } from "../../utils/mrtr-hosted-collector.js";
-import { logger } from "../../utils/logger.js";
 import {
   HOSTED_MRTR_VERSION,
   isCompatibleMrtrVersion,
@@ -273,18 +273,13 @@ export async function runHostedDirectMrtrOperation<S extends z.ZodTypeAny, R>(
       // Disconnect BEFORE building the envelope so `_rpcLogs` reflects records
       // flushed during teardown — parity with `withEphemeralConnection`.
       //
-      // Teardown is CLEANUP, never the outcome. An awaited rejection in a
-      // `finally` replaces whatever the try produced, so an unguarded disconnect
-      // failure would turn an already-persisted suspend into a route error: the
-      // browser never learns the `continuationId`, the durable row sits awaiting
-      // input until its TTL, and a user retrying the direct op repeats its
-      // initial side effects. Log it and return the outcome we actually have.
-      await manager.disconnectAllServers().catch((error: unknown) => {
-        logger.warn("[mrtr-direct] disconnect failed after operation", {
-          serverId: targetServerId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
+      // Teardown is CLEANUP, never the outcome — a failed OR hung disconnect
+      // must not turn an already-persisted suspend into a route error (or into
+      // no response at all). See `settleMrtrTeardown`.
+      await settleMrtrTeardown(
+        () => manager.disconnectAllServers(),
+        "[mrtr-direct]",
+      );
     }
     return c.json(attachHostedRpcLogs(outcome, rpcCollector), 200);
   } catch (error) {

@@ -39,6 +39,7 @@ import type {
 import {
   MRTR_DISPLAY_FIELD_MAX_BYTES,
   MRTR_CONTINUATION_TTL_MS,
+  MRTR_TEARDOWN_TIMEOUT_MS,
 } from "../config.js";
 import { logger } from "./logger.js";
 import {
@@ -242,6 +243,59 @@ function stableStringify(
         )}`,
     );
   return `{${entries.join(",")}}`;
+}
+
+/**
+ * Tear a connection down WITHOUT letting cleanup become the outcome.
+ *
+ * Both MRTR routes disconnect in a `finally` that runs after the answer is
+ * already determined — a suspend whose continuation is durably persisted, or a
+ * resume whose leg has already left the wire. Two ways teardown can hijack that
+ * answer, and both matter:
+ *
+ * - it REJECTS: an awaited rejection in a `finally` replaces the value the
+ *   `try` produced, so the browser gets a transport error instead of its
+ *   `continuationId` (or its real `completed` / `indeterminate` outcome) and a
+ *   retry re-runs something that may already have executed;
+ * - it never SETTLES: the `finally` blocks forever and the response never goes
+ *   out at all — same damage, no error to log.
+ *
+ * So: swallow-and-log the rejection, and race the whole thing against a bound.
+ * The `.catch` is attached to the teardown promise ITSELF, not to the race, so
+ * a rejection arriving after the timeout has already won is still handled
+ * rather than surfacing as an unhandled rejection.
+ *
+ * With today's transports the timeout should never fire — upstream Streamable
+ * HTTP and SSE `close()` just abort their controllers, and stdio bounds itself
+ * at ~4s — but that is an SDK-internal property, and this invariant should not
+ * depend on one.
+ */
+export async function settleMrtrTeardown(
+  disconnect: () => Promise<void>,
+  context: string,
+  timeoutMs: number = MRTR_TEARDOWN_TIMEOUT_MS,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const teardown = Promise.resolve()
+    .then(disconnect)
+    .catch((error: unknown) => {
+      logger.warn(`${context} disconnect failed`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  const bound = new Promise<void>((resolve) => {
+    timer = setTimeout(() => {
+      logger.warn(`${context} disconnect timed out; answering anyway`, {
+        timeoutMs,
+      });
+      resolve();
+    }, timeoutMs);
+  });
+  try {
+    await Promise.race([teardown, bound]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /**

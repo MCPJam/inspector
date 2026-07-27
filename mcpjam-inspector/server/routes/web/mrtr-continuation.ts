@@ -46,6 +46,7 @@ import {
   deriveServerConfigDigest,
   resolveMrtrAuthPrincipal,
   resumeMrtrContinuationLeg,
+  settleMrtrTeardown,
 } from "../../utils/mrtr-hosted-collector.js";
 import {
   cancelContinuation,
@@ -240,15 +241,14 @@ mrtrContinuation.post("/resume", async (c) =>
       return { ok: true, ...outcome };
     } finally {
       // Teardown is CLEANUP, never the outcome. This `finally` runs AFTER a leg
-      // has already gone out and the store has been written; an awaited
-      // rejection here would replace a real resume outcome (a completed result,
-      // or an `indeterminate` the user must be told about) with a transport
-      // teardown error, inviting a retry of something that already executed.
-      await manager.disconnectAllServers().catch((error: unknown) => {
-        logger.warn("[mrtr-continuation] disconnect failed after resume", {
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
+      // has already gone out and the store has been written, so a teardown that
+      // fails OR hangs must not replace (or indefinitely withhold) a real resume
+      // outcome — a `completed` result, or an `indeterminate` the user has to be
+      // told about. See `settleMrtrTeardown`.
+      await settleMrtrTeardown(
+        () => manager.disconnectAllServers(),
+        "[mrtr-continuation]",
+      );
     }
   }),
 );
