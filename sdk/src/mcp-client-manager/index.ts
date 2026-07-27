@@ -134,6 +134,7 @@ export {
 export {
   MCPError,
   MCPAuthError,
+  TasksWireUnsupportedError,
   isAuthError,
   isUnauthorized401,
   isInsufficientScopeError,
@@ -154,6 +155,10 @@ export {
   supportsTasksList,
   supportsTasksCancel,
 } from "./tasks.js";
+// Tasks wire resolver — the seam a follow-up PR extends for the
+// 2026-07-28 `io.modelcontextprotocol/tasks` extension wire.
+export { resolveTasksWire } from "./tasks-dispatch.js";
+export type { TasksWire } from "./tasks-dispatch.js";
 
 // Notification schemas (for advanced use cases)
 export {

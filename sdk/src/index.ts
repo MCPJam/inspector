@@ -126,11 +126,17 @@ export {
 export {
   MCPError,
   MCPAuthError,
+  TasksWireUnsupportedError,
   isAuthError,
   isMCPAuthError,
   isUnauthorized401,
   isInsufficientScopeError,
 } from "./mcp-client-manager/index.js";
+
+// Tasks wire resolver (the seam a follow-up PR extends for the
+// 2026-07-28 `io.modelcontextprotocol/tasks` extension wire).
+export { resolveTasksWire } from "./mcp-client-manager/index.js";
+export type { TasksWire } from "./mcp-client-manager/index.js";
 export type { RetryPolicy } from "./retry.js";
 export {
   DEFAULT_RETRY_POLICY,

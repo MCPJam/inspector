@@ -39,6 +39,27 @@ export function isMCPAuthError(error: unknown): error is MCPAuthError {
 }
 
 /**
+ * Thrown when a caller passes a task-augmented request on a connection
+ * whose resolved tasks wire is not `"legacy"` (see `resolveTasksWire` in
+ * `./tasks-dispatch.ts`). Nothing is sent on the wire — the request is
+ * rejected before it leaves the client.
+ */
+export class TasksWireUnsupportedError extends MCPError {
+  constructor(
+    serverId: string,
+    public readonly wire: string,
+    options?: { cause?: unknown }
+  ) {
+    super(
+      `Server "${serverId}" does not support task-augmented requests on its negotiated protocol (tasks wire: "${wire}").`,
+      "TASKS_WIRE_UNSUPPORTED",
+      options
+    );
+    this.name = "TasksWireUnsupportedError";
+  }
+}
+
+/**
  * Type guard for errors with a numeric code property (like StreamableHTTPError, SseError)
  */
 function hasNumericCode(error: unknown): error is Error & { code: number } {

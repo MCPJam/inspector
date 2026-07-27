@@ -66,10 +66,12 @@ import {
 import { isMethodUnavailableError, formatError } from "./error-utils.js";
 import {
   MCPAuthError,
+  TasksWireUnsupportedError,
   isAuthError,
   isUnauthorized401,
   isInsufficientScopeError,
 } from "./errors.js";
+import { resolveTasksWire, type TasksWire } from "./tasks-dispatch.js";
 import {
   type RetryPolicy,
   isRetryableTransientError,
@@ -390,6 +392,18 @@ export class MCPClientManager {
   }
 
   /**
+   * The protocol version negotiated with a server during `initialize`
+   * (a wire literal like `"2025-11-25"`), or `undefined` when the server
+   * is not connected or its adapter cannot report it. Reads the public
+   * upstream path — never the transport's private `_protocolVersion`.
+   */
+  getNegotiatedProtocolVersion(serverId: string): string | undefined {
+    return this.liveClientStates
+      .get(serverId)
+      ?.client?.getNegotiatedProtocolVersion?.();
+  }
+
+  /**
    * Gets the underlying upstream MCP `Client` for a server. Returns the
    * legacy adapter's wrapped `Client` instance, or `undefined` for
    * stateless-preview connections (which have no upstream `Client`).
@@ -455,10 +469,7 @@ export class MCPClientManager {
           : "streamable-http";
     }
 
-    let protocolVersion: string | undefined;
-    if (liveState.transport) {
-      protocolVersion = (liveState.transport as any)._protocolVersion;
-    }
+    const protocolVersion = client.getNegotiatedProtocolVersion?.();
 
     return {
       protocolVersion,
@@ -804,15 +815,25 @@ export class MCPClientManager {
       const callParams = { name: toolName, arguments: args };
 
       if (request.task !== undefined) {
+        const wire = resolveTasksWire(
+          client.getNegotiatedProtocolVersion?.(),
+          client.getServerCapabilities()
+        );
+        if (wire !== "legacy") {
+          throw new TasksWireUnsupportedError(serverId, wire);
+        }
         const taskValue =
           request.task.ttl !== undefined ? { ttl: request.task.ttl } : {};
+        // 2025-11-25 carries the `task` field in the request PARAMS
+        // (`params: { name, arguments, task: { ttl } }`), not in
+        // RequestOptions. Strictly additive: non-task calls above build the
+        // identical `callParams` and never touch this branch.
         const result = await client.request(
-          { method: "tools/call", params: callParams },
-          // TODO(Phase 6 / io.modelcontextprotocol/tasks): beta.4 removed the
-          // `task` field from RequestOptions (tasks moved to the extension).
-          // Cast to keep this legacy task-augmented path compiling until Phase 6
-          // rebuilds it on the new extension shape.
-          { ...mergedOptions, task: taskValue } as RequestOptions
+          {
+            method: "tools/call",
+            params: { ...callParams, task: taskValue },
+          },
+          mergedOptions
         );
         if (!isCreateTaskResult(result)) {
           throw new TypeError(
@@ -1359,9 +1380,24 @@ export class MCPClientManager {
   }
 
   /**
-   * Checks if server supports task-augmented tool calls.
+   * Resolves the tasks wire for a connection (negotiated version +
+   * advertised capabilities). Single seam so the executeTool gate and the
+   * capability probes below agree on whether tasks are routable.
+   */
+  private resolveServerTasksWire(serverId: string): TasksWire {
+    return resolveTasksWire(
+      this.getNegotiatedProtocolVersion(serverId),
+      this.getServerCapabilities(serverId)
+    );
+  }
+
+  /**
+   * Checks if server supports task-augmented tool calls. Returns false
+   * whenever the connection's resolved tasks wire is not `"legacy"`, so the
+   * version gate reaches the UI (which hides task affordances on false).
    */
   supportsTasksForToolCalls(serverId: string): boolean {
+    if (this.resolveServerTasksWire(serverId) !== "legacy") return false;
     return supportsTasksForToolCalls(this.getServerCapabilities(serverId));
   }
 
@@ -1369,6 +1405,7 @@ export class MCPClientManager {
    * Checks if server supports listing tasks.
    */
   supportsTasksList(serverId: string): boolean {
+    if (this.resolveServerTasksWire(serverId) !== "legacy") return false;
     return supportsTasksList(this.getServerCapabilities(serverId));
   }
 
@@ -1376,6 +1413,7 @@ export class MCPClientManager {
    * Checks if server supports canceling tasks.
    */
   supportsTasksCancel(serverId: string): boolean {
+    if (this.resolveServerTasksWire(serverId) !== "legacy") return false;
     return supportsTasksCancel(this.getServerCapabilities(serverId));
   }
 
