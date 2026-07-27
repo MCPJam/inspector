@@ -755,3 +755,31 @@ export type {
   InputRequests,
   InputResponses,
 } from "./mcp-client-manager/index.js";
+
+// Era-neutral subscription coordinator (`subscriptions/listen`, MCP
+// 2026-07-28 §13). Already exported from the manager barrel; surfaced on the
+// package root so consumers outside the SDK (the CLI's listen mode) can drive
+// it without reaching into a subpath. New exports only.
+export {
+  SubscriptionCoordinator,
+  DEFAULT_SUBSCRIPTION_RECONNECT_POLICY,
+  SUBSCRIPTION_ID_META_KEY,
+  SubscriptionsAcknowledgedNotificationMethod,
+  diffAcknowledgement,
+  resolveRequestedFilter,
+} from "./mcp-client-manager/index.js";
+export type {
+  DesiredSubscriptionInterests,
+  DeliveredSubscriptionNotification,
+  McpSubscriptionHandle,
+  RejectedSubscriptionNotification,
+  SubscriptionClientPort,
+  SubscriptionCloseReason,
+  SubscriptionCoordinatorOptions,
+  SubscriptionFilterShape,
+  SubscriptionInterestRejection,
+  SubscriptionNotificationKind,
+  SubscriptionReconnectPolicy,
+  SubscriptionStreamRecord,
+  SubscriptionStreamStatus,
+} from "./mcp-client-manager/index.js";
