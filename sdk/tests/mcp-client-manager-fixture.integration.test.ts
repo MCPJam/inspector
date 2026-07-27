@@ -81,11 +81,30 @@ describe("MCPClientManager × dual-era fixture over HTTP", () => {
     ).toBe("hello from the fixture");
   });
 
-  it("connects on the default (legacy) path to the same server", async () => {
+  it("auto-detects the modern era when no HTTP pin is configured", async () => {
     await manager.connectToServer("fixture", {
       url: served.url,
       timeout: 10_000,
     });
+
+    expect(manager.getInitializationInfo("fixture")?.protocolVersion).toBe(
+      "2026-07-28",
+    );
+
+    const tools = await manager.listTools("fixture");
+    expect(tools.tools.map((t) => t.name)).toContain("echo");
+  });
+
+  it("keeps an explicit 2025 pin on the legacy initialize path", async () => {
+    await manager.connectToServer("fixture", {
+      url: served.url,
+      mcpProtocolVersion: "2025-11-25",
+      timeout: 10_000,
+    });
+
+    expect(manager.getInitializationInfo("fixture")?.protocolVersion).toBe(
+      "2025-11-25",
+    );
 
     const tools = await manager.listTools("fixture");
     expect(tools.tools.map((t) => t.name)).toContain("echo");

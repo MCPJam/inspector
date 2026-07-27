@@ -10,6 +10,17 @@ import {
   passedResult,
   skippedResult,
 } from "./helpers.js";
+import {
+  DEFAULT_LEGACY_PROTOCOL_VERSION,
+  jsonRpcError,
+  legacyHeaders,
+  legacyInitialize,
+  modernHeaders,
+  modernRequestBody,
+  rawRequest,
+  type RawHttpResult,
+} from "../raw-http.js";
+import { hasWireField } from "../raw-capture.js";
 
 // JSON-RPC "Method not found" — the only conforming error for an unrecognized
 // method name (JSON-RPC 2.0 §5.1). Accepting any numeric code would let a
@@ -31,121 +42,47 @@ const PROTOCOL_CHECK_METADATA = {
 
 const INVALID_METHOD = "nonexistent/method_that_does_not_exist";
 
-function buildBaseHeaders(ctx: RawHttpCheckContext): Record<string, string> {
-  return {
-    ...(ctx.config.customHeaders ?? {}),
-    ...(ctx.config.accessToken
-      ? { Authorization: `Bearer ${ctx.config.accessToken}` }
-      : {}),
-  };
-}
-
 /**
- * Legacy prelude: run the `initialize` handshake and return the session id
- * (if the server mints one). Modern (sessionless) runs skip this entirely.
- * The protocol version pinned by the run drives the handshake; unset ⇒
- * `"2025-11-25"`, byte-identical to the pre-era-awareness behavior.
- */
-async function initializeAndGetSession(
-  ctx: RawHttpCheckContext,
-): Promise<string | undefined> {
-  const response = await ctx.fetchFn(ctx.serverUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json, text/event-stream",
-      ...buildBaseHeaders(ctx),
-    },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "initialize",
-      params: {
-        protocolVersion: ctx.config.protocolVersion ?? "2025-11-25",
-        capabilities: {},
-        clientInfo: {
-          name: "mcpjam-sdk-conformance",
-          version: "1.0.0",
-        },
-      },
-    }),
-  });
-
-  return response.headers.get("mcp-session-id") ?? undefined;
-}
-
-/**
- * Send the invalid-method probe.
+ * Send the invalid-method probe through the shared raw harness (§15.5): one
+ * capture primitive, one place that knows how to frame a request per era.
  *
  *   - Legacy: `initialize` first (to obtain a session for stateful servers),
  *     then the bad-method POST carrying the session id.
  *   - Modern (2026 era): no prelude. The 2026 era is sessionless, so the
  *     bad-method POST stands alone, framed with the `MCP-Protocol-Version`
- *     header and the per-request `_meta` protocol-version envelope the modern
- *     wire requires (plus the SEP-2243 `mcp-method` mirror header).
+ *     header and the per-request `_meta` envelope the modern wire requires
+ *     (plus the SEP-2243 `Mcp-Method` mirror header). An INCOMPLETE envelope
+ *     would be rejected as malformed (-32602) before dispatch, so the probe
+ *     would never exercise unknown-method handling at all.
  */
 async function sendInvalidMethodProbe(
   ctx: RawHttpCheckContext,
-): Promise<Response> {
+): Promise<RawHttpResult> {
   if (ctx.config.era === "modern") {
-    const version = ctx.config.protocolVersion ?? "2025-11-25";
-    // Build with a `Headers` instance so probe-owned fields win by
-    // case-insensitive NAME, not by object-key ordering. A plain object keeps
-    // `MCP-Method` and `mcp-method` as two distinct keys; Fetch then normalizes
-    // both to the canonical `mcp-method` and CONCATENATES their values
-    // ("tools/list, __invalid__"), so a caller's `customHeaders` case-variant
-    // would blend into the probe header and turn an honest probe into a false
-    // failure. `headers.set(...)` after the base spread REPLACES any such
-    // collision regardless of the caller's casing.
-    const headers = new Headers({
-      "Content-Type": "application/json",
-      Accept: "application/json, text/event-stream",
-      ...buildBaseHeaders(ctx),
-    });
-    headers.set("MCP-Protocol-Version", version);
-    headers.set("mcp-method", INVALID_METHOD);
-    return await ctx.fetchFn(ctx.serverUrl, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        jsonrpc: "2.0",
+    const version =
+      ctx.config.protocolVersion ?? DEFAULT_LEGACY_PROTOCOL_VERSION;
+    return await rawRequest(ctx, {
+      headers: modernHeaders({
+        protocolVersion: version,
+        method: INVALID_METHOD,
+      }),
+      body: modernRequestBody({
         id: 99,
         method: INVALID_METHOD,
-        params: {
-          // The 2026-07-28 wire requires the FULL per-request `_meta` envelope
-          // (protocolVersion + clientInfo + clientCapabilities). Sending only
-          // the version makes a conforming server reject the request as a
-          // malformed envelope (-32602) BEFORE it ever dispatches the method,
-          // so the probe would never actually exercise unknown-method handling.
-          // clientInfo / clientCapabilities mirror the legacy `initialize`.
-          _meta: {
-            "io.modelcontextprotocol/protocolVersion": version,
-            "io.modelcontextprotocol/clientInfo": {
-              name: "mcpjam-sdk-conformance",
-              version: "1.0.0",
-            },
-            "io.modelcontextprotocol/clientCapabilities": {},
-          },
-        },
+        protocolVersion: version,
       }),
     });
   }
 
-  const sessionId = await initializeAndGetSession(ctx);
-  return await ctx.fetchFn(ctx.serverUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json, text/event-stream",
-      ...buildBaseHeaders(ctx),
-      ...(sessionId ? { "mcp-session-id": sessionId } : {}),
-    },
-    body: JSON.stringify({
+  const { sessionId } = await legacyInitialize(ctx);
+  return await rawRequest(ctx, {
+    headers: legacyHeaders({ sessionId }),
+    body: {
       jsonrpc: "2.0",
       id: 99,
       method: INVALID_METHOD,
       params: {},
-    }),
+    },
   });
 }
 
@@ -178,55 +115,25 @@ export async function runProtocolChecks(
   const startedAt = Date.now();
   try {
     const response = await sendInvalidMethodProbe(ctx);
-
-    const contentType = response.headers.get("content-type") ?? "";
-    let body: unknown;
-
-    if (contentType.includes("text/event-stream")) {
-      const text = await response.text();
-      const dataLine = text
-        .split(/\r?\n/)
-        .find((line) => line.startsWith("data:"));
-      body = dataLine
-        ? JSON.parse(dataLine.slice(dataLine.indexOf(":") + 1).trim())
-        : undefined;
-    } else {
-      body = await response.json();
-    }
-
-    const rpcResponse = body as Record<string, unknown> | undefined;
-    const rpcError =
-      rpcResponse?.error && typeof rpcResponse.error === "object"
-        ? (rpcResponse.error as Record<string, unknown>)
-        : undefined;
+    // `jsonRpcError` reads JSON and SSE bodies alike off the capture, so the
+    // check never has to know how the server framed its answer.
+    const rpcError = jsonRpcError(response);
 
     if (!rpcError) {
+      // `jsonRpcError` only reports a WELL-FORMED error (numeric code + string
+      // message), so distinguish "no error at all" from "an error member that
+      // is not a conforming JSON-RPC error".
+      const malformed = hasWireField(response.json, "error");
       results.push(
         failedResult(
           PROTOCOL_CHECK_METADATA["protocol-invalid-method-error"],
           Date.now() - startedAt,
-          "Server did not return a JSON-RPC error object for an invalid method",
+          malformed
+            ? "JSON-RPC error is malformed: it needs a numeric code and a message string"
+            : "Server did not return a JSON-RPC error object for an invalid method",
           {
             status: response.status,
-            body: rpcResponse,
-          },
-        ),
-      );
-      return results;
-    }
-
-    const hasCode = typeof rpcError.code === "number";
-    const hasMessage = typeof rpcError.message === "string";
-
-    if (!hasCode || !hasMessage) {
-      results.push(
-        failedResult(
-          PROTOCOL_CHECK_METADATA["protocol-invalid-method-error"],
-          Date.now() - startedAt,
-          `JSON-RPC error is malformed: ${!hasCode ? "missing numeric code" : "missing message string"}`,
-          {
-            status: response.status,
-            error: rpcError,
+            body: response.json ?? response.bodyText,
           },
         ),
       );

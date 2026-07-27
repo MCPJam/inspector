@@ -18,16 +18,30 @@ interface PreviewedHostChangedDetail {
   hostId: string | null;
 }
 
-export function loadPreviewedHostId(projectId: string): string | null {
+/**
+ * The document has always been a `projectId` → `hostId` map. Anything else
+ * under the key (an unscoped bare id, an array, a half-written value) is read
+ * as "no host for any project" rather than trusted — a host id that isn't
+ * filed under a project can't be attributed to one, and guessing would preview
+ * another project's host.
+ */
+function readAll(): Record<string, string | null> {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const all = JSON.parse(raw) as Record<string, string | null>;
-    const value = all[projectId];
-    return typeof value === "string" && value.length > 0 ? value : null;
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+    return parsed as Record<string, string | null>;
   } catch {
-    return null;
+    return {};
   }
+}
+
+export function loadPreviewedHostId(projectId: string): string | null {
+  const value = readAll()[projectId];
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 export function savePreviewedHostId(
@@ -35,8 +49,7 @@ export function savePreviewedHostId(
   hostId: string | null,
 ): void {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    const all = raw ? (JSON.parse(raw) as Record<string, string | null>) : {};
+    const all = readAll();
     if (hostId) {
       all[projectId] = hostId;
     } else {

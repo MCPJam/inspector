@@ -44,6 +44,7 @@ function createProtocolResult(): MCPConformanceResult {
     ],
     summary: "0/2 checks passed, 1 failed, 1 skipped",
     durationMs: 24,
+    readiness: [],
     categorySummary: {
       core: { total: 1, passed: 0, failed: 1, skipped: 0 },
       protocol: { total: 0, passed: 0, failed: 0, skipped: 0 },
