@@ -97,7 +97,7 @@ export const PROTOCOL_VERSION_ERAS = {
 
 /** Every classified protocol version, for exhaustiveness assertions. */
 export const MCP_PROTOCOL_VERSION_ERA_IDS = Object.keys(
-  PROTOCOL_VERSION_ERAS,
+  PROTOCOL_VERSION_ERAS
 ) as McpProtocolVersion[];
 
 /**
@@ -137,6 +137,14 @@ export const MCP_PROTOCOL_VERSION_ERA_IDS = Object.keys(
  *     were removed from the 2026 wire (a modern server answers -32601), so on
  *     a modern run they are era-skipped and `modern-client-handshake` /
  *     `modern-removed-methods-not-found` carry the equivalent evidence.
+ *   - The three `modern-subscription-*` checks are modern-only for the
+ *     strongest possible reason: `subscriptions/listen` does not exist on the
+ *     2025 wire at all, so there is nothing for them to assert on a legacy
+ *     run. They observe ONE real listen stream (see `raw-listen.ts`) and skip
+ *     — never fail — when the server advertises nothing subscribable, refuses
+ *     to open a stream, or keeps the subscription open past the observation
+ *     window (a graceful close is server-initiated and cannot be induced by a
+ *     client-side probe).
  */
 export const CHECK_ERAS: Record<MCPCheckId, MCPCheckEras> = {
   "server-initialize": ["legacy"],
@@ -326,7 +334,9 @@ export interface MCPConformanceSuiteConfig {
   name?: string;
   serverUrl: string;
   defaults?: Partial<Omit<MCPConformanceConfig, "serverUrl">>;
-  runs: Array<Partial<Omit<MCPConformanceConfig, "serverUrl">> & { label?: string }>;
+  runs: Array<
+    Partial<Omit<MCPConformanceConfig, "serverUrl">> & { label?: string }
+  >;
 }
 
 export interface MCPConformanceSuiteResult {
@@ -360,7 +370,10 @@ export interface RawHttpCheckContext {
 
 export interface MCPClientCheckDefinition {
   id: MCPCheckId;
-  category: Extract<MCPCheckCategory, "core" | "tools" | "prompts" | "resources">;
+  category: Extract<
+    MCPCheckCategory,
+    "core" | "tools" | "prompts" | "resources"
+  >;
   title: string;
   description: string;
   run: (ctx: MCPClientCheckContext) => Promise<MCPCheckResult>;
