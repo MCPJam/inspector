@@ -130,6 +130,8 @@ export {
   isMCPAuthError,
   isUnauthorized401,
   isInsufficientScopeError,
+  MCPTasksWireError,
+  isMCPTasksWireError,
 } from "./mcp-client-manager/index.js";
 export type { RetryPolicy } from "./retry.js";
 export {

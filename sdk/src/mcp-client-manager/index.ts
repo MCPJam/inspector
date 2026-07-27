@@ -138,6 +138,8 @@ export {
   isUnauthorized401,
   isInsufficientScopeError,
   isMCPAuthError,
+  MCPTasksWireError,
+  isMCPTasksWireError,
 } from "./errors.js";
 
 export type { RetryPolicy } from "../retry.js";
@@ -154,6 +156,12 @@ export {
   supportsTasksList,
   supportsTasksCancel,
 } from "./tasks.js";
+export {
+  MCP_TASKS_EXTENSION_ID,
+  resolveTasksWire,
+  serverDeclaresTasksExtension,
+} from "./tasks-dispatch.js";
+export type { TasksWire } from "./tasks-dispatch.js";
 
 // Notification schemas (for advanced use cases)
 export {
