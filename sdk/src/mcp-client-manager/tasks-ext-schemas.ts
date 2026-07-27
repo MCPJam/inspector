@@ -1,4 +1,12 @@
 /**
+ * PIN: the ext-tasks repo (spec-only, private, unpublished) was NOT available
+ * in the authoring environment, so no upstream commit SHA can be recorded here.
+ * These shapes were hand-written from the SEP-2663 draft as summarized in the
+ * restoration plan (`specification/draft/tasks.md`, `schema/draft/schema.ts`).
+ * Record the SHA — or delete these files for the published package — as soon as
+ * either is reachable.
+ */
+/**
  * Runtime validation for `io.modelcontextprotocol/tasks` (SEP-2663) payloads.
  *
  * VENDORED-FROM-SEP-2663-DRAFT — zod mirrors of the extension's
@@ -71,11 +79,8 @@ export const createTaskExtResultSchema = taskExtSchema.extend({
 
 export const getTaskExtResultSchema = detailedTaskExtSchema;
 
-export const taskExtNotificationParamsSchema = z
-  .object({
-    taskId: z.string().min(1),
-    status: taskExtStatusSchema,
-    statusMessage: z.string().optional(),
-    _meta: z.record(z.string(), z.unknown()).optional(),
-  })
-  .loose();
+/**
+ * `notifications/tasks` params. SEP-2663 delivers a full `DetailedTask`, so the
+ * notification body validates against the same schema as `tasks/get`.
+ */
+export const taskExtNotificationParamsSchema = detailedTaskExtSchema;

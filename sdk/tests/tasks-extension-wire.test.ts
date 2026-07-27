@@ -14,7 +14,9 @@ import {
 import {
   TASK_CREATED_META_KEY,
   rewriteTaskResultMessage,
+  stripTaskCreatedMetaKey,
   wrapFetchForTaskRouting,
+  wrapTransportForTaskResults,
 } from "../src/mcp-client-manager/transport-utils.js";
 import type { ManagedMcpClient } from "../src/mcp-client-manager/managed-mcp-client.js";
 
@@ -55,6 +57,10 @@ function seedManager(options: {
     getServerVersion: () => ({ name: "fixture", version: "1.0.0" }),
     getInstructions: () => undefined,
     request: async (req: Recorded) => {
+      calls.push(JSON.parse(JSON.stringify(req)));
+      return options.requestResult;
+    },
+    requestWithSchema: async (req: Recorded) => {
       calls.push(JSON.parse(JSON.stringify(req)));
       return options.requestResult;
     },
@@ -242,9 +248,58 @@ describe("executeTool wire selection", () => {
     } as never)) as any;
     expect(result.taskId).toBe("task-7");
     expect(result.status).toBe("working");
+    // The server's own `_meta` is preserved; nothing is synthesized (SEP-2663
+    // has no `model-immediate-response` concept).
     expect(
-      result._meta["io.modelcontextprotocol/model-immediate-response"]
-    ).toContain("task-7");
+      result._meta?.["io.modelcontextprotocol/model-immediate-response"]
+    ).toBeUndefined();
+  });
+
+  it("ignores the smuggling key when the call did not allow a task result", async () => {
+    const task = {
+      resultType: "task",
+      taskId: "spoofed",
+      status: "working",
+      createdAt: "2026-07-27T00:00:00Z",
+      lastUpdatedAt: "2026-07-27T00:00:00Z",
+      ttlMs: null,
+    };
+    const { manager, serverId } = seedManager({
+      protocolVersion: "2026-07-28",
+      capabilities: EXT_CAPS as never,
+      callToolResult: {
+        content: [],
+        _meta: { [TASK_CREATED_META_KEY]: task },
+      },
+    });
+
+    const result = (await manager.executeTool(serverId, "slow_tool", {})) as any;
+    expect(result.taskId).toBeUndefined();
+    expect(result.content).toEqual([]);
+  });
+
+  it("ignores the smuggling key on a non-extension wire", async () => {
+    const task = {
+      resultType: "task",
+      taskId: "spoofed",
+      status: "working",
+      createdAt: "2025-11-25T00:00:00Z",
+      lastUpdatedAt: "2025-11-25T00:00:00Z",
+      ttlMs: null,
+    };
+    const { manager, serverId } = seedManager({
+      protocolVersion: "2025-11-25",
+      capabilities: LEGACY_CAPS as never,
+      callToolResult: {
+        content: [],
+        _meta: { [TASK_CREATED_META_KEY]: task },
+      },
+    });
+
+    const result = (await manager.executeTool(serverId, "slow_tool", {}, {
+      allowTaskResult: true,
+    } as never)) as any;
+    expect(result.taskId).toBeUndefined();
   });
 });
 
@@ -274,25 +329,43 @@ describe("extension read APIs", () => {
     ).toEqual({});
   });
 
-  it("tasks/update sends inputResponses with the declaration", async () => {
+  it("tasks/update sends bare inputResponses with the declaration", async () => {
     const { manager, calls, serverId } = seedManager({
       protocolVersion: "2026-07-28",
       capabilities: EXT_CAPS as never,
-      requestResult: {
-        taskId: "task-7",
-        status: "working",
-        createdAt: "2026-07-27T00:00:00Z",
-        lastUpdatedAt: "2026-07-27T00:02:00Z",
-        ttlMs: null,
-      },
+      requestResult: {},
     });
 
     await manager.updateTask(serverId, "task-7", {
-      k1: { method: "elicitation/create", result: { action: "accept" } },
+      k1: { action: "accept", content: { city: "Madrid" } },
     } as never);
 
     expect(calls[0].method).toBe("tasks/update");
-    expect((calls[0].params as any).inputResponses.k1).toBeDefined();
+    expect((calls[0].params as any).inputResponses.k1).toEqual({
+      action: "accept",
+      content: { city: "Madrid" },
+    });
+    expect(
+      (calls[0].params as any)._meta[CLIENT_CAPABILITIES_META_KEY].extensions[
+        EXT_ID
+      ]
+    ).toEqual({});
+  });
+
+  it("tasks/update accepts the spec's empty acknowledgement", async () => {
+    // `UpdateTaskResult = Result`: no task state comes back, so validating the
+    // ack as a task would reject every conforming server.
+    const { manager, serverId } = seedManager({
+      protocolVersion: "2026-07-28",
+      capabilities: EXT_CAPS as never,
+      requestResult: {},
+    });
+
+    await expect(
+      manager.updateTask(serverId, "task-7", {
+        k1: { action: "decline" },
+      } as never)
+    ).resolves.toEqual({});
   });
 
   it("tasks/cancel returns the empty ack verbatim", async () => {
@@ -370,6 +443,7 @@ describe("transport seams", () => {
 
     await wrapped("https://x.test/mcp", {
       method: "POST",
+      headers: { "mcp-protocol-version": "2026-07-28" },
       body: JSON.stringify({
         jsonrpc: "2.0",
         id: 1,
@@ -399,7 +473,10 @@ describe("transport seams", () => {
     const wrapped = wrapFetchForTaskRouting(inner as never);
     await wrapped("https://x.test/mcp", {
       method: "POST",
-      headers: { "mcp-name": "already" },
+      headers: {
+        "mcp-name": "already",
+        "mcp-protocol-version": "2026-07-28",
+      },
       body: JSON.stringify({
         jsonrpc: "2.0",
         id: 1,
@@ -430,6 +507,75 @@ describe("transport seams", () => {
 
     const notification = { jsonrpc: "2.0", method: "notifications/x" } as never;
     expect(rewriteTaskResultMessage(notification)).toBe(notification);
+  });
+
+  it("strips an inbound smuggling key so a server cannot forge a task", () => {
+    const forged = {
+      jsonrpc: "2.0",
+      id: 5,
+      result: {
+        content: [],
+        _meta: { [TASK_CREATED_META_KEY]: { taskId: "forged" }, keep: 1 },
+      },
+    } as never;
+    const cleaned = stripTaskCreatedMetaKey(forged) as any;
+    expect(cleaned.result._meta[TASK_CREATED_META_KEY]).toBeUndefined();
+    expect(cleaned.result._meta.keep).toBe(1);
+  });
+
+  it("era-gates the routing headers to the extension era", () => {
+    const inner = vi.fn(async () => new Response("{}"));
+    const wrapped = wrapFetchForTaskRouting(inner as never);
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tasks/get",
+      params: { taskId: "task-7" },
+    });
+
+    wrapped("https://example.test/mcp" as never, {
+      method: "POST",
+      headers: { "mcp-protocol-version": "2025-11-25" },
+      body,
+    });
+    expect(
+      new Headers((inner.mock.calls[0] as any)[1].headers).get("mcp-name")
+    ).toBeNull();
+
+    wrapped("https://example.test/mcp" as never, {
+      method: "POST",
+      headers: { "mcp-protocol-version": "2026-07-28" },
+      body,
+    });
+    expect(
+      new Headers((inner.mock.calls[1] as any)[1].headers).get("mcp-name")
+    ).toBe("task-7");
+  });
+
+  it("only rewrites task results once the extension era is negotiated", () => {
+    const messages: any[] = [];
+    const inner: any = { onmessage: undefined, send: async () => {}, close: async () => {} };
+    const wrapped = wrapTransportForTaskResults(inner);
+    wrapped.onmessage = (message) => messages.push(message);
+
+    const taskResponse = {
+      jsonrpc: "2.0",
+      id: 1,
+      result: { resultType: "task", taskId: "task-7", status: "working" },
+    };
+
+    // Pre-negotiation / legacy era: shown verbatim (a debugger must not hide a
+    // nonconforming 2025-era server's bogus resultType).
+    wrapped.setProtocolVersion?.("2025-11-25");
+    inner.onmessage(taskResponse);
+    expect(messages[0].result.resultType).toBe("task");
+
+    wrapped.setProtocolVersion?.("2026-07-28");
+    inner.onmessage(taskResponse);
+    expect(messages[1].result.resultType).toBe("complete");
+    expect(messages[1].result._meta[TASK_CREATED_META_KEY].taskId).toBe(
+      "task-7"
+    );
   });
 });
 
