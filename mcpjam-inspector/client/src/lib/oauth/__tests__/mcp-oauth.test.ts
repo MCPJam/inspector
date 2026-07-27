@@ -227,7 +227,7 @@ const issuedCallbackState = (): string | null => {
   if (!serverName) return null;
   try {
     const raw = localStorage.getItem(`mcp-oauth-flow-state-${serverName}`);
-    const fromSession = raw ? (JSON.parse(raw).state?.state ?? null) : null;
+    const fromSession = raw ? JSON.parse(raw).state?.state ?? null : null;
     if (fromSession) return fromSession;
   } catch {
     // fall through to the durable key
@@ -484,7 +484,8 @@ describe("mcp-oauth", () => {
     discoveryState: any = createAsanaDiscoveryState(),
     useRegistryOAuthProxy?: boolean,
     serverName: string = "asana",
-    serverUrl: string = "https://mcp.asana.com/v2/mcp"
+    serverUrl: string = "https://mcp.asana.com/v2/mcp",
+    protocolMode?: "2025-11-25" | "2026-07-28"
   ) {
     mockDiscoverOAuthServerInfo
       .mockResolvedValueOnce(discoveryState)
@@ -505,6 +506,7 @@ describe("mcp-oauth", () => {
       serverUrl,
       registryServerId,
       useRegistryOAuthProxy,
+      protocolMode,
     });
 
     expect(result.success).toBe(true);
@@ -788,9 +790,9 @@ describe("mcp-oauth", () => {
           if (!response) {
             throw new Error("Missing OAuth fetch function");
           }
-          expect(
-            response.headers.get("x-mcpjam-oauth-upstream-url")
-          ).toBe("http://127.0.0.1:8787/spoofed-by-upstream");
+          expect(response.headers.get("x-mcpjam-oauth-upstream-url")).toBe(
+            "http://127.0.0.1:8787/spoofed-by-upstream"
+          );
           return createDiscoveryState();
         }
       );
@@ -1600,9 +1602,9 @@ describe("mcp-oauth", () => {
         "static-client-id",
         "static-client-secret"
       );
-      expect(
-        providerWithSecret.clientMetadata.token_endpoint_auth_method
-      ).toBe("client_secret_basic");
+      expect(providerWithSecret.clientMetadata.token_endpoint_auth_method).toBe(
+        "client_secret_basic"
+      );
     });
 
     it("round-trips discovery state for the matching server URL", async () => {
@@ -1727,6 +1729,97 @@ describe("mcp-oauth", () => {
       expect(localStorage.getItem("mcp-verifier-asana")).toBeNull();
       expect(mockDiscoverOAuthServerInfo).toHaveBeenCalledTimes(2);
       expect(mockExchangeAuthorization).toHaveBeenCalledTimes(1);
+    });
+
+    it("stops a 2026 issuer mismatch before token exchange", async () => {
+      await seedPendingOAuth(
+        undefined,
+        createAsanaDiscoveryState(),
+        false,
+        "asana",
+        "https://mcp.asana.com/v2/mcp",
+        "2026-07-28"
+      );
+
+      const { handleOAuthCallback } = await import("../mcp-oauth");
+      const result = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+        callbackIss: "https://different.example.com",
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/issuer validation failed/i);
+      expect(mockExchangeAuthorization).not.toHaveBeenCalled();
+    });
+
+    it("stops a 2025 issuer mismatch before token exchange too", async () => {
+      // RFC 9207 Section 2.4's local-policy row: a PRESENT `iss` is compared
+      // on every era. Pre-draft specs are silent on `iss`, so comparing is
+      // permitted — and it protects our own token handling rather than
+      // changing anything the user is debugging server-side.
+      await seedPendingOAuth(
+        undefined,
+        createAsanaDiscoveryState(),
+        false,
+        "asana",
+        "https://mcp.asana.com/v2/mcp",
+        "2025-11-25"
+      );
+
+      const { handleOAuthCallback } = await import("../mcp-oauth");
+      const result = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+        callbackIss: "https://different.example.com",
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/issuer validation failed/i);
+      expect(mockExchangeAuthorization).not.toHaveBeenCalled();
+    });
+
+    it("stops an issuer mismatch on an old stored session with no version", async () => {
+      await seedPendingOAuth(
+        undefined,
+        createAsanaDiscoveryState(),
+        false,
+        "asana",
+        "https://mcp.asana.com/v2/mcp",
+        "2026-07-28"
+      );
+      const storageKey = "mcp-oauth-flow-state-asana";
+      const oldSession = JSON.parse(localStorage.getItem(storageKey) ?? "{}");
+      delete oldSession.protocolVersion;
+      localStorage.setItem(storageKey, JSON.stringify(oldSession));
+
+      const { handleOAuthCallback } = await import("../mcp-oauth");
+      const result = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+        callbackIss: "https://different.example.com",
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/issuer validation failed/i);
+      expect(mockExchangeAuthorization).not.toHaveBeenCalled();
+    });
+
+    it("still exchanges a 2025 flow whose AS omits iss entirely", async () => {
+      // Reject-on-absence is the draft's own rule and must stay modern-only.
+      await seedPendingOAuth(
+        undefined,
+        createAsanaDiscoveryState(),
+        false,
+        "asana",
+        "https://mcp.asana.com/v2/mcp",
+        "2025-11-25"
+      );
+
+      const { handleOAuthCallback } = await import("../mcp-oauth");
+      const result = await handleOAuthCallback("oauth-code", {
+        callbackState: issuedCallbackState(),
+      });
+
+      expect(result.success, result.error).toBe(true);
+      expect(mockExchangeAuthorization).toHaveBeenCalledOnce();
     });
 
     it("preserves one advertised resource string through authorization, callback, storage, and refresh", async () => {
@@ -2498,8 +2591,10 @@ describe("mcp-oauth", () => {
       } as any);
 
       // Reading with the ORIGINAL serverUrl still resolves AS A → token present.
-      expect(getStoredTokens("reused-gst", "https://old.example.com/sse")
-        ?.access_token).toBe("token-for-as-a");
+      expect(
+        getStoredTokens("reused-gst", "https://old.example.com/sse")
+          ?.access_token
+      ).toBe("token-for-as-a");
 
       // Reused with a DIFFERENT URL: the stale discovery must NOT resolve an
       // issuer, so AS A's token bucket is NOT surfaced through getStoredTokens.
@@ -2637,7 +2732,10 @@ describe("mcp-oauth", () => {
     const seedAsanaCallback = (discoveryState: any) => {
       localStorage.setItem("mcp-oauth-pending", "asana");
       // Durable issued state (F6 recovery reads this on the no-session path).
-      localStorage.setItem("mcp-oauth-issued-state-asana", "asana-issued-state");
+      localStorage.setItem(
+        "mcp-oauth-issued-state-asana",
+        "asana-issued-state"
+      );
       localStorage.setItem(
         "mcp-serverUrl-asana",
         "https://mcp.asana.com/v2/mcp"
@@ -2711,6 +2809,27 @@ describe("mcp-oauth", () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain("state");
+      expect(mockExchangeAuthorization).not.toHaveBeenCalled();
+    });
+
+    it("applies the 2026 issuer gate during sessionless callback recovery", async () => {
+      seedAsanaCallback(createAsanaDiscoveryState());
+      localStorage.setItem(
+        "mcp-oauth-config-asana",
+        JSON.stringify({
+          protocolMode: "auto",
+          protocolVersion: "2026-07-28",
+        })
+      );
+
+      const { handleOAuthCallback } = await import("../mcp-oauth");
+      const result = await handleOAuthCallback("oauth-code", {
+        callbackState: "asana-issued-state",
+        callbackIss: "https://different.example.com",
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/issuer validation failed/i);
       expect(mockExchangeAuthorization).not.toHaveBeenCalled();
     });
 
@@ -3294,10 +3413,10 @@ describe("createServerConfig wire-era pin", () => {
     const config = createServerConfig(
       "https://mcp.example.com",
       { access_token: "tok" },
-      "2026-07-28",
+      "2026-07-28"
     );
     expect((config as { mcpProtocolVersion?: string }).mcpProtocolVersion).toBe(
-      "2026-07-28",
+      "2026-07-28"
     );
   });
 
@@ -3306,10 +3425,10 @@ describe("createServerConfig wire-era pin", () => {
     const config = createServerConfig(
       "https://mcp.example.com",
       { access_token: "tok" },
-      "2025-11-25",
+      "2025-11-25"
     );
     expect(
-      (config as { mcpProtocolVersion?: string }).mcpProtocolVersion,
+      (config as { mcpProtocolVersion?: string }).mcpProtocolVersion
     ).toBeUndefined();
   });
 });
@@ -3321,6 +3440,7 @@ describe("evaluateCallbackSecurity (2R-iss callback gate)", () => {
     expectedState: "s-123",
     recordedIssuer: "https://as.example.com",
     issParameterSupported: true as boolean | undefined,
+    protocolVersion: "2026-07-28" as const,
   };
 
   it("passes when state and iss both match", async () => {
@@ -3371,8 +3491,51 @@ describe("evaluateCallbackSecurity (2R-iss callback gate)", () => {
         ...base,
         callbackIss: null,
         issParameterSupported: undefined,
-      }),
+      })
     ).toEqual({ ok: true });
+  });
+
+  it.each(["2025-03-26", "2025-06-18", "2025-11-25", undefined] as const)(
+    "rejects a mismatched iss on a %s flow (RFC 9207 local policy)",
+    async (protocolVersion) => {
+      // Pre-draft versions are silent on `iss`, so comparing a PRESENT one is
+      // permitted — and the mix-up attack it blocks targets our own token
+      // handling, not any server-observable behavior being debugged.
+      const { evaluateCallbackSecurity } = await import("../mcp-oauth");
+      const result = evaluateCallbackSecurity({
+        ...base,
+        protocolVersion,
+        callbackIss: "https://different.example.com",
+      });
+      expect(result.ok).toBe(false);
+    }
+  );
+
+  it.each(["2025-11-25", undefined] as const)(
+    "does not reject an absent-but-advertised iss on a %s flow",
+    async (protocolVersion) => {
+      // Reject-on-absence is the rule the draft introduces; it must not fire
+      // on an era whose spec never defined it.
+      const { evaluateCallbackSecurity } = await import("../mcp-oauth");
+      expect(
+        evaluateCallbackSecurity({
+          ...base,
+          protocolVersion,
+          callbackIss: null,
+          issParameterSupported: true,
+        })
+      ).toEqual({ ok: true });
+    }
+  );
+
+  it("still rejects an absent-but-advertised iss on the modern era", async () => {
+    const { evaluateCallbackSecurity } = await import("../mcp-oauth");
+    const result = evaluateCallbackSecurity({
+      ...base,
+      callbackIss: null,
+      issParameterSupported: true,
+    });
+    expect(result.ok).toBe(false);
   });
 
   it("skips the state check on the no-session fallback (no expected state)", async () => {
@@ -3384,7 +3547,7 @@ describe("evaluateCallbackSecurity (2R-iss callback gate)", () => {
         expectedState: undefined,
         recordedIssuer: "https://as.example.com",
         issParameterSupported: undefined,
-      }),
+      })
     ).toEqual({ ok: true });
   });
 });

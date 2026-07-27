@@ -152,6 +152,18 @@ export interface StartPluginImportArgs {
    * caps length, so passing a file/folder name is safe.
    */
   sourceLabel?: string;
+  /**
+   * Called with the new import id the moment `createImport` resolves —
+   * BEFORE inspection runs.
+   *
+   * `startImport` drives inspection itself (the backend does not schedule it),
+   * so an inspect rejection rejects the whole call and the caller would never
+   * learn the id of the row that WAS created. Without it there is nothing to
+   * resume and the only recovery is a second upload creating a second import
+   * row. Callers that offer "retry" must adopt the id from here, not only from
+   * the resolved result.
+   */
+  onImportCreated?: (importId: string) => void;
 }
 
 export interface StartPluginImportResult {
@@ -293,6 +305,14 @@ export function usePluginImportActions(): PluginImportActions {
         bundleStorageId,
         sourceLabel: args.sourceLabel,
       });
+      // Hand the id over before inspection can throw (see `onImportCreated`).
+      // A caller-thrown callback must not swallow an import that DID get
+      // created, so its failure is contained rather than propagated.
+      try {
+        args.onImportCreated?.(importId);
+      } catch {
+        // ignore — the id is still returned below on the success path.
+      }
       const inspect = await inspectImport(importId);
       return { importId, inspect };
     },
@@ -314,5 +334,105 @@ export function usePluginImportActions(): PluginImportActions {
       commitImport,
       startImport,
     ],
+  );
+}
+
+export interface PluginManagementActions {
+  /** Reversible kill switch (`plugins.setEnabled`). */
+  setEnabled: (pluginId: string, enabled: boolean) => Promise<void>;
+  /**
+   * Point the plugin at a different ready version (`plugins.activateVersion`).
+   * Affects which version NEW attachments offer; environments that already pin
+   * a version keep it until they are explicitly upgraded.
+   */
+  activateVersion: (pluginId: string, pluginVersionId: string) => Promise<void>;
+  /**
+   * Soft uninstall (`plugins.softDeletePlugin`). Rejects with `CONFLICT` while
+   * a live environment still pins one of the plugin's versions — surface that
+   * message rather than retrying.
+   */
+  softDeletePlugin: (pluginId: string) => Promise<void>;
+  /** Undo a soft uninstall (`plugins.restorePlugin`). */
+  restorePlugin: (pluginId: string) => Promise<void>;
+}
+
+/**
+ * Guarded wrappers around the plugin LIFECYCLE mutations (project-admin gated
+ * backend-side). Same fail-closed flag gate and structured-error mapping as
+ * {@link usePluginImportActions}; kept in this module so there is one plugin
+ * client, not an import client plus a parallel management client.
+ */
+export function usePluginManagementActions(): PluginManagementActions {
+  const enabled = usePluginsEnabled();
+  const setEnabledMutation = useMutation("plugins:setEnabled" as any);
+  const activateVersionMutation = useMutation("plugins:activateVersion" as any);
+  const softDeleteMutation = useMutation("plugins:softDeletePlugin" as any);
+  const restoreMutation = useMutation("plugins:restorePlugin" as any);
+
+  const requireEnabled = useCallback(() => {
+    if (!enabled) {
+      throw new PluginApiError(
+        "PLUGINS_DISABLED",
+        "Plugin management is not enabled for this account.",
+      );
+    }
+  }, [enabled]);
+
+  const setEnabled = useCallback(
+    async (pluginId: string, nextEnabled: boolean): Promise<void> => {
+      requireEnabled();
+      try {
+        await setEnabledMutation({ pluginId, enabled: nextEnabled } as any);
+      } catch (err) {
+        throw toPluginApiError(
+          err,
+          nextEnabled
+            ? "Could not enable the plugin"
+            : "Could not disable the plugin",
+        );
+      }
+    },
+    [requireEnabled, setEnabledMutation],
+  );
+
+  const activateVersion = useCallback(
+    async (pluginId: string, pluginVersionId: string): Promise<void> => {
+      requireEnabled();
+      try {
+        await activateVersionMutation({ pluginId, pluginVersionId } as any);
+      } catch (err) {
+        throw toPluginApiError(err, "Could not activate that plugin version");
+      }
+    },
+    [requireEnabled, activateVersionMutation],
+  );
+
+  const softDeletePlugin = useCallback(
+    async (pluginId: string): Promise<void> => {
+      requireEnabled();
+      try {
+        await softDeleteMutation({ pluginId } as any);
+      } catch (err) {
+        throw toPluginApiError(err, "Could not uninstall the plugin");
+      }
+    },
+    [requireEnabled, softDeleteMutation],
+  );
+
+  const restorePlugin = useCallback(
+    async (pluginId: string): Promise<void> => {
+      requireEnabled();
+      try {
+        await restoreMutation({ pluginId } as any);
+      } catch (err) {
+        throw toPluginApiError(err, "Could not restore the plugin");
+      }
+    },
+    [requireEnabled, restoreMutation],
+  );
+
+  return useMemo(
+    () => ({ setEnabled, activateVersion, softDeletePlugin, restorePlugin }),
+    [setEnabled, activateVersion, softDeletePlugin, restorePlugin],
   );
 }

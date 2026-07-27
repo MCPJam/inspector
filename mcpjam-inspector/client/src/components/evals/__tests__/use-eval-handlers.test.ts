@@ -812,6 +812,67 @@ describe("useEvalHandlers", () => {
       expect(body.runGroupId).toBeUndefined();
       expect(body.namedHostId).toBe("host-mcpjam");
     });
+
+    it("surfaces an environment-drift 409 carried by a LATER plan when every plan fails", async () => {
+      // The drift 409 is the retry-able, actionable cause. Selecting
+      // `failures[0]` blind buries it behind whichever generic error happened
+      // to come first — the partial-failure branch already prefers the
+      // conflict, and the all-failed branch must agree.
+      mockAuthFetch.mockImplementation(
+        async (path: string, init: { body: string }) => {
+          if (path !== "/api/mcp/evals/run") {
+            return createFetchResponse({ success: true });
+          }
+          const body = JSON.parse(init.body);
+          return body.namedHostId === "host-claude"
+            ? createFetchResponse(
+                {
+                  code: "ENVIRONMENT_REVISION_CONFLICT",
+                  message: "Environment changed — retry the run.",
+                },
+                409,
+              )
+            : createFetchResponse({ message: "Upstream exploded" }, 500);
+        },
+      );
+
+      const { result } = renderHook(() =>
+        useEvalHandlers({
+          ...defaultProps,
+          connectedServerNames: new Set(["server-a", "server-b"]),
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleRerun({
+          _id: "suite-all-failed",
+          name: "Multi-host suite",
+          environment: { servers: ["server-a", "server-b"] },
+          hostAttachments: [
+            // Ordered so the conflict is NOT `failures[0]`.
+            {
+              namedHostId: "host-mcpjam",
+              hostName: "MCPJam",
+              enabledOptionalServerIds: [],
+              resolvedServerNames: ["server-a"],
+            },
+            {
+              namedHostId: "host-claude",
+              hostName: "Claude",
+              enabledOptionalServerIds: [],
+              resolvedServerNames: ["server-b"],
+            },
+          ],
+        } as any);
+      });
+
+      const errorToasts = vi
+        .mocked(toast.error)
+        .mock.calls.map((call) => String(call[0]))
+        .join(" | ");
+      expect(errorToasts).toContain("Environment changed — retry the run.");
+      expect(errorToasts).not.toContain("Upstream exploded");
+    });
   });
 
   describe("handleRunTestCase", () => {
