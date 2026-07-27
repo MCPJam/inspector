@@ -8,6 +8,7 @@ import type {
 import { Wrench } from "lucide-react";
 import { ElicitationDialog } from "./ElicitationDialog";
 import { MrtrElicitationHost } from "./elicitation/MrtrElicitationHost";
+import { HostedMrtrHost } from "./elicitation/HostedMrtrHost";
 import { EmptyState } from "./ui/empty-state";
 import { navigateApp } from "@/lib/app-navigation";
 import { ThreePanelLayout } from "./ui/three-panel-layout";
@@ -1010,6 +1011,7 @@ export function ToolsTab({
           returns an `input_required` result, the SDK driver collects rounds
           through this shared dialog and retries the original call. */}
       <MrtrElicitationHost />
+      <HostedMrtrHost />
 
       <SaveRequestDialog
         open={isSaveDialogOpen}
