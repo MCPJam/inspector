@@ -221,6 +221,23 @@ function isAction(value: unknown): value is MrtrElicitationAction {
   return value === "accept" || value === "decline" || value === "cancel";
 }
 
+/**
+ * A URL-mode elicitation target must be navigable http(s). Mirrors the
+ * producer-side check in `server/utils/mrtr-hosted-collector.ts`, deliberately
+ * duplicated: this guard is the last thing between an untrusted part and UI
+ * that dereferences `url`, so a `javascript:`/`data:` value must not pass even
+ * if it somehow reached the browser without going through that producer.
+ */
+function isNavigableUrl(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  try {
+    const { protocol } = new URL(value);
+    return protocol === "https:" || protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
 function isInputRequestDisplay(
   value: unknown,
 ): value is MrtrInputRequestDisplay {
@@ -228,7 +245,7 @@ function isInputRequestDisplay(
   if (typeof value.key !== "string" || typeof value.message !== "string") {
     return false;
   }
-  if (value.mode === "url") return typeof value.url === "string";
+  if (value.mode === "url") return isNavigableUrl(value.url);
   if (value.mode === "form") return true;
   return false;
 }
@@ -313,10 +330,16 @@ export function isMrtrResumeSubmission(
 ): value is MrtrResumeSubmission {
   if (!isRecord(value)) return false;
   if (typeof value.continuationId !== "string") return false;
-  if (typeof value.round !== "number" || !Number.isFinite(value.round)) {
+  // A round is a discrete counter the store fences on, so a fractional value
+  // is as malformed as a string one — `Number.isInteger` also implies finite.
+  if (!Number.isInteger(value.round) || (value.round as number) < 0) {
     return false;
   }
   if (!isRecord(value.responses)) return false;
+  // One response per request key: an empty map answers nothing and would drive
+  // an empty round, so reject it here (mirrors isMrtrContinuationEvent, which
+  // requires ≥1 inputRequests).
+  if (Object.keys(value.responses).length === 0) return false;
   return Object.values(value.responses).every(
     (r) =>
       isRecord(r) &&

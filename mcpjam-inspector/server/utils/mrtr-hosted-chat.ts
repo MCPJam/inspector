@@ -58,7 +58,7 @@ import {
 } from "@/shared/mrtr-continuation";
 import {
   computeMrtrBindingFingerprintFromManager,
-  deriveNegotiatedEra,
+  resolveMrtrNegotiatedEra,
   resumeMrtrContinuationLeg,
   type ResumeMrtrOutcome,
 } from "./mrtr-hosted-collector.js";
@@ -312,7 +312,7 @@ export async function resolveMrtrChatResume(
     };
   }
 
-  const negotiatedEra = deriveNegotiatedEra(deps.manager, serverId);
+  const negotiatedEra = resolveMrtrNegotiatedEra(deps.manager, serverId);
   const bindingFingerprint = computeMrtrBindingFingerprintFromManager(
     deps.manager,
     { serverId, negotiatedEra, authPrincipal: deps.authPrincipal },

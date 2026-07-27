@@ -37,7 +37,7 @@ import {
 import {
   createHostedMrtrCollector,
   computeMrtrBindingFingerprintFromManager,
-  deriveNegotiatedEra,
+  resolveMrtrNegotiatedEra,
   type MrtrFingerprintManager,
 } from "./mrtr-hosted-collector.js";
 import { MRTR_CONTINUATION_TTL_MS } from "../config.js";
@@ -111,14 +111,14 @@ export class HostedMrtrBridge {
   }
 
   private resolveNegotiatedEra(serverId: string): string {
-    return deriveNegotiatedEra(this.requireManager(), serverId);
+    return resolveMrtrNegotiatedEra(this.requireManager(), serverId);
   }
 
   private resolveBindingFingerprint(serverId: string): string {
     const manager = this.requireManager();
     return computeMrtrBindingFingerprintFromManager(manager, {
       serverId,
-      negotiatedEra: deriveNegotiatedEra(manager, serverId),
+      negotiatedEra: resolveMrtrNegotiatedEra(manager, serverId),
       authPrincipal: this.options.authPrincipal,
     });
   }

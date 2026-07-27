@@ -88,7 +88,9 @@ const normalizeDetails = (details: unknown): string | undefined => {
 const lowercaseFirst = (value: string) =>
   value.length > 0 ? value[0].toLowerCase() + value.slice(1) : value;
 
-const pluralize = (value: number, unit: string) =>
+/** `1 server`, `0 servers`. Exported so other count strips reuse this instead
+ *  of re-deriving the same `s` suffix. */
+export const pluralize = (value: number, unit: string) =>
   `${value} ${unit}${value === 1 ? "" : "s"}`;
 
 const collectStringValues = (

@@ -3,7 +3,7 @@
  * resource each answer `input_required` on the first call and complete on the
  * retry that carries the accepted elicitation content (spec §12). Served via
  * `createMcpHandler` so it runs over the real modern wire (see
- * `mcp-client-manager-fixture.integration.test.ts` for the HTTP harness).
+ * `mrtr-manager.integration.test.ts` for the HTTP harness).
  *
  * One tool (`confirm-typed`) declares an `outputSchema`, so the manager's
  * reconstructed tool output-schema validation on the MRTR path has something to

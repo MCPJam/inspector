@@ -103,6 +103,34 @@ export function isUnauthorized401(error: unknown): boolean {
 }
 
 /**
+ * Strictly detects an upstream `InsufficientScopeError` (SEP-2350 runtime scope
+ * step-up) anywhere in the error / cause chain.
+ *
+ * Matches ONLY the real class — by its brand (`constructor.mcpBrand ===
+ * "mcp.InsufficientScopeError"`, which survives minification / cross-realm) or
+ * `.name` — never a duck-typed `requiredScope` field, so an unrelated error
+ * carrying that field can't masquerade as a step-up challenge. This mirrors the
+ * host-side `extractInsufficientScopeChallenge` recognizer exactly. Used to keep
+ * a connect-time 403 `insufficient_scope` from being swallowed / downgraded by
+ * the Streamable→SSE transport fallback, which would strip the challenge fields.
+ */
+export function isInsufficientScopeError(error: unknown): boolean {
+  const seen = new Set<unknown>();
+  let current: any = error;
+  while (current && typeof current === "object" && !seen.has(current)) {
+    seen.add(current);
+    if (
+      current.constructor?.mcpBrand === "mcp.InsufficientScopeError" ||
+      current.name === "InsufficientScopeError"
+    ) {
+      return true;
+    }
+    current = current.cause;
+  }
+  return false;
+}
+
+/**
  * Checks if an error is an authentication-related error.
  * Detects auth errors by:
  * 1. Error class name (UnauthorizedError from MCP SDK)

@@ -23,6 +23,11 @@ function makeManager(overrides: Record<string, any> = {}) {
     getInitializationInfo: vi
       .fn()
       .mockReturnValue({ protocolVersion: "2026-07-28", transport: "http" }),
+    // The resolved endpoint is half of the binding digest, so suspend and
+    // resume both need a config to hash; a server swap fails the claim closed.
+    getServerConfig: vi
+      .fn()
+      .mockReturnValue({ url: "https://srv.example.com/mcp" }),
     assertMrtrToolOutputSchema: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };

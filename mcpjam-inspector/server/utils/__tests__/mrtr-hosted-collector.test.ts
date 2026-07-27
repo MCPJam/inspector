@@ -5,8 +5,11 @@ import {
   buildInputRequestDisplays,
   computeMrtrBindingFingerprint,
   createHostedMrtrCollector,
+  deriveServerConfigDigest,
   isMrtrSuspendedSignal,
+  resolveMrtrAuthPrincipal,
   resumeMrtrContinuationLeg,
+  settleMrtrTeardown,
 } from "../mrtr-hosted-collector";
 import {
   encodeResumeState,
@@ -67,6 +70,24 @@ describe("buildInputRequestDisplays", () => {
     });
   });
 
+  it("rejects a url-mode elicitation whose scheme is not navigable", () => {
+    const withUrl = (url: string) =>
+      ({
+        q1: { method: "elicitation/create", params: { mode: "url", message: "Go", url } },
+      }) as never;
+    // A hostile server must not get a script URL persisted or emitted.
+    expect(() => buildInputRequestDisplays(withUrl("javascript:alert(1)"))).toThrow(
+      /rejected/i,
+    );
+    expect(() => buildInputRequestDisplays(withUrl("data:text/html,<script>"))).toThrow(
+      /rejected/i,
+    );
+    expect(() => buildInputRequestDisplays(withUrl(""))).toThrow(/rejected/i);
+    // http(s) still passes — http for local/dev servers.
+    expect(buildInputRequestDisplays(withUrl("https://x.test/a"))).toHaveLength(1);
+    expect(buildInputRequestDisplays(withUrl("http://localhost:1/a"))).toHaveLength(1);
+  });
+
   it("rejects an oversized field rather than truncating", () => {
     expect(() =>
       buildInputRequestDisplays(
@@ -98,6 +119,192 @@ describe("computeMrtrBindingFingerprint", () => {
     expect(fp).not.toBe(
       computeMrtrBindingFingerprint({ ...base, serverConfigDigest: "d2" }),
     );
+  });
+});
+
+describe("deriveServerConfigDigest", () => {
+  const info = {
+    protocolVersion: "2026-07-28",
+    transport: "streamable-http",
+    serverVersion: { name: "srv", version: "1.0" },
+    serverCapabilities: { elicitation: {}, tools: { listChanged: true } },
+  };
+  const managerFor = (config: unknown, initInfo: unknown = info) => ({
+    getInitializationInfo: () => initInfo,
+    getServerConfig: () => config,
+  });
+
+  it("binds the resolved endpoint, so a server swap fails closed", () => {
+    // Same implementation, same reported capabilities — a DIFFERENT endpoint.
+    // Without the endpoint term these two are indistinguishable and a resume
+    // would replay the original params + requestState at the new server.
+    const a = deriveServerConfigDigest(
+      managerFor({ url: "https://a.example.com/mcp" }),
+      "srv-1",
+    );
+    const b = deriveServerConfigDigest(
+      managerFor({ url: "https://b.example.com/mcp" }),
+      "srv-1",
+    );
+    expect(a).not.toBe(b);
+    // Path and query route too.
+    expect(a).not.toBe(
+      deriveServerConfigDigest(
+        managerFor({ url: "https://a.example.com/mcp/v2" }),
+        "srv-1",
+      ),
+    );
+    expect(a).not.toBe(
+      deriveServerConfigDigest(
+        managerFor({ url: "https://a.example.com/mcp?tenant=other" }),
+        "srv-1",
+      ),
+    );
+  });
+
+  it("does NOT bind rotating credentials, so a token refresh still resumes", () => {
+    // A bearer rotating behind the same endpoint is not a server swap; binding
+    // it would fail every legitimate resume that straddles a refresh.
+    expect(
+      deriveServerConfigDigest(
+        managerFor({ url: "https://a.example.com/mcp", accessToken: "tok-1" }),
+        "srv-1",
+      ),
+    ).toBe(
+      deriveServerConfigDigest(
+        managerFor({ url: "https://a.example.com/mcp", accessToken: "tok-2" }),
+        "srv-1",
+      ),
+    );
+  });
+
+  it("is insensitive to initialize key order", () => {
+    expect(
+      deriveServerConfigDigest(
+        managerFor(
+          { url: "https://a.example.com/mcp" },
+          {
+            serverCapabilities: { tools: { listChanged: true }, elicitation: {} },
+            serverVersion: { version: "1.0", name: "srv" },
+            transport: "streamable-http",
+            protocolVersion: "2026-07-28",
+          },
+        ),
+        "srv-1",
+      ),
+    ).toBe(
+      deriveServerConfigDigest(managerFor({ url: "https://a.example.com/mcp" }), "srv-1"),
+    );
+  });
+
+  it("fails closed on hostile, unboundedly nested initialize metadata", () => {
+    let deep: Record<string, unknown> = {};
+    const root = deep;
+    for (let i = 0; i < 200; i++) {
+      const next: Record<string, unknown> = {};
+      deep.nested = next;
+      deep = next;
+    }
+    expect(() =>
+      deriveServerConfigDigest(
+        managerFor(
+          { url: "https://a.example.com/mcp" },
+          { ...info, serverCapabilities: root },
+        ),
+        "srv-1",
+      ),
+    ).toThrow(/exceeded the 24-level nesting limit/);
+  });
+
+  it("fails closed on an oversized (wide) capabilities blob", () => {
+    const wide: Record<string, unknown> = {};
+    for (let i = 0; i < 5000; i++) wide[`k${i}`] = i;
+    expect(() =>
+      deriveServerConfigDigest(
+        managerFor(
+          { url: "https://a.example.com/mcp" },
+          { ...info, serverCapabilities: wide },
+        ),
+        "srv-1",
+      ),
+    ).toThrow(/exceeded the 4096-node traversal limit/);
+  });
+});
+
+describe("resolveMrtrAuthPrincipal", () => {
+  const ctx = (vars: Record<string, string>) => ({
+    get: (k: string) => vars[k],
+  });
+
+  it("resolves the real signed-in principal, not a shared anonymous", () => {
+    // `bearer-auth` sets mcpjamUserId/workosUserId — never `userId`. Reading a
+    // non-existent var would resolve every signed-in caller to "anonymous" and
+    // fail their resume closed against the suspend-time fingerprint.
+    expect(resolveMrtrAuthPrincipal(ctx({ mcpjamUserId: "u-1" }))).toBe("u-1");
+    expect(resolveMrtrAuthPrincipal(ctx({ workosUserId: "w-1" }))).toBe("w-1");
+    expect(resolveMrtrAuthPrincipal(ctx({ guestId: "g-1" }))).toBe("g-1");
+    expect(resolveMrtrAuthPrincipal(ctx({ userId: "u-1" }))).toBe("anonymous");
+    expect(resolveMrtrAuthPrincipal(ctx({}))).toBe("anonymous");
+  });
+});
+
+describe("settleMrtrTeardown", () => {
+  it("returns normally on a clean disconnect", async () => {
+    const disconnect = vi.fn(async () => {});
+    await expect(settleMrtrTeardown(disconnect, "[t]")).resolves.toBeUndefined();
+    expect(disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("swallows a rejection so cleanup cannot replace the outcome", async () => {
+    await expect(
+      settleMrtrTeardown(async () => {
+        throw new Error("teardown exploded");
+      }, "[t]"),
+    ).resolves.toBeUndefined();
+  });
+
+  it("swallows a synchronous throw too", async () => {
+    await expect(
+      settleMrtrTeardown(() => {
+        throw new Error("threw before returning a promise");
+      }, "[t]"),
+    ).resolves.toBeUndefined();
+  });
+
+  it("gives up on a disconnect that never settles", async () => {
+    // The route's `finally` must not hold the response hostage to a transport
+    // that never finishes closing: the outcome is already determined.
+    let settled = false;
+    const promise = settleMrtrTeardown(
+      () => new Promise<void>(() => {}),
+      "[t]",
+      5,
+    ).then(() => {
+      settled = true;
+    });
+    await promise;
+    expect(settled).toBe(true);
+  });
+
+  it("does not leave an unhandled rejection when the timeout wins first", async () => {
+    // The `.catch` must sit on the teardown promise itself, not on the race —
+    // otherwise a late rejection escapes after the bound has already resolved.
+    const onUnhandled = vi.fn();
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      await settleMrtrTeardown(
+        () =>
+          new Promise<void>((_resolve, reject) =>
+            setTimeout(() => reject(new Error("late failure")), 15),
+          ),
+        "[t]",
+        5,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(onUnhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
   });
 });
 
@@ -185,6 +392,10 @@ function makeFakeStore(seed: {
   sideEffecting?: boolean;
   bindingFingerprint?: string;
   round?: number;
+  expiresAt?: number;
+  /** Inject a store-write failure to exercise the post-wire outcome mapping. */
+  failFinalize?: { status: number; error: string };
+  failResuspend?: { status: number; error: string };
 }) {
   let stateVersion = 1;
   let attempt = 0;
@@ -210,6 +421,7 @@ function makeFakeStore(seed: {
     round: seed.round ?? seed.state.round,
     maxRounds: seed.state.maxRounds,
     attempt: 0,
+    ...(seed.expiresAt !== undefined ? { expiresAt: seed.expiresAt } : {}),
   };
 
   return {
@@ -244,6 +456,9 @@ function makeFakeStore(seed: {
       }) as never,
       resuspend: (async (_bearer: string, args: { round: number }) => {
         calls.resuspend.push(args.round);
+        if (seed.failResuspend) {
+          return { ok: false as const, ...seed.failResuspend };
+        }
         stateVersion += 1;
         return {
           ok: true as const,
@@ -255,6 +470,9 @@ function makeFakeStore(seed: {
       }) as never,
       finalize: (async (_bearer: string, args: { status: string }) => {
         calls.finalize.push(args.status);
+        if (seed.failFinalize) {
+          return { ok: false as const, ...seed.failFinalize };
+        }
         stateVersion += 1;
         return { ok: true as const, stateVersion, status: args.status };
       }) as never,
@@ -413,6 +631,184 @@ describe("resumeMrtrContinuationLeg", () => {
     });
     expect(outcome).toMatchObject({ outcome: "failed", status: 409 });
     expect(store.calls.release).toBe(1);
+  });
+
+  it("replays the current round when the browser retries the round before it", async () => {
+    // The store advanced to round 1 (a resuspend the browser never saw); the
+    // browser can only retry round 0. That must re-serve round 1, not strand the
+    // continuation until its TTL.
+    const store = makeFakeStore({
+      continuationId: "cont-1",
+      state: makeState({ round: 1 }),
+      round: 1,
+      expiresAt: 9_000,
+    });
+    const driveLeg = vi.fn();
+    const emitted: MrtrContinuationEvent[] = [];
+    const outcome = await resumeMrtrContinuationLeg({
+      bearer: "b",
+      submission: { ...submission, round: 0 },
+      bindingFingerprint: "fp",
+      driveLeg: driveLeg as never,
+      emit: (e) => emitted.push(e),
+      ...store.deps,
+    });
+    expect(outcome).toMatchObject({
+      outcome: "input_required",
+      round: 1,
+      expiresAt: 9_000,
+    });
+    // Read-only recovery: no leg, no submit, no write — just the lease released.
+    expect(driveLeg).not.toHaveBeenCalled();
+    expect(store.calls.submit).toBe(0);
+    expect(store.calls.resuspend).toEqual([]);
+    expect(store.calls.finalize).toEqual([]);
+    expect(store.calls.release).toBe(1);
+    const evt = emitted.find((e) => e.kind === "input_required");
+    expect(evt).toBeDefined();
+    expect(JSON.stringify(evt)).not.toContain(SECRET);
+  });
+
+  it("omits expiresAt on a replay when the claim payload carries no deadline", async () => {
+    // Absence must read as "unknown", never as an invented/expired deadline.
+    const store = makeFakeStore({
+      continuationId: "cont-1",
+      state: makeState({ round: 1 }),
+      round: 1,
+    });
+    const emitted: MrtrContinuationEvent[] = [];
+    const outcome = await resumeMrtrContinuationLeg({
+      bearer: "b",
+      submission: { ...submission, round: 0 },
+      bindingFingerprint: "fp",
+      driveLeg: (async () => ({ status: "complete", result: {} })) as never,
+      emit: (e) => emitted.push(e),
+      ...store.deps,
+    });
+    expect(outcome).toMatchObject({ outcome: "input_required", round: 1 });
+    expect(outcome).not.toHaveProperty("expiresAt");
+    // No fabricated deadline reaches the browser event either.
+    expect(emitted.find((e) => e.kind === "input_required")).toBeUndefined();
+  });
+
+  it("reports indeterminate when finalize fails after a completed side-effecting leg", async () => {
+    const store = makeFakeStore({
+      continuationId: "cont-1",
+      state: makeState(),
+      sideEffecting: true,
+      failFinalize: { status: 409, error: "lease expired" },
+    });
+    const outcome = await resumeMrtrContinuationLeg({
+      bearer: "b",
+      submission,
+      bindingFingerprint: "fp",
+      driveLeg: async (): Promise<MrtrLegResult<unknown>> => ({
+        status: "complete",
+        result: { ok: true },
+      }),
+      ...store.deps,
+    });
+    // The tool definitively ran; a durability failure must NOT read as
+    // `cancelled`/`failed`, which would invite a double-executing retry.
+    expect(outcome).toMatchObject({ outcome: "indeterminate", result: { ok: true } });
+    expect(store.calls.cancel).toHaveLength(1);
+  });
+
+  it("reports indeterminate when resuspend fails after a side-effecting leg", async () => {
+    const store = makeFakeStore({
+      continuationId: "cont-1",
+      state: makeState(),
+      sideEffecting: true,
+      failResuspend: { status: 409, error: "version conflict" },
+    });
+    const outcome = await resumeMrtrContinuationLeg({
+      bearer: "b",
+      submission,
+      bindingFingerprint: "fp",
+      driveLeg: async (): Promise<MrtrLegResult<unknown>> => ({
+        status: "input_required",
+        state: makeState({ round: 1 }),
+      }),
+      ...store.deps,
+    });
+    expect(outcome.outcome).toBe("indeterminate");
+    expect(store.calls.cancel).toHaveLength(1);
+  });
+
+  it("reports indeterminate when the next round's state cannot be encoded after a side-effecting leg", async () => {
+    // The store write would SUCCEED here — the failure is ours (the next state
+    // will not encode). The wire still left, so a durable `failed` would invite
+    // a restart of something that may have executed.
+    const store = makeFakeStore({
+      continuationId: "cont-1",
+      state: makeState(),
+      sideEffecting: true,
+    });
+    const outcome = await resumeMrtrContinuationLeg({
+      bearer: "b",
+      submission,
+      bindingFingerprint: "fp",
+      driveLeg: async (): Promise<MrtrLegResult<unknown>> => ({
+        status: "input_required",
+        state: makeState({ round: 1 }),
+      }),
+      encode: (() => {
+        throw new Error("resumeState too large");
+      }) as never,
+      ...store.deps,
+    });
+    expect(outcome.outcome).toBe("indeterminate");
+    // Marked indeterminate, NOT durably finalized as failed.
+    expect(store.calls.cancel).toHaveLength(1);
+    expect(store.calls.finalize).toEqual([]);
+  });
+
+  it("still finalizes failed on an encode error for a NON-side-effecting op", async () => {
+    const store = makeFakeStore({
+      continuationId: "cont-1",
+      state: makeState(),
+      sideEffecting: false,
+    });
+    const outcome = await resumeMrtrContinuationLeg({
+      bearer: "b",
+      submission,
+      bindingFingerprint: "fp",
+      driveLeg: async (): Promise<MrtrLegResult<unknown>> => ({
+        status: "input_required",
+        state: makeState({ round: 1 }),
+      }),
+      encode: (() => {
+        throw new Error("resumeState too large");
+      }) as never,
+      ...store.deps,
+    });
+    // Nothing side-effecting happened, so the precise terminal reason is kept.
+    expect(outcome.outcome).toBe("failed");
+    expect(store.calls.finalize).toEqual(["failed"]);
+    expect(store.calls.cancel).toHaveLength(0);
+  });
+
+  it("keeps the ordinary mapping when a store write fails on a NON-side-effecting op", async () => {
+    // Nothing side-effecting left the wire, so this is safely replayable and
+    // must stay `cancelled`/`failed` rather than being escalated.
+    const store = makeFakeStore({
+      continuationId: "cont-1",
+      state: makeState(),
+      sideEffecting: false,
+      failFinalize: { status: 409, error: "version conflict" },
+    });
+    const outcome = await resumeMrtrContinuationLeg({
+      bearer: "b",
+      submission,
+      bindingFingerprint: "fp",
+      driveLeg: async (): Promise<MrtrLegResult<unknown>> => ({
+        status: "complete",
+        result: { ok: true },
+      }),
+      ...store.deps,
+    });
+    expect(outcome).toMatchObject({ outcome: "cancelled", status: 409 });
+    expect(store.calls.cancel).toHaveLength(0);
   });
 });
 

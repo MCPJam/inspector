@@ -37,11 +37,16 @@ import {
   projectServerSchema,
 } from "./auth.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
-import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
+import {
+  WEB_CALL_TIMEOUT_MS,
+  MRTR_RESPONSE_CONTENT_MAX_BYTES,
+} from "../../config.js";
 import {
   computeMrtrBindingFingerprint,
   deriveServerConfigDigest,
+  resolveMrtrAuthPrincipal,
   resumeMrtrContinuationLeg,
+  settleMrtrTeardown,
 } from "../../utils/mrtr-hosted-collector.js";
 import {
   cancelContinuation,
@@ -71,7 +76,39 @@ const resumeSchema = projectServerSchema.extend({
 });
 
 /**
- * POST /mrtr/continuation/resume
+ * Collapse the per-server `oauthTokens` map onto the single-server
+ * `oauthAccessToken` this route actually connects with.
+ *
+ * A continuation is bound to exactly ONE server, so the resume body carries
+ * `serverId` (not `serverIds`) — and `resolveConnectionParams` therefore takes
+ * its single-server branch, which reads only `oauthAccessToken` and drops
+ * `oauthTokens` on the floor. Hosted chat holds the per-server map, so a caller
+ * that sends it would have had its token silently discarded: the fresh resume
+ * connection then fails OAuth-required before the continuation could be claimed,
+ * stranding the suspended operation until it expired. Declaring a field the
+ * route ignores is the bug; honor it here rather than accept it and drop it.
+ *
+ * An explicit `oauthAccessToken` wins — it is the more specific field.
+ */
+function normalizeResumeOAuth(
+  rawBody: Record<string, unknown>,
+): Record<string, unknown> {
+  if (typeof rawBody.oauthAccessToken === "string") return rawBody;
+  const serverId = rawBody.serverId;
+  const tokens = rawBody.oauthTokens;
+  if (typeof serverId !== "string" || tokens === null || typeof tokens !== "object") {
+    return rawBody;
+  }
+  const token = (tokens as Record<string, unknown>)[serverId];
+  if (typeof token !== "string" || !token) return rawBody;
+  return { ...rawBody, oauthAccessToken: token };
+}
+
+/**
+ * POST /mrtr/resume  (mounted: `web.route("/mrtr", …)` → `/api/web/mrtr/resume`)
+ *
+ * Not to be confused with the FROZEN Convex-side `/web/mrtr/continuation/*`
+ * contract this calls out to — that is the backend store, not this route.
  *
  * Claim the record, idempotently submit the browser's response, and drive one
  * retry leg. Returns the resume outcome (completed result, another
@@ -81,7 +118,12 @@ mrtrContinuation.post("/resume", async (c) =>
   handleRoute(c, async () => {
     const rawBody = await readJsonBody<Record<string, unknown>>(c);
 
-    // Shape-gate the browser submission before it reaches the store.
+    // Shape-gate the browser submission BEFORE connecting, so a malformed or
+    // oversized payload never costs a server connect. This gate runs on the raw
+    // body; the value that actually reaches the store and the wire is the
+    // Zod-parsed `body.responses` below, which additionally strips unknown keys.
+    // (The raw cap is a superset of the parsed one, so passing here implies
+    // passing there.)
     const submissionCandidate = {
       continuationId: rawBody.continuationId,
       round: rawBody.round,
@@ -95,10 +137,32 @@ mrtrContinuation.post("/resume", async (c) =>
       );
     }
 
+    // Per-response content cap: the global body limit only bounds the whole
+    // request, so a single `content` between the per-response bound and 1 MiB
+    // would otherwise be stored and forwarded to the MCP server. Reject
+    // oversized content here (never truncate — a truncated response would drive
+    // a different request) before it reaches the store.
+    for (const [key, response] of Object.entries(
+      submissionCandidate.responses,
+    )) {
+      if (response.content === undefined) continue;
+      const bytes = Buffer.byteLength(
+        JSON.stringify(response.content),
+        "utf8",
+      );
+      if (bytes > MRTR_RESPONSE_CONTENT_MAX_BYTES) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          `Response content for "${key}" is ${bytes} bytes, over the ${MRTR_RESPONSE_CONTENT_MAX_BYTES}-byte per-response cap`,
+        );
+      }
+    }
+
     const bearer = await getConvexBearerForRequest(c);
     const { manager, body } = await createManualHostedConnection(
       c,
-      rawBody,
+      normalizeResumeOAuth(rawBody),
       resumeSchema,
       { timeoutMs: WEB_CALL_TIMEOUT_MS },
     );
@@ -108,13 +172,27 @@ mrtrContinuation.post("/resume", async (c) =>
       const submission: MrtrResumeSubmission = {
         continuationId: body.continuationId,
         round: body.round,
-        responses: submissionCandidate.responses,
+        // The Zod-normalized values, NOT the raw ones that merely passed the
+        // structural predicate above: `elicitationResponseSchema` strips keys
+        // the contract does not declare, and it must be that narrowed shape
+        // that reaches the store and the MCP server.
+        responses: body.responses,
       };
 
       // Warm the connection so the client exists AND its negotiated identity is
-      // available for the fingerprint. listTools is not an MRTR verb, so it can
-      // never itself return input_required.
-      await manager.listTools(serverId);
+      // available for the fingerprint. `ping` is deliberately capability-NEUTRAL:
+      // this route resumes all three MRTR verbs, so probing with `listTools`
+      // would fail a prompt-only or resource-only server that never advertised
+      // `tools` — before the continuation was even claimed. `ping` is also not
+      // an MRTR verb, so it can never itself return `input_required`.
+      //
+      // The timeout is explicit for the same reason as `driveLeg` below, and it
+      // is NOT inherited here even though the manager was built with one:
+      // `listTools` applies `withTimeout` inside its own callback, but
+      // `pingServer` forwards its options straight to `client.ping`, so an
+      // unbounded probe would sit on the upstream SDK default while a connected
+      // server stops answering.
+      await manager.pingServer(serverId, { timeout: WEB_CALL_TIMEOUT_MS });
       const client = manager.getManagedClient(serverId);
       if (!client) {
         throw new WebRouteError(
@@ -124,10 +202,10 @@ mrtrContinuation.post("/resume", async (c) =>
         );
       }
 
-      const authPrincipal =
-        ((c as any).get("userId") as string | undefined) ??
-        ((c as any).get("guestId") as string | undefined) ??
-        "anonymous";
+      // The auth-principal half of the binding must differentiate signed-in
+      // principals, and must resolve IDENTICALLY at the suspend site — hence the
+      // shared helper rather than a second hand-rolled lookup here.
+      const authPrincipal = resolveMrtrAuthPrincipal(c);
       const bindingFingerprint = computeMrtrBindingFingerprint({
         serverId,
         negotiatedEra: body.negotiatedEra,
@@ -139,7 +217,15 @@ mrtrContinuation.post("/resume", async (c) =>
         state: MrtrOperationState,
         responses: InputResponses,
       ): Promise<MrtrLegResult<unknown>> =>
-        resumeInputRequiredOperation(client, state, responses);
+        // The timeout is EXPLICIT, not inherited. This drives the managed client
+        // directly rather than through a manager verb, so the manager's
+        // `withTimeout` injection does not apply and the leg would otherwise
+        // fall back to the upstream SDK's own default. That would break the
+        // lease budget `MRTR_CONTINUATION_LEASE_TTL_MS` is derived from — a leg
+        // outrunning the budget can lose its lease after the wire has left.
+        resumeInputRequiredOperation(client, state, responses, {
+          requestOptions: { timeout: WEB_CALL_TIMEOUT_MS },
+        });
 
       const outcome = await resumeMrtrContinuationLeg({
         bearer,
@@ -154,13 +240,21 @@ mrtrContinuation.post("/resume", async (c) =>
       // the outcome shape + a bounded result for local/testing surfaces.
       return { ok: true, ...outcome };
     } finally {
-      await manager.disconnectAllServers();
+      // Teardown is CLEANUP, never the outcome. This `finally` runs AFTER a leg
+      // has already gone out and the store has been written, so a teardown that
+      // fails OR hangs must not replace (or indefinitely withhold) a real resume
+      // outcome — a `completed` result, or an `indeterminate` the user has to be
+      // told about. See `settleMrtrTeardown`.
+      await settleMrtrTeardown(
+        () => manager.disconnectAllServers(),
+        "[mrtr-continuation]",
+      );
     }
   }),
 );
 
 /**
- * POST /mrtr/continuation/cancel
+ * POST /mrtr/cancel  (mounted: `web.route("/mrtr", …)` → `/api/web/mrtr/cancel`)
  *
  * Durable cancel: the original `AbortSignal` no longer exists after suspension,
  * so a user closing the dialog must be able to withdraw the continuation from a

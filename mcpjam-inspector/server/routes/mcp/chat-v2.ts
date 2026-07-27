@@ -299,6 +299,21 @@ chatV2.post("/", async (c) => {
       surface: bodySurface,
       hostId: bodyHostId,
     } = body;
+    // Local execution cannot run a Project Environment, and must say so rather
+    // than quietly ignoring the target and running an ad-hoc turn. Resolving an
+    // environment needs a member-authorized Convex read plus the hosted
+    // authorization plane that primes the manager from the resolved server set;
+    // this route has neither. Fail clearly, at ingress, before anything else
+    // reads the body.
+    if ((body as { executionTarget?: unknown }).executionTarget !== undefined) {
+      return c.json(
+        {
+          error:
+            "Project Environments can't run on local /api/mcp execution — use the hosted chat route.",
+        },
+        400
+      );
+    }
     const isChatboxSession = Boolean(bodyChatboxId);
     const chatSessionSourceType: "chatbox" | "direct" = isChatboxSession
       ? "chatbox"

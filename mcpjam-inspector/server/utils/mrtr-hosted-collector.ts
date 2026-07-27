@@ -39,6 +39,7 @@ import type {
 import {
   MRTR_DISPLAY_FIELD_MAX_BYTES,
   MRTR_CONTINUATION_TTL_MS,
+  MRTR_TEARDOWN_TIMEOUT_MS,
 } from "../config.js";
 import { logger } from "./logger.js";
 import {
@@ -107,6 +108,43 @@ export class MrtrDisplayTooLargeError extends Error {
   }
 }
 
+/**
+ * Raised when a safe-display field is rejected on grounds other than size —
+ * today, a URL-mode elicitation whose scheme is not navigable. Distinct from
+ * {@link MrtrDisplayTooLargeError} so the reason reads honestly in logs and the
+ * two failures stay separable.
+ */
+export class MrtrDisplayRejectedError extends Error {
+  readonly code = "MRTR_DISPLAY_REJECTED";
+  constructor(readonly field: string, reason: string) {
+    super(`MRTR display field "${field}" was rejected: ${reason}`);
+    this.name = "MrtrDisplayRejectedError";
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+/**
+ * A URL-mode elicitation target the browser may be asked to navigate to.
+ *
+ * MCP 2026-07-28 requires the CLIENT to "show the full URL to the user for
+ * examination before consent" and to "highlight the domain of the URL" — a
+ * `javascript:` or `data:` URL has no domain to show and is not an out-of-band
+ * destination at all; rendered as an anchor it is simply script injection. The
+ * spec constrains the server ("MUST contain a valid URL", "SHOULD use HTTPS
+ * URLs for non-development environments") but does not enumerate a client-side
+ * scheme allowlist, so this is MCPJam hardening against a hostile server rather
+ * than a spec MUST. `http:` stays allowed for local/dev servers.
+ */
+export function isNavigableElicitationUrl(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  try {
+    const { protocol } = new URL(value);
+    return protocol === "https:" || protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
 // ── Binding fingerprint ──────────────────────────────────────────────────
 
 /**
@@ -137,24 +175,220 @@ export function computeMrtrBindingFingerprint(args: {
     .digest("hex");
 }
 
-/** Minimal shape of the manager needed to derive the binding fingerprint. */
-export interface MrtrFingerprintManager {
-  getInitializationInfo: (serverId: string) => unknown;
+/**
+ * Traversal bounds for {@link stableStringify}. Its input is a HOSTILE server's
+ * initialize response (`serverCapabilities` / `serverVersion` are echoed from
+ * the wire), so an unbounded recursive sort is a server-controlled way to blow
+ * the worker's stack or pin its CPU on every suspend AND every resume. Both
+ * limits sit orders of magnitude above any legitimate capabilities object.
+ */
+const FINGERPRINT_MAX_DEPTH = 24;
+const FINGERPRINT_MAX_NODES = 4096;
+
+/** Raised when a server's initialize metadata exceeds the traversal bounds. */
+export class MrtrFingerprintTooComplexError extends Error {
+  readonly code = "MRTR_FINGERPRINT_TOO_COMPLEX";
+  constructor(limit: string) {
+    super(
+      `MRTR binding fingerprint aborted: server initialization metadata exceeded ${limit}.`,
+    );
+    this.name = "MrtrFingerprintTooComplexError";
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
 }
 
 /**
- * Derive the effective-server-config digest half of the binding fingerprint
- * from a LIVE connection's negotiated identity. Both the suspend site (PR5 chat
- * loop) and the resume site connect to the server, so both compute this
- * identically — a materially different server (name / version / capabilities /
- * protocol) yields a different digest and the resume claim fails closed at the
- * backend. Config that never reaches the wire (a rotated bearer behind the same
- * identity) is intentionally NOT in the digest; the auth-principal half covers
- * principal changes.
+ * Serialize a value with object keys emitted in a stable (recursively sorted)
+ * order, so the digest below hashes the *values* of the negotiated identity
+ * rather than the JSON property order a given initialize response happened to
+ * use. Two connects to the same server that surface identical capabilities in a
+ * different key order must produce the SAME fingerprint or a legitimate resume
+ * would fail the binding claim closed. Arrays keep their order (semantic);
+ * scalars and null are emitted as-is.
  *
- * SINGLE SOURCE for both sites — never fork this, or a suspend/resume pair
- * against the same server could compute different fingerprints and dead-lock a
- * legitimate resume as "cancelled".
+ * Bounded by depth and node count: over either limit it THROWS rather than
+ * truncates. Truncation would be worse than failing — two different oversized
+ * metadata blobs could collapse to the same prefix and bind a continuation to a
+ * server it does not actually match. Failing closed just refuses the round.
+ */
+function stableStringify(
+  value: unknown,
+  depth = 0,
+  budget: { nodes: number } = { nodes: FINGERPRINT_MAX_NODES },
+): string {
+  if (depth > FINGERPRINT_MAX_DEPTH) {
+    throw new MrtrFingerprintTooComplexError(
+      `the ${FINGERPRINT_MAX_DEPTH}-level nesting limit`,
+    );
+  }
+  if (budget.nodes-- <= 0) {
+    throw new MrtrFingerprintTooComplexError(
+      `the ${FINGERPRINT_MAX_NODES}-node traversal limit`,
+    );
+  }
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value ?? null);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((v) => stableStringify(v, depth + 1, budget)).join(",")}]`;
+  }
+  const entries = Object.keys(value as Record<string, unknown>)
+    .sort()
+    .map(
+      (k) =>
+        `${JSON.stringify(k)}:${stableStringify(
+          (value as Record<string, unknown>)[k],
+          depth + 1,
+          budget,
+        )}`,
+    );
+  return `{${entries.join(",")}}`;
+}
+
+/**
+ * Tear a connection down WITHOUT letting cleanup become the outcome.
+ *
+ * Both MRTR routes disconnect in a `finally` that runs after the answer is
+ * already determined — a suspend whose continuation is durably persisted, or a
+ * resume whose leg has already left the wire. Two ways teardown can hijack that
+ * answer, and both matter:
+ *
+ * - it REJECTS: an awaited rejection in a `finally` replaces the value the
+ *   `try` produced, so the browser gets a transport error instead of its
+ *   `continuationId` (or its real `completed` / `indeterminate` outcome) and a
+ *   retry re-runs something that may already have executed;
+ * - it never SETTLES: the `finally` blocks forever and the response never goes
+ *   out at all — same damage, no error to log.
+ *
+ * So: swallow-and-log the rejection, and race the whole thing against a bound.
+ * The `.catch` is attached to the teardown promise ITSELF, not to the race, so
+ * a rejection arriving after the timeout has already won is still handled
+ * rather than surfacing as an unhandled rejection.
+ *
+ * With today's transports the timeout should never fire — upstream Streamable
+ * HTTP and SSE `close()` just abort their controllers, and stdio bounds itself
+ * at ~4s — but that is an SDK-internal property, and this invariant should not
+ * depend on one.
+ */
+export async function settleMrtrTeardown(
+  disconnect: () => Promise<void>,
+  context: string,
+  timeoutMs: number = MRTR_TEARDOWN_TIMEOUT_MS,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const teardown = Promise.resolve()
+    .then(disconnect)
+    .catch((error: unknown) => {
+      logger.warn(`${context} disconnect failed`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  const bound = new Promise<void>((resolve) => {
+    timer = setTimeout(() => {
+      logger.warn(`${context} disconnect timed out; answering anyway`, {
+        timeoutMs,
+      });
+      resolve();
+    }, timeoutMs);
+  });
+  try {
+    await Promise.race([teardown, bound]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * The one place suspend and resume derive the auth principal half of the
+ * binding. `bearer-auth` sets `mcpjamUserId` + `workosUserId` for a signed-in
+ * WorkOS session and `guestId` for a guest — there is NO `userId` context var,
+ * so reading one would silently resolve every signed-in caller to the shared
+ * `"anonymous"` on one side of the binding and to a real id on the other,
+ * failing every legitimate signed-in resume closed. Shared so the two sites
+ * cannot drift apart again.
+ */
+export function resolveMrtrAuthPrincipal(c: {
+  get?: (key: string) => unknown;
+}): string {
+  const pick = (key: string): string | undefined => {
+    const value = c.get?.(key);
+    return typeof value === "string" && value ? value : undefined;
+  };
+  return (
+    pick("mcpjamUserId") ?? pick("workosUserId") ?? pick("guestId") ?? "anonymous"
+  );
+}
+
+/**
+ * Reduce a resolved server config to the identity of the ENDPOINT it actually
+ * talks to, so the digest below binds *where* the operation ran and not merely
+ * what the peer claimed to be. Deliberately narrow:
+ *
+ * - HTTP: `origin + pathname + search`. Origin and path are the retarget
+ *   vector; the query string is included because it routes on some servers
+ *   (`?tenant=`). Hash fragments and userinfo are dropped — they never reach
+ *   the wire as a destination.
+ * - stdio: the executable and its argv, which are the equivalent identity.
+ *
+ * Credentials and headers are intentionally EXCLUDED: an access token rotating
+ * behind the same endpoint is not a server swap, and folding it in would fail
+ * every legitimate resume that straddles a refresh. Principal changes are
+ * covered by the auth-principal half of {@link computeMrtrBindingFingerprint}.
+ */
+function deriveEndpointIdentity(config: unknown): unknown {
+  const cfg = config as
+    | { url?: unknown; command?: unknown; args?: unknown }
+    | undefined;
+  if (!cfg) return null;
+  if (typeof cfg.url === "string" && cfg.url) {
+    try {
+      const url = new URL(cfg.url);
+      return { kind: "http", endpoint: `${url.origin}${url.pathname}${url.search}` };
+    } catch {
+      // Unparseable URL: bind the raw string rather than silently dropping the
+      // term — a changed endpoint must still change the digest.
+      return { kind: "http", endpoint: cfg.url };
+    }
+  }
+  if (typeof cfg.command === "string" && cfg.command) {
+    return {
+      kind: "stdio",
+      command: cfg.command,
+      args: Array.isArray(cfg.args) ? cfg.args.map((a) => String(a)) : [],
+    };
+  }
+  return null;
+}
+
+/**
+ * Minimal shape of the manager needed to derive the binding fingerprint — both
+ * the negotiated identity and the resolved endpoint the connection points at.
+ */
+export interface MrtrFingerprintManager {
+  getInitializationInfo: (serverId: string) => unknown;
+  getServerConfig: (serverId: string) => unknown;
+}
+
+/**
+ * Derive the effective-server digest half of the binding fingerprint. Both the
+ * SUSPEND site (PR4 direct ops / PR5 chat) and the RESUME route connect to the
+ * server, so both compute this identically — a materially different server
+ * fails the claim closed. Two terms:
+ *
+ * 1. the RESOLVED endpoint the connection points at (see
+ *    {@link deriveEndpointIdentity}), and
+ * 2. the negotiated identity the peer reported (protocol / transport / version
+ *    / capabilities).
+ *
+ * The endpoint term is what makes a server SWAP fail closed. Server-reported
+ * metadata alone does not distinguish two endpoints running the same
+ * implementation, so a project's server URL edited between suspend and resume
+ * would otherwise still claim successfully and replay the old opaque
+ * `requestState` plus the original params at the new endpoint — which MCP
+ * 2026-07-28 forbids: "Both the `inputRequests` and `requestState` fields
+ * affect only the client's retry of the original request. They MUST NOT be used
+ * for any other request." Single source so suspend and resume never drift; a
+ * fingerprint only fails closed while both halves compute it identically.
  */
 export function deriveServerConfigDigest(
   manager: MrtrFingerprintManager,
@@ -170,14 +404,11 @@ export function deriveServerConfigDigest(
     | undefined;
   return createHash("sha256")
     .update(
-      // Canonical (property-order-independent) serialization: the resume site
-      // is a FRESH connection on any replica, so a server may re-serialize
-      // `serverVersion` / `serverCapabilities` with a different key order than
-      // the suspend site saw. Hashing raw `JSON.stringify` wire order would then
-      // dead-lock a legitimate resume as a binding mismatch. `stableStringify`
-      // sorts object keys recursively so equivalent metadata always hashes
-      // identically.
+      // Key order in a server's initialize response is not load-bearing —
+      // canonicalize nested capability/version keys so the digest binds values,
+      // not JSON property order (suspend and resume must agree).
       stableStringify({
+        endpoint: deriveEndpointIdentity(manager.getServerConfig(serverId)),
         protocolVersion: info?.protocolVersion ?? null,
         transport: info?.transport ?? null,
         serverVersion: info?.serverVersion ?? null,
@@ -188,41 +419,32 @@ export function deriveServerConfigDigest(
 }
 
 /**
- * Deterministic JSON serialization with recursively sorted object keys, so two
- * structurally-equal values always produce the same string regardless of
- * property insertion order. Arrays keep their order (order is semantic there).
+ * Resolve the coarse negotiated era string bound to a continuation. MRTR only
+ * ever occurs on a modern (2026-07-28) connection, so this reads the negotiated
+ * protocol version off the live client and falls back to `"modern"` if the
+ * transport hasn't surfaced one. The exact value is not load-bearing for the
+ * fingerprint check on its own (the browser echoes it back verbatim on resume,
+ * so suspend and resume always agree); it exists so a continuation records which
+ * wire era produced it.
  */
-function stableStringify(value: unknown): string {
-  const seen = new WeakSet<object>();
-  const canonicalize = (v: unknown): unknown => {
-    if (v === null || typeof v !== "object") return v;
-    if (seen.has(v as object)) return null; // guard against cycles
-    seen.add(v as object);
-    if (Array.isArray(v)) return v.map(canonicalize);
-    const out: Record<string, unknown> = {};
-    for (const key of Object.keys(v as Record<string, unknown>).sort()) {
-      out[key] = canonicalize((v as Record<string, unknown>)[key]);
-    }
-    return out;
-  };
-  return JSON.stringify(canonicalize(value));
-}
-
-/** The negotiated protocol era bound to a continuation, read from the live connection. */
-export function deriveNegotiatedEra(
-  manager: MrtrFingerprintManager,
+export function resolveMrtrNegotiatedEra(
+  manager: { getInitializationInfo: (serverId: string) => unknown },
   serverId: string,
 ): string {
   const info = manager.getInitializationInfo(serverId) as
     | { protocolVersion?: string }
     | undefined;
-  return info?.protocolVersion ?? "unknown";
+  return typeof info?.protocolVersion === "string" && info.protocolVersion
+    ? info.protocolVersion
+    : "modern";
 }
 
 /**
  * Compute the full binding fingerprint from a live manager connection. Used by
  * both the suspend (chat collector) and resume paths so they agree by
- * construction.
+ * construction — never fork the digest derivation, or a suspend/resume pair
+ * against the same server could compute different fingerprints and dead-lock a
+ * legitimate resume as "cancelled".
  */
 export function computeMrtrBindingFingerprintFromManager(
   manager: MrtrFingerprintManager,
@@ -272,6 +494,16 @@ export function buildInputRequestDisplays(
     );
     if (mode === "url") {
       const url = typeof params.url === "string" ? params.url : "";
+      // Fail closed on a non-navigable scheme, at the PRODUCER: this value is
+      // persisted and emitted to the browser as a navigation target, so a
+      // hostile server's `javascript:`/`data:` URL must never leave the server
+      // — the same treatment the byte caps get.
+      if (!isNavigableElicitationUrl(url)) {
+        throw new MrtrDisplayRejectedError(
+          `${key}.url`,
+          "URL-mode elicitation must be an http(s) URL",
+        );
+      }
       displays.push({
         key,
         mode: "url",
@@ -455,13 +687,26 @@ export type ResumeMrtrOutcome =
       outcome: "input_required";
       round: number;
       displays: MrtrInputRequestDisplay[];
-      expiresAt: number;
+      /**
+       * Absent when the round is being REPLAYED from a claim rather than freshly
+       * re-suspended: the claim payload does not carry the record's deadline, so
+       * absence means "unknown", never "already expired". (If PR3a adds
+       * `expiresAt` to the claim payload it flows through automatically.)
+       */
+      expiresAt?: number;
     }
   | {
       outcome: "failed" | "cancelled" | "expired" | "indeterminate";
       reason: string;
       /** HTTP status to surface (defaults per outcome). */
       status?: number;
+      /**
+       * Present only when the MCP leg COMPLETED but the durable record could not
+       * be finalized: the result is real and in hand, the store just does not
+       * know it. Callers may surface it, but MUST treat the continuation as
+       * indeterminate and never re-drive a side-effecting operation on it.
+       */
+      result?: unknown;
     };
 
 export interface ResumeMrtrDeps {
@@ -527,6 +772,53 @@ function emitResolved(
 }
 
 /**
+ * Re-serve the round the store is currently parked on, for a browser replaying
+ * the round before it. Read-only: no leg is driven and nothing is written, so
+ * this cannot double-execute anything. Returns `null` when the parked state
+ * cannot be rendered (corrupt blob, oversized display), leaving the caller to
+ * fall through to the ordinary stale-round rejection.
+ */
+function replayCurrentRound(
+  cs: ClaimedContinuationState,
+  decode: typeof decodeResumeState,
+  deps: ResumeMrtrDeps,
+  continuationId: string,
+): ResumeMrtrOutcome | null {
+  try {
+    const parked = decode(cs.resumeState as string);
+    const displays = buildInputRequestDisplays(parked.pendingInputRequests);
+    if (displays.length === 0) return null;
+    // The claim payload carries no deadline; only emit the browser event when
+    // the backend did supply one, rather than inventing an `expiresAt` the UI
+    // would render as an expiry. The HTTP outcome below is the direct path's
+    // actual channel either way.
+    if (cs.expiresAt !== undefined) {
+      deps.emit?.(
+        makeInputRequiredEvent({
+          continuationId,
+          serverId: cs.serverId,
+          serverName: deps.serverName,
+          method: cs.operationMethod,
+          operationLabel: operationLabel(parked),
+          round: cs.round,
+          displays,
+          expiresAt: cs.expiresAt,
+          chatSessionId: cs.chatSessionId,
+        }),
+      );
+    }
+    return {
+      outcome: "input_required",
+      round: cs.round,
+      displays,
+      ...(cs.expiresAt !== undefined ? { expiresAt: cs.expiresAt } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Resume one suspended MRTR round. Idempotent for a duplicate browser submit of
  * the same round: the response is submitted round-keyed to the store (which
  * de-dupes), and a caller that retries lands on the same claim → same outcome.
@@ -566,9 +858,87 @@ export async function resumeMrtrContinuationLeg(
   const cs: ClaimedContinuationState = claimed.state;
   let stateVersion = claimed.stateVersion;
 
+  /**
+   * Outcome for a store write that fails AFTER the MCP leg already went out.
+   *
+   * `mapError` is wrong here for a side-effecting operation: the wire left, so
+   * the operation may have (or, on a completed leg, definitely did) execute.
+   * Reporting `failed`/`cancelled` invites the caller to retry and double-
+   * execute it. Only durability failed, so resolve as `indeterminate` and mark
+   * the record indeterminate best-effort (`cancel` needs no lease — the lease
+   * is exactly what may have just been lost). A non-side-effecting operation is
+   * safe to replay, so it keeps the ordinary mapping.
+   */
+  const postWireFailure = async (
+    e: ContinuationCallError,
+    result?: unknown,
+  ): Promise<ResumeMrtrOutcome> => {
+    if (!cs.sideEffecting) return mapError(e);
+    await cancel(deps.bearer, {
+      continuationId,
+      reason: "post_wire_store_error_indeterminate",
+    });
+    emitResolved(deps, continuationId, "failed", true);
+    return {
+      outcome: "indeterminate",
+      reason: `MCP leg left the wire but the continuation could not be persisted: ${e.error}`,
+      status: e.status,
+      ...(result !== undefined ? { result } : {}),
+    };
+  };
+
+  /**
+   * Same rule as {@link postWireFailure}, for a failure that is OURS rather than
+   * the store's — we successfully reached the store, but cannot carry the
+   * operation forward (its next state will not encode, its display will not
+   * render). The distinction that matters is unchanged: `driveLeg` has already
+   * returned, so for a side-effecting operation the wire left and a durable
+   * `failed` would invite a restart of something that may have executed. Mark it
+   * indeterminate instead. A non-side-effecting operation is safely replayable
+   * and still finalizes `failed` with its precise terminal reason.
+   */
+  const postWireLocalFailure = async (
+    reason: string,
+    terminalReason: string,
+  ): Promise<ResumeMrtrOutcome> => {
+    if (cs.sideEffecting) {
+      await cancel(deps.bearer, {
+        continuationId,
+        reason: "post_wire_local_error_indeterminate",
+      });
+      emitResolved(deps, continuationId, "failed", true);
+      return {
+        outcome: "indeterminate",
+        reason: `MCP leg left the wire but the continuation could not be carried forward: ${reason}`,
+      };
+    }
+    await finalize(deps.bearer, {
+      continuationId,
+      leaseId,
+      expectedStateVersion: stateVersion,
+      status: "failed",
+      terminalReason,
+    });
+    emitResolved(deps, continuationId, "failed");
+    return { outcome: "failed", reason };
+  };
+
   // Round fence: a submission for a different round is stale.
   if (round !== cs.round) {
-    await release(deps.bearer, { continuationId, leaseId });
+    // …EXCEPT the one recoverable stale round: the immediately preceding one.
+    // If the browser's submit for round N succeeded but the HTTP response was
+    // lost, the store already advanced to N+1 and the browser can only retry N.
+    // Failing that retry strands the continuation — it sits awaiting answers the
+    // browser was never shown until the TTL expires. Replay the current round's
+    // display instead. This drives no leg and writes nothing: it only re-serves
+    // what `resuspend` already durably recorded.
+    if (round === cs.round - 1 && cs.resumeState) {
+      const replay = replayCurrentRound(cs, decode, deps, continuationId);
+      await release(deps.bearer, { continuationId, leaseId });
+      if (replay) return replay;
+    } else {
+      await release(deps.bearer, { continuationId, leaseId });
+    }
     return {
       outcome: "failed",
       reason: `stale round: submitted ${round}, pending ${cs.round}`,
@@ -654,7 +1024,9 @@ export async function resumeMrtrContinuationLeg(
       expectedStateVersion: stateVersion,
       status: "completed",
     });
-    if (!fin.ok) return mapError(fin);
+    // The leg COMPLETED: for a side-effecting op the tool definitively ran, so a
+    // finalize failure is a durability failure, not an execution failure.
+    if (!fin.ok) return postWireFailure(fin, leg.result);
     emitResolved(deps, continuationId, "completed");
     return { outcome: "completed", result: leg.result };
   }
@@ -665,36 +1037,20 @@ export async function resumeMrtrContinuationLeg(
   try {
     nextBlob = encode(nextState);
   } catch (err) {
-    await finalize(deps.bearer, {
-      continuationId,
-      leaseId,
-      expectedStateVersion: stateVersion,
-      status: "failed",
-      terminalReason: "resume_state_encode_error",
-    });
-    emitResolved(deps, continuationId, "failed");
-    return {
-      outcome: "failed",
-      reason: err instanceof Error ? err.message : "resumeState encode error",
-    };
+    return postWireLocalFailure(
+      err instanceof Error ? err.message : "resumeState encode error",
+      "resume_state_encode_error",
+    );
   }
 
   let displays: MrtrInputRequestDisplay[];
   try {
     displays = buildInputRequestDisplays(nextState.pendingInputRequests);
   } catch (err) {
-    await finalize(deps.bearer, {
-      continuationId,
-      leaseId,
-      expectedStateVersion: stateVersion,
-      status: "failed",
-      terminalReason: "resume_display_error",
-    });
-    emitResolved(deps, continuationId, "failed");
-    return {
-      outcome: "failed",
-      reason: err instanceof Error ? err.message : "display build error",
-    };
+    return postWireLocalFailure(
+      err instanceof Error ? err.message : "display build error",
+      "resume_display_error",
+    );
   }
 
   const rs = await resuspend(deps.bearer, {
@@ -704,7 +1060,11 @@ export async function resumeMrtrContinuationLeg(
     round: nextState.round,
     resumeState: nextBlob,
   });
-  if (!rs.ok) return mapError(rs);
+  // Same post-wire rule as the finalize path: the leg already went out (the
+  // server answered with another `input_required`), so a side-effecting op that
+  // cannot be re-suspended is indeterminate, not `failed` — the caller must not
+  // re-drive it from round zero.
+  if (!rs.ok) return postWireFailure(rs);
 
   deps.emit?.(
     makeInputRequiredEvent({
