@@ -79,6 +79,8 @@ import {
 } from "../../services/environments/effective-capabilities.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
 import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
+import { BASH_TOOL_NAME } from "../../utils/built-in-tools/bash.js";
+import { maybeAppendEnvironmentContext } from "../../utils/computers/environment-context.js";
 import { buildMcpjamPlatformClient } from "./mcpjam-platform-client.js";
 import { logger } from "../../utils/logger.js";
 
@@ -600,6 +602,18 @@ chatV2.post("/", async (c) => {
       },
     );
 
+    // Blueprint knowledge/maintenance: when this turn advertises bash, append
+    // the pinned image's model-facing context to the system prompt. Tri-state
+    // fetch inside — a Convex blip degrades to "no extra context", never a
+    // broken turn. No-op (and no fetch) when bash isn't advertised.
+    const effectiveSystemPrompt = await maybeAppendEnvironmentContext({
+      systemPrompt,
+      hasBashTool: Boolean(builtInTools?.[BASH_TOOL_NAME]),
+      bearer: bearerToken,
+      projectId: hostedBody.projectId,
+      ...(executionScope ? { executionScope } : {}),
+    });
+
     // COMP-16: the host-configured computer working directory — the SAME
     // `computer.workdir` the bash tool runs in — threaded into the harness path
     // so its Shell roots under the same directory. Server-resolved config only.
@@ -924,7 +938,7 @@ chatV2.post("/", async (c) => {
         prepare: {
           selectedServerIds: effectiveServerIds,
           modelDefinition,
-          systemPrompt,
+          systemPrompt: effectiveSystemPrompt,
           temperature,
           requireToolApproval,
           respectToolVisibility,
@@ -1018,7 +1032,7 @@ chatV2.post("/", async (c) => {
             : null,
           selectedServerNames: effectiveServerNames,
           selectedServerIds: effectiveServerIds,
-          systemPrompt,
+          systemPrompt: effectiveSystemPrompt,
           temperature,
           requireToolApproval,
           mcpToolResultImageRendering,
