@@ -132,8 +132,9 @@ function isEraNegotiationError(error: unknown): boolean {
  * negotiation error instead of triggering OAuth.
  *
  * Returns the innermost non-wrapper error; returns the input UNCHANGED when it
- * is not an era-negotiation wrapper — so with activation OFF (where no probe,
- * and therefore no wrapper, ever occurs) behavior is byte-identical.
+ * is not an era-negotiation wrapper — a non-wrapper transport error (e.g. a
+ * bare `UnauthorizedError` from an explicit legacy pin, where no probe and
+ * therefore no wrapper ever occurs) passes through byte-identically.
  */
 export function unwrapEraNegotiationCause(error: unknown): unknown {
   const seen = new Set<unknown>();
@@ -152,6 +153,39 @@ export function unwrapEraNegotiationCause(error: unknown): unknown {
     current = next;
   }
   return current;
+}
+
+/**
+ * Classify a connection failure into the short, string `failureClass` reported
+ * on a negotiation-outcome telemetry event.
+ *
+ * Prefers the error's `name`, then its `code`, then the string form of a string
+ * cause, falling back to `"unknown"`. A transport `code` is frequently numeric
+ * at runtime (e.g. `401` / `403`), so it is normalized with `String(...)` — a
+ * bare cast would let a number escape into the `failureClass?: string` public
+ * contract. The caller is expected to pass the UNWRAPPED cause (see
+ * {@link unwrapEraNegotiationCause}) so the real transport class is reported
+ * rather than the opaque era-negotiation wrapper.
+ */
+export function classifyNegotiationFailureClass(cause: unknown): string {
+  const name =
+    cause && typeof cause === "object"
+      ? (cause as { name?: unknown }).name
+      : undefined;
+  if (typeof name === "string") {
+    return name;
+  }
+  const code =
+    cause && typeof cause === "object"
+      ? (cause as { code?: unknown }).code
+      : undefined;
+  if (typeof code === "string" || typeof code === "number") {
+    return String(code);
+  }
+  if (typeof cause === "string") {
+    return cause;
+  }
+  return "unknown";
 }
 
 /**

@@ -3,6 +3,7 @@ import {
   isUnauthorized401,
   isAuthError,
   unwrapEraNegotiationCause,
+  classifyNegotiationFailureClass,
 } from "../src/mcp-client-manager/errors.js";
 
 /**
@@ -49,7 +50,7 @@ describe("unwrapEraNegotiationCause", () => {
     expect(unwrapEraNegotiationCause(wrapper)).toBe(inner);
   });
 
-  it("is identity for a non-wrapper error (byte-identical with activation OFF)", () => {
+  it("is identity for a non-wrapper error (byte-identical passthrough)", () => {
     const plain = new UnauthorizedError();
     expect(unwrapEraNegotiationCause(plain)).toBe(plain);
     const status = { status: 500 };
@@ -61,6 +62,38 @@ describe("unwrapEraNegotiationCause", () => {
     wrapper.code = "ERA_NEGOTIATION_FAILED";
     (wrapper as Error).cause = wrapper;
     expect(() => unwrapEraNegotiationCause(wrapper)).not.toThrow();
+  });
+});
+
+describe("classifyNegotiationFailureClass always returns a string", () => {
+  it("prefers a string error name", () => {
+    expect(classifyNegotiationFailureClass(new UnauthorizedError())).toBe(
+      "UnauthorizedError"
+    );
+  });
+
+  it("normalizes a NUMERIC transport code to a string (401/403)", () => {
+    // Transport errors expose `code` as a runtime number; the public
+    // `failureClass?: string` contract must never receive a number.
+    const numericCode = classifyNegotiationFailureClass({ code: 401 });
+    expect(numericCode).toBe("401");
+    expect(typeof numericCode).toBe("string");
+    expect(typeof classifyNegotiationFailureClass({ code: 403 })).toBe(
+      "string"
+    );
+  });
+
+  it("passes through a string code and a string cause", () => {
+    expect(classifyNegotiationFailureClass({ code: "ETIMEDOUT" })).toBe(
+      "ETIMEDOUT"
+    );
+    expect(classifyNegotiationFailureClass("boom")).toBe("boom");
+  });
+
+  it("falls back to 'unknown' for a codeless/nameless cause", () => {
+    expect(classifyNegotiationFailureClass(undefined)).toBe("unknown");
+    expect(classifyNegotiationFailureClass({})).toBe("unknown");
+    expect(classifyNegotiationFailureClass(42)).toBe("unknown");
   });
 });
 

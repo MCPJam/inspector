@@ -46,8 +46,9 @@ import {
  * calls this helper for both HTTP and stdio servers. An unconfigured
  * connection resolves to `{ mode: "auto" }` on either transport (on stdio the
  * `server/discover` probe runs on a sibling process — the server binary is
- * spawned a second time), and explicit pins are honored identically
- * everywhere.
+ * spawned a second time). Explicit pins are honored on HTTP connections only;
+ * stdio always negotiates in `auto` mode, because `mcpProtocolVersion` is
+ * HTTP-only and the manager never forwards a pin to a stdio transport.
  */
 export function resolveVersionNegotiation(
   mcpProtocolVersion: McpProtocolVersion | undefined

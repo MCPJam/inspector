@@ -73,6 +73,7 @@ import {
   isUnauthorized401,
   isInsufficientScopeError,
   unwrapEraNegotiationCause,
+  classifyNegotiationFailureClass,
 } from "./errors.js";
 import {
   type RetryPolicy,
@@ -619,13 +620,9 @@ export class MCPClientManager {
         // Unwrap an auto-probe `SdkError(EraNegotiationFailed)` so the class
         // reported is the real transport error (e.g. `UnauthorizedError`),
         // not the opaque negotiation wrapper.
-        const cause = unwrapEraNegotiationCause(error);
-        failureClass =
-          (cause && typeof cause === "object"
-            ? ((cause as { name?: unknown }).name as string | undefined) ??
-              ((cause as { code?: unknown }).code as string | undefined)
-            : undefined) ??
-          (typeof cause === "string" ? cause : "unknown");
+        failureClass = classifyNegotiationFailureClass(
+          unwrapEraNegotiationCause(error)
+        );
       }
 
       logger({
@@ -2314,7 +2311,24 @@ export class MCPClientManager {
       await this.awaitWithAbort(state.connectPromise, signal);
       return;
     }
-    await this.connectToServerOnce(serverId, signal);
+    // Implicit reconnect boundary: a registered-but-disconnected server (after
+    // an earlier disconnect or a failed connect) reaches a fresh connection
+    // attempt here WITHOUT flowing through `connectToServer`'s try/catch. Emit
+    // the negotiation outcome so every real attempt reports exactly once. The
+    // in-flight `retryPromise`/`connectPromise` guards above make this mutually
+    // exclusive with `connectToServer`'s emission, so no attempt double-emits.
+    const config = this.getServerConfig(serverId);
+    try {
+      await this.connectToServerOnce(serverId, signal);
+      if (config) {
+        this.emitNegotiationOutcome(serverId, config, "connected", undefined);
+      }
+    } catch (error) {
+      if (config) {
+        this.emitNegotiationOutcome(serverId, config, "failed", error);
+      }
+      throw error;
+    }
   }
 
   private getClientOrThrow(serverId: string): ManagedMcpClient {

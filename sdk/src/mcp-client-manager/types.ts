@@ -85,12 +85,13 @@ export interface CacheHitEvent {
 export type CacheEventLogger = (event: CacheHitEvent) => void;
 
 /**
- * The activation-resolved negotiation mode a connection actually requested of
- * the underlying client:
- *  - `"auto"` — unconfigured connection under activation (probed);
+ * The negotiation mode a connection actually requested of the underlying
+ * client. Auto-negotiation is unconditional, so an unconfigured connection is
+ * always probed:
+ *  - `"auto"` — unconfigured connection (always probed);
  *  - `"modern-pin"` — an explicit modern (`2026-07-28`) pin;
- *  - `"legacy"` — the exact legacy `initialize` handshake (unconfigured with
- *    activation OFF, or any explicit legacy pin).
+ *  - `"legacy"` — the exact legacy `initialize` handshake, from an explicit
+ *    legacy pin.
  */
 export type ConfiguredNegotiationMode = "auto" | "modern-pin" | "legacy";
 
