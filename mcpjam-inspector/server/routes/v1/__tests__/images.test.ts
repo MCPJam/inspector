@@ -323,10 +323,12 @@ describe("v1 images routes", () => {
         body: { blueprint: "base: debian@sha256:abc123" },
       });
       expect(res.status).toBe(200);
-      expect((await res.json()) as Record<string, unknown>).toMatchObject({
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body).toMatchObject({
         ok: true,
         baseImageDigest: "sha256:abc123",
       });
+      expect(body).not.toHaveProperty("errors");
       expect(convexQueryMock).toHaveBeenCalledWith(
         "computerEnvironments:validateBlueprint",
         { projectId: "p1", blueprint: "base: debian@sha256:abc123" }
