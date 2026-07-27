@@ -673,12 +673,21 @@ All `images` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_A
 | `--image <id-or-name>` | Yes | Sandbox image name or ID |
 | `--project <id-or-name>` | No | Project name or ID |
 
+### `images validate`
+
+Lint a blueprint without saving it. Prints `ok` plus the resolved base digest, or structured errors with the YAML path of each violation.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--file <path>` | Yes | Blueprint YAML path, or `-` to read from stdin |
+| `--project <id-or-name>` | No | Project name or ID |
+
 ### `images create`
 
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--name <name>` | Yes | Display name for the new sandbox image |
-| `--file <path>` | Yes | Dockerfile path, or `-` to read from stdin |
+| `--file <path>` | Yes | Blueprint YAML path, or `-` to read from stdin |
 | `--project <id-or-name>` | No | Project name or ID |
 
 ### `images edit`
