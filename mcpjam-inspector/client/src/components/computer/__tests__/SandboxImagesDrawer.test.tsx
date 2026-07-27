@@ -34,6 +34,9 @@ vi.mock("@/hooks/useSandboxImages", async () => {
     usePromoteSandboxImage: () => promote,
     useDeleteSandboxImage: () => deleteEnvironment,
     useSetComputerSandboxImage: () => setComputerEnvironment,
+    // The backend linter needs a live Convex provider; the drawer tests only
+    // exercise flow, so lint always reports ok.
+    useValidateBlueprint: () => ({ ok: true, baseImageDigest: "sha256:x" }),
   };
 });
 
@@ -61,7 +64,7 @@ function env(over: Partial<SandboxImageView> = {}): SandboxImageView {
     environmentId: "env1",
     projectId: "p1",
     name: "ml-toolkit",
-    dockerfile: "FROM debian@sha256:x\nRUN echo hi",
+    blueprint: "base: debian@sha256:x\ninitialize:\n  - run: echo hi\n",
     contentHash: "h",
     sharing: "user",
     isOwner: true,

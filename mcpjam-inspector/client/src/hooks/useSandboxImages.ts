@@ -6,7 +6,8 @@ import { useMutation, useQuery } from "convex/react";
  * functions). Like `useProjectComputer`, the inspector references Convex
  * functions by string id — it does not import the backend's generated `api`.
  *
- * An environment is a project-owned Dockerfile, built into an immutable image
+ * An environment is a project-owned image blueprint (YAML: base / initialize /
+ * maintenance / knowledge), whose build spec is built into an immutable image
  * that a member's Computer can boot from. Builds run under the deployment's
  * configured builder (`stub` by default; real images only when an operator sets
  * `COMPUTERS_ENV_BUILDER=e2b`).
@@ -31,7 +32,7 @@ export interface SandboxImageView {
   environmentId: string;
   projectId: string;
   name: string;
-  dockerfile: string;
+  blueprint: string;
   contentHash: string;
   sharing: "user" | "project";
   /** True only for a per-user draft the caller owns. Project-shared envs are
@@ -75,10 +76,26 @@ export function useSandboxImageBuilds(
   ) as SandboxImageBuildView[] | undefined;
 }
 
+export type BlueprintValidationResult =
+  | { ok: true; baseImageDigest: string }
+  | { ok: false; errors: { path: string; message: string }[] };
+
+/** Lint blueprint YAML without saving (backend is the single validator).
+ * `undefined` while loading / when either arg is absent. */
+export function useValidateBlueprint(
+  projectId: string | null,
+  blueprint: string | null
+): BlueprintValidationResult | undefined {
+  return useQuery(
+    "computerEnvironments:validateBlueprint" as never,
+    projectId && blueprint ? ({ projectId, blueprint } as never) : "skip"
+  ) as BlueprintValidationResult | undefined;
+}
+
 export function useCreateSandboxImage(): (args: {
   projectId: string;
   name: string;
-  dockerfile: string;
+  blueprint: string;
 }) => Promise<SandboxImageView> {
   return useMutation(
     "computerEnvironments:createEnvironment" as never
@@ -88,7 +105,7 @@ export function useCreateSandboxImage(): (args: {
 export function useUpdateSandboxImage(): (args: {
   environmentId: string;
   name?: string;
-  dockerfile?: string;
+  blueprint?: string;
 }) => Promise<SandboxImageView> {
   return useMutation(
     "computerEnvironments:updateEnvironment" as never

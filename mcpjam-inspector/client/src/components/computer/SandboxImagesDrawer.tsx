@@ -26,22 +26,31 @@ import {
   useSetComputerSandboxImage,
   useStartSandboxImageBuild,
   useUpdateSandboxImage,
+  useValidateBlueprint,
   type SandboxImageView,
 } from "@/hooks/useSandboxImages";
 import { EnvironmentBuildBadge } from "./EnvironmentBuildBadge";
 import { convexErrMessage } from "@/lib/convex-error";
 
 // Ships a real, buildable default so "Create → Build" works out of the box.
-// The base must be an allowlisted official image (debian, ubuntu, node,
-// python) pinned by @sha256 digest — swap in your own base/digest as needed.
-// Only FROM + RUN are supported today.
-const NEW_ENVIRONMENT_TEMPLATE = `# Allowlisted official base (debian, ubuntu, node, python) pinned by digest.
-# Only FROM + RUN are supported today. Change the base or digest as needed.
-FROM debian:bookworm-slim@sha256:60eac759739651111db372c07be67863818726f754804b8707c90979bda511df
-RUN echo "customize me"
+// `base` must be an allowlisted official image (debian, ubuntu, node, python)
+// pinned by @sha256 digest — swap in your own base/digest as needed.
+const NEW_ENVIRONMENT_TEMPLATE = `# base must be an allowlisted official image (debian, ubuntu, node, python)
+# pinned by digest. initialize steps are baked into the image at build time;
+# maintenance and knowledge are handed to the agent at runtime, never executed.
+base: debian:bookworm-slim@sha256:60eac759739651111db372c07be67863818726f754804b8707c90979bda511df
+initialize:
+  - name: Customize
+    run: echo "customize me"
+# maintenance:
+#   - name: Refresh deps
+#     run: cd ~/app && npm install
+# knowledge:
+#   - name: Notes for the agent
+#     contents: Run \`make test\` before pushing.
 `;
 
-// Convex error shaping (e.g. the backend's DockerfileValidationError) lives
+// Convex error shaping (e.g. the backend's BlueprintValidationError) lives
 // in the shared util now that project environments reuse the same pattern.
 const errMessage = convexErrMessage;
 
@@ -94,8 +103,9 @@ export function SandboxImagesDrawer({
               the word "Environments" in UI now (naming decision 2026-07-24). */}
           <SheetTitle>Sandbox images</SheetTitle>
           <SheetDescription>
-            A custom Docker image your computer boots from. Changing the image
-            rebuilds the computer — all files on it will be deleted.
+            A custom image your computer boots from, defined by a blueprint.
+            Changing the image rebuilds the computer — all files on it will be
+            deleted.
           </SheetDescription>
         </SheetHeader>
 
@@ -285,7 +295,7 @@ function NewEnvironmentForm({
 }) {
   const createEnvironment = useCreateSandboxImage();
   const [name, setName] = useState("");
-  const [dockerfile, setDockerfile] = useState(NEW_ENVIRONMENT_TEMPLATE);
+  const [blueprint, setBlueprint] = useState(NEW_ENVIRONMENT_TEMPLATE);
   const [saving, setSaving] = useState(false);
 
   const create = async () => {
@@ -293,18 +303,12 @@ function NewEnvironmentForm({
       toast.error("Give the sandbox image a name.");
       return;
     }
-    if (/REPLACE_WITH_DIGEST/.test(dockerfile)) {
-      toast.error(
-        "Pin the base image to a real @sha256 digest before creating."
-      );
-      return;
-    }
     setSaving(true);
     try {
       const env = await createEnvironment({
         projectId,
         name: name.trim(),
-        dockerfile,
+        blueprint,
       });
       toast.success(`Created “${env.name}”. Build it to use it.`);
       onCreated(env);
@@ -331,7 +335,11 @@ function NewEnvironmentForm({
         placeholder="Sandbox image name"
         className="rounded-md border bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
       />
-      <DockerfileEditor value={dockerfile} onChange={setDockerfile} />
+      <BlueprintEditor
+        projectId={projectId}
+        value={blueprint}
+        onChange={setBlueprint}
+      />
       <div className="flex justify-end gap-2">
         <Button size="sm" variant="ghost" onClick={onCancel} disabled={saving}>
           Cancel
@@ -371,7 +379,7 @@ function EnvironmentDetail({
   const setComputerEnvironment = useSetComputerSandboxImage();
 
   const [name, setName] = useState(env.name);
-  const [dockerfile, setDockerfile] = useState(env.dockerfile);
+  const [blueprint, setBlueprint] = useState(env.blueprint);
   const [saving, setSaving] = useState(false);
   const [building, setBuilding] = useState(false);
   const [attaching, setAttaching] = useState(false);
@@ -379,10 +387,10 @@ function EnvironmentDetail({
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   // Re-seed local buffers if the underlying env changes identity (the parent
-  // remounts via `key`, but guard the reactive name/dockerfile too).
+  // remounts via `key`, but guard the reactive name/blueprint too).
   useEffect(() => {
     setName(env.name);
-    setDockerfile(env.dockerfile);
+    setBlueprint(env.blueprint);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [env.environmentId]);
 
@@ -391,7 +399,7 @@ function EnvironmentDetail({
   // Compare against the TRIMMED name (what the backend stores), so trailing
   // whitespace never counts as a pending change and "dirty" clears after a save.
   const trimmedName = name.trim();
-  const dirty = trimmedName !== env.name || dockerfile !== env.dockerfile;
+  const dirty = trimmedName !== env.name || blueprint !== env.blueprint;
   const readyToAttach = build?.status === "ready" && !dirty;
 
   const save = async (): Promise<boolean> => {
@@ -400,7 +408,7 @@ function EnvironmentDetail({
       await updateEnvironment({
         environmentId: env.environmentId,
         ...(trimmedName !== env.name ? { name: trimmedName } : {}),
-        ...(dockerfile !== env.dockerfile ? { dockerfile } : {}),
+        ...(blueprint !== env.blueprint ? { blueprint } : {}),
       });
       toast.success("Saved.");
       return true;
@@ -413,7 +421,7 @@ function EnvironmentDetail({
   };
 
   const runBuild = async () => {
-    // Don't build the previously-persisted Dockerfile if saving the edits
+    // Don't build the previously-persisted blueprint if saving the edits
     // failed — that would forge an image the user didn't actually save.
     if (dirty && !(await save())) return;
     setBuilding(true);
@@ -495,7 +503,11 @@ function EnvironmentDetail({
         className="rounded-md border bg-background px-3 py-2 text-sm font-medium outline-none focus:ring-1 focus:ring-ring"
       />
 
-      <DockerfileEditor value={dockerfile} onChange={setDockerfile} />
+      <BlueprintEditor
+        projectId={projectId}
+        value={blueprint}
+        onChange={setBlueprint}
+      />
 
       {build?.status === "failed" && build.error ? (
         <div className="rounded border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
@@ -617,19 +629,45 @@ function EnvironmentDetail({
 
 // ---------------------------------------------------------------------------
 
-function DockerfileEditor({
+function BlueprintEditor({
+  projectId,
   value,
   onChange,
 }: {
+  projectId: string;
   value: string;
   onChange: (next: string) => void;
 }) {
+  // Debounce what we send to the backend linter so the (reactive) validate
+  // query isn't re-issued on every keystroke.
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const handle = setTimeout(() => setDebounced(value), 400);
+    return () => clearTimeout(handle);
+  }, [value]);
+  const validation = useValidateBlueprint(projectId, debounced || null);
+  const stale = debounced !== value;
+
   return (
-    <textarea
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      spellCheck={false}
-      className="min-h-[180px] flex-1 resize-y rounded-md border bg-muted/20 p-3 font-mono text-xs leading-relaxed text-foreground outline-none focus:ring-1 focus:ring-ring"
-    />
+    <div className="flex min-h-0 flex-1 flex-col gap-1.5">
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        spellCheck={false}
+        className="min-h-[180px] flex-1 resize-y rounded-md border bg-muted/20 p-3 font-mono text-xs leading-relaxed text-foreground outline-none focus:ring-1 focus:ring-ring"
+      />
+      {!stale && validation && !validation.ok ? (
+        <div className="rounded border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
+          {validation.errors.map((issue, i) => (
+            <div key={i}>
+              {issue.path ? (
+                <span className="font-mono">{issue.path}: </span>
+              ) : null}
+              {issue.message}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
