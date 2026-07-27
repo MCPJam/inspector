@@ -5,8 +5,11 @@ import {
   buildInputRequestDisplays,
   computeMrtrBindingFingerprint,
   createHostedMrtrCollector,
+  deriveServerConfigDigest,
   isMrtrSuspendedSignal,
+  resolveMrtrAuthPrincipal,
   resumeMrtrContinuationLeg,
+  settleMrtrTeardown,
 } from "../mrtr-hosted-collector";
 import {
   encodeResumeState,
@@ -116,6 +119,192 @@ describe("computeMrtrBindingFingerprint", () => {
     expect(fp).not.toBe(
       computeMrtrBindingFingerprint({ ...base, serverConfigDigest: "d2" }),
     );
+  });
+});
+
+describe("deriveServerConfigDigest", () => {
+  const info = {
+    protocolVersion: "2026-07-28",
+    transport: "streamable-http",
+    serverVersion: { name: "srv", version: "1.0" },
+    serverCapabilities: { elicitation: {}, tools: { listChanged: true } },
+  };
+  const managerFor = (config: unknown, initInfo: unknown = info) => ({
+    getInitializationInfo: () => initInfo,
+    getServerConfig: () => config,
+  });
+
+  it("binds the resolved endpoint, so a server swap fails closed", () => {
+    // Same implementation, same reported capabilities — a DIFFERENT endpoint.
+    // Without the endpoint term these two are indistinguishable and a resume
+    // would replay the original params + requestState at the new server.
+    const a = deriveServerConfigDigest(
+      managerFor({ url: "https://a.example.com/mcp" }),
+      "srv-1",
+    );
+    const b = deriveServerConfigDigest(
+      managerFor({ url: "https://b.example.com/mcp" }),
+      "srv-1",
+    );
+    expect(a).not.toBe(b);
+    // Path and query route too.
+    expect(a).not.toBe(
+      deriveServerConfigDigest(
+        managerFor({ url: "https://a.example.com/mcp/v2" }),
+        "srv-1",
+      ),
+    );
+    expect(a).not.toBe(
+      deriveServerConfigDigest(
+        managerFor({ url: "https://a.example.com/mcp?tenant=other" }),
+        "srv-1",
+      ),
+    );
+  });
+
+  it("does NOT bind rotating credentials, so a token refresh still resumes", () => {
+    // A bearer rotating behind the same endpoint is not a server swap; binding
+    // it would fail every legitimate resume that straddles a refresh.
+    expect(
+      deriveServerConfigDigest(
+        managerFor({ url: "https://a.example.com/mcp", accessToken: "tok-1" }),
+        "srv-1",
+      ),
+    ).toBe(
+      deriveServerConfigDigest(
+        managerFor({ url: "https://a.example.com/mcp", accessToken: "tok-2" }),
+        "srv-1",
+      ),
+    );
+  });
+
+  it("is insensitive to initialize key order", () => {
+    expect(
+      deriveServerConfigDigest(
+        managerFor(
+          { url: "https://a.example.com/mcp" },
+          {
+            serverCapabilities: { tools: { listChanged: true }, elicitation: {} },
+            serverVersion: { version: "1.0", name: "srv" },
+            transport: "streamable-http",
+            protocolVersion: "2026-07-28",
+          },
+        ),
+        "srv-1",
+      ),
+    ).toBe(
+      deriveServerConfigDigest(managerFor({ url: "https://a.example.com/mcp" }), "srv-1"),
+    );
+  });
+
+  it("fails closed on hostile, unboundedly nested initialize metadata", () => {
+    let deep: Record<string, unknown> = {};
+    const root = deep;
+    for (let i = 0; i < 200; i++) {
+      const next: Record<string, unknown> = {};
+      deep.nested = next;
+      deep = next;
+    }
+    expect(() =>
+      deriveServerConfigDigest(
+        managerFor(
+          { url: "https://a.example.com/mcp" },
+          { ...info, serverCapabilities: root },
+        ),
+        "srv-1",
+      ),
+    ).toThrow(/exceeded the 24-level nesting limit/);
+  });
+
+  it("fails closed on an oversized (wide) capabilities blob", () => {
+    const wide: Record<string, unknown> = {};
+    for (let i = 0; i < 5000; i++) wide[`k${i}`] = i;
+    expect(() =>
+      deriveServerConfigDigest(
+        managerFor(
+          { url: "https://a.example.com/mcp" },
+          { ...info, serverCapabilities: wide },
+        ),
+        "srv-1",
+      ),
+    ).toThrow(/exceeded the 4096-node traversal limit/);
+  });
+});
+
+describe("resolveMrtrAuthPrincipal", () => {
+  const ctx = (vars: Record<string, string>) => ({
+    get: (k: string) => vars[k],
+  });
+
+  it("resolves the real signed-in principal, not a shared anonymous", () => {
+    // `bearer-auth` sets mcpjamUserId/workosUserId — never `userId`. Reading a
+    // non-existent var would resolve every signed-in caller to "anonymous" and
+    // fail their resume closed against the suspend-time fingerprint.
+    expect(resolveMrtrAuthPrincipal(ctx({ mcpjamUserId: "u-1" }))).toBe("u-1");
+    expect(resolveMrtrAuthPrincipal(ctx({ workosUserId: "w-1" }))).toBe("w-1");
+    expect(resolveMrtrAuthPrincipal(ctx({ guestId: "g-1" }))).toBe("g-1");
+    expect(resolveMrtrAuthPrincipal(ctx({ userId: "u-1" }))).toBe("anonymous");
+    expect(resolveMrtrAuthPrincipal(ctx({}))).toBe("anonymous");
+  });
+});
+
+describe("settleMrtrTeardown", () => {
+  it("returns normally on a clean disconnect", async () => {
+    const disconnect = vi.fn(async () => {});
+    await expect(settleMrtrTeardown(disconnect, "[t]")).resolves.toBeUndefined();
+    expect(disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("swallows a rejection so cleanup cannot replace the outcome", async () => {
+    await expect(
+      settleMrtrTeardown(async () => {
+        throw new Error("teardown exploded");
+      }, "[t]"),
+    ).resolves.toBeUndefined();
+  });
+
+  it("swallows a synchronous throw too", async () => {
+    await expect(
+      settleMrtrTeardown(() => {
+        throw new Error("threw before returning a promise");
+      }, "[t]"),
+    ).resolves.toBeUndefined();
+  });
+
+  it("gives up on a disconnect that never settles", async () => {
+    // The route's `finally` must not hold the response hostage to a transport
+    // that never finishes closing: the outcome is already determined.
+    let settled = false;
+    const promise = settleMrtrTeardown(
+      () => new Promise<void>(() => {}),
+      "[t]",
+      5,
+    ).then(() => {
+      settled = true;
+    });
+    await promise;
+    expect(settled).toBe(true);
+  });
+
+  it("does not leave an unhandled rejection when the timeout wins first", async () => {
+    // The `.catch` must sit on the teardown promise itself, not on the race —
+    // otherwise a late rejection escapes after the bound has already resolved.
+    const onUnhandled = vi.fn();
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      await settleMrtrTeardown(
+        () =>
+          new Promise<void>((_resolve, reject) =>
+            setTimeout(() => reject(new Error("late failure")), 15),
+          ),
+        "[t]",
+        5,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(onUnhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
   });
 });
 

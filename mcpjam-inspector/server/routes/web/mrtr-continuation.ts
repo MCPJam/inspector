@@ -19,7 +19,6 @@
  */
 import { Hono } from "hono";
 import { z } from "zod";
-import { createHash } from "node:crypto";
 import type {
   InputResponses,
   MrtrOperationState,
@@ -44,7 +43,10 @@ import {
 } from "../../config.js";
 import {
   computeMrtrBindingFingerprint,
+  deriveServerConfigDigest,
+  resolveMrtrAuthPrincipal,
   resumeMrtrContinuationLeg,
+  settleMrtrTeardown,
 } from "../../utils/mrtr-hosted-collector.js";
 import {
   cancelContinuation,
@@ -72,55 +74,6 @@ const resumeSchema = projectServerSchema.extend({
   chatSessionId: z.string().min(1).optional(),
   oauthTokens: z.record(z.string(), z.string()).optional(),
 });
-
-/**
- * Derive the effective-server digest half of the binding fingerprint from the
- * live connection. Both the suspend site (PR5) and this resume path connect to
- * the server, so both can compute it identically from the negotiated identity —
- * a materially different server (name / version / capabilities / protocol)
- * yields a different digest and the claim fails closed. Config that never
- * reaches the wire (a rotated bearer behind the same identity) is intentionally
- * NOT in the digest; the auth-principal half covers principal changes.
- *
- * KNOWN GAP (tracked, not closed here): the digest covers only server-REPORTED
- * initialization metadata, so it does not distinguish two endpoints that report
- * identical protocol / version / capabilities. If a project's server URL is
- * edited between suspend and resume, the claim can still succeed and the old
- * opaque `requestState` plus the original params would be replayed at the new
- * endpoint — which MCP 2026-07-28 constrains ("Both the `inputRequests` and
- * `requestState` fields affect only the client's retry of the original request.
- * They MUST NOT be used for any other request"). This is NOT a caller-controlled
- * retarget: `resumeSchema` carries no URL and the endpoint is resolved
- * server-side from `projectId` + `serverId`, so it takes a legitimate config
- * edit racing a suspended round. Closing it means folding a stable digest of the
- * RESOLVED endpoint (origin + path) into the hash below — which needs the URL
- * surfaced out of `createManualHostedConnection` (it returns only the manager
- * and body today), and the SAME term added at the PR5 suspend site, since a
- * fingerprint only fails closed while both halves compute it identically.
- */
-function deriveServerConfigDigest(
-  manager: { getInitializationInfo: (serverId: string) => unknown },
-  serverId: string,
-): string {
-  const info = manager.getInitializationInfo(serverId) as
-    | {
-        protocolVersion?: string;
-        transport?: string;
-        serverVersion?: unknown;
-        serverCapabilities?: unknown;
-      }
-    | undefined;
-  return createHash("sha256")
-    .update(
-      JSON.stringify({
-        protocolVersion: info?.protocolVersion ?? null,
-        transport: info?.transport ?? null,
-        serverVersion: info?.serverVersion ?? null,
-        serverCapabilities: info?.serverCapabilities ?? null,
-      }),
-    )
-    .digest("hex");
-}
 
 /**
  * Collapse the per-server `oauthTokens` map onto the single-server
@@ -250,15 +203,9 @@ mrtrContinuation.post("/resume", async (c) =>
       }
 
       // The auth-principal half of the binding must differentiate signed-in
-      // principals: bearer-auth sets `mcpjamUserId`/`workosUserId` for WorkOS
-      // sessions and `guestId` for guests (there is no `userId` context var), so
-      // a real per-user id — not a shared "anonymous" — is what fails a
-      // cross-principal resume closed.
-      const authPrincipal =
-        c.get("mcpjamUserId") ??
-        c.get("workosUserId") ??
-        c.get("guestId") ??
-        "anonymous";
+      // principals, and must resolve IDENTICALLY at the suspend site — hence the
+      // shared helper rather than a second hand-rolled lookup here.
+      const authPrincipal = resolveMrtrAuthPrincipal(c);
       const bindingFingerprint = computeMrtrBindingFingerprint({
         serverId,
         negotiatedEra: body.negotiatedEra,
@@ -293,7 +240,15 @@ mrtrContinuation.post("/resume", async (c) =>
       // the outcome shape + a bounded result for local/testing surfaces.
       return { ok: true, ...outcome };
     } finally {
-      await manager.disconnectAllServers();
+      // Teardown is CLEANUP, never the outcome. This `finally` runs AFTER a leg
+      // has already gone out and the store has been written, so a teardown that
+      // fails OR hangs must not replace (or indefinitely withhold) a real resume
+      // outcome — a `completed` result, or an `indeterminate` the user has to be
+      // told about. See `settleMrtrTeardown`.
+      await settleMrtrTeardown(
+        () => manager.disconnectAllServers(),
+        "[mrtr-continuation]",
+      );
     }
   }),
 );

@@ -156,6 +156,15 @@ export const MRTR_RESUME_STATE_MAX_BYTES = 128 * 1024;
 export const MRTR_DISPLAY_FIELD_MAX_BYTES = 16 * 1024;
 /** Cap on a single browser-submitted response's serialized content. */
 export const MRTR_RESPONSE_CONTENT_MAX_BYTES = 64 * 1024;
+/**
+ * How long an MRTR route waits for connection teardown before answering the
+ * browser anyway. Teardown is cleanup, never the outcome: once a round has been
+ * persisted (suspend) or a leg has already gone out (resume), the response must
+ * not be held hostage by a transport that is slow to close. Comfortably above
+ * the upstream stdio transport's own ~4s close budget, which is the slowest
+ * close path any connection here can take.
+ */
+export const MRTR_TEARDOWN_TIMEOUT_MS = 5_000;
 
 // Hosted app origin the LOCAL inspector server forwards XAA hosted-issuer
 // mint requests to (server-to-server; hosted CORS blocks the browser from
