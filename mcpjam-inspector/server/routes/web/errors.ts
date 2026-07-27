@@ -52,6 +52,10 @@ export const ErrorCode = {
   // failure, so the client can mark the handle "unavailable" instead of
   // retrying forever or dropping it.
   TASK_NOT_FOUND: "TASK_NOT_FOUND",
+  // A tasks request the resolved wire cannot serve: no tasks wire at all, a
+  // method that does not exist on that wire (`tasks/result` on the extension),
+  // or an undeclared capability. A caller/feature error (400), never a 500.
+  TASKS_UNSUPPORTED: "TASKS_UNSUPPORTED",
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
