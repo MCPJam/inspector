@@ -154,11 +154,42 @@ export const toolsListSchema = projectServerSchema.extend({
   cursor: z.string().optional(),
 });
 
+// Legacy (2025-11-25) task augmentation: the concrete `{ttl?}` shape, not a
+// free-form record — this is a write path that reaches the MCP server verbatim.
+export const taskOptionsSchema = z
+  .object({ ttl: z.number().int().positive().optional() })
+  .strict();
+
 export const toolsExecuteSchema = projectServerSchema.extend({
   toolName: z.string().min(1),
   parameters: z.record(z.string(), z.unknown()).default({}),
-  taskOptions: z.record(z.string(), z.unknown()).optional(),
+  taskOptions: taskOptionsSchema.optional(),
+  // Extension wire: the client only declares that a task response is
+  // acceptable; the server decides whether to create one.
+  allowTaskResult: z.boolean().optional(),
 });
+
+/** One connection per server per TasksTab tick — the main hosted cost control. */
+export const HOSTED_TASK_BATCH_MAX = 50;
+
+export const taskGetSchema = projectServerSchema.extend({
+  taskId: z.string().min(1),
+});
+
+export const taskGetBatchSchema = projectServerSchema.extend({
+  taskIds: z.array(z.string().min(1)).min(1).max(HOSTED_TASK_BATCH_MAX),
+});
+
+export const taskListSchema = projectServerSchema.extend({
+  cursor: z.string().optional(),
+});
+
+export const taskUpdateSchema = projectServerSchema.extend({
+  taskId: z.string().min(1),
+  inputResponses: z.record(z.string(), z.unknown()),
+});
+
+export const taskCapabilitiesSchema = projectServerSchema;
 
 export const resourcesListSchema = projectServerSchema.extend({
   cursor: z.string().optional(),

@@ -46,6 +46,12 @@ export const ErrorCode = {
   // 409; interactive callers surface "Environment changed — retry the run",
   // the scheduled worker retries through its trigger/idempotency path.
   ENVIRONMENT_REVISION_CONFLICT: "ENVIRONMENT_REVISION_CONFLICT",
+  // A task read/write hit JSON-RPC -32602: the server no longer knows the
+  // task. Distinct from a structureless 404 (route missing on an older
+  // replica during a mixed-version rollout) and from a transient connect
+  // failure, so the client can mark the handle "unavailable" instead of
+  // retrying forever or dropping it.
+  TASK_NOT_FOUND: "TASK_NOT_FOUND",
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
