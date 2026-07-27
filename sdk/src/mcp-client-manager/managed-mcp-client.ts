@@ -34,7 +34,9 @@ import type {
   ListResourceTemplatesResult,
   ListToolsResult,
   LoggingLevel,
+  McpSubscription,
   ProtocolEra,
+  SubscriptionFilter,
   ReadResourceResult,
   Request,
   RequestOptions,
@@ -220,6 +222,18 @@ export interface ManagedMcpClient {
     params: { uri: string },
     options?: RequestOptions
   ): Promise<EmptyResult>;
+  /**
+   * Opens a 2026-07-28 `subscriptions/listen` stream. OPTIONAL: only adapters
+   * over an upstream `Client` can provide it, and it throws a typed
+   * `SdkErrorCode.MethodNotSupportedByProtocolVersion` on a legacy connection.
+   * Consumers MUST treat an absent method as "this connection has no modern
+   * subscription stream" and fall back to the legacy per-URI RPCs — see
+   * `SubscriptionCoordinator` in `./subscription-coordinator.ts`.
+   */
+  listen?(
+    filter: SubscriptionFilter,
+    options?: RequestOptions
+  ): Promise<McpSubscription>;
 
   // ---- Logging (stateless preview is a no-op + warning) ----
   setLoggingLevel(level: LoggingLevel, options?: RequestOptions): Promise<void>;

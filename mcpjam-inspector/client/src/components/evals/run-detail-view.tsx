@@ -709,13 +709,12 @@ export function RunDetailView({
           </div>
         )}
 
-      {runClient && !showAccuracyHero && !embeddedInResultsSplit ? (
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          <span className={runDetailMetaLabelClass}>Client</span>
-          <HostChip name={runClient.displayName} hostId={runClient.hostId} />
-        </div>
-      ) : null}
-
+      {/* Run IDENTITY, in precedence order. When the run launched from a
+          project environment, the ENVIRONMENT is what produced it — the host
+          below is a detail of how the environment resolved, not the run's
+          identity. Two environments can resolve to the same host, so the host
+          alone cannot name the run. `rev N` is the exact revision THIS run
+          pinned; grouping elsewhere keys on the environment id, never this. */}
       {runProjectEnvironmentRef ? (
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <span className={runDetailMetaLabelClass}>Environment</span>
@@ -730,6 +729,13 @@ export function RunDetailView({
               rev {runProjectEnvironmentRef.revision}
             </span>
           </span>
+        </div>
+      ) : null}
+
+      {runClient && !showAccuracyHero && !embeddedInResultsSplit ? (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <span className={runDetailMetaLabelClass}>Client</span>
+          <HostChip name={runClient.displayName} hostId={runClient.hostId} />
         </div>
       ) : null}
 
