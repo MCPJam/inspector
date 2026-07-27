@@ -31,10 +31,20 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
 
 import { usePlaygroundEnvironment } from "../use-playground-environment";
 
+const PLUGINS = [
+  { pluginId: "pl_1", pluginVersionId: "pv_1", name: "docs" },
+  { pluginId: "pl_2", pluginVersionId: "pv_2", name: "linear" },
+];
+
 function previewPayload(
   environmentId: string,
   servers: Array<{ serverId: string; name: string; source?: string }>,
-  revision = 1
+  revision = 1,
+  plugins: Array<{
+    pluginId: string;
+    pluginVersionId: string;
+    name: string;
+  }> = []
 ) {
   return {
     specVersion: 1,
@@ -52,7 +62,7 @@ function previewPayload(
       source: s.source ?? "host_or_group",
     })),
     skills: [],
-    plugins: [],
+    plugins,
     capabilities: {
       requireToolApproval: null,
       respectToolVisibility: null,
@@ -62,7 +72,7 @@ function previewPayload(
       serverCount: servers.length,
       skillCount: 0,
       skillDelivery: "harness",
-      pluginCount: 0,
+      pluginCount: plugins.length,
       serversOverridden: false,
     },
   };
@@ -211,6 +221,86 @@ describe("usePlaygroundEnvironment — the override tri-state", () => {
     expect(
       result.current.servers.find((s) => s.serverId === "srv_plugin")?.source
     ).toBe("plugin");
+  });
+});
+
+describe("usePlaygroundEnvironment — the EPHEMERAL plugin narrowing", () => {
+  async function withPlugins() {
+    respondWith(
+      previewPayload(
+        "env_1",
+        [{ serverId: "srv_a", name: "Alpha" }],
+        1,
+        PLUGINS
+      )
+    );
+    const rendered = await renderEnvironment();
+    act(() => rendered.result.current.selectEnvironment("env_1"));
+    await waitFor(() => expect(rendered.result.current.preview).not.toBeNull());
+    return rendered;
+  }
+
+  it("shows the environment's pins enabled and sends no override", async () => {
+    const { result } = await withPlugins();
+    expect(result.current.plugins.map((p) => p.pluginVersionId)).toEqual([
+      "pv_1",
+      "pv_2",
+    ]);
+    expect(result.current.plugins.every((p) => p.enabled)).toBe(true);
+    expect(result.current.hasExplicitPluginOverride).toBe(false);
+    expect(result.current.environmentOverrides).toBeUndefined();
+  });
+
+  it("turning one plugin off materializes the FULL pin set minus that one", async () => {
+    const { result } = await withPlugins();
+    act(() => result.current.setPluginVersionEnabled("pv_1", false));
+    expect(result.current.pluginVersionOverrideIds).toEqual(["pv_2"]);
+    expect(result.current.environmentOverrides).toEqual({
+      pluginVersionIds: ["pv_2"],
+    });
+    expect(result.current.plugins.map((p) => p.enabled)).toEqual([false, true]);
+  });
+
+  it("turning every plugin off is an EMPTY override, not an absent one", async () => {
+    const { result } = await withPlugins();
+    act(() => result.current.setPluginVersionEnabled("pv_1", false));
+    act(() => result.current.setPluginVersionEnabled("pv_2", false));
+    expect(result.current.environmentOverrides).toEqual({
+      pluginVersionIds: [],
+    });
+  });
+
+  it("travels alongside a server override without clobbering it", async () => {
+    const { result } = await withPlugins();
+    act(() => result.current.setServerEnabled("srv_a", false));
+    act(() => result.current.setPluginVersionEnabled("pv_2", false));
+    expect(result.current.environmentOverrides).toEqual({
+      serverIds: [],
+      pluginVersionIds: ["pv_1"],
+    });
+  });
+
+  it("reset and re-selecting an environment both return to the environment's pins", async () => {
+    const { result } = await withPlugins();
+    act(() => result.current.setPluginVersionEnabled("pv_1", false));
+    act(() => result.current.resetPluginsToEnvironment());
+    expect(result.current.pluginVersionOverrideIds).toBeNull();
+    expect(result.current.environmentOverrides).toBeUndefined();
+
+    // Nothing is written down, so switching environments cannot carry a
+    // narrowing across — the next environment's own pins are the baseline.
+    act(() => result.current.setPluginVersionEnabled("pv_2", false));
+    respondWith(
+      previewPayload("env_2", [{ serverId: "srv_z", name: "Zeta" }], 1, [
+        PLUGINS[0],
+      ])
+    );
+    act(() => result.current.selectEnvironment("env_2"));
+    await waitFor(() =>
+      expect(result.current.preview?.environment.environmentId).toBe("env_2")
+    );
+    expect(result.current.pluginVersionOverrideIds).toBeNull();
+    expect(result.current.plugins.map((p) => p.enabled)).toEqual([true]);
   });
 });
 

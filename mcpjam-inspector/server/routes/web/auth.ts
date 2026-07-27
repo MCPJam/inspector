@@ -712,10 +712,17 @@ export function toHttpConfig(
   }
 ): HttpServerConfig {
   if (authResponse.serverConfig.transportType !== "http") {
+    // Hosted web has no local process to spawn into, so a stdio server — an
+    // ordinary one or a plugin's local component — is reported with the
+    // backend's own readiness vocabulary (`getPluginSetupStatus` marks
+    // `placement: "local"` components `local_runtime_required`) rather than
+    // attempted. Same word on both surfaces means a client can render one
+    // "open the desktop app" affordance without guessing from prose.
     throw new WebRouteError(
       400,
       ErrorCode.FEATURE_NOT_SUPPORTED,
-      "Only HTTP transport is supported in hosted mode"
+      "This server runs over stdio and requires the local runtime (desktop app); hosted mode cannot spawn local processes.",
+      { readiness: "local_runtime_required", transport: "stdio" }
     );
   }
 

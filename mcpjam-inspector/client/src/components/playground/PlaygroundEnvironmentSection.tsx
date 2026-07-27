@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { track } from "@/lib/analytics";
 import { EnvironmentPicker } from "@/components/project-environments/environment-picker";
 import { pluralize } from "@/components/chat-v2/shared/chat-helpers";
+import { PlaygroundPluginSelector } from "./PlaygroundPluginSelector";
 import type { PlaygroundEnvironmentState } from "@/hooks/use-playground-environment";
 
 /**
@@ -50,6 +51,10 @@ export function PlaygroundEnvironmentSection({
     clearEnvironment,
     resetServersToEnvironment,
     setServerEnabled,
+    plugins,
+    hasExplicitPluginOverride,
+    resetPluginsToEnvironment,
+    setPluginVersionEnabled,
   } = environment;
 
   // Telemetry: an environment resolving is also a host becoming the presented
@@ -125,12 +130,27 @@ export function PlaygroundEnvironmentSection({
       ) : null}
 
       {isEnvironmentMode && previewError ? (
-        <p
-          className="text-[11px] text-destructive"
-          data-testid="playground-environment-error"
-        >
-          {previewError}
-        </p>
+        <div className="flex min-w-0 flex-col gap-1">
+          <p
+            className="text-[11px] text-destructive"
+            data-testid="playground-environment-error"
+          >
+            {previewError}
+          </p>
+          {/* The most common reason an environment refuses to resolve is a
+              pinned plugin that is no longer runnable, and the failed preview
+              cannot say which one. The probe reads the row's pins directly, so
+              the answer survives the failure. */}
+          <PlaygroundPluginSelector
+            projectId={projectId}
+            environmentId={environmentId}
+            plugins={[]}
+            hasExplicitOverride={false}
+            disabled={disabled}
+            onTogglePlugin={setPluginVersionEnabled}
+            onResetPlugins={resetPluginsToEnvironment}
+          />
+        </div>
       ) : null}
 
       {isEnvironmentMode && preview ? (
@@ -191,6 +211,20 @@ export function PlaygroundEnvironmentSection({
               </span>
             </p>
           ) : null}
+
+          {/* Plugin chips + preflight. Rendered inside the resolved block for
+              the chips, but the selector itself also reports pinned versions
+              that CANNOT run — the case where this block is absent entirely
+              is handled by the same component below the error. */}
+          <PlaygroundPluginSelector
+            projectId={projectId}
+            environmentId={environmentId}
+            plugins={plugins}
+            hasExplicitOverride={hasExplicitPluginOverride}
+            disabled={disabled}
+            onTogglePlugin={setPluginVersionEnabled}
+            onResetPlugins={resetPluginsToEnvironment}
+          />
 
           {servers.length > 0 ? (
             <div

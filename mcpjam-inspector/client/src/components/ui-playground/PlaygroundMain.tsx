@@ -48,6 +48,8 @@ import { StickToBottom } from "use-stick-to-bottom";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
 import {
   formatErrorMessage,
+  buildMcpPromptMessages,
+  buildSkillToolMessages,
   DEFAULT_CHAT_COMPOSER_PLACEHOLDER,
   MINIMAL_CHAT_COMPOSER_PLACEHOLDER,
   cloneUiMessages,
@@ -3158,13 +3160,18 @@ export function PlaygroundMain({
     signUp();
   };
 
+  // A turn's content is text OR anything explicitly attached to it: an
+  // expanded MCP prompt, a skill, a file. Text-only would disable Send on a
+  // composer that visibly holds an attached skill.
+  const composerHasContent =
+    composer.input.trim().length > 0 ||
+    mcpPromptResults.length > 0 ||
+    skillResults.length > 0 ||
+    fileAttachments.length > 0;
+
   // Submit handler — shared by the composer form and eval Quick Run.
   const performComposerSubmit = useCallback(async (): Promise<boolean> => {
-    const hasContent =
-      composer.input.trim() ||
-      mcpPromptResults.length > 0 ||
-      fileAttachments.length > 0;
-    if (!hasContent || sendBlocked) {
+    if (!composerHasContent || sendBlocked) {
       return false;
     }
     if (!(await ensureSelectedServerReadyForChat())) {
@@ -3227,11 +3234,23 @@ export function PlaygroundMain({
         ? await attachmentsToFileUIParts(fileAttachments)
         : undefined;
 
+    // EXPLICIT injection (INS-4): a prompt the user expanded and a skill they
+    // attached are turn CONTENT, not context the model has to go fetch. The
+    // Playground was building neither, so an explicitly attached skill was
+    // silently dropped — a skill-only send left the composer and produced an
+    // empty turn. Same construction as ChatTabV2; the helpers own the shapes.
+    const promptMessages = buildMcpPromptMessages(
+      mcpPromptResults
+    ) as UIMessage[];
+    const skillMessages = buildSkillToolMessages(skillResults) as UIMessage[];
+    const prependMessages = [...promptMessages, ...skillMessages];
+
     if (isCompareMode) {
+      // Each card prepends the same messages to its own thread.
       queueBroadcastRequest({
         text: composerText,
         files,
-        prependMessages: [],
+        prependMessages,
         widgetModelContext: modelContextQueue,
       });
       setModelContextQueue([]);
@@ -3240,10 +3259,16 @@ export function PlaygroundMain({
         {
           text: composerText,
           files,
-          prependMessages: [],
+          prependMessages,
         },
         { single_model_send: true }
       );
+      // Single-model mode has no broadcast consumer, so the prepends have to
+      // land in the thread here — before `sendMessage`, so the request carries
+      // them as history rather than arriving after the model answered.
+      if (prependMessages.length > 0) {
+        setMessages((prev) => [...prev, ...prependMessages]);
+      }
       sendMessage({
         text: composerText,
         files,
@@ -3255,13 +3280,16 @@ export function PlaygroundMain({
 
     composer.setInput("");
     setMcpPromptResults([]);
+    setSkillResults([]);
     revokeFileAttachmentUrls(fileAttachments);
     setFileAttachments([]);
     onFirstMessageSent?.();
     return true;
   }, [
     composer,
-    mcpPromptResults.length,
+    composerHasContent,
+    mcpPromptResults,
+    skillResults,
     fileAttachments,
     sendBlocked,
     ensureSelectedServerReadyForChat,
@@ -3271,6 +3299,7 @@ export function PlaygroundMain({
     queueBroadcastRequest,
     modelContextQueue,
     sendMessage,
+    setMessages,
     outgoingSenderMetadata,
     onFirstMessageSent,
     computerAttachmentsActive,
@@ -3782,26 +3811,15 @@ export function PlaygroundMain({
           onInputChange={composer.setInput}
           placeholder={placeholder}
           disabled={composerDisabled}
-          canSend={!sendBlocked && composer.input.trim().length > 0}
+          canSend={!sendBlocked && composerHasContent}
           isThinking={isStreamingActive}
           onStop={stopActiveChat}
+          // Same submit path as the docked composer. Its own copy dropped
+          // attached prompts/skills (it sent raw text and then cleared the
+          // prompt results), so an explicit attachment vanished from a
+          // fullscreen widget session.
           onSend={() => {
-            void (async () => {
-              if (sendBlocked) {
-                return;
-              }
-              if (!(await ensureSelectedServerReadyForChat())) {
-                return;
-              }
-              sendMessage({
-                text: composer.input,
-                metadata: outgoingSenderMetadata,
-                widgetModelContext: modelContextQueue,
-              });
-              setModelContextQueue([]);
-              composer.setInput("");
-              setMcpPromptResults([]);
-            })();
+            void performComposerSubmit();
           }}
         />
       )}

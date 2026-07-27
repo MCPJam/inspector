@@ -3,6 +3,7 @@ import type {
   MCPClientManager,
 } from "../mcp-client-manager/index.js";
 import type { McpProtocolVersion } from "../mcp-client-manager/mcp-protocol-version.js";
+import type { Tool } from "@modelcontextprotocol/client";
 
 export const MCP_CHECK_CATEGORIES = [
   "core",
@@ -32,6 +33,26 @@ export const MCP_CHECK_IDS = [
   "server-sse-polling-session",
   "server-accepts-multiple-post-streams",
   "server-sse-streams-functional",
+  // Phase 7 §15.3 — modern (2026-07-28) MUST checks. New ids rather than
+  // reused legacy ones: each asserts a requirement that did not exist (or
+  // changed materially) in the 2025 era, so a shared id would make a legacy
+  // report and a modern report mean different things under the same name.
+  "modern-client-handshake",
+  "modern-server-discover",
+  "modern-result-type-present",
+  "modern-cacheable-result-hints",
+  "modern-protocol-version-header-mismatch",
+  "modern-method-header-mismatch",
+  "modern-name-header-mismatch",
+  "modern-unsupported-version-error",
+  "modern-undeclared-capability-error",
+  "modern-no-session-id",
+  "modern-removed-methods-not-found",
+  "modern-resource-not-found-invalid-params",
+  "modern-logs-require-log-level",
+  "modern-subscription-ack-precedes-notifications",
+  "modern-subscription-filter-and-tagging",
+  "modern-subscription-graceful-close",
 ] as const;
 
 export type MCPCheckId = (typeof MCP_CHECK_IDS)[number];
@@ -46,6 +67,38 @@ export type MCPCheckStatus = "passed" | "failed" | "skipped";
  * byte-identical legacy behavior.
  */
 export type MCPCheckEra = "legacy" | "modern";
+
+/**
+ * Era membership for a check: a NON-EMPTY list. Typing it as a non-empty tuple
+ * is the second half of the §15.1 exhaustiveness guarantee — `CHECK_ERAS` is
+ * already total over `MCPCheckId`, and this makes `[]` (a check that silently
+ * applies to no era, i.e. is dead everywhere) a compile error too.
+ */
+export type MCPCheckEras = readonly [MCPCheckEra, ...MCPCheckEra[]];
+
+/**
+ * Era of every protocol version the SDK can be pinned to — the version half of
+ * the §15.1 registry.
+ *
+ * `satisfies Record<McpProtocolVersion, MCPCheckEra>` makes this map TOTAL over
+ * `MCP_PROTOCOL_VERSIONS`: adding a supported protocol version is therefore a
+ * compile-time obligation to state which era's check set it runs, instead of
+ * silently inheriting "unknown ⇒ legacy". Derivation from
+ * `isStatelessProtocolVersion` is deliberately NOT used here — that predicate
+ * answers "not on the stateful list", which is the wrong default for a version
+ * nobody has classified yet.
+ */
+export const PROTOCOL_VERSION_ERAS = {
+  "2025-03-26": "legacy",
+  "2025-06-18": "legacy",
+  "2025-11-25": "legacy",
+  "2026-07-28": "modern",
+} as const satisfies Record<McpProtocolVersion, MCPCheckEra>;
+
+/** Every classified protocol version, for exhaustiveness assertions. */
+export const MCP_PROTOCOL_VERSION_ERA_IDS = Object.keys(
+  PROTOCOL_VERSION_ERAS,
+) as McpProtocolVersion[];
 
 /**
  * Single source of truth mapping each check to the eras it applies to.
@@ -71,12 +124,24 @@ export type MCPCheckEra = "legacy" | "modern";
  * now: their raw modern host-header probe could not be validated against the
  * dual-era fixture (which leaves DNS-rebinding protection disabled), so per
  * the Phase 3 safety valve they are downgraded to a safe skip on a modern run
- * rather than shipped as a fragile probe. Promoting them is Phase 7 work.
+ * rather than shipped as a fragile probe.
+ *
+ * Phase 7 additions:
+ *   - The `modern-*` checks are modern-only. On a legacy run they era-skip, so
+ *     a legacy report keeps exactly the statuses it had before this phase.
+ *   - `capabilities-consistent` is promoted to BOTH eras: the requirement
+ *     ("what you advertise is what you expose") is unchanged by the era, only
+ *     the transport that carries the advertisement is (initialize ⇒
+ *     server/discover), so the id is preserved rather than renamed.
+ *   - `server-initialize` and `ping` STAY legacy-only: `initialize` and `ping`
+ *     were removed from the 2026 wire (a modern server answers -32601), so on
+ *     a modern run they are era-skipped and `modern-client-handshake` /
+ *     `modern-removed-methods-not-found` carry the equivalent evidence.
  */
-export const CHECK_ERAS: Record<MCPCheckId, readonly MCPCheckEra[]> = {
+export const CHECK_ERAS: Record<MCPCheckId, MCPCheckEras> = {
   "server-initialize": ["legacy"],
   ping: ["legacy"],
-  "capabilities-consistent": ["legacy"],
+  "capabilities-consistent": ["legacy", "modern"],
   "server-sse-polling-session": ["legacy"],
   "server-accepts-multiple-post-streams": ["legacy"],
   "server-sse-streams-functional": ["legacy"],
@@ -89,7 +154,23 @@ export const CHECK_ERAS: Record<MCPCheckId, readonly MCPCheckEra[]> = {
   "logging-set-level": ["legacy", "modern"],
   "completion-complete": ["legacy", "modern"],
   "protocol-invalid-method-error": ["legacy", "modern"],
-} as const satisfies Record<MCPCheckId, readonly MCPCheckEra[]>;
+  "modern-client-handshake": ["modern"],
+  "modern-server-discover": ["modern"],
+  "modern-result-type-present": ["modern"],
+  "modern-cacheable-result-hints": ["modern"],
+  "modern-protocol-version-header-mismatch": ["modern"],
+  "modern-method-header-mismatch": ["modern"],
+  "modern-name-header-mismatch": ["modern"],
+  "modern-unsupported-version-error": ["modern"],
+  "modern-undeclared-capability-error": ["modern"],
+  "modern-no-session-id": ["modern"],
+  "modern-removed-methods-not-found": ["modern"],
+  "modern-resource-not-found-invalid-params": ["modern"],
+  "modern-logs-require-log-level": ["modern"],
+  "modern-subscription-ack-precedes-notifications": ["modern"],
+  "modern-subscription-filter-and-tagging": ["modern"],
+  "modern-subscription-graceful-close": ["modern"],
+} as const satisfies Record<MCPCheckId, MCPCheckEras>;
 
 export interface MCPCheckResult {
   id: MCPCheckId;
@@ -122,6 +203,33 @@ export interface MCPConformanceConfig {
    * Validated at normalization via `isKnownProtocolVersion`.
    */
   protocolVersion?: McpProtocolVersion;
+  /**
+   * Tool the `modern-undeclared-capability-error` check may call to make the
+   * server attempt an `input_required` round trip (MCP 2026-07-28 §12).
+   *
+   * Opt-in on purpose: the check has to actually EXECUTE a tool, and no
+   * advertised metadata says which tool will ask for input, so guessing would
+   * mean firing arbitrary side-effecting tools at the server under test.
+   * Absent ⇒ the check reports a skip explaining what it needs.
+   */
+  inputRequiredProbe?: {
+    toolName: string;
+    arguments?: Record<string, unknown>;
+  };
+  /**
+   * Tool the `modern-logs-require-log-level` check may call to make the server
+   * actually EMIT log records. Opt-in for the same reason as
+   * {@link MCPConformanceConfig.inputRequiredProbe}: no metadata says which
+   * tool logs, and the check must not fire arbitrary side-effecting tools.
+   *
+   * Absent ⇒ the check still asserts the MUST against an ordinary request
+   * (any log record on a level-less request is a violation), but it cannot
+   * show the server logs at all, so the evidence is weaker.
+   */
+  logProbe?: {
+    toolName: string;
+    arguments?: Record<string, unknown>;
+  };
 }
 
 export interface NormalizedMCPConformanceConfig {
@@ -137,6 +245,58 @@ export interface NormalizedMCPConformanceConfig {
   protocolVersion?: McpProtocolVersion;
   /** Era derived from `protocolVersion`; absent pin ⇒ `"legacy"`. */
   era: MCPCheckEra;
+  /** See {@link MCPConformanceConfig.inputRequiredProbe}. */
+  inputRequiredProbe?: {
+    toolName: string;
+    arguments?: Record<string, unknown>;
+  };
+  /** See {@link MCPConformanceConfig.logProbe}. */
+  logProbe?: {
+    toolName: string;
+    arguments?: Record<string, unknown>;
+  };
+}
+
+/**
+ * What the client phase found on the server, handed to the raw track and the
+ * readiness pass so neither has to re-discover it (and so a raw probe targets
+ * a REAL primitive instead of a guessed name).
+ */
+export interface MCPServerSurfaceSnapshot {
+  tools: Tool[];
+  toolNames: string[];
+  promptNames: string[];
+  resourceUris: string[];
+  resourceTemplateUris: string[];
+  serverCapabilities?: Record<string, unknown>;
+}
+
+/** Readiness advice ids (Phase 7 §15.4). Never part of the pass/fail verdict. */
+export const MCP_READINESS_IDS = [
+  "readiness-tool-order-deterministic",
+  "readiness-metadata-quality",
+  "readiness-deprecated-feature-use",
+  "readiness-cache-ttl-useful",
+  "readiness-oauth-iss-advertised",
+] as const;
+
+export type MCPReadinessId = (typeof MCP_READINESS_IDS)[number];
+
+/**
+ * How strongly the spec states the advice. Everything on the readiness channel
+ * is SHOULD/RECOMMENDED/MAY strength by construction — a MUST belongs in
+ * {@link MCP_CHECK_IDS}, where it can fail the run.
+ */
+export type MCPReadinessSpecStrength = "SHOULD" | "RECOMMENDED" | "MAY";
+
+export interface MCPReadinessWarning {
+  id: MCPReadinessId;
+  title: string;
+  /** Always `"warning"`: the readiness channel has no failure severity. */
+  severity: "warning";
+  specStrength: MCPReadinessSpecStrength;
+  message: string;
+  details?: Record<string, unknown>;
 }
 
 export interface MCPConformanceResult {
@@ -154,6 +314,12 @@ export interface MCPConformanceResult {
       skipped: number;
     }
   >;
+  /**
+   * Interoperability advice observed during the run (Phase 7 §15.4). These are
+   * NON-MUST findings: they are reported so a server author can improve
+   * real-world interop, and they NEVER affect `passed` or any check status.
+   */
+  readiness: MCPReadinessWarning[];
 }
 
 export interface MCPConformanceSuiteConfig {
@@ -188,6 +354,8 @@ export interface RawHttpCheckContext {
   config: NormalizedMCPConformanceConfig;
   serverUrl: string;
   fetchFn: typeof fetch;
+  /** Absent when the run selected raw-only checks and never connected. */
+  surface?: MCPServerSurfaceSnapshot;
 }
 
 export interface MCPClientCheckDefinition {

@@ -5,14 +5,16 @@
  */
 
 import { PluginApiError, type PluginApiErrorCode } from "./plugin-api-types";
+import { MAX_PLUGIN_BUNDLE_COMPRESSED_BYTES } from "@/shared/plugin-bundle-limits";
 
 /**
- * Mirror of the backend's compressed-bundle cap
- * (mcpjam-backend convex/lib/pluginArchiveLimits.ts, DEFAULT_ARCHIVE_LIMITS).
- * Used to reject an oversized ZIP before burning an upload-URL rate-limit
- * token; the backend re-enforces it at `createImport` and inspect time.
+ * Re-exported so existing import sites keep working; the value now lives in
+ * `shared/` because the local materializer route enforces the same cap.
+ * Used here to reject an oversized ZIP before burning an upload-URL
+ * rate-limit token; the backend re-enforces it at `createImport` and inspect
+ * time.
  */
-export const MAX_PLUGIN_BUNDLE_COMPRESSED_BYTES = 25 * 1024 * 1024; // 25 MB
+export { MAX_PLUGIN_BUNDLE_COMPRESSED_BYTES };
 
 /**
  * Default upload timeout. Generous enough for a full 25 MB bundle on a slow

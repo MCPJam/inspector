@@ -29,7 +29,16 @@ vi.mock("@/hooks/useClients", () => ({
 vi.mock("@/hooks/use-previewed-client-id", () => ({
   usePreviewedHostId: () => [null, vi.fn()] as const,
 }));
+// The plugin selector reads the selected row's pins straight from Convex so it
+// can report a pinned version the preview could not resolve.
+vi.mock("@/hooks/usePluginImportApi", () => ({
+  usePluginRuntimePreview: () => undefined,
+}));
 vi.mock("@/hooks/useProjectEnvironments", () => ({
+  useProjectEnvironment: () => ({
+    environmentId: "env_1",
+    pluginVersionIds: [],
+  }),
   useProjectEnvironments: () => [
     {
       environmentId: "env_1",
@@ -104,6 +113,11 @@ function environmentState(
     clearEnvironment: vi.fn(),
     resetServersToEnvironment: vi.fn(),
     setServerEnabled: vi.fn(),
+    pluginVersionOverrideIds: null,
+    hasExplicitPluginOverride: false,
+    plugins: [],
+    resetPluginsToEnvironment: vi.fn(),
+    setPluginVersionEnabled: vi.fn(),
     ...overrides,
   };
 }

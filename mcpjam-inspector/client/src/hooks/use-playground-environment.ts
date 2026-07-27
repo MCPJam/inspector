@@ -7,6 +7,7 @@ import { usePreviewedEnvironmentId } from "@/hooks/use-previewed-environment-id"
 import {
   useEnvironmentPreview,
   type EnvironmentPreview,
+  type EnvironmentPreviewPlugin,
   type EnvironmentPreviewServer,
 } from "@/hooks/use-environment-preview";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
@@ -49,6 +50,14 @@ import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
  * event: the selected environment CHANGES. An environment EDIT — a new revision
  * of the same environment — is live-config semantics and leaves the user's
  * per-turn narrowing intact.
+ *
+ * ## Plugins (INS-4) use the SAME tri-state, and are equally ephemeral
+ *
+ * `pluginVersionOverrideIds` is the RETAINED subset of the environment's pinned
+ * plugin versions. Like the server override it lives in component state only:
+ * no session column, no delta store, no snapshot. A reload runs the
+ * environment's plugin set again, and the server rejects any id the environment
+ * does not pin — the selection is a request to narrow, never a grant.
  */
 export interface PlaygroundEnvironmentState {
   /** True when the flag is on AND an environment is selected. */
@@ -78,6 +87,15 @@ export interface PlaygroundEnvironmentState {
   serverOverrideIds: string[] | null;
   /** True iff the user explicitly overrode — i.e. `serverOverrideIds !== null`. */
   hasExplicitOverride: boolean;
+  /** `null` ⇒ follow the environment's pins. An array (INCLUDING `[]`) ⇒ explicit. */
+  pluginVersionOverrideIds: string[] | null;
+  hasExplicitPluginOverride: boolean;
+  /**
+   * The environment's pinned plugin versions to render, id-first; `enabled`
+   * folds in the local override. Empty when the environment pins none — an
+   * environment with no plugins shows no plugin chrome at all.
+   */
+  plugins: Array<EnvironmentPreviewPlugin & { enabled: boolean }>;
   /**
    * The environment-owned server entries to render, id-first. Base entries come
    * from the preview; `enabled` folds in the local override. These are NEVER
@@ -95,6 +113,9 @@ export interface PlaygroundEnvironmentState {
   /** Back to "follow the environment" (`serverOverrideIds` → `null`). */
   resetServersToEnvironment: () => void;
   setServerEnabled: (serverId: string, enabled: boolean) => void;
+  /** Back to "follow the environment" (`pluginVersionOverrideIds` → `null`). */
+  resetPluginsToEnvironment: () => void;
+  setPluginVersionEnabled: (pluginVersionId: string, enabled: boolean) => void;
 }
 
 export function usePlaygroundEnvironment(
@@ -110,6 +131,9 @@ export function usePlaygroundEnvironment(
   const [serverOverrideIds, setServerOverrideIds] = useState<string[] | null>(
     null
   );
+  const [pluginVersionOverrideIds, setPluginVersionOverrideIds] = useState<
+    string[] | null
+  >(null);
 
   // Clear the override when — and ONLY when — the SELECTED environment changes.
   // Keyed on the id, never on the preview object or its revision: a re-fetch or
@@ -119,6 +143,7 @@ export function usePlaygroundEnvironment(
     if (lastEnvironmentIdRef.current === environmentId) return;
     lastEnvironmentIdRef.current = environmentId;
     setServerOverrideIds(null);
+    setPluginVersionOverrideIds(null);
   }, [environmentId]);
 
   // The reactive list is already the client's source of truth for environment
@@ -153,6 +178,18 @@ export function usePlaygroundEnvironment(
     }));
   }, [preview, serverOverrideIds]);
 
+  const plugins = useMemo(() => {
+    const base = preview?.plugins ?? [];
+    if (pluginVersionOverrideIds === null) {
+      return base.map((plugin) => ({ ...plugin, enabled: true }));
+    }
+    const enabledIds = new Set(pluginVersionOverrideIds);
+    return base.map((plugin) => ({
+      ...plugin,
+      enabled: enabledIds.has(plugin.pluginVersionId),
+    }));
+  }, [preview, pluginVersionOverrideIds]);
+
   const selectEnvironment = useCallback(
     (next: string | null) => {
       if (!flagEnabled) return;
@@ -162,7 +199,10 @@ export function usePlaygroundEnvironment(
       // re-picking the environment that is already selected is a no-op
       // selection, and clearing an explicit server override on it would throw
       // away a per-turn choice the user never asked to undo.
-      if (next !== environmentId) setServerOverrideIds(null);
+      if (next !== environmentId) {
+        setServerOverrideIds(null);
+        setPluginVersionOverrideIds(null);
+      }
       setStoredEnvironmentId(next);
     },
     [flagEnabled, environmentId, setStoredEnvironmentId]
@@ -170,6 +210,7 @@ export function usePlaygroundEnvironment(
 
   const clearEnvironment = useCallback(() => {
     setServerOverrideIds(null);
+    setPluginVersionOverrideIds(null);
     setStoredEnvironmentId(null);
   }, [setStoredEnvironmentId]);
 
@@ -194,6 +235,31 @@ export function usePlaygroundEnvironment(
     [preview]
   );
 
+  const resetPluginsToEnvironment = useCallback(
+    () => setPluginVersionOverrideIds(null),
+    []
+  );
+
+  const setPluginVersionEnabled = useCallback(
+    (pluginVersionId: string, enabled: boolean) => {
+      setPluginVersionOverrideIds((current) => {
+        // Same materialization rule as the server override: the first toggle
+        // starts from the environment's own pins, so switching ONE plugin off
+        // does not read as "only this one".
+        const base =
+          current ??
+          (preview?.plugins ?? []).map((plugin) => plugin.pluginVersionId);
+        if (enabled) {
+          return base.includes(pluginVersionId)
+            ? [...base]
+            : [...base, pluginVersionId];
+        }
+        return base.filter((id) => id !== pluginVersionId);
+      });
+    },
+    [preview]
+  );
+
   const isEnvironmentMode = flagEnabled && !!environmentId;
 
   return {
@@ -207,17 +273,30 @@ export function usePlaygroundEnvironment(
     serverOverrideIds,
     hasExplicitOverride: serverOverrideIds !== null,
     servers,
+    pluginVersionOverrideIds,
+    hasExplicitPluginOverride: pluginVersionOverrideIds !== null,
+    plugins,
     executionTarget:
       isEnvironmentMode && environmentId
         ? { kind: "environment", environmentId }
         : undefined,
     environmentOverrides:
-      isEnvironmentMode && serverOverrideIds !== null
-        ? { serverIds: serverOverrideIds }
+      isEnvironmentMode &&
+      (serverOverrideIds !== null || pluginVersionOverrideIds !== null)
+        ? {
+            ...(serverOverrideIds !== null
+              ? { serverIds: serverOverrideIds }
+              : {}),
+            ...(pluginVersionOverrideIds !== null
+              ? { pluginVersionIds: pluginVersionOverrideIds }
+              : {}),
+          }
         : undefined,
     selectEnvironment,
     clearEnvironment,
     resetServersToEnvironment,
     setServerEnabled,
+    resetPluginsToEnvironment,
+    setPluginVersionEnabled,
   };
 }

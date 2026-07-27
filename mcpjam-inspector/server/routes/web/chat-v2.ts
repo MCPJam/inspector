@@ -77,6 +77,7 @@ import {
   resolveEffectiveCapabilities,
   type EffectiveCapabilitySet,
 } from "../../services/environments/effective-capabilities.js";
+import { applyPluginVersionOverride } from "../../services/environments/plugin-override.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
 import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
 import { BASH_TOOL_NAME } from "../../utils/built-in-tools/bash.js";
@@ -284,6 +285,27 @@ chatV2.post("/", async (c) => {
           (plugin) => plugin.pluginVersionId,
         ),
       });
+      // INS-4: the Playground's ephemeral plugin narrowing, applied to the
+      // resolved spec (see `plugin-override.ts` for why it cannot be a query
+      // argument). It runs BEFORE the capability projection so everything
+      // downstream — connected servers, delivered skills, trace origin,
+      // telemetry — sees one spec, and it can only ever remove.
+      if (executionTarget.overrides?.pluginVersionIds !== undefined) {
+        const narrowed = applyPluginVersionOverride({
+          spec: environmentSpec,
+          attribution,
+          retainedVersionIds: executionTarget.overrides.pluginVersionIds,
+        });
+        environmentSpec = narrowed.spec;
+        if (narrowed.droppedVersionIds.length > 0) {
+          logger.info("[chat-v2] playground plugin override applied", {
+            environmentId: environmentSpec.environmentRef.environmentId,
+            droppedVersionIds: narrowed.droppedVersionIds,
+            droppedServerCount: narrowed.droppedServerIds.length,
+            droppedSkillCount: narrowed.droppedSkillIds.length,
+          });
+        }
+      }
       effectiveCapabilities = resolveEffectiveCapabilities(
         environmentSpec,
         attribution,
@@ -1006,6 +1028,11 @@ chatV2.post("/", async (c) => {
           ...(environmentSkills !== undefined
             ? { runtimeSkillsOverride: environmentSkills }
             : {}),
+          // INS-7: the same resolution, unflattened, for Computer delivery —
+          // supporting files (the flat list drops them, and the project-wide
+          // file query cannot return a plugin skill's) and the pinned plugin
+          // versions that fork an incompatible resumed sandbox.
+          ...(effectiveCapabilities ? { effectiveCapabilities } : {}),
           ...(isDirectChat ? { directVisibility: body.directVisibility } : {}),
           // Closure receives `resolvedTemperature` from inside the helper,
           // preserving the legacy behavior where chat-v2 fed the post-
@@ -1032,6 +1059,16 @@ chatV2.post("/", async (c) => {
             : null,
           selectedServerNames: effectiveServerNames,
           selectedServerIds: effectiveServerIds,
+          // Plugin-contributed servers ran this turn but are never written
+          // into the durable resume instruction: a plugin's membership is
+          // decided by its environment at LAUNCH (lifecycle re-checked), so a
+          // stored id would outlive a disable/uninstall — and a Playground's
+          // ephemeral plugin narrowing would become the session's permanent
+          // server set. See `resumableServers`.
+          ...(effectiveCapabilities &&
+          effectiveCapabilities.pluginServerIds.length > 0
+            ? { nonResumableServerIds: effectiveCapabilities.pluginServerIds }
+            : {}),
           // Persisted resume config keeps the RAW user prompt; the blueprint
           // env block is turn-injected (added to `prepare` above), not user
           // configuration — otherwise a resumed turn would carry stale image

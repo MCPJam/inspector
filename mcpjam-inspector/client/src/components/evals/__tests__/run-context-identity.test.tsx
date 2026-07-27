@@ -16,6 +16,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen } from "@/test";
 import {
+  buildHostNamesById,
   hasEnvironmentRun,
   runContextKey,
   runContextKeys,
@@ -87,6 +88,32 @@ describe("runContextKey", () => {
     expect(runContextKey(hostRun("r1", "host-claude"))).not.toBe(
       runContextKey(envRun("r2", "host-claude", "Staging", 1))
     );
+  });
+});
+
+describe("buildHostNamesById", () => {
+  it("names hosts with no suite attachment from the project host list", () => {
+    // An environment-backed suite has no attachments at all, so the project
+    // host list is the only source for its resolved host's name.
+    const names = buildHostNamesById(undefined, [
+      { hostId: "host-claude", name: "Claude" },
+    ]);
+    expect(names.get("host-claude")).toBe("Claude");
+  });
+
+  it("prefers the attachment label, falling back to the project host name", () => {
+    const names = buildHostNamesById(
+      [
+        { namedHostId: "host-claude", hostName: "Claude (suite)" },
+        { namedHostId: "host-cursor", hostName: null },
+      ],
+      [
+        { hostId: "host-claude", name: "Claude" },
+        { hostId: "host-cursor", name: "Cursor" },
+      ],
+    );
+    expect(names.get("host-claude")).toBe("Claude (suite)");
+    expect(names.get("host-cursor")).toBe("Cursor");
   });
 });
 

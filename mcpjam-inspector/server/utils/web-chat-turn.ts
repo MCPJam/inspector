@@ -100,6 +100,32 @@ import {
 type RpcCollector = ReturnType<typeof createHostedRpcLogCollector>;
 
 /**
+ * The direct-chat `resumeConfig.selectedServers` list.
+ *
+ * Names when the browser supplied an index-aligned set, ids otherwise — and
+ * `nonResumableServerIds` filtered out BY INDEX, never by value: two servers
+ * can share a display name, and filtering names by value would drop the wrong
+ * entry (the same rule `services/journeys/plugin-servers.ts` follows).
+ */
+export function resumableServers(persist: {
+  selectedServerIds: string[];
+  selectedServerNames?: string[];
+  nonResumableServerIds?: string[];
+}): string[] {
+  const aligned =
+    Array.isArray(persist.selectedServerNames) &&
+    persist.selectedServerNames.length === persist.selectedServerIds.length
+      ? persist.selectedServerNames
+      : persist.selectedServerIds;
+  const excluded = persist.nonResumableServerIds;
+  if (!excluded || excluded.length === 0) return aligned;
+  const nonResumable = new Set(excluded);
+  return aligned.filter(
+    (_, index) => !nonResumable.has(persist.selectedServerIds[index]!)
+  );
+}
+
+/**
  * Persistence context for a web-chat turn — everything `persistChatSessionToConvex`
  * needs that isn't already in scope from the stream handlers.
  */
@@ -146,6 +172,21 @@ export interface WebChatTurnPersistContext {
   selectedServerNames?: string[];
   /** Required for `resumeConfig.selectedServers` fallback on direct chat. */
   selectedServerIds: string[];
+  /**
+   * Server ids that ran this turn but must NOT be written into
+   * `resumeConfig.selectedServers` — today, plugin-contributed servers.
+   *
+   * `resumeConfig` is a DURABLE reconnect instruction the Sessions viewer
+   * replays with no plugin lifecycle check, so a plugin server id stored here
+   * outlives the plugin's disable/uninstall and re-attaches it — the same
+   * bypass that keeps `plugin_component` ids out of `hostConfigs.serverIds`
+   * (and that `services/journeys/plugin-servers.ts` already filters for journeys).
+   * It is also how a Playground's EPHEMERAL plugin narrowing would leak into a
+   * durable record: whatever the user toggled off this turn would be written
+   * down as the session's server set. Which plugin versions ran stays
+   * recorded as trace provenance; it is never a restorable pin.
+   */
+  nonResumableServerIds?: string[];
   /** Resolved per-turn config — forwarded into `resumeConfig`. */
   systemPrompt?: string;
   temperature?: number;
@@ -174,6 +215,15 @@ export interface WebChatTurnPersistContext {
    * the same place `harness` and `executionScope` already travel.
    */
   runtimeSkillsOverride?: RuntimeSkill[];
+  /**
+   * The same turn's `EffectiveCapabilitySet`, HARNESS side (INS-7). Paired with
+   * `runtimeSkillsOverride`: the flat list is what the adapter writes to disk,
+   * this is what the Computer delivery path needs on top of it — the resolved
+   * per-skill supporting files (including plugin ones, which the project-wide
+   * file query cannot return) and the pinned plugin versions that make a
+   * resumed sandbox with stale plugin material ineligible.
+   */
+  effectiveCapabilities?: EffectiveCapabilitySet;
 }
 
 /**
@@ -645,12 +695,7 @@ export async function streamWebChatTurn(
                 modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
                 mcpToolResultImageRendering:
                   persist.mcpToolResultImageRendering,
-                selectedServers:
-                  Array.isArray(persist.selectedServerNames) &&
-                  persist.selectedServerNames.length ===
-                    persist.selectedServerIds.length
-                    ? persist.selectedServerNames
-                    : persist.selectedServerIds,
+                selectedServers: resumableServers(persist),
               },
               ...(resolvedHostConfig ? { hostConfig: resolvedHostConfig } : {}),
             }
@@ -832,6 +877,9 @@ export async function streamWebChatTurn(
     // the live project-wide skills fetch entirely.
     ...(persist.runtimeSkillsOverride !== undefined
       ? { runtimeSkillsOverride: persist.runtimeSkillsOverride }
+      : {}),
+    ...(persist.effectiveCapabilities
+      ? { effectiveCapabilities: persist.effectiveCapabilities }
       : {}),
     ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
     // Hosted MRTR (§12.5) resume: emulated engine only. On a fresh resume

@@ -79,7 +79,11 @@ export interface SuiteResultsSplitProps {
   cases: EvalCase[];
   runs: EvalSuiteRun[];
   allIterations: EvalIteration[];
-  /** namedHostId → display name, from suite.hostAttachments. */
+  /**
+   * namedHostId → display name, from the suite's attachments plus the project
+   * host list (see `buildHostNamesById`) — the latter is the only source for
+   * the resolved host of an environment-backed run, which has no attachment.
+   */
   hostNamesById: Map<string, string | null>;
   /**
    * The full "All runs" surface (TestCasesOverview), built by the parent so we
@@ -895,7 +899,12 @@ export function SuiteResultsSplit({
             // per host + historical columns). Falls back to the authoring case
             // list when there's no host-scoped run data yet (no attachments or
             // no runs), so empty states + add/edit survive on legacy/fresh suites.
-            (suite.hostAttachments?.length ?? 0) >= 1 && runs.length > 0 ? (
+            // An environment-backed suite has NO host attachments by design, but
+            // its runs still name the environment's resolved host — so it gets
+            // the matrix too. Legacy attachment-less suites are unchanged.
+            ((suite.hostAttachments?.length ?? 0) >= 1 ||
+              hasEnvironmentRun(runs)) &&
+            runs.length > 0 ? (
               <div className="min-h-0 flex-1 overflow-auto p-4">
                 <CrossHostDashboard
                   suite={suite}
@@ -910,6 +919,7 @@ export function SuiteResultsSplit({
                   onTestCaseClick={onTestCaseClick}
                   onCellOpen={handleCellOpen}
                   onDeleteTestCasesBatch={onDeleteTestCasesBatch}
+                  hostNamesById={hostNamesById}
                 />
               </div>
             ) : (
@@ -939,6 +949,7 @@ export function SuiteResultsSplit({
                 onTestCaseClick={onTestCaseClick}
                 onCellOpen={handleCellOpen}
                 onDeleteTestCasesBatch={onDeleteTestCasesBatch}
+                hostNamesById={hostNamesById}
               />
             </div>
           ) : (
