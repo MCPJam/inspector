@@ -13,6 +13,7 @@ export const MCP_TASKS_CHECK_IDS = [
   "tasks-wire-resolvable",
   "tasks-declaration-hygiene",
   "tasks-result-type-discipline",
+  "tasks-undeclared-creation-refused",
   "tasks-undeclared-capability-rejected",
   "tasks-ttl-shape",
   "tasks-inline-result",

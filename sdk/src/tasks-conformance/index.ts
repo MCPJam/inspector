@@ -1,10 +1,16 @@
 export {
   MCPTasksConformanceTest,
+  describeUndeclaredProbe,
   findDeclarationViolations,
   pickProbeTool,
   toolTaskSupport,
   validateCreateTaskShape,
   validateTaskTtlShape,
+} from "./runner.js";
+
+export type {
+  UndeclaredProbe,
+  UndeclaredProbeOutcome,
 } from "./runner.js";
 
 export { normalizeMCPTasksConformanceConfig } from "./validation.js";

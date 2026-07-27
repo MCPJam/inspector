@@ -4,7 +4,7 @@ description: "Validate MCP Tasks wire behavior — legacy and SEP-2663 extension
 icon: "list-checks"
 ---
 
-The `tasks conformance` command validates the MCP Tasks wire your server exposes: which wire the connection resolves to, whether declaration hygiene holds for that wire, and whether the server honours the observable parts of the contract (result-type discipline, undeclared capability handling, TTL shapes, inline results, and `Mcp-Name` routing for HTTP transports).
+The `tasks conformance` command validates the MCP Tasks wire your server exposes: which wire the connection resolves to, whether declaration hygiene holds for that wire, and whether the server honours the observable parts of the contract (result-type discipline, `-32003` on undeclared requests, TTL shapes, inline results, and `Mcp-Name` routing for HTTP transports).
 
 <Note>
   Tasks conformance provokes and then polls a real task, so it requires a
@@ -45,11 +45,12 @@ mcpjam tasks conformance \
 |---|---|---|
 | `tasks-wire-resolvable` | `dispatch` | The negotiated protocol version and capabilities resolve to exactly one tasks wire. |
 | `tasks-declaration-hygiene` | `dispatch` | Outbound requests carry `params.task` only on the legacy wire and the extension declaration only on the extension wire. |
-| `tasks-result-type-discipline` | `creation` | A task-eligible `tools/call` returns either a normal tool result or a flat `CreateTaskResult` with `resultType: "task"` and a non-empty `taskId`. |
-| `tasks-undeclared-capability-rejected` | `creation` | On the extension wire, an undeclared `tools/call` must not come back as a task; the server must answer normally or reject with `-32003`. |
+| `tasks-result-type-discipline` | `creation` | A task-eligible `tools/call` returns either a normal tool result or a flat `CreateTaskResult` with `resultType: "task"` and a non-empty `taskId`. The discriminator is required whether absent or wrong — it is the only signal that separates a task from a standard result. |
+| `tasks-undeclared-creation-refused` | `creation` | On the extension wire, a `tools/call` that did not carry the extension declaration must not come back as a `CreateTaskResult`; the server must answer normally or reject with `-32003`. |
 | `tasks-ttl-shape` | `lifecycle` | TTL and poll interval use the era-native shapes: `ttlMs`/`pollIntervalMs` on the extension, `ttl`/`pollInterval` on the legacy wire. |
 | `tasks-inline-result` | `lifecycle` | A completed extension task carries its result inline on `tasks/get`; a legacy task exposes it via `tasks/result`. |
 | `tasks-mcp-name-routing` | `lifecycle` | Over HTTP, `tasks/get` is sent with `Mcp-Name` set to the task id. |
+| `tasks-undeclared-capability-rejected` | `lifecycle` | `tasks/get`, `tasks/update`, `tasks/cancel` and a task-filtered `subscriptions/listen` sent WITHOUT the extension declaration must each be rejected with `-32003`. |
 
 ## Categories and check ids
 
@@ -104,7 +105,7 @@ Typical success summary:
 ```json
 {
   "passed": true,
-  "summary": "7/7 checks passed, 0 failed, 0 skipped",
+  "summary": "8/8 checks passed, 0 failed, 0 skipped",
   "discovery": {
     "protocolVersion": "2026-07-28",
     "wire": "extension",
@@ -143,7 +144,8 @@ Typical success summary:
 
 - Exit codes are CI-friendly: `0` when all selected checks pass, `1` when any check fails, and `2` for invalid command usage.
 - Declaration hygiene is asserted against captured outbound JSON-RPC bytes, not re-derived from intent.
-- The undeclared-capability check (`tasks-undeclared-capability-rejected`) applies to the extension wire only and is skipped on the legacy wire.
+- The undeclared-request checks (`tasks-undeclared-creation-refused`, `tasks-undeclared-capability-rejected`) apply to the extension wire only and are skipped on the legacy wire.
+- `tasks-undeclared-capability-rejected` needs a live task to probe with, so it is skipped when the run could not provoke one. Its probes run last, after every check that reads the task, because a server that wrongly accepts an undeclared `tasks/update` or `tasks/cancel` would otherwise mutate the very task the other checks inspect. If the server does not implement `subscriptions/listen` at all (`-32601`), that sub-probe is reported as a warning instead of a failure.
 - The `tasks-mcp-name-routing` check applies to HTTP transports only and is skipped for stdio servers.
 - Checks that require a created task are skipped when no task-capable tool is found and no `--tool-name` is provided.
 

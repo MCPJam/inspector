@@ -57,12 +57,19 @@ const CHECK_METADATA: Record<
     description:
       'A task-eligible tools/call returns either a normal tool result or a flat CreateTaskResult with resultType "task" and a server-generated taskId.',
   },
+  "tasks-undeclared-creation-refused": {
+    id: "tasks-undeclared-creation-refused",
+    category: "creation",
+    title: "Undeclared Task Creation Refused",
+    description:
+      "On the extension wire, a tools/call that did not carry the extension declaration must not come back as a CreateTaskResult: the server either answers normally or rejects with -32003.",
+  },
   "tasks-undeclared-capability-rejected": {
     id: "tasks-undeclared-capability-rejected",
-    category: "creation",
-    title: "Undeclared Capability Handling",
+    category: "lifecycle",
+    title: "Undeclared Capability Rejected",
     description:
-      "On the extension wire, an undeclared tools/call must not come back as a task: the server either answers normally or rejects with -32003. How the server treats a bare undeclared tasks/get is reported as a note, since the spec mandates no rejection for reads.",
+      "tasks/get, tasks/update, tasks/cancel and a task-filtered subscriptions/listen sent WITHOUT the extension declaration must each be rejected with -32003 (Missing Required Client Capability).",
   },
   "tasks-ttl-shape": {
     id: "tasks-ttl-shape",
@@ -256,6 +263,23 @@ export interface ShapeVerdict {
  * Extra fields the spec does not define (e.g. a redundant nested `task`
  * object) are WARNINGS, not violations — the spec does not forbid additional
  * fields, so an otherwise-valid result must not fail conformance for them.
+ *
+ * `resultType` is REQUIRED here, present or absent (tasks.md:102): "Servers
+ * MUST set `resultType` to `"task"` when returning a `CreateTaskResult` so
+ * that clients can distinguish it from a standard result." The MUST states
+ * its own purpose and that purpose is the whole mechanism — `CreateTaskResult
+ * = Result & Task` is flat, so the discriminator is the ONLY signal. A server
+ * that omits it does not deviate cosmetically: this SDK's task detection is
+ * keyed on `resultType === "task"` end to end (`rewriteTaskResultMessage` at
+ * the transport seam, then `isCreateTaskExtResult`), so the response is taken
+ * for an ordinary `CallToolResult`, the task is never tracked, and the work
+ * runs to completion with no handle. Omission and a wrong value are both
+ * violations.
+ *
+ * The extension's machine-readable schema never declares the field (`Task`
+ * sets `additionalProperties: false`), which is an argument about the OTHER
+ * direction only: we must not reject a payload for CARRYING `resultType`.
+ * Nothing in that silence licenses a server to omit it.
  */
 export function validateCreateTaskShape(result: unknown): ShapeVerdict {
   const violations: string[] = [];
@@ -265,9 +289,11 @@ export function validateCreateTaskShape(result: unknown): ShapeVerdict {
   }
   if (result.resultType !== "task") {
     violations.push(
-      `task creation result must carry resultType "task" (got ${JSON.stringify(
-        result.resultType
-      )})`
+      result.resultType === undefined
+        ? 'task creation result carries no resultType "task" discriminator, the only signal that distinguishes it from a standard result; a client reads it as an ordinary tool result and never tracks the task'
+        : `task creation result must carry resultType "task" (got ${JSON.stringify(
+            result.resultType
+          )})`
     );
   }
   if (typeof result.taskId !== "string" || result.taskId.length === 0) {
@@ -374,6 +400,105 @@ async function captureTaskRequestHeaders(
 // "canceled" (single-l) is not a spec status on either wire; a server
 // emitting it fails status validation rather than being silently accepted.
 const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
+
+/** Missing Required Client Capability — the only conformant answer here. */
+const MISSING_REQUIRED_CLIENT_CAPABILITY = -32003;
+/** Method not found: the server does not implement the method at all. */
+const METHOD_NOT_FOUND = -32601;
+/** The client gave up waiting — the server never refused the request. */
+const REQUEST_TIMEOUT = -32001;
+
+/**
+ * Cap on the undeclared `subscriptions/listen` probe. A conforming server
+ * refuses it immediately with `-32003`; one that wrongly accepts opens a
+ * long-lived stream, so the probe — not the server — decides when to stop.
+ */
+const LISTEN_PROBE_TIMEOUT_MS = 5_000;
+
+/** What a server did with a request that carried no extension declaration. */
+export type UndeclaredProbeOutcome =
+  /** Rejected with -32003: the required behavior. */
+  | "rejected"
+  /** The server served the request. */
+  | "answered"
+  /** Rejected, but with some other error code. */
+  | "wrong-code"
+  /** No answer arrived before the probe's own deadline. */
+  | "no-response"
+  /** -32601: the method does not exist here, so the rule cannot be probed. */
+  | "unsupported";
+
+export interface UndeclaredProbe {
+  method: string;
+  outcome: UndeclaredProbeOutcome;
+  code?: number;
+  message?: string;
+}
+
+/** One line of per-method detail for the check's failure message. */
+export function describeUndeclaredProbe(probe: UndeclaredProbe): string {
+  switch (probe.outcome) {
+    case "answered":
+      return `${probe.method} was answered instead of rejected`;
+    case "wrong-code":
+      return `${probe.method} was rejected with ${probe.code} rather than -32003`;
+    case "no-response":
+      return `${probe.method} produced no JSON-RPC rejection (${
+        probe.message ?? "no answer"
+      }); a conforming server refuses it immediately with -32003`;
+    case "unsupported":
+      return `${probe.method} is not implemented (-32601)`;
+    case "rejected":
+      return `${probe.method} was rejected with -32003`;
+  }
+}
+
+/** A raw JSON-RPC request seam: the manager's public APIs always declare. */
+type RawRequest = (
+  payload: { method: string; params: Record<string, unknown> },
+  options?: { timeout?: number }
+) => Promise<unknown>;
+
+/**
+ * Sends one request WITHOUT the extension declaration and classifies what
+ * came back. `listenProbe` marks the sub-probe whose absence is a skip rather
+ * than a violation: `subscriptions/listen` is a core method the tasks
+ * extension only borrows, so a server that lacks it cannot be judged on it.
+ */
+async function runUndeclaredProbe(
+  request: RawRequest,
+  method: string,
+  params: Record<string, unknown>,
+  options?: { timeout?: number; listenProbe?: boolean }
+): Promise<UndeclaredProbe> {
+  try {
+    await request(
+      { method, params },
+      options?.timeout === undefined ? undefined : { timeout: options.timeout }
+    );
+    return { method, outcome: "answered" };
+  } catch (error) {
+    const code = errorCode(error);
+    const message = errorMessage(error);
+    if (code === MISSING_REQUIRED_CLIENT_CAPABILITY) {
+      return { method, outcome: "rejected", code };
+    }
+    if (code === METHOD_NOT_FOUND && options?.listenProbe) {
+      return { method, outcome: "unsupported", code, message };
+    }
+    if (code === undefined || code === REQUEST_TIMEOUT) {
+      // No refusal reached us: a transport failure, or a stream the server
+      // held open past the probe deadline. Either way it is not a rejection.
+      return {
+        method,
+        outcome: "no-response",
+        ...(code === undefined ? {} : { code }),
+        message,
+      };
+    }
+    return { method, outcome: "wrong-code", code, message };
+  }
+}
 
 export class MCPTasksConformanceTest {
   private readonly config: NormalizedMCPTasksConformanceConfig;
@@ -501,6 +626,17 @@ export class MCPTasksConformanceTest {
             } else if (createdTaskId === undefined) {
               // Server-decided: declining to produce a task is conformant, as
               // long as what comes back is a normal tool result.
+              //
+              // KNOWN BLIND SPOT: a CreateTaskResult that omits `resultType`
+              // also lands here. Task detection is keyed on
+              // `resultType === "task"` at the transport seam
+              // (`rewriteTaskResultMessage`), so a discriminator-less creation
+              // never reaches this runner AS a task — it arrives as an
+              // ordinary result (or fails result decoding upstream and lands
+              // in the branch above). Catching that omission needs the RAW
+              // response, which this runner does not observe; the assertion
+              // lives in `validateCreateTaskShape` for the payloads that do
+              // reach it and for direct callers of the exported validator.
               checks.push(
                 isRecord(creationResult)
                   ? passed(
@@ -540,57 +676,41 @@ export class MCPTasksConformanceTest {
             }
           }
 
-          if (selected.has("tasks-undeclared-capability-rejected")) {
+          if (selected.has("tasks-undeclared-creation-refused")) {
             const stepStartedAt = Date.now();
-            if (wire !== "extension" || !createdTaskId || !probeTool) {
+            if (wire !== "extension" || !probeTool) {
               checks.push(
                 skipped(
-                  "tasks-undeclared-capability-rejected",
+                  "tasks-undeclared-creation-refused",
                   wire === "extension"
-                    ? "no task was created to probe with"
+                    ? "no task-capable tool to probe (pass toolName to choose one)"
                     : "check applies to the extension wire only"
                 )
               );
             } else {
-              const outcome = await this.probeUndeclaredGet(
-                manager,
-                serverId,
-                createdTaskId
-              );
-              // Answering a bare `tasks/get` is CONFORMANT: the spec mandates
-              // `-32003` only where the server cannot avoid returning
-              // `CreateTaskResult` to an undeclared client (tasks.md §61-63)
-              // or for undeclared notification subscriptions — never for a
-              // bare read. The mandated case IS observable though, so the
-              // check's verdict comes from an undeclared tools/call: a server
-              // must not create a task for a client that never declared
-              // eligibility. The read outcome only adds a note.
+              // tasks.md:61 — a server MUST NOT return `CreateTaskResult` to a
+              // client that did not include the extension capability ON THAT
+              // REQUEST, regardless of prior declarations.
               const creation = await this.probeUndeclaredCreation(
                 manager,
                 serverId,
                 probeTool.name
               );
-              const readNote = outcome.rejected
-                ? `server rejected a bare tasks/get with -32003 (stricter than required)`
-                : outcome.code === undefined
-                  ? "server answered a bare tasks/get without the capability declaration — allowed (the spec requires -32003 only when the server cannot avoid returning CreateTaskResult to an undeclared client)"
-                  : `server rejected a bare tasks/get with ${outcome.code} rather than -32003 — allowed (no rejection is mandated for reads)`;
               checks.push(
                 creation.taskCreated
                   ? failed(
-                      "tasks-undeclared-capability-rejected",
+                      "tasks-undeclared-creation-refused",
                       Date.now() - stepStartedAt,
                       "an undeclared tools/call returned a CreateTaskResult; a server must not create a task for a client that never declared the tasks capability (it must answer normally or reject with -32003)",
-                      { taskId: creation.taskId, bareReadCode: outcome.code }
+                      { tool: probeTool.name, taskId: creation.taskId }
                     )
                   : passed(
-                      "tasks-undeclared-capability-rejected",
+                      "tasks-undeclared-creation-refused",
                       Date.now() - stepStartedAt,
                       {
+                        tool: probeTool.name,
                         undeclaredCreationCode: creation.code,
-                        bareReadCode: outcome.code,
-                      },
-                      [readNote]
+                      }
                     )
               );
             }
@@ -754,6 +874,80 @@ export class MCPTasksConformanceTest {
             }
           }
 
+          // ORDERING: the undeclared probes run LAST of the task-touching
+          // checks, and deliberately so. `tasks/update` and `tasks/cancel`
+          // MUTATE a task, and this check exists precisely because a server
+          // may wrongly accept them — so they must not be able to corrupt any
+          // other check's subject. By this point the task has already been
+          // polled to a terminal status and read by tasks-ttl-shape,
+          // tasks-inline-result and tasks-mcp-name-routing, so nothing left in
+          // the run depends on its state. Only tasks-declaration-hygiene
+          // follows, and it inspects captured outbound traffic (where an
+          // undeclared probe is, correctly, no violation at all).
+          if (selected.has("tasks-undeclared-capability-rejected")) {
+            const stepStartedAt = Date.now();
+            if (wire !== "extension" || !createdTaskId) {
+              checks.push(
+                skipped(
+                  "tasks-undeclared-capability-rejected",
+                  wire === "extension"
+                    ? "no task was created to probe with"
+                    : "check applies to the extension wire only"
+                )
+              );
+            } else {
+              const probes = await this.probeUndeclaredTaskMethods(
+                manager,
+                serverId,
+                createdTaskId
+              );
+              if (probes === undefined) {
+                checks.push(
+                  skipped(
+                    "tasks-undeclared-capability-rejected",
+                    "the connection exposes no raw request seam, so an undeclared call cannot be sent"
+                  )
+                );
+              } else {
+                // tasks.md:797-799 — the server MUST answer -32003 for a
+                // non-declaring client on tasks/get, tasks/update,
+                // tasks/cancel and on task notifications requested through
+                // subscriptions/listen. This is UNCONDITIONAL; anything else
+                // (an answer, or another error code) is a violation.
+                const offenders = probes.filter(
+                  (probe) =>
+                    probe.outcome !== "rejected" &&
+                    probe.outcome !== "unsupported"
+                );
+                const warnings = probes
+                  .filter((probe) => probe.outcome === "unsupported")
+                  .map(
+                    (probe) =>
+                      `${probe.method} is not implemented by this server (-32601), so its undeclared-request requirement was not probed`
+                  );
+                checks.push(
+                  offenders.length === 0
+                    ? passed(
+                        "tasks-undeclared-capability-rejected",
+                        Date.now() - stepStartedAt,
+                        { taskId: createdTaskId, probes },
+                        warnings
+                      )
+                    : failed(
+                        "tasks-undeclared-capability-rejected",
+                        Date.now() - stepStartedAt,
+                        `${
+                          offenders.length
+                        } undeclared request(s) were not rejected with -32003 (Missing Required Client Capability): ${offenders
+                          .map(describeUndeclaredProbe)
+                          .join("; ")}`,
+                        { taskId: createdTaskId, probes }
+                      )
+                );
+              }
+            }
+          }
+
           if (selected.has("tasks-declaration-hygiene")) {
             const stepStartedAt = Date.now();
             const violations = findDeclarationViolations(wire, sent);
@@ -821,6 +1015,11 @@ export class MCPTasksConformanceTest {
     }
   }
 
+  /**
+   * Task id out of a creation result. Shape-based (`taskId`), but it reads a
+   * result the manager has ALREADY discriminated on `resultType === "task"`,
+   * so it identifies the task rather than detecting one.
+   */
   private extractTaskId(wire: TasksWire, result: unknown): string | undefined {
     if (!isRecord(result)) return undefined;
     if (wire === "extension") {
@@ -830,10 +1029,6 @@ export class MCPTasksConformanceTest {
     return typeof task?.taskId === "string" ? task.taskId : undefined;
   }
 
-  /**
-   * Sends a raw `tasks/get` WITHOUT the extension declaration. The manager
-   * always declares, so this goes through the connection's client directly.
-   */
   /**
    * Runs a `tools/call` WITHOUT the extension declaration (`allowTaskResult`
    * omitted, so the manager sends no capability envelope) and reports whether
@@ -860,30 +1055,53 @@ export class MCPTasksConformanceTest {
     }
   }
 
-  private async probeUndeclaredGet(
+  /**
+   * Sends every request the extension requires a server to refuse from a
+   * non-declaring client, WITHOUT the declaration, and reports each outcome.
+   * The manager's task APIs always attach the declaration, so these go through
+   * the connection's raw request seam; `undefined` means there is no such seam.
+   *
+   * Probe order is least- to most-invasive against the (already terminal)
+   * task: read, then a no-op update, then the listen subscription, and
+   * `tasks/cancel` last — a server that wrongly accepts one of these must not
+   * change what the next one observes.
+   */
+  private async probeUndeclaredTaskMethods(
     manager: MCPClientManager,
     serverId: string,
     taskId: string
-  ): Promise<{ rejected: boolean; code?: number }> {
-    // The public task APIs always attach the extension declaration, so the
-    // undeclared probe goes through the raw client.
+  ): Promise<UndeclaredProbe[] | undefined> {
     const client = manager.getClient(serverId) as
-      | { request?: (payload: unknown, schema?: unknown) => Promise<unknown> }
+      | { request?: (payload: unknown, options?: unknown) => Promise<unknown> }
       | undefined;
-    const request = client?.request;
+    const clientRequest = client?.request;
+    if (!clientRequest) return undefined;
 
-    if (!request) return { rejected: false };
+    const request: RawRequest = (payload, options) =>
+      options === undefined
+        ? clientRequest.call(client, payload)
+        : clientRequest.call(client, payload, options);
 
-    try {
-      await request.call(client, { method: "tasks/get", params: { taskId } });
-      return { rejected: false };
-    } catch (error) {
-      const code = errorCode(error);
-      return {
-        rejected: code === -32003,
-        ...(code === undefined ? {} : { code }),
-      };
-    }
+    const probes: UndeclaredProbe[] = [];
+    probes.push(await runUndeclaredProbe(request, "tasks/get", { taskId }));
+    // An EMPTY `inputResponses` map submits nothing, so even a server that
+    // wrongly accepts this update cannot advance the task with it.
+    probes.push(
+      await runUndeclaredProbe(request, "tasks/update", {
+        taskId,
+        inputResponses: {},
+      })
+    );
+    probes.push(
+      await runUndeclaredProbe(
+        request,
+        "subscriptions/listen",
+        { notifications: { taskIds: [taskId] } },
+        { timeout: LISTEN_PROBE_TIMEOUT_MS, listenProbe: true }
+      )
+    );
+    probes.push(await runUndeclaredProbe(request, "tasks/cancel", { taskId }));
+    return probes;
   }
 
   private async pollToTerminal(

@@ -95,6 +95,9 @@ function extensionManager(overrides: Record<string, unknown> = {}) {
       });
       return task;
     },
+    // A conformant server refuses EVERY undeclared task request with -32003
+    // (ext-tasks tasks.md:797-799), including a task-filtered
+    // subscriptions/listen.
     getClient: () => ({
       request: async () => {
         throw Object.assign(new Error("missing capability"), {
@@ -104,6 +107,34 @@ function extensionManager(overrides: Record<string, unknown> = {}) {
     }),
     ...overrides,
   } as Record<string, unknown>;
+}
+
+/**
+ * A raw request seam whose behavior is set per JSON-RPC method. Anything not
+ * listed gets the conformant answer: rejected with -32003.
+ */
+function undeclaredSeam(perMethod: Record<string, () => unknown>) {
+  return () => ({
+    request: async (payload: { method: string }) => {
+      const behavior = perMethod[payload.method];
+      if (behavior) return behavior();
+      throw Object.assign(new Error("missing capability"), { code: -32003 });
+    },
+  });
+}
+
+function rpcError(code: number, message = "nope") {
+  return () => {
+    throw Object.assign(new Error(message), { code });
+  };
+}
+
+function undeclaredCheck(
+  result: Awaited<ReturnType<MCPTasksConformanceTest["run"]>>
+) {
+  return result.checks.find(
+    (c) => c.id === "tasks-undeclared-capability-rejected"
+  );
 }
 
 // The Mcp-Name check instruments `globalThis.fetch`; no test talks to a real
@@ -158,10 +189,17 @@ describe("shape validators", () => {
     expect(
       validateCreateTaskShape({ resultType: "task", taskId: "t" })
     ).toEqual({ violations: [], warnings: [] });
+    // Present-but-wrong discriminator misleads the client: a violation.
     expect(
       validateCreateTaskShape({ resultType: "complete", taskId: "t" })
         .violations[0]
     ).toContain("resultType");
+    // ABSENT discriminator is equally a violation (tasks.md:102). It is the
+    // ONLY signal separating a CreateTaskResult from a standard result, and
+    // this SDK discriminates on it, so omitting it makes the task invisible.
+    const noDiscriminator = validateCreateTaskShape({ taskId: "t" });
+    expect(noDiscriminator.warnings).toEqual([]);
+    expect(noDiscriminator.violations[0]).toContain("resultType");
     expect(
       validateCreateTaskShape({ resultType: "task" }).violations[0]
     ).toContain("taskId");
@@ -245,6 +283,7 @@ describe("MCPTasksConformanceTest", () => {
       "tasks-wire-resolvable": "passed",
       "tasks-declaration-hygiene": "passed",
       "tasks-result-type-discipline": "passed",
+      "tasks-undeclared-creation-refused": "passed",
       "tasks-undeclared-capability-rejected": "passed",
       "tasks-ttl-shape": "passed",
       "tasks-inline-result": "passed",
@@ -279,30 +318,9 @@ describe("MCPTasksConformanceTest", () => {
     ).toContain("INLINE");
   });
 
-  it("passes WITH a warning when tasks/get without the declaration is answered", async () => {
-    // Answering a bare tasks/get is conformant: -32003 is mandated only when
-    // the server cannot avoid returning CreateTaskResult to an undeclared
-    // client — never for a bare read. Lenient handling surfaces as a warning.
-    const manager = extensionManager({
-      getClient: () => ({ request: async () => ({ taskId: "task-1" }) }),
-    });
-
-    const result = await runAgainst(manager, {
-      config: { toolName: "long_job", pollTimeoutMs: 500 },
-    });
-
-    expect(statusMap(result)["tasks-undeclared-capability-rejected"]).toBe(
-      "passed"
-    );
-    const check = result.checks.find(
-      (c) => c.id === "tasks-undeclared-capability-rejected"
-    );
-    expect(check?.warnings?.[0]).toContain("allowed");
-  });
-
   it("fails when an undeclared tools/call is turned into a task", async () => {
-    // The mandated case: a server must not create a task for a client that
-    // never declared the capability.
+    // tasks.md:61 — a server must not return CreateTaskResult to a client
+    // that did not declare the capability ON THAT REQUEST.
     const manager = extensionManager({
       executeTool: async () => ({ resultType: "task", taskId: "task-1" }),
     });
@@ -311,9 +329,10 @@ describe("MCPTasksConformanceTest", () => {
       config: { toolName: "long_job", pollTimeoutMs: 500 },
     });
 
-    expect(statusMap(result)["tasks-undeclared-capability-rejected"]).toBe(
+    expect(statusMap(result)["tasks-undeclared-creation-refused"]).toBe(
       "failed"
     );
+    expect(result.passed).toBe(false);
   });
 
   it("flags a server advertising the extension on 2025-11-25 without failing", async () => {
@@ -357,6 +376,9 @@ describe("MCPTasksConformanceTest", () => {
     expect(statusMap(result)["tasks-undeclared-capability-rejected"]).toBe(
       "skipped"
     );
+    expect(statusMap(result)["tasks-undeclared-creation-refused"]).toBe(
+      "skipped"
+    );
     expect(statusMap(result)["tasks-mcp-name-routing"]).toBe("skipped");
   });
 
@@ -395,5 +417,179 @@ describe("MCPTasksConformanceTest", () => {
 
     expect(result.passed).toBe(false);
     expect(result.checks[0].error?.message).toContain("connect refused");
+  });
+});
+
+/**
+ * ext-tasks tasks.md:797-799 — servers MUST answer -32003 for a non-declaring
+ * client on tasks/get, tasks/update, tasks/cancel, and on task notifications
+ * requested through subscriptions/listen. Unconditional: anything else fails.
+ */
+describe("undeclared task requests (-32003)", () => {
+  const runProbe = (perMethod: Record<string, () => unknown>) =>
+    runAgainst(extensionManager({ getClient: undeclaredSeam(perMethod) }), {
+      config: { toolName: "long_job", pollTimeoutMs: 500 },
+    });
+
+  it("passes when every undeclared request is rejected with -32003", async () => {
+    const result = await runProbe({});
+
+    expect(statusMap(result)["tasks-undeclared-capability-rejected"]).toBe(
+      "passed"
+    );
+    const check = undeclaredCheck(result);
+    expect(check?.warnings ?? []).toEqual([]);
+    expect(check?.details?.probes).toEqual([
+      { method: "tasks/get", outcome: "rejected", code: -32003 },
+      { method: "tasks/update", outcome: "rejected", code: -32003 },
+      { method: "subscriptions/listen", outcome: "rejected", code: -32003 },
+      { method: "tasks/cancel", outcome: "rejected", code: -32003 },
+    ]);
+  });
+
+  for (const method of [
+    "tasks/get",
+    "tasks/update",
+    "tasks/cancel",
+    "subscriptions/listen",
+  ]) {
+    it(`fails when an undeclared ${method} is answered`, async () => {
+      const result = await runProbe({ [method]: () => ({ taskId: "task-1" }) });
+
+      expect(statusMap(result)["tasks-undeclared-capability-rejected"]).toBe(
+        "failed"
+      );
+      expect(result.passed).toBe(false);
+      const check = undeclaredCheck(result);
+      expect(check?.error?.message).toContain(`${method} was answered`);
+      expect(check?.details?.probes).toContainEqual({
+        method,
+        outcome: "answered",
+      });
+    });
+
+    it(`fails when an undeclared ${method} is rejected with another code`, async () => {
+      const result = await runProbe({ [method]: rpcError(-32602) });
+
+      expect(statusMap(result)["tasks-undeclared-capability-rejected"]).toBe(
+        "failed"
+      );
+      const check = undeclaredCheck(result);
+      expect(check?.error?.message).toContain(
+        `${method} was rejected with -32602`
+      );
+    });
+  }
+
+  it("names every offending method when several misbehave", async () => {
+    const result = await runProbe({
+      "tasks/update": () => ({}),
+      "tasks/cancel": rpcError(-32601),
+    });
+
+    const check = undeclaredCheck(result);
+    expect(check?.status).toBe("failed");
+    expect(check?.error?.message).toContain("2 undeclared request(s)");
+    expect(check?.error?.message).toContain("tasks/update was answered");
+    expect(check?.error?.message).toContain("tasks/cancel was rejected with");
+  });
+
+  it("skips the subscriptions/listen sub-probe when the server lacks the method", async () => {
+    // -32601 on a core method the extension only borrows: not probeable, so
+    // it must not be judged. tasks/* still has to answer -32003.
+    const result = await runProbe({
+      "subscriptions/listen": rpcError(-32601, "Method not found"),
+    });
+
+    expect(statusMap(result)["tasks-undeclared-capability-rejected"]).toBe(
+      "passed"
+    );
+    const check = undeclaredCheck(result);
+    expect(check?.warnings?.[0]).toContain("subscriptions/listen");
+    expect(check?.warnings?.[0]).toContain("not probed");
+    expect(check?.details?.probes).toContainEqual(
+      expect.objectContaining({
+        method: "subscriptions/listen",
+        outcome: "unsupported",
+      })
+    );
+  });
+
+  it("fails a probe that never produces a rejection at all", async () => {
+    const result = await runProbe({
+      "subscriptions/listen": () => {
+        throw new Error("stream stayed open");
+      },
+    });
+
+    const check = undeclaredCheck(result);
+    expect(check?.status).toBe("failed");
+    expect(check?.error?.message).toContain("no JSON-RPC rejection");
+  });
+
+  it("does not judge the -32601 escape hatch on tasks/* methods", async () => {
+    // Only the listen sub-probe may be skipped: a server on the extension wire
+    // declared the whole task method set, so -32601 there is a real failure.
+    const result = await runProbe({ "tasks/get": rpcError(-32601) });
+
+    expect(statusMap(result)["tasks-undeclared-capability-rejected"]).toBe(
+      "failed"
+    );
+  });
+
+  it("skips the check when the connection exposes no raw request seam", async () => {
+    const result = await runAgainst(
+      extensionManager({ getClient: () => ({}) }),
+      { config: { toolName: "long_job", pollTimeoutMs: 500 } }
+    );
+
+    const check = undeclaredCheck(result);
+    expect(check?.status).toBe("skipped");
+    expect(check?.error?.message).toContain("raw request seam");
+  });
+
+  it("probes the mutating methods only after every check that reads the task", async () => {
+    const order: string[] = [];
+    const base = extensionManager();
+    const declaredGet = base.getTaskExt as (
+      serverId: string,
+      taskId: string
+    ) => Promise<unknown>;
+    const manager = extensionManager({
+      getTaskExt: async (serverId: string, taskId: string) => {
+        order.push("declared:tasks/get");
+        return declaredGet(serverId, taskId);
+      },
+      getClient: () => ({
+        request: async (payload: { method: string }) => {
+          order.push(`undeclared:${payload.method}`);
+          throw Object.assign(new Error("missing capability"), {
+            code: -32003,
+          });
+        },
+      }),
+    });
+
+    const result = await runAgainst(manager, {
+      config: { toolName: "long_job", pollTimeoutMs: 500 },
+    });
+
+    // Every declared read (polling + the Mcp-Name routing probe) happens
+    // first; the undeclared probes trail, cancel last of all.
+    expect(order.slice(-4)).toEqual([
+      "undeclared:tasks/get",
+      "undeclared:tasks/update",
+      "undeclared:subscriptions/listen",
+      "undeclared:tasks/cancel",
+    ]);
+    const declaredReads = order.filter((entry) =>
+      entry.startsWith("declared:")
+    );
+    expect(declaredReads.length).toBeGreaterThan(0);
+    expect(order.indexOf("undeclared:tasks/update")).toBeGreaterThan(
+      order.lastIndexOf("declared:tasks/get")
+    );
+    expect(statusMap(result)["tasks-inline-result"]).toBe("passed");
+    expect(statusMap(result)["tasks-mcp-name-routing"]).toBe("passed");
   });
 });

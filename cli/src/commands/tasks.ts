@@ -31,12 +31,13 @@ const TASKS_CHECK_IDS_BY_CATEGORY: Record<
   dispatch: ["tasks-wire-resolvable", "tasks-declaration-hygiene"],
   creation: [
     "tasks-result-type-discipline",
-    "tasks-undeclared-capability-rejected",
+    "tasks-undeclared-creation-refused",
   ],
   lifecycle: [
     "tasks-ttl-shape",
     "tasks-inline-result",
     "tasks-mcp-name-routing",
+    "tasks-undeclared-capability-rejected",
   ],
 };
 

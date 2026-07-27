@@ -35,7 +35,7 @@ const test = new MCPTasksConformanceTest({
 const result = await test.run();
 
 console.log(result.passed);              // true
-console.log(result.summary);            // "7/7 checks passed, 0 failed, 0 skipped"
+console.log(result.summary);            // "8/8 checks passed, 0 failed, 0 skipped"
 console.log(result.discovery.wire);     // "extension" | "legacy" | "none"
 ```
 
@@ -90,11 +90,12 @@ const test = new MCPTasksConformanceTest({
 |---|---|---|
 | `tasks-wire-resolvable` | `dispatch` | The negotiated protocol version and capabilities resolve to exactly one tasks wire. |
 | `tasks-declaration-hygiene` | `dispatch` | Outbound requests carry `params.task` only on the legacy wire and the extension declaration only on the extension wire. |
-| `tasks-result-type-discipline` | `creation` | A task-eligible `tools/call` returns either a normal tool result or a flat `CreateTaskResult` with `resultType: "task"` and a non-empty `taskId`. |
-| `tasks-undeclared-capability-rejected` | `creation` | On the extension wire, an undeclared `tools/call` must not come back as a task. |
+| `tasks-result-type-discipline` | `creation` | A task-eligible `tools/call` returns either a normal tool result or a flat `CreateTaskResult` with `resultType: "task"` and a non-empty `taskId`. The discriminator is required whether absent or wrong — it is the only signal that separates a task from a standard result. |
+| `tasks-undeclared-creation-refused` | `creation` | On the extension wire, a `tools/call` that did not carry the extension declaration must not come back as a `CreateTaskResult`. |
 | `tasks-ttl-shape` | `lifecycle` | TTL and poll interval use the era-native shapes: `ttlMs`/`pollIntervalMs` on the extension, `ttl`/`pollInterval` on the legacy wire. |
 | `tasks-inline-result` | `lifecycle` | A completed extension task carries its result inline on `tasks/get`; a legacy task exposes it via `tasks/result`. |
 | `tasks-mcp-name-routing` | `lifecycle` | Over HTTP, `tasks/get` is sent with `Mcp-Name` set to the task id. |
+| `tasks-undeclared-capability-rejected` | `lifecycle` | `tasks/get`, `tasks/update`, `tasks/cancel` and a task-filtered `subscriptions/listen` sent WITHOUT the extension declaration must each be rejected with `-32003`. Per-method outcomes are reported in the check's `details.probes`. |
 
 ## Result shape
 
@@ -163,7 +164,8 @@ writeFileSync(
 ## Notes
 
 - Declaration hygiene is asserted against captured outbound JSON-RPC bytes, not re-derived from intent.
-- The `tasks-undeclared-capability-rejected` check applies to the extension wire only and is skipped on the legacy wire.
+- The `tasks-undeclared-creation-refused` and `tasks-undeclared-capability-rejected` checks apply to the extension wire only and are skipped on the legacy wire.
+- `tasks-undeclared-capability-rejected` needs a live task to probe with, and its probes run after every check that reads that task so a wrongly-accepted `tasks/update` or `tasks/cancel` cannot corrupt the rest of the run. A server with no `subscriptions/listen` (`-32601`) gets that sub-probe reported as a warning rather than a failure.
 - The `tasks-mcp-name-routing` check applies to HTTP transports only and is skipped for stdio servers.
 - Checks that require a created task are skipped when no task-capable tool is found and no `toolName` is provided.
 - Exit code from the CLI is `1` when `result.passed` is `false`.
