@@ -138,6 +138,8 @@ export {
   isUnauthorized401,
   isInsufficientScopeError,
   isMCPAuthError,
+  MCPTasksWireError,
+  isMCPTasksWireError,
 } from "./errors.js";
 
 export type { RetryPolicy } from "../retry.js";
