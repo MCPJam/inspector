@@ -266,10 +266,12 @@ tools.post("/execute", async (c) => {
       const modelImmediateResponse =
         result?._meta?.["io.modelcontextprotocol/model-immediate-response"];
 
-      // Managers that predate wire dispatch only ever spoke the legacy wire.
-      const wire = manager.getTasksWire
-        ? manager.getTasksWire(serverId)
-        : "legacy";
+      // No wire dispatch available (older embedder, test double) means no
+      // tasks wire — never assume one on the create path.
+      const wire =
+        typeof manager.getTasksWire === "function"
+          ? manager.getTasksWire(serverId)
+          : "none";
 
       // Extension wire: the CreateTaskResult is flat (`resultType: "task"`).
       if (wire === "extension" && result?.resultType === "task") {
@@ -282,8 +284,10 @@ tools.post("/execute", async (c) => {
         });
       }
 
-      // Standard MCP Tasks spec format: top-level task property
-      if (result?.task?.taskId && result?.task?.status) {
+      // Legacy (2025-11-25) format: nested top-level `task` property. On the
+      // extension wire this shape is nonconforming, so it must not be
+      // classified as a creation.
+      if (wire === "legacy" && result?.task?.taskId && result?.task?.status) {
         return c.json({
           status: "task_created",
           wire,
