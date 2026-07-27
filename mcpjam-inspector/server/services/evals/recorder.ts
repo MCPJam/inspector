@@ -333,6 +333,7 @@ export const startSuiteRunWithRecorder = async ({
   expectedEnvironmentServerIds,
   source,
   idempotencyKey,
+  skillsOverride,
 }: {
   convexClient: ConvexHttpClient;
   suiteId: string;
@@ -430,6 +431,13 @@ export const startSuiteRunWithRecorder = async ({
    * interactive paths — the mutation's fingerprint window covers those.
    */
   idempotencyKey?: string;
+  /**
+   * The A/B "without skills" arm. `'exclude'` tells `startTestSuiteRun` to pin
+   * NO skills from any channel and to mark the run `skillsExcluded`, so the
+   * comparison arm is labelled rather than merely empty. See the wire schema
+   * for the deliberate plugin-servers asymmetry.
+   */
+  skillsOverride?: "exclude";
 }) => {
   let response: any;
   try {
@@ -461,6 +469,7 @@ export const startSuiteRunWithRecorder = async ({
           : {}),
         ...(source ? { source } : {}),
         ...(idempotencyKey ? { idempotencyKey } : {}),
+        ...(skillsOverride ? { skillsOverride } : {}),
       }
     );
   } catch (error) {

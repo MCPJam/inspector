@@ -334,6 +334,26 @@ export const RunEvalsRequestSchema = z.object({
    * unknown keys are stripped silently.
    */
   environmentId: z.string().optional(),
+  /**
+   * The "without skills" arm of an A/B compare (INS-5). `'exclude'` runs this
+   * suite with skills DELIBERATELY off: the backend pins nothing from ANY of
+   * the three channels — host `skillSelection`, the environment's standalone
+   * selection, and the PLUGIN channel — and marks the run `skillsExcluded`, so
+   * the comparison arm is honestly labelled rather than just quietly skill-free.
+   *
+   * KNOWN AND DELIBERATE ASYMMETRY, inherited verbatim from the backend
+   * (`convex/testSuites.ts`, `resolveEnvironmentPinnedSkills`): this drops
+   * plugin SKILLS, not plugin SERVERS. The flag is scoped to skill delivery, so
+   * a pinned plugin's MCP servers stay connected and stay in the run's
+   * `environmentPluginVersions` provenance. Dropping them too would change
+   * which servers the arm connects, which is the one variable a skills A/B has
+   * to hold fixed. A genuinely plugin-free comparison arm needs a backend
+   * override that does not exist yet — see the INS-5 notes.
+   *
+   * Must be declared explicitly on every Zod boundary in the wire path;
+   * unknown keys are stripped silently.
+   */
+  skillsOverride: z.literal("exclude").optional(),
 });
 
 export type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
@@ -1494,6 +1514,7 @@ export async function prepareEvalRun(
     resolvedEnvironment,
     source,
     idempotencyKey,
+    skillsOverride,
   } = request;
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
@@ -1664,6 +1685,7 @@ export async function prepareEvalRun(
       : undefined,
     source,
     idempotencyKey,
+    skillsOverride,
   });
   const suiteHostConfig =
     runHostConfigSnapshot ??
