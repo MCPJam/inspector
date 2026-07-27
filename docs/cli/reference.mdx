@@ -238,6 +238,33 @@ Plus shared connection flags.
 
 ---
 
+## `subscriptions` commands
+
+### `subscriptions listen`
+
+Open a long-lived MCP subscription stream and print events as NDJSON on stdout. Uses shared connection flags, plus:
+
+| Flag | Description |
+|------|-------------|
+| `--tools-list-changed` | Subscribe to `notifications/tools/list_changed` |
+| `--prompts-list-changed` | Subscribe to `notifications/prompts/list_changed` |
+| `--resources-list-changed` | Subscribe to `notifications/resources/list_changed` |
+| `--list-changed` | Shorthand for all three list-changed notifications |
+| `--resource-uri <uri...>` | Watch a resource URI for `notifications/resources/updated`. Repeatable. |
+| `--relisten <count>` | After an unexpected remote loss, re-listen up to this many times with exponential backoff. Default: `0` (disabled). |
+| `--relisten-delay-ms <ms>` | Initial re-listen backoff delay in milliseconds. Requires `--relisten`. |
+| `--relisten-max-delay-ms <ms>` | Maximum re-listen backoff delay in milliseconds. Requires `--relisten`. |
+| `--max-notifications <count>` | Stop after this many delivered notifications (exits `0`, outcome `cancelled`). |
+| `--duration-ms <ms>` | Stop after this many milliseconds (exits `0`, outcome `cancelled`). |
+
+stdout carries only NDJSON events in both `--format json` and `--format human`. Human status goes to stderr and is suppressed by `--quiet`.
+
+**Exit codes:** `graceful` and `cancelled` outcomes exit `0`; `remote` (unexpected stream loss) exits `1` with `SUBSCRIPTION_REMOTE_CLOSED`; `error` (open failed) exits `1` with `SUBSCRIPTION_FAILED`.
+
+See [Subscriptions](/cli/subscriptions) for the full event schema and usage examples.
+
+---
+
 ## `xaa` commands
 
 ### `xaa run`
