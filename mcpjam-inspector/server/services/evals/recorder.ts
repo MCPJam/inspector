@@ -12,6 +12,7 @@ import type { UsageTotals } from "./types";
 import { logger } from "../../utils/logger";
 import type { ServerToolSnapshot } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
+import type { RunPinnedPluginVersion } from "./run-plugin-snapshot.js";
 import { finalizeEvalIteration } from "./finalize-iteration.js";
 import { resolveCaseSuccessPredicates } from "@/shared/eval-matching";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
@@ -685,5 +686,18 @@ export const startSuiteRunWithRecorder = async ({
       | Record<string, unknown>
       | null
       | undefined,
+    /**
+     * `configSnapshot.environmentPluginVersions` (BE-5) — identity +
+     * `bundleHash` of every plugin version this run pinned, in pin order.
+     *
+     * Surfaced from the RUN row rather than re-read from the environment
+     * resolution that preceded it. The two agree by construction (the mutation
+     * rejects any drift between them via the `expectedEnvironment*` echoes),
+     * but only one of them is the run's own immutable record, and provenance
+     * that is displayed and reported should come from the record. Absent on a
+     * legacy run, a plugin-free environment, or an older backend.
+     */
+    pluginVersions: (response?.configSnapshot as any)
+      ?.environmentPluginVersions as RunPinnedPluginVersion[] | undefined,
   };
 };
