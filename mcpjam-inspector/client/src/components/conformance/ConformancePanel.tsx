@@ -71,7 +71,7 @@ function isHttpServer(server: ServerWithName): boolean {
 }
 
 function suiteState(
-  suite: "protocol" | "oauth" | "apps",
+  suite: "protocol" | "oauth" | "apps" | "tasks",
   server: ServerWithName,
 ): SuiteState {
   // The SDK's `canRunConformance` is the source of truth for which suites
@@ -103,7 +103,7 @@ function createTasksState(server: ServerWithName): TasksSuiteState {
         "Tasks conformance requires a persistent connection (run it from the local inspector)",
     };
   }
-  return suiteState("apps", server);
+  return suiteState("tasks", server);
 }
 
 function createOAuthState(server: ServerWithName): OAuthSuiteState {

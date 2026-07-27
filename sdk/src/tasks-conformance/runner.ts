@@ -60,9 +60,9 @@ const CHECK_METADATA: Record<
   "tasks-undeclared-capability-rejected": {
     id: "tasks-undeclared-capability-rejected",
     category: "creation",
-    title: "Undeclared Capability Rejected",
+    title: "Undeclared Capability Handling",
     description:
-      "On the extension wire, a tasks/get sent without the client capability declaration is rejected with -32003.",
+      "On the extension wire, probes how the server treats a tasks/get sent without the client capability declaration. Strict -32003 rejection and lenient answering are both conformant (the spec mandates -32003 only when the server cannot avoid returning CreateTaskResult to an undeclared client); lenient handling is reported as a warning for visibility.",
   },
   "tasks-ttl-shape": {
     id: "tasks-ttl-shape",
@@ -81,9 +81,9 @@ const CHECK_METADATA: Record<
   "tasks-mcp-name-routing": {
     id: "tasks-mcp-name-routing",
     category: "lifecycle",
-    title: "Mcp-Name Task Routing",
+    title: "Routed Task Poll Accepted",
     description:
-      "Over HTTP, tasks/get is accepted when routed with the Mcp-Name task id header the extension requires.",
+      "Over HTTP, a tasks/get issued through the SDK's routed transport (which sets the Mcp-Name task id header) is accepted by the server. NOTE: this observes the server accepting the routed request, not the header bytes themselves — header emission is pinned by the SDK's transport unit tests.",
   },
 };
 
@@ -244,11 +244,24 @@ export function findDeclarationViolations(
   return violations;
 }
 
-/** Validates a `CreateTaskResult`-shaped payload (flat, `resultType: "task"`). */
-export function validateCreateTaskShape(result: unknown): string[] {
+/** A shape verdict: violations FAIL the check; warnings pass with a note. */
+export interface ShapeVerdict {
+  violations: string[];
+  warnings: string[];
+}
+
+/**
+ * Validates a `CreateTaskResult`-shaped payload (flat, `resultType: "task"`).
+ *
+ * Extra fields the spec does not define (e.g. a redundant nested `task`
+ * object) are WARNINGS, not violations — the spec does not forbid additional
+ * fields, so an otherwise-valid result must not fail conformance for them.
+ */
+export function validateCreateTaskShape(result: unknown): ShapeVerdict {
   const violations: string[] = [];
+  const warnings: string[] = [];
   if (!isRecord(result)) {
-    return ["task creation result must be an object"];
+    return { violations: ["task creation result must be an object"], warnings };
   }
   if (result.resultType !== "task") {
     violations.push(
@@ -263,17 +276,27 @@ export function validateCreateTaskShape(result: unknown): string[] {
     );
   }
   if (isRecord(result.task)) {
-    violations.push(
-      "extension task creation result must be FLAT: the task fields belong at the top level, not nested under `task`"
+    warnings.push(
+      "extension task creation result carries a redundant nested `task` object; the spec defines the flat top-level fields only (extra fields are allowed, so this is not a failure)"
     );
   }
-  return violations;
+  return { violations, warnings };
 }
 
-/** Validates the era-native TTL / poll-interval shapes on a task payload. */
-export function validateTaskTtlShape(wire: TasksWire, task: unknown): string[] {
-  if (!isRecord(task)) return ["task payload must be an object"];
+/**
+ * Validates the era-native TTL / poll-interval shapes on a task payload.
+ * Wrong types on the era-native fields are violations; the mere PRESENCE of
+ * the other era's field is a warning (extra fields are not forbidden).
+ */
+export function validateTaskTtlShape(
+  wire: TasksWire,
+  task: unknown
+): ShapeVerdict {
+  if (!isRecord(task)) {
+    return { violations: ["task payload must be an object"], warnings: [] };
+  }
   const violations: string[] = [];
+  const warnings: string[] = [];
 
   if (wire === "extension") {
     const ttlMs = task.ttlMs;
@@ -291,8 +314,8 @@ export function validateTaskTtlShape(wire: TasksWire, task: unknown): string[] {
       violations.push("extension task pollIntervalMs must be a number");
     }
     if (task.ttl !== undefined) {
-      violations.push(
-        "extension task must use ttlMs, not the legacy ttl field"
+      warnings.push(
+        "extension task also carries a legacy `ttl` field; clients read `ttlMs` (extra fields are allowed, so this is not a failure)"
       );
     }
   } else {
@@ -306,21 +329,18 @@ export function validateTaskTtlShape(wire: TasksWire, task: unknown): string[] {
       violations.push("legacy task pollInterval must be a number");
     }
     if (task.ttlMs !== undefined) {
-      violations.push(
-        "legacy task must use ttl, not the extension ttlMs field"
+      warnings.push(
+        "legacy task also carries an extension `ttlMs` field; clients read `ttl` (extra fields are allowed, so this is not a failure)"
       );
     }
   }
 
-  return violations;
+  return { violations, warnings };
 }
 
-const TERMINAL_STATUSES = new Set([
-  "completed",
-  "failed",
-  "cancelled",
-  "canceled",
-]);
+// "canceled" (single-l) is not a spec status on either wire; a server
+// emitting it fails status validation rather than being silently accepted.
+const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
 
 export class MCPTasksConformanceTest {
   private readonly config: NormalizedMCPTasksConformanceConfig;
@@ -465,22 +485,23 @@ export class MCPTasksConformanceTest {
                     )
               );
             } else {
-              const violations =
+              const verdict =
                 wire === "extension"
                   ? validateCreateTaskShape(creationResult)
-                  : [];
+                  : { violations: [], warnings: [] };
               checks.push(
-                violations.length === 0
+                verdict.violations.length === 0
                   ? passed(
                       "tasks-result-type-discipline",
                       Date.now() - stepStartedAt,
-                      { tool: probeTool.name, taskId: createdTaskId }
+                      { tool: probeTool.name, taskId: createdTaskId },
+                      verdict.warnings
                     )
                   : failed(
                       "tasks-result-type-discipline",
                       Date.now() - stepStartedAt,
-                      `${violations.length} task creation shape violation(s)`,
-                      { violations }
+                      `${verdict.violations.length} task creation shape violation(s)`,
+                      { violations: verdict.violations }
                     )
               );
             }
@@ -503,6 +524,13 @@ export class MCPTasksConformanceTest {
                 serverId,
                 createdTaskId
               );
+              // Answering a bare `tasks/get` is CONFORMANT: the spec mandates
+              // `-32003` only where the server cannot avoid returning
+              // `CreateTaskResult` to an undeclared client (tasks.md §61-63)
+              // or for undeclared notification subscriptions — never for a
+              // bare read. Enforcing rejection here would fail conformant
+              // servers, so a lenient server passes with an informational
+              // warning instead.
               checks.push(
                 outcome.rejected
                   ? passed(
@@ -510,13 +538,15 @@ export class MCPTasksConformanceTest {
                       Date.now() - stepStartedAt,
                       { code: outcome.code }
                     )
-                  : failed(
+                  : passed(
                       "tasks-undeclared-capability-rejected",
                       Date.now() - stepStartedAt,
-                      outcome.code === undefined
-                        ? "tasks/get without the capability declaration succeeded; the server must reject it with -32003"
-                        : `tasks/get without the capability declaration failed with ${outcome.code}; expected -32003`,
-                      { code: outcome.code }
+                      { code: outcome.code },
+                      [
+                        outcome.code === undefined
+                          ? "server answered a bare tasks/get without the capability declaration — allowed (the spec requires -32003 only when the server cannot avoid returning CreateTaskResult to an undeclared client)"
+                          : `server rejected a bare tasks/get with ${outcome.code} rather than -32003 — allowed (no rejection is mandated for reads)`,
+                      ]
                     )
               );
             }
@@ -533,15 +563,20 @@ export class MCPTasksConformanceTest {
                 skipped("tasks-ttl-shape", "no task was created to inspect")
               );
             } else {
-              const violations = validateTaskTtlShape(wire, finalTask);
+              const verdict = validateTaskTtlShape(wire, finalTask);
               checks.push(
-                violations.length === 0
-                  ? passed("tasks-ttl-shape", Date.now() - stepStartedAt)
+                verdict.violations.length === 0
+                  ? passed(
+                      "tasks-ttl-shape",
+                      Date.now() - stepStartedAt,
+                      undefined,
+                      verdict.warnings
+                    )
                   : failed(
                       "tasks-ttl-shape",
                       Date.now() - stepStartedAt,
-                      `${violations.length} TTL shape violation(s)`,
-                      { violations }
+                      `${verdict.violations.length} TTL shape violation(s)`,
+                      { violations: verdict.violations }
                     )
               );
             }
@@ -636,14 +671,22 @@ export class MCPTasksConformanceTest {
               );
             } else {
               // The transport injects `Mcp-Name: <taskId>` for tasks/*; a
-              // successful read is the observable proof the server accepted
-              // the routed request.
+              // successful read shows the server accepts the routed request.
+              // The header bytes are NOT observable from here (no fetch spy
+              // seam on the manager), so emission itself is pinned by the
+              // SDK's transport unit tests — surfaced as a warning so the
+              // result never overstates what was verified.
               try {
                 await manager.getTaskExt(serverId, createdTaskId);
                 checks.push(
-                  passed("tasks-mcp-name-routing", Date.now() - stepStartedAt, {
-                    taskId: createdTaskId,
-                  })
+                  passed(
+                    "tasks-mcp-name-routing",
+                    Date.now() - stepStartedAt,
+                    { taskId: createdTaskId },
+                    [
+                      "verified the server accepts the routed poll; the Mcp-Name header bytes are asserted by SDK transport unit tests, not observed by this check",
+                    ]
+                  )
                 );
               } catch (error) {
                 checks.push(
