@@ -125,6 +125,22 @@ import {
 } from "@/state/oauth-orchestrator";
 import { respondToChatElicitation } from "@/lib/apis/elicitation-api";
 import {
+  HOSTED_MRTR_VERSION,
+  isCompatibleMrtrVersion,
+  isMrtrContinuationDataPart,
+  type MrtrElicitationResponse,
+  type MrtrInputRequiredEvent,
+} from "@/shared/mrtr-continuation";
+import { cancelHostedMrtrContinuation } from "@/lib/apis/web/mrtr-api";
+import {
+  buildMrtrChatResumeBody,
+  findUnresolvedMrtrToolCallId,
+} from "@/lib/mrtr-chat-resume";
+import {
+  useHostedMrtrStore,
+  type HostedMrtrRound,
+} from "@/stores/hosted-mrtr-store";
+import {
   isHarnessSessionDataPart,
   isHarnessResetDataPart,
   type HarnessResetReason,
@@ -1398,6 +1414,18 @@ export function useChatSession(
     HostedElicitationRequestEvent[]
   >([]);
   const [elicitationResponding, setElicitationResponding] = useState(false);
+  /**
+   * Hosted MRTR (§12.5) resume sender. Assigned after `useChat` (it re-drives a
+   * chat turn) but referenced by the stream-part consumer, which is defined
+   * before it — the same late-binding shape the transport refs use.
+   */
+  const mrtrResumeSenderRef = useRef<
+    | ((
+        round: HostedMrtrRound,
+        responses: Record<string, MrtrElicitationResponse>,
+      ) => Promise<void>)
+    | null
+  >(null);
   /** -32042 notices: display-only, anchored to the tool call that failed. */
   const [urlElicitationRequired, setUrlElicitationRequired] = useState<
     HostedElicitationUrlRequiredEvent[]
@@ -1542,6 +1570,66 @@ export function useChatSession(
     liveTraceState.activeTurnHasSnapshot,
     liveTraceState.events,
   ]);
+  /**
+   * Queue a suspended hosted MRTR round on the shared dialog rail (§12.5).
+   *
+   * Mixed-version rollout: an MRTR round is a multi-step protocol (suspend →
+   * display → resume) where a partial understanding is worse than none, so a
+   * version this bundle does not speak FAILS FAST — withdraw the continuation
+   * and tell the user to refresh — instead of rendering a round it could never
+   * complete and leaving the operation to hang until its TTL.
+   */
+  const handleMrtrInputRequired = useCallback(
+    (event: MrtrInputRequiredEvent) => {
+      const store = useHostedMrtrStore.getState();
+      const withdraw = (reason: string) => {
+        void cancelHostedMrtrContinuation({
+          continuationId: event.continuationId,
+          reason,
+        }).catch(() => {
+          // Best effort — the continuation expires on its own TTL.
+        });
+      };
+      if (!isCompatibleMrtrVersion(event.version)) {
+        withdraw("client hosted-MRTR version mismatch");
+        toast.error(
+          `This tab is running an outdated build (hosted-MRTR v${HOSTED_MRTR_VERSION}; ` +
+            `this request needs v${event.version}). Refresh the page and try again.`,
+        );
+        return;
+      }
+      const round: HostedMrtrRound = {
+        key: `${event.continuationId}:${event.round}`,
+        continuationId: event.continuationId,
+        round: event.round,
+        serverId: event.serverId,
+        ...(event.serverName ? { serverName: event.serverName } : {}),
+        method: event.method,
+        ...(event.operationLabel
+          ? { operationLabel: event.operationLabel }
+          : {}),
+        requests: event.inputRequests,
+        expiresAt: event.expiresAt,
+        timestamp: new Date().toISOString(),
+      };
+      // `enqueue` dedupes by round key, so a re-delivered part never stacks a
+      // second dialog over one suspended operation.
+      store.enqueue(round, {
+        submit: async (responses) => {
+          const send = mrtrResumeSenderRef.current;
+          if (!send) {
+            // Unreachable in a mounted hook; throwing keeps the dialog (and the
+            // user's answers) rather than silently dropping a live round.
+            throw new Error("Chat is not ready to resume this operation.");
+          }
+          await send(round, responses);
+        },
+        cancel: () => withdraw("dismissed by user"),
+      });
+    },
+    [],
+  );
+
   const handleStreamDataPart = useCallback(
     (part: unknown) => {
       if (!isTraceEventDataPart(part)) {
@@ -1600,6 +1688,29 @@ export function useChatSession(
               resourceMetadataUrl: event.resourceMetadataUrl,
             });
           }
+        } else if (isMrtrContinuationDataPart(part)) {
+          // Hosted MRTR (§12.5): a tool call returned `input_required` and the
+          // operation was SUSPENDED to a durable continuation — unlike a legacy
+          // elicitation, nothing server-side is blocking on the answer and the
+          // stream ends while the round is still pending. The queue therefore
+          // deliberately OUTLIVES the turn (it is cleared on reset/abort, not
+          // on stream end) and the answer re-drives a fresh chat turn.
+          const event = part.data;
+          const store = useHostedMrtrStore.getState();
+          if (event.kind === "resolved") {
+            store.resolveContinuation(event.continuationId);
+            if (event.indeterminate) {
+              // Exactly-once: a side-effecting call may or may not have run, so
+              // never auto-retry — say so and let the user decide.
+              toast.error(
+                "That tool call was interrupted and may or may not have run. Check the server before retrying.",
+              );
+            } else if (event.outcome === "expired") {
+              toast.info("That request timed out, so the operation was cancelled.");
+            }
+            return;
+          }
+          handleMrtrInputRequired(event);
         } else if (isHostedRpcLogDataPart(part)) {
           ingestHostedRpcLogs([part.data]);
           // SEP-2350: chat/agent-loop server tool calls resolve server-side, so
@@ -1662,7 +1773,13 @@ export function useChatSession(
 
       setLiveTraceState((current) => applyLiveTraceEvent(current, part.data));
     },
-    [hostedProjectId, hostedHostId, hostedPresentationHostId, appState],
+    [
+      hostedProjectId,
+      hostedHostId,
+      hostedPresentationHostId,
+      appState,
+      handleMrtrInputRequired,
+    ],
   );
 
   const syncResumedVersion = useCallback((version: number | null) => {
@@ -1968,6 +2085,12 @@ export function useChatSession(
         // any server that elicits. The server only registers its callback —
         // and therefore only advertises `elicitation` — when it sees this.
         hostedElicitationVersion: HOSTED_ELICITATION_VERSION,
+        // Handshake: tells the server this bundle can render a suspended MRTR
+        // (`input_required`) round AND resume it (§12.5). The server only
+        // registers the suspending collector — and therefore only takes the
+        // durable continuation path — when it sees this, so a stale bundle is
+        // never handed a `continuationId` it can do nothing with.
+        hostedMrtrVersion: HOSTED_MRTR_VERSION,
         ...(isHostedDirectChat ? { directVisibility } : {}),
         // What this turn executes against. EXACTLY ONE of these two shapes ever
         // ships: `normalizeExecutionTarget` 400s on `hostId` + `executionTarget`
@@ -2358,6 +2481,60 @@ export function useChatSession(
   });
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
+
+  /**
+   * Resume a suspended hosted MRTR operation (§12.5) by re-driving a chat turn
+   * that carries the `mrtrResume` descriptor. The server claims the durable
+   * continuation, drives one retry leg, splices the real tool result into the
+   * suspended tool-call, and resumes the agent loop — a further round arrives
+   * as another `data-mrtr-input-required` part on that same turn.
+   *
+   * This is deliberately NOT the direct `/api/web/mrtr/resume` route: that one
+   * drives the leg in isolation and has nowhere to put the result, so a chat
+   * resumed through it would complete server-side while the transcript kept an
+   * unresolved tool-call forever.
+   */
+  const submitMrtrResume = useCallback(
+    async (
+      round: HostedMrtrRound,
+      responses: Record<string, MrtrElicitationResponse>,
+    ) => {
+      const toolCallId = findUnresolvedMrtrToolCallId(
+        messagesRef.current,
+        round.operationLabel,
+      );
+      if (!toolCallId) {
+        // Nothing to splice the driven result into (history was reset/forked
+        // under the dialog). Withdraw rather than send a resume the server
+        // would consume against a tool-call that no longer exists.
+        void cancelHostedMrtrContinuation({
+          continuationId: round.continuationId,
+          reason: "no unresolved tool call to resume",
+        }).catch(() => {});
+        toast.error(
+          "This chat no longer has the tool call that needed input, so the operation was cancelled.",
+        );
+        return;
+      }
+      // Fire the turn without awaiting the whole stream: the round is answered
+      // the moment the request is dispatched, and holding the dialog's
+      // `responding` flag for the turn's lifetime would freeze the NEXT round's
+      // dialog behind a spinner. Stream failures surface through `onError`.
+      void baseSendMessage(undefined, {
+        body: buildMrtrChatResumeBody({
+          toolCallId,
+          serverId: round.serverId,
+          continuationId: round.continuationId,
+          round: round.round,
+          responses,
+        }),
+      }).catch((error) => {
+        console.warn("[hosted-mrtr] resume turn failed", error);
+      });
+    },
+    [baseSendMessage],
+  );
+  mrtrResumeSenderRef.current = submitMrtrResume;
 
   const queueSessionHydration = useCallback(
     (hydration: PendingSessionHydration) => {
@@ -2756,6 +2933,10 @@ export function useChatSession(
     setPersistedSnapshotToolCallIds([]);
     setPendingElicitations([]);
     setUrlElicitationRequired([]);
+    // A durable MRTR continuation survives its turn, so it is NOT cleared on
+    // stream end like an elicitation — but a reset abandons the transcript its
+    // result would splice into, so the rail is dropped here.
+    useHostedMrtrStore.getState().clear();
     syncResumedVersion(null);
     syncRestoredToolRenderOverrides({});
     onResetRef.current?.("reset");
@@ -3329,6 +3510,17 @@ export function useChatSession(
     );
   }, []);
 
+  /**
+   * Abort: the user withdrew the turn, so any suspended MRTR round still on
+   * the rail is withdrawn with it. (Stream END is deliberately NOT a trigger —
+   * a suspended operation's stream always ends while its round is pending.)
+   */
+  const stopChat = useCallback(() => {
+    const store = useHostedMrtrStore.getState();
+    for (const round of store.rounds) void store.cancel(round.key);
+    stop();
+  }, [stop]);
+
   const submitBlocked =
     disableForAuthentication ||
     isAuthLoading ||
@@ -3341,7 +3533,7 @@ export function useChatSession(
     messages,
     setMessages,
     sendMessage,
-    stop,
+    stop: stopChat,
     status,
     error,
     chatSessionId,

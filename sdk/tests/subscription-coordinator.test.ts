@@ -49,6 +49,10 @@ class FixtureClient implements SubscriptionClientPort {
   readonly unsubscribeCalls: string[] = [];
   /** URIs whose `resources/subscribe` should fail (legacy adapter). */
   failSubscribeFor = new Set<string>();
+  /** Every `listen()` call, including the ones that throw. */
+  listenAttempts = 0;
+  /** When set, `listen()` rejects — the server itself is unreachable. */
+  failListenWith: string | undefined;
   private handlers = new Map<
     string,
     Array<(n: { method: string; params?: Record<string, unknown> }) => void>
@@ -98,6 +102,10 @@ class FixtureClient implements SubscriptionClientPort {
   listen = async (
     filter: SubscriptionFilterShape,
   ): Promise<McpSubscriptionHandle> => {
+    this.listenAttempts += 1;
+    if (this.failListenWith) {
+      throw new Error(this.failListenWith);
+    }
     const id = `listen:${++this.nextId}`;
     let settle: (r: "local" | "graceful" | "remote") => void = () => {};
     const closed = new Promise<"local" | "graceful" | "remote">((resolve) => {
@@ -400,6 +408,26 @@ describe("SubscriptionCoordinator — modern (subscriptions/listen)", () => {
     expect(lost.client.listens).toHaveLength(2); // re-listened, not resumed
     expect(streams[1]).toMatchObject({ status: "active", reconnectAttempt: 1 });
     expect(lost.sleeps).toEqual([10]);
+  });
+
+  it("keeps spending the re-listen budget when the re-open itself fails", async () => {
+    const lost = makeHarness("modern", MODERN_CAPS, { maxAttempts: 2 });
+    await lost.coordinator.setDesiredInterests({ toolsListChanged: true });
+    // The server is gone, not just the stream: every re-open throws.
+    lost.client.failListenWith = "fetch failed";
+    lost.client.listens.at(-1)!.dropRemotely();
+    for (let i = 0; i < 5; i++) await flush();
+
+    // Initial open + the full budget of re-opens, all of them waited out.
+    expect(lost.client.listenAttempts).toBe(3);
+    expect(lost.sleeps).toEqual([10, 20]);
+    // A failed re-open is the same remote loss, NOT a new `error` outcome.
+    expect(lost.coordinator.getStreams().at(-1)).toMatchObject({
+      status: "remote-closed",
+      closeReason: "remote",
+      error: "fetch failed",
+      reconnectAttempt: 2,
+    });
   });
 
   it("bounds re-listen attempts with exponential backoff", async () => {
