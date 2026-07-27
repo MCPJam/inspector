@@ -15,13 +15,17 @@ import { MCPClientManager } from "@mcpjam/sdk";
 ## Constructor
 
 ```typescript
-new MCPClientManager(servers: ServerConfig)
+new MCPClientManager(servers: ServerConfig, options?: MCPClientManagerOptions)
 ```
 
 ### Parameters
 
 <ParamField path="servers" type="Record<string, StdioServerConfig | HttpServerConfig>" required>
   A map of server IDs to their configurations.
+</ParamField>
+
+<ParamField path="options" type="MCPClientManagerOptions">
+  Optional manager-level settings. See [Manager options](#manager-options) below.
 </ParamField>
 
 ### Server Configuration Types
