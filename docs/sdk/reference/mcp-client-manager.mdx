@@ -316,7 +316,9 @@ Executes a tool and returns the result.
 executeTool(
   serverId: string,
   toolName: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  request?: ExecuteToolRequest,
+  taskOptions?: TaskOptions
 ): Promise<unknown>
 ```
 
@@ -327,19 +329,45 @@ executeTool(
 | `serverId` | `string` | The server ID |
 | `toolName` | `string` | Name of the tool to execute |
 | `args` | `Record<string, unknown>` | Arguments to pass to the tool |
+| `request` | `ExecuteToolRequest` | Optional request options |
+| `taskOptions` | `TaskOptions` | Optional task options (2025-11-25 legacy wire only) |
+
+#### ExecuteToolRequest
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `request` | `ClientRequestOptions` | Request options for the tool call |
+| `task` | `TaskOptions` | Task options for task-augmented tool calls (2025-11-25 legacy wire only) |
+| `allowTaskResult` | `boolean` | When `true`, declares per-request eligibility to receive a `CreateTaskResult` on the `io.modelcontextprotocol/tasks` extension wire (2026-07-28+). The server decides whether to return a task; a plain result is always valid. Ignored on the legacy wire; throws on `wire: "none"`. |
+| `retry` | `RetryPolicy` | Explicit retry policy for tool execution |
 
 #### Returns
 
-`Promise<unknown>` - The tool's return value (type depends on the tool).
+`Promise<unknown>` - The tool's return value. When `allowTaskResult: true` is set on the extension wire and the server returns a task, resolves with a `CreateTaskExtResult` (a task handle with `taskId`, `status`, timestamps, etc.). Otherwise resolves with the tool's normal result.
 
 #### Example
 
 ```typescript
+// Standard tool call
 const result = await manager.executeTool("myServer", "add", {
   a: 5,
   b: 3,
 });
 console.log(result); // 8
+
+// Extension wire: allow the server to return a task instead of an inline result
+const maybeTask = await manager.executeTool(
+  "myServer",
+  "long_running_tool",
+  { input: "data" },
+  { allowTaskResult: true }
+);
+
+if ("taskId" in maybeTask) {
+  // Server returned a task — poll for completion
+  const task = await manager.getTaskExt("myServer", maybeTask.taskId);
+  console.log(task.status); // "working" | "completed" | ...
+}
 ```
 
 #### Throws
@@ -347,6 +375,7 @@ console.log(result); // 8
 - Error if tool doesn't exist
 - Error if arguments are invalid
 - Error if tool execution fails
+- `TypeError` if `allowTaskResult: true` is set but the server has no tasks wire
 
 ---
 
