@@ -109,6 +109,7 @@ import {
   supportsTasksList,
   supportsTasksCancel,
 } from "./tasks.js";
+import { resolveTasksWire, type TasksWire } from "./tasks-dispatch.js";
 import {
   convertMCPToolsToVercelTools,
   type ToolSchemaOverrides,
@@ -385,6 +386,12 @@ export class MCPClientManager {
   /**
    * Gets the capabilities reported by a server.
    */
+  getNegotiatedProtocolVersion(serverId: string): string | undefined {
+    return this.liveClientStates
+      .get(serverId)
+      ?.client?.getNegotiatedProtocolVersion?.();
+  }
+
   getServerCapabilities(serverId: string): ServerCapabilities | undefined {
     return this.liveClientStates.get(serverId)?.client?.getServerCapabilities();
   }
@@ -455,10 +462,10 @@ export class MCPClientManager {
           : "streamable-http";
     }
 
-    let protocolVersion: string | undefined;
-    if (liveState.transport) {
-      protocolVersion = (liveState.transport as any)._protocolVersion;
-    }
+    // Public negotiated-version accessor (upstream
+    // `Client.getNegotiatedProtocolVersion()`), never the private
+    // `transport._protocolVersion`.
+    const protocolVersion = client.getNegotiatedProtocolVersion?.();
 
     return {
       protocolVersion,
@@ -804,15 +811,18 @@ export class MCPClientManager {
       const callParams = { name: toolName, arguments: args };
 
       if (request.task !== undefined) {
+        this.assertLegacyTasksWire(serverId);
         const taskValue =
           request.task.ttl !== undefined ? { ttl: request.task.ttl } : {};
+        // 2025-11-25 puts the task opt-in in request **params**, not in
+        // `RequestOptions` (beta.4 never carried it there — the options-based
+        // form silently degraded to a plain `tools/call`).
         const result = await client.request(
-          { method: "tools/call", params: callParams },
-          // TODO(Phase 6 / io.modelcontextprotocol/tasks): beta.4 removed the
-          // `task` field from RequestOptions (tasks moved to the extension).
-          // Cast to keep this legacy task-augmented path compiling until Phase 6
-          // rebuilds it on the new extension shape.
-          { ...mergedOptions, task: taskValue } as RequestOptions
+          {
+            method: "tools/call",
+            params: { ...callParams, task: taskValue },
+          },
+          mergedOptions
         );
         if (!isCreateTaskResult(result)) {
           throw new TypeError(
@@ -1359,24 +1369,53 @@ export class MCPClientManager {
   }
 
   /**
-   * Checks if server supports task-augmented tool calls.
+   * The tasks wire this connection speaks (`"none"` when tasks are not
+   * available on the negotiated version / advertised capabilities).
+   */
+  getTasksWire(serverId: string): TasksWire {
+    return resolveTasksWire(
+      this.getNegotiatedProtocolVersion(serverId),
+      this.getServerCapabilities(serverId)
+    );
+  }
+
+  /**
+   * Checks if server supports task-augmented tool calls (legacy wire only).
    */
   supportsTasksForToolCalls(serverId: string): boolean {
-    return supportsTasksForToolCalls(this.getServerCapabilities(serverId));
+    return (
+      this.getTasksWire(serverId) === "legacy" &&
+      supportsTasksForToolCalls(this.getServerCapabilities(serverId))
+    );
   }
 
   /**
-   * Checks if server supports listing tasks.
+   * Checks if server supports listing tasks (legacy wire only).
    */
   supportsTasksList(serverId: string): boolean {
-    return supportsTasksList(this.getServerCapabilities(serverId));
+    return (
+      this.getTasksWire(serverId) === "legacy" &&
+      supportsTasksList(this.getServerCapabilities(serverId))
+    );
   }
 
   /**
-   * Checks if server supports canceling tasks.
+   * Checks if server supports canceling tasks (legacy wire only).
    */
   supportsTasksCancel(serverId: string): boolean {
-    return supportsTasksCancel(this.getServerCapabilities(serverId));
+    return (
+      this.getTasksWire(serverId) === "legacy" &&
+      supportsTasksCancel(this.getServerCapabilities(serverId))
+    );
+  }
+
+  private assertLegacyTasksWire(serverId: string): void {
+    const wire = this.getTasksWire(serverId);
+    if (wire !== "legacy") {
+      throw new TypeError(
+        `Server "${serverId}" does not speak the 2025-11-25 tasks wire (resolved wire: "${wire}"); refusing to send a task-augmented tools/call.`
+      );
+    }
   }
 
   // ===========================================================================
