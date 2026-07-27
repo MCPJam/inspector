@@ -18,6 +18,7 @@ import {
   formatRunId,
   formatTime,
   hasEnvironmentRun,
+  runContextKeys,
 } from "./helpers";
 import { computeIterationResult } from "./pass-criteria";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
@@ -522,6 +523,13 @@ function GroupRunRows({
         : [],
     [shouldRenderMatrix, allIterations, groupRunIds],
   );
+  // Distinct execution CONTEXTS in the group, matching the results rail's
+  // `contextCount`. Counting rows instead would report one environment re-run
+  // three times (or fanned out across revisions) as "3 environments" — the
+  // same miscount Phase 3 fixed in `RailGroup.hostCount`.
+  const contextCount = runContextKeys(group.runs).length;
+  const contextNoun = hasEnvironmentRun(group.runs) ? "environment" : "client";
+
   // Per-child effective stats — same source the standalone rows use.
   const childStats = group.runs.map((run) => ({
     run,
@@ -634,8 +642,8 @@ function GroupRunRows({
               several revisions of the same environment, so no revision is
               claimed here. The exact revision lives on each child run row. */}
           <span className="shrink-0 rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-            {group.runs.length}{" "}
-            {hasEnvironmentRun(group.runs) ? "environments" : "clients"}
+            {contextCount} {contextNoun}
+            {contextCount === 1 ? "" : "s"}
           </span>
         </div>
         <div className={RUNS_LIST_METRIC_CELL_CLASS}>

@@ -26,7 +26,15 @@ import {
 } from "../helpers";
 import { resolveCaseRunBatchHost } from "../runs/group-case-iterations";
 import { SuiteRunsList } from "../suite-runs-list";
-import type { EvalIteration, EvalSuiteRun } from "../types";
+import { SuiteResultsSplit } from "../suite-results-split";
+import { CaseRunsHistory } from "../runs/case-runs-history";
+import {
+  contextSuite,
+  envRun,
+  hostRun,
+  oneEnvironmentThreeRuns,
+} from "./run-context-fixtures";
+import type { EvalIteration } from "../types";
 
 // The chips are flag-gated exactly like the run-detail "Environment" row.
 // Flag ON is the state under test; the OFF path is asserted separately below
@@ -36,57 +44,6 @@ vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabledState: () => true,
   PROJECT_ENVIRONMENTS_FEATURE_FLAG: "project-environments-enabled",
 }));
-
-function envRun(
-  id: string,
-  environmentId: string,
-  name: string,
-  revision: number,
-  overrides: Partial<EvalSuiteRun> = {}
-): EvalSuiteRun {
-  return {
-    _id: id,
-    suiteId: "suite-1",
-    createdBy: "user-1",
-    runNumber: 1,
-    configRevision: "1",
-    configSnapshot: {
-      tests: [],
-      // NOTE: `environment.servers` is the unrelated legacy server-name bag —
-      // it must never be read as environment identity.
-      environment: { servers: ["server-1"] },
-      environmentRef: { environmentId, name, revision },
-    },
-    status: "completed",
-    result: "passed",
-    createdAt: 1_000,
-    completedAt: 2_000,
-    summary: { total: 1, passed: 1, failed: 0, passRate: 100 },
-    ...overrides,
-  } as EvalSuiteRun;
-}
-
-function hostRun(
-  id: string,
-  namedHostId: string | undefined,
-  overrides: Partial<EvalSuiteRun> = {}
-): EvalSuiteRun {
-  return {
-    _id: id,
-    suiteId: "suite-1",
-    createdBy: "user-1",
-    runNumber: 1,
-    configRevision: "1",
-    configSnapshot: { tests: [], environment: { servers: ["server-1"] } },
-    status: "completed",
-    result: "passed",
-    createdAt: 1_000,
-    completedAt: 2_000,
-    summary: { total: 1, passed: 1, failed: 0, passRate: 100 },
-    ...(namedHostId ? { namedHostId } : {}),
-    ...overrides,
-  } as EvalSuiteRun;
-}
 
 describe("runContextKey", () => {
   it("keys an environment run by environment id, NOT by revision", () => {
@@ -312,6 +269,82 @@ describe("SuiteRunsList mixed host/environment history", () => {
     // single environment standing in for the whole group.
     expect(header!.textContent).toContain("2 environments");
     expect(header!.textContent).not.toMatch(/rev \d/);
+  });
+});
+
+/**
+ * The group-header count is a count of CONTEXTS, not of run rows. Re-running
+ * one environment (each run pinning a fresh revision, since an environment is
+ * live-editable) must stay "1 environment". This is the bug Phase 3 fixed in
+ * the rail's `RailGroup.hostCount`; it is pinned on BOTH surfaces here so it
+ * cannot be reintroduced in one of them.
+ */
+describe("CaseRunsHistory environment batch header", () => {
+  it("renders the environment name + its exact revision via the shared chip", () => {
+    // Same `EnvironmentChip` the results surfaces use, so the two renderings
+    // of environment identity cannot drift apart.
+    const iterations = [
+      {
+        _id: "it-1",
+        testCaseId: "case-1",
+        suiteRunId: "envrun00",
+        iterationNumber: 1,
+        result: "passed",
+        createdAt: 1_000,
+        actualToolCalls: [],
+        tokensUsed: 0,
+      },
+    ] as unknown as EvalIteration[];
+
+    renderWithProviders(
+      <CaseRunsHistory
+        iterations={iterations}
+        onSelectIteration={vi.fn()}
+        suiteRuns={[envRun("envrun00", "env-a", "Staging", 6)]}
+      />
+    );
+
+    const chip = screen.getByTitle("Staging · env-a");
+    expect(chip).toBeInTheDocument();
+    expect(chip.textContent).toContain("Staging");
+    expect(chip.textContent).toContain("rev 6");
+  });
+});
+
+describe("group header counts CONTEXTS, not run rows", () => {
+  it("runs list: one environment re-run three times reads '1 environment'", () => {
+    renderWithProviders(
+      <SuiteRunsList
+        runs={oneEnvironmentThreeRuns}
+        allIterations={[]}
+        onRunClick={vi.fn()}
+      />
+    );
+
+    const header = screen.getByText(/Run group g/i).closest("button");
+    expect(header!.textContent).toContain("1 environment");
+    expect(header!.textContent).not.toContain("3 environments");
+  });
+
+  it("results rail: the same group never claims three environments", () => {
+    renderWithProviders(
+      <SuiteResultsSplit
+        suite={contextSuite}
+        cases={[]}
+        runs={oneEnvironmentThreeRuns}
+        allIterations={[]}
+        hostNamesById={new Map()}
+        allRunsPane={<div />}
+        onTestCaseClick={vi.fn()}
+        onRunClick={vi.fn()}
+      />
+    );
+
+    expect(screen.queryByText(/3 environments/)).not.toBeInTheDocument();
+    // One context ⇒ its NAME, plus the RANGE its runs spanned. Never one
+    // arbitrary revision.
+    expect(screen.getByText("Staging · rev 2–4")).toBeInTheDocument();
+    expect(screen.queryByText(/rev 3$/)).not.toBeInTheDocument();
   });
 });
 

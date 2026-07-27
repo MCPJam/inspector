@@ -862,8 +862,15 @@ export function useEvalHandlers({
               : `${failures.length} of ${runPlans.length} ${targetNoun} runs failed: ${failedHostNames}`
           );
         } else {
-          // All failed — surface the first error for actionable detail.
-          const firstError = failures[0]?.reason;
+          // All failed — surface one error for actionable detail. Prefer an
+          // environment-drift 409 wherever it sits in the list, exactly as the
+          // partial-failure branch above does: throwing `failures[0]` blind
+          // would bury a retry-able ENVIRONMENT_REVISION_CONFLICT carried by a
+          // later plan behind whatever generic error happened to come first.
+          const conflictFailure = failures.find(
+            (failure) => getEnvironmentConflictMessage(failure.reason) !== null
+          );
+          const firstError = (conflictFailure ?? failures[0])?.reason;
           throw firstError instanceof Error
             ? firstError
             : new Error(String(firstError ?? `All ${targetNoun} runs failed`));

@@ -263,9 +263,30 @@ export function runContextKey(run: RunContextSource): string {
 }
 
 /**
+ * The run's resolved HOST name only — never its environment name. Falls back to
+ * a truncated host id, and returns `null` when the run names no host.
+ *
+ * This is the branch the `project-environments-enabled` kill-switch falls back
+ * to. An environment-backed run carries no `namedHostId`, so with the flag off
+ * it yields `null` here and the caller shows a neutral placeholder rather than
+ * leaking the environment name through a host-shaped chip.
+ */
+export function runHostLabel(
+  run: RunContextSource,
+  hostNamesById?: Map<string, string | null>,
+): string | null {
+  if (!run.namedHostId) return null;
+  return hostNamesById?.get(run.namedHostId) ?? formatRunId(run.namedHostId);
+}
+
+/**
  * Display name for a run's context: the environment name for environment-backed
  * runs, the resolved host name (falling back to a truncated id) for legacy runs.
  * `null` when the run names neither — the caller decides what to show instead.
+ *
+ * This CAN return environment identity, so every call site must sit behind
+ * `project-environments-enabled`; the flag-off branch uses
+ * {@link runHostLabel} instead.
  */
 export function runContextLabel(
   run: RunContextSource,
@@ -273,8 +294,7 @@ export function runContextLabel(
 ): string | null {
   const ref = runEnvironmentRef(run);
   if (ref) return ref.name;
-  if (!run.namedHostId) return null;
-  return hostNamesById?.get(run.namedHostId) ?? formatRunId(run.namedHostId);
+  return runHostLabel(run, hostNamesById);
 }
 
 /**

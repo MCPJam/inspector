@@ -10,6 +10,7 @@ import { ChevronDown, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { HostChip } from "@/components/hosts/host-chip";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { EnvironmentChip } from "../run-context-chip";
 import { CaseMetricStrip } from "../case-metric-strip";
 import { computeIterationResult } from "../pass-criteria";
 import {
@@ -144,20 +145,17 @@ function RunBatchGroup({
         </span>
         {batchHost?.environmentId ? (
           // Environment-backed batch: the environment NAMES the batch, and the
-          // exact revision this one run pinned rides alongside it.
-          <span
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border/60 px-2 py-0.5 text-[10px]"
-            title={`${batchHost.hostName} · ${batchHost.environmentId}`}
-          >
-            <span className="max-w-[120px] truncate text-foreground">
-              {batchHost.hostName}
-            </span>
-            {batchHost.revisionLabel ? (
-              <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
-                {batchHost.revisionLabel}
-              </span>
-            ) : null}
-          </span>
+          // exact revision this one run pinned rides alongside it. Shares
+          // `EnvironmentChip` with `RunContextChip` so the two renderings of
+          // environment identity cannot drift. `resolveCaseRunBatchHost` has
+          // already applied the kill-switch, so reaching here means it is on.
+          <EnvironmentChip
+            name={batchHost.hostName}
+            environmentId={batchHost.environmentId}
+            revisionLabel={batchHost.revisionLabel}
+            className="text-[10px]"
+            nameClassName="max-w-[120px]"
+          />
         ) : batchHost ? (
           <HostChip
             name={batchHost.hostName}

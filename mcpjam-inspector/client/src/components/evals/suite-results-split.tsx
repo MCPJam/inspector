@@ -59,6 +59,7 @@ import {
   runContextKeys,
   runContextLabel,
   runContextRevisionSummary,
+  runHostLabel,
 } from "./helpers";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { CrossHostDashboard } from "./cross-host/cross-host-dashboard";
@@ -259,8 +260,11 @@ function PinnedItem({
  * axis. A revision RANGE may ride along, but the header never claims one
  * arbitrary revision — that belongs on the individual run row below.
  *
- * With the Project Environments kill-switch off this collapses to the
- * pre-Phase-3 host wording, so retained historical runs leak no env identity.
+ * The Project Environments kill-switch gates NAMES and REVISIONS only — those
+ * are the environment's identity. The count and the axis NOUN stay ungated
+ * (they leak no identity), which is also what `GroupRunRows` in
+ * suite-runs-list does for the same data; gating the noun here made the rail
+ * and the flat runs list disagree on identical runs.
  */
 function groupContextSummary(
   group: RailGroup,
@@ -268,11 +272,13 @@ function groupContextSummary(
   projectEnvironmentsEnabled: boolean,
 ): string {
   const plural = group.contextCount === 1 ? "" : "s";
-  if (!projectEnvironmentsEnabled) {
-    return `${group.contextCount} client${plural}`;
-  }
   const countText = `${group.contextCount} ${group.contextNoun}${plural}`;
   const onlyRun = group.contextCount === 1 ? group.runs[0] : undefined;
+  if (!projectEnvironmentsEnabled) {
+    // Host-only: a legacy group keeps its host name; an environment group has
+    // none, so it degrades to the bare count rather than naming the env.
+    return (onlyRun ? runHostLabel(onlyRun, hostNamesById) : null) ?? countText;
+  }
   const base =
     (onlyRun ? runContextLabel(onlyRun, hostNamesById) : null) ?? countText;
   return group.revisionSummary ? `${base} · ${group.revisionSummary}` : base;
