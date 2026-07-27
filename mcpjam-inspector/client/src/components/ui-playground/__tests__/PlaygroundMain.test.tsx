@@ -312,6 +312,7 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     placeholder,
     pulseSubmit,
     clientSelector,
+    onChangeSkillResults,
   }: {
     value: string;
     onChange: (v: string) => void;
@@ -322,6 +323,7 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     placeholder: string;
     pulseSubmit?: boolean;
     clientSelector?: unknown;
+    onChangeSkillResults?: (results: unknown[]) => void;
   }) => (
     <form
       data-testid="chat-input"
@@ -339,6 +341,25 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
         disabled={disabled}
         placeholder={placeholder}
       />
+      {/* Stands in for the composer's skill picker: attaching a skill is what
+          populates `skillResults`, and the injection rule only exists on that
+          path. */}
+      <button
+        type="button"
+        data-testid="chat-input-attach-skill"
+        onClick={() =>
+          onChangeSkillResults?.([
+            {
+              id: "skill-1",
+              skillId: "sk_1",
+              name: "release-notes",
+              content: "skill body",
+            },
+          ])
+        }
+      >
+        Attach skill
+      </button>
       <button
         type="submit"
         disabled={disabled || !!submitDisabled}
@@ -1494,6 +1515,26 @@ describe("PlaygroundMain", () => {
           expect.objectContaining({ text: "Hello from playground" }),
         );
       });
+    });
+
+    it("injects an explicitly attached skill into the turn (INS-4)", async () => {
+      // An attached skill is turn CONTENT. Playground built no skill messages,
+      // so the skill silently evaporated on send — and a skill-only send did
+      // not count as content at all.
+      render(<PlaygroundMain {...defaultProps} />);
+
+      fireEvent.click(screen.getByTestId("chat-input-attach-skill"));
+      fireEvent.click(screen.getByTestId("chat-submit-button"));
+
+      await waitFor(() => {
+        expect(mockUseChatSession.setMessages).toHaveBeenCalled();
+      });
+      // The prepend lands in the thread BEFORE the user turn, so the request
+      // carries it as history instead of trailing the model's answer.
+      const updater = mockUseChatSession.setMessages.mock.calls.at(-1)![0];
+      const next = typeof updater === "function" ? updater([]) : updater;
+      expect(JSON.stringify(next)).toContain("release-notes");
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalled();
     });
 
     it("shows the guided prompt in the input when post-connect onboarding is active", () => {

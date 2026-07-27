@@ -19,6 +19,7 @@ import { getSuiteReplayEligibility } from "./replay-eligibility";
 import {
   buildSuiteRunPlans,
   getEffectiveSuiteServers,
+  getEnvironmentConflictMessage,
   getSelectedSuiteHostRunPlan,
 } from "./helpers";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
@@ -850,19 +851,36 @@ export function useEvalHandlers({
                 "(unnamed client)"
             )
             .join(", ");
+          // An environment-drift 409 is retry-able and has a specific cause;
+          // the generic "N of M runs failed" summary buries it, so name it.
+          const conflict = failures
+            .map((failure) => getEnvironmentConflictMessage(failure.reason))
+            .find((message): message is string => message !== null);
           toast.error(
-            `${failures.length} of ${runPlans.length} ${targetNoun} runs failed: ${failedHostNames}`
+            conflict
+              ? `${failures.length} of ${runPlans.length} ${targetNoun} runs failed (${failedHostNames}): ${conflict}`
+              : `${failures.length} of ${runPlans.length} ${targetNoun} runs failed: ${failedHostNames}`
           );
         } else {
-          // All failed — surface the first error for actionable detail.
-          const firstError = failures[0]?.reason;
+          // All failed — surface one error for actionable detail. Prefer an
+          // environment-drift 409 wherever it sits in the list, exactly as the
+          // partial-failure branch above does: throwing `failures[0]` blind
+          // would bury a retry-able ENVIRONMENT_REVISION_CONFLICT carried by a
+          // later plan behind whatever generic error happened to come first.
+          const conflictFailure = failures.find(
+            (failure) => getEnvironmentConflictMessage(failure.reason) !== null
+          );
+          const firstError = (conflictFailure ?? failures[0])?.reason;
           throw firstError instanceof Error
             ? firstError
             : new Error(String(firstError ?? `All ${targetNoun} runs failed`));
         }
       } catch (error) {
         console.error("Failed to rerun evals:", error);
-        toast.error(getBillingErrorMessage(error, "Failed to start eval run"));
+        toast.error(
+          getEnvironmentConflictMessage(error) ??
+            getBillingErrorMessage(error, "Failed to start eval run")
+        );
       } finally {
         setRerunningSuiteId(null);
       }

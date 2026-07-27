@@ -190,6 +190,19 @@ export const ANALYTICS_EVENTS = {
   playground_tool_run_clicked: { source: "client" },
   playground_tools_pane_tab_changed: { source: "client" },
   playground_tools_refresh_clicked: { source: "client" },
+  // --- OpenAI plugin import (Connect "Add plugin", INS-2) ---
+  // Props are built by `client/src/lib/plugins/plugin-analytics.ts`, which
+  // exists to keep bundle paths, server URLs, env/header names, and plugin
+  // display names OUT of these payloads: counts, closed enums, stable codes,
+  // and a bundle-hash prefix only.
+  add_plugin_button_clicked: { source: "client" },
+  plugin_disabled: { source: "client" },
+  plugin_import_completed: { source: "client" },
+  plugin_import_failed: { source: "client" },
+  plugin_import_previewed: { source: "client" },
+  plugin_import_started: { source: "client" },
+  plugin_uninstalled: { source: "client" },
+  plugin_version_upgraded: { source: "client" },
   project_invite_sent: { source: "client" },
   project_member_removed: { source: "client" },
   project_members_facepile_clicked: { source: "client" },

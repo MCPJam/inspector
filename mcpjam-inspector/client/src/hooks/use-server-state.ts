@@ -29,7 +29,10 @@ import {
   ensureAuthorizedForReconnect,
   type OAuthResult,
 } from "@/state/oauth-orchestrator";
-import type { ServerFormData } from "@/shared/types.js";
+import {
+  resolveOAuthProtocolSelection,
+  type ServerFormData,
+} from "@/shared/types.js";
 import { toMCPConfig } from "@/state/server-helpers";
 import {
   completeHostedOAuthCallback,
@@ -499,10 +502,11 @@ function buildOAuthProfileFromFormData(
     return undefined;
   }
 
-  const protocolVersion =
-    formData.oauthProtocolMode && formData.oauthProtocolMode !== "auto"
-      ? formData.oauthProtocolMode
-      : existingProfile?.protocolVersion ?? "2025-11-25";
+  const { protocolVersion } = resolveOAuthProtocolSelection({
+    mode: formData.oauthProtocolMode,
+    legacyProtocolVersion: existingProfile?.protocolVersion,
+    wireProtocolVersion: formData.mcpProtocolVersionOverride,
+  });
   const registrationStrategy =
     formData.registrationMode && formData.registrationMode !== "auto"
       ? formData.registrationMode
@@ -781,8 +785,9 @@ function getConnectionTransport(serverConfig: MCPServerConfig): string {
  *
  * Precedence: explicit per-server override → explicit pin on the config being
  * connected → explicit pin on the canonical stored `server.config` (recovers
- * the pin when a caller passes a rebuilt URL-only config) → the 2026 era
- * implied by the server's saved OAuth profile → host default.
+ * the pin when a caller passes a rebuilt URL-only config) → a legacy record's
+ * concrete OAuth profile → host default. A canonical Auto record never turns
+ * its last resolved profile back into a wire pin.
  */
 export function resolveEffectiveWireProtocolVersion(input: {
   serverConfig: MCPServerConfig | undefined;
@@ -807,9 +812,12 @@ export function resolveEffectiveWireProtocolVersion(input: {
   // handed a slim URL-only config (which drops the pin) still recovers the
   // wire era the server was saved with.
   const canonicalConfigPin = readConfigPin(server?.config);
+  const canonicalOauthMode = server?.oauthProtocolMode;
   const oauthProfilePin: McpProtocolVersion | undefined =
     server?.useOAuth === true &&
-    server.oauthFlowProfile?.protocolVersion === "2026-07-28"
+    server.oauthFlowProfile?.protocolVersion === "2026-07-28" &&
+    (canonicalOauthMode === undefined ||
+      canonicalOauthMode === "2026-07-28")
       ? "2026-07-28"
       : undefined;
   return (
@@ -832,6 +840,39 @@ export interface EnsureServersReadyResult {
   missingServerNames: string[];
   failedServerNames: string[];
   reauthServerNames: string[];
+}
+
+/**
+ * The ONLY channel by which secrets travel from form data to persistence.
+ *
+ * `syncServerToConvex` writes `env` / `headers` exclusively from what this
+ * returns, and reads key PRESENCE as intent (absent = leave alone, `{}` =
+ * clear, value = replace). Plain `formData.env` / `formData.headers` never
+ * reach it — they configure the in-memory connection only — which is the trap
+ * every import-shaped producer has to know about; see `ServerFormData.secretPatch`.
+ *
+ * Extracted and exported so that contract is unit-testable in one place rather
+ * than re-derived inline by each caller.
+ */
+export function buildSecretSyncOptions(formData: ServerFormData): {
+  clientSecret?: string;
+  clearClientSecret?: boolean;
+  clearXaaConfig?: boolean;
+  env?: Record<string, string>;
+  headers?: Record<string, string>;
+} {
+  return {
+    ...(formData.clientSecret ? { clientSecret: formData.clientSecret } : {}),
+    ...(formData.clearClientSecret ? { clearClientSecret: true } : {}),
+    // One-shot XAA-config reset (modal moved the server off XAA).
+    ...(formData.clearXaaConfig ? { clearXaaConfig: true } : {}),
+    ...(formData.secretPatch?.env !== undefined
+      ? { env: formData.secretPatch.env }
+      : {}),
+    ...(formData.secretPatch?.headers !== undefined
+      ? { headers: formData.secretPatch.headers }
+      : {}),
+  };
 }
 
 export function useServerState({
@@ -1724,6 +1765,7 @@ export function useServerState({
           storedOAuthConfig.resourceUrl,
         // Persist the debugger test-profile choices so the catalog
         // round-trip doesn't silently reset them to DCR / 2025-11-25.
+        oauthProtocolMode: serverEntry.oauthProtocolMode,
         oauthProtocolVersion: serverEntry.oauthFlowProfile?.protocolVersion,
         oauthRegistrationStrategy:
           serverEntry.oauthFlowProfile?.registrationStrategy,
@@ -2585,6 +2627,11 @@ export function useServerState({
             xaaAllowPathScopedIssuer: existingServer?.xaaAllowPathScopedIssuer,
             initializationInfo: existingServer?.initializationInfo,
             useOAuth: true,
+            oauthProtocolMode:
+              existingServer?.oauthProtocolMode ??
+              storedOAuthConfig.protocolMode ??
+              resolvedOAuthProfile?.protocolVersion ??
+              "2025-11-25",
             lastOAuthTrace: result.oauthTrace,
           };
 
@@ -2917,20 +2964,7 @@ export function useServerState({
                 existingServerForSave?.hasClientSecret
             )
           : false;
-      const clientSecretSyncOptions = {
-        ...(formData.clientSecret
-          ? { clientSecret: formData.clientSecret }
-          : {}),
-        ...(formData.clearClientSecret ? { clearClientSecret: true } : {}),
-        // One-shot XAA-config reset (modal moved the server off XAA).
-        ...(formData.clearXaaConfig ? { clearXaaConfig: true } : {}),
-        ...(formData.secretPatch?.env !== undefined
-          ? { env: formData.secretPatch.env }
-          : {}),
-        ...(formData.secretPatch?.headers !== undefined
-          ? { headers: formData.secretPatch.headers }
-          : {}),
-      };
+      const clientSecretSyncOptions = buildSecretSyncOptions(formData);
 
       const serverEntryForSave: ServerWithName = {
         name: formData.name,
@@ -2940,6 +2974,9 @@ export function useServerState({
         retryCount: 0,
         enabled: true,
         useOAuth: formData.useOAuth ?? false,
+        oauthProtocolMode: formData.useOAuth
+          ? formData.oauthProtocolMode ?? "auto"
+          : undefined,
         oauthFlowProfile: formOAuthProfile,
         hasClientSecret: nextHasClientSecret,
         hasEnv:
@@ -3157,12 +3194,31 @@ export function useServerState({
           });
 
           const oauthInputs = await resolveOAuthInitiationInputs(formData);
-          const existingOAuthProfile =
-            appState.servers[formData.name]?.oauthFlowProfile;
-          const protocolMode =
-            formData.oauthProtocolMode ??
-            existingOAuthProfile?.protocolVersion ??
-            "auto";
+          const existingServer = appState.servers[formData.name];
+          const existingOAuthProfile = existingServer?.oauthFlowProfile;
+          const rawHostPin = activeMcpProfile?.mcpProtocolVersion;
+          const hostPin =
+            typeof rawHostPin === "string" &&
+            isKnownProtocolVersion(rawHostPin)
+              ? rawHostPin
+              : undefined;
+          const effectiveWireProtocolVersion =
+            resolveEffectiveWireProtocolVersion({
+              serverConfig: mcpConfig,
+              server: existingServer,
+              serverOverride: formData.mcpProtocolVersionOverride,
+              hostPin,
+            });
+          const protocolSelection = resolveOAuthProtocolSelection({
+            mode:
+              formData.oauthProtocolMode ??
+              existingServer?.oauthProtocolMode,
+            legacyProtocolVersion: existingOAuthProfile?.protocolVersion,
+            wireProtocolVersion: effectiveWireProtocolVersion,
+            // This connect attempt was stopped by 401, so an older server
+            // card's initializationInfo is not fresh evidence for this flow.
+            negotiatedProtocolVersion: undefined,
+          });
           const registrationMode =
             formData.registrationMode ??
             existingOAuthProfile?.registrationStrategy ??
@@ -3176,12 +3232,10 @@ export function useServerState({
             registryServerId: oauthInputs.registryServerId,
             useRegistryOAuthProxy: oauthInputs.useRegistryOAuthProxy,
             customHeaders: mergeWithProjectHeaders(formData.headers),
-            protocolMode,
+            protocolMode: protocolSelection.mode,
             registrationMode,
-            protocolVersion:
-              protocolMode !== "auto"
-                ? protocolMode
-                : existingOAuthProfile?.protocolVersion,
+            protocolVersion: protocolSelection.protocolVersion,
+            protocolResolutionSource: protocolSelection.source,
             registrationStrategy:
               registrationMode !== "auto"
                 ? registrationMode
@@ -3454,6 +3508,9 @@ export function useServerState({
         enabled: existingServer?.enabled ?? false,
         oauthFlowProfile: nextOAuthProfile,
         useOAuth: formData.useOAuth ?? false,
+        oauthProtocolMode: formData.useOAuth
+          ? formData.oauthProtocolMode ?? existingServer?.oauthProtocolMode
+          : undefined,
         hasClientSecret: nextHasClientSecret,
         hasEnv:
           formData.secretPatch?.env !== undefined
@@ -4372,10 +4429,26 @@ export function useServerState({
         const profileHeaders = profileHeadersToRecord(
           server.oauthFlowProfile?.customHeaders
         );
-        const protocolMode =
-          server.oauthFlowProfile?.protocolVersion ??
-          storedOAuthConfig.protocolMode ??
-          "auto";
+        const rawHostPin = activeMcpProfile?.mcpProtocolVersion;
+        const hostPin =
+          typeof rawHostPin === "string" &&
+          isKnownProtocolVersion(rawHostPin)
+            ? rawHostPin
+            : undefined;
+        const protocolSelection = resolveOAuthProtocolSelection({
+          mode:
+            server.oauthProtocolMode ??
+            server.oauthFlowProfile?.protocolVersion ??
+            storedOAuthConfig.protocolMode,
+          legacyProtocolVersion: storedOAuthConfig.protocolVersion,
+          wireProtocolVersion: resolveEffectiveWireProtocolVersion({
+            serverConfig: server.config,
+            server,
+            serverOverride: undefined,
+            hostPin,
+          }),
+          negotiatedProtocolVersion: server.initializationInfo?.protocolVersion,
+        });
         // Canonical per-server registrationMode wins over the legacy
         // profile/localStorage concretes — a persisted "auto" must keep
         // resolving from current server metadata on forced reconnects too
@@ -4411,13 +4484,10 @@ export function useServerState({
           ),
           registryServerId: storedOAuthConfig.registryServerId,
           useRegistryOAuthProxy: storedOAuthConfig.useRegistryOAuthProxy,
-          protocolMode,
+          protocolMode: protocolSelection.mode,
           registrationMode,
-          protocolVersion:
-            protocolMode !== "auto"
-              ? protocolMode
-              : server.oauthFlowProfile?.protocolVersion ??
-                storedOAuthConfig.protocolVersion,
+          protocolVersion: protocolSelection.protocolVersion,
+          protocolResolutionSource: protocolSelection.source,
           registrationStrategy:
             registrationMode !== "auto"
               ? registrationMode
@@ -5218,6 +5288,9 @@ export function useServerState({
               : undefined,
           initializationInfo: originalServer?.initializationInfo,
           useOAuth: formData.useOAuth ?? false,
+          oauthProtocolMode: formData.useOAuth
+            ? formData.oauthProtocolMode ?? originalServer?.oauthProtocolMode
+            : undefined,
           xaaAuthzIssuer:
             formData.xaaAuthzIssuer ?? originalServer?.xaaAuthzIssuer,
           xaaAllowPathScopedIssuer:

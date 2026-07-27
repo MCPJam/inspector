@@ -85,7 +85,11 @@ import {
   findTargetCellForChatSessionId,
   type SwarmTargetColumn,
 } from "@/components/swarms/swarm-targets";
-import { buildEnvJourneyPayload } from "@/components/swarms/journey-environments";
+import {
+  buildEnvJourneyPayload,
+  MAX_ENVIRONMENTS_PER_JOURNEY,
+} from "@/components/swarms/journey-environments";
+import { EnvironmentPicker } from "@/components/project-environments/environment-picker";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 // The badge + wide-shape guard live in the shared session-quality module so
@@ -1602,7 +1606,6 @@ function NewJourneyButton({
     "clients"
   );
   const [environmentIds, setEnvironmentIds] = useState<string[]>([]);
-  const [envPickerOpen, setEnvPickerOpen] = useState(false);
   const [sessionsPerHost, setSessionsPerHost] = useState(2);
   const [maxTurns, setMaxTurns] = useState(6);
   const [clientsPickerOpen, setClientsPickerOpen] = useState(false);
@@ -1719,112 +1722,19 @@ function NewJourneyButton({
       ) : null}
 
       {targetMode === "environments" ? (
-        /* Env mode: ordered ≤10 environment multi-select (name + host chip).
-           Server group + skills come from each environment's own definition. */
+        /* Env mode: the shared ordered ≤10 environment multi-select. Server
+           group + skills come from each environment's own definition. */
         <div className="mb-2.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-2">
-          <Popover open={envPickerOpen} onOpenChange={setEnvPickerOpen}>
-            <PopoverTrigger asChild>
-              <button
-                type="button"
-                data-testid="journey-environments-picker"
-                className={cn(
-                  "flex h-8 max-w-[280px] shrink-0 items-center gap-1 rounded-full border px-2 text-foreground",
-                  "outline-none transition-colors",
-                  environmentIds.length === 0
-                    ? "border-dashed border-border/60 bg-muted/30 hover:bg-muted/45"
-                    : "border-border/60 bg-muted/40 hover:bg-muted/60"
-                )}
-                aria-label="Attached environments"
-              >
-                <span className="min-w-0 flex-1 truncate text-xs font-medium">
-                  {environmentIds.length === 0
-                    ? "No environments · pick one"
-                    : environments.find(
-                        (e) => e.environmentId === environmentIds[0]
-                      )?.name ?? "Environments"}
-                </span>
-                {environmentIds.length > 1 ? (
-                  <span className="text-[10px] text-muted-foreground">
-                    +{environmentIds.length - 1}
-                  </span>
-                ) : null}
-                <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
-              </button>
-            </PopoverTrigger>
-            <PopoverContent
-              className="w-72 p-1"
-              align="start"
-              sideOffset={4}
-              onCloseAutoFocus={(e) => e.preventDefault()}
-            >
-              <div
-                className="space-y-0.5"
-                role="group"
-                aria-label="Environments"
-              >
-                <p className="px-2 pb-1 pt-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Environments
-                </p>
-                {environments.length === 0 ? (
-                  <p className="px-2 py-1.5 text-xs text-muted-foreground">
-                    No environments in this project.
-                  </p>
-                ) : (
-                  environments.map((env) => {
-                    const selected = environmentIds.includes(env.environmentId);
-                    const ordinal = environmentIds.indexOf(env.environmentId);
-                    const disabled = !selected && environmentIds.length >= 10;
-                    const hostLabel =
-                      hosts.find((h) => h.hostId === env.hostId)?.name ??
-                      env.hostId.slice(0, 8);
-                    return (
-                      <button
-                        key={env.environmentId}
-                        type="button"
-                        role="checkbox"
-                        aria-checked={selected}
-                        disabled={disabled}
-                        onPointerDown={(e) => e.preventDefault()}
-                        onClick={() =>
-                          setEnvironmentIds((prev) =>
-                            prev.includes(env.environmentId)
-                              ? prev.filter((id) => id !== env.environmentId)
-                              : prev.length >= 10
-                              ? prev
-                              : [...prev, env.environmentId]
-                          )
-                        }
-                        className={cn(
-                          "flex w-full items-center gap-2 rounded py-1.5 pl-2 pr-2 text-left text-sm",
-                          "hover:bg-accent hover:text-accent-foreground",
-                          selected && "bg-accent/50",
-                          disabled && "cursor-not-allowed opacity-50"
-                        )}
-                      >
-                        <Check
-                          className={cn(
-                            "size-3.5 shrink-0",
-                            selected ? "opacity-100" : "opacity-0"
-                          )}
-                        />
-                        <span className="min-w-0 flex-1 truncate">
-                          <span className="font-medium">{env.name}</span>
-                          <span className="mt-0.5 block truncate text-[10px] text-muted-foreground">
-                            {hostLabel}
-                          </span>
-                        </span>
-                        {selected ? (
-                          <span className="shrink-0 rounded-full bg-muted px-1.5 text-[10px] tabular-nums text-muted-foreground">
-                            {ordinal + 1}
-                          </span>
-                        ) : null}
-                      </button>
-                    );
-                  })
-                )}
-              </div>
-            </PopoverContent>
-          </Popover>
+          <EnvironmentPicker
+            projectId={projectId}
+            value={environmentIds}
+            onChange={setEnvironmentIds}
+            multi
+            max={MAX_ENVIRONMENTS_PER_JOURNEY}
+            emptyLabel="No environments · pick one"
+            triggerTestId="journey-environments-picker"
+            triggerAriaLabel="Attached environments"
+          />
         </div>
       ) : null}
 

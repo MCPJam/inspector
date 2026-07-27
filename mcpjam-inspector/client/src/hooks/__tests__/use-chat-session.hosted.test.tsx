@@ -3,6 +3,7 @@ import { generateId } from "ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatSession } from "../use-chat-session";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
+import { useHarnessWorkdirStore } from "@/stores/harness-workdir-store";
 import { useUiToolsRegistry } from "@/lib/webmcp/ui-tools-registry";
 
 const mockState = vi.hoisted(() => ({
@@ -1213,6 +1214,228 @@ describe("useChatSession hosted mode", () => {
         (model) => model.id === "openai/gpt-5.4-pro"
       )?.disabled
     ).toBeUndefined();
+    unmount();
+  });
+});
+
+// ── Project Environments — Phase 2.3 (request serialization) ────────────────
+//
+// The wire contract these cover is not "an extra optional field". It is a
+// closed union that `normalizeExecutionTarget` REJECTS ambiguity in, plus an
+// override envelope whose absent / `[]` distinction is load-bearing all the way
+// to the backend resolver. Both are exactly the kind of thing that regresses
+// silently — a body that still carries `hostId` 400s, and a body that always
+// carries `environmentOverrides` would pin the environment's own set as if the
+// user had chosen it.
+describe("useChatSession — environment execution target", () => {
+  const environmentContext = {
+    projectId: "project-1",
+    selectedServerIds: ["server-id-1"],
+    requiresWebChatApi: true,
+    executionTarget: { kind: "environment" as const, environmentId: "env_1" },
+  };
+
+  it("sends executionTarget and NEVER a legacy hostId alongside it", () => {
+    const { unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: environmentContext,
+      })
+    );
+
+    const body = lastTransportOptions.body();
+    expect(body).toMatchObject({
+      executionTarget: { kind: "environment", environmentId: "env_1" },
+    });
+    // `hostId` + `executionTarget` is a 400, not a precedence question.
+    expect(body).not.toHaveProperty("hostId");
+    unmount();
+  });
+
+  it("omits environmentOverrides entirely before the user overrides anything", () => {
+    const { unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: environmentContext,
+      })
+    );
+
+    // Absent ⇒ "resolve the environment's own server set". Sending an envelope
+    // here would freeze whatever the set happened to be at page load.
+    expect(lastTransportOptions.body()).not.toHaveProperty(
+      "environmentOverrides"
+    );
+    unmount();
+  });
+
+  it("sends an EMPTY explicit override as an override, not as absence", () => {
+    const { unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: {
+          ...environmentContext,
+          environmentOverrides: { serverIds: [] },
+        },
+      })
+    );
+
+    // `[]` means "run this turn with no MCP servers" and must survive the trip.
+    expect(lastTransportOptions.body()).toMatchObject({
+      environmentOverrides: { serverIds: [] },
+    });
+    unmount();
+  });
+
+  it("forwards an explicit narrowing by id", () => {
+    const { unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: {
+          ...environmentContext,
+          environmentOverrides: { serverIds: ["srv_a", "srv_b"] },
+        },
+      })
+    );
+
+    expect(lastTransportOptions.body()).toMatchObject({
+      environmentOverrides: { serverIds: ["srv_a", "srv_b"] },
+    });
+    unmount();
+  });
+
+  it("never runs the name→id persistence preflight for an environment turn", async () => {
+    // Environment servers already carry authoritative Convex ids, and
+    // plugin-contributed ones are deliberately hidden from
+    // `servers:getProjectServers` — resolving them BY NAME would fail outright
+    // or persist a shadow copy that bypasses plugin lifecycle semantics.
+    const ensureServerIds = vi.fn(async () => [
+      { serverName: "server-1", serverId: "server-id-1" },
+    ]);
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: { ...environmentContext, ensureServerIds },
+      })
+    );
+
+    await act(async () => {
+      await result.current.sendMessage("hello");
+    });
+
+    expect(ensureServerIds).not.toHaveBeenCalled();
+    unmount();
+  });
+
+  it("does not gate submit on browser-resolved server ids", async () => {
+    // The hosted environment path is server-connected: the backend resolves and
+    // connects the set. Requiring one browser-known id per selected server would
+    // never open for a plugin-contributed environment.
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1", "hidden-plugin-server"],
+        hostedContext: { ...environmentContext, selectedServerIds: [] },
+      })
+    );
+
+    await waitFor(() => expect(result.current.submitBlocked).toBe(false));
+
+    // Control: the same shape WITHOUT an environment target stays blocked,
+    // because that path really does need one Convex id per selected server.
+    const hostMode = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1", "hidden-plugin-server"],
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: [],
+          requiresWebChatApi: true,
+          hostId: "host_1",
+        },
+      })
+    );
+    expect(hostMode.result.current.submitBlocked).toBe(true);
+    hostMode.unmount();
+    unmount();
+  });
+
+  it("caches the harness workdir under the PRESENTATION host, not the project fallback", () => {
+    // An environment target carries no `hostId` on the wire (the server
+    // re-resolves the host from the environment), so the workdir cache used to
+    // land under the project key — while the Playground Shell reads it by the
+    // environment's resolved host id. The terminal then opened at the box home
+    // instead of inside the harness session directory.
+    useHarnessWorkdirStore.setState({ byKey: {} });
+    const { unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedContext: {
+          ...environmentContext,
+          presentationHostId: "host_env",
+        },
+      })
+    );
+
+    act(() => {
+      mockState.latestOnData?.({
+        type: "data-harness-session",
+        data: { workdir: "/home/user/claude-code-abc" },
+      });
+    });
+
+    // `h:<hostId>` is the store's own key shape, and the rail reads it with the
+    // previewed host id — which in environment mode IS the environment's host.
+    expect(useHarnessWorkdirStore.getState().byKey["h:host_env"]).toBe(
+      "/home/user/claude-code-abc"
+    );
+    unmount();
+  });
+
+  it("aborts a send whose target changed while the name→id preflight was in flight", async () => {
+    // The preflight is async and the transport body is built from the LATEST
+    // props when the request finally goes out. A message composed against a
+    // host would otherwise resume into the environment the user just selected
+    // and run against a different bundle entirely.
+    let resolvePreflight!: (value: Array<{ serverId: string }>) => void;
+    const ensureServerIds = vi.fn(
+      () =>
+        new Promise<Array<{ serverId: string }>>((resolve) => {
+          resolvePreflight = resolve;
+        })
+    );
+
+    const { result, rerender, unmount } = renderHook(
+      ({ inEnvironment }: { inEnvironment: boolean }) =>
+        useChatSession({
+          selectedServers: ["server-a"],
+          hostedContext: inEnvironment
+            ? environmentContext
+            : {
+                projectId: "project-1",
+                selectedServerIds: [],
+                requiresWebChatApi: true,
+                hostId: "host_1",
+                ensureServerIds,
+              },
+        }),
+      { initialProps: { inEnvironment: false } }
+    );
+    mockState.authFetch.mockClear();
+
+    let sendPromise: Promise<void> | undefined;
+    act(() => {
+      sendPromise = result.current.sendMessage({ text: "hi" });
+    });
+    expect(ensureServerIds).toHaveBeenCalledWith(["server-a"]);
+
+    // The user switches to an environment before the preflight settles.
+    rerender({ inEnvironment: true });
+    resolvePreflight([{ serverId: "id-a" }]);
+    await act(async () => {
+      await sendPromise;
+    });
+
+    // Fail CLOSED: nothing goes out. The user resends against the target they
+    // can actually see.
+    expect(mockState.authFetch).not.toHaveBeenCalled();
     unmount();
   });
 });
