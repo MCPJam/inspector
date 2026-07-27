@@ -14,5 +14,11 @@ Close reasons are distinct outcomes: `graceful` and `cancelled` exit 0, while a
 remote loss exits 1 with `SUBSCRIPTION_REMOTE_CLOSED`. `--relisten <count>`
 opts into a bounded re-listen with exponential backoff. stdout carries only
 NDJSON events (no human progress text, in either `--format`); human status goes
-to stderr. The SDK re-exports the subscription coordinator surface from the
-package root so the CLI can drive it without a subpath import.
+to stderr.
+
+`SubscriptionCoordinator` now treats a re-listen whose `listen()` itself throws
+as the same remote loss rather than a terminal `error`, so a server that is
+still down when the backoff expires keeps consuming the attempt budget instead
+of ending the sequence after one try. The coordinator surface is also
+re-exported from the SDK package root so the CLI can drive it without a subpath
+import.
