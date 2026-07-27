@@ -66,6 +66,7 @@ import {
 import { isMethodUnavailableError, formatError } from "./error-utils.js";
 import {
   MCPAuthError,
+  MCPTasksWireError,
   isAuthError,
   isUnauthorized401,
   isInsufficientScopeError,
@@ -143,7 +144,11 @@ import {
   mergeClientCapabilities,
   normalizeClientCapabilities,
 } from "./capabilities.js";
-import { assertCallToolResult, isCreateTaskResult } from "./result-guards.js";
+import {
+  assertCallToolResult,
+  isCreateTaskResult,
+  LEGACY_TASK_AUGMENTED_RESULT_SCHEMA,
+} from "./result-guards.js";
 import { wrapLegacyClient } from "./managed-mcp-client-factory.js";
 import { ObservableResponseCache } from "./observable-response-cache.js";
 import { resolveVersionNegotiation } from "./version-negotiation.js";
@@ -847,11 +852,17 @@ export class MCPClientManager {
         // 2025-11-25 puts the task opt-in in request **params**, not in
         // `RequestOptions` (beta.4 never carried it there — the options-based
         // form silently degraded to a plain `tools/call`).
-        const result = await client.request(
+        //
+        // The response is a `CreateTaskResult`, which beta.4's built-in
+        // `tools/call` result schema rejects (it demands `content`), so the
+        // task-augmented call goes through the explicit-schema seam with a
+        // permissive schema and is validated by `isCreateTaskResult` below.
+        const result = await client.requestWithSchema(
           {
             method: "tools/call",
             params: { ...callParams, task: taskValue },
           },
+          LEGACY_TASK_AUGMENTED_RESULT_SCHEMA,
           mergedOptions
         );
         if (!isCreateTaskResult(result)) {
@@ -1607,8 +1618,9 @@ export class MCPClientManager {
   private assertLegacyTasksWire(serverId: string): void {
     const wire = this.getTasksWire(serverId);
     if (wire !== "legacy") {
-      throw new TypeError(
-        `Server "${serverId}" does not speak the 2025-11-25 tasks wire (resolved wire: "${wire}"); refusing to send a task-augmented tools/call.`
+      throw new MCPTasksWireError(
+        `Server "${serverId}" does not speak the 2025-11-25 tasks wire (resolved wire: "${wire}"); refusing to send a task-augmented tools/call.`,
+        wire
       );
     }
   }

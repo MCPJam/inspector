@@ -45,6 +45,10 @@ function seedManager(options: {
       calls.push(JSON.parse(JSON.stringify(req)));
       return options.requestResult;
     },
+    requestWithSchema: async (req: Recorded) => {
+      calls.push(JSON.parse(JSON.stringify(req)));
+      return options.requestResult;
+    },
     callTool: async (params: Record<string, unknown>) => {
       calls.push(
         JSON.parse(JSON.stringify({ method: "tools/call", params }))
