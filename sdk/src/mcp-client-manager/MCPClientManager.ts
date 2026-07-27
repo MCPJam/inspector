@@ -82,6 +82,9 @@ import {
   getExistingAuthorization,
   stripAuthorizationFromRequestInit,
   wrapTransportForLogging,
+  wrapTransportForTaskResults,
+  wrapFetchForTaskRouting,
+  TASK_CREATED_META_KEY,
   createDefaultRpcLogger,
 } from "./transport-utils.js";
 import { RefreshTokenOAuthProvider } from "./refresh-token-auth-provider.js";
@@ -109,7 +112,26 @@ import {
   supportsTasksList,
   supportsTasksCancel,
 } from "./tasks.js";
-import { resolveTasksWire, type TasksWire } from "./tasks-dispatch.js";
+import {
+  resolveTasksWire,
+  resolveTasksSupport,
+  type TasksSupport,
+  type TasksWire,
+} from "./tasks-dispatch.js";
+import {
+  TasksExtNotificationMethod,
+  cancelTaskExt,
+  getTaskExt,
+  updateTaskExt,
+  withTasksExtensionDeclaration,
+} from "./tasks-ext.js";
+import { assertCreateTaskExtResult } from "./tasks-ext-guards.js";
+import type {
+  CreateTaskExtResult,
+  DetailedTaskExt,
+  GetTaskExtResult,
+  InputResponses as TaskExtInputResponses,
+} from "./tasks-ext-types.js";
 import {
   convertMCPToolsToVercelTools,
   type ToolSchemaOverrides,
@@ -796,19 +818,27 @@ export class MCPClientManager {
     // unaffected.
     const mrtrCollect = this.mrtrInputCollectors.get(serverId);
     if (mrtrCollect && request.task === undefined) {
-      return this.executeToolWithInputRequired(
+      // One result state machine: an extension-eligible call goes through the
+      // SAME MRTR loop, because `resultType` is a tri-state — a call may run
+      // `input_required` rounds and only THEN resolve to a task. The task
+      // envelope is unwrapped from whatever the loop terminates with.
+      const mrtrResult = await this.executeToolWithInputRequired(
         serverId,
         { name: toolName, arguments: args },
         request,
         mrtrCollect
       );
+      return this.unwrapCreatedTaskExt(mrtrResult) ?? mrtrResult;
     }
 
     const operation = async (signal?: AbortSignal) => {
       await this.ensureConnected(serverId, signal);
       const client = this.getClientOrThrow(serverId);
       const mergedOptions = this.withProgressHandler(serverId, request.request);
-      const callParams = { name: toolName, arguments: args };
+      const callParams = this.withTaskEligibilityDeclaration(serverId, request, {
+        name: toolName,
+        arguments: args,
+      });
 
       if (request.task !== undefined) {
         this.assertLegacyTasksWire(serverId);
@@ -837,11 +867,12 @@ export class MCPClientManager {
         };
       }
 
-      return this.withElicitationTimeoutSuspension(
+      const plainResult = await this.withElicitationTimeoutSuspension(
         serverId,
         mergedOptions,
         (callOptions) => client.callTool(callParams, callOptions)
       );
+      return this.unwrapCreatedTaskExt(plainResult) ?? plainResult;
     };
 
     return this.runRetriedOperation(
@@ -1152,9 +1183,17 @@ export class MCPClientManager {
    * Registers a handler for task status changes.
    */
   onTaskStatusChanged(serverId: string, handler: NotificationHandler): void {
+    // Both wires feed the same handler: legacy `notifications/tasks/status`
+    // (2025-11-25) and the extension's `notifications/tasks` (SEP-2663).
+    // Callers tag by wire via `getTasksSupport(serverId).wire`.
     this.addNotificationHandler(
       serverId,
       TaskStatusNotificationMethod,
+      handler
+    );
+    this.addNotificationHandler(
+      serverId,
+      TasksExtNotificationMethod,
       handler
     );
   }
@@ -1313,6 +1352,11 @@ export class MCPClientManager {
     cursor?: string,
     options?: ClientRequestOptions
   ) {
+    if (this.getTasksWire(serverId) === "extension") {
+      // SEP-2663 has no `tasks/list`: the client's tracker IS the list. Answer
+      // locally so callers can stay wire-agnostic (no network round trip).
+      return { tasks: [] };
+    }
     return this.runRetryableReadOperation(serverId, options, async (client) => {
       try {
         return await tasksListTasks(
@@ -1350,6 +1394,11 @@ export class MCPClientManager {
     taskId: string,
     options?: ClientRequestOptions
   ) {
+    if (this.getTasksWire(serverId) === "extension") {
+      throw new TypeError(
+        `Server "${serverId}" speaks the io.modelcontextprotocol/tasks extension, which has no tasks/result; use getTaskExt() — a completed task carries its result inline.`
+      );
+    }
     return this.runRetryableReadOperation(serverId, options, (client) =>
       tasksGetTaskResult(client, taskId, this.withTimeout(serverId, options))
     );
@@ -1407,6 +1456,152 @@ export class MCPClientManager {
       this.getTasksWire(serverId) === "legacy" &&
       supportsTasksCancel(this.getServerCapabilities(serverId))
     );
+  }
+
+  /**
+   * The full tasks support matrix for a connection — the single value every
+   * route, UI, and CLI surface should branch on.
+   */
+  getTasksSupport(serverId: string): TasksSupport {
+    return resolveTasksSupport(
+      this.getNegotiatedProtocolVersion(serverId),
+      this.getServerCapabilities(serverId)
+    );
+  }
+
+  /**
+   * `tasks/get` on the SEP-2663 extension wire. A completed task carries its
+   * `result` inline; an expired/unknown task raises the server's `-32602`.
+   */
+  async getTaskExt(
+    serverId: string,
+    taskId: string,
+    options?: ClientRequestOptions
+  ): Promise<GetTaskExtResult> {
+    return this.runRetryableReadOperation(serverId, options, (client) => {
+      this.assertExtensionTasksWire(serverId, "tasks/get");
+      return getTaskExt(
+        {
+          client,
+          declaredCapabilities: this.declaredCapabilitiesFor(serverId),
+          options: this.withTimeout(serverId, options),
+        },
+        taskId
+      );
+    });
+  }
+
+  /** `tasks/update` — submit (possibly partial) `inputResponses`. */
+  async updateTask(
+    serverId: string,
+    taskId: string,
+    inputResponses: TaskExtInputResponses,
+    options?: ClientRequestOptions
+  ): Promise<DetailedTaskExt> {
+    await this.ensureConnected(serverId);
+    const client = this.getClientOrThrow(serverId);
+    this.assertExtensionTasksWire(serverId, "tasks/update");
+    return updateTaskExt(
+      {
+        client,
+        declaredCapabilities: this.declaredCapabilitiesFor(serverId),
+        options: this.withTimeout(serverId, options),
+      },
+      taskId,
+      inputResponses
+    );
+  }
+
+  /**
+   * `tasks/cancel` on the extension wire. The result is an EMPTY ack:
+   * cancellation is cooperative, so callers must re-poll rather than render
+   * the ack as a state.
+   */
+  async cancelTaskExt(
+    serverId: string,
+    taskId: string,
+    options?: ClientRequestOptions
+  ): Promise<Record<string, unknown>> {
+    await this.ensureConnected(serverId);
+    const client = this.getClientOrThrow(serverId);
+    this.assertExtensionTasksWire(serverId, "tasks/cancel");
+    return cancelTaskExt(
+      {
+        client,
+        declaredCapabilities: this.declaredCapabilitiesFor(serverId),
+        options: this.withTimeout(serverId, options),
+      },
+      taskId
+    );
+  }
+
+  private declaredCapabilitiesFor(
+    serverId: string
+  ): ClientCapabilityOptions | undefined {
+    return this.liveClientStates.get(serverId)?.initializedClientCapabilities;
+  }
+
+  private assertExtensionTasksWire(serverId: string, method: string): void {
+    const wire = this.getTasksWire(serverId);
+    if (wire !== "extension") {
+      throw new TypeError(
+        `Server "${serverId}" does not speak the io.modelcontextprotocol/tasks extension (resolved wire: "${wire}"); refusing to send ${method}.`
+      );
+    }
+  }
+
+  /**
+   * Adds the per-request extension declaration when this call is eligible for
+   * a task result. Sends nothing extra on the legacy/none wires; a task
+   * request on `wire: "none"` is a local typed error (never a wire probe).
+   */
+  private withTaskEligibilityDeclaration<T extends Record<string, unknown>>(
+    serverId: string,
+    request: ExecuteToolRequest,
+    callParams: T
+  ): T {
+    if (request.allowTaskResult !== true || request.task !== undefined) {
+      return callParams;
+    }
+    const wire = this.getTasksWire(serverId);
+    if (wire === "extension") {
+      return withTasksExtensionDeclaration(
+        callParams,
+        this.declaredCapabilitiesFor(serverId)
+      );
+    }
+    if (wire === "legacy") {
+      // The legacy wire has no per-request declaration; the caller opts in via
+      // `task: {ttl?}` instead. Nothing to add.
+      return callParams;
+    }
+    throw new TypeError(
+      `Server "${serverId}" has no tasks wire (resolved wire: "none"); refusing to declare task eligibility on tools/call.`
+    );
+  }
+
+  /**
+   * Unwraps a `CreateTaskResult` that the transport wrapper smuggled through
+   * beta.4's decoder (see `wrapTransportForTaskResults`). Returns `undefined`
+   * for an ordinary result — the server decides, and a non-task result is
+   * always valid on the extension wire.
+   */
+  private unwrapCreatedTaskExt(
+    result: unknown
+  ): Record<string, unknown> | undefined {
+    const meta = (result as { _meta?: Record<string, unknown> } | undefined)
+      ?._meta;
+    const raw = meta?.[TASK_CREATED_META_KEY];
+    if (raw === undefined) {
+      return undefined;
+    }
+    const task: CreateTaskExtResult = assertCreateTaskExtResult(raw);
+    return {
+      ...task,
+      _meta: {
+        "io.modelcontextprotocol/model-immediate-response": `Task ${task.taskId} created with status: ${task.status}`,
+      },
+    };
   }
 
   private assertLegacyTasksWire(serverId: string): void {
@@ -1700,9 +1895,9 @@ export class MCPClientManager {
     });
 
     const logger = this.resolveRpcLogger(config);
-    const transport = logger
-      ? wrapTransportForLogging(serverId, logger, underlying)
-      : underlying;
+    const transport = wrapTransportForTaskResults(
+      logger ? wrapTransportForLogging(serverId, logger, underlying) : underlying
+    );
 
     const stderrDrain = this.createStdioStderrDrain(underlying);
 
@@ -1790,6 +1985,11 @@ export class MCPClientManager {
     if (!preferSSE) {
       const streamableTransport = new StreamableHTTPClientTransport(url, {
         requestInit,
+        // SEP-2663 HTTP binding: `tasks/get|update|cancel` must carry
+        // `Mcp-Name: <taskId>`. beta.4 derives `mcp-name` from
+        // `params.name|uri` only, so the header is injected in the fetch seam
+        // (hosted inherits it, since hosted builds transports through here).
+        fetch: wrapFetchForTaskRouting(),
         reconnectionOptions: config.reconnectionOptions,
         authProvider: effectiveAuthProvider,
         sessionId: config.sessionId,
@@ -1813,9 +2013,11 @@ export class MCPClientManager {
 
       try {
         const logger = this.resolveRpcLogger(config);
-        const wrapped = logger
-          ? wrapTransportForLogging(serverId, logger, streamableTransport)
-          : streamableTransport;
+        const wrapped = wrapTransportForTaskResults(
+          logger
+            ? wrapTransportForLogging(serverId, logger, streamableTransport)
+            : streamableTransport
+        );
         await client.connect(wrapped, {
           timeout: Math.min(timeout, HTTP_CONNECT_TIMEOUT),
         });
@@ -1840,15 +2042,16 @@ export class MCPClientManager {
 
     const sseTransport = new SSEClientTransport(url, {
       requestInit,
+      fetch: wrapFetchForTaskRouting(),
       eventSourceInit: config.eventSourceInit,
       authProvider: effectiveAuthProvider,
     });
 
     try {
       const logger = this.resolveRpcLogger(config);
-      const wrapped = logger
-        ? wrapTransportForLogging(serverId, logger, sseTransport)
-        : sseTransport;
+      const wrapped = wrapTransportForTaskResults(
+        logger ? wrapTransportForLogging(serverId, logger, sseTransport) : sseTransport
+      );
       await client.connect(wrapped, { timeout });
       return sseTransport;
     } catch (error) {
@@ -2439,7 +2642,7 @@ export class MCPClientManager {
     return Boolean(
       value &&
       typeof value === "object" &&
-      ("request" in value || "retry" in value)
+      ("request" in value || "retry" in value || "allowTaskResult" in value)
     );
   }
 
@@ -2479,6 +2682,14 @@ export class MCPClientManager {
   ): Promise<CallToolResult> {
     const baseOptions = request.request;
     const retryPolicy = request.retry ?? { retries: 0, retryDelayMs: 0 };
+    // The extension declaration depends on the negotiated wire, so the
+    // connection must exist before the (immutable) MRTR params are built.
+    await this.ensureConnected(serverId, baseOptions?.signal);
+    const mrtrParams = this.withTaskEligibilityDeclaration(
+      serverId,
+      request,
+      callParams as unknown as Record<string, unknown>
+    ) as typeof callParams;
     const sender: MrtrLegSender<CallToolResult> = (req) =>
       this.runRetriedOperation(
         serverId,
@@ -2509,7 +2720,7 @@ export class MCPClientManager {
 
     return runInputRequiredOperation<CallToolResult>({
       method: "tools/call",
-      params: callParams,
+      params: mrtrParams,
       sender,
       collectInput: collect,
       validateContent: this.mrtrElicitationContentValidator,

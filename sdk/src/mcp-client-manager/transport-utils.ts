@@ -204,3 +204,184 @@ export function createDefaultRpcLogger(): RpcLogger {
     console.debug(`[MCP:${serverId}] ${direction.toUpperCase()} ${printable}`);
   };
 }
+
+// ============================================================================
+// Tasks extension: `Mcp-Name` routing header
+// ============================================================================
+
+/**
+ * The `io.modelcontextprotocol/tasks` methods that MUST carry
+ * `Mcp-Name: <taskId>` (SEP-2663, HTTP binding).
+ */
+const TASK_ROUTED_METHODS = new Set([
+  "tasks/get",
+  "tasks/update",
+  "tasks/cancel",
+]);
+
+function taskRoutingHeadersFor(
+  body: unknown
+): { name: string; method: string } | undefined {
+  if (typeof body !== "string" || !body.includes("tasks/")) {
+    return undefined;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return undefined;
+  }
+  // A batch is not a task RPC shape we emit; only single requests are routed.
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return undefined;
+  }
+  const { method, params } = parsed as {
+    method?: unknown;
+    params?: { taskId?: unknown };
+  };
+  if (typeof method !== "string" || !TASK_ROUTED_METHODS.has(method)) {
+    return undefined;
+  }
+  const taskId = params?.taskId;
+  return typeof taskId === "string" && taskId.length > 0
+    ? { name: taskId, method }
+    : undefined;
+}
+
+/**
+ * Wraps a transport `fetch` so `tasks/get|update|cancel` POSTs carry the
+ * SEP-2663 routing headers.
+ *
+ * beta.4's Streamable HTTP transport derives `mcp-name` from `params.name` /
+ * `params.uri` only — never from `params.taskId` — so without this wrapper a
+ * task poll reaches a routed deployment without its routing key. `mcp-method`
+ * is set only when absent, so an envelope beta.4 already wrote wins; existing
+ * `mcp-name` values are likewise never overwritten. Body sniffing is the only
+ * seam available (the transport does not expose the outgoing message here),
+ * so it is contained in this one function and covered by its own test —
+ * re-verify on every `@modelcontextprotocol/client` bump.
+ */
+export function wrapFetchForTaskRouting(
+  fetchFn?: typeof fetch
+): typeof fetch {
+  const base = fetchFn ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
+  return ((input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    const routing = taskRoutingHeadersFor(init?.body);
+    if (!routing) {
+      return base(input as never, init as never);
+    }
+    const headers = new Headers(init?.headers);
+    if (!headers.has("mcp-name")) {
+      headers.set("mcp-name", routing.name);
+    }
+    if (!headers.has("mcp-method")) {
+      headers.set("mcp-method", routing.method);
+    }
+    return base(input as never, { ...init, headers } as never);
+  }) as typeof fetch;
+}
+
+// ============================================================================
+// Tasks extension: recovering `resultType: "task"` responses from beta.4
+// ============================================================================
+
+/**
+ * `_meta` key carrying an intercepted SEP-2663 `CreateTaskResult` through
+ * beta.4's result decoder. Private to this SDK — never sent on the wire.
+ */
+export const TASK_CREATED_META_KEY =
+  "io.mcpjam/tasks/create-task-result" as const;
+
+/**
+ * Wraps a transport so an SEP-2663 `CreateTaskResult` survives beta.4's
+ * result decoder.
+ *
+ * beta.4's 2026 codec (`decodeResult`, client `src-*.mjs:3864`) accepts only
+ * `resultType` `"complete"` and `"input_required"`; anything else — including
+ * the extension's `"task"` — is decoded as `kind: "invalid"` and the request
+ * REJECTS with `SdkError(UNSUPPORTED_RESULT_TYPE)`, whose `data` carries the
+ * `resultType` string but NOT the payload. There is no client option (no
+ * `allowTaskResult` counterpart to `allowInputRequired`) and no pluggable
+ * codec, so a task creation would be unrecoverable at the `Client` layer.
+ *
+ * This wrapper therefore rewrites the inbound JSON-RPC response *before* the
+ * decoder sees it: `{resultType:"task", …task}` becomes a minimal valid
+ * complete result whose `_meta[TASK_CREATED_META_KEY]` holds the original
+ * payload verbatim. `MCPClientManager` unwraps it and returns the
+ * `CreateTaskResult`. Nothing else is touched: non-task responses, requests,
+ * and notifications pass through by identity, and no bytes are changed on the
+ * outbound side.
+ *
+ * Remove this when the client package can surface `resultType: "task"`
+ * natively.
+ */
+export function wrapTransportForTaskResults(transport: Transport): Transport {
+  class TaskResultTransport implements Transport {
+    onclose?: () => void;
+    onerror?: (error: Error) => void;
+    onmessage?: (message: JSONRPCMessage, extra?: MessageExtraInfo) => void;
+
+    constructor(private readonly inner: Transport) {
+      this.inner.onmessage = (
+        message: JSONRPCMessage,
+        extra?: MessageExtraInfo
+      ) => {
+        this.onmessage?.(rewriteTaskResultMessage(message), extra);
+      };
+      this.inner.onclose = () => this.onclose?.();
+      this.inner.onerror = (error: Error) => this.onerror?.(error);
+    }
+
+    async start(): Promise<void> {
+      if (typeof (this.inner as any).start === "function") {
+        await (this.inner as any).start();
+      }
+    }
+
+    async send(
+      message: JSONRPCMessage,
+      options?: TransportSendOptions
+    ): Promise<void> {
+      await this.inner.send(message as any, options as any);
+    }
+
+    async close(): Promise<void> {
+      await this.inner.close();
+    }
+
+    get sessionId(): string | undefined {
+      return (this.inner as any).sessionId;
+    }
+
+    setProtocolVersion?(version: string): void {
+      if (typeof this.inner.setProtocolVersion === "function") {
+        this.inner.setProtocolVersion(version);
+      }
+    }
+  }
+
+  return new TaskResultTransport(transport);
+}
+
+/** Exported for tests: the pure message rewrite the wrapper applies. */
+export function rewriteTaskResultMessage(
+  message: JSONRPCMessage
+): JSONRPCMessage {
+  const result = (message as { result?: unknown }).result;
+  if (
+    typeof result !== "object" ||
+    result === null ||
+    Array.isArray(result) ||
+    (result as { resultType?: unknown }).resultType !== "task"
+  ) {
+    return message;
+  }
+  return {
+    ...(message as Record<string, unknown>),
+    result: {
+      resultType: "complete",
+      content: [],
+      _meta: { [TASK_CREATED_META_KEY]: result },
+    },
+  } as unknown as JSONRPCMessage;
+}

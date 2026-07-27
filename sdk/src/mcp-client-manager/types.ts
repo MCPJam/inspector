@@ -490,8 +490,15 @@ export type TaskOptions = {
 export interface ExecuteToolRequest {
   /** Request options for the tool call */
   request?: ClientRequestOptions;
-  /** Task options for task-augmented tool calls */
+  /** Task options for task-augmented tool calls (2025-11-25 legacy wire only) */
   task?: TaskOptions;
+  /**
+   * SEP-2663 extension wire (2026-07-28+): declare, for THIS call, that the
+   * client can handle a `CreateTaskResult`. The server decides whether to use
+   * it; a plain result is still valid. There is no TTL — the server owns it.
+   * Ignored on the legacy wire; an error on `wire: "none"`.
+   */
+  allowTaskResult?: boolean;
   /** Explicit retry policy for tool execution */
   retry?: RetryPolicy;
 }

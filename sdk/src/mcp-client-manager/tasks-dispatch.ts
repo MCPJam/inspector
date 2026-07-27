@@ -95,3 +95,69 @@ export function resolveTasksWire(
 
   return "none";
 }
+
+/**
+ * Everything a caller (route, UI, CLI) needs to know about a connection's
+ * tasks capability, derived in ONE place so no other module has to know the
+ * per-wire rules.
+ */
+export interface TasksSupport {
+  wire: TasksWire;
+  /** A `tools/call` may produce a task on this connection. */
+  toolCalls: boolean;
+  /** `tasks/list` exists (legacy only; on the extension the client tracks). */
+  list: boolean;
+  /** `tasks/cancel` may be sent. */
+  cancel: boolean;
+  /** `tasks/update` exists (extension only). */
+  update: boolean;
+  /** A completed `tasks/get` carries its result inline (extension only). */
+  inlineResult: boolean;
+}
+
+const NO_TASKS_SUPPORT: TasksSupport = {
+  wire: "none",
+  toolCalls: false,
+  list: false,
+  cancel: false,
+  update: false,
+  inlineResult: false,
+};
+
+/**
+ * Resolves the full tasks support matrix for a connection. This module is the
+ * only place allowed to consult the extension capability, which is what keeps
+ * the "treat as absent on 2025-11-25" rule honest.
+ */
+export function resolveTasksSupport(
+  protocolVersion: string | undefined,
+  capabilities: ServerCapabilities | undefined
+): TasksSupport {
+  const wire = resolveTasksWire(protocolVersion, capabilities);
+
+  if (wire === "legacy") {
+    return {
+      wire,
+      toolCalls: supportsTasksForToolCalls(capabilities),
+      list: supportsTasksList(capabilities),
+      cancel: supportsTasksCancel(capabilities),
+      update: false,
+      inlineResult: false,
+    };
+  }
+
+  if (wire === "extension") {
+    // SEP-2663 has no per-operation capability sub-flags: declaring the
+    // extension declares the whole method set.
+    return {
+      wire,
+      toolCalls: true,
+      list: false,
+      cancel: true,
+      update: true,
+      inlineResult: true,
+    };
+  }
+
+  return { ...NO_TASKS_SUPPORT };
+}
