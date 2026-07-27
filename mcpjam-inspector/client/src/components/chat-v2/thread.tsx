@@ -36,6 +36,7 @@ import {
   WidgetSurfaceHostProvider,
 } from "./thread/mcp-apps/widget-surface-host";
 import { InspectorWidgetHostProvider } from "./thread/mcp-apps/use-widget-host";
+import { MrtrElicitationHost } from "@/components/elicitation/MrtrElicitationHost";
 import { useWidgetSurfaceStore } from "./thread/mcp-apps/widget-surface-store";
 import type {
   AppToolInvocation,
@@ -382,6 +383,17 @@ export function Thread({
         <InspectorWidgetHostProvider>
           <WidgetSurfaceHost chatSessionId={chatSessionId} />
         </InspectorWidgetHostProvider>
+
+        {/* PR7 (§12.6) — an MCP App's App-initiated `tools/call` can return
+            `input_required`; the same SDK MRTR driver that backs `callTool`
+            collects each round through this reused dialog, which portals above
+            the App surface (dialog z-50 > fullscreen widget z-40) so the App
+            keeps rendering underneath and only the FINAL result is returned
+            over the App bridge. Mounted on every `Thread` (local chat, agent,
+            multi-model, playground) so the overlay is present wherever an App
+            is interactive; the host self-elects a single active dialog and the
+            store no-ops in hosted mode. */}
+        <MrtrElicitationHost />
 
         {shouldShowStandaloneThinkingIndicator && (
           <div className="min-w-0 w-full max-w-4xl mx-auto px-4">
