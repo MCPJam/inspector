@@ -231,6 +231,12 @@ function assertRuntimeInvariants(raw: unknown): ResolvedEnvironmentRuntime {
  * `overrides.serverIds` is forwarded as `serverOverrideIds` ONLY when present:
  * absent and `[]` are semantically different at the backend (use the
  * environment vs run with no servers) and must stay different on the way in.
+ *
+ * `overrides.pluginVersionIds` is deliberately NOT forwarded: the deployed
+ * query takes no plugin-override argument and a Convex validator rejects
+ * unknown args. That narrowing is applied to the RESOLVED spec by
+ * `./plugin-override`, which can only remove versions this environment already
+ * resolved for this caller.
  */
 export async function resolveEnvironmentForRuntime(
   convexClient: ConvexHttpClient,
