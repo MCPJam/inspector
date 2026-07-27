@@ -2,6 +2,15 @@ import {
   type CallToolResult,
   type CreateTaskResult,
 } from "@modelcontextprotocol/client";
+import { z } from "zod";
+
+/**
+ * Permissive result schema for the legacy (2025-11-25) task-augmented
+ * `tools/call`. beta.4's built-in `tools/call` schema requires `content`, so it
+ * rejects a `CreateTaskResult` outright; validation happens in
+ * {@link isCreateTaskResult} instead.
+ */
+export const LEGACY_TASK_AUGMENTED_RESULT_SCHEMA = z.looseObject({});
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object";

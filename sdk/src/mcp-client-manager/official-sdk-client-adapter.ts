@@ -81,6 +81,11 @@ export class OfficialSdkClientAdapter implements ManagedMcpClient {
     // `initialize` completes (`undefined` before). Pure pass-through.
     return this.inner.getProtocolEra();
   }
+  getNegotiatedProtocolVersion() {
+    // Upstream `Client.getNegotiatedProtocolVersion()` returns the negotiated
+    // wire literal once `initialize` completes. Pure pass-through.
+    return this.inner.getNegotiatedProtocolVersion();
+  }
 
   // ---- RPC ----
   listTools(
