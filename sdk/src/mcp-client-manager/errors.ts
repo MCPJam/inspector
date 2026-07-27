@@ -32,6 +32,29 @@ export class MCPAuthError extends MCPError {
 }
 
 /**
+ * Tasks wire mismatch — a tasks operation was requested against a server whose
+ * negotiated protocol version / advertised capabilities resolve to a different
+ * wire (or to no tasks wire at all). Nothing is sent when this throws.
+ */
+export class MCPTasksWireError extends MCPError {
+  constructor(
+    message: string,
+    public readonly wire: string,
+    options?: { cause?: unknown }
+  ) {
+    super(message, "TASKS_WIRE_ERROR", options);
+    this.name = "MCPTasksWireError";
+  }
+}
+
+/** Type guard for {@link MCPTasksWireError}. */
+export function isMCPTasksWireError(
+  error: unknown
+): error is MCPTasksWireError {
+  return error instanceof MCPTasksWireError;
+}
+
+/**
  * Type guard to check if an error is an MCPAuthError
  */
 export function isMCPAuthError(error: unknown): error is MCPAuthError {
