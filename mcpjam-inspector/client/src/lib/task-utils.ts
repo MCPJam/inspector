@@ -10,8 +10,69 @@ import {
   Slash,
   type LucideIcon,
 } from "lucide-react";
-import type { Task } from "./apis/mcp-tasks-api";
+import type { Task, TasksWire } from "./apis/mcp-tasks-api";
 import type { PrimitiveType } from "./task-tracker";
+
+/**
+ * A task rendered by the shared UI. Both wires carry the same information
+ * under different field names (`ttl`/`pollInterval` vs `ttlMs`/
+ * `pollIntervalMs`), plus extension-only inline `result`/`error`/
+ * `inputRequests`. The era-native object stays available as `raw` so the
+ * debugger can show wire truth.
+ */
+/**
+ * Synthetic status for a tracked handle the server no longer knows (`-32602`).
+ * It is not a wire status: it only ever originates from the local tracker.
+ */
+export const UNAVAILABLE_STATUS = "unavailable" as const;
+
+export type TaskDisplayStatus = Task["status"] | typeof UNAVAILABLE_STATUS;
+
+export interface NormalizedTask {
+  wire: TasksWire;
+  taskId: string;
+  status: TaskDisplayStatus;
+  statusMessage?: string;
+  createdAt: string;
+  lastUpdatedAt: string;
+  ttl: number | null;
+  pollInterval?: number;
+  result?: unknown;
+  error?: { code: number; message: string; data?: unknown };
+  inputRequests?: Record<string, unknown>;
+  /** Local-only: the server answered `-32602` for this handle. */
+  expired?: boolean;
+  raw: Record<string, unknown>;
+}
+
+function optionalNumber(value: unknown): number | undefined {
+  return typeof value === "number" ? value : undefined;
+}
+
+export function normalizeTask(
+  wire: TasksWire,
+  raw: Record<string, unknown>,
+): NormalizedTask {
+  const ttl = wire === "extension" ? raw.ttlMs : raw.ttl;
+  const pollInterval =
+    wire === "extension" ? raw.pollIntervalMs : raw.pollInterval;
+
+  return {
+    wire,
+    taskId: String(raw.taskId ?? ""),
+    status: raw.status as Task["status"],
+    statusMessage:
+      typeof raw.statusMessage === "string" ? raw.statusMessage : undefined,
+    createdAt: String(raw.createdAt ?? ""),
+    lastUpdatedAt: String(raw.lastUpdatedAt ?? raw.createdAt ?? ""),
+    ttl: typeof ttl === "number" ? ttl : null,
+    pollInterval: optionalNumber(pollInterval),
+    result: raw.result,
+    error: raw.error as NormalizedTask["error"],
+    inputRequests: raw.inputRequests as Record<string, unknown> | undefined,
+    raw,
+  };
+}
 
 // Status configuration for task states
 export interface StatusConfig {
@@ -21,7 +82,7 @@ export interface StatusConfig {
   animate: boolean;
 }
 
-export const STATUS_CONFIG: Record<Task["status"], StatusConfig> = {
+export const STATUS_CONFIG: Record<TaskDisplayStatus, StatusConfig> = {
   working: {
     icon: Loader2,
     color: "text-info",
@@ -52,7 +113,36 @@ export const STATUS_CONFIG: Record<Task["status"], StatusConfig> = {
     bgColor: "bg-muted",
     animate: false,
   },
+  [UNAVAILABLE_STATUS]: {
+    icon: Slash,
+    color: "text-muted-foreground",
+    bgColor: "bg-muted",
+    animate: false,
+  },
 };
+
+/**
+ * Renders a tracked handle the server has forgotten straight from tracker
+ * state — no network read, since re-polling it can only fail again.
+ */
+export function expiredPlaceholderTask(tracked: {
+  taskId: string;
+  wire: TasksWire;
+  createdAt: string;
+}): NormalizedTask {
+  return {
+    wire: tracked.wire,
+    taskId: tracked.taskId,
+    status: UNAVAILABLE_STATUS,
+    statusMessage:
+      "The server no longer knows this task (expired, purged, or forgotten across sessions).",
+    createdAt: tracked.createdAt,
+    lastUpdatedAt: tracked.createdAt,
+    ttl: null,
+    expired: true,
+    raw: { taskId: tracked.taskId },
+  };
+}
 
 // Primitive type configuration
 export const PRIMITIVE_TYPE_CONFIG: Record<

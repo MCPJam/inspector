@@ -6,6 +6,38 @@ import { ensureLocalMode, runByMode } from "@/lib/apis/mode-client";
 export type Task = MCPTask;
 export type ListTasksResult = MCPListTasksResult;
 
+/** Which tasks wire a connection speaks (see the SDK's tasks-dispatch). */
+export type TasksWire = "none" | "legacy" | "extension";
+
+export interface TasksSupport {
+  wire: TasksWire;
+  toolCalls: boolean;
+  list: boolean;
+  cancel: boolean;
+  update: boolean;
+  inlineResult: boolean;
+}
+
+export const NO_TASKS_SUPPORT: TasksSupport = {
+  wire: "none",
+  toolCalls: false,
+  list: false,
+  cancel: false,
+  update: false,
+  inlineResult: false,
+};
+
+/** Era-native task payload plus the wire it came off. */
+export interface TaskEnvelope {
+  wire: TasksWire;
+  task: Record<string, unknown>;
+}
+
+/** The server no longer knows this task (expired/purged/forgotten). */
+export class TaskUnknownOrExpiredError extends Error {
+  readonly code = "task-unknown-or-expired";
+}
+
 export async function listTasks(
   serverId: string,
   cursor?: string,
@@ -29,7 +61,10 @@ export async function listTasks(
   return body as ListTasksResult;
 }
 
-export async function getTask(serverId: string, taskId: string): Promise<Task> {
+export async function getTask(
+  serverId: string,
+  taskId: string,
+): Promise<TaskEnvelope> {
   ensureLocalMode("Tasks are not supported in hosted mode");
 
   const res = await authFetch("/api/mcp/tasks/get", {
@@ -44,9 +79,44 @@ export async function getTask(serverId: string, taskId: string): Promise<Task> {
   } catch {}
 
   if (!res.ok) {
+    if (body?.code === "task-unknown-or-expired") {
+      throw new TaskUnknownOrExpiredError(
+        body?.error || "Task is unknown or expired",
+      );
+    }
     throw new Error(body?.error || `Get task failed (${res.status})`);
   }
-  return body as Task;
+  return body as TaskEnvelope;
+}
+
+// Extension wire: submit responses to the keyed `inputRequests` snapshot.
+export async function updateTask(
+  serverId: string,
+  taskId: string,
+  inputResponses: Record<string, unknown>,
+): Promise<TaskEnvelope> {
+  ensureLocalMode("Tasks are not supported in hosted mode");
+
+  const res = await authFetch("/api/mcp/tasks/update", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ serverId, taskId, inputResponses }),
+  });
+
+  let body: any = null;
+  try {
+    body = await res.json();
+  } catch {}
+
+  if (!res.ok) {
+    if (body?.code === "task-unknown-or-expired") {
+      throw new TaskUnknownOrExpiredError(
+        body?.error || "Task is unknown or expired",
+      );
+    }
+    throw new Error(body?.error || `Update task failed (${res.status})`);
+  }
+  return body as TaskEnvelope;
 }
 
 export async function getTaskResult(
@@ -78,7 +148,7 @@ export async function getTaskResult(
 export async function cancelTask(
   serverId: string,
   taskId: string,
-): Promise<Task> {
+): Promise<{ wire: TasksWire; task: Task | null }> {
   ensureLocalMode("Tasks are not supported in hosted mode");
 
   const res = await authFetch("/api/mcp/tasks/cancel", {
@@ -95,17 +165,7 @@ export async function cancelTask(
   if (!res.ok) {
     throw new Error(body?.error || `Cancel task failed (${res.status})`);
   }
-  return body as Task;
-}
-
-// Task capabilities for a server (MCP Tasks spec 2025-11-25)
-export interface TaskCapabilities {
-  // Server supports task-augmented tools/call requests
-  supportsToolCalls: boolean;
-  // Server supports tasks/list operation
-  supportsList: boolean;
-  // Server supports tasks/cancel operation
-  supportsCancel: boolean;
+  return body as { wire: TasksWire; task: Task | null };
 }
 
 // Get task capabilities for a server
@@ -113,15 +173,11 @@ export interface TaskCapabilities {
 // if the corresponding capability has been declared by the receiver
 export async function getTaskCapabilities(
   serverId: string,
-): Promise<TaskCapabilities> {
+): Promise<TasksSupport> {
   return runByMode({
     hosted: async () => {
       void serverId;
-      return {
-        supportsToolCalls: false,
-        supportsList: false,
-        supportsCancel: false,
-      };
+      return NO_TASKS_SUPPORT;
     },
     local: async () => {
       const res = await authFetch("/api/mcp/tasks/capabilities", {
@@ -140,7 +196,7 @@ export async function getTaskCapabilities(
           body?.error || `Get task capabilities failed (${res.status})`,
         );
       }
-      return body as TaskCapabilities;
+      return body as TasksSupport;
     },
   });
 }

@@ -146,6 +146,7 @@ export async function executeToolApi(
   toolName: string,
   parameters: Record<string, unknown>,
   taskOptions?: TaskOptions,
+  allowTaskResult?: boolean,
 ): Promise<ToolExecutionResponse> {
   return runByMode({
     hosted: async () => {
@@ -187,7 +188,13 @@ export async function executeToolApi(
       const res = await authFetch("/api/mcp/tools/execute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ serverId, toolName, parameters, taskOptions }),
+        body: JSON.stringify({
+          serverId,
+          toolName,
+          parameters,
+          taskOptions,
+          allowTaskResult,
+        }),
       });
       let body: any = null;
       try {
