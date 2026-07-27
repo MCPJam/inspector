@@ -86,7 +86,7 @@ function extensionManager(overrides: Record<string, unknown> = {}) {
         ? { resultType: "task", taskId: "task-1" }
         : { resultType: "complete", content: [{ type: "text", text: "sync" }] },
     // The Mcp-Name check reads the headers the transport actually sent, so the
-    // fake performs the HTTP round trip its real counterpart would.
+    // fake performs the routed HTTP round trip its real counterpart would.
     getTaskExt: async (_serverId: string, taskId: string) => {
       await fetch("https://example.test/mcp", {
         method: "POST",
@@ -95,12 +95,19 @@ function extensionManager(overrides: Record<string, unknown> = {}) {
       });
       return task;
     },
+    getClient: () => ({
+      request: async () => {
+        throw Object.assign(new Error("missing capability"), {
+          code: -32003,
+        });
+      },
+    }),
     ...overrides,
   } as Record<string, unknown>;
 }
 
 // The Mcp-Name check instruments `globalThis.fetch`; no test talks to a real
-// network, so the fake transport round trip resolves locally.
+// network, so the fake transport's round trip resolves locally.
 beforeEach(() => {
   vi.stubGlobal(
     "fetch",
@@ -147,30 +154,51 @@ describe("declaration hygiene", () => {
 });
 
 describe("shape validators", () => {
-  it("requires a flat CreateTaskResult", () => {
+  it("requires a flat CreateTaskResult; extra fields warn instead of failing", () => {
     expect(
       validateCreateTaskShape({ resultType: "task", taskId: "t" })
-    ).toEqual([]);
+    ).toEqual({ violations: [], warnings: [] });
     expect(
-      validateCreateTaskShape({ resultType: "complete", taskId: "t" })[0]
+      validateCreateTaskShape({ resultType: "complete", taskId: "t" })
+        .violations[0]
     ).toContain("resultType");
-    expect(validateCreateTaskShape({ resultType: "task" })[0]).toContain(
-      "taskId"
-    );
     expect(
-      validateCreateTaskShape({
-        resultType: "task",
-        taskId: "t",
-        task: { taskId: "t" },
-      })[0]
-    ).toContain("FLAT");
+      validateCreateTaskShape({ resultType: "task" }).violations[0]
+    ).toContain("taskId");
+    // A redundant nested `task` object is an extra field the spec does not
+    // forbid: an otherwise-valid flat result passes with a warning.
+    const nested = validateCreateTaskShape({
+      resultType: "task",
+      taskId: "t",
+      task: { taskId: "t" },
+    });
+    expect(nested.violations).toEqual([]);
+    expect(nested.warnings[0]).toContain("nested");
   });
 
-  it("enforces era-native ttl fields", () => {
-    expect(validateTaskTtlShape("extension", { ttlMs: null })).toEqual([]);
-    expect(validateTaskTtlShape("extension", { ttl: 5 })).toHaveLength(2);
-    expect(validateTaskTtlShape("legacy", { ttl: 5 })).toEqual([]);
-    expect(validateTaskTtlShape("legacy", { ttlMs: 5 })[0]).toContain("ttl");
+  it("enforces era-native ttl fields; the other era's field warns", () => {
+    expect(validateTaskTtlShape("extension", { ttlMs: null })).toEqual({
+      violations: [],
+      warnings: [],
+    });
+    // `ttl` beside a missing/invalid `ttlMs`: one violation (ttlMs shape) and
+    // one warning (extra legacy field) — presence alone must not fail.
+    const mixed = validateTaskTtlShape("extension", { ttl: 5 });
+    expect(mixed.violations).toHaveLength(1);
+    expect(mixed.warnings).toHaveLength(1);
+    const extraOnValid = validateTaskTtlShape("extension", {
+      ttlMs: null,
+      ttl: 5,
+    });
+    expect(extraOnValid.violations).toEqual([]);
+    expect(extraOnValid.warnings[0]).toContain("ttl");
+    expect(validateTaskTtlShape("legacy", { ttl: 5 })).toEqual({
+      violations: [],
+      warnings: [],
+    });
+    expect(validateTaskTtlShape("legacy", { ttlMs: 5 }).warnings[0]).toContain(
+      "ttlMs"
+    );
   });
 });
 
@@ -251,9 +279,31 @@ describe("MCPTasksConformanceTest", () => {
     ).toContain("INLINE");
   });
 
-  it("fails when the server creates a task the client never declared for", async () => {
+  it("passes WITH a warning when tasks/get without the declaration is answered", async () => {
+    // Answering a bare tasks/get is conformant: -32003 is mandated only when
+    // the server cannot avoid returning CreateTaskResult to an undeclared
+    // client — never for a bare read. Lenient handling surfaces as a warning.
     const manager = extensionManager({
-      // Returns a task whether or not the call declared eligibility.
+      getClient: () => ({ request: async () => ({ taskId: "task-1" }) }),
+    });
+
+    const result = await runAgainst(manager, {
+      config: { toolName: "long_job", pollTimeoutMs: 500 },
+    });
+
+    expect(statusMap(result)["tasks-undeclared-capability-rejected"]).toBe(
+      "passed"
+    );
+    const check = result.checks.find(
+      (c) => c.id === "tasks-undeclared-capability-rejected"
+    );
+    expect(check?.warnings?.[0]).toContain("allowed");
+  });
+
+  it("fails when an undeclared tools/call is turned into a task", async () => {
+    // The mandated case: a server must not create a task for a client that
+    // never declared the capability.
+    const manager = extensionManager({
       executeTool: async () => ({ resultType: "task", taskId: "task-1" }),
     });
 
