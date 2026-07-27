@@ -20,6 +20,7 @@ import {
 } from "./use-journey-run-stream";
 import { summaryTargetKey, type SwarmTargetColumn } from "./swarm-targets";
 import { usePersistedSessionTrace } from "./use-persisted-session-trace";
+import { shortBundleHash } from "@/components/plugins/plugin-presentation";
 
 export type SwarmMatrixCellOutcome =
   | "pending"
@@ -363,6 +364,31 @@ export function SwarmLiveStreamPane({
               : null)}
         </p>
       )}
+
+      {/* Which plugin bundle produced this transcript. A swarm transcript is
+          the only record of what a simulated session ran with, and a plugin
+          re-import silently changed the answer until the run snapshot started
+          carrying it. Read-only provenance, not a restorable pin — and shown
+          only when the target pinned one. */}
+      {persisted.pluginVersions.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            Plugins
+          </span>
+          {persisted.pluginVersions.map((version) => (
+            <span
+              key={version.pluginVersionId}
+              className="inline-flex items-center gap-1 rounded-md border border-border/60 px-1.5 py-0.5 text-[11px]"
+              title={`Plugin version ${version.pluginVersionId} · bundle ${version.bundleHash}`}
+            >
+              <span className="text-foreground">{version.name}</span>
+              <span className="font-mono text-[10px] text-muted-foreground">
+                {shortBundleHash(version.bundleHash)}
+              </span>
+            </span>
+          ))}
+        </div>
+      ) : null}
 
       <div data-testid="swarm-live-trace-view-tabs">
         <TraceViewModeTabs
