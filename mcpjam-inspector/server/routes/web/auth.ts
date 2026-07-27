@@ -16,6 +16,7 @@ import type {
   XaaEnterprisePolicy,
 } from "@mcpjam/sdk";
 import { HOSTED_MODE, WEB_CALL_TIMEOUT_MS } from "../../config.js";
+import { HOSTED_TASK_BATCH_MAX as HOSTED_TASK_BATCH_MAX_SHARED } from "../../../shared/hosted-tasks.js";
 import {
   attachHostedRpcLogs,
   createHostedRpcLogCollector,
@@ -160,24 +161,36 @@ export const taskOptionsSchema = z
   .object({ ttl: z.number().int().positive().optional() })
   .strict();
 
-export const toolsExecuteSchema = projectServerSchema.extend({
-  toolName: z.string().min(1),
-  parameters: z.record(z.string(), z.unknown()).default({}),
-  taskOptions: taskOptionsSchema.optional(),
-  // Extension wire: the client only declares that a task response is
-  // acceptable; the server decides whether to create one.
-  allowTaskResult: z.boolean().optional(),
-});
+export const toolsExecuteSchema = projectServerSchema
+  .extend({
+    toolName: z.string().min(1),
+    parameters: z.record(z.string(), z.unknown()).default({}),
+    taskOptions: taskOptionsSchema.optional(),
+    // Extension wire: the client only declares that a task response is
+    // acceptable; the server decides whether to create one.
+    allowTaskResult: z.boolean().optional(),
+  })
+  // The two are mutually exclusive wires: `taskOptions` is the 2025-11-25
+  // `params.task` opt-in, `allowTaskResult` the SEP-2663 per-request
+  // declaration. Sending both means the caller does not know which wire it is
+  // on, so reject it at the edge instead of guessing.
+  .refine((body) => !(body.taskOptions && body.allowTaskResult), {
+    message:
+      "taskOptions (2025-11-25) and allowTaskResult (io.modelcontextprotocol/tasks) are different wires; send at most one",
+    path: ["allowTaskResult"],
+  });
 
-/** One connection per server per TasksTab tick — the main hosted cost control. */
-export const HOSTED_TASK_BATCH_MAX = 50;
+export { HOSTED_TASK_BATCH_MAX } from "../../../shared/hosted-tasks.js";
 
 export const taskGetSchema = projectServerSchema.extend({
   taskId: z.string().min(1),
 });
 
 export const taskGetBatchSchema = projectServerSchema.extend({
-  taskIds: z.array(z.string().min(1)).min(1).max(HOSTED_TASK_BATCH_MAX),
+  taskIds: z
+    .array(z.string().min(1))
+    .min(1)
+    .max(HOSTED_TASK_BATCH_MAX_SHARED),
 });
 
 export const taskListSchema = projectServerSchema.extend({

@@ -39,6 +39,7 @@ import {
 } from "./auth.js";
 import { ErrorCode, WebRouteError } from "./errors.js";
 import {
+  TasksFeatureError,
   UnknownTaskError,
   cancelTaskForWire,
   getTaskForWire,
@@ -51,13 +52,22 @@ import {
 
 const tasks = new Hono();
 
-/** A task the server no longer knows is a stable, client-actionable outcome. */
-async function mapUnknownTask<T>(fn: () => Promise<T>): Promise<T> {
+/**
+ * Maps the two task-specific failure classes onto stable client-actionable
+ * outcomes: a forgotten task (404 `TASK_NOT_FOUND`) and a request the resolved
+ * wire cannot serve (400 `TASKS_UNSUPPORTED`). Anything else stays a 500.
+ */
+async function mapTaskErrors<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } catch (error) {
     if (error instanceof UnknownTaskError) {
       throw new WebRouteError(404, ErrorCode.TASK_NOT_FOUND, error.message, {
+        wire: error.wire,
+      });
+    }
+    if (error instanceof TasksFeatureError) {
+      throw new WebRouteError(400, ErrorCode.TASKS_UNSUPPORTED, error.message, {
         wire: error.wire,
       });
     }
@@ -73,13 +83,18 @@ tasks.post("/capabilities", async (c) =>
 
 tasks.post("/list", async (c) =>
   withEphemeralConnection(c, taskListSchema, (manager, body) =>
-    listTasksForWire(manager, { serverId: body.serverId, cursor: body.cursor }),
+    mapTaskErrors(() =>
+      listTasksForWire(manager, {
+        serverId: body.serverId,
+        cursor: body.cursor,
+      }),
+    ),
   ),
 );
 
 tasks.post("/get", async (c) =>
   withEphemeralConnection(c, taskGetSchema, (manager, body) =>
-    mapUnknownTask(() =>
+    mapTaskErrors(() =>
       getTaskForWire(manager, {
         serverId: body.serverId,
         taskId: body.taskId,
@@ -92,17 +107,19 @@ tasks.post("/get", async (c) =>
 // inside the batch so one forgotten task can't fail the whole tick.
 tasks.post("/get-batch", async (c) =>
   withEphemeralConnection(c, taskGetBatchSchema, (manager, body) =>
-    getTasksBatchForWire(manager, {
-      serverId: body.serverId,
-      taskIds: body.taskIds,
-    }),
+    mapTaskErrors(() =>
+      getTasksBatchForWire(manager, {
+        serverId: body.serverId,
+        taskIds: body.taskIds,
+      }),
+    ),
   ),
 );
 
 // Legacy only: the extension carries the result inline on tasks/get.
 tasks.post("/result", async (c) =>
   withEphemeralConnection(c, taskGetSchema, (manager, body) =>
-    mapUnknownTask(() =>
+    mapTaskErrors(() =>
       getTaskResultForWire(manager, {
         serverId: body.serverId,
         taskId: body.taskId,
@@ -114,7 +131,7 @@ tasks.post("/result", async (c) =>
 // Extension only: submit responses to the keyed inputRequests snapshot.
 tasks.post("/update", async (c) =>
   withEphemeralConnection(c, taskUpdateSchema, (manager, body) =>
-    mapUnknownTask(() =>
+    mapTaskErrors(() =>
       updateTaskForWire(manager, {
         serverId: body.serverId,
         taskId: body.taskId,
@@ -126,7 +143,7 @@ tasks.post("/update", async (c) =>
 
 tasks.post("/cancel", async (c) =>
   withEphemeralConnection(c, taskGetSchema, (manager, body) =>
-    mapUnknownTask(() =>
+    mapTaskErrors(() =>
       cancelTaskForWire(manager, {
         serverId: body.serverId,
         taskId: body.taskId,

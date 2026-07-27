@@ -1,4 +1,10 @@
 /**
+ * PIN: modelcontextprotocol/ext-tasks @ 2c1425d9a288b9b1f489430fe1e00bb392b47e48
+ * (`specification/draft/tasks.md`, `schema/draft/schema.ts`). Re-diff against
+ * that commit when re-syncing; delete these files for the published
+ * `@modelcontextprotocol/ext-tasks` package once it ships.
+ */
+/**
  * Vendored types for the `io.modelcontextprotocol/tasks` extension
  * (SEP-2663).
  *
@@ -95,10 +101,12 @@ export interface GetTaskExtResult extends DetailedTaskExt {
   resultType?: "complete";
 }
 
-/** `tasks/update` result (submitting `inputResponses`). */
-export interface UpdateTaskExtResult extends DetailedTaskExt {
-  resultType?: "complete";
-}
+/**
+ * `tasks/update` result — per SEP-2663 `UpdateTaskResult = Result`: an EMPTY,
+ * eventually-consistent acknowledgement. It carries no task state, so callers
+ * must re-poll `tasks/get` for the post-update status.
+ */
+export type UpdateTaskExtResult = Record<string, unknown>;
 
 /**
  * `tasks/cancel` result — an EMPTY acknowledgement. Cancellation is
@@ -107,10 +115,11 @@ export interface UpdateTaskExtResult extends DetailedTaskExt {
  */
 export type CancelTaskExtResult = Record<string, unknown>;
 
-/** `notifications/tasks` body (optional; delivered via `subscriptions/listen`). */
-export interface TaskExtNotificationParams {
-  taskId: string;
-  status: TaskExtStatus;
-  statusMessage?: string;
+/**
+ * `notifications/tasks` body (optional; delivered via `subscriptions/listen`).
+ * SEP-2663 carries a full `DetailedTask`, so the extra task fields are part of
+ * the payload rather than an unrelated envelope.
+ */
+export interface TaskExtNotificationParams extends DetailedTaskExt {
   _meta?: Record<string, unknown>;
 }

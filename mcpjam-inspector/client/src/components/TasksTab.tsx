@@ -50,9 +50,11 @@ import { Progress } from "@mcpjam/design-system/progress";
 import { TaskInlineProgress } from "./tasks/TaskInlineProgress";
 import {
   STATUS_CONFIG,
+  expiredPlaceholderTask,
   formatRelativeTime,
   normalizeTask,
   type NormalizedTask,
+  type TaskDisplayStatus,
 } from "@/lib/task-utils";
 import { useTaskElicitation } from "@/hooks/use-task-elicitation";
 import { ElicitationDialog } from "./ElicitationDialog";
@@ -69,8 +71,13 @@ interface TasksTabProps {
   isActive?: boolean;
 }
 
-function TaskStatusIcon({ status }: { status: Task["status"] }) {
-  const config = STATUS_CONFIG[status];
+/** Unknown statuses should never reach the UI, but must not crash it. */
+function statusConfigFor(status: TaskDisplayStatus) {
+  return STATUS_CONFIG[status] ?? STATUS_CONFIG.working;
+}
+
+function TaskStatusIcon({ status }: { status: TaskDisplayStatus }) {
+  const config = statusConfigFor(status);
   const Icon = config.icon;
   return (
     <Icon
@@ -133,6 +140,12 @@ export function TasksTab({
     Set<string>
   >(new Set());
   const [submittingInput, setSubmittingInput] = useState(false);
+  // `inputRequests` is a re-sent snapshot and `tasks/update` is eventually
+  // consistent, so an answered key can come back on the next poll. Remember
+  // what was answered per task and never re-prompt for it.
+  const [answeredInputKeys, setAnsweredInputKeys] = useState<
+    Map<string, Set<string>>
+  >(new Map());
   // Track the task ID for pending input_required requests to avoid race conditions
   const pendingInputRequestTaskIdRef = useRef<string | null>(null);
 
@@ -205,8 +218,10 @@ export function TasksTab({
     if (!isExtensionWire || selectedTask?.status !== "input_required") {
       return null;
     }
+    const answered = answeredInputKeys.get(selectedTask.taskId);
     const entries = Object.entries(selectedTask.inputRequests ?? {});
     for (const [key, value] of entries) {
+      if (answered?.has(key)) continue;
       const request = value as {
         method?: string;
         params?: { message?: string; requestedSchema?: unknown };
@@ -216,6 +231,15 @@ export function TasksTab({
       }
     }
     return null;
+  }, [isExtensionWire, selectedTask, answeredInputKeys]);
+
+  /** Keys in the current snapshot this UI cannot answer (sampling/roots). */
+  const unanswerableInputCount = useMemo(() => {
+    if (!isExtensionWire || selectedTask?.status !== "input_required") return 0;
+    return Object.values(selectedTask.inputRequests ?? {}).filter(
+      (value) =>
+        (value as { method?: string })?.method !== "elicitation/create",
+    ).length;
   }, [isExtensionWire, selectedTask]);
 
   const extensionDialogElicitation: DialogElicitation | null =
@@ -284,6 +308,13 @@ export function TasksTab({
 
   const fetchTasks = useCallback(async () => {
     if (!serverName) return;
+    // No tasks wire (older version pinned, or no capability): every request
+    // would 400. Keep the tracked handles — they become valid again when the
+    // user pins back to a tasks-capable version.
+    if (taskCapabilities && taskCapabilities.wire === "none") {
+      setTasks([]);
+      return;
+    }
 
     setFetchingTasks(true);
     setError("");
@@ -306,10 +337,17 @@ export function TasksTab({
 
       // Get locally tracked tasks and fetch their current status
       const trackedTasks = getTrackedTasksForServer(serverName);
-      const pendingIds = trackedTasks
+      const pending = trackedTasks
         .filter((t) => !serverTaskIds.has(t.taskId))
-        .filter((t) => !dismissedIds.has(t.taskId))
-        .map((t) => t.taskId);
+        .filter((t) => !dismissedIds.has(t.taskId));
+      // An expired handle is never re-polled: the server has forgotten it, so
+      // it renders from tracker data until the user dismisses it.
+      const expiredEntries = pending
+        .filter((t) => t.expired)
+        .map((t) => expiredPlaceholderTask(t));
+      const livePending = pending.filter((t) => !t.expired);
+      const byId = new Map(livePending.map((t) => [t.taskId, t]));
+      const pendingIds = livePending.map((t) => t.taskId);
 
       const onUnknownTask = (taskId: string) => {
         // Unknown/expired is not an error: flag it and keep the handle so the
@@ -338,28 +376,34 @@ export function TasksTab({
           )
         ).flat();
         trackedTaskStatuses = entries.map((entry) => {
+          const tracked = byId.get(entry.taskId);
           if (entry.code === "task-unknown-or-expired") {
             onUnknownTask(entry.taskId);
-            return null;
+            return tracked ? expiredPlaceholderTask(tracked) : null;
           }
           if (!entry.task) return null;
           return normalizeTask(wire, entry.task);
         });
       } else {
         trackedTaskStatuses = await Promise.all(
-          pendingIds.map(async (taskId) => {
+          livePending.map(async (tracked) => {
             try {
-              const envelope = await getTask(serverName, taskId);
+              const envelope = await getTask(serverName, tracked.taskId);
               return normalizeTask(envelope.wire, envelope.task);
             } catch (err) {
               if (err instanceof TaskUnknownOrExpiredError) {
-                onUnknownTask(taskId);
+                onUnknownTask(tracked.taskId);
+                return expiredPlaceholderTask(tracked);
               }
+              // Anything else is transient (connect failure, 5xx, a version
+              // flip). Handles are NEVER dropped for it — on the extension
+              // wire there is no `tasks/list` to recover them from.
               return null;
             }
           }),
         );
       }
+      trackedTaskStatuses = [...trackedTaskStatuses, ...expiredEntries];
 
       // Merge server tasks with tracked tasks (tracked tasks first for recency)
       // Filter out dismissed tasks from server results
@@ -484,20 +528,40 @@ export function TasksTab({
     ) => {
       if (!extensionInputRequest) return;
       // Partial responses are allowed: answer the key the user just handled.
+      // SEP-2663 `InputResponse` is the BARE result object — never wrapped in a
+      // `{method, result}` envelope, which a conforming server would ignore
+      // (leaving the task stuck in `input_required`).
+      const key = extensionInputRequest.key;
+      setAnsweredInputKeys((prev) => {
+        const next = new Map(prev);
+        const keys = new Set(next.get(selectedTaskId) ?? []);
+        keys.add(key);
+        next.set(selectedTaskId, keys);
+        return next;
+      });
       await handleSubmitInputResponses({
-        [extensionInputRequest.key]: {
-          method: "elicitation/create",
-          result: {
-            action,
-            ...(action === "accept" && parameters
-              ? { content: parameters }
-              : {}),
-          },
+        [key]: {
+          action,
+          ...(action === "accept" && parameters ? { content: parameters } : {}),
         },
       });
     },
-    [extensionInputRequest, handleSubmitInputResponses],
+    [extensionInputRequest, handleSubmitInputResponses, selectedTaskId],
   );
+
+  // The "cancellation requested" banner is transient: once the task reaches a
+  // terminal state (or disappears) it has served its purpose.
+  useEffect(() => {
+    setCancellationRequested((prev) => {
+      if (prev.size === 0) return prev;
+      const next = new Set(prev);
+      for (const id of prev) {
+        const task = tasks.find((t) => t.taskId === id);
+        if (!task || isTerminalStatus(task.status)) next.delete(id);
+      }
+      return next.size === prev.size ? prev : next;
+    });
+  }, [tasks]);
 
   // Fetch task capabilities when server changes
   // Per MCP Tasks spec (2025-11-25): clients SHOULD check capabilities before using task features
@@ -893,7 +957,7 @@ export function TasksTab({
                 <TaskStatusIcon status={selectedTask.status} />
                 <Badge
                   variant="outline"
-                  className={`text-xs ${STATUS_CONFIG[selectedTask.status].bgColor} ${STATUS_CONFIG[selectedTask.status].color} border-0`}
+                  className={`text-xs ${statusConfigFor(selectedTask.status).bgColor} ${statusConfigFor(selectedTask.status).color} border-0`}
                 >
                   {selectedTask.status}
                 </Badge>

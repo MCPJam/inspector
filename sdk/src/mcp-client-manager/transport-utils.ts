@@ -10,6 +10,7 @@ import type {
   StreamableHTTPClientTransportOptions,
 } from "@modelcontextprotocol/client";
 import type { RpcLogger } from "./types.js";
+import { isTasksExtensionEra } from "./tasks-dispatch.js";
 
 /**
  * Normalizes headers from various formats (Headers, string[][], or plain object)
@@ -271,6 +272,12 @@ export function wrapFetchForTaskRouting(
       return base(input as never, init as never);
     }
     const headers = new Headers(init?.headers);
+    // Era gate: the routing headers only exist in the extension era. A legacy
+    // 2025-11-25 `tasks/get` poll must go out byte-identical to what the
+    // in-core spec defines.
+    if (!isTasksExtensionEra(headers.get("mcp-protocol-version") ?? undefined)) {
+      return base(input as never, init as never);
+    }
     if (!headers.has("mcp-name")) {
       headers.set("mcp-name", routing.name);
     }
@@ -320,13 +327,26 @@ export function wrapTransportForTaskResults(transport: Transport): Transport {
     onclose?: () => void;
     onerror?: (error: Error) => void;
     onmessage?: (message: JSONRPCMessage, extra?: MessageExtraInfo) => void;
+    /** Negotiated version, learned from the client's `setProtocolVersion`. */
+    private protocolVersion: string | undefined;
 
     constructor(private readonly inner: Transport) {
       this.inner.onmessage = (
         message: JSONRPCMessage,
         extra?: MessageExtraInfo
       ) => {
-        this.onmessage?.(rewriteTaskResultMessage(message), extra);
+        // Sanitize on every era: a server must never be able to speak the
+        // private smuggling key itself.
+        const sanitized = stripTaskCreatedMetaKey(message);
+        // Era gate: a pre-2026 server that claims `resultType: "task"` is
+        // nonconforming, and a debugger must show that rather than silently
+        // rewriting it into a task.
+        this.onmessage?.(
+          isTasksExtensionEra(this.protocolVersion)
+            ? rewriteTaskResultMessage(sanitized)
+            : sanitized,
+          extra
+        );
       };
       this.inner.onclose = () => this.onclose?.();
       this.inner.onerror = (error: Error) => this.onerror?.(error);
@@ -354,6 +374,7 @@ export function wrapTransportForTaskResults(transport: Transport): Transport {
     }
 
     setProtocolVersion?(version: string): void {
+      this.protocolVersion = version;
       if (typeof this.inner.setProtocolVersion === "function") {
         this.inner.setProtocolVersion(version);
       }
@@ -361,6 +382,36 @@ export function wrapTransportForTaskResults(transport: Transport): Transport {
   }
 
   return new TaskResultTransport(transport);
+}
+
+/**
+ * Removes an inbound `_meta[TASK_CREATED_META_KEY]` — the key is private to
+ * this SDK, so anything arriving with it is a server trying to forge a task
+ * envelope. Exported for tests.
+ */
+export function stripTaskCreatedMetaKey(
+  message: JSONRPCMessage
+): JSONRPCMessage {
+  const result = (message as { result?: unknown }).result;
+  if (typeof result !== "object" || result === null || Array.isArray(result)) {
+    return message;
+  }
+  const meta = (result as { _meta?: unknown })._meta;
+  if (
+    typeof meta !== "object" ||
+    meta === null ||
+    !(TASK_CREATED_META_KEY in (meta as Record<string, unknown>))
+  ) {
+    return message;
+  }
+  const { [TASK_CREATED_META_KEY]: _forged, ...rest } = meta as Record<
+    string,
+    unknown
+  >;
+  return {
+    ...(message as Record<string, unknown>),
+    result: { ...(result as Record<string, unknown>), _meta: rest },
+  } as unknown as JSONRPCMessage;
 }
 
 /** Exported for tests: the pure message rewrite the wrapper applies. */

@@ -49,8 +49,20 @@ vi.mock("@/hooks/use-task-elicitation", () => ({
   }),
 }));
 
+const capturedDialogProps: {
+  elicitation?: { requestId: string } | null;
+  onResponse?: (
+    action: "accept" | "decline" | "cancel",
+    parameters?: Record<string, unknown>,
+  ) => Promise<void> | void;
+} = {};
+
 vi.mock("../ElicitationDialog", () => ({
-  ElicitationDialog: () => null,
+  ElicitationDialog: (props: any) => {
+    capturedDialogProps.elicitation = props.elicitationRequest;
+    capturedDialogProps.onResponse = props.onResponse;
+    return null;
+  },
 }));
 
 vi.mock("../ui/three-panel-layout", () => ({
@@ -316,6 +328,114 @@ describe("TasksTab", () => {
       await waitFor(() => {
         expect(screen.getByText(/Cancellation requested/i)).toBeInTheDocument();
       });
+    });
+    it("submits a BARE input response value to tasks/update", async () => {
+      mockGetTask.mockResolvedValue({
+        wire: "extension",
+        task: {
+          ...extensionTask,
+          status: "input_required",
+          result: undefined,
+          inputRequests: {
+            k1: {
+              method: "elicitation/create",
+              params: {
+                message: "need a city",
+                requestedSchema: { type: "object", properties: {} },
+              },
+            },
+          },
+        },
+      });
+      mockUpdateTask.mockResolvedValue({});
+
+      render(
+        <TasksTab
+          serverConfig={createServerConfig()}
+          serverName="test-server"
+        />,
+      );
+      await waitFor(() => {
+        expect(screen.getByText("ext-1")).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByText("ext-1"));
+
+      await waitFor(() => {
+        expect(capturedDialogProps.elicitation?.requestId).toBe("k1");
+      });
+      await capturedDialogProps.onResponse?.("decline");
+
+      await waitFor(() => {
+        expect(mockUpdateTask).toHaveBeenCalledWith("test-server", "ext-1", {
+          k1: { action: "decline" },
+        });
+      });
+    });
+
+    it("renders an already-expired handle from the tracker without re-polling", async () => {
+      const tracker = await import("@/lib/task-tracker");
+      vi.mocked(tracker.getTrackedTasksForServer).mockReturnValue([
+        {
+          taskId: "ext-1",
+          serverId: "test-server",
+          wire: "extension",
+          createdAt: extensionTask.createdAt,
+          expired: true,
+        },
+      ] as never);
+
+      render(
+        <TasksTab
+          serverConfig={createServerConfig()}
+          serverName="test-server"
+        />,
+      );
+      await waitFor(() => {
+        expect(screen.getByText("ext-1")).toBeInTheDocument();
+      });
+      expect(mockGetTask).not.toHaveBeenCalled();
+    });
+
+    it("keeps a tracked handle when a read fails transiently", async () => {
+      mockGetTask.mockRejectedValue(new Error("connect ECONNREFUSED"));
+      const tracker = await import("@/lib/task-tracker");
+
+      render(
+        <TasksTab
+          serverConfig={createServerConfig()}
+          serverName="test-server"
+        />,
+      );
+      await waitFor(() => {
+        expect(mockGetTask).toHaveBeenCalled();
+      });
+      expect(tracker.untrackTask).not.toHaveBeenCalled();
+      expect(tracker.markTaskExpired).not.toHaveBeenCalled();
+    });
+
+    it("reads nothing when the resolved wire is none", async () => {
+      mockGetTaskCapabilities.mockResolvedValue({
+        wire: "none",
+        toolCalls: false,
+        list: false,
+        cancel: false,
+        update: false,
+        inlineResult: false,
+      });
+      const tracker = await import("@/lib/task-tracker");
+
+      render(
+        <TasksTab
+          serverConfig={createServerConfig()}
+          serverName="test-server"
+        />,
+      );
+      await waitFor(() => {
+        expect(mockGetTaskCapabilities).toHaveBeenCalled();
+      });
+      expect(mockGetTask).not.toHaveBeenCalled();
+      expect(mockListTasks).not.toHaveBeenCalled();
+      expect(tracker.untrackTask).not.toHaveBeenCalled();
     });
   });
 });

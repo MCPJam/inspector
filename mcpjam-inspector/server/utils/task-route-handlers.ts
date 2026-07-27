@@ -27,6 +27,23 @@ export function isUnknownTaskError(error: unknown): boolean {
   return (error as { code?: unknown } | null)?.code === -32602;
 }
 
+/**
+ * A tasks request the connection cannot serve — no tasks wire, a method that
+ * does not exist on the resolved wire, or an undeclared capability. It is a
+ * client/feature error (400), not an internal failure (500).
+ */
+export class TasksFeatureError extends Error {
+  readonly code = "tasks-unsupported";
+  readonly status = 400 as const;
+  constructor(
+    message: string,
+    readonly wire: string,
+  ) {
+    super(message);
+    this.name = "TasksFeatureError";
+  }
+}
+
 export class UnknownTaskError extends Error {
   readonly code = TASK_UNKNOWN_OR_EXPIRED;
   constructor(
@@ -70,7 +87,7 @@ export async function getTaskForWire(
 ) {
   const support = manager.getTasksSupport(params.serverId);
   if (support.wire === "none") {
-    throw new Error("Server has no tasks wire");
+    throw new TasksFeatureError("Server has no tasks wire", support.wire);
   }
 
   try {
@@ -91,7 +108,7 @@ export async function getTasksBatchForWire(
 ) {
   const support = manager.getTasksSupport(params.serverId);
   if (support.wire === "none") {
-    throw new Error("Server has no tasks wire");
+    throw new TasksFeatureError("Server has no tasks wire", support.wire);
   }
 
   const tasks: Array<{
@@ -131,8 +148,9 @@ export async function getTaskResultForWire(
 ) {
   const support = manager.getTasksSupport(params.serverId);
   if (support.wire !== "legacy") {
-    throw new Error(
+    throw new TasksFeatureError(
       "tasks/result exists only on the 2025-11-25 wire; use tasks/get (the result is inline)",
+      support.wire,
     );
   }
 
@@ -161,7 +179,10 @@ export async function updateTaskForWire(
 ) {
   const support = manager.getTasksSupport(params.serverId);
   if (!support.update) {
-    throw new Error("Server does not support tasks/update");
+    throw new TasksFeatureError(
+      "Server does not support tasks/update",
+      support.wire,
+    );
   }
 
   try {
@@ -182,8 +203,9 @@ export async function cancelTaskForWire(
 ) {
   const support = manager.getTasksSupport(params.serverId);
   if (!support.cancel) {
-    throw new Error(
+    throw new TasksFeatureError(
       "Server does not support task cancellation (tasks.cancel capability not declared)",
+      support.wire,
     );
   }
 
@@ -205,17 +227,29 @@ export async function cancelTaskForWire(
  * 2025-11-25 form nests it under `task`. Returns null for a normal result —
  * on the extension the server is free to answer synchronously.
  */
+function modelImmediateResponseOf(result: unknown): unknown {
+  return (result as { _meta?: Record<string, unknown> } | null | undefined)
+    ?._meta?.["io.modelcontextprotocol/model-immediate-response"];
+}
+
 export function detectCreatedTask(
   manager: Manager,
   serverId: string,
   result: unknown,
-): { status: "task_created"; wire: string; task: unknown } | null {
-  // Managers that predate wire dispatch (older embedders, test doubles) only
-  // ever spoke the legacy wire.
+):
+  | {
+      status: "task_created";
+      wire: string;
+      task: unknown;
+      modelImmediateResponse?: unknown;
+    }
+  | null {
+  // No wire dispatch available (older embedder, test double) means no tasks:
+  // never assume a wire on the create path.
   const wire =
     typeof manager.getTasksSupport === "function"
       ? manager.getTasksSupport(serverId).wire
-      : "legacy";
+      : "none";
   if (wire === "none") return null;
 
   const body = result as
@@ -223,11 +257,27 @@ export function detectCreatedTask(
     | null
     | undefined;
 
-  if (wire === "extension" && body?.resultType === "task") {
-    return { status: "task_created", wire, task: body };
+  if (wire === "extension") {
+    // Flat `resultType: "task"` only. The nested legacy shape is NOT accepted
+    // here: on the extension wire it would be a nonconforming payload, and
+    // classifying it as a task creation would hide that from the debugger.
+    return body?.resultType === "task"
+      ? {
+          status: "task_created",
+          wire,
+          task: body,
+          modelImmediateResponse: modelImmediateResponseOf(result),
+        }
+      : null;
   }
   if (body?.task?.taskId && body.task.status) {
-    return { status: "task_created", wire, task: body.task };
+    // Field parity with the local route envelope.
+    return {
+      status: "task_created",
+      wire,
+      task: body.task,
+      modelImmediateResponse: modelImmediateResponseOf(result),
+    };
   }
   return null;
 }

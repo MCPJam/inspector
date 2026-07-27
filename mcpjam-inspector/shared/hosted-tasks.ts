@@ -12,8 +12,15 @@
  */
 export const HOSTED_TASK_POLL_FLOOR_MS = 2000;
 
-/** Maximum task IDs per `/get-batch` call (mirrors the route schema). */
+/**
+ * Maximum task IDs per `/get-batch` call — one connection per server per tick
+ * is the main hosted cost control. The route schema enforces the same number
+ * (it imports this constant, aliased as `HOSTED_TASK_BATCH_MAX`).
+ */
 export const HOSTED_TASK_BATCH_LIMIT = 50;
+
+/** Route-side alias for {@link HOSTED_TASK_BATCH_LIMIT}. */
+export const HOSTED_TASK_BATCH_MAX = HOSTED_TASK_BATCH_LIMIT;
 
 /**
  * Server-side task age at which the client stops tracking a handle even if it
