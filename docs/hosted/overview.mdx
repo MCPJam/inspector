@@ -102,9 +102,12 @@ When you connect to such a server, the app shows a warning toast. You can contin
 
 Tunneling exposes a local MCP server over HTTPS for remote access. Since the hosted app connects to already-remote servers, tunneling is not applicable.
 
-### No tasks
+### Tasks: polling only, no progress notifications
 
-Tasks are not yet available in the hosted app.
+The Tasks tab is available in the hosted app. Task status is refreshed by polling — the hosted app opens a fresh connection per poll tick, so there is no persistent notification stream. As a result:
+
+- **Inline progress bars and the progress panel are hidden** in hosted mode. You can still see task status (working, completed, failed, cancelled) and the task result.
+- **`input_required` tasks cannot be answered** from the hosted app. Tasks that are waiting for interactive input need a live session; use the [local inspector](/installation) to respond to those requests.
 
 ## Billing
 
