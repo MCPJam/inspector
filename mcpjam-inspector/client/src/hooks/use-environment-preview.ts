@@ -25,6 +25,13 @@ export type EnvironmentPreviewSkillChannel = "host" | "environment" | "plugin";
 
 export type EnvironmentSkillDelivery = "emulated" | "harness" | "unsupported";
 
+/** One plugin VERSION the environment pins, as the preview reports it. */
+export interface EnvironmentPreviewPlugin {
+  pluginId: string;
+  pluginVersionId: string;
+  name: string;
+}
+
 export interface EnvironmentPreviewServer {
   serverId: string;
   name: string;
@@ -50,7 +57,7 @@ export interface EnvironmentPreview {
     channels: EnvironmentPreviewSkillChannel[];
     hasFiles: boolean;
   }>;
-  plugins: Array<{ pluginId: string; pluginVersionId: string; name: string }>;
+  plugins: EnvironmentPreviewPlugin[];
   capabilities: {
     requireToolApproval: boolean | null;
     respectToolVisibility: boolean | null;
