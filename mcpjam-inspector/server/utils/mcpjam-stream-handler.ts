@@ -31,6 +31,7 @@ import type { HarnessSessionCommitPayload } from "./harness/harness-session-stat
 import type { ExecutionScope } from "./execution-scope.js";
 import type { PinnedSkillArtifact } from "../../shared/skill-types.js";
 import type { RuntimeSkill } from "./harness/runtime-skills.js";
+import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { HarnessMcpProxyStrategy } from "./harness/harness-proxy-strategy.js";
 import {
   buildFinishChunk,
@@ -465,6 +466,19 @@ export interface MCPJamHandlerOptions {
    * environment delivers no skills, which is not the same as "ask the project".
    */
   runtimeSkillsOverride?: RuntimeSkill[];
+  /**
+   * The turn's resolved `EffectiveCapabilitySet` (INS-3), harness side (INS-7).
+   * Set alongside `runtimeSkillsOverride` for an environment turn; it carries
+   * what the flat skill list structurally cannot — per-skill SUPPORTING FILES
+   * (the only source that includes a plugin skill's, since the project-wide file
+   * query excludes `plugin_component` rows) and the pinned plugin VERSIONS,
+   * which fold into the harness runtime fingerprint so a plugin change
+   * invalidates an incompatible resumed sandbox.
+   *
+   * Delivery input only. Nothing derived from it is persisted as a pin: every
+   * launch re-resolves the environment, so a recorded version is provenance.
+   */
+  effectiveCapabilities?: EffectiveCapabilitySet;
   /**
    * Phase 3 execution scope from the server-resolved runtime config (chatbox OR
    * host-by-id). Threaded into the harness path (sandbox reserve, runtime skills,
