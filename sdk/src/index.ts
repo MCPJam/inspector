@@ -758,10 +758,11 @@ export type {
   InputResponses,
 } from "./mcp-client-manager/index.js";
 
-// Era-neutral subscription coordinator (`subscriptions/listen`, MCP
-// 2026-07-28 §13). Already exported from the manager barrel; surfaced on the
-// package root so consumers outside the SDK (the CLI's listen mode) can drive
-// it without reaching into a subpath. New exports only.
+// Era-neutral subscription coordinator (2026-07-28 `subscriptions/listen` +
+// legacy list-changed / `resources/subscribe`) — spec §13. Re-exported at the
+// package root so local surfaces (the Inspector's subscription bridge) own the
+// stream, and consumers outside the SDK (the CLI's listen mode) can drive it,
+// without reaching into the client-manager subpath. New exports only.
 export {
   SubscriptionCoordinator,
   DEFAULT_SUBSCRIPTION_RECONNECT_POLICY,
