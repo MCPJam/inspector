@@ -327,7 +327,7 @@
           "Sandbox images"
         ],
         "summary": "Create a sandbox image",
-        "description": "Create a personal-draft sandbox image from a Dockerfile and respond `201` with its detail. Build it (`POST .../build`) before a computer can boot from it. Guest callers are denied (a write).",
+        "description": "Create a personal-draft sandbox image from a blueprint and respond `201` with its detail. Build it (`POST .../build`) before a computer can boot from it. Guest callers are denied (a write).",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -389,7 +389,7 @@
           "Sandbox images"
         ],
         "summary": "Get a sandbox image",
-        "description": "One sandbox image's Dockerfile, sharing, and latest build. An image that exists but belongs to a different project reads as `404 NOT_FOUND`.",
+        "description": "One sandbox image's blueprint, sharing, and latest build. An image that exists but belongs to a different project reads as `404 NOT_FOUND`.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -3337,6 +3337,27 @@
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
           }
         }
       }
@@ -5862,7 +5883,8 @@
       },
       "SandboxImageCreateRequest": {
         "type": "object",
-        "description": "Create a sandbox image from a blueprint. The blueprint must start FROM an allowlisted official base pinned by @sha256 digest; only FROM + RUN are supported.",
+        "additionalProperties": false,
+        "description": "Create a sandbox image from a blueprint YAML document: an allowlisted, `@sha256`-digest-pinned `base` image plus `initialize` steps baked into the image, and optional `maintenance`/`knowledge` delivered to the agent at runtime.",
         "required": [
           "name",
           "blueprint"
@@ -5882,6 +5904,7 @@
       },
       "SandboxImageUpdateRequest": {
         "type": "object",
+        "additionalProperties": false,
         "description": "Edit a sandbox image. Provide at least one of `name` or `blueprint`; only the fields you pass change.",
         "properties": {
           "name": {
@@ -5903,7 +5926,7 @@
           },
           {
             "required": [
-              "dockerfile"
+              "blueprint"
             ]
           }
         ]
@@ -6342,7 +6365,29 @@
               }
             }
           }
-        }
+        },
+        "oneOf": [
+          {
+            "required": [
+              "baseImageDigest"
+            ],
+            "properties": {
+              "ok": {
+                "const": true
+              }
+            }
+          },
+          {
+            "required": [
+              "errors"
+            ],
+            "properties": {
+              "ok": {
+                "const": false
+              }
+            }
+          }
+        ]
       }
     },
     "responses": {
