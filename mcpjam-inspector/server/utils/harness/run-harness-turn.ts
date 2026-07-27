@@ -68,6 +68,7 @@ import {
 } from "../../services/environments/effective-capabilities.js";
 import {
   capabilitySkillFiles,
+  deliveredPluginSkillOrigins,
   pluginSkillDeliverySummary,
   pluginVersionsFingerprint,
   selectDeliverableServerIds,
@@ -91,7 +92,6 @@ import {
   fetchRuntimeSkills,
   fetchRuntimeSkillFiles,
   skillsFingerprint,
-  claudeCodeSafeSkills,
 } from "./runtime-skills.js";
 import { materializeSkillFiles } from "./materialize-skill-files.js";
 import { materializePinnedSkillFiles } from "./pinned-harness-skills.js";
@@ -567,6 +567,19 @@ export async function runHarnessTurn(
           `The ${harnessAdapter.displayName} harness can't run model "${modelId}".`
         );
       }
+      //   (a2) capability/hook invariant for plugin BUNDLE install: advertising
+      //       it means implementing it. No adapter does today (see the registry's
+      //       `supportsPluginBundles`), so this only guards a future one from
+      //       claiming a native plugin install MCPJam would then silently skip.
+      if (
+        harnessAdapter.supportsPluginBundles &&
+        !harnessAdapter.deliverPluginBundles
+      ) {
+        throw new Error(
+          `The ${harnessAdapter.displayName} harness advertises plugin-bundle ` +
+            "support but has no deliverPluginBundles strategy (adapter misconfigured)."
+        );
+      }
       //   (b) a harness that can't deliver the host's selected MCP servers must
       //       NOT silently run without them.
       if (
@@ -675,6 +688,19 @@ export async function runHarnessTurn(
       const runtimeSkills = skillsFetch.ok ? skillsFetch.skills : null;
       const skillsHash =
         runtimeSkills !== null ? skillsFingerprint(runtimeSkills) : undefined;
+      // What the ADAPTER will actually write, per its own rules (Codex rejects
+      // a name outright — mid-`doStart`, i.e. it would fail the whole turn — so
+      // it filters rather than throws). Every MCPJam-side skill pass below is
+      // driven off `delivered`, so none of them ever targets a dir the runtime
+      // will not create.
+      const preparedSkills =
+        harnessAdapter.supportsSkills && runtimeSkills !== null
+          ? harnessAdapter.prepareSkills(runtimeSkills)
+          : undefined;
+      const deliveredSkills = preparedSkills?.delivered ?? [];
+      const deliveredSkillNamesById = new Map(
+        deliveredSkills.map((s) => [s.skillId, s.name])
+      );
 
       // WS3: gate side-effecting built-ins (Bash/Edit/Write) behind approval
       // when the host requires it, via the adapter's declared approval mode
@@ -893,15 +919,13 @@ export async function runHarnessTurn(
         harness: harnessRuntime,
         sandbox,
         // Deliver skills via the adapter's own param (host-agnostic: it writes
-        // them natively at the real $HOME). Only for adapters that support skills
-        // (Claude Code today). The Claude Code adapter interpolates `description`
-        // into YAML frontmatter RAW, so pre-encode descriptions safely here. Codex
-        // v1 doesn't deliver skills (`supportsSkills: false`).
-        ...(harnessAdapter.supportsSkills &&
-        runtimeSkills &&
-        runtimeSkills.length
+        // them natively at the real $HOME — Claude Code under `.claude/skills`,
+        // Codex under `.agents/skills`). The per-adapter `prepareSkills` owns the
+        // payload shaping (both runtimes interpolate `description` into YAML
+        // frontmatter RAW, so it is pre-encoded).
+        ...(preparedSkills && preparedSkills.payload.length
           ? {
-              skills: claudeCodeSafeSkills(runtimeSkills) as NonNullable<
+              skills: preparedSkills.payload as NonNullable<
                 ConstructorParameters<typeof HarnessAgent>[0]["skills"]
               >,
             }
@@ -966,8 +990,9 @@ export async function runHarnessTurn(
           if (harnessAdapter.supportsSkills && runtimeSkills !== null) {
             await reconcileSkillDirs({
               session,
-              skills: runtimeSkills,
+              skills: deliveredSkills,
               skillsHash: skillsHash ?? "",
+              skillsBase: harnessAdapter.skillsBaseDir,
               ...(abortSignal ? { signal: abortSignal } : {}),
             }).catch(() => {});
             // PINNED MODE: supporting files ride INLINE on the pinned
@@ -981,6 +1006,7 @@ export async function runHarnessTurn(
               await materializePinnedSkillFiles({
                 session,
                 artifacts: pinnedHarnessSkills!,
+                skillsBase: harnessAdapter.skillsBaseDir,
                 ...(abortSignal ? { signal: abortSignal } : {}),
               }).catch(() => {});
             }
@@ -1007,14 +1033,13 @@ export async function runHarnessTurn(
             // fail.
             else if (
               effectiveCapabilities !== undefined &&
-              runtimeSkills.length > 0
+              deliveredSkills.length > 0
             ) {
               await materializeSkillFiles({
                 session,
                 files: capabilitySkillFiles(effectiveCapabilities),
-                skillNamesById: new Map(
-                  runtimeSkills.map((s) => [s.skillId, s.name])
-                ),
+                skillNamesById: deliveredSkillNamesById,
+                skillsBase: harnessAdapter.skillsBaseDir,
                 computerId: String(computerId),
                 ...(abortSignal ? { signal: abortSignal } : {}),
               }).catch(() => {});
@@ -1029,6 +1054,22 @@ export async function runHarnessTurn(
                   skills: pluginSkills,
                 });
               }
+              // INS-8 ORIGIN MAPPING: the same delivery, keyed by the identity
+              // the RUNTIME exposes (the on-box dir it reads the skill from), so
+              // a skill operation observed on the box is attributable to the
+              // exact immutable plugin revision that produced it — per runtime,
+              // since the root differs (Codex `.agents/skills`).
+              const skillOrigins = deliveredPluginSkillOrigins({
+                set: effectiveCapabilities,
+                skillsBaseDir: harnessAdapter.skillsBaseDir,
+                deliveredNameBySkillId: deliveredSkillNamesById,
+              });
+              if (skillOrigins.length > 0) {
+                logger.info("[harness] plugin skill origins", {
+                  harness: harnessAdapter.id,
+                  origins: skillOrigins,
+                });
+              }
             }
             // LEGACY / non-environment mode. The file query stays PROJECT-WIDE
             // while the delivered skill set may be narrower:
@@ -1036,7 +1077,7 @@ export async function runHarnessTurn(
             // `skillNamesById`, which is built from `runtimeSkills` alone, so a
             // file belonging to a project skill this turn did NOT deliver is
             // skipped and its dir is never created.
-            else if (projectId && authHeader && runtimeSkills.length > 0) {
+            else if (projectId && authHeader && deliveredSkills.length > 0) {
               // Tri-state: `{ ok: false }` ⇒ the fetch FAILED (transient). Skip
               // materialization then — an empty file set would otherwise prune
               // every delivered skill's on-box files. `{ ok: true, files: [] }`
@@ -1051,9 +1092,8 @@ export async function runHarnessTurn(
                 await materializeSkillFiles({
                   session,
                   files: fileResult.files,
-                  skillNamesById: new Map(
-                    runtimeSkills.map((s) => [s.skillId, s.name])
-                  ),
+                  skillNamesById: deliveredSkillNamesById,
+                  skillsBase: harnessAdapter.skillsBaseDir,
                   computerId: String(computerId),
                   ...(abortSignal ? { signal: abortSignal } : {}),
                 }).catch(() => {});
@@ -1164,15 +1204,11 @@ export async function runHarnessTurn(
       // fresh start (exactly when the adapter writes) would clobber it.
       // Fail-soft (never fails the turn); zero session calls when no skill
       // has extras; same gating as the onSandboxSession skill passes.
-      if (
-        harnessAdapter.supportsSkills &&
-        runtimeSkills !== null &&
-        runtimeSkills.length > 0 &&
-        sandboxFileSession
-      ) {
+      if (deliveredSkills.length > 0 && sandboxFileSession) {
         await materializeSkillFrontmatter({
           session: sandboxFileSession,
-          skills: runtimeSkills,
+          skills: deliveredSkills,
+          skillsBase: harnessAdapter.skillsBaseDir,
           ...(abortSignal ? { signal: abortSignal } : {}),
         }).catch(() => {});
       }
@@ -1889,7 +1925,8 @@ export async function runHarnessTurn(
               projectId,
               // Names already delivered as cloud skills this turn are the adapter's
               // own dirs — not adoptions.
-              managedNames: new Set(runtimeSkills.map((s) => s.name)),
+              managedNames: new Set(deliveredSkills.map((s) => s.name)),
+              skillsBase: harnessAdapter.skillsBaseDir,
               ...(abortSignal ? { signal: abortSignal } : {}),
             }).catch(() => ({
               adopted: [] as { skillId: string; name: string }[],
@@ -1900,6 +1937,7 @@ export async function runHarnessTurn(
               await appendManagedSkills({
                 session: fileSession,
                 skills: adopted,
+                skillsBase: harnessAdapter.skillsBaseDir,
               }).catch(() => {});
             }
           }
