@@ -16,6 +16,7 @@ import {
 import { EmptyState } from "./ui/empty-state";
 import { ThreePanelLayout } from "./ui/three-panel-layout";
 import { MrtrElicitationHost } from "./elicitation/MrtrElicitationHost";
+import { SubscriptionStreamsPanel } from "./subscriptions/SubscriptionStreamsPanel";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { extractDisplayFromValue } from "@/components/chat-v2/shared/tool-result-text";
 import type {
@@ -1054,6 +1055,17 @@ export function ResourcesTab({
               )}
             </div>
           </ScrollArea>
+        </div>
+      )}
+      {/* Subscription stream observation (2026-07-28 §13.2). Local only: the
+          hosted bridge owns its own subscription lifecycle. */}
+      {!HOSTED_MODE && serverName && isServerConnected && (
+        <div className="border-t border-border flex-shrink-0 max-h-80 overflow-auto">
+          <SubscriptionStreamsPanel
+            serverId={serverName}
+            resourceUris={resources.map((resource) => resource.uri)}
+            connected={isServerConnected}
+          />
         </div>
       )}
     </div>

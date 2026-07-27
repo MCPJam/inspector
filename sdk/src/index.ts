@@ -755,3 +755,30 @@ export type {
   InputRequests,
   InputResponses,
 } from "./mcp-client-manager/index.js";
+
+// Era-neutral subscription coordinator (2026-07-28 `subscriptions/listen` +
+// legacy list-changed / `resources/subscribe`) — spec §13. Re-exported at the
+// package root so local surfaces (the Inspector's subscription bridge) can own
+// the stream without reaching into the client-manager subpath.
+export {
+  SubscriptionCoordinator,
+  DEFAULT_SUBSCRIPTION_RECONNECT_POLICY,
+  SUBSCRIPTION_ID_META_KEY,
+  diffAcknowledgement,
+  resolveRequestedFilter,
+} from "./mcp-client-manager/index.js";
+export type {
+  DesiredSubscriptionInterests,
+  DeliveredSubscriptionNotification,
+  McpSubscriptionHandle,
+  RejectedSubscriptionNotification,
+  SubscriptionClientPort,
+  SubscriptionCloseReason,
+  SubscriptionCoordinatorOptions,
+  SubscriptionFilterShape,
+  SubscriptionInterestRejection,
+  SubscriptionNotificationKind,
+  SubscriptionReconnectPolicy,
+  SubscriptionStreamRecord,
+  SubscriptionStreamStatus,
+} from "./mcp-client-manager/index.js";
