@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { HostChip } from "@/components/hosts/host-chip";
+import { RunContextChip } from "./run-context-chip";
 import { cn, getInitials } from "@/lib/utils";
 import {
   Avatar,
@@ -17,6 +17,8 @@ import {
   formatDuration,
   formatRunId,
   formatTime,
+  hasEnvironmentRun,
+  runContextKeys,
 } from "./helpers";
 import { computeIterationResult } from "./pass-criteria";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
@@ -78,9 +80,12 @@ export interface SuiteRunsListProps {
   maxVisibleRuns?: number;
   runsLoading?: boolean;
   /**
-   * Resolves `namedHostId` → display name for runs that were triggered
+   * Resolves `namedHostId` → display name for LEGACY runs that were triggered
    * against a specific attached host. When omitted, host badges show
    * truncated IDs instead. Pass the suite's `hostAttachments` to feed it.
+   *
+   * Environment-backed runs never consult this map — they label from their own
+   * frozen `configSnapshot.environmentRef`.
    */
   hostNamesById?: Map<string, string | null>;
   className?: string;
@@ -377,16 +382,13 @@ function StandaloneRunRow({
               Scheduled
             </span>
           ) : null}
-          {run.namedHostId ? (
-            <HostChip
-              name={
-                hostNamesById?.get(run.namedHostId) ??
-                formatRunId(run.namedHostId)
-              }
-              hostId={run.namedHostId}
-              className="shrink-0 max-w-[140px] gap-1 border-primary/35 bg-primary/10 px-2 py-0.5 text-[10px] text-primary shadow-none"
-            />
-          ) : null}
+          {/* Which CONTEXT produced this run — the environment (name + its
+              exact revision) or, for legacy runs, the resolved host. */}
+          <RunContextChip
+            run={run}
+            hostNamesById={hostNamesById}
+            className="shrink-0 max-w-[180px] gap-1 border-primary/35 bg-primary/10 px-2 py-0.5 text-[10px] text-primary shadow-none"
+          />
           {creator ? (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -521,6 +523,13 @@ function GroupRunRows({
         : [],
     [shouldRenderMatrix, allIterations, groupRunIds],
   );
+  // Distinct execution CONTEXTS in the group, matching the results rail's
+  // `contextCount`. Counting rows instead would report one environment re-run
+  // three times (or fanned out across revisions) as "3 environments" — the
+  // same miscount Phase 3 fixed in `RailGroup.hostCount`.
+  const contextCount = runContextKeys(group.runs).length;
+  const contextNoun = hasEnvironmentRun(group.runs) ? "environment" : "client";
+
   // Per-child effective stats — same source the standalone rows use.
   const childStats = group.runs.map((run) => ({
     run,
@@ -629,8 +638,12 @@ function GroupRunRows({
               {groupBadge.label}
             </span>
           ) : null}
+          {/* Names the fan-out AXIS, not any one target — a group can span
+              several revisions of the same environment, so no revision is
+              claimed here. The exact revision lives on each child run row. */}
           <span className="shrink-0 rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-            {group.runs.length} clients
+            {contextCount} {contextNoun}
+            {contextCount === 1 ? "" : "s"}
           </span>
         </div>
         <div className={RUNS_LIST_METRIC_CELL_CLASS}>
@@ -674,6 +687,7 @@ function GroupRunRows({
                   const runId = cell.iterations[0]?.suiteRunId;
                   if (runId) onRunClick(runId);
                 }}
+                hostNamesById={hostNamesById}
               />
             </div>
           ) : null}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   areHostedSessionScopesEqual,
+  hostedTargetKey,
   isSuccessfulRpcResponse,
   reconcileChatToolCallStepUp,
   rpcMessageId,
@@ -103,37 +104,92 @@ describe("tools/call reset correlation helpers (SEP-2350)", () => {
 // must FORK the session — otherwise turns under host B append onto host A's
 // transcript while resolving against B (mis-attribution). The chat-reset path
 // keys off this comparison, so hostId must be a scope dimension.
-describe("areHostedSessionScopesEqual — host switch forks the session", () => {
+describe("areHostedSessionScopesEqual — target switch forks the session", () => {
+  const scope = (input: Parameters<typeof hostedTargetKey>[0]) => ({
+    projectId: input.projectId,
+    targetKey: hostedTargetKey(input),
+  });
   const base = { projectId: "p1", chatboxId: undefined, hostId: "host-a" };
 
   it("treats a different previewed hostId as a different scope (⇒ reset)", () => {
-    expect(areHostedSessionScopesEqual(base, { ...base, hostId: "host-b" })).toBe(
-      false
-    );
+    expect(
+      areHostedSessionScopesEqual(scope(base), scope({ ...base, hostId: "host-b" }))
+    ).toBe(false);
   });
 
   it("treats identical scope as equal (⇒ keep the conversation)", () => {
-    expect(areHostedSessionScopesEqual(base, { ...base })).toBe(true);
+    expect(areHostedSessionScopesEqual(scope(base), scope({ ...base }))).toBe(
+      true
+    );
   });
 
   it("a different project forks; a different chatbox forks", () => {
     expect(
-      areHostedSessionScopesEqual(base, { ...base, projectId: "p2" })
+      areHostedSessionScopesEqual(scope(base), scope({ ...base, projectId: "p2" }))
     ).toBe(false);
     expect(
-      areHostedSessionScopesEqual(base, { ...base, chatboxId: "cbx" })
+      areHostedSessionScopesEqual(
+        scope({ projectId: "p1" }),
+        scope({ projectId: "p1", chatboxId: "cbx" })
+      )
     ).toBe(false);
   });
 
   it("does not consider accessVersion (not part of the scope shape)", () => {
-    // Only the three identity dims matter — an accessVersion bump elsewhere
-    // keeps the same scope and must not tear down the chat.
+    // Only project + target matter — an accessVersion bump elsewhere keeps the
+    // same scope and must not tear down the chat.
     expect(
       areHostedSessionScopesEqual(
-        { projectId: "p1", hostId: "h" },
-        { projectId: "p1", hostId: "h" }
+        scope({ projectId: "p1", hostId: "h" }),
+        scope({ projectId: "p1", hostId: "h" })
       )
     ).toBe(true);
+  });
+});
+
+// Project Environments Phase 2.3: the target key is what forks a session.
+describe("hostedTargetKey", () => {
+  it("namespaces each target kind so id spaces cannot collide", () => {
+    // Same raw id string, different Convex tables — these must never compare
+    // equal, or selecting an environment whose id matched a host id would
+    // silently continue the host's transcript.
+    expect(hostedTargetKey({ hostId: "x" })).toBe("host:x");
+    expect(
+      hostedTargetKey({ executionTarget: { kind: "environment", environmentId: "x" } })
+    ).toBe("environment:x");
+    expect(hostedTargetKey({ chatboxId: "x" })).toBe("chatbox:x");
+    expect(hostedTargetKey({ projectId: "x" })).toBe("adhoc:x");
+  });
+
+  it("an explicit executionTarget wins over the legacy pointers", () => {
+    expect(
+      hostedTargetKey({
+        projectId: "p1",
+        hostId: "host-a",
+        executionTarget: { kind: "environment", environmentId: "env-1" },
+      })
+    ).toBe("environment:env-1");
+  });
+
+  it("selecting a DIFFERENT environment forks; editing the same one does not", () => {
+    const atRevision1 = hostedTargetKey({
+      projectId: "p1",
+      executionTarget: { kind: "environment", environmentId: "env-1" },
+    });
+    // An edit bumps the environment's `revision`, which is deliberately absent
+    // from the key: environments are live config, so the next turn resolves
+    // against the new revision inside the SAME conversation.
+    const afterAnEdit = hostedTargetKey({
+      projectId: "p1",
+      executionTarget: { kind: "environment", environmentId: "env-1" },
+    });
+    expect(afterAnEdit).toBe(atRevision1);
+    expect(
+      hostedTargetKey({
+        projectId: "p1",
+        executionTarget: { kind: "environment", environmentId: "env-2" },
+      })
+    ).not.toBe(atRevision1);
   });
 });
 

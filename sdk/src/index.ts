@@ -580,6 +580,8 @@ export {
 } from "./mcp-conformance/index.js";
 export type {
   MCPCheckCategory,
+  MCPCheckEra,
+  MCPCheckEras,
   MCPCheckId,
   MCPCheckResult,
   MCPCheckStatus,
@@ -587,10 +589,18 @@ export type {
   MCPConformanceResult,
   MCPConformanceSuiteConfig,
   MCPConformanceSuiteResult,
+  MCPReadinessId,
+  MCPReadinessSpecStrength,
+  MCPReadinessWarning,
+  MCPServerSurfaceSnapshot,
 } from "./mcp-conformance/index.js";
 export {
+  CHECK_ERAS,
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
+  MCP_PROTOCOL_VERSION_ERA_IDS,
+  MCP_READINESS_IDS,
+  PROTOCOL_VERSION_ERAS,
   canRunConformance,
   isHttpServerConfig,
 } from "./mcp-conformance/index.js";
