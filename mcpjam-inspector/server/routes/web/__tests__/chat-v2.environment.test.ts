@@ -327,6 +327,67 @@ describe("web chat-v2 — environment execution target", () => {
     expect(JSON.stringify(persistArgs)).not.toContain("body-server-9");
   });
 
+  it("injects blueprint context into the turn prompt but persists the RAW prompt in resumeConfig", async () => {
+    const RUNTIME_CONTEXT = {
+      imageName: "staging-box",
+      knowledge: [{ name: "Setup", contents: "Use pnpm, not npm." }],
+      maintenance: [{ name: "deps", run: "pnpm install" }],
+    };
+    // Same environment spec, now booting from a blueprint image: a `bash`
+    // built-in on a personal computer is what makes the turn advertise bash
+    // and trigger the runtime-context fetch.
+    const SPEC_WITH_BASH = {
+      ...ENV_SPEC,
+      host: {
+        ...ENV_SPEC.host,
+        runtimeConfig: {
+          ...ENV_SPEC.host.runtimeConfig,
+          builtInToolIds: ["bash"],
+          computer: { kind: "personal" },
+        },
+      },
+    };
+    convexQueryMock.mockImplementation(async (ref: string) =>
+      ref === "computerEnvironments:getEnvironmentRuntimeContext"
+        ? RUNTIME_CONTEXT
+        : SPEC_WITH_BASH
+    );
+
+    const { app, token } = createWebTestApp();
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        ...BASE_BODY,
+        executionTarget: { kind: "environment", environmentId: "env_1" },
+      },
+      token
+    );
+    expect(response.status).toBe(200);
+
+    // bash advertised ⇒ the image's runtime context is fetched for this turn.
+    expect(convexQueryMock).toHaveBeenCalledWith(
+      "computerEnvironments:getEnvironmentRuntimeContext",
+      { projectId: "project-1" }
+    );
+
+    // The MODEL-facing prompt for THIS turn carries the injected image block,
+    // appended after the resolved host prompt.
+    const prepareArgs = prepareChatV2Mock.mock.calls.at(-1)![0];
+    expect(prepareArgs.systemPrompt).toContain("## Computer image: staging-box");
+    expect(prepareArgs.systemPrompt).toContain("Use pnpm, not npm.");
+    expect(prepareArgs.systemPrompt.startsWith("environment prompt")).toBe(true);
+
+    // The PERSISTED resume config keeps the RAW user prompt — a resumed turn
+    // re-injects fresh context, so baking this turn's block in would leave
+    // stale image context and double-append on resume.
+    const persistArgs = persistChatSessionToConvexMock.mock.calls.at(-1)![0];
+    expect(persistArgs.resumeConfig.systemPrompt).toBe("environment prompt");
+    expect(persistArgs.resumeConfig.systemPrompt).not.toContain(
+      "Computer image"
+    );
+  });
+
   it("forwards the per-turn server override, keeping [] distinct from absent", async () => {
     const { app, token } = createWebTestApp();
     await postJson(

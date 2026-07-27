@@ -1032,7 +1032,11 @@ chatV2.post("/", async (c) => {
             : null,
           selectedServerNames: effectiveServerNames,
           selectedServerIds: effectiveServerIds,
-          systemPrompt: effectiveSystemPrompt,
+          // Persisted resume config keeps the RAW user prompt; the blueprint
+          // env block is turn-injected (added to `prepare` above), not user
+          // configuration — otherwise a resumed turn would carry stale image
+          // context and re-append it. Matches the mcp chat-v2 route.
+          systemPrompt,
           temperature,
           requireToolApproval,
           mcpToolResultImageRendering,
