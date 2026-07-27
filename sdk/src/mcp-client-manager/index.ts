@@ -203,6 +203,33 @@ export {
   isStatelessProtocolVersion,
 } from "./mcp-protocol-version.js";
 
+// Era-neutral subscription coordinator (2026-07-28 `subscriptions/listen`
+// + legacy list-changed/`resources/subscribe`). New exports only.
+export {
+  SubscriptionCoordinator,
+  DEFAULT_SUBSCRIPTION_RECONNECT_POLICY,
+  SUBSCRIPTION_ID_META_KEY,
+  SubscriptionsAcknowledgedNotificationMethod,
+  ToolListChangedNotificationMethod,
+  diffAcknowledgement,
+  resolveRequestedFilter,
+} from "./subscription-coordinator.js";
+export type {
+  DesiredSubscriptionInterests,
+  DeliveredSubscriptionNotification,
+  McpSubscriptionHandle,
+  RejectedSubscriptionNotification,
+  SubscriptionClientPort,
+  SubscriptionCloseReason,
+  SubscriptionCoordinatorOptions,
+  SubscriptionFilterShape,
+  SubscriptionInterestRejection,
+  SubscriptionNotificationKind,
+  SubscriptionReconnectPolicy,
+  SubscriptionStreamRecord,
+  SubscriptionStreamStatus,
+} from "./subscription-coordinator.js";
+
 // Multi-round-trip (`input_required`) manual driver — spec §12 (new exports).
 export {
   DEFAULT_MAX_MRTR_ROUNDS,

@@ -23,7 +23,10 @@ vi.mock("../ProjectEnvironmentEditor", () => ({
   ProjectEnvironmentEditor: () => <div>Environment Editor</div>,
 }));
 vi.mock("../use-project-environment-consumers", () => ({
-  useProjectEnvironmentConsumers: () => ({ suiteCount: null }),
+  useProjectEnvironmentConsumers: () => ({
+    suiteCount: null,
+    journeyCount: null,
+  }),
 }));
 
 import { ProjectEnvironmentsRoute } from "../ProjectEnvironmentsRoute";

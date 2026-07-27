@@ -162,6 +162,57 @@ export function describePluginHealth(health: PluginHealth): {
 }
 
 // ---------------------------------------------------------------------------
+// Unavailable pinned versions (runtime preflight, INS-4).
+// ---------------------------------------------------------------------------
+
+/**
+ * Backend `resolvePluginVersionsRuntime` unavailable reason → wording.
+ *
+ * These come from the RUNTIME probe (`plugins.resolvePluginRuntimePreview`
+ * `unavailableComponents`), not from setup status: they answer "why won't this
+ * exact pinned version run", which is a lifecycle fact (deleted, disabled,
+ * uninstalled, still staging) rather than a readiness one. Kept beside
+ * `describePluginReadiness` so a surface never has to choose between two
+ * vocabularies for the same plugin.
+ */
+export function describePluginUnavailableReason(reason: string): {
+  label: string;
+  detail: string;
+} {
+  switch (reason) {
+    case "disabled":
+      return {
+        label: "Disabled",
+        detail:
+          "The plugin is disabled for this project. Re-enable it in Connect → Plugins.",
+      };
+    case "uninstalled":
+      return {
+        label: "Uninstalled",
+        detail:
+          "The plugin was removed from this project. Re-import it, or unpin the version.",
+      };
+    case "not_ready":
+      return {
+        label: "Not ready",
+        detail: "This revision never finished importing, so it cannot run.",
+      };
+    case "not_found":
+      return {
+        label: "Not found",
+        detail: "This revision no longer exists in this project.",
+      };
+    default:
+      // An unknown reason is still a refusal to run. Report the raw code
+      // rather than implying the version is usable.
+      return {
+        label: reason,
+        detail: "This revision cannot run right now.",
+      };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Unsupported components.
 // ---------------------------------------------------------------------------
 

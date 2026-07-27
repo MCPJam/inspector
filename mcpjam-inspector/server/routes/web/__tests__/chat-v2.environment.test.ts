@@ -320,10 +320,11 @@ describe("web chat-v2 — environment execution target", () => {
       "env-server-1",
       "env-server-2",
     ]);
-    expect(persistArgs.resumeConfig.selectedServers).toEqual([
-      "linear",
-      "asana",
-    ]);
+    // INS-4: "asana" is the PLUGIN-contributed server. It ran this turn, but
+    // `resumeConfig` is a durable reconnect instruction replayed with no
+    // plugin lifecycle check — a plugin server belongs to its environment at
+    // launch, never to a stored session list.
+    expect(persistArgs.resumeConfig.selectedServers).toEqual(["linear"]);
     expect(JSON.stringify(persistArgs)).not.toContain("body-server-9");
   });
 
@@ -347,6 +348,96 @@ describe("web chat-v2 — environment execution target", () => {
         serverOverrideIds: [],
       }
     );
+  });
+
+  it("narrows to the retained plugin versions without touching the backend query", async () => {
+    // The attribution probe is what supplies the version → server edge the
+    // narrowing needs; without it the turn fails closed rather than keeping a
+    // switched-off plugin's server.
+    convexQueryMock.mockImplementation(async (ref: string) =>
+      ref === "plugins:resolvePluginRuntimePreview"
+        ? {
+            pluginVersions: [ENV_SPEC.pluginVersions[0]],
+            effectiveServerIds: ["env-server-2"],
+            pluginSkills: [],
+            unavailableComponents: [],
+          }
+        : ENV_SPEC
+    );
+    const { app, token } = createWebTestApp();
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        ...BASE_BODY,
+        executionTarget: { kind: "environment", environmentId: "env_1" },
+        // "run this turn with none of the environment's plugins".
+        environmentOverrides: { pluginVersionIds: [] },
+      },
+      token
+    );
+    expect(response.status).toBe(200);
+
+    // The narrowing is applied to the RESOLVED spec: the deployed query takes
+    // no plugin argument, and sending one would fail its validator.
+    expect(convexQueryMock).toHaveBeenCalledWith(
+      "projectEnvironments:resolveEnvironmentForRuntime",
+      { projectId: "project-1", environmentId: "env_1" }
+    );
+
+    // The plugin's server is gone from the turn; the host's own remains.
+    expect(prepareChatV2Mock.mock.calls.at(-1)![0].selectedServers).toEqual([
+      "env-server-1",
+    ]);
+  });
+
+  it("rejects a plugin version the environment does not pin", async () => {
+    const { app, token } = createWebTestApp();
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        ...BASE_BODY,
+        executionTarget: { kind: "environment", environmentId: "env_1" },
+        environmentOverrides: { pluginVersionIds: ["pv_1", "pv_not_pinned"] },
+      },
+      token
+    );
+    // An override is a request, not a grant.
+    expect(response.status).toBe(400);
+    expect(JSON.stringify(await response.json())).toMatch(/can only narrow/i);
+    expect(prepareChatV2Mock).not.toHaveBeenCalled();
+  });
+
+  it("stops the turn when a deselected plugin's components can't be identified", async () => {
+    // Probe reports the version as unavailable ⇒ no attribution for it. The
+    // honest outcomes are "run everything the user just switched off" or
+    // "stop"; we stop.
+    convexQueryMock.mockImplementation(async (ref: string) =>
+      ref === "plugins:resolvePluginRuntimePreview"
+        ? {
+            pluginVersions: [],
+            effectiveServerIds: [],
+            pluginSkills: [],
+            unavailableComponents: [
+              { pluginVersionId: "pv_1", reason: "disabled" },
+            ],
+          }
+        : ENV_SPEC
+    );
+    const { app, token } = createWebTestApp();
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        ...BASE_BODY,
+        executionTarget: { kind: "environment", environmentId: "env_1" },
+        environmentOverrides: { pluginVersionIds: [] },
+      },
+      token
+    );
+    expect(response.status).toBe(409);
+    expect(prepareChatV2Mock).not.toHaveBeenCalled();
   });
 
   it("delivers ONLY the resolved skills to the emulated engine (no cloudSkills)", async () => {
