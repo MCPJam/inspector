@@ -645,7 +645,9 @@ function BlueprintEditor({
     const handle = setTimeout(() => setDebounced(value), 400);
     return () => clearTimeout(handle);
   }, [value]);
-  const validation = useValidateBlueprint(projectId, debounced || null);
+  // Pass `debounced` (even when empty) so clearing the editor still lints and
+  // surfaces the required-`base` error; `null` is reserved for no project.
+  const validation = useValidateBlueprint(projectId, debounced);
   const stale = debounced !== value;
 
   return (

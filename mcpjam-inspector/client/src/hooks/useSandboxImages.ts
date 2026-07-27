@@ -81,14 +81,18 @@ export type BlueprintValidationResult =
   | { ok: false; errors: { path: string; message: string }[] };
 
 /** Lint blueprint YAML without saving (backend is the single validator).
- * `undefined` while loading / when either arg is absent. */
+ * `undefined` while loading / when either arg is absent (`null`). An empty
+ * string is a real lint input — the backend reports the required-`base`/YAML
+ * error — so only `null` (no project / no editor) skips the query. */
 export function useValidateBlueprint(
   projectId: string | null,
   blueprint: string | null
 ): BlueprintValidationResult | undefined {
   return useQuery(
     "computerEnvironments:validateBlueprint" as never,
-    projectId && blueprint ? ({ projectId, blueprint } as never) : "skip"
+    projectId !== null && blueprint !== null
+      ? ({ projectId, blueprint } as never)
+      : "skip"
   ) as BlueprintValidationResult | undefined;
 }
 
