@@ -1,10 +1,8 @@
 /**
- * PIN: the ext-tasks repo (spec-only, private, unpublished) was NOT available
- * in the authoring environment, so no upstream commit SHA can be recorded here.
- * These shapes were hand-written from the SEP-2663 draft as summarized in the
- * restoration plan (`specification/draft/tasks.md`, `schema/draft/schema.ts`).
- * Record the SHA — or delete these files for the published package — as soon as
- * either is reachable.
+ * PIN: modelcontextprotocol/ext-tasks @ 2c1425d9a288b9b1f489430fe1e00bb392b47e48
+ * (`specification/draft/tasks.md`, `schema/draft/schema.ts`). Re-diff against
+ * that commit when re-syncing; delete these files for the published
+ * `@modelcontextprotocol/ext-tasks` package once it ships.
  */
 /**
  * Vendored types for the `io.modelcontextprotocol/tasks` extension
