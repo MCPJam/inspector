@@ -291,7 +291,7 @@ describe("v1 images routes", () => {
   });
 
   describe("POST validate", () => {
-    it("lints a blueprint, returning 200 for BOTH ok and not-ok results", async () => {
+    it("lints an invalid blueprint, returning 200 with structured errors", async () => {
       mockQuery({
         "computerEnvironments:validateBlueprint": {
           ok: false,
@@ -309,6 +309,27 @@ describe("v1 images routes", () => {
       expect(convexQueryMock).toHaveBeenCalledWith(
         "computerEnvironments:validateBlueprint",
         { projectId: "p1", blueprint: "initialize: []" }
+      );
+    });
+
+    it("lints a valid blueprint, returning 200 with the resolved base digest", async () => {
+      mockQuery({
+        "computerEnvironments:validateBlueprint": {
+          ok: true,
+          baseImageDigest: "sha256:abc123",
+        },
+      });
+      const res = await request("POST", "/api/v1/projects/p1/images/validate", {
+        body: { blueprint: "base: debian@sha256:abc123" },
+      });
+      expect(res.status).toBe(200);
+      expect((await res.json()) as Record<string, unknown>).toMatchObject({
+        ok: true,
+        baseImageDigest: "sha256:abc123",
+      });
+      expect(convexQueryMock).toHaveBeenCalledWith(
+        "computerEnvironments:validateBlueprint",
+        { projectId: "p1", blueprint: "base: debian@sha256:abc123" }
       );
     });
 
