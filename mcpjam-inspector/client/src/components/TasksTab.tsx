@@ -50,6 +50,7 @@ import { Progress } from "@mcpjam/design-system/progress";
 import { TaskInlineProgress } from "./tasks/TaskInlineProgress";
 import {
   STATUS_CONFIG,
+  UNAVAILABLE_STATUS,
   expiredPlaceholderTask,
   formatRelativeTime,
   normalizeTask,
@@ -94,9 +95,14 @@ function formatDate(isoString: string): string {
   }
 }
 
-function isTerminalStatus(status: Task["status"]): boolean {
+function isTerminalStatus(status: TaskDisplayStatus): boolean {
+  // "unavailable" is terminal for polling purposes: the server has forgotten
+  // the task, so nothing further will arrive for it.
   return (
-    status === "completed" || status === "failed" || status === "cancelled"
+    status === "completed" ||
+    status === "failed" ||
+    status === "cancelled" ||
+    status === UNAVAILABLE_STATUS
   );
 }
 
@@ -232,15 +238,6 @@ export function TasksTab({
     }
     return null;
   }, [isExtensionWire, selectedTask, answeredInputKeys]);
-
-  /** Keys in the current snapshot this UI cannot answer (sampling/roots). */
-  const unanswerableInputCount = useMemo(() => {
-    if (!isExtensionWire || selectedTask?.status !== "input_required") return 0;
-    return Object.values(selectedTask.inputRequests ?? {}).filter(
-      (value) =>
-        (value as { method?: string })?.method !== "elicitation/create",
-    ).length;
-  }, [isExtensionWire, selectedTask]);
 
   const extensionDialogElicitation: DialogElicitation | null =
     extensionInputRequest
