@@ -111,6 +111,17 @@ Some component types found in OpenAI plugin bundles are not executed by MCPJam. 
 
 These components appear in the preview and in the expanded card under **Unsupported components**, always described as preserved rather than executable.
 
+## Local component errors
+
+When a plugin's stdio component cannot launch, MCPJam shows an actionable error rather than silently failing. Common causes and remedies:
+
+| Error | Cause | Remedy |
+|-------|-------|--------|
+| Bundle not materialized | The plugin was never imported on this machine, or MCPJam was reinstalled | Re-import the plugin bundle on this device |
+| Bundle verification failed | Cached files were altered after import | Re-import the plugin to restore a verified copy |
+| Local runtime required | You are using hosted web, which cannot spawn local processes | Open the desktop app to run this component |
+| Plugin not found or disabled | The plugin was disabled or uninstalled since the last launch | Re-enable or re-import the plugin, then reconnect |
+
 ## Credential setup
 
 After installing a plugin, each MCP server component that requires credentials shows its readiness in the plugin card. The setup section of the install summary lists the environment variable and header names the bundle declared. You configure the actual values per server — MCPJam never reads or stores credential values from the bundle itself.
