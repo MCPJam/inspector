@@ -22,6 +22,7 @@ import type {
   PlatformEnvironmentResolved,
   PlatformEnvironmentUpdateBody,
   PlatformImage,
+  PlatformImageBlueprintValidation,
   PlatformImageBuild,
   PlatformImageBuildStarted,
   PlatformImageDeleted,
@@ -438,7 +439,7 @@ export class PlatformApiClient {
   }
 
   createImage(
-    params: { projectId: string; body: { name: string; dockerfile: string } },
+    params: { projectId: string; body: { name: string; blueprint: string } },
     options?: RequestOptions
   ): Promise<PlatformImage> {
     return this.request(
@@ -453,7 +454,7 @@ export class PlatformApiClient {
     params: {
       projectId: string;
       imageId: string;
-      body: { name?: string; dockerfile?: string };
+      body: { name?: string; blueprint?: string };
     },
     options?: RequestOptions
   ): Promise<PlatformImage> {
@@ -462,6 +463,20 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/images/${encodeURIComponent(params.imageId)}`,
+      { body: params.body },
+      options
+    );
+  }
+
+  /** Lint blueprint YAML without saving it. Always resolves (200); an
+   * invalid blueprint is a successful lint with structured errors. */
+  validateImageBlueprint(
+    params: { projectId: string; body: { blueprint: string } },
+    options?: RequestOptions
+  ): Promise<PlatformImageBlueprintValidation> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(params.projectId)}/images/validate`,
       { body: params.body },
       options
     );

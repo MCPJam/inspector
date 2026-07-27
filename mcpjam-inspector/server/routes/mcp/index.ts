@@ -23,6 +23,7 @@ import conformance from "./conformance";
 import xaa from "./xaa";
 import command from "./command";
 import subscribe from "./subscribe";
+import subscriptions from "./subscriptions";
 import widgetRender from "./widget-render";
 import widgetSession from "./widget-session";
 import audioTranscriptions from "./audio-transcriptions";
@@ -61,6 +62,10 @@ mcp.route("/connect", connect);
 // Inspector command bus endpoints
 mcp.route("/command", command);
 mcp.route("/subscribe", subscribe);
+
+// Subscription bridge - observe the local manager's `subscriptions/listen`
+// stream lifecycle (2026-07-28 §13.2) and state desired interests
+mcp.route("/subscriptions", subscriptions);
 
 // Servers management endpoints - REAL IMPLEMENTATION
 mcp.route("/servers", servers);
