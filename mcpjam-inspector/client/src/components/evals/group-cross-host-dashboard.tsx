@@ -24,6 +24,8 @@ interface GroupCrossHostDashboardProps {
   onTestCaseClick?: (testCaseId: string) => void;
   onCellOpen?: (cell: CellData, hostId: string, caseId: string) => void;
   onDeleteTestCasesBatch?: (testCaseIds: string[]) => Promise<void>;
+  /** `namedHostId` → display name for hosts with no suite attachment. */
+  hostNamesById?: Map<string, string | null>;
 }
 
 export function GroupCrossHostDashboard({
@@ -37,6 +39,7 @@ export function GroupCrossHostDashboard({
   onTestCaseClick,
   onCellOpen,
   onDeleteTestCasesBatch,
+  hostNamesById,
 }: GroupCrossHostDashboardProps) {
   const { result } = useRunGroupQuality({
     suiteId: suite._id,
@@ -72,6 +75,7 @@ export function GroupCrossHostDashboard({
       onCellOpen={onCellOpen}
       onDeleteTestCasesBatch={onDeleteTestCasesBatch}
       hostVerdicts={hostVerdicts}
+      hostNamesById={hostNamesById}
     />
   );
 }

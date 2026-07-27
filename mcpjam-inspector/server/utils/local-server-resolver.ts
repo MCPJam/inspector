@@ -51,6 +51,10 @@ import {
 import { getLocalConfidentialCimdProvider } from "@mcpjam/sdk";
 import type { ConnectionDefaults } from "../../shared/connection-defaults.js";
 import { HOSTED_MODE } from "../config.js";
+import {
+  materializePluginStdioForConnect,
+  releasePluginLease,
+} from "../services/plugins/local-stdio.js";
 
 type LocalAuthorizeServerConfig =
   | {
@@ -885,6 +889,46 @@ export async function resolveLocalServerForConnect(
     };
   }
 
+  // Plugin components reach this path as ordinary stdio servers whose
+  // command/args/env still carry the SDK's `${PLUGIN_ROOT}` placeholders (the
+  // parser preserves them verbatim; substitution belongs at spawn). Resolve
+  // them against the verified local bundle cache HERE — after authorization,
+  // after secrets, immediately before the SDK config is built — so a launch
+  // can never inherit a stale root and a component whose plugin was just
+  // disabled fails closed instead of running from cached files.
+  if (result.serverConfig.transportType === "stdio") {
+    const stdioConfig = result.serverConfig;
+    const materialized = await materializePluginStdioForConnect({
+      // Lazy: an ordinary stdio server must not pay a Convex read — or
+      // require Convex configuration at all — to connect.
+      createClient: () => createPluginRuntimeConvexClient(bearerToken),
+      projectId,
+      serverId,
+      serverName: options?.serverDisplayName ?? serverId,
+      spec: {
+        command: stdioConfig.command,
+        args: stdioConfig.args ?? [],
+        env: stdioConfig.env ?? {},
+      },
+    });
+    if (materialized) {
+      logger.debug("[plugin-stdio] materialized bundle for launch", {
+        serverId,
+        pluginId: materialized.origin.pluginId,
+        bundleHash: materialized.origin.bundleHash,
+      });
+      result = {
+        ...result,
+        serverConfig: {
+          ...stdioConfig,
+          command: materialized.command,
+          args: materialized.args,
+          env: materialized.env,
+        },
+      };
+    }
+  }
+
   const config = toMCPServerConfig(result, {
     timeoutMs: options?.timeoutMs ?? options?.defaults?.timeoutMs,
     clientCapabilities:
@@ -1159,6 +1203,10 @@ export async function executeLocalServerConnect(
   try {
     await mcpClientManager.connectToServer(serverDisplayName, connectConfig);
   } catch (error) {
+    // Nothing is running from the materialized bundle, so its GC lease must go
+    // with the failed entry — otherwise a plugin whose component never starts
+    // would pin its cache entry until the inspector process exits.
+    releasePluginLease(serverDisplayName);
     if (options.removeOnFailure) {
       try {
         await mcpClientManager.removeServer(serverDisplayName);
@@ -1262,6 +1310,25 @@ export async function executeLocalServerConnect(
   return c.json(
     buildConnectSuccessEnvelope(mcpClientManager, serverDisplayName)
   );
+}
+
+/**
+ * Convex client for the plugin-runtime reads the materializer needs (origin
+ * attribution). Same bearer the authorize call used — plugin reads are
+ * project-scoped and re-authorized backend-side on every query.
+ */
+function createPluginRuntimeConvexClient(bearerToken: string): ConvexHttpClient {
+  const { convexUrl } = getInspectorClientRuntimeConfig();
+  if (!convexUrl) {
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Server missing Convex configuration for plugin runtime resolution"
+    );
+  }
+  const client = new ConvexHttpClient(convexUrl);
+  client.setAuth(bearerToken);
+  return client;
 }
 
 async function persistConnectInspection(args: {

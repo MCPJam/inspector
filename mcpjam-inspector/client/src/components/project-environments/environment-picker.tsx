@@ -45,6 +45,8 @@ export function EnvironmentPicker({
   busy = false,
   emptyLabel = "No environments · pick some",
   className,
+  triggerTestId,
+  triggerAriaLabel,
 }: {
   projectId: string;
   /** Selected id(s). Single-select accepts `string | null`. */
@@ -59,6 +61,9 @@ export function EnvironmentPicker({
   busy?: boolean;
   emptyLabel?: string;
   className?: string;
+  /** Test hook + a11y label for the trigger, for callers that key on them. */
+  triggerTestId?: string;
+  triggerAriaLabel?: string;
 }) {
   // Include archived so a still-attached archived row can surface and be
   // detached (see the doc block above).
@@ -135,6 +140,8 @@ export function EnvironmentPicker({
         <button
           type="button"
           disabled={disabled}
+          data-testid={triggerTestId}
+          aria-label={triggerAriaLabel}
           className={cn(
             "flex h-8 max-w-[280px] items-center gap-1 rounded-full border px-2 text-foreground",
             "outline-none transition-colors",
