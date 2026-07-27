@@ -307,6 +307,31 @@ export function runRevisionLabel(run: RunContextSource): string | null {
   return ref ? `rev ${ref.revision}` : null;
 }
 
+/**
+ * `namedHostId` → display name across every host a suite surface can name: the
+ * suite's attachments (authoritative label) plus the project host list, which
+ * is the ONLY source for a host with no attachment — notably the host an
+ * environment-backed run resolved to.
+ */
+export function buildHostNamesById(
+  attachments:
+    | Array<{ namedHostId: string; hostName: string | null }>
+    | undefined,
+  projectHosts: Array<{ hostId: string; name: string }> | undefined,
+): Map<string, string | null> {
+  const map = new Map<string, string | null>();
+  for (const host of projectHosts ?? []) {
+    map.set(host.hostId, host.name);
+  }
+  for (const attachment of attachments ?? []) {
+    map.set(
+      attachment.namedHostId,
+      attachment.hostName ?? map.get(attachment.namedHostId) ?? null,
+    );
+  }
+  return map;
+}
+
 /** Distinct context keys across a set of runs, in first-seen order. */
 export function runContextKeys(runs: RunContextSource[]): string[] {
   const seen = new Set<string>();

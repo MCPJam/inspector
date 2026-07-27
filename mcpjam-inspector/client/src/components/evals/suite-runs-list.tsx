@@ -687,6 +687,7 @@ function GroupRunRows({
                   const runId = cell.iterations[0]?.suiteRunId;
                   if (runId) onRunClick(runId);
                 }}
+                hostNamesById={hostNamesById}
               />
             </div>
           ) : null}
