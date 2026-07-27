@@ -71,6 +71,12 @@ import {
   runtimeSkills as environmentRuntimeSkills,
   type ResolvedEnvironmentRuntime,
 } from "../../services/environments/runtime.js";
+import { fetchPluginRuntimeAttribution } from "../../services/environments/plugin-attribution.js";
+import {
+  pluginOriginByServerId,
+  resolveEffectiveCapabilities,
+  type EffectiveCapabilitySet,
+} from "../../services/environments/effective-capabilities.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
 import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
 import { buildMcpjamPlatformClient } from "./mcpjam-platform-client.js";
@@ -242,24 +248,65 @@ chatV2.post("/", async (c) => {
     // source for this turn's host config, server set, and skills — nothing
     // downstream may fall back to the body's `selectedServerIds`.
     let environmentSpec: ResolvedEnvironmentRuntime | null = null;
+    // INS-3: the turn's one answer to "what may this run reach?" — the split
+    // explicit/plugin server sets, ref-addressed skills, and plugin origin.
+    // Derived from `environmentSpec`, never from the body or a HostConfig
+    // (hosts are plugin-blind), and never persisted: it is provenance for this
+    // launch, not a restorable pin.
+    let effectiveCapabilities: EffectiveCapabilitySet | null = null;
     if (executionTarget.kind === "environment") {
+      // `sk_…` API-key bearers can't query Convex directly; this resolves the
+      // delegated JWT (and passes JWTs through untouched), same as the eval
+      // launch path.
+      const convexClient = createConvexClient(
+        await getConvexBearerForRequest(c),
+      );
       // One atomic member-read: host runtime config + closed server set +
       // composed skill union + pinned plugin versions, at one revision. The
       // browser never supplies any of it.
-      environmentSpec = await resolveEnvironmentForRuntime(
-        // `sk_…` API-key bearers can't query Convex directly; this resolves the
-        // delegated JWT (and passes JWTs through untouched), same as the eval
-        // launch path.
-        createConvexClient(await getConvexBearerForRequest(c)),
-        {
-          projectId: hostedBody.projectId,
-          environmentId: executionTarget.environmentId,
-          ...(executionTarget.overrides
-            ? { overrides: executionTarget.overrides }
-            : {}),
-        },
-      );
+      environmentSpec = await resolveEnvironmentForRuntime(convexClient, {
+        projectId: hostedBody.projectId,
+        environmentId: executionTarget.environmentId,
+        ...(executionTarget.overrides
+          ? { overrides: executionTarget.overrides }
+          : {}),
+      });
       hostRuntimeConfig = environmentSpec.host.runtimeConfig;
+      // Attribution is a SECOND read and deliberately cannot fail the turn:
+      // the environment already decided what runs, and a probe blip must
+      // degrade origin reporting, not stop a send. Costs nothing when the
+      // environment pins no plugins.
+      const attribution = await fetchPluginRuntimeAttribution(convexClient, {
+        projectId: hostedBody.projectId,
+        pluginVersionIds: (environmentSpec.pluginVersions ?? []).map(
+          (plugin) => plugin.pluginVersionId,
+        ),
+      });
+      effectiveCapabilities = resolveEffectiveCapabilities(
+        environmentSpec,
+        attribution,
+      );
+      if (effectiveCapabilities.problems.length > 0) {
+        // Codes and ids only, never `problem.message` — those messages
+        // interpolate the skill's own NAME, which is user-authored content and
+        // is held out of the provenance telemetry below for the same reason.
+        // One aggregated line, so a collision-heavy environment does not emit
+        // an entry per problem per turn.
+        logger.warn("[chat-v2] effective capability problems", {
+          environmentId: environmentSpec.environmentRef.environmentId,
+          codes: effectiveCapabilities.problems.map(
+            (problem) => problem.code,
+          ),
+          skillIds: effectiveCapabilities.problems.flatMap((problem) =>
+            "skillId" in problem ? [problem.skillId] : [],
+          ),
+        });
+      }
+      // Plugin origin on every RPC frame this turn produces, so a trace answers
+      // "which plugin revision served this tool call" without a second lookup.
+      rpcCollector?.setPluginOriginByServerId(
+        pluginOriginByServerId(effectiveCapabilities),
+      );
     } else if (isChatboxSession && chatboxId) {
       const runtime = await fetchChatboxRuntimeConfig({
         chatboxId,
@@ -854,6 +901,20 @@ chatV2.post("/", async (c) => {
               environment_plugin_version_ids: (
                 environmentSpec.pluginVersions ?? []
               ).map((plugin) => plugin.pluginVersionId),
+              // INS-3 provenance. Bundle hashes are content addresses, not
+              // user data, and are what makes a run attributable to an exact
+              // revision. Plugin NAMES are deliberately not emitted (telemetry
+              // must carry no user-authored strings).
+              environment_plugin_bundle_hashes: (
+                environmentSpec.pluginVersions ?? []
+              ).map((plugin) => plugin.bundleHash ?? null),
+              environment_plugin_server_count:
+                effectiveCapabilities?.pluginServerIds.length ?? 0,
+              environment_plugin_skill_count:
+                effectiveCapabilities?.pluginSkills.length ?? 0,
+              environment_capability_problems: (
+                effectiveCapabilities?.problems ?? []
+              ).map((problem) => problem.code),
             }
           : {}),
       });
@@ -899,8 +960,15 @@ chatV2.post("/", async (c) => {
           // Emulated-engine delivery of the environment's resolved skills.
           // Mutually exclusive with `cloudSkills` above (gated on the same
           // `environmentSpec`), and ignored by the helper on a harness turn.
+          //
+          // Both are set for an environment turn: the capability set drives the
+          // emulated ref-addressed tools (INS-3), the flat list stays for the
+          // harness adapter, which writes name/description/content to disk.
           ...(environmentSkills !== undefined
             ? { runtimeSkillsOverride: environmentSkills }
+            : {}),
+          ...(effectiveCapabilities
+            ? { effectiveCapabilities }
             : {}),
         },
         persist: {

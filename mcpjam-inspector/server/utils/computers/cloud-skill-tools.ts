@@ -269,23 +269,8 @@ export function getPinnedSkillToolsAndPrompt(skills: PinnableSkill[]): {
   };
 }
 
-/**
- * RESOLVED skill tools for a Project-Environment turn (Phase 1.4). Structurally
- * identical to the pinned set — an in-memory closure over exactly the artifacts
- * the environment resolved, with no live project-pool read — because the
- * environment's set is authoritative for the turn and a live `listSkills` would
- * advertise skills the environment deliberately excluded.
- *
- * The behavioral difference lives at the CALL SITE, not here: `prepareChatV2`
- * wraps these with `needsApproval` under the host's ordinary
- * `requireToolApproval`, whereas pinned tools bypass approval. Same reason the
- * file tools stay omitted: an environment turn delivers SKILL.md bodies through
- * `loadSkill`; supporting files reach a harness box through materialization, not
- * through emulated tool calls.
- */
-export function getResolvedSkillToolsAndPrompt(skills: PinnableSkill[]): {
-  tools: ReturnType<typeof createPinnedSkillTools>;
-  systemPromptSection: string;
-} {
-  return getPinnedSkillToolsAndPrompt(skills);
-}
+// The Project-Environment turn used to reuse the pinned tools verbatim
+// (`getResolvedSkillToolsAndPrompt`). INS-3 replaced that with
+// `./effective-skill-tools.ts`, which addresses skills by REF rather than bare
+// name so two plugins may declare the same skill name, and which exposes the
+// supporting-file tools an environment turn genuinely can serve.

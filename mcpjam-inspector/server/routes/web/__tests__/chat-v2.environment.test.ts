@@ -363,18 +363,25 @@ describe("web chat-v2 — environment execution target", () => {
     const args = prepareChatV2Mock.mock.calls.at(-1)![0];
     // Project-wide cloud skills would double-deliver alongside the resolved set.
     expect(args.cloudSkills).toBeUndefined();
-    expect(args.skillsSource).toEqual({
-      kind: "resolved",
-      skills: [
-        {
-          name: "release-notes",
-          description: "Write release notes",
-          content: "env skill body",
-          contentHash: "agg_env",
-          provenance: "authored",
-        },
-      ],
-    });
+    // INS-3: the emulated engine now receives the whole EffectiveCapabilitySet
+    // rather than a flat skill list, because its tools address skills by REF
+    // (`<plugin>/<skill>` for a plugin skill). This environment pins no
+    // plugins, so the one resolved skill is standalone and its ref is its name.
+    expect(args.skillsSource.kind).toBe("resolved");
+    expect(args.skillsSource.capabilities.standaloneSkills).toEqual([
+      {
+        ref: "release-notes",
+        skillId: "sk_env",
+        name: "release-notes",
+        description: "Write release notes",
+        content: "env skill body",
+        aggregateHash: "agg_env",
+        channels: ["environment"],
+        files: [],
+      },
+    ]);
+    expect(args.skillsSource.capabilities.pluginSkills).toEqual([]);
+    expect(args.skillsSource.capabilities.problems).toEqual([]);
   });
 
   it("hands the resolved skills to the HARNESS engine instead when the host runs one", async () => {
@@ -436,5 +443,177 @@ describe("web chat-v2 — environment execution target", () => {
     );
     expect(response.status).toBe(409);
     expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+  });
+});
+
+// INS-3: a turn whose environment pins plugins must be able to SAY where each
+// server and skill came from. The runtime spec carries the pins and the plugin
+// server ids as two flat lists with no edge between them, so the route asks the
+// per-version probe to recover it — and must degrade, never fail, if it can't.
+describe("web chat-v2 — plugin capability attribution", () => {
+  const originalConvexHttpUrl = process.env.CONVEX_HTTP_URL;
+  const originalConvexUrl = process.env.CONVEX_URL;
+  const originalFetch = global.fetch;
+
+  const PLUGIN_SPEC = {
+    ...ENV_SPEC,
+    skills: [
+      {
+        skillId: "sk_plugin",
+        name: "summarize",
+        description: "Summarize",
+        content: "plugin skill body",
+        aggregateHash: "agg_plugin",
+        channels: ["plugin"],
+        files: [],
+      },
+    ],
+  };
+
+  const PREVIEW_RESPONSE = {
+    pluginVersions: [
+      {
+        pluginId: "pl_1",
+        pluginVersionId: "pv_1",
+        name: "linear",
+        bundleHash: "abc",
+      },
+    ],
+    effectiveServerIds: ["env-server-2"],
+    pluginSkills: [
+      { modelRef: "linear/summarize", materializedSkillId: "sk_plugin" },
+    ],
+    unavailableComponents: [],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.CONVEX_HTTP_URL = "https://example.convex.site";
+    process.env.CONVEX_URL = "https://example.convex.cloud";
+    prepareChatV2Mock.mockResolvedValue({
+      allTools: {},
+      enhancedSystemPrompt: "system",
+      resolvedTemperature: 0.7,
+    });
+    handleMCPJamFreeChatModelMock.mockResolvedValue(
+      new Response("ok", { status: 200 })
+    );
+    global.fetch = vi.fn(async (input: any, init: any) => {
+      if (String(input).endsWith("/web/authorize-batch")) {
+        const payload = JSON.parse(String(init?.body ?? "{}"));
+        const serverIds: string[] = Array.isArray(payload?.serverIds)
+          ? payload.serverIds
+          : [];
+        return new Response(
+          JSON.stringify({
+            results: Object.fromEntries(
+              serverIds.map((serverId) => [
+                serverId,
+                {
+                  ok: true,
+                  role: "member",
+                  accessLevel: "shared_chat",
+                  permissions: { chatOnly: false },
+                  internalLogContext: {
+                    authType: "signedIn",
+                    userId: "u-alice",
+                    projectId: payload.projectId ?? null,
+                  },
+                  serverConfig: {
+                    transportType: "http",
+                    url: `https://${serverId}.example.com/mcp`,
+                    headers: {},
+                    useOAuth: false,
+                  },
+                },
+              ])
+            ),
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    }) as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    // `delete` on absent, never assignment: Node coerces an assigned
+    // `undefined` to the literal string "undefined", which a later test in the
+    // same worker would happily build a Convex client against.
+    if (originalConvexHttpUrl === undefined) delete process.env.CONVEX_HTTP_URL;
+    else process.env.CONVEX_HTTP_URL = originalConvexHttpUrl;
+    if (originalConvexUrl === undefined) delete process.env.CONVEX_URL;
+    else process.env.CONVEX_URL = originalConvexUrl;
+  });
+
+  it("namespaces the plugin skill and attributes its server to the pinned version", async () => {
+    convexQueryMock.mockImplementation(async (ref: string) =>
+      ref === "plugins:resolvePluginRuntimePreview"
+        ? PREVIEW_RESPONSE
+        : PLUGIN_SPEC
+    );
+    const { app, token } = createWebTestApp();
+    await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        ...BASE_BODY,
+        executionTarget: { kind: "environment", environmentId: "env_1" },
+      },
+      token
+    );
+
+    const capabilities =
+      prepareChatV2Mock.mock.calls.at(-1)![0].skillsSource.capabilities;
+    expect(capabilities.pluginSkills).toEqual([
+      expect.objectContaining({
+        ref: "linear/summarize",
+        content: "plugin skill body",
+        plugin: expect.objectContaining({
+          pluginVersionId: "pv_1",
+          bundleHash: "abc",
+        }),
+      }),
+    ]);
+    expect(capabilities.standaloneSkills).toEqual([]);
+    expect(capabilities.explicitServerIds).toEqual(["env-server-1"]);
+    expect(capabilities.pluginServerIds).toEqual(["env-server-2"]);
+    expect(
+      capabilities.servers.find((s: any) => s.serverId === "env-server-2")
+        .plugin.name
+    ).toBe("linear");
+    expect(capabilities.problems).toEqual([]);
+  });
+
+  it("still runs the turn — with origin unreported — when the probe fails", async () => {
+    convexQueryMock.mockImplementation(async (ref: string) => {
+      if (ref === "plugins:resolvePluginRuntimePreview") {
+        throw new Error("Could not find public function");
+      }
+      return PLUGIN_SPEC;
+    });
+    const { app, token } = createWebTestApp();
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        ...BASE_BODY,
+        executionTarget: { kind: "environment", environmentId: "env_1" },
+      },
+      token
+    );
+
+    expect(response.status).toBe(200);
+    const capabilities =
+      prepareChatV2Mock.mock.calls.at(-1)![0].skillsSource.capabilities;
+    // The server set is untouched; only what we can SAY about it degraded.
+    expect(capabilities.pluginServerIds).toEqual(["env-server-2"]);
+    expect(capabilities.pluginSkills[0].ref).toBe("summarize");
+    expect(capabilities.pluginSkills[0].plugin).toBeUndefined();
+    expect(capabilities.problems.map((p: any) => p.code)).toEqual([
+      "plugin_origin_unavailable",
+      "plugin_skill_ref_unavailable",
+    ]);
   });
 });
