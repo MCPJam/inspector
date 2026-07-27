@@ -24,7 +24,7 @@
  * aborts the request.
  */
 
-import { SUBSCRIPTION_ID_META_KEY } from "@modelcontextprotocol/client";
+import { SUBSCRIPTION_ID_META_KEY } from "../mcp-client-manager/subscription-coordinator.js";
 import type { RawHttpCheckContext } from "./types.js";
 import {
   getWireField,
@@ -32,8 +32,6 @@ import {
   type RawSseEvent,
 } from "./raw-capture.js";
 import { baseHeaders, modernHeaders, modernRequestBody } from "./raw-http.js";
-
-export { SUBSCRIPTION_ID_META_KEY };
 
 /** The `subscriptions/listen` method name, spelled once. */
 export const LISTEN_METHOD = "subscriptions/listen";

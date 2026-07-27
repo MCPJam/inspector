@@ -20,7 +20,7 @@
 
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import type { McpHttpHandler } from "@modelcontextprotocol/server";
-import { SUBSCRIPTION_ID_META_KEY } from "@modelcontextprotocol/client";
+import { SUBSCRIPTION_ID_META_KEY } from "../../src/mcp-client-manager/subscription-coordinator.js";
 import { z } from "zod";
 
 export const SUBSCRIPTION_FIXTURE_SERVER_INFO = {
