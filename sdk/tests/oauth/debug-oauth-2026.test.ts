@@ -186,15 +186,19 @@ describe("validateAuthorizationResponseIssuer (RFC 9207)", () => {
   });
 
   it("row 2 neutralizes a hostile `iss` that tries to forge message lines", () => {
-    const result = validateAuthorizationResponseIssuer({
-      recordedIssuer: ISS,
-      returnedIss: "https://evil.example.com\n\nAuthorization succeeded.",
-      issParameterSupported: true,
-    });
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.reason).not.toContain("\n");
-      expect(result.reason).toContain("https://evil.example.com");
+    // C0/DEL are not the only line breakers: NEL and the Unicode LINE/PARAGRAPH
+    // separators also split lines when the diagnostic is rendered.
+    for (const breaker of ["\n", "\r", "\u0085", "\u2028", "\u2029"]) {
+      const result = validateAuthorizationResponseIssuer({
+        recordedIssuer: ISS,
+        returnedIss: `https://evil.example.com${breaker}${breaker}Authorization succeeded.`,
+        issParameterSupported: true,
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.reason).not.toContain(breaker);
+        expect(result.reason).toContain("https://evil.example.com");
+      }
     }
   });
 

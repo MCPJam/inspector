@@ -565,13 +565,18 @@ export type AuthorizationResponseIssuerCheck =
   | { ok: false; reason: string };
 
 /**
- * Render a callback-supplied value inside a diagnostic. Control characters are
- * flattened so a hostile `iss` cannot forge additional message lines, and the
- * value is capped so it cannot crowd out the diagnostic around it.
+ * Render a callback-supplied value inside a diagnostic. Line-breaking
+ * characters are flattened so a hostile `iss` cannot forge additional message
+ * lines, and the value is capped so it cannot crowd out the diagnostic around
+ * it. C0 and DEL are not sufficient on their own: NEL (U+0085) and the Unicode
+ * LINE/PARAGRAPH SEPARATORs (U+2028/U+2029) also break lines when a diagnostic
+ * is rendered, so they are flattened too.
  */
 function quoteUntrusted(value: string): string {
   // eslint-disable-next-line no-control-regex
-  const flattened = value.replace(/[\u0000-\u001f\u007f]+/g, " ").trim();
+  const flattened = value
+    .replace(/[\u0000-\u001f\u007f\u0085\u2028\u2029]+/g, " ")
+    .trim();
   const capped =
     flattened.length > 256 ? `${flattened.slice(0, 256)}…` : flattened;
   return `\`${capped}\``;
