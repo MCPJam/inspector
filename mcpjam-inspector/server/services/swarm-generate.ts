@@ -53,24 +53,28 @@ async function postGenerate<T>(
   });
   if (!response.ok) {
     const errorText = await response.text().catch(() => "");
-    // Prefer the backend's user-facing `error` copy (quota messages, member
-    // gate, invalid group) over a generic transport message. A non-JSON body
-    // (WAF/HTML interstitial, proxy error page) is NOT user-facing copy and
-    // must not reach the client — the route forwards `message` verbatim on
-    // every 4xx — so it is logged server-side and the generic message stands.
-    let message = `swarm-generate ${url} failed (${response.status})`;
+    // The route forwards this message VERBATIM to the browser on every 4xx,
+    // so the default must carry no transport detail: `url` is the Convex
+    // deployment endpoint, and a non-JSON body (WAF/HTML interstitial, proxy
+    // error page) is not user-facing copy either. Only the backend's own
+    // `error` string — quota messages, member gate, invalid group — is
+    // allowed to replace it. Everything else is logged server-side.
+    let message = `Generation request failed (${response.status}).`;
+    let usedBackendCopy = false;
     try {
       const parsed = JSON.parse(errorText) as { error?: unknown };
       if (typeof parsed.error === "string" && parsed.error.length > 0) {
         message = parsed.error;
+        usedBackendCopy = true;
       }
     } catch {
-      if (errorText) {
-        logger.warn("[swarm-generate] non-JSON error body from upstream", {
-          url,
-          status: response.status,
-        });
-      }
+      // Unparseable body — fall through to the generic message.
+    }
+    if (!usedBackendCopy) {
+      logger.warn("[swarm-generate] upstream error carried no usable copy", {
+        url,
+        status: response.status,
+      });
     }
     throw new SwarmAgentError(response.status, errorText, message);
   }
