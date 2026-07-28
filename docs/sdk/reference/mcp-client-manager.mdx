@@ -190,6 +190,7 @@ The second argument to the constructor accepts an `MCPClientManagerOptions` obje
 | `rpcLogger` | `RpcLogger` | Optional callback for raw RPC request/response pairs. |
 | `retryPolicy` | `RetryPolicy` | Default retry policy for retryable manager operations. |
 | `lazyConnect` | `boolean` | When `true`, defers the actual transport connection until the first RPC call. |
+| `traceContextProvider` | `TraceContextProvider` | Optional accessor for the ambient OpenTelemetry trace context to propagate. When provided, the manager injects the W3C `traceparent`, `tracestate`, and `baggage` values into outbound request `_meta` on the modern era (MCP 2026-07-28) only. Omit (the default) and no trace keys are ever emitted. See [Trace context propagation](#trace-context-propagation) below. |
 
 ### negotiationOutcomeLogger
 
