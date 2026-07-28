@@ -4,6 +4,8 @@ import { getCanonicalModelId } from "@/shared/types";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import { shouldEnableCloudSkillTools } from "../../utils/computers/cloud-skill-tools.js";
 import { isMCPAuthError, TaskCreatedSink } from "@mcpjam/sdk";
+import { isCompatibleHostedTasksVersion } from "@/shared/hosted-task-created";
+import { HostedTaskCreatedBridge } from "../../utils/hosted-task-created-bridge.js";
 import { resolveToolTaskSeam } from "../../utils/task-seam.js";
 import { resolveHostModelDefinition } from "../../utils/org-model-config.js";
 import {
@@ -827,6 +829,31 @@ chatV2.post("/", async (c) => {
           })
         : undefined;
 
+    // Delivery to the browser is a SEPARATE decision from whether tasks run.
+    // A stale bundle that cannot render the part must not stop the host's
+    // policy from taking effect — the task still gets created, it just isn't
+    // pushed live. Absent or mismatched version ⇒ no bridge, and the turn
+    // proceeds normally. Never a 409: see `HOSTED_TASKS_VERSION`.
+    const taskCreatedBridge =
+      tasksSeam &&
+      isCompatibleHostedTasksVersion(
+        (rawBody as Record<string, unknown>).hostedTasksVersion,
+      )
+        ? new HostedTaskCreatedBridge({
+            serverNamesById:
+              buildServerNamesById(effectiveServerIds, effectiveServerNames) ??
+              {},
+          })
+        : undefined;
+    if (taskCreatedBridge) {
+      // Functional, not best-effort: this is the path the user's next page
+      // load depends on to know the task exists.
+      tasksSink.register({
+        name: "hosted-task-created-bridge",
+        handle: taskCreatedBridge.handle,
+      });
+    }
+
     // Membership chat (no share/chatbox token) is the default — the backend
     // authorizes via project ownership for both guest and authed users.
     // accessScope is only set when a token is in play (shared chat / chatbox)
@@ -1166,6 +1193,7 @@ chatV2.post("/", async (c) => {
           rpcCollector,
           elicitationBridge,
           ...(mrtrBridge ? { mrtrBridge } : {}),
+          ...(taskCreatedBridge ? { taskCreatedBridge } : {}),
           ...(mrtrEngineResume ? { mrtrResume: mrtrEngineResume } : {}),
           c,
         },

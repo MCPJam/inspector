@@ -145,6 +145,11 @@ import {
   isHarnessResetDataPart,
   type HarnessResetReason,
 } from "@/shared/harness-session";
+import {
+  HOSTED_TASKS_VERSION,
+  isTaskCreatedDataPart,
+} from "@/shared/hosted-task-created";
+import { trackTask } from "@/lib/task-tracker";
 import { useHarnessWorkdirStore } from "@/stores/harness-workdir-store";
 import { ingestHostedRpcLogsFromResponse } from "@/lib/apis/web/rpc-logs";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
@@ -1767,6 +1772,33 @@ export function useChatSession(
           // explained reset, not the model silently "forgetting".
           const message = HARNESS_RESET_MESSAGES[part.data.reason];
           if (message) toast.info(message);
+        } else if (isTaskCreatedDataPart(part)) {
+          // Track it and stop. Deliberately NO navigation: a chat turn must
+          // not yank the user out of the conversation to a task list.
+          //
+          // `trackTask` needs nothing added for at-least-once delivery — it
+          // dedupes on the full task identity and stamps the active scope
+          // itself, so a duplicated part is a no-op.
+          //
+          // Keyed by server NAME when the server sent one: the tracker and the
+          // Tasks tab both read by name, while a hosted `serverId` is a Convex
+          // document id, so tracking under the id files the task where the
+          // Tasks tab never looks.
+          trackTask({
+            taskId: part.data.taskId,
+            serverId: part.data.serverName ?? part.data.serverId,
+            wire: part.data.wire,
+            // Required by the tracker. The server's own timestamp when it sent
+            // one; a local reading only as a last resort, since the tracker
+            // renders it as the handle's age.
+            createdAt: part.data.createdAt ?? new Date().toISOString(),
+            ...(part.data.toolName ? { toolName: part.data.toolName } : {}),
+            ...(part.data.status ? { status: part.data.status } : {}),
+            ...(part.data.ttlMs !== undefined ? { ttlMs: part.data.ttlMs } : {}),
+            ...(part.data.pollIntervalMs !== undefined
+              ? { pollIntervalMs: part.data.pollIntervalMs }
+              : {}),
+          });
         }
         return;
       }
@@ -2091,6 +2123,11 @@ export function useChatSession(
         // durable continuation path — when it sees this, so a stale bundle is
         // never handed a `continuationId` it can do nothing with.
         hostedMrtrVersion: HOSTED_MRTR_VERSION,
+        // Handshake: tells the server this bundle can track a task the turn
+        // creates. Unlike the two above, a mismatch here is NOT fatal — the
+        // server simply skips the bridge. The task already exists on the MCP
+        // server, so refusing the turn would fail a call that succeeded.
+        hostedTasksVersion: HOSTED_TASKS_VERSION,
         ...(isHostedDirectChat ? { directVisibility } : {}),
         // What this turn executes against. EXACTLY ONE of these two shapes ever
         // ships: `normalizeExecutionTarget` 400s on `hostId` + `executionTarget`
