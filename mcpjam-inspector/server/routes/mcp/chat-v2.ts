@@ -19,6 +19,7 @@ import {
   handleMCPJamFreeChatModel,
   warnIfChatAbortSignalMissing,
 } from "../../utils/mcpjam-stream-handler";
+import { resolveToolTaskSeam } from "../../utils/task-seam.js";
 import {
   handleHostedOrgChatModel,
   handleLocalOrgChatModel,
@@ -751,6 +752,14 @@ chatV2.post("/", async (c) => {
     const harnessComputerWorkdir =
       typeof computerWorkdir === "string" ? computerWorkdir : undefined;
 
+    // Host-only, exactly as in the hosted route: a chatbox session's body must
+    // not be able to opt into tasks the host disabled. `tasksPolicy` never
+    // enters the override path, so `override-wins` above cannot reach it.
+    const tasksSeam = resolveToolTaskSeam({
+      tasksPolicy: resolvedExecution.tasksPolicy,
+      surface: "chat",
+    });
+
     let prepared;
     try {
       prepared = await prepareChatV2({
@@ -767,6 +776,7 @@ chatV2.post("/", async (c) => {
         ...(resolvedExecution.harness
           ? { harness: resolvedExecution.harness }
           : {}),
+        ...(tasksSeam ? { tasks: tasksSeam } : {}),
         ...(builtInTools ? { builtInTools } : {}),
         // Body for direct chat (project default), host-re-resolved for
         // chatbox-bound sessions. undefined → auto policy.

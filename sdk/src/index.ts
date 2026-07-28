@@ -700,6 +700,7 @@ export type {
   TaskCreationSurface,
   TaskAwaitOutcome,
   TaskAwaitResult,
+  ToolTaskAwaitOptions,
   ToolTaskSeamContext,
   ToolTaskSeamMeta,
   ToolTaskSeamOptions,

@@ -24,7 +24,12 @@ import {
   type ModelVisibleMcpToolResults,
   type ToolExposureSignals,
 } from "@mcpjam/sdk/host-config/internal";
-import { type MCPClientManager } from "@mcpjam/sdk";
+import {
+  readTasksPolicy,
+  type MCPClientManager,
+  type ToolTaskSeamOptions,
+} from "@mcpjam/sdk";
+import { resolveToolTaskSeam } from "../utils/task-seam.js";
 import {
   createLlmModel,
   type BaseUrls,
@@ -441,16 +446,23 @@ async function getEvalToolsForAiSdkOrThrow(args: {
   serverIds: string[];
   includeAppOnly: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+  /**
+   * Resolved task seam, or absent for tasks-off. Eval is the one surface the
+   * matrix resolves to `await`: nobody is watching a tab during a run, so a
+   * handle for someone to follow later is the same as returning nothing.
+   */
+  tasks?: ToolTaskSeamOptions;
   environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
 }): Promise<ToolSet> {
   const hasModelVisiblePolicy = args.modelVisibleMcpToolResults !== undefined;
   const toolOptions =
-    args.includeAppOnly || hasModelVisiblePolicy
+    args.includeAppOnly || hasModelVisiblePolicy || args.tasks !== undefined
       ? {
           ...(args.includeAppOnly ? { includeAppOnly: true } : {}),
           ...(args.modelVisibleMcpToolResults !== undefined
             ? { modelVisibleMcpToolResults: args.modelVisibleMcpToolResults }
             : {}),
+          ...(args.tasks !== undefined ? { tasks: args.tasks } : {}),
         }
       : undefined;
 
@@ -1859,6 +1871,13 @@ export const runEvalSuiteWithAiSdk = async ({
     failed: 0,
   };
 
+  const evalTasksSeam = resolveToolTaskSeam({
+    tasksPolicy: readTasksPolicy(
+      (suiteHostConfig ?? undefined) as Parameters<typeof readTasksPolicy>[0]
+    ),
+    surface: "eval",
+  });
+
   try {
     // When a host policy is present we need the full tool set (including
     // app-only) so `applyVisibilityPolicyAndCountSignals` can:
@@ -1872,6 +1891,10 @@ export const runEvalSuiteWithAiSdk = async ({
       includeAppOnly: Boolean(hostExecutionPolicy),
       modelVisibleMcpToolResults:
         hostExecutionPolicy?.modelVisibleMcpToolResults,
+      // Host-only, and deliberately NOT read through `pickField`: an eval's
+      // per-case `advancedConfig` runs at `override-wins`, and a case must not
+      // be able to switch tasks on for a suite whose host said off.
+      ...(evalTasksSeam ? { tasks: evalTasksSeam } : {}),
       environment: config.environment,
     });
 

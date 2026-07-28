@@ -27,7 +27,11 @@ import type { Context } from "hono";
 import { type ToolSet } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { UIMessage } from "@ai-sdk/react";
-import type { Harness, MCPClientManager } from "@mcpjam/sdk";
+import type {
+  Harness,
+  MCPClientManager,
+  ToolTaskSeamOptions,
+} from "@mcpjam/sdk";
 import type {
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
@@ -245,6 +249,12 @@ export interface WebChatTurnPrepareInputs {
   progressiveToolDiscovery?: { enabled: boolean };
   /** Resolved host harness. Harness runtimes own native tool discovery. */
   harness?: Harness;
+  /**
+   * Resolved task-seam options. The CALLER resolves the mode, because hosted
+   * chat and the MCPJam agent both come through here and are different rows in
+   * the policy matrix. Absent ⇒ tasks off for this turn.
+   */
+  tasks?: ToolTaskSeamOptions;
   appTools?: AppToolEntry[];
   /** WebMCP-shaped MCPJam UI tools (client-fulfilled, like `appTools`). */
   uiTools?: UiToolEntry[];
@@ -432,6 +442,7 @@ export async function streamWebChatTurn(
       customProviders: prepare.customProviders,
       priorMessages: modelMessages,
       ...(prepare.harness ? { harness: prepare.harness } : {}),
+      ...(prepare.tasks ? { tasks: prepare.tasks } : {}),
       ...(prepare.progressiveToolDiscovery !== undefined
         ? { progressiveToolDiscovery: prepare.progressiveToolDiscovery }
         : {}),

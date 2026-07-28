@@ -49,7 +49,7 @@ import {
   resetScopeStepUp,
 } from "@/lib/scope-step-up";
 import type { ServerWithName } from "@/state/app-types";
-import type { MCPServerConfig } from "@mcpjam/sdk/browser";
+import type { MCPServerConfig, TaskMode } from "@mcpjam/sdk/browser";
 import { isNormalizedError } from "@mcpjam/sdk/browser";
 import { WebApiError } from "@/lib/apis/web/base";
 import { track } from "@/lib/analytics";
@@ -163,6 +163,12 @@ interface ToolsTabProps {
   server?: ServerWithName;
   serverConnectionStatus?: ConnectionStatus;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
+  /**
+   * Resolved host task policy for the `tools` surface. Defaults to `expose`,
+   * which is what the matrix returns for an `unset` host — so a caller that
+   * doesn't pass it gets exactly today's behavior.
+   */
+  tasksMode?: TaskMode;
 }
 
 export function ToolsTab({
@@ -171,6 +177,7 @@ export function ToolsTab({
   server,
   serverConnectionStatus,
   mcpToolResultImageRendering,
+  tasksMode = "expose",
 }: ToolsTabProps) {
   const logger = useLogger("ToolsTab");
   const [tools, setTools] = useState<ToolMap>({});
@@ -273,7 +280,22 @@ export function ToolsTab({
   // Check if server supports task-augmented tool calls (MCP Tasks spec 2025-11-25)
   // Per spec: clients MUST NOT use task augmentation if server doesn't declare capability
   const tasksWire = taskCapabilities?.wire ?? "none";
+  // Deliberately reports what the SERVER supports, independent of the host
+  // policy. Faking this to false under an `off` policy would let the panel
+  // claim a task-capable server isn't one, which corrupts the thing a debugger
+  // exists to show. The policy hides the affordance below; it does not rewrite
+  // the server's capabilities.
   const serverSupportsTaskToolCalls = taskCapabilities?.toolCalls ?? false;
+  // `off` removes every task affordance, including the Tools tab's own
+  // per-call controls. `unset` and `expose` both keep today's behavior — the
+  // matrix resolves `tools` to `expose` under `unset` precisely so this tab is
+  // unchanged for hosts that never opted in.
+  //
+  // This HIDES A CONTROL; it does not enforce a boundary.
+  // `/api/web/tools/execute` builds an ephemeral connection from the request
+  // body and never sees the host config, so a crafted request can still create
+  // a task. The boundary, when there is one, is server-side.
+  const tasksDisabledByHost = tasksMode === "off";
 
   const resetLoadedToolState = ({
     invalidateRequests = true,
@@ -698,10 +720,13 @@ export function ToolsTab({
       // Extension wire: no ttl and no `params.task` — the client only
       // declares that a task response is acceptable and the server decides.
       const allowTaskResult =
-        tasksWire === "extension" && serverSupportsTaskToolCalls
+        !tasksDisabledByHost &&
+        tasksWire === "extension" &&
+        serverSupportsTaskToolCalls
           ? executeAsTask
           : undefined;
       const shouldUseTask =
+        !tasksDisabledByHost &&
         tasksWire === "legacy" &&
         serverSupportsTaskToolCalls &&
         (executeAsTask || selectedToolTaskSupport === "required");
@@ -950,12 +975,14 @@ export function ToolsTab({
           : undefined
       }
       taskRequired={
+        !tasksDisabledByHost &&
         tasksWire === "legacy" &&
         serverSupportsTaskToolCalls &&
         selectedToolTaskSupport === "required"
       }
       taskTtl={taskTtl}
       taskWire={tasksWire}
+      tasksDisabledByHost={tasksDisabledByHost}
       onTaskTtlChange={tasksWire === "extension" ? undefined : setTaskTtl}
       serverSupportsTaskToolCalls={serverSupportsTaskToolCalls}
       onClose={() => setIsSidebarVisible(false)}

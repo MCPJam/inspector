@@ -3,7 +3,8 @@ import type { ChatV2Request } from "@/shared/chat-v2";
 import { getCanonicalModelId } from "@/shared/types";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import { shouldEnableCloudSkillTools } from "../../utils/computers/cloud-skill-tools.js";
-import { isMCPAuthError } from "@mcpjam/sdk";
+import { isMCPAuthError, TaskCreatedSink } from "@mcpjam/sdk";
+import { resolveToolTaskSeam } from "../../utils/task-seam.js";
 import { resolveHostModelDefinition } from "../../utils/org-model-config.js";
 import {
   ELICITATION_TIMEOUT_EXTENSION_MS,
@@ -735,6 +736,20 @@ chatV2.post("/", async (c) => {
       clientVersion: hostedBody.hostedElicitationVersion,
     });
 
+    // ── Tasks (`com.mcpjam/tasks`) ──────────────────────────────────────────
+    // Read from the RESOLVED host, never the body. Same authority rule as the
+    // elicitation gate above: a share-link visitor owns the request body, so a
+    // body-supplied opt-in must not be able to turn tasks on against a host
+    // that said off. `tasksPolicy` is absent from `ExecutionOverrides`
+    // entirely, so this holds at every precedence rather than by a check here.
+    const tasksSink = new TaskCreatedSink();
+    const tasksSeam = resolveToolTaskSeam({
+      tasksPolicy: resolvedExecution.tasksPolicy,
+      surface: "chat",
+      scope: hostedBody.projectId,
+      sink: tasksSink,
+    });
+
     // ── Hosted MRTR (input_required, §12.5) gate + resume parse ─────────────
     // MRTR suspend/resume rides the SAME elicitation capability (a round embeds
     // `elicitation/create`), so it is enabled only alongside elicitation (both
@@ -1034,6 +1049,7 @@ chatV2.post("/", async (c) => {
           ...(resolvedExecution.harness
             ? { harness: resolvedExecution.harness }
             : {}),
+          ...(tasksSeam ? { tasks: tasksSeam } : {}),
           ...(resolvedProgressiveToolDiscovery !== undefined
             ? {
                 progressiveToolDiscovery: {

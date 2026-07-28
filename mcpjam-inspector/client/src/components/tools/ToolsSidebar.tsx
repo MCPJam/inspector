@@ -67,6 +67,13 @@ interface ToolsSidebarProps {
   taskWire?: "none" | "legacy" | "extension";
   onTaskTtlChange?: (value: number) => void;
   serverSupportsTaskToolCalls?: boolean;
+  /**
+   * The host's task policy is `off`. Kept SEPARATE from
+   * `serverSupportsTaskToolCalls`, which stays truthful about the server, so
+   * the panel can say "this server supports tasks; this host disabled them"
+   * rather than pretending the capability isn't there.
+   */
+  tasksDisabledByHost?: boolean;
   // Collapsible sidebar
   onClose?: () => void;
 }
@@ -111,6 +118,7 @@ export function ToolsSidebar({
   taskWire,
   onTaskTtlChange,
   serverSupportsTaskToolCalls,
+  tasksDisabledByHost,
   onClose,
 }: ToolsSidebarProps) {
   const selectedTool = selectedToolName ? tools[selectedToolName] : null;
@@ -312,7 +320,18 @@ export function ToolsSidebar({
               </Accordion>
 
               {/* Task execution options */}
-              {serverSupportsTaskToolCalls && (
+              {serverSupportsTaskToolCalls && tasksDisabledByHost && (
+                <div className="px-3 py-3 border-t border-border">
+                  <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <Clock className="h-3 w-3" />
+                    <span>
+                      This server supports tasks, but this host has task
+                      execution turned off.
+                    </span>
+                  </span>
+                </div>
+              )}
+              {serverSupportsTaskToolCalls && !tasksDisabledByHost && (
                 <div className="px-3 py-3 border-t border-border">
                   {taskWire === "extension" ? (
                     // The extension has no client-side TTL or opt-in: the

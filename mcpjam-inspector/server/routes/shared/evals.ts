@@ -1,5 +1,7 @@
 import { ConvexHttpClient } from "convex/browser";
 import type { MCPClientManager, MCPServerReplayConfig } from "@mcpjam/sdk";
+import { readTasksPolicy } from "@mcpjam/sdk";
+import { resolveToolTaskSeam } from "../../utils/task-seam.js";
 import { z } from "zod";
 import { generateTestCases } from "../../services/eval-agent";
 import {
@@ -2472,12 +2474,26 @@ export async function streamEvalTestCaseWithManager(
   // full tool set (including app-only) so the policy can both filter and
   // count drops honestly. Without this, app-only tools are pre-stripped by
   // getToolsForAiSdk and host visibility signals are blank.
+  // Host-only, and never merged with `hostConfigOverride`: a single-case
+  // override must not be able to switch tasks on for a suite whose host said
+  // off. Eval resolves to `await` — a run has nobody watching a handle.
+  const singleCaseTasksSeam = resolveToolTaskSeam({
+    tasksPolicy: readTasksPolicy(
+      suiteHostConfig as Parameters<typeof readTasksPolicy>[0]
+    ),
+    surface: "eval",
+  });
   const tools = (
-    suiteHostPolicy
+    suiteHostPolicy || singleCaseTasksSeam
       ? await clientManager.getToolsForAiSdk(resolvedServerIds, {
-          includeAppOnly: true,
-          modelVisibleMcpToolResults:
-            suiteHostPolicy.modelVisibleMcpToolResults,
+          ...(suiteHostPolicy
+            ? {
+                includeAppOnly: true,
+                modelVisibleMcpToolResults:
+                  suiteHostPolicy.modelVisibleMcpToolResults,
+              }
+            : {}),
+          ...(singleCaseTasksSeam ? { tasks: singleCaseTasksSeam } : {}),
         })
       : await clientManager.getToolsForAiSdk(resolvedServerIds)
   ) as Record<string, any>;
