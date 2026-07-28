@@ -134,8 +134,9 @@ export function GenerateSwarmDialog({
     personaRefId: string,
     journeys: SwarmGeneratedJourney[],
     attachmentId: string
-  ): Promise<number> => {
+  ): Promise<{ created: number; firstError: Error | null }> => {
     let created = 0;
+    let firstError: Error | null = null;
     for (const journey of journeys) {
       try {
         await onCreateJourney(personaRefId, {
@@ -146,12 +147,18 @@ export function GenerateSwarmDialog({
           config: { sessionsPerHost: 1, maxTurns: 6 },
         });
         created += 1;
-      } catch {
+      } catch (error) {
         // Partial failure keeps the rows that landed — the persona and any
-        // created journeys stay editable rather than being rolled back.
+        // created journeys stay editable rather than being rolled back. The
+        // first error is kept so a run where NOTHING landed can report why
+        // instead of closing on a "0 of N" success toast.
+        if (!firstError) {
+          firstError =
+            error instanceof Error ? error : new Error(String(error));
+        }
       }
     }
-    return created;
+    return { created, firstError };
   };
 
   const handleGenerate = async () => {
@@ -189,20 +196,34 @@ export function GenerateSwarmDialog({
           avatarShape: randomAvatarIndex(PERSONA_AVATAR_SHAPE_COUNT),
           avatarPalette: randomAvatarIndex(PERSONA_AVATAR_PALETTE_COUNT),
         });
-        const created = await createJourneyRows(
+        const { created, firstError } = await createJourneyRows(
           personaRefId,
           result.journeys,
           attachmentId
         );
+        // The persona landed either way — select it so the new row is visible
+        // even when every journey write failed.
         onPersonaCreated?.(personaRefId);
         track("swarm_generate_persona_completed", {
           location: "swarms",
           journeysRequested: result.journeys.length,
           journeysCreated: created,
         });
+        // Nothing to celebrate if no journey survived: keep the dialog open
+        // and show why, rather than closing on a "0 of N" success toast.
+        if (created === 0 && result.journeys.length > 0) {
+          setErrorMessage(
+            `Created the persona, but no journeys could be saved. ${
+              firstError?.message ?? "The journey writes were rejected."
+            }`
+          );
+          return;
+        }
         toast.success(
           created === result.journeys.length
-            ? `Created persona + ${created} ${created === 1 ? "journey" : "journeys"}`
+            ? `Created persona + ${created} ${
+                created === 1 ? "journey" : "journeys"
+              }`
             : `Created persona + ${created} of ${result.journeys.length} journeys`
         );
         onOpenChange(false);
@@ -225,11 +246,20 @@ export function GenerateSwarmDialog({
           ...(persona.notes ? { notes: persona.notes } : {}),
         },
       });
-      const created = await createJourneyRows(
+      const { created, firstError } = await createJourneyRows(
         persona._id,
         result.journeys,
         attachmentId
       );
+      // Every write failed (deleted server group, rejected goals, …): surface
+      // the mutation error instead of closing on a "0 of N" success toast —
+      // the generation quota was already spent, so the user needs the reason.
+      if (created === 0 && result.journeys.length > 0) {
+        throw (
+          firstError ??
+          new Error("No journeys could be saved for this persona.")
+        );
+      }
       track("swarm_generate_journeys_completed", {
         location: "swarms",
         journeysRequested: result.journeys.length,
@@ -258,7 +288,9 @@ export function GenerateSwarmDialog({
   const description =
     mode === "persona"
       ? "Generates one persona and its journeys, grounded in a server group's tools. Everything lands as editable rows — nothing runs until you say so."
-      : `Generates journeys for ${persona?.name ?? "this persona"}, grounded in a server group's tools. Nothing runs until you say so.`;
+      : `Generates journeys for ${
+          persona?.name ?? "this persona"
+        }, grounded in a server group's tools. Nothing runs until you say so.`;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

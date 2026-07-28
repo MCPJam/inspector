@@ -237,6 +237,28 @@ describe("SwarmsTab — generate persona", () => {
     });
   });
 
+  it("reports the mutation error when no journey survives, keeping the persona", async () => {
+    generatePersonaMock.mockResolvedValue({
+      persona: { name: "P", role: "R" },
+      journeys: [{ goal: "one" }, { goal: "two" }],
+    });
+    createJourneyMutation.mockRejectedValue(
+      new Error("Server attachment not found")
+    );
+
+    openGeneratePersona();
+    await pickClient(/host one/i);
+    fireEvent.click(screen.getByTestId("mock-server-group-picker"));
+    fireEvent.click(screen.getByRole("button", { name: /generate persona/i }));
+
+    // No "0 of 2" success toast — the dialog stays open and says why.
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Server attachment not found");
+    expect(toastMock.success).not.toHaveBeenCalled();
+    // The persona did land, so it must still be created and selected.
+    expect(createPersonaMutation).toHaveBeenCalledTimes(1);
+  });
+
   it("renders a quota 429 inline instead of closing the dialog", async () => {
     generatePersonaMock.mockRejectedValue(
       new SwarmGenerateError(429, "You've hit your usage limit for today.")
@@ -303,5 +325,29 @@ describe("SwarmsTab — generate journeys", () => {
     });
     // Generating journeys must never create a persona.
     expect(createPersonaMutation).not.toHaveBeenCalled();
+  });
+
+  it("surfaces the mutation error when every journey write fails", async () => {
+    generateJourneysMock.mockResolvedValue({
+      journeys: [{ goal: "goal a" }, { goal: "goal b" }],
+    });
+    createJourneyMutation.mockRejectedValue(new Error("Goal is required"));
+
+    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+    fireEvent.click(screen.getByText("Persona One"));
+    const generateButtons = screen.getAllByRole("button", {
+      name: /^generate$/i,
+    });
+    fireEvent.click(generateButtons[generateButtons.length - 1]);
+
+    await pickClient(/host one/i);
+    fireEvent.click(screen.getByTestId("mock-server-group-picker"));
+    fireEvent.click(screen.getByRole("button", { name: /generate journeys/i }));
+
+    // Nothing was saved after spending generation quota — say so inline and
+    // keep the dialog open, rather than a "Created 0 of 2" success toast.
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Goal is required");
+    expect(toastMock.success).not.toHaveBeenCalled();
   });
 });
