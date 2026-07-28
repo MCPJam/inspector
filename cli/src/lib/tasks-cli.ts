@@ -366,6 +366,14 @@ export async function driveTaskWatch(
               unknown
             > | null,
         }),
+    // Extension only, and not an omission: `tasks/update` does not exist on
+    // 2025-11-25, which is why `TasksSupport.update` is hard-`false` for that
+    // wire. A legacy task's input arrives out of band as an `elicitation/create`
+    // stamped with `relatedTaskId` and its `Task` carries no `inputRequests`, so
+    // the poll loop has nothing to answer and nothing to answer it with. The
+    // driver reports `input_required` there deliberately rather than re-reading
+    // an unchanging status until the deadline — a deterministic exit 6 beats a
+    // timeout that looks like a hang.
     ...(extension
       ? {
           updateTask: async (_identity, inputResponses) => {

@@ -130,6 +130,10 @@ which emits `{ "created": …, "watch": … }` and exits with the watch's code.
 
 `--interactive` answers the task's elicitations from the terminal. Like every other interactive verb, it needs a real TTY on stdin: piped or redirected stdin, `--yes`, `CI`, or `MCPJAM_NON_INTERACTIVE` all make it decline cleanly rather than prompt into the void. A declined or unanswered input ends the watch with exit `6`, and you can answer out of band with `tasks update` and watch again.
 
+<Warning>
+  **`--interactive` answers task input on the extension wire only.** The legacy wire has no `tasks/update`, and its `Task` carries no `inputRequests` — the request arrives out of band as an `elicitation/create` stamped with `relatedTaskId`, which a polling loop cannot correlate with the task it is watching. `tasks watch` therefore reports `input_required` on that wire and exits `6` rather than polling an unchanging status until `--duration-ms` runs out. Drive a legacy task that needs input from the Inspector UI, which reads the elicitation off a live stream.
+</Warning>
+
 Ctrl-C (or `SIGTERM`) aborts the watch cleanly: you still get an envelope, with `"outcome": "aborted"` and exit `130`.
 
 <Note>
