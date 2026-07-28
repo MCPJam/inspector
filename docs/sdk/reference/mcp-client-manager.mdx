@@ -224,6 +224,36 @@ const manager = new MCPClientManager(
 );
 ```
 
+### Trace context propagation
+
+`traceContextProvider` is a function `(serverId: string) => TraceContext | undefined`. It is called fresh on every outbound request so a tracer that changes spans per operation propagates the current one without reconnecting.
+
+The manager injects the context only on the **modern era** (MCP 2026-07-28). Legacy (2025-era) wire output is byte-identical to having no provider at all. A malformed `traceparent` is dropped rather than forwarded; a malformed `tracestate` or `baggage` is dropped while a valid `traceparent` is kept.
+
+```typescript
+import { MCPClientManager, TraceContextProvider } from "@mcpjam/sdk";
+
+const traceProvider: TraceContextProvider = (serverId) => {
+  // Return the active span's context from your own OpenTelemetry tracer.
+  // Return undefined when there is no active span.
+  const span = myTracer.currentSpan();
+  if (!span) return undefined;
+  return {
+    traceparent: span.traceparent(),
+    tracestate: span.tracestate(),
+  };
+};
+
+const manager = new MCPClientManager(
+  { myServer: { command: "node", args: ["./server.js"] } },
+  { traceContextProvider: traceProvider },
+);
+```
+
+<Note>
+MCPJam itself does not supply a `traceContextProvider` — it runs no OpenTelemetry tracer. The option exists for SDK embedders that do. With no provider, the `traceparent`, `tracestate`, and `baggage` `_meta` keys are never written.
+</Note>
+
 ---
 
 ## Methods
