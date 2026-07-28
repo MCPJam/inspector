@@ -301,9 +301,21 @@ function loadTasks(): TrackedTask[] {
   return loadAllTasks().filter(inScope);
 }
 
-/** Persists the in-scope entries while preserving other actors' entries. */
+/**
+ * Persists the in-scope entries while preserving other actors' entries.
+ *
+ * Current scope FIRST, and the order is load-bearing rather than cosmetic.
+ * `saveTasks` sheds from the tail to fit the size ceiling, and `trackTask`
+ * unshifts, so the prefix is "newest, mine" and the tail is "oldest, someone
+ * else's". Concatenating the other way — which is what this did — put every
+ * preserved handle from a previous account or organization scope ahead of the
+ * current one, so a task created seconds ago was among the first records
+ * dropped while stale handles belonging to a scope nobody is looking at
+ * survived. Losing the handle the user is actively waiting on is the worst
+ * outcome this store has.
+ */
 function saveInScope(next: TrackedTask[]): void {
-  saveTasks([...loadAllTasks().filter((t) => !inScope(t)), ...next]);
+  saveTasks([...next, ...loadAllTasks().filter((t) => !inScope(t))]);
 }
 
 function saveTasks(tasks: TrackedTask[]): void {
@@ -313,9 +325,11 @@ function saveTasks(tasks: TrackedTask[]): void {
       version: SCHEMA_VERSION,
       tasks: payload,
     } satisfies StoredShape);
-    // Shed from the tail — the least recently tracked — until the payload fits.
-    // A quota rejection would otherwise lose the whole store, including the
-    // handle the user is actively waiting on.
+    // Shed from the tail until the payload fits. `saveInScope` orders the
+    // payload so the tail is the most expendable thing in the store — other
+    // scopes' entries, then this scope's oldest — and a quota rejection would
+    // otherwise lose the WHOLE store, including the handle the user is
+    // actively waiting on.
     while (serialized.length > MAX_SERIALIZED_BYTES && payload.length > 1) {
       payload = payload.slice(0, Math.floor(payload.length / 2));
       serialized = JSON.stringify({

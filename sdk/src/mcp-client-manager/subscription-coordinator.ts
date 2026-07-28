@@ -103,9 +103,7 @@ export type SubscriptionNotificationKind =
   | "resource-updated"
   | "tasks";
 
-const METHOD_TO_KIND: Readonly<
-  Record<string, SubscriptionNotificationKind>
-> = {
+const METHOD_TO_KIND: Readonly<Record<string, SubscriptionNotificationKind>> = {
   [ToolListChangedNotificationMethod]: "tools-list-changed",
   [PromptListChangedNotificationMethod]: "prompts-list-changed",
   [ResourceListChangedNotificationMethod]: "resources-list-changed",
@@ -377,32 +375,59 @@ function isEmptyFilter(filter: SubscriptionFilterShape): boolean {
   );
 }
 
+/**
+ * Whether a notification is one this stream may deliver.
+ *
+ * Takes BOTH filters, and for the identifier-bearing kinds requires membership
+ * in each. The acknowledged filter alone is not enough: `markAcknowledged`
+ * stores whatever the server honored, and `diffAcknowledgement` only records
+ * what the server *dropped* — an id the server ADDED survives into
+ * `acknowledgedFilter` unchallenged. Checking that filter by itself therefore
+ * let a server deliver a task or resource we never asked about simply by
+ * claiming it had honored it, which is the exact inverse of the isolation this
+ * predicate exists to enforce.
+ *
+ * Requested-only would be wrong too: the server must not send a type it never
+ * agreed to honor. The safe set is the intersection, so an id has to have been
+ * both asked for and agreed to.
+ *
+ * The boolean list-changed kinds stay on the acknowledged filter. They carry no
+ * identifier, so there is no cross-surface state to leak — the worst case is a
+ * redundant list refetch.
+ */
 function filterAllows(
-  filter: SubscriptionFilterShape,
+  acknowledged: SubscriptionFilterShape,
+  requested: SubscriptionFilterShape,
   kind: SubscriptionNotificationKind,
   uri?: string,
   taskId?: string
 ): boolean {
   switch (kind) {
     case "tools-list-changed":
-      return Boolean(filter.toolsListChanged);
+      return Boolean(acknowledged.toolsListChanged);
     case "prompts-list-changed":
-      return Boolean(filter.promptsListChanged);
+      return Boolean(acknowledged.promptsListChanged);
     case "resources-list-changed":
-      return Boolean(filter.resourcesListChanged);
+      return Boolean(acknowledged.resourcesListChanged);
     case "resource-updated": {
-      const uris = filter.resourceSubscriptions ?? [];
       // A server may legitimately stamp an update for a URI whose exact form
       // differs only by template expansion; MCPJam does not guess — the URI
-      // must be one we asked for.
-      return uri !== undefined && uris.includes(uri);
+      // must be one we asked for AND one the server agreed to.
+      return (
+        uri !== undefined &&
+        (acknowledged.resourceSubscriptions ?? []).includes(uri) &&
+        (requested.resourceSubscriptions ?? []).includes(uri)
+      );
     }
     case "tasks": {
-      // Same rule as resources. A task notification for a handle we never
-      // asked about is unsolicited whatever it carries, and accepting it would
-      // let a server push state for a task belonging to another surface.
-      const ids = filter.taskIds ?? [];
-      return taskId !== undefined && ids.includes(taskId);
+      // Same rule as resources, and it matters more here: task ids are
+      // bearer-like handles, so accepting an unrequested one lets a server push
+      // state for a task belonging to another surface.
+      return (
+        taskId !== undefined &&
+        (acknowledged.taskIds ?? []).includes(taskId) &&
+        (requested.taskIds ?? []).includes(taskId)
+      );
     }
   }
 }
@@ -678,7 +703,9 @@ export class SubscriptionCoordinator {
   ): Promise<void> {
     this.desired = {
       ...desired,
-      ...(desired.resourceUris ? { resourceUris: [...desired.resourceUris] } : {}),
+      ...(desired.resourceUris
+        ? { resourceUris: [...desired.resourceUris] }
+        : {}),
       ...(desired.taskIds ? { taskIds: [...desired.taskIds] } : {}),
     };
     await this.enqueue(() => this.reconcile());
@@ -729,8 +756,8 @@ export class SubscriptionCoordinator {
     return typeof raw === "string"
       ? raw
       : typeof raw === "number"
-        ? String(raw)
-        : undefined;
+      ? String(raw)
+      : undefined;
   }
 
   /**
@@ -852,10 +879,13 @@ export class SubscriptionCoordinator {
       typeof notification.params?.taskId === "string"
         ? (notification.params.taskId as string)
         : undefined;
-    // Enforce against the ACKNOWLEDGED filter: the server must not send a type
-    // it did not agree to honor.
-    const effective = stream.acknowledgedFilter ?? stream.requestedFilter;
-    if (!filterAllows(effective, kind, uri, taskId)) {
+    // Enforce against BOTH: the server must not send a type it did not agree to
+    // honor, and must not deliver an identifier we never asked about even if it
+    // claims to have honored one.
+    const acknowledged = stream.acknowledgedFilter ?? stream.requestedFilter;
+    if (
+      !filterAllows(acknowledged, stream.requestedFilter, kind, uri, taskId)
+    ) {
       this.recordRejection({
         method: notification.method,
         subscriptionId,
@@ -973,7 +1003,10 @@ export class SubscriptionCoordinator {
         await this.safeUnsubscribe(uri);
       }
       this.legacySubscribedUris.clear();
-      if (current && (current.status === "active" || current.status === "opening")) {
+      if (
+        current &&
+        (current.status === "active" || current.status === "opening")
+      ) {
         current.status = "cancelled";
         current.closeReason = "local-abort";
         current.closedAt = this.now();
@@ -1095,8 +1128,7 @@ export class SubscriptionCoordinator {
       ? this.streams.get(this.currentLocalId)
       : undefined;
     const live =
-      current &&
-      (current.status === "opening" || current.status === "active")
+      current && (current.status === "opening" || current.status === "active")
         ? current
         : undefined;
 

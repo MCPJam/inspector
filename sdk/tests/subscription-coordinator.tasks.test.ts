@@ -64,8 +64,9 @@ class TaskFixtureClient implements SubscriptionClientPort {
     private readonly canDeclare = true
   ) {
     if (!canDeclare) {
-      (this as { listenWithTasksDeclaration?: unknown }).listenWithTasksDeclaration =
-        undefined;
+      (
+        this as { listenWithTasksDeclaration?: unknown }
+      ).listenWithTasksDeclaration = undefined;
     }
   }
 
@@ -144,10 +145,7 @@ class TaskFixtureClient implements SubscriptionClientPort {
   }
 
   /** Deliver a full `DetailedTask` on the stream, as SEP-2663 specifies. */
-  emitTask(
-    listenIndex: number,
-    task: Record<string, unknown>
-  ): void {
+  emitTask(listenIndex: number, task: Record<string, unknown>): void {
     this.emit(TasksNotificationMethod, {
       ...task,
       _meta: { [SUBSCRIPTION_ID_META_KEY]: `listen:${listenIndex + 1}` },
@@ -233,7 +231,11 @@ describe("filter resolution", () => {
       );
       expect(requested.taskIds).toBeUndefined();
       expect(rejected).toEqual([
-        { interest: "tasks", taskId: "t1", reason: "capability-not-advertised" },
+        {
+          interest: "tasks",
+          taskId: "t1",
+          reason: "capability-not-advertised",
+        },
       ]);
     }
   });
@@ -317,6 +319,26 @@ describe("delivery", () => {
       status: "working",
       pollIntervalMs: 2_000,
     });
+  });
+
+  it("refuses a task id the server acknowledged but we never requested", async () => {
+    const h = harness();
+    // The server echoes back MORE than it was asked for. `diffAcknowledgement`
+    // only records what a server DROPPED, so an id it ADDED survives into
+    // `acknowledgedFilter` unchallenged — and enforcing against that filter
+    // alone let it through. Task ids are bearer-like handles, so this is a
+    // server pushing state for another surface's task.
+    await h.coordinator.setDesiredInterests({ taskIds: ["t1"] });
+    h.client.listens[0].acknowledge({ taskIds: ["t1", "someone-elses"] });
+
+    h.client.emitTask(0, workingTask("someone-elses"));
+    expect(h.delivered).toEqual([]);
+    expect(h.rejected.at(-1)).toMatchObject({ reason: "unrequested-type" });
+
+    // ...and the id we actually asked for still arrives.
+    h.client.emitTask(0, workingTask("t1"));
+    expect(h.delivered).toHaveLength(1);
+    expect(h.delivered[0]).toMatchObject({ taskId: "t1" });
   });
 
   it("refuses a task notification for an id we never asked about", async () => {

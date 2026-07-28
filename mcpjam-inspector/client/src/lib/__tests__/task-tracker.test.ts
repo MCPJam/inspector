@@ -25,9 +25,7 @@ describe("task-tracker", () => {
   it("migrates v1 bare-array entries to legacy-tagged records", () => {
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify([
-        { taskId: "old-1", serverId: "s1", createdAt: NOW },
-      ]),
+      JSON.stringify([{ taskId: "old-1", serverId: "s1", createdAt: NOW }])
     );
 
     expect(getTrackedTasks()).toEqual([
@@ -90,7 +88,7 @@ describe("task-tracker", () => {
           { taskId: "old", serverId: "s1", wire: "legacy", createdAt: stale },
           { taskId: "new", serverId: "s1", wire: "legacy", createdAt: NOW },
         ],
-      }),
+      })
     );
 
     expect(getTrackedTasks().map((t) => t.taskId)).toEqual(["new"]);
@@ -140,7 +138,7 @@ describe("task-tracker", () => {
     untrackTask("t1", "s1");
     expect(getTrackedTasks().map((t) => t.serverId)).toEqual(["s2"]);
   });
-// ---- v3: resumable scheduling state + responded input keys --------------
+  // ---- v3: resumable scheduling state + responded input keys --------------
 
   it("resumes a handle's scheduling state across a reload", () => {
     const id = { taskId: "t1", serverId: "s1", wire: "extension" as const };
@@ -179,7 +177,7 @@ describe("task-tracker", () => {
   it("does not resurrect an untracked handle", () => {
     recordTaskObservation(
       { taskId: "ghost", serverId: "s1", wire: "extension" },
-      { status: "working" },
+      { status: "working" }
     );
     expect(getTrackedTasks()).toHaveLength(0);
   });
@@ -210,7 +208,11 @@ describe("task-tracker", () => {
 
   it("does not carry responded keys across wires for the same task id", () => {
     const legacy = { taskId: "t1", serverId: "s1", wire: "legacy" as const };
-    const extension = { taskId: "t1", serverId: "s1", wire: "extension" as const };
+    const extension = {
+      taskId: "t1",
+      serverId: "s1",
+      wire: "extension" as const,
+    };
     trackTask({ ...legacy, createdAt: NOW });
     trackTask({ ...extension, createdAt: NOW });
 
@@ -228,7 +230,7 @@ describe("task-tracker", () => {
         tasks: [
           { taskId: "t1", serverId: "s1", wire: "extension", createdAt: NOW },
         ],
-      }),
+      })
     );
     // Best-effort parsing a future record risks misreading fields whose meaning
     // changed; re-deriving from the server is strictly safer.
@@ -246,7 +248,7 @@ describe("task-tracker", () => {
           { serverId: "s1", wire: "extension", createdAt: NOW },
           { taskId: "good", serverId: "s1", wire: "extension", createdAt: NOW },
         ],
-      }),
+      })
     );
     expect(getTrackedTasks().map((t) => t.taskId)).toEqual(["good"]);
   });
@@ -264,7 +266,7 @@ describe("task-tracker", () => {
         tasks: [
           { taskId: "t1", serverId: "s1", wire: "made-up", createdAt: NOW },
         ],
-      }),
+      })
     );
     expect(getTrackedTasks()[0].wire).toBe("legacy");
   });
@@ -285,7 +287,7 @@ describe("task-tracker", () => {
             primitiveName: huge,
           },
         ],
-      }),
+      })
     );
     const [task] = getTrackedTasks();
     expect(task.toolName?.length).toBe(1024);
@@ -312,10 +314,10 @@ describe("task-tracker", () => {
               [field]: "x".repeat(10_000),
             },
           ],
-        }),
+        })
       );
       expect(getTrackedTasks()).toEqual([]);
-    },
+    }
   );
 
   it("refuses to write an over-length identity in the first place", () => {
@@ -335,7 +337,7 @@ describe("task-tracker", () => {
     trackTask({ ...id, createdAt: NOW });
     recordRespondedInputKeys(
       id,
-      Array.from({ length: 500 }, (_, i) => `k${i}`),
+      Array.from({ length: 500 }, (_, i) => `k${i}`)
     );
     expect(getRespondedInputKeys(id)).toHaveLength(100);
   });
@@ -345,7 +347,45 @@ describe("task-tracker", () => {
     trackTask({ ...id, createdAt: NOW });
     // A one-millisecond TTL, long since past. Discarding the task is the
     // SERVER's call (tasks.md:136-140); we keep the handle and keep polling.
-    recordTaskObservation(id, { ttlMs: 1, lastObservedAt: Date.now() - 60_000 });
+    recordTaskObservation(id, {
+      ttlMs: 1,
+      lastObservedAt: Date.now() - 60_000,
+    });
     expect(getTrackedTasks().map((t) => t.taskId)).toEqual(["t1"]);
+  });
+
+  it("sheds other scopes' handles before its own when the store is full", () => {
+    // Seeded directly rather than through `trackTask`, because the trim halves
+    // the payload and so leaves ~half the ceiling free afterwards — the public
+    // API cannot easily park the store just under the limit. A browser gets
+    // there over time; the test gets there in one write.
+    const pad = "x".repeat(1000);
+    const seeded = Array.from({ length: 260 }, (_, i) => ({
+      taskId: `other-${i}-${pad}`.slice(0, 1000),
+      serverId: `srv-${pad}`.slice(0, 1000),
+      wire: "extension" as const,
+      createdAt: new Date().toISOString(),
+      dismissed: false,
+      scope: "other-org",
+    }));
+    localStorage.setItem(
+      "mcp-tracked-tasks",
+      JSON.stringify({ version: 3, tasks: seeded })
+    );
+
+    setTrackedTaskScope("my-org");
+    trackTask({
+      taskId: "fresh",
+      serverId: "srv",
+      wire: "extension",
+      createdAt: new Date().toISOString(),
+    });
+
+    // Adding this one task crosses the ceiling, so the trim runs. Out-of-scope
+    // entries used to be concatenated FIRST and the trim sheds from the tail,
+    // so the task created a moment ago was dropped while stale handles from a
+    // scope nobody has open survived. Losing the handle the user is waiting on
+    // is the worst outcome this store has.
+    expect(getTrackedTasks().map((t) => t.taskId)).toEqual(["fresh"]);
   });
 });

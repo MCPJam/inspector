@@ -149,15 +149,26 @@ describe("useTaskScheduler", () => {
   });
 
   it("applies a surface floor even when the server advertises none", () => {
-    const { result } = scheduler(100, 5_000);
-    result.current.dueTaskIds(["t1"]);
-    act(() => {
-      result.current.recordObservations([{ taskId: "t1", status: "working" }]);
-    });
-    // Asserted against the SURFACE floor specifically: a weaker
-    // `toBeGreaterThan(100)` would pass on the engine's 250ms absolute floor
-    // alone and prove nothing about the 5s hosted floor.
-    expect(result.current.msUntilNextDue()).toBeGreaterThanOrEqual(5_000);
+    // Fake timers because this assertion has ZERO slack: `msUntilNextDue()` is
+    // `nextPollAt - now`, the floor puts `nextPollAt` at exactly `now + 5000`,
+    // and a single millisecond of real wall-clock between the two lines makes
+    // it 4999. It flaked in CI for exactly that reason.
+    vi.useFakeTimers();
+    try {
+      const { result } = scheduler(100, 5_000);
+      result.current.dueTaskIds(["t1"]);
+      act(() => {
+        result.current.recordObservations([
+          { taskId: "t1", status: "working" },
+        ]);
+      });
+      // Asserted against the SURFACE floor specifically: a weaker
+      // `toBeGreaterThan(100)` would pass on the engine's 250ms absolute floor
+      // alone and prove nothing about the 5s hosted floor.
+      expect(result.current.msUntilNextDue()).toBe(5_000);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("stops scheduling a terminal task", () => {
