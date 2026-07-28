@@ -302,6 +302,20 @@ export function ToolsTab({
   // body and never sees the host config, so a crafted request can still create
   // a task. The boundary, when there is one, is server-side.
   const tasksDisabledByHost = tasksMode === "off";
+  // Legacy wire + a tool that REQUIRES task execution + host said off: the
+  // only spec-compliant way to run this tool is as a task, and the host has
+  // disabled tasks — so executing it would either violate the tool's
+  // declaration or the host policy. Disable the affordance and say why.
+  // Affordance framing only, same as `tasksDisabledByHost` above: this is not
+  // a security boundary (the route never sees the host config).
+  const taskRequiredButTasksOff =
+    tasksDisabledByHost &&
+    tasksWire === "legacy" &&
+    serverSupportsTaskToolCalls &&
+    selectedToolTaskSupport === "required";
+  const executeDisabledReason = taskRequiredButTasksOff
+    ? "This tool requires task execution, and tasks are disabled by the host configuration."
+    : undefined;
 
   const resetLoadedToolState = ({
     invalidateRequests = true,
@@ -703,6 +717,15 @@ export function ToolsTab({
       logger.warn("Cannot execute tool: no tool selected");
       return;
     }
+    // Guarded HERE, not only at the button: the global Enter keydown and
+    // ParametersPanel's own Enter handler both funnel into this function.
+    if (taskRequiredButTasksOff) {
+      setError(
+        "This tool requires task execution, and tasks are disabled by the host configuration."
+      );
+      setNormalizedError(null);
+      return;
+    }
     if (!serverName) {
       logger.warn("Cannot execute tool: no serverId available");
       return;
@@ -997,6 +1020,8 @@ export function ToolsTab({
       taskTtl={taskTtl}
       taskWire={tasksWire}
       tasksDisabledByHost={tasksDisabledByHost}
+      executeDisabled={taskRequiredButTasksOff}
+      executeDisabledReason={executeDisabledReason}
       onTaskTtlChange={tasksWire === "extension" ? undefined : setTaskTtl}
       serverSupportsTaskToolCalls={serverSupportsTaskToolCalls}
       onClose={() => setIsSidebarVisible(false)}

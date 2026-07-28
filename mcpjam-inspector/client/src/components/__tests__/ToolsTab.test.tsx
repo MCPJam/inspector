@@ -90,6 +90,8 @@ vi.mock("@/hooks/useToolQualityEnabled", () => ({
 // Mock task tracker
 vi.mock("@/lib/task-tracker", () => ({
   trackTask: vi.fn(),
+  // Read at the top of executeTool (finding 4: scope captured at call start).
+  getTrackedTaskScope: vi.fn(() => undefined),
 }));
 
 // Mock app navigation — the task_created success branch navigates to /tasks;
@@ -786,6 +788,117 @@ describe("ToolsTab", () => {
       await waitFor(() => {
         expect(mockGetTaskCapabilities).toHaveBeenCalledWith("test-server");
       });
+    });
+  });
+
+  // Finding 6: legacy wire + a tool that REQUIRES task execution + host tasks
+  // off ⇒ the tool cannot run at all, so the affordance is disabled with a
+  // reason. Affordance framing, not a security boundary — the route never
+  // sees the host config.
+  describe("legacy task-required gating when tasks are host-disabled", () => {
+    const DISABLED_REASON =
+      "This tool requires task execution, and tasks are disabled by the host configuration.";
+
+    const setupRequiredTool = async (options?: {
+      tasksMode?: "off" | "expose";
+      taskSupport?: "required" | "optional";
+      toolCalls?: boolean;
+    }) => {
+      mockListTools.mockResolvedValue({
+        tools: [
+          {
+            name: "long_job",
+            description: "Runs a long job",
+            inputSchema: {
+              type: "object",
+              properties: { name: { type: "string" } },
+            },
+            execution: { taskSupport: options?.taskSupport ?? "required" },
+          },
+        ],
+      });
+      mockGetTaskCapabilities.mockResolvedValue({
+        wire: "legacy",
+        toolCalls: options?.toolCalls ?? true,
+        list: true,
+        cancel: false,
+        update: false,
+        inlineResult: false,
+      });
+      mockExecuteToolApi.mockResolvedValue({
+        status: "completed",
+        result: { content: [] },
+      });
+
+      render(
+        <ToolsTab
+          serverConfig={createServerConfig()}
+          serverName="test-server"
+          tasksMode={options?.tasksMode ?? "off"}
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("long_job")).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByText("long_job"));
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: /^run/i })
+        ).toBeInTheDocument();
+      });
+      return screen.getByRole("button", { name: /^run/i });
+    };
+
+    it("disables the Run button and shows the reason", async () => {
+      const runButton = await setupRequiredTool();
+
+      expect(runButton).toBeDisabled();
+      await waitFor(() => {
+        expect(screen.getByText(DISABLED_REASON)).toBeInTheDocument();
+      });
+    });
+
+    it("Enter does not fire the execute API", async () => {
+      await setupRequiredTool();
+
+      // The global keydown path funnels into executeTool, whose guard is the
+      // one thing covering every entry point.
+      fireEvent.keyDown(window, { key: "Enter" });
+
+      await waitFor(() => {
+        // The guard surfaced the reason as an error notice...
+        expect(screen.getAllByText(DISABLED_REASON).length).toBeGreaterThan(0);
+      });
+      // ...and nothing was executed.
+      expect(mockExecuteToolApi).not.toHaveBeenCalled();
+    });
+
+    it("re-enables when the host allows tasks", async () => {
+      const runButton = await setupRequiredTool({ tasksMode: "expose" });
+      expect(runButton).not.toBeDisabled();
+
+      fireEvent.click(runButton);
+      await waitFor(() => {
+        // Required tool on the legacy wire runs AS a task when tasks are on.
+        expect(mockExecuteToolApi).toHaveBeenCalledWith(
+          "test-server",
+          "long_job",
+          expect.any(Object),
+          expect.objectContaining({}),
+          undefined
+        );
+      });
+    });
+
+    it("re-enables when the tool does not require task execution", async () => {
+      const runButton = await setupRequiredTool({ taskSupport: "optional" });
+      expect(runButton).not.toBeDisabled();
+    });
+
+    it("re-enables when the server never declared task tool calls", async () => {
+      const runButton = await setupRequiredTool({ toolCalls: false });
+      expect(runButton).not.toBeDisabled();
     });
   });
 

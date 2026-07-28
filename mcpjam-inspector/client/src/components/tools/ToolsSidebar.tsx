@@ -74,6 +74,14 @@ interface ToolsSidebarProps {
    * rather than pretending the capability isn't there.
    */
   tasksDisabledByHost?: boolean;
+  /**
+   * Execution is blocked for the SELECTED tool (e.g. it requires task
+   * execution while the host disabled tasks). Affordance only — the owning
+   * tab guards `executeTool` itself, so this just keeps the buttons honest.
+   */
+  executeDisabled?: boolean;
+  /** Human-readable reason shown when `executeDisabled` is set. */
+  executeDisabledReason?: string;
   // Collapsible sidebar
   onClose?: () => void;
 }
@@ -119,6 +127,8 @@ export function ToolsSidebar({
   onTaskTtlChange,
   serverSupportsTaskToolCalls,
   tasksDisabledByHost,
+  executeDisabled,
+  executeDisabledReason,
   onClose,
 }: ToolsSidebarProps) {
   const selectedTool = selectedToolName ? tools[selectedToolName] : null;
@@ -129,11 +139,12 @@ export function ToolsSidebar({
   useEffect(() => {
     setOpenSections(hasParameters ? ["parameters"] : ["description"]);
   }, [selectedToolName, hasParameters]);
-  const canExecute = serverConnected && !!selectedToolName && !!onExecute;
+  const canExecute =
+    serverConnected && !!selectedToolName && !!onExecute && !executeDisabled;
   const canSave = !!selectedToolName && !!onSave;
 
   const handleExecute = () => {
-    if (!onExecute) return;
+    if (!onExecute || executeDisabled) return;
     track("execute_tool", {
       location: "tools_sidebar",
       as_task: executeAsTask ?? false,
@@ -236,6 +247,7 @@ export function ToolsSidebar({
             disabled={loading || !canExecute}
             size="sm"
             className="h-8 px-3 text-xs ml-auto"
+            title={executeDisabled ? executeDisabledReason : undefined}
           >
             {loading ? (
               <RefreshCw className="h-3 w-3 animate-spin" />
@@ -321,7 +333,7 @@ export function ToolsSidebar({
 
               {/* Task execution options */}
               {serverSupportsTaskToolCalls && tasksDisabledByHost && (
-                <div className="px-3 py-3 border-t border-border">
+                <div className="px-3 py-3 border-t border-border space-y-1.5">
                   <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                     <Clock className="h-3 w-3" />
                     <span>
@@ -329,6 +341,14 @@ export function ToolsSidebar({
                       execution turned off.
                     </span>
                   </span>
+                  {executeDisabled && executeDisabledReason && (
+                    // The required case: the selected tool can ONLY run as a
+                    // task, so with tasks off it cannot run at all.
+                    <span className="flex items-center gap-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+                      <Clock className="h-3 w-3" />
+                      <span>{executeDisabledReason}</span>
+                    </span>
+                  )}
                 </div>
               )}
               {serverSupportsTaskToolCalls && !tasksDisabledByHost && (
