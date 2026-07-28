@@ -118,7 +118,9 @@ describe("EnvironmentChatboxSection", () => {
     fireEvent.click(screen.getByTestId("environment-chatbox-unpublish"));
     expect(mutationMocks.unpublish).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByTestId("environment-chatbox-unpublish-confirm"));
+    fireEvent.click(
+      screen.getByTestId("environment-chatbox-unpublish-confirm")
+    );
     await waitFor(() =>
       expect(mutationMocks.unpublish).toHaveBeenCalledWith({
         environmentId: "env-1",
@@ -142,9 +144,7 @@ describe("EnvironmentChatboxSection", () => {
     stubChatboxList([ENV_CHATBOX_ROW]);
     renderSection({ canManage: false });
 
-    expect(
-      screen.getByTestId("environment-chatbox-link")
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("environment-chatbox-link")).toBeInTheDocument();
     expect(
       screen.queryByTestId("environment-chatbox-unpublish")
     ).not.toBeInTheDocument();

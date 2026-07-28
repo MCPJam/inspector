@@ -441,8 +441,8 @@ chatV2.post("/", async (c) => {
     }
 
     // ── The turn's effective server set ─────────────────────────────────────
-    // For an environment target — or an environment-backed chatbox turn —
-    // this REPLACES the body's `selectedServerIds`
+    // For an environment target — or an environment-backed chatbox turn — this
+    // REPLACES the body's `selectedServerIds`
     // everywhere below — manager authorization/connection, name mapping and
     // elicitation, prepareChatV2, persistence/resume config, telemetry and the
     // tool snapshot. Resolving an environment and then still handing the raw
@@ -704,21 +704,23 @@ chatV2.post("/", async (c) => {
     // on the actual engine (harness id + canonicalized model), not host config
     // alone.
     // An environment target — or an environment-backed chatbox — NEVER also
-    // enables the project-wide cloud skill
-    // tools: its resolved union is authoritative and is delivered through
+    // enables the project-wide cloud skill tools: its resolved union is
+    // authoritative and is delivered through
     // `runtimeSkillsOverride`. Wiring both would double-deliver — an
     // environment-scoped `loadSkill` alongside a project-wide one, with the
     // model free to pull skills the environment deliberately excluded.
-    const cloudSkillsEnabled = !environmentServers && shouldEnableCloudSkillTools({
-      isGuest: Boolean(c.get("guestId")),
-      harness: resolvedExecution.harness,
-      modelId: String(modelDefinition.id),
-      // Provider is required so bare hosted ids canonicalize — without it a
-      // bare-id harness turn would be mis-detected as emulated and get the
-      // emulated skill tools on top of adapter-delivered skills.
-      provider: modelDefinition.provider,
-      hasProjectId: Boolean(hostedBody.projectId),
-    });
+    const cloudSkillsEnabled =
+      !environmentServers &&
+      shouldEnableCloudSkillTools({
+        isGuest: Boolean(c.get("guestId")),
+        harness: resolvedExecution.harness,
+        modelId: String(modelDefinition.id),
+        // Provider is required so bare hosted ids canonicalize — without it a
+        // bare-id harness turn would be mis-detected as emulated and get the
+        // emulated skill tools on top of adapter-delivered skills.
+        provider: modelDefinition.provider,
+        hasProjectId: Boolean(hostedBody.projectId),
+      });
 
     // Registering the callback is what makes the SDK advertise `elicitation`,
     // so "who declares it" and "may we honor it" are one decision — see
@@ -1010,8 +1012,7 @@ chatV2.post("/", async (c) => {
           ? {
               chatbox_environment_backed: true,
               environment_id: chatboxEnvironment.environmentRef.environmentId,
-              environment_revision:
-                chatboxEnvironment.environmentRef.revision,
+              environment_revision: chatboxEnvironment.environmentRef.revision,
               environment_effective_server_count: effectiveServerIds.length,
               environment_skill_count: environmentSkills?.length ?? 0,
             }

@@ -67,9 +67,8 @@ export function useProjectEnvironmentConsumers(
     const chatboxCount =
       chatboxes === undefined
         ? null
-        : chatboxes.filter(
-            (chatbox) => chatbox.environmentId === environmentId
-          ).length;
+        : chatboxes.filter((chatbox) => chatbox.environmentId === environmentId)
+            .length;
     return { suiteCount, journeyCount, chatboxCount };
   }, [overview, journeys, chatboxes, environmentId]);
 }

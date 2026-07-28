@@ -86,7 +86,10 @@ vi.mock("../../../utils/chatbox-runtime-config.js", async () => {
   >("../../../utils/chatbox-runtime-config.js");
   // The route's parsing (`readChatboxEnvironment`) stays REAL — that is the
   // seam under test; only the network fetch is mocked.
-  return { ...actual, fetchChatboxRuntimeConfig: fetchChatboxRuntimeConfigMock };
+  return {
+    ...actual,
+    fetchChatboxRuntimeConfig: fetchChatboxRuntimeConfigMock,
+  };
 });
 
 vi.mock("../../../utils/harness/harness-availability.js", () => ({
