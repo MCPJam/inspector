@@ -172,6 +172,69 @@ describe("task-tracker", () => {
     expect(getTrackedTasks().map((t) => t.taskId).sort()).toEqual(["a1", "a2"]);
   });
 
+  it("caps the active scope at 50, evicting its own oldest handle", () => {
+    for (let i = 0; i <= 50; i++) {
+      trackTask({
+        taskId: `t${i}`,
+        serverId: "s1",
+        wire: "legacy",
+        createdAt: NOW,
+      });
+    }
+
+    const ids = getTrackedTasks().map((t) => t.taskId);
+    expect(ids).toHaveLength(50);
+    expect(ids[0]).toBe("t50");
+    expect(ids).not.toContain("t0");
+  });
+
+  it("a late foreign-scope write caps ITS OWN scope, never the active one", () => {
+    // Fill project-a to the cap, then project-b to the cap.
+    setTrackedTaskScope("project-a");
+    for (let i = 0; i < 50; i++) {
+      trackTask({
+        taskId: `a${i}`,
+        serverId: "s1",
+        wire: "extension",
+        createdAt: NOW,
+      });
+    }
+    setTrackedTaskScope("project-b");
+    for (let i = 0; i < 50; i++) {
+      trackTask({
+        taskId: `b${i}`,
+        serverId: "s1",
+        wire: "extension",
+        createdAt: NOW,
+      });
+    }
+
+    // A delayed project-a task arrives while project-b is active. Pre-fix
+    // the cap ran over the ACTIVE slice: project-b's oldest handle (b0) was
+    // evicted — an evicted extension handle is locally unrecoverable — while
+    // project-a grew past the cap.
+    trackTask({
+      taskId: "a-late",
+      serverId: "s1",
+      wire: "extension",
+      createdAt: NOW,
+      scope: "project-a",
+    });
+
+    // Every project-b handle survived, including its oldest.
+    const bIds = getTrackedTasks().map((t) => t.taskId);
+    expect(bIds).toHaveLength(50);
+    expect(bIds).toContain("b0");
+
+    // The eviction happened in the DESTINATION scope: a-late is in,
+    // project-a's oldest is out, and the slice is still at the cap.
+    setTrackedTaskScope("project-a");
+    const aIds = getTrackedTasks().map((t) => t.taskId);
+    expect(aIds).toHaveLength(50);
+    expect(aIds[0]).toBe("a-late");
+    expect(aIds).not.toContain("a0");
+  });
+
   it("drops a scope's handles on logout / organization switch", () => {
     setTrackedTaskScope("project-a");
     trackTask({ taskId: "t1", serverId: "s1", wire: "legacy", createdAt: NOW });

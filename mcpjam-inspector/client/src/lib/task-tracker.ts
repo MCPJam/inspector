@@ -391,14 +391,26 @@ export function trackTask(task: Omit<TrackedTask, "dismissed">): void {
   const identity = taskIdentity(scoped);
   if (all.some((t) => taskIdentity(t) === identity)) return;
 
-  // The new entry rides in the saved prefix even when its scope is not the
-  // active one: it is the newest handle in the store, exactly what the
-  // tail-shedding in `saveTasks` must drop last. `saveInScope` preserves the
-  // rest of the foreign-scope entries from disk, so a scoped write is never a
-  // drop.
-  const tasks = all.filter(inScope);
-  tasks.unshift({ ...scoped, dismissed: false });
-  saveInScope(tasks.slice(0, MAX_TRACKED_TASKS));
+  // The cap and its eviction operate on the DESTINATION scope's slice —
+  // `scoped.scope`, which can differ from the active scope when the caller
+  // passes a scope captured at turn start and the part arrives after a
+  // project switch. Selecting by the ACTIVE scope here (the pre-fix
+  // behavior) made a delayed project-A write evict project B's oldest
+  // handle while leaving A's own slice uncapped — and an evicted
+  // extension-wire handle is locally unrecoverable (no `tasks/list`).
+  const inDestinationScope = (t: TrackedTask) =>
+    (t.scope ?? undefined) === (scoped.scope ?? undefined);
+  const destination = all.filter(inDestinationScope);
+  destination.unshift({ ...scoped, dismissed: false });
+
+  // Destination slice first (newest-first), every other scope's entries
+  // behind it: the new entry is the newest handle in the store, exactly what
+  // the tail-shedding in `saveTasks` must drop last. Other scopes' entries
+  // are preserved, never capped, by a write that isn't theirs.
+  saveTasks([
+    ...destination.slice(0, MAX_TRACKED_TASKS),
+    ...all.filter((t) => !inDestinationScope(t)),
+  ]);
 }
 
 /**
