@@ -63,7 +63,7 @@ import {
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
-import { InlineEditableText } from "@/components/ui/inline-editable-text";
+import { EditableTitle } from "@/components/evals/EditableTitle";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { PersonaPixelAvatar } from "@/components/swarms/persona-pixel-avatar";
 import { PersonaAvatarLookPicker } from "@/components/swarms/persona-avatar-look-picker";
@@ -1245,18 +1245,26 @@ function PersonaDetailHeader({
           onSave={(look) => onSave(look)}
         />
         <div className="min-w-0 flex-1">
-          <InlineEditableText
+          <EditableTitle
             value={persona.name}
             onSave={(name) => onSave({ name })}
             startInEditMode={autoEditName}
-            className="block w-full text-lg font-semibold tracking-tight sm:text-xl"
+            variant="h2"
+            fullWidth
             truncate={false}
+            placeholder="Persona name"
+            className="-ml-2 px-2 text-lg font-semibold tracking-tight sm:text-xl"
+            inputClassName="text-lg font-semibold tracking-tight sm:text-xl"
           />
-          <InlineEditableText
+          <EditableTitle
             value={persona.role}
             onSave={(role) => onSave({ role })}
-            className="mt-0.5 block w-full text-sm text-muted-foreground"
+            variant="text"
+            fullWidth
             truncate={false}
+            placeholder="Role"
+            className="-ml-2 mt-0.5 px-2 font-normal text-muted-foreground"
+            inputClassName="font-normal text-muted-foreground"
           />
           <TextareaAutosize
             aria-label="Notes / personality"
