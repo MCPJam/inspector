@@ -71,6 +71,12 @@ describe("useTaskScheduler", () => {
       // shared-`Math.min` scheduler polled both here.
       vi.advanceTimersByTime(2_000);
       expect(result.current.dueTaskIds(["fast", "slow"])).toEqual(["fast"]);
+      // `dueTaskIds` CLAIMS what it hands back, so a caller that never folds
+      // the read back has to say so — otherwise the handle stays claimed and
+      // the next tick correctly refuses to re-issue it.
+      act(() => {
+        result.current.release(["fast"]);
+      });
 
       // The slow task comes due only at its own floor.
       vi.advanceTimersByTime(58_000);
@@ -78,6 +84,52 @@ describe("useTaskScheduler", () => {
         "fast",
         "slow",
       ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("claims what it hands back, so overlapping refreshes cannot duplicate a read", () => {
+    const { result } = scheduler();
+    // The tab's auto-refresh can interleave with one triggered by an input
+    // submission, a cancellation, or a rapid manual click. Without a claim both
+    // select the same due handle and issue duplicate `tasks/get` calls inside
+    // one advertised floor — where an out-of-order reply overwrites newer state
+    // with older.
+    expect(result.current.dueTaskIds(["t1"])).toEqual(["t1"]);
+    expect(result.current.dueTaskIds(["t1"])).toEqual([]);
+
+    // Folding the read back releases it — the handle is then withheld by its
+    // FLOOR rather than by a claim, so it returns once the floor elapses.
+    vi.useFakeTimers();
+    try {
+      act(() => {
+        result.current.recordObservations([
+          { taskId: "t1", status: "working" },
+        ]);
+      });
+      expect(result.current.dueTaskIds(["t1"])).toEqual([]);
+      vi.advanceTimersByTime(1_000);
+      expect(result.current.dueTaskIds(["t1"])).toEqual(["t1"]);
+
+      // A failed read releases it too, so the backoff is eventually retried
+      // rather than stranded behind a claim nobody holds any more.
+      act(() => {
+        result.current.recordErrors(["t1"]);
+      });
+      vi.advanceTimersByTime(60_000);
+      expect(result.current.dueTaskIds(["t1"])).toEqual(["t1"]);
+
+      // And a read that reached neither is released explicitly. Claiming
+      // reserves as well, so the handle is still withheld by its floor
+      // afterwards — which is what stops an abandoned read from becoming a hot
+      // retry loop — but it is no longer withheld forever.
+      act(() => {
+        result.current.release(["t1"]);
+      });
+      expect(result.current.dueTaskIds(["t1"])).toEqual([]);
+      vi.advanceTimersByTime(1_000);
+      expect(result.current.dueTaskIds(["t1"])).toEqual(["t1"]);
     } finally {
       vi.useRealTimers();
     }

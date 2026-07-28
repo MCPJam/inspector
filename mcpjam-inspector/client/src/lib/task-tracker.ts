@@ -154,7 +154,16 @@ function clampString(value: unknown): string | undefined {
  */
 function identityString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
-  return value.length > MAX_STRING_LENGTH ? undefined : value;
+  // NUL is REJECTED, not stripped or escaped. It is the delimiter the composite
+  // identity key is joined with, so a component containing one re-parses as a
+  // different split: `serverId: "a\u0000b"` with `taskId: "c"` produces the same
+  // key as `serverId: "a"` with `taskId: "b\u0000c"`. Two distinct handles would
+  // then share one record — inheriting each other's `nextPollAt` and, worse,
+  // each other's answered-input keys, so a prompt one of them never answered
+  // would be silently skipped.
+  return value.length > MAX_STRING_LENGTH || value.includes("\u0000")
+    ? undefined
+    : value;
 }
 
 function clampNumber(value: unknown): number | undefined {

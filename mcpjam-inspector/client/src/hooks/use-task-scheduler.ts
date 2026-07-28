@@ -90,11 +90,25 @@ export interface UseTaskSchedulerArgs {
 
 export interface TaskScheduler {
   /**
-   * Narrows `candidateTaskIds` to the ones actually due now. An unknown handle
-   * is treated as due, so a newly created task is polled immediately and the
-   * floor applies only from its first observation onward.
+   * Narrows `candidateTaskIds` to the ones actually due now, CLAIMING each one
+   * it returns. An unknown handle is treated as due, so a newly created task is
+   * polled immediately and the floor applies only from its first observation
+   * onward.
+   *
+   * Claiming is what makes overlapping refreshes safe. The tab's auto-refresh
+   * can interleave with one triggered by an input submission, a cancellation,
+   * or a rapid manual click, and without a claim both invocations select the
+   * same due set and issue duplicate `tasks/get` calls inside one advertised
+   * floor — where an out-of-order reply can overwrite newer state with older.
+   *
+   * The caller MUST {@link TaskScheduler.release} what it receives, on every
+   * completion path including failure. `recordObservations` and `recordErrors`
+   * release automatically, so an ordinary tick needs nothing extra; `release`
+   * is for the ids that never reached either.
    */
   dueTaskIds(candidateTaskIds: readonly string[]): string[];
+  /** Releases claims for ids that produced neither an observation nor an error. */
+  release(taskIds: readonly string[]): void;
   /** Folds a poll's results back in, rescheduling each task by its own floor. */
   recordObservations(states: readonly SchedulerTaskState[]): void;
   /** Records a failed read for these ids: backoff, no status change. */
@@ -188,39 +202,15 @@ export function useTaskScheduler({
           );
         const restoreStates = getTrackedTaskRestoreStates(unseen);
 
-        /**
-         * A restored terminal handle that still owes exactly one read.
-         *
-         * The tracker persists a task's status but never its payload, and on
-         * the extension wire the result and error ride INLINE on `tasks/get` —
-         * there is no `tasks/result` to fetch them from later. So a handle
-         * restored as `completed` after a reload is a status with nothing
-         * behind it, and excluding it from polling (which is otherwise exactly
-         * right for a terminal handle) strands it: the row shows "completed"
-         * with no result and no way to ever get one, including manual refresh.
-         *
-         * Bounded to one read: `engine.observe` clears `restored`, after which
-         * the ordinary terminal exclusion takes over. `nextPollAt` is still
-         * honored, so a recovery read that fails backs off with everything
-         * else instead of retrying every tick.
-         *
-         * Legacy is excluded because it does not have the problem — its result
-         * comes from a separate `tasks/result` call the tab makes on demand.
-         */
-        const needsTerminalRecovery = (
-          record: NonNullable<ReturnType<typeof engine.get>>
-        ): boolean =>
-          wire === "extension" &&
-          record.restored &&
-          isTerminalLifecycleStatus(record.status) &&
-          record.nextPollAt <= now;
-
         return candidateTaskIds.filter((taskId) => {
           const identity = identityFor(taskId);
           if (!identity) return false;
           const known = engine.get(identity);
           if (known) {
-            return needsTerminalRecovery(known) || due.has(known.key);
+            if (!due.has(known.key)) return false;
+            // Refused when another refresh already holds it, so overlapping
+            // ticks split the work rather than duplicating it.
+            return engine.acquirePoll(identity);
           }
 
           // First sighting this session — which, after a reload, means EVERY
@@ -245,17 +235,24 @@ export function useTaskScheduler({
             respondedInputKeys: persisted?.respondedInputKeys,
           });
           const restored = engine.get(identity);
+          // `owesRead` inside the engine decides whether a restored terminal
+          // still needs its one recovery read, so asking `due()` is enough —
+          // and it is the only way `msUntilNextDue()` agrees, which is what
+          // actually arms the timer that brings us back here.
           if (restored && isTerminalLifecycleStatus(restored.status)) {
-            return needsTerminalRecovery(restored);
+            return (
+              engine.due().some((record) => record.key === restored.key) &&
+              engine.acquirePoll(identity)
+            );
           }
           if (persisted?.nextPollAt !== undefined) {
             // A handle whose stored floor has not elapsed is NOT due, even
             // though we have never read it in this session.
-            return persisted.nextPollAt <= now;
+            return persisted.nextPollAt <= now && engine.acquirePoll(identity);
           }
           // No persisted schedule ⇒ genuinely new. The floor governs how
           // often to RE-read, not a delay before the first read.
-          return true;
+          return engine.acquirePoll(identity);
         });
       },
 
@@ -272,6 +269,8 @@ export function useTaskScheduler({
             lastUpdatedAt: state.lastUpdatedAt,
           } satisfies TaskLifecycleObservation;
           const record = engine.observe(identity, observation);
+          // The read that held this claim has landed.
+          engine.releasePoll(identity);
           persist.push({
             identity,
             observation: {
@@ -299,6 +298,7 @@ export function useTaskScheduler({
           const identity = identityFor(taskId);
           if (!identity) continue;
           const record = engine.observeError(identity);
+          engine.releasePoll(identity);
           // The backoff has to be DURABLE. Persisting only successful
           // observations left the tracker holding the already-elapsed
           // `nextPollAt` from the last good read, so a reload during backoff
@@ -332,6 +332,13 @@ export function useTaskScheduler({
         return [
           ...new Set([...persisted, ...(record?.respondedInputKeys ?? [])]),
         ];
+      },
+
+      release(taskIds) {
+        for (const taskId of taskIds) {
+          const identity = identityFor(taskId);
+          if (identity) engine.releasePoll(identity);
+        }
       },
 
       forget(taskIds) {

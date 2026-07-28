@@ -597,6 +597,71 @@ describe("wire adapters", () => {
     expect(isUnknownTaskError(null)).toBe(false);
   });
 
+  it("lets a LOWERED user minimum shorten a wait it caused", () => {
+    const clock = { at: 1_000 };
+    const engine = new TaskLifecycleEngine({
+      now: () => clock.at,
+      userMinimumIntervalMs: 60_000,
+    });
+    const identity = {
+      serverId: "s",
+      wire: "extension",
+      taskId: "t1",
+    } as const;
+    engine.observe(identity, { status: "working", pollIntervalMs: 2_000 });
+    expect(engine.get(identity)!.nextPollAt).toBe(clock.at + 60_000);
+
+    // A blanket "never earlier" kept the superseded preference as if it were a
+    // server wait: the task stayed parked for the rest of its old 60s, so the
+    // new setting did nothing until it happened to come due.
+    engine.setUserMinimumIntervalMs(1_000);
+    // Back down to the SERVER's floor, not to the user's 1s — the preference
+    // is one `max` term, never permission to poll faster than asked.
+    expect(engine.get(identity)!.nextPollAt).toBe(clock.at + 2_000);
+  });
+
+  it("does not let a lowered minimum punch through a Retry-After", () => {
+    const clock = { at: 1_000 };
+    const engine = new TaskLifecycleEngine({
+      now: () => clock.at,
+      userMinimumIntervalMs: 60_000,
+    });
+    const identity = {
+      serverId: "s",
+      wire: "extension",
+      taskId: "t1",
+    } as const;
+    engine.observe(identity, { status: "working", pollIntervalMs: 2_000 });
+    engine.applyRetryAfter(identity, 120_000);
+    const deadline = engine.get(identity)!.nextPollAt;
+
+    // A wait the SERVER imposed is absolute and survives the recompute; only
+    // the part the old preference caused is recoverable.
+    engine.setUserMinimumIntervalMs(1_000);
+    expect(engine.get(identity)!.nextPollAt).toBe(deadline);
+  });
+
+  it("does not let a lowered minimum walk through an error backoff", () => {
+    const clock = { at: 1_000 };
+    const engine = new TaskLifecycleEngine({
+      now: () => clock.at,
+      userMinimumIntervalMs: 60_000,
+    });
+    const identity = {
+      serverId: "s",
+      wire: "extension",
+      taskId: "t1",
+    } as const;
+    engine.observe(identity, { status: "working", pollIntervalMs: 2_000 });
+    clock.at += 60_000;
+    engine.observeError(identity);
+    const backedOffTo = engine.get(identity)!.nextPollAt;
+    expect(backedOffTo).toBeGreaterThan(clock.at);
+
+    engine.setUserMinimumIntervalMs(1_000);
+    expect(engine.get(identity)!.nextPollAt).toBe(backedOffTo);
+  });
+
   it("excludes a leased handle from `due` for the whole read", () => {
     const clock = { at: 1_000 };
     const engine = new TaskLifecycleEngine({ now: () => clock.at });

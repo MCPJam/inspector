@@ -284,23 +284,42 @@ export class TaskLifecycleEngine {
   }
 
   /**
-   * Updates the user's preferred minimum. Existing due times are recomputed so
-   * a *slower* preference takes effect immediately rather than after one more
-   * fast tick; a *faster* preference can still never breach a server floor.
+   * Updates the user's preferred minimum.
+   *
+   * Existing due times are recomputed in both directions, so the setting takes
+   * effect on in-flight tasks rather than only on the next ones: a *slower*
+   * preference extends their wait immediately, and a *faster* one shortens the
+   * part of the wait that only the old preference caused.
+   *
+   * A faster preference still cannot breach a server floor — it is one `max`
+   * term among several, and the absolute waits (`Retry-After`, error backoff)
+   * are re-applied as floors afterwards.
    */
   setUserMinimumIntervalMs(intervalMs: number): void {
     this.userMinimumIntervalMs = normalizeInterval(intervalMs);
     for (const record of this.records.values()) {
       if (isTerminalLifecycleStatus(record.status)) continue;
       const base = record.lastObservedAt ?? this.now();
-      // NEVER earlier, only later. Recomputing from `lastObservedAt` can land
-      // in the past while an error backoff or a `Retry-After` is in force —
-      // which would let a preference change punch straight through a wait the
-      // server asked for. A slower preference still extends the wait, which is
-      // the whole point of applying it to already-scheduled tasks.
+      // Recomputed in BOTH directions. A blanket "never earlier" kept the
+      // superseded preference as if it were a server wait: dropping the box
+      // from 60s to 1s against a 2s server floor left every in-flight task
+      // parked for the rest of its old 60s, so the new setting did nothing
+      // until each task happened to come due.
+      const recomputed = base + this.effectiveIntervalMs(record);
+      // What a preference change must never do is punch through a wait the
+      // SERVER imposed, and those two are absolute rather than relative to
+      // `base` — a `base` in the past would otherwise land before them. So
+      // they are re-applied as floors on top of the recompute.
+      //
+      // The backoff is expressed as the CURRENT due time rather than
+      // recomputed, because its elapsed portion is not recoverable from
+      // `lastObservedAt`: an error advances `nextPollAt` without advancing the
+      // observation clock.
+      const backoffFloor = record.consecutiveErrors > 0 ? record.nextPollAt : 0;
       record.nextPollAt = Math.max(
-        record.nextPollAt,
-        base + this.effectiveIntervalMs(record)
+        recomputed,
+        record.retryAfterUntil ?? 0,
+        backoffFloor
       );
     }
   }
@@ -650,26 +669,48 @@ export class TaskLifecycleEngine {
   }
 
   /**
-   * Handles due for a poll now, soonest first. Terminal handles are never due,
-   * and neither is a handle with a read already in flight.
+   * Whether this handle still has a read owed to it.
+   *
+   * Normally that means "not terminal". The exception is a RESTORED terminal on
+   * the extension wire, and it is a protocol fact rather than a UI preference:
+   * durable storage keeps a task's status but never its payload, and on the
+   * extension the result and error ride INLINE on `tasks/get` — there is no
+   * `tasks/result` to fetch them from later. So a handle restored as
+   * `completed` is a status with nothing behind it, and excluding it from
+   * scheduling strands the result permanently.
+   *
+   * It lives HERE rather than in each caller because every scheduling method
+   * has to agree. A caller that special-cased `due()` alone would still find
+   * `msUntilNextDue()` ignoring the handle, so no timer would ever arm for it
+   * and the special case would never fire.
+   *
+   * Bounded to one read: `observe` clears `restored`.
+   */
+  private owesRead(record: TaskLifecycleRecord): boolean {
+    if (!isTerminalLifecycleStatus(record.status)) return true;
+    return record.restored && record.identity.wire === "extension";
+  }
+
+  /**
+   * Handles due for a poll now, soonest first. Terminal handles are never due —
+   * except a restored one that still owes its recovery read — and neither is a
+   * handle with a read already in flight.
    */
   due(at?: number): TaskLifecycleRecord[] {
     const now = at ?? this.now();
     return [...this.records.values()]
       .filter(
         (record) =>
-          !isTerminalLifecycleStatus(record.status) &&
+          this.owesRead(record) &&
           !record.pollInFlight &&
           record.nextPollAt <= now
       )
       .sort((a, b) => a.nextPollAt - b.nextPollAt);
   }
 
-  /** Non-terminal handles, whether or not they are due. */
+  /** Handles that still owe a read, whether or not they are due. */
   active(): TaskLifecycleRecord[] {
-    return [...this.records.values()].filter(
-      (record) => !isTerminalLifecycleStatus(record.status)
-    );
+    return [...this.records.values()].filter((record) => this.owesRead(record));
   }
 
   /**
@@ -680,7 +721,7 @@ export class TaskLifecycleEngine {
     const now = at ?? this.now();
     let soonest = Number.POSITIVE_INFINITY;
     for (const record of this.records.values()) {
-      if (isTerminalLifecycleStatus(record.status)) continue;
+      if (!this.owesRead(record)) continue;
       soonest = Math.min(soonest, record.nextPollAt);
     }
     if (!Number.isFinite(soonest)) return undefined;

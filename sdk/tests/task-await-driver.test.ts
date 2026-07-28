@@ -423,7 +423,7 @@ describe("poll discipline", () => {
       release = resolve;
     });
 
-    const drive = driveTaskToTerminal({
+    const drivePromise = driveTaskToTerminal({
       identity,
       // The read is SLOWER than the advertised floor, which is the case a
       // time-only reservation cannot cover: `reserve` pushes the due time by
@@ -446,7 +446,7 @@ describe("poll discipline", () => {
     expect(engine.get(identity)?.pollInFlight).toBe(true);
 
     release({ status: "completed", result: {} });
-    const result = await drive;
+    const result = await drivePromise;
     expect(result.outcome).toBe("completed");
     // Released on the way out, so the handle is not parked forever on an
     // engine that outlives this drive.
@@ -488,7 +488,7 @@ describe("poll discipline", () => {
     // floor. Without racing the signal, an aborted drive stays pending for the
     // whole interval — on a task asking for 60s, a full minute after the
     // caller gave up.
-    const drive = driveTaskToTerminal({
+    const drivePromise = driveTaskToTerminal({
       identity,
       getTask: async () => ({ status: "working", pollIntervalMs: 60_000 }),
       now: clock.now,
@@ -500,6 +500,6 @@ describe("poll discipline", () => {
 
     await Promise.resolve();
     controller.abort();
-    await expect(drive).resolves.toMatchObject({ outcome: "aborted" });
+    await expect(drivePromise).resolves.toMatchObject({ outcome: "aborted" });
   });
 });
