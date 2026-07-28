@@ -443,8 +443,8 @@ async function connectHttpDoctorClient(
     );
   }
 
-  // No `io.modelcontextprotocol/tasks` era-gate shadow here: this client is
-  // never wrapped as a `ManagedMcpClient` and the doctor issues no `tasks/*`
+  // No `io.modelcontextprotocol/tasks` era-gate shadow here: it is installed
+  // from the extension's own send path, and the doctor issues no `tasks/*`
   // request at all (its `BrowserDoctorClient` surface is capabilities + the
   // three list calls), so there is nothing for the gate to block.
   const client = new Client(

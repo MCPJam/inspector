@@ -60,17 +60,41 @@
  * would silently strip the declaration and earn a `-32003` from every
  * conforming server.
  *
+ * ## When it is installed, and why not at connect
+ *
+ * LAZILY, on the first `io.modelcontextprotocol/tasks` operation — never at
+ * client construction or connect. The factory only *registers* the upstream
+ * instance behind its `ManagedMcpClient`
+ * ({@link registerTasksExtensionEraGateTarget}); the shadow itself is put on
+ * by {@link ensureTasksExtensionEraGateShadow}, which `tasks-ext.ts` calls
+ * from the single send path shared by `tasks/get`, `tasks/update` and
+ * `tasks/cancel`.
+ *
+ * The reason is blast radius. This module probes a PRIVATE upstream member,
+ * and a bump that renames it must fail loudly (see Maintenance) — but that
+ * failure has to land on the feature that depends on the probe, not on the
+ * transport. Installing at connect would put a private-member probe on the
+ * critical path of EVERY connection: a renamed member would break 2025-03-26,
+ * 2025-06-18, 2025-11-25 and 2026-07-28 servers alike, including the vast
+ * majority that never speak this extension. So we do NOT gate connections on
+ * it. A connection is never denied because of a seam we only need for tasks;
+ * the seam error can only ever surface on a tasks request.
+ *
  * ## Maintenance
  *
  * REVISIT ON EVERY `@modelcontextprotocol/client` BUMP. If the private member
- * is renamed or removed, {@link installTasksExtensionEraGateShadow} throws at
- * wrap time (i.e. at connect) rather than silently no-opping, so a bump that
- * re-blocks the extension fails loudly instead of shipping a dead debugger
- * surface. Delete this module once the client package stops era-gating the
- * extension's method names (or exposes a real seam).
+ * is renamed or removed, {@link installTasksExtensionEraGateShadow} throws on
+ * the first extension tasks operation rather than silently no-opping, so a
+ * bump that re-blocks the extension fails loudly instead of shipping a dead
+ * debugger surface. Delete this module once the client package stops
+ * era-gating the extension's method names (or exposes a real seam).
  */
 
 import type { Client } from "@modelcontextprotocol/client";
+// Runtime import, and `tasks-ext.ts` imports this module back for the lazy
+// install. Everything derived from `TasksExtRequestMethods` is therefore read
+// at CALL time, never at module-evaluation time, so neither module can observe
+// the other in its temporal dead zone whichever one the bundler loads first.
 import { TasksExtRequestMethods } from "./tasks-ext.js";
 
 /**
@@ -87,8 +111,6 @@ const VERIFIED_CLIENT_VERSION = "2.0.0-beta.4 / 2.0.0-beta.5";
  * applies. Read off the dist, not guessed from a protocol-version constant.
  */
 const MODERN_WIRE_ERA = "2026-07-28";
-
-const EXEMPT_METHODS: ReadonlySet<string> = new Set(TasksExtRequestMethods);
 
 /**
  * Instances already shadowed. Tracked here rather than by sniffing for an own
@@ -127,6 +149,10 @@ export function installTasksExtensionEraGateShadow(client: Client): void {
   if (shadowed.has(target)) {
     return;
   }
+  // Built here rather than at module scope: this module and `tasks-ext.ts`
+  // import each other (see the note on the import), so the method list is only
+  // safe to read once someone actually calls in.
+  const exemptMethods: ReadonlySet<string> = new Set(TasksExtRequestMethods);
   const original = target[ERA_GATE_MEMBER];
   if (original === undefined) {
     throw new TasksExtEraGateSeamError("the member is absent");
@@ -148,7 +174,7 @@ export function installTasksExtensionEraGateShadow(client: Client): void {
       if (
         codec?.era === MODERN_WIRE_ERA &&
         typeof method === "string" &&
-        EXEMPT_METHODS.has(method)
+        exemptMethods.has(method)
       ) {
         return;
       }
@@ -159,4 +185,50 @@ export function installTasksExtensionEraGateShadow(client: Client): void {
     enumerable: false,
   });
   shadowed.add(target);
+}
+
+/**
+ * `ManagedMcpClient` (or any decorator around one) → the upstream `Client`
+ * instance whose gate would have to be shadowed for it.
+ *
+ * The extension helpers in `tasks-ext.ts` hold a `ManagedMcpClient`, which is
+ * an interface with no route back to the upstream instance (and may be a
+ * decorator chain). Rather than have them guess at a private `.inner` chain,
+ * the factory — the one place an upstream `Client` becomes a
+ * `ManagedMcpClient` — records the pairing here.
+ */
+const eraGateTargets = new WeakMap<object, Client>();
+
+/**
+ * Record that `managed` speaks for `client`, so a later tasks operation can
+ * find the instance to shadow. Registration alone installs NOTHING and cannot
+ * throw — see the module comment on why connections are not gated on the
+ * private-member probe.
+ */
+export function registerTasksExtensionEraGateTarget(
+  managed: object,
+  client: Client
+): void {
+  eraGateTargets.set(managed, client);
+}
+
+/**
+ * Install the shadow for `managed`, if it has not been installed already.
+ * Called from the single send path every extension tasks request goes through.
+ *
+ * An unregistered `managed` is a client that never came from the factory (a
+ * test double, or a hand-rolled `ManagedMcpClient`); it has no upstream era
+ * gate to shadow, so there is nothing to do and nothing to fail about. A
+ * REGISTERED one whose seam has moved throws — that is the loud failure the
+ * probe exists for, now scoped to tasks traffic.
+ *
+ * @throws {TasksExtEraGateSeamError} when the registered instance no longer
+ * carries the private member.
+ */
+export function ensureTasksExtensionEraGateShadow(managed: object): void {
+  const client = eraGateTargets.get(managed);
+  if (client === undefined) {
+    return;
+  }
+  installTasksExtensionEraGateShadow(client);
 }

@@ -7,6 +7,10 @@
  * the two real `era` strings (`rev2025Codec.era` / `rev2026Codec.era`) and the
  * codec's own `hasRequestMethod` answer. The delegation cases therefore run
  * upstream's actual `isSpecRequestMethod` check rather than a stub of it.
+ *
+ * They also pin WHEN the shadow goes on: never at construction/connect, always
+ * on the first extension tasks operation, so a client build that moved the
+ * private member can only ever break tasks — not every connection.
  */
 
 import { describe, expect, it } from "vitest";
@@ -15,8 +19,15 @@ import {
   TasksExtEraGateSeamError,
   installTasksExtensionEraGateShadow,
 } from "../src/mcp-client-manager/tasks-ext-era-gate.js";
-import { TasksExtRequestMethods } from "../src/mcp-client-manager/tasks-ext.js";
-import { createManagedMcpClient } from "../src/mcp-client-manager/managed-mcp-client-factory.js";
+import {
+  TasksExtRequestMethods,
+  cancelTaskExt,
+  getTaskExt,
+} from "../src/mcp-client-manager/tasks-ext.js";
+import {
+  createManagedMcpClient,
+  wrapLegacyClient,
+} from "../src/mcp-client-manager/managed-mcp-client-factory.js";
 
 const MODERN_ERA = "2026-07-28";
 const LEGACY_ERA = "2025-11-25";
@@ -107,14 +118,67 @@ describe("tasks extension era-gate shadow", () => {
     expect(target[GATE]).toBe(first);
   });
 
-  it("is installed by the managed-client factory", () => {
+  it("is NOT installed by the factory, but IS by the first extension call", async () => {
     const managed = createManagedMcpClient({
       clientInfo: { name: "test", version: "0.0.0" },
       clientOptions: {},
     });
     const inner = (managed as unknown as { inner: Record<string, unknown> })
       .inner;
+    // Lazy: building (and connecting) a client never touches the private
+    // member — see the module comment on blast radius.
+    expect(Object.prototype.hasOwnProperty.call(inner, GATE)).toBe(false);
+
+    // The extension call itself fails (no transport), but only after the
+    // shadow is on: the install happens before anything reaches the wire.
+    await expect(
+      getTaskExt({ client: managed, declaredCapabilities: undefined }, "t")
+    ).rejects.toThrow();
     expect(Object.prototype.hasOwnProperty.call(inner, GATE)).toBe(true);
+  });
+
+  describe("a client whose seam is missing", () => {
+    /**
+     * Stands in for a future `@modelcontextprotocol/client` that renamed
+     * `_assertOutboundRequestInEra`: everything else works, the private member
+     * is simply not there.
+     */
+    function seamlessClient() {
+      const sent: string[] = [];
+      const stub = {
+        listTools: async () => {
+          sent.push("tools/list");
+          return { tools: [] };
+        },
+        request: async (req: { method: string }) => {
+          sent.push(req.method);
+          return {};
+        },
+      };
+      return {
+        managed: wrapLegacyClient(stub as unknown as Client),
+        sent,
+      };
+    }
+
+    it("still wraps and still serves non-tasks traffic", async () => {
+      const { managed, sent } = seamlessClient();
+      // Wrapping did not throw. Neither does an ordinary request: a server
+      // that never speaks the extension is unaffected by a moved seam.
+      await expect(managed.listTools()).resolves.toEqual({ tools: [] });
+      expect(sent).toEqual(["tools/list"]);
+    });
+
+    it("fails loudly on a tasks operation, before anything is sent", async () => {
+      const { managed, sent } = seamlessClient();
+      await expect(
+        getTaskExt({ client: managed, declaredCapabilities: undefined }, "t")
+      ).rejects.toBeInstanceOf(TasksExtEraGateSeamError);
+      await expect(
+        cancelTaskExt({ client: managed, declaredCapabilities: undefined }, "t")
+      ).rejects.toThrow(/_assertOutboundRequestInEra/);
+      expect(sent).toEqual([]);
+    });
   });
 
   describe("fail-loud when the upstream seam moves", () => {
