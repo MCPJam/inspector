@@ -128,9 +128,10 @@ function createServerConfig(
       ? { headers: config.customHeaders }
       : undefined,
     timeout: config.checkTimeout,
-    // Flows through `resolveVersionNegotiation`: a modern (stateless) pin
-    // makes the underlying Client negotiate the 2026 era so a modern-only
-    // server can connect at all. Absent ⇒ legacy negotiation, unchanged.
+    // Flows through the negotiation resolver: a modern (stateless) pin makes
+    // the underlying Client negotiate the 2026 era so a modern-only server can
+    // connect at all. Absent ⇒ `auto` (automatic negotiation is always on), so
+    // an unconfigured conformance run detects the era the server negotiates.
     mcpProtocolVersion: config.protocolVersion,
   };
 }

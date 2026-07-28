@@ -25,13 +25,12 @@ import {
 } from "../../../shared/skill-types.js";
 import { isPathWithinDirectory } from "../skill-parser.js";
 import { shellQuote } from "./shell-quote.js";
+import { CLAUDE_CODE_SKILLS_BASE } from "./skill-roots.js";
 import { logger } from "../logger.js";
 import type {
   CloudSkillRuntimeItem,
   SkillExtraFrontmatterInput,
 } from "../computers/convex-skills-client.js";
-
-const SKILLS_BASE = "/home/user/.claude/skills";
 
 /** Minimal structural view of the harness sandbox session (file plane). */
 export interface PinnedSkillFileSession {
@@ -109,6 +108,7 @@ export function pinnedArtifactsToRuntimeSkills(
  */
 async function pruneStalePinnedSkillFiles(
   session: PinnedSkillFileSession,
+  skillsBase: string,
   deliveredDirs: Set<string>,
   keepByDir: Map<string, Set<string>>,
   signal?: AbortSignal
@@ -121,7 +121,7 @@ async function pruneStalePinnedSkillFiles(
   try {
     const ls = await session.run({
       command: `find ${shellQuote(
-        SKILLS_BASE
+        skillsBase
       )} -mindepth 2 -type f ! -name SKILL.md`,
     });
     if (ls.exitCode !== 0) return;
@@ -131,9 +131,9 @@ async function pruneStalePinnedSkillFiles(
       .filter(Boolean);
     for (const p of onBox) {
       if (signal?.aborted) return;
-      if (!p.startsWith(`${SKILLS_BASE}/`)) continue;
-      const name = p.slice(SKILLS_BASE.length + 1).split("/")[0];
-      const skillDir = `${SKILLS_BASE}/${name}`;
+      if (!p.startsWith(`${skillsBase}/`)) continue;
+      const name = p.slice(skillsBase.length + 1).split("/")[0];
+      const skillDir = `${skillsBase}/${name}`;
       if (!deliveredDirs.has(skillDir)) continue; // never a foreign skill
       if (p === `${skillDir}/SKILL.md`) continue; // belt-and-suspenders
       if (keepByDir.get(skillDir)?.has(p)) continue; // still current
@@ -150,7 +150,8 @@ async function pruneStalePinnedSkillFiles(
 
 /**
  * Write the pinned artifacts' inline supporting files under each skill's own
- * dir (`~/.claude/skills/<name>/<path>`). Path-validated per file (defense in
+ * dir (`<runtime skills root>/<name>/<path>` — the adapter's own root, since it
+ * wrote the SKILL.md beside them). Path-validated per file (defense in
  * depth over the backend's pin-time validation); binary files ride base64
  * through `base64 -d` (the b64 alphabet is single-quote safe). Best-effort per
  * file: a single bad file logs and is skipped — the pinned SKILL.md already
@@ -165,9 +166,13 @@ async function pruneStalePinnedSkillFiles(
 export async function materializePinnedSkillFiles(args: {
   session: PinnedSkillFileSession;
   artifacts: PinnedSkillArtifact[];
+  /** The RUNTIME's skills root (`HarnessRuntimeAdapter.skillsBaseDir`). Defaults
+   *  to Claude Code's for legacy callers. */
+  skillsBase?: string;
   signal?: AbortSignal;
 }): Promise<void> {
   const { session, artifacts, signal } = args;
+  const skillsBase = args.skillsBase ?? CLAUDE_CODE_SKILLS_BASE;
 
   // Prune before write: build delivered dirs + the files each should keep from
   // the authoritative pinned artifacts, then remove anything else on box.
@@ -175,7 +180,7 @@ export async function materializePinnedSkillFiles(args: {
   const keepByDir = new Map<string, Set<string>>();
   for (const artifact of artifacts) {
     if (!isValidSkillName(artifact.name)) continue;
-    const skillDir = `${SKILLS_BASE}/${artifact.name}`;
+    const skillDir = `${skillsBase}/${artifact.name}`;
     deliveredDirs.add(skillDir);
     const keep = new Set<string>();
     for (const file of artifact.files ?? []) {
@@ -184,7 +189,13 @@ export async function materializePinnedSkillFiles(args: {
     }
     keepByDir.set(skillDir, keep);
   }
-  await pruneStalePinnedSkillFiles(session, deliveredDirs, keepByDir, signal);
+  await pruneStalePinnedSkillFiles(
+    session,
+    skillsBase,
+    deliveredDirs,
+    keepByDir,
+    signal
+  );
 
   for (const artifact of artifacts) {
     const files = artifact.files;
@@ -198,7 +209,7 @@ export async function materializePinnedSkillFiles(args: {
       );
       continue;
     }
-    const skillDir = `${SKILLS_BASE}/${artifact.name}`;
+    const skillDir = `${skillsBase}/${artifact.name}`;
     for (const file of files) {
       if (signal?.aborted) return;
       if (!isPathWithinDirectory(skillDir, file.path)) {

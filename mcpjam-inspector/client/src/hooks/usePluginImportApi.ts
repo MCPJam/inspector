@@ -24,6 +24,7 @@
 
 import { useCallback, useMemo } from "react";
 import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react";
+import { useAuth } from "@workos-inc/authkit-react";
 import {
   assertPluginBundleWithinCap,
   toPluginApiError,
@@ -46,18 +47,33 @@ import { usePluginsEnabled } from "./usePluginsEnabled";
 // ---------------------------------------------------------------------------
 // Query hooks (reactive Convex subscriptions — the "polling" of the plan's
 // import-progress requirement is a live subscription, not an interval).
-// All skip while `plugins-enabled` is off/loading, auth has not resolved, or
-// arguments are absent. Project-scoped hooks additionally gate on
+// All skip while `plugins-enabled` is off/loading, the actor is a guest, auth
+// has not resolved, or arguments are absent. Project-scoped hooks gate on
 // `shouldQueryProjectId` (the useProjects/useChatboxes convention): a
 // transient LOCAL project id (UUID or `local_`/`project_` placeholder) is
 // truthy but would throw an ArgumentValidationError during hydration.
 // ---------------------------------------------------------------------------
 
-/** Shared gate: `plugins-enabled` (fail-closed) AND Convex auth resolved. */
+/**
+ * Shared gate: `plugins-enabled` (fail-closed) AND a *signed-in* actor.
+ *
+ * `isAuthenticated` alone is not enough: guests authenticate to Convex through
+ * the same provider chain (see `useUnifiedConvexAuth`), so it is true for them
+ * too. Every plugin function is a `signedInQuery`, which rejects guests with
+ * "Authenticated user required" — a render-time throw that takes down the whole
+ * route, since Connect mounts `PluginsSection` inline. The WorkOS user is the
+ * signed-in/guest discriminator (same predicate as `use-project-state`'s
+ * `isAuthenticated && !hasSignedInUser`).
+ *
+ * TEMPORARY: remove the `Boolean(user)` term once the backend serves guests —
+ * this gate exists only because the frontend is ready for guest plugins and the
+ * backend is not.
+ */
 function usePluginQueriesReady(): boolean {
   const enabled = usePluginsEnabled();
   const { isAuthenticated } = useConvexAuth();
-  return enabled && isAuthenticated;
+  const { user } = useAuth();
+  return enabled && isAuthenticated && Boolean(user);
 }
 
 /**

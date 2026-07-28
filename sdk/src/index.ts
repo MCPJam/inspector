@@ -117,6 +117,12 @@ export type {
   CacheHitEvent,
   CacheEventLogger,
 } from "./mcp-client-manager/index.js";
+// Phase 5 auto-negotiation-activation telemetry (new exports only).
+export type {
+  NegotiationOutcomeEvent,
+  NegotiationOutcomeLogger,
+  ConfiguredNegotiationMode,
+} from "./mcp-client-manager/index.js";
 export {
   ObservableResponseCache,
   type ObservableResponseCacheOptions,
@@ -130,6 +136,9 @@ export {
   isMCPAuthError,
   isUnauthorized401,
   isInsufficientScopeError,
+  unwrapEraNegotiationCause,
+  MCPTasksWireError,
+  isMCPTasksWireError,
 } from "./mcp-client-manager/index.js";
 export type { RetryPolicy } from "./retry.js";
 export {
@@ -632,6 +641,25 @@ export {
   MCP_APPS_CHECK_IDS,
 } from "./apps-conformance/index.js";
 
+// MCP Tasks conformance
+export { MCPTasksConformanceTest } from "./tasks-conformance/index.js";
+export type {
+  MCPTasksCheckCategory,
+  MCPTasksCheckId,
+  MCPTasksCheckResult,
+  MCPTasksCheckStatus,
+  MCPTasksConformanceConfig,
+  MCPTasksConformanceResult,
+  MCPTasksRunOutcome,
+  MCPTasksSkipReason,
+} from "./tasks-conformance/index.js";
+export {
+  decideOutcome,
+  MCP_TASKS_CHECK_CATEGORIES,
+  MCP_TASKS_CHECK_IDS,
+  resolveProbeTool,
+} from "./tasks-conformance/index.js";
+
 export type {
   ConformanceResult,
   ConformanceStepId,
@@ -754,4 +782,33 @@ export type {
   InputRequiredResult,
   InputRequests,
   InputResponses,
+} from "./mcp-client-manager/index.js";
+
+// Era-neutral subscription coordinator (2026-07-28 `subscriptions/listen` +
+// legacy list-changed / `resources/subscribe`) — spec §13. Re-exported at the
+// package root so local surfaces (the Inspector's subscription bridge) own the
+// stream, and consumers outside the SDK (the CLI's listen mode) can drive it,
+// without reaching into the client-manager subpath. New exports only.
+export {
+  SubscriptionCoordinator,
+  DEFAULT_SUBSCRIPTION_RECONNECT_POLICY,
+  SUBSCRIPTION_ID_META_KEY,
+  SubscriptionsAcknowledgedNotificationMethod,
+  diffAcknowledgement,
+  resolveRequestedFilter,
+} from "./mcp-client-manager/index.js";
+export type {
+  DesiredSubscriptionInterests,
+  DeliveredSubscriptionNotification,
+  McpSubscriptionHandle,
+  RejectedSubscriptionNotification,
+  SubscriptionClientPort,
+  SubscriptionCloseReason,
+  SubscriptionCoordinatorOptions,
+  SubscriptionFilterShape,
+  SubscriptionInterestRejection,
+  SubscriptionNotificationKind,
+  SubscriptionReconnectPolicy,
+  SubscriptionStreamRecord,
+  SubscriptionStreamStatus,
 } from "./mcp-client-manager/index.js";

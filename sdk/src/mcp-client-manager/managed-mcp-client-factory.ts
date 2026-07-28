@@ -23,6 +23,7 @@ import {
   type LogLevelProvider,
 } from "./log-level-meta-client.js";
 import type { McpProtocolVersion } from "./mcp-protocol-version.js";
+import { registerTasksExtensionEraGateTarget } from "./tasks-ext-era-gate.js";
 import type { RpcLogger } from "./types.js";
 
 export type { LogLevelProvider };
@@ -39,6 +40,32 @@ function withLogLevelMeta(
   return logLevelProvider
     ? new LogLevelMetaClient(adapter, logLevelProvider)
     : adapter;
+}
+
+/**
+ * The single seam at which an upstream `Client` becomes a `ManagedMcpClient`,
+ * and therefore the single place the `io.modelcontextprotocol/tasks` era-gate
+ * shadow can learn which upstream instance sits behind a managed one: every
+ * client that can ever issue an extension request passes through here (both
+ * entry points below, including the manager's own `new Client(...)`, which
+ * arrives via `wrapLegacyClient`).
+ *
+ * Registration only — it installs nothing and cannot throw. The shadow goes on
+ * lazily, on the first extension tasks call, so a future client build that
+ * renamed the private member breaks tasks rather than every connection. See
+ * `tasks-ext-era-gate.ts` for the full rationale and the bump checklist.
+ */
+function manage(
+  client: Client,
+  logLevelProvider?: LogLevelProvider,
+): ManagedMcpClient {
+  const adapter = new OfficialSdkClientAdapter(client);
+  const managed = withLogLevelMeta(adapter, logLevelProvider);
+  // Both the adapter and the (possibly decorated) value handed back, so the
+  // lookup works whichever one a caller ends up passing to `tasks-ext.ts`.
+  registerTasksExtensionEraGateTarget(adapter, client);
+  registerTasksExtensionEraGateTarget(managed, client);
+  return managed;
 }
 
 // Re-export so consumers can `import { McpProtocolVersion } from "@mcpjam/sdk"`
@@ -81,10 +108,7 @@ export function createManagedMcpClient(
       args.clientOptions.jsonSchemaValidator ??
       new DialectAwareJsonSchemaValidator(),
   });
-  return withLogLevelMeta(
-    new OfficialSdkClientAdapter(inner),
-    args.logLevelProvider,
-  );
+  return manage(inner, args.logLevelProvider);
 }
 
 /**
@@ -96,10 +120,7 @@ export function wrapLegacyClient(
   client: Client,
   logLevelProvider?: LogLevelProvider,
 ): ManagedMcpClient {
-  return withLogLevelMeta(
-    new OfficialSdkClientAdapter(client),
-    logLevelProvider,
-  );
+  return manage(client, logLevelProvider);
 }
 
 export type { RpcLogger };

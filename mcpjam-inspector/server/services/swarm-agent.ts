@@ -47,7 +47,8 @@ export interface PinnedSkillMeta {
   description: string;
   contentHash: string;
   sharing?: "user" | "project";
-  channels?: Array<"host" | "environment">;
+  /** Stable `host` → `environment` → `plugin` order; see PinnedSkillArtifact. */
+  channels?: Array<"host" | "environment" | "plugin">;
 }
 
 export interface PinnedHostExecutionSpec {

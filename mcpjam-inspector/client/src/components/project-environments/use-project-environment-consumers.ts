@@ -15,7 +15,16 @@ import { shouldQueryProjectId } from "@/hooks/useProjects";
 export function useProjectEnvironmentConsumers(
   projectId: string | null,
   environmentId: string | null
-): { suiteCount: number | null; journeyCount: number | null } {
+): {
+  suiteCount: number | null;
+  journeyCount: number | null;
+  /**
+   * Published chatboxes backed by this environment (0 or 1 — backend-enforced
+   * one-per-environment). Unlike the advisory suite/journey scans this one is
+   * exact when settled: the chatbox list carries `environmentId` per row.
+   */
+  chatboxCount: number | null;
+} {
   const { isAuthenticated } = useConvexAuth();
   const isUserReady = useDbUserReady();
   const enableQuery =
@@ -34,9 +43,14 @@ export function useProjectEnvironmentConsumers(
     enableQuery ? ({ projectId } as any) : "skip"
   ) as Array<{ environmentIds?: string[] | null }> | undefined;
 
+  const chatboxes = useQuery(
+    "chatboxes:listChatboxes" as any,
+    enableQuery ? ({ projectId } as any) : "skip"
+  ) as Array<{ environmentId?: string | null }> | undefined;
+
   return useMemo(() => {
     if (!environmentId) {
-      return { suiteCount: null, journeyCount: null };
+      return { suiteCount: null, journeyCount: null, chatboxCount: null };
     }
     const suiteCount =
       overview === undefined
@@ -50,6 +64,11 @@ export function useProjectEnvironmentConsumers(
         : journeys.filter((journey) =>
             (journey.environmentIds ?? []).includes(environmentId)
           ).length;
-    return { suiteCount, journeyCount };
-  }, [overview, journeys, environmentId]);
+    const chatboxCount =
+      chatboxes === undefined
+        ? null
+        : chatboxes.filter((chatbox) => chatbox.environmentId === environmentId)
+            .length;
+    return { suiteCount, journeyCount, chatboxCount };
+  }, [overview, journeys, chatboxes, environmentId]);
 }

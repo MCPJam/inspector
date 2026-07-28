@@ -215,6 +215,15 @@ export interface WebChatTurnPersistContext {
    * the same place `harness` and `executionScope` already travel.
    */
   runtimeSkillsOverride?: RuntimeSkill[];
+  /**
+   * The same turn's `EffectiveCapabilitySet`, HARNESS side (INS-7). Paired with
+   * `runtimeSkillsOverride`: the flat list is what the adapter writes to disk,
+   * this is what the Computer delivery path needs on top of it — the resolved
+   * per-skill supporting files (including plugin ones, which the project-wide
+   * file query cannot return) and the pinned plugin versions that make a
+   * resumed sandbox with stale plugin material ineligible.
+   */
+  effectiveCapabilities?: EffectiveCapabilitySet;
 }
 
 /**
@@ -868,6 +877,9 @@ export async function streamWebChatTurn(
     // the live project-wide skills fetch entirely.
     ...(persist.runtimeSkillsOverride !== undefined
       ? { runtimeSkillsOverride: persist.runtimeSkillsOverride }
+      : {}),
+    ...(persist.effectiveCapabilities
+      ? { effectiveCapabilities: persist.effectiveCapabilities }
       : {}),
     ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
     // Hosted MRTR (§12.5) resume: emulated engine only. On a fresh resume

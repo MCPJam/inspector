@@ -31,6 +31,8 @@ interface ParametersPanelProps {
   taskRequired?: boolean;
   /** TTL for task execution in milliseconds (MCP Tasks spec 2025-11-25) */
   taskTtl?: number;
+  /** Which tasks wire the connection speaks; drives the task affordance. */
+  taskWire?: "none" | "legacy" | "extension";
   onTaskTtlChange?: (value: number) => void;
   /** Whether server declares tasks.requests.tools.call capability */
   serverSupportsTaskToolCalls?: boolean;
@@ -50,6 +52,7 @@ export function ParametersPanel({
   onExecuteAsTaskChange,
   taskRequired,
   taskTtl,
+  taskWire,
   onTaskTtlChange,
   serverSupportsTaskToolCalls,
 }: ParametersPanelProps) {
@@ -74,7 +77,23 @@ export function ParametersPanel({
           </div>
           <div className="flex items-center gap-3">
             {/* Task execution option - show if server and tool support it */}
-            {taskRequired ? (
+            {taskWire === "extension" ? (
+              // Extension wire: no TTL and no request-level opt-in — the
+              // client only declares that a task response is acceptable.
+              <label
+                className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer hover:text-foreground transition-colors"
+                title="Declare that a task response is acceptable; the server decides"
+              >
+                <input
+                  type="checkbox"
+                  checked={executeAsTask ?? false}
+                  onChange={(e) => onExecuteAsTaskChange?.(e.target.checked)}
+                  className="w-3.5 h-3.5 rounded border-border accent-primary cursor-pointer"
+                />
+                <Clock className="h-3 w-3" />
+                <span>Allow task response</span>
+              </label>
+            ) : taskRequired ? (
               // Tool requires task execution (MCP Tasks spec)
               <div className="flex items-center gap-2">
                 <span
