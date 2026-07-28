@@ -67,7 +67,7 @@ const baseArgs = (overrides: Record<string, unknown> = {}) => ({
   serverIds: ["server-a"],
   sourceType: "chatbox" as const,
   chatSessionId: "sess_1",
-  attribution: { synthesisRunId: "run-xyz" },
+  attribution: { journeyRunId: "run-xyz" },
   ...overrides,
 });
 
@@ -252,7 +252,7 @@ describe("resolveTurnRuntime — local usage writeback (finalizeUsage)", () => {
     });
   });
 
-  it("posts /stream/org/local-usage with the byte-identical body incl. synthesisRunId", async () => {
+  it("posts /stream/org/local-usage with the byte-identical body incl. journeyRunId", async () => {
     const rt = await resolveTurnRuntime(localArgs());
 
     await rt.finalizeUsage(successResult());
@@ -277,7 +277,7 @@ describe("resolveTurnRuntime — local usage writeback (finalizeUsage)", () => {
       chatboxId: "chatbox-1",
       accessVersion: 3,
       serverIds: ["server-a"],
-      synthesisRunId: "run-xyz",
+      journeyRunId: "run-xyz",
     });
   });
 

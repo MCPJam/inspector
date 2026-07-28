@@ -134,7 +134,7 @@ beforeEach(() => {
 });
 
 function openForm() {
-  fireEvent.click(screen.getByText("Persona One"));
+  fireEvent.click(screen.getAllByText("Persona One")[0]);
   fireEvent.click(screen.getByRole("button", { name: /new journey/i }));
 }
 
