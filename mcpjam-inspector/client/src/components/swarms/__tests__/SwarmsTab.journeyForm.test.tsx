@@ -140,7 +140,7 @@ async function pickClient(name: string | RegExp) {
 describe("SwarmsTab — new journey form server group", () => {
   it("keeps Create disabled until a server group and client are picked", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    fireEvent.click(screen.getByText("Persona One"));
+    fireEvent.click(screen.getAllByText("Persona One")[0]);
     fireEvent.click(screen.getByRole("button", { name: /new journey/i }));
 
     const createBtn = screen.getByRole("button", { name: /create journey/i });
@@ -160,7 +160,7 @@ describe("SwarmsTab — new journey form server group", () => {
 
   it("passes serverAttachmentId into createJourney", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    fireEvent.click(screen.getByText("Persona One"));
+    fireEvent.click(screen.getAllByText("Persona One")[0]);
     fireEvent.click(screen.getByRole("button", { name: /new journey/i }));
 
     fireEvent.change(screen.getByLabelText("Goal"), {
@@ -186,7 +186,7 @@ describe("SwarmsTab — new journey form server group", () => {
 
   it("lets you toggle multiple clients without closing the picker", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    fireEvent.click(screen.getByText("Persona One"));
+    fireEvent.click(screen.getAllByText("Persona One")[0]);
     fireEvent.click(screen.getByRole("button", { name: /new journey/i }));
 
     fireEvent.change(screen.getByLabelText("Goal"), {

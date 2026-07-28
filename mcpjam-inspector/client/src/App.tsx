@@ -1096,11 +1096,10 @@ export function CompatibilityRoute() {
 // (`ChatboxPublishClientBar` / `ChatboxHostPickerPill`) — pick a host,
 // manage its chatbox here. There is no chatbox list; identity edits
 // still live in Connect.
-// Both the human Chatbox surface (`/chatboxes`) and the agent Swarm surface
-// (`/swarms`) render `ChatboxesTab` over the same underlying chatbox; only the
-// `product` (tab set + affordances) differs. Both share the `chatboxes`
+// The Chatbox surface (`/chatboxes`) renders `ChatboxesTab`; the Swarms
+// surface (`/swarms`) renders `SwarmsTab` below. Both share the `chatboxes`
 // billing feature + `sandboxes-enabled` flag.
-function ChatboxProductRoute({ product }: { product: "chatbox" | "swarm" }) {
+export function ChatboxesRoute() {
   const {
     billingUiEnabled,
     activeTabBillingLocked,
@@ -1117,13 +1116,8 @@ function ChatboxProductRoute({ product }: { product: "chatbox" | "swarm" }) {
     <ChatboxesTab
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
-      product={product}
     />
   );
-}
-
-export function ChatboxesRoute() {
-  return <ChatboxProductRoute product="chatbox" />;
 }
 
 export function SwarmsRoute() {

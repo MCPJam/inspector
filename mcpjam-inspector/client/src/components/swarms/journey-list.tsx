@@ -40,6 +40,8 @@ import {
   runStatusChipClass,
   runSummaryLine,
 } from "./journey-run-format";
+import { SwarmSessionsMatrix } from "./journey-run-results";
+import { useRunSessionsContext } from "./run-sessions-context";
 
 // Structural view of the SwarmsTab `Journey` / `HostItem` shapes — kept local so
 // this module stays decoupled from the surface component (no import cycle).
@@ -93,23 +95,6 @@ const SEGMENT_CLASS: Record<Exclude<JourneyCellOutcome, "none">, string> = {
   part: "bg-amber-500/70 dark:bg-amber-400/70",
   running: "bg-warning/50 animate-pulse",
 };
-
-/** Run-level status dot for the run rows (status string, not per-host). */
-function runStatusDotClass(status: string): string {
-  switch (status) {
-    case "completed":
-      return "bg-success";
-    case "failed":
-      return "bg-destructive";
-    case "partial":
-    case "rate_limited":
-      return "bg-amber-500";
-    case "stale":
-      return "bg-muted-foreground/50";
-    default:
-      return "bg-muted-foreground animate-pulse"; // running
-  }
-}
 
 const MAX_TREND_SEGMENTS = 12;
 
@@ -272,11 +257,7 @@ function JourneyBlock({
   environments?: ProjectEnvironmentView[];
   environmentsEnabled?: boolean;
 }) {
-  const {
-    results: runs,
-    status: runsStatus,
-    loadMore,
-  } = usePaginatedQuery(
+  const { results: runs } = usePaginatedQuery(
     SWARM_QUERIES.listJourneyRuns as any,
     { journeyRefId: journey._id } as any,
     { initialNumItems: DEFAULT_PAGE_SIZE }
@@ -288,6 +269,7 @@ function JourneyBlock({
 
   const [launching, setLaunching] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
+  const runSessions = useRunSessionsContext();
 
   const typedRuns = runs as JourneyRun[];
   const latestRun = typedRuns[0] ?? null;
@@ -470,8 +452,8 @@ function JourneyBlock({
             )
             .slice(-MAX_TREND_SEGMENTS);
           const cellSelected =
-            selection?.runId === latestRun._id &&
-            selection.targetKey === col.key;
+            selection?.targetKey === col.key &&
+            selection?.runId === runSessions?.runId;
 
           return (
             <div
@@ -547,68 +529,26 @@ function JourneyBlock({
                   ))}
                 </div>
               ) : null}
+              {cellSelected && selection?.targetKey && runSessions ? (
+                <div className="mt-2 w-full border-t border-border/40 pt-2">
+                  <SwarmSessionsMatrix
+                    runId={runSessions.runId}
+                    targets={runSessions.targets}
+                    sessionsPerHost={runSessions.sessionsPerHost}
+                    sessions={runSessions.sessions}
+                    hostSummaries={runSessions.hostSummaries}
+                    stream={runSessions.stream}
+                    runStatus={String(runSessions.runStatus)}
+                    selection={runSessions.matrixSelection}
+                    onSelect={runSessions.onMatrixSelect}
+                    targetKeyFilter={col.key}
+                  />
+                </div>
+              ) : null}
             </div>
           );
         })}
       </div>
-
-      {/* Run history — visible while one of this journey's runs is open. */}
-      {selection ? (
-        <div className="mt-2 space-y-0.5 border-t border-border/40 pt-2">
-          <p className="px-1.5 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Runs
-          </p>
-          {typedRuns.map((r, index) => {
-            const isOpen = selection.runId === r._id;
-            return (
-              <button
-                key={r._id}
-                type="button"
-                className={cn(
-                  "flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left text-xs outline-none transition-colors",
-                  "hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring",
-                  isOpen && "bg-muted/40"
-                )}
-                aria-expanded={isOpen}
-                aria-label={
-                  isOpen
-                    ? `Hide sessions for run ${r.status}`
-                    : `View sessions for run ${r.status}`
-                }
-                onClick={() => (isOpen ? onCloseRun() : openRun(r, null))}
-              >
-                <span
-                  className={cn(
-                    "size-1.5 shrink-0 rounded-full",
-                    runStatusDotClass(r.status)
-                  )}
-                />
-                <span className="shrink-0 font-medium text-foreground/90">
-                  {runNumberLabel(runCount, index)}
-                </span>
-                <span className="capitalize text-muted-foreground">
-                  {r.status.replace(/_/g, " ")}
-                </span>
-                <span className="min-w-0 flex-1 truncate text-muted-foreground">
-                  {runSummaryLine(r)}
-                </span>
-                <span className="shrink-0 text-[10px] text-muted-foreground">
-                  {formatJourneyRelativeTime(r.createdAt)}
-                </span>
-              </button>
-            );
-          })}
-          {runsStatus === "CanLoadMore" ? (
-            <button
-              type="button"
-              className="mt-0.5 px-1.5 text-[11px] font-medium text-primary hover:underline"
-              onClick={() => loadMore(DEFAULT_PAGE_SIZE)}
-            >
-              Load more runs
-            </button>
-          ) : null}
-        </div>
-      ) : null}
     </div>
   );
 }

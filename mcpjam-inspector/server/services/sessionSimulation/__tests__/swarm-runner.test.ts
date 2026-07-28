@@ -14,6 +14,7 @@ const reportAttemptMock = vi.fn();
 const swarmPersonaNextTurnMock = vi.fn();
 const heartbeatJourneyRunMock = vi.fn();
 const runSyntheticHostSessionMock = vi.fn();
+const captureWidgetSnapshotsMock = vi.fn();
 
 const finalizePendingAttemptsMock = vi.fn();
 const fetchPinnedSkillMock = vi.fn();
@@ -43,6 +44,8 @@ vi.mock("../runner.js", async () => {
     ...actual,
     runSyntheticHostSession: (...args: unknown[]) =>
       runSyntheticHostSessionMock(...args),
+    captureAndPersistWidgetSnapshotsForSession: (...args: unknown[]) =>
+      captureWidgetSnapshotsMock(...args),
   };
 });
 
@@ -159,8 +162,41 @@ describe("swarm single-host runner — attempt ordering", () => {
       personaId: "p1",
       personaLabel: "Persona One",
     });
-    // Swarm has no chatbox surface — no chatbox-scoped side-persistence.
-    expect(adapter.onTurnPersisted).toBeUndefined();
+    // Per-turn widget-snapshot capture rides `onTurnPersisted`, through the
+    // mutation's DIRECT auth branch: launcher bearer + session id, and NO
+    // chatboxId/accessVersion (swarm has no chatbox surface).
+    expect(adapter.onTurnPersisted).toBeTypeOf("function");
+    const fakeMessages = [{ role: "assistant", content: "done" }];
+    const fakeManager = { tag: "manager" };
+    await adapter.onTurnPersisted({
+      messages: fakeMessages,
+      manager: fakeManager,
+      browser: { tag: "browser" },
+      connectedServerIds: ["server-1"],
+      promptIndex: 0,
+    });
+    expect(captureWidgetSnapshotsMock).toHaveBeenCalledTimes(1);
+    expect(captureWidgetSnapshotsMock).toHaveBeenCalledWith({
+      messages: fakeMessages,
+      mcpClientManager: fakeManager,
+      convexAuthToken: "token",
+      chatSessionId: "synth_run-1_host-1_0",
+      capturedToolCallIds: expect.any(Set),
+    });
+    // The captured-ids set is ATTEMPT-scoped: the same instance rides every
+    // turn of this session, so ids marked persisted on turn N are skipped
+    // (no readResource/upload) on turn N+1.
+    await adapter.onTurnPersisted({
+      messages: fakeMessages,
+      manager: fakeManager,
+      browser: { tag: "browser" },
+      connectedServerIds: ["server-1"],
+      promptIndex: 1,
+    });
+    expect(captureWidgetSnapshotsMock).toHaveBeenCalledTimes(2);
+    expect(
+      captureWidgetSnapshotsMock.mock.calls[0]![0].capturedToolCallIds
+    ).toBe(captureWidgetSnapshotsMock.mock.calls[1]![0].capturedToolCallIds);
     // Persona driver routes through the swarm backend client.
     await adapter.nextPersonaTurn([{ role: "user", content: "hi" }]);
     expect(swarmPersonaNextTurnMock).toHaveBeenCalledWith(
