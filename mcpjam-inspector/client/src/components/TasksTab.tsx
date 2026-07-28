@@ -5,7 +5,10 @@ import {
   HOSTED_TASK_POLL_FLOOR_MS,
   hostedPollIntervalMs,
 } from "@/shared/hosted-tasks";
-import { useTaskScheduler } from "@/hooks/use-task-scheduler";
+import {
+  MAX_RECOVERY_READ_ATTEMPTS,
+  useTaskScheduler,
+} from "@/hooks/use-task-scheduler";
 import { Button } from "@mcpjam/design-system/button";
 import { Badge } from "@mcpjam/design-system/badge";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
@@ -203,10 +206,28 @@ export function TasksTab({
   const pendingRequestDisplay = extractDisplayFromToolResult(pendingRequest);
   const taskResultDisplay = extractDisplayFromToolResult(taskResult);
 
+  // Restored handles that still owe the one `tasks/get` carrying their inline
+  // result. Read from the scheduler rather than from the rows, because the rows
+  // cannot show it: such a handle renders as `completed` and reads as finished
+  // while its result has never actually been fetched.
+  const recoveryReads = useMemo(
+    () => scheduler.recoveryReadState(tasks.map((t) => t.taskId)),
+    [tasks, scheduler]
+  );
+
   // Check if any task is in a non-terminal state (working, input_required, pending)
   const hasActiveTasks = useMemo(() => {
-    return tasks.some((t) => !isTerminalStatus(t.status));
-  }, [tasks]);
+    return (
+      tasks.some((t) => !isTerminalStatus(t.status)) ||
+      // ...or a restored terminal still owes its recovery read. Without this
+      // term the loop stops on the DISPLAYED status and the read never
+      // happens: not when it was scheduled for later (a stored `nextPollAt`
+      // in the future is not due on the first tick, so the timer never arms
+      // at all), and not after it failed (the backoff is recorded, then
+      // nothing is left running to honor it).
+      recoveryReads.pendingTaskIds.length > 0
+    );
+  }, [tasks, recoveryReads]);
 
   // Auto-enable polling when there are active tasks, unless user explicitly disabled
   useEffect(() => {
@@ -676,6 +697,20 @@ export function TasksTab({
     }
   }, [serverName, taskCapabilities, hosted, wire, scheduler]);
 
+  // The Refresh button, as distinct from a tick.
+  //
+  // A recovery read the tab has given up on is sitting on a backoff that can
+  // be a minute long, so plain `fetchTasks` would find it not due and the
+  // button would look broken on the one handle the message just told the user
+  // to retry. A person clicking Refresh is a better signal than our own guess
+  // about a failing transport, so their click drops that guess — and only that
+  // one: the server's advertised floor and any `Retry-After` still hold, and
+  // the automatic loop keeps backing off exactly as before.
+  const handleManualRefresh = useCallback(() => {
+    scheduler.retryRecoveryReads(recoveryReads.exhaustedTaskIds);
+    void fetchTasks();
+  }, [scheduler, recoveryReads, fetchTasks]);
+
   // Handle elicitation response from the dialog
   const handleElicitationResponse = useCallback(
     async (
@@ -1115,7 +1150,7 @@ export function TasksTab({
           {/* Secondary actions */}
           <div className="flex items-center gap-0.5 text-muted-foreground/80">
             <Button
-              onClick={fetchTasks}
+              onClick={handleManualRefresh}
               variant="ghost"
               size="sm"
               disabled={fetchingTasks}
@@ -1147,6 +1182,24 @@ export function TasksTab({
             </Button>
           </div>
         </div>
+
+        {/* Giving up on a recovery read has to SAY so. Going quietly idle is
+            the failure this whole path exists to prevent: the row still reads
+            "completed" while its result was never fetched, so silence would
+            look like success. */}
+        {recoveryReads.exhaustedTaskIds.length > 0 && (
+          <div className="px-2 pb-1.5 flex items-start gap-1.5">
+            <AlertCircle className="h-3 w-3 text-warning mt-[3px] flex-shrink-0" />
+            <p className="text-[10px] text-muted-foreground leading-snug">
+              Could not read back{" "}
+              {recoveryReads.exhaustedTaskIds.length === 1
+                ? "1 restored task's result"
+                : `${recoveryReads.exhaustedTaskIds.length} restored tasks' results`}{" "}
+              after {MAX_RECOVERY_READ_ATTEMPTS} attempts. Stopped retrying
+              automatically — use Refresh to try again.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Tasks List */}

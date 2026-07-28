@@ -610,6 +610,35 @@ export class TaskLifecycleEngine {
   }
 
   /**
+   * Drops the ERROR BACKOFF for a handle, for a read a **person** asked for.
+   *
+   * The backoff is this client's own guess about a transport that keeps
+   * failing, and a user clicking Refresh is better evidence than that guess —
+   * without this, a handle that has backed off to a minute is unreachable for
+   * a minute no matter what the user does, which reads as a dead button.
+   *
+   * What it does NOT clear is anything the SERVER imposed. The advertised
+   * `pollIntervalMs` still applies from the last observation, and an explicit
+   * `Retry-After` still floors the result, so a user cannot click their way
+   * past a rate limit or an advertised floor. No-ops for an unknown handle:
+   * this only ever relaxes an existing schedule, never registers one.
+   */
+  clearErrorBackoff(identity: TaskLifecycleIdentity): void {
+    const record = this.records.get(taskLifecycleKey(identity));
+    if (!record) return;
+    const now = this.now();
+    record.consecutiveErrors = 0;
+    const serverFloor = finitePositive(record.pollIntervalMs) ?? 0;
+    record.nextPollAt = Math.max(
+      now,
+      record.lastObservedAt !== undefined
+        ? record.lastObservedAt + serverFloor
+        : 0,
+      record.retryAfterUntil ?? 0
+    );
+  }
+
+  /**
    * Marks the handle unknown to the server. Only ever called from a **confirmed
    * `tasks/get` `-32602`** — that is the one method carrying the MUST
    * (`tasks.md:793-795`); update/cancel carry a SHOULD, so a `-32602` from

@@ -65,6 +65,30 @@ function restoredTerminalStatus(
     : undefined;
 }
 
+/**
+ * How many times the tab will re-attempt a restored handle's ONE recovery read
+ * on its own before it stops and says so.
+ *
+ * The read is bounded because it is unbounded by construction otherwise: a
+ * restored terminal keeps owing its read until a read actually lands, so a
+ * handle whose server is permanently gone would keep the auto-refresh loop
+ * armed for the life of the tab. Five attempts spans the engine's 1s/2s/4s/8s
+ * backoff — long enough to ride out a restart, short enough that a dead server
+ * stops costing requests.
+ */
+export const MAX_RECOVERY_READ_ATTEMPTS = 5;
+
+/**
+ * Which restored handles still owe the one recovery read that fetches their
+ * result, split by whether the tab will still attempt it automatically.
+ */
+export interface RecoveryReadState {
+  /** Still owed and still within the attempt bound: keep the loop armed. */
+  pendingTaskIds: string[];
+  /** Still owed, but the tab has stopped retrying on its own. */
+  exhaustedTaskIds: string[];
+}
+
 export interface SchedulerTaskState {
   taskId: string;
   status: string;
@@ -131,6 +155,28 @@ export interface TaskScheduler {
   msUntilNextDue(): number;
   /** The floor a batch of these ids must respect: the SLOWEST member's. */
   batchIntervalMs(taskIds: readonly string[]): number;
+  /**
+   * Which of these handles still owe their restored-terminal recovery read.
+   *
+   * A PURE read of engine state — no claim, no registration, no scheduling —
+   * so it is safe to call during render, which is where the caller needs it:
+   * the decision it feeds is "keep the poll loop armed", and a surface that
+   * only asked after a tick would never arm the timer that produces the tick.
+   *
+   * It exists because the answer is invisible from the rendered rows. A
+   * restored `completed` handle renders as terminal and reads as finished,
+   * while the engine still owes it the `tasks/get` that carries the inline
+   * result. That is true whether the read is due now, due LATER (a stored
+   * `nextPollAt` in the future — no failure involved at all), or has failed
+   * and backed off; all three keep the handle here.
+   */
+  recoveryReadState(candidateTaskIds: readonly string[]): RecoveryReadState;
+  /**
+   * Re-arms recovery reads the tab has given up on, for an explicitly
+   * user-initiated refresh. Clears only the local error backoff — the server's
+   * advertised floor and any `Retry-After` still apply.
+   */
+  retryRecoveryReads(taskIds: readonly string[]): void;
 }
 
 export function useTaskScheduler({
@@ -345,6 +391,45 @@ export function useTaskScheduler({
         for (const taskId of taskIds) {
           const identity = identityFor(taskId);
           if (identity) engine.forget(identity);
+        }
+      },
+
+      recoveryReadState(candidateTaskIds) {
+        // `active()` is the engine's own answer to "does this handle still owe
+        // a read", so the extension-wire condition and the one-read bound stay
+        // in the one place that every scheduling method already agrees with.
+        // Restricting it to TERMINAL records is what makes this specifically
+        // the recovery read: a non-terminal handle owes an ordinary poll, and
+        // the tab already keeps the loop armed for those from its rendered
+        // rows.
+        const owing = new Map(
+          engine
+            .active()
+            .filter((record) => isTerminalLifecycleStatus(record.status))
+            .map((record) => [record.key, record])
+        );
+        const pendingTaskIds: string[] = [];
+        const exhaustedTaskIds: string[] = [];
+        for (const taskId of candidateTaskIds) {
+          const identity = identityFor(taskId);
+          if (!identity) continue;
+          const record = engine.get(identity);
+          if (!record) continue;
+          const owed = owing.get(record.key);
+          if (!owed) continue;
+          if (owed.consecutiveErrors >= MAX_RECOVERY_READ_ATTEMPTS) {
+            exhaustedTaskIds.push(taskId);
+          } else {
+            pendingTaskIds.push(taskId);
+          }
+        }
+        return { pendingTaskIds, exhaustedTaskIds };
+      },
+
+      retryRecoveryReads(taskIds) {
+        for (const taskId of taskIds) {
+          const identity = identityFor(taskId);
+          if (identity) engine.clearErrorBackoff(identity);
         }
       },
 

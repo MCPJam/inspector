@@ -406,6 +406,39 @@ describe("per-task scheduling", () => {
     expect(engine.due()).toEqual([]);
   });
 
+  it("clears the error backoff for a user-initiated read, keeping the server's floor", () => {
+    const clock = fakeClock();
+    const engine = new TaskLifecycleEngine({ now: clock.now });
+    const id = identity("t1");
+    engine.observe(id, { status: "working", pollIntervalMs: 1_000 });
+    engine.observeError(id);
+    engine.observeError(id);
+    engine.observeError(id);
+    // Backed off well past the server's own floor: without this, a person
+    // clicking Refresh watches nothing happen.
+    expect(engine.msUntilNextDue()).toBeGreaterThan(1_000);
+
+    clock.advance(500);
+    engine.clearErrorBackoff(id);
+    expect(engine.get(id)?.consecutiveErrors).toBe(0);
+    // The SERVER's floor survives — 1s from the last observation, of which
+    // 500ms has elapsed — so a click cannot out-poll what the server asked for.
+    expect(engine.msUntilNextDue()).toBe(500);
+  });
+
+  it("never lets a cleared backoff punch through a Retry-After", () => {
+    const clock = fakeClock();
+    const engine = new TaskLifecycleEngine({ now: clock.now });
+    const id = identity("t1");
+    engine.observe(id, { status: "working" });
+    engine.applyRetryAfter(id, 30_000);
+    engine.observeError(id);
+
+    engine.clearErrorBackoff(id);
+    // Rate limiting is the server's explicit instruction, not our guess.
+    expect(engine.msUntilNextDue()).toBe(30_000);
+  });
+
   it("applies a slower user minimum to already-scheduled tasks immediately", () => {
     const clock = fakeClock();
     const engine = new TaskLifecycleEngine({ now: clock.now });
