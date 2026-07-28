@@ -68,6 +68,7 @@ import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { PersonaPixelAvatar } from "@/components/swarms/persona-pixel-avatar";
 import { PersonaAvatarLookPicker } from "@/components/swarms/persona-avatar-look-picker";
 import { JourneyNetworkBackdrop } from "@/components/swarms/journey-network-backdrop";
+import { SwarmsEmptyHero } from "@/components/swarms/swarms-empty-hero";
 import {
   launchJourneyRun,
   LaunchJourneyRunError,
@@ -319,6 +320,19 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
     () => personas?.find((p) => p._id === selectedPersonaId) ?? null,
     [personas, selectedPersonaId]
   );
+
+  // Personas tab: always land on someone — pick the first list entry when none
+  // is selected or the current id no longer exists (deleted / stale deep link).
+  useEffect(() => {
+    if (viewMode !== "journeys") return;
+    if (personas === undefined || personas.length === 0) return;
+    const currentValid =
+      selectedPersonaId !== null &&
+      personas.some((p) => p._id === selectedPersonaId);
+    if (!currentValid) {
+      setSelectedPersonaId(personas[0]._id);
+    }
+  }, [viewMode, personas, selectedPersonaId]);
   // Gate on the VALIDATED persona, not the raw URL-derived id: a copied
   // /swarms?persona=... deep link opened while signed out (or with a stale id)
   // must not subscribe getPersonaTrackRecord before the allowed persona list
@@ -332,6 +346,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
   // config, so the human finishes and submits it).
   const [journeyFormOpen, setJourneyFormOpen] = useState(false);
   const [journeyGoalSeed, setJourneyGoalSeed] = useState("");
+  const [personaDialogOpen, setPersonaDialogOpen] = useState(false);
 
   // Run detail opened in the right-hand panel. `runSnapshot` seeds the panel
   // until its own `listJourneyRuns` subscription resolves the run (identical
@@ -718,6 +733,8 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
               <div className="flex items-center justify-between border-b px-4 py-3">
                 <h2 className="text-sm font-semibold">Personas</h2>
                 <NewPersonaDialog
+                  open={personaDialogOpen}
+                  onOpenChange={setPersonaDialogOpen}
                   onCreate={async (draft) => {
                     const row = await createPersona({
                       projectId,
@@ -727,14 +744,34 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
                   }}
                 />
               </div>
-              <div className="min-h-0 flex-1 overflow-y-auto">
+              <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
                 {personas === undefined ? (
                   <div className="p-4 text-sm text-muted-foreground">
                     Loading…
                   </div>
                 ) : personas.length === 0 ? (
-                  <div className="p-4 text-sm text-muted-foreground">
-                    No personas yet. Create one to get started.
+                  <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 py-16 text-center">
+                    <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 ring-1 ring-primary/20">
+                      <Users className="h-7 w-7 text-primary" />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-sm font-semibold text-foreground">
+                        No personas yet
+                      </p>
+                      <p className="max-w-xs text-xs text-muted-foreground">
+                        Create a persona to simulate user journeys across your
+                        clients.
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="font-semibold shadow-sm"
+                      onClick={() => setPersonaDialogOpen(true)}
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      Create your first persona
+                    </Button>
                   </div>
                 ) : (
                   personas.map((p) => {
@@ -772,8 +809,16 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
             </aside>
 
             {/* Persona detail + journey blocks; run detail opens on the right */}
-            <main className="min-w-0 flex-1 overflow-hidden">
-              {!selectedPersona ? (
+            <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+              {personas === undefined ? (
+                <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+                  Loading…
+                </div>
+              ) : personas.length === 0 ? (
+                <SwarmsEmptyHero
+                  onCreatePersona={() => setPersonaDialogOpen(true)}
+                />
+              ) : !selectedPersona ? (
                 <JourneyNetworkBackdrop />
               ) : (
                 (() => {
@@ -1207,15 +1252,18 @@ function PersonaDetailHeader({
 
 // ── create persona dialog (design-system; replaces the floating raw form) ────
 function NewPersonaDialog({
+  open,
+  onOpenChange,
   onCreate,
 }: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   onCreate: (draft: {
     name: string;
     role: string;
     notes?: string;
   }) => Promise<void>;
 }) {
-  const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [role, setRole] = useState("");
   const [notes, setNotes] = useState("");
@@ -1243,7 +1291,7 @@ function NewPersonaDialog({
         notes: notes.trim() || undefined,
       });
       toast.success("Persona created");
-      setOpen(false);
+      onOpenChange(false);
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to create persona"
@@ -1259,12 +1307,12 @@ function NewPersonaDialog({
         type="button"
         size="sm"
         variant="outline"
-        onClick={() => setOpen(true)}
+        onClick={() => onOpenChange(true)}
       >
         <Plus className="mr-1 size-3" />
         New
       </Button>
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>New persona</DialogTitle>
@@ -1320,7 +1368,7 @@ function NewPersonaDialog({
             <Button
               type="button"
               variant="outline"
-              onClick={() => setOpen(false)}
+              onClick={() => onOpenChange(false)}
               disabled={saving}
             >
               Cancel

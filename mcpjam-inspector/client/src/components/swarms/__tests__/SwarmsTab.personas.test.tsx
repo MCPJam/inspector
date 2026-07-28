@@ -96,23 +96,39 @@ beforeEach(() => {
 });
 
 describe("SwarmsTab — persona create/edit", () => {
+  it("preselects the first persona on the Personas tab", async () => {
+    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Notes / personality")).toBeTruthy();
+    });
+    expect(
+      (screen.getByLabelText("Notes / personality") as HTMLTextAreaElement).value
+    ).toBe("curious and impatient");
+    expect(
+      screen.queryByText("Select a persona to see its journeys.")
+    ).toBeNull();
+  });
+
   it("opens a labeled create dialog instead of a floating raw form", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
 
-    fireEvent.click(screen.getByRole("button", { name: /new/i }));
+    const aside = screen.getByRole("complementary");
+    fireEvent.click(within(aside).getByRole("button", { name: /^new$/i }));
 
+    const dialog = screen.getByRole("dialog");
     expect(screen.getByRole("heading", { name: "New persona" })).toBeTruthy();
-    expect(screen.getByLabelText("Name")).toBeTruthy();
-    expect(screen.getByLabelText("Role")).toBeTruthy();
-    expect(screen.getByLabelText("Notes / personality")).toBeTruthy();
+    expect(within(dialog).getByLabelText("Name")).toBeTruthy();
+    expect(within(dialog).getByLabelText("Role")).toBeTruthy();
+    expect(within(dialog).getByLabelText("Notes / personality")).toBeTruthy();
 
-    fireEvent.change(screen.getByLabelText("Name"), {
+    fireEvent.change(within(dialog).getByLabelText("Name"), {
       target: { value: "Nacho" },
     });
-    fireEvent.change(screen.getByLabelText("Role"), {
+    fireEvent.change(within(dialog).getByLabelText("Role"), {
       target: { value: "SWE" },
     });
-    fireEvent.change(screen.getByLabelText("Notes / personality"), {
+    fireEvent.change(within(dialog).getByLabelText("Notes / personality"), {
       target: { value: "pragmatic" },
     });
     fireEvent.click(screen.getByRole("button", { name: /create persona/i }));
@@ -129,9 +145,8 @@ describe("SwarmsTab — persona create/edit", () => {
 
   it("saves personality notes on blur via updatePersona", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    fireEvent.click(screen.getByText("Persona One"));
 
-    const notes = screen.getByLabelText("Notes / personality");
+    const notes = await screen.findByLabelText("Notes / personality");
     expect((notes as HTMLTextAreaElement).value).toBe("curious and impatient");
 
     fireEvent.change(notes, { target: { value: "calm and thorough" } });
@@ -147,10 +162,8 @@ describe("SwarmsTab — persona create/edit", () => {
 
   it("saves an inline name edit via updatePersona", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    fireEvent.click(screen.getByText("Persona One"));
 
-    // Sidebar + detail header both render the name; edit the detail copy.
-    const nameLabels = screen.getAllByText("Persona One");
+    const nameLabels = await screen.findAllByText("Persona One");
     fireEvent.click(nameLabels[nameLabels.length - 1]!);
     const input = screen.getByDisplayValue("Persona One");
     fireEvent.change(input, { target: { value: "Persona Two" } });
@@ -171,9 +184,7 @@ describe("SwarmsTab — persona create/edit", () => {
     const seeded = resolvePersonaPixelLook("persona-1");
 
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    fireEvent.click(screen.getByText("Persona One"));
-
-    fireEvent.click(screen.getByTestId("persona-avatar-look-trigger"));
+    fireEvent.click(await screen.findByTestId("persona-avatar-look-trigger"));
     fireEvent.click(screen.getByTestId("persona-avatar-next-shape"));
 
     await waitFor(() => {
@@ -201,7 +212,6 @@ describe("SwarmsTab — persona create/edit", () => {
   it("does not mark a selected idle persona as busy", async () => {
     runningPersonaRefIds.current = [];
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    fireEvent.click(await screen.findByText("Persona One"));
 
     await waitFor(() => {
       const aside = screen.getByRole("complementary");
