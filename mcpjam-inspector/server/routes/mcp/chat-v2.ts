@@ -187,6 +187,16 @@ function streamDirectChatWithLiveTrace(options: {
   progressivePlan?: ProgressiveToolPlan;
   discoveryState?: ToolDiscoveryState;
   abortSignal?: AbortSignal;
+  /**
+   * Invoked with the live stream writer before the turn starts. Every
+   * dispatch path with a tasks seam must attach the task-created bridge here,
+   * BEFORE the first tool call can fire — the sink dispatches synchronously
+   * from the tool loop, so a late attach means the bridge warn-drops the part
+   * and the task is orphaned (see `server/utils/web-chat-turn.ts`).
+   */
+  onStreamWriterReady?: (writer: {
+    write: (chunk: UIMessageChunk) => void;
+  }) => void;
   onPersist?: (event: {
     responseMessages: ModelMessage[];
     assistantText: string;
@@ -197,7 +207,8 @@ function streamDirectChatWithLiveTrace(options: {
     turnTrace: PersistedTurnTrace;
   }) => Promise<void> | void;
 }): Response {
-  const { provider, abortSignal, onPersist, ...turnOptions } = options;
+  const { provider, abortSignal, onStreamWriterReady, onPersist, ...turnOptions } =
+    options;
   // Declared before `createUIMessageStream` so the top-level `onError`
   // (which can fire before `execute` runs) can read it; assigned inside
   // `execute` once the helper is configured.
@@ -220,6 +231,11 @@ function streamDirectChatWithLiveTrace(options: {
       return formatStreamError(error, provider);
     },
     execute: async ({ writer }) => {
+      // FIRST, before `runDirectChatTurn` configures the tool loop: the
+      // task-created sink dispatches synchronously from inside a tool call,
+      // so the bridge must already hold the writer or the part is warn-dropped
+      // and the task handle never reaches the browser tracker.
+      onStreamWriterReady?.({ write: (chunk) => writer.write(chunk) });
       handle = runDirectChatTurn({
         ...turnOptions,
         // Logical provider for span metadata (OTel gen_ai.provider.name).
@@ -1128,6 +1144,18 @@ chatV2.post("/", async (c) => {
           requireToolApproval,
           abortSignal: inboundAbortSignalOrg,
           onConversationComplete,
+          // Every dispatch path with a tasks seam must attach the bridge
+          // before the first tool call can fire — the sink dispatches
+          // synchronously from the tool loop, so a missing attach means the
+          // bridge warn-drops the task-created part and the task is orphaned
+          // (see `server/utils/web-chat-turn.ts`).
+          ...(taskCreatedBridge
+            ? {
+                onStreamWriterReady: (writer: {
+                  write: (chunk: UIMessageChunk) => void;
+                }) => taskCreatedBridge.attachStreamWriter(writer),
+              }
+            : {}),
         });
       }
 
@@ -1150,6 +1178,15 @@ chatV2.post("/", async (c) => {
         modelVisibleMcpToolResults,
         abortSignal: inboundAbortSignalOrg,
         onConversationComplete,
+        // Same invariant as the local-org call above: attach the bridge
+        // before the first tool call, or created tasks are orphaned.
+        ...(taskCreatedBridge
+          ? {
+              onStreamWriterReady: (writer: {
+                write: (chunk: UIMessageChunk) => void;
+              }) => taskCreatedBridge.attachStreamWriter(writer),
+            }
+          : {}),
       });
     }
 
@@ -1221,6 +1258,15 @@ chatV2.post("/", async (c) => {
       progressivePlan,
       discoveryState,
       abortSignal: inboundAbortSignalDirect,
+      // Same invariant as the org-BYOK calls above: attach the bridge before
+      // the first tool call, or created tasks are orphaned.
+      ...(taskCreatedBridge
+        ? {
+            onStreamWriterReady: (writer: {
+              write: (chunk: UIMessageChunk) => void;
+            }) => taskCreatedBridge.attachStreamWriter(writer),
+          }
+        : {}),
       onPersist: chatSessionId
         ? async ({
             responseMessages,
