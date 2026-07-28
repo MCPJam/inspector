@@ -268,10 +268,10 @@ async function selectFirstDoneCell() {
   fireEvent.click(doneCell!);
 }
 
-function openJourneysTab() {
+function openSessionsTab() {
   fireEvent.click(
     within(screen.getByLabelText("Swarm view")).getByRole("button", {
-      name: /^journeys$/i,
+      name: /^sessions$/i,
     }),
   );
 }
@@ -411,7 +411,7 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
 describe("SwarmsTab — top-level Journeys view", () => {
   it("defaults to listSessionsByProject and opens the viewer on `id`", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    openJourneysTab();
+    openSessionsTab();
 
     await waitFor(() => {
       const call = paginatedCalls.find(
@@ -438,7 +438,7 @@ describe("SwarmsTab — top-level Journeys view", () => {
 
   it("filters the visible list by client (host) without changing the query", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    openJourneysTab();
+    openSessionsTab();
 
     // Both hosts' sessions are listed before filtering.
     const panel = await screen.findByTestId("swarms-sessions-panel");
@@ -472,7 +472,7 @@ describe("SwarmsTab — top-level Journeys view", () => {
 
   it("narrows to listSessionsByPersona when a persona is selected, and clears back to all", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    openJourneysTab();
+    openSessionsTab();
     await selectPersonaFilter("Persona One");
 
     await waitFor(() => {

@@ -35,6 +35,7 @@ import {
   Info,
   Loader2,
   Plus,
+  Trash2,
   Users,
   X,
 } from "lucide-react";
@@ -275,7 +276,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
   type SwarmViewMode = "journeys" | "sessions";
   const SWARM_VIEW_OPTIONS = [
     { value: "journeys" as const, label: "Personas" },
-    { value: "sessions" as const, label: "Journeys" },
+    { value: "sessions" as const, label: "Sessions" },
   ];
   // Session deep-links open the flat Sessions browser; run-only links stay on
   // Journeys so the matrix / live stream can restore.
@@ -314,6 +315,27 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
       }
     },
     [updatePersona]
+  );
+
+  const handleDeletePersona = useCallback(
+    async (persona: Persona) => {
+      if (
+        !window.confirm(
+          `Delete persona "${persona.name}"? Its journeys are hidden but historical runs are kept.`
+        )
+      ) {
+        return;
+      }
+      try {
+        await deletePersona({ personaRefId: persona._id } as any);
+        setSelectedPersonaId(null);
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : "Failed to delete persona"
+        );
+      }
+    },
+    [deletePersona]
   );
 
   const selectedPersona = useMemo(
@@ -808,31 +830,54 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
                   personas.map((p) => {
                     const selected = p._id === selectedPersonaId;
                     return (
-                      <button
+                      <div
                         key={p._id}
-                        type="button"
-                        onClick={() => setSelectedPersonaId(p._id)}
                         className={cn(
-                          "flex w-full items-center gap-3 border-b px-4 py-3 text-left hover:bg-muted/50",
+                          "group flex w-full items-center border-b",
                           selected && "bg-muted"
                         )}
                       >
-                        <PersonaPixelAvatar
-                          seed={p._id}
-                          shapeIndex={p.avatarShape}
-                          paletteIndex={p.avatarPalette}
-                          size="md"
-                          state={runningSet.has(p._id) ? "running" : "idle"}
-                        />
-                        <span className="flex min-w-0 flex-col items-start gap-0.5">
-                          <span className="truncate text-sm font-medium">
-                            {p.name}
+                        <button
+                          type="button"
+                          onClick={() => setSelectedPersonaId(p._id)}
+                          className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left hover:bg-muted/50"
+                        >
+                          <PersonaPixelAvatar
+                            seed={p._id}
+                            shapeIndex={p.avatarShape}
+                            paletteIndex={p.avatarPalette}
+                            size="md"
+                            state={runningSet.has(p._id) ? "running" : "idle"}
+                          />
+                          <span className="flex min-w-0 flex-col items-start gap-0.5">
+                            <span className="truncate text-sm font-medium">
+                              {p.name}
+                            </span>
+                            <span className="truncate text-xs text-muted-foreground">
+                              {p.role}
+                            </span>
                           </span>
-                          <span className="truncate text-xs text-muted-foreground">
-                            {p.role}
-                          </span>
-                        </span>
-                      </button>
+                        </button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          aria-label={`Delete ${p.name}`}
+                          title="Delete persona"
+                          className={cn(
+                            "mr-2 size-8 shrink-0 p-0 text-muted-foreground hover:text-destructive",
+                            selected
+                              ? "opacity-100"
+                              : "opacity-0 group-hover:opacity-100"
+                          )}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void handleDeletePersona(p);
+                          }}
+                        >
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      </div>
                     );
                   })
                 )}
@@ -864,19 +909,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
                         onSave={(patch) =>
                           savePersonaField(selectedPersona._id, patch)
                         }
-                        onDelete={async () => {
-                          if (
-                            !window.confirm(
-                              `Delete persona "${selectedPersona.name}"? Its journeys are hidden but historical runs are kept.`
-                            )
-                          ) {
-                            return;
-                          }
-                          await deletePersona({
-                            personaRefId: selectedPersona._id,
-                          } as any);
-                          setSelectedPersonaId(null);
-                        }}
+                        onDelete={() => handleDeletePersona(selectedPersona)}
                       />
 
                       <div

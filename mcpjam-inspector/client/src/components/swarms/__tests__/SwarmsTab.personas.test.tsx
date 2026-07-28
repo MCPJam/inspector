@@ -22,10 +22,12 @@ const persona = {
 const {
   createPersonaMutation,
   updatePersonaMutation,
+  deletePersonaMutation,
   runningPersonaRefIds,
 } = vi.hoisted(() => ({
   createPersonaMutation: vi.fn(),
   updatePersonaMutation: vi.fn(),
+  deletePersonaMutation: vi.fn(),
   runningPersonaRefIds: { current: [] as string[] },
 }));
 
@@ -48,6 +50,7 @@ vi.mock("convex/react", () => ({
   useMutation: (name: string) => {
     if (name === "personas:createPersona") return createPersonaMutation;
     if (name === "personas:updatePersona") return updatePersonaMutation;
+    if (name === "personas:deletePersona") return deletePersonaMutation;
     return vi.fn().mockResolvedValue(undefined);
   },
   usePaginatedQuery: () => ({
@@ -93,6 +96,8 @@ beforeEach(() => {
   runningPersonaRefIds.current = [];
   createPersonaMutation.mockResolvedValue({ _id: "persona-new" });
   updatePersonaMutation.mockResolvedValue({ ...persona });
+  deletePersonaMutation.mockResolvedValue(undefined);
+  vi.spyOn(window, "confirm").mockReturnValue(true);
 });
 
 describe("SwarmsTab — persona create/edit", () => {
@@ -163,6 +168,21 @@ describe("SwarmsTab — persona create/edit", () => {
       expect(updatePersonaMutation).toHaveBeenCalledWith({
         personaRefId: "persona-1",
         name: "Persona Two",
+      });
+    });
+  });
+
+  it("deletes a persona from the sidebar trash button", async () => {
+    render(<SwarmsTab projectId="proj-1" isAuthenticated />);
+
+    const aside = await screen.findByRole("complementary");
+    fireEvent.click(
+      within(aside).getByRole("button", { name: "Delete Persona One" })
+    );
+
+    await waitFor(() => {
+      expect(deletePersonaMutation).toHaveBeenCalledWith({
+        personaRefId: "persona-1",
       });
     });
   });
