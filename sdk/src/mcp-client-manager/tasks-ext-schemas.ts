@@ -273,6 +273,11 @@ export const createTaskExtResultSchema = taskExtSchema.extend({
  * (tasks.md:102) and the whole detection path keys on it. On a completion
  * response the field carries no information the `status` union does not
  * already carry, so its absence is harmless.
+ *
+ * An own `resultType` whose value is literally `undefined` reads as absent
+ * here, deliberately: `JSON.parse` cannot produce one (JSON has no `undefined`,
+ * and a reviver returning `undefined` DELETES the key), so the case exists only
+ * in hand-built objects, where "absent" is the right reading anyway.
  */
 function checkOptionalCompleteResultType(
   value: unknown,

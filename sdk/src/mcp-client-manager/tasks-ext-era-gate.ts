@@ -70,6 +70,14 @@
  * from the single send path shared by `tasks/get`, `tasks/update` and
  * `tasks/cancel`.
  *
+ * Registration is a fast path, never a precondition: a `ManagedMcpClient` that
+ * did NOT come from the factory (a directly-constructed
+ * `OfficialSdkClientAdapter`, say) is resolved by walking its public
+ * `ManagedMcpClient.inner` delegation chain, so it gets the same shadow. The
+ * only case that installs nothing is a chain with no upstream client in it at
+ * all — a test double, which has no era gate to shadow. See
+ * {@link resolveTasksExtensionEraGateTarget}.
+ *
  * The reason is blast radius. This module probes a PRIVATE upstream member,
  * and a bump that renames it must fail loudly (see Maintenance) — but that
  * failure has to land on the feature that depends on the probe, not on the
@@ -90,7 +98,10 @@
  * era-gating the extension's method names (or exposes a real seam).
  */
 
-import type { Client } from "@modelcontextprotocol/client";
+// Runtime import: `resolveTasksExtensionEraGateTarget` needs the CLASS to tell
+// a real upstream client apart from a hand-rolled stand-in when walking an
+// unregistered delegation chain (see {@link isUpstreamClient}).
+import { Client } from "@modelcontextprotocol/client";
 // Runtime import, and `tasks-ext.ts` imports this module back for the lazy
 // install. Everything derived from `TasksExtRequestMethods` is therefore read
 // at CALL time, never at module-evaluation time, so neither module can observe
@@ -191,13 +202,75 @@ export function installTasksExtensionEraGateShadow(client: Client): void {
  * `ManagedMcpClient` (or any decorator around one) → the upstream `Client`
  * instance whose gate would have to be shadowed for it.
  *
- * The extension helpers in `tasks-ext.ts` hold a `ManagedMcpClient`, which is
- * an interface with no route back to the upstream instance (and may be a
- * decorator chain). Rather than have them guess at a private `.inner` chain,
- * the factory — the one place an upstream `Client` becomes a
- * `ManagedMcpClient` — records the pairing here.
+ * A FAST PATH, not the only path. The factory — the one place an upstream
+ * `Client` becomes a `ManagedMcpClient` — records the pairing here, which also
+ * makes the pairing authoritative: a registered value is asserted to BE the
+ * upstream client, so a registered instance whose seam has moved throws rather
+ * than being quietly reclassified as "not a real client". A `ManagedMcpClient`
+ * built without the factory is not in here at all, and is resolved structurally
+ * instead — see {@link resolveTasksExtensionEraGateTarget}.
  */
 const eraGateTargets = new WeakMap<object, Client>();
+
+/**
+ * Depth cap on the `inner` delegation walk. Also the cycle guard: a decorator
+ * chain that (wrongly) loops back on itself terminates here instead of hanging
+ * a tasks call. Real chains are 2 links (`LogLevelMetaClient` →
+ * `OfficialSdkClientAdapter` → `Client`).
+ */
+const MAX_DELEGATION_DEPTH = 16;
+
+/**
+ * Is this the upstream client whose gate we shadow?
+ *
+ * `instanceof` is the primary test. The duck-typed fallback covers a
+ * dual-install of `@modelcontextprotocol/client` (two copies in the tree ⇒
+ * `instanceof` is false against a genuine client): an object that carries the
+ * era-gate member as a function is one, whoever's copy built it. The fallback
+ * can only ADD installs, never turn a missing seam into a silent skip — it
+ * requires the member to be present and callable.
+ */
+function isUpstreamClient(value: object): value is Client {
+  return (
+    value instanceof Client ||
+    typeof (value as Record<string, unknown>)[ERA_GATE_MEMBER] === "function"
+  );
+}
+
+/**
+ * The upstream `Client` behind `managed`, or `undefined` when there is none.
+ *
+ * Registered pairing first; otherwise walk the public `inner` delegation chain
+ * that every adapter/decorator in this package exposes
+ * (`ManagedMcpClient.inner`). The walk is what keeps a directly-constructed
+ * `new OfficialSdkClientAdapter(client)` — one that never went through
+ * `managed-mcp-client-factory.ts` — from silently keeping upstream's era gate
+ * and dying with an opaque `METHOD_NOT_SUPPORTED_BY_PROTOCOL_VERSION` on its
+ * first `tasks/get`.
+ *
+ * `undefined` means exactly one thing: nothing in the chain is an upstream
+ * client, i.e. a test double with no era gate to shadow. That is the ONLY
+ * remaining no-op, and it is a true no-op rather than a missed install.
+ */
+function resolveTasksExtensionEraGateTarget(
+  managed: object
+): Client | undefined {
+  const registered = eraGateTargets.get(managed);
+  if (registered !== undefined) {
+    return registered;
+  }
+  let current: unknown = managed;
+  for (let depth = 0; depth < MAX_DELEGATION_DEPTH; depth += 1) {
+    if (typeof current !== "object" || current === null) {
+      return undefined;
+    }
+    if (isUpstreamClient(current)) {
+      return current;
+    }
+    current = (current as { inner?: unknown }).inner;
+  }
+  return undefined;
+}
 
 /**
  * Record that `managed` speaks for `client`, so a later tasks operation can
@@ -216,17 +289,23 @@ export function registerTasksExtensionEraGateTarget(
  * Install the shadow for `managed`, if it has not been installed already.
  * Called from the single send path every extension tasks request goes through.
  *
- * An unregistered `managed` is a client that never came from the factory (a
- * test double, or a hand-rolled `ManagedMcpClient`); it has no upstream era
- * gate to shadow, so there is nothing to do and nothing to fail about. A
- * REGISTERED one whose seam has moved throws — that is the loud failure the
- * probe exists for, now scoped to tasks traffic.
+ * The target is resolved by {@link resolveTasksExtensionEraGateTarget}:
+ * registration first, then the public `inner` delegation chain. Coming from
+ * the factory is therefore an optimization, not a requirement — a
+ * hand-constructed `OfficialSdkClientAdapter` over a real `Client` gets the
+ * same shadow the factory's would.
  *
- * @throws {TasksExtEraGateSeamError} when the registered instance no longer
+ * A `managed` with no upstream client anywhere in its chain (a test double) is
+ * a no-op: there is no era gate to shadow, so there is nothing to do and
+ * nothing to fail about. One that DOES resolve to an upstream client whose
+ * seam has moved throws — that is the loud failure the probe exists for, now
+ * scoped to tasks traffic.
+ *
+ * @throws {TasksExtEraGateSeamError} when the resolved instance no longer
  * carries the private member.
  */
 export function ensureTasksExtensionEraGateShadow(managed: object): void {
-  const client = eraGateTargets.get(managed);
+  const client = resolveTasksExtensionEraGateTarget(managed);
   if (client === undefined) {
     return;
   }

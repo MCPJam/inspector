@@ -28,6 +28,9 @@ import {
   createManagedMcpClient,
   wrapLegacyClient,
 } from "../src/mcp-client-manager/managed-mcp-client-factory.js";
+import { OfficialSdkClientAdapter } from "../src/mcp-client-manager/official-sdk-client-adapter.js";
+import { LogLevelMetaClient } from "../src/mcp-client-manager/log-level-meta-client.js";
+import type { ManagedMcpClient } from "../src/mcp-client-manager/managed-mcp-client.js";
 
 const MODERN_ERA = "2026-07-28";
 const LEGACY_ERA = "2025-11-25";
@@ -135,6 +138,64 @@ describe("tasks extension era-gate shadow", () => {
       getTaskExt({ client: managed, declaredCapabilities: undefined }, "t")
     ).rejects.toThrow();
     expect(Object.prototype.hasOwnProperty.call(inner, GATE)).toBe(true);
+  });
+
+  describe("resolving the instance to shadow", () => {
+    const hasGate = (target: object) =>
+      Object.prototype.hasOwnProperty.call(target, GATE);
+
+    it("shadows an adapter built WITHOUT the factory", async () => {
+      // The previously-broken case: nothing registered this pairing, so the
+      // lookup used to no-op and upstream's gate went on to refuse the send.
+      const client = new Client({ name: "test", version: "0.0.0" }, {});
+      const adapter = new OfficialSdkClientAdapter(client);
+      expect(hasGate(client)).toBe(false);
+
+      await expect(
+        getTaskExt({ client: adapter, declaredCapabilities: undefined }, "t")
+      ).rejects.toThrow();
+      expect(hasGate(client)).toBe(true);
+    });
+
+    it("walks a decorator chain over an unregistered adapter", async () => {
+      const client = new Client({ name: "test", version: "0.0.0" }, {});
+      const decorated = new LogLevelMetaClient(
+        new OfficialSdkClientAdapter(client),
+        () => "warning"
+      );
+
+      await expect(
+        getTaskExt({ client: decorated, declaredCapabilities: undefined }, "t")
+      ).rejects.toThrow();
+      expect(hasGate(client)).toBe(true);
+    });
+
+    it("stays a silent no-op for a double with no upstream client", async () => {
+      // Nothing in the chain is a client, so there is no era gate to shadow —
+      // that must not be confused with a moved seam.
+      const double = {
+        requestWithSchema: async () => ({}),
+      } as unknown as ManagedMcpClient;
+      await expect(
+        cancelTaskExt({ client: double, declaredCapabilities: undefined }, "t")
+      ).resolves.toEqual({});
+    });
+
+    it("terminates on a self-referential delegation chain", async () => {
+      const looped: Record<string, unknown> = {
+        requestWithSchema: async () => ({}),
+      };
+      looped.inner = looped;
+      await expect(
+        cancelTaskExt(
+          {
+            client: looped as unknown as ManagedMcpClient,
+            declaredCapabilities: undefined,
+          },
+          "t"
+        )
+      ).resolves.toEqual({});
+    });
   });
 
   describe("a client whose seam is missing", () => {

@@ -171,6 +171,15 @@ export interface ExtensionTasksMisbehavior {
   /** `resultType` on `CreateTaskResult`. Spec requires `"task"` (MUST). */
   createResultType?: string;
   /**
+   * OMIT `resultType` from `CreateTaskResult` entirely — distinct from
+   * {@link createResultType}, which can only change its VALUE. Absence is the
+   * more dangerous violation of tasks.md:102: a wrong value at least stays
+   * visible, while an absent one makes the task invisible to a client that
+   * discriminates on it, so the response reads as an ordinary tool result.
+   * Wins over `createResultType` when both are set.
+   */
+  omitCreateResultType?: boolean;
+  /**
    * `resultType` on `tasks/get`. The prose requires `"complete"`; setting it
    * to `"task"` is the "wrong discriminator" case. To OMIT it instead (which
    * is arguably schema-conformant, not misbehavior) use
@@ -770,7 +779,9 @@ export async function serveExtensionTasksFixture(
         // `CreateTaskResult = Result & Task` — flat, and bare `Task` fields
         // only (no inputRequests/result/error).
         return {
-          resultType: misbehavior.createResultType ?? "task",
+          ...(misbehavior.omitCreateResultType
+            ? {}
+            : { resultType: misbehavior.createResultType ?? "task" }),
           ...taskFields(entry),
         };
       }
