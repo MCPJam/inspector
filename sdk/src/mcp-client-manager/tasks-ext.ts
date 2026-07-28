@@ -54,6 +54,10 @@ import { CLIENT_CAPABILITIES_META_KEY } from "@modelcontextprotocol/client";
 import { z } from "zod";
 import { mergeClientCapabilities } from "./capabilities.js";
 import { ensureTasksExtensionEraGateShadow } from "./tasks-ext-era-gate.js";
+import {
+  resolveListenMetaTarget,
+  withTasksExtensionEnvelope,
+} from "./tasks-ext-listen-meta.js";
 import type { ManagedMcpClient } from "./managed-mcp-client.js";
 import type { ClientCapabilityOptions, ClientRequestOptions } from "./types.js";
 import {
@@ -192,6 +196,41 @@ async function sendTasksExtRequest(
     },
     TASKS_EXT_WIRE_RESULT_SCHEMA,
     ctx.options
+  );
+}
+
+/**
+ * Opens a task-filtered `subscriptions/listen` carrying the extension's
+ * eligibility declaration.
+ *
+ * The declaration is mandatory on this request too — a non-declaring client
+ * MUST get `-32003` (`tasks.md:797-799`) — but `Client.listen` builds its own
+ * `params._meta` and takes no caller `_meta`. `tasks-ext-listen-meta.ts`
+ * explains the seam and why it is scoped to this one call.
+ *
+ * Returns `undefined` when this connection cannot listen at all, or cannot
+ * declare on the listen. Both are the same outcome for the caller: **do not
+ * send a task-filtered listen**, keep polling. Task notifications are OPTIONAL
+ * in the extension, so nothing is lost but latency.
+ *
+ * @throws {TasksExtListenMetaSeamError} when the upstream seam has moved. Loud
+ * on purpose: a silent fallback would hide a client bump that broke the
+ * declaration, and the caller can catch it to degrade to polling deliberately.
+ */
+export async function openTaskDeclaredListen(
+  ctx: Omit<TasksExtCallContext, "options">,
+  filter: Record<string, unknown>
+): Promise<unknown | undefined> {
+  const listen = (
+    ctx.client as {
+      listen?: (filter: unknown, options?: unknown) => Promise<unknown>;
+    }
+  ).listen;
+  if (typeof listen !== "function") return undefined;
+  const target = resolveListenMetaTarget(ctx.client as unknown as object);
+  if (target === undefined) return undefined;
+  return withTasksExtensionEnvelope(target, ctx.declaredCapabilities, () =>
+    listen.call(ctx.client, filter)
   );
 }
 

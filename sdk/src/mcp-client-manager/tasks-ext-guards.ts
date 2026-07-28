@@ -185,3 +185,26 @@ export function parseTaskExtNotificationParams(
     ? (parsed.data as TaskExtNotificationParams)
     : undefined;
 }
+
+/**
+ * Strict form of {@link parseTaskExtNotificationParams}.
+ *
+ * A `notifications/tasks` payload carries a full `DetailedTask` and is
+ * validated **identically to `tasks/get`** — the delivery channel changes
+ * nothing about how much a payload is trusted. Use this wherever a rejected
+ * notification should be diagnosable; use the lenient parser only where the
+ * caller genuinely wants to drop unparseable traffic and keep polling.
+ */
+export function assertTaskExtNotificationParams(
+  value: unknown,
+  context = "notifications/tasks params",
+  method = "notifications/tasks"
+): TaskExtNotificationParams {
+  const parsed = taskExtNotificationParamsSchema.safeParse(value);
+  if (!parsed.success) {
+    throw new InvalidTaskExtPayloadError(context, issuesOf(parsed.error), {
+      method,
+    });
+  }
+  return parsed.data as TaskExtNotificationParams;
+}
