@@ -181,7 +181,22 @@ describe("swarm single-host runner — attempt ordering", () => {
       mcpClientManager: fakeManager,
       convexAuthToken: "token",
       chatSessionId: "synth_run-1_host-1_0",
+      capturedToolCallIds: expect.any(Set),
     });
+    // The captured-ids set is ATTEMPT-scoped: the same instance rides every
+    // turn of this session, so ids marked persisted on turn N are skipped
+    // (no readResource/upload) on turn N+1.
+    await adapter.onTurnPersisted({
+      messages: fakeMessages,
+      manager: fakeManager,
+      browser: { tag: "browser" },
+      connectedServerIds: ["server-1"],
+      promptIndex: 1,
+    });
+    expect(captureWidgetSnapshotsMock).toHaveBeenCalledTimes(2);
+    expect(
+      captureWidgetSnapshotsMock.mock.calls[0]![0].capturedToolCallIds
+    ).toBe(captureWidgetSnapshotsMock.mock.calls[1]![0].capturedToolCallIds);
     // Persona driver routes through the swarm backend client.
     await adapter.nextPersonaTurn([{ role: "user", content: "hi" }]);
     expect(swarmPersonaNextTurnMock).toHaveBeenCalledWith(

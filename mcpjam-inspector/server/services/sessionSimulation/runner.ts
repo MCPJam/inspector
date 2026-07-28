@@ -1247,6 +1247,10 @@ async function runOneSession(args: {
 }): Promise<SessionResult> {
   const { persona, sessionIdx, runId, chatboxId, convexHttpUrl } = args;
   const chatSessionId = `synth_${runId}_${persona.id}_${sessionIdx}`;
+  // Session-scoped: per-turn widget capture walks the FULL accumulated
+  // transcript, so without this an early widget is re-fetched and
+  // re-uploaded on every later turn.
+  const capturedWidgetToolCallIds = new Set<string>();
 
   return runSyntheticHostSession({
     runId,
@@ -1297,6 +1301,7 @@ async function runOneSession(args: {
         chatSessionId,
         chatboxId,
         accessVersion: args.accessVersion,
+        capturedToolCallIds: capturedWidgetToolCallIds,
       });
       await persistBrowserArtifactsForTurn({
         browser,
@@ -1337,6 +1342,16 @@ export async function captureAndPersistWidgetSnapshotsForSession(args: {
   chatSessionId: string;
   chatboxId?: string;
   accessVersion?: number;
+  /**
+   * Session-scoped set of tool-call ids whose snapshot row is already
+   * persisted. Callers invoking this per turn over a growing transcript
+   * pass one set per session: already-persisted calls are skipped before
+   * `readResource`/upload (the walk is otherwise quadratic in turns), and
+   * an id is added only after its mutation succeeds — a transient failure
+   * (including the mutation's null return while `/ingest-chat` hasn't
+   * written the session row yet) retries naturally on the next turn.
+   */
+  capturedToolCallIds?: Set<string>;
 }): Promise<void> {
   const {
     messages,
@@ -1345,6 +1360,7 @@ export async function captureAndPersistWidgetSnapshotsForSession(args: {
     chatSessionId,
     chatboxId,
     accessVersion,
+    capturedToolCallIds,
   } = args;
 
   // `convexHttpUrl` is the `.convex.site` HTTP-actions endpoint (the runner
@@ -1382,6 +1398,7 @@ export async function captureAndPersistWidgetSnapshotsForSession(args: {
       messages,
       mcpClientManager,
       convexClient,
+      ...(capturedToolCallIds ? { skipToolCallIds: capturedToolCallIds } : {}),
     });
   } catch (err) {
     logger.warn("[sessionSimulation.runner] widget snapshot capture failed", {
@@ -1408,7 +1425,7 @@ export async function captureAndPersistWidgetSnapshotsForSession(args: {
       // which Convex rejects at the argument-validator boundary.
       const sanitized = sanitizeWidgetForBackend(widgetPayload);
       try {
-        await convexClient.mutation(
+        const result = await convexClient.mutation(
           "chatSessions:createWidgetSnapshot" as any,
           {
             ...(chatboxId !== undefined ? { chatboxId } : {}),
@@ -1417,6 +1434,11 @@ export async function captureAndPersistWidgetSnapshotsForSession(args: {
             ...sanitized,
           }
         );
+        // Null = the ingest race (session row not written yet) — leave the
+        // id unmarked so the next turn retries. Anything else is the row id.
+        if (result != null) {
+          capturedToolCallIds?.add(snap.toolCallId);
+        }
       } catch (err) {
         logger.warn("[sessionSimulation.runner] createWidgetSnapshot failed", {
           chatSessionId,

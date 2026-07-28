@@ -392,6 +392,10 @@ async function runJourneyFanOut(
           targetSessionIdentity(target),
           sessionIdx
         );
+        // Attempt-scoped: per-turn widget capture walks the FULL accumulated
+        // transcript, so without this an early widget is re-fetched and
+        // re-uploaded on every later turn.
+        const capturedWidgetToolCallIds = new Set<string>();
 
         // CLAIM before executing: the `running` transition requires the
         // chatSessionId and is immutable thereafter. Persistence is LAUNCHER-gated
@@ -531,6 +535,7 @@ async function runJourneyFanOut(
               mcpClientManager: manager,
               convexAuthToken: bearer,
               chatSessionId,
+              capturedToolCallIds: capturedWidgetToolCallIds,
             });
           },
         });
