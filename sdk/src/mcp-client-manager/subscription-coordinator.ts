@@ -577,6 +577,8 @@ export class SubscriptionCoordinator {
   private readonly rejections: RejectedSubscriptionNotification[] = [];
   /** Legacy adapter bookkeeping: URIs currently `resources/subscribe`d. */
   private legacySubscribedUris = new Set<string>();
+  /** Signature of the last all-rejected interest set recorded, for dedupe. */
+  private lastUnopenedSignature?: string;
 
   constructor(options: SubscriptionCoordinatorOptions) {
     this.options = options;
@@ -1060,6 +1062,7 @@ export class SubscriptionCoordinator {
       if (!this.disposed && rejected.length > 0) {
         this.recordUnopenedStream(rejected);
       }
+
       return;
     }
 
@@ -1079,6 +1082,20 @@ export class SubscriptionCoordinator {
   private recordUnopenedStream(
     rejected: SubscriptionInterestRejection[]
   ): void {
+    // Deduplicated. A caller that periodically reasserts an interest set which
+    // is entirely unavailable would otherwise accumulate one synthetic failure
+    // record — and one `onStreamChange` — per reassertion, turning a single
+    // steady condition into an ever-growing list of distinct "failures".
+    const signature = JSON.stringify(
+      [...rejected]
+        .map(
+          (r) => `${r.interest}|${r.uri ?? ""}|${r.taskId ?? ""}|${r.reason}`
+        )
+        .sort()
+    );
+    if (this.lastUnopenedSignature === signature) return;
+    this.lastUnopenedSignature = signature;
+
     const at = this.now();
     const stream: SubscriptionStreamRecord = {
       localId: `${this.instanceId}-unopened-${++this.streamSeq}`,
@@ -1088,8 +1105,7 @@ export class SubscriptionCoordinator {
       status: "error",
       closeReason: "error",
       error:
-        "No subscription was opened: every requested interest was rejected. " +
-        "Task state is polled instead.",
+        "No subscription was opened: every requested interest was rejected.",
       openedAt: at,
       closedAt: at,
       reconnectAttempt: 0,
@@ -1121,6 +1137,9 @@ export class SubscriptionCoordinator {
     };
     this.streams.set(stream.localId, stream);
     this.currentLocalId = stream.localId;
+    // A real open clears the memo, so if the interest set later becomes
+    // entirely unavailable again that IS recorded rather than suppressed.
+    this.lastUnopenedSignature = undefined;
     this.emitStream(stream);
 
     if (!listen) {

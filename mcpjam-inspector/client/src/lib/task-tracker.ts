@@ -419,9 +419,7 @@ export function recordTaskObservations(
  * The persisted scheduling state for a handle, for seeding the lifecycle
  * engine after a reload. `undefined` when the handle is not tracked.
  */
-export function getTrackedTaskSchedule(
-  identity: TaskIdentityRef
-):
+export function getTrackedTaskSchedule(identity: TaskIdentityRef):
   | {
       nextPollAt?: number;
       lastObservedAt?: number;
@@ -467,22 +465,7 @@ export function recordTaskObservation(
   const entry = tasks.find((t) => taskIdentity(t) === key);
   if (!entry) return;
 
-  if (observation.status !== undefined) entry.status = observation.status;
-  if (observation.lastUpdatedAt !== undefined) {
-    entry.lastUpdatedAt = observation.lastUpdatedAt;
-  }
-  // `null` is meaningful (no expiry) and must overwrite a previous number, so
-  // this checks for `undefined` rather than truthiness.
-  if (observation.ttlMs !== undefined) entry.ttlMs = observation.ttlMs;
-  if (observation.pollIntervalMs !== undefined) {
-    entry.pollIntervalMs = observation.pollIntervalMs;
-  }
-  if (observation.nextPollAt !== undefined) {
-    entry.nextPollAt = observation.nextPollAt;
-  }
-  if (observation.lastObservedAt !== undefined) {
-    entry.lastObservedAt = observation.lastObservedAt;
-  }
+  applyObservation(entry, observation);
   saveInScope(tasks);
 }
 

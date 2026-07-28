@@ -57,6 +57,7 @@ import { TaskInlineProgress } from "./tasks/TaskInlineProgress";
 import {
   STATUS_CONFIG,
   expiredPlaceholderTask,
+  restoredPlaceholderTask,
   formatRelativeTime,
   isTerminalStatus,
   normalizeTask,
@@ -114,6 +115,9 @@ export function TasksTab({
   // render and restart the poll timer each tick.
   const tasksRef = useRef<NormalizedTask[]>([]);
   tasksRef.current = tasks;
+  // Last `tasks/list` snapshot (legacy wire only), so a tick that is not due
+  // can carry it forward instead of re-issuing the call or blanking the list.
+  const listedTasksRef = useRef<NormalizedTask[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string>("");
   const [taskResult, setTaskResult] = useState<unknown>(null);
   const [pendingRequest, setPendingRequest] = useState<unknown>(null);
@@ -236,7 +240,10 @@ export function TasksTab({
   // The server is setting the pace whenever its floor is the binding term.
   const usingServerInterval =
     serverSuggestedPollInterval !== null &&
-    serverSuggestedPollInterval >= userPreferredMinimum;
+    // Against the TICK floor, not the user's preference: on the hosted surface
+    // a 1500ms suggestion under a 1000ms user minimum would otherwise light the
+    // badge while the 2000ms hosted floor is what actually sets the pace.
+    serverSuggestedPollInterval >= tickFloorMs;
 
   // Subscribe to task-related elicitations via SSE
   // Per MCP Tasks spec (2025-11-25): when a task is in input_required status,
@@ -342,7 +349,7 @@ export function TasksTab({
     setSelectedTaskId("");
     setTaskResult(null);
     setPendingRequest(null);
-  }, [serverName, tasks]);
+  }, [serverName, tasks, scheduler]);
 
   const fetchTasks = useCallback(async () => {
     if (!serverName) return;
@@ -367,10 +374,31 @@ export function TasksTab({
       let serverTaskIds = new Set<string>();
 
       // The extension has no tasks/list: the tracker is the list.
+      //
+      // On the legacy wire the call returns EVERY task at once, so "is this
+      // due" is a question about the list as a whole: issue it when we have
+      // never listed, or when at least one previously-listed active task has
+      // reached its own floor. Calling it on every tick would read a 30s task
+      // at the tab's pace just because a 1s task shares the connection — the
+      // same floor breach the per-task scheduler exists to prevent, one level
+      // up.
+      let listedCarriedForward: NormalizedTask[] = [];
       if (taskCapabilities?.list) {
-        // Server supports tasks/list - fetch from server
-        serverResult = await listTasks(serverName);
-        serverTaskIds = new Set(serverResult.tasks.map((t) => t.taskId));
+        const knownListed = listedTasksRef.current;
+        const listDue =
+          knownListed.length === 0 ||
+          scheduler.dueTaskIds(knownListed.map((task) => task.taskId)).length >
+            0;
+
+        if (listDue) {
+          serverResult = await listTasks(serverName);
+          serverTaskIds = new Set(serverResult.tasks.map((t) => t.taskId));
+        } else {
+          // Not due: keep the last snapshot on screen rather than blanking the
+          // list, and do not re-issue the call.
+          listedCarriedForward = knownListed;
+          serverTaskIds = new Set(knownListed.map((task) => task.taskId));
+        }
       }
 
       // Get locally tracked tasks and fetch their current status
@@ -462,8 +490,15 @@ export function TasksTab({
       // rescheduled by its OWN advertised floor. A due handle that came back
       // empty is a failed read: it backs off rather than being retried at the
       // tab's pace.
+      // Expired PLACEHOLDERS are excluded. `expiredPlaceholderTask` returns a
+      // real `NormalizedTask`, so without this filter it would flow into
+      // `recordObservations` and re-register the very handle `onUnknownTask`
+      // just told the scheduler to forget — and it carries a display-only
+      // status that is not a lifecycle status, so the resurrected record would
+      // never read as terminal, stay permanently due, and pin
+      // `msUntilNextDue()` at zero for the rest of the session.
       const observed = trackedTaskStatuses.filter(
-        (task): task is NormalizedTask => task !== null
+        (task): task is NormalizedTask => task !== null && !task.expired
       );
       scheduler.recordObservations(
         observed.map((task) => ({
@@ -474,17 +509,32 @@ export function TasksTab({
           lastUpdatedAt: task.lastUpdatedAt,
         }))
       );
-      const observedIds = new Set(observed.map((task) => task.taskId));
-      scheduler.recordErrors(pendingIds.filter((id) => !observedIds.has(id)));
+      const settledIds = new Set(
+        trackedTaskStatuses
+          .filter((task): task is NormalizedTask => task !== null)
+          .map((task) => task.taskId)
+      );
+      // Only ids that produced NOTHING are failed reads. A confirmed-expired
+      // handle answered — it is retired, not unreachable — and backing it off
+      // would be recording an error against a handle nobody will poll again.
+      scheduler.recordErrors(pendingIds.filter((id) => !settledIds.has(id)));
 
       // A handle that was not due this tick keeps its last-known state rather
       // than disappearing from the list until its next read.
+      //
+      // The fallback is load-bearing, not defensive. On the FIRST tick after a
+      // reload `tasksRef.current` is empty while every restored handle is
+      // not-yet-due, so without it the list renders empty — which makes
+      // `hasActiveTasks` false, so auto-refresh never starts, so the handle is
+      // never polled when its floor finally elapses. The task would stay
+      // invisible until a manual refresh, and could expire server-side first.
       const previousById = new Map(
         tasksRef.current.map((task) => [task.taskId, task])
       );
-      const carriedForward = notDue
-        .map((tracked) => previousById.get(tracked.taskId))
-        .filter((task): task is NormalizedTask => task !== undefined);
+      const carriedForward = notDue.map(
+        (tracked) =>
+          previousById.get(tracked.taskId) ?? restoredPlaceholderTask(tracked)
+      );
 
       trackedTaskStatuses = [
         ...trackedTaskStatuses,
@@ -494,13 +544,34 @@ export function TasksTab({
 
       // Merge server tasks with tracked tasks (tracked tasks first for recency)
       // Filter out dismissed tasks from server results
+      const listed =
+        listedCarriedForward.length > 0
+          ? listedCarriedForward.filter((t) => !dismissedIds.has(t.taskId))
+          : serverResult.tasks
+              .filter((t) => !dismissedIds.has(t.taskId))
+              .map((t) =>
+                normalizeTask("legacy", t as unknown as Record<string, unknown>)
+              );
+      listedTasksRef.current = listed;
+      // Learn each listed task's own floor, so the NEXT decision about whether
+      // to call `tasks/list` is made per task rather than at the tab's pace.
+      if (listedCarriedForward.length === 0 && listed.length > 0) {
+        scheduler.recordObservations(
+          listed
+            .filter((task) => !isTerminalStatus(task.status))
+            .map((task) => ({
+              taskId: task.taskId,
+              status: task.status,
+              pollIntervalMs: task.pollInterval,
+              ttlMs: task.ttl ?? null,
+              lastUpdatedAt: task.lastUpdatedAt,
+            }))
+        );
+      }
+
       const allTasks: NormalizedTask[] = [
         ...trackedTaskStatuses.filter((t): t is NormalizedTask => t !== null),
-        ...serverResult.tasks
-          .filter((t) => !dismissedIds.has(t.taskId))
-          .map((t) =>
-            normalizeTask("legacy", t as unknown as Record<string, unknown>)
-          ),
+        ...listed,
       ];
 
       // Sort by createdAt descending (most recent first)

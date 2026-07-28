@@ -157,11 +157,9 @@ export async function driveTaskToTerminal(
   const { identity } = args;
 
   engine.register(identity, { restored: true });
-  // Attaching to a SHARED engine must not jump the queue. If an interactive
-  // poller already read this handle a moment ago, its floor has not elapsed
-  // and reading again now would both breach that floor and duplicate the read.
-  // A private engine has `nextPollAt = now`, so this is a no-op there.
-  let firstRead = true;
+  // Attaching to a SHARED engine must not jump the queue: if an interactive
+  // poller read this handle a moment ago, its floor has not elapsed. A private
+  // engine has `nextPollAt = now`, so the check below is a no-op there.
   let inputRounds = 0;
   let lastError: unknown;
   let unansweredInput: TaskInputRejection[] | undefined;
@@ -174,25 +172,29 @@ export async function driveTaskToTerminal(
       return { outcome: "timeout", task: engine.snapshot(identity), lastError };
     }
 
-    if (firstRead) {
-      firstRead = false;
-      const existing = engine.get(identity);
-      if (existing && isTerminalLifecycleStatus(existing.status)) {
-        // Already finished, per whoever polled it last. No read needed.
-        const snapshot = engine.snapshot(identity)!;
-        return { outcome: terminalOutcome(snapshot.status), task: snapshot };
-      }
-      if (existing && existing.nextPollAt > now()) {
-        if (!(await waitUntilDue())) {
-          return {
-            outcome: "timeout",
-            task: engine.snapshot(identity),
-            lastError,
-          };
-        }
-        continue;
-      }
+    // Checked before EVERY dispatch, not just the first. On a shared engine an
+    // interactive poller can reserve or re-read this handle while this drive
+    // is sleeping, so a check that ran only once would let the second
+    // iteration duplicate that read and breach the floor it just set.
+    const existing = engine.get(identity);
+    if (existing && isTerminalLifecycleStatus(existing.status)) {
+      // Already finished, per whoever read it last. No read needed at all.
+      const settled = engine.snapshot(identity)!;
+      return { outcome: terminalOutcome(settled.status), task: settled };
     }
+    if (existing && existing.nextPollAt > now()) {
+      if (!(await waitUntilDue())) {
+        return {
+          outcome: "timeout",
+          task: engine.snapshot(identity),
+          lastError,
+        };
+      }
+      continue;
+    }
+    // Reserve before dispatching, so a concurrent poller on the same engine
+    // sees this handle as taken rather than issuing its own read.
+    if (existing) engine.reserve([existing]);
 
     let observation: TaskLifecycleObservation;
     try {

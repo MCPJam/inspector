@@ -51,7 +51,7 @@ function optionalNumber(value: unknown): number | undefined {
 
 export function normalizeTask(
   wire: TasksWire,
-  raw: Record<string, unknown>,
+  raw: Record<string, unknown>
 ): NormalizedTask {
   const ttl = wire === "extension" ? raw.ttlMs : raw.ttl;
   const pollInterval =
@@ -125,6 +125,42 @@ export const STATUS_CONFIG: Record<TaskDisplayStatus, StatusConfig> = {
  * Renders a tracked handle the server has forgotten straight from tracker
  * state — no network read, since re-polling it can only fail again.
  */
+/**
+ * A row for a tracked handle we have not read yet in this session.
+ *
+ * Rendered on the first tick after a reload, when a restored handle's stored
+ * poll floor has not yet elapsed. It carries the last status the tracker
+ * persisted so the list is not empty — an empty list would make the tab think
+ * there are no active tasks, never start auto-refresh, and leave the handle
+ * unpolled and invisible until a manual refresh.
+ *
+ * Deliberately NOT marked `expired`: the server has said nothing about this
+ * handle. It is simply not due yet.
+ */
+export function restoredPlaceholderTask(tracked: {
+  taskId: string;
+  wire: TasksWire;
+  createdAt: string;
+  status?: string;
+  lastUpdatedAt?: string;
+  ttlMs?: number | null;
+  pollIntervalMs?: number;
+}): NormalizedTask {
+  const status = (tracked.status ?? "working") as NormalizedTask["status"];
+  return {
+    wire: tracked.wire,
+    taskId: tracked.taskId,
+    status,
+    createdAt: tracked.createdAt,
+    lastUpdatedAt: tracked.lastUpdatedAt ?? tracked.createdAt,
+    ttl: tracked.ttlMs ?? null,
+    ...(tracked.pollIntervalMs !== undefined
+      ? { pollInterval: tracked.pollIntervalMs }
+      : {}),
+    raw: { taskId: tracked.taskId },
+  };
+}
+
 export function expiredPlaceholderTask(tracked: {
   taskId: string;
   wire: TasksWire;

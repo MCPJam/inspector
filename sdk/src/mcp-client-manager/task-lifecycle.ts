@@ -356,6 +356,15 @@ export class TaskLifecycleEngine {
       /** Adopted from durable storage; not re-notified as a creation. */
       restored?: boolean;
       respondedInputKeys?: readonly string[];
+      /**
+       * Due time carried over from durable storage. Without it a restored
+       * handle is due immediately, so a reload would re-read every task before
+       * its advertised floor elapsed — and repeated reloads would out-poll the
+       * server. Ignored for a handle that is already terminal.
+       */
+      nextPollAt?: number;
+      /** Last observation time carried over from durable storage. */
+      lastObservedAt?: number;
     } = {}
   ): TaskLifecycleRecord {
     const key = taskLifecycleKey(identity);
@@ -370,7 +379,18 @@ export class TaskLifecycleEngine {
       createdAt: init.createdAt,
       ttlMs: init.ttlMs ?? null,
       pollIntervalMs: finitePositive(init.pollIntervalMs),
-      nextPollAt: now,
+      // A restored due time wins over "now", but never moves a handle EARLIER
+      // than it would otherwise be: a stored value from the past just means the
+      // floor already elapsed, which `now` already expresses.
+      nextPollAt:
+        typeof init.nextPollAt === "number" && Number.isFinite(init.nextPollAt)
+          ? Math.max(now, init.nextPollAt)
+          : now,
+      lastObservedAt:
+        typeof init.lastObservedAt === "number" &&
+        Number.isFinite(init.lastObservedAt)
+          ? init.lastObservedAt
+          : undefined,
       consecutiveErrors: 0,
       cancellationRequested: false,
       respondedInputKeys: new Set(init.respondedInputKeys ?? []),
@@ -458,9 +478,20 @@ export class TaskLifecycleEngine {
     }
 
     const terminal = isTerminalLifecycleStatus(record.status);
-    record.nextPollAt = terminal
-      ? Number.POSITIVE_INFINITY
-      : now + this.effectiveIntervalMs(record, now);
+    if (terminal) {
+      record.nextPollAt = Number.POSITIVE_INFINITY;
+    } else if (source === "notification" && record.consecutiveErrors > 0) {
+      // A notification while the POLL path is failing must not push the
+      // recovery read further out. A steady notification stream would
+      // otherwise defer it indefinitely, so a broken `tasks/get` would stay
+      // broken and invisible for as long as the other channel kept talking.
+      record.nextPollAt = Math.min(
+        record.nextPollAt,
+        now + this.effectiveIntervalMs(record, now)
+      );
+    } else {
+      record.nextPollAt = now + this.effectiveIntervalMs(record, now);
+    }
 
     const snapshot = toSnapshot(record);
     if (previous !== record.status) {

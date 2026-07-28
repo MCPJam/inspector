@@ -289,4 +289,81 @@ describe("useTaskScheduler", () => {
       "ask-city",
     ]);
   });
+
+  it("keeps a restored TERMINAL handle unscheduled instead of re-polling it", () => {
+    trackTask({
+      taskId: "t1",
+      serverId: "s1",
+      wire: "extension",
+      createdAt: NOW,
+    });
+    recordTaskObservation(
+      { taskId: "t1", serverId: "s1", wire: "extension" },
+      { status: "completed" },
+    );
+
+    // Restoring it as `unknown` would read as non-terminal and get it polled
+    // again — re-reading a task whose result we already have.
+    const { result } = scheduler();
+    expect(result.current.dueTaskIds(["t1"])).toEqual([]);
+  });
+
+  it("persists the backoff, so a reload cannot walk through it", () => {
+    trackTask({
+      taskId: "t1",
+      serverId: "s1",
+      wire: "extension",
+      createdAt: NOW,
+    });
+    const first = scheduler(100);
+    first.result.current.dueTaskIds(["t1"]);
+    act(() => {
+      first.result.current.recordObservations([
+        { taskId: "t1", status: "working" },
+      ]);
+      first.result.current.recordErrors(["t1"]);
+      first.result.current.recordErrors(["t1"]);
+      first.result.current.recordErrors(["t1"]);
+    });
+
+    // A fresh hook — as after a reload during the backoff. Persisting only
+    // successful observations left the tracker holding the elapsed
+    // `nextPollAt` from the last good read, so the handle came back due at
+    // once and repeated reloads bypassed the backoff entirely.
+    const second = scheduler(100);
+    expect(second.result.current.dueTaskIds(["t1"])).toEqual([]);
+  });
+
+  it("drops records for the previous server when the selection changes", () => {
+    vi.useFakeTimers();
+    try {
+      const { result, rerender } = renderHook(
+        ({ serverId }: { serverId: string }) =>
+          useTaskScheduler({
+            serverId,
+            wire: "extension",
+            userMinimumIntervalMs: 1_000,
+          }),
+        { initialProps: { serverId: "s1" } },
+      );
+
+      result.current.dueTaskIds(["t1"]);
+      act(() => {
+        result.current.recordObservations([
+          { taskId: "t1", status: "working", pollIntervalMs: 1_000 },
+        ]);
+      });
+
+      rerender({ serverId: "s2" });
+      vi.advanceTimersByTime(5_000);
+
+      // The old server's record would otherwise still answer `due()` — nothing
+      // on the new connection ever observes or forgets it, so
+      // `msUntilNextDue()` would sit at zero for the rest of the session and
+      // every re-arm would collapse to the floor.
+      expect(result.current.msUntilNextDue()).toBeGreaterThanOrEqual(1_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

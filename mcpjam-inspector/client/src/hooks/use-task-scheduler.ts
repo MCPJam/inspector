@@ -37,6 +37,7 @@
 import { useCallback, useMemo, useRef } from "react";
 import {
   TaskLifecycleEngine,
+  isTerminalLifecycleStatus,
   taskLifecycleKey,
   type TaskLifecycleIdentity,
   type TaskLifecycleObservation,
@@ -48,6 +49,21 @@ import {
   recordRespondedInputKeys,
   recordTaskObservations,
 } from "@/lib/task-tracker";
+
+/**
+ * Narrows a persisted status string to a terminal lifecycle status.
+ *
+ * Only the three PROTOCOL terminal states are restored. MCPJam's own `expired`
+ * tombstone is deliberately excluded: it means the server forgot the handle,
+ * and a fresh session should be free to confirm that rather than inherit it.
+ */
+function restoredTerminalStatus(
+  status: string | undefined
+): "completed" | "failed" | "cancelled" | undefined {
+  return status === "completed" || status === "failed" || status === "cancelled"
+    ? status
+    : undefined;
+}
 
 export interface SchedulerTaskState {
   taskId: string;
@@ -110,11 +126,19 @@ export function useTaskScheduler({
   userMinimumIntervalMs,
   surfaceFloorMs = 0,
 }: UseTaskSchedulerArgs): TaskScheduler {
+  // The engine is keyed to the connection it holds records for. The hook
+  // instance survives a server or wire switch, and stale records from the
+  // previous connection would keep answering `due()` — pinning
+  // `msUntilNextDue()` at zero forever, because nothing on the NEW connection
+  // ever observes or forgets them, so every re-arm would collapse to the floor.
+  const identityKey = `${scope ?? ""}\u0000${serverId ?? ""}\u0000${wire}`;
   const engineRef = useRef<TaskLifecycleEngine | undefined>(undefined);
-  if (!engineRef.current) {
+  const engineKeyRef = useRef<string | undefined>(undefined);
+  if (!engineRef.current || engineKeyRef.current !== identityKey) {
     engineRef.current = new TaskLifecycleEngine({
       userMinimumIntervalMs: Math.max(userMinimumIntervalMs, surfaceFloorMs),
     });
+    engineKeyRef.current = identityKey;
   }
   const engine = engineRef.current;
 
@@ -158,16 +182,21 @@ export function useTaskScheduler({
               restored: true,
               pollIntervalMs: persisted?.pollIntervalMs,
               ttlMs: persisted?.ttlMs,
+              // A handle we last saw finished must come back finished. Without
+              // this it restores as `unknown`, reads as non-terminal, and gets
+              // polled again — re-reading a task whose result we already have.
+              status: restoredTerminalStatus(persisted?.status),
+              nextPollAt: persisted?.nextPollAt,
+              lastObservedAt: persisted?.lastObservedAt,
               // Restored so a reload does not re-prompt for an input the user
               // already answered and the server already acknowledged.
               respondedInputKeys: getRespondedInputKeys(identity),
             });
+            const restored = engine.get(identity);
+            if (restored && isTerminalLifecycleStatus(restored.status)) {
+              return false;
+            }
             if (persisted?.nextPollAt !== undefined) {
-              const record = engine.get(identity);
-              if (record) {
-                record.nextPollAt = persisted.nextPollAt;
-                record.lastObservedAt = persisted.lastObservedAt;
-              }
               // A handle whose stored floor has not elapsed is NOT due, even
               // though we have never read it in this session.
               return persisted.nextPollAt <= now;
@@ -214,10 +243,27 @@ export function useTaskScheduler({
       },
 
       recordErrors(taskIds) {
+        const persist: Parameters<typeof recordTaskObservations>[0][number][] =
+          [];
         for (const taskId of taskIds) {
           const identity = identityFor(taskId);
-          if (identity) engine.observeError(identity);
+          if (!identity) continue;
+          const record = engine.observeError(identity);
+          // The backoff has to be DURABLE. Persisting only successful
+          // observations left the tracker holding the already-elapsed
+          // `nextPollAt` from the last good read, so a reload during backoff
+          // restored the handle as immediately due and retried at once —
+          // repeated reloads would walk straight through the backoff.
+          persist.push({
+            identity,
+            observation: {
+              nextPollAt: Number.isFinite(record.nextPollAt)
+                ? record.nextPollAt
+                : undefined,
+            },
+          });
         }
+        recordTaskObservations(persist);
       },
 
       markInputResponded(taskId, keys) {

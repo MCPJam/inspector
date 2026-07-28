@@ -126,6 +126,12 @@ export function readTasksPolicy(
   }
   const entry = extensions[MCPJAM_TASKS_POLICY_EXTENSION_ID];
   if (!isRecord(entry)) return "invalid";
+  // OWN property only. `entry.enabled` would otherwise read through the
+  // prototype chain, so a polluted `Object.prototype.enabled` could make an
+  // entry that says nothing read as an explicit on or off — turning Tasks on
+  // across every surface without anything in the config saying so. This module
+  // fails closed; that has to include the lookup itself.
+  if (!Object.prototype.hasOwnProperty.call(entry, "enabled")) return "invalid";
   const enabled = entry.enabled;
   if (enabled === true) return "on";
   if (enabled === false) return "off";
