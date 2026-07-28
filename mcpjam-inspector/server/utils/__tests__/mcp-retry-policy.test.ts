@@ -16,4 +16,13 @@ describe("INSPECTOR_MCP_RETRY_POLICY", () => {
     // multiple seconds reads as a hang.
     expect(INSPECTOR_MCP_RETRY_POLICY.retryDelayMs).toBeLessThanOrEqual(1000);
   });
+
+  it("bounds the worst-case added latency", () => {
+    // A tuning change can adjust either knob, but the total delay a failing
+    // connect can add before surfacing must stay interactive.
+    expect(
+      INSPECTOR_MCP_RETRY_POLICY.retries *
+        INSPECTOR_MCP_RETRY_POLICY.retryDelayMs,
+    ).toBeLessThanOrEqual(2000);
+  });
 });

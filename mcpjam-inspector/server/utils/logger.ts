@@ -143,13 +143,48 @@ export const logger = {
  *   `timestamp - durationMs` for HTTP events.
  * - Sentry is opt-in via `options.sentry === true`; the caller that owns the
  *   error decides whether to forward it.
- * - `options.error` is ALSO serialized into the Axiom payload (as `error:
- *   {name, message, stack}`, scrubbed), independent of the Sentry opt-in.
- *   Before this, the error object reached only Sentry and every failure
- *   event landed in Axiom with no cause — a 502 investigation couldn't name
- *   the underlying ECONNRESET without leaving the log pipeline.
+ * - `options.error` is ALSO serialized into the Axiom payload, independent
+ *   of the Sentry opt-in: Error instances become `error: {name, message,
+ *   stack}`, anything else is stringified (with a non-throwing fallback for
+ *   values whose coercion throws). Message/stack are length-capped, and the
+ *   result goes through `scrubLogPayload` like every other field — upstream
+ *   error strings can quote URLs with embedded credentials. Before this,
+ *   the error object reached only Sentry and every failure event landed in
+ *   Axiom with no cause — a 502 investigation couldn't name the underlying
+ *   ECONNRESET without leaving the log pipeline.
  * - `*.failed` events route their console echo to stderr.
  */
+const MAX_ERROR_MESSAGE_CHARS = 2000;
+const MAX_ERROR_STACK_CHARS = 4000;
+
+/**
+ * Bounded, non-throwing serialization of an emit-time error for the Axiom
+ * payload. Length caps keep pathological upstream errors (an MCP server can
+ * return an arbitrarily large body quoted into the message) from bloating
+ * ingestion; the try/catch keeps a rejection reason with a throwing
+ * `toString` (e.g. `Object.create(null)`) from turning the logging of a
+ * failure into a new crash — this runs inside the process-level
+ * `unhandledRejection` handler. Secret scrubbing is NOT this function's job:
+ * the returned value flows through `scrubLogPayload` with the rest of the
+ * payload.
+ */
+function serializeEmitError(error: unknown): unknown {
+  try {
+    if (error instanceof Error) {
+      return {
+        name: error.name,
+        message: error.message.slice(0, MAX_ERROR_MESSAGE_CHARS),
+        ...(error.stack
+          ? { stack: error.stack.slice(0, MAX_ERROR_STACK_CHARS) }
+          : {}),
+      };
+    }
+    return String(error).slice(0, MAX_ERROR_MESSAGE_CHARS);
+  } catch {
+    return "[unserializable error]";
+  }
+}
+
 function emit(
   eventName: LogEventName,
   base: RequestLogContext | SystemLogContext,
@@ -159,15 +194,8 @@ function emit(
   const fullPayload = scrubLogPayload({
     ...base,
     ...payload,
-    // scrubLogPayload serializes Error instances to {name, message, stack}
-    // with token/JWT/email scrubbing applied to both message and stack.
     ...(options?.error !== undefined
-      ? {
-          error:
-            options.error instanceof Error
-              ? options.error
-              : String(options.error),
-        }
+      ? { error: serializeEmitError(options.error) }
       : {}),
     event: eventName,
     timestamp: new Date().toISOString(),

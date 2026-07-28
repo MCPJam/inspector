@@ -240,12 +240,44 @@ describe("logger", () => {
         "http.request.failed",
         baseRequestContext,
         { statusCode: 500, errorCode: "unhandled_exception" },
-        { error: "string reason" },
+        { error: 42 },
       );
 
       expect(mockIngest).toHaveBeenCalledWith("test-dataset", [
-        expect.objectContaining({ error: "string reason" }),
+        expect.objectContaining({ error: "42" }),
       ]);
+    });
+
+    it("survives an options.error whose string coercion throws", () => {
+      // Promise.reject(Object.create(null)) reaches the unhandledRejection
+      // handler; String() on a null-prototype object throws, and a throw
+      // here would turn an absorbed rejection into an uncaught exception.
+      logger.event(
+        "http.request.failed",
+        baseRequestContext,
+        { statusCode: 500, errorCode: "unhandled_exception" },
+        { error: Object.create(null) },
+      );
+
+      expect(mockIngest).toHaveBeenCalledWith("test-dataset", [
+        expect.objectContaining({ error: "[unserializable error]" }),
+      ]);
+    });
+
+    it("caps oversized error messages and stacks", () => {
+      const err = new Error("m".repeat(10_000));
+      err.stack = "s".repeat(20_000);
+      logger.event(
+        "http.request.failed",
+        baseRequestContext,
+        { statusCode: 502, errorCode: "server_unreachable" },
+        { error: err },
+      );
+
+      const [, [ingested]] = mockIngest.mock.calls.at(-1)!;
+      const errorField = (ingested as any).error;
+      expect(errorField.message.length).toBeLessThanOrEqual(2000);
+      expect(errorField.stack.length).toBeLessThanOrEqual(4000);
     });
 
     it("calls Sentry.captureException only when sentry: true is opted in with an Error", () => {
