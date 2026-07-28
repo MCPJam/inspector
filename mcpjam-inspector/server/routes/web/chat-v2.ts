@@ -795,8 +795,14 @@ chatV2.post("/", async (c) => {
     // Resolve the Convex-valid bearer once for both bridges (NOT the raw
     // Authorization header: WorkOS API-key callers send an `sk_…` key Convex
     // cannot verify; this resolves the delegated JWT and passes JWTs through).
+    // `tasksSeam` is in the condition because the hosted task registry needs
+    // the same bearer: the backend derives the row's owner from it. Without
+    // this, a host with Tasks on but elicitation and MRTR off would resolve no
+    // bearer, silently skip the registry consumer, and lose the cross-device
+    // recovery index for exactly the ordinary task-only turns it is meant to
+    // cover.
     const convexBearer =
-      elicitationEnabled || mrtrEnabled || mrtrResumeRequest
+      elicitationEnabled || mrtrEnabled || mrtrResumeRequest || tasksSeam
         ? await getConvexBearerForRequest(c)
         : undefined;
     const mrtrAuthPrincipal =

@@ -20,6 +20,9 @@ import {
   warnIfChatAbortSignalMissing,
 } from "../../utils/mcpjam-stream-handler";
 import { resolveToolTaskSeam } from "../../utils/task-seam.js";
+import { TaskCreatedSink } from "@mcpjam/sdk";
+import type { UIMessageChunk } from "ai";
+import { HostedTaskCreatedBridge } from "../../utils/hosted-task-created-bridge.js";
 import {
   handleHostedOrgChatModel,
   handleLocalOrgChatModel,
@@ -755,10 +758,35 @@ chatV2.post("/", async (c) => {
     // Host-only, exactly as in the hosted route: a chatbox session's body must
     // not be able to opt into tasks the host disabled. `tasksPolicy` never
     // enters the override path, so `override-wins` above cannot reach it.
+    //
+    // The sink carries a stream bridge, and that is not optional: the
+    // extension wire has NO `tasks/list` (`resolveTasksSupport` reports
+    // `list: false`), so the browser tracker is the ONLY way a task on such a
+    // server can ever be found again. A seam with nowhere to deliver would log
+    // the handle server-side and orphan the task.
+    //
+    // No `hostedTasksVersion` gate here, unlike the hosted route. That
+    // handshake exists because a hosted browser can be running a cached bundle
+    // older than the server; a desktop install ships both halves together and
+    // cannot skew. An older bundle would ignore the part anyway — the data-part
+    // chain has no terminal `else`.
+    const tasksSink = new TaskCreatedSink();
     const tasksSeam = resolveToolTaskSeam({
       tasksPolicy: resolvedExecution.tasksPolicy,
       surface: "chat",
+      sink: tasksSink,
     });
+    // Local server ids ARE the display names, so the payload's `serverId`
+    // already carries what the tracker keys by and no name map is needed.
+    const taskCreatedBridge = tasksSeam
+      ? new HostedTaskCreatedBridge({ serverNamesById: {} })
+      : undefined;
+    if (taskCreatedBridge) {
+      tasksSink.register({
+        name: "task-created-bridge",
+        handle: taskCreatedBridge.handle,
+      });
+    }
 
     let prepared;
     try {
@@ -891,6 +919,13 @@ chatV2.post("/", async (c) => {
         selectedServers,
         requireToolApproval,
         modelVisibleMcpToolResults,
+        ...(taskCreatedBridge
+          ? {
+              onStreamWriterReady: (writer: {
+                write: (chunk: UIMessageChunk) => void;
+              }) => taskCreatedBridge.attachStreamWriter(writer),
+            }
+          : {}),
         ...(resolvedExecution.harness
           ? {
               harness: resolvedExecution.harness,
