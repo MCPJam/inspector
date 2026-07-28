@@ -164,9 +164,6 @@ vi.mock("@/components/chatboxes/ChatboxShareSection", () => ({
 vi.mock("@/components/chatboxes/ChatboxUsagePanel", () => ({
   ChatboxUsagePanel: () => <div data-testid="stub-usage" />,
 }));
-vi.mock("@/components/chatboxes/PersonasTab", () => ({
-  PersonasTab: () => <div data-testid="stub-personas" />,
-}));
 vi.mock("@/components/chatboxes/ChatboxHostCanvasPanel", () => ({
   ChatboxHostCanvasPanel: () => <div data-testid="stub-canvas" />,
 }));
@@ -190,7 +187,6 @@ async function dispatch(command: Omit<InspectorCommand, "id">) {
 }
 
 function renderChatboxes(props?: {
-  product?: "chatbox" | "swarm";
   isAuthenticated?: boolean;
   projectId?: string | null;
 }) {
@@ -198,7 +194,6 @@ function renderChatboxes(props?: {
     <ChatboxesTab
       projectId={props?.projectId ?? "proj-1"}
       isAuthenticated={props?.isAuthenticated ?? true}
-      product={props?.product ?? "swarm"}
     />,
   );
 }
@@ -277,7 +272,7 @@ describe("ChatboxesTab — agent bridge handlers", () => {
   it("keeps the PREVIEWED host's chatbox deleted — no auto-remint after delete", async () => {
     // host-1 (Claude) is the previewed host and is currently published.
     const { rerender } = render(
-      <ChatboxesTab projectId="proj-1" isAuthenticated product="swarm" />,
+      <ChatboxesTab projectId="proj-1" isAuthenticated />,
     );
     const response = await dispatch({
       type: "deleteChatbox",
@@ -294,9 +289,7 @@ describe("ChatboxesTab — agent bridge handlers", () => {
     // re-provision it — contradicting chatbox_deleted.
     currentChatbox = null;
     await act(async () => {
-      rerender(
-        <ChatboxesTab projectId="proj-1" isAuthenticated product="swarm" />,
-      );
+      rerender(<ChatboxesTab projectId="proj-1" isAuthenticated />);
     });
     expect(ensureChatboxForHostMock).not.toHaveBeenCalledWith({
       hostId: "host-1",
@@ -330,18 +323,16 @@ describe("ChatboxesTab — agent bridge handlers", () => {
   });
 
   it("snapshot reports redacted state and NEVER the token / transcript / PII", async () => {
-    renderChatboxes({ product: "swarm" });
+    renderChatboxes();
 
     const snapshot = await readSurfaceSnapshot("chatboxes");
     expect(snapshot).toMatchObject({
       ok: true,
       data: {
-        product: "swarm",
         selectedHostId: "host-1",
         published: true,
         hasPublishLink: true,
         isStandaloneSwarmHost: false,
-        syntheticSessionsAllowed: true,
         sessionCount: 1,
         sessions: [
           { id: "thread-1", messageCount: 4, toolCallCount: 2, synthetic: true },
