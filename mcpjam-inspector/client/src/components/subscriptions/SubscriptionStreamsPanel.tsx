@@ -181,6 +181,13 @@ export function SubscriptionStreamsPanel({
         <Badge variant="secondary" data-testid="subscription-era">
           {era === "modern" ? "subscriptions/listen" : "resources/subscribe"}
         </Badge>
+        {/* Observation only: the Tasks tab owns the `taskIds` interest. When
+            absent, task state is polled — which is always sufficient. */}
+        {server?.supportsTaskDeclaredListen && (
+          <Badge variant="outline" data-testid="task-notifications-supported">
+            task notifications
+          </Badge>
+        )}
         {busy && <span className="text-muted-foreground">Updating…</span>}
       </div>
 
