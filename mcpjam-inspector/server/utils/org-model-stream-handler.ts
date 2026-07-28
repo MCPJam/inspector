@@ -45,14 +45,12 @@ import type { PersistedTurnTrace } from "./chat-ingestion";
 import { handleMCPJamFreeChatModel } from "./mcpjam-stream-handler.js";
 import { logger } from "./logger.js";
 import {
-  consumeDirectChatTurnHeadless,
   runDirectChatTurn,
   withMcpToolOriginChunkMetadata,
   type DirectChatTurnPersistEvent,
   type DirectChatTurnTraceEvents,
   type RunDirectChatTurnHandle,
 } from "./direct-chat-turn.js";
-import type { PrepareAdvertisedTools } from "./advertised-tools.js";
 import { buildDirectChatTraceCallbacks } from "./direct-chat-sse-callbacks.js";
 import { appendDedupedModelMessages } from "@/shared/eval-trace";
 import {
@@ -132,10 +130,10 @@ export interface OrgModelHandlerOptions {
   maxSteps?: number;
   /**
    * Extra body fields merged into the per-step Convex `/stream/org` POST.
-   * Synthetic chatbox runs use this to thread `synthesisRunId` so the
-   * backend BYOK writer can stamp it onto `llmUsageRecord` for per-run
-   * spend attribution. Sibling fields from the handler (providerKey,
-   * serverIds) take precedence on collision.
+   * Swarm runs use this to thread `journeyRunId` so the backend BYOK writer
+   * can stamp it onto `llmUsageRecord` for per-run spend attribution.
+   * Sibling fields from the handler (providerKey, serverIds) take precedence
+   * on collision.
    */
   extraBodyFields?: Record<string, unknown>;
 }
@@ -292,13 +290,6 @@ export interface OrgLocalModelHandlerOptions {
    */
   progressivePlan?: ProgressiveToolPlan;
   discoveryState?: ToolDiscoveryState;
-  /**
-   * Synthesis run id for chatbox-session simulation runs. Forwarded to
-   * `/stream/org/local-usage` so the backend BYOK writer can stamp it
-   * onto the resulting `llmUsageRecord` for per-run spend attribution.
-   * Omitted for real chat traffic.
-   */
-  synthesisRunId?: string;
 }
 
 /**
@@ -571,7 +562,6 @@ function buildLocalOrgOnPersist(params: {
       accessVersion: options.accessVersion,
       selectedServers: options.selectedServers,
       serverIds: options.serverIds,
-      synthesisRunId: options.synthesisRunId,
     }).catch((err) => {
       logger.warn("[org/local] Failed to post local usage", {
         error: err instanceof Error ? err.message : String(err),
@@ -603,131 +593,6 @@ function buildLocalOrgOnPersist(params: {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Headless local org BYOK turn (synthetic-session runner)
-// ---------------------------------------------------------------------------
-
-export interface RunLocalOrgChatTurnHeadlessOptions
-  extends Omit<
-    OrgLocalModelHandlerOptions,
-    | "onConversationComplete"
-    | "onStreamComplete"
-    | "onStreamWriterReady"
-    | "onLiveTextDelta"
-  > {
-  /** Per-step advertised-tool narrowing (browser session context gate). */
-  prepareAdvertisedTools?: PrepareAdvertisedTools;
-  /** Awaited per tool result (browser session context render hook). */
-  onToolResultChunk?: DirectChatTurnTraceEvents["onToolResultChunk"];
-}
-
-/**
- * Headless sibling of {@link handleLocalOrgChatModel} for callers with no SSE
- * consumer (the synthetic-session runner). Drives `runDirectChatTurn` via
- * `consumeDirectChatTurnHeadless` — no `createUIMessageStream`, no Response
- * to drain — and shares the SSE handler's route-3 invariants through the
- * helpers above: model validation, the 30-step default, the unconditional
- * `postLocalUsage` writeback, the `streamErrored` ingestion gate, and the
- * deduped history rebuild.
- *
- * Error contract: where the SSE handler writes error chunks into the stream,
- * this variant THROWS — config/allowlist failures, the
- * `tool_approval_unsupported` guard, and mid-turn engine errors all surface
- * to the caller (usage writeback for completed steps has already fired via
- * `onPersist` where the engine ran far enough to produce one).
- */
-export async function runLocalOrgChatTurnHeadless(
-  options: RunLocalOrgChatTurnHeadlessOptions
-): Promise<{
-  messages: ModelMessage[];
-  turnTrace?: PersistedTurnTrace;
-  aborted: boolean;
-}> {
-  const { provider, modelId, messages, systemPrompt, temperature, tools } =
-    options;
-
-  if (hasUnsupportedLocalApprovalGate(tools, options.requireToolApproval)) {
-    throw new Error(
-      "Tool approval is not supported for local-runtime org providers yet. Disable tool approval or switch this provider to cloud runtime."
-    );
-  }
-
-  // Same validation the SSE handler runs before opening its stream; headless
-  // callers get the typed error (OrgProviderConfigError) instead of a
-  // formatted error chunk.
-  assertOrgModelAllowed(provider, modelId);
-  const llmModel = buildOrgModelFromResolvedConfig(provider, modelId);
-
-  let streamErrored = false;
-  let engineErrorText: string | undefined;
-  let capturedHistory: ModelMessage[] | undefined;
-  let capturedTrace: PersistedTurnTrace | undefined;
-
-  const handle = runDirectChatTurn({
-    // Same typing bridge as the SSE handler: the org-resolved model is the
-    // AI SDK `LanguageModel` union; the engine option is the narrower
-    // `createLlmModel` return. Both reach the same `streamText` slot.
-    llmModel: llmModel as unknown as Parameters<
-      typeof runDirectChatTurn
-    >[0]["llmModel"],
-    modelId,
-    messageHistory: messages,
-    systemPrompt,
-    ...(temperature !== undefined ? { temperature } : {}),
-    tools,
-    progressivePlan: options.progressivePlan,
-    discoveryState: options.discoveryState,
-    ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
-    maxSteps: resolveLocalOrgMaxSteps(options.maxSteps),
-    ...(options.prepareAdvertisedTools
-      ? { prepareAdvertisedTools: options.prepareAdvertisedTools }
-      : {}),
-    ...(options.onToolResultChunk
-      ? { traceEvents: { onToolResultChunk: options.onToolResultChunk } }
-      : {}),
-    onEngineError: (event) => {
-      streamErrored = true;
-      engineErrorText = event.message;
-    },
-    onPersist: buildLocalOrgOnPersist({
-      options,
-      isStreamErrored: () => streamErrored,
-      onConversationComplete: (fullHistory, turnTrace) => {
-        capturedHistory = fullHistory;
-        capturedTrace = turnTrace;
-      },
-    }),
-    onPersistError: (err) => {
-      logger.warn("[org/local] headless onPersist error", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    },
-  });
-
-  const headless = await consumeDirectChatTurnHeadless(handle);
-  if (headless.aborted) {
-    return { messages, aborted: true };
-  }
-  if (streamErrored) {
-    throw new Error(
-      engineErrorText ?? "Local org-BYOK turn failed mid-stream."
-    );
-  }
-
-  // `onPersist` fired on every non-aborted completion, so `capturedHistory`
-  // is normally set; the rebuild below is a defensive fallback with the same
-  // dedup semantics.
-  if (!capturedHistory) {
-    capturedHistory = [...messages];
-    appendDedupedModelMessages(capturedHistory, headless.messages);
-  }
-  return {
-    messages: capturedHistory,
-    ...(capturedTrace ? { turnTrace: capturedTrace } : {}),
-    aborted: false,
-  };
-}
-
 /**
  * Post a local-runtime BYOK usage record to Convex's
  * `/stream/org/local-usage` writeback endpoint. Exported so the shared
@@ -751,15 +616,9 @@ export async function postLocalUsage(params: {
   selectedServers?: string[];
   serverIds?: string[];
   /**
-   * Synthesis run id for chatbox-session simulation runs. Backend BYOK
-   * writer stamps it onto `llmUsageRecord` so dashboards can query
-   * "all spend for synthesisRunId X" in one hop. Omitted for real chat.
-   */
-  synthesisRunId?: string;
-  /**
-   * Journey run id for swarm (journey-execution) synthetic sessions. Mutually
-   * exclusive with `synthesisRunId`; the backend stamps it onto the same
-   * `llmUsageRecord` so per-journey-run spend rolls up in one query.
+   * Journey run id for swarm (journey-execution) synthetic sessions. The
+   * backend stamps it onto `llmUsageRecord` so per-journey-run spend rolls
+   * up in one query. Omitted for real chat.
    */
   journeyRunId?: string;
 }): Promise<void> {
@@ -796,9 +655,6 @@ export async function postLocalUsage(params: {
           : {}),
         ...((params.serverIds ?? params.selectedServers)?.length
           ? { serverIds: params.serverIds ?? params.selectedServers }
-          : {}),
-        ...(params.synthesisRunId
-          ? { synthesisRunId: params.synthesisRunId }
           : {}),
         ...(params.journeyRunId
           ? { journeyRunId: params.journeyRunId }
