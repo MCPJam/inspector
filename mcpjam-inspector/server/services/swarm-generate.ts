@@ -81,6 +81,34 @@ async function postGenerate<T>(
   return (await response.json()) as T;
 }
 
+/**
+ * The generated rows are written straight into Convex mutations whose
+ * validators reject a missing goal / name / role. Validating the SHAPE here
+ * — not just the containers — keeps a malformed upstream payload from
+ * committing a persona that every subsequent journey write then rejects,
+ * stranding a journey-less row. A bad shape is an upstream defect, so the
+ * whole response is refused rather than partially salvaged.
+ */
+function isGeneratedPersona(value: unknown): value is SwarmGeneratedPersona {
+  if (!value || typeof value !== "object") return false;
+  const p = value as Record<string, unknown>;
+  const nonEmpty = (v: unknown) => typeof v === "string" && v.trim().length > 0;
+  if (!nonEmpty(p.name) || !nonEmpty(p.role)) return false;
+  return p.notes === undefined || typeof p.notes === "string";
+}
+
+function isGeneratedJourneyList(
+  value: unknown
+): value is SwarmGeneratedJourney[] {
+  if (!Array.isArray(value)) return false;
+  return value.every((entry) => {
+    if (!entry || typeof entry !== "object") return false;
+    const j = entry as Record<string, unknown>;
+    if (typeof j.goal !== "string" || j.goal.trim().length === 0) return false;
+    return j.name === undefined || typeof j.name === "string";
+  });
+}
+
 export async function generateSwarmPersona(
   convexHttpUrl: string,
   bearer: string,
@@ -105,7 +133,11 @@ export async function generateSwarmPersona(
     },
     args.signal
   );
-  if (!data.ok || !data.persona || !Array.isArray(data.journeys)) {
+  if (
+    !data.ok ||
+    !isGeneratedPersona(data.persona) ||
+    !isGeneratedJourneyList(data.journeys)
+  ) {
     throw new SwarmAgentError(
       502,
       JSON.stringify(data),
@@ -140,7 +172,7 @@ export async function generateSwarmJourneys(
     },
     args.signal
   );
-  if (!data.ok || !Array.isArray(data.journeys)) {
+  if (!data.ok || !isGeneratedJourneyList(data.journeys)) {
     throw new SwarmAgentError(
       502,
       JSON.stringify(data),

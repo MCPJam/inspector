@@ -5,7 +5,10 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { generateSwarmPersona } from "../swarm-generate.js";
+import {
+  generateSwarmJourneys,
+  generateSwarmPersona,
+} from "../swarm-generate.js";
 import { SwarmAgentError } from "../swarm-agent.js";
 
 const CONVEX_URL = "https://secret-deployment-1234.convex.site";
@@ -30,6 +33,81 @@ function mockFetchOnce(
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+describe("swarm-generate service — response shape validation", () => {
+  function mockOk(body: unknown) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify(body),
+        json: async () => body,
+        headers: new Headers({ "content-type": "application/json" }),
+      })) as unknown as typeof fetch
+    );
+  }
+
+  const personaArgs = {
+    projectId: "proj-1",
+    serverAttachmentId: "att-1",
+    journeyCount: 3,
+  };
+
+  it("rejects a journey element with no goal", async () => {
+    // Would otherwise commit the persona, then have every journey mutation
+    // reject the missing goal — stranding a journey-less persona.
+    mockOk({ ok: true, persona: { name: "P", role: "R" }, journeys: [{}] });
+
+    const err = await generateSwarmPersona(
+      CONVEX_URL,
+      "bearer",
+      personaArgs
+    ).catch((e) => e);
+
+    expect(err).toBeInstanceOf(SwarmAgentError);
+    expect(err.message).toContain("unexpected response");
+  });
+
+  it("rejects a persona missing role", async () => {
+    mockOk({ ok: true, persona: { name: "P" }, journeys: [{ goal: "g" }] });
+
+    const err = await generateSwarmPersona(
+      CONVEX_URL,
+      "bearer",
+      personaArgs
+    ).catch((e) => e);
+
+    expect(err).toBeInstanceOf(SwarmAgentError);
+  });
+
+  it("rejects a null journey element in journeys mode", async () => {
+    mockOk({ ok: true, journeys: [{ goal: "ok" }, null] });
+
+    const err = await generateSwarmJourneys(CONVEX_URL, "bearer", {
+      ...personaArgs,
+      persona: { name: "P", role: "R" },
+    }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(SwarmAgentError);
+  });
+
+  it("accepts a well-formed payload", async () => {
+    mockOk({
+      ok: true,
+      persona: { name: "P", role: "R", notes: "n" },
+      journeys: [{ name: "J", goal: "g" }, { goal: "g2" }],
+    });
+
+    const result = await generateSwarmPersona(
+      CONVEX_URL,
+      "bearer",
+      personaArgs
+    );
+    expect(result.persona.name).toBe("P");
+    expect(result.journeys).toHaveLength(2);
+  });
 });
 
 describe("swarm-generate service — client-facing error copy", () => {
