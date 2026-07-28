@@ -367,6 +367,16 @@ chatV2.post("/", async (c) => {
         }
         if (environmentRead.kind === "present") {
           chatboxEnvironment = environmentRead.environment;
+          // Same projection the environment target uses, so the EMULATED
+          // engine advertises the environment's skills (skillsSource:
+          // "resolved") instead of silently delivering zero. Attribution is
+          // null on purpose: the payload pins no plugin versions (the backend
+          // already re-gated plugins before serving it), so there is nothing
+          // to attribute and no probe to degrade on a guest-reachable turn.
+          effectiveCapabilities = resolveEffectiveCapabilities(
+            chatboxEnvironment,
+            null,
+          );
         }
         hostRuntimeConfig = runtime.config as unknown as Record<
           string,
