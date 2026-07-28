@@ -9,7 +9,7 @@
  * that genuinely executes. A doc comment cannot prevent that; a scan can.
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -64,7 +64,6 @@ describe("resolveToolTaskSeam", () => {
   });
 
   it("carries the scope into the created-task identity", async () => {
-    const events: string[] = [];
     const seam = resolveToolTaskSeam({
       tasksPolicy: "on",
       surface: "chat",
@@ -77,7 +76,6 @@ describe("resolveToolTaskSeam", () => {
       wire: "extension",
       surface: "chat",
     });
-    expect(events).toEqual([]);
   });
 });
 
@@ -135,7 +133,6 @@ describe('"replay" is only ever used by genuinely inert surfaces', () => {
 });
 
 function listTsFiles(root: string): string[] {
-  const { readdirSync, statSync } = require("node:fs") as typeof import("node:fs");
   const out: string[] = [];
   const walk = (dir: string) => {
     for (const entry of readdirSync(dir)) {
