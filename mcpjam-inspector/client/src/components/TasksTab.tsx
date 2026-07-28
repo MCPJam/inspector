@@ -71,6 +71,12 @@ import {
   type NormalizedTask,
   type TaskDisplayStatus,
 } from "@/lib/task-utils";
+import {
+  fetchSubscriptionState,
+  setDesiredSubscriptionInterests,
+} from "@/lib/apis/mcp-subscriptions-api";
+import { addTokenToUrl } from "@/lib/session-token";
+import type { SubscriptionBridgeEvent } from "@/shared/subscription-bridge.js";
 import { useTaskElicitation } from "@/hooks/use-task-elicitation";
 import { ElicitationDialog } from "./ElicitationDialog";
 import type { DialogElicitation } from "./ToolsTab";
@@ -79,6 +85,12 @@ import { buildTasksSnapshot } from "@/lib/webmcp/review-surface-snapshots";
 
 const POLL_INTERVAL_STORAGE_KEY = "mcp-inspector-tasks-poll-interval";
 const DEFAULT_POLL_INTERVAL = 3000;
+/**
+ * Debounce for re-posting the task-notification interest set. A listen filter
+ * is immutable, so every change is a close+reopen on the wire — worth batching
+ * a burst of status flips into one revision.
+ */
+const TASK_INTEREST_DEBOUNCE_MS = 300;
 
 interface TasksTabProps {
   serverConfig?: MCPServerConfig;
@@ -181,6 +193,16 @@ export function TasksTab({
   // server change and on manual refresh; a failed read leaves it unset so the
   // next tick retries.
   const registryReadDoneRef = useRef<string | null>(null);
+
+  // Signature of the last `taskIds` interest set POSTED to the subscription
+  // bridge, so an unchanged active set never re-posts (each post can be a
+  // close+reopen of the listen stream). `null` = nothing posted yet this
+  // server: an initially-empty set then leaves the panel-owned desired filter
+  // completely untouched.
+  const postedTaskInterestsRef = useRef<string | null>(null);
+  // Task ids with a notification-triggered `tasks/get` already in flight —
+  // one notification burst, ONE immediate read.
+  const notifiedRefreshInFlightRef = useRef<Set<string>>(new Set());
 
   // Collapsible sidebar state
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
@@ -895,6 +917,154 @@ export function TasksTab({
     void fetchTasks();
   }, [scheduler, recoveryReads, fetchTasks]);
 
+  // -------------------------------------------------------------------------
+  // Extension task notifications (local persistent connections only).
+  //
+  // The Tasks tab OWNS the `taskIds` member of the desired subscription
+  // interests: the ids worth being told about are exactly the ones this
+  // browser tracks — extension wire, not dismissed, not terminal. The
+  // SubscriptionStreamsPanel owns every other member, so writes here are
+  // fetch-merge-post, never replace. A delivered `notifications/tasks` is a
+  // POLL-NOW HINT and nothing more: it triggers one immediate `tasks/get`
+  // through the same observation path a scheduled poll uses, and the
+  // notification params are never written into state as truth. Polling stays
+  // fully sufficient; hosted mode (reconnect-per-op, no persistent stream)
+  // posts no `taskIds` at all.
+  // -------------------------------------------------------------------------
+
+  /** The active notification interest set, sorted for a stable signature. */
+  const notificationTaskIds = useMemo(() => {
+    if (!serverName || hosted || !isExtensionWire) return [] as string[];
+    const dismissed = getDismissedTaskIds(serverName);
+    const tracked = new Set(
+      getTrackedTasksForServer(serverName).map((t) => t.taskId)
+    );
+    return tasks
+      .filter(
+        (t) =>
+          tracked.has(t.taskId) &&
+          !dismissed.has(t.taskId) &&
+          !t.expired &&
+          !isTerminalStatus(t.status)
+      )
+      .map((t) => t.taskId)
+      .sort();
+  }, [serverName, hosted, isExtensionWire, tasks]);
+
+  // Debounced fetch-merge-post of the interest set on active-set change.
+  useEffect(() => {
+    if (!serverName || hosted || !isExtensionWire) return;
+    const signature = JSON.stringify(notificationTaskIds);
+    if (postedTaskInterestsRef.current === signature) return;
+    if (
+      postedTaskInterestsRef.current === null &&
+      notificationTaskIds.length === 0
+    ) {
+      // Nothing to declare and nothing declared before: do not touch the
+      // panel-owned desired filter at all.
+      postedTaskInterestsRef.current = signature;
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        // Merge over the CURRENT bridge state so the interests the
+        // Subscriptions panel owns survive; only `taskIds` is ours to write
+        // (and to remove, once the set empties).
+        const state = await fetchSubscriptionState(serverName);
+        const { taskIds: _ours, ...panelOwned } = state.desired;
+        await setDesiredSubscriptionInterests(serverName, {
+          ...panelOwned,
+          ...(notificationTaskIds.length > 0
+            ? { taskIds: notificationTaskIds }
+            : {}),
+        });
+        postedTaskInterestsRef.current = signature;
+      } catch {
+        // Notifications only ever reduce polling latency; a failed post
+        // changes nothing about correctness. The ref stays unset, so the
+        // next active-set change (or effect re-run) retries.
+      }
+    }, TASK_INTEREST_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [serverName, hosted, isExtensionWire, notificationTaskIds]);
+
+  /**
+   * The poll-now hint's landing: ONE immediate `tasks/get` for the notified
+   * task, folded back through the scheduler exactly like a scheduled read.
+   * `tasks/get` stays the source of truth — the notification's own params are
+   * discarded.
+   */
+  const refreshNotifiedTask = useCallback(
+    async (taskId: string) => {
+      if (!serverName) return;
+      // Untracked or dismissed ids are ignored: the interest filter should
+      // exclude them already, but the server chooses what it sends.
+      const tracked = getTrackedTasksForServer(serverName).some(
+        (t) => t.taskId === taskId
+      );
+      if (!tracked) return;
+      if (getDismissedTaskIds(serverName).has(taskId)) return;
+      const inFlight = notifiedRefreshInFlightRef.current;
+      if (inFlight.has(taskId)) return;
+      inFlight.add(taskId);
+      try {
+        const envelope = await getTask(serverName, taskId);
+        const refreshed = normalizeTask(envelope.wire, envelope.task);
+        // Same fold-back as a scheduled poll: the observation reschedules the
+        // handle by its own advertised floor.
+        scheduler.recordObservations([
+          {
+            taskId: refreshed.taskId,
+            status: refreshed.status,
+            pollIntervalMs: refreshed.pollInterval,
+            ttlMs: refreshed.ttl ?? null,
+            lastUpdatedAt: refreshed.lastUpdatedAt,
+          },
+        ]);
+        setTasks((prev) =>
+          prev.some((t) => t.taskId === taskId)
+            ? prev.map((t) => (t.taskId === taskId ? refreshed : t))
+            : [refreshed, ...prev]
+        );
+      } catch (err) {
+        if (err instanceof TaskUnknownOrExpiredError) {
+          scheduler.forget([taskId]);
+          markTaskExpired(taskId, serverName);
+        }
+        // Anything else is transient; the ordinary poll loop retries on its
+        // own schedule — the hint carried no obligation.
+      } finally {
+        inFlight.delete(taskId);
+      }
+    },
+    [serverName, scheduler]
+  );
+
+  // Observe the bridge's SSE broadcast for `tasks` notifications. Local mode
+  // only: hosted connections are reconnect-per-op and never hold the
+  // persistent stream a listen rides on.
+  useEffect(() => {
+    if (!serverName || hosted || !isExtensionWire || !isActive) return;
+    // Environments without SSE (jsdom without a stub, SSR) simply keep
+    // polling; the notification channel is an optional latency win.
+    if (typeof EventSource === "undefined") return;
+    const es = new EventSource(addTokenToUrl("/api/mcp/subscriptions/stream"));
+    es.onmessage = (ev) => {
+      let event: SubscriptionBridgeEvent;
+      try {
+        event = JSON.parse(ev.data) as SubscriptionBridgeEvent;
+      } catch {
+        return;
+      }
+      if (event.type !== "subscription_notification") return;
+      if (event.serverId !== serverName) return;
+      const notification = event.notification;
+      if (notification.kind !== "tasks" || !notification.taskId) return;
+      void refreshNotifiedTask(notification.taskId);
+    };
+    return () => es.close();
+  }, [serverName, hosted, isExtensionWire, isActive, refreshNotifiedTask]);
+
   // Handle elicitation response from the dialog
   const handleElicitationResponse = useCallback(
     async (
@@ -1054,6 +1224,9 @@ export function TasksTab({
     // re-arm the one recovery read for the new one.
     registryHandlesRef.current = new Map();
     registryReadDoneRef.current = null;
+    // The notification interest set is per server too: the new server's
+    // bridge has no `taskIds` posted yet, whatever the old one had.
+    postedTaskInterestsRef.current = null;
 
     const fetchCapabilities = async () => {
       try {

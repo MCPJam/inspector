@@ -29,6 +29,8 @@ type FakeHandle = {
 
 function modernClient(options?: {
   honor?: (filter: SubscriptionFilterShape) => SubscriptionFilterShape;
+  /** Advertise the SEP-2663 tasks extension capability. */
+  tasksExtension?: boolean;
 }) {
   const handlers = new Map<string, (n: any) => void>();
   const opened: SubscriptionFilterShape[] = [];
@@ -43,6 +45,9 @@ function modernClient(options?: {
       tools: { listChanged: true },
       prompts: { listChanged: true },
       resources: { listChanged: true, subscribe: true },
+      ...(options?.tasksExtension
+        ? { extensions: { "io.modelcontextprotocol/tasks": {} } }
+        : {}),
     }),
     getProtocolEra: () => "modern" as const,
     setNotificationHandler: (method: string, handler: (n: any) => void) => {
@@ -50,23 +55,26 @@ function modernClient(options?: {
     },
     subscribeResource: vi.fn(async () => ({})),
     unsubscribeResource: vi.fn(async () => ({})),
-    listen: vi.fn(async (filter: SubscriptionFilterShape) => {
-      opened.push(filter);
-      let settle!: (r: "local" | "graceful" | "remote") => void;
-      const closed = new Promise<"local" | "graceful" | "remote">((resolve) => {
-        settle = resolve;
-      });
-      const handle: FakeHandle = {
-        honoredFilter: options?.honor ? options.honor(filter) : filter,
-        close: async () => settle("local"),
-        closed,
-        subscriptionId: `sub-${++seq}`,
-      };
-      handles.push({ handle, settle });
-      return handle;
-    }),
+    listen: vi.fn(async (filter: SubscriptionFilterShape) => open(filter)),
   };
-  return { client, opened, handles, handlers };
+  // Shared handle machinery: the ordinary listen and the manager's
+  // declared-listen opener produce structurally identical handles.
+  function open(filter: SubscriptionFilterShape): FakeHandle {
+    opened.push(filter);
+    let settle!: (r: "local" | "graceful" | "remote") => void;
+    const closed = new Promise<"local" | "graceful" | "remote">((resolve) => {
+      settle = resolve;
+    });
+    const handle: FakeHandle = {
+      honoredFilter: options?.honor ? options.honor(filter) : filter,
+      close: async () => settle("local"),
+      closed,
+      subscriptionId: `sub-${++seq}`,
+    };
+    handles.push({ handle, settle });
+    return handle;
+  }
+  return { client, opened, handles, handlers, open };
 }
 
 function legacyClient() {
@@ -83,9 +91,29 @@ function legacyClient() {
   return { client };
 }
 
-function appFor(client: unknown) {
+function appFor(
+  client: unknown,
+  options?: {
+    /** The manager's probe; the route installs the opener only when true. */
+    supportsTaskDeclaredListen?: boolean;
+    listenWithTasksDeclaration?: (
+      filter: SubscriptionFilterShape,
+    ) => Promise<FakeHandle>;
+  },
+) {
   const manager = {
     getManagedClient: () => client,
+    supportsTaskDeclaredListen: vi.fn(
+      () => options?.supportsTaskDeclaredListen ?? false,
+    ),
+    listenWithTasksDeclaration: vi.fn(
+      async (_serverId: string, filter: SubscriptionFilterShape) => {
+        if (!options?.listenWithTasksDeclaration) {
+          throw new Error("declared listen not wired in this test");
+        }
+        return options.listenWithTasksDeclaration(filter);
+      },
+    ),
   } as any;
   resetSubscriptionRegistry(manager);
   const app = new Hono();
@@ -358,5 +386,121 @@ describe("subscription bridge validation", () => {
       body: JSON.stringify({ serverId: "srv" }),
     });
     expect(res.status).toBe(404);
+  });
+});
+
+describe("task-filtered notifications (extension wire, B2)", () => {
+  it("round-trips desired taskIds un-stripped into a DECLARED listen", async () => {
+    const { client, opened } = modernClient({ tasksExtension: true });
+    const { app, manager } = appFor(client, {
+      supportsTaskDeclaredListen: true,
+      // The declared opener rides the same handle machinery as plain listen;
+      // in production it is the manager's listenWithTasksDeclaration.
+      listenWithTasksDeclaration: async (filter) =>
+        (await client.listen(filter)) as FakeHandle,
+    });
+
+    const state = await postDesired(app, {
+      toolsListChanged: true,
+      taskIds: ["task-1", "task-2"],
+    });
+
+    // The filter reached the wire through the DECLARED opener, verbatim.
+    expect(manager.listenWithTasksDeclaration).toHaveBeenCalledTimes(1);
+    expect(manager.listenWithTasksDeclaration).toHaveBeenCalledWith("srv", {
+      toolsListChanged: true,
+      taskIds: ["task-1", "task-2"],
+    });
+    expect(opened[0].taskIds).toEqual(["task-1", "task-2"]);
+
+    expect(state.supportsTaskDeclaredListen).toBe(true);
+    expect(state.desired.taskIds).toEqual(["task-1", "task-2"]);
+    expect(state.streams).toHaveLength(1);
+    expect(state.streams[0].status).toBe("active");
+    expect(state.streams[0].requestedFilter.taskIds).toEqual([
+      "task-1",
+      "task-2",
+    ]);
+    expect(state.streams[0].acknowledgedFilter?.taskIds).toEqual([
+      "task-1",
+      "task-2",
+    ]);
+  });
+
+  it("omits the declared-listen method when the probe fails: taskIds dropped, not sent", async () => {
+    // Extension advertised by the server, but the CONNECTION cannot declare
+    // (probe false) — the port must not carry the method at all, so the
+    // coordinator records the drop and never sends an undeclared filter.
+    const { client } = modernClient({ tasksExtension: true });
+    const { app, manager } = appFor(client, {
+      supportsTaskDeclaredListen: false,
+    });
+
+    const state = await postDesired(app, { taskIds: ["task-1"] });
+
+    expect(manager.listenWithTasksDeclaration).not.toHaveBeenCalled();
+    expect(client.listen).not.toHaveBeenCalled();
+    expect(state.supportsTaskDeclaredListen).toBe(false);
+    // The refusal is a first-class fact: an unopened stream record carrying
+    // the tasks-declaration-unavailable rejection, so the UI can explain why
+    // notifications never arrive while polling continues.
+    expect(state.streams).toHaveLength(1);
+    expect(state.streams[0].rejectedInterests).toContainEqual({
+      interest: "tasks",
+      taskId: "task-1",
+      reason: "tasks-declaration-unavailable",
+    });
+  });
+
+  it("forwards the taskId on a delivered notifications/tasks broadcast", async () => {
+    const { client, handlers } = modernClient({ tasksExtension: true });
+    const { app } = appFor(client, {
+      supportsTaskDeclaredListen: true,
+      listenWithTasksDeclaration: async (filter) =>
+        (await client.listen(filter)) as FakeHandle,
+    });
+    await postDesired(app, { taskIds: ["task-1"] });
+
+    const events = await readEvents(app, 2, async () => {
+      handlers.get("notifications/tasks")?.({
+        method: "notifications/tasks",
+        params: {
+          taskId: "task-1",
+          status: "working",
+          createdAt: "2026-07-28T00:00:00Z",
+          lastUpdatedAt: "2026-07-28T00:00:01Z",
+          _meta: { "io.modelcontextprotocol/subscriptionId": "sub-1" },
+        },
+      });
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    const delivered = events.find(
+      (e) => e.type === "subscription_notification",
+    );
+    if (delivered?.type !== "subscription_notification") throw new Error("bad");
+    expect(delivered.notification.kind).toBe("tasks");
+    // The taskId is the poll-now hint's target; the DetailedTask params are
+    // NOT forwarded as state — tasks/get stays the source of truth.
+    expect(delivered.notification.taskId).toBe("task-1");
+  });
+
+  it("normalizeDesired keeps only string task ids and the state view carries the probe", async () => {
+    const { client } = modernClient({ tasksExtension: true });
+    const { app, manager } = appFor(client, {
+      supportsTaskDeclaredListen: true,
+      listenWithTasksDeclaration: async (filter) =>
+        (await client.listen(filter)) as FakeHandle,
+    });
+
+    const state = await postDesired(app, {
+      taskIds: ["task-1", 42, null, "task-2"],
+    });
+
+    expect(manager.listenWithTasksDeclaration).toHaveBeenCalledWith("srv", {
+      taskIds: ["task-1", "task-2"],
+    });
+    expect(state.desired.taskIds).toEqual(["task-1", "task-2"]);
+    expect(state.supportsTaskDeclaredListen).toBe(true);
   });
 });

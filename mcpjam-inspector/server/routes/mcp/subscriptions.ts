@@ -71,6 +71,8 @@ type ServerEntry = {
   serverId: string;
   coordinator: SubscriptionCoordinator;
   supportsListen: boolean;
+  /** Computed once per entry — the manager's probe on the live connection. */
+  supportsTaskDeclaredListen: boolean;
   desired: SubscriptionDesiredInterestsView;
   /** Local stream id → latest view. Closed streams are retained for History. */
   streams: Map<string, SubscriptionStreamView>;
@@ -126,6 +128,9 @@ function toNotificationView(
     method: event.method,
     kind: event.kind,
     ...(event.uri ? { uri: event.uri } : {}),
+    // The poll-now hint's target: the browser refreshes this task via
+    // `tasks/get` — the notification params are never treated as state.
+    ...(event.taskId ? { taskId: event.taskId } : {}),
     ...(event.subscriptionId ? { subscriptionId: event.subscriptionId } : {}),
     localSubscriptionId: event.localSubscriptionId,
     at: event.at,
@@ -153,11 +158,52 @@ export function toServerStateView(
     serverId: entry.serverId,
     era: entry.coordinator.era,
     supportsListen: entry.supportsListen,
+    supportsTaskDeclaredListen: entry.supportsTaskDeclaredListen,
     desired: { ...entry.desired },
     streams: [...entry.streams.values()],
     notifications: [...entry.notifications],
     rejectedNotifications: [...entry.rejectedNotifications],
   };
+}
+
+/**
+ * The coordinator's port over the managed client — explicit delegation, not a
+ * cast, because the port's OPTIONAL methods are semantic: on
+ * `SubscriptionClientPort`, availability is method PRESENCE. In particular
+ * `listenWithTasksDeclaration` is installed ONLY when the manager's probe
+ * passes; when it is absent the coordinator drops the `taskIds` selection,
+ * records it as `tasks-declaration-unavailable`, and polling (always
+ * sufficient) remains the only channel. A cast would have advertised a method
+ * the connection cannot honor — or hidden one it could.
+ */
+function buildSubscriptionPort(
+  manager: MCPClientManager,
+  serverId: string,
+  client: NonNullable<ReturnType<MCPClientManager["getManagedClient"]>>,
+  supportsTaskDeclaredListen: boolean,
+): SubscriptionClientPort {
+  const port: SubscriptionClientPort = {
+    getServerCapabilities: () => client.getServerCapabilities(),
+    getProtocolEra: () => client.getProtocolEra?.(),
+    setNotificationHandler: (method, handler) =>
+      client.setNotificationHandler(
+        method as Parameters<typeof client.setNotificationHandler>[0],
+        handler as Parameters<typeof client.setNotificationHandler>[1],
+      ),
+    subscribeResource: (params) => client.subscribeResource(params),
+    unsubscribeResource: (params) => client.unsubscribeResource(params),
+    ...(typeof client.listen === "function"
+      ? {
+          listen: (filter: Parameters<NonNullable<typeof client.listen>>[0]) =>
+            client.listen!(filter),
+        }
+      : {}),
+  };
+  if (supportsTaskDeclaredListen) {
+    port.listenWithTasksDeclaration = (filter) =>
+      manager.listenWithTasksDeclaration(serverId, filter);
+  }
+  return port;
 }
 
 /**
@@ -178,11 +224,14 @@ export function getOrCreateEntry(
   const client = manager.getManagedClient(serverId);
   if (!client) return undefined;
 
+  const supportsTaskDeclaredListen =
+    manager.supportsTaskDeclaredListen(serverId);
   const entry: ServerEntry = {
     serverId,
     // Assigned below; the coordinator's callbacks close over `entry`.
     coordinator: undefined as unknown as SubscriptionCoordinator,
     supportsListen: typeof client.listen === "function",
+    supportsTaskDeclaredListen,
     desired: {},
     streams: new Map(),
     notifications: [],
@@ -190,7 +239,12 @@ export function getOrCreateEntry(
   };
 
   entry.coordinator = new SubscriptionCoordinator({
-    client: client as unknown as SubscriptionClientPort,
+    client: buildSubscriptionPort(
+      manager,
+      serverId,
+      client,
+      supportsTaskDeclaredListen,
+    ),
     onStreamChange: (stream) => {
       const view = toStreamView(stream);
       entry.streams.set(view.localId, view);
@@ -242,6 +296,8 @@ function normalizeDesired(
   const raw = input as Record<string, unknown>;
   const uris = raw.resourceUris;
   if (uris !== undefined && !Array.isArray(uris)) return undefined;
+  const taskIds = raw.taskIds;
+  if (taskIds !== undefined && !Array.isArray(taskIds)) return undefined;
   return {
     ...(raw.toolsListChanged !== undefined
       ? { toolsListChanged: Boolean(raw.toolsListChanged) }
@@ -254,6 +310,14 @@ function normalizeDesired(
       : {}),
     ...(uris
       ? { resourceUris: uris.filter((u): u is string => typeof u === "string") }
+      : {}),
+    // Not stripped: `taskIds` is the Tasks tab's slice of the desired filter
+    // (extension `notifications/tasks`). The coordinator gates it on the
+    // extension capability and the declared-listen opener.
+    ...(taskIds
+      ? {
+          taskIds: taskIds.filter((t): t is string => typeof t === "string"),
+        }
       : {}),
   };
 }
