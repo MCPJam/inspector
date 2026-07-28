@@ -289,7 +289,8 @@ describe("SwarmsTab — generate journeys", () => {
     });
 
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    fireEvent.click(screen.getByText("Persona One"));
+    // SwarmsTab auto-selects the first persona, so the journeys panel (and its
+    // Generate button) is already mounted.
     fireEvent.click(
       screen.getByRole("button", { name: /generate journeys with ai/i })
     );
@@ -335,7 +336,8 @@ describe("SwarmsTab — generate journeys", () => {
     createJourneyMutation.mockRejectedValue(new Error("Goal is required"));
 
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    fireEvent.click(screen.getByText("Persona One"));
+    // SwarmsTab auto-selects the first persona, so the journeys panel (and its
+    // Generate button) is already mounted.
     fireEvent.click(
       screen.getByRole("button", { name: /generate journeys with ai/i })
     );

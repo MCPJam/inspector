@@ -183,6 +183,7 @@ export {
   getTaskExt,
   updateTaskExt,
   cancelTaskExt,
+  openTaskDeclaredListen,
 } from "./tasks-ext.js";
 export type {
   TaskExt,
@@ -211,7 +212,82 @@ export {
   assertDetailedTaskExt,
   assertTaskExtAck,
   parseTaskExtNotificationParams,
+  assertTaskExtNotificationParams,
 } from "./tasks-ext-guards.js";
+
+// Shared task lifecycle engine — per-task due-time scheduling, dynamic
+// TTL/poll interval, backoff, durable input-key state. Every Tasks surface
+// drives this instead of writing its own polling loop.
+export {
+  TaskLifecycleEngine,
+  taskLifecycleKey,
+  isTerminalLifecycleStatus,
+  toSnapshot as toTaskLifecycleSnapshot,
+  TERMINAL_LIFECYCLE_STATUSES,
+} from "./task-lifecycle.js";
+export type {
+  LiveTasksWire,
+  TaskLifecycleCallbacks,
+  TaskLifecycleEngineOptions,
+  TaskLifecycleError,
+  TaskLifecycleIdentity,
+  TaskLifecycleObservation,
+  TaskLifecycleRecord,
+  TaskLifecycleSnapshot,
+  TaskLifecycleStatus,
+  TaskObservationSource,
+} from "./task-lifecycle.js";
+export {
+  extensionTaskToObservation,
+  legacyTaskToObservation,
+  isUnknownTaskError,
+  isTasksDeclarationRequiredError,
+  parseRetryAfterMs,
+  UNKNOWN_TASK_ERROR_CODE,
+  TASKS_DECLARATION_REQUIRED_ERROR_CODE,
+} from "./task-lifecycle-adapters.js";
+
+// `input_required` driver — routes a task's embedded elicitation / roots /
+// sampling requests through the SAME trust rules as the standalone path.
+export {
+  TASK_INPUT_METHODS,
+  isTaskInputMethod,
+  TaskInputRejectedError,
+  collectTaskInputResponses,
+  canDeclareTasksExtension,
+  readDeclaredInputCapabilities,
+  DEFAULT_TASK_INPUT_LIMITS,
+} from "./task-input-driver.js";
+
+// The single task-creation fan-out point (durable tracking, hosted stream,
+// best-effort registry, analytics) and the bounded `await`-mode driver used
+// by automation surfaces.
+export { TaskCreatedSink } from "./task-created-event.js";
+export type {
+  TaskCreatedConsumer,
+  TaskCreatedConsumerFailure,
+  TaskCreatedDispatchResult,
+  TaskCreatedEvent,
+  TaskCreationSurface,
+} from "./task-created-event.js";
+export { driveTaskToTerminal } from "./task-await-driver.js";
+export type {
+  DriveTaskToTerminalArgs,
+  TaskAwaitOutcome,
+  TaskAwaitResult,
+} from "./task-await-driver.js";
+export type {
+  CollectTaskInputResult,
+  DeclaredInputCapabilities,
+  TaskInputHandlerContext,
+  TaskInputHandlers,
+  TaskInputKeyOutcome,
+  TaskInputLimits,
+  TaskInputMethod,
+  TaskInputDriverOptions,
+  TaskInputRejection,
+  TaskInputRejectionReason,
+} from "./task-input-driver.js";
 export {
   TASK_EXT_INPUT_REQUEST_METHODS,
   isRecognizedInputRequestMethod,
@@ -280,6 +356,7 @@ export {
   SUBSCRIPTION_ID_META_KEY,
   SubscriptionsAcknowledgedNotificationMethod,
   ToolListChangedNotificationMethod,
+  TasksNotificationMethod,
   diffAcknowledgement,
   resolveRequestedFilter,
 } from "./subscription-coordinator.js";

@@ -155,6 +155,7 @@ export function SwarmSessionsMatrix({
   runStatus,
   selection,
   onSelect,
+  targetKeyFilter,
 }: {
   runId: string;
   /** One column per execution target (per-target model — B6). */
@@ -173,6 +174,8 @@ export function SwarmSessionsMatrix({
   runStatus: string;
   selection: SwarmMatrixSelection | null;
   onSelect: (sel: SwarmMatrixSelection) => void;
+  /** When set, only render session chips for this target. */
+  targetKeyFilter?: string;
 }) {
   const sessionByChatId = useMemo(() => {
     const map = new Map<string, JourneySessionRow>();
@@ -183,6 +186,9 @@ export function SwarmSessionsMatrix({
   }, [sessions]);
 
   const rows = Math.max(1, sessionsPerHost);
+  const visibleTargets = targetKeyFilter
+    ? targets.filter((target) => target.key === targetKeyFilter)
+    : targets;
 
   return (
     <div className="min-w-0" data-testid="swarm-sessions-matrix">
@@ -190,7 +196,7 @@ export function SwarmSessionsMatrix({
         Sessions
       </p>
       <div className="flex flex-wrap gap-1.5">
-        {targets.flatMap((target) => {
+        {visibleTargets.flatMap((target) => {
           // Per-TARGET minted cell ids (shared mint — env targets key on the
           // environmentId identity, so two same-host targets never collide).
           const cellIds = Array.from({ length: rows }, (_, sessionIndex) =>
