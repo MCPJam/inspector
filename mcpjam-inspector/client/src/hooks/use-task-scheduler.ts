@@ -34,7 +34,7 @@
  * is already legal.
  */
 
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   TaskLifecycleEngine,
   isTerminalLifecycleStatus,
@@ -45,9 +45,10 @@ import {
 } from "@mcpjam/sdk/browser";
 import {
   getRespondedInputKeys,
-  getTrackedTaskSchedule,
+  getTrackedTaskRestoreStates,
   recordRespondedInputKeys,
   recordTaskObservations,
+  taskIdentity,
 } from "@/lib/task-tracker";
 
 /**
@@ -145,10 +146,18 @@ export function useTaskScheduler({
   // A change to either term must take effect on the ALREADY-SCHEDULED tasks,
   // not only on the next ones — otherwise raising the interval leaves every
   // in-flight task polling at the old rate until it happens to complete.
+  //
+  // In an effect, not during render: the engine is a ref-held mutable object,
+  // and writing to it while rendering is a side effect in the render phase.
+  // The write is idempotent, so this is a purity fix rather than a bug fix —
+  // but the rule holds regardless, and an effect is where a commit-time
+  // reconciliation of external state belongs.
   const effectiveMinimum = Math.max(userMinimumIntervalMs, surfaceFloorMs);
-  if (engine.getUserMinimumIntervalMs() !== effectiveMinimum) {
-    engine.setUserMinimumIntervalMs(effectiveMinimum);
-  }
+  useEffect(() => {
+    if (engine.getUserMinimumIntervalMs() !== effectiveMinimum) {
+      engine.setUserMinimumIntervalMs(effectiveMinimum);
+    }
+  }, [engine, effectiveMinimum]);
 
   const identityFor = useCallback(
     (taskId: string): TaskLifecycleIdentity | undefined => {
@@ -167,6 +176,19 @@ export function useTaskScheduler({
         // due check.
         const due = new Set(engine.due().map((record) => record.key));
         const now = Date.now();
+        // ONE store read for every handle this tick has never seen, rather
+        // than two per handle. After a reload EVERY tracked handle is unseen,
+        // so the per-handle form ran 2N full parses of the whole store in a
+        // single tick on the main thread — the cost the batched write path
+        // already avoids on the other side.
+        const unseen = candidateTaskIds
+          .map((taskId) => identityFor(taskId))
+          .filter(
+            (identity): identity is TaskLifecycleIdentity =>
+              !!identity && !engine.get(identity)
+          );
+        const restoreStates = getTrackedTaskRestoreStates(unseen);
+
         return candidateTaskIds.filter((taskId) => {
           const identity = identityFor(taskId);
           if (!identity) return false;
@@ -177,7 +199,7 @@ export function useTaskScheduler({
             // restored handle due immediately, so a series of reloads would
             // poll a server far faster than it asked to be polled, and the
             // durable `nextPollAt` would never do anything.
-            const persisted = getTrackedTaskSchedule(identity);
+            const persisted = restoreStates.get(taskIdentity(identity));
             engine.register(identity, {
               restored: true,
               pollIntervalMs: persisted?.pollIntervalMs,
@@ -190,7 +212,7 @@ export function useTaskScheduler({
               lastObservedAt: persisted?.lastObservedAt,
               // Restored so a reload does not re-prompt for an input the user
               // already answered and the server already acknowledged.
-              respondedInputKeys: getRespondedInputKeys(identity),
+              respondedInputKeys: persisted?.respondedInputKeys,
             });
             const restored = engine.get(identity);
             if (restored && isTerminalLifecycleStatus(restored.status)) {

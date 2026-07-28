@@ -189,7 +189,8 @@ describe("filter resolution", () => {
   it("requests taskIds when the server advertises the tasks extension", () => {
     const { requested, rejected } = resolveRequestedFilter(
       { taskIds: ["t1", "t2"] },
-      EXTENSION_CAPS
+      EXTENSION_CAPS,
+      "modern"
     );
     expect(requested.taskIds).toEqual(["t1", "t2"]);
     expect(rejected).toEqual([]);
@@ -198,7 +199,8 @@ describe("filter resolution", () => {
   it("rejects taskIds when the server does not advertise the extension", () => {
     const { requested, rejected } = resolveRequestedFilter(
       { taskIds: ["t1"] },
-      NO_TASKS_CAPS
+      NO_TASKS_CAPS,
+      "modern"
     );
     expect(requested.taskIds).toBeUndefined();
     expect(rejected).toEqual([
@@ -208,17 +210,39 @@ describe("filter resolution", () => {
 
   it("treats the extension as absent when the capability value is not an object", () => {
     for (const bad of [true, "yes", [], null]) {
-      const { requested } = resolveRequestedFilter({ taskIds: ["t1"] }, {
-        extensions: { [TASKS_EXT]: bad },
-      } as unknown as ServerCapabilities);
+      const { requested } = resolveRequestedFilter(
+        { taskIds: ["t1"] },
+        { extensions: { [TASKS_EXT]: bad } } as unknown as ServerCapabilities,
+        "modern"
+      );
       expect(requested.taskIds).toBeUndefined();
+    }
+  });
+
+  // The extension capability is a plain capability read with no era in it, so
+  // the era rule has to live at the call site. This is the exported entry
+  // point — any consumer outside the coordinator gets its filter from here,
+  // and a legacy filter carrying an extension-only member is exactly the
+  // legacy/extension mixing this plan forbids.
+  it("drops taskIds on a legacy connection EVEN IF the server advertises the extension", () => {
+    for (const era of ["legacy", undefined] as const) {
+      const { requested, rejected } = resolveRequestedFilter(
+        { taskIds: ["t1"] },
+        EXTENSION_CAPS,
+        era
+      );
+      expect(requested.taskIds).toBeUndefined();
+      expect(rejected).toEqual([
+        { interest: "tasks", taskId: "t1", reason: "capability-not-advertised" },
+      ]);
     }
   });
 
   it("dedupes task ids", () => {
     const { requested } = resolveRequestedFilter(
       { taskIds: ["t1", "t1", "t2"] },
-      EXTENSION_CAPS
+      EXTENSION_CAPS,
+      "modern"
     );
     expect(requested.taskIds).toEqual(["t1", "t2"]);
   });
@@ -385,9 +409,7 @@ describe("filter churn", () => {
 
 describe("wire isolation", () => {
   it("never requests task ids on a legacy connection", () => {
-    // On 2025-11-25 the extension capability MUST be treated as absent, and
-    // `resolveRequestedFilter` reads it through the one predicate that knows
-    // that rule.
+    // No era and no extension capability: doubly ineligible.
     const { requested, rejected } = resolveRequestedFilter(
       { taskIds: ["t1"] },
       { tools: { listChanged: true } } as ServerCapabilities
@@ -400,5 +422,36 @@ describe("wire isolation", () => {
     const h = harness();
     await h.coordinator.setDesiredInterests({ toolsListChanged: true });
     expect(h.client.listens[0].filter).not.toHaveProperty("taskIds");
+  });
+});
+
+describe("retained stream history", () => {
+  it("is bounded, so a tab revising its watched set cannot grow it forever", async () => {
+    // Nothing implements `listenWithTasksDeclaration` here, so EVERY revision
+    // is a fully-rejected interest set and records a synthetic never-opened
+    // stream. A Tasks tab revising its watched set as handles are created and
+    // retire does exactly this, once per tick, for the life of the connection.
+    const h = harness(EXTENSION_CAPS, false);
+    for (let i = 0; i < 200; i += 1) {
+      await h.coordinator.setDesiredInterests({ taskIds: [`t${i}`] });
+    }
+    const streams = h.coordinator.getStreams();
+    expect(streams.length).toBeLessThanOrEqual(50);
+    // The newest records — the ones a debugger is actually reading — survive.
+    expect(streams.at(-1)!.rejectedInterests[0]).toMatchObject({
+      taskId: "t199",
+    });
+  });
+
+  it("never evicts the live stream, however much history piles up", async () => {
+    const h = harness();
+    for (let i = 0; i < 200; i += 1) {
+      await h.coordinator.setDesiredInterests({ taskIds: [`t${i}`] });
+      h.client.listens.at(-1)!.acknowledge();
+    }
+    const active = h.coordinator.getActiveStream();
+    expect(active).toBeDefined();
+    expect(active!.requestedFilter.taskIds).toEqual(["t199"]);
+    expect(h.coordinator.getStreams().length).toBeLessThanOrEqual(50);
   });
 });

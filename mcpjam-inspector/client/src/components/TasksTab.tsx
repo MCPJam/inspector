@@ -47,11 +47,7 @@ import {
 } from "@/lib/task-tracker";
 import { Switch } from "@mcpjam/design-system/switch";
 import { Input } from "@mcpjam/design-system/input";
-import {
-  Tooltip,
-  TooltipTrigger,
-  TooltipContent,
-} from "@mcpjam/design-system/tooltip";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@mcpjam/design-system/tooltip";
 import { Progress } from "@mcpjam/design-system/progress";
 import { TaskInlineProgress } from "./tasks/TaskInlineProgress";
 import {
@@ -89,9 +85,7 @@ function TaskStatusIcon({ status }: { status: TaskDisplayStatus }) {
   const Icon = config.icon;
   return (
     <Icon
-      className={`h-4 w-4 ${config.color} ${
-        config.animate ? "animate-spin" : ""
-      }`}
+      className={`h-4 w-4 ${config.color} ${config.animate ? "animate-spin" : ""}`}
     />
   );
 }
@@ -296,7 +290,8 @@ export function TasksTab({
   const unanswerableInputCount = useMemo(() => {
     if (!isExtensionWire || selectedTask?.status !== "input_required") return 0;
     return Object.values(selectedTask.inputRequests ?? {}).filter(
-      (value) => (value as { method?: string })?.method !== "elicitation/create"
+      (value) =>
+        (value as { method?: string })?.method !== "elicitation/create",
     ).length;
   }, [isExtensionWire, selectedTask]);
 
@@ -327,7 +322,7 @@ export function TasksTab({
         localStorage.setItem(POLL_INTERVAL_STORAGE_KEY, String(parsed));
       }
     },
-    [serverSuggestedPollInterval]
+    [serverSuggestedPollInterval],
   );
 
   // Clear override when server suggestion goes away (tasks complete)
@@ -455,7 +450,7 @@ export function TasksTab({
               } catch {
                 return [];
               }
-            })
+            }),
           )
         ).flat();
         trackedTaskStatuses = entries.map((entry) => {
@@ -483,7 +478,7 @@ export function TasksTab({
               // wire there is no `tasks/list` to recover them from.
               return null;
             }
-          })
+          }),
         );
       }
       // Feed the scheduler what we actually observed, so each handle is
@@ -593,7 +588,7 @@ export function TasksTab({
   const handleElicitationResponse = useCallback(
     async (
       action: "accept" | "decline" | "cancel",
-      parameters?: Record<string, unknown>
+      parameters?: Record<string, unknown>,
     ) => {
       try {
         await respondToElicitation(action, parameters);
@@ -603,11 +598,11 @@ export function TasksTab({
         setError(
           err instanceof Error
             ? err.message
-            : "Failed to respond to elicitation"
+            : "Failed to respond to elicitation",
         );
       }
     },
-    [respondToElicitation, fetchTasks]
+    [respondToElicitation, fetchTasks],
   );
 
   const fetchTaskResult = useCallback(
@@ -622,13 +617,13 @@ export function TasksTab({
         setTaskResult(result);
       } catch (err) {
         setError(
-          err instanceof Error ? err.message : "Failed to fetch task result"
+          err instanceof Error ? err.message : "Failed to fetch task result",
         );
       } finally {
         setLoading(false);
       }
     },
-    [serverName]
+    [serverName],
   );
 
   const handleCancelTask = useCallback(async () => {
@@ -643,7 +638,9 @@ export function TasksTab({
         // Cooperative cancel: the ack is empty, so record the request and
         // stop polling by default rather than waiting for a `cancelled` that
         // may never arrive.
-        setCancellationRequested((prev) => new Set(prev).add(selectedTaskId));
+        setCancellationRequested((prev) =>
+          new Set(prev).add(selectedTaskId),
+        );
         setAutoRefresh(false);
         userDisabledAutoRefresh.current = true;
       }
@@ -669,20 +666,20 @@ export function TasksTab({
         return true;
       } catch (err) {
         setError(
-          err instanceof Error ? err.message : "Failed to submit task input"
+          err instanceof Error ? err.message : "Failed to submit task input",
         );
         return false;
       } finally {
         setSubmittingInput(false);
       }
     },
-    [serverName, selectedTaskId, fetchTasks]
+    [serverName, selectedTaskId, fetchTasks],
   );
 
   const handleExtensionInputResponse = useCallback(
     async (
       action: "accept" | "decline" | "cancel",
-      parameters?: Record<string, unknown>
+      parameters?: Record<string, unknown>,
     ) => {
       if (!extensionInputRequest) return;
       // Partial responses are allowed: answer the key the user just handled.
@@ -1153,9 +1150,7 @@ export function TasksTab({
                 <TaskStatusIcon status={selectedTask.status} />
                 <Badge
                   variant="outline"
-                  className={`text-xs ${
-                    statusConfigFor(selectedTask.status).bgColor
-                  } ${statusConfigFor(selectedTask.status).color} border-0`}
+                  className={`text-xs ${statusConfigFor(selectedTask.status).bgColor} ${statusConfigFor(selectedTask.status).color} border-0`}
                 >
                   {selectedTask.status}
                 </Badge>
@@ -1405,9 +1400,7 @@ export function TasksTab({
       {/* Per MCP Tasks spec (2025-11-25): when a task needs input, server sends */}
       {/* elicitation requests with relatedTaskId in the metadata */}
       <ElicitationDialog
-        elicitationRequest={
-          extensionDialogElicitation ?? legacyDialogElicitation
-        }
+        elicitationRequest={extensionDialogElicitation ?? legacyDialogElicitation}
         onResponse={
           extensionDialogElicitation
             ? handleExtensionInputResponse

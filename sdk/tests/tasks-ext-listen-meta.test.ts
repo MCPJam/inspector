@@ -162,6 +162,194 @@ describe("fail loud", () => {
     ).rejects.toThrow(TasksExtListenMetaSeamError);
     expect(call).toHaveBeenCalled();
   });
+
+  it("disposes what the unread call produced, so a seam failure cannot leak a subscription", async () => {
+    const client = realClient();
+    // `listen()` resolves only after the server's ack, so by the time the seam
+    // check runs the subscription is LIVE. The caller only ever sees the
+    // rejection, so nothing else can close it.
+    const handle = { close: vi.fn(async () => {}) };
+    await expect(
+      withTasksExtensionEnvelope(
+        client,
+        {},
+        async () => handle,
+        (value) => value.close()
+      )
+    ).rejects.toThrow(TasksExtListenMetaSeamError);
+    expect(handle.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("still reports the seam failure when disposal itself fails", async () => {
+    const client = realClient();
+    await expect(
+      withTasksExtensionEnvelope(
+        client,
+        {},
+        async () => "handle",
+        () => {
+          throw new Error("close failed");
+        }
+      )
+    ).rejects.toThrow(TasksExtListenMetaSeamError);
+  });
+
+  it("does not dispose the value when the declaration DID reach the call", async () => {
+    const client = realClient();
+    const dispose = vi.fn();
+    await expect(
+      withTasksExtensionEnvelope(
+        client,
+        {},
+        async () => {
+          readEnvelope(client);
+          return "handle";
+        },
+        dispose
+      )
+    ).resolves.toBe("handle");
+    expect(dispose).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The claim the whole module rests on: `listen()`'s prologue reads the outbound
+ * envelope SYNCHRONOUSLY, before its first `await`, so a shadow installed and
+ * removed around the call reaches that one request and nothing else.
+ *
+ * Every other test here reads the envelope through the private member by hand.
+ * That verifies the shadow, not the claim — a client bump that moved the
+ * request literal below an `await` would leave all of them green and break
+ * only production. So this one drives a REAL `client.listen()` over a transport
+ * that captures the frame, and asserts on what actually went out.
+ */
+describe("the declaration on a real subscriptions/listen frame", () => {
+  const MODERN_PROTOCOL_VERSION = "2026-07-28";
+  const SUBSCRIPTION_ID_META_KEY = "io.modelcontextprotocol/subscriptionId";
+
+  type Frame = Record<string, any>;
+
+  /** Captures every outgoing frame and acknowledges any listen. */
+  class CapturingTransport {
+    onmessage?: (message: Frame) => void;
+    onclose?: () => void;
+    onerror?: (error: Error) => void;
+    readonly sent: Frame[] = [];
+
+    async start(): Promise<void> {}
+
+    async send(message: Frame): Promise<void> {
+      this.sent.push(message);
+      if (message.method === "subscriptions/listen") {
+        queueMicrotask(() =>
+          this.onmessage?.({
+            jsonrpc: "2.0",
+            method: "notifications/subscriptions/acknowledged",
+            params: {
+              _meta: { [SUBSCRIPTION_ID_META_KEY]: message.id },
+              notifications: message.params?.notifications ?? {},
+            },
+          })
+        );
+      }
+    }
+
+    async close(): Promise<void> {
+      this.onclose?.();
+    }
+
+    setProtocolVersion(_version: string): void {}
+  }
+
+  async function connected(): Promise<{
+    client: Client;
+    transport: CapturingTransport;
+  }> {
+    const client = realClient();
+    const transport = new CapturingTransport();
+    // `connect({ prior })` is the public zero-round-trip modern connect: it
+    // establishes the 2026-07-28 era from a supplied `DiscoverResult` with no
+    // handshake, which is all `listen()`'s era gate needs. Nothing private is
+    // touched to get here.
+    await client.connect(transport as never, {
+      prior: {
+        supportedVersions: [MODERN_PROTOCOL_VERSION],
+        capabilities: {},
+        serverInfo: { name: "fake", version: "0.0.0" },
+      } as never,
+    });
+    return { client, transport };
+  }
+
+  function listenFrame(transport: CapturingTransport): Frame | undefined {
+    return transport.sent.find((m) => m.method === "subscriptions/listen");
+  }
+
+  it("puts BOTH the eligibility declaration and the extension's taskIds on the wire", async () => {
+    const { client, transport } = await connected();
+
+    const handle = await withTasksExtensionEnvelope(
+      client,
+      { elicitation: {}, roots: {} },
+      () =>
+        (
+          client as unknown as {
+            listen(filter: unknown): Promise<{ close(): Promise<void> }>;
+          }
+        ).listen({ taskIds: ["task-1", "task-2"], toolsListChanged: true })
+    );
+
+    const frame = listenFrame(transport);
+    expect(frame).toBeDefined();
+
+    // 1. The per-request eligibility declaration. Without it a conforming
+    //    server MUST answer -32003.
+    const capabilities = frame?.params?._meta?.[CLIENT_CAPABILITIES_META_KEY];
+    expect(capabilities?.extensions?.[TASKS_EXT]).toEqual({});
+    // The client's own declared capabilities survive the merge.
+    expect(capabilities?.elicitation).toEqual({});
+
+    // 2. The extension-only filter member. `taskIds` is not in upstream's
+    //    `SubscriptionFilter` type; this pins that upstream still forwards the
+    //    filter verbatim rather than stripping unknown members.
+    expect(frame?.params?.notifications?.taskIds).toEqual(["task-1", "task-2"]);
+    expect(frame?.params?.notifications?.toolsListChanged).toBe(true);
+
+    await handle.close();
+    await client.close();
+  });
+
+  it("leaves the NEXT request on the same connection undeclared", async () => {
+    const { client, transport } = await connected();
+
+    const handle = await withTasksExtensionEnvelope(client, {}, () =>
+      (
+        client as unknown as {
+          listen(filter: unknown): Promise<{ close(): Promise<void> }>;
+        }
+      ).listen({ taskIds: ["task-1"] })
+    );
+    await handle.close();
+
+    const second = await (
+      client as unknown as {
+        listen(filter: unknown): Promise<{ close(): Promise<void> }>;
+      }
+    ).listen({ toolsListChanged: true });
+
+    const frames = transport.sent.filter(
+      (m) => m.method === "subscriptions/listen"
+    );
+    expect(frames).toHaveLength(2);
+    expect(
+      frames[1].params?._meta?.[CLIENT_CAPABILITIES_META_KEY]?.extensions?.[
+        TASKS_EXT
+      ]
+    ).toBeUndefined();
+
+    await second.close();
+    await client.close();
+  });
 });
 
 describe("target resolution", () => {

@@ -229,8 +229,21 @@ export async function openTaskDeclaredListen(
   if (typeof listen !== "function") return undefined;
   const target = resolveListenMetaTarget(ctx.client as unknown as object);
   if (target === undefined) return undefined;
-  return withTasksExtensionEnvelope(target, ctx.declaredCapabilities, () =>
-    listen.call(ctx.client, filter)
+  return withTasksExtensionEnvelope(
+    target,
+    ctx.declaredCapabilities,
+    () => listen.call(ctx.client, filter),
+    // `listen()` resolves only once the server has ACKNOWLEDGED, so a seam
+    // failure is detected with the subscription already live. The caller gets a
+    // rejection and never sees this handle, so if we do not close it here the
+    // server keeps the subscription — and never receives the
+    // `notifications/cancelled` that `close()` sends — for the life of the
+    // connection, once per attempt.
+    async (handle) => {
+      const close = (handle as { close?: () => Promise<void> } | undefined)
+        ?.close;
+      if (typeof close === "function") await close.call(handle);
+    }
   );
 }
 

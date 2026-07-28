@@ -269,7 +269,7 @@ describe("task-tracker", () => {
     expect(getTrackedTasks()[0].wire).toBe("legacy");
   });
 
-  it("caps oversized strings from a hostile server", () => {
+  it("caps oversized DISPLAY strings from a hostile server", () => {
     const huge = "x".repeat(10_000);
     localStorage.setItem(
       STORAGE_KEY,
@@ -277,18 +277,57 @@ describe("task-tracker", () => {
         version: 3,
         tasks: [
           {
-            taskId: huge,
+            taskId: "t1",
             serverId: "s1",
             wire: "extension",
             createdAt: NOW,
             toolName: huge,
+            primitiveName: huge,
           },
         ],
       }),
     );
     const [task] = getTrackedTasks();
-    expect(task.taskId.length).toBe(1024);
     expect(task.toolName?.length).toBe(1024);
+    expect(task.primitiveName?.length).toBe(1024);
+  });
+
+  // Truncating an IDENTITY field does not shorten a value, it produces a
+  // DIFFERENT handle — and collapses any two values sharing a 1024-character
+  // prefix into one identity that shares `respondedInputKeys`/`nextPollAt`.
+  // For `scope`, the auth/org segment, that collapse crosses accounts.
+  it.each(["taskId", "serverId", "scope"])(
+    "drops a record whose %s is over-length rather than truncating it",
+    (field) => {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          version: 3,
+          tasks: [
+            {
+              taskId: "t1",
+              serverId: "s1",
+              wire: "extension",
+              createdAt: NOW,
+              [field]: "x".repeat(10_000),
+            },
+          ],
+        }),
+      );
+      expect(getTrackedTasks()).toEqual([]);
+    },
+  );
+
+  it("refuses to write an over-length identity in the first place", () => {
+    // Rejected at the door rather than on the next load, so the handle does
+    // not appear to work and then vanish at the next reload.
+    trackTask({
+      taskId: "x".repeat(10_000),
+      serverId: "s1",
+      wire: "extension",
+      createdAt: NOW,
+    });
+    expect(getTrackedTasks()).toEqual([]);
   });
 
   it("caps the number of responded input keys it will retain", () => {

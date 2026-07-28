@@ -45,6 +45,15 @@ vi.mock("@/lib/task-tracker", () => ({
   recordTaskObservation: vi.fn(),
   recordTaskObservations: vi.fn(),
   getTrackedTaskSchedule: vi.fn().mockReturnValue(undefined),
+  // Batched restore: one store read per tick for every handle the scheduler
+  // has not seen yet, instead of two per handle.
+  getTrackedTaskRestoreStates: vi.fn().mockReturnValue(new Map()),
+  taskIdentity: (t: {
+    serverId: string;
+    wire: string;
+    taskId: string;
+    scope?: string;
+  }) => `${t.scope ?? ""}\u0000${t.serverId}\u0000${t.wire}\u0000${t.taskId}`,
   recordRespondedInputKeys: vi.fn(),
   getRespondedInputKeys: vi.fn().mockReturnValue([]),
 }));

@@ -63,6 +63,19 @@ describe("tri-state read", () => {
     }
   });
 
+  it("fails closed on a malformed mcpProfile, not just a malformed extensions", () => {
+    // `host.mcpProfile` is typed, but the value comes from JSON. Optional
+    // chaining reads `"on".extensions` as undefined, which would report
+    // `unset` — i.e. PRESERVE the Tools tab's controls on a config nobody can
+    // read. The module's invariant is fail-closed at every level.
+    for (const bad of ["on", 1, true, [], null]) {
+      expect(readTasksPolicy({ mcpProfile: bad } as never)).toBe("invalid");
+    }
+    expect(describeInvalidTasksPolicy({ mcpProfile: "on" } as never)).toMatch(
+      /"mcpProfile" must be a plain JSON object/,
+    );
+  });
+
   it("explains what is wrong so the editor can offer a repair", () => {
     expect(describeInvalidTasksPolicy(hostWith("yes"))).toMatch(/must be an object/);
     expect(describeInvalidTasksPolicy(hostWith({ enabled: 1 }))).toMatch(
@@ -110,6 +123,52 @@ describe("write and clear", () => {
   it("preserves other mcpProfile fields", () => {
     const host = { mcpProfile: { profileVersion: 1 as const } };
     expect(setTasksPolicy(host, true).mcpProfile.profileVersion).toBe(1);
+  });
+
+  // `hostConfigs` are content-addressed — the stored id IS the hash of the
+  // serialized host — so "reads back as unset" is not enough. An emptied
+  // `extensions: {}` left behind by a set→clear round trip mints a NEW
+  // hostConfig row for a host that is, observably, the pre-feature one. The
+  // plan's requirement is zero hash churn, which only byte-identity proves.
+  describe("set → clear leaves no residue in the serialized host", () => {
+    const fixtures: Array<[string, Record<string, unknown>]> = [
+      ["a host with no mcpProfile at all", { name: "h", version: "1" }],
+      [
+        "a host whose mcpProfile has other fields",
+        { name: "h", mcpProfile: { profileVersion: 1 } },
+      ],
+      [
+        "a host with other extensions",
+        { name: "h", mcpProfile: { extensions: { "com.other/x": { a: 1 } } } },
+      ],
+      [
+        "a host with other extensions and other profile fields",
+        {
+          name: "h",
+          mcpProfile: {
+            profileVersion: 1,
+            extensions: { "com.other/x": { a: 1 } },
+          },
+        },
+      ],
+    ];
+
+    for (const [label, host] of fixtures) {
+      it(label, () => {
+        const before = JSON.stringify(host);
+        for (const enabled of [true, false]) {
+          const cleared = clearTasksPolicy(setTasksPolicy(host, enabled));
+          expect(readTasksPolicy(cleared)).toBe("unset");
+          expect(JSON.stringify(cleared)).toBe(before);
+        }
+      });
+    }
+
+    it("clearing a host that never had a policy is a no-op", () => {
+      for (const [, host] of fixtures) {
+        expect(clearTasksPolicy(host)).toBe(host);
+      }
+    });
   });
 });
 

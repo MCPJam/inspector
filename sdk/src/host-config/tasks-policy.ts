@@ -111,6 +111,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export function readTasksPolicy(
   host: TasksPolicyHost | undefined
 ): TasksPolicy {
+  const mcpProfile = host?.mcpProfile as unknown;
+  // Same fail-closed rule as `extensions`, one level up. `host.mcpProfile` is
+  // typed but the value comes from JSON, so `mcpProfile: "on"` is reachable —
+  // and optional chaining would read `"on".extensions` as `undefined` and
+  // report `unset`, i.e. PRESERVE task controls on a config nobody can read.
+  if (mcpProfile !== undefined && !isRecord(mcpProfile)) return "invalid";
   const extensions = host?.mcpProfile?.extensions;
   if (extensions === undefined) return "unset";
   // Present but not a plain object: a config we cannot read must fail closed,
@@ -145,6 +151,9 @@ export function describeInvalidTasksPolicy(
   host: TasksPolicyHost | undefined
 ): string | undefined {
   if (readTasksPolicy(host) !== "invalid") return undefined;
+  if (host?.mcpProfile !== undefined && !isRecord(host.mcpProfile)) {
+    return `"mcpProfile" must be a plain JSON object.`;
+  }
   const entry =
     host?.mcpProfile?.extensions?.[MCPJAM_TASKS_POLICY_EXTENSION_ID];
   if (!isRecord(host?.mcpProfile?.extensions)) {
@@ -185,21 +194,57 @@ export function setTasksPolicy<T extends TasksPolicyHost>(
  * Distinct from `setTasksPolicy(host, false)`: this restores default behavior
  * (Tools keeps its explicit controls), whereas `false` actively disables Tasks
  * everywhere including those controls.
+ *
+ * ## No residue
+ *
+ * `hostConfigs` are content-addressed: the stored id IS the hash of the
+ * serialized host, so an empty container left behind by a set→clear round trip
+ * is not cosmetic — it mints a new hostConfig row for a host that is, in every
+ * observable way, the one that existed before the feature shipped. So the
+ * emptied containers are removed rather than kept: `extensions` goes away when
+ * nothing else lives in it, and `mcpProfile` goes away when `extensions` was
+ * all it held.
+ *
+ * The one thing this does NOT round-trip is a host that stored an *explicitly
+ * empty* `mcpProfile: {}` or `extensions: {}` before any policy was set — that
+ * is normalized to absent. Deliberate: absent and empty already mean exactly
+ * the same thing to every reader in this module, and preserving the difference
+ * would mean keeping the residue in the far more common case.
  */
 export function clearTasksPolicy<T extends TasksPolicyHost>(
   host: T | undefined
 ): T {
   const base = (host ?? {}) as T;
   const extensions = base.mcpProfile?.extensions;
+  // Nothing stored (or an unreadable container): clearing is a no-op, and
+  // rebuilding the host here would churn the hash for no change.
   if (!isRecord(extensions)) return base;
+  if (
+    !Object.prototype.hasOwnProperty.call(
+      extensions,
+      MCPJAM_TASKS_POLICY_EXTENSION_ID
+    )
+  ) {
+    return base;
+  }
   const { [MCPJAM_TASKS_POLICY_EXTENSION_ID]: _removed, ...rest } = extensions;
-  return {
-    ...base,
-    mcpProfile: {
-      ...(base.mcpProfile ?? {}),
-      extensions: rest,
-    },
-  };
+  const { extensions: _dropped, ...profileRest } = (base.mcpProfile ??
+    {}) as Record<string, unknown>;
+
+  if (Object.keys(rest).length > 0) {
+    return {
+      ...base,
+      mcpProfile: { ...profileRest, extensions: rest },
+    };
+  }
+  if (Object.keys(profileRest).length > 0) {
+    return { ...base, mcpProfile: profileRest } as unknown as T;
+  }
+  const { mcpProfile: _removedProfile, ...hostRest } = base as Record<
+    string,
+    unknown
+  >;
+  return hostRest as unknown as T;
 }
 
 /**

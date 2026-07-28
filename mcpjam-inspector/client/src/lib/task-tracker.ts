@@ -138,6 +138,25 @@ function clampString(value: unknown): string | undefined {
     : value;
 }
 
+/**
+ * An IDENTITY string: over-length is rejected, never truncated.
+ *
+ * `taskId`, `serverId` and `scope` are the three components of
+ * {@link taskIdentity}, so truncating one does not shorten a value — it
+ * silently produces a DIFFERENT handle than the one that was written, and any
+ * two values sharing a 1024-character prefix collapse into a single identity
+ * that shares `respondedInputKeys` and `nextPollAt`. For `scope` — the
+ * auth/org segment that keeps one account's handles out of another's — that
+ * collapse is a cross-account leak rather than a display glitch.
+ *
+ * Dropping the record instead costs a handle the user can re-create; the
+ * bounds still hold, because a rejected record is not persisted at all.
+ */
+function identityString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  return value.length > MAX_STRING_LENGTH ? undefined : value;
+}
+
 function clampNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value)
     ? value
@@ -154,10 +173,16 @@ function sanitize(raw: unknown): TrackedTask | undefined {
     return undefined;
   }
   const record = raw as Record<string, unknown>;
-  const taskId = clampString(record.taskId);
-  const serverId = clampString(record.serverId);
+  const taskId = identityString(record.taskId);
+  const serverId = identityString(record.serverId);
   const createdAt = clampString(record.createdAt);
   if (!taskId || !serverId) return undefined;
+  // Present but over-length. `identityString` cannot distinguish that from
+  // absent, and the two are not the same: an absent scope is the default
+  // scope, while an over-length one is a scope we cannot represent — reading
+  // it as "default" would file another account's handle under this one.
+  const scope = identityString(record.scope);
+  if (record.scope !== undefined && scope === undefined) return undefined;
   // Reject rather than default to `""`. Every other unrecognized field here is
   // dropped; defaulting this one would produce a string no date parser
   // accepts, and `isFresh` and the Tasks tab's sort comparator both call
@@ -199,9 +224,7 @@ function sanitize(raw: unknown): TrackedTask | undefined {
       : {}),
     ...(record.dismissed === true ? { dismissed: true } : {}),
     ...(record.expired === true ? { expired: true } : {}),
-    ...(clampString(record.scope) !== undefined
-      ? { scope: clampString(record.scope) }
-      : {}),
+    ...(scope !== undefined ? { scope } : {}),
     ...(clampString(record.lastUpdatedAt)
       ? { lastUpdatedAt: clampString(record.lastUpdatedAt) }
       : {}),
@@ -325,6 +348,17 @@ export function getTrackedTaskById(
 
 export function trackTask(task: Omit<TrackedTask, "dismissed">): void {
   const scoped = { ...task, scope: task.scope ?? activeScope };
+  // Same identity bound as the read path, applied HERE so an over-length
+  // server-chosen id is refused at the door. Writing it and rejecting it on
+  // the next `loadTasks` would make the handle vanish at the next reload with
+  // nothing to explain why.
+  if (
+    identityString(scoped.taskId) === undefined ||
+    identityString(scoped.serverId) === undefined ||
+    (scoped.scope !== undefined && identityString(scoped.scope) === undefined)
+  ) {
+    return;
+  }
   const tasks = loadTasks();
   const identity = taskIdentity(scoped);
   if (tasks.some((t) => taskIdentity(t) === identity)) return;
@@ -413,6 +447,57 @@ export function recordTaskObservations(
     changed = true;
   }
   if (changed) saveInScope(tasks);
+}
+
+/** Everything the lifecycle engine needs to restore one handle after a reload. */
+export interface TrackedTaskRestoreState {
+  nextPollAt?: number;
+  lastObservedAt?: number;
+  pollIntervalMs?: number;
+  ttlMs?: number | null;
+  status?: string;
+  respondedInputKeys: string[];
+}
+
+/**
+ * Batch form of {@link getTrackedTaskSchedule} + {@link getRespondedInputKeys}.
+ *
+ * Seeding the engine used to cost TWO full `loadTasks()` parses per newly-seen
+ * handle — so the first tick after a reload, when every tracked handle is
+ * newly seen, ran 2N parse-and-migrate passes over the whole store on the main
+ * thread. That is the same per-task cost {@link recordTaskObservations} exists
+ * to avoid on the write side; this is the read side of it. One parse per tick.
+ *
+ * Keyed by `taskIdentity(identity)` of the identity AS PASSED — not by the
+ * scope-defaulted key used to match rows — so a caller that omitted `scope`
+ * (meaning "the active scope") can look its own result up without having to
+ * know what the active scope is.
+ */
+export function getTrackedTaskRestoreStates(
+  identities: readonly TaskIdentityRef[]
+): Map<string, TrackedTaskRestoreState> {
+  const result = new Map<string, TrackedTaskRestoreState>();
+  if (identities.length === 0) return result;
+  const callerKeyByStoredKey = new Map<string, string>();
+  for (const identity of identities) {
+    callerKeyByStoredKey.set(
+      taskIdentity({ ...identity, scope: identity.scope ?? activeScope }),
+      taskIdentity(identity)
+    );
+  }
+  for (const entry of loadTasks()) {
+    const callerKey = callerKeyByStoredKey.get(taskIdentity(entry));
+    if (callerKey === undefined) continue;
+    result.set(callerKey, {
+      nextPollAt: entry.nextPollAt,
+      lastObservedAt: entry.lastObservedAt,
+      pollIntervalMs: entry.pollIntervalMs,
+      ttlMs: entry.ttlMs,
+      status: entry.status,
+      respondedInputKeys: entry.respondedInputKeys ?? [],
+    });
+  }
+  return result;
 }
 
 /**

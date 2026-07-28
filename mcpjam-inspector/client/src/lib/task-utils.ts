@@ -51,7 +51,7 @@ function optionalNumber(value: unknown): number | undefined {
 
 export function normalizeTask(
   wire: TasksWire,
-  raw: Record<string, unknown>
+  raw: Record<string, unknown>,
 ): NormalizedTask {
   const ttl = wire === "extension" ? raw.ttlMs : raw.ttl;
   const pollInterval =

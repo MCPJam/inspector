@@ -103,11 +103,20 @@ type EnvelopeFn = () => Record<string, unknown> | undefined;
  * `call` MUST read the envelope synchronously (see the module comment); a call
  * that does not is a seam change and throws rather than silently sending an
  * undeclared request.
+ *
+ * `disposeUnobserved` is how that throw stays leak-free. The seam check can
+ * only run once `call` has SETTLED — for `listen()` that is after the server's
+ * acknowledgement, so by the time we decide the declaration never reached the
+ * wire the subscription is already live on the server. The caller receives a
+ * rejection and therefore never gets the handle, so nothing else can ever tear
+ * it down; without this hook every attempt would leak one server-side
+ * subscription. Give it whatever closes `T`.
  */
 export function withTasksExtensionEnvelope<T>(
   client: Client,
   declaredCapabilities: ClientCapabilityOptions | undefined,
-  call: () => Promise<T>
+  call: () => Promise<T>,
+  disposeUnobserved?: (value: T) => void | Promise<void>
 ): Promise<T> {
   const target = client as unknown as Record<string, unknown>;
   const original = target[ENVELOPE_MEMBER];
@@ -168,10 +177,24 @@ export function withTasksExtensionEnvelope<T>(
   // it. Two reasons: a call that also rejected must surface ITS error (the
   // server's `-32003` is more useful than our diagnosis of it), and abandoning
   // `pending` here would leave an unhandled rejection behind.
-  return pending.then((value) => {
+  return pending.then(async (value) => {
     if (!observed) {
       // Either the prologue became asynchronous or upstream stopped consulting
       // the envelope for listen. Both mean the request went out undeclared.
+      //
+      // Whatever `call` produced is about to be thrown away, so it has to be
+      // torn down HERE: the caller only ever sees the rejection, so a live
+      // subscription handle we do not close is a subscription nobody will ever
+      // close. Disposal failures are swallowed — the seam error is the fact
+      // worth reporting, and a failed close is at worst the leak we were
+      // already trying to avoid.
+      if (disposeUnobserved) {
+        try {
+          await disposeUnobserved(value);
+        } catch {
+          // Swallowed, including a synchronous throw.
+        }
+      }
       throw new TasksExtListenMetaSeamError(
         "the request was built without reading the outbound capabilities envelope, " +
           "so the eligibility declaration did not reach the wire"

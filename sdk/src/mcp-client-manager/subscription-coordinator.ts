@@ -103,7 +103,9 @@ export type SubscriptionNotificationKind =
   | "resource-updated"
   | "tasks";
 
-const METHOD_TO_KIND: Readonly<Record<string, SubscriptionNotificationKind>> = {
+const METHOD_TO_KIND: Readonly<
+  Record<string, SubscriptionNotificationKind>
+> = {
   [ToolListChangedNotificationMethod]: "tools-list-changed",
   [PromptListChangedNotificationMethod]: "prompts-list-changed",
   [ResourceListChangedNotificationMethod]: "resources-list-changed",
@@ -408,10 +410,20 @@ function filterAllows(
 /**
  * Splits desired interests into the filter we will actually request and the
  * selections the server does not advertise (shown as rejected, not dropped).
+ *
+ * `era` is required for `taskIds` and for nothing else. The extension
+ * capability is a plain capability read with no era in it, so on 2025-11-25 a
+ * server that advertises `io.modelcontextprotocol/tasks` still reads as
+ * declaring it — while SEP-2663 says that on that revision the extension MUST
+ * be treated as absent. Omitting `era` therefore means "not a modern
+ * connection" and drops `taskIds`: the legacy wire must never carry an
+ * extension-only filter member, and defaulting the other way would put one
+ * there for every caller that has not been updated.
  */
 export function resolveRequestedFilter(
   desired: DesiredSubscriptionInterests,
-  capabilities: ServerCapabilities | undefined
+  capabilities: ServerCapabilities | undefined,
+  era?: "legacy" | "modern"
 ): {
   requested: SubscriptionFilterShape;
   rejected: SubscriptionInterestRejection[];
@@ -477,10 +489,11 @@ export function resolveRequestedFilter(
     // Gated on the tasks EXTENSION capability, not on any `notifications`
     // sub-flag: SEP-2663 has no per-operation capability flags, so declaring
     // the extension declares the whole method set — including this channel.
-    // `serverDeclaresTasksExtension` is also the one place allowed to read that
-    // capability, which is what keeps the "treat as absent on 2025-11-25" rule
-    // honest: on the legacy wire this correctly rejects rather than requesting.
-    if (serverDeclaresTasksExtension(capabilities)) {
+    // `serverDeclaresTasksExtension` is the one place allowed to READ that
+    // capability, but it is a pure capability read: the "treat the extension as
+    // absent on 2025-11-25" rule is the `era` term next to it, not something
+    // the predicate knows.
+    if (era === "modern" && serverDeclaresTasksExtension(capabilities)) {
       requested.taskIds = wantedTaskIds;
     } else {
       for (const taskId of wantedTaskIds) {
@@ -545,6 +558,19 @@ export function diffAcknowledgement(
   return rejected;
 }
 
+/**
+ * How many stream records a coordinator keeps.
+ *
+ * The history exists for the debugger, so it has to be long enough to show a
+ * reconnect sequence and the failures around it — but it cannot be unbounded.
+ * Task interest is revised as handles are created and reach terminal states,
+ * and every revision either opens a stream or records an unopened one, so on a
+ * long-lived connection this map grows with the SESSION rather than with
+ * anything the user can see. The oldest terminal records are the ones nobody
+ * is reading.
+ */
+const MAX_RETAINED_STREAMS = 50;
+
 let coordinatorSeq = 0;
 
 /**
@@ -564,7 +590,10 @@ export class SubscriptionCoordinator {
   private handlersRegistered = false;
   private disposed = false;
   private streamSeq = 0;
-  /** Local id → record. Insertion-ordered; closed records are retained. */
+  /**
+   * Local id → record. Insertion-ordered; closed records are retained up to
+   * {@link MAX_RETAINED_STREAMS}.
+   */
   private readonly streams = new Map<string, SubscriptionStreamRecord>();
   /** Local id → live handle (modern only). */
   private readonly handles = new Map<string, McpSubscriptionHandle>();
@@ -649,9 +678,7 @@ export class SubscriptionCoordinator {
   ): Promise<void> {
     this.desired = {
       ...desired,
-      ...(desired.resourceUris
-        ? { resourceUris: [...desired.resourceUris] }
-        : {}),
+      ...(desired.resourceUris ? { resourceUris: [...desired.resourceUris] } : {}),
       ...(desired.taskIds ? { taskIds: [...desired.taskIds] } : {}),
     };
     await this.enqueue(() => this.reconcile());
@@ -702,8 +729,8 @@ export class SubscriptionCoordinator {
     return typeof raw === "string"
       ? raw
       : typeof raw === "number"
-      ? String(raw)
-      : undefined;
+        ? String(raw)
+        : undefined;
   }
 
   /**
@@ -895,31 +922,25 @@ export class SubscriptionCoordinator {
   } {
     const { requested, rejected } = resolveRequestedFilter(
       this.desired,
-      this.client.getServerCapabilities()
+      this.client.getServerCapabilities(),
+      this.era
     );
     const wantedTaskIds = requested.taskIds ?? [];
     if (wantedTaskIds.length === 0) return { requested, rejected };
 
-    if (
-      this.era === "modern" &&
-      typeof this.client.listenWithTasksDeclaration === "function"
-    ) {
+    if (typeof this.client.listenWithTasksDeclaration === "function") {
       return { requested, rejected };
     }
 
     // Drop rather than downgrade: an undeclared task-filtered listen is a
     // guaranteed -32003, and the polling fallback loses nothing but latency.
     //
-    // The REASON depends on why. `resolveRequestedFilter` reads the extension
-    // capability alone, so a 2025-11-25 server that advertises
-    // `io.modelcontextprotocol/tasks` reaches here — but on that era the
-    // extension MUST be treated as absent, so the honest report is
-    // "capability not advertised", not "we could not declare". Only a modern
-    // connection whose client lacks the declaration seam gets the latter.
-    const reason: SubscriptionInterestRejection["reason"] =
-      this.era === "modern"
-        ? "tasks-declaration-unavailable"
-        : "capability-not-advertised";
+    // Only ONE reason is reachable here. `resolveRequestedFilter` was given the
+    // era, so a legacy connection already had its `taskIds` rejected as
+    // `capability-not-advertised` — whatever the server advertised, because on
+    // 2025-11-25 the extension MUST be treated as absent. So a non-empty
+    // `taskIds` at this point means a modern connection, and the only thing
+    // still missing is the declaration seam.
     const { taskIds: _dropped, ...withoutTasks } = requested;
     return {
       requested: withoutTasks,
@@ -929,7 +950,7 @@ export class SubscriptionCoordinator {
           (taskId): SubscriptionInterestRejection => ({
             interest: "tasks",
             taskId,
-            reason,
+            reason: "tasks-declaration-unavailable",
           })
         ),
       ],
@@ -952,10 +973,7 @@ export class SubscriptionCoordinator {
         await this.safeUnsubscribe(uri);
       }
       this.legacySubscribedUris.clear();
-      if (
-        current &&
-        (current.status === "active" || current.status === "opening")
-      ) {
+      if (current && (current.status === "active" || current.status === "opening")) {
         current.status = "cancelled";
         current.closeReason = "local-abort";
         current.closedAt = this.now();
@@ -1025,8 +1043,37 @@ export class SubscriptionCoordinator {
       reconnectAttempt: 0,
     };
     this.streams.set(stream.localId, stream);
+    this.pruneStreams();
     this.currentLocalId = stream.localId;
     this.emitStream(stream);
+  }
+
+  /**
+   * Trims the retained stream history to {@link MAX_RETAINED_STREAMS}, oldest
+   * first.
+   *
+   * Only records nothing else still points at are eligible: the intended
+   * stream, anything holding a live handle, and anything not yet closed stay
+   * regardless of age, because dropping one of those would strand the handle
+   * and break `resolveStream`'s id binding. In practice the eviction set is
+   * exactly the old terminal records — closed streams and the synthetic
+   * never-opened ones — which is what actually accumulates.
+   */
+  private pruneStreams(): void {
+    if (this.streams.size <= MAX_RETAINED_STREAMS) return;
+    for (const [localId, stream] of this.streams) {
+      if (this.streams.size <= MAX_RETAINED_STREAMS) return;
+      if (localId === this.currentLocalId) continue;
+      if (this.handles.has(localId)) continue;
+      if (stream.status === "opening" || stream.status === "active") continue;
+      this.streams.delete(localId);
+      // The id index outlives nothing: a subscription id that maps to a record
+      // we no longer hold would make `resolveStream` return `undefined` for a
+      // KNOWN id instead of falling through to the unbound-stream adoption.
+      if (stream.mcpSubscriptionId !== undefined) {
+        this.idIndex.delete(stream.mcpSubscriptionId);
+      }
+    }
   }
 
   private async safeUnsubscribe(uri: string): Promise<void> {
@@ -1048,7 +1095,8 @@ export class SubscriptionCoordinator {
       ? this.streams.get(this.currentLocalId)
       : undefined;
     const live =
-      current && (current.status === "opening" || current.status === "active")
+      current &&
+      (current.status === "opening" || current.status === "active")
         ? current
         : undefined;
 
@@ -1111,6 +1159,7 @@ export class SubscriptionCoordinator {
       reconnectAttempt: 0,
     };
     this.streams.set(stream.localId, stream);
+    this.pruneStreams();
     this.emitStream(stream);
   }
 
@@ -1136,6 +1185,7 @@ export class SubscriptionCoordinator {
       reconnectAttempt,
     };
     this.streams.set(stream.localId, stream);
+    this.pruneStreams();
     this.currentLocalId = stream.localId;
     // A real open clears the memo, so if the interest set later becomes
     // entirely unavailable again that IS recorded rather than suppressed.
