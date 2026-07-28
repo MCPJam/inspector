@@ -258,6 +258,24 @@ export {
   readDeclaredInputCapabilities,
   DEFAULT_TASK_INPUT_LIMITS,
 } from "./task-input-driver.js";
+
+// The single task-creation fan-out point (durable tracking, hosted stream,
+// best-effort registry, analytics) and the bounded `await`-mode driver used
+// by automation surfaces.
+export { TaskCreatedSink } from "./task-created-event.js";
+export type {
+  TaskCreatedConsumer,
+  TaskCreatedConsumerFailure,
+  TaskCreatedDispatchResult,
+  TaskCreatedEvent,
+  TaskCreationSurface,
+} from "./task-created-event.js";
+export { driveTaskToTerminal } from "./task-await-driver.js";
+export type {
+  DriveTaskToTerminalArgs,
+  TaskAwaitOutcome,
+  TaskAwaitResult,
+} from "./task-await-driver.js";
 export type {
   CollectTaskInputResult,
   DeclaredInputCapabilities,

@@ -423,3 +423,20 @@ export {
   UNKNOWN_TASK_ERROR_CODE,
   TASKS_DECLARATION_REQUIRED_ERROR_CODE,
 } from "./mcp-client-manager/task-lifecycle-adapters.js";
+
+// Tasks product policy — pure predicates over the stored host config, so the
+// editor and every browser-side surface read the same tri-state.
+export {
+  MCPJAM_TASKS_POLICY_EXTENSION_ID,
+  readTasksPolicy,
+  describeInvalidTasksPolicy,
+  setTasksPolicy,
+  clearTasksPolicy,
+  taskModeForSurface,
+  surfaceMayDeclareTasks,
+} from "./host-config/tasks-policy.js";
+export type {
+  TasksPolicy,
+  TaskMode,
+  TaskSurface,
+} from "./host-config/tasks-policy.js";
