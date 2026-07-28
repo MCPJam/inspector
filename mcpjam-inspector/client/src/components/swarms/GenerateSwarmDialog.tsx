@@ -107,6 +107,11 @@ export function GenerateSwarmDialog({
   const [journeyCount, setJourneyCount] = useState(DEFAULT_JOURNEY_COUNT);
   const [pending, setPending] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // Latched once the persona row is written. Re-running generation after that
+  // point would spend quota AND create a SECOND persona rather than retrying
+  // the journeys, so the submit button stays locked for the rest of this
+  // dialog session; the retry path is "Generate journeys" on the new persona.
+  const [personaCommitted, setPersonaCommitted] = useState(false);
 
   useEffect(() => {
     if (!open) {
@@ -115,6 +120,7 @@ export function GenerateSwarmDialog({
       setJourneyCount(DEFAULT_JOURNEY_COUNT);
       setPending(false);
       setErrorMessage(null);
+      setPersonaCommitted(false);
     }
   }, [open]);
 
@@ -135,6 +141,7 @@ export function GenerateSwarmDialog({
     mode !== "persona" || typeof personaCount === "number";
   const canSubmit =
     !pending &&
+    !personaCommitted &&
     personaCountKnown &&
     !!serverAttachmentId &&
     hostIds.length > 0 &&
@@ -206,6 +213,8 @@ export function GenerateSwarmDialog({
           avatarShape: randomAvatarIndex(PERSONA_AVATAR_SHAPE_COUNT),
           avatarPalette: randomAvatarIndex(PERSONA_AVATAR_PALETTE_COUNT),
         });
+        // The row exists now — no second generation from this dialog.
+        setPersonaCommitted(true);
         const { created, firstError } = await createJourneyRows(
           personaRefId,
           result.journeys,
@@ -225,7 +234,7 @@ export function GenerateSwarmDialog({
           setErrorMessage(
             `Created the persona, but no journeys could be saved. ${
               firstError?.message ?? "The journey writes were rejected."
-            }`
+            } Close this dialog and use Generate journeys on the new persona to retry.`
           );
           return;
         }
@@ -381,7 +390,7 @@ export function GenerateSwarmDialog({
             onClick={() => onOpenChange(false)}
             disabled={pending}
           >
-            Cancel
+            {personaCommitted ? "Close" : "Cancel"}
           </Button>
           <Button
             type="button"

@@ -274,9 +274,23 @@ describe("SwarmsTab — generate persona", () => {
     expect(alert).toHaveTextContent("Server attachment not found");
     expect(toastMock.success).not.toHaveBeenCalled();
     // The persona itself did land — it must still be written, not rolled back.
-    // (Selection is a side effect on SwarmsTab state that this static query
-    // mock can't surface: the new id never appears in the mocked persona list.)
     expect(createPersonaMutation).toHaveBeenCalledTimes(1);
+
+    // ...and generation must now be locked. Re-submitting would spend quota
+    // and create a SECOND persona rather than retrying the journey writes.
+    const submit = screen.getByRole("button", { name: /generate persona/i });
+    expect(submit).toBeDisabled();
+    fireEvent.click(submit);
+    await waitFor(() => {
+      expect(createPersonaMutation).toHaveBeenCalledTimes(1);
+    });
+    expect(generatePersonaMock).toHaveBeenCalledTimes(1);
+    // "Cancel" would misdescribe a dialog that already wrote a row, so the
+    // footer action is relabelled. (Radix renders its own "Close" X, so assert
+    // the absence of "Cancel" rather than the presence of "Close".)
+    expect(
+      screen.queryByRole("button", { name: /^cancel$/i })
+    ).not.toBeInTheDocument();
   });
 
   it("renders a quota 429 inline instead of closing the dialog", async () => {
