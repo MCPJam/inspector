@@ -2888,6 +2888,37 @@ describe("useServerState OAuth callback in-flight dispatch", () => {
     });
   });
 
+  it("ignores a WorkOS sign-in code on /callback and leaves a stale pending server alone", async () => {
+    // Regression: WorkOS sign-in lands on `/callback?code=…`. That code is not
+    // ours. With a stale `mcp-oauth-pending` marker left by an abandoned MCP
+    // flow, an unscoped seed marked that unrelated server "connecting" (and
+    // stole the selection via `select: true`), and the completion effect would
+    // even try to redeem the sign-in code as an MCP authorization code.
+    localStorage.setItem("mcp-oauth-pending", "demo-server");
+    localStorage.setItem(
+      "mcp-serverUrl-demo-server",
+      "https://example.com/mcp"
+    );
+    window.history.replaceState({}, "", "/callback?code=workos-signin-code");
+
+    const appState = createAppState();
+    appState.servers["demo-server"].connectionStatus = "disconnected";
+    appState.projects.default.servers["demo-server"].connectionStatus =
+      "disconnected";
+    const dispatch = vi.fn();
+    renderUseServerState(dispatch, appState);
+    await flushAsyncWork();
+
+    expect(
+      dispatch.mock.calls.some(([a]) => a.type === "CONNECT_REQUEST")
+    ).toBe(false);
+    // And the sign-in code is never redeemed as an MCP authorization code.
+    expect(handleOAuthCallbackMock).not.toHaveBeenCalled();
+    expect(completeHostedOAuthCallbackMock).not.toHaveBeenCalled();
+    // The WorkOS callback URL is left intact for the sign-in flow to finish.
+    expect(window.location.pathname).toBe("/callback");
+  });
+
   it("re-seeds CONNECT_REQUEST after a runtime wipe while the callback is still settling", async () => {
     // A scope reset (CLEAR_RUNTIME_STATE) can wipe the runtime entry while
     // the token exchange is still in flight; with ?code still in the URL the

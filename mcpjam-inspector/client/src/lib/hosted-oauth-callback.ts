@@ -31,6 +31,27 @@ export const HOSTED_OAUTH_PENDING_STORAGE_KEY = "mcp-hosted-oauth-pending";
 
 const HOSTED_OAUTH_PENDING_TTL_MS = 10 * 60 * 1000;
 
+/**
+ * Is this pathname the MCP OAuth `redirect_uri` (`getRedirectUri()` — always
+ * `/oauth/callback`)?
+ *
+ * The single definition of "this authorization code is ours". WorkOS sign-in
+ * lands on `/callback?code=…`, which carries an authorization code that has
+ * nothing to do with MCP; without this scope a sign-in is misread as an
+ * in-flight MCP OAuth callback and pairs with whatever stale
+ * `mcp-oauth-pending` marker is left in localStorage (from an abandoned flow),
+ * resurfacing ghost "connecting"/"Finishing OAuth…" state for an unrelated
+ * server.
+ *
+ * Note this deliberately also matches `/oauth/callback/debug` — callers that
+ * must exclude the debug surface check `isDebugOAuthCallbackPath` first.
+ */
+export function isMcpOAuthCallbackPath(pathname: string): boolean {
+  return (
+    pathname === "/oauth/callback" || pathname.startsWith("/oauth/callback/")
+  );
+}
+
 export function normalizeHostedOAuthServerName(
   serverName?: string | null
 ): string {
@@ -224,12 +245,9 @@ export function getHostedOAuthCallbackContext(): HostedOAuthCallbackContext | nu
     return null;
   }
 
-  // Scope MCP-OAuth callback detection to /oauth/callback (the MCP redirect_uri
-  // from getRedirectUri()). WorkOS sign-in lands on /callback?code=… which
-  // would otherwise be misread here and pair with a stale mcp-oauth-pending
-  // marker, producing a ghost "Finishing OAuth…" gate after sign-in.
-  const pathname = window.location.pathname;
-  if (pathname !== "/oauth/callback" && !pathname.startsWith("/oauth/callback/")) {
+  // Scope MCP-OAuth callback detection to the MCP redirect_uri — see
+  // `isMcpOAuthCallbackPath`.
+  if (!isMcpOAuthCallbackPath(window.location.pathname)) {
     return null;
   }
 

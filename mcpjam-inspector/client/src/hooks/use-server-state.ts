@@ -55,6 +55,7 @@ import {
 import {
   clearHostedOAuthPendingState,
   getHostedOAuthCallbackContext,
+  isMcpOAuthCallbackPath,
   resolveHostedOAuthReturnPath,
   writeHostedOAuthPendingMarker,
 } from "@/lib/hosted-oauth-callback";
@@ -2807,6 +2808,16 @@ export function useServerState({
     if (isDebugOAuthCallbackPath(window.location.pathname)) {
       return;
     }
+    // Only OUR redirect_uri carries an MCP authorization code. A WorkOS
+    // sign-in lands on `/callback?code=…`; without this scope that code pairs
+    // with a stale `mcp-oauth-pending` marker from an abandoned flow and marks
+    // an unrelated server "connecting" (and steals the selection via
+    // `select: true`). `getHostedOAuthCallbackContext()` is itself path-scoped,
+    // but it returns `null` off-route — indistinguishable from "on-route with
+    // no marker", which falls through to the legacy localStorage read.
+    if (!isMcpOAuthCallbackPath(window.location.pathname)) {
+      return;
+    }
     const urlParams = new URLSearchParams(window.location.search);
     if (!urlParams.get("code")) return;
     // Electron-tagged browser callbacks hand off to the desktop app.
@@ -2850,6 +2861,13 @@ export function useServerState({
 
   useEffect(() => {
     if (isDebugOAuthCallbackPath(window.location.pathname)) {
+      return;
+    }
+    // Same scope as the seed effect above: a WorkOS sign-in code on
+    // `/callback` is not ours to redeem. Unscoped, this effect would run an
+    // MCP token exchange against a stale pending server AND navigate away via
+    // `restoreCallbackUrl`, interrupting the sign-in it was never part of.
+    if (!isMcpOAuthCallbackPath(window.location.pathname)) {
       return;
     }
 
