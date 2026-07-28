@@ -37,8 +37,17 @@ describe("unknown data parts degrade silently", () => {
     //   return;
     //
     // An `} else {` immediately before that `return;` is the regression.
-    const chain = /}\s*else\s*{[^}]*}\s*\n\s*return;/;
-    expect(chain.test(HOOK_SOURCE)).toBe(false);
+    // Scoped to the dispatch chain, and tolerant of nested braces. An earlier
+    // version used `[^}]*` for the else body, which cannot cross a single
+    // nested brace — so the most likely real regression,
+    // `} else { setError({ message: ... }); }`, slipped past unmatched while
+    // the suite reported health. It was also unanchored, so an unrelated
+    // else/return pair elsewhere in the hook would have failed it for no
+    // reason.
+    const start = HOOK_SOURCE.indexOf("isTaskCreatedDataPart(part)");
+    expect(start).toBeGreaterThan(-1);
+    const chainTail = HOOK_SOURCE.slice(start, start + 2000);
+    expect(/}\s*else\s*{[\s\S]*?}\s*\n\s*return;/.test(chainTail)).toBe(false);
   });
 
   it("still routes the parts it does know", () => {
