@@ -13,7 +13,12 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { readTasksPolicy, setTasksPolicy } from "@mcpjam/sdk";
+import {
+  readTasksPolicy,
+  runToolTaskSeam,
+  setTasksPolicy,
+  TASK_SEAM_META_KEY,
+} from "@mcpjam/sdk";
 
 import { resolveToolTaskSeam } from "../task-seam.js";
 
@@ -61,6 +66,81 @@ describe("resolveToolTaskSeam", () => {
     expect(resolveToolTaskSeam({ tasksPolicy: "on", surface: "chat" })?.mode).toBe(
       "expose"
     );
+  });
+
+  it("forwards await tuning — including the abort signal — into the produced options", () => {
+    // Finding 5: the eval surfaces pass their run controller's signal here so
+    // a cancelled run stops an in-flight `await`-mode task drive. Dropping
+    // the field on the way through would silently restore the old behavior
+    // (polling until the driver timeout).
+    const controller = new AbortController();
+    const seam = resolveToolTaskSeam({
+      tasksPolicy: "on",
+      surface: "eval",
+      await: { signal: controller.signal },
+    });
+    expect(seam?.mode).toBe("await");
+    expect(seam?.await?.signal).toBe(controller.signal);
+  });
+
+  it("aborting mid-await yields an aborted-outcome tool result in bounded time", async () => {
+    // The eval seam driving a task that never terminates: cancelling the run
+    // must produce the `aborted` outcome promptly — not wait out the driver's
+    // default timeout.
+    const controller = new AbortController();
+    const seam = resolveToolTaskSeam({
+      tasksPolicy: "on",
+      surface: "eval",
+      await: { signal: controller.signal },
+    });
+    expect(seam).toBeDefined();
+
+    const now = new Date().toISOString();
+    const resultPromise = runToolTaskSeam(
+      {
+        serverId: "srv-1",
+        toolName: "slow_tool",
+        wire: "extension",
+        callPlain: async () => {
+          throw new Error("await mode must use the eligible call");
+        },
+        callEligible: async () => ({
+          resultType: "task",
+          taskId: "task-1",
+          status: "working",
+          createdAt: now,
+          lastUpdatedAt: now,
+          ttlMs: null,
+          // A long floor: without an abort-aware wait the drive would sit in
+          // this sleep and blow the bounded-time assertion below.
+          pollIntervalMs: 60_000,
+        }),
+        // Never terminal: the ONLY way out before the driver timeout is the
+        // abort signal.
+        getTask: async () => ({
+          status: "working" as const,
+          lastUpdatedAt: new Date().toISOString(),
+          ttlMs: null,
+        }),
+      },
+      seam!
+    );
+
+    setTimeout(() => controller.abort(new Error("run cancelled")), 20);
+
+    const started = Date.now();
+    const result = await resultPromise;
+    // Bounded: resolved by the abort, not by the driver's default timeout.
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(result.isError).toBe(true);
+    const meta = (result._meta as Record<string, unknown>)[
+      TASK_SEAM_META_KEY
+    ] as { outcome?: string; taskId?: string };
+    expect(meta.outcome).toBe("aborted");
+    expect(meta.taskId).toBe("task-1");
+    // The prompt-facing text says what happened.
+    const text = (result.content?.[0] as { text?: string })?.text ?? "";
+    expect(text).toContain("aborted");
   });
 
   it("carries the scope into the created-task identity", async () => {
