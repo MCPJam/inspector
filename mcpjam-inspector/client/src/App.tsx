@@ -217,7 +217,9 @@ import { getEffectiveProjectClientCapabilities } from "./lib/client-config";
 import {
   getDefaultClientCapabilities,
   isKnownProtocolVersion,
+  readTasksPolicy,
   readXaaEnterprisePolicy,
+  taskModeForSurface,
   type McpProtocolVersion,
 } from "@mcpjam/sdk/browser";
 import {
@@ -996,6 +998,10 @@ export function ToolsRoute() {
           serverConnectionStatus={
             selectedServerEntry?.connectionStatus ?? "disconnected"
           }
+          tasksMode={taskModeForSurface(
+            readTasksPolicy(activeHost?.config),
+            "tools",
+          )}
           mcpToolResultImageRendering={gateMcpToolResultImageRenderingByModelVisibility(
             activeHost?.config?.mcpToolResultImageRendering,
             activeHost?.config?.modelVisibleMcpToolResults
