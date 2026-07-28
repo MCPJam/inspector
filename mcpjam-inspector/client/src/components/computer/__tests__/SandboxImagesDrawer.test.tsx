@@ -3,9 +3,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   SandboxImageView,
   SandboxImageBuildView,
+  BlueprintValidationResult,
 } from "@/hooks/useSandboxImages";
 
 let mockEnvironments: SandboxImageView[] | undefined = [];
+let mockValidation: BlueprintValidationResult | undefined = {
+  ok: true,
+  baseImageDigest: "sha256:x",
+};
 const createEnvironment = vi.fn(async () => env({ environmentId: "new" }));
 const updateEnvironment = vi.fn(async () => env());
 const startBuild = vi.fn(async () => ({ buildId: "b1", reused: false }));
@@ -34,6 +39,10 @@ vi.mock("@/hooks/useSandboxImages", async () => {
     usePromoteSandboxImage: () => promote,
     useDeleteSandboxImage: () => deleteEnvironment,
     useSetComputerSandboxImage: () => setComputerEnvironment,
+    // The backend linter needs a live Convex provider; the drawer tests stub
+    // it. Default is ok so flow tests aren't blocked; individual tests reassign
+    // `mockValidation` to exercise the structured-error rendering path.
+    useValidateBlueprint: () => mockValidation,
   };
 });
 
@@ -61,7 +70,7 @@ function env(over: Partial<SandboxImageView> = {}): SandboxImageView {
     environmentId: "env1",
     projectId: "p1",
     name: "ml-toolkit",
-    dockerfile: "FROM debian@sha256:x\nRUN echo hi",
+    blueprint: "base: debian@sha256:x\ninitialize:\n  - run: echo hi\n",
     contentHash: "h",
     sharing: "user",
     isOwner: true,
@@ -90,6 +99,7 @@ function renderDrawer(
 afterEach(() => {
   vi.clearAllMocks();
   mockEnvironments = [];
+  mockValidation = { ok: true, baseImageDigest: "sha256:x" };
 });
 
 describe("SandboxImagesDrawer", () => {
@@ -119,6 +129,18 @@ describe("SandboxImagesDrawer", () => {
         expect.objectContaining({ projectId: "p1", name: "scraper" })
       )
     );
+  });
+
+  it("renders the backend's structured lint errors under the blueprint editor", () => {
+    mockValidation = {
+      ok: false,
+      errors: [{ path: "base", message: "is required" }],
+    };
+    const { getByText, baseElement } = renderDrawer();
+    fireEvent.click(getByText("New sandbox image"));
+    // Editor mounts non-stale (debounced === starter template), so an ok:false
+    // result paints the path-scoped error immediately.
+    expect(baseElement.textContent).toContain("base: is required");
   });
 
   it("lands on the new env's detail right after create, before the list refreshes", async () => {

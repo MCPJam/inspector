@@ -20,6 +20,7 @@ import {
 } from "./env";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy";
 import { cacheEventLogger } from "./utils/cache-events";
+import { negotiationTelemetryLogger } from "./utils/negotiation-telemetry";
 
 // Security imports
 import {
@@ -302,6 +303,8 @@ const mcpClientManager = new MCPClientManager(
     // (see server/utils/cache-events.ts). Routes opt in per-request via
     // `withCacheEventCapture`; this callback is a no-op outside that scope.
     cacheEventLogger,
+    // Auto-negotiation outcome telemetry (always-on negotiation).
+    negotiationOutcomeLogger: negotiationTelemetryLogger("local-inspector"),
   }
 );
 // Middleware to inject client manager into context

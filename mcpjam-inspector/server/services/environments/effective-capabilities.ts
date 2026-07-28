@@ -143,6 +143,21 @@ function toRuntimePluginVersion(
 }
 
 /**
+ * Exactly the parts of a resolved environment this projection reads.
+ *
+ * Narrower than `ResolvedEnvironmentRuntime` on purpose. A `ResolvedEnvironmentRuntime`
+ * still satisfies it structurally, so the interactive caller is unchanged — but
+ * a caller with a run SNAPSHOT rather than a live environment (INS-5) can now
+ * supply what it genuinely has instead of fabricating an `environmentRef` and a
+ * `host.runtimeConfig` this function never looks at. A fabricated host field is
+ * a lie that only reads as one at the next person to grep for it.
+ */
+export type EffectiveCapabilityInput = Pick<
+  ResolvedEnvironmentRuntime,
+  "servers" | "skills" | "pluginVersions"
+>;
+
+/**
  * Project one resolved environment spec into the turn's capability set.
  *
  * `attribution` is `null` when `fetchPluginRuntimeAttribution` could not read
@@ -151,7 +166,7 @@ function toRuntimePluginVersion(
  * of which come straight from the spec.
  */
 export function resolveEffectiveCapabilities(
-  spec: ResolvedEnvironmentRuntime,
+  spec: EffectiveCapabilityInput,
   attribution: PluginRuntimeAttribution | null
 ): EffectiveCapabilitySet {
   const problems: RuntimeCapabilityProblem[] = [];

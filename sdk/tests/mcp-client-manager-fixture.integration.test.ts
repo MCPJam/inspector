@@ -3,6 +3,7 @@ import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { MCPClientManager } from "../src/mcp-client-manager/index.js";
+import type { NegotiationOutcomeEvent } from "../src/mcp-client-manager/index.js";
 import {
   createFixtureHandler,
   FIXTURE_GREETING_URI,
@@ -81,7 +82,10 @@ describe("MCPClientManager × dual-era fixture over HTTP", () => {
     ).toBe("hello from the fixture");
   });
 
-  it("auto-detects the modern era when no HTTP pin is configured", async () => {
+  it("auto-detects the modern era for an unconfigured HTTP connection (always on)", async () => {
+    // Automatic negotiation is always on: a bare manager with no pin probes
+    // `server/discover` and lands on the modern era against the dual-era
+    // fixture. This is the behavior main already ships for HTTP (#3441).
     await manager.connectToServer("fixture", {
       url: served.url,
       timeout: 10_000,
@@ -90,9 +94,41 @@ describe("MCPClientManager × dual-era fixture over HTTP", () => {
     expect(manager.getInitializationInfo("fixture")?.protocolVersion).toBe(
       "2026-07-28",
     );
+    expect(manager.getManagedClient("fixture")?.getProtocolEra?.()).toBe(
+      "modern",
+    );
 
     const tools = await manager.listTools("fixture");
     expect(tools.tools.map((t) => t.name)).toContain("echo");
+  });
+
+  it("emits a negotiation-outcome telemetry event with the required fields", async () => {
+    const events: NegotiationOutcomeEvent[] = [];
+    const observed = new MCPClientManager(
+      {},
+      { negotiationOutcomeLogger: (e) => events.push(e) },
+    );
+    try {
+      await observed.connectToServer("fixture", {
+        url: served.url,
+        timeout: 10_000,
+      });
+    } finally {
+      await observed.disconnectAllServers().catch(() => {});
+    }
+
+    expect(events).toHaveLength(1);
+    const event = events[0];
+    // configured mode + negotiated era + transport + outcome are all present.
+    expect(event).toMatchObject({
+      serverId: "fixture",
+      transport: "http",
+      configuredMode: "auto",
+      outcome: "connected",
+      negotiatedEra: "modern",
+      negotiatedProtocolVersion: "2026-07-28",
+    });
+    expect(event.failureClass).toBeUndefined();
   });
 
   it("keeps an explicit 2025 pin on the legacy initialize path", async () => {
