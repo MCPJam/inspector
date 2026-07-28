@@ -460,8 +460,31 @@ function registerTaskVerbs(tasks: Command): void {
           );
           return { wire: support.wire, ack };
         } catch (error) {
-          if (isUnknownTaskError(error)) throw taskUnknownError(taskId);
-          throw error;
+          if (!isUnknownTaskError(error)) throw error;
+
+          // `-32602` is only a HINT on a mutation, and this is the one verb
+          // where the ambiguity bites: `tasks/update` carries an arbitrary
+          // user-supplied JSON object, so Invalid Params is exactly what a
+          // server returns when it rejects the RESPONSES. Translating blindly
+          // would replace the server's actionable validation message with
+          // "the task expired" — sending the user to re-create a task that is
+          // alive and well.
+          //
+          // The rule is the SDK's own (`task-lifecycle-adapters.ts`): `MUST`
+          // for `tasks/get`, `SHOULD` for mutations, so only a `tasks/get`
+          // rejection proves a handle is gone. `get`/`cancel`/`result` take
+          // nothing but the id and so have no second cause to disambiguate;
+          // this one does.
+          let provenUnknown = false;
+          try {
+            await manager.getTaskExt(serverId, taskId);
+          } catch (confirmation) {
+            // A confirmation that fails for any OTHER reason proves nothing,
+            // so the original error stands rather than being overwritten by a
+            // guess about a transport failure.
+            provenUnknown = isUnknownTaskError(confirmation);
+          }
+          throw provenUnknown ? taskUnknownError(taskId) : error;
         }
       },
     ),

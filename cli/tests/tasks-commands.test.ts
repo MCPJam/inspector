@@ -586,6 +586,33 @@ test("tasks update answers an input_required key on the extension wire", async (
   });
 });
 
+test("tasks update surfaces a params rejection instead of claiming expiry", async () => {
+  // `-32602` from a mutation is ambiguous: unknown task id, or params the
+  // server refused. `tasks update` is the only verb carrying arbitrary
+  // user-supplied JSON, so it is the only one where the second cause is real.
+  // Reporting expiry here would send the user to re-create a task that is
+  // alive, and would throw away the one message telling them what to fix.
+  await withExtensionFixture(
+    async (fixture) => {
+      const taskId = await createExtensionTask(fixture.url);
+      const run = await runCli([
+        "tasks",
+        "update",
+        "--task-id",
+        taskId,
+        "--input-responses",
+        JSON.stringify({ confirm: { action: "accept", content: {} } }),
+        ...httpTarget(fixture.url),
+      ]);
+      assert.equal(run.exitCode, 1, run.stderr);
+      assert.notEqual(errorOf(run).code, "TASK_UNKNOWN_OR_EXPIRED");
+      // The server's own words have to reach the operator.
+      assert.match(run.stderr, /must be a boolean/);
+    },
+    { rejectUpdateWithInvalidParams: true },
+  );
+});
+
 test("tasks update requires --input-responses and is refused on the legacy wire", async () => {
   await withExtensionFixture(async (fixture) => {
     const run = await runCli([
