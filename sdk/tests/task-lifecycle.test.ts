@@ -796,6 +796,29 @@ describe("retryAfterMsFromError", () => {
     ).toBe(45_000);
   });
 
+  it("matches record header names in any casing", () => {
+    // HTTP header names are case-insensitive and this branch reads a record
+    // some unknown layer preserved, so no single spelling can be assumed.
+    // Missing the hint is not cosmetic: the poll loop loses its floor and
+    // hammers a server that just asked it to wait.
+    for (const name of [
+      "retry-after",
+      "Retry-After",
+      "RETRY-AFTER",
+      "Retry-after",
+      "rEtRy-AfTeR",
+    ]) {
+      expect(retryAfterMsFromError({ headers: { [name]: "30" } }, now)).toBe(
+        30_000
+      );
+    }
+    // Node types multi-valued header records as `string[]`; a preserved record
+    // may carry that shape even though `Retry-After` is single-valued.
+    expect(
+      retryAfterMsFromError({ headers: { "Retry-After": ["30"] } }, now)
+    ).toBe(30_000);
+  });
+
   it("returns undefined when nothing usable is attached", () => {
     expect(retryAfterMsFromError(new Error("plain"), now)).toBeUndefined();
     expect(retryAfterMsFromError(undefined, now)).toBeUndefined();

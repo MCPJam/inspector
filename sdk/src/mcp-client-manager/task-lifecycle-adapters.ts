@@ -225,7 +225,19 @@ function headerValue(headers: unknown, name: string): string | undefined {
     const value = (get as (n: string) => unknown).call(headers, name);
     return typeof value === "string" ? value : undefined;
   }
+  // Case-insensitive, because HTTP header names are — and this branch exists
+  // precisely for a record some unknown layer preserved, so its casing cannot
+  // be assumed. Testing two spellings would still miss `RETRY-AFTER` and
+  // `Retry-after`, and silently skipping the pacing hint is worse than the
+  // scan: the CLI would poll a server that just asked it to wait.
   const record = headers as Record<string, unknown>;
-  const value = record[name] ?? record["Retry-After"];
+  const wanted = name.toLowerCase();
+  const key = Object.keys(record).find((k) => k.toLowerCase() === wanted);
+  const value = key === undefined ? undefined : record[key];
+  // Node's raw header records type multi-valued headers as `string[]`; a
+  // preserved record may carry that shape even though `Retry-After` is single.
+  if (Array.isArray(value)) {
+    return typeof value[0] === "string" ? value[0] : undefined;
+  }
   return typeof value === "string" ? value : undefined;
 }
