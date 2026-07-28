@@ -103,9 +103,7 @@ export type SubscriptionNotificationKind =
   | "resource-updated"
   | "tasks";
 
-const METHOD_TO_KIND: Readonly<
-  Record<string, SubscriptionNotificationKind>
-> = {
+const METHOD_TO_KIND: Readonly<Record<string, SubscriptionNotificationKind>> = {
   [ToolListChangedNotificationMethod]: "tools-list-changed",
   [PromptListChangedNotificationMethod]: "prompts-list-changed",
   [ResourceListChangedNotificationMethod]: "resources-list-changed",
@@ -608,6 +606,13 @@ export class SubscriptionCoordinator {
       ...(this.desired.resourceUris
         ? { resourceUris: [...this.desired.resourceUris] }
         : {}),
+      // Copied for the same reason as `resourceUris`, and more urgently: the
+      // docs tell callers to drop terminal ids from this list, so a caller
+      // mutating the array it got back would silently change the desired
+      // filter with no reconcile — and `filtersEqual` would then compare the
+      // mutated array against itself and report "unchanged", leaving the live
+      // stream watching the wrong set.
+      ...(this.desired.taskIds ? { taskIds: [...this.desired.taskIds] } : {}),
     };
   }
 
@@ -642,7 +647,10 @@ export class SubscriptionCoordinator {
   ): Promise<void> {
     this.desired = {
       ...desired,
-      ...(desired.resourceUris ? { resourceUris: [...desired.resourceUris] } : {}),
+      ...(desired.resourceUris
+        ? { resourceUris: [...desired.resourceUris] }
+        : {}),
+      ...(desired.taskIds ? { taskIds: [...desired.taskIds] } : {}),
     };
     await this.enqueue(() => this.reconcile());
   }
@@ -692,8 +700,8 @@ export class SubscriptionCoordinator {
     return typeof raw === "string"
       ? raw
       : typeof raw === "number"
-        ? String(raw)
-        : undefined;
+      ? String(raw)
+      : undefined;
   }
 
   /**
@@ -745,8 +753,9 @@ export class SubscriptionCoordinator {
       return;
     }
     const acknowledged =
-      ((notification.params?.notifications as SubscriptionFilterShape) ??
-        undefined) ?? {};
+      (notification.params?.notifications as SubscriptionFilterShape) ??
+      undefined ??
+      {};
     this.markAcknowledged(stream, acknowledged);
   }
 
@@ -891,13 +900,26 @@ export class SubscriptionCoordinator {
     const wantedTaskIds = requested.taskIds ?? [];
     if (wantedTaskIds.length === 0) return { requested, rejected };
 
-    const canDeclare =
+    if (
       this.era === "modern" &&
-      typeof this.client.listenWithTasksDeclaration === "function";
-    if (canDeclare) return { requested, rejected };
+      typeof this.client.listenWithTasksDeclaration === "function"
+    ) {
+      return { requested, rejected };
+    }
 
     // Drop rather than downgrade: an undeclared task-filtered listen is a
     // guaranteed -32003, and the polling fallback loses nothing but latency.
+    //
+    // The REASON depends on why. `resolveRequestedFilter` reads the extension
+    // capability alone, so a 2025-11-25 server that advertises
+    // `io.modelcontextprotocol/tasks` reaches here — but on that era the
+    // extension MUST be treated as absent, so the honest report is
+    // "capability not advertised", not "we could not declare". Only a modern
+    // connection whose client lacks the declaration seam gets the latter.
+    const reason: SubscriptionInterestRejection["reason"] =
+      this.era === "modern"
+        ? "tasks-declaration-unavailable"
+        : "capability-not-advertised";
     const { taskIds: _dropped, ...withoutTasks } = requested;
     return {
       requested: withoutTasks,
@@ -907,7 +929,7 @@ export class SubscriptionCoordinator {
           (taskId): SubscriptionInterestRejection => ({
             interest: "tasks",
             taskId,
-            reason: "tasks-declaration-unavailable",
+            reason,
           })
         ),
       ],
@@ -930,7 +952,10 @@ export class SubscriptionCoordinator {
         await this.safeUnsubscribe(uri);
       }
       this.legacySubscribedUris.clear();
-      if (current && (current.status === "active" || current.status === "opening")) {
+      if (
+        current &&
+        (current.status === "active" || current.status === "opening")
+      ) {
         current.status = "cancelled";
         current.closeReason = "local-abort";
         current.closedAt = this.now();
@@ -1023,14 +1048,20 @@ export class SubscriptionCoordinator {
       ? this.streams.get(this.currentLocalId)
       : undefined;
     const live =
-      current &&
-      (current.status === "opening" || current.status === "active")
+      current && (current.status === "opening" || current.status === "active")
         ? current
         : undefined;
 
     if (this.disposed || isEmptyFilter(requested)) {
       if (live) await this.closeStream(live, "local-abort", "cancelled");
       this.currentLocalId = undefined;
+      // A filter that is empty ONLY because task ids were dropped is not the
+      // same as wanting nothing. Without a record here, the reason we fell
+      // back to polling would vanish and the caller would have no way to
+      // explain why notifications never arrived.
+      if (!this.disposed && rejected.length > 0) {
+        this.recordUnopenedStream(rejected);
+      }
       return;
     }
 
@@ -1040,6 +1071,33 @@ export class SubscriptionCoordinator {
     // A listen filter is immutable: change of desire ⇒ controlled close+reopen.
     if (live) await this.closeStream(live, "local-abort", "cancelled");
     await this.openModernStream(requested, rejected, 0);
+  }
+
+  /**
+   * Records a stream that was never opened, purely so its rejected interests
+   * remain visible through `getStreams()`. Terminal on arrival — there is no
+   * transport behind it.
+   */
+  private recordUnopenedStream(
+    rejected: SubscriptionInterestRejection[]
+  ): void {
+    const at = this.now();
+    const stream: SubscriptionStreamRecord = {
+      localId: `${this.instanceId}-unopened-${++this.streamSeq}`,
+      era: "modern",
+      requestedFilter: {},
+      rejectedInterests: [...rejected],
+      status: "error",
+      closeReason: "error",
+      error:
+        "No subscription was opened: every requested interest was rejected. " +
+        "Task state is polled instead.",
+      openedAt: at,
+      closedAt: at,
+      reconnectAttempt: 0,
+    };
+    this.streams.set(stream.localId, stream);
+    this.emitStream(stream);
   }
 
   private async openModernStream(

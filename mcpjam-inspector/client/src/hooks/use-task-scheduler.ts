@@ -37,11 +37,17 @@
 import { useCallback, useMemo, useRef } from "react";
 import {
   TaskLifecycleEngine,
+  taskLifecycleKey,
   type TaskLifecycleIdentity,
   type TaskLifecycleObservation,
   type LiveTasksWire,
 } from "@mcpjam/sdk/browser";
-import { recordTaskObservation } from "@/lib/task-tracker";
+import {
+  getRespondedInputKeys,
+  getTrackedTaskSchedule,
+  recordRespondedInputKeys,
+  recordTaskObservations,
+} from "@/lib/task-tracker";
 
 export interface SchedulerTaskState {
   taskId: string;
@@ -80,6 +86,14 @@ export interface TaskScheduler {
   /** Stops scheduling a handle (dismissed, cleared, or confirmed expired). */
   forget(taskIds: readonly string[]): void;
   /**
+   * Marks input keys answered, AFTER their `tasks/update` was acknowledged.
+   * Persists the keys — never the prompt or the response — so a reload does
+   * not re-prompt for something the user already answered.
+   */
+  markInputResponded(taskId: string, keys: readonly string[]): void;
+  /** Input keys already acknowledged for this handle, across reloads. */
+  respondedInputKeys(taskId: string): string[];
+  /**
    * Milliseconds until the next task is due, for arming one timer. Falls back
    * to the user's minimum when nothing is scheduled yet, so the first tick
    * after a page load still happens.
@@ -117,29 +131,58 @@ export function useTaskScheduler({
       if (!serverId || wire === "none") return undefined;
       return { serverId, wire, taskId, ...(scope ? { scope } : {}) };
     },
-    [serverId, wire, scope],
+    [serverId, wire, scope]
   );
 
   return useMemo<TaskScheduler>(
     () => ({
       dueTaskIds(candidateTaskIds) {
-        const due = new Set(
-          engine.due().map((record) => record.identity.taskId),
-        );
+        // Keyed on the COMPOSITE identity, not the bare task id: the engine
+        // may hold the same id under a different server, wire or scope, and
+        // matching on the id alone would let one of them satisfy another's
+        // due check.
+        const due = new Set(engine.due().map((record) => record.key));
+        const now = Date.now();
         return candidateTaskIds.filter((taskId) => {
           const identity = identityFor(taskId);
           if (!identity) return false;
-          // Never observed ⇒ due now. The floor is a statement about how often
-          // to RE-read, not a delay before the first read.
           if (!engine.get(identity)) {
-            engine.register(identity, { restored: true });
+            // First sighting this session — which, after a reload, means EVERY
+            // tracked handle. Seed the engine from the persisted schedule
+            // instead of registering fresh: registering fresh makes every
+            // restored handle due immediately, so a series of reloads would
+            // poll a server far faster than it asked to be polled, and the
+            // durable `nextPollAt` would never do anything.
+            const persisted = getTrackedTaskSchedule(identity);
+            engine.register(identity, {
+              restored: true,
+              pollIntervalMs: persisted?.pollIntervalMs,
+              ttlMs: persisted?.ttlMs,
+              // Restored so a reload does not re-prompt for an input the user
+              // already answered and the server already acknowledged.
+              respondedInputKeys: getRespondedInputKeys(identity),
+            });
+            if (persisted?.nextPollAt !== undefined) {
+              const record = engine.get(identity);
+              if (record) {
+                record.nextPollAt = persisted.nextPollAt;
+                record.lastObservedAt = persisted.lastObservedAt;
+              }
+              // A handle whose stored floor has not elapsed is NOT due, even
+              // though we have never read it in this session.
+              return persisted.nextPollAt <= now;
+            }
+            // No persisted schedule ⇒ genuinely new. The floor governs how
+            // often to RE-read, not a delay before the first read.
             return true;
           }
-          return due.has(taskId);
+          return due.has(taskLifecycleKey(identity));
         });
       },
 
       recordObservations(states) {
+        const persist: Parameters<typeof recordTaskObservations>[0][number][] =
+          [];
         for (const state of states) {
           const identity = identityFor(state.taskId);
           if (!identity) continue;
@@ -150,19 +193,24 @@ export function useTaskScheduler({
             lastUpdatedAt: state.lastUpdatedAt,
           } satisfies TaskLifecycleObservation;
           const record = engine.observe(identity, observation);
-          // Mirror the scheduling state into durable storage so a reload
-          // resumes at the right time rather than restarting every task.
-          recordTaskObservation(identity, {
-            status: record.status,
-            lastUpdatedAt: record.lastUpdatedAt,
-            ttlMs: record.ttlMs,
-            pollIntervalMs: record.pollIntervalMs,
-            nextPollAt: Number.isFinite(record.nextPollAt)
-              ? record.nextPollAt
-              : undefined,
-            lastObservedAt: record.lastObservedAt,
+          persist.push({
+            identity,
+            observation: {
+              status: record.status,
+              lastUpdatedAt: record.lastUpdatedAt,
+              ttlMs: record.ttlMs,
+              pollIntervalMs: record.pollIntervalMs,
+              nextPollAt: Number.isFinite(record.nextPollAt)
+                ? record.nextPollAt
+                : undefined,
+              lastObservedAt: record.lastObservedAt,
+            },
           });
         }
+        // ONE load + save for the whole tick. Mirroring the scheduling state
+        // into durable storage is what lets a reload resume at the right time
+        // rather than restarting every task at its floor.
+        recordTaskObservations(persist);
       },
 
       recordErrors(taskIds) {
@@ -170,6 +218,24 @@ export function useTaskScheduler({
           const identity = identityFor(taskId);
           if (identity) engine.observeError(identity);
         }
+      },
+
+      markInputResponded(taskId, keys) {
+        const identity = identityFor(taskId);
+        if (!identity || keys.length === 0) return;
+        engine.markInputKeysResponded(identity, keys);
+        recordRespondedInputKeys(identity, keys);
+      },
+
+      respondedInputKeys(taskId) {
+        const identity = identityFor(taskId);
+        if (!identity) return [];
+        // Union of this session's engine state and what survived a reload.
+        const persisted = getRespondedInputKeys(identity);
+        const record = engine.get(identity);
+        return [
+          ...new Set([...persisted, ...(record?.respondedInputKeys ?? [])]),
+        ];
       },
 
       forget(taskIds) {
@@ -192,6 +258,6 @@ export function useTaskScheduler({
         return engine.batchIntervalMs(records);
       },
     }),
-    [engine, identityFor, effectiveMinimum],
+    [engine, identityFor, effectiveMinimum]
   );
 }

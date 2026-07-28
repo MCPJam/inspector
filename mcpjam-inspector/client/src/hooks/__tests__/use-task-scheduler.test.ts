@@ -10,7 +10,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useTaskScheduler } from "../use-task-scheduler";
-import { getTrackedTasks, setTrackedTaskScope, trackTask } from "@/lib/task-tracker";
+import {
+  getTrackedTasks,
+  recordTaskObservation,
+  setTrackedTaskScope,
+  trackTask,
+} from "@/lib/task-tracker";
 
 const NOW = new Date().toISOString();
 
@@ -97,7 +102,10 @@ describe("useTaskScheduler", () => {
     act(() => {
       result.current.recordObservations([{ taskId: "t1", status: "working" }]);
     });
-    expect(result.current.msUntilNextDue()).toBeGreaterThan(100);
+    // Asserted against the SURFACE floor specifically: a weaker
+    // `toBeGreaterThan(100)` would pass on the engine's 250ms absolute floor
+    // alone and prove nothing about the 5s hosted floor.
+    expect(result.current.msUntilNextDue()).toBeGreaterThanOrEqual(5_000);
   });
 
   it("stops scheduling a terminal task", () => {
@@ -124,14 +132,29 @@ describe("useTaskScheduler", () => {
   });
 
   it("backs off a failed read without changing the task's status", () => {
-    const { result } = scheduler(100);
-    result.current.dueTaskIds(["t1"]);
-    act(() => {
-      result.current.recordErrors(["t1"]);
-      result.current.recordErrors(["t1"]);
-    });
-    // Two consecutive errors ⇒ the backoff exceeds the user's 100ms preference.
-    expect(result.current.msUntilNextDue()).toBeGreaterThan(100);
+    vi.useFakeTimers();
+    try {
+      const { result } = scheduler(100);
+      result.current.dueTaskIds(["t1"]);
+      act(() => {
+        result.current.recordObservations([
+          { taskId: "t1", status: "working" },
+        ]);
+        result.current.recordErrors(["t1"]);
+        result.current.recordErrors(["t1"]);
+      });
+
+      // Two consecutive errors ⇒ the backoff exceeds the user's 100ms floor.
+      expect(result.current.msUntilNextDue()).toBeGreaterThanOrEqual(2_000);
+
+      // ...and the handle is still SCHEDULED once the backoff expires. A
+      // transport failure says nothing about the task, so it must not have
+      // been marked terminal.
+      vi.advanceTimersByTime(10_000);
+      expect(result.current.dueTaskIds(["t1"])).toEqual(["t1"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("mirrors scheduling state into the tracker so a reload resumes", () => {
@@ -194,5 +217,76 @@ describe("useTaskScheduler", () => {
 
     // Same task id, different server: a separate handle, still due.
     expect(second.result.current.dueTaskIds(["t1"])).toEqual(["t1"]);
+  });
+
+  // ---- Resume after a reload ------------------------------------------------
+
+  it("does NOT treat a restored handle as due when its stored floor has not elapsed", () => {
+    trackTask({
+      taskId: "t1",
+      serverId: "s1",
+      wire: "extension",
+      createdAt: NOW,
+    });
+    recordTaskObservation(
+      { taskId: "t1", serverId: "s1", wire: "extension" },
+      {
+        status: "working",
+        pollIntervalMs: 60_000,
+        nextPollAt: Date.now() + 60_000,
+        lastObservedAt: Date.now(),
+      },
+    );
+
+    // A FRESH hook — the engine is empty, exactly as after a page reload.
+    const { result } = scheduler();
+    expect(result.current.dueTaskIds(["t1"])).toEqual([]);
+  });
+
+  it("treats a restored handle as due once its stored floor has passed", () => {
+    trackTask({
+      taskId: "t1",
+      serverId: "s1",
+      wire: "extension",
+      createdAt: NOW,
+    });
+    recordTaskObservation(
+      { taskId: "t1", serverId: "s1", wire: "extension" },
+      { status: "working", nextPollAt: Date.now() - 1_000 },
+    );
+
+    const { result } = scheduler();
+    expect(result.current.dueTaskIds(["t1"])).toEqual(["t1"]);
+  });
+
+  it("treats a handle with no persisted schedule as due — nothing to resume", () => {
+    trackTask({
+      taskId: "fresh",
+      serverId: "s1",
+      wire: "extension",
+      createdAt: NOW,
+    });
+    const { result } = scheduler();
+    expect(result.current.dueTaskIds(["fresh"])).toEqual(["fresh"]);
+  });
+
+  it("persists responded input keys and restores them across a reload", () => {
+    trackTask({
+      taskId: "t1",
+      serverId: "s1",
+      wire: "extension",
+      createdAt: NOW,
+    });
+    const first = scheduler();
+    act(() => {
+      first.result.current.markInputResponded("t1", ["ask-city"]);
+    });
+
+    // A fresh hook must not re-prompt for a key the server already
+    // acknowledged.
+    const second = scheduler();
+    expect(second.result.current.respondedInputKeys("t1")).toEqual([
+      "ask-city",
+    ]);
   });
 });

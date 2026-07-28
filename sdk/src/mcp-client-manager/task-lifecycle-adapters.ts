@@ -76,6 +76,16 @@ const LEGACY_STATUSES = new Set([
  * An unrecognized status normalizes to `working` rather than being dropped: a
  * handle we cannot classify is still a handle we must keep polling, and
  * inventing a terminal state would strand it.
+ *
+ * There is deliberately no `inputRequests` here, and none is missing: the
+ * 2025-11-25 `Task` shape carries no keyed request map at all
+ * (`taskId`, `status`, `ttl`, `createdAt`, `lastUpdatedAt`, `pollInterval`,
+ * `statusMessage` — nothing else). On that wire an `input_required` task's
+ * request arrives out of band, as an elicitation stamped with `relatedTaskId`,
+ * and is answered through the elicitation channel rather than `tasks/update` —
+ * which the legacy wire does not have. `driveTaskToTerminal` recognizes the
+ * resulting "input_required with an empty keyed snapshot" and reports
+ * `input-required` rather than re-polling an unchanging state.
  */
 export function legacyTaskToObservation(
   task: MCPTask & Record<string, unknown>

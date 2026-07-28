@@ -82,6 +82,15 @@ export interface TaskCreatedDispatchResult {
 }
 
 /**
+ * How long a `bestEffort` consumer may take before the fan-out stops waiting
+ * for it. "Best effort" has to mean bounded effort: a registry write that
+ * hangs rather than failing would otherwise leave `dispatch()` pending
+ * forever, and a caller awaiting it would never return a tool call that
+ * already succeeded on the server.
+ */
+export const DEFAULT_BEST_EFFORT_TIMEOUT_MS = 5_000;
+
+/**
  * Fan-out for {@link TaskCreatedEvent}.
  *
  * Consumers run in registration order and are awaited. Order matters for one
@@ -90,6 +99,10 @@ export interface TaskCreatedDispatchResult {
  */
 export class TaskCreatedSink {
   private readonly consumers: TaskCreatedConsumer[] = [];
+
+  constructor(
+    private readonly bestEffortTimeoutMs = DEFAULT_BEST_EFFORT_TIMEOUT_MS
+  ) {}
 
   register(consumer: TaskCreatedConsumer): () => void {
     this.consumers.push(consumer);
@@ -107,8 +120,27 @@ export class TaskCreatedSink {
    */
   async dispatch(event: TaskCreatedEvent): Promise<TaskCreatedDispatchResult> {
     const degraded: TaskCreatedConsumerFailure[] = [];
-    for (const consumer of this.consumers) {
+    // Iterate a COPY: a consumer that unregisters itself (or a sibling) while
+    // we are awaiting it would shift the indices under a live iterator and the
+    // next consumer would be silently skipped.
+    for (const consumer of [...this.consumers]) {
       try {
+        if (consumer.bestEffort) {
+          // Bounded: a hang is degradation, exactly like a throw.
+          const timedOut = await withTimeout(
+            Promise.resolve(consumer.handle(event)),
+            this.bestEffortTimeoutMs
+          );
+          if (timedOut) {
+            degraded.push({
+              name: consumer.name,
+              error: new Error(
+                `${consumer.name} did not settle within ${this.bestEffortTimeoutMs}ms`
+              ),
+            });
+          }
+          continue;
+        }
         await consumer.handle(event);
       } catch (error) {
         if (!consumer.bestEffort) throw error;
@@ -119,5 +151,34 @@ export class TaskCreatedSink {
       }
     }
     return { degraded };
+  }
+}
+
+/**
+ * Resolves `false` when `work` settled in time, `true` when it did not.
+ *
+ * A rejection propagates so the caller's own `catch` still classifies it. The
+ * abandoned promise keeps a no-op handler for the timeout case, since a late
+ * failure from a call nobody is waiting on is noise.
+ */
+async function withTimeout(
+  work: Promise<unknown>,
+  ms: number
+): Promise<boolean> {
+  if (!Number.isFinite(ms) || ms <= 0) {
+    await work;
+    return false;
+  }
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<true>((resolve) => {
+    timer = setTimeout(() => resolve(true), ms);
+  });
+  try {
+    return (
+      (await Promise.race([work.then(() => false as const), timeout])) === true
+    );
+  } finally {
+    clearTimeout(timer!);
+    work.catch(() => undefined);
   }
 }

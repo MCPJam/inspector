@@ -118,7 +118,9 @@ export function taskIdentity(task: {
   taskId: string;
   scope?: string;
 }): string {
-  return [task.scope ?? "", task.serverId, task.wire, task.taskId].join("\u0000");
+  return [task.scope ?? "", task.serverId, task.wire, task.taskId].join(
+    "\u0000"
+  );
 }
 
 function isFresh(task: TrackedTask, now: number): boolean {
@@ -137,7 +139,9 @@ function clampString(value: unknown): string | undefined {
 }
 
 function clampNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
 }
 
 /**
@@ -152,7 +156,15 @@ function sanitize(raw: unknown): TrackedTask | undefined {
   const record = raw as Record<string, unknown>;
   const taskId = clampString(record.taskId);
   const serverId = clampString(record.serverId);
+  const createdAt = clampString(record.createdAt);
   if (!taskId || !serverId) return undefined;
+  // Reject rather than default to `""`. Every other unrecognized field here is
+  // dropped; defaulting this one would produce a string no date parser
+  // accepts, and `isFresh` and the Tasks tab's sort comparator both call
+  // `new Date(createdAt).getTime()` — so the record would contribute `NaN` to
+  // an age check and to a comparator, giving an arbitrary ordering rather than
+  // an error.
+  if (!createdAt || Number.isNaN(Date.parse(createdAt))) return undefined;
 
   // A stored entry without a wire tag predates the extension; defaulting keeps
   // `wire` non-optional at runtime (identity depends on it).
@@ -161,8 +173,7 @@ function sanitize(raw: unknown): TrackedTask | undefined {
       ? record.wire
       : "legacy";
 
-  const ttlMs =
-    record.ttlMs === null ? null : clampNumber(record.ttlMs);
+  const ttlMs = record.ttlMs === null ? null : clampNumber(record.ttlMs);
   const respondedInputKeys = Array.isArray(record.respondedInputKeys)
     ? record.respondedInputKeys
         .filter((key): key is string => typeof key === "string")
@@ -174,8 +185,10 @@ function sanitize(raw: unknown): TrackedTask | undefined {
     taskId,
     serverId,
     wire,
-    createdAt: clampString(record.createdAt) ?? "",
-    ...(clampString(record.toolName) ? { toolName: clampString(record.toolName) } : {}),
+    createdAt,
+    ...(clampString(record.toolName)
+      ? { toolName: clampString(record.toolName) }
+      : {}),
     ...(record.primitiveType === "tool" ||
     record.primitiveType === "prompt" ||
     record.primitiveType === "resource"
@@ -192,7 +205,9 @@ function sanitize(raw: unknown): TrackedTask | undefined {
     ...(clampString(record.lastUpdatedAt)
       ? { lastUpdatedAt: clampString(record.lastUpdatedAt) }
       : {}),
-    ...(clampString(record.status) ? { status: clampString(record.status) } : {}),
+    ...(clampString(record.status)
+      ? { status: clampString(record.status) }
+      : {}),
     ...(ttlMs !== undefined ? { ttlMs } : {}),
     ...(clampNumber(record.pollIntervalMs) !== undefined
       ? { pollIntervalMs: clampNumber(record.pollIntervalMs) }
@@ -288,23 +303,23 @@ export function getTrackedTasks(): TrackedTask[] {
 
 export function getTrackedTasksForServer(
   serverId: string,
-  wire?: TasksWire,
+  wire?: TasksWire
 ): TrackedTask[] {
   return loadTasks().filter(
     (t) =>
       t.serverId === serverId &&
       !t.dismissed &&
-      (wire === undefined || t.wire === wire),
+      (wire === undefined || t.wire === wire)
   );
 }
 
 export function getTrackedTaskById(
   taskId: string,
-  serverId?: string,
+  serverId?: string
 ): TrackedTask | undefined {
   return loadTasks().find(
     (t) =>
-      t.taskId === taskId && (serverId === undefined || t.serverId === serverId),
+      t.taskId === taskId && (serverId === undefined || t.serverId === serverId)
   );
 }
 
@@ -325,8 +340,118 @@ export function trackTask(task: Omit<TrackedTask, "dismissed">): void {
  * A no-op for an untracked handle: this must never resurrect an entry the user
  * cleared or that belongs to another actor.
  */
+/**
+ * Applies one observation to a loaded entry. Shared by the single and batch
+ * write paths so their field semantics — notably `null` `ttlMs` meaning "no
+ * expiry" and therefore overwriting a number — cannot drift apart.
+ */
+function applyObservation(
+  entry: TrackedTask,
+  observation: TaskObservationPatch
+): void {
+  if (observation.status !== undefined) entry.status = observation.status;
+  if (observation.lastUpdatedAt !== undefined) {
+    entry.lastUpdatedAt = observation.lastUpdatedAt;
+  }
+  // `null` is meaningful (no expiry) and must overwrite a previous number, so
+  // this checks for `undefined` rather than truthiness.
+  if (observation.ttlMs !== undefined) entry.ttlMs = observation.ttlMs;
+  if (observation.pollIntervalMs !== undefined) {
+    entry.pollIntervalMs = observation.pollIntervalMs;
+  }
+  if (observation.nextPollAt !== undefined) {
+    entry.nextPollAt = observation.nextPollAt;
+  }
+  if (observation.lastObservedAt !== undefined) {
+    entry.lastObservedAt = observation.lastObservedAt;
+  }
+}
+
+export interface TaskObservationPatch {
+  status?: string;
+  lastUpdatedAt?: string;
+  ttlMs?: number | null;
+  pollIntervalMs?: number;
+  nextPollAt?: number;
+  lastObservedAt?: number;
+}
+
+export interface TaskIdentityRef {
+  taskId: string;
+  serverId: string;
+  wire: TasksWire;
+  scope?: string;
+}
+
+/**
+ * Batch form of {@link recordTaskObservation}.
+ *
+ * A poll tick observes every due handle, and the single-entry function parses
+ * and re-serializes the whole store per call — so N due handles cost 2N full
+ * parses and N serializations on the main thread, every interval. This makes
+ * the cost per TICK instead of per task, which also narrows the window in
+ * which two tabs polling the same server clobber each other's hints.
+ */
+export function recordTaskObservations(
+  entries: readonly {
+    identity: TaskIdentityRef;
+    observation: TaskObservationPatch;
+  }[]
+): void {
+  if (entries.length === 0) return;
+  const tasks = loadTasks();
+  const byKey = new Map(tasks.map((task) => [taskIdentity(task), task]));
+  let changed = false;
+  for (const { identity, observation } of entries) {
+    const entry = byKey.get(
+      taskIdentity({ ...identity, scope: identity.scope ?? activeScope })
+    );
+    // Never resurrects an untracked handle: this must not recreate an entry
+    // the user cleared or that belongs to another actor.
+    if (!entry) continue;
+    applyObservation(entry, observation);
+    changed = true;
+  }
+  if (changed) saveInScope(tasks);
+}
+
+/**
+ * The persisted scheduling state for a handle, for seeding the lifecycle
+ * engine after a reload. `undefined` when the handle is not tracked.
+ */
+export function getTrackedTaskSchedule(
+  identity: TaskIdentityRef
+):
+  | {
+      nextPollAt?: number;
+      lastObservedAt?: number;
+      pollIntervalMs?: number;
+      ttlMs?: number | null;
+      status?: string;
+    }
+  | undefined {
+  const key = taskIdentity({
+    ...identity,
+    scope: identity.scope ?? activeScope,
+  });
+  const entry = loadTasks().find((task) => taskIdentity(task) === key);
+  if (!entry) return undefined;
+  return {
+    nextPollAt: entry.nextPollAt,
+    lastObservedAt: entry.lastObservedAt,
+    pollIntervalMs: entry.pollIntervalMs,
+    ttlMs: entry.ttlMs,
+    status: entry.status,
+  };
+}
+
 export function recordTaskObservation(
-  identity: { taskId: string; serverId: string; wire: TasksWire; scope?: string },
+  identity: {
+    taskId: string;
+    serverId: string;
+    wire: TasksWire;
+    scope?: string;
+  },
   observation: {
     status?: string;
     lastUpdatedAt?: string;
@@ -334,7 +459,7 @@ export function recordTaskObservation(
     pollIntervalMs?: number;
     nextPollAt?: number;
     lastObservedAt?: number;
-  },
+  }
 ): void {
   const scoped = { ...identity, scope: identity.scope ?? activeScope };
   const key = taskIdentity(scoped);
@@ -366,8 +491,13 @@ export function recordTaskObservation(
  * succeeded. Keys only — the request and the response are never persisted.
  */
 export function recordRespondedInputKeys(
-  identity: { taskId: string; serverId: string; wire: TasksWire; scope?: string },
-  keys: readonly string[],
+  identity: {
+    taskId: string;
+    serverId: string;
+    wire: TasksWire;
+    scope?: string;
+  },
+  keys: readonly string[]
 ): void {
   if (keys.length === 0) return;
   const scoped = { ...identity, scope: identity.scope ?? activeScope };
@@ -403,8 +533,8 @@ export function untrackTask(taskId: string, serverId?: string): void {
         !(
           t.taskId === taskId &&
           (serverId === undefined || t.serverId === serverId)
-        ),
-    ),
+        )
+    )
   );
 }
 
@@ -436,7 +566,7 @@ export function dismissTask(taskId: string, serverId?: string): void {
 
 export function dismissTasksForServer(
   serverId: string,
-  taskIds: string[],
+  taskIds: string[]
 ): void {
   const idsToDissmiss = new Set(taskIds);
   const tasks = loadTasks();
@@ -452,7 +582,7 @@ export function getDismissedTaskIds(serverId: string): Set<string> {
   return new Set(
     loadTasks()
       .filter((t) => t.serverId === serverId && t.dismissed)
-      .map((t) => t.taskId),
+      .map((t) => t.taskId)
   );
 }
 
@@ -466,7 +596,7 @@ export function clearTrackedTasksForServer(serverId: string): void {
  * shared browser.
  */
 export function clearTrackedTasksForScope(
-  scope: string | null | undefined,
+  scope: string | null | undefined
 ): void {
   const target = scope ?? undefined;
   saveTasks(loadAllTasks().filter((t) => (t.scope ?? undefined) !== target));

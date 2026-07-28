@@ -165,7 +165,10 @@ export interface TaskLifecycleSnapshot
 
 export interface TaskLifecycleCallbacks {
   onTaskCreated?: (record: TaskLifecycleSnapshot) => void;
-  onState?: (record: TaskLifecycleSnapshot, previous: TaskLifecycleStatus) => void;
+  onState?: (
+    record: TaskLifecycleSnapshot,
+    previous: TaskLifecycleStatus
+  ) => void;
   onInputRequired?: (record: TaskLifecycleSnapshot) => void;
   onTerminal?: (record: TaskLifecycleSnapshot) => void;
 }
@@ -192,6 +195,19 @@ const DEFAULT_ABSOLUTE_FLOOR_MS = 250;
 const DEFAULT_MAXIMUM_INTERVAL_MS = 5 * 60_000;
 const DEFAULT_ERROR_BACKOFF_BASE_MS = 1_000;
 const DEFAULT_ERROR_BACKOFF_MAX_MS = 60_000;
+
+/**
+ * Coerces a caller-supplied interval to a usable non-negative number.
+ *
+ * `Math.max(0, NaN)` is `NaN`, and a `NaN` interval propagates into
+ * `nextPollAt`, where every comparison is false — so a single malformed
+ * preference would silently stop ALL polling rather than failing loudly.
+ */
+function normalizeInterval(value: number | undefined): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : 0;
+}
 
 /** Guards against `NaN`/`Infinity`/negative values arriving from a server. */
 function finitePositive(value: unknown): number | undefined {
@@ -233,9 +249,8 @@ export class TaskLifecycleEngine {
       options.errorBackoffBaseMs ?? DEFAULT_ERROR_BACKOFF_BASE_MS;
     this.backoffMaxMs =
       options.errorBackoffMaxMs ?? DEFAULT_ERROR_BACKOFF_MAX_MS;
-    this.userMinimumIntervalMs = Math.max(
-      0,
-      options.userMinimumIntervalMs ?? 0
+    this.userMinimumIntervalMs = normalizeInterval(
+      options.userMinimumIntervalMs
     );
     this.callbacks = options.callbacks ?? {};
   }
@@ -250,11 +265,19 @@ export class TaskLifecycleEngine {
    * fast tick; a *faster* preference can still never breach a server floor.
    */
   setUserMinimumIntervalMs(intervalMs: number): void {
-    this.userMinimumIntervalMs = Math.max(0, intervalMs);
+    this.userMinimumIntervalMs = normalizeInterval(intervalMs);
     for (const record of this.records.values()) {
       if (isTerminalLifecycleStatus(record.status)) continue;
       const base = record.lastObservedAt ?? this.now();
-      record.nextPollAt = base + this.effectiveIntervalMs(record);
+      // NEVER earlier, only later. Recomputing from `lastObservedAt` can land
+      // in the past while an error backoff or a `Retry-After` is in force —
+      // which would let a preference change punch straight through a wait the
+      // server asked for. A slower preference still extends the wait, which is
+      // the whole point of applying it to already-scheduled tasks.
+      record.nextPollAt = Math.max(
+        record.nextPollAt,
+        base + this.effectiveIntervalMs(record)
+      );
     }
   }
 
@@ -281,14 +304,22 @@ export class TaskLifecycleEngine {
     const retryAfter = record.retryAfterUntil
       ? Math.max(0, record.retryAfterUntil - now)
       : 0;
-    const raw = Math.max(
-      this.absoluteFloorMs,
-      serverFloor,
-      this.userMinimumIntervalMs,
-      backoff,
-      retryAfter
+    // The cap exists to stop a hostile or nonsensical `pollIntervalMs` from
+    // parking a task forever, so it applies to the terms we do not trust.
+    // `Retry-After` is NOT one of them: it is an explicit instruction from the
+    // server about its own rate limiting, and truncating "back off for ten
+    // minutes" to five would mean deliberately ignoring it. So clamp first,
+    // then let `Retry-After` raise the result back above the cap.
+    const capped = Math.min(
+      Math.max(this.absoluteFloorMs, this.userMinimumIntervalMs, backoff),
+      Math.max(this.maximumIntervalMs, this.absoluteFloorMs)
     );
-    return Math.min(raw, Math.max(this.maximumIntervalMs, this.absoluteFloorMs));
+    // Both protocol-imposed terms survive the cap. A server that asks to be
+    // polled every ten minutes, or that answers `Retry-After: 600`, has said
+    // something we are obliged to respect; clamping either to a local five
+    // minutes would mean deliberately polling twice as often as we were told
+    // to. The cap therefore governs only the terms MCPJam itself invented.
+    return Math.max(capped, serverFloor, retryAfter);
   }
 
   get(identity: TaskLifecycleIdentity): TaskLifecycleRecord | undefined {
@@ -381,10 +412,22 @@ export class TaskLifecycleEngine {
     const previous = record.status;
     const now = this.now();
 
-    record.status = observation.status;
-    if (observation.statusMessage !== undefined) {
-      record.statusMessage = observation.statusMessage;
+    // Terminal is FINAL. A poll issued before a terminal notification arrived
+    // can land after it, and applying it would revert a completed task's UI
+    // and scheduling to `working` — resurrecting a handle we already retired.
+    // The observation is still evidence the handle exists, so the observation
+    // clock advances; nothing else does.
+    if (isTerminalLifecycleStatus(record.status)) {
+      record.lastObservedAt = now;
+      return record;
     }
+
+    record.status = observation.status;
+    // Assigned unconditionally: an observation is a FULL snapshot, so a server
+    // omitting `statusMessage` is clearing it. Keeping the previous value
+    // would leave a stale message on screen after the condition it described
+    // was resolved.
+    record.statusMessage = observation.statusMessage;
     if (observation.createdAt !== undefined) {
       record.createdAt = observation.createdAt;
     }
@@ -405,8 +448,14 @@ export class TaskLifecycleEngine {
     record.error = observation.error;
     record.raw = observation.raw;
     record.lastObservedAt = now;
-    record.consecutiveErrors = 0;
-    record.retryAfterUntil = undefined;
+    if (source !== "notification") {
+      // Only a successful READ proves the poll path recovered. A notification
+      // arrives on a different channel entirely, so clearing the backoff on one
+      // would drop us straight back to the normal floor against a server whose
+      // `tasks/get` is still failing.
+      record.consecutiveErrors = 0;
+      record.retryAfterUntil = undefined;
+    }
 
     const terminal = isTerminalLifecycleStatus(record.status);
     record.nextPollAt = terminal
@@ -573,7 +622,10 @@ export class TaskLifecycleEngine {
    * members, not the minimum. A batch polls every member, so honoring the
    * fastest member's floor would breach every slower member's.
    */
-  batchIntervalMs(records: readonly TaskLifecycleRecord[], at?: number): number {
+  batchIntervalMs(
+    records: readonly TaskLifecycleRecord[],
+    at?: number
+  ): number {
     const now = at ?? this.now();
     let interval = Math.max(this.absoluteFloorMs, this.userMinimumIntervalMs);
     for (const record of records) {

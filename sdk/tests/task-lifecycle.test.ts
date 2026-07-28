@@ -165,15 +165,83 @@ describe("poll interval resolution", () => {
     }
   });
 
-  it("clamps a hostile pollIntervalMs to the maximum so a task cannot be parked forever", () => {
+  it("does NOT clamp a long server floor — the cap governs only local terms", () => {
     const clock = fakeClock();
     const engine = new TaskLifecycleEngine({
       now: clock.now,
       maximumIntervalMs: 60_000,
     });
     const id = identity("t1");
-    engine.observe(id, { status: "working", pollIntervalMs: 999_999_999 });
-    expect(engine.effectiveIntervalMs(engine.get(id)!)).toBe(60_000);
+    // A server asking to be polled every ten minutes has said something we are
+    // obliged to respect. Clamping to a local 60s would mean polling ten times
+    // more often than instructed — a deliberate SHOULD violation. The tradeoff
+    // is accepted: a task parked by an absurd floor is still refreshable by
+    // hand, and its handle is still tracked.
+    engine.observe(id, { status: "working", pollIntervalMs: 600_000 });
+    expect(engine.effectiveIntervalMs(engine.get(id)!)).toBe(600_000);
+  });
+
+  it("does NOT clamp a Retry-After longer than the maximum interval", () => {
+    const clock = fakeClock();
+    const engine = new TaskLifecycleEngine({
+      now: clock.now,
+      maximumIntervalMs: 60_000,
+    });
+    const id = identity("t1");
+    engine.observe(id, { status: "working" });
+    engine.applyRetryAfter(id, 600_000);
+    expect(engine.effectiveIntervalMs(engine.get(id)!)).toBe(600_000);
+
+    // And it still decays with real time rather than staying pinned: 50s of
+    // the hint remain, which is below the cap but above every local term.
+    clock.advance(550_000);
+    expect(engine.effectiveIntervalMs(engine.get(id)!)).toBe(50_000);
+  });
+
+  it("still clamps the LOCAL terms — a runaway backoff cannot park a task", () => {
+    const clock = fakeClock();
+    const engine = new TaskLifecycleEngine({
+      now: clock.now,
+      maximumIntervalMs: 5_000,
+      errorBackoffBaseMs: 1_000,
+      errorBackoffMaxMs: 10 * 60_000,
+    });
+    const id = identity("t1");
+    for (let i = 0; i < 20; i += 1) engine.observeError(id);
+    expect(engine.effectiveIntervalMs(engine.get(id)!)).toBe(5_000);
+  });
+
+  it("treats a non-finite user minimum as zero rather than poisoning the schedule", () => {
+    const clock = fakeClock();
+    // `Math.max(0, NaN)` is NaN, and a NaN interval makes every `nextPollAt`
+    // comparison false — one malformed preference would silently stop ALL
+    // polling instead of failing loudly.
+    const engine = new TaskLifecycleEngine({
+      now: clock.now,
+      userMinimumIntervalMs: Number.NaN,
+      absoluteFloorMs: 250,
+    });
+    const id = identity("t1");
+    engine.observe(id, { status: "working" });
+    expect(engine.effectiveIntervalMs(engine.get(id)!)).toBe(250);
+    expect(Number.isFinite(engine.get(id)!.nextPollAt)).toBe(true);
+
+    engine.setUserMinimumIntervalMs(Number.NaN);
+    expect(Number.isFinite(engine.get(id)!.nextPollAt)).toBe(true);
+  });
+
+  it("a slower preference never shortens a wait the server asked for", () => {
+    const clock = fakeClock();
+    const engine = new TaskLifecycleEngine({ now: clock.now });
+    const id = identity("t1");
+    engine.observe(id, { status: "working" });
+    engine.applyRetryAfter(id, 120_000);
+    const reserved = engine.get(id)!.nextPollAt;
+
+    // Recomputing from `lastObservedAt` would land in the past here, punching
+    // straight through the Retry-After.
+    engine.setUserMinimumIntervalMs(1_000);
+    expect(engine.get(id)!.nextPollAt).toBeGreaterThanOrEqual(reserved);
   });
 });
 
@@ -353,6 +421,73 @@ describe("state transitions", () => {
     clock.advance(1_000_000);
     expect(engine.due()).toEqual([]);
     expect(terminal).toEqual(["expired"]);
+  });
+});
+
+describe("terminal finality", () => {
+  it("ignores a late poll that would reanimate a terminal task", () => {
+    const engine = new TaskLifecycleEngine();
+    const id = identity("t1");
+    // A notification lands first; the poll that was already in flight lands
+    // after it. Applying the stale poll would revert completed UI to working.
+    engine.observe(
+      id,
+      { status: "completed", result: { ok: true } },
+      "notification",
+    );
+    engine.observe(id, { status: "working" }, "poll");
+
+    expect(engine.get(id)!.status).toBe("completed");
+    expect(engine.get(id)!.result).toEqual({ ok: true });
+  });
+
+  it("still advances the observation clock for a late poll", () => {
+    const clock = fakeClock();
+    const engine = new TaskLifecycleEngine({ now: clock.now });
+    const id = identity("t1");
+    engine.observe(id, { status: "completed", result: {} });
+    const first = engine.get(id)!.lastObservedAt;
+
+    clock.advance(5_000);
+    engine.observe(id, { status: "working" });
+    // The handle demonstrably still exists, which is what the retention clock
+    // cares about — even though its state is final.
+    expect(engine.get(id)!.lastObservedAt).toBeGreaterThan(first!);
+  });
+});
+
+describe("observation bookkeeping", () => {
+  it("lets a server clear a status message by omitting it", () => {
+    const engine = new TaskLifecycleEngine();
+    const id = identity("t1");
+    engine.observe(id, { status: "working", statusMessage: "step 1 of 3" });
+    expect(engine.get(id)!.statusMessage).toBe("step 1 of 3");
+
+    // An observation is a FULL snapshot: omitting the field clears it, rather
+    // than leaving a stale message describing a resolved condition.
+    engine.observe(id, { status: "working" });
+    expect(engine.get(id)!.statusMessage).toBeUndefined();
+  });
+
+  it("a notification does not clear the POLL path's backoff", () => {
+    const clock = fakeClock();
+    const engine = new TaskLifecycleEngine({
+      now: clock.now,
+      errorBackoffBaseMs: 1_000,
+    });
+    const id = identity("t1");
+    engine.observeError(id);
+    engine.observeError(id);
+    expect(engine.get(id)!.consecutiveErrors).toBe(2);
+
+    // Notifications arrive on a different channel; one says nothing about
+    // whether `tasks/get` recovered.
+    engine.observe(id, { status: "working" }, "notification");
+    expect(engine.get(id)!.consecutiveErrors).toBe(2);
+
+    // A successful READ is what proves it.
+    engine.observe(id, { status: "working" }, "poll");
+    expect(engine.get(id)!.consecutiveErrors).toBe(0);
   });
 });
 

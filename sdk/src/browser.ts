@@ -400,6 +400,7 @@ export {
   TaskLifecycleEngine,
   taskLifecycleKey,
   isTerminalLifecycleStatus,
+  toSnapshot as toTaskLifecycleSnapshot,
   TERMINAL_LIFECYCLE_STATUSES,
 } from "./mcp-client-manager/task-lifecycle.js";
 export type {

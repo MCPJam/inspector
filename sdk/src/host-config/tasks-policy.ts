@@ -83,8 +83,22 @@ interface TasksPolicyHost {
   };
 }
 
+/**
+ * A PLAIN JSON object — not merely "an object".
+ *
+ * Host config is JSON, so anything with an exotic prototype (`new Map()`, a
+ * class instance) did not come from a config file and cannot be read as one.
+ * A looser `typeof === "object"` check would let `new Map()` through as an
+ * empty extensions container and report `unset`, which PRESERVES task controls
+ * on a config we cannot actually understand. Failing closed to `invalid` is
+ * the only safe reading, and it surfaces the repair warning.
+ */
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
 
 /**
@@ -94,9 +108,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * than being coerced. Coercion here is how a typo becomes silently-enabled
  * Tasks on every surface.
  */
-export function readTasksPolicy(host: TasksPolicyHost | undefined): TasksPolicy {
+export function readTasksPolicy(
+  host: TasksPolicyHost | undefined
+): TasksPolicy {
   const extensions = host?.mcpProfile?.extensions;
-  if (!isRecord(extensions)) return "unset";
+  if (extensions === undefined) return "unset";
+  // Present but not a plain object: a config we cannot read must fail closed,
+  // not be treated as "nothing was configured".
+  if (!isRecord(extensions)) return "invalid";
   if (
     !Object.prototype.hasOwnProperty.call(
       extensions,
@@ -120,9 +139,11 @@ export function describeInvalidTasksPolicy(
   host: TasksPolicyHost | undefined
 ): string | undefined {
   if (readTasksPolicy(host) !== "invalid") return undefined;
-  const entry = host?.mcpProfile?.extensions?.[
-    MCPJAM_TASKS_POLICY_EXTENSION_ID
-  ];
+  const entry =
+    host?.mcpProfile?.extensions?.[MCPJAM_TASKS_POLICY_EXTENSION_ID];
+  if (!isRecord(host?.mcpProfile?.extensions)) {
+    return `"mcpProfile.extensions" must be a plain JSON object.`;
+  }
   if (!isRecord(entry)) {
     return `"${MCPJAM_TASKS_POLICY_EXTENSION_ID}" must be an object of the form { "enabled": true | false }.`;
   }
@@ -165,10 +186,7 @@ export function clearTasksPolicy<T extends TasksPolicyHost>(
   const base = (host ?? {}) as T;
   const extensions = base.mcpProfile?.extensions;
   if (!isRecord(extensions)) return base;
-  const {
-    [MCPJAM_TASKS_POLICY_EXTENSION_ID]: _removed,
-    ...rest
-  } = extensions;
+  const { [MCPJAM_TASKS_POLICY_EXTENSION_ID]: _removed, ...rest } = extensions;
   return {
     ...base,
     mcpProfile: {

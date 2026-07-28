@@ -268,9 +268,18 @@ export async function collectTaskInputResponses(args: {
   const respondedKeys = args.respondedKeys ?? new Set<string>();
   const limits = { ...DEFAULT_TASK_INPUT_LIMITS, ...(options.limits ?? {}) };
   const declared = readDeclaredInputCapabilities(options.declaredCapabilities);
-  const modes = options.supportedElicitationModes ?? SUPPORTED_ELICITATION_MODES;
+  const modes =
+    options.supportedElicitationModes ?? SUPPORTED_ELICITATION_MODES;
 
-  const responses: Record<string, unknown> = {};
+  // NULL-PROTOTYPE, and this is load-bearing rather than defensive styling.
+  // On a plain object literal, `responses["__proto__"] = value` invokes the
+  // inherited `__proto__` setter: it reassigns the object's prototype instead
+  // of creating an own property. The key would still land in `answeredKeys`,
+  // so the caller would mark it responded and never re-prompt, while the
+  // `tasks/update` carried nothing for it — the user's answer silently lost.
+  // A null prototype makes a hostile key ordinary data, which is what the
+  // module comment claims.
+  const responses: Record<string, unknown> = Object.create(null);
   const answeredKeys: string[] = [];
   const rejections: TaskInputRejection[] = [];
   const alreadyAnsweredKeys: string[] = [];
@@ -435,7 +444,11 @@ function resolveHandler(
 ): HandlerGate {
   const table: Record<
     TaskInputMethod,
-    { declared: boolean; handler?: TaskInputHandlers["elicitation"]; capability: string }
+    {
+      declared: boolean;
+      handler?: TaskInputHandlers["elicitation"];
+      capability: string;
+    }
   > = {
     "elicitation/create": {
       declared: declared.elicitation,
