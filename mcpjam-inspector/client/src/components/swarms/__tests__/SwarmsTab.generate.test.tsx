@@ -24,6 +24,10 @@ const host = {
   ownerScope: { type: "journeys" },
 };
 
+/** Mutable so a created persona shows up in the list the sidebar renders —
+ * that is how the test observes the new row being SELECTED, not just written. */
+let personaList: Array<Record<string, unknown>> = [];
+
 const {
   createPersonaMutation,
   createJourneyMutation,
@@ -43,7 +47,7 @@ vi.mock("convex/react", () => ({
     if (args === "skip") return undefined;
     switch (name) {
       case "personas:listPersonas":
-        return [persona];
+        return personaList;
       case "journeys:listJourneysByPersona":
         return [];
       case "hosts:listHosts":
@@ -125,7 +129,12 @@ import { SwarmGenerateError } from "@/lib/swarm-api";
 
 beforeEach(() => {
   vi.clearAllMocks();
-  createPersonaMutation.mockResolvedValue({ _id: "persona-new" });
+  personaList = [persona];
+  createPersonaMutation.mockImplementation(async (args: any) => {
+    const row = { ...args, _id: "persona-new", personaId: "pnew" };
+    personaList = [...personaList, row];
+    return row;
+  });
   createJourneyMutation.mockResolvedValue({ _id: "journey-new" });
 });
 
@@ -207,6 +216,13 @@ describe("SwarmsTab — generate persona", () => {
     const secondCall = createJourneyMutation.mock.calls[1]![0] as any;
     expect(secondCall.name).toBeUndefined();
     expect(secondCall.goal).toBe("goal two");
+
+    // The generated persona must also be SELECTED — the detail header renders
+    // the selected persona's name, so a regression dropping onPersonaCreated
+    // would leave "Persona One" selected and fail here.
+    await waitFor(() => {
+      expect(screen.getAllByText("Curious Newcomer").length).toBeGreaterThan(1);
+    });
 
     // Forwards the dialog's grounding + count to the backend.
     expect(generatePersonaMock).toHaveBeenCalledWith(
