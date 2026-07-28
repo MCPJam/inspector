@@ -353,7 +353,13 @@ export class MCPClientManager {
     // Start connecting to all configured servers (unless replay/trace-repair use explicit connect)
     if (!this.lazyConnect) {
       for (const [id, config] of Object.entries(servers)) {
-        void this.connectToServer(id, config);
+        // Fire-and-forget prefetch: a failure here is NOT lost — the failed
+        // attempt clears its live state, so the first operation that needs
+        // this server re-attempts the connect and observes the error itself
+        // (in-flight attempts are deduped via retryPromise/connectPromise).
+        // Without the catch, every failed eager connect ALSO escapes as a
+        // process-level unhandledRejection.
+        this.connectToServer(id, config).catch(() => {});
       }
     }
   }
@@ -1850,6 +1856,11 @@ export class MCPClientManager {
         state
       )
     );
+    // Mark handled without affecting awaiters (they hold the original
+    // promise): awaitWithAbort abandons connectionPromise when the caller's
+    // signal fires first, and an abandoned rejection escapes as a
+    // process-level unhandledRejection.
+    connectionPromise.catch(() => {});
     state.connectPromise = connectionPromise;
     this.liveClientStates.set(serverId, state);
     return this.awaitWithAbort(connectionPromise, signal);
@@ -1907,27 +1918,37 @@ export class MCPClientManager {
       const wantsStateless =
         resolvedProtocolVersion !== undefined &&
         isStatelessProtocolVersion(resolvedProtocolVersion);
+      // Resolve negotiation before the legacy initialize accept-list so Auto
+      // has one source of truth. An unpinned connection probes the modern era
+      // first and, on a legacy signal, must fall back with the upstream SDK's
+      // complete built-in supported-version list. Forwarding a persisted
+      // per-server or manager-default list here can make the first connection
+      // succeed but a later reconnect reject the server's valid counter-offer.
+      const versionNegotiation = resolveVersionNegotiation(
+        resolvedProtocolVersion
+      );
+      const wantsAutoNegotiation = versionNegotiation?.mode === "auto";
       // Stateful `mcpProtocolVersion` pin (e.g. `"2025-11-25"`) propagates
       // into the legacy `Client`'s `supportedProtocolVersions` accept-list
       // so `initialize.params.protocolVersion` actually goes out as the
       // pinned value rather than the SDK's built-in newest default. An
       // explicit `supportedProtocolVersions` (per-server or default) still
-      // wins — pinning at one layer while overriding the other would be
-      // ambiguous and the override is the more specific signal.
-      const supportedProtocolVersions =
-        config.supportedProtocolVersions ??
-        this.defaultSupportedProtocolVersions ??
-        (!wantsStateless && resolvedProtocolVersion !== undefined
-          ? [resolvedProtocolVersion]
-          : undefined);
+      // wins for an explicit pin — pinning at one layer while overriding the
+      // other would be ambiguous and the override is the more specific signal.
+      // Auto deliberately ignores both lists so its legacy fallback negotiates
+      // against every version supported by the upstream SDK.
+      const supportedProtocolVersions = wantsAutoNegotiation
+        ? undefined
+        : config.supportedProtocolVersions ??
+          this.defaultSupportedProtocolVersions ??
+          (!wantsStateless && resolvedProtocolVersion !== undefined
+            ? [resolvedProtocolVersion]
+            : undefined);
       // Automatic era negotiation is always on and transport-agnostic: an
       // unconfigured connection resolves to `{ mode: "auto" }` on both HTTP
       // and stdio (on stdio the `server/discover` probe runs on a sibling
       // process). Explicit pins are honored identically — a modern pin
       // negotiates modern with no legacy fallback, a legacy pin is byte-stable.
-      const versionNegotiation = resolveVersionNegotiation(
-        resolvedProtocolVersion
-      );
       const clientOptions: ClientOptions = {
         capabilities: clientCapabilities,
         // Manual multi-round-trip mode (2026-07-28 `input_required`, spec §12).

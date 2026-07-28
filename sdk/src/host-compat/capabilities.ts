@@ -45,11 +45,10 @@ export const MCP_APPS_FULL: McpAppsCapabilities = frozen({
   widgetDisplayModeRequests: "accept",
 });
 
-/** ChatGPT — full minus serverResources + logging. */
+/** ChatGPT — full surface minus downloadFile. */
 export const MCP_APPS_CHATGPT: McpAppsCapabilities = frozen({
   ...MCP_APPS_FULL,
-  serverResources: false,
-  logging: false,
+  downloadFile: false,
 });
 
 /** Mistral Le Chat — Apps-side `ui/initialize` evidence (no pip / download / teardown). */
@@ -144,21 +143,22 @@ export const MCP_APPS_SLACK: McpAppsCapabilities = frozen({
   widgetDisplayModeRequests: "accept",
 });
 
-/** VS Code (GitHub Copilot chat panel) — from the VS Code client template
- * (`VSCODE_HOST_STYLE.mcp.mcpAppsCapabilities` in built-ins.ts): full surface
- * minus updateModelContext + message. */
+/** VS Code 1.130.0 — captured from a live VS Code MCP Apps host probe on
+ * 2026-07-23. Advertises inline-only display, typed updateModelContext,
+ * downloadFile, and host-context changes. Unexercised behavior deliberately
+ * retains the existing emulator defaults. */
 export const MCP_APPS_VSCODE: McpAppsCapabilities = frozen({
-  availableDisplayModes: ["inline", "fullscreen", "pip"],
+  availableDisplayModes: ["inline"],
   toolInputPartial: true,
   toolCancelled: true,
   hostContextChanged: true,
   resourceTeardown: true,
-  toolInfo: true,
+  toolInfo: false,
   openLinks: true,
   serverTools: true,
   serverResources: true,
   logging: true,
-  updateModelContext: false,
+  updateModelContext: true,
   message: false,
   sandboxPermissions: true,
   cspFrameDomains: true,
