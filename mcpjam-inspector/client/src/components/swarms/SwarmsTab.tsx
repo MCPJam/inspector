@@ -725,6 +725,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
                     type="button"
                     size="sm"
                     variant="outline"
+                    aria-label="Generate persona with AI"
                     onClick={() => setGenerateMode("persona")}
                   >
                     <Sparkles className="mr-1 size-3" />
@@ -829,6 +830,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
                             size="sm"
                             variant="outline"
                             className="ml-auto mr-1.5"
+                            aria-label="Generate journeys with AI"
                             onClick={() => setGenerateMode("journeys")}
                           >
                             <Sparkles className="mr-1 size-3" />

@@ -8,6 +8,7 @@
  * verbatim.
  */
 import { SwarmAgentError } from "./swarm-agent.js";
+import { logger } from "../utils/logger.js";
 
 // LLM-backed generation calls; generous timeout to cover slower completions
 // (generate-persona makes two model calls behind one request).
@@ -53,7 +54,10 @@ async function postGenerate<T>(
   if (!response.ok) {
     const errorText = await response.text().catch(() => "");
     // Prefer the backend's user-facing `error` copy (quota messages, member
-    // gate, invalid group) over a generic transport message.
+    // gate, invalid group) over a generic transport message. A non-JSON body
+    // (WAF/HTML interstitial, proxy error page) is NOT user-facing copy and
+    // must not reach the client — the route forwards `message` verbatim on
+    // every 4xx — so it is logged server-side and the generic message stands.
     let message = `swarm-generate ${url} failed (${response.status})`;
     try {
       const parsed = JSON.parse(errorText) as { error?: unknown };
@@ -61,7 +65,12 @@ async function postGenerate<T>(
         message = parsed.error;
       }
     } catch {
-      if (errorText) message = `${message}: ${errorText}`;
+      if (errorText) {
+        logger.warn("[swarm-generate] non-JSON error body from upstream", {
+          url,
+          status: response.status,
+        });
+      }
     }
     throw new SwarmAgentError(response.status, errorText, message);
   }

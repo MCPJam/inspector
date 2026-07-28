@@ -131,7 +131,9 @@ beforeEach(() => {
 
 function openGeneratePersona() {
   render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-  fireEvent.click(screen.getAllByRole("button", { name: /^generate$/i })[0]);
+  fireEvent.click(
+    screen.getByRole("button", { name: /generate persona with ai/i })
+  );
 }
 
 async function pickClient(name: string | RegExp) {
@@ -255,7 +257,9 @@ describe("SwarmsTab — generate persona", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Server attachment not found");
     expect(toastMock.success).not.toHaveBeenCalled();
-    // The persona did land, so it must still be created and selected.
+    // The persona itself did land — it must still be written, not rolled back.
+    // (Selection is a side effect on SwarmsTab state that this static query
+    // mock can't surface: the new id never appears in the mocked persona list.)
     expect(createPersonaMutation).toHaveBeenCalledTimes(1);
   });
 
@@ -286,12 +290,9 @@ describe("SwarmsTab — generate journeys", () => {
 
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
     fireEvent.click(screen.getByText("Persona One"));
-    // Second "Generate" is the journeys one (the first sits in the persona
-    // sidebar header).
-    const generateButtons = screen.getAllByRole("button", {
-      name: /^generate$/i,
-    });
-    fireEvent.click(generateButtons[generateButtons.length - 1]);
+    fireEvent.click(
+      screen.getByRole("button", { name: /generate journeys with ai/i })
+    );
 
     await pickClient(/host one/i);
     fireEvent.click(screen.getByTestId("mock-server-group-picker"));
@@ -335,10 +336,9 @@ describe("SwarmsTab — generate journeys", () => {
 
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
     fireEvent.click(screen.getByText("Persona One"));
-    const generateButtons = screen.getAllByRole("button", {
-      name: /^generate$/i,
-    });
-    fireEvent.click(generateButtons[generateButtons.length - 1]);
+    fireEvent.click(
+      screen.getByRole("button", { name: /generate journeys with ai/i })
+    );
 
     await pickClient(/host one/i);
     fireEvent.click(screen.getByTestId("mock-server-group-picker"));

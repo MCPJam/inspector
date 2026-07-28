@@ -40,7 +40,11 @@ describe("web routes — swarm generation proxy", () => {
 
   it("generates a persona + journeys, defaulting journeyCount to 3", async () => {
     generateSwarmPersonaMock.mockResolvedValue({
-      persona: { name: "Curious First-Time User", role: "Hobbyist", notes: "n" },
+      persona: {
+        name: "Curious First-Time User",
+        role: "Hobbyist",
+        notes: "n",
+      },
       journeys: [{ name: "J1", goal: "Do the thing." }],
     });
 
@@ -134,16 +138,18 @@ describe("web routes — swarm generation proxy", () => {
       { projectId: "proj-1", serverAttachmentId: "att-1" },
       token
     );
-    const { status, data } = await expectJson<{ error?: { message?: string } }>(
-      response
-    );
+    const { status, data } = await expectJson<{
+      code?: string;
+      message?: string;
+    }>(response);
     expect(status).toBe(429);
-    expect(JSON.stringify(data)).toContain(
-      "You've hit your usage limit for today."
-    );
+    expect(data.message).toContain("You've hit your usage limit for today.");
+    // Code-based clients branch on this to reach standard rate-limit handling;
+    // a generic VALIDATION_ERROR would strand them on a 429.
+    expect(data.code).toBe("RATE_LIMITED");
   });
 
-  it("maps backend 5xx onto a 500 without leaking transport details", async () => {
+  it("maps a backend 5xx onto 500 and keeps the upstream detail out of the body", async () => {
     generateSwarmJourneysMock.mockRejectedValue(
       new SwarmAgentError(502, "", "swarm-generate upstream failed (502)")
     );
@@ -158,7 +164,15 @@ describe("web routes — swarm generation proxy", () => {
       },
       token
     );
-    expect(response.status).toBeGreaterThanOrEqual(500);
+    // Exactly 500 — a 5xx SwarmAgentError must NOT be rethrown at its own
+    // status the way the 4xx branch forwards one.
+    const { status, data } = await expectJson<Record<string, unknown>>(
+      response
+    );
+    expect(status).toBe(500);
+    expect(JSON.stringify(data)).not.toContain(
+      "swarm-generate upstream failed"
+    );
   });
 
   it("requires a bearer token", async () => {

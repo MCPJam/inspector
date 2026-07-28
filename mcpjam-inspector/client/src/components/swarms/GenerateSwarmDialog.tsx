@@ -127,8 +127,18 @@ export function GenerateSwarmDialog({
     Number.isInteger(journeyCount) &&
     journeyCount >= MIN_GENERATED_JOURNEYS &&
     journeyCount <= MAX_GENERATED_JOURNEYS;
+  // The cap precheck below is only meaningful once the persona count has
+  // loaded. Treating `undefined` as "under the cap" would let a full project
+  // spend generation quota before `createPersona` rejects the row, so persona
+  // mode stays disabled until the count is known.
+  const personaCountKnown =
+    mode !== "persona" || typeof personaCount === "number";
   const canSubmit =
-    !pending && !!serverAttachmentId && hostIds.length > 0 && countValid;
+    !pending &&
+    personaCountKnown &&
+    !!serverAttachmentId &&
+    hostIds.length > 0 &&
+    countValid;
 
   const createJourneyRows = async (
     personaRefId: string,
@@ -293,7 +303,18 @@ export function GenerateSwarmDialog({
         }, grounded in a server group's tools. Nothing runs until you say so.`;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      // Generation is in flight and NOT abortable: the backend call is already
+      // billed and the row mutations follow it. Unmounting here would leave
+      // that work running headless and let a retry double-spend, so Escape,
+      // outside-click, and the close button are ignored while pending (the
+      // Cancel button is disabled for the same reason).
+      onOpenChange={(next) => {
+        if (pending && !next) return;
+        onOpenChange(next);
+      }}
+    >
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>

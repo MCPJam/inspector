@@ -75,6 +75,9 @@ export function SwarmHostMultiSelect({
           className={cn(
             "flex h-8 max-w-[260px] shrink-0 items-center gap-1 rounded-full border px-2 text-foreground",
             "outline-none transition-colors",
+            // Keyboard users get no indicator otherwise — `outline-none` above
+            // strips the browser default.
+            "focus-visible:ring-2 focus-visible:ring-ring",
             hostIds.length === 0
               ? "border-dashed border-border/60 bg-muted/30 hover:bg-muted/45"
               : "border-border/60 bg-muted/40 hover:bg-muted/60"

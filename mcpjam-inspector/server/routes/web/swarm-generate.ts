@@ -18,6 +18,7 @@ import {
   readJsonBody,
 } from "./auth.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { logger } from "../../utils/logger.js";
 import { SwarmAgentError } from "../../services/swarm-agent.js";
 import {
   generateSwarmJourneys,
@@ -52,14 +53,46 @@ const generateJourneysSchema = generatePersonaSchema.extend({
   }),
 });
 
-/** Backend 4xx → WebRouteError preserving the status (429 quota included) so
- * the backend's user-facing `error` copy reaches the dialog verbatim. */
+/** Error codes for the 4xx statuses the backend generation routes return, so
+ * code-based clients get the standard handling for each (a 429 quota rejection
+ * must read as RATE_LIMITED, not a malformed request). Anything else keeps
+ * VALIDATION_ERROR. */
+const FORWARDED_ERROR_CODES: Record<
+  number,
+  (typeof ErrorCode)[keyof typeof ErrorCode]
+> = {
+  401: ErrorCode.UNAUTHORIZED,
+  403: ErrorCode.FORBIDDEN,
+  404: ErrorCode.NOT_FOUND,
+  409: ErrorCode.CONFLICT,
+  429: ErrorCode.RATE_LIMITED,
+};
+
+/**
+ * Backend 4xx → WebRouteError preserving the status (429 quota included) so
+ * the backend's user-facing `error` copy reaches the dialog verbatim.
+ *
+ * A backend 5xx is NOT user-facing: its message carries the Convex deployment
+ * URL and upstream status, which the default error mapper would echo into the
+ * response body. Log it and return a generic 500 instead.
+ */
 function rethrowAsRouteError(err: unknown): never {
   if (err instanceof SwarmAgentError && err.status >= 400 && err.status < 500) {
     throw new WebRouteError(
       err.status,
-      ErrorCode.VALIDATION_ERROR,
+      FORWARDED_ERROR_CODES[err.status] ?? ErrorCode.VALIDATION_ERROR,
       err.message || "Generation request was rejected."
+    );
+  }
+  if (err instanceof SwarmAgentError) {
+    logger.error("[swarm-generate] backend returned a server error", {
+      status: err.status,
+      message: err.message,
+    });
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Generation is temporarily unavailable. Please try again."
     );
   }
   throw err;
