@@ -650,10 +650,14 @@ export type {
   MCPTasksCheckStatus,
   MCPTasksConformanceConfig,
   MCPTasksConformanceResult,
+  MCPTasksRunOutcome,
+  MCPTasksSkipReason,
 } from "./tasks-conformance/index.js";
 export {
+  decideOutcome,
   MCP_TASKS_CHECK_CATEGORIES,
   MCP_TASKS_CHECK_IDS,
+  resolveProbeTool,
 } from "./tasks-conformance/index.js";
 
 export type {

@@ -72,7 +72,8 @@ async function serve(
 }
 
 function runAgainst(
-  fixture: ServedExtensionTasksFixture
+  fixture: ServedExtensionTasksFixture,
+  overrides: Record<string, unknown> = {}
 ): Promise<MCPTasksConformanceResult> {
   return new MCPTasksConformanceTest({
     url: fixture.url,
@@ -83,7 +84,14 @@ function runAgainst(
     // probe tool is named rather than auto-picked.
     toolName: TASK_TOOL_NAME,
     pollTimeoutMs: 5_000,
-  }).run();
+    ...overrides,
+  } as never).run();
+}
+
+function unrunChecks(result: MCPTasksConformanceResult) {
+  return result.checks.filter(
+    (entry) => entry.status === "skipped" && entry.skipReason === "could-not-run"
+  );
 }
 
 function check(
@@ -227,6 +235,104 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
     // second task for the call that carried no declaration.
     expect(fixture.tasks().length).toBeGreaterThan(1);
     expect(result.passed).toBe(false);
+  });
+
+  it("reports INCOMPLETE, not success, when no toolName is given on the extension wire", async () => {
+    // The false green this suite exists to make impossible: auto-selection
+    // reads `execution.taskSupport`, which the 2026 ToolSchema strips, so
+    // without a `toolName` six task-dependent checks never run. Two of eight
+    // passing must never be reported as conformance.
+    const fixture = await serve();
+    const result = await runAgainst(fixture, { toolName: undefined });
+
+    expect(result.outcome).toBe("incomplete");
+    expect(result.passed).toBe(false);
+    expect(result.checks.some((entry) => entry.status === "failed")).toBe(false);
+
+    // Only the two wire-level checks genuinely ran; nothing else may read as
+    // a pass, and none of the gaps may be excused as "not applicable".
+    expect(
+      result.checks
+        .filter((entry) => entry.status === "passed")
+        .map((entry) => entry.id)
+        .sort()
+    ).toEqual(["tasks-declaration-hygiene", "tasks-wire-resolvable"]);
+    expect(unrunChecks(result)).toHaveLength(6);
+    expect(
+      result.checks.filter(
+        (entry) =>
+          entry.status === "skipped" && entry.skipReason === "not-applicable"
+      )
+    ).toHaveLength(0);
+
+    // The reason has to tell the user what to do and why the runner could not
+    // do it for them.
+    expect(result.incompleteReason).toContain("could not run");
+    expect(result.incompleteReason).toContain("--tool-name");
+    expect(result.incompleteReason).toContain("execution.taskSupport");
+    expect(result.incompleteReason).toContain("2026-07-28");
+    expect(result.incompleteReason).toContain(TASK_TOOL_NAME);
+    expect(result.summary).toContain("6 could not run");
+    expect(result.categorySummary.creation.couldNotRun).toBe(2);
+    expect(result.discovery.createdTaskId).toBeUndefined();
+  });
+
+  it("reports INCOMPLETE, naming the tool, when toolName is not listed by the server", async () => {
+    // A typo must not silently skip six checks either.
+    const fixture = await serve();
+    const result = await runAgainst(fixture, { toolName: "task_toool" });
+
+    expect(result.outcome).toBe("incomplete");
+    expect(result.passed).toBe(false);
+    expect(unrunChecks(result)).toHaveLength(6);
+    expect(result.incompleteReason).toContain('"task_toool"');
+    expect(result.incompleteReason).toContain("is not listed by this server");
+    // …and it points at what the server DOES list.
+    expect(result.incompleteReason).toContain(TASK_TOOL_NAME);
+    // No tools/call was attempted with a name the server never advertised.
+    expect(
+      fixture.received.filter((entry) => entry.method === "tools/call")
+    ).toHaveLength(0);
+  });
+
+  it("keeps an unlimited (null) TTL null across the whole round trip", async () => {
+    // `ttlMs: null` means unlimited and is semantically distinct from absent.
+    // A `??` default in the fixture's seed used to turn a deliberate phase-zero
+    // null into 60_000, so the wire shape could never be exercised.
+    const received: unknown[] = [];
+    const fixture = await serve({
+      tools: {
+        [TASK_TOOL_NAME]: taskTool([
+          { status: "working", ttlMs: null, pollIntervalMs: 5 },
+          {
+            status: "completed",
+            ttlMs: null,
+            result: { content: [{ type: "text", text: "done" }] },
+          },
+        ]),
+      },
+    });
+
+    const result = await runAgainst(fixture, {
+      rpcLogger: (event: { direction: string; message: unknown }) => {
+        if (event.direction === "receive") received.push(event.message);
+      },
+    });
+
+    expect(check(result, "tasks-ttl-shape").status).toBe("passed");
+    // The fixture kept the seed rather than defaulting it…
+    expect(fixture.tasks()[0].ttlMs).toBeNull();
+    // …and `null` reached the client as a PRESENT null, not as an absent key.
+    const withTask = received
+      .map((message) => (message as { result?: Record<string, unknown> }).result)
+      .filter(
+        (payload): payload is Record<string, unknown> =>
+          // `taskId` narrows this to task payloads: `tools/list` also carries a
+          // (numeric) `ttlMs` of its own under SEP-2549.
+          !!payload && "taskId" in payload && "ttlMs" in payload
+      );
+    expect(withTask.length).toBeGreaterThan(0);
+    expect(withTask.every((payload) => payload.ttlMs === null)).toBe(true);
   });
 
   it("reports a connect failure as one failed run, not a green suite", async () => {

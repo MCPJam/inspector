@@ -2,11 +2,14 @@ import { beforeEach, describe, expect, it, vi, afterEach } from "vitest";
 import {
   MCPTasksConformanceTest,
   MCP_TASKS_CHECK_IDS,
+  decideOutcome,
   findDeclarationViolations,
   pickProbeTool,
+  resolveProbeTool,
   validateCreateTaskShape,
   validateTaskTtlShape,
 } from "../../src/tasks-conformance/index.js";
+import type { MCPTasksCheckResult } from "../../src/tasks-conformance/index.js";
 import * as operations from "../../src/operations.js";
 
 const EXT_ID = "io.modelcontextprotocol/tasks";
@@ -284,6 +287,94 @@ describe("pickProbeTool", () => {
     expect(pickProbeTool(tools, "plain")?.name).toBe("plain");
     expect(pickProbeTool([tools[0]])).toBeUndefined();
   });
+
+  describe("resolveProbeTool", () => {
+    it("auto-selects on the legacy wire, where taskSupport still exists", () => {
+      const resolved = resolveProbeTool("legacy", tools);
+      expect(resolved.tool?.name).toBe("required_task");
+      expect(resolved.reason).toBeUndefined();
+    });
+
+    it("blocks on the extension wire, naming the flag and why auto-selection cannot work", () => {
+      const resolved = resolveProbeTool("extension", [tools[0]]);
+      expect(resolved.tool).toBeUndefined();
+      expect(resolved.blocking).toBe(true);
+      expect(resolved.reason).toContain("--tool-name");
+      expect(resolved.reason).toContain("execution.taskSupport");
+      expect(resolved.reason).toContain("2026-07-28");
+      // It points at what the server does list.
+      expect(resolved.reason).toContain("plain");
+    });
+
+    it("blocks on a legacy server with no task-capable tool", () => {
+      const resolved = resolveProbeTool("legacy", [tools[0]]);
+      expect(resolved.blocking).toBe(true);
+      expect(resolved.reason).toContain("execution.taskSupport");
+    });
+
+    it("blocks — naming the tool — when the requested name is not listed", () => {
+      const resolved = resolveProbeTool("extension", tools, "typo_task");
+      expect(resolved.tool).toBeUndefined();
+      expect(resolved.blocking).toBe(true);
+      expect(resolved.reason).toContain('"typo_task"');
+      expect(resolved.reason).toContain("is not listed by this server");
+      expect(resolved.reason).toContain("required_task");
+    });
+
+    it("is NOT blocking when there is no tasks wire at all", () => {
+      const resolved = resolveProbeTool("none", tools);
+      expect(resolved.tool).toBeUndefined();
+      expect(resolved.blocking).toBe(false);
+      expect(resolved.reason).toContain("no tasks wire");
+    });
+  });
+});
+
+describe("decideOutcome", () => {
+  const check = (
+    status: MCPTasksCheckResult["status"],
+    skipReason?: MCPTasksCheckResult["skipReason"]
+  ) =>
+    ({
+      id: "tasks-ttl-shape",
+      category: "lifecycle",
+      title: "t",
+      description: "d",
+      status,
+      durationMs: 0,
+      ...(skipReason ? { skipReason } : {}),
+      ...(status === "skipped" ? { error: { message: "why" } } : {}),
+    }) as MCPTasksCheckResult;
+
+  it("passes only when every selected check produced a verdict", () => {
+    expect(decideOutcome([check("passed")]).outcome).toBe("passed");
+    // An inapplicable check establishes nothing but leaves nothing untested.
+    expect(
+      decideOutcome([check("passed"), check("skipped", "not-applicable")])
+        .outcome
+    ).toBe("passed");
+  });
+
+  it("never lets a check that could not run add up to a pass", () => {
+    const verdict = decideOutcome([
+      check("passed"),
+      check("skipped", "could-not-run"),
+    ]);
+    expect(verdict.outcome).toBe("incomplete");
+    expect(verdict.incompleteReason).toContain("1 of 2");
+    expect(verdict.incompleteReason).toContain("why");
+  });
+
+  it("reports a violation as failed even when other checks did not run", () => {
+    expect(
+      decideOutcome([check("failed"), check("skipped", "could-not-run")])
+        .outcome
+    ).toBe("failed");
+  });
+
+  it("treats an empty selection as incomplete rather than vacuously green", () => {
+    expect(decideOutcome([]).outcome).toBe("incomplete");
+  });
 });
 
 describe("MCPTasksConformanceTest", () => {
@@ -505,6 +596,108 @@ describe("MCPTasksConformanceTest", () => {
     expect(statusMap(result)["tasks-mcp-name-routing"]).toBe("skipped");
   });
 
+  it("auto-selects the probe tool on the legacy wire, where taskSupport survives", async () => {
+    // The legacy wire is the one era where `execution.taskSupport` reaches the
+    // client, so a run with NO toolName must still exercise the task checks.
+    const manager = extensionManager({
+      getNegotiatedProtocolVersion: () => "2025-11-25",
+      getServerCapabilities: () => ({
+        tools: {},
+        tasks: { requests: { tools: { call: true } } },
+      }),
+      getTasksSupport: () => ({
+        wire: "legacy",
+        toolCalls: true,
+        list: false,
+        cancel: true,
+        update: false,
+        inlineResult: false,
+      }),
+      listTools: async () => ({
+        tools: [
+          { name: "plain", inputSchema: {} },
+          {
+            name: "long_job",
+            inputSchema: {},
+            execution: { taskSupport: "required" },
+          },
+        ],
+      }),
+      executeTool: async () => ({
+        task: { taskId: "task-1", status: "working", ttl: 60_000 },
+      }),
+      getTask: async () => ({
+        taskId: "task-1",
+        status: "completed",
+        ttl: 60_000,
+      }),
+      getTaskResult: async () => ({ content: [] }),
+    });
+
+    const result = await runAgainst(manager, {
+      config: { pollTimeoutMs: 500 },
+    });
+
+    expect(result.discovery.probedTool).toBe("long_job");
+    expect(result.outcome).toBe("passed");
+    expect(result.passed).toBe(true);
+    expect(statusMap(result)["tasks-result-type-discipline"]).toBe("passed");
+    expect(statusMap(result)["tasks-ttl-shape"]).toBe("passed");
+    expect(statusMap(result)["tasks-inline-result"]).toBe("passed");
+  });
+
+  it("reports INCOMPLETE when the extension wire has no probe tool to select", async () => {
+    // No toolName, and the 2026 ToolSchema strips `execution.taskSupport`, so
+    // nothing can be auto-selected. Six checks never run — and the run must
+    // say so instead of scoring 2/8 as a pass.
+    const result = await runAgainst(extensionManager(), {
+      config: { pollTimeoutMs: 500 },
+    });
+
+    expect(result.outcome).toBe("incomplete");
+    expect(result.passed).toBe(false);
+    expect(result.checks.some((c) => c.status === "failed")).toBe(false);
+    expect(
+      result.checks.filter(
+        (c) => c.status === "skipped" && c.skipReason === "could-not-run"
+      )
+    ).toHaveLength(6);
+    expect(result.incompleteReason).toContain("--tool-name");
+    expect(result.incompleteReason).toContain("long_job");
+  });
+
+  it("reports INCOMPLETE when the requested probe tool is not listed", async () => {
+    const result = await runAgainst(extensionManager(), {
+      config: { toolName: "nope", pollTimeoutMs: 500 },
+    });
+
+    expect(result.outcome).toBe("incomplete");
+    expect(result.passed).toBe(false);
+    expect(result.incompleteReason).toContain('"nope"');
+    expect(result.incompleteReason).toContain("is not listed by this server");
+    expect(result.incompleteReason).toContain("long_job");
+  });
+
+  it("reports INCOMPLETE when the probed tool never produced a task", async () => {
+    const manager = extensionManager({
+      executeTool: async () => ({
+        resultType: "complete",
+        content: [{ type: "text", text: "sync" }],
+      }),
+    });
+
+    const result = await runAgainst(manager, {
+      config: { toolName: "long_job", pollTimeoutMs: 500 },
+    });
+
+    // Result-type discipline DID run (a normal result is conformant); the
+    // lifecycle checks did not, and that is the run's verdict.
+    expect(statusMap(result)["tasks-result-type-discipline"]).toBe("passed");
+    expect(statusMap(result)["tasks-ttl-shape"]).toBe("skipped");
+    expect(result.outcome).toBe("incomplete");
+    expect(result.incompleteReason).toContain("no task existed to inspect");
+  });
+
   it("skips the task checks when the connection has no tasks wire", async () => {
     const manager = extensionManager({
       getNegotiatedProtocolVersion: () => "2025-06-18",
@@ -525,8 +718,15 @@ describe("MCPTasksConformanceTest", () => {
     const result = await runAgainst(manager);
 
     expect(result.passed).toBe(true);
+    expect(result.outcome).toBe("passed");
     expect(statusMap(result)["tasks-result-type-discipline"]).toBe("skipped");
     expect(statusMap(result)["tasks-ttl-shape"]).toBe("skipped");
+    // Inapplicable, not unexercised: there is no tasks behavior to establish.
+    expect(
+      result.checks
+        .filter((c) => c.status === "skipped")
+        .every((c) => c.skipReason === "not-applicable")
+    ).toBe(true);
   });
 
   it("reports a connection failure as a failed run", async () => {
@@ -730,8 +930,13 @@ describe("undeclared task requests (-32003)", () => {
     );
 
     const check = undeclaredCheck(result);
+    // Skipped, but as a GAP: the -32003 requirement was never put to the
+    // server, so the run cannot report conformance.
     expect(check?.status).toBe("skipped");
+    expect(check?.skipReason).toBe("could-not-run");
     expect(check?.error?.message).toContain("raw request seam");
+    expect(result.outcome).toBe("incomplete");
+    expect(result.passed).toBe(false);
   });
 
   it("probes the mutating methods only after every check that reads the task", async () => {

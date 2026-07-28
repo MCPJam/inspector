@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { MCP_TASKS_CHECK_IDS } from "@mcpjam/sdk";
-import { buildTasksConformanceConfig } from "../src/commands/tasks.js";
+import {
+  buildTasksConformanceConfig,
+  tasksConformanceExitCode,
+} from "../src/commands/tasks.js";
 import { CliError } from "../src/lib/output.js";
 
 test("buildTasksConformanceConfig rejects unknown categories and check ids", () => {
@@ -80,6 +83,22 @@ test("buildTasksConformanceConfig lets explicit check ids override categories", 
   });
 
   assert.deepEqual(config.checkIds, ["tasks-inline-result"]);
+});
+
+test("tasksConformanceExitCode separates a violation from a run that established nothing", () => {
+  assert.equal(tasksConformanceExitCode({ passed: true, outcome: "passed" }), 0);
+  assert.equal(tasksConformanceExitCode({ passed: false, outcome: "failed" }), 1);
+  // An incomplete run is NOT a pass and NOT a spec violation: its own code, and
+  // never 2 (reserved for usage errors).
+  assert.equal(
+    tasksConformanceExitCode({ passed: false, outcome: "incomplete" }),
+    3,
+  );
+});
+
+test("tasksConformanceExitCode falls back to passed for a result with no outcome", () => {
+  assert.equal(tasksConformanceExitCode({ passed: true }), 0);
+  assert.equal(tasksConformanceExitCode({ passed: false }), 1);
 });
 
 test("buildTasksConformanceConfig forwards the tool probe options", () => {

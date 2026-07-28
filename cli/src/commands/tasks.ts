@@ -41,6 +41,26 @@ const TASKS_CHECK_IDS_BY_CATEGORY: Record<
   ],
 };
 
+/**
+ * Exit code for a finished run.
+ *
+ * `incomplete` gets its own code because "the server violated the spec" and
+ * "we never established anything" are different failures with different fixes,
+ * and a run that skipped its task-dependent checks must never look like a pass.
+ * `2` is taken by usage errors, so the new state is `3`.
+ *
+ * The result is read structurally rather than by SDK type so an older
+ * `@mcpjam/sdk` (no `outcome`) still maps cleanly through `passed`.
+ */
+export function tasksConformanceExitCode(result: {
+  passed: boolean;
+  outcome?: "passed" | "failed" | "incomplete";
+}): number {
+  if (result.outcome === "incomplete") return 3;
+  if (result.outcome === "failed") return 1;
+  return result.passed ? 0 : 1;
+}
+
 export interface TasksConformanceOptions extends SharedServerTargetOptions {
   category?: string[];
   checkId?: string[];
@@ -185,8 +205,17 @@ export function registerTasksCommands(program: Command): void {
     const output = renderConformanceForCli(outputResult, reporter, format);
     process.stdout.write(output.endsWith("\n") ? output : `${output}\n`);
 
-    if (!result.passed) {
-      setProcessExitCode(1);
+    const incompleteReason = (result as { incompleteReason?: string })
+      .incompleteReason;
+    if (incompleteReason && !globalOptions.quiet) {
+      // The JSON payload carries it too, but a human running this in a terminal
+      // must not have to dig for the reason six checks never ran.
+      process.stderr.write(`Run incomplete: ${incompleteReason}\n`);
+    }
+
+    const exitCode = tasksConformanceExitCode(result);
+    if (exitCode !== 0) {
+      setProcessExitCode(exitCode);
     }
   });
 }

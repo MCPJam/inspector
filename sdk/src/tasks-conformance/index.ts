@@ -1,14 +1,17 @@
 export {
   MCPTasksConformanceTest,
+  decideOutcome,
   describeUndeclaredProbe,
   findDeclarationViolations,
   pickProbeTool,
+  resolveProbeTool,
   toolTaskSupport,
   validateCreateTaskShape,
   validateTaskTtlShape,
 } from "./runner.js";
 
 export type {
+  ProbeToolResolution,
   UndeclaredProbe,
   UndeclaredProbeOutcome,
 } from "./runner.js";
@@ -22,6 +25,8 @@ export type {
   MCPTasksCheckStatus,
   MCPTasksConformanceConfig,
   MCPTasksConformanceResult,
+  MCPTasksRunOutcome,
+  MCPTasksSkipReason,
   NormalizedMCPTasksConformanceConfig,
 } from "./types.js";
 

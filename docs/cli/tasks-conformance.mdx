@@ -23,13 +23,15 @@ For a local stdio server:
 mcpjam tasks conformance --command node --args server.js --cwd /path/to/project
 ```
 
-When your server's tools carry no task metadata (the extension wire), pass the tool name explicitly:
+On the extension wire you must name the probe tool. Auto-selection reads `execution.taskSupport`, which the 2026-07-28 `ToolSchema` strips, so a tasks-extension server cannot advertise which tool creates a task. Without `--tool-name` the six task-dependent checks cannot run and the command reports `"outcome": "incomplete"` (exit code `3`) rather than a green run:
 
 ```bash
 mcpjam tasks conformance \
   --url https://your-server.com/mcp \
   --tool-name long_job
 ```
+
+A `--tool-name` the server does not list is treated the same way: the run is incomplete, and the message names both the tool you asked for and the tools the server actually lists.
 
 Emit CI-friendly JUnit XML:
 
@@ -105,7 +107,8 @@ Typical success summary:
 ```json
 {
   "passed": true,
-  "summary": "8/8 checks passed, 0 failed, 0 skipped",
+  "outcome": "passed",
+  "summary": "8/8 checks passed, 0 failed, 0 could not run, 0 not applicable",
   "discovery": {
     "protocolVersion": "2026-07-28",
     "wire": "extension",
@@ -116,6 +119,23 @@ Typical success summary:
   }
 }
 ```
+
+## Outcomes: passed, failed, incomplete
+
+A run reports one of three outcomes, and `passed` is `true` only for the first:
+
+| `outcome` | Exit code | Meaning |
+|---|---|---|
+| `passed` | `0` | Every selected check either ran and passed, or does not apply to this server. |
+| `failed` | `1` | At least one check found a violation. |
+| `incomplete` | `3` | Nothing failed, but at least one selected check could not be run, so the run does not establish conformance. |
+
+Every skipped check says which kind of skip it is in `skipReason`:
+
+- `not-applicable` — the check cannot apply here (an extension-only check on a legacy connection, `Mcp-Name` routing over stdio, any task check on a connection with no tasks wire). These never hold a run back.
+- `could-not-run` — the check applies but was never exercised (no probe tool resolved, the named tool is not listed, the tool produced no task, the task never became readable). These make the run `incomplete`.
+
+An incomplete run carries a root `incompleteReason` naming the checks that did not run and what to change; non-quiet runs also print it to stderr. A skipped check can never add up to a passing verdict.
 
 ## Shared connection flags
 
@@ -142,12 +162,12 @@ Typical success summary:
 
 ## Notes
 
-- Exit codes are CI-friendly: `0` when all selected checks pass, `1` when any check fails, and `2` for invalid command usage.
+- Exit codes are CI-friendly: `0` when all selected checks pass, `1` when any check fails, `2` for invalid command usage, and `3` when the run is incomplete because a selected check could not be run.
 - Declaration hygiene is asserted against captured outbound JSON-RPC bytes, not re-derived from intent.
 - The undeclared-request checks (`tasks-undeclared-creation-refused`, `tasks-undeclared-capability-rejected`) apply to the extension wire only and are skipped on the legacy wire.
-- `tasks-undeclared-capability-rejected` needs a live task to probe with, so it is skipped when the run could not provoke one. Its probes run last, after every check that reads the task, because a server that wrongly accepts an undeclared `tasks/update` or `tasks/cancel` would otherwise mutate the very task the other checks inspect. If the server does not implement `subscriptions/listen` at all (`-32601`), that sub-probe is reported as a warning instead of a failure.
+- `tasks-undeclared-capability-rejected` needs a live task to probe with, so it is reported as `could-not-run` (and the run as incomplete) when no task could be provoked. Its probes run last, after every check that reads the task, because a server that wrongly accepts an undeclared `tasks/update` or `tasks/cancel` would otherwise mutate the very task the other checks inspect. If the server does not implement `subscriptions/listen` at all (`-32601`), that sub-probe is reported as a warning instead of a failure.
 - The `tasks-mcp-name-routing` check applies to HTTP transports only and is skipped for stdio servers.
-- Checks that require a created task are skipped when no task-capable tool is found and no `--tool-name` is provided.
+- Checks that require a created task cannot run when no probe tool resolves. That is a `could-not-run` skip, so the command exits `3` instead of reporting a pass — pass `--tool-name` to fix it.
 
 ## Related commands
 

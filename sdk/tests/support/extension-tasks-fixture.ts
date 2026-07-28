@@ -237,6 +237,8 @@ export interface TaskInspection {
   toolName: string;
   phaseIndex: number;
   polls: number;
+  /** Current TTL, `null` meaning unlimited — distinct from an absent one. */
+  ttlMs: number | null;
   /** `inputRequests` keys answered so far via `tasks/update`. */
   answeredKeys: string[];
   cancelRequested: boolean;
@@ -550,7 +552,16 @@ export async function serveExtensionTasksFixture(
       pollsOnPhase: 0,
       createdAt,
       lastUpdatedAt: createdAt,
-      ttlMs: phases[0].ttlMs ?? behavior.ttlMs ?? 60_000,
+      // `null` is "unlimited" and is NOT absence — the same distinction the
+      // SDK's task validation preserves — so a `??` chain here would silently
+      // turn a deliberate unlimited-TTL phase into 60s and the fixture could
+      // never emit the shape it exists to exercise. Only `undefined` inherits.
+      ttlMs:
+        phases[0].ttlMs !== undefined
+          ? phases[0].ttlMs
+          : behavior.ttlMs !== undefined
+            ? behavior.ttlMs
+            : 60_000,
       pollIntervalMs: phases[0].pollIntervalMs ?? behavior.pollIntervalMs ?? 10,
       answered: new Set(),
       cancelRequested: false,
@@ -912,6 +923,7 @@ export async function serveExtensionTasksFixture(
     toolName: entry.toolName,
     phaseIndex: entry.phaseIndex,
     polls: entry.pollsOnPhase,
+    ttlMs: entry.ttlMs,
     answeredKeys: [...entry.answered],
     cancelRequested: entry.cancelRequested,
   });

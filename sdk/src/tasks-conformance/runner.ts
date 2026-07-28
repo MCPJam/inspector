@@ -31,6 +31,7 @@ import {
   type MCPTasksCheckResult,
   type MCPTasksConformanceConfig,
   type MCPTasksConformanceResult,
+  type MCPTasksRunOutcome,
   type NormalizedMCPTasksConformanceConfig,
 } from "./types.js";
 import { normalizeMCPTasksConformanceConfig } from "./validation.js";
@@ -146,7 +147,13 @@ function failed(
   };
 }
 
-function skipped(
+/**
+ * A check that cannot apply to THIS server: an extension-only requirement on a
+ * legacy connection, an HTTP-only requirement over stdio, a task check on a
+ * connection with no tasks wire. Nothing is left unverified, so this does not
+ * hold the run back.
+ */
+function notApplicable(
   id: MCPTasksCheckId,
   message: string,
   details?: Record<string, unknown>
@@ -154,10 +161,38 @@ function skipped(
   return {
     ...CHECK_METADATA[id],
     status: "skipped",
+    skipReason: "not-applicable",
     durationMs: 0,
     error: { message },
     ...(details ? { details } : {}),
   };
+}
+
+/**
+ * A check that DOES apply here but the run could not exercise — no probe tool,
+ * a probe tool the server does not list, no task to inspect. The requirement
+ * was not tested, so the run is `incomplete`: this must never be summed into a
+ * passing verdict, which is exactly the bug where six task-dependent checks
+ * silently skipped and the suite still reported success.
+ */
+function couldNotRun(
+  id: MCPTasksCheckId,
+  message: string,
+  details?: Record<string, unknown>
+): MCPTasksCheckResult {
+  return {
+    ...CHECK_METADATA[id],
+    status: "skipped",
+    skipReason: "could-not-run",
+    durationMs: 0,
+    error: { message },
+    ...(details ? { details } : {}),
+  };
+}
+
+/** Selected, applicable, and never exercised. */
+function isUnrun(check: MCPTasksCheckResult): boolean {
+  return check.status === "skipped" && check.skipReason === "could-not-run";
 }
 
 function summarizeChecks(checks: MCPTasksCheckResult[]) {
@@ -171,6 +206,7 @@ function summarizeChecks(checks: MCPTasksCheckResult[]) {
           passed: inCategory.filter((c) => c.status === "passed").length,
           failed: inCategory.filter((c) => c.status === "failed").length,
           skipped: inCategory.filter((c) => c.status === "skipped").length,
+          couldNotRun: inCategory.filter(isUnrun).length,
         },
       ];
     })
@@ -180,8 +216,49 @@ function summarizeChecks(checks: MCPTasksCheckResult[]) {
 function buildSummary(checks: MCPTasksCheckResult[]): string {
   const passedCount = checks.filter((c) => c.status === "passed").length;
   const failedCount = checks.filter((c) => c.status === "failed").length;
-  const skippedCount = checks.filter((c) => c.status === "skipped").length;
-  return `${passedCount}/${checks.length} checks passed, ${failedCount} failed, ${skippedCount} skipped`;
+  const unrunCount = checks.filter(isUnrun).length;
+  const inapplicableCount = checks.filter(
+    (c) => c.status === "skipped" && c.skipReason !== "could-not-run"
+  ).length;
+  return `${passedCount}/${checks.length} checks passed, ${failedCount} failed, ${unrunCount} could not run, ${inapplicableCount} not applicable`;
+}
+
+/**
+ * The run's verdict, plus the reason when it is `incomplete`.
+ *
+ * `passed` requires that every SELECTED check actually produced a verdict —
+ * either it ran, or it was inapplicable to this server. A check that could not
+ * run is neither a violation nor a pass, and collapsing it into "not failed"
+ * is what let a two-of-eight run report success.
+ */
+export function decideOutcome(checks: MCPTasksCheckResult[]): {
+  outcome: MCPTasksRunOutcome;
+  incompleteReason?: string;
+} {
+  if (checks.some((check) => check.status === "failed")) {
+    return { outcome: "failed" };
+  }
+  const unrun = checks.filter(isUnrun);
+  if (unrun.length === 0) {
+    return checks.length === 0
+      ? {
+          outcome: "incomplete",
+          incompleteReason:
+            "no checks were selected, so this run establishes nothing",
+        }
+      : { outcome: "passed" };
+  }
+  const reasons = Array.from(
+    new Set(unrun.map((check) => check.error?.message ?? "reason unavailable"))
+  );
+  return {
+    outcome: "incomplete",
+    incompleteReason: `${unrun.length} of ${
+      checks.length
+    } selected check(s) could not run, so this run does not establish conformance (${unrun
+      .map((check) => check.id)
+      .join(", ")}): ${reasons.join(" ")}`,
+  };
 }
 
 /** `execution.taskSupport` on a listed tool (legacy 2025-11-25 metadata). */
@@ -205,6 +282,84 @@ export function pickProbeTool(
     tools.find((tool) => toolTaskSupport(tool) === "required") ??
     tools.find((tool) => toolTaskSupport(tool) === "optional")
   );
+}
+
+/** How many listed tool names a resolution message names before eliding. */
+const NAMED_TOOLS_LIMIT = 10;
+
+function describeListedTools(tools: MCPListedTool[]): string {
+  if (tools.length === 0) return "the server lists no tools at all";
+  const named = tools.slice(0, NAMED_TOOLS_LIMIT).map((tool) => tool.name);
+  const rest = tools.length - named.length;
+  return `listed tools: ${named.join(", ")}${
+    rest > 0 ? `, +${rest} more` : ""
+  }`;
+}
+
+/**
+ * The outcome of choosing a tool to provoke a task with.
+ *
+ * The FAILURE half is the point. `pickProbeTool` alone cannot say why it came
+ * back empty, and the caller treated "no tool" as a skip — so on the extension
+ * wire, where `execution.taskSupport` is stripped by the 2026 `ToolSchema` and
+ * auto-selection can therefore NEVER succeed, six task-dependent checks skipped
+ * and the run still reported `passed: true`. A resolution carries both a
+ * user-actionable reason and whether that reason leaves work untested
+ * (`blocking`) or is simply inapplicable (no tasks wire at all).
+ */
+export interface ProbeToolResolution {
+  tool?: MCPListedTool;
+  /** Why no tool resolved, in terms the caller can act on. */
+  reason?: string;
+  /** True when the missing tool leaves applicable checks unexercised. */
+  blocking?: boolean;
+}
+
+/**
+ * Resolves the probe tool, or explains — actionably — why it could not.
+ *
+ * An explicit `requestedName` that the server does not list is a resolution
+ * FAILURE, not a silent miss: a typo would otherwise skip every task-dependent
+ * check while the run still read as conformant.
+ */
+export function resolveProbeTool(
+  wire: TasksWire,
+  tools: MCPListedTool[],
+  requestedName?: string
+): ProbeToolResolution {
+  if (wire === "none") {
+    return {
+      reason:
+        "connection resolves to no tasks wire, so there is no task behavior to probe",
+      blocking: false,
+    };
+  }
+
+  const tool = pickProbeTool(tools, requestedName);
+  if (tool) return { tool };
+
+  if (requestedName) {
+    return {
+      reason: `the requested probe tool ${JSON.stringify(
+        requestedName
+      )} is not listed by this server, so no task could be provoked (${describeListedTools(
+        tools
+      )}); pass --tool-name (SDK: toolName) with a tool the server lists`,
+      blocking: true,
+    };
+  }
+
+  return {
+    reason:
+      wire === "extension"
+        ? `no probe tool could be selected automatically: tools are chosen by \`execution.taskSupport\`, which the 2026-07-28 ToolSchema strips, so a tasks-extension server cannot advertise which tool creates a task. Pass --tool-name (SDK: toolName) naming a task-creating tool (${describeListedTools(
+            tools
+          )})`
+        : `no listed tool advertises \`execution.taskSupport\`, so no task could be provoked (${describeListedTools(
+            tools
+          )}); pass --tool-name (SDK: toolName) naming a task-creating tool`,
+    blocking: true,
+  };
 }
 
 /**
@@ -669,7 +824,14 @@ export class MCPTasksConformanceTest {
           const taskCapableTools = tools.filter(
             (tool) => toolTaskSupport(tool) !== undefined
           );
-          const probeTool = pickProbeTool(tools, this.config.toolName);
+          const probe = resolveProbeTool(wire, tools, this.config.toolName);
+          const probeTool = probe.tool;
+          /** The check verdict for "there is no probe tool", per resolution. */
+          const missingProbeTool = (id: MCPTasksCheckId) =>
+            (probe.blocking ? couldNotRun : notApplicable)(
+              id,
+              probe.reason ?? "no probe tool resolved"
+            );
 
           let createdTaskId: string | undefined;
           let creationResult: unknown;
@@ -699,20 +861,8 @@ export class MCPTasksConformanceTest {
 
           if (selected.has("tasks-result-type-discipline")) {
             const stepStartedAt = Date.now();
-            if (wire === "none") {
-              checks.push(
-                skipped(
-                  "tasks-result-type-discipline",
-                  "connection resolves to no tasks wire"
-                )
-              );
-            } else if (!probeTool) {
-              checks.push(
-                skipped(
-                  "tasks-result-type-discipline",
-                  "no task-capable tool to probe (pass toolName to choose one)"
-                )
-              );
+            if (!probeTool) {
+              checks.push(missingProbeTool("tasks-result-type-discipline"));
             } else if (creationResult instanceof Error) {
               checks.push(
                 failed(
@@ -780,15 +930,15 @@ export class MCPTasksConformanceTest {
 
           if (selected.has("tasks-undeclared-creation-refused")) {
             const stepStartedAt = Date.now();
-            if (wire !== "extension" || !probeTool) {
+            if (wire !== "extension") {
               checks.push(
-                skipped(
+                notApplicable(
                   "tasks-undeclared-creation-refused",
-                  wire === "extension"
-                    ? "no task-capable tool to probe (pass toolName to choose one)"
-                    : "check applies to the extension wire only"
+                  "check applies to the extension wire only"
                 )
               );
+            } else if (!probeTool) {
+              checks.push(missingProbeTool("tasks-undeclared-creation-refused"));
             } else {
               // tasks.md:61 — a server MUST NOT return `CreateTaskResult` to a
               // client that did not include the extension capability ON THAT
@@ -849,19 +999,34 @@ export class MCPTasksConformanceTest {
           const finalTask = polled.task;
           // Distinguishes "there was never a task" from "polling the task
           // failed", so no dependent check skips under a message that hides a
-          // broken read.
-          const noTaskReason = createdTaskId
-            ? polled.error === undefined
-              ? `task ${createdTaskId} was never readable within ${this.config.pollTimeoutMs}ms`
-              : `polling task ${createdTaskId} failed: ${errorMessage(
-                  polled.error
-                )}`
-            : "no task was created to inspect";
+          // broken read. Every branch here leaves the check UNEXERCISED, so the
+          // verdict is `could-not-run` — except when no probe tool resolved at
+          // all, where the resolution already decided whether that is a gap or
+          // an inapplicability (no tasks wire).
+          const noTask = (id: MCPTasksCheckId): MCPTasksCheckResult => {
+            if (!probeTool) return missingProbeTool(id);
+            if (!createdTaskId) {
+              return couldNotRun(
+                id,
+                `the probed tool ${JSON.stringify(
+                  probeTool.name
+                )} returned a normal result, so no task existed to inspect; name a task-creating tool with --tool-name (SDK: toolName) or supply --tool-args (SDK: toolArguments) that provoke one`
+              );
+            }
+            return couldNotRun(
+              id,
+              polled.error === undefined
+                ? `task ${createdTaskId} was never readable within ${this.config.pollTimeoutMs}ms`
+                : `polling task ${createdTaskId} failed: ${errorMessage(
+                    polled.error
+                  )}`
+            );
+          };
 
           if (selected.has("tasks-ttl-shape")) {
             const stepStartedAt = Date.now();
             if (!finalTask) {
-              checks.push(skipped("tasks-ttl-shape", noTaskReason));
+              checks.push(noTask("tasks-ttl-shape"));
             } else {
               const verdict = validateTaskTtlShape(wire, finalTask);
               checks.push(
@@ -885,14 +1050,16 @@ export class MCPTasksConformanceTest {
           if (selected.has("tasks-inline-result")) {
             const stepStartedAt = Date.now();
             if (!finalTask || !createdTaskId) {
-              checks.push(skipped("tasks-inline-result", noTaskReason));
+              checks.push(noTask("tasks-inline-result"));
             } else if (!TERMINAL_STATUSES.has(String(finalTask.status))) {
               checks.push(
-                skipped(
+                couldNotRun(
                   "tasks-inline-result",
                   `task did not reach a terminal status within ${
                     this.config.pollTimeoutMs
-                  }ms (last status: ${String(finalTask.status)})`
+                  }ms (last status: ${String(
+                    finalTask.status
+                  )}); raise --poll-timeout (SDK: pollTimeoutMs) or probe a shorter-lived task`
                 )
               );
             } else if (wire === "extension") {
@@ -955,18 +1122,20 @@ export class MCPTasksConformanceTest {
             const isHttp = "url" in this.config.serverConfig;
             if (!isHttp) {
               checks.push(
-                skipped(
+                notApplicable(
                   "tasks-mcp-name-routing",
                   "Mcp-Name routing applies to HTTP transports only"
                 )
               );
-            } else if (!createdTaskId || wire !== "extension") {
+            } else if (wire !== "extension") {
               checks.push(
-                skipped(
+                notApplicable(
                   "tasks-mcp-name-routing",
-                  "no extension task was created to route"
+                  "Mcp-Name task routing applies to the extension wire only"
                 )
               );
+            } else if (!createdTaskId) {
+              checks.push(noTask("tasks-mcp-name-routing"));
             } else {
               // The requirement is about the OUTBOUND request, so the header
               // is captured off the fetch seam rather than inferred from a
@@ -1020,15 +1189,15 @@ export class MCPTasksConformanceTest {
           // undeclared probe is, correctly, no violation at all).
           if (selected.has("tasks-undeclared-capability-rejected")) {
             const stepStartedAt = Date.now();
-            if (wire !== "extension" || !createdTaskId) {
+            if (wire !== "extension") {
               checks.push(
-                skipped(
+                notApplicable(
                   "tasks-undeclared-capability-rejected",
-                  wire === "extension"
-                    ? "no task was created to probe with"
-                    : "check applies to the extension wire only"
+                  "check applies to the extension wire only"
                 )
               );
+            } else if (!createdTaskId) {
+              checks.push(noTask("tasks-undeclared-capability-rejected"));
             } else {
               const probes = await this.probeUndeclaredTaskMethods(
                 manager,
@@ -1038,9 +1207,9 @@ export class MCPTasksConformanceTest {
               );
               if (probes === undefined) {
                 checks.push(
-                  skipped(
+                  couldNotRun(
                     "tasks-undeclared-capability-rejected",
-                    "the connection exposes no raw request seam, so an undeclared call cannot be sent"
+                    "the connection exposes no raw request seam, so an undeclared call could not be sent and the -32003 requirement was not tested"
                   )
                 );
               } else {
@@ -1102,8 +1271,14 @@ export class MCPTasksConformanceTest {
             );
           }
 
+          const verdict = decideOutcome(checks);
+
           return {
-            passed: checks.every((check) => check.status !== "failed"),
+            passed: verdict.outcome === "passed",
+            outcome: verdict.outcome,
+            ...(verdict.incompleteReason
+              ? { incompleteReason: verdict.incompleteReason }
+              : {}),
             target: this.config.target,
             checks,
             summary: buildSummary(checks),
@@ -1136,6 +1311,7 @@ export class MCPTasksConformanceTest {
       );
       return {
         passed: false,
+        outcome: "failed",
         target: this.config.target,
         checks: [failure],
         summary: buildSummary([failure]),
