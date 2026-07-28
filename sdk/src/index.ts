@@ -660,6 +660,53 @@ export {
   resolveProbeTool,
 } from "./tasks-conformance/index.js";
 
+// MCP Tasks runtime — the lifecycle engine, the wire adapters, the creation
+// fan-out, the `await` driver, and the tool-call seam. Previously reachable
+// only through `@mcpjam/sdk/browser`, which left every Node consumer (the
+// inspector server, the CLI) re-deriving these rules locally.
+export {
+  TaskLifecycleEngine,
+  taskLifecycleKey,
+  isTerminalLifecycleStatus,
+  toTaskLifecycleSnapshot,
+  TERMINAL_LIFECYCLE_STATUSES,
+  extensionTaskToObservation,
+  legacyTaskToObservation,
+  isUnknownTaskError,
+  isTasksDeclarationRequiredError,
+  parseRetryAfterMs,
+  UNKNOWN_TASK_ERROR_CODE,
+  TASKS_DECLARATION_REQUIRED_ERROR_CODE,
+  TaskCreatedSink,
+  driveTaskToTerminal,
+  runToolTaskSeam,
+  toolTaskSeamOptionsFor,
+  TASK_SEAM_META_KEY,
+  isCreateTaskExtResult,
+  assertCreateTaskExtResult,
+  assertGetTaskExtResult,
+  InvalidTaskExtPayloadError,
+  isInvalidTaskExtPayloadError,
+  resolveTasksSupport,
+} from "./mcp-client-manager/index.js";
+export type {
+  LiveTasksWire,
+  TaskLifecycleIdentity,
+  TaskLifecycleObservation,
+  TaskLifecycleSnapshot,
+  TaskLifecycleStatus,
+  TaskCreatedConsumer,
+  TaskCreatedEvent,
+  TaskCreationSurface,
+  TaskAwaitOutcome,
+  TaskAwaitResult,
+  ToolTaskSeamContext,
+  ToolTaskSeamMeta,
+  ToolTaskSeamOptions,
+  TasksSupport,
+  TasksWire,
+} from "./mcp-client-manager/index.js";
+
 export type {
   ConformanceResult,
   ConformanceStepId,
@@ -744,6 +791,25 @@ export type {
   CspDomainSet,
   OpenAiAppsCapabilities,
   McpAppsCapabilities,
+} from "./host-config/index.js";
+
+// MCPJam's Tasks **product policy** (`com.mcpjam/tasks`) — never a wire
+// capability. Exported so the surfaces that resolve a mode can do so without
+// reaching into a subpath, and so `taskModeForSurface` stays the single place
+// the matrix lives.
+export {
+  MCPJAM_TASKS_POLICY_EXTENSION_ID,
+  readTasksPolicy,
+  describeInvalidTasksPolicy,
+  setTasksPolicy,
+  clearTasksPolicy,
+  taskModeForSurface,
+  surfaceMayDeclareTasks,
+} from "./host-config/index.js";
+export type {
+  TasksPolicy,
+  TaskMode,
+  TaskSurface,
 } from "./host-config/index.js";
 
 // Multi-round-trip (`input_required`) manual driver — MCP 2026-07-28 spec §12.

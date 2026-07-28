@@ -143,6 +143,11 @@ import {
   convertMCPToolsToVercelTools,
   type ToolSchemaOverrides,
 } from "./tool-converters.js";
+import {
+  runToolTaskSeam,
+  type ToolTaskSeamOptions,
+} from "./tool-task-seam.js";
+import { extensionTaskToObservation } from "./task-lifecycle-adapters.js";
 import type { ModelVisibleMcpToolResults } from "../host-config/types.js";
 import {
   applyRuntimeClientCapabilities,
@@ -802,6 +807,16 @@ export class MCPClientManager {
       includeAppOnly?: boolean;
       /** Host policy for model visibility of MCP tool-result content/resources. */
       modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+      /**
+       * Task policy for the tool calls this set produces. Omit (the default)
+       * and every call takes the pre-existing path, byte-for-byte: no `_meta`,
+       * no declaration, no extra request field. See `tool-task-seam.ts`.
+       *
+       * The mode is resolved by the CALLER — this class must not read host
+       * configs. `off` is expressed by omitting the option entirely, which is
+       * what `toolTaskSeamOptionsFor` returns for it.
+       */
+      tasks?: ToolTaskSeamOptions;
     } = {}
   ): Promise<AiSdkTool> {
     const ids = Array.isArray(serverIds)
@@ -830,13 +845,50 @@ export class MCPClientManager {
               const requestOptions = callOptions?.abortSignal
                 ? { signal: callOptions.abortSignal }
                 : undefined;
-              const result = await this.executeTool(
-                id,
-                name,
-                (args ?? {}) as ExecuteToolArguments,
-                requestOptions
+              const toolArgs = (args ?? {}) as ExecuteToolArguments;
+              if (!options.tasks) {
+                const result = await this.executeTool(
+                  id,
+                  name,
+                  toolArgs,
+                  requestOptions
+                );
+                return assertCallToolResult(result, `Tool "${name}" result`);
+              }
+              // `id` is captured per server, so the wire is resolved per call:
+              // a mixed tool set does the right thing for each server without
+              // any caller knowing mixed sets exist.
+              return runToolTaskSeam(
+                {
+                  serverId: id,
+                  toolName: name,
+                  wire: this.getTasksSupport(id).wire,
+                  callPlain: () =>
+                    this.executeTool(id, name, toolArgs, requestOptions),
+                  callEligible: () =>
+                    this.executeTool(id, name, toolArgs, {
+                      ...(requestOptions ? { request: requestOptions } : {}),
+                      allowTaskResult: true,
+                    }),
+                  getTask: async (taskId) =>
+                    extensionTaskToObservation(
+                      await this.getTaskExt(id, taskId, requestOptions)
+                    ),
+                  updateTask: async (taskId, inputResponses) => {
+                    // The await driver is wire-neutral and types responses as
+                    // plain JSON; on this branch the wire is known to be the
+                    // extension, whose `InputResponses` is the narrower shape
+                    // `collectTaskInputResponses` already validated against.
+                    await this.updateTask(
+                      id,
+                      taskId,
+                      inputResponses as TaskExtInputResponses,
+                      requestOptions
+                    );
+                  },
+                },
+                options.tasks
               );
-              return assertCallToolResult(result, `Tool "${name}" result`);
             },
           });
 

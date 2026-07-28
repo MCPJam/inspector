@@ -276,6 +276,19 @@ export type {
   TaskAwaitOutcome,
   TaskAwaitResult,
 } from "./task-await-driver.js";
+
+// The one place a model-facing tool call may become a task.
+export {
+  runToolTaskSeam,
+  toolTaskSeamOptionsFor,
+  TASK_SEAM_META_KEY,
+} from "./tool-task-seam.js";
+export type {
+  ToolTaskAwaitOptions,
+  ToolTaskSeamContext,
+  ToolTaskSeamMeta,
+  ToolTaskSeamOptions,
+} from "./tool-task-seam.js";
 export type {
   CollectTaskInputResult,
   DeclaredInputCapabilities,
