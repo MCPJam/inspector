@@ -150,7 +150,9 @@ export function GenerateSwarmDialog({
   const createJourneyRows = async (
     personaRefId: string,
     journeys: SwarmGeneratedJourney[],
-    attachmentId: string
+    attachmentId: string,
+    /** Snapshotted at submit — see `handleGenerate`. Never the live state. */
+    targetHostIds: string[]
   ): Promise<{ created: number; firstError: Error | null }> => {
     let created = 0;
     let firstError: Error | null = null;
@@ -159,7 +161,7 @@ export function GenerateSwarmDialog({
         await onCreateJourney(personaRefId, {
           ...(journey.name ? { name: journey.name } : {}),
           goal: journey.goal,
-          hostIds,
+          hostIds: targetHostIds,
           serverAttachmentId: attachmentId,
           config: { sessionsPerHost: 1, maxTurns: 6 },
         });
@@ -192,7 +194,12 @@ export function GenerateSwarmDialog({
     }
     setPending(true);
     setErrorMessage(null);
+    // Snapshot BOTH targets at submit. Generation is a slow round-trip and the
+    // pickers stay mounted, so reading live state after the await would let a
+    // mid-flight change retarget the created rows — or clear the host list and
+    // fail every mutation — after the quota was already spent.
     const attachmentId = serverAttachmentId;
+    const targetHostIds = [...hostIds];
 
     try {
       if (mode === "persona") {
@@ -206,6 +213,13 @@ export function GenerateSwarmDialog({
           serverAttachmentId: attachmentId,
           journeyCount,
         });
+        if (result.journeys.length === 0) {
+          // Checked before onCreatePersona so a failed generation can't strand
+          // a journey-less persona. "Generate persona" always ships journeys.
+          throw new Error(
+            "Generation returned no journeys. Try again, or pick a server group whose servers have been connected."
+          );
+        }
         const personaRefId = await onCreatePersona({
           name: result.persona.name,
           role: result.persona.role,
@@ -218,7 +232,8 @@ export function GenerateSwarmDialog({
         const { created, firstError } = await createJourneyRows(
           personaRefId,
           result.journeys,
-          attachmentId
+          attachmentId,
+          targetHostIds
         );
         // The persona landed either way — select it so the new row is visible
         // even when every journey write failed.
@@ -265,10 +280,16 @@ export function GenerateSwarmDialog({
           ...(persona.notes ? { notes: persona.notes } : {}),
         },
       });
+      if (result.journeys.length === 0) {
+        throw new Error(
+          "Generation returned no journeys. Try again, or pick a server group whose servers have been connected."
+        );
+      }
       const { created, firstError } = await createJourneyRows(
         persona._id,
         result.journeys,
-        attachmentId
+        attachmentId,
+        targetHostIds
       );
       // Every write failed (deleted server group, rejected goals, …): surface
       // the mutation error instead of closing on a "0 of N" success toast —

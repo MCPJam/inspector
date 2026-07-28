@@ -293,6 +293,58 @@ describe("SwarmsTab — generate persona", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("treats an empty generated slate as a failure and writes nothing", async () => {
+    generatePersonaMock.mockResolvedValue({
+      persona: { name: "P", role: "R" },
+      journeys: [],
+    });
+
+    openGeneratePersona();
+    await pickClient(/host one/i);
+    fireEvent.click(screen.getByTestId("mock-server-group-picker"));
+    fireEvent.click(screen.getByRole("button", { name: /generate persona/i }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("returned no journeys");
+    // Rejected BEFORE the persona write, so no journey-less row is stranded.
+    expect(createPersonaMutation).not.toHaveBeenCalled();
+    expect(toastMock.success).not.toHaveBeenCalled();
+  });
+
+  it("targets the clients selected at submit, not a mid-flight change", async () => {
+    let releaseGenerate: (v: unknown) => void = () => {};
+    generatePersonaMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseGenerate = resolve;
+        })
+    );
+
+    openGeneratePersona();
+    await pickClient(/host one/i);
+    fireEvent.click(screen.getByTestId("mock-server-group-picker"));
+    fireEvent.click(screen.getByRole("button", { name: /generate persona/i }));
+
+    // Deselect the host while the generation request is still in flight. The
+    // multi-select popover stays open after a toggle, so click the row
+    // directly rather than re-opening (which would just close it).
+    fireEvent.click(await screen.findByRole("checkbox", { name: /host one/i }));
+
+    releaseGenerate({
+      persona: { name: "P", role: "R" },
+      journeys: [{ goal: "goal one" }],
+    });
+
+    await waitFor(() => {
+      expect(createJourneyMutation).toHaveBeenCalledTimes(1);
+    });
+    // The snapshot wins: without it this would be [] and the mutation would
+    // fail after the quota was already spent.
+    expect(
+      (createJourneyMutation.mock.calls[0]![0] as any).hostIds
+    ).toEqual(["host-1"]);
+  });
+
   it("renders a quota 429 inline instead of closing the dialog", async () => {
     generatePersonaMock.mockRejectedValue(
       new SwarmGenerateError(429, "You've hit your usage limit for today.")
