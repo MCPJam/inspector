@@ -264,9 +264,17 @@ export async function resolveEnvironmentForRuntime(
 }
 
 // ── Projections used by the executing caller ────────────────────────────────
+//
+// Parameter types are `Pick`s of the full spec on purpose: the Phase 5
+// environment-backed chatbox payload (`ChatboxEnvironmentRuntime`, see
+// `utils/chatbox-runtime-config.ts`) carries the same `servers`/`skills`
+// shapes without the rest of the spec, and reuses these projections instead of
+// growing a drifting second copy.
 
 /** The server ids to connect this turn (already live-healed by the backend). */
-export function runtimeServerIds(spec: ResolvedEnvironmentRuntime): string[] {
+export function runtimeServerIds(
+  spec: Pick<ResolvedEnvironmentRuntime, "servers">
+): string[] {
   return Array.isArray(spec.servers.connectable)
     ? spec.servers.connectable.map((entry) => entry.serverId)
     : spec.servers.effectiveServerIds;
@@ -277,7 +285,9 @@ export function runtimeServerIds(spec: ResolvedEnvironmentRuntime): string[] {
  * backend omits the name-carrying projection (the manager then falls back to
  * showing the server id) — never a partially-aligned array.
  */
-export function runtimeServerNames(spec: ResolvedEnvironmentRuntime): string[] {
+export function runtimeServerNames(
+  spec: Pick<ResolvedEnvironmentRuntime, "servers">
+): string[] {
   return Array.isArray(spec.servers.connectable)
     ? spec.servers.connectable.map((entry) => entry.name)
     : [];
@@ -302,7 +312,7 @@ export function runtimeServersAreOverridden(
  * cannot leak into skill delivery by accident.
  */
 export function runtimeSkills(
-  spec: ResolvedEnvironmentRuntime
+  spec: Pick<ResolvedEnvironmentRuntime, "skills">
 ): RuntimeSkill[] {
   return (spec.skills ?? []).map((skill) => ({
     skillId: skill.skillId,

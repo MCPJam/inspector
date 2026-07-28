@@ -51,7 +51,11 @@ import {
 } from "./auth.js";
 import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
 import { getClientIp } from "../../utils/client-ip.js";
-import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config.js";
+import {
+  fetchChatboxRuntimeConfig,
+  readChatboxEnvironment,
+  type ChatboxEnvironmentRuntime,
+} from "../../utils/chatbox-runtime-config.js";
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
 import {
   parseXaaPolicyValue,
@@ -251,6 +255,12 @@ chatV2.post("/", async (c) => {
     // source for this turn's host config, server set, and skills — nothing
     // downstream may fall back to the body's `selectedServerIds`.
     let environmentSpec: ResolvedEnvironmentRuntime | null = null;
+    // Phase 5: set ONLY for an environment-backed chatbox turn — the additive
+    // `environment` payload on the chatbox runtime config (mcpjam-backend
+    // #805). Once present it is authoritative for the turn's server set and
+    // skills exactly like `environmentSpec` is for an environment target;
+    // absent ⇒ host-backed chatbox, today's behavior byte-identical.
+    let chatboxEnvironment: ChatboxEnvironmentRuntime | null = null;
     // INS-3: the turn's one answer to "what may this run reach?" — the split
     // explicit/plugin server sets, ref-addressed skills, and plugin origin.
     // Derived from `environmentSpec`, never from the body or a HostConfig
