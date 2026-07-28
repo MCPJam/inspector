@@ -73,6 +73,16 @@ export interface LegacyTasksFixtureOptions {
    * on its own or silently mis-handle.
    */
   createTaskWithoutStatus?: boolean;
+  /**
+   * Answer a task-augmented `tools/call` with a `CreateTaskResult` whose
+   * `status` is present and truthy but outside the 2025-11-25 enum.
+   *
+   * The nastier sibling of {@link createTaskWithoutStatus}: a presence check
+   * accepts it, and an unrecognized status normalizes to `working` downstream,
+   * so a watch polls a task the server never advances instead of reporting the
+   * malformed creation.
+   */
+  createTaskStatus?: string;
 }
 
 export interface ReceivedRequest {
@@ -209,6 +219,9 @@ export async function serveLegacyTasksFixture(
             ttl: (params.task as { ttl?: number }).ttl ?? 60_000,
           };
           if (options.createTaskWithoutStatus) delete task.status;
+          else if (options.createTaskStatus !== undefined) {
+            task.status = options.createTaskStatus;
+          }
           return { task };
         }
         return { content: [{ type: "text", text: "plain call" }] };

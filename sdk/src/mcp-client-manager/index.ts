@@ -240,6 +240,7 @@ export type {
 export {
   extensionTaskToObservation,
   legacyTaskToObservation,
+  LEGACY_TASK_STATUSES,
   isUnknownTaskError,
   isTasksDeclarationRequiredError,
   parseRetryAfterMs,

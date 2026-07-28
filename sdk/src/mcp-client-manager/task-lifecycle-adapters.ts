@@ -56,8 +56,12 @@ export function extensionTaskToObservation(
 /**
  * Legacy 2025-11-25 statuses. The in-core utility used the same five names, so
  * the normalized status needs no remapping — only the surrounding fields do.
+ *
+ * Exported because callers that validate a status before this normalizer ever
+ * runs — a creation-time check, say — must test the SAME five names. A second
+ * hand-written copy would be free to drift from the one the normalizer trusts.
  */
-const LEGACY_STATUSES = new Set([
+export const LEGACY_TASK_STATUSES: ReadonlySet<string> = new Set([
   "working",
   "input_required",
   "completed",
@@ -91,7 +95,7 @@ export function legacyTaskToObservation(
   task: MCPTask & Record<string, unknown>
 ): TaskLifecycleObservation {
   const rawStatus = String(task.status ?? "");
-  const status = LEGACY_STATUSES.has(rawStatus)
+  const status = LEGACY_TASK_STATUSES.has(rawStatus)
     ? (rawStatus as TaskLifecycleObservation["status"])
     : "working";
   const ttl = task.ttl;

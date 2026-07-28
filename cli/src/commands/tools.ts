@@ -282,7 +282,8 @@ async function runTaskAugmentedToolCall(args: {
               "TASK_MALFORMED",
               `Server returned a task-augmented result for ${toolName} that ` +
                 "is not a usable task: the 2025-11-25 `CreateTaskResult` " +
-                "requires both `taskId` and `status`.",
+                "requires a `taskId` and a `status` of `working`, " +
+                "`input_required`, `completed`, `failed`, or `cancelled`.",
               1,
               { wire: support.wire, result },
             );

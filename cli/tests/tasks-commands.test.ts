@@ -257,6 +257,38 @@ test("tools call --task rejects a malformed legacy task creation", async () => {
   );
 });
 
+test("tools call --task rejects a legacy creation with an off-enum status", async () => {
+  // The sibling case above, one step nastier. A presence check passes `queued`,
+  // and `legacyTaskToObservation` normalizes anything unrecognized to `working`
+  // — so under `--task-watch` this would poll a task the server never advances
+  // and surface as a timeout minutes later, with the actual fault (a status
+  // outside the 2025-11-25 enum) nowhere in the output. Watch is on here
+  // precisely to pin the outcome that a lenient check would have buried.
+  await withLegacyFixture(
+    async (fixture) => {
+      const run = await runCli([
+        "tools",
+        "call",
+        "--tool-name",
+        LEGACY_TASK_TOOL_NAME,
+        "--task",
+        "--task-watch",
+        "--duration-ms",
+        "4000",
+        ...httpTarget(fixture.url),
+      ]);
+      assert.equal(run.exitCode, 1, run.stderr);
+      const error = errorOf(run);
+      assert.equal(error.code, "TASK_MALFORMED");
+      // The message has to name the enum, or it sends the reader looking for a
+      // missing field that is in fact present.
+      assert.match(error.message, /working/);
+      assert.doesNotMatch(run.stderr, /timed out/i);
+    },
+    { createTaskStatus: "queued" },
+  );
+});
+
 test("tasks get reads a live extension task inline", async () => {
   await withExtensionFixture(async (fixture) => {
     const taskId = await createExtensionTask(fixture.url);

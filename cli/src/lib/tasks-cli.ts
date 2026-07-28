@@ -4,6 +4,7 @@ import {
   extensionTaskToObservation,
   isUnknownTaskError,
   legacyTaskToObservation,
+  LEGACY_TASK_STATUSES,
   TaskLifecycleEngine,
   type MCPClientManager,
   type MCPServerConfig,
@@ -211,7 +212,23 @@ export function detectCreatedTask(
 
   if (wire === "extension") {
     if (task.resultType !== "task") return null;
-  } else if (!task.status) {
+  } else if (
+    typeof task.status !== "string" ||
+    !LEGACY_TASK_STATUSES.has(task.status)
+  ) {
+    // Membership, not mere presence. A status of `"queued"` is exactly as
+    // nonconforming as a missing one, but a truthiness check accepts it — and
+    // the damage is worse than a bad envelope: `legacyTaskToObservation`
+    // normalizes an unrecognized status to `working`, so `--task-watch` would
+    // poll a task the server never advances and bury the malformed creation
+    // under an opaque timeout.
+    //
+    // The normalizer is right to be lenient — an unclassifiable handle is
+    // still a handle, and inventing a terminal state would strand it. That
+    // leniency is for a status observed mid-flight. Creation is the one moment
+    // the CLI can still refuse the handle outright, and the legacy wire is a
+    // frozen revision, so its five statuses are not a moving target to be
+    // forward-compatible with.
     return null;
   }
 

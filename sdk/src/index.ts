@@ -831,6 +831,7 @@ export {
   TERMINAL_LIFECYCLE_STATUSES,
   extensionTaskToObservation,
   legacyTaskToObservation,
+  LEGACY_TASK_STATUSES,
   isUnknownTaskError,
   UNKNOWN_TASK_ERROR_CODE,
   canDeclareTasksExtension,
