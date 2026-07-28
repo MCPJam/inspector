@@ -230,22 +230,37 @@ async function runTaskAugmentedToolCall(args: {
         // The legacy opt-in must use the dedicated fifth parameter, the same
         // way the Inspector's own tools route does.
         //
-        // Both branches carry the watch's `signal`, so a creation that hangs
-        // unwinds into the documented `aborted` outcome instead of waiting out
-        // the request timeout.
-        const result =
-          support.wire === "legacy"
-            ? await manager.executeTool(
-                serverId,
-                toolName,
-                params,
-                { signal },
-                options.taskTtl !== undefined ? { ttl: options.taskTtl } : {},
-              )
-            : await manager.executeTool(serverId, toolName, params, {
-                allowTaskResult: true,
-                request: { signal },
-              });
+        // Both branches carry the watch's `signal` so a hung creation can be
+        // interrupted at all — but forwarding it means an interrupt now REJECTS
+        // the in-flight request instead of hanging, and that rejection has to
+        // be translated. Left to propagate it would surface as a generic
+        // `INTERNAL_ERROR` exit 1, contradicting the documented `aborted`
+        // outcome for exactly the case the signal was plumbed in to serve.
+        let result: unknown;
+        try {
+          result =
+            support.wire === "legacy"
+              ? await manager.executeTool(
+                  serverId,
+                  toolName,
+                  params,
+                  { signal },
+                  options.taskTtl !== undefined ? { ttl: options.taskTtl } : {},
+                )
+              : await manager.executeTool(serverId, toolName, params, {
+                  allowTaskResult: true,
+                  request: { signal },
+                });
+        } catch (error) {
+          if (!signal.aborted) throw error;
+          // No task exists yet, so there is no watch envelope to report and no
+          // task id to name. `phase` says where the interrupt landed.
+          return {
+            aborted: { wire: support.wire, phase: "create" as const },
+            created: null,
+            result: null,
+          };
+        }
 
         const created = detectCreatedTask(support.wire, result);
         if (!created) {
@@ -277,10 +292,12 @@ async function runTaskAugmentedToolCall(args: {
             `No task materialized: the server answered ${toolName} ` +
               "synchronously. Returning the tool result as-is.",
           );
-          return { created: null, result };
+          return { aborted: null, created: null, result };
         }
 
-        if (!options.taskWatch) return { created, result: null };
+        if (!options.taskWatch) {
+          return { aborted: null, created, result: null };
+        }
 
         const taskId = created.task.taskId;
         const watch = await driveTaskWatch({
@@ -293,7 +310,7 @@ async function runTaskAugmentedToolCall(args: {
           signal,
           ...(onState ? { onState } : {}),
         });
-        return { created, watch, result: null };
+        return { aborted: null, created, watch, result: null };
         });
       },
       {
@@ -317,15 +334,21 @@ async function runTaskAugmentedToolCall(args: {
     throw error;
   }
 
-  const payload = envelope.created
-    ? envelope.watch
-      ? { created: envelope.created, watch: envelope.watch }
-      : envelope.created
-    : envelope.result;
+  const payload = envelope.aborted
+    ? { status: "aborted", ...envelope.aborted }
+    : envelope.created
+      ? envelope.watch
+        ? { created: envelope.created, watch: envelope.watch }
+        : envelope.created
+      : envelope.result;
 
-  const exitCode = envelope.watch
-    ? taskWatchExitCode(envelope.watch.outcome)
-    : 0;
+  // An interrupt is 130 wherever it lands, so a caller reads the same code
+  // whether the signal arrived during creation or mid-watch.
+  const exitCode = envelope.aborted
+    ? 130
+    : envelope.watch
+      ? taskWatchExitCode(envelope.watch.outcome)
+      : 0;
 
   // A watch that ended anywhere but `completed` is an error outcome for the
   // artifact, even though the command itself ran correctly — the artifact
@@ -333,14 +356,23 @@ async function runTaskAugmentedToolCall(args: {
   await writeArtifact(
     exitCode === 0
       ? { status: "success", result: payload }
-      : {
-          status: "error",
-          result: payload,
-          error: {
-            code: `task_${envelope.watch?.outcome ?? "unknown"}`,
-            message: `Task watch ended with outcome "${envelope.watch?.outcome}".`,
+      : envelope.aborted
+        ? {
+            status: "error",
+            result: payload,
+            error: {
+              code: "task_aborted",
+              message: `Interrupted during task ${envelope.aborted.phase}.`,
+            },
+          }
+        : {
+            status: "error",
+            result: payload,
+            error: {
+              code: `task_${envelope.watch?.outcome ?? "unknown"}`,
+              message: `Task watch ended with outcome "${envelope.watch?.outcome}".`,
+            },
           },
-        },
   );
 
   writeResult(

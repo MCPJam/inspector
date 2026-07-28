@@ -120,6 +120,8 @@ mcpjam tools call --url … --tool-name long_job --task --task-watch
 
 which emits `{ "created": …, "watch": … }` and exits with the watch's code.
 
+Interrupting before the task exists — Ctrl-C while the `tools/call` is still in flight — emits `{ "status": "aborted", "phase": "create", "wire": … }` and exits `130`, the same code an interrupted watch uses. There is no task id to report yet, so `phase` says where the interrupt landed instead.
+
 ### Pacing
 
 `--poll-interval-ms` sets **your** minimum interval. The server's advertised `pollIntervalMs`, any `Retry-After`, and error backoff still apply as floors on top of it, so the CLI cannot poll a server faster than that server asked for.
