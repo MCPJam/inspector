@@ -87,11 +87,35 @@ vi.mock("@/hooks/useToolQualityEnabled", () => ({
   useToolQualityEnabled: () => mockUseToolQualityEnabled(),
 }));
 
-// Mock task tracker
+// Mock task tracker. getTrackedTaskScope is read at the top of executeTool
+// (finding 4: scope captured at call start, per execution).
+const { mockTrackTask, mockGetTrackedTaskScope } = vi.hoisted(() => ({
+  mockTrackTask: vi.fn(),
+  mockGetTrackedTaskScope: vi.fn((): string | undefined => undefined),
+}));
 vi.mock("@/lib/task-tracker", () => ({
-  trackTask: vi.fn(),
-  // Read at the top of executeTool (finding 4: scope captured at call start).
-  getTrackedTaskScope: vi.fn(() => undefined),
+  trackTask: mockTrackTask,
+  getTrackedTaskScope: mockGetTrackedTaskScope,
+}));
+
+// Stub the elicitation dialog with an accept button so tests can resume a
+// pending execution without driving the real form.
+vi.mock("../ElicitationDialog", () => ({
+  ElicitationDialog: ({
+    elicitationRequest,
+    onResponse,
+  }: {
+    elicitationRequest: unknown;
+    onResponse: (action: "accept") => void;
+  }) =>
+    elicitationRequest ? (
+      <button
+        data-testid="elicitation-accept"
+        onClick={() => onResponse("accept")}
+      >
+        accept-elicitation
+      </button>
+    ) : null,
 }));
 
 // Mock app navigation — the task_created success branch navigates to /tasks;
@@ -788,6 +812,75 @@ describe("ToolsTab", () => {
       await waitFor(() => {
         expect(mockGetTaskCapabilities).toHaveBeenCalledWith("test-server");
       });
+    });
+  });
+
+  // Re-review finding 6 (r3668331238): the scope a task_created is filed
+  // under belongs to its ORIGINATING execution. A second execution started
+  // while the first's elicitation is pending must not clobber it — the scope
+  // rides on the per-execution elicitation record, not a shared ref.
+  describe("per-execution scope across overlapping executions", () => {
+    it("files the resumed first execution's task under the FIRST call's scope", async () => {
+      mockListTools.mockResolvedValue({
+        tools: [
+          {
+            name: "greet",
+            description: "Greet someone",
+            inputSchema: { type: "object", properties: {} },
+          },
+        ],
+      });
+      // Execution 1 captures scope-1; execution 2 (started later, after a
+      // project switch) captures scope-2.
+      mockGetTrackedTaskScope
+        .mockReturnValueOnce("scope-1")
+        .mockReturnValueOnce("scope-2");
+      mockExecuteToolApi
+        .mockResolvedValueOnce({
+          status: "elicitation_required",
+          executionId: "exec-1",
+          requestId: "req-1",
+          request: { message: "Need input" },
+          timestamp: "2026-01-01T00:00:00Z",
+        })
+        // Execution 2 stays in flight while execution 1 is resumed.
+        .mockReturnValueOnce(new Promise(() => {}));
+      mockRespondToElicitationApi.mockResolvedValue({
+        status: "task_created",
+        task: {
+          taskId: "task-1",
+          status: "working",
+          createdAt: "2026-01-01T00:00:01Z",
+        },
+      });
+
+      render(
+        <ToolsTab serverConfig={createServerConfig()} serverName="test-server" />
+      );
+      await waitFor(() => {
+        expect(screen.getByText("greet")).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByText("greet"));
+      const runButton = await screen.findByRole("button", { name: /^run/i });
+
+      // Execution 1 → suspends on elicitation (scope-1 on its record).
+      fireEvent.click(runButton);
+      await screen.findByTestId("elicitation-accept");
+
+      // Execution 2 starts while 1 is suspended; it captures scope-2.
+      fireEvent.click(runButton);
+      await waitFor(() => {
+        expect(mockExecuteToolApi).toHaveBeenCalledTimes(2);
+      });
+
+      // Resume execution 1: its task_created must carry scope-1.
+      fireEvent.click(screen.getByTestId("elicitation-accept"));
+      await waitFor(() => {
+        expect(mockTrackTask).toHaveBeenCalledTimes(1);
+      });
+      expect(mockTrackTask).toHaveBeenCalledWith(
+        expect.objectContaining({ taskId: "task-1", scope: "scope-1" })
+      );
     });
   });
 
