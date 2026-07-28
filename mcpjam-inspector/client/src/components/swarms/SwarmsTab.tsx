@@ -267,6 +267,13 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
   const [selectedPersonaId, setSelectedPersonaId] = useState<string | null>(
     () => deepLink.personaRefId ?? null
   );
+  // Sessions-tab persona filter — independent of the Personas-tab selection:
+  // that tab auto-selects a persona to land on, which must not narrow the flat
+  // Sessions browser away from its all-project default. Session deep-links
+  // still restore their persona filter.
+  const [sessionsPersonaFilter, setSessionsPersonaFilter] = useState<
+    string | null
+  >(() => (deepLink.threadId ? (deepLink.personaRefId ?? null) : null));
   const journeys = useJourneys(selectedPersonaId);
   // Lifted for the agent snapshot (one subscription).
 
@@ -1038,8 +1045,8 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
               projectId={projectId}
               personas={personas ?? []}
               hosts={hosts ?? []}
-              personaRefId={selectedPersonaId}
-              onPersonaRefIdChange={setSelectedPersonaId}
+              personaRefId={sessionsPersonaFilter}
+              onPersonaRefIdChange={setSessionsPersonaFilter}
               initialThreadId={deepLink.threadId}
             />
           </main>
