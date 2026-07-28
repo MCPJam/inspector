@@ -531,7 +531,7 @@ describe("DetailedTask status union", () => {
   it("accepts the response with AND without resultType:'complete'", () => {
     // tasks.md:338 says MUST, but `resultType` is absent from schema.json and
     // every DetailedTask variant is `additionalProperties: false` — schema and
-    // prose conflict, so neither presence nor absence may be rejected.
+    // prose conflict, so absence may not be rejected.
     const withDiscriminator = assertGetTaskExtResult({
       ...base,
       resultType: "complete",
@@ -541,6 +541,32 @@ describe("DetailedTask status union", () => {
     expect(
       (assertGetTaskExtResult({ ...base, status: "working" }) as any).resultType
     ).toBeUndefined();
+  });
+
+  it("rejects a resultType that is present but not 'complete'", () => {
+    // Absence is tolerated, but a WRONG discriminator misleads and contradicts
+    // the `GetTaskExtResult` type — including `"task"`, which is the creation
+    // discriminator and never valid on a tasks/get.
+    for (const resultType of ["banana", "task", "input_required", 7, null]) {
+      expect(() =>
+        assertGetTaskExtResult({ ...base, status: "working", resultType })
+      ).toThrow(InvalidTaskExtPayloadError);
+    }
+    let captured: unknown;
+    try {
+      assertGetTaskExtResult({
+        ...base,
+        status: "working",
+        resultType: "banana",
+      });
+    } catch (error) {
+      captured = error;
+    }
+    expect(captured).toBeInstanceOf(InvalidTaskExtPayloadError);
+    expect((captured as InvalidTaskExtPayloadError).method).toBe("tasks/get");
+    expect((captured as InvalidTaskExtPayloadError).issues.join()).toContain(
+      "resultType"
+    );
   });
 
   it("keeps isError:true a COMPLETED task, never failed", () => {
@@ -698,12 +724,28 @@ describe("empty acknowledgements", () => {
     expect(assertTaskExtAck({ _meta: { a: 1 } }, "tasks/update result")).toEqual(
       { _meta: { a: 1 } }
     );
-    // A transport that surfaced "no result" as undefined normalizes to `{}`.
-    expect(assertTaskExtAck(undefined, "tasks/update result")).toEqual({});
   });
 
-  it("rejects a non-object ack", () => {
-    for (const bad of [null, [], "ok", 1, true]) {
+  it("accepts an ack carrying resultType:'complete' and rejects a wrong one", () => {
+    // tasks.md:381 / :410 mandate the discriminator on the update/cancel acks
+    // too; beta.4 strips it before the guard sees it, so absence is tolerated
+    // and only a present-but-wrong value is a violation.
+    expect(
+      assertTaskExtAck({ resultType: "complete" }, "tasks/cancel result")
+    ).toEqual({ resultType: "complete" });
+    for (const resultType of ["banana", "task", "input_required"]) {
+      expect(() =>
+        assertTaskExtAck({ resultType }, "tasks/cancel result")
+      ).toThrow(InvalidTaskExtPayloadError);
+    }
+  });
+
+  it("rejects a non-object ack, including undefined", () => {
+    // `undefined` is NOT a transport-flattened empty result: beta.4 rejects a
+    // non-object result in `decodeResult` and only resolves what the caller's
+    // `z.looseObject({})` accepted, so `undefined` means a malformed/missing
+    // result and must not be laundered into a valid empty ack.
+    for (const bad of [undefined, null, [], "ok", 1, true]) {
       expect(() => assertTaskExtAck(bad, "tasks/update result")).toThrow(
         InvalidTaskExtPayloadError
       );

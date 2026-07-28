@@ -251,7 +251,54 @@ export const createTaskExtResultSchema = taskExtSchema.extend({
   resultType: z.literal("task"),
 });
 
-export const getTaskExtResultSchema = detailedTaskExtSchema;
+/**
+ * `resultType` on a `tasks/get` / `tasks/update` / `tasks/cancel` response:
+ * OPTIONAL, but when present it MUST be exactly `"complete"`.
+ *
+ * ABSENT is tolerated because schema and prose conflict at pin 2c1425d9:
+ * tasks.md:338 / :381 / :410 state the key as a MUST, yet `resultType` appears
+ * ZERO times in `schema.json` and every `DetailedTask` variant is
+ * `additionalProperties: false` — a schema-faithful server omits it. beta.4
+ * makes this concrete: its 2026 codec STRIPS `resultType` off the decoded
+ * result before the guards ever see it (client `src-*.mjs:3878-3884`), so on
+ * the real transport the field is always absent. See `GetTaskExtResult`.
+ *
+ * PRESENT-BUT-WRONG is a violation: a `"banana"` (or a `"task"` on a
+ * `tasks/get`) actively misleads a reader and contradicts the public
+ * `GetTaskExtResult` type, which promises `"complete"`. Same shape of rule as
+ * `validateCreateTaskShape` in `tasks-conformance/runner.ts`, which rejects a
+ * `CreateTaskResult` whose `resultType` is present but not `"task"` — except
+ * that there omission is ALSO a violation, because `resultType: "task"` is the
+ * only signal distinguishing a task creation from an ordinary tool result
+ * (tasks.md:102) and the whole detection path keys on it. On a completion
+ * response the field carries no information the `status` union does not
+ * already carry, so its absence is harmless.
+ */
+function checkOptionalCompleteResultType(
+  value: unknown,
+  ctx: z.RefinementCtx
+): void {
+  if (!isPlainRecord(value)) return;
+  const resultType = Object.getOwnPropertyDescriptor(
+    value,
+    "resultType"
+  )?.value;
+  if (resultType === undefined || resultType === "complete") return;
+  ctx.addIssue({
+    code: "custom",
+    path: ["resultType"],
+    // Server-controlled: never interpolate a non-string body into the message.
+    message: `expected resultType "complete" when present, got ${
+      typeof resultType === "string"
+        ? JSON.stringify(resultType.slice(0, 32))
+        : `a value of type ${typeof resultType}`
+    }`,
+  });
+}
+
+export const getTaskExtResultSchema = detailedTaskExtSchema.superRefine(
+  checkOptionalCompleteResultType
+);
 
 /**
  * `notifications/tasks` params. SEP-2663 delivers a full `DetailedTask`, so the
@@ -265,5 +312,13 @@ export const taskExtNotificationParamsSchema = detailedTaskExtSchema;
  * ack carries NO task state, so it is validated only as an object: a non-object
  * (array, string, `null`) is a wire violation, while any object — empty or not
  * — is accepted and passed through verbatim. Callers must re-poll `tasks/get`.
+ *
+ * The one exception is `resultType`, which tasks.md:381 / :410 mandate as
+ * `"complete"` here just as tasks.md:338 does for `tasks/get`: absent is
+ * tolerated, present-but-wrong is rejected. See
+ * {@link checkOptionalCompleteResultType}.
  */
-export const taskExtAckSchema = z.object({}).loose();
+export const taskExtAckSchema = z
+  .object({})
+  .loose()
+  .superRefine(checkOptionalCompleteResultType);

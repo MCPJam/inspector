@@ -150,18 +150,24 @@ export function assertDetailedTaskExt(
 /**
  * `tasks/update` / `tasks/cancel` acknowledgement. The ack is a bare `Result`
  * and carries NO task state — it is validated as an object only, and callers
- * must re-poll `tasks/get` for the post-operation status. `undefined` (a
- * transport that surfaced an empty result as nothing) is normalized to `{}`;
- * any other non-object is a wire violation.
+ * must re-poll `tasks/get` for the post-operation status. Any non-object,
+ * INCLUDING `undefined`, is a wire violation.
+ *
+ * `undefined` used to be normalized to `{}` on the theory that a transport may
+ * surface an empty result as nothing. It cannot: beta.4's 2026 codec rejects a
+ * non-object `result` outright (`decodeResult`, client `src-*.mjs:3828-3835`),
+ * a well-formed empty ack arrives as `{"resultType":"complete"}` and is lifted
+ * to `{}` (`src-*.mjs:3878-3884`), and the complete branch only ever resolves
+ * what the caller's result schema accepted (`src-*.mjs:6045-6049`) — the
+ * schema these calls pass is `z.looseObject({})`, which rejects `undefined`.
+ * So `undefined` here means a malformed or missing result and must not be
+ * laundered into a valid empty ack.
  */
 export function assertTaskExtAck(
   value: unknown,
   context: string,
   method?: string
 ): CancelTaskExtResult {
-  if (value === undefined) {
-    return {};
-  }
   const parsed = taskExtAckSchema.safeParse(value);
   if (!parsed.success) {
     throw new InvalidTaskExtPayloadError(context, issuesOf(parsed.error), {
