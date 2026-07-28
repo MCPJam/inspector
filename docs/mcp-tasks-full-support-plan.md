@@ -560,9 +560,16 @@ wire
 taskId
 createdAt
 updatedAt
+lastObservedAt
 lastKnownStatus
 terminalAt?
 ```
+
+`lastObservedAt` is the last time a live `tasks/get` under the same
+authorization context answered for this handle at all — any status, including a
+`-32602`. It is the retention clock's only input for a non-terminal row, and it
+is distinct from `updatedAt`, which moves on any row write. `terminalAt` is
+stamped when the task reaches a terminal status or is marked expired.
 
 Do not store result/error payloads, `statusMessage`, tool arguments,
 `inputRequests`, input responses, sampling content, roots, or model output.
@@ -572,7 +579,7 @@ Use:
 
 - an exact identity index including owner and auth context;
 - an owner/context list index;
-- a retention scan index;
+- retention scan indexes on `terminalAt` and on `lastObservedAt`;
 - a 200-row cap per owner/server/auth-context and a defensive 2,000-row global
   project cap.
 
@@ -580,16 +587,58 @@ Use:
 
 Implement:
 
-- `upsertHostedTask`: transactional insert-or-update and bounded FIFO eviction;
+- `upsertHostedTask`: transactional insert-or-update and bounded eviction. Evict
+  in this order — expired rows, then terminal rows by oldest `terminalAt`, then
+  non-terminal rows by oldest `lastObservedAt`. Do not evict by oldest
+  `createdAt`: the oldest row is often the longest-running live task, which is
+  the one the registry exists to recover;
 - `listHostedTasks`: exact owner/context only;
 - `reportHostedTaskStatuses`: patch-only and exact owner/context only;
 - `pruneHostedTasks`: bounded, cursor-driven draining until the backlog is
   empty.
 
-Do not prune from `ttlMs` observed only at creation. The extension permits TTL
-changes and `null`. Use a seven-day registry maximum age and 24-hour terminal
-retention; mark a task expired only after a live `-32602` result under the same
-authorization context.
+Do not prune from `ttlMs` observed only at creation. `ttlMs` is `number | null`
+and `null` means unlimited, the value MAY change over the task's lifetime, and
+the server — not the client — is the party permitted to discard the task once a
+TTL elapses (`tasks.md:136-140`, `tasks.md:340`). An elapsed TTL is therefore a
+revalidation hint, never a deletion trigger: it may raise a handle's poll
+priority, and nothing more.
+
+Retention runs from the end of a task's life, not from its beginning. There is
+no registry maximum age measured from `createdAt`. Concretely:
+
+- the retention clock starts at `terminalAt` — set when a live `tasks/get`
+  reports a terminal status (`completed`, `failed`, `cancelled`) or when the
+  task is marked expired — and a terminal or expired row is deleted 24 hours
+  later;
+- a non-terminal row is never deleted for being old. A task may legitimately
+  still be `working` or `input_required` after seven days, and dropping its
+  handle would destroy exactly the durability the registry exists to provide.
+
+Mark a task expired only after a live `-32602` on `tasks/get` under the same
+authorization context. The method pinning is load-bearing and matches §3: only
+`tasks/get` carries the `MUST` for `-32602`, while `tasks/update` and
+`tasks/cancel` carry a `SHOULD` (`tasks.md:793-795`), so a `-32602` from update
+or cancel is a warning that triggers a confirming `tasks/get`, never proof on
+its own.
+
+Growth is still bounded, by unobservability rather than by age. `lastObservedAt`
+advances whenever a live `tasks/get` answers for the handle, so a genuinely
+long-running task that is being polled keeps refreshing it. A non-terminal row
+whose `lastObservedAt` is older than seven days is dormant: nobody has been able
+to confirm it for a week, which is the signature of a server that vanished, a
+revoked credential, or an abandoned handle. The pruner attempts one bounded
+revalidation for such a row when a live client context is available, and reaps
+it otherwise. An orphaned row therefore ages out on a fixed seven-day bound
+after the last contact, while a live, polled task never does. The per-owner and
+per-project caps in D2 remain the hard backstop.
+
+MCPJam is deliberately **not** defining a maximum task lifetime here. If it ever
+wants one — for storage cost or compliance reasons — that must be written down
+as an explicit product decision with its consequence stated plainly: recovery
+handles for tasks that are still running are dropped at the cutoff, and those
+tasks become invisible and uncancellable from any device that did not create
+them. It must not arrive disguised as a retention default.
 
 Validate and cap every identifier and batch. `lastKnownStatus` is an enum plus
 MCPJam's local `expired` tombstone. Reporting an unknown identity never
@@ -692,7 +741,10 @@ fetched task only when the caller explicitly requests a refresh. Never return
 Add stable error codes:
 
 - `TASKS_UNSUPPORTED` — 422, never retry;
-- `TASK_NOT_FOUND` — 404 for task `-32602`, stop polling;
+- `TASK_NOT_FOUND` — 404 for a `-32602` on `tasks/get`, stop polling. A
+  `-32602` on `tasks/update` or `tasks/cancel` is only a `SHOULD`
+  (`tasks.md:793-795`), so it maps to the operation's own failure and does not
+  by itself retire the handle;
 - `TASK_INPUT_REQUIRED` — automation cannot fulfill input;
 - existing `VALIDATION_ERROR`, `TIMEOUT`, and `RATE_LIMITED`.
 
@@ -884,10 +936,55 @@ Roll out in this order:
 7. guests only after mixed-client risk is gone and a durable recovery decision
    is documented.
 
-Rollback disables new per-request declarations and registry/API gates without
-removing stored browser handles or changing legacy `2025-11-25` behavior.
-Registry rows age out under retention and never need to be exposed
-project-wide.
+Rollback must not be described as "disable the per-request declaration". The
+extension requires the declaration on the lifecycle methods themselves: a
+non-declaring client issuing `tasks/get`, `tasks/update`, or `tasks/cancel`
+**MUST** receive `-32003` (`tasks.md:797-799`). A blanket declaration kill would
+therefore keep every stored handle while making it unpollable, unanswerable, and
+uncancellable — the tasks keep running and consuming server resources, invisible
+to the user and to MCPJam.
+
+MCPJam's position is **lifecycle-only continuation**. Rollback disables task
+*creation* and leaves the *drain* path intact:
+
+- surfaces stop declaring `io.modelcontextprotocol/tasks` on `tools/call`, and
+  task affordances disappear from creation UI, so no new handles are minted;
+- surfaces keep declaring the extension on `tasks/get`, `tasks/update`, and
+  `tasks/cancel` for handles that already exist, for exactly as long as any
+  outstanding handle is non-terminal;
+- registry and public-API gates close for writes but keep serving reads of
+  existing handles, so a user on another device can still find and cancel work
+  they started.
+
+Explicit cancellation is the operator escalation, not the default. If the
+rollback is caused by a defect in creation or product policy, draining is
+correct and cancelling would destroy work the user asked for. If the rollback is
+caused by a defect in the lifecycle wire itself — where continuing to speak
+`tasks/*` is what is unsafe — the procedure inverts to cancel-then-disable:
+`tasks/cancel` every outstanding handle first, verify terminal status with
+`tasks/get`, then drop the declaration entirely.
+
+In-flight `input_required` tasks get an explicit rule, because they never reach
+a terminal status on their own. During a drain they remain answerable: the
+handle is shown read-only with two actions, respond (`tasks/update`) or cancel
+(`tasks/cancel`), both of which still carry the declaration under
+lifecycle-only continuation. When the rolled-back defect is in the input path
+itself — elicitation, roots, or sampling handling — MCPJam does not offer
+respond and cancels instead. An unattended drain that reaches its deadline
+cancels rather than abandons.
+
+Abandonment is the residual case, and it is bounded rather than silent. Anything
+still non-terminal after cancel-then-disable is marked locally as unrecoverable
+with the reason shown; MCPJam stops polling; and the registry row ages out under
+the D3 unobservability bound, since `lastObservedAt` stops advancing once
+polling stops. Stored browser handles are never removed as part of rollback, and
+registry rows are never exposed project-wide.
+
+Legacy `2025-11-25` behavior is unaffected by any of this. The legacy wire
+carries no per-request extension declaration, so a creation-scoped or
+declaration-scoped gate cannot reach it; legacy tasks continue to be created,
+polled, and cancelled exactly as before. Every gate above is scoped to the
+extension declaration specifically, not to Tasks as a product concept.
 
 ## 13. Final release checklist
 
@@ -908,6 +1005,11 @@ project-wide.
       extension field.
 - [ ] Hosted registry is owner- and authorization-context-scoped.
 - [ ] No registry result, status-message, input, or model payload is stored.
+- [ ] Registry retention starts at terminal status or a confirmed `tasks/get`
+      `-32602`, never at creation or at an elapsed `ttlMs`, and an unobservable
+      row still ages out.
+- [ ] Rollback is creation-scoped: the drain path keeps declaring on
+      `tasks/get`/`tasks/update`/`tasks/cancel`, and no handle is stranded.
 - [ ] Public envelopes include `wire` and `lastUpdatedAt` and are
       status-discriminated.
 - [ ] Preview polling endpoints ship with rate limiting and `Retry-After`.
