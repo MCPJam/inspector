@@ -110,6 +110,7 @@
               "cli/oauth-login",
               "cli/xaa",
               "cli/apps-conformance",
+              "cli/tasks-conformance",
               "cli/tools-resources-prompts",
               "cli/ci",
               "cli/telemetry"
@@ -157,6 +158,7 @@
               "sdk/reference/protocol-conformance",
               "sdk/reference/oauth-conformance",
               "sdk/reference/apps-conformance",
+              "sdk/reference/tasks-conformance",
               "sdk/reference/host-compat"
             ]
           }

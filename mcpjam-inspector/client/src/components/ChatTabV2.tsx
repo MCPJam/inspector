@@ -26,6 +26,7 @@ import {
 } from "./ui/resizable";
 import { ElicitationDialog } from "@/components/ElicitationDialog";
 import { MrtrElicitationHost } from "@/components/elicitation/MrtrElicitationHost";
+import { HostedMrtrHost } from "@/components/elicitation/HostedMrtrHost";
 import {
   ElicitationRequestDialog,
   UrlElicitationRequiredDialog,
@@ -2809,6 +2810,10 @@ export function ChatTabV2({
                 the agent calls can return `input_required`; the SDK driver
                 collects rounds through this shared dialog and retries. */}
             <MrtrElicitationHost />
+            {/* Hosted MRTR (§12.5): the durable-continuation rail. Distinct
+                from the local host above — different transport, same dialogs;
+                only one of the two can ever have a round in a given mode. */}
+            <HostedMrtrHost />
           </div>
         </ResizablePanel>
 

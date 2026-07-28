@@ -234,6 +234,32 @@ export type EvalTestCase = {
   probeConfig?: import("@/shared/probe-config").ProbeConfig;
 };
 
+/**
+ * How a run delivers its PINNED skills to the model (INS-5).
+ *
+ * Both variants are frozen snapshot content and both bypass approval — an eval
+ * run is auto-deny, and these are pure reads of content that cannot change
+ * mid-run. They differ only in the tool SURFACE, and which one a run needs is a
+ * property of what it pinned:
+ *
+ *  - `pinned` — bare-name tools over SKILL.md bodies. Every eval run that
+ *    predates plugins, unchanged: same tool names, same prompt stanza, and no
+ *    supporting-file tools advertised for files that cannot exist.
+ *  - `pinned-effective` — INS-3's ref-addressed surface, for a run whose pins
+ *    carry a plugin `modelRef` (two plugins may declare the same skill name, so
+ *    a bare name cannot identify one) or supporting FILES (the bare-name
+ *    surface has no tool to read them with).
+ *
+ * Decided ONCE, at the boundary that read the run's pins, so no iteration can
+ * disagree with another about the surface the suite was measured on.
+ */
+export type EvalPinnedSkillSource =
+  | { kind: "pinned"; skills: PinnableSkill[] }
+  | {
+      kind: "pinned-effective";
+      capabilities: import("./environments/effective-capabilities.js").EffectiveCapabilitySet;
+    };
+
 export type RunEvalSuiteOptions = {
   suiteId: string;
   runId: string | null; // null for quick runs
@@ -286,13 +312,17 @@ export type RunEvalSuiteOptions = {
    */
   suiteHostConfig?: Record<string, unknown> | null;
   /**
-   * Skills PINNED for this run (from `startTestSuiteRun`'s `pinnedSkills`,
-   * content joined from `evalSkillSnapshots`). Threaded into every iteration
-   * runner as `skillsSource: pinned`. Absent ⇒ the runners pass
-   * `skillsSource: none` (eval runs never use local-FS skills — decision 10);
-   * quick-run stays `none` (no run row = no pinning carrier).
+   * The skill delivery this run's PINS resolved to, decided once at the
+   * boundary (`prepareEvalRun`) and forwarded verbatim by every iteration
+   * runner. Absent ⇒ the runners pass `skillsSource: none` (eval runs never use
+   * local-FS skills — decision 10); quick-run stays absent (no run row = no
+   * pinning carrier).
+   *
+   * A SOURCE rather than a skill list because INS-5 gave the pin store two
+   * possible shapes, and which one a run needs is a property of what it pinned,
+   * not a per-iteration choice — see {@link EvalPinnedSkillSource}.
    */
-  pinnedSkills?: PinnableSkill[];
+  pinnedSkillSource?: EvalPinnedSkillSource;
 };
 
 /** One executed iteration inside a suite/quick run (evaluation + optional persisted iteration id). */
@@ -1071,12 +1101,11 @@ type RunIterationBaseParams = {
    * eval sandbox when the suite pins a computerEnvironment. */
   convexAuthToken: string;
   /**
-   * Skills PINNED for this run (frozen SKILL.md content from the run's
-   * `configSnapshot.pinnedSkills`). When present, the runner mints in-memory
-   * pinned skill tools (zero network). Eval runs NEVER use local-FS skills
-   * (decision 10) — the runner always passes `skillsSource: pinned|none`.
+   * The skill delivery this run's PINS resolved to (see
+   * {@link RunEvalSuiteOptions.pinnedSkillSource}). Eval runs NEVER use local-FS
+   * skills (decision 10) — the runner passes this or `skillsSource: none`.
    */
-  pinnedSkills?: PinnableSkill[];
+  pinnedSkillSource?: EvalPinnedSkillSource;
 };
 
 type RunIterationAiSdkParams = RunIterationBaseParams & {
@@ -1434,8 +1463,8 @@ const executeTestCase = async (params: {
    * receives its servers pre-resolved via `selectedServers`.
    */
   environment?: RunEvalSuiteOptions["config"]["environment"];
-  /** Pinned skills for this run (see RunEvalSuiteOptions.pinnedSkills). */
-  pinnedSkills?: PinnableSkill[];
+  /** Pinned skill delivery for this run (see RunEvalSuiteOptions.pinnedSkillSource). */
+  pinnedSkillSource?: EvalPinnedSkillSource;
 }) => {
   const {
     test,
@@ -1461,7 +1490,7 @@ const executeTestCase = async (params: {
     toolSignals,
     suiteHostConfig,
     environment,
-    pinnedSkills,
+    pinnedSkillSource,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const streaming = emit != null;
@@ -1543,7 +1572,7 @@ const executeTestCase = async (params: {
         toolSignals,
         suiteHostConfig,
         environment,
-        pinnedSkills,
+        pinnedSkillSource,
       };
       outcomes.push(
         await runSingleIteration(
@@ -1666,7 +1695,7 @@ const executeTestCase = async (params: {
         toolSignals,
         suiteHostConfig,
         environment,
-        pinnedSkills,
+        pinnedSkillSource,
       };
       const iterationOutcome = await runSingleIteration(
         () =>
@@ -1714,7 +1743,7 @@ const executeTestCase = async (params: {
         toolSignals,
         suiteHostConfig,
         environment,
-        pinnedSkills,
+        pinnedSkillSource,
       };
       const iterationOutcome = await runSingleIteration(
         () =>
@@ -1759,7 +1788,7 @@ const executeTestCase = async (params: {
       // for prompt-only cases.
       environment,
       convexAuthToken,
-      pinnedSkills,
+      pinnedSkillSource,
     };
     const iterationOutcome = await runSingleIteration(
       () =>
@@ -1800,7 +1829,7 @@ export const runEvalSuiteWithAiSdk = async ({
   suiteInjectOpenAiCompat,
   hostExecutionPolicy,
   suiteHostConfig,
-  pinnedSkills,
+  pinnedSkillSource,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
   const injectOpenAiCompat = suiteInjectOpenAiCompat === true;
   const tests = config.tests ?? [];
@@ -1925,7 +1954,7 @@ export const runEvalSuiteWithAiSdk = async ({
         toolSignals: resolvedToolSignals,
         suiteHostConfig,
         environment: config.environment,
-        ...(pinnedSkills ? { pinnedSkills } : {}),
+        ...(pinnedSkillSource ? { pinnedSkillSource } : {}),
       });
     const testPromises = tests.map((test) =>
       // Cap concurrent headless browsers for every model-free render check
@@ -2175,15 +2204,13 @@ const runLocalIteration = async ({
   suiteHostConfig,
   environment,
   convexAuthToken,
-  pinnedSkills,
+  pinnedSkillSource,
 }: RunIterationAiSdkParams & {
   emit?: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
   const resolvedTest = resolveEvalTestCase(test);
   // Eval runs NEVER use local-FS skills (decision 10): always explicit.
-  const skillsSource = pinnedSkills?.length
-    ? ({ kind: "pinned", skills: pinnedSkills } as const)
-    : ({ kind: "none" } as const);
+  const skillsSource = pinnedSkillSource ?? ({ kind: "none" } as const);
 
   // Check if run was cancelled before starting iteration
   if (runId !== null) {
@@ -3075,7 +3102,7 @@ const runHostedIterationWithBrowser = async (
     // iteration eval-sandbox provisioning + the bash tool (hosted parity with
     // the local runner).
     environment,
-    pinnedSkills,
+    pinnedSkillSource,
   }: RunIterationBackendParams & {
     emit?: StreamEmit;
   },
@@ -3083,9 +3110,7 @@ const runHostedIterationWithBrowser = async (
 ): Promise<EvalIterationOutcome> => {
   const resolvedTest = resolveEvalTestCase(test);
   // Eval runs NEVER use local-FS skills (decision 10): always explicit.
-  const skillsSource = pinnedSkills?.length
-    ? ({ kind: "pinned", skills: pinnedSkills } as const)
-    : ({ kind: "none" } as const);
+  const skillsSource = pinnedSkillSource ?? ({ kind: "none" } as const);
 
   // Check if run was cancelled before starting iteration
   if (runId !== null) {

@@ -701,14 +701,30 @@ export interface PrepareChatV2Options {
    *    (INS-3) because the tools address skills by REF: a plugin skill is
    *    `<plugin>/<skill>`, and the origin/file metadata the ref surface needs
    *    lives on the set, not on a flattened `PinnableSkill`.
+   *  - `pinned-effective` — EVAL RUNNERS ONLY, for a run whose pins carry a
+   *    plugin `modelRef` or supporting FILES (INS-5). Same frozen-content,
+   *    approval-exempt policy as `pinned`; the ref-addressed `resolved` tool
+   *    surface, because a bare-name surface cannot express `<plugin>/<skill>`
+   *    and has no file tools to serve a pinned `scripts/` directory with. The
+   *    set is built from the RUN SNAPSHOT, so "in-memory over frozen content"
+   *    still holds — the only network is the signed `_storage` GET for a file
+   *    the model actually asks for, and that URL was minted against the pinned
+   *    blob, not the live one.
    *  - `none`     — suppress skills entirely.
    *
-   * `resolved` and `pinned` are separate kinds rather than one "in-memory" kind
-   * with a flag precisely because that approval divergence is the whole
-   * distinction, and a shared kind would make it a caller's job to remember.
+   * `resolved` and the two pinned kinds are separate kinds rather than one
+   * "in-memory" kind with a flag precisely because that approval divergence is
+   * the whole distinction, and a shared kind would make it a caller's job to
+   * remember.
    */
   skillsSource?:
     | { kind: "pinned"; skills: PinnableSkill[] }
+    | {
+        kind: "pinned-effective";
+        capabilities: EffectiveCapabilitySet;
+        /** See `resolved` below — same reason, same lifetime. */
+        abortSignal?: AbortSignal;
+      }
     | {
         kind: "resolved";
         capabilities: EffectiveCapabilitySet;
@@ -960,7 +976,9 @@ export async function prepareChatV2(
   //      with a provisioned computer. Lazy discovery (no upfront wake).
   //   2. HOSTED_MODE without a computer ⇒ no skills (local FS unavailable).
   //   3. local ⇒ the inspector's own filesystem.
-  const skillsArePinned = skillsSource?.kind === "pinned";
+  const skillsArePinned =
+    skillsSource?.kind === "pinned" ||
+    skillsSource?.kind === "pinned-effective";
   // Decision 11: harness eval turns live-fetch skills, so a pinned set would
   // falsify the snapshot claim. Harness is stripped from suite configs already;
   // this throw is belt-and-suspenders at the single point both paths funnel through.
@@ -973,7 +991,8 @@ export async function prepareChatV2(
     skillsSource
       ? skillsSource.kind === "pinned"
         ? getPinnedSkillToolsAndPrompt(skillsSource.skills)
-        : skillsSource.kind === "resolved"
+        : skillsSource.kind === "resolved" ||
+            skillsSource.kind === "pinned-effective"
           ? getEffectiveSkillToolsAndPrompt(skillsSource.capabilities, {
               ...(skillsSource.abortSignal
                 ? { signal: skillsSource.abortSignal }

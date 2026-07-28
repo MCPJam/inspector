@@ -63,6 +63,8 @@ interface ToolsSidebarProps {
   onExecuteAsTaskChange?: (value: boolean) => void;
   taskRequired?: boolean;
   taskTtl?: number;
+  /** Which tasks wire the connection speaks; drives the task affordance. */
+  taskWire?: "none" | "legacy" | "extension";
   onTaskTtlChange?: (value: number) => void;
   serverSupportsTaskToolCalls?: boolean;
   // Collapsible sidebar
@@ -106,6 +108,7 @@ export function ToolsSidebar({
   onExecuteAsTaskChange,
   taskRequired,
   taskTtl,
+  taskWire,
   onTaskTtlChange,
   serverSupportsTaskToolCalls,
   onClose,
@@ -311,7 +314,22 @@ export function ToolsSidebar({
               {/* Task execution options */}
               {serverSupportsTaskToolCalls && (
                 <div className="px-3 py-3 border-t border-border">
-                  {taskRequired ? (
+                  {taskWire === "extension" ? (
+                    // The extension has no client-side TTL or opt-in: the
+                    // client only declares that a task response is acceptable.
+                    <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer hover:text-foreground transition-colors">
+                      <input
+                        type="checkbox"
+                        checked={executeAsTask ?? false}
+                        onChange={(e) =>
+                          onExecuteAsTaskChange?.(e.target.checked)
+                        }
+                        className="w-3.5 h-3.5 rounded border-border accent-primary cursor-pointer"
+                      />
+                      <Clock className="h-3 w-3" />
+                      <span>Allow task response</span>
+                    </label>
+                  ) : taskRequired ? (
                     <div className="flex items-center gap-2">
                       <span className="flex items-center gap-1.5 text-[11px] text-amber-600 dark:text-amber-400">
                         <Clock className="h-3 w-3" />
