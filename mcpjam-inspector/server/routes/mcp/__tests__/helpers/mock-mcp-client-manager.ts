@@ -54,6 +54,18 @@ const defaultImplementations = {
     contents: [],
   }),
 
+  // Tasks (wire dispatch): the default double speaks the 2025-11-25 wire,
+  // matching the tasks tests' expectations.
+  getTasksWire: () => "legacy" as const,
+  getTasksSupport: () => ({
+    wire: "legacy" as const,
+    toolCalls: true,
+    list: true,
+    cancel: true,
+    update: false,
+    inlineResult: false,
+  }),
+
   // Prompts
   listPrompts: async () => ({ prompts: [] }),
   getPrompt: async () => ({ messages: [] }),

@@ -69,6 +69,8 @@ import {
 import { buildDirectChatTraceCallbacks } from "../../utils/direct-chat-sse-callbacks";
 import { resolveExecutionContext } from "../../utils/host-execution-context";
 import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
+import { BASH_TOOL_NAME } from "../../utils/built-in-tools/bash.js";
+import { maybeAppendEnvironmentContext } from "../../utils/computers/environment-context.js";
 import { convertToMcpjamModelMessages } from "../../utils/mcp-tool-result-model-output.js";
 import { type ExecutionScope } from "../../utils/execution-scope.js";
 
@@ -726,6 +728,20 @@ chatV2.post("/", async (c) => {
         : null,
     );
 
+    // Blueprint knowledge/maintenance: when this turn advertises bash, append
+    // the pinned image's model-facing context to the system prompt (threaded
+    // through prepareChatV2's enhanced prompt). Tri-state fetch inside — a
+    // Convex blip degrades to "no extra context", never a broken turn. The
+    // persisted direct-chat/resume configs keep the RAW user prompt; the env
+    // block is turn-injected, not user configuration.
+    const effectiveSystemPrompt = await maybeAppendEnvironmentContext({
+      systemPrompt,
+      hasBashTool: Boolean(builtInTools?.[BASH_TOOL_NAME]),
+      bearer: builtInAuthHeader,
+      projectId: typeof body.projectId === "string" ? body.projectId : undefined,
+      ...(executionScope ? { executionScope } : {}),
+    });
+
     // COMP-16: the host-configured computer working directory — the SAME
     // `computer.workdir` the bash tool runs in — threaded into the harness path
     // so its Shell roots under the same directory. Server-resolved config only.
@@ -741,7 +757,7 @@ chatV2.post("/", async (c) => {
         mcpClientManager,
         selectedServers,
         modelDefinition,
-        systemPrompt,
+        systemPrompt: effectiveSystemPrompt,
         temperature,
         requireToolApproval,
         respectToolVisibility,

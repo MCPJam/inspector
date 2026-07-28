@@ -8,6 +8,7 @@ import type {
 import { Wrench } from "lucide-react";
 import { ElicitationDialog } from "./ElicitationDialog";
 import { MrtrElicitationHost } from "./elicitation/MrtrElicitationHost";
+import { HostedMrtrHost } from "./elicitation/HostedMrtrHost";
 import { EmptyState } from "./ui/empty-state";
 import { navigateApp } from "@/lib/app-navigation";
 import { ThreePanelLayout } from "./ui/three-panel-layout";
@@ -39,7 +40,7 @@ import {
 } from "@/lib/apis/mcp-tools-api";
 import {
   getTaskCapabilities,
-  type TaskCapabilities,
+  type TasksSupport,
 } from "@/lib/apis/mcp-tasks-api";
 import { trackTask } from "@/lib/task-tracker";
 import { validateToolOutput } from "@/lib/schema-utils";
@@ -205,10 +206,12 @@ export function ToolsTab({
     description?: string;
   }>({ title: "" });
   const [executeAsTask, setExecuteAsTask] = useState(false);
+  /** Server the extension "allow task response" default was applied for. */
+  const extensionTaskDefaultAppliedRef = useRef<string | undefined>(undefined);
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
   // Task capabilities from server (MCP Tasks spec 2025-11-25)
   const [taskCapabilities, setTaskCapabilities] =
-    useState<TaskCapabilities | null>(null);
+    useState<TasksSupport | null>(null);
   // TTL for task execution (milliseconds, 0 = no expiration)
   const [taskTtl, setTaskTtl] = useState<number>(0);
   // Infinite scroll state
@@ -269,8 +272,8 @@ export function ToolsTab({
 
   // Check if server supports task-augmented tool calls (MCP Tasks spec 2025-11-25)
   // Per spec: clients MUST NOT use task augmentation if server doesn't declare capability
-  const serverSupportsTaskToolCalls =
-    taskCapabilities?.supportsToolCalls ?? false;
+  const tasksWire = taskCapabilities?.wire ?? "none";
+  const serverSupportsTaskToolCalls = taskCapabilities?.toolCalls ?? false;
 
   const resetLoadedToolState = ({
     invalidateRequests = true,
@@ -400,10 +403,21 @@ export function ToolsTab({
       setTaskCapabilities(capabilities);
       logger.info("Task capabilities fetched", {
         serverId: serverName,
-        supportsToolCalls: capabilities.supportsToolCalls,
-        supportsList: capabilities.supportsList,
-        supportsCancel: capabilities.supportsCancel,
+        wire: capabilities.wire,
+        supportsToolCalls: capabilities.toolCalls,
+        supportsList: capabilities.list,
+        supportsCancel: capabilities.cancel,
       });
+      // The extension is a per-request declaration, not a mode: default the
+      // toggle on when the server advertises it — but only once per server, so
+      // a capability refresh cannot silently re-enable a user's opt-out.
+      if (
+        capabilities.wire === "extension" &&
+        extensionTaskDefaultAppliedRef.current !== serverName
+      ) {
+        extensionTaskDefaultAppliedRef.current = serverName;
+        setExecuteAsTask(true);
+      }
     } catch (err) {
       if (fetchVersion !== taskCapabilitiesFetchVersionRef.current) return;
       // Server may not support tasks - this is fine, just log it
@@ -596,6 +610,7 @@ export function ToolsTab({
         trackTask({
           taskId: task.taskId,
           serverId: serverName,
+          wire: tasksWire,
           createdAt: task.createdAt,
           toolName,
           primitiveType: "tool",
@@ -680,7 +695,14 @@ export function ToolsTab({
       // Pass task options if executing as background task (MCP Tasks spec 2025-11-25)
       // Use task execution only if: server supports tasks AND (user checked option OR tool requires it)
       // Per spec: clients MUST NOT use task augmentation without server capability
+      // Extension wire: no ttl and no `params.task` — the client only
+      // declares that a task response is acceptable and the server decides.
+      const allowTaskResult =
+        tasksWire === "extension" && serverSupportsTaskToolCalls
+          ? executeAsTask
+          : undefined;
       const shouldUseTask =
+        tasksWire === "legacy" &&
         serverSupportsTaskToolCalls &&
         (executeAsTask || selectedToolTaskSupport === "required");
       // Per MCP spec: ttl is optional. Only include if user specified a non-zero value.
@@ -693,7 +715,8 @@ export function ToolsTab({
         serverName,
         selectedTool,
         params,
-        taskOptions
+        taskOptions,
+        allowTaskResult
       );
       handleExecutionResponse(response, selectedTool);
     } catch (err) {
@@ -913,20 +936,27 @@ export function ToolsTab({
       onExecute={executeTool}
       onSave={handleSaveCurrent}
       executeAsTask={
-        serverSupportsTaskToolCalls && selectedToolTaskSupport !== "forbidden"
+        serverSupportsTaskToolCalls &&
+        (tasksWire === "extension" ||
+          selectedToolTaskSupport !== "forbidden")
           ? executeAsTask
           : undefined
       }
       onExecuteAsTaskChange={
-        serverSupportsTaskToolCalls && selectedToolTaskSupport !== "forbidden"
+        serverSupportsTaskToolCalls &&
+        (tasksWire === "extension" ||
+          selectedToolTaskSupport !== "forbidden")
           ? setExecuteAsTask
           : undefined
       }
       taskRequired={
-        serverSupportsTaskToolCalls && selectedToolTaskSupport === "required"
+        tasksWire === "legacy" &&
+        serverSupportsTaskToolCalls &&
+        selectedToolTaskSupport === "required"
       }
       taskTtl={taskTtl}
-      onTaskTtlChange={setTaskTtl}
+      taskWire={tasksWire}
+      onTaskTtlChange={tasksWire === "extension" ? undefined : setTaskTtl}
       serverSupportsTaskToolCalls={serverSupportsTaskToolCalls}
       onClose={() => setIsSidebarVisible(false)}
     />
@@ -981,6 +1011,7 @@ export function ToolsTab({
           returns an `input_required` result, the SDK driver collects rounds
           through this shared dialog and retries the original call. */}
       <MrtrElicitationHost />
+      <HostedMrtrHost />
 
       <SaveRequestDialog
         open={isSaveDialogOpen}

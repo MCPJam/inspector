@@ -89,7 +89,7 @@ const ENV_ROW = {
   environmentId: "env1",
   projectId: "p1",
   name: "ml-toolkit",
-  dockerfile: "FROM debian@sha256:x\nRUN echo hi",
+  blueprint: "base: debian@sha256:x\ninitialize:\n  - run: echo hi\n",
   contentHash: "h",
   sharing: "user",
   isOwner: true,
@@ -248,10 +248,10 @@ describe("v1 images routes", () => {
   });
 
   describe("POST create", () => {
-    it("creates an environment and returns 201, forwarding name + dockerfile", async () => {
+    it("creates an environment and returns 201, forwarding name + blueprint", async () => {
       mockMutation({ "computerEnvironments:createEnvironment": ENV_ROW });
       const res = await request("POST", "/api/v1/projects/p1/images", {
-        body: { name: "ml-toolkit", dockerfile: "FROM debian@sha256:x" },
+        body: { name: "ml-toolkit", blueprint: "base: debian@sha256:x" },
       });
       expect(res.status).toBe(201);
       expect((await res.json()) as Record<string, unknown>).toMatchObject({
@@ -262,14 +262,14 @@ describe("v1 images routes", () => {
         {
           projectId: "p1",
           name: "ml-toolkit",
-          dockerfile: "FROM debian@sha256:x",
+          blueprint: "base: debian@sha256:x",
         }
       );
     });
 
-    it("rejects an empty dockerfile (400)", async () => {
+    it("rejects an empty blueprint (400)", async () => {
       const res = await request("POST", "/api/v1/projects/p1/images", {
-        body: { name: "x", dockerfile: "" },
+        body: { name: "x", blueprint: "" },
       });
       expect(res.status).toBe(400);
       expect(((await res.json()) as { code?: string }).code).toBe(
@@ -278,15 +278,69 @@ describe("v1 images routes", () => {
       expect(convexMutationMock).not.toHaveBeenCalled();
     });
 
-    it("rejects an unknown field — e.g. a `dockerFile` typo — (400, strict)", async () => {
+    it("rejects an unknown field — e.g. a `bluePrint` typo — (400, strict)", async () => {
       const res = await request("POST", "/api/v1/projects/p1/images", {
-        body: { name: "x", dockerFile: "FROM debian@sha256:x" },
+        body: { name: "x", bluePrint: "base: debian@sha256:x" },
       });
       expect(res.status).toBe(400);
       expect(((await res.json()) as { code?: string }).code).toBe(
         "VALIDATION_ERROR"
       );
       expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("POST validate", () => {
+    it("lints an invalid blueprint, returning 200 with structured errors", async () => {
+      mockQuery({
+        "computerEnvironments:validateBlueprint": {
+          ok: false,
+          errors: [{ path: "base", message: "is required" }],
+        },
+      });
+      const res = await request("POST", "/api/v1/projects/p1/images/validate", {
+        body: { blueprint: "initialize: []" },
+      });
+      expect(res.status).toBe(200);
+      expect((await res.json()) as Record<string, unknown>).toMatchObject({
+        ok: false,
+        errors: [{ path: "base", message: "is required" }],
+      });
+      expect(convexQueryMock).toHaveBeenCalledWith(
+        "computerEnvironments:validateBlueprint",
+        { projectId: "p1", blueprint: "initialize: []" }
+      );
+    });
+
+    it("lints a valid blueprint, returning 200 with the resolved base digest", async () => {
+      mockQuery({
+        "computerEnvironments:validateBlueprint": {
+          ok: true,
+          baseImageDigest: "sha256:abc123",
+        },
+      });
+      const res = await request("POST", "/api/v1/projects/p1/images/validate", {
+        body: { blueprint: "base: debian@sha256:abc123" },
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body).toMatchObject({
+        ok: true,
+        baseImageDigest: "sha256:abc123",
+      });
+      expect(body).not.toHaveProperty("errors");
+      expect(convexQueryMock).toHaveBeenCalledWith(
+        "computerEnvironments:validateBlueprint",
+        { projectId: "p1", blueprint: "base: debian@sha256:abc123" }
+      );
+    });
+
+    it("rejects a missing blueprint field (400) without calling Convex", async () => {
+      const res = await request("POST", "/api/v1/projects/p1/images/validate", {
+        body: {},
+      });
+      expect(res.status).toBe(400);
+      expect(convexQueryMock).not.toHaveBeenCalled();
     });
   });
 

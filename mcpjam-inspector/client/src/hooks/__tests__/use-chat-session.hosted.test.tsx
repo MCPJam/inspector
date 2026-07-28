@@ -361,6 +361,26 @@ describe("useChatSession hosted mode", () => {
     });
   });
 
+  it("announces the hosted-MRTR handshake", async () => {
+    // §12.5: the server only registers the SUSPENDING collector — and so only
+    // takes the durable continuation path — when it sees this. Without it a
+    // stale bundle would be handed a continuationId it cannot render or
+    // resume, and the operation would sit until its TTL.
+    renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: ["server-id-1"],
+        },
+      })
+    );
+
+    expect(lastTransportOptions.body()).toMatchObject({
+      hostedMrtrVersion: 1,
+    });
+  });
+
   it("includes chatSessionId in the hosted transport body", async () => {
     const { result, unmount } = renderHook(() =>
       useChatSession({

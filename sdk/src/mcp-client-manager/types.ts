@@ -85,6 +85,57 @@ export interface CacheHitEvent {
 export type CacheEventLogger = (event: CacheHitEvent) => void;
 
 /**
+ * The negotiation mode a connection actually requested of the underlying
+ * client. Auto-negotiation is unconditional, so an unconfigured connection is
+ * always probed:
+ *  - `"auto"` — unconfigured connection (always probed);
+ *  - `"modern-pin"` — an explicit modern (`2026-07-28`) pin;
+ *  - `"legacy"` — the exact legacy `initialize` handshake, from an explicit
+ *    legacy pin.
+ */
+export type ConfiguredNegotiationMode = "auto" | "modern-pin" | "legacy";
+
+/**
+ * One connection-attempt outcome, emitted by the manager for Phase 5
+ * auto-negotiation-activation telemetry. This is a LOCAL provenance channel
+ * (like {@link CacheEventLogger}) — the manager NEVER emits analytics itself;
+ * each surface wires this to its own PostHog/Axiom pipeline and stamps the
+ * `surface` dimension there.
+ *
+ * The fields are exactly the activation-checklist telemetry requirement:
+ * configured mode + negotiated era + transport + outcome + failure class.
+ * (`surface` is added by the consumer.) It carries NO request payloads.
+ */
+export interface NegotiationOutcomeEvent {
+  /** The server whose connection was attempted. */
+  serverId: string;
+  /** Transport the attempt used. */
+  transport: "http" | "stdio";
+  /** The negotiation mode the client was actually asked to use. */
+  configuredMode: ConfiguredNegotiationMode;
+  /** Whether the connection established or failed. */
+  outcome: "connected" | "failed";
+  /** Negotiated era once connected (`undefined` on failure / unknown). */
+  negotiatedEra?: "legacy" | "modern";
+  /** Negotiated wire protocol version once connected (`undefined` on failure). */
+  negotiatedProtocolVersion?: string;
+  /**
+   * Coarse, non-PII failure class on failure — the era-negotiation-unwrapped
+   * error's `name` (or `code`), e.g. `"UnauthorizedError"`,
+   * `"EraNegotiationFailed"`, `"TypeError"`. `undefined` on success.
+   */
+  failureClass?: string;
+}
+
+/**
+ * Callback invoked once per connection attempt with its negotiation outcome.
+ * Distinct channel from {@link RpcLogger}/{@link CacheEventLogger}; never
+ * throws into the connect path (the manager guards it). Unset ⇒ no telemetry
+ * and byte-identical connect behavior.
+ */
+export type NegotiationOutcomeLogger = (event: NegotiationOutcomeEvent) => void;
+
+/**
  * MCPJam response-cache POLICY (SEP-2549). This is the single source of truth
  * for how the debugger disposes of the client's response cache; the code above
  * and the raw-evidence surfaces (`server-snapshot`, `server-doctor`,
@@ -444,6 +495,15 @@ export interface MCPClientManagerOptions {
    * byte-identical to not wiring a cache observer.
    */
   cacheEventLogger?: CacheEventLogger;
+  /**
+   * Optional per-connection negotiation-outcome sink (Phase 5 activation
+   * telemetry). Fires once per connection attempt with the configured
+   * negotiation mode, negotiated era/version, transport, outcome, and failure
+   * class. The manager guards it (never throws into connect). Unset ⇒ no
+   * telemetry, byte-identical connect behavior. The consumer stamps the
+   * `surface` dimension and forwards to PostHog/Axiom.
+   */
+  negotiationOutcomeLogger?: NegotiationOutcomeLogger;
   /** Default retry policy for retryable manager operations */
   retryPolicy?: RetryPolicy;
   /**
@@ -490,8 +550,15 @@ export type TaskOptions = {
 export interface ExecuteToolRequest {
   /** Request options for the tool call */
   request?: ClientRequestOptions;
-  /** Task options for task-augmented tool calls */
+  /** Task options for task-augmented tool calls (2025-11-25 legacy wire only) */
   task?: TaskOptions;
+  /**
+   * SEP-2663 extension wire (2026-07-28+): declare, for THIS call, that the
+   * client can handle a `CreateTaskResult`. The server decides whether to use
+   * it; a plain result is still valid. There is no TTL — the server owns it.
+   * Ignored on the legacy wire; an error on `wire: "none"`.
+   */
+  allowTaskResult?: boolean;
   /** Explicit retry policy for tool execution */
   retry?: RetryPolicy;
 }

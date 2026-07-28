@@ -391,3 +391,53 @@ export type {
   OpenAiAppsCapabilities,
   McpAppsCapabilities,
 } from "./host-config/index.js";
+
+// Shared task lifecycle engine. Browser-safe by construction: it performs no
+// I/O at all — it decides *when* a task may next be polled and remembers what
+// was last seen, while the caller owns the transport. That is exactly what
+// lets the Tasks tab, a Hono route and the CLI share one scheduler.
+export {
+  TaskLifecycleEngine,
+  taskLifecycleKey,
+  isTerminalLifecycleStatus,
+  toSnapshot as toTaskLifecycleSnapshot,
+  TERMINAL_LIFECYCLE_STATUSES,
+} from "./mcp-client-manager/task-lifecycle.js";
+export type {
+  LiveTasksWire,
+  TaskLifecycleCallbacks,
+  TaskLifecycleEngineOptions,
+  TaskLifecycleError,
+  TaskLifecycleIdentity,
+  TaskLifecycleObservation,
+  TaskLifecycleRecord,
+  TaskLifecycleSnapshot,
+  TaskLifecycleStatus,
+  TaskObservationSource,
+} from "./mcp-client-manager/task-lifecycle.js";
+export {
+  extensionTaskToObservation,
+  legacyTaskToObservation,
+  isUnknownTaskError,
+  isTasksDeclarationRequiredError,
+  parseRetryAfterMs,
+  UNKNOWN_TASK_ERROR_CODE,
+  TASKS_DECLARATION_REQUIRED_ERROR_CODE,
+} from "./mcp-client-manager/task-lifecycle-adapters.js";
+
+// Tasks product policy — pure predicates over the stored host config, so the
+// editor and every browser-side surface read the same tri-state.
+export {
+  MCPJAM_TASKS_POLICY_EXTENSION_ID,
+  readTasksPolicy,
+  describeInvalidTasksPolicy,
+  setTasksPolicy,
+  clearTasksPolicy,
+  taskModeForSurface,
+  surfaceMayDeclareTasks,
+} from "./host-config/tasks-policy.js";
+export type {
+  TasksPolicy,
+  TaskMode,
+  TaskSurface,
+} from "./host-config/tasks-policy.js";

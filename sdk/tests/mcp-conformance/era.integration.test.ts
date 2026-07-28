@@ -180,18 +180,25 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
       },
     });
 
-    // The subscription checks are honest skips until the Phase 5
-    // `subscriptions/listen` surface lands — a skip is safe, a false failure
-    // never is.
+    // The subscription checks run for real against this fixture: registering
+    // tools/prompts/resources makes beta.4 advertise `listChanged`, so the
+    // probe opens a live `subscriptions/listen` stream. Nothing publishes a
+    // change event here, so the stream carries the acknowledgement alone —
+    // enough to settle ordering and tagging, and not enough to settle a
+    // graceful close, which is server-initiated and therefore an honest skip.
+    // The failing paths are exercised in `subscription-checks.integration`.
     for (const id of [
       "modern-subscription-ack-precedes-notifications",
       "modern-subscription-filter-and-tagging",
-      "modern-subscription-graceful-close",
     ] as const) {
-      const check = byId(result.checks, id);
-      expect(check.status).toBe("skipped");
-      expect(check.error?.message).toMatch(/subscriptions\/listen/);
+      expect([id, byId(result.checks, id).status]).toEqual([id, "passed"]);
     }
+    const gracefulClose = byId(
+      result.checks,
+      "modern-subscription-graceful-close"
+    );
+    expect(gracefulClose.status).toBe("skipped");
+    expect(gracefulClose.error?.message).toMatch(/still open/);
 
     // §15.4: readiness advice is reported but never changes the verdict.
     expect(result.readiness.length).toBeGreaterThan(0);
