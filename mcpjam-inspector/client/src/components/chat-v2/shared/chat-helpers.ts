@@ -130,12 +130,21 @@ const humanizeConnectionError = (
         message: `${serverName ? `“${serverName}”` : "The MCP server"} took too long to respond.`,
         isRetryable: true,
       };
+    // UNAUTHORIZED / FORBIDDEN are NOT unambiguous: the same codes carry
+    // MCPJam's own auth failures (expired session, missing bearer via
+    // `assertBearerToken`) and project-permission denials, neither of which is
+    // the user's MCP server misbehaving. Sending someone to reconnect a server
+    // that is working fine is worse than the jargon this replaces, so only
+    // rewrite when the payload actually names a server. Everything else falls
+    // through to the verbatim path.
     case "UNAUTHORIZED":
+      if (!serverName) return null;
       return {
         message: `${server} rejected the connection. Reconnect it to refresh your access.`,
         isRetryable: false,
       };
     case "FORBIDDEN":
+      if (!serverName) return null;
       return {
         message: `${server} refused this request. Your access may not cover the tools this chat needs.`,
         isRetryable: false,

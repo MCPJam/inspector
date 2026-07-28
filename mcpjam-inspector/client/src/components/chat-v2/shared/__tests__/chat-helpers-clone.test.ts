@@ -295,6 +295,48 @@ describe("formatErrorMessage", () => {
       expect(result?.isRetryable).toBe(true);
     });
 
+    // UNAUTHORIZED / FORBIDDEN double as MCPJam's OWN auth failures (expired
+    // session, missing bearer) and project-permission denials. Rewriting those
+    // into "reconnect your MCP server" would send the user to fix something
+    // that isn't broken — strictly worse than the jargon. Only rewrite when a
+    // server is actually named.
+    it("does not blame the MCP server for an unattributed 401", () => {
+      const result = formatErrorMessage(
+        JSON.stringify({
+          code: "UNAUTHORIZED",
+          message: "Missing or invalid bearer token",
+        }),
+      );
+
+      expect(result?.message).toBe("Missing or invalid bearer token");
+    });
+
+    it("does not blame the MCP server for an unattributed 403", () => {
+      const result = formatErrorMessage(
+        JSON.stringify({
+          code: "FORBIDDEN",
+          message: "Authorization denied for server",
+        }),
+      );
+
+      expect(result?.message).toBe("Authorization denied for server");
+    });
+
+    it("rewrites a 401 that names a server", () => {
+      const result = formatErrorMessage(
+        JSON.stringify({
+          code: "UNAUTHORIZED",
+          message: "Authentication failed",
+          details: { serverName: "BART MCP" },
+        }),
+      );
+
+      expect(result?.message).toBe(
+        "“BART MCP” rejected the connection. Reconnect it to refresh your access.",
+      );
+      expect(result?.isRetryable).toBe(false);
+    });
+
     it("leaves unrelated codes on the verbatim path", () => {
       const result = formatErrorMessage(
         JSON.stringify({
