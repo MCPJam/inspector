@@ -144,7 +144,14 @@ export async function generateSwarmPersona(
       "Persona generation returned an unexpected response"
     );
   }
-  return { persona: data.persona, journeys: data.journeys };
+  // The user's 1-5 choice is authoritative. The backend already truncates to
+  // the requested count, but over-delivery here would silently write more
+  // rows than were asked for — so clamp rather than trust. Truncating (not
+  // rejecting) mirrors the backend's own slate contract.
+  return {
+    persona: data.persona,
+    journeys: data.journeys.slice(0, args.journeyCount),
+  };
 }
 
 export async function generateSwarmJourneys(
@@ -179,5 +186,6 @@ export async function generateSwarmJourneys(
       "Journey generation returned an unexpected response"
     );
   }
-  return { journeys: data.journeys };
+  // See generateSwarmPersona: the requested count is enforced locally.
+  return { journeys: data.journeys.slice(0, args.journeyCount) };
 }

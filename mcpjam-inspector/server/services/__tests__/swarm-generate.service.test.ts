@@ -93,6 +93,39 @@ describe("swarm-generate service — response shape validation", () => {
     expect(err).toBeInstanceOf(SwarmAgentError);
   });
 
+  it("clamps an over-delivered slate to the requested count", async () => {
+    // The user's 1-5 choice is authoritative; an upstream that returns more
+    // must not silently create extra rows.
+    mockOk({
+      ok: true,
+      persona: { name: "P", role: "R" },
+      journeys: [
+        { goal: "1" },
+        { goal: "2" },
+        { goal: "3" },
+        { goal: "4" },
+        { goal: "5" },
+      ],
+    });
+
+    const result = await generateSwarmPersona(CONVEX_URL, "bearer", {
+      ...personaArgs,
+      journeyCount: 2,
+    });
+    expect(result.journeys.map((j) => j.goal)).toEqual(["1", "2"]);
+  });
+
+  it("clamps over-delivery in journeys mode too", async () => {
+    mockOk({ ok: true, journeys: [{ goal: "a" }, { goal: "b" }] });
+
+    const result = await generateSwarmJourneys(CONVEX_URL, "bearer", {
+      ...personaArgs,
+      journeyCount: 1,
+      persona: { name: "P", role: "R" },
+    });
+    expect(result.journeys).toHaveLength(1);
+  });
+
   it("accepts a well-formed payload", async () => {
     mockOk({
       ok: true,

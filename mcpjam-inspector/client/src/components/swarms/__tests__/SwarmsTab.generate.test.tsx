@@ -24,6 +24,9 @@ const host = {
   ownerScope: { type: "journeys" },
 };
 
+/** Mutable so a test can simulate a client being deleted mid-dialog. */
+let hostList: Array<Record<string, unknown>> = [];
+
 /** Mutable so a created persona shows up in the list the sidebar renders —
  * that is how the test observes the new row being SELECTED, not just written. */
 let personaList: Array<Record<string, unknown>> = [];
@@ -51,7 +54,7 @@ vi.mock("convex/react", () => ({
       case "journeys:listJourneysByPersona":
         return [];
       case "hosts:listHosts":
-        return [host];
+        return hostList;
       default:
         return undefined;
     }
@@ -130,6 +133,7 @@ import { SwarmGenerateError } from "@/lib/swarm-api";
 beforeEach(() => {
   vi.clearAllMocks();
   personaList = [persona];
+  hostList = [host];
   createPersonaMutation.mockImplementation(async (args: any) => {
     const row = { ...args, _id: "persona-new", personaId: "pnew" };
     personaList = [...personaList, row];
@@ -166,10 +170,7 @@ describe("SwarmsTab — generate persona", () => {
   it("creates the persona as generated, then one journey per result", async () => {
     generatePersonaMock.mockResolvedValue({
       persona: { name: "Curious Newcomer", role: "hobbyist", notes: "n" },
-      journeys: [
-        { name: "J1", goal: "goal one" },
-        { goal: "goal two" },
-      ],
+      journeys: [{ name: "J1", goal: "goal one" }, { goal: "goal two" }],
     });
 
     openGeneratePersona();
@@ -340,9 +341,9 @@ describe("SwarmsTab — generate persona", () => {
     });
     // The snapshot wins: without it this would be [] and the mutation would
     // fail after the quota was already spent.
-    expect(
-      (createJourneyMutation.mock.calls[0]![0] as any).hostIds
-    ).toEqual(["host-1"]);
+    expect((createJourneyMutation.mock.calls[0]![0] as any).hostIds).toEqual([
+      "host-1",
+    ]);
   });
 
   it("renders a quota 429 inline instead of closing the dialog", async () => {

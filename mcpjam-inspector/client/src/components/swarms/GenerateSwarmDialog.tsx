@@ -12,7 +12,7 @@
  * mutations so every existing validation applies and the results land as real,
  * editable rows. Running them stays a separate explicit click.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Loader2, Sparkles } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -129,6 +129,15 @@ export function GenerateSwarmDialog({
       prev.includes(id) ? prev.filter((h) => h !== id) : [...prev, id]
     );
 
+  // A client deleted by another project member while this dialog is open
+  // vanishes from `hosts` but lingers in `hostIds`. Submitting a stale id
+  // spends generation quota and then fails every journey mutation, so gate
+  // and snapshot on the ids that still exist rather than raw selection state.
+  const liveHostIds = useMemo(
+    () => hostIds.filter((id) => hosts.some((h) => h.hostId === id)),
+    [hostIds, hosts]
+  );
+
   const countValid =
     Number.isInteger(journeyCount) &&
     journeyCount >= MIN_GENERATED_JOURNEYS &&
@@ -144,7 +153,7 @@ export function GenerateSwarmDialog({
     !personaCommitted &&
     personaCountKnown &&
     !!serverAttachmentId &&
-    hostIds.length > 0 &&
+    liveHostIds.length > 0 &&
     countValid;
 
   const createJourneyRows = async (
@@ -181,7 +190,7 @@ export function GenerateSwarmDialog({
   };
 
   const handleGenerate = async () => {
-    if (!serverAttachmentId || hostIds.length === 0 || !countValid) return;
+    if (!serverAttachmentId || liveHostIds.length === 0 || !countValid) return;
     if (
       mode === "persona" &&
       typeof personaCount === "number" &&
@@ -199,7 +208,7 @@ export function GenerateSwarmDialog({
     // mid-flight change retarget the created rows — or clear the host list and
     // fail every mutation — after the quota was already spent.
     const attachmentId = serverAttachmentId;
-    const targetHostIds = [...hostIds];
+    const targetHostIds = [...liveHostIds];
 
     try {
       if (mode === "persona") {
