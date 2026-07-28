@@ -71,6 +71,15 @@ export const INVALID_PARAMS = -32602;
 /** The first protocol version that can carry the extension. */
 export const EXTENSION_PROTOCOL_VERSION = "2026-07-28";
 
+/**
+ * `CacheableResult` fields the modern wire REQUIRES on `tools/list` (SEP-2549).
+ * Values are arbitrary-but-valid: a non-negative integer and one of the two
+ * `cacheScope` literals. They are not part of any tasks assertion — they exist
+ * so the fixture's `tools/list` decodes at all.
+ */
+export const LIST_RESULT_TTL_MS = 60_000;
+export const LIST_RESULT_CACHE_SCOPE = "private" as const;
+
 /** Default tool that only ever answers synchronously. */
 export const SYNC_TOOL_NAME = "sync_tool";
 /** Default tool that answers with a `CreateTaskResult` to a declaring caller. */
@@ -706,6 +715,16 @@ export async function serveExtensionTasksFixture(
       case "tools/list":
         return {
           resultType: "complete",
+          // SEP-2549 (`draft/changelog.mdx:36`) made `ttlMs` + `cacheScope`
+          // REQUIRED on `tools/list`, and beta.4's 2026 decoder enforces both
+          // without a `.catch()` fallback (`ListToolsResultSchema` /
+          // `dispatchResultSchemas["tools/list"]`, `src-CMjk3S93.mjs:2778`,
+          // `:3036`). Omitting them makes every consumer — including the tasks
+          // conformance runner — fail during DISCOVERY, before any tasks
+          // behavior is reached. `server/discover` is NOT in the same boat: its
+          // two fields carry `.catch()` defaults (`:3074`).
+          ttlMs: LIST_RESULT_TTL_MS,
+          cacheScope: LIST_RESULT_CACHE_SCOPE,
           tools: Object.entries(tools).map(([name, behavior]) => ({
             name,
             description: behavior.description ?? name,

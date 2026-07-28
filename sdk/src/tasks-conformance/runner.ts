@@ -12,6 +12,7 @@
  * a single provoked task, so running the suite costs one server session.
  */
 
+import { z } from "zod";
 import type { MCPClientManager } from "../mcp-client-manager/MCPClientManager.js";
 import type {
   ListToolsResult,
@@ -20,6 +21,8 @@ import type {
 import { MCP_TASKS_EXTENSION_ID } from "../mcp-client-manager/tasks-dispatch.js";
 import type { TasksWire } from "../mcp-client-manager/tasks-dispatch.js";
 import { CLIENT_CAPABILITIES_META_KEY } from "../mcp-client-manager/tasks-ext.js";
+import { ensureTasksExtensionEraGateShadow } from "../mcp-client-manager/tasks-ext-era-gate.js";
+import { TASK_CREATED_META_KEY } from "../mcp-client-manager/transport-utils.js";
 import { withEphemeralClient } from "../operations.js";
 import {
   MCP_TASKS_CHECK_IDS,
@@ -425,6 +428,13 @@ export type UndeclaredProbeOutcome =
   | "wrong-code"
   /** No answer arrived before the probe's own deadline. */
   | "no-response"
+  /**
+   * The request never reached the server at all — it died locally (upstream's
+   * outbound era gate, a missing result schema) or the transport failed before
+   * a JSON-RPC response existed. NOT a verdict on the server, and never a pass:
+   * a probe that cannot execute must not be reported as conformance.
+   */
+  | "probe-failed"
   /** -32601: the method does not exist here, so the rule cannot be probed. */
   | "unsupported";
 
@@ -433,6 +443,12 @@ export interface UndeclaredProbe {
   outcome: UndeclaredProbeOutcome;
   code?: number;
   message?: string;
+  /**
+   * Whether an outbound JSON-RPC request for this method was observed on the
+   * connection's rpc log. This is what separates "the server misbehaved" from
+   * "the probe never got onto the wire".
+   */
+  reachedWire?: boolean;
 }
 
 /** One line of per-method detail for the check's failure message. */
@@ -446,6 +462,10 @@ export function describeUndeclaredProbe(probe: UndeclaredProbe): string {
       return `${probe.method} produced no JSON-RPC rejection (${
         probe.message ?? "no answer"
       }); a conforming server refuses it immediately with -32003`;
+    case "probe-failed":
+      return `${probe.method} never reached the server (${
+        probe.message ?? "no answer"
+      }), so the undeclared-request requirement was NOT tested`;
     case "unsupported":
       return `${probe.method} is not implemented (-32601)`;
     case "rejected":
@@ -453,50 +473,132 @@ export function describeUndeclaredProbe(probe: UndeclaredProbe): string {
   }
 }
 
-/** A raw JSON-RPC request seam: the manager's public APIs always declare. */
+/**
+ * The task id a server smuggled into an UNDECLARED `tools/call`, or
+ * `undefined` if it produced an ordinary result.
+ *
+ * Two places have to be read, and the second is the one that matters. Without
+ * `allowTaskResult`, `MCPClientManager` does not hand a `CreateTaskResult`
+ * back at the top level at all: the transport wrapper rewrites the response
+ * into a minimal valid `CallToolResult` and parks the original payload under
+ * `_meta[TASK_CREATED_META_KEY]` (`transport-utils.ts:300`). A detector that
+ * only read `result.taskId` would therefore see a plain tool result from EVERY
+ * server — conformant or not — and the check would pass vacuously against the
+ * exact violation it exists to catch.
+ */
+export function extractUndeclaredCreationTaskId(
+  result: unknown
+): string | undefined {
+  if (!isRecord(result)) return undefined;
+  if (typeof result.taskId === "string" && result.taskId.length > 0) {
+    return result.taskId;
+  }
+  const meta = isRecord(result._meta) ? result._meta : undefined;
+  const stashed = meta?.[TASK_CREATED_META_KEY];
+  if (!isRecord(stashed)) return undefined;
+  // A `taskId`-less stash is still a task the server created; name it rather
+  // than let the absent id downgrade the failure to a pass.
+  return typeof stashed.taskId === "string" && stashed.taskId.length > 0
+    ? stashed.taskId
+    : "(CreateTaskResult with no taskId)";
+}
+
+/**
+ * A raw JSON-RPC request seam: the manager's public tasks APIs always attach
+ * the extension declaration, which is exactly what these probes must omit.
+ *
+ * The seam MUST carry an explicit result schema. `Protocol.request`'s
+ * schema-less overload resolves its validator from the negotiated era's method
+ * registry, and no `tasks/*` method has an entry there on the 2026 wire — so a
+ * schema-less call dies LOCALLY ("pass a result schema as the second
+ * argument") and the probe tests nothing. Same reasoning, same fix as
+ * `tasks-ext.ts` / `tasks.ts`, which is why the schema below is the same
+ * deliberately-loose `z.looseObject({})`: this probe asserts on the JSON-RPC
+ * *envelope* (rejected vs answered), never on a payload's shape.
+ */
 type RawRequest = (
   payload: { method: string; params: Record<string, unknown> },
   options?: { timeout?: number }
 ) => Promise<unknown>;
+
+/** See {@link RawRequest} — loose on purpose. */
+const RAW_PROBE_RESULT_SCHEMA = z.looseObject({});
+
+/** Outbound requests for `method` seen on the connection's rpc log. */
+function countSentRequests(sent: unknown[], method: string): number {
+  return sent.filter(
+    (message) => isRecord(message) && message.method === method
+  ).length;
+}
 
 /**
  * Sends one request WITHOUT the extension declaration and classifies what
  * came back. `listenProbe` marks the sub-probe whose absence is a skip rather
  * than a violation: `subscriptions/listen` is a core method the tasks
  * extension only borrows, so a server that lacks it cannot be judged on it.
+ *
+ * `sent` is the run's captured outbound rpc log; the probe reads it before and
+ * after so a failure can say whether the request ever left the process.
+ *
+ * In `@modelcontextprotocol/client` v2 a NUMERIC `code` on the thrown error is
+ * itself the discriminator: `ProtocolError` (numeric code) is minted only from
+ * a server's JSON-RPC error response (`src-*.mjs:5873`), while every local and
+ * transport fault — the era gate, timeouts, a closed connection — is an
+ * `SdkError` whose `code` is a STRING. So "no numeric code" means "no server
+ * verdict", and it is reported as `probe-failed`, not as a pass.
  */
 async function runUndeclaredProbe(
   request: RawRequest,
+  sent: unknown[],
   method: string,
   params: Record<string, unknown>,
   options?: { timeout?: number; listenProbe?: boolean }
 ): Promise<UndeclaredProbe> {
+  const sentBefore = countSentRequests(sent, method);
+  const reachedWire = () => countSentRequests(sent, method) > sentBefore;
   try {
     await request(
       { method, params },
       options?.timeout === undefined ? undefined : { timeout: options.timeout }
     );
-    return { method, outcome: "answered" };
+    return { method, outcome: "answered", reachedWire: reachedWire() };
   } catch (error) {
     const code = errorCode(error);
     const message = errorMessage(error);
     if (code === MISSING_REQUIRED_CLIENT_CAPABILITY) {
-      return { method, outcome: "rejected", code };
+      return { method, outcome: "rejected", code, reachedWire: true };
     }
     if (code === METHOD_NOT_FOUND && options?.listenProbe) {
-      return { method, outcome: "unsupported", code, message };
+      return {
+        method,
+        outcome: "unsupported",
+        code,
+        message,
+        reachedWire: true,
+      };
     }
-    if (code === undefined || code === REQUEST_TIMEOUT) {
-      // No refusal reached us: a transport failure, or a stream the server
-      // held open past the probe deadline. Either way it is not a rejection.
+    if (code === undefined) {
+      // No JSON-RPC response exists, so there is no server verdict. The rpc log
+      // decides which kind of nothing this is: a request that DID leave the
+      // process and was never answered (a stream the server held open past the
+      // probe deadline) is a server-side `no-response`; one that never left is
+      // the probe's own failure and must not be graded as conformance.
+      return reachedWire()
+        ? { method, outcome: "no-response", message, reachedWire: true }
+        : { method, outcome: "probe-failed", message, reachedWire: false };
+    }
+    if (code === REQUEST_TIMEOUT) {
+      // A server-sent -32001: the request reached it and it declined to answer
+      // within the deadline — a verdict, just not the required one.
       return {
         method,
         outcome: "no-response",
-        ...(code === undefined ? {} : { code }),
+        code,
         message,
+        reachedWire: true,
       };
     }
-    return { method, outcome: "wrong-code", code, message };
+    return { method, outcome: "wrong-code", code, message, reachedWire: true };
   }
 }
 
@@ -696,36 +798,70 @@ export class MCPTasksConformanceTest {
                 serverId,
                 probeTool.name
               );
-              checks.push(
-                creation.taskCreated
-                  ? failed(
-                      "tasks-undeclared-creation-refused",
-                      Date.now() - stepStartedAt,
-                      "an undeclared tools/call returned a CreateTaskResult; a server must not create a task for a client that never declared the tasks capability (it must answer normally or reject with -32003)",
-                      { tool: probeTool.name, taskId: creation.taskId }
-                    )
-                  : passed(
-                      "tasks-undeclared-creation-refused",
-                      Date.now() - stepStartedAt,
-                      {
-                        tool: probeTool.name,
-                        undeclaredCreationCode: creation.code,
-                      }
-                    )
-              );
+              const stepDurationMs = Date.now() - stepStartedAt;
+              if (creation.outcome === "created") {
+                checks.push(
+                  failed(
+                    "tasks-undeclared-creation-refused",
+                    stepDurationMs,
+                    "an undeclared tools/call returned a CreateTaskResult; a server must not create a task for a client that never declared the tasks capability (it must answer normally or reject with -32003)",
+                    { tool: probeTool.name, taskId: creation.taskId }
+                  )
+                );
+              } else if (creation.outcome === "errored") {
+                // Not a pass: the probe never obtained a server response, so
+                // tasks.md:61 was not exercised at all.
+                checks.push(
+                  failed(
+                    "tasks-undeclared-creation-refused",
+                    stepDurationMs,
+                    `the undeclared tools/call produced no JSON-RPC response (${creation.message}), so the server was never tested; re-run against a reachable server`,
+                    { tool: probeTool.name, outcome: creation.outcome }
+                  )
+                );
+              } else {
+                checks.push(
+                  passed(
+                    "tasks-undeclared-creation-refused",
+                    stepDurationMs,
+                    {
+                      tool: probeTool.name,
+                      outcome: creation.outcome,
+                      ...(creation.outcome === "refused"
+                        ? { undeclaredCreationCode: creation.code }
+                        : {}),
+                    },
+                    creation.outcome === "refused" &&
+                      creation.code !== MISSING_REQUIRED_CLIENT_CAPABILITY
+                      ? [
+                          `the undeclared tools/call was rejected with ${creation.code} rather than -32003; no task was created (which is what tasks.md:61 requires) but the refusal is not the one the extension names`,
+                        ]
+                      : undefined
+                  )
+                );
+              }
             }
           }
 
-          const finalTask = createdTaskId
+          const polled = createdTaskId
             ? await this.pollToTerminal(manager, serverId, wire, createdTaskId)
-            : undefined;
+            : {};
+          const finalTask = polled.task;
+          // Distinguishes "there was never a task" from "polling the task
+          // failed", so no dependent check skips under a message that hides a
+          // broken read.
+          const noTaskReason = createdTaskId
+            ? polled.error === undefined
+              ? `task ${createdTaskId} was never readable within ${this.config.pollTimeoutMs}ms`
+              : `polling task ${createdTaskId} failed: ${errorMessage(
+                  polled.error
+                )}`
+            : "no task was created to inspect";
 
           if (selected.has("tasks-ttl-shape")) {
             const stepStartedAt = Date.now();
             if (!finalTask) {
-              checks.push(
-                skipped("tasks-ttl-shape", "no task was created to inspect")
-              );
+              checks.push(skipped("tasks-ttl-shape", noTaskReason));
             } else {
               const verdict = validateTaskTtlShape(wire, finalTask);
               checks.push(
@@ -749,9 +885,7 @@ export class MCPTasksConformanceTest {
           if (selected.has("tasks-inline-result")) {
             const stepStartedAt = Date.now();
             if (!finalTask || !createdTaskId) {
-              checks.push(
-                skipped("tasks-inline-result", "no task was created to inspect")
-              );
+              checks.push(skipped("tasks-inline-result", noTaskReason));
             } else if (!TERMINAL_STATUSES.has(String(finalTask.status))) {
               checks.push(
                 skipped(
@@ -899,7 +1033,8 @@ export class MCPTasksConformanceTest {
               const probes = await this.probeUndeclaredTaskMethods(
                 manager,
                 serverId,
-                createdTaskId
+                createdTaskId,
+                sent
               );
               if (probes === undefined) {
                 checks.push(
@@ -1031,27 +1166,51 @@ export class MCPTasksConformanceTest {
 
   /**
    * Runs a `tools/call` WITHOUT the extension declaration (`allowTaskResult`
-   * omitted, so the manager sends no capability envelope) and reports whether
-   * the server nonetheless created a task.
+   * omitted, so the manager sends no capability envelope) and reports what the
+   * server did.
+   *
+   * The outcome is deliberately four-valued rather than a boolean. A boolean
+   * `taskCreated: false` collapses "the server honoured tasks.md:61" with "the
+   * probe blew up before it proved anything", and the check counted BOTH as a
+   * pass. Only an actual server response can pass here:
+   *
+   *   - `created`  — a `CreateTaskResult` came back: the violation.
+   *   - `answered` — a normal tool result: conformant.
+   *   - `refused`  — a JSON-RPC error response: also conformant (no task was
+   *     handed to a non-declaring client), with `-32003` being the refusal the
+   *     spec names and any other code carried through as a warning.
+   *   - `errored`  — no JSON-RPC response exists at all. Same v2 discriminator
+   *     as {@link runUndeclaredProbe}: `ProtocolError` carries a NUMERIC code
+   *     and is minted only from a server error response, while local and
+   *     transport faults are `SdkError`s with STRING codes. This is a check
+   *     FAILURE, because nothing about the server was observed.
    */
   private async probeUndeclaredCreation(
     manager: MCPClientManager,
     serverId: string,
     toolName: string
-  ): Promise<{ taskCreated: boolean; taskId?: string; code?: number }> {
+  ): Promise<
+    | { outcome: "created"; taskId: string }
+    | { outcome: "answered" }
+    | { outcome: "refused"; code: number; message: string }
+    | { outcome: "errored"; message: string }
+  > {
     try {
       const result = await manager.executeTool(
         serverId,
         toolName,
         this.config.toolArguments ?? {}
       );
-      const taskId = this.extractTaskId("extension", result);
+      const taskId = extractUndeclaredCreationTaskId(result);
       return taskId === undefined
-        ? { taskCreated: false }
-        : { taskCreated: true, taskId };
+        ? { outcome: "answered" }
+        : { outcome: "created", taskId };
     } catch (error) {
       const code = errorCode(error);
-      return { taskCreated: false, ...(code === undefined ? {} : { code }) };
+      const message = errorMessage(error);
+      return code === undefined
+        ? { outcome: "errored", message }
+        : { outcome: "refused", code, message };
     }
   }
 
@@ -1065,29 +1224,51 @@ export class MCPTasksConformanceTest {
    * task: read, then a no-op update, then the listen subscription, and
    * `tasks/cancel` last — a server that wrongly accepts one of these must not
    * change what the next one observes.
+   *
+   * ERA GATE: on a 2026-07-28 connection, upstream refuses to SEND `tasks/get`
+   * and `tasks/cancel` (they are 2025-registry members the modern registry
+   * dropped); `tasks-ext-era-gate.ts` shadows that gate, and installs the shadow
+   * LAZILY on the first extension tasks operation. These probes bypass the
+   * manager's tasks APIs, so they must ask for the shadow themselves rather
+   * than lean on an earlier `getTaskExt` having triggered it — `ensure…` is
+   * idempotent and a no-op for a client the factory never registered.
+   * Belt and braces: if the gate ever did fire, it throws an `SdkError` with a
+   * STRING code, so the probe reports `probe-failed` (an offender), never a pass.
    */
   private async probeUndeclaredTaskMethods(
     manager: MCPClientManager,
     serverId: string,
-    taskId: string
+    taskId: string,
+    sent: unknown[]
   ): Promise<UndeclaredProbe[] | undefined> {
-    const client = manager.getClient(serverId) as
-      | { request?: (payload: unknown, options?: unknown) => Promise<unknown> }
-      | undefined;
-    const clientRequest = client?.request;
-    if (!clientRequest) return undefined;
+    // `getManagedClient()`, not `getClient()`: the raw upstream `Client`'s
+    // `request()` has no explicit-schema form on this SDK's surface, and its
+    // schema-less form cannot carry a `tasks/*` method (see {@link RawRequest}).
+    // The managed client's `requestWithSchema` is the same seam `tasks-ext.ts`
+    // uses for the DECLARING calls, minus the declaration — which is precisely
+    // the probe. Nothing in the wrapper chain adds the tasks capability: the
+    // only `_meta` a wrapper injects is `LogLevelMetaClient`'s log level.
+    const client = manager.getManagedClient(serverId);
+    if (typeof client?.requestWithSchema !== "function") return undefined;
+    // See the ERA GATE note above: the declaring path installs this on its own
+    // first send, the probes must ask.
+    ensureTasksExtensionEraGateShadow(client);
 
     const request: RawRequest = (payload, options) =>
-      options === undefined
-        ? clientRequest.call(client, payload)
-        : clientRequest.call(client, payload, options);
+      client.requestWithSchema(
+        payload as never,
+        RAW_PROBE_RESULT_SCHEMA,
+        options as never
+      );
 
     const probes: UndeclaredProbe[] = [];
-    probes.push(await runUndeclaredProbe(request, "tasks/get", { taskId }));
+    probes.push(
+      await runUndeclaredProbe(request, sent, "tasks/get", { taskId })
+    );
     // An EMPTY `inputResponses` map submits nothing, so even a server that
     // wrongly accepts this update cannot advance the task with it.
     probes.push(
-      await runUndeclaredProbe(request, "tasks/update", {
+      await runUndeclaredProbe(request, sent, "tasks/update", {
         taskId,
         inputResponses: {},
       })
@@ -1095,21 +1276,32 @@ export class MCPTasksConformanceTest {
     probes.push(
       await runUndeclaredProbe(
         request,
+        sent,
         "subscriptions/listen",
         { notifications: { taskIds: [taskId] } },
         { timeout: LISTEN_PROBE_TIMEOUT_MS, listenProbe: true }
       )
     );
-    probes.push(await runUndeclaredProbe(request, "tasks/cancel", { taskId }));
+    probes.push(
+      await runUndeclaredProbe(request, sent, "tasks/cancel", { taskId })
+    );
     return probes;
   }
 
+  /**
+   * Polls until terminal, the deadline, or the first poll error.
+   *
+   * The poll error is RETURNED rather than swallowed: a `tasks/get` that throws
+   * is the difference between "the server never produced a task to inspect"
+   * (a genuine skip) and "the task exists but reading it failed" (which the
+   * dependent checks must name, not silently skip past).
+   */
   private async pollToTerminal(
     manager: MCPClientManager,
     serverId: string,
     wire: TasksWire,
     taskId: string
-  ): Promise<Record<string, unknown> | undefined> {
+  ): Promise<{ task?: Record<string, unknown>; error?: unknown }> {
     const deadline = Date.now() + this.config.pollTimeoutMs;
     let last: Record<string, unknown> | undefined;
 
@@ -1120,11 +1312,12 @@ export class MCPTasksConformanceTest {
             ? ((await manager.getTaskExt(serverId, taskId)) as unknown)
             : ((await manager.getTask(serverId, taskId)) as unknown);
         last = isRecord(task) ? task : undefined;
-      } catch {
-        return last;
+      } catch (error) {
+        return { task: last, error };
       }
 
-      if (last && TERMINAL_STATUSES.has(String(last.status))) return last;
+      if (last && TERMINAL_STATUSES.has(String(last.status)))
+        return { task: last };
 
       const suggested = last
         ? Number(last.pollIntervalMs ?? last.pollInterval)
@@ -1134,6 +1327,6 @@ export class MCPTasksConformanceTest {
       await new Promise((resolve) => setTimeout(resolve, waitMs));
     }
 
-    return last;
+    return { task: last };
   }
 }

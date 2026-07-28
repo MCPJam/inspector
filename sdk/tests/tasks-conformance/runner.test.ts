@@ -17,6 +17,23 @@ function extensionDeclaration() {
 }
 
 /**
+ * The live `rpcLogger` of the run in progress. The runner reads the outbound
+ * rpc log to tell "the server never answered" apart from "the request never
+ * left the process", so a fake seam that wants to model the FORMER has to
+ * announce its send the way a real transport would.
+ */
+let activeRpcLogger: ((event: unknown) => void) | undefined;
+
+/** Announce an outbound request on the run's rpc log, as a transport would. */
+function logSend(method: string) {
+  activeRpcLogger?.({
+    direction: "send",
+    message: { method, params: {} },
+    serverId: "srv",
+  });
+}
+
+/**
  * Runs the conformance test against a fake connection by standing in for
  * `withEphemeralClient`, which is where the runner gets its manager.
  */
@@ -33,6 +50,7 @@ function runAgainst(
     opts: unknown
   ) => {
     const { rpcLogger } = (opts ?? {}) as { rpcLogger?: (e: unknown) => void };
+    activeRpcLogger = rpcLogger;
     for (const message of options.sentMessages ?? []) {
       rpcLogger?.({ direction: "send", message, serverId: "srv" });
     }
@@ -98,8 +116,14 @@ function extensionManager(overrides: Record<string, unknown> = {}) {
     // A conformant server refuses EVERY undeclared task request with -32003
     // (ext-tasks tasks.md:797-799), including a task-filtered
     // subscriptions/listen.
-    getClient: () => ({
-      request: async () => {
+    //
+    // The seam is `getManagedClient().requestWithSchema`, not
+    // `getClient().request`: the schema-less overload cannot carry a `tasks/*`
+    // method on the 2026 wire (it has no era-registry result entry and throws
+    // locally), so the probes ride the explicit-schema seam — the same one
+    // `tasks-ext.ts` uses for the DECLARING calls, minus the declaration.
+    getManagedClient: () => ({
+      requestWithSchema: async () => {
         throw Object.assign(new Error("missing capability"), {
           code: -32003,
         });
@@ -115,7 +139,7 @@ function extensionManager(overrides: Record<string, unknown> = {}) {
  */
 function undeclaredSeam(perMethod: Record<string, () => unknown>) {
   return () => ({
-    request: async (payload: { method: string }) => {
+    requestWithSchema: async (payload: { method: string }) => {
       const behavior = perMethod[payload.method];
       if (behavior) return behavior();
       throw Object.assign(new Error("missing capability"), { code: -32003 });
@@ -335,6 +359,105 @@ describe("MCPTasksConformanceTest", () => {
     expect(result.passed).toBe(false);
   });
 
+  it("fails when an undeclared tools/call smuggles a task through the manager's _meta stash", async () => {
+    // Without `allowTaskResult` the manager never returns a `CreateTaskResult`
+    // at the top level: the transport wrapper rewrites it into a plain
+    // `CallToolResult` and parks the payload under
+    // `_meta["io.mcpjam/tasks/create-task-result"]`. A detector reading only
+    // `result.taskId` sees an ordinary result from EVERY server and passes
+    // against the exact violation it exists to catch.
+    const manager = extensionManager({
+      executeTool: async (
+        _serverId: string,
+        _toolName: string,
+        _args: unknown,
+        options?: { allowTaskResult?: boolean }
+      ) =>
+        options?.allowTaskResult
+          ? { resultType: "task", taskId: "task-1" }
+          : {
+              content: [],
+              _meta: {
+                "io.mcpjam/tasks/create-task-result": {
+                  resultType: "task",
+                  taskId: "smuggled-1",
+                  status: "working",
+                },
+              },
+            },
+    });
+
+    const result = await runAgainst(manager, {
+      config: { toolName: "long_job", pollTimeoutMs: 500 },
+    });
+
+    const check = result.checks.find(
+      (c) => c.id === "tasks-undeclared-creation-refused"
+    );
+    expect(check?.status).toBe("failed");
+    expect(check?.details).toMatchObject({ taskId: "smuggled-1" });
+    expect(result.passed).toBe(false);
+  });
+
+  it("fails, rather than passing, when the undeclared creation probe cannot execute", async () => {
+    // Any exception used to become `taskCreated: false`, which the check
+    // counted as a PASS — so a timeout or a dead connection scored as
+    // conformance. A thrown error with NO numeric code means no JSON-RPC
+    // response exists, so nothing about the server was observed.
+    const manager = extensionManager({
+      executeTool: async (
+        _serverId: string,
+        _toolName: string,
+        _args: unknown,
+        options?: { allowTaskResult?: boolean }
+      ) => {
+        if (options?.allowTaskResult)
+          return { resultType: "task", taskId: "task-1" };
+        throw new Error("Connection closed");
+      },
+    });
+
+    const result = await runAgainst(manager, {
+      config: { toolName: "long_job", pollTimeoutMs: 500 },
+    });
+
+    const check = result.checks.find(
+      (c) => c.id === "tasks-undeclared-creation-refused"
+    );
+    expect(check?.status).toBe("failed");
+    expect(check?.error?.message).toContain("no JSON-RPC response");
+    expect(check?.error?.message).toContain("Connection closed");
+    expect(result.passed).toBe(false);
+  });
+
+  it("passes an undeclared creation the server refused, warning when the code is not -32003", async () => {
+    const manager = extensionManager({
+      executeTool: async (
+        _serverId: string,
+        _toolName: string,
+        _args: unknown,
+        options?: { allowTaskResult?: boolean }
+      ) => {
+        if (options?.allowTaskResult)
+          return { resultType: "task", taskId: "task-1" };
+        throw Object.assign(new Error("nope"), { code: -32602 });
+      },
+    });
+
+    const result = await runAgainst(manager, {
+      config: { toolName: "long_job", pollTimeoutMs: 500 },
+    });
+
+    const check = result.checks.find(
+      (c) => c.id === "tasks-undeclared-creation-refused"
+    );
+    // No task was handed to a non-declaring client, which is what tasks.md:61
+    // requires — but the refusal is not the one the extension names.
+    expect(check?.status).toBe("passed");
+    expect(check?.warnings?.[0]).toContain("-32602");
+    expect(check?.details).toMatchObject({ undeclaredCreationCode: -32602 });
+  });
+
   it("flags a server advertising the extension on 2025-11-25 without failing", async () => {
     const manager = extensionManager({
       getNegotiatedProtocolVersion: () => "2025-11-25",
@@ -427,9 +550,12 @@ describe("MCPTasksConformanceTest", () => {
  */
 describe("undeclared task requests (-32003)", () => {
   const runProbe = (perMethod: Record<string, () => unknown>) =>
-    runAgainst(extensionManager({ getClient: undeclaredSeam(perMethod) }), {
-      config: { toolName: "long_job", pollTimeoutMs: 500 },
-    });
+    runAgainst(
+      extensionManager({ getManagedClient: undeclaredSeam(perMethod) }),
+      {
+        config: { toolName: "long_job", pollTimeoutMs: 500 },
+      }
+    );
 
   it("passes when every undeclared request is rejected with -32003", async () => {
     const result = await runProbe({});
@@ -440,10 +566,30 @@ describe("undeclared task requests (-32003)", () => {
     const check = undeclaredCheck(result);
     expect(check?.warnings ?? []).toEqual([]);
     expect(check?.details?.probes).toEqual([
-      { method: "tasks/get", outcome: "rejected", code: -32003 },
-      { method: "tasks/update", outcome: "rejected", code: -32003 },
-      { method: "subscriptions/listen", outcome: "rejected", code: -32003 },
-      { method: "tasks/cancel", outcome: "rejected", code: -32003 },
+      {
+        method: "tasks/get",
+        outcome: "rejected",
+        code: -32003,
+        reachedWire: true,
+      },
+      {
+        method: "tasks/update",
+        outcome: "rejected",
+        code: -32003,
+        reachedWire: true,
+      },
+      {
+        method: "subscriptions/listen",
+        outcome: "rejected",
+        code: -32003,
+        reachedWire: true,
+      },
+      {
+        method: "tasks/cancel",
+        outcome: "rejected",
+        code: -32003,
+        reachedWire: true,
+      },
     ]);
   });
 
@@ -465,6 +611,7 @@ describe("undeclared task requests (-32003)", () => {
       expect(check?.details?.probes).toContainEqual({
         method,
         outcome: "answered",
+        reachedWire: false,
       });
     });
 
@@ -515,9 +662,13 @@ describe("undeclared task requests (-32003)", () => {
     );
   });
 
-  it("fails a probe that never produces a rejection at all", async () => {
+  it("fails a probe the server received but never answered", async () => {
     const result = await runProbe({
       "subscriptions/listen": () => {
+        // A stream the server held open past the probe deadline: upstream
+        // raises an `SdkError` (STRING code, so no numeric `code` reaches the
+        // runner), but the request DID go out.
+        logSend("subscriptions/listen");
         throw new Error("stream stayed open");
       },
     });
@@ -525,6 +676,41 @@ describe("undeclared task requests (-32003)", () => {
     const check = undeclaredCheck(result);
     expect(check?.status).toBe("failed");
     expect(check?.error?.message).toContain("no JSON-RPC rejection");
+    expect(check?.details?.probes).toContainEqual(
+      expect.objectContaining({
+        method: "subscriptions/listen",
+        outcome: "no-response",
+        reachedWire: true,
+      })
+    );
+  });
+
+  it("fails — and says so — when a probe never reaches the server at all", async () => {
+    // The shape of the bug this seam was rewritten to kill: the request dies
+    // locally (a missing result schema, upstream's outbound era gate), so the
+    // -32003 requirement is never put to the server. It must never read as
+    // conformance, and the failure must say the probe did not run.
+    const result = await runProbe({
+      "tasks/get": () => {
+        throw new Error(
+          "pass a result schema as the second argument to request()"
+        );
+      },
+    });
+
+    const check = undeclaredCheck(result);
+    expect(check?.status).toBe("failed");
+    expect(check?.error?.message).toContain(
+      "tasks/get never reached the server"
+    );
+    expect(check?.error?.message).toContain("was NOT tested");
+    expect(check?.details?.probes).toContainEqual(
+      expect.objectContaining({
+        method: "tasks/get",
+        outcome: "probe-failed",
+        reachedWire: false,
+      })
+    );
   });
 
   it("does not judge the -32601 escape hatch on tasks/* methods", async () => {
@@ -539,7 +725,7 @@ describe("undeclared task requests (-32003)", () => {
 
   it("skips the check when the connection exposes no raw request seam", async () => {
     const result = await runAgainst(
-      extensionManager({ getClient: () => ({}) }),
+      extensionManager({ getManagedClient: () => ({}) }),
       { config: { toolName: "long_job", pollTimeoutMs: 500 } }
     );
 
@@ -560,8 +746,8 @@ describe("undeclared task requests (-32003)", () => {
         order.push("declared:tasks/get");
         return declaredGet(serverId, taskId);
       },
-      getClient: () => ({
-        request: async (payload: { method: string }) => {
+      getManagedClient: () => ({
+        requestWithSchema: async (payload: { method: string }) => {
           order.push(`undeclared:${payload.method}`);
           throw Object.assign(new Error("missing capability"), {
             code: -32003,
