@@ -1,8 +1,3 @@
-// MUST stay first: `./sentry.js` runs `Sentry.init` as an import side effect,
-// and the Node SDK can only auto-instrument modules loaded after it. Nothing
-// imported this file before, so `Sentry.init` never ran on the server — every
-// `{ sentry: true }` capture in the codebase was silently a no-op.
-import "./sentry.js";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import fixPath from "fix-path";

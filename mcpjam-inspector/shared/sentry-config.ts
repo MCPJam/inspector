@@ -13,13 +13,9 @@ export const electronSentryConfig = {
   ...baseSentryConfig,
   dsn: "https://6a41a208e72267f181f66c47138f2b9d@o4510109778378752.ingest.us.sentry.io/4510112190431232",
 };
-// Points at the `inspector-hono` project (id 4510112200065025). The previous
-// value carried project id 4510112186433536, which matches no project in the
-// org — every server-side capture was accepted by the SDK and dropped on
-// ingest, so the inbox read as "no errors" rather than "misrouted".
 export const serverSentryConfig = {
   ...baseSentryConfig,
-  dsn: "https://3b91932f3169d72c846ce063d4e0c934@o4510109778378752.ingest.us.sentry.io/4510112200065025",
+  dsn: "https://ec309069e18ebe1d0be9088fa7bf56d9@o4510109778378752.ingest.us.sentry.io/4510112186433536",
 };
 export const clientSentryConfig = {
   ...baseSentryConfig,
