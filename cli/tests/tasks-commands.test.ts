@@ -232,6 +232,31 @@ test("tools call rejects task flags that cannot coexist", async () => {
   }
 });
 
+test("tools call --task rejects a malformed legacy task creation", async () => {
+  // `isCreateTaskResult` checks only that `task.taskId` is a string, so a task
+  // with no `status` reaches the CLI having already passed the SDK. On the
+  // legacy wire a synchronous answer would have thrown before this point, so
+  // "no task" can only mean the server sent a broken one — reporting it as a
+  // synchronous success would be a plain lie.
+  await withLegacyFixture(
+    async (fixture) => {
+      const run = await runCli([
+        "tools",
+        "call",
+        "--tool-name",
+        LEGACY_TASK_TOOL_NAME,
+        "--task",
+        ...httpTarget(fixture.url),
+      ]);
+      assert.equal(run.exitCode, 1, run.stderr);
+      const error = errorOf(run);
+      assert.equal(error.code, "TASK_MALFORMED");
+      assert.doesNotMatch(run.stderr, /synchronously/);
+    },
+    { createTaskWithoutStatus: true },
+  );
+});
+
 test("tasks get reads a live extension task inline", async () => {
   await withExtensionFixture(async (fixture) => {
     const taskId = await createExtensionTask(fixture.url);

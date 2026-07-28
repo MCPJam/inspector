@@ -64,6 +64,15 @@ export interface LegacyTasksFixtureOptions {
    * are available.
    */
   tasksCapability?: Record<string, unknown>;
+  /**
+   * Answer a task-augmented `tools/call` with a `CreateTaskResult` that carries
+   * `taskId` but no `status`.
+   *
+   * That payload is nonconforming, yet it passes the SDK's `isCreateTaskResult`
+   * guard, which checks only the id — so it is the shape a client has to reject
+   * on its own or silently mis-handle.
+   */
+  createTaskWithoutStatus?: boolean;
 }
 
 export interface ReceivedRequest {
@@ -195,12 +204,12 @@ export async function serveLegacyTasksFixture(
           state.phaseIndex = 0;
           state.pollsOnPhase = 0;
           state.cancelled = false;
-          return {
-            task: {
-              ...taskFields(phases ? currentPhase().status : "working"),
-              ttl: (params.task as { ttl?: number }).ttl ?? 60_000,
-            },
+          const task: Record<string, unknown> = {
+            ...taskFields(phases ? currentPhase().status : "working"),
+            ttl: (params.task as { ttl?: number }).ttl ?? 60_000,
           };
+          if (options.createTaskWithoutStatus) delete task.status;
+          return { task };
         }
         return { content: [{ type: "text", text: "plain call" }] };
       case "tasks/get": {

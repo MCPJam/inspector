@@ -591,8 +591,15 @@ function registerTaskWatch(tasks: Command): void {
     });
     const onState = watchStateReporter(globalOptions);
 
-    const envelope = await withWatchSignals((signal) =>
-      withEphemeralManager(
+    // `withWatchSignals` goes INSIDE the connect, not around it. Its listeners
+    // suppress Node's default SIGINT termination, and `withEphemeralClient`
+    // gives the handshake no signal to observe — so wrapping the connect would
+    // leave a Ctrl-C against an unreachable server doing nothing until
+    // `--timeout`, with repeat presses swallowed too. That is worse than no
+    // signal handling at all, and there is no task to report on before the
+    // connection exists. Scoping them to the drive is the shape
+    // `subscriptions listen` uses.
+    const envelope = await withEphemeralManager(
         config,
         async (manager, serverId) => {
           const support = resolveTasksSupportOrThrow(
@@ -600,16 +607,18 @@ function registerTaskWatch(tasks: Command): void {
             serverId,
             options.wire,
           );
-          return driveTaskWatch({
-            manager,
-            serverId,
-            support,
-            taskId,
-            tuning: taskWatchTuningFrom(options),
-            ...(input ? { input } : {}),
-            signal,
-            ...(onState ? { onState } : {}),
-          });
+          return withWatchSignals((signal) =>
+            driveTaskWatch({
+              manager,
+              serverId,
+              support,
+              taskId,
+              tuning: taskWatchTuningFrom(options),
+              ...(input ? { input } : {}),
+              signal,
+              ...(onState ? { onState } : {}),
+            }),
+          );
         },
         {
           timeout: globalOptions.timeout,
@@ -625,8 +634,7 @@ function registerTaskWatch(tasks: Command): void {
               }
             : {}),
         },
-      ),
-    );
+      );
 
     writeResult(
       withRpcLogsIfRequested(envelope, collector, globalOptions),

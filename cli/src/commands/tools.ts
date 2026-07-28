@@ -63,6 +63,7 @@ import {
   resolveHostFromOptions,
 } from "../lib/host-resolve.js";
 import {
+  cliError,
   normalizeCliError,
   setProcessExitCode,
   toStructuredError,
@@ -179,8 +180,14 @@ async function runTaskAugmentedToolCall(args: {
     if (!globalOptions.quiet) process.stderr.write(`${message}\n`);
   };
 
+  // `withWatchSignals` goes INSIDE the connect, not around it. Its listeners
+  // suppress Node's default SIGINT termination, and `withEphemeralClient` gives
+  // the handshake no signal to observe — so wrapping the connect would leave a
+  // Ctrl-C against an unreachable server doing nothing until `--timeout`, with
+  // repeat presses swallowed too. That is worse than no signal handling at all.
+  // Scoping them to the work that can actually honour an abort is the shape
+  // `subscriptions listen` uses.
   const run = () =>
-    withWatchSignals((signal) =>
     withEphemeralManager(
       config,
       async (manager, serverId) => {
@@ -210,6 +217,7 @@ async function runTaskAugmentedToolCall(args: {
           );
         }
 
+        return withWatchSignals(async (signal) => {
         // Exactly one of the two opt-ins is ever set: the legacy in-params
         // augmentation, or the extension's per-call declaration that this
         // client can handle a `CreateTaskResult`.
@@ -222,10 +230,9 @@ async function runTaskAugmentedToolCall(args: {
         // The legacy opt-in must use the dedicated fifth parameter, the same
         // way the Inspector's own tools route does.
         //
-        // Both branches carry the watch's `signal`. `withWatchSignals` has
-        // already suppressed Node's default SIGINT termination, so a creation
-        // that hangs would otherwise swallow the interrupt until the request
-        // timeout rather than unwinding into the documented `aborted` outcome.
+        // Both branches carry the watch's `signal`, so a creation that hangs
+        // unwinds into the documented `aborted` outcome instead of waiting out
+        // the request timeout.
         const result =
           support.wire === "legacy"
             ? await manager.executeTool(
@@ -242,9 +249,30 @@ async function runTaskAugmentedToolCall(args: {
 
         const created = detectCreatedTask(support.wire, result);
         if (!created) {
-          // Legal on the extension wire: a server may decide any given call is
-          // cheap enough to answer synchronously. Saying so beats a caller
-          // wondering why there is no task id.
+          // "No task" means different things per wire, and reporting the
+          // extension's meaning on the legacy wire would hide a broken server.
+          //
+          // Extension: a server may decide any given call is cheap enough to
+          // answer synchronously, and `unwrapCreatedTaskExt` hands back the
+          // plain result. Legal, so say so and return it.
+          //
+          // Legacy: a synchronous answer never reaches here at all — the SDK
+          // throws unless `isCreateTaskResult` holds. But that guard checks
+          // only that `task.taskId` is a string, so a `CreateTaskResult` with
+          // no `status` passes it and then fails our own check. On this wire
+          // `null` therefore has exactly one cause: a nonconforming task. Exit
+          // 0 with "answered synchronously" would be a plain lie.
+          if (support.wire === "legacy") {
+            throw cliError(
+              "TASK_MALFORMED",
+              `Server returned a task-augmented result for ${toolName} that ` +
+                "is not a usable task: the 2025-11-25 `CreateTaskResult` " +
+                "requires both `taskId` and `status`.",
+              1,
+              { wire: support.wire, result },
+            );
+          }
+
           note(
             `No task materialized: the server answered ${toolName} ` +
               "synchronously. Returning the tool result as-is.",
@@ -266,6 +294,7 @@ async function runTaskAugmentedToolCall(args: {
           ...(onState ? { onState } : {}),
         });
         return { created, watch, result: null };
+        });
       },
       {
         timeout: globalOptions.timeout,
@@ -278,7 +307,6 @@ async function runTaskAugmentedToolCall(args: {
             }
           : {}),
       },
-    ),
     );
 
   let envelope: Awaited<ReturnType<typeof run>>;
