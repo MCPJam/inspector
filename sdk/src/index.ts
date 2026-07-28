@@ -890,33 +890,19 @@ export type {
 //
 // `InputRequests` / `InputResponses` (the `tasks/update` payload maps) are
 // already exported by the MRTR block above and are deliberately not repeated.
+// The lifecycle block above (added by the tool-task seam work) already
+// re-exports the engine, the observation adapters, the driver and the shared
+// task types. Only what it does NOT carry is listed here, so the two blocks
+// stay a single source of truth rather than two lists to keep in step.
 export {
-  driveTaskToTerminal,
-  TaskLifecycleEngine,
-  taskLifecycleKey,
-  isTerminalLifecycleStatus,
-  TERMINAL_LIFECYCLE_STATUSES,
-  extensionTaskToObservation,
-  legacyTaskToObservation,
   LEGACY_TASK_STATUSES,
-  isUnknownTaskError,
-  UNKNOWN_TASK_ERROR_CODE,
   canDeclareTasksExtension,
   readDeclaredInputCapabilities,
   TaskInputRejectedError,
   DEFAULT_TASK_INPUT_LIMITS,
 } from "./mcp-client-manager/index.js";
 export type {
-  TasksSupport,
-  TasksWire,
-  LiveTasksWire,
   DriveTaskToTerminalArgs,
-  TaskAwaitOutcome,
-  TaskAwaitResult,
-  TaskLifecycleIdentity,
-  TaskLifecycleObservation,
-  TaskLifecycleSnapshot,
-  TaskLifecycleStatus,
   DeclaredInputCapabilities,
   TaskInputDriverOptions,
   TaskInputHandlerContext,
