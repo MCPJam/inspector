@@ -124,7 +124,7 @@ Interrupting before the task exists — Ctrl-C while the `tools/call` is still i
 
 ### Pacing
 
-`--poll-interval-ms` sets **your** minimum interval. The server's advertised `pollIntervalMs`, any `Retry-After`, and error backoff still apply as floors on top of it, so the CLI cannot poll a server faster than that server asked for.
+`--poll-interval-ms` sets **your** minimum interval. The server's advertised `pollIntervalMs`, any `Retry-After` the transport surfaces on a failed read, and error backoff still apply as floors on top of it, so the CLI cannot poll a server faster than that server asked for.
 
 `--duration-ms` bounds the whole watch (default 5 minutes). `--max-input-rounds` and `--max-consecutive-errors` bound the input loop and transient read failures.
 

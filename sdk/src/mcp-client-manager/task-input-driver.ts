@@ -298,6 +298,12 @@ export async function collectTaskInputResponses(args: {
   }
 
   for (const key of keys.slice(0, limits.maxRequests)) {
+    // An aborted caller gets a truncated collection, not a string of forced
+    // failures: prompting the next key into a dead terminal would record a
+    // `handler-failed` for every remaining request, and the driver reads those
+    // rejections as "the task needs input this run could not answer" — the
+    // wrong verdict when the truth is "the user hit Ctrl-C".
+    if (signal?.aborted) break;
     if (respondedKeys.has(key)) {
       alreadyAnsweredKeys.push(key);
       continue;
@@ -382,6 +388,11 @@ export async function collectTaskInputResponses(args: {
         signal,
       });
     } catch (error) {
+      // A handler torn down by the caller's abort is not a failed handler.
+      // The prompt's readline rejects when the signal fires, and recording
+      // that as `handler-failed` is what made a Ctrl-C mid-prompt settle as
+      // `input-required` instead of `aborted` upstream.
+      if (signal?.aborted) break;
       rejections.push({
         inputKey: key,
         method,

@@ -22,6 +22,7 @@ import {
   legacyTaskToObservation,
   isUnknownTaskError,
   parseRetryAfterMs,
+  retryAfterMsFromError,
 } from "../src/mcp-client-manager/task-lifecycle-adapters.js";
 
 const identity = (
@@ -767,5 +768,42 @@ describe("wire adapters", () => {
     // A malformed hint must not become a zero-length backoff.
     expect(parseRetryAfterMs("soon", now)).toBeUndefined();
     expect(parseRetryAfterMs(undefined, now)).toBeUndefined();
+  });
+});
+
+describe("retryAfterMsFromError", () => {
+  const now = Date.parse("2026-07-28T00:00:00Z");
+
+  it("reads each error shape a layer might preserve, most-explicit first", () => {
+    expect(retryAfterMsFromError({ retryAfterMs: 1_500 }, now)).toBe(1_500);
+    // `retryAfter` follows the platform-error convention: seconds.
+    expect(retryAfterMsFromError({ retryAfter: 30 }, now)).toBe(30_000);
+    expect(retryAfterMsFromError({ retryAfter: "30" }, now)).toBe(30_000);
+    expect(
+      retryAfterMsFromError({ headers: { "retry-after": "30" } }, now)
+    ).toBe(30_000);
+    expect(
+      retryAfterMsFromError(
+        { headers: new Headers({ "Retry-After": "30" }) },
+        now
+      )
+    ).toBe(30_000);
+    expect(
+      retryAfterMsFromError(
+        { response: { headers: { "Retry-After": "2026-07-28T00:00:45Z" } } },
+        now
+      )
+    ).toBe(45_000);
+  });
+
+  it("returns undefined when nothing usable is attached", () => {
+    expect(retryAfterMsFromError(new Error("plain"), now)).toBeUndefined();
+    expect(retryAfterMsFromError(undefined, now)).toBeUndefined();
+    expect(retryAfterMsFromError("string error", now)).toBeUndefined();
+    // A malformed hint must not become a zero-length floor.
+    expect(
+      retryAfterMsFromError({ headers: { "retry-after": "soon" } }, now)
+    ).toBeUndefined();
+    expect(retryAfterMsFromError({ retryAfterMs: -5 }, now)).toBeUndefined();
   });
 });

@@ -1,5 +1,6 @@
 import {
   canDeclareTasksExtension,
+  createStrictElicitationContentValidator,
   driveTaskToTerminal,
   extensionTaskToObservation,
   isUnknownTaskError,
@@ -549,5 +550,14 @@ export function buildTaskInputDriverOptions(
     );
   }
 
-  return { declaredCapabilities: declaredCapabilities as never, handlers };
+  return {
+    declaredCapabilities: declaredCapabilities as never,
+    handlers,
+    // The same strict, dialect-aware self-validation the standalone MRTR path
+    // applies (the manager's `mrtrElicitationContentValidator` is built from
+    // this same factory). Without it, an accepted answer that violates the
+    // request's `requestedSchema` would be submitted via `tasks/update` here
+    // while the interactive path refuses the identical answer.
+    validateElicitationContent: createStrictElicitationContentValidator(),
+  };
 }

@@ -312,3 +312,35 @@ describe("declaration eligibility", () => {
     ).toEqual({ ok: true });
   });
 });
+
+describe("abort during collection", () => {
+  it("stops without recording handler-failed for the aborted prompt", async () => {
+    // The abort tears down an open prompt (its throw is a consequence of the
+    // signal, not a failed handler) and the remaining keys must not be
+    // prompted into a dead terminal.
+    const controller = new AbortController();
+    const prompted: string[] = [];
+    const result = await collectTaskInputResponses({
+      options: {
+        declaredCapabilities: { elicitation: {} } as ClientCapabilityOptions,
+        handlers: {
+          elicitation: async (params) => {
+            prompted.push(String((params as { key?: unknown }).key ?? "?"));
+            controller.abort();
+            throw new Error("prompt torn down by abort");
+          },
+        },
+      },
+      taskId: "task-1",
+      serverId: "srv",
+      inputRequests: {
+        a: { method: "elicitation/create", params: { key: "a" } },
+        b: { method: "elicitation/create", params: { key: "b" } },
+      } as never,
+      signal: controller.signal,
+    });
+    expect(prompted).toEqual(["a"]);
+    expect(result.answeredKeys).toEqual([]);
+    expect(result.rejections).toEqual([]);
+  });
+});

@@ -611,3 +611,99 @@ describe("poll discipline", () => {
     expect(result.task?.result).toEqual({ ok: true });
   });
 });
+
+describe("abort during input collection", () => {
+  it("settles as aborted when the signal fires mid-prompt", async () => {
+    // A Ctrl-C lands while a terminal prompt is open: the abort tears the
+    // prompt down and the handler surfaces that as a throw. Without the
+    // signal check this settled as `input-required` (the throw reads as
+    // handler-failed), making a prompt the ONE place in the drive where an
+    // interrupt did not produce `aborted`.
+    const clock = controlledClock();
+    const controller = new AbortController();
+    const result = await drive(
+      {
+        getTask: async () => ({
+          status: "input_required",
+          inputRequests: {
+            k: { method: "elicitation/create", params: {} },
+          } as never,
+        }),
+        updateTask: async () => {},
+        input: {
+          declaredCapabilities: { elicitation: {} } as ClientCapabilityOptions,
+          handlers: {
+            elicitation: async () => {
+              controller.abort();
+              throw new Error("prompt torn down by abort");
+            },
+          },
+        },
+        signal: controller.signal,
+        timeoutMs: 60_000,
+      },
+      clock
+    );
+    expect(result.outcome).toBe("aborted");
+  });
+
+  it("keeps a genuine handler failure as input-required", async () => {
+    // The discrimination is the signal, not the throw: the same throw without
+    // an abort is a real handler failure and must keep the old verdict.
+    const clock = controlledClock();
+    const result = await drive(
+      {
+        getTask: async () => ({
+          status: "input_required",
+          inputRequests: {
+            k: { method: "elicitation/create", params: {} },
+          } as never,
+        }),
+        updateTask: async () => {},
+        input: {
+          declaredCapabilities: { elicitation: {} } as ClientCapabilityOptions,
+          handlers: {
+            elicitation: async () => {
+              throw new Error("collector exploded on its own");
+            },
+          },
+        },
+        timeoutMs: 60_000,
+      },
+      clock
+    );
+    expect(result.outcome).toBe("input-required");
+    expect(result.unansweredInput?.[0]?.reason).toBe("handler-failed");
+  });
+});
+
+describe("Retry-After pacing", () => {
+  it("honors a Retry-After recovered from a failed read", async () => {
+    // The engine has honored `retryAfterUntil` since it was built; this pins
+    // that the DRIVER now feeds it. A 429 carrying `Retry-After: 30` must gate
+    // the next poll behind the full 30s, not just the error backoff.
+    const clock = controlledClock();
+    const readTimes: number[] = [];
+    let call = 0;
+    const result = await drive(
+      {
+        getTask: async () => {
+          readTimes.push(clock.now());
+          call += 1;
+          if (call === 1) {
+            const error = new Error("429 Too Many Requests") as Error & {
+              headers: Record<string, string>;
+            };
+            error.headers = { "retry-after": "30" };
+            throw error;
+          }
+          return { status: "completed", result: { ok: true } };
+        },
+        timeoutMs: 5 * 60_000,
+      },
+      clock
+    );
+    expect(result.outcome).toBe("completed");
+    expect(readTimes[1]! - readTimes[0]!).toBeGreaterThanOrEqual(30_000);
+  });
+});

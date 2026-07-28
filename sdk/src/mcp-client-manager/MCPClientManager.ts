@@ -170,6 +170,7 @@ import { wrapLegacyClient } from "./managed-mcp-client-factory.js";
 import { ObservableResponseCache } from "./observable-response-cache.js";
 import { resolveVersionNegotiation } from "./version-negotiation.js";
 import { DialectAwareJsonSchemaValidator } from "./dialect-aware-json-schema-validator.js";
+import { createStrictElicitationContentValidator } from "./elicitation-content-validator.js";
 import { isStatelessProtocolVersion } from "./mcp-protocol-version.js";
 import { type ManagedMcpClient } from "./managed-mcp-client.js";
 import {
@@ -248,39 +249,12 @@ export class MCPClientManager {
 
   /**
    * Strict self-validation of collected elicitation content against each
-   * request's `requestedSchema` (§12.1.11). Unlike the tool-output validator,
-   * an unknown JSON-Schema dialect is treated as INVALID (not fail-open):
-   * elicitation content is untrusted, so an exotic dialect must not wave it
-   * through. The dialect-aware validator is constructed per call so the
-   * throwing `onUnknownDialect` never leaks state between validations.
+   * request's `requestedSchema` (§12.1.11). The rule itself lives in
+   * `elicitation-content-validator.ts` so task input drivers wire the same
+   * authority; see that module for the strictness rationale.
    */
   private readonly mrtrElicitationContentValidator: ElicitationContentValidator =
-    (requestedSchema, content) => {
-      if (
-        typeof requestedSchema !== "object" ||
-        requestedSchema === null
-      ) {
-        return { valid: false, error: "requestedSchema is not an object" };
-      }
-      const strict = new DialectAwareJsonSchemaValidator({
-        onUnknownDialect: (dialect) => {
-          throw new Error(
-            `Elicitation content declares unsupported JSON Schema dialect "${dialect}".`
-          );
-        },
-      });
-      let validate;
-      try {
-        validate = strict.getValidator(requestedSchema as JsonSchemaType);
-      } catch (error) {
-        return {
-          valid: false,
-          error: error instanceof Error ? error.message : String(error),
-        };
-      }
-      const result = validate(content);
-      return { valid: result.valid, error: result.errorMessage };
-    };
+    createStrictElicitationContentValidator();
 
   /**
    * Tool output-schema validator for the MRTR path. `requestWithSchema`

@@ -899,6 +899,8 @@ export {
   readDeclaredInputCapabilities,
   TaskInputRejectedError,
   DEFAULT_TASK_INPUT_LIMITS,
+  createStrictElicitationContentValidator,
+  retryAfterMsFromError,
 } from "./mcp-client-manager/index.js";
 export type {
   DriveTaskToTerminalArgs,

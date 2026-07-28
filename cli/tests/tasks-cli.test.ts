@@ -254,6 +254,41 @@ test("buildTaskInputDriverOptions wires an elicitation handler and declares it",
   assert.deepEqual(declared.elicitation, { form: {}, url: {} });
 });
 
+test("buildTaskInputDriverOptions self-validates accepted content strictly", () => {
+  // The same strict rule as standalone MRTR (SEP-2663 tasks.md routes task
+  // input through the MRTR trust rules): an accepted answer that violates the
+  // request's `requestedSchema` must be refused BEFORE `tasks/update`, not
+  // submitted. Without `validateElicitationContent` the driver skips
+  // self-validation entirely.
+  const options = buildTaskInputDriverOptions({
+    config: httpConfig,
+    interactive: true,
+    stdinIsTTY: true,
+    env: {},
+  });
+  assert.ok(options);
+  const validate = options.validateElicitationContent;
+  assert.equal(typeof validate, "function");
+
+  const requestedSchema = {
+    type: "object",
+    properties: { count: { type: "number" } },
+    required: ["count"],
+  };
+  assert.equal(validate!(requestedSchema, { count: 3 }).valid, true);
+  assert.equal(validate!(requestedSchema, { count: "three" }).valid, false);
+  assert.equal(validate!(requestedSchema, {}).valid, false);
+  // An unknown dialect is INVALID, not fail-open — elicitation content is
+  // untrusted input.
+  assert.equal(
+    validate!(
+      { $schema: "https://example.com/not-a-dialect", type: "object" },
+      {},
+    ).valid,
+    false,
+  );
+});
+
 test("buildTaskInputDriverOptions refuses a pinned capability it cannot answer", () => {
   // Declaring `sampling` with no handler would strand any task that asks for
   // it; the user sees the reason instead of a hang.
