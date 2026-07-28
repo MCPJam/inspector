@@ -74,6 +74,77 @@ const MCPJAM_MODEL_LIMIT_PATTERN = /mcpjam[\w\s-]*model limit/i;
 const MINUTES_PER_HOUR = 60;
 const MINUTES_PER_DAY = 24 * MINUTES_PER_HOUR;
 
+/**
+ * Plain-English copy for the connection failures a chat turn can hit.
+ *
+ * The server already sends an accurate `code` (`WebRouteError` → `webError`),
+ * but the raw `message` beside it is written for us, not for the person in the
+ * playground: a failed OAuth refresh renders as "Authorization failed" and an
+ * unreachable server as "fetch failed". Both leave the user with no idea what
+ * to do next. Translate the codes we understand and leave everything else on
+ * the existing verbatim path.
+ *
+ * The raw message is preserved as `details`, so the "More details" collapsible
+ * still shows exactly what the server said.
+ */
+const describeServer = (serverName: string | undefined) =>
+  serverName ? `“${serverName}”` : "the MCP server";
+
+const humanizeConnectionError = (
+  code: unknown,
+  rawDetails: unknown,
+): { message: string; isRetryable: boolean } | null => {
+  if (typeof code !== "string") return null;
+
+  const detailBag =
+    rawDetails && typeof rawDetails === "object"
+      ? (rawDetails as Record<string, unknown>)
+      : undefined;
+  const serverName =
+    typeof detailBag?.serverName === "string" && detailBag.serverName.length > 0
+      ? detailBag.serverName
+      : undefined;
+  const server = describeServer(serverName);
+
+  // An expired/revoked OAuth grant is flagged by the backend regardless of the
+  // code it rides in on (see hosted-oauth-refresh.ts), so check it first — the
+  // fix is "reconnect", never "retry".
+  if (
+    detailBag?.refreshTokenInvalid === true ||
+    detailBag?.oauthRequired === true
+  ) {
+    return {
+      message: `Your connection to ${server} has expired. Reconnect it to keep chatting.`,
+      isRetryable: false,
+    };
+  }
+
+  switch (code) {
+    case "SERVER_UNREACHABLE":
+      return {
+        message: `Couldn't reach ${server}. It may be offline or blocking the connection.`,
+        isRetryable: true,
+      };
+    case "TIMEOUT":
+      return {
+        message: `${serverName ? `“${serverName}”` : "The MCP server"} took too long to respond.`,
+        isRetryable: true,
+      };
+    case "UNAUTHORIZED":
+      return {
+        message: `${server} rejected the connection. Reconnect it to refresh your access.`,
+        isRetryable: false,
+      };
+    case "FORBIDDEN":
+      return {
+        message: `${server} refused this request. Your access may not cover the tools this chat needs.`,
+        isRetryable: false,
+      };
+    default:
+      return null;
+  }
+};
+
 const normalizeDetails = (details: unknown): string | undefined => {
   if (details == null) return undefined;
   if (typeof details === "string") return details;
@@ -314,6 +385,20 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
             retryAfterMs,
           },
         );
+      }
+
+      // Connection failures get human copy; the server's own wording stays
+      // reachable under "More details" rather than leading the banner.
+      const humanized = humanizeConnectionError(code, parsed.details);
+      if (humanized) {
+        return {
+          message: humanized.message,
+          details: details ?? message,
+          code,
+          statusCode: parsed.statusCode,
+          isRetryable: humanized.isRetryable,
+          isMCPJamPlatformError: false,
+        };
       }
 
       return {

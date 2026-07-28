@@ -222,4 +222,101 @@ describe("formatErrorMessage", () => {
     expect(result).not.toHaveProperty("walletLocked");
     expect(result).not.toHaveProperty("limitKind");
   });
+
+  // Connection failures already reached the playground intact — the AI SDK
+  // throws `new Error(await response.text())`, so the server's JSON parses
+  // fine here. What reached the user was the backend's own wording: a dead
+  // OAuth grant rendered as "Authorization failed", an unreachable server as
+  // "fetch failed". Accurate, and useless. These pin the human copy.
+  describe("connection failures", () => {
+    it("explains an unreachable server and offers a retry", () => {
+      const result = formatErrorMessage(
+        JSON.stringify({
+          code: "SERVER_UNREACHABLE",
+          message: "fetch failed",
+        }),
+      );
+
+      expect(result?.message).toBe(
+        "Couldn't reach the MCP server. It may be offline or blocking the connection.",
+      );
+      expect(result?.isRetryable).toBe(true);
+      expect(result?.isMCPJamPlatformError).toBe(false);
+      // The server's own wording stays reachable under "More details".
+      expect(result?.details).toBe("fetch failed");
+    });
+
+    it("names the server when the backend supplies one", () => {
+      const result = formatErrorMessage(
+        JSON.stringify({
+          code: "SERVER_UNREACHABLE",
+          message: "fetch failed",
+          details: { serverName: "BART MCP" },
+        }),
+      );
+
+      expect(result?.message).toBe(
+        "Couldn't reach “BART MCP”. It may be offline or blocking the connection.",
+      );
+    });
+
+    it("tells the user to reconnect an expired OAuth grant instead of retrying", () => {
+      const result = formatErrorMessage(
+        JSON.stringify({
+          code: "UNAUTHORIZED",
+          message: "Hosted OAuth refresh token is invalid. Please reconnect.",
+          details: {
+            oauthRequired: true,
+            refreshTokenInvalid: true,
+            serverName: "BART MCP",
+          },
+        }),
+      );
+
+      expect(result?.message).toBe(
+        "Your connection to “BART MCP” has expired. Reconnect it to keep chatting.",
+      );
+      // Retrying cannot revive a dead grant — the CTA must not suggest it.
+      expect(result?.isRetryable).toBe(false);
+    });
+
+    it("explains a timeout", () => {
+      const result = formatErrorMessage(
+        JSON.stringify({
+          code: "TIMEOUT",
+          message: "Connection attempt timed out after 20 seconds",
+          details: { serverName: "BART MCP" },
+        }),
+      );
+
+      expect(result?.message).toBe(
+        "“BART MCP” took too long to respond.",
+      );
+      expect(result?.isRetryable).toBe(true);
+    });
+
+    it("leaves unrelated codes on the verbatim path", () => {
+      const result = formatErrorMessage(
+        JSON.stringify({
+          code: "VALIDATION_ERROR",
+          message: "projectId is invalid",
+        }),
+      );
+
+      expect(result?.message).toBe("projectId is invalid");
+    });
+
+    it("does not divert a rate-limit error onto the connection path", () => {
+      const result = formatErrorMessage(
+        JSON.stringify({
+          code: "user_rate_limit",
+          error: "Daily MCPJam model limit reached.",
+          retryAfter: 4500000,
+        }),
+      );
+
+      expect(result?.isMCPJamPlatformError).toBe(true);
+      expect(result?.message).toContain("Add your own API key");
+    });
+  });
 });
