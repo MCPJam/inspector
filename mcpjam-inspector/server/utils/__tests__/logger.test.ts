@@ -213,6 +213,41 @@ describe("logger", () => {
       );
     });
 
+    it("serializes options.error into the Axiom payload", () => {
+      // Regression: emit() used to forward the error object to Sentry only,
+      // so every failure event landed in Axiom with no cause attached.
+      logger.event(
+        "http.request.failed",
+        baseRequestContext,
+        { statusCode: 502, errorCode: "server_unreachable" },
+        { error: new Error("read ECONNRESET") },
+      );
+
+      expect(mockIngest).toHaveBeenCalledWith("test-dataset", [
+        expect.objectContaining({
+          event: "http.request.failed",
+          statusCode: 502,
+          error: expect.objectContaining({
+            name: "Error",
+            message: "read ECONNRESET",
+          }),
+        }),
+      ]);
+    });
+
+    it("stringifies a non-Error options.error for the Axiom payload", () => {
+      logger.event(
+        "http.request.failed",
+        baseRequestContext,
+        { statusCode: 500, errorCode: "unhandled_exception" },
+        { error: "string reason" },
+      );
+
+      expect(mockIngest).toHaveBeenCalledWith("test-dataset", [
+        expect.objectContaining({ error: "string reason" }),
+      ]);
+    });
+
     it("calls Sentry.captureException only when sentry: true is opted in with an Error", () => {
       const err = new Error("boom");
       logger.event(

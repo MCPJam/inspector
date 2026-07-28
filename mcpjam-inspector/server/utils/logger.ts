@@ -143,6 +143,11 @@ export const logger = {
  *   `timestamp - durationMs` for HTTP events.
  * - Sentry is opt-in via `options.sentry === true`; the caller that owns the
  *   error decides whether to forward it.
+ * - `options.error` is ALSO serialized into the Axiom payload (as `error:
+ *   {name, message, stack}`, scrubbed), independent of the Sentry opt-in.
+ *   Before this, the error object reached only Sentry and every failure
+ *   event landed in Axiom with no cause — a 502 investigation couldn't name
+ *   the underlying ECONNRESET without leaving the log pipeline.
  * - `*.failed` events route their console echo to stderr.
  */
 function emit(
@@ -154,6 +159,16 @@ function emit(
   const fullPayload = scrubLogPayload({
     ...base,
     ...payload,
+    // scrubLogPayload serializes Error instances to {name, message, stack}
+    // with token/JWT/email scrubbing applied to both message and stack.
+    ...(options?.error !== undefined
+      ? {
+          error:
+            options.error instanceof Error
+              ? options.error
+              : String(options.error),
+        }
+      : {}),
     event: eventName,
     timestamp: new Date().toISOString(),
   }) as Record<string, unknown>;
