@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { isHostedMode } from "@/lib/apis/mode-client";
 import {
   HOSTED_TASK_BATCH_LIMIT,
+  HOSTED_TASK_POLL_FLOOR_MS,
   hostedPollIntervalMs,
 } from "@/shared/hosted-tasks";
+import { useTaskScheduler } from "@/hooks/use-task-scheduler";
 import { Button } from "@mcpjam/design-system/button";
 import { Badge } from "@mcpjam/design-system/badge";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
@@ -101,6 +103,11 @@ export function TasksTab({
   isActive = true,
 }: TasksTabProps) {
   const [tasks, setTasks] = useState<NormalizedTask[]>([]);
+  // Read inside `fetchTasks` to carry not-yet-due handles forward without
+  // making the callback depend on `tasks` — that would rebuild it on every
+  // render and restart the poll timer each tick.
+  const tasksRef = useRef<NormalizedTask[]>([]);
+  tasksRef.current = tasks;
   const [selectedTaskId, setSelectedTaskId] = useState<string>("");
   const [taskResult, setTaskResult] = useState<unknown>(null);
   const [pendingRequest, setPendingRequest] = useState<unknown>(null);
@@ -175,16 +182,19 @@ export function TasksTab({
     }
   }, [hasActiveTasks]);
 
-  // Per MCP Tasks spec: "Requestors SHOULD respect the pollInterval provided in responses"
-  // Calculate server-suggested poll interval from non-terminal tasks
-  // Use the minimum pollInterval from active tasks to not miss updates
+  // The slowest floor among the active tasks — NOT the fastest.
+  //
+  // A tick reads every due task, so honoring the fastest task's floor would
+  // breach every slower task's. This value is what the shared tick must
+  // respect and what the UI reports; the per-task decision of *which* tasks
+  // are actually due is the scheduler's, not this number's.
   const serverSuggestedPollInterval = useMemo(() => {
-    const activeTasksWithPollInterval = tasks
+    const activeFloors = tasks
       .filter((t) => !isTerminalStatus(t.status) && t.pollInterval)
       .map((t) => t.pollInterval!);
 
-    if (activeTasksWithPollInterval.length === 0) return null;
-    return Math.min(...activeTasksWithPollInterval);
+    if (activeFloors.length === 0) return null;
+    return Math.max(...activeFloors);
   }, [tasks]);
 
   // Subscribe to task-related elicitations via SSE
@@ -251,19 +261,32 @@ export function TasksTab({
         }
       : null;
 
-  // Priority: user override > server suggestion > user default
-  // Per MCP Tasks spec: "Requestors SHOULD respect the pollInterval provided in responses"
-  // But we allow user to explicitly override if they want
-  const requestedPollInterval =
-    userOverride ?? serverSuggestedPollInterval ?? userPollInterval;
-  const pollInterval = hosted
-    ? hostedPollIntervalMs(
-        requestedPollInterval,
-        serverSuggestedPollInterval ?? undefined,
-      )
-    : requestedPollInterval;
+  // Every term is a MAX. The user's setting is a preferred *minimum*, never
+  // permission to poll faster than a server asked to be polled — the old
+  // `userOverride ?? serverSuggested ?? userDefault` chain let a user typing
+  // 500 into the box replace a 30s server floor outright.
+  const userPreferredMinimum = userOverride ?? userPollInterval;
+  const pollInterval = Math.max(
+    userPreferredMinimum,
+    serverSuggestedPollInterval ?? 0,
+    // Each hosted tick is a full authorize → connect → request → disconnect
+    // round trip, so the hosted surface carries its own connection-cost floor.
+    hosted ? hostedPollIntervalMs(userPreferredMinimum) : 0,
+  );
+  // The server is setting the pace whenever its floor is the binding term.
   const usingServerInterval =
-    serverSuggestedPollInterval !== null && userOverride === null;
+    serverSuggestedPollInterval !== null &&
+    serverSuggestedPollInterval >= userPreferredMinimum;
+
+  // Per-task due-time scheduling. The shared tick below fires at the pace
+  // above; the scheduler decides which handles that tick is actually allowed
+  // to read, so a 30s task is not read every time a 1s task is.
+  const scheduler = useTaskScheduler({
+    serverId: serverName,
+    wire,
+    userMinimumIntervalMs: userPreferredMinimum,
+    surfaceFloorMs: hosted ? HOSTED_TASK_POLL_FLOOR_MS : 0,
+  });
 
   const handlePollIntervalChange = useCallback(
     (value: string) => {
@@ -340,7 +363,19 @@ export function TasksTab({
       const expiredEntries = pending
         .filter((t) => t.expired)
         .map((t) => expiredPlaceholderTask(t));
-      const livePending = pending.filter((t) => !t.expired);
+      // Only the handles whose own floor has elapsed. A tick that read every
+      // pending handle would poll a 30s task at the tab's 1s pace.
+      const dueIds = new Set(
+        scheduler.dueTaskIds(
+          pending.filter((t) => !t.expired).map((t) => t.taskId),
+        ),
+      );
+      const livePending = pending.filter(
+        (t) => !t.expired && dueIds.has(t.taskId),
+      );
+      // Handles that exist but are not due keep their last-known state on
+      // screen rather than blinking out until their next read.
+      const notDue = pending.filter((t) => !t.expired && !dueIds.has(t.taskId));
       const byId = new Map(livePending.map((t) => [t.taskId, t]));
       const pendingIds = livePending.map((t) => t.taskId);
 
@@ -398,7 +433,39 @@ export function TasksTab({
           }),
         );
       }
-      trackedTaskStatuses = [...trackedTaskStatuses, ...expiredEntries];
+      // Feed the scheduler what we actually observed, so each handle is
+      // rescheduled by its OWN advertised floor. A due handle that came back
+      // empty is a failed read: it backs off rather than being retried at the
+      // tab's pace.
+      const observed = trackedTaskStatuses.filter(
+        (task): task is NormalizedTask => task !== null,
+      );
+      scheduler.recordObservations(
+        observed.map((task) => ({
+          taskId: task.taskId,
+          status: task.status,
+          pollIntervalMs: task.pollInterval,
+          ttlMs: task.ttl ?? null,
+          lastUpdatedAt: task.lastUpdatedAt,
+        })),
+      );
+      const observedIds = new Set(observed.map((task) => task.taskId));
+      scheduler.recordErrors(pendingIds.filter((id) => !observedIds.has(id)));
+
+      // A handle that was not due this tick keeps its last-known state rather
+      // than disappearing from the list until its next read.
+      const previousById = new Map(
+        tasksRef.current.map((task) => [task.taskId, task]),
+      );
+      const carriedForward = notDue
+        .map((tracked) => previousById.get(tracked.taskId))
+        .filter((task): task is NormalizedTask => task !== undefined);
+
+      trackedTaskStatuses = [
+        ...trackedTaskStatuses,
+        ...carriedForward,
+        ...expiredEntries,
+      ];
 
       // Merge server tasks with tracked tasks (tracked tasks first for recency)
       // Filter out dismissed tasks from server results
@@ -424,7 +491,7 @@ export function TasksTab({
     } finally {
       setFetchingTasks(false);
     }
-  }, [serverName, taskCapabilities, hosted, wire]);
+  }, [serverName, taskCapabilities, hosted, wire, scheduler]);
 
   // Handle elicitation response from the dialog
   const handleElicitationResponse = useCallback(
@@ -598,17 +665,34 @@ export function TasksTab({
     }
   }, [serverConfig, serverName, fetchTasks, isActive, taskCapabilities]);
 
-  // Auto-refresh logic - uses user-configured pollInterval (persisted in localStorage)
-  // Only poll when tab is active
+  // Auto-refresh: a self-rearming timeout rather than a fixed interval.
+  //
+  // The delay is whatever the scheduler says the SOONEST task is waiting for,
+  // clamped to the tab's own pace. A fixed `setInterval(pollInterval)` would
+  // wake up at the fastest task's rate and then find nothing due — burning a
+  // render and, on the hosted path, tempting a connection per tick. Only poll
+  // when the tab is active.
   useEffect(() => {
     if (!autoRefresh || !serverName || !isActive) return;
 
-    const interval = setInterval(() => {
-      fetchTasks();
-    }, pollInterval);
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
 
-    return () => clearInterval(interval);
-  }, [autoRefresh, serverName, fetchTasks, pollInterval, isActive]);
+    const arm = (delayMs: number) => {
+      timer = setTimeout(async () => {
+        if (cancelled) return;
+        await fetchTasks();
+        if (cancelled) return;
+        arm(Math.max(scheduler.msUntilNextDue(), pollInterval));
+      }, delayMs);
+    };
+    arm(pollInterval);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [autoRefresh, serverName, fetchTasks, pollInterval, isActive, scheduler]);
 
   // Fetch result when selecting a completed or failed task, or pending request for input_required
   // Per MCP Tasks spec: when task is input_required, tasks/result returns the pending request

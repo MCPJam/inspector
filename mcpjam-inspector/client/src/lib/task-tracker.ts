@@ -1,16 +1,34 @@
 /**
- * Lightweight task tracker for MCP Tasks.
+ * Durable task tracker for MCP Tasks.
  *
  * Tasks are tracked locally because servers are not required to remember them:
  * legacy servers may forget them across sessions, and the extension wire has
- * no `tasks/list` at all — there the tracker IS the list.
+ * no `tasks/list` at all — there the tracker IS the list. For anonymous and
+ * local use it is the only copy; for authenticated users it is still the
+ * immediate write path, with the hosted registry as a best-effort recovery
+ * index behind it rather than a replacement.
  *
  * Identity is the composite `(scope, serverId, wire, taskId)`: task IDs are
  * only unique within a server, the same ID can exist on both wires while a
  * developer flips protocol versions, and hosted task IDs are bearer-ish
  * handles that must not leak between accounts or organizations sharing a
- * browser — hence the auth/org `scope` segment. Entries are stored under a
- * versioned schema key so old, origin-wide entries can be migrated on load.
+ * browser — hence the auth/org `scope` segment.
+ *
+ * ## What is stored, and what is deliberately not
+ *
+ * Enough to RESUME a task, and nothing more: the handle, its identity, its
+ * latest scheduling hints, and which input keys have been answered. Never the
+ * elicitation prompts, the sampling content, the roots, the responses, or the
+ * task's result. A tracker entry is a bookmark, not a transcript.
+ *
+ * ## Why an entry is dropped
+ *
+ * Only ever for storage bounds — count, age, string length, serialized size —
+ * and never from a TTL. `ttlMs` is the SERVER's licence to discard a task, not
+ * ours (`tasks.md:136-140`), it may change over the task's lifetime
+ * (`tasks.md:340`), and `null` means unlimited. So an elapsed TTL raises a
+ * handle's poll priority and does nothing else. The age bound is measured and
+ * documented as a localStorage cap, not as an expiry.
  */
 
 import { TRACKED_TASK_MAX_AGE_MS } from "@/shared/hosted-tasks";
@@ -34,6 +52,26 @@ export interface TrackedTask {
    * Undefined for purely local entries, which have no cross-account risk.
    */
   scope?: string;
+
+  // ---- v3: resumable scheduling state -------------------------------------
+  /** Last `lastUpdatedAt` observed from the server. Never inferred locally. */
+  lastUpdatedAt?: string;
+  /** Latest observed status, so a reload can render before the first poll. */
+  status?: string;
+  /** Latest `ttlMs`. `null` means the server said "no expiry". */
+  ttlMs?: number | null;
+  /** Latest server-advertised poll floor. MAY change in either direction. */
+  pollIntervalMs?: number;
+  /** Epoch ms this handle may next be polled; survives a reload. */
+  nextPollAt?: number;
+  /** Epoch ms a live read last answered for this handle, any status. */
+  lastObservedAt?: number;
+  /**
+   * Input keys whose `tasks/update` was acknowledged. KEYS ONLY — never the
+   * request, the prompt, or the response. This is what stops a reload from
+   * re-prompting for something the user already answered.
+   */
+  respondedInputKeys?: string[];
 }
 
 /**
@@ -56,8 +94,18 @@ function inScope(task: TrackedTask): boolean {
 }
 
 const STORAGE_KEY = "mcp-tracked-tasks";
-const SCHEMA_VERSION = 2;
+/**
+ * v1: bare array, no wire tag. v2: `{version, tasks}` with `wire`.
+ * v3: adds resumable scheduling state and responded input keys.
+ */
+const SCHEMA_VERSION = 3;
 const MAX_TRACKED_TASKS = 50;
+
+/** Bounds on untrusted, server-influenced strings before they are persisted. */
+const MAX_STRING_LENGTH = 1024;
+const MAX_RESPONDED_KEYS = 100;
+/** Whole-payload ceiling; entries are shed oldest-first until it is met. */
+const MAX_SERIALIZED_BYTES = 512 * 1024;
 
 interface StoredShape {
   version: number;
@@ -81,19 +129,111 @@ function isFresh(task: TrackedTask, now: number): boolean {
   return now - createdAt < TRACKED_TASK_MAX_AGE_MS;
 }
 
+function clampString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  return value.length > MAX_STRING_LENGTH
+    ? value.slice(0, MAX_STRING_LENGTH)
+    : value;
+}
+
+function clampNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+/**
+ * Normalizes one stored record. Anything unrecognized is dropped rather than
+ * trusted: this data is attacker-influenceable (a server picks the task id and
+ * the input keys) and it is read on every page load.
+ */
+function sanitize(raw: unknown): TrackedTask | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return undefined;
+  }
+  const record = raw as Record<string, unknown>;
+  const taskId = clampString(record.taskId);
+  const serverId = clampString(record.serverId);
+  if (!taskId || !serverId) return undefined;
+
+  // A stored entry without a wire tag predates the extension; defaulting keeps
+  // `wire` non-optional at runtime (identity depends on it).
+  const wire: TasksWire =
+    record.wire === "extension" || record.wire === "legacy"
+      ? record.wire
+      : "legacy";
+
+  const ttlMs =
+    record.ttlMs === null ? null : clampNumber(record.ttlMs);
+  const respondedInputKeys = Array.isArray(record.respondedInputKeys)
+    ? record.respondedInputKeys
+        .filter((key): key is string => typeof key === "string")
+        .slice(0, MAX_RESPONDED_KEYS)
+        .map((key) => key.slice(0, MAX_STRING_LENGTH))
+    : undefined;
+
+  const task: TrackedTask = {
+    taskId,
+    serverId,
+    wire,
+    createdAt: clampString(record.createdAt) ?? "",
+    ...(clampString(record.toolName) ? { toolName: clampString(record.toolName) } : {}),
+    ...(record.primitiveType === "tool" ||
+    record.primitiveType === "prompt" ||
+    record.primitiveType === "resource"
+      ? { primitiveType: record.primitiveType }
+      : {}),
+    ...(clampString(record.primitiveName)
+      ? { primitiveName: clampString(record.primitiveName) }
+      : {}),
+    ...(record.dismissed === true ? { dismissed: true } : {}),
+    ...(record.expired === true ? { expired: true } : {}),
+    ...(clampString(record.scope) !== undefined
+      ? { scope: clampString(record.scope) }
+      : {}),
+    ...(clampString(record.lastUpdatedAt)
+      ? { lastUpdatedAt: clampString(record.lastUpdatedAt) }
+      : {}),
+    ...(clampString(record.status) ? { status: clampString(record.status) } : {}),
+    ...(ttlMs !== undefined ? { ttlMs } : {}),
+    ...(clampNumber(record.pollIntervalMs) !== undefined
+      ? { pollIntervalMs: clampNumber(record.pollIntervalMs) }
+      : {}),
+    ...(clampNumber(record.nextPollAt) !== undefined
+      ? { nextPollAt: clampNumber(record.nextPollAt) }
+      : {}),
+    ...(clampNumber(record.lastObservedAt) !== undefined
+      ? { lastObservedAt: clampNumber(record.lastObservedAt) }
+      : {}),
+    ...(respondedInputKeys?.length ? { respondedInputKeys } : {}),
+  };
+  return task;
+}
+
+/**
+ * v1 → v3 and v2 → v3 are both pure widenings: every added field is optional,
+ * so an older record is already a valid v3 record once its `wire` is defaulted.
+ *
+ * A FUTURE version is ignored entirely rather than best-effort parsed. A newer
+ * tab may have written fields whose meaning we would get wrong, and a wrong
+ * `nextPollAt` or a wrongly-inherited `respondedInputKeys` is worse than
+ * re-deriving both from the server.
+ */
 function migrate(parsed: unknown): TrackedTask[] {
   // v1 stored a bare array with no wire tag; those entries predate the
   // extension, so they are legacy by construction.
   if (Array.isArray(parsed)) {
-    return parsed.map((task: TrackedTask) => ({ ...task, wire: "legacy" }));
+    return parsed
+      .map(sanitize)
+      .filter((task): task is TrackedTask => task !== undefined);
   }
-  const stored = parsed as StoredShape | null;
-  if (!stored || !Array.isArray(stored.tasks)) return [];
+  if (typeof parsed !== "object" || parsed === null) return [];
+  const stored = parsed as Partial<StoredShape>;
+  if (typeof stored.version === "number" && stored.version > SCHEMA_VERSION) {
+    return [];
+  }
+  if (!Array.isArray(stored.tasks)) return [];
   return stored.tasks
-    .filter((task) => task && task.taskId && task.serverId)
-    // A stored entry without a wire tag predates the extension; defaulting
-    // keeps `wire` non-optional at runtime (identity depends on it).
-    .map((task) => (task.wire ? task : { ...task, wire: "legacy" as const }));
+    .map(sanitize)
+    .filter((task): task is TrackedTask => task !== undefined);
 }
 
 /** Every entry on disk, regardless of scope — writes must not drop other actors' handles. */
@@ -104,6 +244,8 @@ function loadAllTasks(): TrackedTask[] {
     const now = Date.now();
     return migrate(JSON.parse(data)).filter((task) => isFresh(task, now));
   } catch {
+    // Corrupt JSON is indistinguishable from a hostile write; start clean
+    // rather than throwing on every page load.
     return [];
   }
 }
@@ -119,8 +261,22 @@ function saveInScope(next: TrackedTask[]): void {
 
 function saveTasks(tasks: TrackedTask[]): void {
   try {
-    const payload: StoredShape = { version: SCHEMA_VERSION, tasks };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+    let payload = tasks;
+    let serialized = JSON.stringify({
+      version: SCHEMA_VERSION,
+      tasks: payload,
+    } satisfies StoredShape);
+    // Shed from the tail — the least recently tracked — until the payload fits.
+    // A quota rejection would otherwise lose the whole store, including the
+    // handle the user is actively waiting on.
+    while (serialized.length > MAX_SERIALIZED_BYTES && payload.length > 1) {
+      payload = payload.slice(0, Math.floor(payload.length / 2));
+      serialized = JSON.stringify({
+        version: SCHEMA_VERSION,
+        tasks: payload,
+      } satisfies StoredShape);
+    }
+    localStorage.setItem(STORAGE_KEY, serialized);
   } catch {
     // localStorage might be full or unavailable
   }
@@ -160,6 +316,84 @@ export function trackTask(task: Omit<TrackedTask, "dismissed">): void {
 
   tasks.unshift({ ...scoped, dismissed: false });
   saveInScope(tasks.slice(0, MAX_TRACKED_TASKS));
+}
+
+/**
+ * Folds an observation into a tracked handle so a reload resumes where the
+ * poller left off rather than restarting every task at its floor.
+ *
+ * A no-op for an untracked handle: this must never resurrect an entry the user
+ * cleared or that belongs to another actor.
+ */
+export function recordTaskObservation(
+  identity: { taskId: string; serverId: string; wire: TasksWire; scope?: string },
+  observation: {
+    status?: string;
+    lastUpdatedAt?: string;
+    ttlMs?: number | null;
+    pollIntervalMs?: number;
+    nextPollAt?: number;
+    lastObservedAt?: number;
+  },
+): void {
+  const scoped = { ...identity, scope: identity.scope ?? activeScope };
+  const key = taskIdentity(scoped);
+  const tasks = loadTasks();
+  const entry = tasks.find((t) => taskIdentity(t) === key);
+  if (!entry) return;
+
+  if (observation.status !== undefined) entry.status = observation.status;
+  if (observation.lastUpdatedAt !== undefined) {
+    entry.lastUpdatedAt = observation.lastUpdatedAt;
+  }
+  // `null` is meaningful (no expiry) and must overwrite a previous number, so
+  // this checks for `undefined` rather than truthiness.
+  if (observation.ttlMs !== undefined) entry.ttlMs = observation.ttlMs;
+  if (observation.pollIntervalMs !== undefined) {
+    entry.pollIntervalMs = observation.pollIntervalMs;
+  }
+  if (observation.nextPollAt !== undefined) {
+    entry.nextPollAt = observation.nextPollAt;
+  }
+  if (observation.lastObservedAt !== undefined) {
+    entry.lastObservedAt = observation.lastObservedAt;
+  }
+  saveInScope(tasks);
+}
+
+/**
+ * Marks input keys answered, after the `tasks/update` acknowledgement
+ * succeeded. Keys only — the request and the response are never persisted.
+ */
+export function recordRespondedInputKeys(
+  identity: { taskId: string; serverId: string; wire: TasksWire; scope?: string },
+  keys: readonly string[],
+): void {
+  if (keys.length === 0) return;
+  const scoped = { ...identity, scope: identity.scope ?? activeScope };
+  const key = taskIdentity(scoped);
+  const tasks = loadTasks();
+  const entry = tasks.find((t) => taskIdentity(t) === key);
+  if (!entry) return;
+
+  const merged = new Set([...(entry.respondedInputKeys ?? []), ...keys]);
+  entry.respondedInputKeys = [...merged]
+    .slice(0, MAX_RESPONDED_KEYS)
+    .map((k) => k.slice(0, MAX_STRING_LENGTH));
+  saveInScope(tasks);
+}
+
+export function getRespondedInputKeys(identity: {
+  taskId: string;
+  serverId: string;
+  wire: TasksWire;
+  scope?: string;
+}): string[] {
+  const scoped = { ...identity, scope: identity.scope ?? activeScope };
+  const key = taskIdentity(scoped);
+  return (
+    loadTasks().find((t) => taskIdentity(t) === key)?.respondedInputKeys ?? []
+  );
 }
 
 export function untrackTask(taskId: string, serverId?: string): void {

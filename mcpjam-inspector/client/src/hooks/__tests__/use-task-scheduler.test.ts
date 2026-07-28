@@ -1,0 +1,198 @@
+/**
+ * `useTaskScheduler` — the Tasks tab's per-task poll scheduling.
+ *
+ * The regression these lock down: the tab used to poll every active task at
+ * `Math.min(...)` of their advertised intervals, with a user override that
+ * *replaced* the server's floor via a `??` chain. Both let MCPJam poll a
+ * server far faster than it asked to be polled.
+ */
+
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { renderHook, act } from "@testing-library/react";
+import { useTaskScheduler } from "../use-task-scheduler";
+import { getTrackedTasks, setTrackedTaskScope, trackTask } from "@/lib/task-tracker";
+
+const NOW = new Date().toISOString();
+
+function scheduler(userMinimumIntervalMs = 1_000, surfaceFloorMs = 0) {
+  return renderHook(() =>
+    useTaskScheduler({
+      serverId: "s1",
+      wire: "extension",
+      userMinimumIntervalMs,
+      surfaceFloorMs,
+    }),
+  );
+}
+
+describe("useTaskScheduler", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    setTrackedTaskScope(undefined);
+  });
+
+  it("treats a never-observed handle as due immediately", () => {
+    const { result } = scheduler();
+    expect(result.current.dueTaskIds(["t1"])).toEqual(["t1"]);
+  });
+
+  it("does not re-poll a handle before its own floor elapses", () => {
+    const { result } = scheduler();
+    result.current.dueTaskIds(["t1"]);
+    act(() => {
+      result.current.recordObservations([
+        { taskId: "t1", status: "working", pollIntervalMs: 60_000 },
+      ]);
+    });
+    expect(result.current.dueTaskIds(["t1"])).toEqual([]);
+  });
+
+  it("does not drag a slow task down to a fast task's floor", () => {
+    vi.useFakeTimers();
+    try {
+      const { result } = scheduler();
+      result.current.dueTaskIds(["fast", "slow"]);
+      act(() => {
+        result.current.recordObservations([
+          { taskId: "fast", status: "working", pollIntervalMs: 2_000 },
+          { taskId: "slow", status: "working", pollIntervalMs: 60_000 },
+        ]);
+      });
+
+      // Immediately after a read, neither is due.
+      expect(result.current.dueTaskIds(["fast", "slow"])).toEqual([]);
+
+      // Past the fast task's floor, only the fast task may be read. The old
+      // shared-`Math.min` scheduler polled both here.
+      vi.advanceTimersByTime(2_000);
+      expect(result.current.dueTaskIds(["fast", "slow"])).toEqual(["fast"]);
+
+      // The slow task comes due only at its own floor.
+      vi.advanceTimersByTime(58_000);
+      expect(result.current.dueTaskIds(["fast", "slow"]).sort()).toEqual([
+        "fast",
+        "slow",
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("never lets the user's preference undercut the server floor", () => {
+    // The user asked for 500ms; the server asked for 60s. The server wins.
+    const { result } = scheduler(500);
+    result.current.dueTaskIds(["t1"]);
+    act(() => {
+      result.current.recordObservations([
+        { taskId: "t1", status: "working", pollIntervalMs: 60_000 },
+      ]);
+    });
+    expect(result.current.dueTaskIds(["t1"])).toEqual([]);
+    expect(result.current.msUntilNextDue()).toBeGreaterThan(500);
+  });
+
+  it("applies a surface floor even when the server advertises none", () => {
+    const { result } = scheduler(100, 5_000);
+    result.current.dueTaskIds(["t1"]);
+    act(() => {
+      result.current.recordObservations([{ taskId: "t1", status: "working" }]);
+    });
+    expect(result.current.msUntilNextDue()).toBeGreaterThan(100);
+  });
+
+  it("stops scheduling a terminal task", () => {
+    const { result } = scheduler();
+    result.current.dueTaskIds(["t1"]);
+    act(() => {
+      result.current.recordObservations([
+        { taskId: "t1", status: "completed" },
+      ]);
+    });
+    expect(result.current.dueTaskIds(["t1"])).toEqual([]);
+  });
+
+  it("gives a batch the SLOWEST member's floor", () => {
+    const { result } = scheduler();
+    result.current.dueTaskIds(["a", "b"]);
+    act(() => {
+      result.current.recordObservations([
+        { taskId: "a", status: "working", pollIntervalMs: 1_000 },
+        { taskId: "b", status: "working", pollIntervalMs: 9_000 },
+      ]);
+    });
+    expect(result.current.batchIntervalMs(["a", "b"])).toBe(9_000);
+  });
+
+  it("backs off a failed read without changing the task's status", () => {
+    const { result } = scheduler(100);
+    result.current.dueTaskIds(["t1"]);
+    act(() => {
+      result.current.recordErrors(["t1"]);
+      result.current.recordErrors(["t1"]);
+    });
+    // Two consecutive errors ⇒ the backoff exceeds the user's 100ms preference.
+    expect(result.current.msUntilNextDue()).toBeGreaterThan(100);
+  });
+
+  it("mirrors scheduling state into the tracker so a reload resumes", () => {
+    trackTask({
+      taskId: "t1",
+      serverId: "s1",
+      wire: "extension",
+      createdAt: NOW,
+    });
+    const { result } = scheduler();
+    result.current.dueTaskIds(["t1"]);
+    act(() => {
+      result.current.recordObservations([
+        {
+          taskId: "t1",
+          status: "working",
+          pollIntervalMs: 5_000,
+          ttlMs: 60_000,
+          lastUpdatedAt: "2026-07-28T00:05:00Z",
+        },
+      ]);
+    });
+
+    expect(getTrackedTasks()[0]).toMatchObject({
+      status: "working",
+      pollIntervalMs: 5_000,
+      ttlMs: 60_000,
+      lastUpdatedAt: "2026-07-28T00:05:00Z",
+    });
+    expect(getTrackedTasks()[0].nextPollAt).toBeGreaterThan(0);
+  });
+
+  it("schedules nothing when the connection has no tasks wire", () => {
+    const { result } = renderHook(() =>
+      useTaskScheduler({
+        serverId: "s1",
+        wire: "none",
+        userMinimumIntervalMs: 1_000,
+      }),
+    );
+    expect(result.current.dueTaskIds(["t1"])).toEqual([]);
+  });
+
+  it("keeps handles apart per server", () => {
+    const first = scheduler();
+    const second = renderHook(() =>
+      useTaskScheduler({
+        serverId: "s2",
+        wire: "extension",
+        userMinimumIntervalMs: 1_000,
+      }),
+    );
+
+    first.result.current.dueTaskIds(["t1"]);
+    act(() => {
+      first.result.current.recordObservations([
+        { taskId: "t1", status: "working", pollIntervalMs: 60_000 },
+      ]);
+    });
+
+    // Same task id, different server: a separate handle, still due.
+    expect(second.result.current.dueTaskIds(["t1"])).toEqual(["t1"]);
+  });
+});

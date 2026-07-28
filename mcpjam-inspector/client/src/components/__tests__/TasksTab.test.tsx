@@ -39,6 +39,11 @@ vi.mock("@/lib/task-tracker", () => ({
   clearTrackedTasksForServer: vi.fn(),
   getDismissedTaskIds: vi.fn().mockReturnValue(new Set()),
   dismissTasksForServer: vi.fn(),
+  // v3 durable scheduling state, written by `useTaskScheduler` after every
+  // observation so a reload resumes where the poller left off.
+  recordTaskObservation: vi.fn(),
+  recordRespondedInputKeys: vi.fn(),
+  getRespondedInputKeys: vi.fn().mockReturnValue([]),
 }));
 
 vi.mock("@/hooks/use-task-elicitation", () => ({

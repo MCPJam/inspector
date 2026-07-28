@@ -391,3 +391,35 @@ export type {
   OpenAiAppsCapabilities,
   McpAppsCapabilities,
 } from "./host-config/index.js";
+
+// Shared task lifecycle engine. Browser-safe by construction: it performs no
+// I/O at all — it decides *when* a task may next be polled and remembers what
+// was last seen, while the caller owns the transport. That is exactly what
+// lets the Tasks tab, a Hono route and the CLI share one scheduler.
+export {
+  TaskLifecycleEngine,
+  taskLifecycleKey,
+  isTerminalLifecycleStatus,
+  TERMINAL_LIFECYCLE_STATUSES,
+} from "./mcp-client-manager/task-lifecycle.js";
+export type {
+  LiveTasksWire,
+  TaskLifecycleCallbacks,
+  TaskLifecycleEngineOptions,
+  TaskLifecycleError,
+  TaskLifecycleIdentity,
+  TaskLifecycleObservation,
+  TaskLifecycleRecord,
+  TaskLifecycleSnapshot,
+  TaskLifecycleStatus,
+  TaskObservationSource,
+} from "./mcp-client-manager/task-lifecycle.js";
+export {
+  extensionTaskToObservation,
+  legacyTaskToObservation,
+  isUnknownTaskError,
+  isTasksDeclarationRequiredError,
+  parseRetryAfterMs,
+  UNKNOWN_TASK_ERROR_CODE,
+  TASKS_DECLARATION_REQUIRED_ERROR_CODE,
+} from "./mcp-client-manager/task-lifecycle-adapters.js";

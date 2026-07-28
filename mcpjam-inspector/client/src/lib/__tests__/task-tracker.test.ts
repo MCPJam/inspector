@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   clearTrackedTasksForScope,
+  getRespondedInputKeys,
+  recordRespondedInputKeys,
+  recordTaskObservation,
   getTrackedTasks,
   getTrackedTasksForServer,
   markTaskExpired,
@@ -58,7 +61,7 @@ describe("task-tracker", () => {
     });
 
     const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) as string);
-    expect(stored.version).toBe(2);
+    expect(stored.version).toBe(3);
     expect(stored.tasks).toHaveLength(1);
   });
 
@@ -136,5 +139,174 @@ describe("task-tracker", () => {
 
     untrackTask("t1", "s1");
     expect(getTrackedTasks().map((t) => t.serverId)).toEqual(["s2"]);
+  });
+// ---- v3: resumable scheduling state + responded input keys --------------
+
+  it("resumes a handle's scheduling state across a reload", () => {
+    const id = { taskId: "t1", serverId: "s1", wire: "extension" as const };
+    trackTask({ ...id, createdAt: NOW });
+
+    recordTaskObservation(id, {
+      status: "working",
+      lastUpdatedAt: "2026-07-28T00:05:00Z",
+      ttlMs: 60_000,
+      pollIntervalMs: 5_000,
+      nextPollAt: 1_700_000_000_000,
+      lastObservedAt: 1_699_999_995_000,
+    });
+
+    const [task] = getTrackedTasks();
+    expect(task).toMatchObject({
+      status: "working",
+      lastUpdatedAt: "2026-07-28T00:05:00Z",
+      ttlMs: 60_000,
+      pollIntervalMs: 5_000,
+      nextPollAt: 1_700_000_000_000,
+      lastObservedAt: 1_699_999_995_000,
+    });
+  });
+
+  it("lets a null ttlMs overwrite a number — null means 'no expiry', not 'unset'", () => {
+    const id = { taskId: "t1", serverId: "s1", wire: "extension" as const };
+    trackTask({ ...id, createdAt: NOW });
+
+    recordTaskObservation(id, { ttlMs: 60_000 });
+    expect(getTrackedTasks()[0].ttlMs).toBe(60_000);
+    recordTaskObservation(id, { ttlMs: null });
+    expect(getTrackedTasks()[0].ttlMs).toBeNull();
+  });
+
+  it("does not resurrect an untracked handle", () => {
+    recordTaskObservation(
+      { taskId: "ghost", serverId: "s1", wire: "extension" },
+      { status: "working" },
+    );
+    expect(getTrackedTasks()).toHaveLength(0);
+  });
+
+  it("persists responded input KEYS and never a payload", () => {
+    const id = { taskId: "t1", serverId: "s1", wire: "extension" as const };
+    trackTask({ ...id, createdAt: NOW });
+
+    recordRespondedInputKeys(id, ["ask-name"]);
+    recordRespondedInputKeys(id, ["ask-name", "ask-email"]);
+
+    expect(getRespondedInputKeys(id).sort()).toEqual(["ask-email", "ask-name"]);
+    // The whole serialized store must contain no prompt or response content.
+    const raw = localStorage.getItem(STORAGE_KEY) as string;
+    expect(raw).not.toContain("elicitation");
+    expect(raw).not.toContain("content");
+  });
+
+  it("keeps responded keys scoped to their own handle", () => {
+    const a = { taskId: "t1", serverId: "s1", wire: "extension" as const };
+    const b = { taskId: "t2", serverId: "s1", wire: "extension" as const };
+    trackTask({ ...a, createdAt: NOW });
+    trackTask({ ...b, createdAt: NOW });
+
+    recordRespondedInputKeys(a, ["k"]);
+    expect(getRespondedInputKeys(b)).toEqual([]);
+  });
+
+  it("does not carry responded keys across wires for the same task id", () => {
+    const legacy = { taskId: "t1", serverId: "s1", wire: "legacy" as const };
+    const extension = { taskId: "t1", serverId: "s1", wire: "extension" as const };
+    trackTask({ ...legacy, createdAt: NOW });
+    trackTask({ ...extension, createdAt: NOW });
+
+    recordRespondedInputKeys(legacy, ["k"]);
+    expect(getRespondedInputKeys(extension)).toEqual([]);
+  });
+
+  // ---- Robustness against corrupt / hostile / future records --------------
+
+  it("ignores a record written by a NEWER schema version outright", () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        version: 99,
+        tasks: [
+          { taskId: "t1", serverId: "s1", wire: "extension", createdAt: NOW },
+        ],
+      }),
+    );
+    // Best-effort parsing a future record risks misreading fields whose meaning
+    // changed; re-deriving from the server is strictly safer.
+    expect(getTrackedTasks()).toHaveLength(0);
+  });
+
+  it("drops malformed entries but keeps the good ones beside them", () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        version: 3,
+        tasks: [
+          null,
+          "nope",
+          { serverId: "s1", wire: "extension", createdAt: NOW },
+          { taskId: "good", serverId: "s1", wire: "extension", createdAt: NOW },
+        ],
+      }),
+    );
+    expect(getTrackedTasks().map((t) => t.taskId)).toEqual(["good"]);
+  });
+
+  it("survives corrupt JSON instead of throwing on every page load", () => {
+    localStorage.setItem(STORAGE_KEY, "{not json");
+    expect(getTrackedTasks()).toEqual([]);
+  });
+
+  it("normalizes an unrecognized wire tag to legacy rather than trusting it", () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        version: 3,
+        tasks: [
+          { taskId: "t1", serverId: "s1", wire: "made-up", createdAt: NOW },
+        ],
+      }),
+    );
+    expect(getTrackedTasks()[0].wire).toBe("legacy");
+  });
+
+  it("caps oversized strings from a hostile server", () => {
+    const huge = "x".repeat(10_000);
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        version: 3,
+        tasks: [
+          {
+            taskId: huge,
+            serverId: "s1",
+            wire: "extension",
+            createdAt: NOW,
+            toolName: huge,
+          },
+        ],
+      }),
+    );
+    const [task] = getTrackedTasks();
+    expect(task.taskId.length).toBe(1024);
+    expect(task.toolName?.length).toBe(1024);
+  });
+
+  it("caps the number of responded input keys it will retain", () => {
+    const id = { taskId: "t1", serverId: "s1", wire: "extension" as const };
+    trackTask({ ...id, createdAt: NOW });
+    recordRespondedInputKeys(
+      id,
+      Array.from({ length: 500 }, (_, i) => `k${i}`),
+    );
+    expect(getRespondedInputKeys(id)).toHaveLength(100);
+  });
+
+  it("never drops a handle because its ttlMs elapsed", () => {
+    const id = { taskId: "t1", serverId: "s1", wire: "extension" as const };
+    trackTask({ ...id, createdAt: NOW });
+    // A one-millisecond TTL, long since past. Discarding the task is the
+    // SERVER's call (tasks.md:136-140); we keep the handle and keep polling.
+    recordTaskObservation(id, { ttlMs: 1, lastObservedAt: Date.now() - 60_000 });
+    expect(getTrackedTasks().map((t) => t.taskId)).toEqual(["t1"]);
   });
 });
