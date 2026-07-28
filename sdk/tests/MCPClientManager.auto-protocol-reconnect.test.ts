@@ -1,7 +1,27 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { MCPClientManager } from "../src/mcp-client-manager/index.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+let sseConstructedCount = 0;
+
+vi.mock("@modelcontextprotocol/client", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@modelcontextprotocol/client")>();
+  class SpySSEClientTransport extends actual.SSEClientTransport {
+    constructor(url: URL, opts?: Record<string, unknown>) {
+      super(url, opts as never);
+      sseConstructedCount += 1;
+    }
+  }
+  return {
+    ...actual,
+    SSEClientTransport: SpySSEClientTransport,
+  };
+});
+
+const { MCPClientManager } = await import(
+  "../src/mcp-client-manager/index.js"
+);
 
 const NEGOTIATED_VERSION = "2025-06-18";
 const STALE_ACCEPT_LIST = ["2025-11-25"];
@@ -100,6 +120,7 @@ describe("MCPClientManager Automatic legacy fallback", () => {
   let manager: MCPClientManager;
 
   beforeEach(async () => {
+    sseConstructedCount = 0;
     fixture = await serveLegacyFixture();
     manager = new MCPClientManager();
   });
@@ -135,9 +156,7 @@ describe("MCPClientManager Automatic legacy fallback", () => {
     expect(
       initializeRequests.map((request) => request.proposedProtocolVersion)
     ).toEqual(["2025-11-25", "2025-11-25"]);
-    expect(
-      fixture.requests.filter((request) => request.httpMethod === "GET")
-    ).toHaveLength(0);
+    expect(sseConstructedCount).toBe(0);
   });
 
   it("ignores a stale manager-default accept-list in Automatic mode", async () => {
