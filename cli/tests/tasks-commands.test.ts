@@ -211,6 +211,9 @@ test("tools call rejects task flags that cannot coexist", async () => {
     [["--task-watch"], /--task-watch requires --task/],
     [["--task", "--reporter", "junit-xml"], /--reporter/],
     [["--task", "--validate-response"], /--validate-response/],
+    [["--wire", "legacy"], /--wire requires --task/],
+    [["--duration-ms", "1000"], /--duration-ms requires --task --task-watch/],
+    [["--task", "--poll-interval-ms", "500"], /requires --task-watch/],
   ];
   for (const [extra, pattern] of cases) {
     const run = await runCli([
@@ -335,6 +338,54 @@ test("tasks list returns the legacy list and warns on the extension", async () =
   });
 });
 
+/**
+ * A 2025-11-25 server that declares ONLY `tasks.cancel`.
+ *
+ * It still resolves to `wire: "legacy"`, which is the whole point: the wire
+ * alone does not license `tasks/list` or a task-augmented `tools/call`, and
+ * both must be refused rather than issued blind.
+ */
+const CANCEL_ONLY_CAPABILITY = { cancel: {} };
+
+test("tasks list refuses a legacy server that never declared it", async () => {
+  await withLegacyFixture(
+    async (fixture) => {
+      const run = await runCli(["tasks", "list", ...httpTarget(fixture.url)]);
+      assert.equal(run.exitCode, 1, run.stderr);
+      assert.equal(errorOf(run).code, "TASKS_UNSUPPORTED");
+      // The SDK would have answered `{ tasks: [] }` — indistinguishable from a
+      // server that genuinely has no tasks.
+      assert.ok(
+        !fixture.received.some((entry) => entry.method === "tasks/list"),
+        "tasks/list was sent to a server that did not declare it",
+      );
+    },
+    { tasksCapability: CANCEL_ONLY_CAPABILITY },
+  );
+});
+
+test("tools call --task refuses a legacy server that never declared tool calls", async () => {
+  await withLegacyFixture(
+    async (fixture) => {
+      const run = await runCli([
+        "tools",
+        "call",
+        "--tool-name",
+        LEGACY_TASK_TOOL_NAME,
+        "--task",
+        ...httpTarget(fixture.url),
+      ]);
+      assert.equal(run.exitCode, 1, run.stderr);
+      assert.equal(errorOf(run).code, "TASKS_UNSUPPORTED");
+      assert.ok(
+        !fixture.received.some((entry) => entry.method === "tools/call"),
+        "a task-augmented tools/call reached an undeclared server",
+      );
+    },
+    { tasksCapability: CANCEL_ONLY_CAPABILITY },
+  );
+});
+
 test("tasks result serves the legacy payload and stamps the related task", async () => {
   await withLegacyFixture(async (fixture) => {
     const run = await runCli([
@@ -422,7 +473,10 @@ test("tasks update answers an input_required key on the extension wire", async (
   await withExtensionFixture(async (fixture) => {
     const taskId = await createExtensionTask(fixture.url);
 
-    // Walk the task to `input_required` so there is a key to answer.
+    // Walk the task to `input_required` so there is a key to answer. Assert the
+    // precondition: without it a fixture change surfaces as an opaque
+    // `answeredKeys` mismatch below instead of naming what actually went wrong.
+    let reachedInputRequired = false;
     for (let attempt = 0; attempt < 6; attempt += 1) {
       const get = await runCli([
         "tasks",
@@ -432,8 +486,15 @@ test("tasks update answers an input_required key on the extension wire", async (
         ...httpTarget(fixture.url),
       ]);
       const task = (jsonOf(get) as { task: Record<string, unknown> }).task;
-      if (task.status === "input_required") break;
+      if (task.status === "input_required") {
+        reachedInputRequired = true;
+        break;
+      }
     }
+    assert.ok(
+      reachedInputRequired,
+      "the task never reached input_required in 6 reads",
+    );
 
     const run = await runCli([
       "tasks",

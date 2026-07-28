@@ -91,16 +91,26 @@ export function resolveTasksSupportOrThrow(
   return support;
 }
 
-/** Refuses a verb the resolved wire does not carry. */
+const CAPABILITY_LABELS: Record<TaskCapability, string> = {
+  list: "tasks/list",
+  cancel: "tasks/cancel",
+  update: "tasks/update",
+  toolCalls: "task-augmented tools/call",
+};
+
+export type TaskCapability = "list" | "cancel" | "update" | "toolCalls";
+
+/** Refuses an operation the resolved wire does not actually carry. */
 export function assertWireCapability(
   support: TasksSupport,
-  capability: "list" | "cancel" | "update",
+  capability: TaskCapability,
   hint: string,
 ): void {
   if (support[capability]) return;
   throw cliError(
     "TASKS_UNSUPPORTED",
-    `tasks/${capability} is not available on the ${support.wire} wire. ${hint}`,
+    `${CAPABILITY_LABELS[capability]} is not available on the ` +
+      `${support.wire} wire. ${hint}`,
     1,
     { wire: support.wire, capability },
   );
@@ -154,7 +164,8 @@ export async function getTaskForWire(
 export interface CreatedTaskEnvelope {
   status: "task_created";
   wire: TasksWire;
-  task: Record<string, unknown>;
+  /** Always carries a non-empty string `taskId` — see `detectCreatedTask`. */
+  task: Record<string, unknown> & { taskId: string };
   modelImmediateResponse?: unknown;
 }
 
@@ -178,6 +189,13 @@ function modelImmediateResponseOf(result: unknown): unknown {
  * while the legacy wire nests it under `task`. Accepting the other wire's shape
  * would hide a nonconforming server from the person debugging it, so each wire
  * accepts only its own.
+ *
+ * Both wires additionally require a usable `taskId`. Without that check a
+ * server that answered `resultType: "task"` and nothing else would be reported
+ * as a successful creation, and `--task-watch` would go on to poll `tasks/get`
+ * with an undefined id — burying the malformed payload under an opaque polling
+ * failure. Returning `null` instead routes it to the "no task materialized"
+ * path, which prints the server's actual response.
  */
 export function detectCreatedTask(
   wire: TasksWire,
@@ -188,24 +206,22 @@ export function detectCreatedTask(
   const body = asRecord(result);
   if (!body) return null;
 
-  if (wire === "extension") {
-    if (body.resultType !== "task") return null;
-    return {
-      status: "task_created",
-      wire,
-      task: body,
-      ...withModelImmediateResponse(result),
-    };
-  }
+  const task = wire === "extension" ? body : asRecord(body.task);
+  if (!task) return null;
 
-  const nested = asRecord(body.task);
-  if (!nested || typeof nested.taskId !== "string" || !nested.status) {
+  if (wire === "extension") {
+    if (task.resultType !== "task") return null;
+  } else if (!task.status) {
     return null;
   }
+
+  const taskId = task.taskId;
+  if (typeof taskId !== "string" || taskId.length === 0) return null;
+
   return {
     status: "task_created",
     wire,
-    task: nested,
+    task: task as Record<string, unknown> & { taskId: string },
     ...withModelImmediateResponse(result),
   };
 }
@@ -271,14 +287,16 @@ function describeError(error: unknown): { message: string } | undefined {
   if (error === undefined || error === null) return undefined;
   // `JSON.stringify(new Error(...))` is `{}`, so an Error reaching the envelope
   // verbatim would silently erase the only useful field.
-  return {
-    message:
-      error instanceof Error
-        ? error.message
-        : typeof error === "string"
-          ? error
-          : JSON.stringify(error),
-  };
+  if (error instanceof Error) return { message: error.message };
+  if (typeof error === "string") return { message: error };
+  try {
+    // This is the last step before the envelope is written. A cyclic or
+    // BigInt-bearing value would otherwise turn a perfectly reportable outcome
+    // into an unhandled throw, losing the outcome AND the error.
+    return { message: JSON.stringify(error) ?? String(error) };
+  } catch {
+    return { message: String(error) };
+  }
 }
 
 export interface DriveTaskWatchArgs {
@@ -428,18 +446,24 @@ export function buildTaskInputDriverOptions(
     (resolved as { clientCapabilities?: Record<string, unknown> })
       .clientCapabilities ?? resolved.capabilities;
 
-  const elicitationHandler = createStdinElicitationHandler({
-    nonInteractive,
-    ...args.collectorOptions,
-  });
   const handlers: TaskInputHandlers = {
-    // The two sides describe the same `elicitation/create` params with
-    // different precision: the task input driver hands over an opaque record
-    // because it has already validated the request shape and the declared mode
-    // before dispatching, while the standalone handler is typed against the
-    // narrowed union. Casting here is the seam between them.
-    elicitation: (params) =>
-      elicitationHandler(params as never) as Promise<Record<string, unknown>>,
+    // Built per invocation rather than once, so each call can be given ITS
+    // context's `signal`. A terminal prompt is the one place a watch can block
+    // indefinitely, and without the signal reaching `readline` a Ctrl-C during
+    // the prompt would leave the drive stuck instead of producing the
+    // documented `aborted` outcome.
+    //
+    // The cast is the seam between two descriptions of the same
+    // `elicitation/create` params: the task input driver hands over an opaque
+    // record because it has already validated the request shape and the
+    // declared mode before dispatching, while the standalone handler is typed
+    // against the narrowed union.
+    elicitation: (params, ctx) =>
+      createStdinElicitationHandler({
+        nonInteractive,
+        ...(ctx?.signal ? { signal: ctx.signal } : {}),
+        ...args.collectorOptions,
+      })(params as never) as Promise<Record<string, unknown>>,
   };
 
   const declaration = canDeclareTasksExtension(

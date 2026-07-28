@@ -54,6 +54,16 @@ export interface LegacyTasksFixtureOptions {
   rejectUnknownTaskIds?: boolean;
   /** Report created tasks from `tasks/list`. Default false (always empty). */
   trackForList?: boolean;
+  /**
+   * The `capabilities.tasks` object advertised on `initialize`.
+   *
+   * Default declares all three sub-capabilities. Narrowing it is how a test
+   * reaches the legacy wire WITHOUT a given operation — a server that declares
+   * only `cancel` still resolves to `wire: "legacy"`, which is exactly the case
+   * where a client must not assume `tasks/list` or task-augmented `tools/call`
+   * are available.
+   */
+  tasksCapability?: Record<string, unknown>;
 }
 
 export interface ReceivedRequest {
@@ -82,16 +92,20 @@ interface TaskState {
   cancelled: boolean;
 }
 
-function initialize(): Record<string, unknown> {
+const DEFAULT_TASKS_CAPABILITY: Record<string, unknown> = {
+  list: {},
+  cancel: {},
+  requests: { tools: { call: {} } },
+};
+
+function initialize(
+  tasksCapability: Record<string, unknown> = DEFAULT_TASKS_CAPABILITY
+): Record<string, unknown> {
   return {
     protocolVersion: "2025-11-25",
     capabilities: {
       tools: { listChanged: false },
-      tasks: {
-        list: {},
-        cancel: {},
-        requests: { tools: { call: {} } },
-      },
+      tasks: tasksCapability,
     },
     serverInfo: { name: "legacy-tasks-fixture", version: "1.0.0" },
   };
@@ -170,7 +184,7 @@ export async function serveLegacyTasksFixture(
   ): Record<string, unknown> => {
     switch (method) {
       case "initialize":
-        return initialize();
+        return initialize(options.tasksCapability);
       case "tools/list":
         return toolsList();
       case "tools/call":

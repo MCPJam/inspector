@@ -36,6 +36,10 @@ mcpjam tasks capabilities --url https://your-server.com/mcp
 
 Pass `--wire legacy` or `--wire extension` to any command to assert the wire you expect; a mismatch exits `1` rather than quietly running against the other one.
 
+<Note>
+  On the legacy wire the sub-capabilities are independent: a server that declares only `tasks.cancel` still resolves to `wire: "legacy"`. Commands check the specific capability they need and exit `1` with `TASKS_UNSUPPORTED` if the server never declared it, rather than issuing a request it did not advertise. `tasks list` is the one that would otherwise mislead — the SDK turns a method-unavailable response into an empty list, which reads as "no tasks running" when the truth is "this server cannot tell you".
+</Note>
+
 ## Creating a task
 
 Add `--task` to a normal `tools call`. The CLI picks the right opt-in for the resolved wire:

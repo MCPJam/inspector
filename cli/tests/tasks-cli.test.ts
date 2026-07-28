@@ -76,6 +76,24 @@ test("detectCreatedTask requires taskId and status on the legacy wire", () => {
   assert.equal(detectCreatedTask("legacy", { task: { status: "working" } }), null);
 });
 
+test("detectCreatedTask requires a usable taskId on the extension wire too", () => {
+  // Without this the envelope reports a successful creation and --task-watch
+  // goes on to poll `tasks/get` with an undefined id, burying the malformed
+  // payload under an opaque polling failure.
+  assert.equal(
+    detectCreatedTask("extension", { resultType: "task", status: "working" }),
+    null,
+  );
+  assert.equal(
+    detectCreatedTask("extension", { resultType: "task", taskId: "" }),
+    null,
+  );
+  assert.equal(
+    detectCreatedTask("extension", { resultType: "task", taskId: 42 }),
+    null,
+  );
+});
+
 test("detectCreatedTask returns null for a plain tool result and a dead wire", () => {
   const plain = { content: [{ type: "text", text: "hi" }] };
   assert.equal(detectCreatedTask("extension", plain), null);

@@ -286,6 +286,17 @@ function registerTaskVerbs(tasks: Command): void {
               "tasks for you on the extension wire, so this is always empty. " +
               "Track task ids from `tools call --task` instead.",
           );
+        } else {
+          // A 2025-11-25 server can land on the legacy wire by declaring only
+          // `tasks.cancel` or `tasks.requests`. Issuing `tasks/list` anyway
+          // yields the same `{ tasks: [] }` the extension returns by design —
+          // which would read as "this server has no tasks" when the truth is
+          // "this server cannot tell you". Refuse instead of answering falsely.
+          assertWireCapability(
+            support,
+            "list",
+            "The server did not declare `capabilities.tasks.list`.",
+          );
         }
         const result = await manager.listTasks(serverId, options.cursor);
         return { wire: support.wire, ...result };

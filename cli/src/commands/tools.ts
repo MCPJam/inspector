@@ -15,6 +15,7 @@ import {
   withWatchSignals,
 } from "./tasks.js";
 import {
+  assertWireCapability,
   buildTaskInputDriverOptions,
   detectCreatedTask,
   driveTaskWatch,
@@ -120,9 +121,53 @@ async function runTaskAugmentedToolCall(args: {
   toolName: string;
   params: Record<string, unknown>;
   collector: ReturnType<typeof createCliRpcLogCollector> | undefined;
+  targetSummary: ReturnType<typeof summarizeServerDoctorTarget>;
+  snapshotCollector: ReturnType<typeof createCliRpcLogCollector> | undefined;
 }): Promise<void> {
-  const { options, globalOptions, config, host, toolName, params, collector } =
-    args;
+  const {
+    options,
+    globalOptions,
+    config,
+    host,
+    toolName,
+    params,
+    collector,
+    targetSummary,
+    snapshotCollector,
+  } = args;
+
+  /**
+   * Same debug artifact the plain path writes.
+   *
+   * A task creation that fails on the wire is precisely when `--debug-out` is
+   * wanted, so this path honours the flag rather than refusing it — accepting
+   * it and writing nothing would read as a broken flag.
+   */
+  const writeArtifact = (outcome: {
+    status: "success" | "error";
+    result?: unknown;
+    error?: unknown;
+  }) =>
+    writeCommandDebugArtifact({
+      outputPath: options.debugOut,
+      format: globalOptions.format,
+      quiet: globalOptions.quiet,
+      commandName: "tools call",
+      commandInput: { toolName, params },
+      target: targetSummary,
+      outcome: outcome as never,
+      snapshot: options.debugOut
+        ? {
+            input: {
+              config,
+              target: targetSummary,
+              timeout: globalOptions.timeout,
+            },
+            collector: snapshotCollector,
+          }
+        : undefined,
+      collectors: [collector],
+    });
 
   const input = buildTaskInputDriverOptions({
     config: host ? applyHostToConfig(config, host.connection) : config,
@@ -134,7 +179,8 @@ async function runTaskAugmentedToolCall(args: {
     if (!globalOptions.quiet) process.stderr.write(`${message}\n`);
   };
 
-  const envelope = await withWatchSignals((signal) =>
+  const run = () =>
+    withWatchSignals((signal) =>
     withEphemeralManager(
       config,
       async (manager, serverId) => {
@@ -142,6 +188,19 @@ async function runTaskAugmentedToolCall(args: {
           await assertToolVisibleToHost(manager, serverId, toolName, host);
         }
         const support = resolveTasksSupportOrThrow(manager, serverId, options.wire);
+
+        // A 2025-11-25 server reaches the legacy wire by declaring ANY of
+        // `tasks.list`/`cancel`/`requests`, so the wire alone does not mean it
+        // accepts task-augmented tool calls — and the manager's guard checks
+        // only the wire. Without this, the CLI sends an opt-in the server never
+        // advertised and the user debugs a protocol error instead of reading
+        // the reason.
+        assertWireCapability(
+          support,
+          "toolCalls",
+          "The server did not declare `capabilities.tasks.requests` for " +
+            "`tools/call`, so it cannot turn this call into a task.",
+        );
 
         if (options.taskTtl !== undefined && support.wire !== "legacy") {
           throw usageError(
@@ -162,17 +221,23 @@ async function runTaskAugmentedToolCall(args: {
         // `ClientRequestOptions` and the augmentation never reaches the wire.
         // The legacy opt-in must use the dedicated fifth parameter, the same
         // way the Inspector's own tools route does.
+        //
+        // Both branches carry the watch's `signal`. `withWatchSignals` has
+        // already suppressed Node's default SIGINT termination, so a creation
+        // that hangs would otherwise swallow the interrupt until the request
+        // timeout rather than unwinding into the documented `aborted` outcome.
         const result =
           support.wire === "legacy"
             ? await manager.executeTool(
                 serverId,
                 toolName,
                 params,
-                undefined,
+                { signal },
                 options.taskTtl !== undefined ? { ttl: options.taskTtl } : {},
               )
             : await manager.executeTool(serverId, toolName, params, {
                 allowTaskResult: true,
+                request: { signal },
               });
 
         const created = detectCreatedTask(support.wire, result);
@@ -189,7 +254,7 @@ async function runTaskAugmentedToolCall(args: {
 
         if (!options.taskWatch) return { created, result: null };
 
-        const taskId = created.task.taskId as string;
+        const taskId = created.task.taskId;
         const watch = await driveTaskWatch({
           manager,
           serverId,
@@ -214,7 +279,15 @@ async function runTaskAugmentedToolCall(args: {
           : {}),
       },
     ),
-  );
+    );
+
+  let envelope: Awaited<ReturnType<typeof run>>;
+  try {
+    envelope = await run();
+  } catch (error) {
+    await writeArtifact({ status: "error", error });
+    throw error;
+  }
 
   const payload = envelope.created
     ? envelope.watch
@@ -222,15 +295,32 @@ async function runTaskAugmentedToolCall(args: {
       : envelope.created
     : envelope.result;
 
+  const exitCode = envelope.watch
+    ? taskWatchExitCode(envelope.watch.outcome)
+    : 0;
+
+  // A watch that ended anywhere but `completed` is an error outcome for the
+  // artifact, even though the command itself ran correctly — the artifact
+  // records what happened to the task, not to the process.
+  await writeArtifact(
+    exitCode === 0
+      ? { status: "success", result: payload }
+      : {
+          status: "error",
+          result: payload,
+          error: {
+            code: `task_${envelope.watch?.outcome ?? "unknown"}`,
+            message: `Task watch ended with outcome "${envelope.watch?.outcome}".`,
+          },
+        },
+  );
+
   writeResult(
     withRpcLogsIfRequested(payload, collector, globalOptions),
     globalOptions.format,
   );
 
-  if (envelope.watch) {
-    const exitCode = taskWatchExitCode(envelope.watch.outcome);
-    if (exitCode !== 0) setProcessExitCode(exitCode);
-  }
+  if (exitCode !== 0) setProcessExitCode(exitCode);
 }
 
 export function registerToolsCommands(program: Command): void {
@@ -481,12 +571,39 @@ export function registerToolsCommands(program: Command): void {
       );
     }
 
+    // Every task-only flag is refused without its enabling flag. Accepting one
+    // silently would let a misspelled or half-finished task invocation run an
+    // ordinary tool call that looks like it worked.
+    const watchTuningFlags = [
+      ["--duration-ms", options.durationMs],
+      ["--poll-interval-ms", options.pollIntervalMs],
+      ["--max-input-rounds", options.maxInputRounds],
+      ["--max-consecutive-errors", options.maxConsecutiveErrors],
+    ] as const;
+
     if (!options.task) {
       if (options.taskTtl !== undefined) {
         throw usageError("--task-ttl requires --task.");
       }
       if (options.taskWatch) throw usageError("--task-watch requires --task.");
+      if (options.wire !== undefined) {
+        throw usageError("--wire requires --task.");
+      }
+      for (const [flag, value] of watchTuningFlags) {
+        if (value !== undefined) {
+          throw usageError(`${flag} requires --task --task-watch.`);
+        }
+      }
     } else {
+      if (!options.taskWatch) {
+        for (const [flag, value] of watchTuningFlags) {
+          if (value !== undefined) {
+            throw usageError(
+              `${flag} tunes the watch loop, so it requires --task-watch.`,
+            );
+          }
+        }
+      }
       // A `task_created` envelope is not a `CallToolResult`, and the renderers
       // and validators all assume one. Refusing beats emitting a validation
       // failure that says nothing about the real mistake.
@@ -512,6 +629,8 @@ export function registerToolsCommands(program: Command): void {
         toolName,
         params,
         collector: primaryCollector,
+        targetSummary,
+        snapshotCollector,
       });
       return;
     }

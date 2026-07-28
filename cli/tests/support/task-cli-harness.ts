@@ -23,7 +23,20 @@ export interface CliRun {
  * in-process call would skip the commander wiring and the exit-code mapping
  * that most of these tests exist to pin.
  */
-export function runCli(args: string[], input?: string): Promise<CliRun> {
+/**
+ * Watchdog for a run that never terminates.
+ *
+ * Generous, because these tests spawn a real CLI against a real socket. Its job
+ * is to convert "the suite hangs and leaves an orphan child" — the failure mode
+ * a regressed signal path produces — into a named, attributable failure.
+ */
+const DEFAULT_RUN_TIMEOUT_MS = 120_000;
+
+export function runCli(
+  args: string[],
+  input?: string,
+  options: { timeoutMs?: number } = {},
+): Promise<CliRun> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [TSX_CLI_PATH, CLI_ENTRY_PATH, ...args], {
       cwd: CLI_DIR,
@@ -42,10 +55,30 @@ export function runCli(args: string[], input?: string): Promise<CliRun> {
 
     let stdout = "";
     let stderr = "";
+    let timedOut = false;
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, options.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS);
+
     child.stdout.setEncoding("utf8").on("data", (chunk) => (stdout += chunk));
     child.stderr.setEncoding("utf8").on("data", (chunk) => (stderr += chunk));
-    child.on("error", reject);
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
     child.on("close", (code) => {
+      clearTimeout(timer);
+      if (timedOut) {
+        reject(
+          new Error(
+            `CLI did not exit within ${options.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS}ms: ` +
+              `mcpjam ${args.join(" ")}\n${stderr}`,
+          ),
+        );
+        return;
+      }
       if (code === null) {
         reject(new Error(`CLI killed by signal\n${stderr}`));
         return;
