@@ -560,8 +560,22 @@ function buildAuthServerMetadataUrls(authServerUrl: string): string[] {
 }
 
 export type AuthorizationResponseIssuerCheck =
-  | { ok: true }
+  /** `warning` is set when a mismatch was found but the era does not enforce it. */
+  | { ok: true; warning?: string }
   | { ok: false; reason: string };
+
+/**
+ * Render a callback-supplied value inside a diagnostic. Control characters are
+ * flattened so a hostile `iss` cannot forge additional message lines, and the
+ * value is capped so it cannot crowd out the diagnostic around it.
+ */
+function quoteUntrusted(value: string): string {
+  // eslint-disable-next-line no-control-regex
+  const flattened = value.replace(/[\u0000-\u001f\u007f]+/g, " ").trim();
+  const capped =
+    flattened.length > 256 ? `${flattened.slice(0, 256)}…` : flattened;
+  return `\`${capped}\``;
+}
 
 /**
  * RFC 9207 authorization-response `iss` validation — a 2026-07-28 requirement.
@@ -576,21 +590,54 @@ export type AuthorizationResponseIssuerCheck =
  * discipline as the RFC 8414 §3.3 issuer check. On a mismatch the caller emits
  * a fixed diagnostic and MUST NOT surface any server-supplied `error*` callback
  * parameters.
+ *
+ * Row 2 names both issuers, because an exact comparison fails on differences
+ * too small to see (trailing slash, scheme, port) and the mismatch is otherwise
+ * undiagnosable — the gate returns before anything reaches the OAuth trace. The
+ * RFC 9207 prohibition covers `error`/`error_description`, which carry AS-authored
+ * prose; `iss` is the compared value itself, and quoting it is what makes the
+ * rejection actionable. It is still attacker-controlled, hence `quoteUntrusted`.
+ *
+ * `enforcePresentIssMismatch` scopes row 2 to the era that actually mandates it.
+ * SEP-2468 introduces `MUST validate a present iss` in the 2026-07-28 draft;
+ * 2025-11-25 and earlier never mention `iss`, so a caller on those versions
+ * passes `false` to downgrade row 2 to a `warning` and let the flow continue.
+ * Defaults to enforcing: an omitted flag must fail closed, and the value that
+ * carries the era lives with the caller, not here.
  */
 export function validateAuthorizationResponseIssuer(input: {
   recordedIssuer: string | undefined;
   returnedIss: string | undefined;
   issParameterSupported: boolean | undefined;
+  enforcePresentIssMismatch?: boolean;
 }): AuthorizationResponseIssuerCheck {
-  const { recordedIssuer, returnedIss, issParameterSupported } = input;
+  const {
+    recordedIssuer,
+    returnedIss,
+    issParameterSupported,
+    enforcePresentIssMismatch = true,
+  } = input;
 
   if (returnedIss !== undefined && returnedIss !== "") {
     if (recordedIssuer !== undefined && returnedIss !== recordedIssuer) {
+      const mismatch =
+        "Authorization response `iss` does not match the issuer this flow " +
+        "started with. Recorded from authorization-server metadata: " +
+        `${quoteUntrusted(recordedIssuer)}; returned on the callback: ` +
+        `${quoteUntrusted(returnedIss)}.`;
+      if (!enforcePresentIssMismatch) {
+        return {
+          ok: true,
+          warning:
+            `${mismatch} This protocol version does not require RFC 9207 ` +
+            "issuer validation, so the flow continues; on 2026-07-28 this " +
+            "stops the flow before the authorization code is redeemed.",
+        };
+      }
       return {
         ok: false,
         reason:
-          "Authorization response `iss` does not match the issuer this flow " +
-          "started with. Refusing to exchange the authorization code; not " +
+          `${mismatch} Refusing to exchange the authorization code; not ` +
           "displaying any server-supplied error parameters (RFC 9207).",
       };
     }
@@ -1950,6 +1997,10 @@ export const createDebugOAuthStateMachine = (
               recordedIssuer: state.recordedIssuer,
               returnedIss: state.authorizationResponseIss,
               issParameterSupported: undefined,
+              // This machine IS the 2026-07-28 era, where SEP-2468 makes the
+              // present-`iss` comparison a MUST. Stated explicitly rather than
+              // leaning on the default, so the era rule is visible here.
+              enforcePresentIssMismatch: true,
             });
             if (!issCheck.ok) {
               updateState({

@@ -2695,6 +2695,17 @@ export function useServerState({
               toast.success(
                 `OAuth connection successful! Connected to ${serverName}.`
               );
+              // A conformance problem that did not block the flow (today: an
+              // RFC 9207 `iss` mismatch on a version that does not mandate the
+              // check). The trace step alone lives in the OAuth logs panel,
+              // which nobody is looking at while connecting — so say it here.
+              if (result.warning) {
+                logger.warn("OAuth conformance warning", {
+                  serverName,
+                  warning: result.warning,
+                });
+                toast.warning(result.warning);
+              }
               storeInitInfo(serverName, connectionResult.initInfo).catch(
                 (err) =>
                   logger.warn("Failed to fetch init info", {
