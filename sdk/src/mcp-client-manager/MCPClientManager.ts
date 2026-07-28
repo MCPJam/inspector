@@ -210,6 +210,22 @@ export class MCPClientManager {
   private readonly registeredServers = new Map<string, RegisteredServerState>();
   private readonly liveClientStates = new Map<string, LiveClientState>();
   private readonly toolsMetadataCache = new Map<string, Map<string, any>>();
+  /**
+   * Servers whose CURRENT connection has completed a no-`cursor`
+   * `tools/list` — the only call that writes upstream's aggregated
+   * `tools/list` response-cache entry, which is what upstream `callTool()`
+   * reads to run SEP-2243 `Mcp-Param-*` header mirroring (see
+   * `@modelcontextprotocol/client` `index.d.mts`: "Pass an explicit
+   * `{ cursor }` to fetch a single page ... does not write the response
+   * cache"). A membership miss means "mirroring would silently no-op", which
+   * `ensureXMcpHeaderMirroringSource` repairs before a modern tools/call.
+   *
+   * Lifetime is the CONNECTION, not the server registration: the response
+   * cache is allocated per upstream `Client`, so this is cleared everywhere
+   * `toolsMetadataCache` is (every live-state teardown) and never persists
+   * across a reconnect.
+   */
+  private readonly aggregatedToolsListWarmed = new Set<string>();
   private readonly retryAbortControllers = new Map<
     string,
     Set<AbortController>
@@ -651,6 +667,7 @@ export class MCPClientManager {
     await this.disconnectServer(serverId);
     this.registeredServers.delete(serverId);
     this.toolsMetadataCache.delete(serverId);
+    this.aggregatedToolsListWarmed.delete(serverId);
     this.notificationManager.clearServer(serverId);
     this.elicitationManager.clearServer(serverId);
     this.perRequestLogLevels.delete(serverId);
@@ -678,6 +695,13 @@ export class MCPClientManager {
 
   /**
    * Lists tools available from a server.
+   *
+   * A call with no `cursor` (the common case) auto-aggregates every page in
+   * the upstream client AND writes that aggregate to its response cache — the
+   * view upstream `callTool()` reads for SEP-2243 `Mcp-Param-*` mirroring. An
+   * explicit-`{ cursor }` page walk deliberately writes neither, and
+   * `cacheMode: "bypass"` returns the aggregate without writing it, so only a
+   * no-`cursor` non-bypass call marks the connection warm here.
    */
   async listTools(
     serverId: string,
@@ -691,10 +715,16 @@ export class MCPClientManager {
           this.withTimeout(serverId, options)
         );
         this.cacheToolsMetadata(serverId, result.tools);
+        if (params?.cursor === undefined && options?.cacheMode !== "bypass") {
+          this.aggregatedToolsListWarmed.add(serverId);
+        }
         return result;
       } catch (error) {
         if (isMethodUnavailableError(error, "tools/list")) {
           this.toolsMetadataCache.set(serverId, new Map());
+          // A server without `tools/list` cannot declare `x-mcp-header` on
+          // anything, so the mirroring source is trivially complete.
+          this.aggregatedToolsListWarmed.add(serverId);
           return { tools: [] } as ListToolsResult;
         }
         throw error;
@@ -994,6 +1024,20 @@ export class MCPClientManager {
         };
       }
 
+      await this.ensureXMcpHeaderMirroringSource(
+        serverId,
+        client,
+        // Signal + timeout only: the warm-up must honor the caller's abort and
+        // deadline, but must NOT inherit the call's progress handler (a
+        // `tools/list` is not the operation the caller is tracking).
+        {
+          ...(signal ? { signal } : {}),
+          ...(request.request?.timeout !== undefined
+            ? { timeout: request.request.timeout }
+            : {}),
+        }
+      );
+
       const plainResult = await this.withElicitationTimeoutSuspension(
         serverId,
         mergedOptions,
@@ -1010,6 +1054,68 @@ export class MCPClientManager {
       request.retry ?? { retries: 0, retryDelayMs: 0 },
       operation
     );
+  }
+
+  /**
+   * Guarantees upstream `callTool()` can run SEP-2243 `Mcp-Param-*` header
+   * mirroring (2026-07-28 Streamable HTTP, "clients **MUST** mirror the
+   * designated parameter values into HTTP headers").
+   *
+   * Upstream reads the tool's `inputSchema` from exactly two places: the
+   * `CallToolRequestOptions.toolDefinition` escape hatch, or the aggregated
+   * `tools/list` entry in its response cache. MCPJam passes the former
+   * nowhere, and several surfaces reach `executeTool` with a cache that was
+   * never written — a hosted/CLI ephemeral connection that only ever calls
+   * the tool, and any surface that walks pagination by hand (an
+   * explicit-`{ cursor }` `listTools()` does not write the cache). Upstream's
+   * miss path is silent: it sends the call with no `Mcp-Param-*` headers and
+   * relies on the server answering `HEADER_MISMATCH` to trigger its
+   * evict-refetch-retry recovery — which a lenient server never does. So the
+   * MUST was being skipped with no warning.
+   *
+   * The repair is to WARM the source rather than to synthesize a
+   * `toolDefinition`: upstream then keeps ownership of freshness, of the
+   * `list_changed` eviction lifecycle, and of the `HEADER_MISMATCH` recovery
+   * retry (which it disables outright when `toolDefinition` is supplied), and
+   * output-schema validation keeps reading the same view it does today. On
+   * the surfaces that DO hold the tool definitions, they hold them because
+   * they called {@link listTools} on this manager — which already warmed the
+   * cache — so those paths pay nothing here.
+   *
+   * Three gates keep this off every path that cannot need it, so no legacy
+   * (2025-*) connection changes by a single byte:
+   * - already warmed on this connection (tracked by
+   *   `aggregatedToolsListWarmed`) — the common case, zero round trips;
+   * - era is not `"modern"`, or is unknown (an adapter that cannot report it)
+   *   — mirroring is 2026-07-28-only and an unknown era fails closed;
+   * - the transport is stdio — mirroring is Streamable-HTTP-only, and unlike
+   *   upstream (which cannot tell an HTTP transport from an in-memory one) we
+   *   own the server config and can skip the useless round trip.
+   *
+   * A failed warm-up is NOT marked warm and NOT fatal: the tool call proceeds
+   * exactly as it does today (upstream's `HEADER_MISMATCH` recovery is still
+   * armed because we pass no `toolDefinition`), and the next call re-attempts
+   * the warm-up rather than disabling mirroring for the connection's life.
+   */
+  private async ensureXMcpHeaderMirroringSource(
+    serverId: string,
+    client: ManagedMcpClient,
+    options: Pick<ClientRequestOptions, "signal" | "timeout">
+  ): Promise<void> {
+    if (this.aggregatedToolsListWarmed.has(serverId)) return;
+    if (client.getProtocolEra?.() !== "modern") return;
+    const config = this.registeredServers.get(serverId)?.config;
+    if (!config || this.isStdioConfig(config)) return;
+
+    try {
+      // No `cursor`, no `cacheMode` override: the one call shape that writes
+      // upstream's aggregated `tools/list` entry. Marks the connection warm
+      // via `listTools` itself, so this runs at most once per connection.
+      await this.listTools(serverId, undefined, options);
+    } catch {
+      // Deliberately swallowed — see the docblock. A `tools/list` failure must
+      // not convert an otherwise-valid `tools/call` into an error.
+    }
   }
 
   // ===========================================================================
@@ -2484,6 +2590,7 @@ export class MCPClientManager {
 
     if (!state) {
       this.toolsMetadataCache.delete(serverId);
+      this.aggregatedToolsListWarmed.delete(serverId);
       return;
     }
 
@@ -2505,6 +2612,7 @@ export class MCPClientManager {
       this.liveClientStates.delete(serverId);
     }
     this.toolsMetadataCache.delete(serverId);
+    this.aggregatedToolsListWarmed.delete(serverId);
   }
 
   private clearClosedPendingConnectionState(
@@ -2535,6 +2643,7 @@ export class MCPClientManager {
       this.liveClientStates.delete(serverId);
     }
     this.toolsMetadataCache.delete(serverId);
+    this.aggregatedToolsListWarmed.delete(serverId);
   }
 
   private async destroyLiveState(
@@ -2954,9 +3063,16 @@ export class MCPClientManager {
   // cache, tool + prompt legs carry the modern per-request log-level `_meta`
   // via the `requestWithSchema` decorator, and the final tool result is
   // re-validated against its output schema (reconstructing what the bypassed
-  // upstream `callTool` would have asserted). The MRTR loop lives OUTSIDE the
-  // per-leg retry/timeout wrappers, so a transient failure on round N retries
-  // only that leg — it never restarts the operation at round zero.
+  // upstream `callTool` would have asserted). SEP-2243 `Mcp-Param-*` mirroring
+  // is the one `callTool` behavior these legs CANNOT reconstruct — it lives in
+  // upstream's private internals and there is no seam to add per-request
+  // headers to a `requestWithSchema` leg, so warming the mirroring source (see
+  // `ensureXMcpHeaderMirroringSource`) would not help here. Local and hosted
+  // MRTR have parity on that gap; see `mrtr-hosted-chat.ts`.
+  //
+  // The MRTR loop lives OUTSIDE the per-leg retry/timeout wrappers, so a
+  // transient failure on round N retries only that leg — it never restarts
+  // the operation at round zero.
   // ===========================================================================
 
   private async executeToolWithInputRequired(
