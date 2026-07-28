@@ -138,6 +138,41 @@ const humanizeConnectionError = (
   }
 };
 
+/**
+ * Build the "More details" payload for a humanized banner.
+ *
+ * The banner no longer leads with the server's own wording, so that wording has
+ * to survive here or it is lost outright. Fold it into the structured details
+ * rather than replacing them (a bare `details ?? message` drops one or the
+ * other), and keep the result JSON-shaped when the server sent an object so
+ * `ErrorBox` still renders it through `JsonEditor` instead of a flat `<pre>`.
+ */
+const preserveServerMessageInDetails = (
+  message: string,
+  rawDetails: unknown,
+): string | undefined => {
+  if (rawDetails == null) return message;
+
+  if (
+    typeof rawDetails === "object" &&
+    !Array.isArray(rawDetails) &&
+    // `serverMessage` (not `message`) so a details bag that already carries its
+    // own `message` key can't silently swallow the server's wording.
+    !("serverMessage" in (rawDetails as Record<string, unknown>))
+  ) {
+    return normalizeDetails({
+      ...(rawDetails as Record<string, unknown>),
+      serverMessage: message,
+    });
+  }
+
+  const normalized = normalizeDetails(rawDetails);
+  if (!normalized) return message;
+  return normalized.includes(message)
+    ? normalized
+    : `${message}\n\n${normalized}`;
+};
+
 const normalizeDetails = (details: unknown): string | undefined => {
   if (details == null) return undefined;
   if (typeof details === "string") return details;
@@ -388,7 +423,7 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
       if (humanized) {
         return {
           message: humanized,
-          details: details ?? message,
+          details: preserveServerMessageInDetails(message, parsed.details),
           code,
           statusCode: parsed.statusCode,
           isRetryable: parsed.isRetryable,

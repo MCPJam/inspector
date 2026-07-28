@@ -280,6 +280,50 @@ describe("formatErrorMessage", () => {
       );
     });
 
+    // The banner no longer leads with the server's wording, so "More details"
+    // is the only place it survives. Structured details must not displace it.
+    it("keeps the raw server message alongside structured details", () => {
+      const result = formatErrorMessage(
+        JSON.stringify({
+          code: "SERVER_UNREACHABLE",
+          message: "fetch failed",
+          details: { serverName: "BART MCP" },
+        }),
+      );
+
+      expect(result?.details).toContain("fetch failed");
+      expect(result?.details).toContain("BART MCP");
+      // Still JSON, so ErrorBox renders it through JsonEditor rather than <pre>.
+      expect(() => JSON.parse(result!.details!)).not.toThrow();
+    });
+
+    it("keeps both when details is a plain string", () => {
+      const result = formatErrorMessage(
+        JSON.stringify({
+          code: "TIMEOUT",
+          message: "Connection attempt timed out after 20 seconds",
+          details: "upstream did not respond",
+        }),
+      );
+
+      expect(result?.details).toContain(
+        "Connection attempt timed out after 20 seconds",
+      );
+      expect(result?.details).toContain("upstream did not respond");
+    });
+
+    it("does not duplicate a message the details already contain", () => {
+      const result = formatErrorMessage(
+        JSON.stringify({
+          code: "SERVER_UNREACHABLE",
+          message: "fetch failed",
+          details: "fetch failed (ECONNREFUSED)",
+        }),
+      );
+
+      expect(result?.details).toBe("fetch failed (ECONNREFUSED)");
+    });
+
     it("tells the user to reconnect an expired OAuth grant", () => {
       const result = formatErrorMessage(
         JSON.stringify({
