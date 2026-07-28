@@ -120,9 +120,11 @@ async function dispatch(command: Omit<InspectorCommand, "id">) {
   return response;
 }
 
-function renderAndSelectPersona() {
+async function renderAndSelectPersona() {
   render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-  fireEvent.click(screen.getByText("Persona One"));
+  await waitFor(() => {
+    expect(screen.getByLabelText("Notes / personality")).toBeTruthy();
+  });
 }
 
 beforeEach(() => {
@@ -168,7 +170,7 @@ describe("SwarmsTab — agent bridge handlers", () => {
   });
 
   it("openJourneyForm opens the new-journey form with a goal prefill — no journey is created", async () => {
-    renderAndSelectPersona();
+    await renderAndSelectPersona();
 
     const response = await dispatch({
       type: "openJourneyForm",
@@ -203,7 +205,7 @@ describe("SwarmsTab — agent bridge handlers", () => {
 
   it("launchSwarmRun routes through launchJourneyRun with a launch key and reports the run id", async () => {
     launchJourneyRunMock.mockResolvedValue({ runId: "run-1" });
-    renderAndSelectPersona();
+    await renderAndSelectPersona();
 
     const response = await dispatch({
       type: "launchSwarmRun",
@@ -230,7 +232,7 @@ describe("SwarmsTab — agent bridge handlers", () => {
     launchJourneyRunMock.mockRejectedValue(
       new LaunchJourneyRunError(402, "Swarm run limit reached"),
     );
-    renderAndSelectPersona();
+    await renderAndSelectPersona();
 
     const response = await dispatch({
       type: "launchSwarmRun",
@@ -248,7 +250,7 @@ describe("SwarmsTab — agent bridge handlers", () => {
   });
 
   it("launchSwarmRun rejects an unknown journey without calling the launch path", async () => {
-    renderAndSelectPersona();
+    await renderAndSelectPersona();
 
     const response = await dispatch({
       type: "launchSwarmRun",
@@ -263,7 +265,7 @@ describe("SwarmsTab — agent bridge handlers", () => {
   });
 
   it("reuses the SAME launch key on retry after a failure (no duplicate run/spend)", async () => {
-    renderAndSelectPersona();
+    await renderAndSelectPersona();
 
     // First attempt fails — the key must be RETAINED for the retry so the
     // backend dedupes rather than creating a second run.
@@ -315,7 +317,7 @@ describe("SwarmsTab — agent bridge handlers", () => {
   });
 
   it("snapshot reports redacted state — persona/journey names, ids, host target names, counts", async () => {
-    renderAndSelectPersona();
+    await renderAndSelectPersona();
 
     const snapshot = await readSurfaceSnapshot("swarms");
     expect(snapshot).toMatchObject({
