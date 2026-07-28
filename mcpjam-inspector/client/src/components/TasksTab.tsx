@@ -4,6 +4,8 @@ import {
   HOSTED_TASK_BATCH_LIMIT,
   HOSTED_TASK_POLL_FLOOR_MS,
   hostedPollIntervalMs,
+  isTerminalRegistryStatus,
+  type RegistryTaskEntry,
 } from "@/shared/hosted-tasks";
 import {
   MAX_RECOVERY_READ_ATTEMPTS,
@@ -60,6 +62,7 @@ import { TaskInlineProgress } from "./tasks/TaskInlineProgress";
 import {
   STATUS_CONFIG,
   expiredPlaceholderTask,
+  registryPlaceholderTask,
   restoredPlaceholderTask,
   formatRelativeTime,
   isTerminalStatus,
@@ -163,6 +166,18 @@ export function TasksTab({
   >(new Map());
   // Track the task ID for pending input_required requests to avoid race conditions
   const pendingInputRequestTaskIdRef = useRef<string | null>(null);
+
+  // Handles recovered from the hosted registry (`registryTasks` on `/list`),
+  // keyed by taskId. A REF, never the localStorage tracker: registry entries
+  // are another device's (or a cleared profile's) handles, and writing them
+  // into the tracker would resurrect entries the user cleared and duplicate
+  // the registry's own persistence. They render as placeholders and join the
+  // poll set until a live read (or a -32602) settles them.
+  const registryHandlesRef = useRef<Map<string, RegistryTaskEntry>>(new Map());
+  // The server the one recovery read of this mount has been done for. Reset on
+  // server change and on manual refresh; a failed read leaves it unset so the
+  // next tick retries.
+  const registryReadDoneRef = useRef<string | null>(null);
 
   // Collapsible sidebar state
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
@@ -366,6 +381,11 @@ export function TasksTab({
     dismissTasksForServer(serverName, taskIds);
     clearTrackedTasksForServer(serverName);
     scheduler.forget(taskIds);
+    // Registry-recovered handles have no tracker entry for the dismissal to
+    // stick to; drop them from the mount-local recovery set as well so Clear
+    // does not resurrect them on the next tick. (The registry row itself
+    // survives — global removal is the delete route's job, deferred in v1.)
+    registryHandlesRef.current = new Map();
     setTasks([]);
     setSelectedTaskId("");
     setTaskResult(null);
@@ -391,8 +411,22 @@ export function TasksTab({
 
       // Per MCP Tasks spec (2025-11-25): clients SHOULD only call tasks/list
       // if the server declares tasks.list capability
-      let serverResult: { tasks: Task[] } = { tasks: [] };
+      let serverResult: { tasks: Task[]; registryTasks?: RegistryTaskEntry[] } =
+        { tasks: [] };
       let serverTaskIds = new Set<string>();
+
+      // Folds a `/list` response's registry attachment in. An ABSENT
+      // `registryTasks` is "no recovery source this tick" (local mode, chatbox
+      // scope, registry off/unreachable) and leaves whatever we already
+      // recovered untouched; `[]` is a verified empty registry and clears it.
+      const captureRegistry = (registryTasks?: RegistryTaskEntry[]) => {
+        registryReadDoneRef.current = serverName;
+        if (registryTasks) {
+          registryHandlesRef.current = new Map(
+            registryTasks.map((entry) => [entry.taskId, entry])
+          );
+        }
+      };
 
       // The extension has no tasks/list: the tracker is the list.
       //
@@ -403,6 +437,12 @@ export function TasksTab({
       // at the tab's pace just because a 1s task shares the connection — the
       // same floor breach the per-task scheduler exists to prevent, one level
       // up.
+      // Ids a live read CONFIRMED gone this tick. They answered — retired,
+      // not unreachable — so they must not be classified as failed reads
+      // below: a tracked handle gets its expired placeholder instead, and a
+      // registry-recovered one (which has no tracker entry to hang a
+      // placeholder on) simply leaves the list.
+      const confirmedGoneIds = new Set<string>();
       const onUnknownTask = (taskId: string) => {
         // Stop scheduling it too. Without this the engine's map grows for the
         // life of the session, and a record that stays due-but-never-polled
@@ -414,6 +454,11 @@ export function TasksTab({
         // failure (transient connect, structureless 404 from an older hosted
         // replica) keeps the handle untouched and retries on the next tick.
         markTaskExpired(taskId, serverName);
+        // A recovered handle the server has forgotten is done for good: drop
+        // the registry entry so it is neither re-polled nor re-rendered.
+        // (`markTaskExpired` above no-ops for ids the tracker never held.)
+        registryHandlesRef.current.delete(taskId);
+        confirmedGoneIds.add(taskId);
       };
 
       let listedCarriedForward: NormalizedTask[] = [];
@@ -445,6 +490,7 @@ export function TasksTab({
           try {
             serverResult = await listTasks(serverName);
             serverTaskIds = new Set(serverResult.tasks.map((t) => t.taskId));
+            captureRegistry(serverResult.registryTasks);
           } finally {
             // Claims taken by the due check above. The fold-back below releases
             // what it covers; this releases the rest (terminal members, and any
@@ -503,11 +549,62 @@ export function TasksTab({
         }
       }
 
+      // The ONE registry recovery read of this mount (re-armed by a manual
+      // refresh), for ticks where the ordinary `tasks/list` did not run — on
+      // the extension wire it never runs, and there the route answers
+      // `{tasks: []}` locally while the registry attachment is the only way a
+      // fresh browser can discover a running task at all. Hosted-only: local
+      // mode has no registry and the extra call would buy nothing.
+      if (hosted && registryReadDoneRef.current !== serverName) {
+        try {
+          const recovery = await listTasks(serverName);
+          captureRegistry(recovery.registryTasks);
+        } catch {
+          // Leave the ref unset: the next tick retries the recovery read.
+        }
+      }
+
       // Get locally tracked tasks and fetch their current status
       const trackedTasks = getTrackedTasksForServer(serverName);
       const pending = trackedTasks
         .filter((t) => !serverTaskIds.has(t.taskId))
         .filter((t) => !dismissedIds.has(t.taskId));
+
+      // Registry-recovered handles this browser does not track. Merge filter:
+      // same wire as the tab, not dismissed here, not already in the server's
+      // list, not already tracked (the tracker copy wins — it carries scheduling
+      // state the registry doesn't).
+      const trackedIds = new Set(trackedTasks.map((t) => t.taskId));
+      const recoveredEntries = [...registryHandlesRef.current.values()].filter(
+        (entry) =>
+          entry.wire === wire &&
+          !dismissedIds.has(entry.taskId) &&
+          !serverTaskIds.has(entry.taskId) &&
+          !trackedIds.has(entry.taskId)
+      );
+      // A terminal registry row renders as a placeholder and is NEVER polled:
+      // its retention window is the backend's concern, and re-reading a
+      // finished task from every browser would only burn connections.
+      const recoveredTerminal = recoveredEntries.filter((entry) =>
+        isTerminalRegistryStatus(entry.lastKnownStatus)
+      );
+      const recoveredActive = recoveredEntries.filter(
+        (entry) => !isTerminalRegistryStatus(entry.lastKnownStatus)
+      );
+      const recoveredById = new Map(
+        recoveredActive.map((entry) => [entry.taskId, entry])
+      );
+      // Non-terminal recovered ids join the same due-gated poll set as
+      // tracked handles. The scheduler has never seen them and the tracker
+      // holds no persisted schedule, so they are due immediately — once; the
+      // observations recorded from that first read seed their real floors.
+      const dueRecovered = scheduler.dueTaskIds(
+        recoveredActive.map((entry) => entry.taskId)
+      );
+      const dueRecoveredSet = new Set(dueRecovered);
+      const notDueRecovered = recoveredActive.filter(
+        (entry) => !dueRecoveredSet.has(entry.taskId)
+      );
       // An expired handle is never re-polled: the server has forgotten it, so
       // it renders from tracker data until the user dismisses it.
       const expiredEntries = pending
@@ -527,7 +624,13 @@ export function TasksTab({
       // screen rather than blinking out until their next read.
       const notDue = pending.filter((t) => !t.expired && !dueIds.has(t.taskId));
       const byId = new Map(livePending.map((t) => [t.taskId, t]));
-      const pendingIds = livePending.map((t) => t.taskId);
+      const pendingIds = [
+        ...livePending.map((t) => t.taskId),
+        // Due registry-recovered handles ride the same batch; their results
+        // (and -32602s) are handled exactly like tracked ones below, except
+        // that nothing is ever written into the tracker for them.
+        ...dueRecovered,
+      ];
 
       let trackedTaskStatuses: (NormalizedTask | null)[];
       if (hosted && pendingIds.length > 0) {
@@ -606,7 +709,9 @@ export function TasksTab({
       // Only ids that produced NOTHING are failed reads. A confirmed-expired
       // handle answered — it is retired, not unreachable — and backing it off
       // would be recording an error against a handle nobody will poll again.
-      const failedIds = pendingIds.filter((id) => !settledIds.has(id));
+      const failedIds = pendingIds.filter(
+        (id) => !settledIds.has(id) && !confirmedGoneIds.has(id)
+      );
       scheduler.recordErrors(failedIds);
 
       // A handle that was not due this tick keeps its last-known state rather
@@ -639,14 +744,25 @@ export function TasksTab({
           const previous = previousById.get(taskId);
           if (previous) return previous;
           const tracked = byId.get(taskId);
-          return tracked ? restoredPlaceholderTask(tracked) : null;
+          if (tracked) return restoredPlaceholderTask(tracked);
+          const recovered = recoveredById.get(taskId);
+          return recovered ? registryPlaceholderTask(recovered) : null;
         })
         .filter((task): task is NormalizedTask => task !== null);
+
+      // Recovered handles that were not due this tick, and terminal registry
+      // rows (render-only, never polled), keep a row on screen: last live
+      // state when we have one, otherwise the registry's own last-known view.
+      const recoveredCarriedForward = notDueRecovered.map(
+        (entry) => previousById.get(entry.taskId) ?? registryPlaceholderTask(entry)
+      );
 
       trackedTaskStatuses = [
         ...trackedTaskStatuses,
         ...carriedForward,
         ...failedCarriedForward,
+        ...recoveredCarriedForward,
+        ...recoveredTerminal.map((entry) => registryPlaceholderTask(entry)),
         ...expiredEntries,
       ];
 
@@ -708,6 +824,9 @@ export function TasksTab({
   // the automatic loop keeps backing off exactly as before.
   const handleManualRefresh = useCallback(() => {
     scheduler.retryRecoveryReads(recoveryReads.exhaustedTaskIds);
+    // Re-arm the once-per-mount registry recovery read: a person clicking
+    // Refresh is exactly the "did I lose a task somewhere?" moment.
+    registryReadDoneRef.current = null;
     void fetchTasks();
   }, [scheduler, recoveryReads, fetchTasks]);
 
@@ -866,6 +985,10 @@ export function TasksTab({
 
     // Reset to undefined while fetching
     setTaskCapabilities(undefined);
+    // Registry recovery is per server: drop the previous server's handles and
+    // re-arm the one recovery read for the new one.
+    registryHandlesRef.current = new Map();
+    registryReadDoneRef.current = null;
 
     const fetchCapabilities = async () => {
       try {

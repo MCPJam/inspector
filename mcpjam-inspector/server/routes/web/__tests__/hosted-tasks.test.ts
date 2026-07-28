@@ -12,6 +12,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const lifecycle: string[] = [];
 let managerImpl: Record<string, unknown> = {};
 
+const mockListRegistryTasks = vi.fn();
+const mockReportTaskStatuses = vi.fn();
+
+// The registry service has its own outcome tests; here it is a seam so the
+// assertions are about what THIS route attaches, skips, and forwards.
+vi.mock("../../../services/hosted-task-registry.js", () => ({
+  listRegistryTasks: (...args: unknown[]) => mockListRegistryTasks(...args),
+  reportTaskStatuses: (...args: unknown[]) => mockReportTaskStatuses(...args),
+}));
+
+vi.mock("../../../utils/v1-convex-token.js", () => ({
+  getConvexBearerForRequest: vi.fn().mockResolvedValue("convex-jwt"),
+}));
+
 vi.mock("../auth.js", async () => {
   const actual =
     await vi.importActual<typeof import("../auth.js")>("../auth.js");
@@ -100,6 +114,8 @@ describe("hosted /api/web/tasks", () => {
   beforeEach(() => {
     lifecycle.length = 0;
     managerImpl = {};
+    mockListRegistryTasks.mockReset().mockResolvedValue(null);
+    mockReportTaskStatuses.mockReset().mockResolvedValue(undefined);
   });
 
   it("connects, reads and disconnects for a single get", async () => {
@@ -333,6 +349,180 @@ describe("hosted /api/web/tasks", () => {
       wire: "none",
     });
     expect(lifecycle).toEqual(["connect", "disconnect"]);
+  });
+
+  describe("registry recovery attachment on /list", () => {
+    const registryEntry = {
+      wire: "extension" as const,
+      taskId: "recovered-1",
+      lastKnownStatus: "working" as const,
+      createdAt: 1_000,
+      updatedAt: 2_000,
+      lastObservedAt: 2_000,
+    };
+
+    it("attaches registryTasks on the extension wire, where /list is answered locally", async () => {
+      // The extension has no tasks/list, so the attachment is the ONLY
+      // discovery source a fresh browser has on this wire.
+      setManager({});
+      mockListRegistryTasks.mockResolvedValue([registryEntry]);
+
+      const res = await post("/list", {});
+
+      expect(await res.json()).toEqual({
+        tasks: [],
+        wire: "extension",
+        registryTasks: [registryEntry],
+      });
+      expect(mockListRegistryTasks).toHaveBeenCalledWith({
+        bearer: "convex-jwt",
+        projectId: "p1",
+        serverId: "s1",
+      });
+    });
+
+    it("attaches registryTasks alongside the legacy passthrough list", async () => {
+      setManager({
+        getTasksSupport: vi.fn().mockReturnValue(legacySupport),
+        listTasks: vi.fn().mockResolvedValue({ tasks: [{ taskId: "t1" }] }),
+      });
+      mockListRegistryTasks.mockResolvedValue([registryEntry]);
+
+      expect(await (await post("/list", {})).json()).toEqual({
+        tasks: [{ taskId: "t1" }],
+        wire: "legacy",
+        registryTasks: [registryEntry],
+      });
+    });
+
+    it("OMITS the field entirely when there is no recovery source (null, not [])", async () => {
+      setManager({});
+      mockListRegistryTasks.mockResolvedValue(null);
+
+      const body = await (await post("/list", {})).json();
+
+      // Absent = "no recovery source this tick"; [] would claim a verified
+      // empty registry the route cannot vouch for.
+      expect(body).not.toHaveProperty("registryTasks");
+    });
+
+    it("attaches [] for a VERIFIED empty registry", async () => {
+      setManager({});
+      mockListRegistryTasks.mockResolvedValue([]);
+
+      expect(await (await post("/list", {})).json()).toEqual({
+        tasks: [],
+        wire: "extension",
+        registryTasks: [],
+      });
+    });
+
+    it("skips the registry entirely for chatbox-scoped callers", async () => {
+      // A chatbox visitor is not a project member; the backend's membership
+      // check on the forwarded bearer would 403 them anyway.
+      setManager({});
+
+      await post("/list", { accessScope: "chat_v2" });
+      await post("/list", { chatboxId: "cbx_1" });
+
+      expect(mockListRegistryTasks).not.toHaveBeenCalled();
+    });
+
+    it("still answers /list when the registry read throws", async () => {
+      setManager({});
+      mockListRegistryTasks.mockRejectedValue(new Error("registry down"));
+
+      const res = await post("/list", {});
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ tasks: [], wire: "extension" });
+    });
+  });
+
+  describe("observed-status reporting on /get-batch", () => {
+    it("maps live statuses (hyphen-normalized) and -32602s onto registry updates", async () => {
+      const getTaskExt = vi
+        .fn()
+        .mockImplementationOnce(async () => ({
+          taskId: "a",
+          status: "working",
+        }))
+        .mockImplementationOnce(async () => ({
+          taskId: "b",
+          // Extension wire hyphenates; the registry stores underscores.
+          status: "input-required",
+        }))
+        .mockImplementationOnce(async () => {
+          throw Object.assign(new Error("gone"), { code: -32602 });
+        })
+        .mockImplementationOnce(async () => ({
+          taskId: "d",
+          // Unrecognized statuses are dropped, never defaulted.
+          status: "banana",
+        }));
+      setManager({ getTaskExt });
+
+      const res = await post("/get-batch", { taskIds: ["a", "b", "c", "d"] });
+      expect(res.status).toBe(200);
+
+      await vi.waitFor(() =>
+        expect(mockReportTaskStatuses).toHaveBeenCalledTimes(1),
+      );
+      expect(mockReportTaskStatuses).toHaveBeenCalledWith(
+        { bearer: "convex-jwt", projectId: "p1", serverId: "s1" },
+        [
+          { wire: "extension", taskId: "a", status: "working" },
+          { wire: "extension", taskId: "b", status: "input_required" },
+          // The confirmed -32602 is the observation that lets the backend
+          // retire the row.
+          { wire: "extension", taskId: "c", status: "expired" },
+        ],
+      );
+    });
+
+    it("never fails the poll when the report fails", async () => {
+      const getTaskExt = vi
+        .fn()
+        .mockImplementation(async (_s: string, taskId: string) => ({
+          taskId,
+          status: "working",
+        }));
+      setManager({ getTaskExt });
+      mockReportTaskStatuses.mockRejectedValue(new Error("registry down"));
+
+      const res = await post("/get-batch", { taskIds: ["a"] });
+
+      expect(res.status).toBe(200);
+      expect((await res.json()).tasks[0].task).toEqual({
+        taskId: "a",
+        status: "working",
+      });
+      // Let the fire-and-forget settle so a rejection would surface as an
+      // unhandled error if the route failed to contain it.
+      await vi.waitFor(() =>
+        expect(mockReportTaskStatuses).toHaveBeenCalledTimes(1),
+      );
+    });
+
+    it("skips reporting for chatbox-scoped callers", async () => {
+      const getTaskExt = vi
+        .fn()
+        .mockImplementation(async (_s: string, taskId: string) => ({
+          taskId,
+          status: "working",
+        }));
+      setManager({ getTaskExt });
+
+      const res = await post("/get-batch", {
+        taskIds: ["a"],
+        accessScope: "chat_v2",
+      });
+
+      expect(res.status).toBe(200);
+      // Give the dangling promise a tick; it must have bailed before the call.
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(mockReportTaskStatuses).not.toHaveBeenCalled();
+    });
   });
 
   it("rejects taskOptions and allowTaskResult together (different wires)", async () => {
