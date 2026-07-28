@@ -880,13 +880,12 @@ export type {
   SubscriptionStreamStatus,
 } from "./mcp-client-manager/index.js";
 
-// MCP Tasks manual-drive surface — the shared lifecycle engine, the poll-only
-// await driver, the wire-neutral observation adapters, and the `input_required`
-// driver's trust rules. Re-exported at the package root for the same reason the
-// subscription coordinator is: a consumer outside the SDK (the CLI's `tasks`
-// verbs) must be able to drive a task to terminal without reaching into the
-// client-manager subpath, and without growing a second polling loop beside the
-// Inspector's. New exports only.
+// MCP Tasks manual-drive surface — the `input_required` driver's trust rules
+// plus the creation-time status whitelist. The lifecycle engine, the `await`
+// driver, and the observation adapters are already exported by the MCP Tasks
+// runtime block above; this block carries only what that one does not, so a
+// consumer outside the SDK (the CLI's `tasks` verbs) can drive a task to
+// terminal without reaching into the client-manager subpath. New exports only.
 //
 // `InputRequests` / `InputResponses` (the `tasks/update` payload maps) are
 // already exported by the MRTR block above and are deliberately not repeated.

@@ -343,13 +343,26 @@ async function runTaskAugmentedToolCall(args: {
         : envelope.created
       : envelope.result;
 
+  // The extension server declined to create a task and answered synchronously.
+  // That answer is an ordinary tool result, so it keeps the ordinary contract:
+  // plain `tools call` exits 1 on `isError: true`, and adding `--task` — an
+  // invitation the server turned down — must not silently soften that. The
+  // 0-on-`isError` rule is for a COMPLETED TASK, where the error rides in the
+  // watch envelope.
+  const syncToolResultError =
+    !envelope.aborted &&
+    !envelope.created &&
+    isCallToolResultError(envelope.result as never);
+
   // An interrupt is 130 wherever it lands, so a caller reads the same code
   // whether the signal arrived during creation or mid-watch.
   const exitCode = envelope.aborted
     ? 130
     : envelope.watch
       ? taskWatchExitCode(envelope.watch.outcome)
-      : 0;
+      : syncToolResultError
+        ? 1
+        : 0;
 
   // A watch that ended anywhere but `completed` is an error outcome for the
   // artifact, even though the command itself ran correctly — the artifact
@@ -366,14 +379,26 @@ async function runTaskAugmentedToolCall(args: {
               message: `Interrupted during task ${envelope.aborted.phase}.`,
             },
           }
-        : {
-            status: "error",
-            result: payload,
-            error: {
-              code: `task_${envelope.watch?.outcome ?? "unknown"}`,
-              message: `Task watch ended with outcome "${envelope.watch?.outcome}".`,
+        : syncToolResultError
+          ? {
+              // Same code the plain path stamps for `isError: true`: the task
+              // machinery was a bystander here, so the artifact must not
+              // suggest a task outcome that never existed.
+              status: "error",
+              result: payload,
+              error: {
+                code: "tool_result_error",
+                message: "Tool returned an error result.",
+              },
+            }
+          : {
+              status: "error",
+              result: payload,
+              error: {
+                code: `task_${envelope.watch?.outcome ?? "unknown"}`,
+                message: `Task watch ended with outcome "${envelope.watch?.outcome}".`,
+              },
             },
-          },
   );
 
   writeResult(

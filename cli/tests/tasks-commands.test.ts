@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   serveExtensionTasksFixture,
+  SYNC_TOOL_NAME,
   TASK_TOOL_NAME,
   type ServedExtensionTasksFixture,
 } from "../../sdk/tests/support/extension-tasks-fixture.js";
@@ -230,6 +231,62 @@ test("tools call rejects task flags that cannot coexist", async () => {
     assert.equal(run.exitCode, 2, `${extra.join(" ")}\n${run.stderr}`);
     assert.match(errorOf(run).message, pattern);
   }
+});
+
+test("tools call --task returns a synchronous extension answer with exit 0", async () => {
+  // The server declining to create a task is legal on the extension wire: the
+  // plain result comes back unchanged, with a stderr note so the missing
+  // `task_created` envelope is explained.
+  await withExtensionFixture(async (fixture) => {
+    const run = await runCli([
+      "tools",
+      "call",
+      "--tool-name",
+      SYNC_TOOL_NAME,
+      "--task",
+      ...httpTarget(fixture.url),
+    ]);
+    assert.equal(run.exitCode, 0, run.stderr);
+    const payload = jsonOf(run) as { content: Array<{ text: string }> };
+    assert.equal(payload.content[0]?.text, "sync result");
+    assert.match(run.stderr, /synchronously/);
+  });
+});
+
+test("tools call --task exits 1 when a synchronous answer carries isError", async () => {
+  // A synchronous answer is an ordinary tool result, so it keeps the ordinary
+  // `tools call` contract: `isError: true` exits 1. The 0-on-`isError` rule is
+  // for a COMPLETED TASK, where the error rides in the watch envelope — here no
+  // task ever existed, and `--task` must not soften the exit code the same
+  // command line would have produced without it.
+  await withExtensionFixture(
+    async (fixture) => {
+      const run = await runCli([
+        "tools",
+        "call",
+        "--tool-name",
+        SYNC_TOOL_NAME,
+        "--task",
+        ...httpTarget(fixture.url),
+      ]);
+      assert.equal(run.exitCode, 1, run.stderr);
+      const payload = jsonOf(run) as { isError?: boolean };
+      assert.equal(payload.isError, true);
+      assert.match(run.stderr, /synchronously/);
+    },
+    {
+      tools: {
+        [SYNC_TOOL_NAME]: {
+          mode: "sync",
+          description: "Always answers synchronously, with an error result.",
+          result: {
+            content: [{ type: "text", text: "boom" }],
+            isError: true,
+          },
+        },
+      },
+    },
+  );
 });
 
 test("tools call --task rejects a malformed legacy task creation", async () => {

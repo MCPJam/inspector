@@ -59,7 +59,7 @@ mcpjam tools call \
 }
 ```
 
-If the server decides the call is cheap enough to answer synchronously — legal on the extension wire — you get the ordinary tool result instead, plus a note on stderr that no task materialized.
+If the server decides the call is cheap enough to answer synchronously — legal on the extension wire — you get the ordinary tool result instead, plus a note on stderr that no task materialized. A synchronous answer keeps the ordinary `tools call` exit contract: a result with `isError: true` exits `1`, exactly as it would without `--task`. The 0-on-`isError` rule below applies only to a task that completed.
 
 `--task-ttl <ms>` requests a TTL. It applies only to the legacy wire; on the extension wire it is a usage error (exit `2`), because SEP-2663 gives the client no say in the TTL.
 
