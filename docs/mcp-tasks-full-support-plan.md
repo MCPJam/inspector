@@ -159,12 +159,13 @@ Implement and test these at the SDK boundary, not separately in each route:
 
 ## 4. Workstream A — protocol boundary and conformance corrections
 
-**Status: MERGED** — PR [#3511](https://github.com/MCPJam/inspector/pull/3511),
-2026-07-28. A0–A4 landed together, so the blocking gate on downstream
-workstreams is lifted and Workstream B may start. Two review findings landed
-as a follow-up PR rather than in #3511 — see A2 below; neither re-blocks
-downstream work. The subsections are kept as the record of what was decided
-and why, with what actually shipped noted per item.
+**Status: MERGED** — PR [#3511](https://github.com/MCPJam/inspector/pull/3511)
+and follow-up [#3515](https://github.com/MCPJam/inspector/pull/3515), both
+2026-07-28. A0–A4 landed together in #3511; two review findings landed in
+#3515 (see A2). Workstream A is complete, the blocking gate on downstream
+workstreams is lifted, and Workstream B may start. The subsections are kept
+as the record of what was decided and why, with what actually shipped noted
+per item.
 
 This was the blocking first PR. Product expansion must not ship before it.
 
@@ -308,16 +309,24 @@ original item did not anticipate:
 - **CLI exit codes:** `0` passed, `1` failed, **`3` incomplete** (`2` stays
   reserved for usage errors), plus the reason on stderr.
 
-Fixed in the follow-up PR, not in #3511: the discriminator blind spot. A server that
-answers a `tools/call` with a flat task payload carrying **no**
-`resultType: "task"` is invisible to every check that reads the *decoded*
-result — task detection keys on that discriminator at the transport seam — so
-it currently scores green on both `tasks-result-type-discipline` and
-`tasks-undeclared-creation-refused`. Closing it means judging the discriminator
-on the raw inbound JSON-RPC (the run already captures it) for both checks, with
-a failure message that names the consequence: the client cannot discriminate
-the response, so the task is never tracked and the work runs to completion
+Fixed in #3515, not #3511: the discriminator blind spot. A server that answers
+a `tools/call` with a flat task payload carrying **no** `resultType: "task"`
+was invisible to every check that read the *decoded* result — task detection
+keys on that discriminator at the transport seam — so it scored green on both
+`tasks-result-type-discipline` and `tasks-undeclared-creation-refused`, and a
+server violating `tasks.md:61` and `tasks.md:102` at once passed precisely
+because the second violation concealed the first. Both checks now judge the
+discriminator on the raw inbound JSON-RPC off a single capture, identifying a
+task by shape (`taskId`) since the discriminator is the thing under test. The
+failure message names the consequence: the client cannot discriminate the
+response, so the task is never tracked and the work runs to completion
 server-side with no handle (`tasks.md:102`).
+
+Also in #3515: era-gate target resolution no longer depends solely on factory
+registration — the `WeakMap` became a fast path with a depth-capped walk of
+the public `inner` delegation chain behind it, so a directly-constructed
+adapter can no longer silently no-op and then fail with an opaque upstream
+`METHOD_NOT_SUPPORTED_BY_PROTOCOL_VERSION`.
 
 ### A3. Verify headers and connection durability
 
@@ -936,7 +945,8 @@ Land in this order:
    nothing else in the extension path can be exercised against a real
    `2026-07-28` server until it lands — then the corrected schemas, corrected
    conformance verdicts, and the vendored schema drift check.~~
-   **DONE** — PR #3511, merged 2026-07-28. Step 2 is unblocked.
+   **DONE** — PRs #3511 and #3515, both merged 2026-07-28. Step 2 is
+   unblocked.
 2. **Lifecycle engine:** Workstream B polling, notification integration,
    complete input driver, tracker migration.
 3. **Host policy:** tri-state resolver/editor and raw-wire policy tests.
@@ -1029,13 +1039,21 @@ extension declaration specifically, not to Tasks as a product concept.
 ## 13. Final release checklist
 
 - [ ] Ext-tasks commit pin and drift check are recorded in code and docs.
-- [ ] The A0 era-gate override lets `tasks/get`, `tasks/update`, and
+      *Partial: the pin is recorded in the vendored types and here, but the CI
+      drift job diffing vendored types, runtime schemas, and fixtures against
+      the pinned commit is NOT built yet.*
+- [x] The A0 era-gate override lets `tasks/get`, `tasks/update`, and
       `tasks/cancel` reach a real `2026-07-28` server, is scoped to those three
-      methods, and fails loud on a client bump.
-- [ ] Extension coverage is proven against a real fixture connection, not a
-      mocked or seeded client manager.
-- [ ] Corrected SDK schemas and `-32003` conformance checks pass.
-- [ ] All task methods carry the right extension declaration and HTTP headers.
+      methods, and fails loud on a client bump. *(#3511, #3515)*
+- [x] Extension coverage is proven against a real fixture connection, not a
+      mocked or seeded client manager. *(#3511)*
+- [x] Corrected SDK schemas and `-32003` conformance checks pass. *(#3511,
+      #3515)*
+- [x] All task methods carry the right extension declaration and HTTP headers.
+      *(#3511)*
+- [x] A conformance run cannot report success unless every selected check
+      actually ran. *(#3515 — added after a run reported green with 6 of 8
+      checks skipped.)*
 - [ ] Per-task scheduling never violates `pollIntervalMs`.
 - [ ] Notifications work on persistent connections and fall back to polling.
 - [ ] Elicitation, roots, and sampling task inputs use standalone trust rules.
