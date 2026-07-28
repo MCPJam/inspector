@@ -183,6 +183,7 @@ export {
   getTaskExt,
   updateTaskExt,
   cancelTaskExt,
+  canOpenTaskDeclaredListen,
   openTaskDeclaredListen,
 } from "./tasks-ext.js";
 export type {

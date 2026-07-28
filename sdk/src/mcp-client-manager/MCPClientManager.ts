@@ -125,11 +125,17 @@ import {
 } from "./tasks-dispatch.js";
 import {
   TasksExtNotificationMethod,
+  canOpenTaskDeclaredListen,
   cancelTaskExt,
   getTaskExt,
+  openTaskDeclaredListen,
   updateTaskExt,
   withTasksExtensionDeclaration,
 } from "./tasks-ext.js";
+import type {
+  McpSubscriptionHandle,
+  SubscriptionFilterShape,
+} from "./subscription-coordinator.js";
 import {
   assertCreateTaskExtResult,
   parseTaskExtNotificationParams,
@@ -1697,6 +1703,67 @@ export class MCPClientManager {
       },
       taskId
     );
+  }
+
+  /**
+   * Opens a task-filtered `subscriptions/listen` carrying the extension's
+   * per-request eligibility declaration (SEP-2663). A non-declaring
+   * task-filtered listen MUST be answered `-32003`, so this is the ONLY way a
+   * `taskIds` filter may reach the wire.
+   *
+   * Port contract: on `SubscriptionClientPort`, availability is expressed by
+   * method PRESENCE — callers probe {@link supportsTaskDeclaredListen} and
+   * install this method onto the port only when it answers true. A defined
+   * method must therefore never answer `undefined`; when the underlying seam
+   * is unavailable despite the probe, this throws instead of silently sending
+   * nothing.
+   *
+   * `TasksExtListenMetaSeamError` propagates deliberately: the coordinator
+   * records the failed open on the stream record and polling continues —
+   * task notifications are OPTIONAL, so nothing is lost but latency.
+   */
+  async listenWithTasksDeclaration(
+    serverId: string,
+    filter: SubscriptionFilterShape
+  ): Promise<McpSubscriptionHandle> {
+    await this.ensureConnected(serverId);
+    const client = this.getClientOrThrow(serverId);
+    this.assertExtensionTasksWire(
+      serverId,
+      "a task-filtered subscriptions/listen"
+    );
+    const handle = await openTaskDeclaredListen(
+      {
+        client,
+        declaredCapabilities: this.declaredCapabilitiesFor(serverId),
+      },
+      filter as Record<string, unknown>
+    );
+    if (handle === undefined) {
+      throw new Error(
+        `Server "${serverId}"'s connection cannot open a task-declared ` +
+          `subscriptions/listen (no listen method, or no upstream client ` +
+          `behind the managed client). Probe supportsTaskDeclaredListen() ` +
+          `before calling; polling via tasks/get remains sufficient.`
+      );
+    }
+    return handle as McpSubscriptionHandle;
+  }
+
+  /**
+   * Whether {@link listenWithTasksDeclaration} can put a declared,
+   * task-filtered listen on this connection's wire: extension tasks wire ∧
+   * the client can listen ∧ the listen-meta seam target resolves. Consumers
+   * building a `SubscriptionClientPort` install the opener onto the port only
+   * when this answers true — absence of the method IS the coordinator's signal
+   * to drop `taskIds` (recording `tasks-declaration-unavailable`) and keep
+   * polling.
+   */
+  supportsTaskDeclaredListen(serverId: string): boolean {
+    if (this.getTasksWire(serverId) !== "extension") return false;
+    const client = this.liveClientStates.get(serverId)?.client;
+    if (!client) return false;
+    return canOpenTaskDeclaredListen(client);
   }
 
   private declaredCapabilitiesFor(
