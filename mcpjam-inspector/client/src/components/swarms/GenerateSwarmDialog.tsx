@@ -197,10 +197,9 @@ export function GenerateSwarmDialog({
 
   const handleGenerate = async () => {
     if (!serverAttachmentId || liveHostIds.length === 0 || !countValid) return;
-    // Latch BEFORE any await — `pending` and `personaCommitted` only take
-    // effect on the next render, which is too late for a rapid second click.
-    if (generateInFlightRef.current || personaCommitted) return;
-    generateInFlightRef.current = true;
+    // Every rejection that returns WITHOUT entering the try/finally below must
+    // come before the latch is taken — otherwise the latch is never released
+    // and the button is silently dead until the dialog is reopened.
     if (
       mode === "persona" &&
       typeof personaCount === "number" &&
@@ -211,6 +210,11 @@ export function GenerateSwarmDialog({
       );
       return;
     }
+    // Latch BEFORE any await — `pending` and `personaCommitted` only take
+    // effect on the next render, which is too late for a rapid second click.
+    // Released in the `finally` that every path below flows through.
+    if (generateInFlightRef.current || personaCommitted) return;
+    generateInFlightRef.current = true;
     setPending(true);
     setErrorMessage(null);
     // Snapshot BOTH targets at submit. Generation is a slow round-trip and the

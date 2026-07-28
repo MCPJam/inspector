@@ -128,6 +128,7 @@ vi.mock("@/lib/toast", () => ({ toast: toastMock }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
 import { SwarmsTab } from "../SwarmsTab";
+import { GenerateSwarmDialog } from "../GenerateSwarmDialog";
 import { SwarmGenerateError } from "@/lib/swarm-api";
 
 beforeEach(() => {
@@ -458,5 +459,51 @@ describe("SwarmsTab — generate journeys", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Goal is required");
     expect(toastMock.success).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Rendered directly (not through SwarmsTab) so `personaCount` is a prop this
+ * test can change — the cap-rejection path needs a re-render with a different
+ * count, which a dialog-internal state change can't produce.
+ */
+describe("GenerateSwarmDialog — latch release on early rejection", () => {
+  const baseProps = {
+    mode: "persona" as const,
+    open: true,
+    onOpenChange: vi.fn(),
+    projectId: "proj-1",
+    hosts: [host as any],
+    onCreatePersona: vi.fn().mockResolvedValue("persona-new"),
+    onCreateJourney: vi.fn().mockResolvedValue(undefined),
+  };
+
+  it("does not wedge the button when the persona cap rejects", async () => {
+    generatePersonaMock.mockResolvedValue({
+      persona: { name: "P", role: "R" },
+      journeys: [{ goal: "g" }],
+    });
+
+    const { rerender } = render(
+      <GenerateSwarmDialog {...baseProps} personaCount={200} />
+    );
+    fireEvent.click(screen.getByRole("button", { name: /attached clients/i }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: /host one/i }));
+    fireEvent.click(screen.getByTestId("mock-server-group-picker"));
+
+    fireEvent.click(screen.getByRole("button", { name: /generate persona/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "already has 200 personas"
+    );
+    expect(generatePersonaMock).not.toHaveBeenCalled();
+
+    // Cap clears (a persona was deleted elsewhere). If the rejection above had
+    // left the in-flight latch set, this click would be silently swallowed.
+    rerender(<GenerateSwarmDialog {...baseProps} personaCount={1} />);
+    fireEvent.click(screen.getByRole("button", { name: /generate persona/i }));
+
+    await waitFor(() => {
+      expect(generatePersonaMock).toHaveBeenCalledTimes(1);
+    });
   });
 });
