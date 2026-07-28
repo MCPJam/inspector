@@ -348,7 +348,13 @@ export class MCPClientManager {
     // Start connecting to all configured servers (unless replay/trace-repair use explicit connect)
     if (!this.lazyConnect) {
       for (const [id, config] of Object.entries(servers)) {
-        void this.connectToServer(id, config);
+        // Fire-and-forget prefetch: a failure here is NOT lost — the failed
+        // attempt clears its live state, so the first operation that needs
+        // this server re-attempts the connect and observes the error itself
+        // (in-flight attempts are deduped via retryPromise/connectPromise).
+        // Without the catch, every failed eager connect ALSO escapes as a
+        // process-level unhandledRejection.
+        this.connectToServer(id, config).catch(() => {});
       }
     }
   }
@@ -1798,6 +1804,11 @@ export class MCPClientManager {
         state
       )
     );
+    // Mark handled without affecting awaiters (they hold the original
+    // promise): awaitWithAbort abandons connectionPromise when the caller's
+    // signal fires first, and an abandoned rejection escapes as a
+    // process-level unhandledRejection.
+    connectionPromise.catch(() => {});
     state.connectPromise = connectionPromise;
     this.liveClientStates.set(serverId, state);
     return this.awaitWithAbort(connectionPromise, signal);
