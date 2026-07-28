@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { MCPServerConfig, TaskAwaitOutcome } from "@mcpjam/sdk";
 import {
+  abortedDuringResultFetch,
   buildTaskInputDriverOptions,
   detectCreatedTask,
   parseTasksWireOption,
@@ -293,4 +294,43 @@ test("buildTaskInputDriverOptions surfaces the pinned-set error from --interacti
     (error: unknown) =>
       error instanceof CliError && error.code === "USAGE_ERROR",
   );
+});
+
+/**
+ * The legacy result-fetch abort, which the driver hands back as a clean
+ * `completed`. Each case below is a way the four conditions can be true or
+ * false in isolation — the point is that only the genuine interrupt is
+ * reclassified, since over-eager mapping would turn ordinary fetch failures
+ * into a 130 and hide them.
+ */
+test("abortedDuringResultFetch reclassifies only a real interrupt", () => {
+  const base = {
+    aborted: true,
+    outcome: "completed",
+    hasLastError: true,
+    hasResult: false,
+  };
+
+  // The case Codex found: signal fired, task settled completed, no payload.
+  assert.equal(abortedDuringResultFetch(base), true);
+
+  // No signal — the fetch failed on its own merits. Still a completion, and
+  // `lastError` already tells the operator the payload is missing.
+  assert.equal(abortedDuringResultFetch({ ...base, aborted: false }), false);
+
+  // The payload arrived; an interrupt after the fact does not undo a result.
+  assert.equal(abortedDuringResultFetch({ ...base, hasResult: true }), false);
+
+  // A `null` payload is the server's legitimate "no result" and sets no
+  // `lastError`. Mapping it to aborted would invent a failure.
+  assert.equal(
+    abortedDuringResultFetch({ ...base, hasLastError: false }),
+    false,
+  );
+
+  // Non-completed outcomes already carry their own exit codes; an abort that
+  // landed mid-poll is reported by the driver itself and must not be rewritten.
+  for (const outcome of ["failed", "timeout", "input-required", "aborted"]) {
+    assert.equal(abortedDuringResultFetch({ ...base, outcome }), false);
+  }
 });

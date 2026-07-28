@@ -413,8 +413,17 @@ export async function driveTaskWatch(
   });
 
   const lastError = describeError(result.lastError);
+
   return {
-    outcome: result.outcome,
+    outcome: abortedDuringResultFetch({
+      aborted: args.signal?.aborted === true,
+      outcome: result.outcome,
+      hasLastError: result.lastError !== undefined,
+      hasResult:
+        (result.task as { result?: unknown } | undefined)?.result !== undefined,
+    })
+      ? "aborted"
+      : result.outcome,
     wire: support.wire,
     taskId,
     ...(result.task ? { task: result.task } : {}),
@@ -423,6 +432,40 @@ export async function driveTaskWatch(
       : {}),
     ...(lastError ? { lastError } : {}),
   };
+}
+
+/**
+ * Whether a settled watch was really an interrupt during the legacy result
+ * fetch, rather than the clean completion it reports as.
+ *
+ * A legacy fetch that loses to the signal still settles as `completed`: the
+ * TASK did finish, and `driveTaskToTerminal` reports the failed `tasks/result`
+ * as a `lastError` beside it. That is right for the library — the task's
+ * terminal state is a fact independent of whether the payload was retrieved —
+ * but wrong for this CLI, whose documented contract is that an interrupt yields
+ * `aborted` and exit 130. Left alone, Ctrl-C during that final fetch is the one
+ * interrupt in the whole surface that exits 0, and a script would read a
+ * resultless envelope as success.
+ *
+ * Structural rather than message-matching. On the legacy wire the CLI always
+ * supplies `getResult`, so a `completed` carrying a `lastError` and no
+ * `task.result` means the fetch did not deliver. The abort is attributed only
+ * when the signal actually fired: a fetch that failed on its own merits keeps
+ * `completed`, and a `null` payload — the server's legitimate "no result" —
+ * sets no `lastError` and is untouched.
+ */
+export function abortedDuringResultFetch(args: {
+  aborted: boolean;
+  outcome: string;
+  hasLastError: boolean;
+  hasResult: boolean;
+}): boolean {
+  return (
+    args.aborted &&
+    args.outcome === "completed" &&
+    args.hasLastError &&
+    !args.hasResult
+  );
 }
 
 export interface BuildTaskInputDriverOptionsArgs {
