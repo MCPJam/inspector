@@ -382,10 +382,21 @@ export function trackTask(task: Omit<TrackedTask, "dismissed">): void {
   ) {
     return;
   }
-  const tasks = loadTasks();
+  // Dedupe against EVERY scope on disk, not just the active slice. A caller
+  // may pass an explicit `scope` captured at turn start that is no longer the
+  // active scope (the user switched projects mid-stream); deduping only
+  // against `loadTasks()` would let such a foreign-scope write duplicate an
+  // identical entry that already exists under its own scope.
+  const all = loadAllTasks();
   const identity = taskIdentity(scoped);
-  if (tasks.some((t) => taskIdentity(t) === identity)) return;
+  if (all.some((t) => taskIdentity(t) === identity)) return;
 
+  // The new entry rides in the saved prefix even when its scope is not the
+  // active one: it is the newest handle in the store, exactly what the
+  // tail-shedding in `saveTasks` must drop last. `saveInScope` preserves the
+  // rest of the foreign-scope entries from disk, so a scoped write is never a
+  // drop.
+  const tasks = all.filter(inScope);
   tasks.unshift({ ...scoped, dismissed: false });
   saveInScope(tasks.slice(0, MAX_TRACKED_TASKS));
 }

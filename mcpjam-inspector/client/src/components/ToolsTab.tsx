@@ -42,7 +42,7 @@ import {
   getTaskCapabilities,
   type TasksSupport,
 } from "@/lib/apis/mcp-tasks-api";
-import { trackTask } from "@/lib/task-tracker";
+import { getTrackedTaskScope, trackTask } from "@/lib/task-tracker";
 import { validateToolOutput } from "@/lib/schema-utils";
 import {
   driveScopeStepUpFromChallenge,
@@ -223,6 +223,12 @@ export function ToolsTab({
   const [taskTtl, setTaskTtl] = useState<number>(0);
   // Infinite scroll state
   const sentinelRef = useRef<HTMLDivElement | null>(null);
+  // The auth/org scope captured at the START of a tool call, before any await.
+  // A `task_created` response (possibly after an elicitation round-trip)
+  // tracks the task under the scope the call was made in — never under
+  // whatever scope is active when the response finally lands after a project
+  // switch. Same race, and same fix, as the chat hook's turn-start capture.
+  const executeScopeRef = useRef<string | undefined>(undefined);
   const toolFetchVersionRef = useRef(0);
   const taskCapabilitiesFetchVersionRef = useRef(0);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
@@ -627,7 +633,8 @@ export function ToolsTab({
       // count doesn't prematurely throw a later legitimate step-up.
       resetStepUpOnSuccess();
 
-      // Track the task locally so it appears in the Tasks tab
+      // Track the task locally so it appears in the Tasks tab, under the
+      // scope captured when the call started (see `executeScopeRef`).
       if (serverName) {
         trackTask({
           taskId: task.taskId,
@@ -637,6 +644,9 @@ export function ToolsTab({
           toolName,
           primitiveType: "tool",
           primitiveName: toolName,
+          ...(executeScopeRef.current !== undefined
+            ? { scope: executeScopeRef.current }
+            : {}),
         });
       }
 
@@ -685,6 +695,10 @@ export function ToolsTab({
   };
 
   const executeTool = async () => {
+    // Captured before ANY await: the scope this call belongs to is the one
+    // active when the user hit Execute, not the one active when the (possibly
+    // much later) task_created response arrives.
+    executeScopeRef.current = getTrackedTaskScope();
     if (!selectedTool) {
       logger.warn("Cannot execute tool: no tool selected");
       return;

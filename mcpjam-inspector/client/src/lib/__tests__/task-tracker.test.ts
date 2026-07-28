@@ -108,6 +108,68 @@ describe("task-tracker", () => {
     expect(getTrackedTasks().map((t) => t.scope)).toEqual(["project-a"]);
   });
 
+  it("persists an explicit foreign-scope write under ITS scope, not the active one", () => {
+    // A chat turn submitted under project-a can deliver its task-created part
+    // after the user switched to project-b. The caller passes the turn-start
+    // scope explicitly; the write must land under project-a.
+    setTrackedTaskScope("project-b");
+    trackTask({
+      taskId: "t1",
+      serverId: "s1",
+      wire: "extension",
+      createdAt: NOW,
+      scope: "project-a",
+    });
+
+    // Invisible under the active scope (project-b)...
+    expect(getTrackedTasks()).toHaveLength(0);
+    // ...visible after switching to the scope it belongs to.
+    setTrackedTaskScope("project-a");
+    expect(getTrackedTasks().map((t) => t.scope)).toEqual(["project-a"]);
+  });
+
+  it("dedupes a foreign-scope write against the entry already on disk in that scope", () => {
+    // The pre-fix dedupe only consulted the ACTIVE scope's slice, so an
+    // identical foreign-scope write slipped past it and duplicated the entry
+    // on disk. The dedupe must consult every scope.
+    setTrackedTaskScope("project-a");
+    trackTask({ taskId: "t1", serverId: "s1", wire: "extension", createdAt: NOW });
+
+    setTrackedTaskScope("project-b");
+    trackTask({
+      taskId: "t1",
+      serverId: "s1",
+      wire: "extension",
+      createdAt: NOW,
+      scope: "project-a",
+    });
+
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) as string);
+    expect(stored.tasks).toHaveLength(1);
+    setTrackedTaskScope("project-a");
+    expect(getTrackedTasks()).toHaveLength(1);
+  });
+
+  it("a foreign-scope write preserves every other scope's handles", () => {
+    setTrackedTaskScope("project-a");
+    trackTask({ taskId: "a1", serverId: "s1", wire: "legacy", createdAt: NOW });
+    setTrackedTaskScope("project-b");
+    trackTask({ taskId: "b1", serverId: "s1", wire: "legacy", createdAt: NOW });
+
+    // Still in project-b: write a NEW handle back into project-a.
+    trackTask({
+      taskId: "a2",
+      serverId: "s1",
+      wire: "legacy",
+      createdAt: NOW,
+      scope: "project-a",
+    });
+
+    expect(getTrackedTasks().map((t) => t.taskId)).toEqual(["b1"]);
+    setTrackedTaskScope("project-a");
+    expect(getTrackedTasks().map((t) => t.taskId).sort()).toEqual(["a1", "a2"]);
+  });
+
   it("drops a scope's handles on logout / organization switch", () => {
     setTrackedTaskScope("project-a");
     trackTask({ taskId: "t1", serverId: "s1", wire: "legacy", createdAt: NOW });

@@ -149,7 +149,7 @@ import {
   HOSTED_TASKS_VERSION,
   isTaskCreatedDataPart,
 } from "@/shared/hosted-task-created";
-import { trackTask } from "@/lib/task-tracker";
+import { getTrackedTaskScope, trackTask } from "@/lib/task-tracker";
 import { useHarnessWorkdirStore } from "@/stores/harness-workdir-store";
 import { ingestHostedRpcLogsFromResponse } from "@/lib/apis/web/rpc-logs";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
@@ -1777,8 +1777,11 @@ export function useChatSession(
           // not yank the user out of the conversation to a task list.
           //
           // `trackTask` needs nothing added for at-least-once delivery — it
-          // dedupes on the full task identity and stamps the active scope
-          // itself, so a duplicated part is a no-op.
+          // dedupes on the full task identity, so a duplicated part is a
+          // no-op. The scope is passed EXPLICITLY, from the value captured at
+          // submit: letting `trackTask` stamp the live active scope was the
+          // bug — a part delivered after a mid-stream project switch filed
+          // the task under the NEW project.
           //
           // Keyed by server NAME when the server sent one: the tracker and the
           // Tasks tab both read by name, while a hosted `serverId` is a Convex
@@ -1797,6 +1800,9 @@ export function useChatSession(
             ...(part.data.ttlMs !== undefined ? { ttlMs: part.data.ttlMs } : {}),
             ...(part.data.pollIntervalMs !== undefined
               ? { pollIntervalMs: part.data.pollIntervalMs }
+              : {}),
+            ...(turnTaskScopeRef.current !== undefined
+              ? { scope: turnTaskScopeRef.current }
               : {}),
           });
         }
@@ -2035,6 +2041,12 @@ export function useChatSession(
     serverIds: string[];
     serverNames: string[];
   } | null>(null);
+  // The auth/org scope the CURRENT turn started under, captured once at
+  // submit (in the transport body builder) and read by the task-created
+  // data-part handler. A task created by a turn belongs to the scope the turn
+  // was submitted under — never to whatever scope happens to be active when a
+  // late part arrives after a project switch.
+  const turnTaskScopeRef = useRef<string | undefined>(undefined);
 
   const transport = useMemo(() => {
     const shouldUseOrgAwareChatApi =
@@ -2165,6 +2177,15 @@ export function useChatSession(
       api: chatApi,
       fetch: chatFetch,
       body: () => {
+        // Capture the task scope this turn is SUBMITTED under, next to
+        // `buildHostedBody` (which hard-requires the project id): hosted
+        // turns scope created tasks by the turn's project, non-hosted turns
+        // by the tracker's active scope. Captured here — never read live in
+        // the data-part handler, whose closure is recreated on a project
+        // switch and would stamp the NEW project on a late part.
+        turnTaskScopeRef.current = shouldUseOrgAwareChatApi
+          ? hostedProjectId ?? undefined
+          : getTrackedTaskScope();
         const widgetModelContext = pendingWidgetModelContextRef.current;
         pendingWidgetModelContextRef.current = undefined;
         return {
