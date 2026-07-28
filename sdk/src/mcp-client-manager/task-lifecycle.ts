@@ -685,8 +685,13 @@ export class TaskLifecycleEngine {
    * and the special case would never fire.
    *
    * Bounded to one read: `observe` clears `restored`.
+   *
+   * Public because it is not only the scheduler's business: any caller that
+   * short-circuits on "this handle is terminal, no read needed" has to ask the
+   * same question, and asking it with a bare `isTerminalLifecycleStatus` is how
+   * a restored terminal gets reported without the payload it never had.
    */
-  private owesRead(record: TaskLifecycleRecord): boolean {
+  owesRead(record: TaskLifecycleRecord): boolean {
     if (!isTerminalLifecycleStatus(record.status)) return true;
     return record.restored && record.identity.wire === "extension";
   }

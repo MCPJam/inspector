@@ -502,4 +502,112 @@ describe("poll discipline", () => {
     controller.abort();
     await expect(drivePromise).resolves.toMatchObject({ outcome: "aborted" });
   });
+
+  it("fetches the legacy result rather than reporting a payload-less success", async () => {
+    const clock = controlledClock();
+    const legacy = { serverId: "srv", wire: "legacy", taskId: "t1" } as const;
+    // 2025-11-25 returns only STATUS from `tasks/get`; the payload lives behind
+    // a separate `tasks/result`. Without the seam every successful legacy drive
+    // handed automation `result === undefined`, which for an eval is the same
+    // as having failed.
+    const result = await driveTaskToTerminal({
+      identity: legacy,
+      getTask: async () => ({ status: "completed" }),
+      getResult: async () => ({ content: [{ type: "text", text: "done" }] }),
+      now: clock.now,
+      sleep: async (ms) => clock.advance(ms),
+      engine: new TaskLifecycleEngine({ now: clock.now }),
+      timeoutMs: 10 * 60_000,
+    });
+    expect(result.outcome).toBe("completed");
+    expect(result.task?.result).toEqual({
+      content: [{ type: "text", text: "done" }],
+    });
+  });
+
+  it("still reports a legacy task completed when its result cannot be fetched", async () => {
+    const clock = controlledClock();
+    const legacy = { serverId: "srv", wire: "legacy", taskId: "t1" } as const;
+    const result = await driveTaskToTerminal({
+      identity: legacy,
+      getTask: async () => ({ status: "completed" }),
+      getResult: async () => {
+        throw new Error("tasks/result failed");
+      },
+      now: clock.now,
+      sleep: async (ms) => clock.advance(ms),
+      engine: new TaskLifecycleEngine({ now: clock.now }),
+      timeoutMs: 10 * 60_000,
+    });
+    // The task finished whether or not we could read what it produced —
+    // reporting `failed` would be a lie about the server. The caller learns the
+    // payload is missing rather than empty.
+    expect(result.outcome).toBe("completed");
+    expect(result.task?.result).toBeUndefined();
+    expect((result.lastError as Error).message).toMatch(/tasks\/result failed/);
+  });
+
+  it("names the wiring gap when a legacy drive has no result seam", async () => {
+    const clock = controlledClock();
+    const legacy = { serverId: "srv", wire: "legacy", taskId: "t1" } as const;
+    const result = await driveTaskToTerminal({
+      identity: legacy,
+      getTask: async () => ({ status: "completed" }),
+      now: clock.now,
+      sleep: async (ms) => clock.advance(ms),
+      engine: new TaskLifecycleEngine({ now: clock.now }),
+      timeoutMs: 10 * 60_000,
+    });
+    expect(result.outcome).toBe("completed");
+    expect((result.lastError as Error).message).toMatch(/tasks\/result/);
+  });
+
+  it("does not short-circuit a RESTORED terminal in a shared engine", async () => {
+    const clock = controlledClock();
+    const engine = new TaskLifecycleEngine({ now: clock.now });
+    // Storage keeps a task's status, never its payload. A drive attaching to a
+    // shared engine that holds a restored `completed` must still read once, or
+    // it reports success with no result — the reload bug reached through the
+    // automation door instead of the UI one.
+    engine.register(identity, { restored: true, status: "completed" });
+
+    let reads = 0;
+    const result = await driveTaskToTerminal({
+      identity,
+      getTask: async () => {
+        reads += 1;
+        return { status: "completed", result: { ok: true } };
+      },
+      now: clock.now,
+      sleep: async (ms) => clock.advance(ms),
+      engine,
+      timeoutMs: 10 * 60_000,
+    });
+    expect(reads).toBe(1);
+    expect(result.outcome).toBe("completed");
+    expect(result.task?.result).toEqual({ ok: true });
+  });
+
+  it("short-circuits a terminal that was actually observed", async () => {
+    const clock = controlledClock();
+    const engine = new TaskLifecycleEngine({ now: clock.now });
+    engine.observe(identity, { status: "completed", result: { ok: true } });
+
+    let reads = 0;
+    const result = await driveTaskToTerminal({
+      identity,
+      getTask: async () => {
+        reads += 1;
+        return { status: "completed" };
+      },
+      now: clock.now,
+      sleep: async (ms) => clock.advance(ms),
+      engine,
+      timeoutMs: 10 * 60_000,
+    });
+    // Nothing is owed here: the payload is already in hand, so re-reading it
+    // would be a request against a server that already answered.
+    expect(reads).toBe(0);
+    expect(result.task?.result).toEqual({ ok: true });
+  });
 });

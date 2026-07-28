@@ -61,7 +61,12 @@ export interface TaskAwaitResult {
   task?: TaskLifecycleSnapshot;
   /** Input keys this surface could not answer, with reasons. */
   unansweredInput?: TaskInputRejection[];
-  /** The read error that ended an `unreachable` drive. */
+  /**
+   * The read error that ended an `unreachable` drive — or, on a `completed`
+   * legacy task, the reason its result could not be fetched. The outcome stays
+   * `completed` in that case because the task genuinely finished; this is how
+   * the caller learns the payload is missing rather than empty.
+   */
   lastError?: unknown;
 }
 
@@ -71,6 +76,21 @@ export interface DriveTaskToTerminalArgs {
   getTask: (
     identity: TaskLifecycleIdentity
   ) => Promise<TaskLifecycleObservation>;
+  /**
+   * Fetches a LEGACY task's result. Required on the 2025-11-25 wire, ignored on
+   * the extension.
+   *
+   * The two wires differ here and the difference is not cosmetic: the extension
+   * carries `result` inline on `tasks/get`, while 2025-11-25 returns only
+   * status from `tasks/get` and keeps the payload behind a separate
+   * `tasks/result` call. Without this seam a legacy drive reported `completed`
+   * with `task.result === undefined` for every successful task — which for an
+   * eval or a CLI consumer is the same as having failed, since the tool output
+   * is the entire point of waiting.
+   */
+  getResult?: (
+    identity: TaskLifecycleIdentity
+  ) => Promise<Record<string, unknown> | null>;
   /** Submits input responses. Resolving means the server acknowledged them. */
   updateTask?: (
     identity: TaskLifecycleIdentity,
@@ -177,10 +197,19 @@ export async function driveTaskToTerminal(
     // is sleeping, so a check that ran only once would let the second
     // iteration duplicate that read and breach the floor it just set.
     const existing = engine.get(identity);
-    if (existing && isTerminalLifecycleStatus(existing.status)) {
-      // Already finished, per whoever read it last. No read needed at all.
+    if (
+      existing &&
+      isTerminalLifecycleStatus(existing.status) &&
+      !engine.owesRead(existing)
+    ) {
+      // Already finished AND already read. `owesRead` is the load-bearing half:
+      // a shared engine can hold a handle RESTORED from durable storage as
+      // `completed`, and storage keeps a task's status but never its payload.
+      // Short-circuiting on the status alone would report success with no
+      // result — the same reload bug the UI path has, reached through a
+      // different door.
       const settled = engine.snapshot(identity)!;
-      return { outcome: terminalOutcome(settled.status), task: settled };
+      return await settleTerminal(settled);
     }
     if (existing && existing.nextPollAt > now()) {
       if (!(await waitUntilDue())) {
@@ -260,7 +289,7 @@ export async function driveTaskToTerminal(
     args.onState?.(snapshot);
 
     if (isTerminalLifecycleStatus(snapshot.status)) {
-      return { outcome: terminalOutcome(snapshot.status), task: snapshot };
+      return await settleTerminal(snapshot);
     }
 
     if (snapshot.status === "input_required") {
@@ -401,6 +430,61 @@ export async function driveTaskToTerminal(
     } finally {
       cancelTimer();
       if (onAbort) args.signal?.removeEventListener("abort", onAbort);
+    }
+  }
+
+  /**
+   * Turns a terminal snapshot into the drive's result, fetching the legacy
+   * payload when there is one to fetch.
+   *
+   * Both terminal exits go through here so the wire difference is handled once.
+   * A failure to fetch does NOT change the outcome: the task completed whether
+   * or not we could read what it produced, and reporting `failed` would be a
+   * lie about the server. It surfaces as `lastError` instead.
+   */
+  async function settleTerminal(
+    snapshot: TaskLifecycleSnapshot
+  ): Promise<TaskAwaitResult> {
+    const outcome = terminalOutcome(snapshot.status);
+    const base: TaskAwaitResult = {
+      outcome,
+      task: snapshot,
+      ...(lastError === undefined ? {} : { lastError }),
+    };
+    if (
+      outcome !== "completed" ||
+      identity.wire !== "legacy" ||
+      snapshot.result !== undefined
+    ) {
+      return base;
+    }
+    if (!args.getResult) {
+      return {
+        ...base,
+        lastError: new Error(
+          "Legacy task completed but no `getResult` was supplied: on the " +
+            "2025-11-25 wire the payload lives behind `tasks/result`, so the " +
+            "result cannot be recovered from `tasks/get` alone."
+        ),
+      };
+    }
+    try {
+      const fetched = await raceDeadline(args.getResult(identity));
+      if (fetched === TIMED_OUT || fetched === ABORTED) {
+        return {
+          ...base,
+          lastError: new Error(
+            `Legacy task completed but its result fetch was ${
+              fetched === TIMED_OUT ? "not answered in time" : "aborted"
+            }.`
+          ),
+        };
+      }
+      return fetched === null
+        ? base
+        : { ...base, task: { ...snapshot, result: fetched } };
+    } catch (error) {
+      return { ...base, lastError: error };
     }
   }
 
