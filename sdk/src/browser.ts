@@ -179,9 +179,9 @@ export {
   isLoopbackOAuthUrl,
   OAuthOutboundUrlBlockedError,
 } from "./oauth/ssrf-guard.js";
-// RFC 9207 authorization-response `iss` validation. Era-agnostic (validating a
-// present `iss` is permitted on every version), so the browser callback gate
-// reuses it across 2025/2026 flows.
+// RFC 9207 authorization-response `iss` validation. The comparison itself is
+// era-agnostic, but REJECTING on a mismatch is a 2026-07-28 (SEP-2468) rule —
+// callers pass `enforcePresentIssMismatch` so pre-draft flows warn instead.
 export {
   validateAuthorizationResponseIssuer,
   type AuthorizationResponseIssuerCheck,
