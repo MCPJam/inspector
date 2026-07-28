@@ -13,10 +13,7 @@ import type { ModelDefinition } from "@/shared/types";
 // case for org-BYOK chatboxes (Ollama, custom: providers, OpenRouter ids).
 import { logger } from "../../utils/logger.js";
 import type { MCPJamHandlerOptions } from "../../utils/mcpjam-stream-handler.js";
-import {
-  resolveLocalOrgMaxSteps,
-  type RunLocalOrgChatTurnHeadlessOptions,
-} from "../../utils/org-model-stream-handler.js";
+import { resolveLocalOrgMaxSteps } from "../../utils/org-model-stream-handler.js";
 import type { DirectChatTurnTraceEvents } from "../../utils/direct-chat-turn.js";
 import type { SwarmStreamPayload } from "../../../shared/swarm-stream-events.js";
 import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
@@ -166,7 +163,6 @@ export interface SyntheticPersistAttribution {
   origin: ChatOrigin;
   surface?: "preview" | "share_link";
   chatboxId?: string;
-  synthesisRunId?: string;
   journeyRunId?: string;
   hostId?: string;
   /** Opaque swarm execution-target id — echoed on chat ingestion so two
@@ -586,11 +582,7 @@ export async function runSyntheticHostSession(
         // Threaded into the per-step /stream (or /stream/org) body and the
         // /stream/org/local-usage writeback so the backend BYOK and JAM-paid
         // writers can stamp the run id onto llmUsageRecord for per-run spend
-        // attribution. Exactly one of synthesisRunId (chatbox) / journeyRunId
-        // (swarm) is set — the attribution XOR the adapter chose.
-        ...(persist.synthesisRunId
-          ? { synthesisRunId: persist.synthesisRunId }
-          : {}),
+        // attribution.
         ...(persist.journeyRunId ? { journeyRunId: persist.journeyRunId } : {}),
       });
 
@@ -660,9 +652,6 @@ export async function runSyntheticHostSession(
         ...(persist.personaId ? { personaId: persist.personaId } : {}),
         ...(persist.personaLabel ? { personaLabel: persist.personaLabel } : {}),
         ...(persist.personaRefId ? { personaRefId: persist.personaRefId } : {}),
-        ...(persist.synthesisRunId
-          ? { synthesisRunId: persist.synthesisRunId }
-          : {}),
         ...(persist.journeyRunId ? { journeyRunId: persist.journeyRunId } : {}),
         ...(persist.hostId ? { hostId: persist.hostId } : {}),
         ...(persist.targetId ? { targetId: persist.targetId } : {}),
@@ -737,9 +726,6 @@ export async function runSyntheticHostSession(
         ...(persist.personaId ? { personaId: persist.personaId } : {}),
         ...(persist.personaLabel ? { personaLabel: persist.personaLabel } : {}),
         ...(persist.personaRefId ? { personaRefId: persist.personaRefId } : {}),
-        ...(persist.synthesisRunId
-          ? { synthesisRunId: persist.synthesisRunId }
-          : {}),
         ...(persist.journeyRunId ? { journeyRunId: persist.journeyRunId } : {}),
         ...(persist.hostId ? { hostId: persist.hostId } : {}),
         ...(persist.targetId ? { targetId: persist.targetId } : {}),
@@ -960,7 +946,7 @@ export interface DrainAssistantTurnHooks {
   /** All branches: per-step advertised-tool narrowing. */
   prepareAdvertisedTools?: MCPJamHandlerOptions["prepareAdvertisedTools"];
   /** Local AI-SDK branch: awaited per-tool-result render hook. */
-  onToolResultChunk?: RunLocalOrgChatTurnHeadlessOptions["onToolResultChunk"];
+  onToolResultChunk?: DirectChatTurnTraceEvents["onToolResultChunk"];
   /**
    * Local AI-SDK branch: tool-call chunk (via `traceEvents.onToolCallChunk`).
    * Hosted engines use {@link onToolCall} instead.
@@ -974,15 +960,13 @@ export interface DrainAssistantTurnHooks {
  * resolves the concrete {@link TurnRuntime} (MCPJam `/stream`, cloud-BYOK
  * `/stream/org`, or the direct in-process engine for local BYOK), drives ONE
  * turn through the shared facade, applies the synthetic error contract, and
- * fires the local-BYOK usage writeback. It exists only to keep `runOneSession`
- * unchanged while the shared adapter lands; it will be inlined/removed at
- * legacy cleanup — it is NOT a permanent second facade.
+ * fires the local-BYOK usage writeback.
  *
  * No SSE Response is built or drained: the facade runs `streamSink: "none"` /
  * `persistMode: "caller"` (the hosted agent loop and transcript capture
  * complete before it returns; the direct engine consumes headlessly). Synthetic
- * runs own persistence themselves (per-turn `persistChatSessionToConvex` from
- * `runOneSession` with `synthetic: true`, `personaId`, `synthesisRunId`).
+ * runs own persistence themselves (per-turn `persistChatSessionToConvex` with
+ * `synthetic: true`, `personaId`, `journeyRunId`).
  *
  * Error contract (byte-preserved from the pre-facade dispatch): turn failures
  * THROW. Hosted engines signal failure with a MISSING turnTrace on a
@@ -1004,14 +988,9 @@ export async function drainAssistantTurn(
     /** Resolved provider info for org-BYOK dispatch. Falls back to lookup. */
     modelDefinition: ModelDefinition;
     /**
-     * Chatbox session-simulation run id — stamped onto BYOK usage records for
-     * per-run spend attribution. Mutually exclusive with `journeyRunId`.
-     */
-    synthesisRunId?: string;
-    /**
-     * Swarm (journey-execution) run id — the swarm sibling of
-     * `synthesisRunId`. Forwarded into the hosted `/stream` body and the
-     * local-BYOK usage writeback so per-journey-run spend rolls up the same way.
+     * Swarm (journey-execution) run id. Forwarded into the hosted `/stream`
+     * body and the local-BYOK usage writeback so per-journey-run spend rolls
+     * up in one query.
      */
     journeyRunId?: string;
     /** Optional turn hooks (browser session context attachment points). */
@@ -1031,7 +1010,6 @@ export async function drainAssistantTurn(
 }> {
   const {
     modelDefinition,
-    synthesisRunId,
     journeyRunId,
     hostId,
     harnessMcpProxy,
@@ -1053,11 +1031,9 @@ export async function drainAssistantTurn(
     );
   }
 
-  // Exactly one run-attribution key is set (chatbox sim vs swarm) — the XOR
-  // that `resolveTurnRuntime` stamps onto the local-BYOK usage writeback.
-  const attribution: TurnRunAttribution = synthesisRunId
-    ? { synthesisRunId }
-    : journeyRunId
+  // Run attribution that `resolveTurnRuntime` stamps onto the local-BYOK
+  // usage writeback.
+  const attribution: TurnRunAttribution = journeyRunId
     ? { journeyRunId }
     : undefined;
 
@@ -1249,10 +1225,6 @@ export async function drainAssistantTurn(
     ...(args.progressivePlan ? { progressivePlan: args.progressivePlan } : {}),
     ...(args.discoveryState ? { discoveryState: args.discoveryState } : {}),
     ...(args.abortSignal ? { abortSignal: args.abortSignal } : {}),
-    // `runAssistantTurn` appends synthesisRunId to extraBodyFields last, so the
-    // merged `/stream` body matches the old handler-built shape. The swarm
-    // `journeyRunId` rides `mergedExtraBodyFields` (on `rt.runtime`) instead.
-    ...(synthesisRunId ? { synthesisRunId } : {}),
     ...(hooks?.onToolCall ? { onToolCall: hooks.onToolCall } : {}),
     ...(hooks?.onToolResult ? { onToolResult: hooks.onToolResult } : {}),
     ...(hooks?.onLiveTextDelta
