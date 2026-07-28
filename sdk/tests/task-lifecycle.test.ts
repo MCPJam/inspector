@@ -782,6 +782,14 @@ describe("retryAfterMsFromError", () => {
     expect(
       retryAfterMsFromError({ headers: { "retry-after": "30" } }, now)
     ).toBe(30_000);
+    // HTTP field names are case-insensitive (RFC 9110 §5.1) — any casing on a
+    // plain record must be found.
+    expect(
+      retryAfterMsFromError({ headers: { "RETRY-AFTER": "30" } }, now)
+    ).toBe(30_000);
+    expect(
+      retryAfterMsFromError({ headers: { "Retry-After": "30" } }, now)
+    ).toBe(30_000);
     expect(
       retryAfterMsFromError(
         { headers: new Headers({ "Retry-After": "30" }) },

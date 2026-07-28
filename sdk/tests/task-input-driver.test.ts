@@ -65,9 +65,9 @@ describe("all three extension input methods", () => {
     const seen: string[] = [];
     const result = await collect({
       inputRequests: {
-        e: { method: "elicitation/create", params: { message: "hi" } },
+        e: { method: "elicitation/create", params: { message: "hi", requestedSchema: { type: "object", properties: {} } } },
         r: { method: "roots/list" },
-        s: { method: "sampling/createMessage", params: { messages: [] } },
+        s: { method: "sampling/createMessage", params: { messages: [{ role: "user", content: { type: "text", text: "q" } }], maxTokens: 8 } },
       },
       handlers: handlers({
         elicitation: async () => {
@@ -93,11 +93,11 @@ describe("all three extension input methods", () => {
   it("passes the task and key context to the handler, so a handler can attribute the prompt", async () => {
     const spy = vi.fn(async () => ({ action: "accept", content: {} }));
     await collect({
-      inputRequests: { k: { method: "elicitation/create", params: {} } },
+      inputRequests: { k: { method: "elicitation/create", params: { message: "hi", requestedSchema: { type: "object", properties: {} } } } },
       handlers: handlers({ elicitation: spy }),
     });
     expect(spy).toHaveBeenCalledWith(
-      {},
+      { message: "hi", requestedSchema: { type: "object", properties: {} } },
       expect.objectContaining({ taskId: "task-1", serverId: "srv", inputKey: "k" })
     );
   });
@@ -129,11 +129,40 @@ describe("trust rules match the standalone path", () => {
     expect(result.rejections[0]).toMatchObject({ reason: "no-handler" });
   });
 
-  it("refuses an elicitation mode this client cannot render", async () => {
+  it("rejects a made-up elicitation mode as malformed, at the canonical gate", async () => {
+    // "telepathy" is not a mode the SPEC has, so it never reaches the
+    // renderability check — the canonical `ElicitRequest` schema refuses the
+    // request the same way the standalone channel would.
     const result = await collect({
       inputRequests: {
         k: { method: "elicitation/create", params: { mode: "telepathy" } },
       },
+    });
+    expect(result.rejections[0]).toMatchObject({ reason: "malformed-request" });
+  });
+
+  it("refuses a canonical elicitation mode this surface cannot render", async () => {
+    // `url` IS a spec mode — a client that only renders forms must reject it
+    // as unsupported, not malformed.
+    const result = await collectTaskInputResponses({
+      options: {
+        declaredCapabilities: ALL_CAPS,
+        handlers: handlers(),
+        supportedElicitationModes: ["form"],
+      },
+      taskId: "task-1",
+      serverId: "srv",
+      inputRequests: {
+        k: {
+          method: "elicitation/create",
+          params: {
+            mode: "url",
+            message: "Continue in your browser.",
+            url: "https://example.test/consent",
+            elicitationId: "e1",
+          },
+        },
+      } as never,
     });
     expect(result.rejections[0]).toMatchObject({
       reason: "unsupported-elicitation-mode",
@@ -145,7 +174,7 @@ describe("trust rules match the standalone path", () => {
       inputRequests: {
         k: {
           method: "elicitation/create",
-          params: { requestedSchema: { type: "object" } },
+          params: { message: "hi", requestedSchema: { type: "object", properties: {} } },
         },
       },
       handlers: handlers({
@@ -163,7 +192,7 @@ describe("trust rules match the standalone path", () => {
       inputRequests: {
         k: {
           method: "elicitation/create",
-          params: { requestedSchema: { type: "object" } },
+          params: { message: "hi", requestedSchema: { type: "object", properties: {} } },
         },
       },
       handlers: handlers({ elicitation: async () => ({ action: "decline" }) }),
@@ -188,7 +217,7 @@ describe("partial answering", () => {
   it("answers what it can and keeps the rest visible — one bad key never stalls the task", async () => {
     const result = await collect({
       inputRequests: {
-        ok: { method: "elicitation/create", params: {} },
+        ok: { method: "elicitation/create", params: { message: "hi", requestedSchema: { type: "object", properties: {} } } },
         bad: { method: "sampling/createMessage" },
       },
       declaredCapabilities: { elicitation: {} } as ClientCapabilityOptions,
@@ -203,8 +232,8 @@ describe("partial answering", () => {
     const spy = vi.fn(async () => ({ action: "accept", content: {} }));
     const result = await collect({
       inputRequests: {
-        done: { method: "elicitation/create", params: {} },
-        fresh: { method: "elicitation/create", params: {} },
+        done: { method: "elicitation/create", params: { message: "hi", requestedSchema: { type: "object", properties: {} } } },
+        fresh: { method: "elicitation/create", params: { message: "hi", requestedSchema: { type: "object", properties: {} } } },
       },
       handlers: handlers({ elicitation: spy }),
       respondedKeys: new Set(["done"]),
@@ -218,7 +247,7 @@ describe("partial answering", () => {
   it("surfaces a throwing handler as a rejection instead of failing the whole round", async () => {
     const result = await collect({
       inputRequests: {
-        boom: { method: "elicitation/create", params: {} },
+        boom: { method: "elicitation/create", params: { message: "hi", requestedSchema: { type: "object", properties: {} } } },
         fine: { method: "roots/list" },
       },
       handlers: handlers({
@@ -239,7 +268,7 @@ describe("hostile input", () => {
   it("treats a prototype-polluting key as an ordinary key", async () => {
     const result = await collect({
       inputRequests: JSON.parse(
-        '{"__proto__":{"method":"elicitation/create"},"constructor":{"method":"roots/list"}}'
+        '{"__proto__":{"method":"elicitation/create","params":{"message":"hi","requestedSchema":{"type":"object","properties":{}}}},"constructor":{"method":"roots/list"}}'
       ),
     });
     // Both are answered as data. Nothing on Object.prototype was touched.
@@ -250,7 +279,7 @@ describe("hostile input", () => {
   it("caps the number of requests it will process and reports the overflow", async () => {
     const inputRequests: Record<string, unknown> = {};
     for (let i = 0; i < 10; i += 1) {
-      inputRequests[`k${i}`] = { method: "elicitation/create", params: {} };
+      inputRequests[`k${i}`] = { method: "elicitation/create", params: { message: "hi", requestedSchema: { type: "object", properties: {} } } };
     }
     const result = await collect({ inputRequests, limits: { maxRequests: 3 } });
 
@@ -263,7 +292,7 @@ describe("hostile input", () => {
   it("stops at the per-update response cap and leaves the remainder for a later round", async () => {
     const inputRequests: Record<string, unknown> = {};
     for (let i = 0; i < 5; i += 1) {
-      inputRequests[`k${i}`] = { method: "elicitation/create", params: {} };
+      inputRequests[`k${i}`] = { method: "elicitation/create", params: { message: "hi", requestedSchema: { type: "object", properties: {} } } };
     }
     const result = await collect({
       inputRequests,
@@ -334,13 +363,79 @@ describe("abort during collection", () => {
       taskId: "task-1",
       serverId: "srv",
       inputRequests: {
-        a: { method: "elicitation/create", params: { key: "a" } },
-        b: { method: "elicitation/create", params: { key: "b" } },
+        a: { method: "elicitation/create", params: { key: "a", message: "a?", requestedSchema: { type: "object", properties: {} } } },
+        b: { method: "elicitation/create", params: { key: "b", message: "b?", requestedSchema: { type: "object", properties: {} } } },
       } as never,
       signal: controller.signal,
     });
     expect(prompted).toEqual(["a"]);
     expect(result.answeredKeys).toEqual([]);
     expect(result.rejections).toEqual([]);
+  });
+});
+
+describe("canonical schema enforcement (same-as-standalone)", () => {
+  it("rejects a form elicitation missing message and requestedSchema before any handler runs", async () => {
+    // The reviewer's repro: standalone `ElicitRequest` validation refuses this
+    // request before an app handler ever sees it, so the task channel must
+    // too — SEP-2663 routes task input through the standalone trust rules,
+    // not a laxer copy.
+    const spy = vi.fn(async () => ({ action: "accept" as const, content: {} }));
+    const result = await collect({
+      inputRequests: { k: { method: "elicitation/create", params: {} } },
+      handlers: handlers({ elicitation: spy }),
+    });
+    expect(spy).not.toHaveBeenCalled();
+    expect(result.answeredKeys).toEqual([]);
+    expect(result.rejections[0]).toMatchObject({
+      inputKey: "k",
+      reason: "malformed-request",
+    });
+  });
+
+  it("refuses a handler response the standalone channel could not have produced", async () => {
+    // `{action:"bogus"}` is not an ElicitResult; it must be reported, not
+    // prepared for `tasks/update`.
+    const result = await collect({
+      inputRequests: {
+        k: {
+          method: "elicitation/create",
+          params: {
+            message: "hi",
+            requestedSchema: { type: "object", properties: {} },
+          },
+        },
+      },
+      handlers: handlers({
+        elicitation: async () => ({ action: "bogus" }) as never,
+      }),
+    });
+    expect(result.answeredKeys).toEqual([]);
+    expect(result.rejections[0]).toMatchObject({
+      inputKey: "k",
+      reason: "malformed-response",
+    });
+  });
+
+  it("refuses a sampling result with no model", async () => {
+    const result = await collect({
+      inputRequests: {
+        s: {
+          method: "sampling/createMessage",
+          params: {
+            messages: [{ role: "user", content: { type: "text", text: "q" } }],
+            maxTokens: 8,
+          },
+        },
+      },
+      handlers: handlers({
+        sampling: async () =>
+          ({ role: "assistant", content: { type: "text", text: "ok" } }) as never,
+      }),
+    });
+    expect(result.rejections[0]).toMatchObject({
+      inputKey: "s",
+      reason: "malformed-response",
+    });
   });
 });

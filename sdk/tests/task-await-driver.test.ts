@@ -250,7 +250,7 @@ describe("input rounds", () => {
             return {
               status: "input_required",
               inputRequests: {
-                k: { method: "elicitation/create", params: {} },
+                k: { method: "elicitation/create", params: { message: "hi", requestedSchema: { type: "object", properties: {} } } },
               } as never,
             };
           }
@@ -288,7 +288,7 @@ describe("input rounds", () => {
             return {
               status: "input_required",
               inputRequests: {
-                k: { method: "elicitation/create", params: {} },
+                k: { method: "elicitation/create", params: { message: "hi", requestedSchema: { type: "object", properties: {} } } },
               } as never,
             };
           }
@@ -319,7 +319,7 @@ describe("input rounds", () => {
             return {
               status: "input_required",
               inputRequests: {
-                k: { method: "elicitation/create", params: {} },
+                k: { method: "elicitation/create", params: { message: "hi", requestedSchema: { type: "object", properties: {} } } },
               } as never,
             };
           }
@@ -350,7 +350,7 @@ describe("input rounds", () => {
           status: "input_required",
           // A fresh key every round, so dedupe never converges.
           inputRequests: {
-            [`k${Math.random()}`]: { method: "elicitation/create", params: {} },
+            [`k${Math.random()}`]: { method: "elicitation/create", params: { message: "hi", requestedSchema: { type: "object", properties: {} } } },
           } as never,
         }),
         updateTask: async () => {},
@@ -626,7 +626,7 @@ describe("abort during input collection", () => {
         getTask: async () => ({
           status: "input_required",
           inputRequests: {
-            k: { method: "elicitation/create", params: {} },
+            k: { method: "elicitation/create", params: { message: "hi", requestedSchema: { type: "object", properties: {} } } },
           } as never,
         }),
         updateTask: async () => {},
@@ -656,7 +656,7 @@ describe("abort during input collection", () => {
         getTask: async () => ({
           status: "input_required",
           inputRequests: {
-            k: { method: "elicitation/create", params: {} },
+            k: { method: "elicitation/create", params: { message: "hi", requestedSchema: { type: "object", properties: {} } } },
           } as never,
         }),
         updateTask: async () => {},
