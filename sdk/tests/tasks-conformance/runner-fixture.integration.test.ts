@@ -158,8 +158,8 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
       ).toBeGreaterThan(0);
     }
     // …and the runner agrees, per probe, that it did.
-    const probes = check(result, "tasks-undeclared-capability-rejected").details
-      ?.probes as Array<{
+    const probes = (check(result, "tasks-undeclared-capability-rejected")
+      .details?.probes ?? []) as Array<{
       method: string;
       outcome: string;
       reachedWire?: boolean;
@@ -233,6 +233,41 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
     expect(creation.details).toMatchObject({ tool: TASK_TOOL_NAME });
     // The violation is real on the wire, not inferred: the fixture minted a
     // second task for the call that carried no declaration.
+    expect(fixture.tasks().length).toBeGreaterThan(1);
+    expect(result.passed).toBe(false);
+  });
+
+  it("fails the discipline check when a task carries no resultType discriminator", async () => {
+    // The invisible-task break. The server DOES create a task, but omits the
+    // one field that says so, and this client decodes the response as an
+    // ordinary tool result — so the work runs to completion server-side with
+    // no handle. Detection has to read the raw wire, because by the time the
+    // result reaches the runner it no longer looks like a task at all.
+    const fixture = await serve({ misbehave: { omitCreateResultType: true } });
+    const result = await runAgainst(fixture);
+
+    const discipline = check(result, "tasks-result-type-discipline");
+    expect(discipline.status).toBe("failed");
+    expect(discipline.error?.message).toContain('resultType "task"');
+    expect(discipline.error?.message).toContain("UNREACHABLE");
+    // The task really exists on the server — this is a lost handle, not a
+    // server that simply declined to create one.
+    expect(fixture.tasks().length).toBeGreaterThan(0);
+    expect(result.passed).toBe(false);
+  });
+
+  it("fails the creation check when a non-declaring caller gets a task with no discriminator", async () => {
+    // Doubly-misbehaving: violates tasks.md:61 (task for an undeclaring
+    // caller) AND tasks.md:102 (no discriminator) at once. Before the raw
+    // capture this scored a PASS, because the second violation hid the first.
+    const fixture = await serve({
+      misbehave: { createTaskForUndeclaredCall: true, omitCreateResultType: true },
+    });
+    const result = await runAgainst(fixture);
+
+    const creation = check(result, "tasks-undeclared-creation-refused");
+    expect(creation.status).toBe("failed");
+    expect(creation.error?.message).toContain("raw wire");
     expect(fixture.tasks().length).toBeGreaterThan(1);
     expect(result.passed).toBe(false);
   });

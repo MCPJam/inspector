@@ -628,6 +628,62 @@ export function describeUndeclaredProbe(probe: UndeclaredProbe): string {
   }
 }
 
+/** A flat task payload seen on the wire, before any client-side decoding. */
+export interface RawTaskResponse {
+  taskId: string;
+  /** Exactly as it arrived: `undefined` means the key was absent. */
+  resultType: unknown;
+  /** Whether the required `resultType: "task"` discriminator was present. */
+  discriminated: boolean;
+}
+
+/**
+ * Finds a flat task payload in raw inbound JSON-RPC, IGNORING `resultType`.
+ *
+ * This is the only way to see the violation that matters most here. Task
+ * detection is keyed on `resultType === "task"` end to end — the transport
+ * seam's `rewriteTaskResultMessage`, then `isCreateTaskExtResult` — so a
+ * `CreateTaskResult` that omits the discriminator never reaches the runner AS
+ * a task. It arrives looking like an ordinary `CallToolResult`, and every
+ * check that reads the DECODED result therefore scores the server green on the
+ * exact interop break it exists to catch: the client cannot discriminate the
+ * response, so the task is never tracked and the work runs to completion
+ * server-side with no handle to poll, cancel, or read.
+ *
+ * Identification is by shape (`taskId`) rather than by discriminator, which is
+ * the point; callers pass a window of messages received during ONE request so
+ * a later `tasks/get` response cannot be mistaken for a creation.
+ */
+export function findRawTaskResponse(
+  messages: unknown[]
+): RawTaskResponse | undefined {
+  for (const message of messages) {
+    if (!isRecord(message)) continue;
+    const result = isRecord(message.result) ? message.result : undefined;
+    if (!result) continue;
+    if (typeof result.taskId !== "string" || result.taskId.length === 0) {
+      continue;
+    }
+    return {
+      taskId: result.taskId,
+      resultType: result.resultType,
+      discriminated: result.resultType === "task",
+    };
+  }
+  return undefined;
+}
+
+/** The failure a missing/wrong `resultType: "task"` actually causes. */
+function describeUndiscriminatedTask(raw: RawTaskResponse): string {
+  return `the server answered a tools/call with a flat task payload (taskId ${JSON.stringify(
+    raw.taskId
+  )}) that does not carry resultType "task"${
+    raw.resultType === undefined
+      ? ""
+      : ` (got ${JSON.stringify(raw.resultType)})`
+  }; tasks.md:102 makes that discriminator a MUST because it is the ONLY signal separating a CreateTaskResult from a standard result. This client decoded the response as an ordinary tool result, so the task is UNREACHABLE: it is never tracked, and the work runs to completion server-side with no handle to poll, cancel, or read`;
+}
+
 /**
  * The task id a server smuggled into an UNDECLARED `tools/call`, or
  * `undefined` if it produced an ordinary result.
@@ -771,9 +827,15 @@ export class MCPTasksConformanceTest {
     );
     const checks: MCPTasksCheckResult[] = [];
     const sent: unknown[] = [];
+    // The RAW inbound bytes. Every task check that has to judge the
+    // discriminator reads this, because by the time a result reaches the
+    // manager the decoder has already made up its mind — see
+    // {@link findRawTaskResponse}. Captured once, used by both creation checks.
+    const received: unknown[] = [];
 
     const captureRpc = (event: RpcLogEvent) => {
       if (event.direction === "send") sent.push(event.message);
+      else received.push(event.message);
       this.config.serverConfig.rpcLogger?.(event);
     };
 
@@ -835,8 +897,11 @@ export class MCPTasksConformanceTest {
 
           let createdTaskId: string | undefined;
           let creationResult: unknown;
+          /** The creation response as it arrived, before decoding. */
+          let rawCreation: RawTaskResponse | undefined;
 
           if (wire !== "none" && probeTool) {
+            const receivedBefore = received.length;
             try {
               creationResult =
                 wire === "extension"
@@ -857,12 +922,37 @@ export class MCPTasksConformanceTest {
             } catch (error) {
               creationResult = error;
             }
+            // Read the wire regardless of how decoding went: an
+            // undiscriminated task both LOOKS like a plain result and can make
+            // result decoding fail, and neither may be scored as conformance.
+            rawCreation = findRawTaskResponse(received.slice(receivedBefore));
           }
 
           if (selected.has("tasks-result-type-discipline")) {
             const stepStartedAt = Date.now();
             if (!probeTool) {
               checks.push(missingProbeTool("tasks-result-type-discipline"));
+            } else if (
+              wire === "extension" &&
+              rawCreation &&
+              !rawCreation.discriminated
+            ) {
+              // BEFORE the decoded-result branches, and deliberately so: this
+              // is the one violation the decoded result cannot show, because
+              // an undiscriminated task arrives as an ordinary result (or
+              // fails decoding). Judged on the wire, it is unambiguous.
+              checks.push(
+                failed(
+                  "tasks-result-type-discipline",
+                  Date.now() - stepStartedAt,
+                  describeUndiscriminatedTask(rawCreation),
+                  {
+                    tool: probeTool.name,
+                    taskId: rawCreation.taskId,
+                    resultType: rawCreation.resultType ?? null,
+                  }
+                )
+              );
             } else if (creationResult instanceof Error) {
               checks.push(
                 failed(
@@ -879,16 +969,13 @@ export class MCPTasksConformanceTest {
               // Server-decided: declining to produce a task is conformant, as
               // long as what comes back is a normal tool result.
               //
-              // KNOWN BLIND SPOT: a CreateTaskResult that omits `resultType`
-              // also lands here. Task detection is keyed on
-              // `resultType === "task"` at the transport seam
-              // (`rewriteTaskResultMessage`), so a discriminator-less creation
-              // never reaches this runner AS a task — it arrives as an
-              // ordinary result (or fails result decoding upstream and lands
-              // in the branch above). Catching that omission needs the RAW
-              // response, which this runner does not observe; the assertion
-              // lives in `validateCreateTaskShape` for the payloads that do
-              // reach it and for direct callers of the exported validator.
+              // This branch used to be a blind spot: a `CreateTaskResult` with
+              // no `resultType` lands here too, since task detection is keyed
+              // on `resultType === "task"` at the transport seam
+              // (`rewriteTaskResultMessage`), so it arrives as an ordinary
+              // result. It no longer reaches this branch — the raw-wire check
+              // above judges the discriminator on the bytes, so "the server
+              // declined a task" now means the wire carried no task at all.
               checks.push(
                 isRecord(creationResult)
                   ? passed(
@@ -946,7 +1033,8 @@ export class MCPTasksConformanceTest {
               const creation = await this.probeUndeclaredCreation(
                 manager,
                 serverId,
-                probeTool.name
+                probeTool.name,
+                received
               );
               const stepDurationMs = Date.now() - stepStartedAt;
               if (creation.outcome === "created") {
@@ -954,8 +1042,16 @@ export class MCPTasksConformanceTest {
                   failed(
                     "tasks-undeclared-creation-refused",
                     stepDurationMs,
-                    "an undeclared tools/call returned a CreateTaskResult; a server must not create a task for a client that never declared the tasks capability (it must answer normally or reject with -32003)",
-                    { tool: probeTool.name, taskId: creation.taskId }
+                    `an undeclared tools/call returned a CreateTaskResult; a server must not create a task for a client that never declared the tasks capability (it must answer normally or reject with -32003)${
+                      creation.discriminated
+                        ? ""
+                        : '. The payload also carries no resultType "task" discriminator, so it was only visible on the raw wire — a client cannot discriminate it and the task is unreachable (tasks.md:102)'
+                    }`,
+                    {
+                      tool: probeTool.name,
+                      taskId: creation.taskId,
+                      discriminated: creation.discriminated,
+                    }
                   )
                 );
               } else if (creation.outcome === "errored") {
@@ -1360,28 +1456,53 @@ export class MCPTasksConformanceTest {
    *     and is minted only from a server error response, while local and
    *     transport faults are `SdkError`s with STRING codes. This is a check
    *     FAILURE, because nothing about the server was observed.
+   *
+   * THREE places have to be read, and the wire is the last word. Beyond the
+   * decoded result and the manager's `_meta` stash, the RAW response decides:
+   * a task payload with no `resultType: "task"` is invisible to both of the
+   * others (see {@link findRawTaskResponse}), so a server that violates
+   * tasks.md:61 AND tasks.md:102 at once would otherwise score a pass on the
+   * strength of its second violation.
    */
   private async probeUndeclaredCreation(
     manager: MCPClientManager,
     serverId: string,
-    toolName: string
+    toolName: string,
+    received: unknown[]
   ): Promise<
-    | { outcome: "created"; taskId: string }
+    | { outcome: "created"; taskId: string; discriminated: boolean }
     | { outcome: "answered" }
     | { outcome: "refused"; code: number; message: string }
     | { outcome: "errored"; message: string }
   > {
+    const receivedBefore = received.length;
+    const rawTask = () => findRawTaskResponse(received.slice(receivedBefore));
     try {
       const result = await manager.executeTool(
         serverId,
         toolName,
         this.config.toolArguments ?? {}
       );
-      const taskId = extractUndeclaredCreationTaskId(result);
+      const raw = rawTask();
+      const taskId = extractUndeclaredCreationTaskId(result) ?? raw?.taskId;
       return taskId === undefined
         ? { outcome: "answered" }
-        : { outcome: "created", taskId };
+        : {
+            outcome: "created",
+            taskId,
+            discriminated: raw?.discriminated ?? true,
+          };
     } catch (error) {
+      // An undiscriminated task can also blow up result decoding; the wire
+      // still says a task was created, and that is the violation.
+      const raw = rawTask();
+      if (raw) {
+        return {
+          outcome: "created",
+          taskId: raw.taskId,
+          discriminated: raw.discriminated,
+        };
+      }
       const code = errorCode(error);
       const message = errorMessage(error);
       return code === undefined

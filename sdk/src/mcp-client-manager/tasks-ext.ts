@@ -154,10 +154,21 @@ export interface TasksExtCallContext {
 }
 
 /**
- * The ONE send path for the extension: all three request helpers below build
- * their params and then come through here, and nothing else in the SDK issues
- * a `TasksExtRequestMethod`. That makes it the only choke point where the
- * era-gate shadow has to be installed — and, because the exemption set IS
+ * The send path for the extension: all three request helpers below build their
+ * params and then come through here, and every DECLARED extension request in
+ * the SDK does.
+ *
+ * One deliberate exception: the tasks conformance runner
+ * (`tasks-conformance/`) issues its UNDECLARED probes directly, bypassing this
+ * helper. It has to — this helper always attaches the eligibility declaration,
+ * and the whole point of those probes is to observe what a server does when
+ * the declaration is absent (a conforming one answers `-32003`). That bypass
+ * is the test, not a bug. Being off this path, it installs the era-gate shadow
+ * itself before probing (`tasks-conformance/runner.ts`), since the probes still
+ * have to reach the wire on a 2026-07-28 connection to be answered at all.
+ *
+ * For everything else this stays the only choke point where the era-gate
+ * shadow has to be installed — and, because the exemption set IS
  * `TasksExtRequestMethods`, a request that never passes through here is by
  * definition a request the shadow would not have exempted anyway.
  *

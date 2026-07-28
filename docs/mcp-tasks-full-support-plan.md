@@ -159,7 +159,14 @@ Implement and test these at the SDK boundary, not separately in each route:
 
 ## 4. Workstream A — protocol boundary and conformance corrections
 
-This is the blocking first PR. Product expansion must not ship before it.
+**Status: MERGED** — PR [#3511](https://github.com/MCPJam/inspector/pull/3511),
+2026-07-28. A0–A4 landed together, so the blocking gate on downstream
+workstreams is lifted and Workstream B may start. Two review findings landed
+as a follow-up PR rather than in #3511 — see A2 below; neither re-blocks
+downstream work. The subsections are kept as the record of what was decided
+and why, with what actually shipped noted per item.
+
+This was the blocking first PR. Product expansion must not ship before it.
 
 ### A0. Unblock the extension methods on the 2026-07-28 wire era
 
@@ -279,6 +286,38 @@ undeclared capability covers all required operations:
 
 The current interpretation that a bare `tasks/get` may succeed is incorrect
 for the pinned extension and must be removed from code, docs, and fixtures.
+
+Implemented in PR #3511, plus two corrections found in review that the
+original item did not anticipate:
+
+- **A skipped check can no longer produce a green.** The suite returns
+  `outcome: "passed" | "failed" | "incomplete"`, and `passed` is true only when
+  every *selected* check produced a verdict. Every skip carries a `skipReason`:
+  `"not-applicable"` (cannot apply to this server — extension-only checks on a
+  legacy connection, `Mcp-Name` over stdio, any task check when the wire is
+  `none`) never holds a run back; `"could-not-run"` (applies but was never
+  exercised) makes the run `incomplete`. Reported as a root `incompleteReason`,
+  and per-category `couldNotRun` counts.
+  Motivation: against the conformant extension fixture *without* `toolName`,
+  the suite returned `passed: true` on 2 of 8 checks with 6 silently skipped.
+- **Probe-tool selection fails loud.** Auto-selection reads
+  `execution.taskSupport`, which the 2026-07-28 `ToolSchema` strips, so it can
+  never work on the extension wire. No `toolName` — or a `toolName` the server
+  does not list — is now an `incomplete` run naming the flag, the tool, and the
+  tools the server does list. Legacy auto-selection is unchanged.
+- **CLI exit codes:** `0` passed, `1` failed, **`3` incomplete** (`2` stays
+  reserved for usage errors), plus the reason on stderr.
+
+Fixed in the follow-up PR, not in #3511: the discriminator blind spot. A server that
+answers a `tools/call` with a flat task payload carrying **no**
+`resultType: "task"` is invisible to every check that reads the *decoded*
+result — task detection keys on that discriminator at the transport seam — so
+it currently scores green on both `tasks-result-type-discipline` and
+`tasks-undeclared-creation-refused`. Closing it means judging the discriminator
+on the raw inbound JSON-RPC (the run already captures it) for both checks, with
+a failure message that names the consequence: the client cannot discriminate
+the response, so the task is never tracked and the work runs to completion
+server-side with no handle (`tasks.md:102`).
 
 ### A3. Verify headers and connection durability
 
@@ -893,10 +932,11 @@ correlation is necessary.
 
 Land in this order:
 
-1. **SDK correctness:** Workstream A — the A0 era-gate unblock first, since
+1. ~~**SDK correctness:** Workstream A — the A0 era-gate unblock first, since
    nothing else in the extension path can be exercised against a real
    `2026-07-28` server until it lands — then the corrected schemas, corrected
-   conformance verdicts, and the vendored schema drift check.
+   conformance verdicts, and the vendored schema drift check.~~
+   **DONE** — PR #3511, merged 2026-07-28. Step 2 is unblocked.
 2. **Lifecycle engine:** Workstream B polling, notification integration,
    complete input driver, tracker migration.
 3. **Host policy:** tri-state resolver/editor and raw-wire policy tests.
