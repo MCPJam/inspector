@@ -27,7 +27,11 @@ import type { Context } from "hono";
 import { type ToolSet } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { UIMessage } from "@ai-sdk/react";
-import type { Harness, MCPClientManager } from "@mcpjam/sdk";
+import type {
+  Harness,
+  MCPClientManager,
+  ToolTaskSeamOptions,
+} from "@mcpjam/sdk";
 import type {
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
@@ -83,6 +87,7 @@ import {
   type HostedElicitationBridge,
 } from "./../routes/web/hosted-elicitation.js";
 import type { HostedMrtrBridge } from "./mrtr-hosted-bridge.js";
+import type { HostedTaskCreatedBridge } from "./hosted-task-created-bridge.js";
 import type { MrtrEngineResume } from "./mrtr-hosted-chat.js";
 import {
   bridgeHarnessRpcLogsToCollector,
@@ -245,6 +250,12 @@ export interface WebChatTurnPrepareInputs {
   progressiveToolDiscovery?: { enabled: boolean };
   /** Resolved host harness. Harness runtimes own native tool discovery. */
   harness?: Harness;
+  /**
+   * Resolved task-seam options. The CALLER resolves the mode, because hosted
+   * chat and the MCPJam agent both come through here and are different rows in
+   * the policy matrix. Absent ⇒ tasks off for this turn.
+   */
+  tasks?: ToolTaskSeamOptions;
   appTools?: AppToolEntry[];
   /** WebMCP-shaped MCPJam UI tools (client-fulfilled, like `appTools`). */
   uiTools?: UiToolEntry[];
@@ -312,6 +323,13 @@ export interface WebChatTurnRuntime {
    * elicitation bridge it is NOT disposed at end of turn.
    */
   mrtrBridge?: HostedMrtrBridge;
+  /**
+   * Delivers `data-task-created` parts. Present only when the host policy
+   * enables tasks for this surface AND the client sent a compatible
+   * `hostedTasksVersion`. A mismatch leaves this undefined — the turn proceeds
+   * without the part rather than failing, because the task already exists.
+   */
+  taskCreatedBridge?: HostedTaskCreatedBridge;
   /**
    * Hosted MRTR resume descriptor — forwarded to the emulated engine only. On a
    * fresh resume request the engine drives one retry leg before the first model
@@ -432,6 +450,7 @@ export async function streamWebChatTurn(
       customProviders: prepare.customProviders,
       priorMessages: modelMessages,
       ...(prepare.harness ? { harness: prepare.harness } : {}),
+      ...(prepare.tasks ? { tasks: prepare.tasks } : {}),
       ...(prepare.progressiveToolDiscovery !== undefined
         ? { progressiveToolDiscovery: prepare.progressiveToolDiscovery }
         : {}),
@@ -773,6 +792,7 @@ export async function streamWebChatTurn(
           scopeChallengeWriter = writer;
           runtime.rpcCollector?.attachStreamWriter(writer);
           runtime.elicitationBridge?.attachStreamWriter(writer);
+          runtime.taskCreatedBridge?.attachStreamWriter(writer);
         },
         abortSignal: runtime.abortSignal,
       });
@@ -809,6 +829,7 @@ export async function streamWebChatTurn(
         scopeChallengeWriter = writer;
         runtime.rpcCollector?.attachStreamWriter(writer);
         runtime.elicitationBridge?.attachStreamWriter(writer);
+        runtime.taskCreatedBridge?.attachStreamWriter(writer);
       },
       abortSignal: runtime.abortSignal,
     });
@@ -916,6 +937,9 @@ export async function streamWebChatTurn(
       runtime.elicitationBridge?.attachStreamWriter(writer);
       // MRTR suspend emits `data-mrtr-input-required` on this same stream.
       runtime.mrtrBridge?.attachStreamWriter(writer);
+      // A task can be created on ANY engine path, so unlike the MRTR bridge
+      // this one attaches at all three sites, following the elicitation bridge.
+      runtime.taskCreatedBridge?.attachStreamWriter(writer);
       if (persist.harness && runtime.rpcCollector && !stopHarnessRpcLogBridge) {
         stopHarnessRpcLogBridge = bridgeHarnessRpcLogsToCollector(
           persist.selectedServerIds,

@@ -89,6 +89,40 @@ describe("scrubLogPayload", () => {
       const result = scrubLogPayload({ note: "sk-abcdefghijklmnopqrstuvwx" }) as any;
       expect(result.note).toContain("[redacted-secret]");
     });
+
+    it("redacts secret-ish query params quoted inside error strings", () => {
+      // Raw upstream error messages routinely quote full request URLs; the
+      // key-based redaction can't see inside a string value.
+      const result = scrubLogPayload({
+        message:
+          "fetch failed for https://mcp.example.com/sse?api_key=plain-secret&x=1",
+      }) as any;
+      expect(result.message).not.toContain("plain-secret");
+      expect(result.message).toContain("api_key=[redacted]");
+    });
+
+    it("redacts key=value and key: value secret assignments", () => {
+      const result = scrubLogPayload({
+        message: 'connect failed (token=abc123, client_secret: "s3cr3t")',
+      }) as any;
+      expect(result.message).not.toContain("abc123");
+      expect(result.message).not.toContain("s3cr3t");
+    });
+
+    it("redacts basic-auth credentials in URLs", () => {
+      const result = scrubLogPayload({
+        message: "getaddrinfo ENOTFOUND for https://user:hunter2@internal.host/mcp",
+      }) as any;
+      expect(result.message).not.toContain("hunter2");
+      expect(result.message).toContain("[redacted]@internal.host");
+    });
+
+    it("leaves ordinary error strings readable", () => {
+      const message =
+        "connect ECONNREFUSED 127.0.0.1:8080 (timeout: 30000, retries: 1)";
+      const result = scrubLogPayload({ message }) as any;
+      expect(result.message).toBe(message);
+    });
   });
 
   describe("recursion", () => {

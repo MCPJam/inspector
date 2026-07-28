@@ -125,11 +125,17 @@ import {
 } from "./tasks-dispatch.js";
 import {
   TasksExtNotificationMethod,
+  canOpenTaskDeclaredListen,
   cancelTaskExt,
   getTaskExt,
+  openTaskDeclaredListen,
   updateTaskExt,
   withTasksExtensionDeclaration,
 } from "./tasks-ext.js";
+import type {
+  McpSubscriptionHandle,
+  SubscriptionFilterShape,
+} from "./subscription-coordinator.js";
 import {
   assertCreateTaskExtResult,
   parseTaskExtNotificationParams,
@@ -143,6 +149,11 @@ import {
   convertMCPToolsToVercelTools,
   type ToolSchemaOverrides,
 } from "./tool-converters.js";
+import {
+  runToolTaskSeam,
+  type ToolTaskSeamOptions,
+} from "./tool-task-seam.js";
+import { extensionTaskToObservation } from "./task-lifecycle-adapters.js";
 import type { ModelVisibleMcpToolResults } from "../host-config/types.js";
 import {
   applyRuntimeClientCapabilities,
@@ -348,7 +359,13 @@ export class MCPClientManager {
     // Start connecting to all configured servers (unless replay/trace-repair use explicit connect)
     if (!this.lazyConnect) {
       for (const [id, config] of Object.entries(servers)) {
-        void this.connectToServer(id, config);
+        // Fire-and-forget prefetch: a failure here is NOT lost — the failed
+        // attempt clears its live state, so the first operation that needs
+        // this server re-attempts the connect and observes the error itself
+        // (in-flight attempts are deduped via retryPromise/connectPromise).
+        // Without the catch, every failed eager connect ALSO escapes as a
+        // process-level unhandledRejection.
+        this.connectToServer(id, config).catch(() => {});
       }
     }
   }
@@ -802,6 +819,16 @@ export class MCPClientManager {
       includeAppOnly?: boolean;
       /** Host policy for model visibility of MCP tool-result content/resources. */
       modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
+      /**
+       * Task policy for the tool calls this set produces. Omit (the default)
+       * and every call takes the pre-existing path, byte-for-byte: no `_meta`,
+       * no declaration, no extra request field. See `tool-task-seam.ts`.
+       *
+       * The mode is resolved by the CALLER — this class must not read host
+       * configs. `off` is expressed by omitting the option entirely, which is
+       * what `toolTaskSeamOptionsFor` returns for it.
+       */
+      tasks?: ToolTaskSeamOptions;
     } = {}
   ): Promise<AiSdkTool> {
     const ids = Array.isArray(serverIds)
@@ -830,13 +857,50 @@ export class MCPClientManager {
               const requestOptions = callOptions?.abortSignal
                 ? { signal: callOptions.abortSignal }
                 : undefined;
-              const result = await this.executeTool(
-                id,
-                name,
-                (args ?? {}) as ExecuteToolArguments,
-                requestOptions
+              const toolArgs = (args ?? {}) as ExecuteToolArguments;
+              if (!options.tasks) {
+                const result = await this.executeTool(
+                  id,
+                  name,
+                  toolArgs,
+                  requestOptions
+                );
+                return assertCallToolResult(result, `Tool "${name}" result`);
+              }
+              // `id` is captured per server, so the wire is resolved per call:
+              // a mixed tool set does the right thing for each server without
+              // any caller knowing mixed sets exist.
+              return runToolTaskSeam(
+                {
+                  serverId: id,
+                  toolName: name,
+                  wire: this.getTasksSupport(id).wire,
+                  callPlain: () =>
+                    this.executeTool(id, name, toolArgs, requestOptions),
+                  callEligible: () =>
+                    this.executeTool(id, name, toolArgs, {
+                      ...(requestOptions ? { request: requestOptions } : {}),
+                      allowTaskResult: true,
+                    }),
+                  getTask: async (taskId) =>
+                    extensionTaskToObservation(
+                      await this.getTaskExt(id, taskId, requestOptions)
+                    ),
+                  updateTask: async (taskId, inputResponses) => {
+                    // The await driver is wire-neutral and types responses as
+                    // plain JSON; on this branch the wire is known to be the
+                    // extension, whose `InputResponses` is the narrower shape
+                    // `collectTaskInputResponses` already validated against.
+                    await this.updateTask(
+                      id,
+                      taskId,
+                      inputResponses as TaskExtInputResponses,
+                      requestOptions
+                    );
+                  },
+                },
+                options.tasks
               );
-              return assertCallToolResult(result, `Tool "${name}" result`);
             },
           });
 
@@ -1654,6 +1718,67 @@ export class MCPClientManager {
     );
   }
 
+  /**
+   * Opens a task-filtered `subscriptions/listen` carrying the extension's
+   * per-request eligibility declaration (SEP-2663). A non-declaring
+   * task-filtered listen MUST be answered `-32003`, so this is the ONLY way a
+   * `taskIds` filter may reach the wire.
+   *
+   * Port contract: on `SubscriptionClientPort`, availability is expressed by
+   * method PRESENCE — callers probe {@link supportsTaskDeclaredListen} and
+   * install this method onto the port only when it answers true. A defined
+   * method must therefore never answer `undefined`; when the underlying seam
+   * is unavailable despite the probe, this throws instead of silently sending
+   * nothing.
+   *
+   * `TasksExtListenMetaSeamError` propagates deliberately: the coordinator
+   * records the failed open on the stream record and polling continues —
+   * task notifications are OPTIONAL, so nothing is lost but latency.
+   */
+  async listenWithTasksDeclaration(
+    serverId: string,
+    filter: SubscriptionFilterShape
+  ): Promise<McpSubscriptionHandle> {
+    await this.ensureConnected(serverId);
+    const client = this.getClientOrThrow(serverId);
+    this.assertExtensionTasksWire(
+      serverId,
+      "a task-filtered subscriptions/listen"
+    );
+    const handle = await openTaskDeclaredListen(
+      {
+        client,
+        declaredCapabilities: this.declaredCapabilitiesFor(serverId),
+      },
+      filter as Record<string, unknown>
+    );
+    if (handle === undefined) {
+      throw new Error(
+        `Server "${serverId}"'s connection cannot open a task-declared ` +
+          `subscriptions/listen (no listen method, or no upstream client ` +
+          `behind the managed client). Probe supportsTaskDeclaredListen() ` +
+          `before calling; polling via tasks/get remains sufficient.`
+      );
+    }
+    return handle as McpSubscriptionHandle;
+  }
+
+  /**
+   * Whether {@link listenWithTasksDeclaration} can put a declared,
+   * task-filtered listen on this connection's wire: extension tasks wire ∧
+   * the client can listen ∧ the listen-meta seam target resolves. Consumers
+   * building a `SubscriptionClientPort` install the opener onto the port only
+   * when this answers true — absence of the method IS the coordinator's signal
+   * to drop `taskIds` (recording `tasks-declaration-unavailable`) and keep
+   * polling.
+   */
+  supportsTaskDeclaredListen(serverId: string): boolean {
+    if (this.getTasksWire(serverId) !== "extension") return false;
+    const client = this.liveClientStates.get(serverId)?.client;
+    if (!client) return false;
+    return canOpenTaskDeclaredListen(client);
+  }
+
   private declaredCapabilitiesFor(
     serverId: string
   ): ClientCapabilityOptions | undefined {
@@ -1805,6 +1930,11 @@ export class MCPClientManager {
         state
       )
     );
+    // Mark handled without affecting awaiters (they hold the original
+    // promise): awaitWithAbort abandons connectionPromise when the caller's
+    // signal fires first, and an abandoned rejection escapes as a
+    // process-level unhandledRejection.
+    connectionPromise.catch(() => {});
     state.connectPromise = connectionPromise;
     this.liveClientStates.set(serverId, state);
     return this.awaitWithAbort(connectionPromise, signal);
@@ -1862,27 +1992,37 @@ export class MCPClientManager {
       const wantsStateless =
         resolvedProtocolVersion !== undefined &&
         isStatelessProtocolVersion(resolvedProtocolVersion);
+      // Resolve negotiation before the legacy initialize accept-list so Auto
+      // has one source of truth. An unpinned connection probes the modern era
+      // first and, on a legacy signal, must fall back with the upstream SDK's
+      // complete built-in supported-version list. Forwarding a persisted
+      // per-server or manager-default list here can make the first connection
+      // succeed but a later reconnect reject the server's valid counter-offer.
+      const versionNegotiation = resolveVersionNegotiation(
+        resolvedProtocolVersion
+      );
+      const wantsAutoNegotiation = versionNegotiation?.mode === "auto";
       // Stateful `mcpProtocolVersion` pin (e.g. `"2025-11-25"`) propagates
       // into the legacy `Client`'s `supportedProtocolVersions` accept-list
       // so `initialize.params.protocolVersion` actually goes out as the
       // pinned value rather than the SDK's built-in newest default. An
       // explicit `supportedProtocolVersions` (per-server or default) still
-      // wins — pinning at one layer while overriding the other would be
-      // ambiguous and the override is the more specific signal.
-      const supportedProtocolVersions =
-        config.supportedProtocolVersions ??
-        this.defaultSupportedProtocolVersions ??
-        (!wantsStateless && resolvedProtocolVersion !== undefined
-          ? [resolvedProtocolVersion]
-          : undefined);
+      // wins for an explicit pin — pinning at one layer while overriding the
+      // other would be ambiguous and the override is the more specific signal.
+      // Auto deliberately ignores both lists so its legacy fallback negotiates
+      // against every version supported by the upstream SDK.
+      const supportedProtocolVersions = wantsAutoNegotiation
+        ? undefined
+        : config.supportedProtocolVersions ??
+          this.defaultSupportedProtocolVersions ??
+          (!wantsStateless && resolvedProtocolVersion !== undefined
+            ? [resolvedProtocolVersion]
+            : undefined);
       // Automatic era negotiation is always on and transport-agnostic: an
       // unconfigured connection resolves to `{ mode: "auto" }` on both HTTP
       // and stdio (on stdio the `server/discover` probe runs on a sibling
       // process). Explicit pins are honored identically — a modern pin
       // negotiates modern with no legacy fallback, a legacy pin is byte-stable.
-      const versionNegotiation = resolveVersionNegotiation(
-        resolvedProtocolVersion
-      );
       const clientOptions: ClientOptions = {
         capabilities: clientCapabilities,
         // Manual multi-round-trip mode (2026-07-28 `input_required`, spec §12).

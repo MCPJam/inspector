@@ -80,7 +80,9 @@ process.on("unhandledRejection", (reason, _promise) => {
     "process.unhandled_rejection",
     { errorCode: reason instanceof Error ? reason.name : "unknown" },
     {
-      error: reason instanceof Error ? reason : undefined,
+      // Always forward the reason — a non-Error rejection still carries the
+      // only clue to what fired (emit stringifies it for Axiom).
+      error: reason,
       sentry: true,
     }
   );

@@ -210,6 +210,15 @@ vi.mock("../../../utils/chatbox-runtime-config.js", () => ({
     fetchChatboxRuntimeConfigMock(...args),
 }));
 
+// Host-bound direct sessions (Playground `hostId`) resolve their host config
+// through this fetch; the task-created delivery tests use it to turn the
+// tasks policy on. Inert for every request without a `hostId`.
+const fetchHostRuntimeConfigMock = vi.hoisted(() => vi.fn());
+vi.mock("../../../utils/host-runtime-config.js", () => ({
+  fetchHostRuntimeConfig: (...args: unknown[]) =>
+    fetchHostRuntimeConfigMock(...args),
+}));
+
 // Mock http-tool-calls for testing unresolved tool calls scenario
 vi.mock("@/shared/http-tool-calls", () => ({
   hasUnresolvedToolCalls: vi.fn().mockReturnValue(false),
@@ -2173,6 +2182,213 @@ describe("POST /api/mcp/chat-v2", () => {
             String(input).includes("/stream/org/resolve")
           )
         ).toBe(false);
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+  });
+
+  describe("task-created delivery (BYOK paths)", () => {
+    // A host config whose tasks policy is ON — the only thing that makes the
+    // route build the task seam + created-task bridge for the chat surface.
+    const tasksOnHostConfig = {
+      hostId: "host-tasks",
+      mcpProfile: {
+        extensions: { "com.mcpjam/tasks": { enabled: true } },
+      },
+    };
+
+    const taskCreatedEvent = {
+      identity: {
+        serverId: "server-1",
+        wire: "extension" as const,
+        taskId: "task-123",
+      },
+      wire: "extension" as const,
+      surface: "chat" as const,
+      status: "working",
+    };
+
+    /**
+     * The seam options the route handed to `getToolsForAiSdk`. Dispatching
+     * `onTaskCreated` through them exercises the real sink → bridge → stream
+     * writer chain, exactly as a tool call creating a task would.
+     */
+    const capturedTaskSeam = () => {
+      const call = manager.getToolsForAiSdk.mock.calls.find(
+        (args: unknown[]) =>
+          (args[1] as { tasks?: unknown } | undefined)?.tasks !== undefined
+      );
+      expect(call).toBeDefined();
+      return (call![1] as { tasks: { onTaskCreated: (e: unknown) => Promise<void> } })
+        .tasks;
+    };
+
+    const expectTaskCreatedPartDelivered = () => {
+      const part = capturedStreamEvents.find(
+        (event) => event?.type === "data-task-created"
+      );
+      expect(part).toBeDefined();
+      expect(part.transient).toBe(true);
+      expect(part.data).toMatchObject({
+        taskId: "task-123",
+        serverId: "server-1",
+        wire: "extension",
+        status: "working",
+      });
+    };
+
+    beforeEach(() => {
+      fetchHostRuntimeConfigMock.mockResolvedValue({
+        ok: true,
+        config: tasksOnHostConfig,
+      });
+    });
+
+    afterEach(() => {
+      delete process.env.CONVEX_HTTP_URL;
+    });
+
+    it("delivers the task-created part on the direct user-key path", async () => {
+      const res = await postAuthenticatedJson({
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: "gpt-4", provider: "openai" },
+        apiKey: "test-key",
+        hostId: "host-tasks",
+        selectedServers: ["server-1"],
+      });
+
+      expect(res.status).toBe(200);
+      await lastStreamExecution;
+      await capturedTaskSeam().onTaskCreated(taskCreatedEvent);
+      expectTaskCreatedPartDelivered();
+    });
+
+    it("attaches the writer before the first tool call could fire (direct path, no bridge warn-drop)", async () => {
+      // The task-created sink dispatches SYNCHRONOUSLY from inside the tool
+      // loop, so the bridge must hold the writer by the time `streamText`
+      // (where the first tool call can fire) is invoked. Dispatch from inside
+      // the streamText implementation: if the writer were attached any later,
+      // the bridge would warn-drop the part instead of delivering it.
+      const { streamText } = await import("ai");
+      const { logger } = await import("../../../utils/logger");
+      const warnSpy = vi.spyOn(logger, "warn");
+      let dispatched: Promise<void> | undefined;
+      const baseImpl = vi.mocked(streamText).getMockImplementation()!;
+      vi.mocked(streamText).mockImplementationOnce((options: any) => {
+        dispatched = capturedTaskSeam().onTaskCreated(taskCreatedEvent);
+        return baseImpl(options);
+      });
+
+      const res = await postAuthenticatedJson({
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: "gpt-4", provider: "openai" },
+        apiKey: "test-key",
+        hostId: "host-tasks",
+        selectedServers: ["server-1"],
+      });
+
+      expect(res.status).toBe(200);
+      await lastStreamExecution;
+      expect(dispatched).toBeDefined();
+      await dispatched;
+      expectTaskCreatedPartDelivered();
+      expect(
+        warnSpy.mock.calls.some(([message]) =>
+          String(message).includes("no live stream writer")
+        )
+      ).toBe(false);
+      warnSpy.mockRestore();
+    });
+
+    it("delivers the task-created part on the hosted-org path (/stream/org)", async () => {
+      process.env.CONVEX_HTTP_URL = "https://test-convex.example.com";
+      const originalFetch = global.fetch;
+      // Dispatched MID-STREAM, from inside the /stream/org fetch — the moment
+      // a real tool call would create a task. The hosted engine closes its
+      // safe-writer at teardown, so a post-stream dispatch would be silently
+      // dropped; delivery here proves the writer was attached before the tool
+      // loop started.
+      let dispatched: Promise<void> | undefined;
+      global.fetch = vi.fn().mockImplementation(async (input) => {
+        const url = String(input);
+        if (url === "https://test-convex.example.com/stream/org") {
+          dispatched = capturedTaskSeam().onTaskCreated(taskCreatedEvent);
+          return createSseResponse([
+            {
+              type: "finish",
+              finishReason: "stop",
+              messageMetadata: {
+                inputTokens: 1,
+                outputTokens: 1,
+                totalTokens: 2,
+              },
+            },
+          ]);
+        }
+        throw new Error(`Unexpected fetch URL: ${url}`);
+      });
+
+      try {
+        const res = await postAuthenticatedJson({
+          messages: [{ role: "user", content: "Hello" }],
+          model: { id: "gpt-4-turbo", provider: "openai" },
+          projectId: "project-1",
+          hostId: "host-tasks",
+          selectedServers: ["server-1"],
+        });
+
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+        expect(dispatched).toBeDefined();
+        await dispatched;
+        expectTaskCreatedPartDelivered();
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+
+    it("delivers the task-created part on the local-org path", async () => {
+      process.env.CONVEX_HTTP_URL = "https://test-convex.example.com";
+      const originalFetch = global.fetch;
+      global.fetch = vi.fn().mockImplementation(async (input) => {
+        const url = String(input);
+        if (url === "https://test-convex.example.com/stream/org/resolve") {
+          return Response.json({
+            ok: true,
+            runtimeLocation: "local",
+            provider: {
+              providerKey: "custom:local-one",
+              apiKey: "sk-local",
+              baseUrl: "https://llm.example.com",
+              protocol: "openai-compatible",
+              modelIds: ["m-1"],
+            },
+          });
+        }
+        if (url === "https://test-convex.example.com/stream/org/local-usage") {
+          return Response.json({ ok: true });
+        }
+        throw new Error(`Unexpected fetch URL: ${url}`);
+      });
+
+      try {
+        const res = await postAuthenticatedJson({
+          messages: [{ role: "user", content: "Hello" }],
+          model: {
+            id: "custom:local-one:m-1",
+            provider: "custom",
+            customProviderName: "local-one",
+          },
+          projectId: "project-1",
+          hostId: "host-tasks",
+          selectedServers: ["server-1"],
+        });
+
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+        await capturedTaskSeam().onTaskCreated(taskCreatedEvent);
+        expectTaskCreatedPartDelivered();
       } finally {
         global.fetch = originalFetch;
       }
