@@ -57,6 +57,7 @@ import type {
   Tool,
   AiSdkTool,
 } from "./types.js";
+import type { TraceContextProvider } from "./trace-context.js";
 import type { MCPServerReplayConfig } from "../eval-reporting-types.js";
 
 import {
@@ -304,6 +305,12 @@ export class MCPClientManager {
   private readonly defaultRpcLogger?: RpcLogger;
   private readonly defaultProgressHandler?: ProgressHandler;
   private readonly cacheEventLogger?: CacheEventLogger;
+  /**
+   * Optional accessor for the ambient OpenTelemetry trace context to
+   * propagate. Unset by default — MCPJam runs no tracer, so no
+   * `traceparent`/`tracestate`/`baggage` `_meta` key is ever emitted.
+   */
+  private readonly traceContextProvider?: TraceContextProvider;
   private readonly negotiationOutcomeLogger?: NegotiationOutcomeLogger;
   private readonly defaultRetryPolicy: RetryPolicy;
   private readonly lazyConnect: boolean;
@@ -337,6 +344,7 @@ export class MCPClientManager {
     this.defaultRpcLogger = options.rpcLogger;
     this.defaultProgressHandler = options.progressHandler;
     this.cacheEventLogger = options.cacheEventLogger;
+    this.traceContextProvider = options.traceContextProvider;
     this.negotiationOutcomeLogger = options.negotiationOutcomeLogger;
     this.defaultRetryPolicy = normalizeRetryPolicy(options.retryPolicy);
     this.lazyConnect = options.lazyConnect ?? false;
@@ -2158,9 +2166,15 @@ export class MCPClientManager {
       // `cancelTaskExt`) need to reach a 2026-07-28 server. Registration is
       // inert: the shadow is installed on the first such call, never at
       // connect. See `tasks-ext-era-gate.ts`.
+      // The trace-context decorator is layered only when an embedder supplied
+      // a provider; without one the chain is exactly what it was, so no
+      // `traceparent`/`tracestate`/`baggage` key can reach the wire.
       const managedClient: ManagedMcpClient = wrapLegacyClient(
         upstreamClient,
         () => this.perRequestLogLevels.get(serverId),
+        this.traceContextProvider
+          ? () => this.traceContextProvider?.(serverId)
+          : undefined,
       );
       client = managedClient;
 

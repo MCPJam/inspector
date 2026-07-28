@@ -371,6 +371,29 @@ export {
   type McpProtocolVersion,
 } from "./mcp-client-manager/mcp-protocol-version.js";
 
+// OpenTelemetry trace context over the 2026-07-28 reserved `_meta` keys.
+// Browser-safe by construction: pure string validation, no transport. The
+// browser side is the READ half — surfacing a trace context a server sent so
+// a user debugging it can see which trace their call joined. `baggage` here
+// is untrusted, display-only data; it must never reach PostHog/Axiom.
+export {
+  BAGGAGE_META_KEY,
+  TRACEPARENT_META_KEY,
+  TRACESTATE_META_KEY,
+  extractTraceContext,
+  isValidBaggage,
+  isValidTraceparent,
+  isValidTracestate,
+  parseTraceparent,
+  sanitizeTraceContext,
+  traceContextToMeta,
+} from "./mcp-client-manager/trace-context.js";
+export type {
+  ParsedTraceparent,
+  TraceContext,
+  TraceContextProvider,
+} from "./mcp-client-manager/trace-context.js";
+
 // HostConfig — the public `Host` builder (also at `@mcpjam/sdk/host-config`).
 // Browser-safe: the class wraps the pure canonicalizer + Web Crypto hash.
 // `McpProtocolVersion` is omitted here — already exported just above.

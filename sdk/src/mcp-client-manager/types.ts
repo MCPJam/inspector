@@ -22,6 +22,7 @@ import type {
 import type { StdioServerParameters } from "@modelcontextprotocol/client/stdio";
 import type { RetryPolicy } from "../retry.js";
 import type { RefreshTokenOAuthProvider } from "./refresh-token-auth-provider.js";
+import type { TraceContextProvider } from "./trace-context.js";
 import type { ToolSet } from "ai";
 
 // Re-export ElicitResult for convenience
@@ -504,6 +505,20 @@ export interface MCPClientManagerOptions {
    * `surface` dimension and forwards to PostHog/Axiom.
    */
   negotiationOutcomeLogger?: NegotiationOutcomeLogger;
+  /**
+   * Optional accessor for the ambient OpenTelemetry trace context to
+   * propagate into request `_meta` (the 2026-07-28 reserved `traceparent` /
+   * `tracestate` / `baggage` keys). Called per request with the server id, so
+   * an embedder whose tracer changes spans per operation gets the current one
+   * without reconnecting.
+   *
+   * Propagation only. Returning `undefined` — the default, since MCPJam runs
+   * no OpenTelemetry tracer — means the keys are ABSENT on the wire; the
+   * manager never mints a trace or span id to fill them. Injection happens on
+   * the modern era only, and a malformed value is dropped rather than
+   * forwarded. See `trace-context.ts`.
+   */
+  traceContextProvider?: TraceContextProvider;
   /** Default retry policy for retryable manager operations */
   retryPolicy?: RetryPolicy;
   /**
