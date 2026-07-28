@@ -7,6 +7,14 @@ import {
 import type { TraceEnvelope } from "@/components/evals/trace-viewer-adapter";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 
+/** One pinned plugin version recorded on a synthetic session's resume config. */
+export type SessionPluginVersion = {
+  pluginId: string;
+  pluginVersionId: string;
+  name: string;
+  bundleHash: string;
+};
+
 /**
  * Fetch span blobs from turn trace URLs and flatten into a single span array.
  * Same contract as ShareUsageThreadDetail's hydrateSpans.
@@ -51,6 +59,14 @@ export function usePersistedSessionTrace(threadId: string | null): {
   trace: TraceEnvelope | null;
   loading: boolean;
   error: string | null;
+  /**
+   * The plugin versions this synthetic session's journey target pinned (BE-5),
+   * derived server-side from the run snapshot. Returned from THIS hook rather
+   * than a second query because the session document it comes from is already
+   * loaded here — and because a transcript and the bundle that produced it are
+   * one answer, not two.
+   */
+  pluginVersions: SessionPluginVersion[];
 } {
   const { thread } = useSharedChatThread({ threadId });
   const { traces: turnTraces } = useSharedChatTurnTraces({ threadId });
@@ -146,5 +162,10 @@ export function usePersistedSessionTrace(threadId: string | null): {
           ...(spans.length > 0 ? { spans } : {}),
         };
 
-  return { trace, loading, error };
+  return {
+    trace,
+    loading,
+    error,
+    pluginVersions: thread?.resumeConfig?.pluginVersions ?? [],
+  };
 }
