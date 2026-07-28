@@ -753,9 +753,7 @@ export class SubscriptionCoordinator {
       return;
     }
     const acknowledged =
-      (notification.params?.notifications as SubscriptionFilterShape) ??
-      undefined ??
-      {};
+      (notification.params?.notifications as SubscriptionFilterShape) ?? {};
     this.markAcknowledged(stream, acknowledged);
   }
 
