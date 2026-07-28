@@ -346,7 +346,30 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
   // config, so the human finishes and submits it).
   const [journeyFormOpen, setJourneyFormOpen] = useState(false);
   const [journeyGoalSeed, setJourneyGoalSeed] = useState("");
-  const [personaDialogOpen, setPersonaDialogOpen] = useState(false);
+  const [creatingPersona, setCreatingPersona] = useState(false);
+  const [personaAutoEditId, setPersonaAutoEditId] = useState<string | null>(
+    null
+  );
+
+  const handleCreatePersona = useCallback(async () => {
+    if (!projectId || creatingPersona) return;
+    setCreatingPersona(true);
+    try {
+      const row = await createPersona({
+        projectId,
+        name: "New persona",
+        role: "Role",
+      } as any);
+      setPersonaAutoEditId(row._id);
+      setSelectedPersonaId(row._id);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to create persona"
+      );
+    } finally {
+      setCreatingPersona(false);
+    }
+  }, [projectId, creatingPersona, createPersona]);
 
   // Run detail opened in the right-hand panel. `runSnapshot` seeds the panel
   // until its own `listJourneyRuns` subscription resolves the run (identical
@@ -732,17 +755,20 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
             <aside className="flex w-72 shrink-0 flex-col border-r">
               <div className="flex items-center justify-between border-b px-4 py-3">
                 <h2 className="text-sm font-semibold">Personas</h2>
-                <NewPersonaDialog
-                  open={personaDialogOpen}
-                  onOpenChange={setPersonaDialogOpen}
-                  onCreate={async (draft) => {
-                    const row = await createPersona({
-                      projectId,
-                      ...draft,
-                    } as any);
-                    setSelectedPersonaId(row._id);
-                  }}
-                />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={creatingPersona}
+                  onClick={() => void handleCreatePersona()}
+                >
+                  {creatingPersona ? (
+                    <Loader2 className="mr-1 size-3 animate-spin" />
+                  ) : (
+                    <Plus className="mr-1 size-3" />
+                  )}
+                  New
+                </Button>
               </div>
               <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
                 {personas === undefined ? (
@@ -767,9 +793,14 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
                       type="button"
                       size="sm"
                       className="font-semibold shadow-sm"
-                      onClick={() => setPersonaDialogOpen(true)}
+                      disabled={creatingPersona}
+                      onClick={() => void handleCreatePersona()}
                     >
-                      <Plus className="h-3.5 w-3.5" />
+                      {creatingPersona ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Plus className="h-3.5 w-3.5" />
+                      )}
                       Create your first persona
                     </Button>
                   </div>
@@ -816,7 +847,7 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
                 </div>
               ) : personas.length === 0 ? (
                 <SwarmsEmptyHero
-                  onCreatePersona={() => setPersonaDialogOpen(true)}
+                  onCreatePersona={() => void handleCreatePersona()}
                 />
               ) : !selectedPersona ? (
                 <JourneyNetworkBackdrop />
@@ -827,6 +858,9 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
                       <PersonaDetailHeader
                         persona={selectedPersona}
                         running={runningSet.has(selectedPersona._id)}
+                        autoEditName={
+                          personaAutoEditId === selectedPersona._id
+                        }
                         onSave={(patch) =>
                           savePersonaField(selectedPersona._id, patch)
                         }
@@ -1167,11 +1201,13 @@ function RunSessionsView({ personaRefId }: { personaRefId: string }) {
 function PersonaDetailHeader({
   persona,
   running,
+  autoEditName = false,
   onSave,
   onDelete,
 }: {
   persona: Persona;
   running: boolean;
+  autoEditName?: boolean;
   onSave: (patch: {
     name?: string;
     role?: string;
@@ -1212,6 +1248,7 @@ function PersonaDetailHeader({
           <InlineEditableText
             value={persona.name}
             onSave={(name) => onSave({ name })}
+            startInEditMode={autoEditName}
             className="block w-full text-lg font-semibold tracking-tight sm:text-xl"
             truncate={false}
           />
@@ -1247,144 +1284,6 @@ function PersonaDetailHeader({
         Delete persona
       </Button>
     </div>
-  );
-}
-
-// ── create persona dialog (design-system; replaces the floating raw form) ────
-function NewPersonaDialog({
-  open,
-  onOpenChange,
-  onCreate,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onCreate: (draft: {
-    name: string;
-    role: string;
-    notes?: string;
-  }) => Promise<void>;
-}) {
-  const [name, setName] = useState("");
-  const [role, setRole] = useState("");
-  const [notes, setNotes] = useState("");
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    if (!open) {
-      setName("");
-      setRole("");
-      setNotes("");
-      setSaving(false);
-    }
-  }, [open]);
-
-  const handleCreate = async () => {
-    if (!name.trim() || !role.trim()) {
-      toast.error("Name and role are required");
-      return;
-    }
-    setSaving(true);
-    try {
-      await onCreate({
-        name: name.trim(),
-        role: role.trim(),
-        notes: notes.trim() || undefined,
-      });
-      toast.success("Persona created");
-      onOpenChange(false);
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Failed to create persona"
-      );
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <>
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        onClick={() => onOpenChange(true)}
-      >
-        <Plus className="mr-1 size-3" />
-        New
-      </Button>
-      <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>New persona</DialogTitle>
-            <DialogDescription>
-              A synthetic user who pursues journeys across your clients.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex flex-col gap-3 py-1">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="swarm-persona-name">Name</Label>
-              <Input
-                id="swarm-persona-name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Test User"
-                autoFocus
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    void handleCreate();
-                  }
-                }}
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="swarm-persona-role">Role</Label>
-              <Input
-                id="swarm-persona-role"
-                value={role}
-                onChange={(e) => setRole(e.target.value)}
-                placeholder="SWE evaluating the product"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    void handleCreate();
-                  }
-                }}
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="swarm-persona-notes">Notes / personality</Label>
-              <Textarea
-                id="swarm-persona-notes"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="Background, tone, what they care about…"
-                rows={4}
-                className="leading-relaxed"
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-              disabled={saving}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              disabled={saving || !name.trim() || !role.trim()}
-              onClick={() => void handleCreate()}
-            >
-              {saving ? <Loader2 className="mr-1 size-3 animate-spin" /> : null}
-              Create persona
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
   );
 }
 

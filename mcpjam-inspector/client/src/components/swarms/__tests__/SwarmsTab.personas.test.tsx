@@ -110,37 +110,27 @@ describe("SwarmsTab — persona create/edit", () => {
     ).toBeNull();
   });
 
-  it("opens a labeled create dialog instead of a floating raw form", async () => {
+  it("creates a persona row immediately instead of opening a modal", async () => {
+    createPersonaMutation.mockResolvedValue({
+      _id: "persona-new",
+      name: "New persona",
+      role: "Role",
+      notes: "",
+    });
+
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
 
     const aside = screen.getByRole("complementary");
     fireEvent.click(within(aside).getByRole("button", { name: /^new$/i }));
 
-    const dialog = screen.getByRole("dialog");
-    expect(screen.getByRole("heading", { name: "New persona" })).toBeTruthy();
-    expect(within(dialog).getByLabelText("Name")).toBeTruthy();
-    expect(within(dialog).getByLabelText("Role")).toBeTruthy();
-    expect(within(dialog).getByLabelText("Notes / personality")).toBeTruthy();
-
-    fireEvent.change(within(dialog).getByLabelText("Name"), {
-      target: { value: "Nacho" },
-    });
-    fireEvent.change(within(dialog).getByLabelText("Role"), {
-      target: { value: "SWE" },
-    });
-    fireEvent.change(within(dialog).getByLabelText("Notes / personality"), {
-      target: { value: "pragmatic" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: /create persona/i }));
-
     await waitFor(() => {
       expect(createPersonaMutation).toHaveBeenCalledWith({
         projectId: "proj-1",
-        name: "Nacho",
-        role: "SWE",
-        notes: "pragmatic",
+        name: "New persona",
+        role: "Role",
       });
     });
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("saves personality notes on blur via updatePersona", async () => {
