@@ -188,7 +188,14 @@ function buildHostConfig(overrides?: HostOverrides): any {
 
 function renderRevalidationHook(
   dispatch: (action: AppAction) => void,
-  initial: { profile: Profile; hostConfig: any }
+  initial: { profile: Profile; hostConfig: any },
+  // The `projectServerConfig:getConfig` subscription is gated on auth (it's
+  // a `userQuery`), so control-plane suites must render signed-in. Local
+  // suites keep the unauthenticated default and read the host mirror.
+  auth: { isAuthenticated: boolean; useLocalFallback: boolean } = {
+    isAuthenticated: false,
+    useLocalFallback: true,
+  }
 ) {
   const appState = buildConnectedAppState();
   const state = { ...initial };
@@ -203,11 +210,11 @@ function renderRevalidationHook(
       appState,
       dispatch,
       isLoading: false,
-      isAuthenticated: false,
-      hasSignedInUser: false,
+      isAuthenticated: auth.isAuthenticated,
+      hasSignedInUser: auth.isAuthenticated,
       isAuthLoading: false,
       isLoadingProjects: false,
-      useLocalFallback: true,
+      useLocalFallback: auth.useLocalFallback,
       effectiveProjects: appState.projects,
       effectiveActiveProjectId: appState.activeProjectId,
       activeProjectServersFlat: undefined,
@@ -485,6 +492,9 @@ describe("useServerState per-server pin resolution (control-plane first)", () =>
     return lastCall?.[2]?.connectionDefaults;
   }
 
+  // `getConfig` is a `userQuery`; the subscription only runs signed-in.
+  const SIGNED_IN = { isAuthenticated: true, useLocalFallback: false };
+
   it("connects with the just-saved pin while the host mirror is still stale", async () => {
     reconnectServerMock.mockResolvedValue({
       success: true,
@@ -493,10 +503,14 @@ describe("useServerState per-server pin resolution (control-plane first)", () =>
 
     const dispatch = vi.fn();
     // No pin anywhere yet.
-    const { rerender } = renderRevalidationHook(dispatch, {
-      profile: undefined,
-      hostConfig: buildHostConfig(),
-    });
+    const { rerender } = renderRevalidationHook(
+      dispatch,
+      {
+        profile: undefined,
+        hostConfig: buildHostConfig(),
+      },
+      SIGNED_IN
+    );
     await flushAsyncWork(5);
     expect(reconnectServerMock).not.toHaveBeenCalled();
 
@@ -518,10 +532,14 @@ describe("useServerState per-server pin resolution (control-plane first)", () =>
     });
 
     const dispatch = vi.fn();
-    const { rerender } = renderRevalidationHook(dispatch, {
-      profile: { mcpProtocolVersion: "2025-11-25" },
-      hostConfig: buildHostConfig(),
-    });
+    const { rerender } = renderRevalidationHook(
+      dispatch,
+      {
+        profile: { mcpProtocolVersion: "2025-11-25" },
+        hostConfig: buildHostConfig(),
+      },
+      SIGNED_IN
+    );
     await flushAsyncWork(5);
 
     projectServerConfigDtoMock.mockReturnValue(dtoWithOverride("2026-07-28"));
@@ -536,6 +554,48 @@ describe("useServerState per-server pin resolution (control-plane first)", () =>
     expect(lastConnectionDefaults()?.mcpProtocolVersion).toBe("2026-07-28");
   });
 
+  // A loaded DTO is authoritative, absence included. Clearing the override
+  // writes that absence to the control plane; falling through to the mirror
+  // on a miss would reconnect on the version the user just removed.
+  it("drops back to the host default when the override is cleared, even with a stale mirror", async () => {
+    reconnectServerMock.mockResolvedValue({
+      success: true,
+      initInfo: { serverCapabilities: {} },
+    });
+
+    const dispatch = vi.fn();
+    // Pinned on both layers, connected on the pin.
+    projectServerConfigDtoMock.mockReturnValue(dtoWithOverride("2026-07-28"));
+    const { rerender } = renderRevalidationHook(
+      dispatch,
+      {
+        profile: { mcpProtocolVersion: "2025-11-25" },
+        hostConfig: buildHostConfig({
+          srv_demo: { mcpProtocolVersionOverride: "2026-07-28" },
+        }),
+      },
+      SIGNED_IN
+    );
+    await flushAsyncWork(5);
+    reconnectServerMock.mockClear();
+
+    // Un-pin: the control-plane row loses the override, the mirror hasn't.
+    projectServerConfigDtoMock.mockReturnValue(dtoWithOverride(undefined));
+    rerender({
+      profile: { mcpProtocolVersion: "2025-11-25" },
+      hostConfig: buildHostConfig({
+        srv_demo: { mcpProtocolVersionOverride: "2026-07-28" },
+      }),
+    });
+
+    await waitFor(() => {
+      expect(reconnectServerMock).toHaveBeenCalledTimes(1);
+    });
+    expect(lastConnectionDefaults()?.mcpProtocolVersion).toBe("2025-11-25");
+  });
+
+  // Unauthenticated: the subscription is skipped, so the DTO stays
+  // `undefined` and the mirror is the only readable source.
   it("falls back to the host mirror while the control-plane row is loading", async () => {
     reconnectServerMock.mockResolvedValue({
       success: true,

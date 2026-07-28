@@ -1065,11 +1065,21 @@ export function useServerState({
   // and silently connect on the host default (issue #3453). Convex dedupes
   // identical subscriptions, so sharing this query with `App.tsx` /
   // `ServersTab` / `ServerDetailModal` costs no extra traffic.
+  // Gated on auth + db-user readiness on top of the id-shape guard:
+  // `getConfig` is a `userQuery` that resolves project membership off
+  // `ctx.actor.userId` and throws "Not a member of this project" without
+  // one. Retained project state can carry a real `sharedProjectId` into a
+  // pre-auth or local-fallback render, so the id guard alone would fire
+  // the query before the scope is authorized. Same gate `ServersTab` uses.
   const sharedProjectIdForServerConfig = activeProject?.sharedProjectId ?? null;
+  const canQueryProjectServerConfig =
+    isAuthenticated &&
+    isUserReady &&
+    !!sharedProjectIdForServerConfig &&
+    shouldQueryProjectId(sharedProjectIdForServerConfig);
   const projectServerConfigDto = useQuery(
     "projectServerConfig:getConfig" as never,
-    sharedProjectIdForServerConfig &&
-      shouldQueryProjectId(sharedProjectIdForServerConfig)
+    canQueryProjectServerConfig
       ? ({ projectId: sharedProjectIdForServerConfig } as never)
       : "skip"
   ) as ProjectServerConfigDto | null | undefined;
@@ -1078,19 +1088,25 @@ export function useServerState({
    * Resolve a server's pinned wire version override, control-plane first.
    *
    * Precedence mirrors `App.tsx`'s hosted pin map: the `projectServerConfig`
-   * DTO is the row the save actually wrote, so it wins; the host-config
-   * mirror is the fallback for renderers whose DTO hasn't hydrated yet
-   * (`undefined`). Each candidate is membership-gated so a typo on either
-   * layer can't reach the SDK's open-routing predicate.
+   * DTO is the row the save actually wrote, so once it has LOADED it is
+   * authoritative — including an explicit absence. Clearing an override
+   * writes that absence to the control plane, so falling through to the
+   * mirror on a miss would keep reconnecting on the version the user just
+   * removed until the host mirror caught up. The mirror is consulted only
+   * while the DTO is `undefined` — still in flight, or skipped entirely in
+   * local/unauthenticated mode, where the control plane isn't readable and
+   * the mirror is the only source. Each candidate is membership-gated so a
+   * typo on either layer can't reach the SDK's open-routing predicate.
    */
   const resolveServerProtocolOverride = useCallback(
     (serverId: string | undefined): McpProtocolVersion | undefined => {
       if (!serverId) return undefined;
       const raw =
-        projectServerConfigDto?.overrides?.[serverId]
-          ?.mcpProtocolVersionOverride ??
-        activeHostConfig?.serverConnectionOverrides?.[serverId]
-          ?.mcpProtocolVersionOverride;
+        projectServerConfigDto === undefined
+          ? activeHostConfig?.serverConnectionOverrides?.[serverId]
+              ?.mcpProtocolVersionOverride
+          : projectServerConfigDto?.overrides?.[serverId]
+              ?.mcpProtocolVersionOverride;
       return typeof raw === "string" && isKnownProtocolVersion(raw)
         ? raw
         : undefined;
