@@ -220,10 +220,6 @@ function makeCollector(serverId: string): MrtrInputCollector {
 // Registration (before connect)
 // ---------------------------------------------------------------------------
 
-// Per-manager set of server ids whose collector is already registered. WeakMap
-// so a discarded manager (hot reload) is collected with its set.
-const registered = new WeakMap<MCPClientManager, Set<string>>();
-
 /**
  * The `elicitation` capability a local MRTR connection may advertise.
  *
@@ -333,24 +329,41 @@ function isModernOnlyLocalConnection(config: MCPServerConfig): boolean {
 }
 
 /**
- * Idempotently registers the MRTR input collector for `serverId` on `manager`.
+ * Registers the MRTR input collector for `serverId` on `manager`.
  * MUST be called BEFORE `manager.connectToServer(serverId, …)` so the
  * `elicitation` client capability is advertised on the connect envelope (see
  * the module header).
+ *
+ * ## Why this re-registers unconditionally
+ *
+ * `MCPClientManager.removeServer()` PURGES `mrtrInputCollectors` (deliberately
+ * — a re-registered server must not inherit the previous owner's collector
+ * closure). The local connect route runs with `removeOnFailure: true`, so
+ * every failed connect, and every explicit remove from the servers route,
+ * silently drops the collector.
+ *
+ * This function used to mirror "already registered" in a module-level
+ * `WeakMap<manager, Set<serverId>>`. That mirror had no way to observe the
+ * purge, so after ONE failed connect it answered "already registered" forever:
+ * the collector was never restored, `buildCapabilities` saw no collector, and
+ * every subsequent connection advertised no `elicitation` at all. A 2026-07-28
+ * server then correctly refuses to embed `elicitation/create` in an
+ * `input_required` result, and every MRTR tool fails with "the request's
+ * client capabilities do not declare the required capability" — with a
+ * successful connect and a full tool list, so nothing looks wrong.
+ *
+ * Re-registering is cheap and safe: `setMrtrInputCollector` is a `Map.set`,
+ * and `makeCollector` is a pure factory closing over `serverId` (all round
+ * state lives in the module-level `pendingRounds` / `subscribers`). The
+ * manager's own map is the single source of truth for whether a collector is
+ * installed — this module keeps no second copy of that fact.
  */
 export function registerLocalMrtrCollector(
   manager: MCPClientManager,
   serverId: string,
 ): void {
-  let ids = registered.get(manager);
-  if (!ids) {
-    ids = new Set<string>();
-    registered.set(manager, ids);
-  }
-  if (ids.has(serverId)) return;
   try {
     manager.setMrtrInputCollector(serverId, makeCollector(serverId));
-    ids.add(serverId);
   } catch (err) {
     // Pass the original error as the 2nd (error) arg so Sentry captures a stack
     // and Axiom serializes the real message; serverId is the context (3rd) arg.
