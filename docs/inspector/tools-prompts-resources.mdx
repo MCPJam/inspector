@@ -30,6 +30,7 @@ Test your MCP tools by manually invoking them with custom parameters:
 - **Search tools** - Quickly find specific tools by name
 - **Invoke tools** - Trigger tools with custom input parameters
 - **View results** - See tool outputs, including widget responses for ChatGPT apps and MCP apps
+- **Trace context** - When a MCP 2026-07-28 server includes OpenTelemetry trace context in a result's `_meta`, the Response panel shows the trace id collapsed at the top of the result. Expand it to see the span id, sampling flag, and the raw `traceparent`, `tracestate`, and `baggage` header values.
 - **Elicitation support** - Handle elicitation requests from tools with a spec-complete form dialog
 - **Multi-round input** - Tools that return `input_required` (MCP 2026-07-28) collect the needed input through the same dialog and retry automatically
 - **Save requests** - Save frequently used tool invocations for quick testing
