@@ -345,6 +345,27 @@ export {
   LogLevelMetaClient,
   type LogLevelProvider,
 } from "./log-level-meta-client.js";
+// OpenTelemetry trace-context propagation over the 2026-07-28 reserved
+// `_meta` keys. Propagation only: with no provider wired, nothing is emitted.
+export {
+  TraceContextMetaClient,
+  type ConnectionTraceContextProvider,
+} from "./trace-context-meta-client.js";
+export {
+  BAGGAGE_META_KEY,
+  TRACEPARENT_META_KEY,
+  TRACESTATE_META_KEY,
+  extractTraceContext,
+  isValidBaggage,
+  isValidTraceparent,
+  isValidTracestate,
+  parseTraceparent,
+  sanitizeTraceContext,
+  traceContextToMeta,
+  type ParsedTraceparent,
+  type TraceContext,
+  type TraceContextProvider,
+} from "./trace-context.js";
 export {
   DialectAwareJsonSchemaValidator,
   type DialectAwareJsonSchemaValidatorOptions,

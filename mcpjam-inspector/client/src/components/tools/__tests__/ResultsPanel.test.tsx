@@ -270,4 +270,56 @@ describe("ResultsPanel", () => {
       ).not.toBeInTheDocument();
     });
   });
+
+  describe("trace context", () => {
+    const traceparent =
+      "00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01";
+
+    it("surfaces the trace id when the result carries a traceparent", async () => {
+      render(
+        <ResultsPanel
+          error=""
+          structuredContentValid={false}
+          result={{
+            content: [{ type: "text", text: "{}" }],
+            _meta: { traceparent, baggage: "userId=alice" },
+          }}
+        />
+      );
+
+      expect(screen.getByText("Trace")).toBeInTheDocument();
+      expect(
+        screen.getByText("0af7651916cd43dd8448eb211c80319c")
+      ).toBeInTheDocument();
+      // Specifics — including the untrusted `baggage` — stay behind the expand.
+      expect(screen.queryByText("userId=alice")).not.toBeInTheDocument();
+
+      await userEvent.click(screen.getByText("Trace"));
+      expect(screen.getByText("00f067aa0ba902b7")).toBeInTheDocument();
+      expect(screen.getByText("userId=alice")).toBeInTheDocument();
+    });
+
+    it("renders nothing for a result with no trace context or a malformed one", () => {
+      const { rerender } = render(
+        <ResultsPanel
+          error=""
+          structuredContentValid={false}
+          result={{ content: [{ type: "text", text: "{}" }] }}
+        />
+      );
+      expect(screen.queryByText("Trace")).not.toBeInTheDocument();
+
+      rerender(
+        <ResultsPanel
+          error=""
+          structuredContentValid={false}
+          result={{
+            content: [{ type: "text", text: "{}" }],
+            _meta: { traceparent: "00-nope-01" },
+          }}
+        />
+      );
+      expect(screen.queryByText("Trace")).not.toBeInTheDocument();
+    });
+  });
 });
