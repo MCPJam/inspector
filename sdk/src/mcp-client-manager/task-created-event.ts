@@ -120,6 +120,13 @@ export class TaskCreatedSink {
    */
   async dispatch(event: TaskCreatedEvent): Promise<TaskCreatedDispatchResult> {
     const degraded: TaskCreatedConsumerFailure[] = [];
+    // Functional failures are collected rather than thrown from inside the
+    // loop. Throwing on the first one skipped every consumer after it, so a
+    // tracker write that failed took the stream part and the registry record
+    // down with it — silently, and in registration order, which is not a
+    // meaningful priority. Delivery is attempted to EVERY consumer; the throw
+    // happens once, below, after they have all had their turn.
+    const fatal: TaskCreatedConsumerFailure[] = [];
     // Iterate a COPY: a consumer that unregisters itself (or a sibling) while
     // we are awaiting it would shift the indices under a live iterator and the
     // next consumer would be silently skipped.
@@ -143,12 +150,28 @@ export class TaskCreatedSink {
         }
         await consumer.handle(event);
       } catch (error) {
-        if (!consumer.bestEffort) throw error;
+        if (!consumer.bestEffort) {
+          fatal.push({ name: consumer.name, error });
+          continue;
+        }
         // The task is running on the server regardless of whether we recorded
         // a recovery row for it. Reporting this is right; failing the call is
         // not.
         degraded.push({ name: consumer.name, error });
       }
+    }
+    if (fatal.length === 1) {
+      // Rethrown unchanged: a lone functional failure should surface exactly
+      // as the consumer threw it, stack and type intact.
+      throw fatal[0].error;
+    }
+    if (fatal.length > 1) {
+      throw new AggregateError(
+        fatal.map((failure) => failure.error),
+        `${fatal.length} task-created consumers failed: ${fatal
+          .map((failure) => failure.name)
+          .join(", ")}`
+      );
     }
     return { degraded };
   }

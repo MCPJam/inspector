@@ -132,4 +132,58 @@ describe("failure handling", () => {
     await sink.dispatch(event);
     expect(after).toHaveBeenCalled();
   });
+
+  it("keeps running the remaining consumers past a FUNCTIONAL failure", async () => {
+    // The best-effort case above passed while this one did not: dispatch threw
+    // from inside the loop, so a tracker write that failed took the stream part
+    // and the registry record down with it, in registration order.
+    const stream = vi.fn();
+    const registry = vi.fn();
+    const sink = new TaskCreatedSink();
+    sink.register({
+      name: "tracker",
+      handle: () => {
+        throw new Error("localStorage unavailable");
+      },
+    });
+    sink.register({ name: "stream", handle: stream });
+    sink.register({ name: "registry", bestEffort: true, handle: registry });
+
+    await expect(sink.dispatch(event)).rejects.toThrow(
+      "localStorage unavailable"
+    );
+    expect(stream).toHaveBeenCalled();
+    expect(registry).toHaveBeenCalled();
+  });
+
+  it("reports every functional failure when more than one fails", async () => {
+    const sink = new TaskCreatedSink();
+    sink.register({
+      name: "tracker",
+      handle: () => {
+        throw new Error("tracker down");
+      },
+    });
+    sink.register({
+      name: "stream",
+      handle: () => {
+        throw new Error("stream closed");
+      },
+    });
+    sink.register({
+      name: "registry",
+      bestEffort: true,
+      handle: () => {
+        throw new Error("registry down");
+      },
+    });
+
+    const failure = await sink.dispatch(event).catch((error) => error);
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect(failure.message).toContain("tracker, stream");
+    expect((failure as AggregateError).errors.map((e: Error) => e.message)).toEqual([
+      "tracker down",
+      "stream closed",
+    ]);
+  });
 });
