@@ -346,6 +346,30 @@ describe("SwarmsTab — generate persona", () => {
     ]);
   });
 
+  it("dispatches one billed generation even on a double-click", async () => {
+    let release: (v: unknown) => void = () => {};
+    generatePersonaMock.mockImplementation(
+      () => new Promise((resolve) => (release = resolve))
+    );
+
+    openGeneratePersona();
+    await pickClient(/host one/i);
+    fireEvent.click(screen.getByTestId("mock-server-group-picker"));
+
+    const submit = screen.getByRole("button", { name: /generate persona/i });
+    // Two clicks with no render in between: `pending` has not committed yet,
+    // so only the synchronous ref latch can stop the second dispatch.
+    fireEvent.click(submit);
+    fireEvent.click(submit);
+
+    expect(generatePersonaMock).toHaveBeenCalledTimes(1);
+
+    release({ persona: { name: "P", role: "R" }, journeys: [{ goal: "g" }] });
+    await waitFor(() => {
+      expect(createPersonaMutation).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("renders a quota 429 inline instead of closing the dialog", async () => {
     generatePersonaMock.mockRejectedValue(
       new SwarmGenerateError(429, "You've hit your usage limit for today.")

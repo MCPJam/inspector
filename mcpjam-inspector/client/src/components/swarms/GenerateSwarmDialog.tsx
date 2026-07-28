@@ -12,7 +12,7 @@
  * mutations so every existing validation applies and the results land as real,
  * editable rows. Running them stays a separate explicit click.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Sparkles } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -112,6 +112,11 @@ export function GenerateSwarmDialog({
   // the journeys, so the submit button stays locked for the rest of this
   // dialog session; the retry path is "Generate journeys" on the new persona.
   const [personaCommitted, setPersonaCommitted] = useState(false);
+  // Synchronous latch so a double-click can't dispatch two BILLED generations
+  // before React commits `pending` and renders the button disabled. Same
+  // pattern as `rebuildInFlightRef` in ChatboxUsagePanel; the state above is
+  // still what drives rendering.
+  const generateInFlightRef = useRef(false);
 
   useEffect(() => {
     if (!open) {
@@ -121,6 +126,7 @@ export function GenerateSwarmDialog({
       setPending(false);
       setErrorMessage(null);
       setPersonaCommitted(false);
+      generateInFlightRef.current = false;
     }
   }, [open]);
 
@@ -191,6 +197,10 @@ export function GenerateSwarmDialog({
 
   const handleGenerate = async () => {
     if (!serverAttachmentId || liveHostIds.length === 0 || !countValid) return;
+    // Latch BEFORE any await — `pending` and `personaCommitted` only take
+    // effect on the next render, which is too late for a rapid second click.
+    if (generateInFlightRef.current || personaCommitted) return;
+    generateInFlightRef.current = true;
     if (
       mode === "persona" &&
       typeof personaCount === "number" &&
@@ -329,6 +339,7 @@ export function GenerateSwarmDialog({
           : "Generation failed"
       );
     } finally {
+      generateInFlightRef.current = false;
       setPending(false);
     }
   };
