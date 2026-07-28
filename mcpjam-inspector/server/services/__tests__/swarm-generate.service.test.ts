@@ -59,6 +59,10 @@ describe("swarm-generate service — client-facing error copy", () => {
       journeyCount: 3,
     }).catch((e) => e);
 
+    // Pin the error identity too: a bare "no convex.site" assertion would also
+    // hold if the call resolved, or rejected with something unrelated.
+    expect(err).toBeInstanceOf(SwarmAgentError);
+    expect(err.status).toBe(429);
     expect(err.message).not.toContain("convex.site");
   });
 
@@ -75,6 +79,8 @@ describe("swarm-generate service — client-facing error copy", () => {
       journeyCount: 3,
     }).catch((e) => e);
 
+    expect(err).toBeInstanceOf(SwarmAgentError);
+    expect(err.status).toBe(429);
     expect(err.message).toBe("You've hit your usage limit.");
     expect(err.message).not.toContain("convex.site");
   });
