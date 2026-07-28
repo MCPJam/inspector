@@ -47,32 +47,21 @@ import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
 type HostProtocolDropdownValue = "auto" | McpProtocolVersion;
 
 /**
- * Decorate the two revisions that carry meaning beyond their date, and
- * derive both markers rather than hardcoding them:
+ * Decorate the two newest revisions with their product labels:
  *
- * - **Latest** = newest non-stateless revision. Computed via
- *   `isStatelessProtocolVersion` so the marker walks forward on its own
- *   when a newer stable version is appended to `MCP_PROTOCOL_VERSIONS` —
- *   a hardcoded "Latest (2025-11-25)" would quietly become a lie.
- * - **RC** = any stateless revision, i.e. the 2026-era preview.
+ * - **Latest** = newest known revision. Derived from
+ *   `MCP_PROTOCOL_VERSIONS` so the marker walks forward automatically.
+ * - **November** = the 2025-11-25 revision.
  *
  * `MCP_PROTOCOL_VERSIONS` is ordered oldest-first; the dropdown lists
- * newest-first, which puts the two versions anyone actually picks at the
- * top and leaves the archaeology below.
+ * newest-first.
  */
-const LATEST_STABLE_PROTOCOL_VERSION: McpProtocolVersion | undefined = [
-  ...MCP_PROTOCOL_VERSIONS,
-]
-  .reverse()
-  .find((v) => !isStatelessProtocolVersion(v));
+const LATEST_PROTOCOL_VERSION: McpProtocolVersion | undefined =
+  MCP_PROTOCOL_VERSIONS[MCP_PROTOCOL_VERSIONS.length - 1];
 
 function protocolVersionLabel(version: McpProtocolVersion): string {
-  // "2026-07-28" → "2026 RC (2026-07-28)": the era year is how the RC is
-  // spoken about, the full date is what actually goes on the wire.
-  if (isStatelessProtocolVersion(version)) {
-    return `${version.slice(0, 4)} RC (${version})`;
-  }
-  if (version === LATEST_STABLE_PROTOCOL_VERSION) return `Latest (${version})`;
+  if (version === LATEST_PROTOCOL_VERSION) return `Latest (${version})`;
+  if (version === "2025-11-25") return `November (${version})`;
   return version;
 }
 
