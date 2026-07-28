@@ -39,6 +39,23 @@ vi.mock("@/lib/task-tracker", () => ({
   clearTrackedTasksForServer: vi.fn(),
   getDismissedTaskIds: vi.fn().mockReturnValue(new Set()),
   dismissTasksForServer: vi.fn(),
+  // v3 durable scheduling state. `useTaskScheduler` reads the persisted
+  // schedule when it first sees a handle (so a reload resumes rather than
+  // re-polling immediately) and writes the whole tick back in one batch.
+  recordTaskObservation: vi.fn(),
+  recordTaskObservations: vi.fn(),
+  getTrackedTaskSchedule: vi.fn().mockReturnValue(undefined),
+  // Batched restore: one store read per tick for every handle the scheduler
+  // has not seen yet, instead of two per handle.
+  getTrackedTaskRestoreStates: vi.fn().mockReturnValue(new Map()),
+  taskIdentity: (t: {
+    serverId: string;
+    wire: string;
+    taskId: string;
+    scope?: string;
+  }) => `${t.scope ?? ""}\u0000${t.serverId}\u0000${t.wire}\u0000${t.taskId}`,
+  recordRespondedInputKeys: vi.fn(),
+  getRespondedInputKeys: vi.fn().mockReturnValue([]),
 }));
 
 vi.mock("@/hooks/use-task-elicitation", () => ({

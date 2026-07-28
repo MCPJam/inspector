@@ -51,7 +51,7 @@ function optionalNumber(value: unknown): number | undefined {
 
 export function normalizeTask(
   wire: TasksWire,
-  raw: Record<string, unknown>,
+  raw: Record<string, unknown>
 ): NormalizedTask {
   const ttl = wire === "extension" ? raw.ttlMs : raw.ttl;
   const pollInterval =
@@ -125,6 +125,57 @@ export const STATUS_CONFIG: Record<TaskDisplayStatus, StatusConfig> = {
  * Renders a tracked handle the server has forgotten straight from tracker
  * state — no network read, since re-polling it can only fail again.
  */
+/**
+ * A row for a tracked handle we have not read yet in this session.
+ *
+ * Rendered on the first tick after a reload, when a restored handle's stored
+ * poll floor has not yet elapsed. It carries the last status the tracker
+ * persisted so the list is not empty — an empty list would make the tab think
+ * there are no active tasks, never start auto-refresh, and leave the handle
+ * unpolled and invisible until a manual refresh.
+ *
+ * Deliberately NOT marked `expired`: the server has said nothing about this
+ * handle. It is simply not due yet.
+ */
+export function restoredPlaceholderTask(tracked: {
+  taskId: string;
+  wire: TasksWire;
+  createdAt: string;
+  status?: string;
+  lastUpdatedAt?: string;
+  ttlMs?: number | null;
+  pollIntervalMs?: number;
+}): NormalizedTask {
+  // Validated, not cast. The tracker is localStorage — hand-editable, and
+  // written by every version of this app the browser has ever run — so an
+  // unrecognized string reaching `status` unchecked would render as an unknown
+  // badge at best. The dangerous direction is a bogus value that reads as
+  // TERMINAL: the row would stop being polled and a live task would sit there
+  // frozen. `unavailable` is excluded for the same reason from the other side —
+  // it is this app's own tombstone for "the server forgot it", a conclusion
+  // only `expiredPlaceholderTask` is entitled to draw, never restored state.
+  const status: NormalizedTask["status"] =
+    tracked.status === "working" ||
+    tracked.status === "input_required" ||
+    tracked.status === "completed" ||
+    tracked.status === "failed" ||
+    tracked.status === "cancelled"
+      ? tracked.status
+      : "working";
+  return {
+    wire: tracked.wire,
+    taskId: tracked.taskId,
+    status,
+    createdAt: tracked.createdAt,
+    lastUpdatedAt: tracked.lastUpdatedAt ?? tracked.createdAt,
+    ttl: tracked.ttlMs ?? null,
+    ...(tracked.pollIntervalMs !== undefined
+      ? { pollInterval: tracked.pollIntervalMs }
+      : {}),
+    raw: { taskId: tracked.taskId },
+  };
+}
+
 export function expiredPlaceholderTask(tracked: {
   taskId: string;
   wire: TasksWire;
