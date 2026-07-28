@@ -39,6 +39,7 @@ vi.mock("@/lib/task-tracker", () => ({
   clearTrackedTasksForServer: vi.fn(),
   getDismissedTaskIds: vi.fn().mockReturnValue(new Set()),
   dismissTasksForServer: vi.fn(),
+  dismissRegistryTasks: vi.fn(),
   // v3 durable scheduling state. `useTaskScheduler` reads the persisted
   // schedule when it first sees a handle (so a reload resumes rather than
   // re-polling immediately) and writes the whole tick back in one batch.

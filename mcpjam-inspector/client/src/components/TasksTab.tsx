@@ -49,6 +49,7 @@ import {
   clearTrackedTasksForServer,
   getDismissedTaskIds,
   dismissTasksForServer,
+  dismissRegistryTasks,
 } from "@/lib/task-tracker";
 import { Switch } from "@mcpjam/design-system/switch";
 import { Input } from "@mcpjam/design-system/input";
@@ -185,7 +186,9 @@ export function TasksTab({
   // into the tracker would resurrect entries the user cleared and duplicate
   // the registry's own persistence. They render as placeholders and join the
   // poll set until a live read (or a -32602) settles them.
-  const registryHandlesRef = useRef<Map<string, RegistryTaskEntry>>(new Map());
+  const registryHandlesRef = useRef<
+    Map<string, RegistryTaskEntry & { terminalReadDone?: boolean }>
+  >(new Map());
   // The server the one recovery read of this mount has been done for. Reset on
   // server change and on manual refresh; a failed read leaves it unset so the
   // next tick retries.
@@ -404,9 +407,12 @@ export function TasksTab({
     clearTrackedTasksForServer(serverName);
     scheduler.forget(taskIds);
     // Registry-recovered handles have no tracker entry for the dismissal to
-    // stick to; drop them from the mount-local recovery set as well so Clear
-    // does not resurrect them on the next tick. (The registry row itself
-    // survives — global removal is the delete route's job, deferred in v1.)
+    // stick to, so their ids go into the durable per-server dismissed set —
+    // the merge filter consults getDismissedTaskIds, which unions it in, so
+    // they stay hidden across refetches on THIS browser. A local view
+    // preference only: the registry row itself survives (global removal is
+    // the delete route's job, deferred in v1).
+    dismissRegistryTasks(serverName, [...registryHandlesRef.current.keys()]);
     registryHandlesRef.current = new Map();
     setTasks([]);
     setSelectedTaskId("");
@@ -439,15 +445,28 @@ export function TasksTab({
 
       // Folds a `/list` response's registry attachment in. An ABSENT
       // `registryTasks` is "no recovery source this tick" (local mode, chatbox
-      // scope, registry off/unreachable) and leaves whatever we already
-      // recovered untouched; `[]` is a verified empty registry and clears it.
+      // scope, registry off/unreachable): it leaves whatever we already
+      // recovered untouched AND leaves the recovery read armed, so the next
+      // tick retries — only a PRESENT array (possibly `[]`, a verified empty
+      // registry) completes the once-per-mount read.
       const captureRegistry = (registryTasks?: RegistryTaskEntry[]) => {
+        if (!registryTasks) return;
         registryReadDoneRef.current = serverName;
-        if (registryTasks) {
-          registryHandlesRef.current = new Map(
-            registryTasks.map((entry) => [entry.taskId, entry])
-          );
-        }
+        const previous = registryHandlesRef.current;
+        registryHandlesRef.current = new Map(
+          registryTasks.map((entry) => [
+            entry.taskId,
+            {
+              ...entry,
+              // A terminal handle's one recovery read (see below) stays spent
+              // across re-reads: a manual refresh must not re-fetch a result
+              // we already read (or already gave up on).
+              ...(previous.get(entry.taskId)?.terminalReadDone
+                ? { terminalReadDone: true }
+                : {}),
+            },
+          ])
+        );
       };
 
       // The extension has no tasks/list: the tracker is the list.
@@ -604,12 +623,34 @@ export function TasksTab({
           !serverTaskIds.has(entry.taskId) &&
           !trackedIds.has(entry.taskId)
       );
-      // A terminal registry row renders as a placeholder and is NEVER polled:
-      // its retention window is the backend's concern, and re-reading a
-      // finished task from every browser would only burn connections.
+      // A terminal registry row renders as a placeholder and is not part of
+      // the recurring poll set — with ONE exception. On the EXTENSION wire a
+      // completed result / failed error is carried EXCLUSIVELY by `tasks/get`
+      // (there is no `tasks/result`), and the registry stores neither: a
+      // recovered `completed`/`failed` handle is a status with nothing behind
+      // it, so it owes exactly one bounded recovery read for its inline
+      // result. `cancelled` (and the registry's own `expired`) owe nothing —
+      // there is no result to fetch — and the legacy wire keeps its
+      // placeholder-only behavior: its results come from `tasks/result`
+      // semantics, which this one-shot must not be conflated with.
       const recoveredTerminal = recoveredEntries.filter((entry) =>
         isTerminalRegistryStatus(entry.lastKnownStatus)
       );
+      const terminalNeedingRead = isExtensionWire
+        ? recoveredTerminal.filter(
+            (entry) =>
+              (entry.lastKnownStatus === "completed" ||
+                entry.lastKnownStatus === "failed") &&
+              !entry.terminalReadDone
+          )
+        : [];
+      const terminalReadIdSet = new Set(
+        terminalNeedingRead.map((entry) => entry.taskId)
+      );
+      // Spent at ISSUE time, success or not: the read is bounded to one
+      // attempt, and a failure below falls back to the placeholder rather
+      // than retrying forever against a server that may have purged the task.
+      for (const entry of terminalNeedingRead) entry.terminalReadDone = true;
       const recoveredActive = recoveredEntries.filter(
         (entry) => !isTerminalRegistryStatus(entry.lastKnownStatus)
       );
@@ -652,6 +693,10 @@ export function TasksTab({
         // (and -32602s) are handled exactly like tracked ones below, except
         // that nothing is ever written into the tracker for them.
         ...dueRecovered,
+        // The one-shot terminal recovery reads (extension wire only). These
+        // bypass the scheduler — they are not a recurring poll — and are
+        // excluded from the failed-read bookkeeping below for the same reason.
+        ...terminalNeedingRead.map((entry) => entry.taskId),
       ];
 
       let trackedTaskStatuses: (NormalizedTask | null)[];
@@ -732,7 +777,13 @@ export function TasksTab({
       // handle answered — it is retired, not unreachable — and backing it off
       // would be recording an error against a handle nobody will poll again.
       const failedIds = pendingIds.filter(
-        (id) => !settledIds.has(id) && !confirmedGoneIds.has(id)
+        (id) =>
+          !settledIds.has(id) &&
+          !confirmedGoneIds.has(id) &&
+          // A failed one-shot terminal read is spent, not backed off: it must
+          // neither enter the scheduler's error bookkeeping nor keep the
+          // auto-refresh loop armed. The placeholder fallback below covers it.
+          !terminalReadIdSet.has(id)
       );
       scheduler.recordErrors(failedIds);
 
@@ -779,12 +830,26 @@ export function TasksTab({
         (entry) => previousById.get(entry.taskId) ?? registryPlaceholderTask(entry)
       );
 
+      // Terminal registry rows: a handle whose one-shot read answered this
+      // tick already has its live row in `trackedTaskStatuses` (and later
+      // ticks carry it via `previousById`); a confirmed -32602 dropped it; a
+      // failed or never-owed read renders the registry placeholder.
+      const recoveredTerminalRows = recoveredTerminal
+        .filter(
+          (entry) =>
+            !settledIds.has(entry.taskId) && !confirmedGoneIds.has(entry.taskId)
+        )
+        .map(
+          (entry) =>
+            previousById.get(entry.taskId) ?? registryPlaceholderTask(entry)
+        );
+
       trackedTaskStatuses = [
         ...trackedTaskStatuses,
         ...carriedForward,
         ...failedCarriedForward,
         ...recoveredCarriedForward,
-        ...recoveredTerminal.map((entry) => registryPlaceholderTask(entry)),
+        ...recoveredTerminalRows,
         ...expiredEntries,
       ];
 

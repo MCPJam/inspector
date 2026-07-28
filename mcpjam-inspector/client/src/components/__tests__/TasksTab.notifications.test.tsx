@@ -64,6 +64,7 @@ vi.mock("@/lib/task-tracker", () => ({
   clearTrackedTasksForServer: vi.fn(),
   getDismissedTaskIds: (...args: unknown[]) => mockGetDismissedTaskIds(...args),
   dismissTasksForServer: vi.fn(),
+  dismissRegistryTasks: vi.fn(),
   recordTaskObservation: vi.fn(),
   recordTaskObservations: vi.fn(),
   getTrackedTaskSchedule: vi.fn().mockReturnValue(undefined),
@@ -268,6 +269,31 @@ describe("TasksTab extension task notifications", () => {
     });
 
     expect(mockGetTask.mock.calls.length).toBe(baseline);
+  });
+
+  it("ignores a notification for a dismissed handle (no polling resurrection)", async () => {
+    // `getDismissedTaskIds` unions the tracker's dismissals with the
+    // dismissed-registry store, so this covers both: a dismissed handle is
+    // excluded from the interest set AND a late notification for it must not
+    // restart reads the user asked to stop seeing.
+    mockGetDismissedTaskIds.mockReturnValue(new Set(["t-1"]));
+    render(<TasksTab serverConfig={serverConfig()} serverName={SERVER} />);
+    await waitFor(() => expect(FakeEventSource.instances.length).toBe(1));
+    const baseline = mockGetTask.mock.calls.length;
+
+    await act(async () => {
+      emit(tasksNotification("t-1"));
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    });
+
+    expect(mockGetTask.mock.calls.length).toBe(baseline);
+    // ...and the dismissed id was never posted as an interest either.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
+    for (const call of mockSetDesired.mock.calls) {
+      expect(call[1].taskIds ?? []).not.toContain("t-1");
+    }
   });
 
   it("hosted mode posts no taskIds and opens no notification stream", async () => {
