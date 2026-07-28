@@ -3,26 +3,52 @@ import {
   MCP_TASKS_CHECK_CATEGORIES,
   MCP_TASKS_CHECK_IDS,
   MCPTasksConformanceTest,
+  isMCPTasksWireError,
+  isUnknownTaskError,
+  type MCPClientManager,
   type MCPTasksCheckCategory,
   type MCPTasksCheckId,
   type MCPTasksConformanceConfig,
+  type TasksSupport,
 } from "@mcpjam/sdk";
 import {
   renderConformanceForCli,
   resolveConformanceOutputFormatForCli,
 } from "../lib/conformance-output.js";
+import { withEphemeralManager } from "../lib/ephemeral.js";
 import { parseReporterFormat } from "../lib/reporting.js";
 import { createCliRpcLogCollector } from "../lib/rpc-logs.js";
 import { withRpcLogsIfRequested } from "../lib/rpc-helpers.js";
 import {
   addSharedServerOptions,
   describeTarget,
+  getGlobalOptions,
   parseJsonRecord,
   parsePositiveInteger,
   parseServerConfig,
+  type GlobalOptions,
   type SharedServerTargetOptions,
 } from "../lib/server-config.js";
-import { setProcessExitCode, usageError } from "../lib/output.js";
+import {
+  cliError,
+  setProcessExitCode,
+  usageError,
+  writeResult,
+} from "../lib/output.js";
+import { buildMrtrBeforeConnect } from "../lib/mrtr-input.js";
+import {
+  assertWireCapability,
+  buildTaskInputDriverOptions,
+  driveTaskWatch,
+  getTaskForWire,
+  parseTasksWireOption,
+  RELATED_TASK_META_KEY,
+  resolveTasksSupportOrThrow,
+  taskUnknownError,
+  taskWatchExitCode,
+  type AssertableTasksWire,
+  type TaskWatchTuning,
+} from "../lib/tasks-cli.js";
 
 const TASKS_CHECK_IDS_BY_CATEGORY: Record<
   MCPTasksCheckCategory,
@@ -131,10 +157,486 @@ export function buildTasksConformanceConfig(
   };
 }
 
+export interface TaskVerbOptions extends SharedServerTargetOptions {
+  taskId?: string;
+  wire?: AssertableTasksWire;
+  cursor?: string;
+  inputResponses?: string;
+}
+
+interface TaskVerbContext {
+  manager: MCPClientManager;
+  serverId: string;
+  support: TasksSupport;
+  taskId: string;
+  globalOptions: GlobalOptions;
+  note: (message: string) => void;
+}
+
+function requireTaskId(options: TaskVerbOptions): string {
+  if (!options.taskId) {
+    throw usageError("--task-id is required.");
+  }
+  return options.taskId;
+}
+
+/**
+ * Connects, resolves the tasks wire, runs one verb, and writes its envelope.
+ *
+ * Every task verb re-resolves the wire from the live handshake rather than
+ * remembering it between invocations: tasks are durable server-side on both
+ * wires, so an ephemeral reconnect per command is correct, and a server that
+ * changed eras between runs must not be driven on a stale assumption.
+ */
+async function runTaskVerb<T>(
+  options: TaskVerbOptions,
+  command: Command,
+  fn: (ctx: TaskVerbContext) => Promise<T>,
+  verbOptions: { requiresTaskId?: boolean } = {},
+): Promise<void> {
+  const globalOptions = getGlobalOptions(command);
+  const taskId = verbOptions.requiresTaskId === false ? "" : requireTaskId(options);
+  const collector = globalOptions.rpc
+    ? createCliRpcLogCollector({ __cli__: describeTarget(options) })
+    : undefined;
+
+  const note = (message: string) => {
+    if (!globalOptions.quiet) process.stderr.write(`${message}\n`);
+  };
+
+  const config = parseServerConfig({ ...options, timeout: globalOptions.timeout });
+
+  const result = await withEphemeralManager(
+    config,
+    async (manager, serverId) => {
+      const support = resolveTasksSupportOrThrow(manager, serverId, options.wire);
+      return fn({ manager, serverId, support, taskId, globalOptions, note });
+    },
+    { timeout: globalOptions.timeout, rpcLogger: collector?.rpcLogger },
+  );
+
+  writeResult(
+    withRpcLogsIfRequested(result, collector, globalOptions),
+    globalOptions.format,
+  );
+}
+
+function addTaskIdOption(command: Command): Command {
+  return command.option("--task-id <id>", "The task to act on");
+}
+
+function addWireOption(command: Command): Command {
+  return command.option(
+    "--wire <wire>",
+    "Assert the connection resolves to this tasks wire: legacy or extension",
+    parseTasksWireOption,
+  );
+}
+
+function registerTaskVerbs(tasks: Command): void {
+  addSharedServerOptions(
+    tasks
+      .command("capabilities")
+      .description(
+        "Report the tasks wire this connection resolves to and which task " +
+          "verbs it carries. Always exits 0 — branch on `.wire`.",
+      ),
+  ).action(async (options: TaskVerbOptions, command: Command) => {
+    const globalOptions = getGlobalOptions(command);
+    const collector = globalOptions.rpc
+      ? createCliRpcLogCollector({ __cli__: describeTarget(options) })
+      : undefined;
+    const config = parseServerConfig({
+      ...options,
+      timeout: globalOptions.timeout,
+    });
+
+    // Deliberately NOT routed through `runTaskVerb`: reporting "this server has
+    // no tasks" is this command's whole job, so `wire: "none"` is a successful
+    // answer here rather than the operational failure it is everywhere else.
+    const support = await withEphemeralManager(
+      config,
+      async (manager, serverId) => manager.getTasksSupport(serverId),
+      { timeout: globalOptions.timeout, rpcLogger: collector?.rpcLogger },
+    );
+
+    writeResult(
+      withRpcLogsIfRequested(support, collector, globalOptions),
+      globalOptions.format,
+    );
+  });
+
+  addSharedServerOptions(
+    addWireOption(
+      tasks
+        .command("list")
+        .description("List tasks the server is tracking (legacy wire only)")
+        .option("--cursor <cursor>", "Pagination cursor"),
+    ),
+  ).action((options: TaskVerbOptions, command: Command) =>
+    runTaskVerb(
+      options,
+      command,
+      async ({ manager, serverId, support, note }) => {
+        if (support.wire === "extension") {
+          // The manager answers `{ tasks: [] }` here rather than erroring, and
+          // an empty list with no explanation reads as "no tasks running".
+          note(
+            "Note: SEP-2663 removed tasks/list — a server cannot enumerate " +
+              "tasks for you on the extension wire, so this is always empty. " +
+              "Track task ids from `tools call --task` instead.",
+          );
+        }
+        const result = await manager.listTasks(serverId, options.cursor);
+        return { wire: support.wire, ...result };
+      },
+      { requiresTaskId: false },
+    ),
+  );
+
+  addSharedServerOptions(
+    addWireOption(
+      addTaskIdOption(
+        tasks
+          .command("get")
+          .description("Read one task's current state"),
+      ),
+    ),
+  ).action((options: TaskVerbOptions, command: Command) =>
+    runTaskVerb(options, command, ({ manager, serverId, support, taskId }) =>
+      getTaskForWire(manager, serverId, taskId, support),
+    ),
+  );
+
+  addSharedServerOptions(
+    addWireOption(
+      addTaskIdOption(
+        tasks
+          .command("result")
+          .description(
+            "Read a completed task's result (legacy wire only — extension " +
+              "results are inline on `tasks get`)",
+          ),
+      ),
+    ),
+  ).action((options: TaskVerbOptions, command: Command) =>
+    runTaskVerb(options, command, async ({ manager, serverId, support, taskId }) => {
+      try {
+        const result = (await manager.getTaskResult(serverId, taskId)) as
+          | Record<string, unknown>
+          | null;
+
+        // Same stamp the Inspector route applies: a result read out of band
+        // carries no other trace of which task produced it.
+        if (result && typeof result === "object") {
+          const meta = (result._meta ?? {}) as Record<string, unknown>;
+          result._meta = { ...meta, [RELATED_TASK_META_KEY]: { taskId } };
+        }
+        return result;
+      } catch (error) {
+        if (isUnknownTaskError(error)) throw taskUnknownError(taskId);
+        if (isMCPTasksWireError(error)) {
+          // A server condition, not flag misuse: the same command line is
+          // correct against a 2025-11-25 server.
+          throw cliError(
+            "TASKS_UNSUPPORTED",
+            "tasks/result exists only on the 2025-11-25 wire. This server " +
+              "resolved to the extension wire, where a completed task carries " +
+              "its result inline — use `mcpjam tasks get` instead.",
+            1,
+            { wire: support.wire },
+          );
+        }
+        throw error;
+      }
+    }),
+  );
+
+  addSharedServerOptions(
+    addWireOption(
+      addTaskIdOption(
+        tasks.command("cancel").description("Request cancellation of a task"),
+      ),
+    ),
+  ).action((options: TaskVerbOptions, command: Command) =>
+    runTaskVerb(
+      options,
+      command,
+      async ({ manager, serverId, support, taskId, note }) => {
+        assertWireCapability(
+          support,
+          "cancel",
+          "The server did not declare `capabilities.tasks.cancel`.",
+        );
+
+        try {
+          if (support.wire === "extension") {
+            await manager.cancelTaskExt(serverId, taskId);
+            note(
+              "Cancellation requested. SEP-2663 cancellation is cooperative " +
+                "and the ack is empty: the task may still be running, and may " +
+                "still reach `completed`. Re-poll with `mcpjam tasks get`.",
+            );
+            return { wire: support.wire, task: null, cooperative: true };
+          }
+
+          const task = await manager.cancelTask(serverId, taskId);
+          return { wire: support.wire, task };
+        } catch (error) {
+          if (isUnknownTaskError(error)) throw taskUnknownError(taskId);
+          throw error;
+        }
+      },
+    ),
+  );
+
+  addSharedServerOptions(
+    addWireOption(
+      addTaskIdOption(
+        tasks
+          .command("update")
+          .description(
+            "Answer a task's `input_required` requests (extension wire only)",
+          )
+          .option(
+            "--input-responses <json>",
+            "Responses keyed by input key, as a JSON object, @path, or - for stdin",
+          ),
+      ),
+    ),
+  ).action((options: TaskVerbOptions, command: Command) =>
+    runTaskVerb(
+      options,
+      command,
+      async ({ manager, serverId, support, taskId, note }) => {
+        assertWireCapability(
+          support,
+          "update",
+          "tasks/update is part of the io.modelcontextprotocol/tasks " +
+            "extension; the 2025-11-25 wire answers task input out of band " +
+            "via elicitation instead.",
+        );
+
+        if (!options.inputResponses) {
+          throw usageError("--input-responses is required for `tasks update`.");
+        }
+        const responses = parseJsonRecord(
+          options.inputResponses,
+          "--input-responses",
+        );
+        if (!responses) {
+          throw usageError("--input-responses must be a JSON object.");
+        }
+
+        try {
+          const ack = await manager.updateTask(
+            serverId,
+            taskId,
+            responses as never,
+          );
+          note(
+            "Responses accepted. The ack is empty by design — the task's " +
+              "status does not move until a later `mcpjam tasks get`.",
+          );
+          return { wire: support.wire, ack };
+        } catch (error) {
+          if (isUnknownTaskError(error)) throw taskUnknownError(taskId);
+          throw error;
+        }
+      },
+    ),
+  );
+}
+
+export interface TaskWatchOptions extends TaskVerbOptions {
+  durationMs?: number;
+  pollIntervalMs?: number;
+  maxInputRounds?: number;
+  maxConsecutiveErrors?: number;
+  interactive?: boolean;
+  yes?: boolean;
+}
+
+export function addTaskWatchTuningOptions(command: Command): Command {
+  return command
+    .option(
+      "--duration-ms <ms>",
+      "How long to keep watching before giving up",
+      (value: string) => parsePositiveInteger(value, "Duration"),
+    )
+    .option(
+      "--poll-interval-ms <ms>",
+      "Your minimum interval between polls. The server's pollIntervalMs, any Retry-After, and error backoff still apply as floors on top of it.",
+      (value: string) => parsePositiveInteger(value, "Poll interval"),
+    )
+    .option(
+      "--max-input-rounds <n>",
+      "Give up after this many input_required rounds",
+      (value: string) => parsePositiveInteger(value, "Max input rounds"),
+    )
+    .option(
+      "--max-consecutive-errors <n>",
+      "Give up after this many consecutive failed reads",
+      (value: string) => parsePositiveInteger(value, "Max consecutive errors"),
+    );
+}
+
+/**
+ * `--interactive`/`--yes` are registered separately from the tuning flags
+ * because `tools call` already declares both for the standalone MRTR path;
+ * registering them twice on the same command is a commander error.
+ */
+function addWatchInteractivityOptions(command: Command): Command {
+  return command
+    .option("--interactive", "Answer the task's input requests from the terminal")
+    .option("--yes", "Never prompt; a task that needs input exits 6");
+}
+
+export function taskWatchTuningFrom(options: TaskWatchOptions): TaskWatchTuning {
+  return {
+    ...(options.durationMs !== undefined ? { durationMs: options.durationMs } : {}),
+    ...(options.pollIntervalMs !== undefined
+      ? { pollIntervalMs: options.pollIntervalMs }
+      : {}),
+    ...(options.maxInputRounds !== undefined
+      ? { maxInputRounds: options.maxInputRounds }
+      : {}),
+    ...(options.maxConsecutiveErrors !== undefined
+      ? { maxConsecutiveErrors: options.maxConsecutiveErrors }
+      : {}),
+  };
+}
+
+/**
+ * Runs `fn` with SIGINT/SIGTERM wired to an `AbortController`.
+ *
+ * The listeners are registered for the watch's duration only and removed in
+ * `finally`, so the process neither leaks handlers nor keeps the default kill
+ * behaviour suppressed after the command is done — the shape `subscriptions
+ * listen` uses. Aborting is what lets the driver unwind its in-flight read and
+ * report `aborted` instead of the process dying mid-poll with no envelope.
+ */
+export async function withWatchSignals<T>(
+  fn: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const onSignal = () => controller.abort();
+  process.on("SIGINT", onSignal);
+  process.on("SIGTERM", onSignal);
+  try {
+    return await fn(controller.signal);
+  } finally {
+    process.removeListener("SIGINT", onSignal);
+    process.removeListener("SIGTERM", onSignal);
+  }
+}
+
+/** Emits status transitions to stderr so stdout stays a single envelope. */
+export function watchStateReporter(
+  globalOptions: GlobalOptions,
+): ((snapshot: { status: string; statusMessage?: string }) => void) | undefined {
+  if (globalOptions.quiet) return undefined;
+  let last: string | undefined;
+  return (snapshot) => {
+    if (snapshot.status === last) return;
+    last = snapshot.status;
+    const detail = snapshot.statusMessage ? ` — ${snapshot.statusMessage}` : "";
+    process.stderr.write(`task: ${snapshot.status}${detail}\n`);
+  };
+}
+
+function registerTaskWatch(tasks: Command): void {
+  addSharedServerOptions(
+    addWatchInteractivityOptions(
+      addTaskWatchTuningOptions(
+      addWireOption(
+        addTaskIdOption(
+          tasks.command("watch").description(
+            "Poll a task until it reaches a terminal status. " +
+              "Exit codes: 0 completed (including a tool-level isError result), " +
+              "6 input_required, 7 timed out, 130 interrupted, 1 otherwise. " +
+              "The host tasks policy is not consulted — this is a debugging " +
+              "affordance, like the Inspector's Tools tab.",
+          ),
+        ),
+      ),
+      ),
+    ),
+  ).action(async (options: TaskWatchOptions, command: Command) => {
+    const globalOptions = getGlobalOptions(command);
+    const taskId = requireTaskId(options);
+    const collector = globalOptions.rpc
+      ? createCliRpcLogCollector({ __cli__: describeTarget(options) })
+      : undefined;
+    const config = parseServerConfig({
+      ...options,
+      timeout: globalOptions.timeout,
+    });
+
+    const input = buildTaskInputDriverOptions({
+      config,
+      interactive: options.interactive,
+      yes: options.yes,
+    });
+    const onState = watchStateReporter(globalOptions);
+
+    const envelope = await withWatchSignals((signal) =>
+      withEphemeralManager(
+        config,
+        async (manager, serverId) => {
+          const support = resolveTasksSupportOrThrow(
+            manager,
+            serverId,
+            options.wire,
+          );
+          return driveTaskWatch({
+            manager,
+            serverId,
+            support,
+            taskId,
+            tuning: taskWatchTuningFrom(options),
+            ...(input ? { input } : {}),
+            signal,
+            ...(onState ? { onState } : {}),
+          });
+        },
+        {
+          timeout: globalOptions.timeout,
+          rpcLogger: collector?.rpcLogger,
+          // On the legacy wire a task's `input_required` surfaces as an
+          // out-of-band `elicitation/create` stamped with the task id, not as
+          // data on `tasks/get`. Registering the terminal handler is the only
+          // way a single invocation can answer it.
+          ...(options.interactive
+            ? {
+                beforeConnect: buildMrtrBeforeConnect(options),
+                interactiveElicitation: true,
+              }
+            : {}),
+        },
+      ),
+    );
+
+    writeResult(
+      withRpcLogsIfRequested(envelope, collector, globalOptions),
+      globalOptions.format,
+    );
+
+    const exitCode = taskWatchExitCode(envelope.outcome);
+    if (exitCode !== 0) setProcessExitCode(exitCode);
+  });
+}
+
 export function registerTasksCommands(program: Command): void {
   const tasks = program
     .command("tasks")
-    .description("Validate MCP Tasks wire behavior (legacy and SEP-2663)");
+    .description(
+      "Create, inspect and drive MCP Tasks (legacy 2025-11-25 and SEP-2663), " +
+        "and validate a server's tasks wire behavior",
+    );
+
+  registerTaskVerbs(tasks);
+  registerTaskWatch(tasks);
 
   addSharedServerOptions(
     tasks

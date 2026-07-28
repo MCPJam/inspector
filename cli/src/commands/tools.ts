@@ -4,9 +4,25 @@ import {
   isCallToolResultError,
   validateToolCallResult,
 } from "@mcpjam/sdk";
+import type { MCPServerConfig } from "@mcpjam/sdk";
 import { writeCommandDebugArtifact } from "../lib/debug-artifact.js";
 import { withEphemeralManager } from "../lib/ephemeral.js";
 import { buildMrtrBeforeConnect } from "../lib/mrtr-input.js";
+import {
+  addTaskWatchTuningOptions,
+  taskWatchTuningFrom,
+  watchStateReporter,
+  withWatchSignals,
+} from "./tasks.js";
+import {
+  buildTaskInputDriverOptions,
+  detectCreatedTask,
+  driveTaskWatch,
+  parseTasksWireOption,
+  resolveTasksSupportOrThrow,
+  taskWatchExitCode,
+  type AssertableTasksWire,
+} from "../lib/tasks-cli.js";
 import {
   buildInspectorServerName,
   findInspectorRenderError,
@@ -33,12 +49,14 @@ import {
   getGlobalOptions,
   parseJsonRecord,
   parseRetryPolicy,
+  parsePositiveInteger,
   parseServerConfig,
   resolveAliasedStringOption,
   type GlobalOptions,
   type SharedServerTargetOptions,
 } from "../lib/server-config.js";
 import {
+  applyHostToConfig,
   applyHostVisibility,
   assertToolVisibleToHost,
   resolveHostFromOptions,
@@ -75,6 +93,144 @@ interface ToolsCallOptions extends SharedServerTargetOptions {
   theme?: string;
   locale?: string;
   timeZone?: string;
+  task?: boolean;
+  taskTtl?: number;
+  taskWatch?: boolean;
+  durationMs?: number;
+  pollIntervalMs?: number;
+  maxInputRounds?: number;
+  maxConsecutiveErrors?: number;
+  wire?: AssertableTasksWire;
+}
+
+/**
+ * Runs a task-augmented `tools/call`, optionally watching the created task to a
+ * terminal status in the SAME connection.
+ *
+ * Chaining inside one `withEphemeralManager` is not just an optimization: on
+ * the legacy wire a task's `input_required` arrives as an out-of-band
+ * `elicitation/create`, so a create and a watch split across two invocations
+ * could never answer it.
+ */
+async function runTaskAugmentedToolCall(args: {
+  options: ToolsCallOptions;
+  globalOptions: GlobalOptions;
+  config: MCPServerConfig;
+  host: ReturnType<typeof resolveHostFromOptions>;
+  toolName: string;
+  params: Record<string, unknown>;
+  collector: ReturnType<typeof createCliRpcLogCollector> | undefined;
+}): Promise<void> {
+  const { options, globalOptions, config, host, toolName, params, collector } =
+    args;
+
+  const input = buildTaskInputDriverOptions({
+    config: host ? applyHostToConfig(config, host.connection) : config,
+    interactive: options.interactive,
+    yes: options.yes,
+  });
+  const onState = options.taskWatch ? watchStateReporter(globalOptions) : undefined;
+  const note = (message: string) => {
+    if (!globalOptions.quiet) process.stderr.write(`${message}\n`);
+  };
+
+  const envelope = await withWatchSignals((signal) =>
+    withEphemeralManager(
+      config,
+      async (manager, serverId) => {
+        if (host) {
+          await assertToolVisibleToHost(manager, serverId, toolName, host);
+        }
+        const support = resolveTasksSupportOrThrow(manager, serverId, options.wire);
+
+        if (options.taskTtl !== undefined && support.wire !== "legacy") {
+          throw usageError(
+            "--task-ttl applies only to the 2025-11-25 tasks wire. This " +
+              "server resolved to the extension wire, where the server owns " +
+              "the TTL and a client cannot set one.",
+          );
+        }
+
+        // Exactly one of the two opt-ins is ever set: the legacy in-params
+        // augmentation, or the extension's per-call declaration that this
+        // client can handle a `CreateTaskResult`.
+        //
+        // They go in through DIFFERENT parameters, and this is not stylistic.
+        // `executeTool`'s fourth argument is discriminated at runtime on the
+        // presence of `request`/`retry`/`allowTaskResult` — `task` is not in
+        // that set, so `{ task: … }` passed there is silently read as
+        // `ClientRequestOptions` and the augmentation never reaches the wire.
+        // The legacy opt-in must use the dedicated fifth parameter, the same
+        // way the Inspector's own tools route does.
+        const result =
+          support.wire === "legacy"
+            ? await manager.executeTool(
+                serverId,
+                toolName,
+                params,
+                undefined,
+                options.taskTtl !== undefined ? { ttl: options.taskTtl } : {},
+              )
+            : await manager.executeTool(serverId, toolName, params, {
+                allowTaskResult: true,
+              });
+
+        const created = detectCreatedTask(support.wire, result);
+        if (!created) {
+          // Legal on the extension wire: a server may decide any given call is
+          // cheap enough to answer synchronously. Saying so beats a caller
+          // wondering why there is no task id.
+          note(
+            `No task materialized: the server answered ${toolName} ` +
+              "synchronously. Returning the tool result as-is.",
+          );
+          return { created: null, result };
+        }
+
+        if (!options.taskWatch) return { created, result: null };
+
+        const taskId = created.task.taskId as string;
+        const watch = await driveTaskWatch({
+          manager,
+          serverId,
+          support,
+          taskId,
+          tuning: taskWatchTuningFrom(options),
+          ...(input ? { input } : {}),
+          signal,
+          ...(onState ? { onState } : {}),
+        });
+        return { created, watch, result: null };
+      },
+      {
+        timeout: globalOptions.timeout,
+        rpcLogger: collector?.rpcLogger,
+        host: host?.connection,
+        ...(options.interactive
+          ? {
+              beforeConnect: buildMrtrBeforeConnect(options),
+              interactiveElicitation: true,
+            }
+          : {}),
+      },
+    ),
+  );
+
+  const payload = envelope.created
+    ? envelope.watch
+      ? { created: envelope.created, watch: envelope.watch }
+      : envelope.created
+    : envelope.result;
+
+  writeResult(
+    withRpcLogsIfRequested(payload, collector, globalOptions),
+    globalOptions.format,
+  );
+
+  if (envelope.watch) {
+    const exitCode = taskWatchExitCode(envelope.watch.outcome);
+    if (exitCode !== 0) setProcessExitCode(exitCode);
+  }
 }
 
 export function registerToolsCommands(program: Command): void {
@@ -159,6 +315,7 @@ export function registerToolsCommands(program: Command): void {
 
   addHostOption(
     addSharedServerOptions(
+    addTaskWatchTuningOptions(
     tools
       .command("call")
       .description("Call an MCP tool")
@@ -233,7 +390,26 @@ export function registerToolsCommands(program: Command): void {
       )
       .option("--theme <theme>", 'Render theme: "light" or "dark" (with --ui)')
       .option("--locale <locale>", "Render locale (with --ui)")
-      .option("--time-zone <iana>", "Render IANA timezone (with --ui)"),
+      .option("--time-zone <iana>", "Render IANA timezone (with --ui)")
+      .option(
+        "--task",
+        "Invite the server to answer with a task instead of a result. Uses whichever tasks wire the connection resolves to.",
+      )
+      .option(
+        "--task-ttl <ms>",
+        "Requested task TTL (2025-11-25 wire only; the extension server owns its TTL). Requires --task.",
+        (value: string) => parsePositiveInteger(value, "Task TTL"),
+      )
+      .option(
+        "--task-watch",
+        "After creating the task, poll it to a terminal status in the same connection. Requires --task.",
+      )
+      .option(
+        "--wire <wire>",
+        "Assert the connection resolves to this tasks wire: legacy or extension (with --task)",
+        parseTasksWireOption,
+      ),
+    ),
     ),
   ).action(async (options: ToolsCallOptions, command) => {
     const globalOptions = getGlobalOptions(command);
@@ -303,6 +479,41 @@ export function registerToolsCommands(program: Command): void {
       throw usageError(
         "--reporter requires --validate-response and/or --expect-success.",
       );
+    }
+
+    if (!options.task) {
+      if (options.taskTtl !== undefined) {
+        throw usageError("--task-ttl requires --task.");
+      }
+      if (options.taskWatch) throw usageError("--task-watch requires --task.");
+    } else {
+      // A `task_created` envelope is not a `CallToolResult`, and the renderers
+      // and validators all assume one. Refusing beats emitting a validation
+      // failure that says nothing about the real mistake.
+      if (options.ui) {
+        throw usageError("--task cannot be used together with --ui.");
+      }
+      if (reporter) {
+        throw usageError("--task cannot be used together with --reporter.");
+      }
+      if (shouldValidateResponse || shouldExpectSuccess) {
+        throw usageError(
+          "--task cannot be used together with --validate-response or " +
+            "--expect-success: a task-creation envelope is not a tool result. " +
+            "Validate the result of `tasks watch` instead.",
+        );
+      }
+
+      await runTaskAugmentedToolCall({
+        options,
+        globalOptions,
+        config,
+        host,
+        toolName,
+        params,
+        collector: primaryCollector,
+      });
+      return;
     }
 
     const renderContext = options.ui

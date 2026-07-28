@@ -1,0 +1,147 @@
+---
+title: "MCP Tasks"
+description: "Create, inspect, answer and watch MCP Tasks from the CLI — legacy 2025-11-25 and the SEP-2663 extension"
+icon: "list-todo"
+---
+
+The `tasks` commands give the CLI the manual-testing loop the Inspector's Tasks tab has: create a task from a tool call, read it, answer its input, cancel it, and watch it run to a terminal status — on whichever tasks wire the server resolves to.
+
+For judging a server's *conformance* to the tasks spec, see [MCP Tasks Conformance](/cli/tasks-conformance). These commands do the opposite job: they assume the server works and let you drive it.
+
+<Note>
+  Every task command connects directly to the server you name, exactly like `tools call`. Tasks are not available in hosted mode.
+</Note>
+
+## The two wires
+
+A connection resolves to exactly one tasks wire, and the verbs differ between them. Ask before you assume:
+
+```bash
+mcpjam tasks capabilities --url https://your-server.com/mcp
+```
+
+```json
+{ "wire": "extension", "toolCalls": true, "list": false, "cancel": true, "update": true, "inlineResult": true }
+```
+
+`tasks capabilities` always exits `0` — `"wire": "none"` is a valid answer, not a failure. Every other task command exits `1` on a server with no tasks wire.
+
+| | `legacy` (2025-11-25) | `extension` (SEP-2663, 2026-07-28) |
+|---|---|---|
+| Created by | `params.task` on `tools/call` | a per-call `CreateTaskResult` opt-in |
+| Client-set TTL | yes (`--task-ttl`) | no — the server owns it |
+| `tasks list` | yes | no (removed by SEP-2663) |
+| Result | separate `tasks result` call | inline on `tasks get` |
+| `input_required` | out-of-band elicitation | `inputRequests` on `tasks get`, answered by `tasks update` |
+
+Pass `--wire legacy` or `--wire extension` to any command to assert the wire you expect; a mismatch exits `1` rather than quietly running against the other one.
+
+## Creating a task
+
+Add `--task` to a normal `tools call`. The CLI picks the right opt-in for the resolved wire:
+
+```bash
+mcpjam tools call \
+  --url https://your-server.com/mcp \
+  --tool-name long_job \
+  --task
+```
+
+```json
+{
+  "status": "task_created",
+  "wire": "extension",
+  "task": { "resultType": "task", "taskId": "ext-task-1", "status": "working", "ttlMs": 60000 }
+}
+```
+
+If the server decides the call is cheap enough to answer synchronously — legal on the extension wire — you get the ordinary tool result instead, plus a note on stderr that no task materialized.
+
+`--task-ttl <ms>` requests a TTL. It applies only to the legacy wire; on the extension wire it is a usage error (exit `2`), because SEP-2663 gives the client no say in the TTL.
+
+`--task` cannot be combined with `--ui`, `--reporter`, `--validate-response`, or `--expect-success`: a task-creation envelope is not a `CallToolResult`, and those flags all assume one.
+
+## Inspecting a task
+
+```bash
+mcpjam tasks get --task-id ext-task-1 --url https://your-server.com/mcp
+mcpjam tasks list --url https://your-server.com/mcp          # legacy wire only
+mcpjam tasks result --task-id legacy-task-1 --url …          # legacy wire only
+mcpjam tasks cancel --task-id ext-task-1 --url …
+```
+
+A task id the server does not know — never created, or expired past its TTL — comes back as `TASK_UNKNOWN_OR_EXPIRED` with exit `1`.
+
+`tasks result` exists only on the legacy wire. On the extension wire a completed task carries its result inline, so `tasks result` exits `1` and points you at `tasks get`.
+
+`tasks cancel` on the extension wire is **cooperative**: the ack is empty, the task may still be running, and it may still reach `completed`. Re-poll with `tasks get`.
+
+## Answering `input_required`
+
+On the extension wire a task that needs input exposes `inputRequests` on `tasks get`. Answer them with `tasks update`:
+
+```bash
+mcpjam tasks update \
+  --url https://your-server.com/mcp \
+  --task-id ext-task-1 \
+  --input-responses '{"name": {"action": "accept", "content": {"name": "Luca"}}}'
+```
+
+`--input-responses` accepts inline JSON, `@path`, or `-` for stdin, like `--tool-args`. The ack is empty by design — the task's status does not move until a later `tasks get`.
+
+Only `elicitation/create` requests are answerable. A task asking for `roots/list` or `sampling/createMessage` is reported as an unanswered rejection; the Inspector UI cannot answer those either.
+
+## Watching a task
+
+`tasks watch` polls a task until it reaches a terminal status, printing transitions to stderr and a single envelope to stdout:
+
+```bash
+mcpjam tasks watch --url https://your-server.com/mcp --task-id ext-task-1
+```
+
+```json
+{
+  "outcome": "completed",
+  "wire": "extension",
+  "taskId": "ext-task-1",
+  "task": { "status": "completed", "result": { "content": [{ "type": "text", "text": "done" }] } }
+}
+```
+
+Or create and watch in one invocation, over one connection:
+
+```bash
+mcpjam tools call --url … --tool-name long_job --task --task-watch
+```
+
+which emits `{ "created": …, "watch": … }` and exits with the watch's code.
+
+### Pacing
+
+`--poll-interval-ms` sets **your** minimum interval. The server's advertised `pollIntervalMs`, any `Retry-After`, and error backoff still apply as floors on top of it, so the CLI cannot poll a server faster than that server asked for.
+
+`--duration-ms` bounds the whole watch (default 5 minutes). `--max-input-rounds` and `--max-consecutive-errors` bound the input loop and transient read failures.
+
+### Interactivity
+
+`--interactive` answers the task's elicitations from the terminal. Like every other interactive verb, it needs a real TTY on stdin: piped or redirected stdin, `--yes`, `CI`, or `MCPJAM_NON_INTERACTIVE` all make it decline cleanly rather than prompt into the void. A declined or unanswered input ends the watch with exit `6`, and you can answer out of band with `tasks update` and watch again.
+
+Ctrl-C (or `SIGTERM`) aborts the watch cleanly: you still get an envelope, with `"outcome": "aborted"` and exit `130`.
+
+<Note>
+  `tasks watch` does not consult the host tasks policy. Like the Inspector's Tools tab, it is a debugging affordance — the policy is a modelling concern for hosts, not a boundary on manual testing.
+</Note>
+
+### Watch exit codes
+
+| Code | Outcome |
+|---|---|
+| `0` | `completed` |
+| `1` | `failed`, `cancelled`, `expired`, `unreachable` |
+| `6` | `input-required` — the task needs input this run could not answer |
+| `7` | `timeout` — `--duration-ms` elapsed first |
+| `130` | `aborted` — interrupted by a signal |
+
+A completed task whose result carries `isError: true` still exits `0`: the task finished, and the tool's error is in the envelope. Branch on `task.result.isError` if you need to fail on it.
+
+Outcomes that collapse onto `1` are still distinguishable — `outcome` is always in the envelope.

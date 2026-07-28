@@ -812,3 +812,49 @@ export type {
   SubscriptionStreamRecord,
   SubscriptionStreamStatus,
 } from "./mcp-client-manager/index.js";
+
+// MCP Tasks manual-drive surface — the shared lifecycle engine, the poll-only
+// await driver, the wire-neutral observation adapters, and the `input_required`
+// driver's trust rules. Re-exported at the package root for the same reason the
+// subscription coordinator is: a consumer outside the SDK (the CLI's `tasks`
+// verbs) must be able to drive a task to terminal without reaching into the
+// client-manager subpath, and without growing a second polling loop beside the
+// Inspector's. New exports only.
+//
+// `InputRequests` / `InputResponses` (the `tasks/update` payload maps) are
+// already exported by the MRTR block above and are deliberately not repeated.
+export {
+  driveTaskToTerminal,
+  TaskLifecycleEngine,
+  taskLifecycleKey,
+  isTerminalLifecycleStatus,
+  TERMINAL_LIFECYCLE_STATUSES,
+  extensionTaskToObservation,
+  legacyTaskToObservation,
+  isUnknownTaskError,
+  UNKNOWN_TASK_ERROR_CODE,
+  canDeclareTasksExtension,
+  readDeclaredInputCapabilities,
+  TaskInputRejectedError,
+  DEFAULT_TASK_INPUT_LIMITS,
+} from "./mcp-client-manager/index.js";
+export type {
+  TasksSupport,
+  TasksWire,
+  LiveTasksWire,
+  DriveTaskToTerminalArgs,
+  TaskAwaitOutcome,
+  TaskAwaitResult,
+  TaskLifecycleIdentity,
+  TaskLifecycleObservation,
+  TaskLifecycleSnapshot,
+  TaskLifecycleStatus,
+  DeclaredInputCapabilities,
+  TaskInputDriverOptions,
+  TaskInputHandlerContext,
+  TaskInputHandlers,
+  TaskInputRejection,
+  DetailedTaskExt,
+  GetTaskExtResult,
+  UpdateTaskExtResult,
+} from "./mcp-client-manager/index.js";

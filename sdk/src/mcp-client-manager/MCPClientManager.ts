@@ -1324,11 +1324,18 @@ export class MCPClientManager {
 
   /**
    * Sets a server-specific elicitation handler.
+   *
+   * Like {@link setMrtrInputCollector}, this is intentionally NOT gated on
+   * prior registration. The two are registered together before connect (an
+   * interactive surface answers `elicitation/create` on both eras, so both
+   * deliveries have to be armed on the same envelope), and a gate here made
+   * that pairing throw `Unknown MCP server` for every caller that registered
+   * ahead of `connectToServer` — which is the only point at which `elicitation`
+   * can still reach the connect envelope. Registering for an as-yet-unknown
+   * server is a no-op until that server connects; the live-client update below
+   * is already conditional on there being one.
    */
   setElicitationHandler(serverId: string, handler: ElicitationHandler): void {
-    if (!this.registeredServers.has(serverId)) {
-      throw new Error(`Unknown MCP server "${serverId}".`);
-    }
     this.elicitationManager.setHandler(serverId, handler);
 
     const state = this.liveClientStates.get(serverId);
