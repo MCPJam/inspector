@@ -372,7 +372,15 @@ export function useAppState({
         ) {
           return current;
         }
-        return pendingOAuth;
+        // Re-stamp startedAt: the stored value marks when the redirect LEFT
+        // the app, so time spent on the provider's consent screen (password,
+        // 2FA) ate into the UI timeout — an >30s authorization killed the
+        // "connecting" overlay the instant the callback landed, flashing
+        // "Disconnected" while the token exchange was still running. The
+        // return leg gets its own full timeout window.
+        return pendingOAuth
+          ? { ...pendingOAuth, startedAt: Date.now() }
+          : pendingOAuth;
       });
       // No `loadAppState` — Convex queries hydrate state. The migration shim
       // (`local-state-migration`) lifts any legacy localStorage projects on

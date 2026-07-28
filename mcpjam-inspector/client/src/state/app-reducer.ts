@@ -340,7 +340,15 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       const map = new Map(action.servers.map((s) => [s.id, s]));
       const updated: AppState["servers"] = {};
       for (const [name, server] of Object.entries(state.servers)) {
-        const inFlight = server.connectionStatus === "connecting";
+        // "oauth-flow" is in-flight too: the whole authorize-in-browser window
+        // (and Electron never navigates away from it). The backend agent
+        // doesn't know the server yet — the forced-OAuth path even deletes it
+        // before redirecting — so syncing here would stomp the live flow to
+        // "disconnected" and the card would flicker
+        // connecting → disconnected → connected.
+        const inFlight =
+          server.connectionStatus === "connecting" ||
+          server.connectionStatus === "oauth-flow";
         if (inFlight) {
           updated[name] = server;
           continue;
