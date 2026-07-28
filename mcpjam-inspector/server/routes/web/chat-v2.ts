@@ -51,7 +51,11 @@ import {
 } from "./auth.js";
 import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
 import { getClientIp } from "../../utils/client-ip.js";
-import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config.js";
+import {
+  fetchChatboxRuntimeConfig,
+  readChatboxEnvironment,
+  type ChatboxEnvironmentRuntime,
+} from "../../utils/chatbox-runtime-config.js";
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
 import {
   parseXaaPolicyValue,
@@ -251,6 +255,12 @@ chatV2.post("/", async (c) => {
     // source for this turn's host config, server set, and skills — nothing
     // downstream may fall back to the body's `selectedServerIds`.
     let environmentSpec: ResolvedEnvironmentRuntime | null = null;
+    // Phase 5: set ONLY for an environment-backed chatbox turn — the additive
+    // `environment` payload on the chatbox runtime config (mcpjam-backend
+    // #805). Once present it is authoritative for the turn's server set and
+    // skills exactly like `environmentSpec` is for an environment target;
+    // absent ⇒ host-backed chatbox, today's behavior byte-identical.
+    let chatboxEnvironment: ChatboxEnvironmentRuntime | null = null;
     // INS-3: the turn's one answer to "what may this run reach?" — the split
     // explicit/plugin server sets, ref-addressed skills, and plugin origin.
     // Derived from `environmentSpec`, never from the body or a HostConfig
@@ -337,6 +347,37 @@ chatV2.post("/", async (c) => {
         bearer: bearerToken,
       });
       if (runtime.ok) {
+        // Environment-backed chatbox (live-follow): the backend resolved the
+        // environment FRESH and projected its closed server set + skill union
+        // onto the config. A present-but-malformed payload is an UNKNOWN
+        // environment, not a host-backed chatbox — stop the turn (same
+        // fail-closed rationale as the fetch-error branch below) rather than
+        // fall through to the body's server list.
+        const environmentRead = readChatboxEnvironment(runtime.config);
+        if (environmentRead.kind === "invalid") {
+          logger.warn(
+            "[chat-v2] chatbox environment payload malformed; failing closed",
+            { chatboxId, detail: environmentRead.detail },
+          );
+          throw new WebRouteError(
+            502,
+            ErrorCode.INTERNAL_ERROR,
+            "Couldn't load this chatbox's environment, so the turn was stopped to avoid running with the wrong configuration.",
+          );
+        }
+        if (environmentRead.kind === "present") {
+          chatboxEnvironment = environmentRead.environment;
+          // Same projection the environment target uses, so the EMULATED
+          // engine advertises the environment's skills (skillsSource:
+          // "resolved") instead of silently delivering zero. Attribution is
+          // null on purpose: the payload pins no plugin versions (the backend
+          // already re-gated plugins before serving it), so there is nothing
+          // to attribute and no probe to degrade on a guest-reachable turn.
+          effectiveCapabilities = resolveEffectiveCapabilities(
+            chatboxEnvironment,
+            null,
+          );
+        }
         hostRuntimeConfig = runtime.config as unknown as Record<
           string,
           unknown
@@ -400,23 +441,25 @@ chatV2.post("/", async (c) => {
     }
 
     // ── The turn's effective server set ─────────────────────────────────────
-    // For an environment target this REPLACES the body's `selectedServerIds`
+    // For an environment target — or an environment-backed chatbox turn — this
+    // REPLACES the body's `selectedServerIds`
     // everywhere below — manager authorization/connection, name mapping and
     // elicitation, prepareChatV2, persistence/resume config, telemetry and the
     // tool snapshot. Resolving an environment and then still handing the raw
     // body list to the manager would connect a set the environment never
     // authorized, which is precisely the hole the atomic resolution closes.
-    const effectiveServerIds = environmentSpec
-      ? runtimeServerIds(environmentSpec)
+    const environmentServers = environmentSpec ?? chatboxEnvironment;
+    const effectiveServerIds = environmentServers
+      ? runtimeServerIds(environmentServers)
       : selectedServerIds;
     // Names stay index-aligned with the ids. An empty array (older backend
     // without the name-carrying projection) makes `buildServerNamesById` return
     // undefined, and the manager falls back to showing the id — the same
     // degradation the legacy path already has when a client omits names.
-    const environmentServerNameList = environmentSpec
-      ? runtimeServerNames(environmentSpec)
+    const environmentServerNameList = environmentServers
+      ? runtimeServerNames(environmentServers)
       : undefined;
-    const effectiveServerNames = environmentSpec
+    const effectiveServerNames = environmentServers
       ? environmentServerNameList && environmentServerNameList.length > 0
         ? environmentServerNameList
         : undefined
@@ -424,10 +467,14 @@ chatV2.post("/", async (c) => {
     // The environment's composed skill union, in the shape both engines
     // consume. Presence — not length — is what makes it authoritative, so an
     // environment that resolves zero skills delivers zero, and never falls back
-    // to the project-wide pool.
+    // to the project-wide pool. For an env-backed chatbox an ABSENT skills
+    // array (older backend) also stays authoritative-empty: the environment
+    // decided the channel set, not the project-wide pool.
     const environmentSkills = environmentSpec
       ? environmentRuntimeSkills(environmentSpec)
-      : undefined;
+      : chatboxEnvironment
+        ? environmentRuntimeSkills({ skills: chatboxEnvironment.skills ?? [] })
+        : undefined;
 
     // Enterprise-managed authorization policy. Server-authoritative wherever
     // a backend host config exists (chatbox / host-bound turns above — the
@@ -564,7 +611,7 @@ chatV2.post("/", async (c) => {
         // "no MCP servers" fail-closed gate. An environment target's resolved
         // set outranks even the host config's own list: it IS the set we are
         // about to connect.
-        hasSelectedMcpServers: environmentSpec
+        hasSelectedMcpServers: environmentServers
           ? effectiveServerIds.length > 0
           : (resolvedExecution.selectedServerIds ?? selectedServerIds).length >
             0,
@@ -656,21 +703,24 @@ chatV2.post("/", async (c) => {
     // on such a host is rejected by the availability preflight above, so gate
     // on the actual engine (harness id + canonicalized model), not host config
     // alone.
-    // An environment target NEVER also enables the project-wide cloud skill
-    // tools: its resolved union is authoritative and is delivered through
+    // An environment target — or an environment-backed chatbox — NEVER also
+    // enables the project-wide cloud skill tools: its resolved union is
+    // authoritative and is delivered through
     // `runtimeSkillsOverride`. Wiring both would double-deliver — an
     // environment-scoped `loadSkill` alongside a project-wide one, with the
     // model free to pull skills the environment deliberately excluded.
-    const cloudSkillsEnabled = !environmentSpec && shouldEnableCloudSkillTools({
-      isGuest: Boolean(c.get("guestId")),
-      harness: resolvedExecution.harness,
-      modelId: String(modelDefinition.id),
-      // Provider is required so bare hosted ids canonicalize — without it a
-      // bare-id harness turn would be mis-detected as emulated and get the
-      // emulated skill tools on top of adapter-delivered skills.
-      provider: modelDefinition.provider,
-      hasProjectId: Boolean(hostedBody.projectId),
-    });
+    const cloudSkillsEnabled =
+      !environmentServers &&
+      shouldEnableCloudSkillTools({
+        isGuest: Boolean(c.get("guestId")),
+        harness: resolvedExecution.harness,
+        modelId: String(modelDefinition.id),
+        // Provider is required so bare hosted ids canonicalize — without it a
+        // bare-id harness turn would be mis-detected as emulated and get the
+        // emulated skill tools on top of adapter-delivered skills.
+        provider: modelDefinition.provider,
+        hasProjectId: Boolean(hostedBody.projectId),
+      });
 
     // Registering the callback is what makes the SDK advertise `elicitation`,
     // so "who declares it" and "may we honor it" are one decision — see
@@ -951,6 +1001,20 @@ chatV2.post("/", async (c) => {
               environment_capability_problems: (
                 effectiveCapabilities?.problems ?? []
               ).map((problem) => problem.code),
+            }
+          : {}),
+        // Environment-BACKED CHATBOX turn (live-follow). A deliberately
+        // smaller slice than the environment-target block above: the payload
+        // carries no host/plugin provenance (the backend already re-gated
+        // plugins before serving it), and `environment_name` is user-authored
+        // so it is not emitted from a share-link-reachable turn.
+        ...(chatboxEnvironment
+          ? {
+              chatbox_environment_backed: true,
+              environment_id: chatboxEnvironment.environmentRef.environmentId,
+              environment_revision: chatboxEnvironment.environmentRef.revision,
+              environment_effective_server_count: effectiveServerIds.length,
+              environment_skill_count: environmentSkills?.length ?? 0,
             }
           : {}),
       });

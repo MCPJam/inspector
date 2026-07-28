@@ -1,10 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   useSharedChatThread,
   useSharedChatTurnTraces,
+  useSharedChatWidgetSnapshots,
   type SharedChatTurnTrace,
 } from "@/hooks/useSharedChatThreads";
-import type { TraceEnvelope } from "@/components/evals/trace-viewer-adapter";
+import {
+  snapshotsToTraceWidgetSnapshots,
+  type TraceEnvelope,
+} from "@/components/evals/trace-viewer-adapter";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 
 /** One pinned plugin version recorded on a synthetic session's resume config. */
@@ -70,6 +74,10 @@ export function usePersistedSessionTrace(threadId: string | null): {
 } {
   const { thread } = useSharedChatThread({ threadId });
   const { traces: turnTraces } = useSharedChatTurnTraces({ threadId });
+  // MCP App widget snapshots captured by the swarm runner per turn. Joined
+  // into the envelope (same as ShareUsageThreadDetail) so the Chat view
+  // replays the actual widget instead of collapsing to a plain tool pill.
+  const { snapshots } = useSharedChatWidgetSnapshots({ threadId });
   const [messages, setMessages] = useState<unknown[] | null>(null);
   const [spans, setSpans] = useState<EvalTraceSpan[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
@@ -152,6 +160,11 @@ export function usePersistedSessionTrace(threadId: string | null): {
     };
   }, [threadId, turnTraces]);
 
+  const widgetSnapshots = useMemo(
+    () => (snapshots?.length ? snapshotsToTraceWidgetSnapshots(snapshots) : []),
+    [snapshots],
+  );
+
   const loading = loadingMessages || loadingSpans;
   const trace: TraceEnvelope | null =
     messages == null
@@ -160,6 +173,7 @@ export function usePersistedSessionTrace(threadId: string | null): {
           traceVersion: 1,
           messages: messages as TraceEnvelope["messages"],
           ...(spans.length > 0 ? { spans } : {}),
+          ...(widgetSnapshots.length > 0 ? { widgetSnapshots } : {}),
         };
 
   return {
