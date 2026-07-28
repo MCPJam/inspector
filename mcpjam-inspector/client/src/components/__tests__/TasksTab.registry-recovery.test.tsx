@@ -9,7 +9,7 @@
  * per-browser store.
  */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 
@@ -29,6 +29,7 @@ const mockGetTrackedTasksForServer = vi.fn();
 const mockGetDismissedTaskIds = vi.fn();
 const mockMarkTaskExpired = vi.fn();
 const mockTrackTask = vi.fn();
+const mockDismissRegistryTasks = vi.fn();
 
 vi.mock("@/lib/apis/mcp-tasks-api", () => ({
   listTasks: (...args: unknown[]) => mockListTasks(...args),
@@ -51,6 +52,8 @@ vi.mock("@/lib/task-tracker", () => ({
   clearTrackedTasksForServer: vi.fn(),
   getDismissedTaskIds: (...args: unknown[]) => mockGetDismissedTaskIds(...args),
   dismissTasksForServer: vi.fn(),
+  dismissRegistryTasks: (...args: unknown[]) =>
+    mockDismissRegistryTasks(...args),
   recordTaskObservation: vi.fn(),
   recordTaskObservations: vi.fn(),
   getTrackedTaskSchedule: vi.fn().mockReturnValue(undefined),
@@ -242,12 +245,14 @@ describe("TasksTab registry recovery (hosted mode)", () => {
     expect(screen.queryByText("legacy-1")).not.toBeInTheDocument();
   });
 
-  it("renders terminal registry entries as placeholders and never polls them", async () => {
+  it("renders cancelled registry entries as placeholders and never polls them", async () => {
+    // `cancelled` owes nothing — there is no result to fetch — unlike
+    // completed/failed, which get the one-shot recovery read below.
     mockListTasks.mockResolvedValue({
       tasks: [],
       wire: "extension",
       registryTasks: [
-        registryEntry("done-1", { lastKnownStatus: "completed" }),
+        registryEntry("done-1", { lastKnownStatus: "cancelled" }),
       ],
     });
 
@@ -258,6 +263,84 @@ describe("TasksTab registry recovery (hosted mode)", () => {
     });
     expect(mockGetTasksBatch).not.toHaveBeenCalled();
     expect(mockTrackTask).not.toHaveBeenCalled();
+  });
+
+  it("fetches a recovered completed extension task's inline result exactly once", async () => {
+    // On the extension wire the result rides EXCLUSIVELY on tasks/get and the
+    // registry stores only the status — so a recovered `completed` handle owes
+    // one bounded read, after which it is spent.
+    mockListTasks.mockResolvedValue({
+      tasks: [],
+      wire: "extension",
+      registryTasks: [
+        registryEntry("done-1", { lastKnownStatus: "completed" }),
+      ],
+    });
+    mockGetTasksBatch.mockResolvedValue({
+      wire: "extension",
+      tasks: [
+        {
+          taskId: "done-1",
+          task: {
+            taskId: "done-1",
+            status: "completed",
+            createdAt: "2026-07-27T00:00:00.000Z",
+            lastUpdatedAt: "2026-07-27T00:01:00.000Z",
+            ttlMs: null,
+            result: { content: [{ type: "text", text: "inline done" }] },
+          },
+        },
+      ],
+    });
+
+    render(<TasksTab serverConfig={serverConfig()} serverName={SERVER} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("done-1")).toBeInTheDocument();
+    });
+    expect(mockGetTasksBatch).toHaveBeenCalledWith(SERVER, ["done-1"]);
+
+    // The live read carried the inline result; selecting the row shows it.
+    fireEvent.click(screen.getByText("done-1"));
+    await waitFor(() => {
+      expect(screen.getByText(/inline done/)).toBeInTheDocument();
+    });
+
+    // A manual refresh re-reads the registry, but the one-shot is spent:
+    // the same handle is never re-polled.
+    await act(async () => {
+      fireEvent.click(screen.getByTitle("Refresh tasks"));
+    });
+    await waitFor(() => expect(mockListTasks).toHaveBeenCalledTimes(2));
+    expect(mockGetTasksBatch).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to the placeholder when the one-shot result read fails", async () => {
+    mockListTasks.mockResolvedValue({
+      tasks: [],
+      wire: "extension",
+      registryTasks: [
+        registryEntry("done-1", { lastKnownStatus: "completed" }),
+      ],
+    });
+    mockGetTasksBatch.mockRejectedValue(new Error("connect failed"));
+
+    render(<TasksTab serverConfig={serverConfig()} serverName={SERVER} />);
+
+    // The read was attempted once, failed, and the registry's last-known view
+    // still renders.
+    await waitFor(() => {
+      expect(screen.getByText("done-1")).toBeInTheDocument();
+    });
+    expect(mockGetTasksBatch).toHaveBeenCalledTimes(1);
+
+    // Bounded: spent at issue time, so a refresh does not retry it.
+    await act(async () => {
+      fireEvent.click(screen.getByTitle("Refresh tasks"));
+    });
+    await waitFor(() => expect(mockListTasks).toHaveBeenCalledTimes(2));
+    expect(mockGetTasksBatch).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("done-1")).toBeInTheDocument();
   });
 
   it("drops a recovered handle the server no longer knows", async () => {
@@ -301,5 +384,111 @@ describe("TasksTab registry recovery (hosted mode)", () => {
     });
 
     await waitFor(() => expect(mockListTasks).toHaveBeenCalledTimes(2));
+  });
+
+  describe("recovery-read completion (absent vs present-empty)", () => {
+    /** Runs the fake clock forward, flushing the promises each tick starts. */
+    async function advance(ms: number) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(ms);
+      });
+    }
+
+    // A tracked working handle keeps the auto-refresh loop ticking, so the
+    // retry (or its absence) is observable on ordinary ticks.
+    const withActiveTrackedTask = () => {
+      mockGetTrackedTasksForServer.mockReturnValue([
+        { taskId: "task-1", serverId: SERVER, wire: "extension" },
+      ]);
+      mockGetTasksBatch.mockResolvedValue({
+        wire: "extension",
+        tasks: [{ taskId: "task-1", task: liveTask("task-1") }],
+      });
+    };
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("retries next tick when registryTasks was ABSENT (unavailable)", async () => {
+      vi.useFakeTimers();
+      withActiveTrackedTask();
+      // No registryTasks field at all: "no recovery source this tick".
+      mockListTasks.mockResolvedValue({ tasks: [], wire: "extension" });
+
+      render(<TasksTab serverConfig={serverConfig()} serverName={SERVER} />);
+      await advance(0);
+      expect(mockListTasks).toHaveBeenCalledTimes(1);
+
+      for (let i = 0; i < 4 && mockListTasks.mock.calls.length < 2; i += 1) {
+        await advance(3_000);
+      }
+      // The read stayed armed and was retried automatically.
+      expect(mockListTasks.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it("does not re-read once the registry ANSWERED — even with []", async () => {
+      vi.useFakeTimers();
+      withActiveTrackedTask();
+      // Present-but-empty is a verified answer, and completes the read.
+      mockListTasks.mockResolvedValue({
+        tasks: [],
+        wire: "extension",
+        registryTasks: [],
+      });
+
+      render(<TasksTab serverConfig={serverConfig()} serverName={SERVER} />);
+      await advance(0);
+      expect(mockListTasks).toHaveBeenCalledTimes(1);
+
+      for (let i = 0; i < 4; i += 1) {
+        await advance(3_000);
+      }
+      expect(mockListTasks).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("keeps cleared registry-only handles hidden across refetches", async () => {
+    // Dismissal is registry-aware: Clear adds registry-only ids to the durable
+    // per-server dismissed set (a local view preference — the backend row is
+    // NOT deleted), and the merge filter consults it on every refetch.
+    const dismissed = new Set<string>();
+    mockGetDismissedTaskIds.mockImplementation(() => new Set(dismissed));
+    mockDismissRegistryTasks.mockImplementation(
+      (_server: string, ids: string[]) => {
+        for (const id of ids) dismissed.add(id);
+      },
+    );
+    mockListTasks.mockResolvedValue({
+      tasks: [],
+      wire: "extension",
+      registryTasks: [registryEntry("recovered-1")],
+    });
+    mockGetTasksBatch.mockResolvedValue({
+      wire: "extension",
+      tasks: [{ taskId: "recovered-1", task: liveTask("recovered-1") }],
+    });
+
+    render(<TasksTab serverConfig={serverConfig()} serverName={SERVER} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("recovered-1")).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTitle("Clear all tasks"));
+    });
+    expect(mockDismissRegistryTasks).toHaveBeenCalledWith(SERVER, [
+      "recovered-1",
+    ]);
+
+    // A refetch re-reads the registry and gets the same entry back, but the
+    // dismissal keeps it hidden and unpolled.
+    await act(async () => {
+      fireEvent.click(screen.getByTitle("Refresh tasks"));
+    });
+    await waitFor(() => expect(mockListTasks).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText("recovered-1")).not.toBeInTheDocument();
+    expect(mockGetTasksBatch).toHaveBeenCalledTimes(1);
   });
 });

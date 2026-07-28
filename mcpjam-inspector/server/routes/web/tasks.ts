@@ -222,15 +222,40 @@ tasks.post("/list", async (c) =>
   }),
 );
 
+// Reports its single observation exactly like /get-batch does — hosted legacy
+// handles are refreshed through THIS path when only one of them is due, and
+// without the report their registry rows' lastKnownStatus/lastObservedAt go
+// stale and can be pruned as unobservable despite active polling. A -32602 is
+// still an observation (the one that lets the backend retire the row), so it
+// reports `expired` before the mapped 404 propagates.
 tasks.post("/get", async (c) =>
-  withEphemeralConnection(c, taskGetSchema, (manager, body) =>
-    mapTaskErrors(() =>
-      getTaskForWire(manager, {
-        serverId: body.serverId,
-        taskId: body.taskId,
-      }),
-    ),
-  ),
+  withEphemeralConnection(c, taskGetSchema, async (manager, body) => {
+    try {
+      const result = await mapTaskErrors(() =>
+        getTaskForWire(manager, {
+          serverId: body.serverId,
+          taskId: body.taskId,
+        }),
+      );
+      void reportObservedStatuses(c, body, {
+        wire: result.wire,
+        tasks: [{ taskId: body.taskId, task: result.task }],
+      });
+      return result;
+    } catch (error) {
+      if (
+        error instanceof WebRouteError &&
+        error.code === ErrorCode.TASK_NOT_FOUND
+      ) {
+        const wire = (error.details as { wire?: string } | undefined)?.wire;
+        void reportObservedStatuses(c, body, {
+          wire: wire ?? "none",
+          tasks: [{ taskId: body.taskId, code: TASK_UNKNOWN_OR_EXPIRED }],
+        });
+      }
+      throw error;
+    }
+  }),
 );
 
 // One connection per server per poll tick; per-task failures are reported

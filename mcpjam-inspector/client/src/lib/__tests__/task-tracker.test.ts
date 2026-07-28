@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   clearTrackedTasksForScope,
+  dismissRegistryTasks,
+  getDismissedTaskIds,
   getRespondedInputKeys,
   recordRespondedInputKeys,
   recordTaskObservation,
@@ -449,5 +451,50 @@ describe("task-tracker", () => {
     // scope nobody has open survived. Losing the handle the user is waiting on
     // is the worst outcome this store has.
     expect(getTrackedTasks().map((t) => t.taskId)).toEqual(["fresh"]);
+  });
+
+  describe("dismissed registry-only handles", () => {
+    it("unions registry dismissals into getDismissedTaskIds without a tracker row", () => {
+      trackTask({
+        taskId: "tracked-1",
+        serverId: "srv",
+        wire: "extension",
+        createdAt: NOW,
+      });
+
+      dismissRegistryTasks("srv", ["registry-1", "registry-2"]);
+
+      const dismissed = getDismissedTaskIds("srv");
+      expect(dismissed.has("registry-1")).toBe(true);
+      expect(dismissed.has("registry-2")).toBe(true);
+      // A view preference, not a tracker row: nothing was resurrected into
+      // the task store for it.
+      expect(getTrackedTasks().map((t) => t.taskId)).toEqual(["tracked-1"]);
+    });
+
+    it("scopes registry dismissals like the tracker rows", () => {
+      setTrackedTaskScope("project-a");
+      dismissRegistryTasks("srv", ["registry-1"]);
+
+      setTrackedTaskScope("project-b");
+      expect(getDismissedTaskIds("srv").has("registry-1")).toBe(false);
+
+      setTrackedTaskScope("project-a");
+      expect(getDismissedTaskIds("srv").has("registry-1")).toBe(true);
+    });
+
+    it("clearTrackedTasksForScope drops that scope's registry dismissals too", () => {
+      setTrackedTaskScope("project-a");
+      dismissRegistryTasks("srv", ["registry-1"]);
+      setTrackedTaskScope("project-b");
+      dismissRegistryTasks("srv", ["registry-2"]);
+
+      clearTrackedTasksForScope("project-a");
+
+      setTrackedTaskScope("project-a");
+      expect(getDismissedTaskIds("srv").has("registry-1")).toBe(false);
+      setTrackedTaskScope("project-b");
+      expect(getDismissedTaskIds("srv").has("registry-2")).toBe(true);
+    });
   });
 });

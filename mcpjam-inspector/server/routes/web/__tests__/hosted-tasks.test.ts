@@ -504,6 +504,58 @@ describe("hosted /api/web/tasks", () => {
       );
     });
 
+    it("/get reports its single observation the same way", async () => {
+      // The individual-read path refreshes hosted legacy handles whenever
+      // only one of them is due; without the report their registry rows go
+      // stale and get pruned as unobservable despite active polling.
+      setManager({
+        getTaskExt: vi
+          .fn()
+          .mockResolvedValue({ taskId: "t1", status: "input-required" }),
+      });
+
+      const res = await post("/get", { taskId: "t1" });
+      expect(res.status).toBe(200);
+
+      await vi.waitFor(() =>
+        expect(mockReportTaskStatuses).toHaveBeenCalledTimes(1),
+      );
+      expect(mockReportTaskStatuses).toHaveBeenCalledWith(
+        { bearer: "convex-jwt", projectId: "p1", serverId: "s1" },
+        [{ wire: "extension", taskId: "t1", status: "input_required" }],
+      );
+    });
+
+    it("/get reports expired on a -32602 while the 404 verdict stands", async () => {
+      setManager({ getTaskExt: unknownTask() });
+
+      const res = await post("/get", { taskId: "gone" });
+
+      expect(res.status).toBe(404);
+      expect((await res.json()).error.code).toBe("TASK_NOT_FOUND");
+      await vi.waitFor(() =>
+        expect(mockReportTaskStatuses).toHaveBeenCalledTimes(1),
+      );
+      expect(mockReportTaskStatuses).toHaveBeenCalledWith(
+        { bearer: "convex-jwt", projectId: "p1", serverId: "s1" },
+        [{ wire: "extension", taskId: "gone", status: "expired" }],
+      );
+    });
+
+    it("/get skips reporting for chatbox-scoped callers", async () => {
+      setManager({
+        getTaskExt: vi
+          .fn()
+          .mockResolvedValue({ taskId: "t1", status: "working" }),
+      });
+
+      const res = await post("/get", { taskId: "t1", accessScope: "chat_v2" });
+
+      expect(res.status).toBe(200);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(mockReportTaskStatuses).not.toHaveBeenCalled();
+    });
+
     it("skips reporting for chatbox-scoped callers", async () => {
       const getTaskExt = vi
         .fn()

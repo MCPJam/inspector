@@ -680,12 +680,90 @@ export function dismissTasksForServer(
   saveInScope(tasks);
 }
 
+// ---------------------------------------------------------------------------
+// Dismissed REGISTRY-ONLY handles.
+//
+// A handle recovered from the hosted registry has no tracker row (writing one
+// would resurrect entries the user cleared and duplicate the registry's own
+// persistence), so a tracker-row `dismissed` flag has nowhere to live. Their
+// dismissals are a separate, bounded id set: a local VIEW preference on this
+// browser only — the registry row itself is never deleted for it. Scoped like
+// the tracker rows, because these ids are bearer-ish too.
+// ---------------------------------------------------------------------------
+
+const DISMISSED_REGISTRY_KEY = "mcp-dismissed-registry-tasks";
+const MAX_DISMISSED_REGISTRY_IDS_PER_SERVER = 200;
+
+function dismissedRegistryKey(serverId: string): string {
+  return `${activeScope ?? ""}\u0000${serverId}`;
+}
+
+function loadDismissedRegistry(): Record<string, string[]> {
+  try {
+    const raw = localStorage.getItem(DISMISSED_REGISTRY_KEY);
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return {};
+    }
+    const out: Record<string, string[]> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (!Array.isArray(value)) continue;
+      out[key] = value
+        .filter(
+          (id): id is string =>
+            typeof id === "string" &&
+            id.length > 0 &&
+            id.length <= MAX_STRING_LENGTH
+        )
+        .slice(0, MAX_DISMISSED_REGISTRY_IDS_PER_SERVER);
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function saveDismissedRegistry(store: Record<string, string[]>): void {
+  try {
+    localStorage.setItem(DISMISSED_REGISTRY_KEY, JSON.stringify(store));
+  } catch {
+    // localStorage might be full or unavailable
+  }
+}
+
+/**
+ * Hides registry-recovered handles on THIS browser. The merge filter in the
+ * Tasks tab consults {@link getDismissedTaskIds}, which unions these in, so a
+ * dismissed recovered handle stays hidden across refetches without touching
+ * the backend row (global removal is the delete route's job, uncalled in v1).
+ */
+export function dismissRegistryTasks(
+  serverId: string,
+  taskIds: readonly string[]
+): void {
+  const ids = taskIds.filter((id) => identityString(id) !== undefined);
+  if (ids.length === 0) return;
+  const store = loadDismissedRegistry();
+  const key = dismissedRegistryKey(serverId);
+  const merged = [...new Set([...(store[key] ?? []), ...ids])];
+  // Keep the NEWEST dismissals when the bound trims: the oldest are the ones
+  // most likely to have been pruned from the registry already.
+  store[key] = merged.slice(-MAX_DISMISSED_REGISTRY_IDS_PER_SERVER);
+  saveDismissedRegistry(store);
+}
+
 export function getDismissedTaskIds(serverId: string): Set<string> {
-  return new Set(
+  const dismissed = new Set(
     loadTasks()
       .filter((t) => t.serverId === serverId && t.dismissed)
       .map((t) => t.taskId)
   );
+  for (const id of loadDismissedRegistry()[dismissedRegistryKey(serverId)] ??
+    []) {
+    dismissed.add(id);
+  }
+  return dismissed;
 }
 
 export function clearTrackedTasksForServer(serverId: string): void {
@@ -702,11 +780,24 @@ export function clearTrackedTasksForScope(
 ): void {
   const target = scope ?? undefined;
   saveTasks(loadAllTasks().filter((t) => (t.scope ?? undefined) !== target));
+  // The dismissed-registry ids are bearer-ish task ids too, and must not
+  // survive an actor change on a shared browser any more than the rows do.
+  const store = loadDismissedRegistry();
+  const prefix = `${target ?? ""}\u0000`;
+  let changed = false;
+  for (const key of Object.keys(store)) {
+    if (key.startsWith(prefix)) {
+      delete store[key];
+      changed = true;
+    }
+  }
+  if (changed) saveDismissedRegistry(store);
 }
 
 export function clearAllTrackedTasks(): void {
   try {
     localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(DISMISSED_REGISTRY_KEY);
   } catch {
     // Ignore errors
   }
