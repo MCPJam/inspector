@@ -35,7 +35,10 @@ import {
   usageError,
   writeResult,
 } from "../lib/output.js";
-import { buildMrtrBeforeConnect } from "../lib/mrtr-input.js";
+import {
+  buildMrtrBeforeConnect,
+  sanitizeTerminalText,
+} from "../lib/mrtr-input.js";
 import {
   assertWireCapability,
   buildTaskInputDriverOptions,
@@ -299,7 +302,13 @@ function registerTaskVerbs(tasks: Command): void {
           );
         }
         const result = await manager.listTasks(serverId, options.cursor);
-        return { wire: support.wire, ...result };
+        // Resolved wire LAST. The list schema is permissive, so a server that
+        // returns its own `wire` key would otherwise overwrite the value the
+        // CLI resolved from the handshake — and these commands exist to
+        // diagnose nonconforming servers, which is exactly the population that
+        // would send one. What the connection actually negotiated is not the
+        // server's to restate.
+        return { ...result, wire: support.wire };
       },
       { requiresTaskId: false },
     ),
@@ -551,8 +560,19 @@ export function watchStateReporter(
   return (snapshot) => {
     if (snapshot.status === last) return;
     last = snapshot.status;
-    const detail = snapshot.statusMessage ? ` — ${snapshot.statusMessage}` : "";
-    process.stderr.write(`task: ${snapshot.status}${detail}\n`);
+    // `statusMessage` is free text the server chose, and a watch prints it on
+    // every transition. Unsanitized, a server could emit ANSI escapes to
+    // repaint the terminal, erase the status lines above, or forge a prompt —
+    // and the operator most likely to be watching a task is the one pointed at
+    // a server they do not trust. `status` is enum-constrained by both
+    // observation adapters, but this reporter takes a bare string, so it gets
+    // the same treatment rather than relying on every future caller.
+    const detail = snapshot.statusMessage
+      ? ` — ${sanitizeTerminalText(snapshot.statusMessage)}`
+      : "";
+    process.stderr.write(
+      `task: ${sanitizeTerminalText(snapshot.status)}${detail}\n`,
+    );
   };
 }
 

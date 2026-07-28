@@ -395,6 +395,22 @@ test("tasks list returns the legacy list and warns on the extension", async () =
   });
 });
 
+test("tasks list keeps the resolved wire when the server returns its own", async () => {
+  // The list schema is permissive, so a server can return a `wire` key of its
+  // own. These commands exist to diagnose nonconforming servers — precisely the
+  // population that would send one — so the value the CLI resolved from the
+  // handshake has to win. Reporting `extension` here would send someone
+  // debugging a legacy server down entirely the wrong path.
+  await withLegacyFixture(
+    async (fixture) => {
+      const run = await runCli(["tasks", "list", ...httpTarget(fixture.url)]);
+      assert.equal(run.exitCode, 0, run.stderr);
+      assert.equal((jsonOf(run) as { wire: string }).wire, "legacy");
+    },
+    { listResultExtras: { wire: "extension" } },
+  );
+});
+
 /**
  * A 2025-11-25 server that declares ONLY `tasks.cancel`.
  *

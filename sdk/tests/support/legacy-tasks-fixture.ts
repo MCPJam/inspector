@@ -83,6 +83,15 @@ export interface LegacyTasksFixtureOptions {
    * malformed creation.
    */
   createTaskStatus?: string;
+  /**
+   * Extra properties to merge into the `tasks/list` result.
+   *
+   * The list schema is permissive, so a server can return keys a client never
+   * asked for — including ones that collide with fields the CLI adds to its own
+   * envelope. That collision is the point: a nonconforming server must not be
+   * able to overwrite what the client resolved for itself.
+   */
+  listResultExtras?: Record<string, unknown>;
 }
 
 export interface ReceivedRequest {
@@ -241,6 +250,7 @@ export async function serveLegacyTasksFixture(
         return taskFields("cancelled");
       case "tasks/list":
         return {
+          ...(options.listResultExtras ?? {}),
           tasks:
             options.trackForList && state.created
               ? [
