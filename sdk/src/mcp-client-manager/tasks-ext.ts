@@ -35,13 +35,31 @@
  * entry is dropped. The protocol-version and client-info envelope keys are
  * never written here, so beta.4's auto-generated values for them survive
  * untouched. `tasks-ext.test.ts` pins the no-clobbering property.
+ *
+ * ## Getting the three methods onto the wire at all
+ *
+ * Two separate upstream constructs stand between these helpers and a socket,
+ * and BOTH have to be dealt with:
+ *
+ * 1. the result-schema seam — solved here, by sending every extension request
+ *    through `requestWithSchema` (see {@link TASKS_EXT_WIRE_RESULT_SCHEMA});
+ * 2. the outbound era gate — solved by `tasks-ext-era-gate.ts`, which is where
+ *    the reasoning lives. Its shadow is installed LAZILY, from
+ *    {@link sendTasksExtRequest} below: it probes a private upstream member,
+ *    so it must not sit on the connect path of servers that never speak this
+ *    extension.
  */
 
 import { CLIENT_CAPABILITIES_META_KEY } from "@modelcontextprotocol/client";
+import { z } from "zod";
 import { mergeClientCapabilities } from "./capabilities.js";
+import { ensureTasksExtensionEraGateShadow } from "./tasks-ext-era-gate.js";
 import type { ManagedMcpClient } from "./managed-mcp-client.js";
 import type { ClientCapabilityOptions, ClientRequestOptions } from "./types.js";
-import { assertGetTaskExtResult } from "./tasks-ext-guards.js";
+import {
+  assertGetTaskExtResult,
+  assertTaskExtAck,
+} from "./tasks-ext-guards.js";
 import type {
   CancelTaskExtResult,
   GetTaskExtResult,
@@ -60,6 +78,42 @@ export const TasksExtUpdateMethod = "tasks/update" as const;
 export const TasksExtCancelMethod = "tasks/cancel" as const;
 /** Optional server→client task notification (delivered via `subscriptions/listen`). */
 export const TasksExtNotificationMethod = "notifications/tasks" as const;
+
+/**
+ * The three extension REQUEST methods, as one list. Derived from the constants
+ * above so it can never drift from them.
+ *
+ * Two consumers depend on this being exactly the extension's method set:
+ * `tasks-ext-era-gate.ts` (which exempts them from the client's outbound era
+ * gate) and the request helpers below. `notifications/tasks` is deliberately
+ * absent — it is inbound and never era-gated on send.
+ */
+export const TasksExtRequestMethods = [
+  TasksExtGetMethod,
+  TasksExtUpdateMethod,
+  TasksExtCancelMethod,
+] as const;
+
+export type TasksExtRequestMethod = (typeof TasksExtRequestMethods)[number];
+
+/**
+ * Wire-level result schema for every extension request.
+ *
+ * Deliberately loose, exactly like the legacy wire's
+ * `LEGACY_TASKS_RESULT_SCHEMA` (`tasks.ts:20`): the real validation is the
+ * zod mirror in `tasks-ext-guards.ts`, which discriminates on `status` and
+ * produces `InvalidTaskExtPayloadError` with a per-field issue list. A strict
+ * schema here would instead surface upstream's generic "invalid result" and
+ * lose that diagnosis.
+ *
+ * Passing it is NOT optional. All three methods must ride the
+ * explicit-result-schema overload of upstream `Protocol.request`
+ * (`requestWithSchema`, see `official-sdk-client-adapter.ts:114`), because the
+ * schema-less overload resolves its validator from the negotiated era's
+ * registry (`codecResultValidator`) and that returns `undefined` for every
+ * extension method — the call then throws "'…' is not a spec method".
+ */
+const TASKS_EXT_WIRE_RESULT_SCHEMA = z.looseObject({});
 
 /**
  * The `_meta` fragment declaring task eligibility for ONE request. Merges the
@@ -99,21 +153,43 @@ export interface TasksExtCallContext {
   options?: ClientRequestOptions;
 }
 
+/**
+ * The ONE send path for the extension: all three request helpers below build
+ * their params and then come through here, and nothing else in the SDK issues
+ * a `TasksExtRequestMethod`. That makes it the only choke point where the
+ * era-gate shadow has to be installed — and, because the exemption set IS
+ * `TasksExtRequestMethods`, a request that never passes through here is by
+ * definition a request the shadow would not have exempted anyway.
+ *
+ * The install is idempotent per client instance, so the cost after the first
+ * extension call is a `WeakMap`/`WeakSet` hit.
+ *
+ * @throws {TasksExtEraGateSeamError} when this client's upstream era-gate
+ * member has moved — loud here, where the extension actually depends on it,
+ * and nowhere near a connect.
+ */
+async function sendTasksExtRequest(
+  ctx: TasksExtCallContext,
+  method: TasksExtRequestMethod,
+  params: Record<string, unknown>
+): Promise<unknown> {
+  ensureTasksExtensionEraGateShadow(ctx.client);
+  return ctx.client.requestWithSchema(
+    {
+      method,
+      params: withTasksExtensionDeclaration(params, ctx.declaredCapabilities),
+    },
+    TASKS_EXT_WIRE_RESULT_SCHEMA,
+    ctx.options
+  );
+}
+
 /** `tasks/get` — a completed task carries its `result` INLINE. */
 export async function getTaskExt(
   ctx: TasksExtCallContext,
   taskId: string
 ): Promise<GetTaskExtResult> {
-  const raw = await ctx.client.request(
-    {
-      method: TasksExtGetMethod,
-      params: withTasksExtensionDeclaration(
-        { taskId },
-        ctx.declaredCapabilities
-      ),
-    },
-    ctx.options
-  );
+  const raw = await sendTasksExtRequest(ctx, TasksExtGetMethod, { taskId });
   return assertGetTaskExtResult(raw);
 }
 
@@ -127,17 +203,13 @@ export async function updateTaskExt(
   taskId: string,
   inputResponses: InputResponses
 ): Promise<UpdateTaskExtResult> {
-  const raw = await ctx.client.request<UpdateTaskExtResult>(
-    {
-      method: TasksExtUpdateMethod,
-      params: withTasksExtensionDeclaration(
-        { taskId, inputResponses },
-        ctx.declaredCapabilities
-      ),
-    },
-    ctx.options
-  );
-  return raw ?? {};
+  const raw = await sendTasksExtRequest(ctx, TasksExtUpdateMethod, {
+    taskId,
+    inputResponses,
+  });
+  // Validated as an object only: the ack carries no task state, so anything
+  // that is not an object is a wire violation rather than a task to render.
+  return assertTaskExtAck(raw, "tasks/update result", TasksExtUpdateMethod);
 }
 
 /**
@@ -149,15 +221,6 @@ export async function cancelTaskExt(
   ctx: TasksExtCallContext,
   taskId: string
 ): Promise<CancelTaskExtResult> {
-  const raw = await ctx.client.request<CancelTaskExtResult>(
-    {
-      method: TasksExtCancelMethod,
-      params: withTasksExtensionDeclaration(
-        { taskId },
-        ctx.declaredCapabilities
-      ),
-    },
-    ctx.options
-  );
-  return raw ?? {};
+  const raw = await sendTasksExtRequest(ctx, TasksExtCancelMethod, { taskId });
+  return assertTaskExtAck(raw, "tasks/cancel result", TasksExtCancelMethod);
 }

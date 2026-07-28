@@ -13,6 +13,7 @@ export const MCP_TASKS_CHECK_IDS = [
   "tasks-wire-resolvable",
   "tasks-declaration-hygiene",
   "tasks-result-type-discipline",
+  "tasks-undeclared-creation-refused",
   "tasks-undeclared-capability-rejected",
   "tasks-ttl-shape",
   "tasks-inline-result",
@@ -23,12 +24,40 @@ export type MCPTasksCheckId = (typeof MCP_TASKS_CHECK_IDS)[number];
 
 export type MCPTasksCheckStatus = "passed" | "failed" | "skipped";
 
+/**
+ * Why a selected check produced no verdict. Every `skipped` check carries one,
+ * and the two are NOT interchangeable:
+ *
+ *   - `"not-applicable"` — the check cannot apply to THIS server, so there is
+ *     nothing to establish: an extension-only check on a legacy connection, the
+ *     `Mcp-Name` check on stdio, any task check on a connection with no tasks
+ *     wire. A run may still pass with these.
+ *   - `"could-not-run"` — the check DOES apply and was selected, but the run
+ *     could not exercise it: no probe tool resolved, the probe tool is not
+ *     listed, no task was created, the task never became readable. The run is
+ *     then `incomplete`, never `passed` — "did not run" must never be read as
+ *     "conformed".
+ */
+export type MCPTasksSkipReason = "not-applicable" | "could-not-run";
+
+/**
+ * A run's verdict.
+ *
+ *   - `"passed"` — every selected, applicable check ran and passed.
+ *   - `"failed"` — at least one check produced a violation.
+ *   - `"incomplete"` — nothing failed, but at least one selected check could
+ *     not be run, so the run does not establish conformance.
+ */
+export type MCPTasksRunOutcome = "passed" | "failed" | "incomplete";
+
 export interface MCPTasksCheckResult {
   id: MCPTasksCheckId;
   category: MCPTasksCheckCategory;
   title: string;
   description: string;
   status: MCPTasksCheckStatus;
+  /** Always set when `status` is `"skipped"`. */
+  skipReason?: MCPTasksSkipReason;
   durationMs: number;
   error?: {
     message: string;
@@ -41,9 +70,12 @@ export interface MCPTasksCheckResult {
 export type MCPTasksConformanceConfig = MCPServerConfig & {
   checkIds?: MCPTasksCheckId[];
   /**
-   * Tool used to provoke a task. Optional: without it the runner picks the
-   * first tool whose `execution.taskSupport` is `required`, then the first
-   * with `optional`, and skips the creation checks when neither exists.
+   * Tool used to provoke a task. Without it the runner picks the first tool
+   * whose `execution.taskSupport` is `required`, then the first with
+   * `optional` — 2025-11-25 metadata that the 2026-07-28 `ToolSchema` strips,
+   * so auto-selection cannot work on the extension wire. When no probe tool
+   * resolves, every task-dependent check reports `could-not-run` and the run
+   * is `incomplete`; it never passes on skips.
    */
   toolName?: string;
   toolArguments?: Record<string, unknown>;
@@ -62,14 +94,33 @@ export interface NormalizedMCPTasksConformanceConfig {
 }
 
 export interface MCPTasksConformanceResult {
+  /**
+   * True ONLY when `outcome` is `"passed"`: every selected check either ran and
+   * passed or was inapplicable to this server. A check that could not run keeps
+   * this false, so a skip can never add up to a green run.
+   */
   passed: boolean;
+  outcome: MCPTasksRunOutcome;
+  /**
+   * Present when `outcome` is `"incomplete"`: which checks did not run and what
+   * the caller has to change to make them run.
+   */
+  incompleteReason?: string;
   target: string;
   checks: MCPTasksCheckResult[];
   summary: string;
   durationMs: number;
   categorySummary: Record<
     MCPTasksCheckCategory,
-    { total: number; passed: number; failed: number; skipped: number }
+    {
+      total: number;
+      passed: number;
+      failed: number;
+      /** Every skip, of either reason. */
+      skipped: number;
+      /** The subset of `skipped` that is `"could-not-run"`. */
+      couldNotRun: number;
+    }
   >;
   discovery: {
     protocolVersion?: string;

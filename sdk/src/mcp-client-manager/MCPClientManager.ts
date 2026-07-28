@@ -1656,8 +1656,13 @@ export class MCPClientManager {
   private assertExtensionTasksWire(serverId: string, method: string): void {
     const wire = this.getTasksWire(serverId);
     if (wire !== "extension") {
-      throw new TypeError(
-        `Server "${serverId}" does not speak the io.modelcontextprotocol/tasks extension (resolved wire: "${wire}"); refusing to send ${method}.`
+      // Typed, NOT a bare TypeError: routes map `isMCPTasksWireError` onto a
+      // 400 `TASKS_UNSUPPORTED` (a permanent, non-retryable condition). A
+      // TypeError becomes a 500, which hosted clients treat as transient and
+      // retry forever against a server that can never serve the request.
+      throw new MCPTasksWireError(
+        `Server "${serverId}" does not speak the io.modelcontextprotocol/tasks extension (resolved wire: "${wire}"); refusing to send ${method}.`,
+        wire
       );
     }
   }
@@ -1687,8 +1692,9 @@ export class MCPClientManager {
       // `task: {ttl?}` instead. Nothing to add.
       return callParams;
     }
-    throw new TypeError(
-      `Server "${serverId}" has no tasks wire (resolved wire: "none"); refusing to declare task eligibility on tools/call.`
+    throw new MCPTasksWireError(
+      `Server "${serverId}" has no tasks wire (resolved wire: "none"); refusing to declare task eligibility on tools/call.`,
+      wire
     );
   }
 
@@ -1919,6 +1925,12 @@ export class MCPClientManager {
       // Wire the modern per-request logging opt-in. The provider reads the
       // per-server level live, so `setPerRequestLogLevel` takes effect with no
       // reconnect; the decorator itself only injects on the modern era.
+      // `wrapLegacyClient` also registers this instance for the
+      // `io.modelcontextprotocol/tasks` era-gate shadow, which the extension
+      // methods this manager exposes (`getTaskExt` / `updateTask` /
+      // `cancelTaskExt`) need to reach a 2026-07-28 server. Registration is
+      // inert: the shadow is installed on the first such call, never at
+      // connect. See `tasks-ext-era-gate.ts`.
       const managedClient: ManagedMcpClient = wrapLegacyClient(
         upstreamClient,
         () => this.perRequestLogLevels.get(serverId),

@@ -72,13 +72,29 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * Whether a server advertises `io.modelcontextprotocol/tasks` in
  * `capabilities.extensions`. Only `tasks-dispatch` and `tasks-ext` may
  * consult this — the "treat as absent on 2025-11-25" rule lives here.
+ *
+ * The VALUE must itself be a non-array object: the capability map is
+ * `{ [extensionId]: settingsObject }`, so `true` / `"x"` / `[]` / `null` are
+ * malformed and do NOT count as a declaration (key presence alone would let a
+ * garbage value route real `tasks/*` traffic). A NON-EMPTY object is accepted:
+ * SEP-2663 says the settings are "not currently defined", so rejecting unknown
+ * settings would be forward-incompatible.
  */
 export function serverDeclaresTasksExtension(
   capabilities: ServerCapabilities | undefined
 ): boolean {
   const extensions = (capabilities as { extensions?: unknown } | undefined)
     ?.extensions;
-  return isRecord(extensions) && MCP_TASKS_EXTENSION_ID in extensions;
+  if (!isRecord(extensions)) {
+    return false;
+  }
+  const settings = Object.prototype.hasOwnProperty.call(
+    extensions,
+    MCP_TASKS_EXTENSION_ID
+  )
+    ? extensions[MCP_TASKS_EXTENSION_ID]
+    : undefined;
+  return isRecord(settings);
 }
 
 /**
