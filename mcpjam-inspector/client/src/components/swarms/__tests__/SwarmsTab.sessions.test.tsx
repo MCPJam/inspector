@@ -239,8 +239,8 @@ afterEach(() => {
 /**
  * Progressive discovery: click Host One's matrix cell (opens the LATEST run,
  * which the fixtures make `run-fail`/partial), then — for the completed run —
- * pick it from the run history list. The partial run is already the latest, so
- * the cell click alone opens it.
+ * pick it from the host cell's trend strip. The partial run is already the
+ * latest, so the cell click alone opens it.
  */
 async function expandJourneyAndOpenRunSessions(
   target: "completed" | "partial" = "completed",
@@ -253,7 +253,7 @@ async function expandJourneyAndOpenRunSessions(
   if (target === "completed") {
     fireEvent.click(
       await screen.findByRole("button", {
-        name: /view sessions for run completed/i,
+        name: /open run completed .* on host one/i,
       }),
     );
   }
@@ -360,9 +360,13 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
     fireEvent.click(screen.getByText("Persona One"));
     await expandJourneyAndOpenRunSessions("partial");
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: /open runs for book a flight on host two/i,
+      }),
+    );
 
     const matrix = await screen.findByTestId("swarm-sessions-matrix");
-    // One chip per (host, session) — Host Two appears on each of its chips.
     expect(within(matrix).getAllByText("Host Two").length).toBeGreaterThan(0);
     // Host Two's unpersisted failures surface as Fail chips.
     const failCells = within(matrix)

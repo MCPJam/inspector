@@ -73,18 +73,11 @@ import {
   LaunchJourneyRunError,
   SWARM_QUERIES,
   DEFAULT_PAGE_SIZE,
-  swarmAttemptChatSessionId,
   type JourneyRun,
-  type JourneyRollup,
   type JourneySessionRow,
   type PersonaTrackRecord,
 } from "@/lib/swarm-api";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
-import {
-  buildSwarmRunTargets,
-  findTargetCellForChatSessionId,
-  type SwarmTargetColumn,
-} from "@/components/swarms/swarm-targets";
 import {
   buildEnvJourneyPayload,
   MAX_ENVIRONMENTS_PER_JOURNEY,
@@ -112,11 +105,8 @@ import {
 import { getShareableAppOrigin } from "@/lib/chatbox-session";
 import { ConvertSwarmSessionDialog } from "@/components/swarms/convert-swarm-session-dialog";
 import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
-import {
-  SwarmLiveStreamPane,
-  SwarmSessionsMatrix,
-  type SwarmMatrixSelection,
-} from "@/components/swarms/journey-run-results";
+import { SwarmLiveStreamPane } from "@/components/swarms/journey-run-results";
+import { RunSessionsProvider, useRunSessionsContext } from "@/components/swarms/run-sessions-context";
 import {
   JourneyList,
   type JourneyListJourney,
@@ -136,10 +126,6 @@ import {
 } from "@/components/ui/resizable";
 // Re-exported for the goal-score unit test, which imports from `../SwarmsTab`.
 export { goalScoreAvgLabel } from "@/components/swarms/journey-run-format";
-import {
-  liveSessionTrace,
-  useJourneyRunStream,
-} from "@/components/swarms/use-journey-run-stream";
 import { ViewModeSelector } from "@/components/shared/view-mode-selector";
 import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
@@ -883,35 +869,40 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
                     );
                   }
                   return (
-                    <ResizablePanelGroup
-                      direction="horizontal"
-                      className="h-full"
+                    <RunSessionsProvider
+                      runId={runDetail.runId}
+                      runSnapshot={runDetail.runSnapshot}
+                      journeyRefId={runDetail.journeyId}
+                      hosts={hosts ?? []}
+                      sessionsPerHost={detailJourney.config.sessionsPerHost}
+                      initialTargetKey={runDetail.targetKey}
+                      initialThreadId={
+                        deepLink.runId === runDetail.runId
+                          ? deepLink.threadId
+                          : undefined
+                      }
                     >
-                      <ResizablePanel defaultSize={38} minSize={26}>
-                        <div className="h-full overflow-y-auto px-6 py-6">
-                          {personaDetail}
-                        </div>
-                      </ResizablePanel>
-                      <ResizableHandle withHandle />
-                      <ResizablePanel defaultSize={62} minSize={35}>
-                        <RunDetailPanel
-                          key={`${runDetail.runId}:${
-                            runDetail.targetKey ?? ""
-                          }`}
-                          journey={detailJourney}
-                          runId={runDetail.runId}
-                          runSnapshot={runDetail.runSnapshot}
-                          targetKey={runDetail.targetKey}
-                          hosts={hosts ?? []}
-                          initialThreadId={
-                            deepLink.runId === runDetail.runId
-                              ? deepLink.threadId
-                              : undefined
-                          }
-                          onClose={closeRunDetail}
-                        />
-                      </ResizablePanel>
-                    </ResizablePanelGroup>
+                      <ResizablePanelGroup
+                        direction="horizontal"
+                        className="h-full"
+                      >
+                        <ResizablePanel defaultSize={38} minSize={26}>
+                          <div className="h-full overflow-y-auto px-6 py-6">
+                            {personaDetail}
+                          </div>
+                        </ResizablePanel>
+                        <ResizableHandle withHandle />
+                        <ResizablePanel defaultSize={62} minSize={35}>
+                          <RunDetailPanel
+                            key={`${runDetail.runId}:${
+                              runDetail.targetKey ?? ""
+                            }`}
+                            journey={detailJourney}
+                            onClose={closeRunDetail}
+                          />
+                        </ResizablePanel>
+                      </ResizablePanelGroup>
+                    </RunSessionsProvider>
                   );
                 })()
               )}
@@ -937,43 +928,21 @@ export function SwarmsTab({ projectId, isAuthenticated }: SwarmsTabProps) {
 // ── run detail (right panel): header + sessions matrix + live stream ─────────
 function RunDetailPanel({
   journey,
-  runId,
-  runSnapshot,
-  targetKey,
-  hosts,
-  initialThreadId,
   onClose,
 }: {
   journey: Journey;
-  runId: string;
-  /** Seed until this panel's own runs subscription resolves the run. */
-  runSnapshot: JourneyRun;
-  /** Canonical target key (`targetId ?? hostId`) to preselect, if any. */
-  targetKey: string | null;
-  hosts: HostItem[];
-  initialThreadId?: string;
   onClose: () => void;
 }) {
-  // Same (name, args) as the journey block's subscription — Convex dedupes it —
-  // so a running run keeps updating even though the panel was opened from a
-  // snapshot. Old runs past the first page fall back to the (terminal,
-  // immutable) snapshot.
-  const { results: runs } = usePaginatedQuery(
-    SWARM_QUERIES.listJourneyRuns as any,
-    { journeyRefId: journey._id } as any,
-    { initialNumItems: DEFAULT_PAGE_SIZE }
-  );
-  const rollup = useQuery(
-    SWARM_QUERIES.journeyRollup as any,
-    { journeyRefId: journey._id } as any
-  ) as JourneyRollup | undefined;
-  const typedRuns = runs as JourneyRun[];
-  const runIndex = typedRuns.findIndex((r) => r._id === runId);
-  const run = (runIndex >= 0 ? typedRuns[runIndex] : null) ?? runSnapshot;
-  const runName =
-    runIndex >= 0
-      ? runNumberLabel(rollup?.runCount ?? typedRuns.length, runIndex)
-      : "Run";
+  const runSessions = useRunSessionsContext();
+  if (!runSessions) {
+    return (
+      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+        Loading run…
+      </div>
+    );
+  }
+
+  const { run } = runSessions;
   const clientCount = run.hostSummaries.length || journey.hostIds.length;
 
   return (
@@ -981,7 +950,7 @@ function RunDetailPanel({
       <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border/40 px-4 py-3">
         <div className="min-w-0">
           <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm font-medium">
-            <span>{runName}</span>
+            <span>{runSessions.runLabel}</span>
             <span
               className={cn(
                 "rounded-full px-1.5 py-px text-[10px] font-medium capitalize",
@@ -1017,236 +986,58 @@ function RunDetailPanel({
       </div>
       <div className="min-h-0 flex-1">
         <RunSessionsView
-          run={run}
           personaRefId={journey.personaRefId}
-          hosts={hosts}
-          runStatus={run.status}
-          sessionsPerHost={journey.config.sessionsPerHost}
-          initialTargetKey={targetKey ?? undefined}
-          initialThreadId={initialThreadId}
         />
       </div>
     </div>
   );
 }
 
-// ── sessions × hosts matrix + live stream (per run) ──────────────────────────
-function RunSessionsView({
-  run,
-  personaRefId,
-  hosts,
-  runStatus,
-  sessionsPerHost,
-  initialTargetKey,
-  initialThreadId,
-}: {
-  /** The run (live row or terminal snapshot) — targets join `hostSummaries`
-   * to `snapshot.hosts` for per-target columns/labels (B6). */
-  run: JourneyRun;
-  /** Owning persona — encoded into copied session links for deep-link restore. */
-  personaRefId: string;
-  hosts: HostItem[];
-  runStatus: JourneyRun["status"];
-  sessionsPerHost: number;
-  /** Matrix drill-in: preselect this target's first session (deferred to `initialThreadId`). */
-  initialTargetKey?: string;
-  /** Deep-link session (`id`) to auto-select once it's on a loaded page. */
-  initialThreadId?: string;
-}) {
-  const runId = run._id;
-  const {
-    results: sessions,
-    status,
-    loadMore,
-  } = usePaginatedQuery(
-    SWARM_QUERIES.listSessionsByJourneyRun as any,
-    { journeyRunId: runId } as any,
-    { initialNumItems: Math.max(DEFAULT_PAGE_SIZE, sessionsPerHost * 4) }
-  );
-
-  const streamEnabled = runStatus === "running";
-  const stream = useJourneyRunStream(runId, streamEnabled);
-
-  const [selection, setSelection] = useState<SwarmMatrixSelection | null>(null);
+// ── live stream + session detail (per run; matrix lives in JourneyBlock) ────
+function RunSessionsView({ personaRefId }: { personaRefId: string }) {
+  const runSessions = useRunSessionsContext();
   const [detailSession, setDetailSession] = useState<JourneySessionRow | null>(
     null
   );
   const [sessionToPromote, setSessionToPromote] =
     useState<JourneySessionRow | null>(null);
 
-  // Returns undefined for a host no longer in the project so
-  // `buildSwarmRunTargets` can fall back to the run snapshot's `hostName`
-  // before truncating the id.
-  const hostName = (id: string) => hosts.find((h) => h.hostId === id)?.name;
-  const hostNameOrId = (id: string) => hostName(id) ?? id.slice(0, 8);
-
-  const rows = sessions as JourneySessionRow[];
-  const hostSummaries = run.hostSummaries;
-  // Per-TARGET column model (D2/B6): one column per hostSummaries row, joined
-  // to snapshot.hosts by targetId (env columns get environment-name labels,
-  // #n-suffixed on collisions). Fallback for degenerate rows-only data:
-  // synthesize host columns from the session rows.
-  const targets = useMemo<SwarmTargetColumn[]>(() => {
-    if (hostSummaries.length > 0) {
-      return buildSwarmRunTargets({
-        hostSummaries,
-        snapshotHosts: run.snapshot?.hosts,
-        hostName,
-      });
-    }
-    const seen = new Set<string>();
-    for (const s of rows) seen.add(s.hostId);
-    return Array.from(seen).map((hostId) => ({
-      key: hostId,
-      hostId,
-      label: hostNameOrId(hostId),
-      identity: { hostId },
-    }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hostSummaries, run.snapshot, rows, hosts]);
-
-  const convexByChatId = useMemo(() => {
-    const map = new Map<string, JourneySessionRow>();
-    for (const s of rows) map.set(s.chatSessionId, s);
-    return map;
-  }, [rows]);
-
-  const selectedConvex = selection
-    ? convexByChatId.get(selection.chatSessionId) ?? null
-    : null;
-
-  const fallbackTrace = useMemo(
-    () =>
-      selection
-        ? liveSessionTrace(stream.sessions[selection.chatSessionId])
-        : null,
-    [selection, stream.sessions]
-  );
-
-  // Deep-link restore: select the matrix cell whose MINTED session id matches
-  // the linked Convex session (bounded ≤ targets × sessionsPerHost — B6).
-  const appliedInitialThreadRef = useRef(false);
-  useEffect(() => {
-    if (appliedInitialThreadRef.current || !initialThreadId) return;
-    const match = rows.find((s) => s.id === initialThreadId);
-    if (!match) return;
-    appliedInitialThreadRef.current = true;
-    const cell = findTargetCellForChatSessionId({
-      runId,
-      targets,
-      sessionsPerHost,
-      chatSessionId: match.chatSessionId,
-    });
-    setSelection({
-      targetKey: cell?.target.key ?? match.hostId,
-      hostId: match.hostId,
-      sessionIndex: cell?.sessionIndex ?? 0,
-      chatSessionId: match.chatSessionId,
-    });
-    setDetailSession(match);
-  }, [initialThreadId, rows, runId, targets, sessionsPerHost]);
-
-  // Matrix drill-in: preselect the clicked target's first session.
-  // `initialThreadId` (an explicit deep-linked session) always wins.
-  const appliedInitialTargetRef = useRef(false);
-  useEffect(() => {
-    if (
-      appliedInitialTargetRef.current ||
-      !initialTargetKey ||
-      initialThreadId
-    ) {
-      return;
-    }
-    const target = targets.find((t) => t.key === initialTargetKey);
-    if (!target) return;
-    const mintedIds = Array.from(
-      { length: Math.max(1, sessionsPerHost) },
-      (_, i) => swarmAttemptChatSessionId(runId, target.identity, i)
+  if (!runSessions) {
+    return (
+      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+        Loading sessions…
+      </div>
     );
-    const matchIdx = mintedIds.findIndex((id) =>
-      rows.some((s) => s.chatSessionId === id)
-    );
-    if (matchIdx >= 0) {
-      appliedInitialTargetRef.current = true;
-      setSelection({
-        targetKey: target.key,
-        hostId: target.hostId,
-        sessionIndex: matchIdx,
-        chatSessionId: mintedIds[matchIdx],
-      });
-      return;
-    }
-    // No persisted row yet: for a terminal run with attempts on this target,
-    // synthesize the first attempt's cell so the pane opens on that target.
-    if (
-      runStatus !== "running" &&
-      hostSummaries.some(
-        (h) =>
-          (h.targetId ?? h.hostId) === initialTargetKey ||
-          h.hostId === initialTargetKey
-      )
-    ) {
-      appliedInitialTargetRef.current = true;
-      setSelection({
-        targetKey: target.key,
-        hostId: target.hostId,
-        sessionIndex: 0,
-        chatSessionId: mintedIds[0],
-      });
-    }
-  }, [
-    initialTargetKey,
-    initialThreadId,
-    rows,
-    runStatus,
-    hostSummaries,
+  }
+
+  const {
     runId,
-    targets,
-    sessionsPerHost,
-  ]);
+    runStatus,
+    sessionsStatus,
+    loadMoreSessions,
+    stream,
+    matrixSelection,
+    selectedConvex,
+    fallbackTrace,
+  } = runSessions;
 
-  // Auto-select the first running cell when a live stream starts. Cell keys
-  // are `${targetKey}:${sessionIndex}` and target keys may themselves contain
-  // ":" (opaque ids), so split on the LAST colon.
   useEffect(() => {
-    if (selection || !streamEnabled) return;
-    const runningEntry = Object.entries(stream.cellStatus).find(
-      ([, status]) => status === "running"
-    );
-    if (!runningEntry) return;
-    const [key] = runningEntry;
-    const cut = key.lastIndexOf(":");
-    if (cut <= 0) return;
-    const targetKey = key.slice(0, cut);
-    const sessionIndex = Number(key.slice(cut + 1));
-    if (!Number.isFinite(sessionIndex)) return;
-    const target = targets.find((t) => t.key === targetKey);
-    if (!target) return;
-    setSelection({
-      targetKey,
-      hostId: target.hostId,
-      sessionIndex,
-      chatSessionId: swarmAttemptChatSessionId(
-        runId,
-        target.identity,
-        sessionIndex
-      ),
-    });
-  }, [selection, streamEnabled, stream.cellStatus, runId, targets]);
+    setDetailSession(null);
+  }, [matrixSelection?.chatSessionId]);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto p-4">
-      {stream.connected || stream.error || status === "CanLoadMore" ? (
+      {stream.connected || stream.error || sessionsStatus === "CanLoadMore" ? (
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
           <p className="text-[10px] text-muted-foreground">
             {stream.connected ? "live" : null}
             {stream.error ? `stream error: ${stream.error}` : null}
           </p>
-          {status === "CanLoadMore" ? (
+          {sessionsStatus === "CanLoadMore" ? (
             <button
               type="button"
               className="text-[11px] font-medium text-primary hover:underline"
-              onClick={() => loadMore(DEFAULT_PAGE_SIZE)}
+              onClick={() => loadMoreSessions(DEFAULT_PAGE_SIZE)}
             >
               Load more sessions
             </button>
@@ -1254,25 +1045,9 @@ function RunSessionsView({
         </div>
       ) : null}
 
-      <div className="shrink-0">
-        <SwarmSessionsMatrix
-          runId={runId}
-          targets={targets}
-          sessionsPerHost={sessionsPerHost}
-          sessions={rows}
-          hostSummaries={hostSummaries}
-          stream={stream}
-          runStatus={String(runStatus)}
-          selection={selection}
-          onSelect={(sel) => {
-            setSelection(sel);
-            setDetailSession(null);
-          }}
-        />
-      </div>
       <div className="flex min-h-[24rem] flex-1 flex-col">
         <SwarmLiveStreamPane
-          selection={selection}
+          selection={matrixSelection}
           stream={stream}
           convexSession={selectedConvex}
           fallbackTrace={fallbackTrace}
