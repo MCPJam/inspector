@@ -1,3 +1,8 @@
+// MUST stay first: `./sentry.js` runs `Sentry.init` as an import side effect,
+// and the Node SDK can only auto-instrument modules loaded after it. Nothing
+// imported this file before, so `Sentry.init` never ran on the server — every
+// `{ sentry: true }` capture in the codebase was silently a no-op.
+import "./sentry.js";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import fixPath from "fix-path";
@@ -264,6 +269,18 @@ startLocalBrowserRenderingSetupInBackground();
 const computersStartup = initComputersStartup();
 const app = new Hono().onError((err, c) => {
   appLogger.error("Unhandled error:", err);
+
+  // Hono runs `onError` INSIDE `next()`, so `requestLogContextMiddleware` never
+  // observes the throw — it just sees a 500 response. Record the cause here so
+  // `http.request.failed` carries something better than "internal_error" with
+  // no message. (`/api/web/*` has its own handler that routes through
+  // `webError`, which stashes the same shape.)
+  c.set("webErrorMeta", {
+    status: err instanceof HTTPException ? err.status : 500,
+    code:
+      err instanceof HTTPException ? "http_exception" : "unhandled_exception",
+    message: err instanceof Error ? err.message : String(err),
+  });
 
   // Return appropriate response
   if (err instanceof HTTPException) {
