@@ -109,6 +109,7 @@
               "cli/oauth-login",
               "cli/xaa",
               "cli/apps-conformance",
+              "cli/tasks",
               "cli/tasks-conformance",
               "cli/tools-resources-prompts",
               "cli/ci",

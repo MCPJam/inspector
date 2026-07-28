@@ -241,12 +241,16 @@ export type {
 export {
   extensionTaskToObservation,
   legacyTaskToObservation,
+  LEGACY_TASK_STATUSES,
   isUnknownTaskError,
   isTasksDeclarationRequiredError,
   parseRetryAfterMs,
+  retryAfterMsFromError,
   UNKNOWN_TASK_ERROR_CODE,
   TASKS_DECLARATION_REQUIRED_ERROR_CODE,
 } from "./task-lifecycle-adapters.js";
+// Node-only (Ajv compiles via `new Function`); not re-exported from browser.
+export { createStrictElicitationContentValidator } from "./elicitation-content-validator.js";
 
 // `input_required` driver — routes a task's embedded elicitation / roots /
 // sampling requests through the SAME trust rules as the standalone path.
