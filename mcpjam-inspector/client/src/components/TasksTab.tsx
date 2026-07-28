@@ -379,11 +379,27 @@ export function TasksTab({
       // up.
       let listedCarriedForward: NormalizedTask[] = [];
       if (taskCapabilities?.list) {
+        // `tasks/list` is an INSEPARABLE batch: one request returns every task,
+        // so issuing it reads — and reschedules — the slowest member along with
+        // the fastest. Gating on "any member is due" therefore lets a task
+        // advertising 1s drag a task advertising 60s down to 1s polling: the
+        // exact floor breach the per-task scheduler exists to prevent, one
+        // level up. A batch's floor is its SLOWEST member's, so every active
+        // member has to be due before the call goes out.
+        //
+        // Terminal rows are excluded rather than counted. They never become due
+        // again, so including even one would freeze the list forever. When
+        // nothing active is left there is no floor to breach at all, and
+        // listing is how a task created elsewhere gets discovered — so that
+        // case falls back to the tab's own tick.
         const knownListed = listedTasksRef.current;
+        const activeListed = knownListed.filter(
+          (task) => !isTerminalStatus(task.status)
+        );
         const listDue =
-          knownListed.length === 0 ||
-          scheduler.dueTaskIds(knownListed.map((task) => task.taskId)).length >
-            0;
+          activeListed.length === 0 ||
+          scheduler.dueTaskIds(activeListed.map((task) => task.taskId))
+            .length === activeListed.length;
 
         if (listDue) {
           serverResult = await listTasks(serverName);
@@ -512,7 +528,8 @@ export function TasksTab({
       // Only ids that produced NOTHING are failed reads. A confirmed-expired
       // handle answered — it is retired, not unreachable — and backing it off
       // would be recording an error against a handle nobody will poll again.
-      scheduler.recordErrors(pendingIds.filter((id) => !settledIds.has(id)));
+      const failedIds = pendingIds.filter((id) => !settledIds.has(id));
+      scheduler.recordErrors(failedIds);
 
       // A handle that was not due this tick keeps its last-known state rather
       // than disappearing from the list until its next read.
@@ -531,9 +548,27 @@ export function TasksTab({
           previousById.get(tracked.taskId) ?? restoredPlaceholderTask(tracked)
       );
 
+      // A due read that FAILED keeps its row for exactly the same reason. The
+      // failure is transient by construction — a confirmed `-32602` produced an
+      // expired placeholder instead, and never lands here — so dropping the row
+      // would be self-defeating: with the last active task gone from the list,
+      // `hasActiveTasks` goes false, auto-refresh stops, and the backoff
+      // `recordErrors` just persisted is never actually retried. The handle
+      // strands until the user does something, which is the opposite of what a
+      // backoff is for.
+      const failedCarriedForward = failedIds
+        .map((taskId) => {
+          const previous = previousById.get(taskId);
+          if (previous) return previous;
+          const tracked = byId.get(taskId);
+          return tracked ? restoredPlaceholderTask(tracked) : null;
+        })
+        .filter((task): task is NormalizedTask => task !== null);
+
       trackedTaskStatuses = [
         ...trackedTaskStatuses,
         ...carriedForward,
+        ...failedCarriedForward,
         ...expiredEntries,
       ];
 

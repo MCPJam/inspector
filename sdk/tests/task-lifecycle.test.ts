@@ -24,7 +24,10 @@ import {
   parseRetryAfterMs,
 } from "../src/mcp-client-manager/task-lifecycle-adapters.js";
 
-const identity = (taskId: string, overrides: Partial<TaskLifecycleIdentity> = {}): TaskLifecycleIdentity => ({
+const identity = (
+  taskId: string,
+  overrides: Partial<TaskLifecycleIdentity> = {}
+): TaskLifecycleIdentity => ({
   serverId: "srv",
   wire: "extension",
   taskId,
@@ -266,10 +269,12 @@ describe("per-task scheduling", () => {
     expect(engine.due().map((r) => r.identity.taskId)).toEqual(["fast"]);
 
     clock.advance(7_000);
-    expect(engine.due().map((r) => r.identity.taskId).sort()).toEqual([
-      "fast",
-      "slow",
-    ]);
+    expect(
+      engine
+        .due()
+        .map((r) => r.identity.taskId)
+        .sort()
+    ).toEqual(["fast", "slow"]);
   });
 
   it("gives a batch the SLOWEST member's floor, not the fastest", () => {
@@ -433,7 +438,7 @@ describe("terminal finality", () => {
     engine.observe(
       id,
       { status: "completed", result: { ok: true } },
-      "notification",
+      "notification"
     );
     engine.observe(id, { status: "working" }, "poll");
 
@@ -590,6 +595,71 @@ describe("wire adapters", () => {
     expect(isUnknownTaskError({ error: { code: -32602 } })).toBe(true);
     expect(isUnknownTaskError({ code: -32003 })).toBe(false);
     expect(isUnknownTaskError(null)).toBe(false);
+  });
+
+  it("excludes a leased handle from `due` for the whole read", () => {
+    const clock = { at: 1_000 };
+    const engine = new TaskLifecycleEngine({ now: () => clock.at });
+    const identity = {
+      serverId: "s",
+      wire: "extension",
+      taskId: "t1",
+    } as const;
+    engine.observe(identity, { status: "working", pollIntervalMs: 1_000 });
+
+    clock.at += 5_000;
+    expect(engine.due().map((r) => r.identity.taskId)).toEqual(["t1"]);
+
+    expect(engine.acquirePoll(identity)).toBe(true);
+    // A second acquirer is refused rather than dispatching on top of the
+    // first: two `tasks/get` in flight means the later reply wins even when it
+    // observed the older state.
+    expect(engine.acquirePoll(identity)).toBe(false);
+
+    // Time alone does NOT re-admit it. That is the whole difference between a
+    // lease and `reserve`: a read slower than its own floor would otherwise
+    // read as due again while still open.
+    clock.at += 10 * 60_000;
+    expect(engine.due()).toEqual([]);
+
+    engine.releasePoll(identity);
+    expect(engine.due().map((r) => r.identity.taskId)).toEqual(["t1"]);
+  });
+
+  it("applies the first observation to a RESTORED terminal handle", () => {
+    const engine = new TaskLifecycleEngine();
+    const identity = {
+      serverId: "s",
+      wire: "extension",
+      taskId: "t1",
+    } as const;
+    // Storage kept the status and nothing else — it never holds the payload,
+    // and on the extension wire the result rides inline on `tasks/get`, so
+    // this read is the only way the result is ever obtained.
+    engine.register(identity, { restored: true, status: "completed" });
+    engine.observe(identity, {
+      status: "completed",
+      result: { content: [{ type: "text", text: "done" }] },
+    });
+    expect(engine.get(identity)?.result).toEqual({
+      content: [{ type: "text", text: "done" }],
+    });
+    expect(engine.get(identity)?.restored).toBe(false);
+  });
+
+  it("still treats an OBSERVED terminal as final", () => {
+    const engine = new TaskLifecycleEngine();
+    const identity = {
+      serverId: "s",
+      wire: "extension",
+      taskId: "t1",
+    } as const;
+    engine.observe(identity, { status: "completed", result: { a: 1 } });
+    // A poll issued before the terminal landed can answer after it. Applying
+    // it would revert a finished task's UI and scheduling to `working`.
+    engine.observe(identity, { status: "working" });
+    expect(engine.get(identity)?.status).toBe("completed");
+    expect(engine.get(identity)?.result).toEqual({ a: 1 });
   });
 
   it("parses Retry-After as both a delta and an HTTP date, and rejects garbage", () => {

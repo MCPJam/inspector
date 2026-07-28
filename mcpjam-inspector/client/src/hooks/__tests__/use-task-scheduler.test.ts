@@ -26,7 +26,7 @@ function scheduler(userMinimumIntervalMs = 1_000, surfaceFloorMs = 0) {
       wire: "extension",
       userMinimumIntervalMs,
       surfaceFloorMs,
-    }),
+    })
   );
 }
 
@@ -193,7 +193,7 @@ describe("useTaskScheduler", () => {
         serverId: "s1",
         wire: "none",
         userMinimumIntervalMs: 1_000,
-      }),
+      })
     );
     expect(result.current.dueTaskIds(["t1"])).toEqual([]);
   });
@@ -205,7 +205,7 @@ describe("useTaskScheduler", () => {
         serverId: "s2",
         wire: "extension",
         userMinimumIntervalMs: 1_000,
-      }),
+      })
     );
 
     first.result.current.dueTaskIds(["t1"]);
@@ -235,7 +235,7 @@ describe("useTaskScheduler", () => {
         pollIntervalMs: 60_000,
         nextPollAt: Date.now() + 60_000,
         lastObservedAt: Date.now(),
-      },
+      }
     );
 
     // A FRESH hook — the engine is empty, exactly as after a page reload.
@@ -252,7 +252,7 @@ describe("useTaskScheduler", () => {
     });
     recordTaskObservation(
       { taskId: "t1", serverId: "s1", wire: "extension" },
-      { status: "working", nextPollAt: Date.now() - 1_000 },
+      { status: "working", nextPollAt: Date.now() - 1_000 }
     );
 
     const { result } = scheduler();
@@ -290,7 +290,7 @@ describe("useTaskScheduler", () => {
     ]);
   });
 
-  it("keeps a restored TERMINAL handle unscheduled instead of re-polling it", () => {
+  it("reads a restored TERMINAL extension handle exactly once, then stops", () => {
     trackTask({
       taskId: "t1",
       serverId: "s1",
@@ -299,13 +299,85 @@ describe("useTaskScheduler", () => {
     });
     recordTaskObservation(
       { taskId: "t1", serverId: "s1", wire: "extension" },
-      { status: "completed" },
+      { status: "completed" }
     );
 
-    // Restoring it as `unknown` would read as non-terminal and get it polled
-    // again — re-reading a task whose result we already have.
     const { result } = scheduler();
+
+    // ONE recovery read. The tracker persists a task's status but never its
+    // payload, and on the extension wire the result rides inline on
+    // `tasks/get` — there is no `tasks/result` to fetch it from later. So a
+    // handle restored as `completed` has a status with nothing behind it, and
+    // never polling it would leave the row showing "completed" with no result
+    // and no way to ever get one.
+    expect(result.current.dueTaskIds(["t1"])).toEqual(["t1"]);
+
+    // ...and the read settles the debt. From here the ordinary terminal
+    // exclusion applies: the payload is in hand, so re-reading it is pure
+    // waste against a server that already answered.
+    act(() => {
+      result.current.recordObservations([
+        { taskId: "t1", status: "completed" },
+      ]);
+    });
     expect(result.current.dueTaskIds(["t1"])).toEqual([]);
+  });
+
+  it("does not re-read a restored terminal LEGACY handle", () => {
+    trackTask({
+      taskId: "t1",
+      serverId: "s1",
+      wire: "legacy",
+      createdAt: NOW,
+    });
+    recordTaskObservation(
+      { taskId: "t1", serverId: "s1", wire: "legacy" },
+      { status: "completed" }
+    );
+
+    // Legacy does not have the extension's problem: its result comes from a
+    // separate `tasks/result` call the tab makes on demand, so the recovery
+    // read would buy nothing and cost a request.
+    const { result } = renderHook(() =>
+      useTaskScheduler({
+        serverId: "s1",
+        wire: "legacy",
+        userMinimumIntervalMs: 1_000,
+      })
+    );
+    expect(result.current.dueTaskIds(["t1"])).toEqual([]);
+  });
+
+  it("backs a failed terminal-recovery read off instead of retrying every tick", () => {
+    vi.useFakeTimers();
+    try {
+      trackTask({
+        taskId: "t1",
+        serverId: "s1",
+        wire: "extension",
+        createdAt: NOW,
+      });
+      recordTaskObservation(
+        { taskId: "t1", serverId: "s1", wire: "extension" },
+        { status: "completed" }
+      );
+
+      const { result } = scheduler();
+      expect(result.current.dueTaskIds(["t1"])).toEqual(["t1"]);
+
+      // The recovery read failed. It still owes a read, but the backoff has to
+      // govern it — otherwise an unreachable server is hammered once per tick
+      // by a handle that will never come back.
+      act(() => {
+        result.current.recordErrors(["t1"]);
+      });
+      expect(result.current.dueTaskIds(["t1"])).toEqual([]);
+
+      vi.advanceTimersByTime(60_000);
+      expect(result.current.dueTaskIds(["t1"])).toEqual(["t1"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("persists the backoff, so a reload cannot walk through it", () => {
@@ -344,7 +416,7 @@ describe("useTaskScheduler", () => {
             wire: "extension",
             userMinimumIntervalMs: 1_000,
           }),
-        { initialProps: { serverId: "s1" } },
+        { initialProps: { serverId: "s1" } }
       );
 
       result.current.dueTaskIds(["t1"]);

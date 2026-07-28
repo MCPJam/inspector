@@ -192,19 +192,28 @@ export async function driveTaskToTerminal(
       }
       continue;
     }
-    // Reserve before dispatching, so a concurrent poller on the same engine
-    // sees this handle as taken rather than issuing its own read.
-    if (existing) engine.reserve([existing]);
+    // Lease the handle for the WHOLE request. Pushing the due time forward
+    // (what `reserve` does, and what this used to do alone) only covers a read
+    // that settles inside one interval; a `tasks/get` slower than the floor
+    // leaves the handle due again while this request is still open, so a
+    // concurrent poller dispatches on top of it and the later reply wins even
+    // when it saw the older state. `leasedRead` releases on every exit.
+    if (existing && !engine.acquirePoll(identity)) {
+      // Somebody else is mid-read on this exact handle. Wait for their result
+      // rather than issuing a duplicate of it.
+      if (!(await waitUntilDue())) {
+        return {
+          outcome: "timeout",
+          task: engine.snapshot(identity),
+          lastError,
+        };
+      }
+      continue;
+    }
 
     let observation: TaskLifecycleObservation;
     try {
-      // BOUNDED, not a bare await. If the transport never settles — the exact
-      // unreachable-server case this driver exists to handle — a bare await
-      // would never return to the deadline or abort checks above, and a drive
-      // configured with `timeoutMs` would hang forever. The bound is a real
-      // timer rather than the injected `sleep`, so a test driving a controlled
-      // clock is unaffected while production stays bounded.
-      const bounded = await raceDeadline(args.getTask(identity));
+      const bounded = await leasedRead(existing !== undefined);
       if (bounded === TIMED_OUT) {
         return {
           outcome: "timeout",
@@ -396,6 +405,70 @@ export async function driveTaskToTerminal(
   }
 
   /**
+   * Issues one `tasks/get` while holding the engine's in-flight lease.
+   *
+   * BOUNDED, not a bare await. If the transport never settles — the exact
+   * unreachable-server case this driver exists to handle — a bare await would
+   * never return to the deadline or abort checks in the loop, and a drive
+   * configured with `timeoutMs` would hang forever. The bound is a real timer
+   * rather than the injected `sleep`, so a test driving a controlled clock is
+   * unaffected while production stays bounded.
+   *
+   * The release is in a `finally` and therefore runs BEFORE the caller's
+   * `catch`, so the error path's backoff sleep does not sit on the lease and
+   * block an interactive poller for the whole backoff.
+   */
+  async function leasedRead(
+    leased: boolean
+  ): Promise<TaskLifecycleObservation | typeof TIMED_OUT | typeof ABORTED> {
+    try {
+      return await raceDeadline(args.getTask(identity));
+    } finally {
+      // On a timeout the underlying read may still be in flight, but we
+      // abandon its result rather than folding it in, so releasing cannot
+      // resurrect stale state — and holding the lease after giving up would
+      // park the handle on a shared engine forever.
+      if (leased) engine.releasePoll(identity);
+    }
+  }
+
+  /**
+   * Resolves as soon as `signal` aborts, without waiting for `work`.
+   *
+   * The pacing clock is injected and has no cancellation, so this races it
+   * rather than replacing it. Without the race, a caller aborting during the
+   * wait is not observed until the whole advertised floor elapses — on a task
+   * asking for 60s, an ostensibly cancelled automation drive stays pending for
+   * a full minute. Racing only ends the *wait*; the loop's own
+   * `signal.aborted` check is still what reports the `aborted` outcome.
+   */
+  function raceAbort(work: Promise<void>): Promise<void> {
+    const signal = args.signal;
+    if (!signal) return work;
+    if (signal.aborted) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const onAbort = () => {
+        cleanup();
+        resolve();
+      };
+      const cleanup = () => signal.removeEventListener("abort", onAbort);
+      signal.addEventListener("abort", onAbort, { once: true });
+      // Settle either way — a rejecting pacing clock is a caller bug, not a
+      // reason to strand the drive, and an unhandled rejection would be worse.
+      work.then(
+        () => {
+          cleanup();
+          resolve();
+        },
+        () => {
+          cleanup();
+          resolve();
+        }
+      );
+    });
+  }
+
+  /**
    * Sleeps until this task is next due. Returns `false` when the deadline
    * would elapse first — checked BEFORE sleeping so a long advertised floor
    * cannot push the drive past its own budget.
@@ -409,7 +482,7 @@ export async function driveTaskToTerminal(
     // perpetually due would otherwise spin this loop synchronously until the
     // deadline, starving the event loop — and under an injected clock that
     // only advances on `sleep`, never terminating at all.
-    await sleep(delay);
+    await raceAbort(sleep(delay));
     return true;
   }
 }

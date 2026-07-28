@@ -38,7 +38,6 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   TaskLifecycleEngine,
   isTerminalLifecycleStatus,
-  taskLifecycleKey,
   type TaskLifecycleIdentity,
   type TaskLifecycleObservation,
   type LiveTasksWire,
@@ -189,45 +188,74 @@ export function useTaskScheduler({
           );
         const restoreStates = getTrackedTaskRestoreStates(unseen);
 
+        /**
+         * A restored terminal handle that still owes exactly one read.
+         *
+         * The tracker persists a task's status but never its payload, and on
+         * the extension wire the result and error ride INLINE on `tasks/get` —
+         * there is no `tasks/result` to fetch them from later. So a handle
+         * restored as `completed` after a reload is a status with nothing
+         * behind it, and excluding it from polling (which is otherwise exactly
+         * right for a terminal handle) strands it: the row shows "completed"
+         * with no result and no way to ever get one, including manual refresh.
+         *
+         * Bounded to one read: `engine.observe` clears `restored`, after which
+         * the ordinary terminal exclusion takes over. `nextPollAt` is still
+         * honored, so a recovery read that fails backs off with everything
+         * else instead of retrying every tick.
+         *
+         * Legacy is excluded because it does not have the problem — its result
+         * comes from a separate `tasks/result` call the tab makes on demand.
+         */
+        const needsTerminalRecovery = (
+          record: NonNullable<ReturnType<typeof engine.get>>
+        ): boolean =>
+          wire === "extension" &&
+          record.restored &&
+          isTerminalLifecycleStatus(record.status) &&
+          record.nextPollAt <= now;
+
         return candidateTaskIds.filter((taskId) => {
           const identity = identityFor(taskId);
           if (!identity) return false;
-          if (!engine.get(identity)) {
-            // First sighting this session — which, after a reload, means EVERY
-            // tracked handle. Seed the engine from the persisted schedule
-            // instead of registering fresh: registering fresh makes every
-            // restored handle due immediately, so a series of reloads would
-            // poll a server far faster than it asked to be polled, and the
-            // durable `nextPollAt` would never do anything.
-            const persisted = restoreStates.get(taskIdentity(identity));
-            engine.register(identity, {
-              restored: true,
-              pollIntervalMs: persisted?.pollIntervalMs,
-              ttlMs: persisted?.ttlMs,
-              // A handle we last saw finished must come back finished. Without
-              // this it restores as `unknown`, reads as non-terminal, and gets
-              // polled again — re-reading a task whose result we already have.
-              status: restoredTerminalStatus(persisted?.status),
-              nextPollAt: persisted?.nextPollAt,
-              lastObservedAt: persisted?.lastObservedAt,
-              // Restored so a reload does not re-prompt for an input the user
-              // already answered and the server already acknowledged.
-              respondedInputKeys: persisted?.respondedInputKeys,
-            });
-            const restored = engine.get(identity);
-            if (restored && isTerminalLifecycleStatus(restored.status)) {
-              return false;
-            }
-            if (persisted?.nextPollAt !== undefined) {
-              // A handle whose stored floor has not elapsed is NOT due, even
-              // though we have never read it in this session.
-              return persisted.nextPollAt <= now;
-            }
-            // No persisted schedule ⇒ genuinely new. The floor governs how
-            // often to RE-read, not a delay before the first read.
-            return true;
+          const known = engine.get(identity);
+          if (known) {
+            return needsTerminalRecovery(known) || due.has(known.key);
           }
-          return due.has(taskLifecycleKey(identity));
+
+          // First sighting this session — which, after a reload, means EVERY
+          // tracked handle. Seed the engine from the persisted schedule
+          // instead of registering fresh: registering fresh makes every
+          // restored handle due immediately, so a series of reloads would
+          // poll a server far faster than it asked to be polled, and the
+          // durable `nextPollAt` would never do anything.
+          const persisted = restoreStates.get(taskIdentity(identity));
+          engine.register(identity, {
+            restored: true,
+            pollIntervalMs: persisted?.pollIntervalMs,
+            ttlMs: persisted?.ttlMs,
+            // A handle we last saw finished must come back finished. Without
+            // this it restores as `unknown`, reads as non-terminal, and is
+            // polled on the ordinary schedule forever rather than at most once.
+            status: restoredTerminalStatus(persisted?.status),
+            nextPollAt: persisted?.nextPollAt,
+            lastObservedAt: persisted?.lastObservedAt,
+            // Restored so a reload does not re-prompt for an input the user
+            // already answered and the server already acknowledged.
+            respondedInputKeys: persisted?.respondedInputKeys,
+          });
+          const restored = engine.get(identity);
+          if (restored && isTerminalLifecycleStatus(restored.status)) {
+            return needsTerminalRecovery(restored);
+          }
+          if (persisted?.nextPollAt !== undefined) {
+            // A handle whose stored floor has not elapsed is NOT due, even
+            // though we have never read it in this session.
+            return persisted.nextPollAt <= now;
+          }
+          // No persisted schedule ⇒ genuinely new. The floor governs how
+          // often to RE-read, not a delay before the first read.
+          return true;
         });
       },
 

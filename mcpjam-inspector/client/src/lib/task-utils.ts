@@ -146,7 +146,22 @@ export function restoredPlaceholderTask(tracked: {
   ttlMs?: number | null;
   pollIntervalMs?: number;
 }): NormalizedTask {
-  const status = (tracked.status ?? "working") as NormalizedTask["status"];
+  // Validated, not cast. The tracker is localStorage — hand-editable, and
+  // written by every version of this app the browser has ever run — so an
+  // unrecognized string reaching `status` unchecked would render as an unknown
+  // badge at best. The dangerous direction is a bogus value that reads as
+  // TERMINAL: the row would stop being polled and a live task would sit there
+  // frozen. `unavailable` is excluded for the same reason from the other side —
+  // it is this app's own tombstone for "the server forgot it", a conclusion
+  // only `expiredPlaceholderTask` is entitled to draw, never restored state.
+  const status: NormalizedTask["status"] =
+    tracked.status === "working" ||
+    tracked.status === "input_required" ||
+    tracked.status === "completed" ||
+    tracked.status === "failed" ||
+    tracked.status === "cancelled"
+      ? tracked.status
+      : "working";
   return {
     wire: tracked.wire,
     taskId: tracked.taskId,

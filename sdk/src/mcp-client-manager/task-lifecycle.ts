@@ -149,6 +149,30 @@ export interface TaskLifecycleRecord {
   lastObservedAt?: number;
   /** A `tasks/cancel` has been sent; the task may still complete normally. */
   cancellationRequested: boolean;
+  /**
+   * Adopted from durable storage and not yet confirmed by a live read.
+   *
+   * Cleared by the first {@link TaskLifecycleEngine.observe}. It matters
+   * because durable storage holds a task's *status* but never its payload: on
+   * the extension wire the result and error ride inline on `tasks/get`, so a
+   * handle restored as `completed` has a status and no result. A surface that
+   * wants to show the payload has to read it once more, and this flag is how it
+   * tells "finished, and we have the result" from "finished, and all we kept
+   * was the word".
+   */
+  restored: boolean;
+  /**
+   * A read is in flight for this handle right now.
+   *
+   * Distinct from {@link TaskLifecycleRecord.nextPollAt}, which is a *time*
+   * reservation. Pushing the due time forward only prevents a duplicate while
+   * the read finishes inside one interval; a read slower than the floor lets
+   * the next poller find the handle due again and dispatch concurrently. Two
+   * `tasks/get` in flight means the later reply wins even when it observed the
+   * older state, so the lease covers the whole request rather than a guess at
+   * how long it will take.
+   */
+  pollInFlight: boolean;
   /** Input keys whose `tasks/update` acknowledgement succeeded. */
   respondedInputKeys: Set<string>;
   /** Provenance, for the surfaces that show it. */
@@ -360,7 +384,16 @@ export class TaskLifecycleEngine {
        * Due time carried over from durable storage. Without it a restored
        * handle is due immediately, so a reload would re-read every task before
        * its advertised floor elapsed — and repeated reloads would out-poll the
-       * server. Ignored for a handle that is already terminal.
+       * server.
+       *
+       * Applied to terminal handles too, deliberately. A restored terminal is
+       * not the same as a terminal we watched arrive: `observe` sets
+       * `nextPollAt` to `Infinity` because it already holds the payload,
+       * whereas storage kept only the status. Parking a restored terminal at
+       * `Infinity` here would make the extension wire's inline result
+       * permanently unreachable across a reload, so the floor is honored
+       * instead and {@link TaskLifecycleRecord.restored} marks it as still
+       * owing one read.
        */
       nextPollAt?: number;
       /** Last observation time carried over from durable storage. */
@@ -393,6 +426,8 @@ export class TaskLifecycleEngine {
           : undefined,
       consecutiveErrors: 0,
       cancellationRequested: false,
+      restored: init.restored === true,
+      pollInFlight: false,
       respondedInputKeys: new Set(init.respondedInputKeys ?? []),
       toolName: init.toolName,
       surface: init.surface,
@@ -432,15 +467,28 @@ export class TaskLifecycleEngine {
     const previous = record.status;
     const now = this.now();
 
-    // Terminal is FINAL. A poll issued before a terminal notification arrived
-    // can land after it, and applying it would revert a completed task's UI
-    // and scheduling to `working` — resurrecting a handle we already retired.
-    // The observation is still evidence the handle exists, so the observation
-    // clock advances; nothing else does.
-    if (isTerminalLifecycleStatus(record.status)) {
+    // Terminal is FINAL — for a terminal we actually watched arrive. A poll
+    // issued before a terminal notification arrived can land after it, and
+    // applying it would revert a completed task's UI and scheduling to
+    // `working`, resurrecting a handle we already retired. The observation is
+    // still evidence the handle exists, so the observation clock advances;
+    // nothing else does.
+    //
+    // A RESTORED terminal is the exception, and it is not a loophole in that
+    // rule — it is the case the rule was never about. Durable storage keeps a
+    // task's status and not its payload, so a handle restored as `completed`
+    // is a status with no result behind it, and on the extension wire (where
+    // the result rides inline on `tasks/get`) that payload exists nowhere else.
+    // There is also no in-session ordering to protect: nothing observed this
+    // record, so there is no newer state for a late reply to trample. The
+    // server is authoritative and this first read is what makes it so.
+    if (isTerminalLifecycleStatus(record.status) && !record.restored) {
       record.lastObservedAt = now;
       return record;
     }
+    // A live read supersedes whatever storage remembered, so the handle stops
+    // owing one.
+    record.restored = false;
 
     record.status = observation.status;
     // Assigned unconditionally: an observation is a FULL snapshot, so a server
@@ -602,14 +650,17 @@ export class TaskLifecycleEngine {
   }
 
   /**
-   * Handles due for a poll now, soonest first. Terminal handles are never due.
+   * Handles due for a poll now, soonest first. Terminal handles are never due,
+   * and neither is a handle with a read already in flight.
    */
   due(at?: number): TaskLifecycleRecord[] {
     const now = at ?? this.now();
     return [...this.records.values()]
       .filter(
         (record) =>
-          !isTerminalLifecycleStatus(record.status) && record.nextPollAt <= now
+          !isTerminalLifecycleStatus(record.status) &&
+          !record.pollInFlight &&
+          record.nextPollAt <= now
       )
       .sort((a, b) => a.nextPollAt - b.nextPollAt);
   }
@@ -646,6 +697,40 @@ export class TaskLifecycleEngine {
     for (const record of records) {
       record.nextPollAt = now + this.effectiveIntervalMs(record, now);
     }
+  }
+
+  /**
+   * Claims a handle for a read that is about to be dispatched, returning
+   * whether the claim succeeded.
+   *
+   * `reserve` alone is not enough on a shared engine. It moves the due time
+   * forward by one interval, which only covers a read that settles inside that
+   * interval; a `tasks/get` slower than the floor leaves the handle due again
+   * while the first request is still open, and a second poller dispatches on
+   * top of it. Beyond the wasted request, the replies can land out of order and
+   * an older snapshot overwrites a newer one.
+   *
+   * So the lease is held for the life of the request, not for a guessed
+   * duration, and {@link due} skips a leased handle. It also still reserves, so
+   * the floor is respected the moment the lease is released.
+   *
+   * Callers MUST release in a `finally` — every exit, including a throw. The
+   * lease is not self-expiring on purpose: a timeout is exactly the case where
+   * a stale reply may still arrive, and quietly re-admitting a second reader
+   * would reintroduce the race this prevents.
+   */
+  acquirePoll(identity: TaskLifecycleIdentity, at?: number): boolean {
+    const record = this.records.get(taskLifecycleKey(identity));
+    if (!record || record.pollInFlight) return false;
+    record.pollInFlight = true;
+    this.reserve([record], at);
+    return true;
+  }
+
+  /** Releases a lease taken by {@link acquirePoll}. Idempotent. */
+  releasePoll(identity: TaskLifecycleIdentity): void {
+    const record = this.records.get(taskLifecycleKey(identity));
+    if (record) record.pollInFlight = false;
   }
 
   /**

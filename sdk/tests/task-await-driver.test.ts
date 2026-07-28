@@ -61,7 +61,7 @@ const working: TaskLifecycleObservation = {
 
 async function drive(
   overrides: Partial<Parameters<typeof driveTaskToTerminal>[0]> = {},
-  clock = controlledClock(),
+  clock = controlledClock()
 ): Promise<TaskAwaitResult> {
   return driveTaskToTerminal({
     identity,
@@ -166,17 +166,19 @@ describe("bounded exits", () => {
     const clock = controlledClock();
     const result = await drive(
       { getTask: async () => working, timeoutMs: 10_000 },
-      clock,
+      clock
     );
     expect(result.outcome).toBe("timeout");
   });
 
   it("reports timeout immediately when the next poll would overshoot the deadline", async () => {
     const clock = controlledClock();
-    const reads = scriptedReads([{ status: "working", pollIntervalMs: 60_000 }]);
+    const reads = scriptedReads([
+      { status: "working", pollIntervalMs: 60_000 },
+    ]);
     const result = await drive(
       { getTask: reads.getTask, timeoutMs: 5_000 },
-      clock,
+      clock
     );
     expect(result.outcome).toBe("timeout");
     // One read, then the deadline check — never a 60s sleep past the budget.
@@ -204,7 +206,7 @@ describe("bounded exits", () => {
         maxConsecutiveErrors: 3,
         timeoutMs: 10 * 60_000,
       },
-      clock,
+      clock
     );
     expect(result.outcome).toBe("unreachable");
     expect(result.lastError).toBe(error);
@@ -222,7 +224,7 @@ describe("bounded exits", () => {
         },
         timeoutMs: 60_000,
       },
-      clock,
+      clock
     );
     expect(result.outcome).toBe("completed");
   });
@@ -265,7 +267,7 @@ describe("input rounds", () => {
         },
         timeoutMs: 60_000,
       },
-      clock,
+      clock
     );
 
     expect(result.outcome).toBe("completed");
@@ -299,7 +301,7 @@ describe("input rounds", () => {
         },
         timeoutMs: 60_000,
       },
-      clock,
+      clock
     );
     expect(elicit).toHaveBeenCalledTimes(1);
   });
@@ -333,7 +335,7 @@ describe("input rounds", () => {
         },
         timeoutMs: 60_000,
       },
-      clock,
+      clock
     );
     // The answer was NOT silently discarded: it is re-collected and retried.
     expect(updateCalls).toBe(2);
@@ -361,7 +363,7 @@ describe("input rounds", () => {
         maxInputRounds: 3,
         timeoutMs: 10 * 60_000,
       },
-      clock,
+      clock
     );
     expect(result.outcome).toBe("input-required");
   });
@@ -411,5 +413,93 @@ describe("poll discipline", () => {
     });
     // A shrinking floor is normal and is followed, not flagged.
     expect(slept).toEqual([20_000, 2_000]);
+  });
+
+  it("holds an in-flight lease for the whole read, not just one interval", async () => {
+    const clock = controlledClock();
+    const engine = new TaskLifecycleEngine({ now: clock.now });
+    let release!: (value: TaskLifecycleObservation) => void;
+    const inFlight = new Promise<TaskLifecycleObservation>((resolve) => {
+      release = resolve;
+    });
+
+    const drive = driveTaskToTerminal({
+      identity,
+      // The read is SLOWER than the advertised floor, which is the case a
+      // time-only reservation cannot cover: `reserve` pushes the due time by
+      // one interval, and once that elapses the handle reads as due again
+      // while this request is still open.
+      getTask: () => inFlight,
+      now: clock.now,
+      sleep: async (ms) => clock.advance(ms),
+      engine,
+      timeoutMs: 10 * 60_000,
+    });
+    await Promise.resolve();
+
+    // Well past any floor the engine could have set.
+    clock.advance(10 * 60_000);
+    expect(engine.due()).toEqual([]);
+    // ...and the interactive scheduler agrees, because it asks the same
+    // question. Two `tasks/get` in flight is not merely a wasted request: the
+    // later reply wins even when it observed the older state.
+    expect(engine.get(identity)?.pollInFlight).toBe(true);
+
+    release({ status: "completed", result: {} });
+    const result = await drive;
+    expect(result.outcome).toBe("completed");
+    // Released on the way out, so the handle is not parked forever on an
+    // engine that outlives this drive.
+    expect(engine.get(identity)?.pollInFlight).toBe(false);
+  });
+
+  it("releases the lease before backing off, not after", async () => {
+    const clock = controlledClock();
+    const engine = new TaskLifecycleEngine({ now: clock.now });
+    let seenDuringBackoff: boolean | undefined;
+
+    let attempt = 0;
+    await driveTaskToTerminal({
+      identity,
+      getTask: async () => {
+        attempt += 1;
+        if (attempt === 1) throw new Error("connect failed");
+        return { status: "completed", result: {} };
+      },
+      now: clock.now,
+      sleep: async (ms) => {
+        // The backoff sleep must not sit on the lease: an interactive poller
+        // would be blocked for the entire backoff by a read that already
+        // finished.
+        seenDuringBackoff ??= engine.get(identity)?.pollInFlight;
+        clock.advance(ms);
+      },
+      engine,
+      timeoutMs: 10 * 60_000,
+    });
+
+    expect(seenDuringBackoff).toBe(false);
+  });
+
+  it("stops waiting the moment the caller aborts", async () => {
+    const clock = controlledClock();
+    const controller = new AbortController();
+    // A pacing clock that NEVER resolves, standing in for a long advertised
+    // floor. Without racing the signal, an aborted drive stays pending for the
+    // whole interval — on a task asking for 60s, a full minute after the
+    // caller gave up.
+    const drive = driveTaskToTerminal({
+      identity,
+      getTask: async () => ({ status: "working", pollIntervalMs: 60_000 }),
+      now: clock.now,
+      sleep: () => new Promise<void>(() => {}),
+      engine: new TaskLifecycleEngine({ now: clock.now }),
+      timeoutMs: 10 * 60_000,
+      signal: controller.signal,
+    });
+
+    await Promise.resolve();
+    controller.abort();
+    await expect(drive).resolves.toMatchObject({ outcome: "aborted" });
   });
 });
