@@ -93,7 +93,7 @@ const describeServer = (serverName: string | undefined) =>
 const humanizeConnectionError = (
   code: unknown,
   rawDetails: unknown,
-): { message: string; isRetryable: boolean } | null => {
+): string | null => {
   if (typeof code !== "string") return null;
 
   const detailBag =
@@ -107,29 +107,19 @@ const humanizeConnectionError = (
   const server = describeServer(serverName);
 
   // An expired/revoked OAuth grant is flagged by the backend regardless of the
-  // code it rides in on (see hosted-oauth-refresh.ts), so check it first — the
-  // fix is "reconnect", never "retry".
+  // code it rides in on (see hosted-oauth-refresh.ts), so check it first.
   if (
     detailBag?.refreshTokenInvalid === true ||
     detailBag?.oauthRequired === true
   ) {
-    return {
-      message: `Your connection to ${server} has expired. Reconnect it to keep chatting.`,
-      isRetryable: false,
-    };
+    return `Your connection to ${server} has expired. Reconnect it to keep chatting.`;
   }
 
   switch (code) {
     case "SERVER_UNREACHABLE":
-      return {
-        message: `Couldn't reach ${server}. It may be offline or blocking the connection.`,
-        isRetryable: true,
-      };
+      return `Couldn't reach ${server}. It may be offline or blocking the connection.`;
     case "TIMEOUT":
-      return {
-        message: `${serverName ? `“${serverName}”` : "The MCP server"} took too long to respond.`,
-        isRetryable: true,
-      };
+      return `${serverName ? `“${serverName}”` : "The MCP server"} took too long to respond.`;
     // UNAUTHORIZED / FORBIDDEN are NOT unambiguous: the same codes carry
     // MCPJam's own auth failures (expired session, missing bearer via
     // `assertBearerToken`) and project-permission denials, neither of which is
@@ -139,16 +129,10 @@ const humanizeConnectionError = (
     // through to the verbatim path.
     case "UNAUTHORIZED":
       if (!serverName) return null;
-      return {
-        message: `${server} rejected the connection. Reconnect it to refresh your access.`,
-        isRetryable: false,
-      };
+      return `${server} rejected the connection. Reconnect it to refresh your access.`;
     case "FORBIDDEN":
       if (!serverName) return null;
-      return {
-        message: `${server} refused this request. Your access may not cover the tools this chat needs.`,
-        isRetryable: false,
-      };
+      return `${server} refused this request. Your access may not cover the tools this chat needs.`;
     default:
       return null;
   }
@@ -397,16 +381,20 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
       }
 
       // Connection failures get human copy; the server's own wording stays
-      // reachable under "More details" rather than leading the banner.
+      // reachable under "More details" rather than leading the banner. Copy
+      // only — `isRetryable` and every other field keep whatever the server
+      // sent, so the banner's affordances are unchanged.
       const humanized = humanizeConnectionError(code, parsed.details);
       if (humanized) {
         return {
-          message: humanized.message,
+          message: humanized,
           details: details ?? message,
           code,
           statusCode: parsed.statusCode,
-          isRetryable: humanized.isRetryable,
-          isMCPJamPlatformError: false,
+          isRetryable: parsed.isRetryable,
+          isMCPJamPlatformError: code
+            ? MCPJAM_PLATFORM_CODES.includes(code)
+            : false,
         };
       }
 

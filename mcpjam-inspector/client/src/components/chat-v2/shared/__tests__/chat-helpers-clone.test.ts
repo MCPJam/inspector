@@ -229,7 +229,7 @@ describe("formatErrorMessage", () => {
   // OAuth grant rendered as "Authorization failed", an unreachable server as
   // "fetch failed". Accurate, and useless. These pin the human copy.
   describe("connection failures", () => {
-    it("explains an unreachable server and offers a retry", () => {
+    it("explains an unreachable server", () => {
       const result = formatErrorMessage(
         JSON.stringify({
           code: "SERVER_UNREACHABLE",
@@ -240,10 +240,30 @@ describe("formatErrorMessage", () => {
       expect(result?.message).toBe(
         "Couldn't reach the MCP server. It may be offline or blocking the connection.",
       );
-      expect(result?.isRetryable).toBe(true);
-      expect(result?.isMCPJamPlatformError).toBe(false);
       // The server's own wording stays reachable under "More details".
       expect(result?.details).toBe("fetch failed");
+    });
+
+    // Copy-only: every non-message field is passed through untouched, so the
+    // banner's Retry button behaves exactly as it did before this change.
+    it("passes isRetryable through from the server rather than deriving it", () => {
+      const retryable = formatErrorMessage(
+        JSON.stringify({
+          code: "SERVER_UNREACHABLE",
+          message: "fetch failed",
+          isRetryable: true,
+        }),
+      );
+      expect(retryable?.isRetryable).toBe(true);
+
+      const notRetryable = formatErrorMessage(
+        JSON.stringify({
+          code: "SERVER_UNREACHABLE",
+          message: "fetch failed",
+          isRetryable: false,
+        }),
+      );
+      expect(notRetryable?.isRetryable).toBe(false);
     });
 
     it("names the server when the backend supplies one", () => {
@@ -260,7 +280,7 @@ describe("formatErrorMessage", () => {
       );
     });
 
-    it("tells the user to reconnect an expired OAuth grant instead of retrying", () => {
+    it("tells the user to reconnect an expired OAuth grant", () => {
       const result = formatErrorMessage(
         JSON.stringify({
           code: "UNAUTHORIZED",
@@ -276,8 +296,6 @@ describe("formatErrorMessage", () => {
       expect(result?.message).toBe(
         "Your connection to “BART MCP” has expired. Reconnect it to keep chatting.",
       );
-      // Retrying cannot revive a dead grant — the CTA must not suggest it.
-      expect(result?.isRetryable).toBe(false);
     });
 
     it("explains a timeout", () => {
@@ -289,10 +307,7 @@ describe("formatErrorMessage", () => {
         }),
       );
 
-      expect(result?.message).toBe(
-        "“BART MCP” took too long to respond.",
-      );
-      expect(result?.isRetryable).toBe(true);
+      expect(result?.message).toBe("“BART MCP” took too long to respond.");
     });
 
     // UNAUTHORIZED / FORBIDDEN double as MCPJam's OWN auth failures (expired
@@ -334,7 +349,6 @@ describe("formatErrorMessage", () => {
       expect(result?.message).toBe(
         "“BART MCP” rejected the connection. Reconnect it to refresh your access.",
       );
-      expect(result?.isRetryable).toBe(false);
     });
 
     it("leaves unrelated codes on the verbatim path", () => {
