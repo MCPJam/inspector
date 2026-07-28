@@ -25,13 +25,19 @@ import { useProjectEnvironmentConsumers } from "../use-project-environment-consu
 
 const SUITE_QUERY = "testSuites:getTestSuitesOverview";
 const JOURNEY_QUERY = "journeys:listJourneysByProject";
+const CHATBOX_QUERY = "chatboxes:listChatboxes";
 
 /** Route each Convex query name to a canned result (or `undefined` = loading). */
-function stubQueries(results: { suites?: unknown; journeys?: unknown }) {
+function stubQueries(results: {
+  suites?: unknown;
+  journeys?: unknown;
+  chatboxes?: unknown;
+}) {
   mockQuery.mockImplementation((name: string, args: unknown) => {
     if (args === "skip") return undefined;
     if (name === SUITE_QUERY) return results.suites;
     if (name === JOURNEY_QUERY) return results.journeys;
+    if (name === CHATBOX_QUERY) return results.chatboxes;
     return undefined;
   });
 }
@@ -78,7 +84,7 @@ describe("useProjectEnvironmentConsumers", () => {
   });
 
   it("reports null per-source while that source is still loading", () => {
-    stubQueries({ suites: [], journeys: undefined });
+    stubQueries({ suites: [], journeys: undefined, chatboxes: undefined });
 
     const { result } = renderHook(() =>
       useProjectEnvironmentConsumers("proj-1", "env-1")
@@ -86,6 +92,29 @@ describe("useProjectEnvironmentConsumers", () => {
 
     expect(result.current.suiteCount).toBe(0);
     expect(result.current.journeyCount).toBeNull();
+    expect(result.current.chatboxCount).toBeNull();
+  });
+
+  it("counts the published chatbox backed by the environment (Phase 5)", () => {
+    stubQueries({
+      suites: [],
+      journeys: [],
+      chatboxes: [
+        // Host-backed rows: field absent (old backend) or explicit null.
+        { chatboxId: "cbx-host-a" },
+        { chatboxId: "cbx-host-b", environmentId: null },
+        // The env-backed row.
+        { chatboxId: "cbx-env", environmentId: "env-1" },
+        // Another environment's chatbox must not count.
+        { chatboxId: "cbx-other", environmentId: "env-2" },
+      ],
+    });
+
+    const { result } = renderHook(() =>
+      useProjectEnvironmentConsumers("proj-1", "env-1")
+    );
+
+    expect(result.current.chatboxCount).toBe(1);
   });
 
   it("skips both queries and reports null when no environment is targeted", () => {

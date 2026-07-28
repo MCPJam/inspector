@@ -5,6 +5,7 @@ import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
 import servers from "./servers.js";
 import tools from "./tools.js";
 import resources from "./resources.js";
+import tasksWeb from "./tasks.js";
 import prompts from "./prompts.js";
 import chatV2 from "./chat-v2.js";
 import mcpjamAgent from "./mcpjam-agent.js";
@@ -37,6 +38,7 @@ const web = new Hono();
 web.use("/servers/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/tools/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/resources/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+web.use("/tasks/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/prompts/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/chatboxes/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 // Swarm (journey-execution) launch route — member-gated. The runner-control
@@ -78,6 +80,7 @@ web.use(
 web.route("/servers", servers);
 web.route("/tools", tools);
 web.route("/resources", resources);
+web.route("/tasks", tasksWeb);
 web.route("/prompts", prompts);
 web.route("/chatboxes", chatboxes);
 web.route("/chatboxes", chatboxSessions);
