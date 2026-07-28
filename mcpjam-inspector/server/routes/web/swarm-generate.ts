@@ -8,7 +8,7 @@
  * user-facing message with the original status. No MCPClientManager — the
  * backend grounds generation in stored server inspections, not live connects.
  */
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 import {
   ErrorCode,
@@ -18,7 +18,7 @@ import {
   readJsonBody,
 } from "./auth.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
-import { logger } from "../../utils/logger.js";
+import { getRequestLogger } from "../../utils/request-logger.js";
 import { SwarmAgentError } from "../../services/swarm-agent.js";
 import {
   generateSwarmJourneys,
@@ -76,7 +76,7 @@ const FORWARDED_ERROR_CODES: Record<
  * URL and upstream status, which the default error mapper would echo into the
  * response body. Log it and return a generic 500 instead.
  */
-function rethrowAsRouteError(err: unknown): never {
+function rethrowAsRouteError(c: Context, err: unknown): never {
   if (err instanceof SwarmAgentError && err.status >= 400 && err.status < 500) {
     throw new WebRouteError(
       err.status,
@@ -85,10 +85,10 @@ function rethrowAsRouteError(err: unknown): never {
     );
   }
   if (err instanceof SwarmAgentError) {
-    logger.error("[swarm-generate] backend returned a server error", {
-      status: err.status,
-      message: err.message,
-    });
+    getRequestLogger(c, "routes.web.swarm-generate").event(
+      "swarm.generation.upstream_failed",
+      { statusCode: err.status, errorCode: "upstream_server_error" }
+    );
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
@@ -114,7 +114,7 @@ swarmGenerate.post("/generate/persona", async (c) =>
         signal: c.req.raw.signal,
       });
     } catch (err) {
-      rethrowAsRouteError(err);
+      rethrowAsRouteError(c, err);
     }
   })
 );
@@ -136,7 +136,7 @@ swarmGenerate.post("/generate/journeys", async (c) =>
         signal: c.req.raw.signal,
       });
     } catch (err) {
-      rethrowAsRouteError(err);
+      rethrowAsRouteError(c, err);
     }
   })
 );
