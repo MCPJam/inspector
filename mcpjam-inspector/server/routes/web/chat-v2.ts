@@ -6,6 +6,7 @@ import { shouldEnableCloudSkillTools } from "../../utils/computers/cloud-skill-t
 import { isMCPAuthError, TaskCreatedSink } from "@mcpjam/sdk";
 import { isCompatibleHostedTasksVersion } from "@/shared/hosted-task-created";
 import { HostedTaskCreatedBridge } from "../../utils/hosted-task-created-bridge.js";
+import { recordHostedTask } from "../../services/hosted-task-registry.js";
 import { resolveToolTaskSeam } from "../../utils/task-seam.js";
 import { resolveHostModelDefinition } from "../../utils/org-model-config.js";
 import {
@@ -851,6 +852,25 @@ chatV2.post("/", async (c) => {
       tasksSink.register({
         name: "hosted-task-created-bridge",
         handle: taskCreatedBridge.handle,
+      });
+    }
+    if (tasksSeam && convexBearer) {
+      // Best-effort, and registered AFTER the bridge so the durable local
+      // handle always lands first — a slow registry write can never cost the
+      // user the thing they need to find the task again.
+      //
+      // Dark until the backend's owner-binding gate is switched on, at which
+      // point this starts writing rows with no change here: the disabled state
+      // answers with the same 404 envelope as "not deployed" and degrades to a
+      // single log line.
+      tasksSink.register({
+        name: "hosted-task-registry",
+        bestEffort: true,
+        handle: (event) =>
+          recordHostedTask(event, {
+            bearer: convexBearer,
+            projectId: hostedBody.projectId,
+          }).then(() => undefined),
       });
     }
 
