@@ -36,6 +36,8 @@ Use the host default when you want every server in a Client to speak the same ve
 
 **Automatic** stores no pin — the absence of a pin is the meaning, not a hidden default. Picking any other option stores that exact version literal and narrows the `initialize` handshake's accept-list to that single revision.
 
+When Automatic falls back to the legacy `initialize` handshake, it uses the MCP SDK's complete built-in supported-version list. Persisted per-client accept-lists are ignored in Automatic mode so reconnecting cannot accidentally narrow negotiation; choose an explicit version when you want a strict protocol pin.
+
 **Latest (2025-11-25)** is derived, not hardcoded: it always labels the newest non-RC stable version in the SDK's known-version list. When a newer stable version is added, the "Latest" marker moves forward automatically.
 
 The 2026 RC applies the stateless model across transports. MCPJam's initial preview client is narrower: it currently supports the RC over Streamable HTTP POST. The per-server dropdown hides the RC option for STDIO and legacy SSE servers; if a host-level RC default reaches a non-HTTP server, the inspector fails the connection with a clear transport error instead of silently attempting the wrong protocol.
