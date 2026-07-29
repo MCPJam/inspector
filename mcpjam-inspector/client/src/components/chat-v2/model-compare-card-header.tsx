@@ -54,6 +54,8 @@ export function ModelCompareCardHeader({
   showComparisonChrome = true,
   /** When true (default), hides the status dot and Tools row — latency/tokens only. Set false for full compare metrics. */
   compactCompareHeader = true,
+  showIdentityHeader = false,
+  logoSrc = null,
   result,
   showToolsTab = false,
   showStepsTab = false,
@@ -90,6 +92,14 @@ export function ModelCompareCardHeader({
   /** When false, hides model title and Latency/Tokens/Tools rows (single-model-in-compare mode). */
   showComparisonChrome?: boolean;
   compactCompareHeader?: boolean;
+  /**
+   * When true, shows a compact host identity row (logo + name) above the
+   * Trace/Chat/Raw strip. Independent of `showComparisonChrome` so multi-host
+   * columns can brand without Latency/Tokens metrics.
+   */
+  showIdentityHeader?: boolean;
+  /** Host / client logo for the identity header. */
+  logoSrc?: string | null;
   /** When set, shows a Pass/Fail pill instead of the status dot. */
   result?: "passed" | "failed" | null;
   /** Include a Results tab alongside Trace/Chat/Raw. Only applies when `tabsInline` is true. */
@@ -114,7 +124,7 @@ export function ModelCompareCardHeader({
   actionsSlot?: ReactNode;
   className?: string;
 }) {
-  if (!showComparisonChrome && !showTraceTabs) {
+  if (!showComparisonChrome && !showTraceTabs && !showIdentityHeader) {
     return null;
   }
 
@@ -271,8 +281,41 @@ export function ModelCompareCardHeader({
       </div>
     ) : null;
 
+  const identityHeader =
+    showIdentityHeader && displayName ? (
+      <div
+        data-testid="compare-card-identity"
+        className={cn(
+          "flex shrink-0 items-center gap-2.5 border-b border-border/60 px-3 py-2.5",
+          !showComparisonChrome &&
+            !(showTraceTabs && !tabsInline) &&
+            className
+        )}
+      >
+        {logoSrc ? (
+          <img
+            src={logoSrc}
+            alt=""
+            className="size-6 shrink-0 object-contain"
+          />
+        ) : (
+          <span
+            aria-hidden
+            className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-[10px] font-semibold uppercase text-muted-foreground"
+          >
+            {displayName.slice(0, 2)}
+          </span>
+        )}
+        <span className="min-w-0 truncate text-sm font-semibold leading-tight">
+          {displayName}
+        </span>
+      </div>
+    ) : null;
+
   return (
     <>
+      {identityHeader}
+
       {showComparisonChrome ? (
         <div
           className={cn(

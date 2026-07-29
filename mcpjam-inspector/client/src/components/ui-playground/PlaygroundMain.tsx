@@ -88,6 +88,7 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
   getChatboxChatBackground,
   getChatboxHostFamily,
+  getChatboxHostLogo,
   getChatboxShellStyle,
   type ChatboxHostStyle,
 } from "@/lib/chatbox-client-style";
@@ -4089,8 +4090,15 @@ export function PlaygroundMain({
                           // model title + Latency/Tokens chrome is redundant
                           // (same model in every column) and noisy. Keep the
                           // Trace/Chat/Raw tab strip — that comes from
-                          // `showTraceTabs` inside the header.
+                          // `showTraceTabs` inside the header. Show the host
+                          // identity row so columns are immediately branded.
                           showComparisonChrome={false}
+                          showIdentityHeader
+                          logoSrc={getChatboxHostLogo(
+                            column.hostSnapshot.hostStyle,
+                            column.hostSnapshot.chatUiOverride,
+                            effectiveThreadTheme
+                          )}
                           suppressThreadEmptyHint={false}
                           compareEnterVersion={multiCompareEnterVersion}
                           compareEnterMessages={multiCompareEnterMessages}

@@ -40,7 +40,7 @@ function getMetricRunningSpinnerCount(container: ParentNode): number {
 }
 
 describe("ModelCompareCardHeader", () => {
-  it("renders nothing when comparison chrome is off and trace tabs are hidden", () => {
+  it("renders nothing when comparison chrome is off, trace tabs are hidden, and identity is off", () => {
     const { container } = render(
       <ModelCompareCardHeader
         model={model}
@@ -54,6 +54,53 @@ describe("ModelCompareCardHeader", () => {
     );
 
     expect(container.firstChild).toBeNull();
+  });
+
+  it("shows host identity (logo + name) above tabs without Latency when identity header is on", () => {
+    render(
+      <ModelCompareCardHeader
+        compareLabel="Claude"
+        summary={idleSummary}
+        allSummaries={[]}
+        mode="chat"
+        onModeChange={vi.fn()}
+        showTraceTabs={true}
+        showComparisonChrome={false}
+        showIdentityHeader
+        logoSrc="/logos/claude.svg"
+      />,
+    );
+
+    const identity = screen.getByTestId("compare-card-identity");
+    expect(identity).toBeInTheDocument();
+    expect(screen.getByText("Claude")).toBeInTheDocument();
+    expect(identity.querySelector("img")).toHaveAttribute(
+      "src",
+      "/logos/claude.svg",
+    );
+    expect(screen.getByTitle("Trace")).toBeInTheDocument();
+    expect(screen.queryByText("Latency")).not.toBeInTheDocument();
+  });
+
+  it("shows initials fallback when identity header has no logo", () => {
+    render(
+      <ModelCompareCardHeader
+        compareLabel="Custom Host"
+        summary={idleSummary}
+        allSummaries={[]}
+        mode="chat"
+        onModeChange={vi.fn()}
+        showTraceTabs={false}
+        showComparisonChrome={false}
+        showIdentityHeader
+        logoSrc={null}
+      />,
+    );
+
+    expect(screen.getByTestId("compare-card-identity")).toBeInTheDocument();
+    expect(screen.getByText("Custom Host")).toBeInTheDocument();
+    expect(screen.getByText("Cu")).toBeInTheDocument();
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
   });
 
   it("shows trace tabs but not model name or Latency when comparison chrome is off", () => {
