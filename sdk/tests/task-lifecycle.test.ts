@@ -22,6 +22,7 @@ import {
   legacyTaskToObservation,
   isUnknownTaskError,
   parseRetryAfterMs,
+  retryAfterMsFromError,
 } from "../src/mcp-client-manager/task-lifecycle-adapters.js";
 
 const identity = (
@@ -767,5 +768,73 @@ describe("wire adapters", () => {
     // A malformed hint must not become a zero-length backoff.
     expect(parseRetryAfterMs("soon", now)).toBeUndefined();
     expect(parseRetryAfterMs(undefined, now)).toBeUndefined();
+  });
+});
+
+describe("retryAfterMsFromError", () => {
+  const now = Date.parse("2026-07-28T00:00:00Z");
+
+  it("reads each error shape a layer might preserve, most-explicit first", () => {
+    expect(retryAfterMsFromError({ retryAfterMs: 1_500 }, now)).toBe(1_500);
+    // `retryAfter` follows the platform-error convention: seconds.
+    expect(retryAfterMsFromError({ retryAfter: 30 }, now)).toBe(30_000);
+    expect(retryAfterMsFromError({ retryAfter: "30" }, now)).toBe(30_000);
+    expect(
+      retryAfterMsFromError({ headers: { "retry-after": "30" } }, now)
+    ).toBe(30_000);
+    // HTTP field names are case-insensitive (RFC 9110 §5.1) — any casing on a
+    // plain record must be found.
+    expect(
+      retryAfterMsFromError({ headers: { "RETRY-AFTER": "30" } }, now)
+    ).toBe(30_000);
+    expect(
+      retryAfterMsFromError({ headers: { "Retry-After": "30" } }, now)
+    ).toBe(30_000);
+    expect(
+      retryAfterMsFromError(
+        { headers: new Headers({ "Retry-After": "30" }) },
+        now
+      )
+    ).toBe(30_000);
+    expect(
+      retryAfterMsFromError(
+        { response: { headers: { "Retry-After": "2026-07-28T00:00:45Z" } } },
+        now
+      )
+    ).toBe(45_000);
+  });
+
+  it("matches record header names in any casing", () => {
+    // HTTP header names are case-insensitive and this branch reads a record
+    // some unknown layer preserved, so no single spelling can be assumed.
+    // Missing the hint is not cosmetic: the poll loop loses its floor and
+    // hammers a server that just asked it to wait.
+    for (const name of [
+      "retry-after",
+      "Retry-After",
+      "RETRY-AFTER",
+      "Retry-after",
+      "rEtRy-AfTeR",
+    ]) {
+      expect(retryAfterMsFromError({ headers: { [name]: "30" } }, now)).toBe(
+        30_000
+      );
+    }
+    // Node types multi-valued header records as `string[]`; a preserved record
+    // may carry that shape even though `Retry-After` is single-valued.
+    expect(
+      retryAfterMsFromError({ headers: { "Retry-After": ["30"] } }, now)
+    ).toBe(30_000);
+  });
+
+  it("returns undefined when nothing usable is attached", () => {
+    expect(retryAfterMsFromError(new Error("plain"), now)).toBeUndefined();
+    expect(retryAfterMsFromError(undefined, now)).toBeUndefined();
+    expect(retryAfterMsFromError("string error", now)).toBeUndefined();
+    // A malformed hint must not become a zero-length floor.
+    expect(
+      retryAfterMsFromError({ headers: { "retry-after": "soon" } }, now)
+    ).toBeUndefined();
+    expect(retryAfterMsFromError({ retryAfterMs: -5 }, now)).toBeUndefined();
   });
 });

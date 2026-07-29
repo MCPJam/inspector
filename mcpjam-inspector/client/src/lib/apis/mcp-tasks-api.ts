@@ -1,4 +1,5 @@
 import type { MCPListTasksResult, MCPTask } from "@mcpjam/sdk/browser";
+import type { RegistryTaskEntry } from "@/shared/hosted-tasks";
 import { authFetch } from "@/lib/session-token";
 import { ensureLocalMode, runByMode } from "@/lib/apis/mode-client";
 import { WebApiError } from "@/lib/apis/web/base";
@@ -60,16 +61,26 @@ function rethrowHostedTaskError(error: unknown): never {
   throw error;
 }
 
+/**
+ * `tasks/list` plus, on the hosted path, the best-effort registry recovery
+ * attachment. `registryTasks` is ABSENT (not `[]`) when there was no recovery
+ * source this tick — local mode always leaves it absent — while `[]` is a
+ * verified empty registry.
+ */
+export interface ListTasksWithRecoveryResult extends MCPListTasksResult {
+  registryTasks?: RegistryTaskEntry[];
+}
+
 export async function listTasks(
   serverId: string,
   cursor?: string,
-): Promise<ListTasksResult> {
+): Promise<ListTasksWithRecoveryResult> {
   return runByMode({
     hosted: () =>
       listHostedTasks({
         serverNameOrId: serverId,
         cursor,
-      }) as Promise<ListTasksResult>,
+      }) as Promise<ListTasksWithRecoveryResult>,
     local: () => listTasksLocal(serverId, cursor),
   });
 }

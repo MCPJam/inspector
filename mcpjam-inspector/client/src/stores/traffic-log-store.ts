@@ -4,6 +4,8 @@
  * Includes:
  * - MCP Apps / OpenAI Apps SDK traffic (iframe ↔ host messages)
  * - MCP Server RPC traffic (client ↔ server messages)
+ * - The HTTP exchanges those messages rode in (headers only) — the `Mcp-*`
+ *   mirrored headers are wire state the JSON-RPC body cannot show
  *
  * This is a singleton store - no provider required.
  * The SSE subscription is also a singleton to prevent duplicate connections.
@@ -21,9 +23,23 @@ import type {
 // `extractMethod` relocated to the SDK widget-runtime (Phase 3d-ii); imported
 // for internal use and re-exported below so existing import sites are unchanged.
 import { extractMethod } from "@mcpjam/sdk/widget-runtime";
+import type { HttpExchangeLogEvent } from "@mcpjam/sdk/browser";
+
+/**
+ * The path of an exchange URL — the row label. The query string is dropped on
+ * purpose: this label feeds the Tracing agent snapshot, and a query can carry
+ * a token. The full URL stays on the payload, which the snapshot never reads.
+ */
+function describeHttpTarget(url: string): string {
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return url;
+  }
+}
 
 export type UiProtocol = "mcp-apps" | "openai-apps";
-export type McpServerLogKind = "rpc" | "oauth";
+export type McpServerLogKind = "rpc" | "oauth" | "http";
 
 export interface UiLogEvent {
   id: string;
@@ -217,8 +233,26 @@ export function subscribeToRpcStream(): () => void {
           direction?: string;
           message?: unknown;
           timestamp?: string;
+          exchange?: HttpExchangeLogEvent;
         };
-        if (!data || data.type !== "rpc") return;
+        if (!data) return;
+
+        if (data.type === "http") {
+          if (!data.exchange) return;
+          const exchange = data.exchange;
+          useTrafficLogStore.getState().addMcpServerLog({
+            serverId:
+              typeof data.serverId === "string" ? data.serverId : "unknown",
+            direction: "HTTP",
+            method: `${exchange.request.method} ${describeHttpTarget(exchange.request.url)}`,
+            timestamp: data.timestamp ?? new Date().toISOString(),
+            payload: exchange,
+            kind: "http",
+          });
+          return;
+        }
+
+        if (data.type !== "rpc") return;
 
         const { serverId, direction, message, timestamp } = data;
         useTrafficLogStore.getState().addMcpServerLog({

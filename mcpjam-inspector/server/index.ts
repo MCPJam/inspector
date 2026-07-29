@@ -80,7 +80,9 @@ process.on("unhandledRejection", (reason, _promise) => {
     "process.unhandled_rejection",
     { errorCode: reason instanceof Error ? reason.name : "unknown" },
     {
-      error: reason instanceof Error ? reason : undefined,
+      // Always forward the reason — a non-Error rejection still carries the
+      // only clue to what fired (emit stringifies it for Axiom).
+      error: reason,
       sentry: true,
     }
   );
@@ -296,6 +298,19 @@ const mcpClientManager = new MCPClientManager(
         direction,
         timestamp: new Date().toISOString(),
         message,
+      });
+    },
+    // HTTP-exchange capture (headers only). A separate SDK channel from
+    // `rpcLogger`: from 2026-07-28 the routing/cross-check metadata a
+    // `-32020 HeaderMismatch` is about lives in HTTP headers, which the
+    // JSON-RPC body log cannot show. Every era is captured — the legacy
+    // session/resumption headers are just as debuggable.
+    httpLogger: (exchange) => {
+      rpcLogBus.publish({
+        kind: "http",
+        serverId: exchange.serverId,
+        timestamp: new Date().toISOString(),
+        exchange,
       });
     },
     // SEP-2549 cache-serve provenance — a channel SEPARATE from rpcLogger

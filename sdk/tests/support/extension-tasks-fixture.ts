@@ -226,6 +226,16 @@ export interface ExtensionTasksFixtureOptions {
    * configurable. Default `-32602`.
    */
   unknownTaskCodeForMutations?: number;
+  /**
+   * Reject `tasks/update` with `-32602` for a task that EXISTS, as a server
+   * does when the `inputResponses` themselves are unacceptable.
+   *
+   * The code is the same one that means "unknown task id", which is why a
+   * client must confirm with `tasks/get` before reporting expiry — otherwise
+   * this validation message is lost and the user is told to re-create a live
+   * task. The message is distinctive so a test can prove it survived.
+   */
+  rejectUpdateWithInvalidParams?: boolean;
   serverInfo?: { name: string; version: string };
   /** Replaces the default tool set entirely when provided. */
   tools?: Record<string, ToolBehavior>;
@@ -802,6 +812,12 @@ export async function serveExtensionTasksFixture(
       case "tasks/update": {
         requireDeclaration(params);
         const entry = requireTask(params?.taskId, unknownTaskCodeForMutations);
+        if (options.rejectUpdateWithInvalidParams) {
+          throw new JsonRpcFailure(
+            INVALID_PARAMS,
+            "inputResponses rejected: `confirm` must be a boolean",
+          );
+        }
         const phase = entry.phases[entry.phaseIndex];
         const outstanding = new Set(
           Object.keys(

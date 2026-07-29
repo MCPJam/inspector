@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   clearTrackedTasksForScope,
+  dismissRegistryTasks,
+  getDismissedTaskIds,
   getRespondedInputKeys,
   recordRespondedInputKeys,
   recordTaskObservation,
@@ -106,6 +108,131 @@ describe("task-tracker", () => {
     // A write in one scope must not delete the other scope's handles.
     setTrackedTaskScope("project-a");
     expect(getTrackedTasks().map((t) => t.scope)).toEqual(["project-a"]);
+  });
+
+  it("persists an explicit foreign-scope write under ITS scope, not the active one", () => {
+    // A chat turn submitted under project-a can deliver its task-created part
+    // after the user switched to project-b. The caller passes the turn-start
+    // scope explicitly; the write must land under project-a.
+    setTrackedTaskScope("project-b");
+    trackTask({
+      taskId: "t1",
+      serverId: "s1",
+      wire: "extension",
+      createdAt: NOW,
+      scope: "project-a",
+    });
+
+    // Invisible under the active scope (project-b)...
+    expect(getTrackedTasks()).toHaveLength(0);
+    // ...visible after switching to the scope it belongs to.
+    setTrackedTaskScope("project-a");
+    expect(getTrackedTasks().map((t) => t.scope)).toEqual(["project-a"]);
+  });
+
+  it("dedupes a foreign-scope write against the entry already on disk in that scope", () => {
+    // The pre-fix dedupe only consulted the ACTIVE scope's slice, so an
+    // identical foreign-scope write slipped past it and duplicated the entry
+    // on disk. The dedupe must consult every scope.
+    setTrackedTaskScope("project-a");
+    trackTask({ taskId: "t1", serverId: "s1", wire: "extension", createdAt: NOW });
+
+    setTrackedTaskScope("project-b");
+    trackTask({
+      taskId: "t1",
+      serverId: "s1",
+      wire: "extension",
+      createdAt: NOW,
+      scope: "project-a",
+    });
+
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) as string);
+    expect(stored.tasks).toHaveLength(1);
+    setTrackedTaskScope("project-a");
+    expect(getTrackedTasks()).toHaveLength(1);
+  });
+
+  it("a foreign-scope write preserves every other scope's handles", () => {
+    setTrackedTaskScope("project-a");
+    trackTask({ taskId: "a1", serverId: "s1", wire: "legacy", createdAt: NOW });
+    setTrackedTaskScope("project-b");
+    trackTask({ taskId: "b1", serverId: "s1", wire: "legacy", createdAt: NOW });
+
+    // Still in project-b: write a NEW handle back into project-a.
+    trackTask({
+      taskId: "a2",
+      serverId: "s1",
+      wire: "legacy",
+      createdAt: NOW,
+      scope: "project-a",
+    });
+
+    expect(getTrackedTasks().map((t) => t.taskId)).toEqual(["b1"]);
+    setTrackedTaskScope("project-a");
+    expect(getTrackedTasks().map((t) => t.taskId).sort()).toEqual(["a1", "a2"]);
+  });
+
+  it("caps the active scope at 50, evicting its own oldest handle", () => {
+    for (let i = 0; i <= 50; i++) {
+      trackTask({
+        taskId: `t${i}`,
+        serverId: "s1",
+        wire: "legacy",
+        createdAt: NOW,
+      });
+    }
+
+    const ids = getTrackedTasks().map((t) => t.taskId);
+    expect(ids).toHaveLength(50);
+    expect(ids[0]).toBe("t50");
+    expect(ids).not.toContain("t0");
+  });
+
+  it("a late foreign-scope write caps ITS OWN scope, never the active one", () => {
+    // Fill project-a to the cap, then project-b to the cap.
+    setTrackedTaskScope("project-a");
+    for (let i = 0; i < 50; i++) {
+      trackTask({
+        taskId: `a${i}`,
+        serverId: "s1",
+        wire: "extension",
+        createdAt: NOW,
+      });
+    }
+    setTrackedTaskScope("project-b");
+    for (let i = 0; i < 50; i++) {
+      trackTask({
+        taskId: `b${i}`,
+        serverId: "s1",
+        wire: "extension",
+        createdAt: NOW,
+      });
+    }
+
+    // A delayed project-a task arrives while project-b is active. Pre-fix
+    // the cap ran over the ACTIVE slice: project-b's oldest handle (b0) was
+    // evicted — an evicted extension handle is locally unrecoverable — while
+    // project-a grew past the cap.
+    trackTask({
+      taskId: "a-late",
+      serverId: "s1",
+      wire: "extension",
+      createdAt: NOW,
+      scope: "project-a",
+    });
+
+    // Every project-b handle survived, including its oldest.
+    const bIds = getTrackedTasks().map((t) => t.taskId);
+    expect(bIds).toHaveLength(50);
+    expect(bIds).toContain("b0");
+
+    // The eviction happened in the DESTINATION scope: a-late is in,
+    // project-a's oldest is out, and the slice is still at the cap.
+    setTrackedTaskScope("project-a");
+    const aIds = getTrackedTasks().map((t) => t.taskId);
+    expect(aIds).toHaveLength(50);
+    expect(aIds[0]).toBe("a-late");
+    expect(aIds).not.toContain("a0");
   });
 
   it("drops a scope's handles on logout / organization switch", () => {
@@ -387,5 +514,50 @@ describe("task-tracker", () => {
     // scope nobody has open survived. Losing the handle the user is waiting on
     // is the worst outcome this store has.
     expect(getTrackedTasks().map((t) => t.taskId)).toEqual(["fresh"]);
+  });
+
+  describe("dismissed registry-only handles", () => {
+    it("unions registry dismissals into getDismissedTaskIds without a tracker row", () => {
+      trackTask({
+        taskId: "tracked-1",
+        serverId: "srv",
+        wire: "extension",
+        createdAt: NOW,
+      });
+
+      dismissRegistryTasks("srv", ["registry-1", "registry-2"]);
+
+      const dismissed = getDismissedTaskIds("srv");
+      expect(dismissed.has("registry-1")).toBe(true);
+      expect(dismissed.has("registry-2")).toBe(true);
+      // A view preference, not a tracker row: nothing was resurrected into
+      // the task store for it.
+      expect(getTrackedTasks().map((t) => t.taskId)).toEqual(["tracked-1"]);
+    });
+
+    it("scopes registry dismissals like the tracker rows", () => {
+      setTrackedTaskScope("project-a");
+      dismissRegistryTasks("srv", ["registry-1"]);
+
+      setTrackedTaskScope("project-b");
+      expect(getDismissedTaskIds("srv").has("registry-1")).toBe(false);
+
+      setTrackedTaskScope("project-a");
+      expect(getDismissedTaskIds("srv").has("registry-1")).toBe(true);
+    });
+
+    it("clearTrackedTasksForScope drops that scope's registry dismissals too", () => {
+      setTrackedTaskScope("project-a");
+      dismissRegistryTasks("srv", ["registry-1"]);
+      setTrackedTaskScope("project-b");
+      dismissRegistryTasks("srv", ["registry-2"]);
+
+      clearTrackedTasksForScope("project-a");
+
+      setTrackedTaskScope("project-a");
+      expect(getDismissedTaskIds("srv").has("registry-1")).toBe(false);
+      setTrackedTaskScope("project-b");
+      expect(getDismissedTaskIds("srv").has("registry-2")).toBe(true);
+    });
   });
 });
