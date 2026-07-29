@@ -141,28 +141,33 @@ describe("scope step-up lifecycle", () => {
     expect(applyToolCallStepUp).toHaveBeenCalledTimes(2);
   });
 
-  it("resolves the same server from runtime and active-project maps", () => {
-    const runtimeServer = {
-      name: "runtime",
-    } as unknown as ServerWithName;
-    const projectServer = {
-      name: "auth-bench",
-    } as unknown as ServerWithName;
-    const appState = {
-      activeProjectId: "project-1",
-      servers: { runtime: runtimeServer },
-      projects: {
-        "project-1": {
-          servers: { "auth-bench": projectServer },
-        },
+  const runtimeServer = {
+    name: "runtime",
+  } as unknown as ServerWithName;
+  const projectServer = {
+    name: "auth-bench",
+  } as unknown as ServerWithName;
+  const resolutionAppState = {
+    activeProjectId: "project-1",
+    servers: { runtime: runtimeServer },
+    projects: {
+      "project-1": {
+        servers: { "auth-bench": projectServer },
       },
-    } as unknown as AppState;
+    },
+  } as unknown as AppState;
 
+  it("resolves a server from the runtime map", () => {
     expect(
-      resolveScopeStepUpServer(appState, { serverId: "runtime" }),
+      resolveScopeStepUpServer(resolutionAppState, { serverId: "runtime" }),
     ).toBe(runtimeServer);
+  });
+
+  it("resolves a server from the active-project map", () => {
     expect(
-      resolveScopeStepUpServer(appState, { serverId: "auth-bench" }),
+      resolveScopeStepUpServer(resolutionAppState, {
+        serverId: "auth-bench",
+      }),
     ).toBe(projectServer);
   });
 });

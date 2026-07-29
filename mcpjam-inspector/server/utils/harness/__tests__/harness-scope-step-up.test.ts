@@ -82,6 +82,44 @@ describe("harness scope step-up correlation", () => {
     unregister();
   });
 
+  it("does not notify Inspector when a valid correlation names an unselected server", () => {
+    const sendEvent = vi.fn();
+    const unregister = inspectorCommandBus.registerSubscriber({
+      clientId: "scope-step-up-mismatch-test",
+      send: vi.fn(),
+      sendEvent,
+      supersede: vi.fn(),
+      close: vi.fn(),
+    });
+    const listener = vi.fn();
+    subscribeHarnessScopeStepUp(TURN_A, listener, ["auth-bench"]);
+
+    try {
+      publishHarnessScopeStepUp(TURN_A, {
+        serverId: "other-server",
+        requiredScope: "other:write",
+      });
+
+      // Correlation delivery is unchanged; run-harness-turn applies its
+      // selectedServers filter before writing this event into the chat stream.
+      expect(listener).toHaveBeenCalledTimes(1);
+      expect(sendEvent).not.toHaveBeenCalled();
+
+      publishHarnessScopeStepUp(TURN_A, {
+        serverId: "AUTH-BENCH",
+        requiredScope: "bench:write",
+      });
+      expect(listener).toHaveBeenCalledTimes(2);
+      expect(sendEvent).toHaveBeenCalledWith({
+        kind: "scope_step_up",
+        serverId: "AUTH-BENCH",
+        requiredScope: "bench:write",
+      });
+    } finally {
+      unregister();
+    }
+  });
+
   it("drops an uncorrelated challenge when two live turns share the server", () => {
     const listenerA = vi.fn();
     const listenerB = vi.fn();

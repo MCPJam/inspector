@@ -27,12 +27,19 @@ export function normalizeHarnessScopeStepUpCorrelationId(
 }
 
 type Listener = (info: InsufficientScopeInfo) => void;
-const listenersByCorrelationId = new Map<string, Set<Listener>>();
-type ServerSubscription = {
+type ScopeStepUpSubscription = {
   correlationId: string;
   listener: Listener;
+  serverIds: ReadonlySet<string>;
 };
-const subscriptionsByServerId = new Map<string, Set<ServerSubscription>>();
+const subscriptionsByCorrelationId = new Map<
+  string,
+  Set<ScopeStepUpSubscription>
+>();
+const subscriptionsByServerId = new Map<
+  string,
+  Set<ScopeStepUpSubscription>
+>();
 
 function normalizeServerId(serverId: string): string {
   return serverId.trim().toLowerCase();
@@ -75,31 +82,33 @@ export function subscribeHarnessScopeStepUp(
   const normalized = normalizeHarnessScopeStepUpCorrelationId(correlationId);
   if (!normalized) return () => {};
 
-  const listeners = listenersByCorrelationId.get(normalized) ?? new Set();
-  listeners.add(listener);
-  listenersByCorrelationId.set(normalized, listeners);
+  const normalizedServerIds = new Set(
+    serverIds.map(normalizeServerId).filter(Boolean),
+  );
+  const subscription: ScopeStepUpSubscription = {
+    correlationId: normalized,
+    listener,
+    serverIds: normalizedServerIds,
+  };
+  const correlatedSubscriptions =
+    subscriptionsByCorrelationId.get(normalized) ?? new Set();
+  correlatedSubscriptions.add(subscription);
+  subscriptionsByCorrelationId.set(normalized, correlatedSubscriptions);
 
-  const serverSubscriptions: Array<{
-    serverId: string;
-    subscription: ServerSubscription;
-  }> = [];
-  for (const rawServerId of new Set(serverIds)) {
-    const serverId = normalizeServerId(rawServerId);
-    if (!serverId) continue;
+  for (const serverId of normalizedServerIds) {
     const subscriptions =
-      subscriptionsByServerId.get(serverId) ?? new Set<ServerSubscription>();
-    const subscription = { correlationId: normalized, listener };
+      subscriptionsByServerId.get(serverId) ??
+      new Set<ScopeStepUpSubscription>();
     subscriptions.add(subscription);
     subscriptionsByServerId.set(serverId, subscriptions);
-    serverSubscriptions.push({ serverId, subscription });
   }
 
   return () => {
-    listeners.delete(listener);
-    if (listeners.size === 0) {
-      listenersByCorrelationId.delete(normalized);
+    correlatedSubscriptions.delete(subscription);
+    if (correlatedSubscriptions.size === 0) {
+      subscriptionsByCorrelationId.delete(normalized);
     }
-    for (const { serverId, subscription } of serverSubscriptions) {
+    for (const serverId of normalizedServerIds) {
       const subscriptions = subscriptionsByServerId.get(serverId);
       subscriptions?.delete(subscription);
       if (subscriptions?.size === 0) {
@@ -114,13 +123,23 @@ export function publishHarnessScopeStepUp(
   info: InsufficientScopeInfo,
 ): void {
   const normalized = normalizeHarnessScopeStepUpCorrelationId(correlationId);
-  const correlatedListeners = normalized
-    ? listenersByCorrelationId.get(normalized)
+  const correlatedSubscriptions = normalized
+    ? subscriptionsByCorrelationId.get(normalized)
     : undefined;
-  if (correlatedListeners?.size) {
-    notifyInspector(info);
-    for (const listener of correlatedListeners) {
-      notifyListener(listener, info);
+  if (correlatedSubscriptions?.size) {
+    const serverId = normalizeServerId(info.serverId);
+    if (
+      [...correlatedSubscriptions].some((subscription) =>
+        subscription.serverIds.has(serverId),
+      )
+    ) {
+      notifyInspector(info);
+    }
+    const notifiedListeners = new Set<Listener>();
+    for (const subscription of correlatedSubscriptions) {
+      if (notifiedListeners.has(subscription.listener)) continue;
+      notifiedListeners.add(subscription.listener);
+      notifyListener(subscription.listener, info);
     }
     return;
   }
@@ -152,6 +171,6 @@ export function publishHarnessScopeStepUpFromToolError(
 
 /** Test seam: production cleanup happens through each subscription disposer. */
 export function __resetHarnessScopeStepUpForTests(): void {
-  listenersByCorrelationId.clear();
+  subscriptionsByCorrelationId.clear();
   subscriptionsByServerId.clear();
 }
