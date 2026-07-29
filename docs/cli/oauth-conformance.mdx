@@ -51,13 +51,20 @@ Each conformance run walks through:
 6. **Authenticated request** — retries the MCP request with the token
 7. **Post-auth verification** (optional) — connects via MCP and lists tools / calls a tool
 
-When `--conformance-checks` is enabled, six additional negative checks run after the flow:
+When `--conformance-checks` is enabled, nine additional checks run after the flow — six negative checks that probe client-facing security, and three server-side obligation checks that verify the server meets normative spec requirements:
+
+**Negative checks (client-facing security):**
 - **DCR redirect URI policy** — attempts dynamic client registration with a non-loopback `http://` redirect URI and expects rejection under the MCP authorization profile
 - **Invalid client** — confirms the auth server rejects an unknown client ID
 - **Invalid redirect at the authorization endpoint** — sends an authorization request with a mismatched `redirect_uri` and looks for rejection before the server redirects back to it
 - **Invalid token** — confirms the MCP server rejects an obviously invalid bearer token with HTTP 401
 - **Invalid redirect** — attempts a token request with a mismatched redirect URI to look for exact-match enforcement; this check may be skipped if the request is rejected for a different reason first
 - **Token format** — validates the token response has the expected fields
+
+**Server-side obligation checks (spec compliance):**
+- **Unauthenticated request challenge** — sends an unauthenticated MCP request and confirms the server responds with HTTP 401 and a `WWW-Authenticate: Bearer` challenge, never a 5xx; skipped if the server accepts anonymous `initialize` (which is spec-legal)
+- **Resource metadata URL in challenge** — confirms the `WWW-Authenticate` Bearer challenge includes an absolute `resource_metadata` URL (RFC 9728 §5.1); skipped on protocol version `2025-03-26`, which predates RFC 9728
+- **Stale session rejection** — sends an authenticated request with an unknown `Mcp-Session-Id` and confirms the server rejects it with a 4xx (404 preferred), never a 5xx; skipped on the stateless `2026-07-28` transport
 
 ## Scenarios
 
