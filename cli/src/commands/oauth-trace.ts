@@ -66,7 +66,7 @@ function readJsonFile(path: string, label: string): unknown {
   }
 }
 
-function readTrace(path: string, label: string): GoldenTrace {
+export function readTrace(path: string, label: string): GoldenTrace {
   const parsed = readJsonFile(path, label) as GoldenTrace;
   if (parsed?.traceVersion !== 1) {
     throw cliError(
@@ -95,7 +95,7 @@ function readTrace(path: string, label: string): GoldenTrace {
  * genuinely-incomparable captures be compared, and the differ would then report a
  * conformant client as broken.
  */
-function readScenario(path: string): TraceScenario {
+export function readScenario(path: string): TraceScenario {
   const scenario = readJsonFile(path, "Scenario file") as TraceScenario;
   if (!scenario?.scenarioId || !scenario?.mcpServerUrl || !scenario?.capabilities) {
     throw usageError(
@@ -113,7 +113,7 @@ function readScenario(path: string): TraceScenario {
  * visible signal. The resolved version must come from a lockfile, not a manifest
  * range.
  */
-function parseOAuthImplementation(
+export function parseOAuthImplementation(
   value: string | undefined,
 ): TraceOAuthImplementation | undefined {
   if (!value) return undefined;
