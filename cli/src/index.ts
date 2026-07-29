@@ -19,6 +19,7 @@ import { registerResourcesCommands } from "./commands/resources.js";
 import { registerServerCommands } from "./commands/server.js";
 import { registerSubscriptionsCommands } from "./commands/subscriptions.js";
 import { registerTelemetryCommands } from "./commands/telemetry.js";
+import { registerTasksCommands } from "./commands/tasks.js";
 import { registerToolsCommands } from "./commands/tools.js";
 import { registerTunnelCommands } from "./commands/tunnel.js";
 import { registerInspectorCommands } from "./commands/inspector.js";
@@ -80,6 +81,7 @@ export async function main(
   registerCompatCommands(program);
   registerPromptCommands(program);
   registerAppsCommands(program);
+  registerTasksCommands(program);
   registerOAuthCommands(program);
   registerXaaCommands(program);
   registerProtocolCommands(program);

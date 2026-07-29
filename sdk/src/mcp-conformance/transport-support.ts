@@ -3,7 +3,7 @@ import type {
   MCPServerConfig,
 } from "../mcp-client-manager/index.js";
 
-export type ConformanceSuiteId = "protocol" | "apps" | "oauth";
+export type ConformanceSuiteId = "protocol" | "apps" | "oauth" | "tasks";
 
 export interface ConformanceSupport {
   /** Whether the suite can run against the given server config. */
@@ -55,6 +55,10 @@ export function canRunConformance(
         ? { supported: true }
         : { supported: false, reason: HTTP_ONLY_REASON };
     case "apps":
+      return { supported: true };
+    case "tasks":
+      // Tasks conformance provokes and then polls a real task; any transport
+      // the manager can hold a live connection on qualifies.
       return { supported: true };
     default: {
       const exhaustive: never = suite;

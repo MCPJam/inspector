@@ -1,7 +1,8 @@
 /**
  * Public v1 sandbox-images surface: CRUD + build + attach over a
- * project's custom Computer images (a digest-pinned Dockerfile built into an
- * immutable E2B image a member's Computer can boot from).
+ * project's custom Computer images (a declarative blueprint — YAML with a
+ * digest-pinned base image, initialize steps baked into an immutable E2B
+ * image, and maintenance/knowledge text delivered to the agent at runtime).
  *
  * Thin proxies over the same Convex `computerEnvironments:*` /
  * `projectComputers:*` functions the hosted UI uses, called with the request's
@@ -58,7 +59,7 @@ type EnvironmentRow = {
   environmentId: string;
   projectId: string;
   name: string;
-  dockerfile: string;
+  blueprint: string;
   contentHash: string;
   sharing: "user" | "project";
   isOwner: boolean;
@@ -89,7 +90,7 @@ function toEnvironmentDto(row: EnvironmentRow) {
     id: row.environmentId,
     projectId: row.projectId,
     name: row.name,
-    dockerfile: row.dockerfile,
+    blueprint: row.blueprint,
     contentHash: row.contentHash,
     sharing: row.sharing,
     isOwner: row.isOwner,
@@ -252,21 +253,27 @@ async function readJsonObjectBody(
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
 // Strict: unknown keys are a 400, not silently dropped — so a public-API typo
-// like `dockerFile` fails loudly instead of creating an env with no Dockerfile.
+// like `blueprnt` fails loudly instead of creating an env with no blueprint.
+// The blueprint TEXT is validated by the backend (the single source of truth);
+// this layer only requires a non-empty string.
 const createEnvironmentSchema = z.strictObject({
   name: z.string().trim().min(1),
-  dockerfile: z.string().min(1),
+  blueprint: z.string().min(1),
 });
 
 const updateEnvironmentSchema = z
   .strictObject({
     name: z.string().trim().min(1).optional(),
-    dockerfile: z.string().min(1).optional(),
+    blueprint: z.string().min(1).optional(),
   })
   .refine(
-    (value) => value.name !== undefined || value.dockerfile !== undefined,
-    { message: "Provide at least one of `name` or `dockerfile` to update." }
+    (value) => value.name !== undefined || value.blueprint !== undefined,
+    { message: "Provide at least one of `name` or `blueprint` to update." }
   );
+
+const validateBlueprintSchema = z.strictObject({
+  blueprint: z.string().min(1),
+});
 
 // ── Routes ───────────────────────────────────────────────────────────────────
 
@@ -299,12 +306,36 @@ images.post("/projects/:projectId/images", async (c) => {
   try {
     created = (await convexClient.mutation(
       "computerEnvironments:createEnvironment" as any,
-      { projectId, name: body.name, dockerfile: body.dockerfile } as any
+      { projectId, name: body.name, blueprint: body.blueprint } as any
     )) as EnvironmentRow;
   } catch (error) {
     throw translateConvexWriteError(error);
   }
   return v1Resource(c, toEnvironmentDto(created), 201);
+});
+
+// POST /v1/projects/:projectId/images/validate — lint a blueprint without
+// saving it. Always 200 (an invalid blueprint is a successful lint, not an
+// error); the authoritative rejection still happens at create/update/build.
+images.post("/projects/:projectId/images/validate", async (c) => {
+  const projectId = c.req.param("projectId");
+  const body = parseWithSchema(
+    validateBlueprintSchema,
+    await readJsonObjectBody(c)
+  );
+  const readClient = createConvexReadClient(await getConvexBearerForRequest(c));
+  let result:
+    | { ok: true; baseImageDigest: string }
+    | { ok: false; errors: { path: string; message: string }[] };
+  try {
+    result = (await readClient.query(
+      "computerEnvironments:validateBlueprint" as any,
+      { projectId, blueprint: body.blueprint } as any
+    )) as typeof result;
+  } catch (error) {
+    throw translateConvexWriteError(error);
+  }
+  return v1Resource(c, result);
 });
 
 // GET /v1/projects/:projectId/images/:imageId — detail.
@@ -316,7 +347,7 @@ images.get("/projects/:projectId/images/:imageId", async (c) => {
   return v1Resource(c, toEnvironmentDto(env));
 });
 
-// PATCH /v1/projects/:projectId/images/:imageId — rename / edit Dockerfile.
+// PATCH /v1/projects/:projectId/images/:imageId — rename / edit blueprint.
 images.patch("/projects/:projectId/images/:imageId", async (c) => {
   const projectId = c.req.param("projectId");
   const environmentId = c.req.param("imageId");
@@ -329,7 +360,7 @@ images.patch("/projects/:projectId/images/:imageId", async (c) => {
   await readEnvironmentInProject(token, projectId, environmentId);
   const updateArgs: Record<string, unknown> = { environmentId };
   if (body.name !== undefined) updateArgs.name = body.name;
-  if (body.dockerfile !== undefined) updateArgs.dockerfile = body.dockerfile;
+  if (body.blueprint !== undefined) updateArgs.blueprint = body.blueprint;
   const { convexClient } = createConvexClients(token);
   let updated: EnvironmentRow;
   try {

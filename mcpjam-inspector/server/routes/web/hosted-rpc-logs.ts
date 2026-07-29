@@ -1,6 +1,9 @@
 import type { UIMessageChunk } from "ai";
 import type { RpcLogger } from "@mcpjam/sdk";
-import { rpcLogBus } from "../../services/rpc-log-bus.js";
+import {
+  isRpcMessageLogEvent,
+  rpcLogBus,
+} from "../../services/rpc-log-bus.js";
 import { logger } from "../../utils/logger.js";
 import {
   isRpcLogSinkConfigured,
@@ -207,6 +210,11 @@ export function bridgeHarnessRpcLogsToCollector(
   // a harness turn with no MCP servers has nothing to bridge.
   if (serverIds.length === 0) return () => {};
   return rpcLogBus.subscribe(serverIds, (event) => {
+    // HTTP-exchange events are local-Tracing only. The hosted delivery
+    // (`data-rpc-log` parts, the Convex sink, `isHostedRpcLogEvent`) is a
+    // closed JSON-RPC-frame shape defined across two repos; widening it is its
+    // own change, so hosted stays header-blind rather than half-wired.
+    if (!isRpcMessageLogEvent(event)) return;
     collector.rpcLogger({
       direction: event.direction,
       message: event.message,

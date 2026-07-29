@@ -335,6 +335,9 @@ describe("MCPClientManager", () => {
     }, 10000);
 
     it("keeps stdio server context for silent initialization failures", async () => {
+      // stdio now auto-negotiates the era (always on), so a silent server
+      // times out during the `server/discover` probe rather than the plain
+      // initialize — the "via stdio" server context is still preserved.
       await expect(
         manager.connectToServer("silent-timeout", {
           command: process.execPath,
@@ -346,7 +349,7 @@ describe("MCPClientManager", () => {
           timeout: 200,
         })
       ).rejects.toThrow(
-        /Failed to connect to MCP server "silent-timeout" via stdio: Request timed out/
+        /Failed to connect to MCP server "silent-timeout" via stdio: Version negotiation probe timed out/
       );
     }, 10000);
 

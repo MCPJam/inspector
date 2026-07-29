@@ -128,15 +128,6 @@ export interface RunAssistantTurnOptions {
   streamSink: RunAssistantTurnStreamSink;
   persistMode: RunAssistantTurnPersistMode;
 
-  /**
-   * When provided, threaded into the `/stream` request body so Convex's
-   * spend-record path can attribute usage to the synthetic run/job. The
-   * backend ignores unknown fields until the matching wiring lands per
-   * `feedback_bridge_preserves_unknown_fields`.
-   */
-  synthesisRunId?: string;
-  synthesisJobId?: string;
-
   // --- The fields below are pass-throughs to `handleMCPJamFreeChatModel`
   //     that the live-chat callers already supply today. Exposed here so
   //     a thin wrapper can forward them without losing behavior. ---
@@ -328,21 +319,14 @@ function extractToolResults(
 }
 
 /**
- * Build the merged `extraBodyFields` payload forwarded to the Convex
- * `/stream` request. Caller-supplied fields win; the synthesis
- * attribution keys are appended last so they never override a real
- * upstream key collision (none today — they're new).
+ * Build the `extraBodyFields` payload forwarded to the Convex `/stream`
+ * request. (The synthesis attribution keys this used to append were removed
+ * with the chatbox synthetic surface.)
  */
 function buildExtraBodyFields(
   opts: RunAssistantTurnOptions
 ): Record<string, unknown> | undefined {
   const base = { ...(opts.extraBodyFields ?? {}) };
-  if (opts.synthesisRunId) {
-    base.synthesisRunId = opts.synthesisRunId;
-  }
-  if (opts.synthesisJobId) {
-    base.synthesisJobId = opts.synthesisJobId;
-  }
   return Object.keys(base).length > 0 ? base : undefined;
 }
 
