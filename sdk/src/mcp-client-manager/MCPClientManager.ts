@@ -93,6 +93,10 @@ import {
   TASK_CREATED_META_KEY,
   createDefaultRpcLogger,
 } from "./transport-utils.js";
+import {
+  wrapFetchForHttpLogging,
+  type HttpExchangeLogger,
+} from "./http-exchange-log.js";
 import { RefreshTokenOAuthProvider } from "./refresh-token-auth-provider.js";
 import {
   NotificationManager,
@@ -303,6 +307,7 @@ export class MCPClientManager {
   private readonly defaultTimeout: number;
   private readonly defaultLogJsonRpc: boolean;
   private readonly defaultRpcLogger?: RpcLogger;
+  private readonly defaultHttpLogger?: HttpExchangeLogger;
   private readonly defaultProgressHandler?: ProgressHandler;
   private readonly cacheEventLogger?: CacheEventLogger;
   /**
@@ -342,6 +347,7 @@ export class MCPClientManager {
     this.defaultTimeout = options.defaultTimeout ?? DEFAULT_TIMEOUT;
     this.defaultLogJsonRpc = options.defaultLogJsonRpc ?? false;
     this.defaultRpcLogger = options.rpcLogger;
+    this.defaultHttpLogger = options.httpLogger;
     this.defaultProgressHandler = options.progressHandler;
     this.cacheEventLogger = options.cacheEventLogger;
     this.traceContextProvider = options.traceContextProvider;
@@ -2377,7 +2383,9 @@ export class MCPClientManager {
         // `Mcp-Name: <taskId>`. beta.4 derives `mcp-name` from
         // `params.name|uri` only, so the header is injected in the fetch seam
         // (hosted inherits it, since hosted builds transports through here).
-        fetch: wrapFetchForTaskRouting(),
+        // The same seam captures HTTP headers for the wire log when a
+        // `httpLogger` is configured — see `buildTransportFetch`.
+        fetch: this.buildTransportFetch(serverId, config),
         reconnectionOptions: config.reconnectionOptions,
         authProvider: effectiveAuthProvider,
         sessionId: config.sessionId,
@@ -2430,7 +2438,7 @@ export class MCPClientManager {
 
     const sseTransport = new SSEClientTransport(url, {
       requestInit,
-      fetch: wrapFetchForTaskRouting(),
+      fetch: this.buildTransportFetch(serverId, config),
       eventSourceInit: config.eventSourceInit,
       authProvider: effectiveAuthProvider,
     });
@@ -3025,6 +3033,37 @@ export class MCPClientManager {
       return createDefaultRpcLogger();
     if (this.defaultRpcLogger) return this.defaultRpcLogger;
     return undefined;
+  }
+
+  /**
+   * Unlike `resolveRpcLogger` there is no console fallback: `logJsonRpc` is
+   * about JSON-RPC bodies, and quietly printing every HTTP header set to the
+   * console because a caller asked for body logging would leak more than they
+   * asked for. Opt in explicitly, per server or globally.
+   */
+  private resolveHttpLogger(
+    config: MCPServerConfig
+  ): HttpExchangeLogger | undefined {
+    return config.httpLogger ?? this.defaultHttpLogger;
+  }
+
+  /**
+   * Builds the transport `fetch`. Ordering is load-bearing: the HTTP-log
+   * wrapper is the BASE, so it records the headers that actually leave —
+   * including the SEP-2663 routing headers `wrapFetchForTaskRouting` injects
+   * on top. Without a logger this is byte-identical to the previous
+   * `wrapFetchForTaskRouting()`.
+   */
+  private buildTransportFetch(
+    serverId: string,
+    config: MCPServerConfig
+  ): typeof fetch {
+    const httpLogger = this.resolveHttpLogger(config);
+    return wrapFetchForTaskRouting(
+      httpLogger
+        ? wrapFetchForHttpLogging(serverId, httpLogger)
+        : undefined
+    );
   }
 
   private cacheToolsMetadata(

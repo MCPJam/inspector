@@ -146,6 +146,19 @@ export async function createHonoApp() {
           message,
         });
       },
+      // HTTP-exchange capture (headers only). A separate SDK channel from
+      // `rpcLogger`: from 2026-07-28 the routing/cross-check metadata a
+      // `-32020 HeaderMismatch` is about lives in HTTP headers, which the
+      // JSON-RPC body log cannot show. Every era is captured — the legacy
+      // session/resumption headers are just as debuggable.
+      httpLogger: (exchange) => {
+        rpcLogBus.publish({
+          kind: "http",
+          serverId: exchange.serverId,
+          timestamp: new Date().toISOString(),
+          exchange,
+        });
+      },
       progressHandler: ({
         serverId,
         progressToken,

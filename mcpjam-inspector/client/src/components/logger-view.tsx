@@ -55,8 +55,10 @@ import {
   requestOpenOAuthDebugger,
 } from "@/lib/oauth/oauth-debugger-navigation";
 import { cn } from "@/lib/utils";
+import { HttpExchangeDetails } from "@/components/tracing/HttpExchangeDetails";
+import type { HttpExchangeLogEvent } from "@mcpjam/sdk/browser";
 
-type TrafficSource = "mcp-server" | "mcp-apps" | "oauth";
+type TrafficSource = "mcp-server" | "mcp-apps" | "oauth" | "http";
 
 interface RenderableRpcItem {
   id: string;
@@ -269,6 +271,14 @@ function DirectionLabel({
     );
   }
 
+  if (source === "http") {
+    return (
+      <span className="font-mono text-[10px] leading-none flex-shrink-0 text-amber-600 dark:text-amber-400">
+        http
+      </span>
+    );
+  }
+
   const isSend = direction === "SEND";
   return (
     <span
@@ -371,6 +381,8 @@ export function LoggerView({
       source:
         item.kind === "oauth"
           ? ("oauth" as TrafficSource)
+          : item.kind === "http"
+          ? ("http" as TrafficSource)
           : ("mcp-server" as TrafficSource),
       oauthStatus: item.oauthStatus,
       oauthRecovered: item.oauthRecovered,
@@ -594,6 +606,9 @@ export function LoggerView({
                     </DropdownMenuRadioItem>
                     <DropdownMenuRadioItem value="oauth" className="text-xs">
                       OAuth
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="http" className="text-xs">
+                      HTTP
                     </DropdownMenuRadioItem>
                     <DropdownMenuRadioItem value="mcp-apps" className="text-xs">
                       Apps
@@ -837,6 +852,10 @@ export function LoggerView({
               const isExpanded = expanded.has(it.id);
               const isAppsTraffic = it.source === "mcp-apps";
               const isOAuthTraffic = it.source === "oauth";
+              const isHttpExchange = it.source === "http";
+              const httpExchange = isHttpExchange
+                ? (it.payload as HttpExchangeLogEvent)
+                : undefined;
               const oauthInlineSummary = isOAuthTraffic
                 ? getOAuthInlineSummary(it.payload)
                 : undefined;
@@ -847,7 +866,13 @@ export function LoggerView({
               const isError =
                 it.method === "error" ||
                 it.method === "csp-violation" ||
-                (isOAuthTraffic && it.oauthStatus === "error");
+                (isOAuthTraffic && it.oauthStatus === "error") ||
+                // A 4xx/5xx or a fetch that never got a response. `401` is not
+                // excluded here the way the OAuth card excludes its expected
+                // challenge: on the RPC endpoint a 401 IS the failure.
+                (httpExchange !== undefined &&
+                  (httpExchange.error !== undefined ||
+                    (httpExchange.response?.status ?? 0) >= 400));
 
               // Left border: 2px — red for errors (incl. OAuth failures), purple for Apps,
               // transparent otherwise (OAuth success has no rail)
@@ -884,7 +909,7 @@ export function LoggerView({
                         isExpanded && "rotate-90"
                       )}
                     />
-                    {isError && !isOAuthTraffic ? (
+                    {isError && !isOAuthTraffic && !isHttpExchange ? (
                       <AlertCircle className="h-3 w-3 flex-shrink-0 text-destructive" />
                     ) : (
                       <DirectionLabel
@@ -962,15 +987,21 @@ export function LoggerView({
                   {isExpanded && (
                     <div className="border-t border-border bg-muted/10 p-2">
                       <div className="max-h-[40vh] overflow-auto">
-                        <JsonEditor
-                          height="100%"
-                          value={normalizePayload(it.payload) as object}
-                          readOnly
-                          showToolbar={false}
-                          collapsible
-                          defaultExpandDepth={2}
-                          collapseStringsAfterLength={100}
-                        />
+                        {isHttpExchange ? (
+                          <HttpExchangeDetails
+                            exchange={it.payload as HttpExchangeLogEvent}
+                          />
+                        ) : (
+                          <JsonEditor
+                            height="100%"
+                            value={normalizePayload(it.payload) as object}
+                            readOnly
+                            showToolbar={false}
+                            collapsible
+                            defaultExpandDepth={2}
+                            collapseStringsAfterLength={100}
+                          />
+                        )}
                       </div>
                     </div>
                   )}

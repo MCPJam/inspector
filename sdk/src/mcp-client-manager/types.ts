@@ -23,6 +23,7 @@ import type { StdioServerParameters } from "@modelcontextprotocol/client/stdio";
 import type { RetryPolicy } from "../retry.js";
 import type { RefreshTokenOAuthProvider } from "./refresh-token-auth-provider.js";
 import type { TraceContextProvider } from "./trace-context.js";
+import type { HttpExchangeLogger } from "./http-exchange-log.js";
 import type { ToolSet } from "ai";
 
 // Re-export ElicitResult for convenience
@@ -234,6 +235,14 @@ export type BaseServerConfig = {
   logJsonRpc?: boolean;
   /** Custom logger for JSON-RPC traffic (overrides logJsonRpc) */
   rpcLogger?: RpcLogger;
+  /**
+   * Custom sink for HTTP exchanges (headers only). A DISTINCT channel from
+   * `rpcLogger`: that one carries JSON-RPC bodies, this one carries the HTTP
+   * envelope those bodies rode in — the `Mcp-*` mirrored headers a
+   * `-32020 HeaderMismatch` is about. HTTP transports only; stdio never
+   * reaches a fetch, so it emits nothing.
+   */
+  httpLogger?: HttpExchangeLogger;
 };
 
 /**
@@ -481,6 +490,9 @@ export interface MCPClientManagerOptions {
   defaultLogJsonRpc?: boolean;
   /** Global JSON-RPC logger */
   rpcLogger?: RpcLogger;
+  /** Global HTTP-exchange (headers-only) logger. See `httpLogger` on the
+   *  server config for why this is a separate channel from `rpcLogger`. */
+  httpLogger?: HttpExchangeLogger;
   /** Global progress handler */
   progressHandler?: ProgressHandler;
   /**
