@@ -137,7 +137,6 @@ const baseArgs = (overrides: Record<string, unknown> = {}) => ({
   selectedServers: ["server-a"],
   projectId: "proj-1",
   authHeader: "Bearer abc",
-  synthesisRunId: "run-xyz",
   modelDefinition: {
     id: "openai/gpt-4o-mini",
     name: "GPT-4o mini",
@@ -183,7 +182,6 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     expect(result.modelSource).toBe("mcpjam");
     expect(result.turnTrace).toEqual(TURN_TRACE);
     const opts = calls[0] as any;
-    expect(opts.synthesisRunId).toBe("run-xyz");
     expect(opts.approvalMode).toBe("auto-deny");
     expect(opts.streamSink).toBe("none");
     expect(opts.persistMode).toBe("caller");
@@ -232,7 +230,6 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
       providerKey: "anthropic",
       serverIds: ["server-a"],
     });
-    expect(opts.synthesisRunId).toBe("run-xyz");
     expect(opts.approvalMode).toBe("auto-deny");
     expect(opts.streamSink).toBe("none");
     expect(opts.persistMode).toBe("caller");
@@ -273,7 +270,7 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     // direct engine, so its trace spans carried no provider metadata.
     expect(opts.provider).toBeUndefined();
 
-    // The local-usage writeback fired with the synthesisRunId attribution.
+    // The local-usage writeback fired.
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0]! as unknown as [
       string,
@@ -284,7 +281,6 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
       projectId: "proj-1",
       providerKey: "openai",
       model: "llama3",
-      synthesisRunId: "run-xyz",
       // turnId + promptIndex are sourced from the turn trace (byte-parity).
       turnId: "test-turn",
       promptIndex: 0,
@@ -304,9 +300,8 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     await drainAssistantTurn(
       baseArgs({
         sourceType: "swarm",
-        // Swarm attribution rides journeyRunId (not synthesisRunId). hostId
-        // travels WITH it — the drain fails closed on partial swarm identity.
-        synthesisRunId: undefined,
+        // Swarm attribution rides journeyRunId; hostId travels WITH it —
+        // the drain fails closed on partial swarm identity.
         journeyRunId: "journey-run-1",
         hostId: "host-1",
       }) as Parameters<typeof drainAssistantTurn>[0],
@@ -336,7 +331,6 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     await drainAssistantTurn(
       baseArgs({
         sourceType: "swarm",
-        synthesisRunId: undefined,
         journeyRunId: "journey-run-1",
         hostId: "host-1",
         modelId: "llama3",
@@ -369,7 +363,6 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
       drainAssistantTurn(
         baseArgs({
           sourceType: "swarm",
-          synthesisRunId: undefined,
           journeyRunId: "journey-run-1",
           // hostId missing
         }) as Parameters<typeof drainAssistantTurn>[0],
@@ -380,7 +373,6 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
       drainAssistantTurn(
         baseArgs({
           sourceType: "swarm",
-          synthesisRunId: undefined,
           hostId: "host-1",
           // journeyRunId missing
         }) as Parameters<typeof drainAssistantTurn>[0],

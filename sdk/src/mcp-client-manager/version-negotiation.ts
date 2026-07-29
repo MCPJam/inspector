@@ -42,9 +42,13 @@ import {
  *   indicates an outage, not a legacy server; on stdio a timeout IS a legacy
  *   signal and falls back).
  *
- * The manager calls this helper only for HTTP servers. Stdio remains on its
- * historical legacy default until MCPJam explicitly exposes modern stdio
- * negotiation.
+ * Automatic negotiation is ALWAYS ON and transport-agnostic: the manager
+ * calls this helper for both HTTP and stdio servers. An unconfigured
+ * connection resolves to `{ mode: "auto" }` on either transport (on stdio the
+ * `server/discover` probe runs on a sibling process — the server binary is
+ * spawned a second time). Explicit pins are honored on HTTP connections only;
+ * stdio always negotiates in `auto` mode, because `mcpProtocolVersion` is
+ * HTTP-only and the manager never forwards a pin to a stdio transport.
  */
 export function resolveVersionNegotiation(
   mcpProtocolVersion: McpProtocolVersion | undefined

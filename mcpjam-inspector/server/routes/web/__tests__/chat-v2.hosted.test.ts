@@ -129,9 +129,17 @@ vi.mock("../../../utils/host-runtime-config.js", () => ({
   fetchHostRuntimeConfig: fetchHostRuntimeConfigMock,
 }));
 
-vi.mock("../../../utils/chatbox-runtime-config.js", () => ({
-  fetchChatboxRuntimeConfig: fetchChatboxRuntimeConfigMock,
-}));
+vi.mock("../../../utils/chatbox-runtime-config.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/chatbox-runtime-config.js")
+  >("../../../utils/chatbox-runtime-config.js");
+  // Keep `readChatboxEnvironment` REAL (the route parses the environment
+  // payload through it on every chatbox turn); mock only the network fetch.
+  return {
+    ...actual,
+    fetchChatboxRuntimeConfig: fetchChatboxRuntimeConfigMock,
+  };
+});
 
 vi.mock("../apps.js", () => ({
   default: new Hono(),

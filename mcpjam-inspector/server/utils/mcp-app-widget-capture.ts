@@ -376,8 +376,19 @@ export async function captureMcpAppWidgetSnapshots(params: {
    * matching the rest of the widget injection paths.
    */
   injectOpenAiCompat?: boolean;
+  /**
+   * Tool-call ids already captured on a previous invocation over the same
+   * (growing) transcript. Per-turn callers pass their session-scoped set so
+   * an early widget isn't re-fetched and re-uploaded on every later turn —
+   * without it the walk is quadratic in turns (readResource + blob upload
+   * per prior widget, per turn).
+   */
+  skipToolCallIds?: ReadonlySet<string>;
 }): Promise<EvalTraceWidgetSnapshot[] | undefined> {
-  const sources = collectToolSnapshotSources(params.messages);
+  const skip = params.skipToolCallIds;
+  const sources = collectToolSnapshotSources(params.messages).filter(
+    (source) => !skip?.has(source.toolCallId),
+  );
   if (sources.length === 0) {
     return undefined;
   }
