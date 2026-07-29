@@ -152,6 +152,7 @@ describe("scope step-up lifecycle", () => {
     servers: { runtime: runtimeServer },
     projects: {
       "project-1": {
+        sharedProjectId: "convex-project-1",
         servers: { "auth-bench": projectServer },
       },
     },
@@ -167,6 +168,16 @@ describe("scope step-up lifecycle", () => {
     expect(
       resolveScopeStepUpServer(resolutionAppState, {
         serverId: "auth-bench",
+      }),
+    ).toBe(projectServer);
+  });
+
+  it("resolves a project named by its Convex/shared id", () => {
+    // Hosted events can carry the shared id, which is NOT the `projects` key.
+    expect(
+      resolveScopeStepUpServer(resolutionAppState, {
+        serverId: "auth-bench",
+        projectId: "convex-project-1",
       }),
     ).toBe(projectServer);
   });

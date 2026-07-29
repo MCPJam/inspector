@@ -33,7 +33,11 @@ import {
   applyToolCallStepUp,
   resetToolCallStepUp,
 } from "@/state/oauth-orchestrator";
-import type { AppState, ServerWithName } from "@/state/app-types";
+import {
+  findProjectByAnyId,
+  type AppState,
+  type ServerWithName,
+} from "@/state/app-types";
 
 /**
  * Servers with a step-up in flight. Module-level so the dedup holds ACROSS
@@ -44,6 +48,11 @@ const inFlight = new Set<string>();
 /**
  * Resolve a stream/app event's server identifier against the same local and
  * project-scoped maps on every scope-step-up delivery path.
+ *
+ * The project goes through `findProjectByAnyId` because a hosted event's
+ * `projectId` can be the Convex/shared id rather than the local key
+ * `AppState.projects` is keyed by; a bare key lookup would miss the project
+ * and dead-end the step-up for a server held only in the project map.
  */
 export function resolveScopeStepUpServer(
   appState: AppState | null | undefined,
@@ -54,8 +63,10 @@ export function resolveScopeStepUpServer(
   },
 ): ServerWithName | undefined {
   if (!appState) return undefined;
-  const activeProject =
-    appState.projects[input.projectId ?? appState.activeProjectId];
+  const activeProject = findProjectByAnyId(
+    appState.projects,
+    input.projectId ?? appState.activeProjectId,
+  );
   return (
     (input.serverName
       ? (appState.servers[input.serverName] ??

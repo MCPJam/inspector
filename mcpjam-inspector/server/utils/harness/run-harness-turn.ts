@@ -122,7 +122,10 @@ import {
   type HarnessMcpProxyStrategy,
 } from "./harness-proxy-strategy.js";
 import { fetchHarnessProxyTokens } from "./harness-proxy-token-client.js";
-import { subscribeHarnessScopeStepUp } from "./harness-scope-step-up.js";
+import {
+  harnessScopeStepUpServerMatches,
+  subscribeHarnessScopeStepUp,
+} from "./harness-scope-step-up.js";
 import { emitInsufficientScopeChunk } from "../../routes/web/hosted-elicitation.js";
 
 /** A minimal writer matching what `createUIMessageStream` hands `execute` and
@@ -512,7 +515,11 @@ export async function runHarnessTurn(
         ? subscribeHarnessScopeStepUp(
             turnId,
             (info) => {
-              if (!selectedServers?.includes(info.serverId)) return;
+              if (
+                !harnessScopeStepUpServerMatches(selectedServers, info.serverId)
+              ) {
+                return;
+              }
               emitInsufficientScopeChunk(writer, undefined, info);
             },
             selectedServers,

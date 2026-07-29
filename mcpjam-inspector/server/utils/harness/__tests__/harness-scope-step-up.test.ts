@@ -2,6 +2,7 @@ import { InsufficientScopeError } from "@modelcontextprotocol/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   __resetHarnessScopeStepUpForTests,
+  harnessScopeStepUpServerMatches,
   normalizeHarnessScopeStepUpCorrelationId,
   publishHarnessScopeStepUp,
   publishHarnessScopeStepUpFromToolError,
@@ -182,5 +183,23 @@ describe("harness scope step-up correlation", () => {
       requiredScope: "bench:write",
     });
     expect(listener).not.toHaveBeenCalled();
+  });
+
+  it("matches a subscriber's server filter the way routing does", () => {
+    // A subscriber that filtered with a bare `includes` would drop a variant
+    // this registry had already routed (and already told Inspector about).
+    expect(harnessScopeStepUpServerMatches(["auth-bench"], "AUTH-BENCH")).toBe(
+      true,
+    );
+    expect(
+      harnessScopeStepUpServerMatches(["AUTH-BENCH"], " auth-bench "),
+    ).toBe(true);
+    expect(harnessScopeStepUpServerMatches(["auth-bench"], "other")).toBe(
+      false,
+    );
+    expect(harnessScopeStepUpServerMatches([], "auth-bench")).toBe(false);
+    expect(harnessScopeStepUpServerMatches(undefined, "auth-bench")).toBe(
+      false,
+    );
   });
 });

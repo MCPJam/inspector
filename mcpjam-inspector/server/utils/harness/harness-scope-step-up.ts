@@ -45,6 +45,24 @@ function normalizeServerId(serverId: string): string {
   return serverId.trim().toLowerCase();
 }
 
+/**
+ * Whether a published challenge names one of these server ids, using the SAME
+ * normalization this registry routes with. Subscribers must filter through
+ * this rather than a bare `includes`: otherwise a case or whitespace variant
+ * could be routed here and then dropped by the subscriber, so the Inspector
+ * would open OAuth for a challenge the chat stream never showed.
+ */
+export function harnessScopeStepUpServerMatches(
+  serverIds: readonly string[] | undefined,
+  serverId: string,
+): boolean {
+  if (!serverIds?.length) return false;
+  const normalized = normalizeServerId(serverId);
+  return serverIds.some(
+    (candidate) => normalizeServerId(candidate) === normalized,
+  );
+}
+
 function notifyListener(
   listener: Listener,
   info: InsufficientScopeInfo,
