@@ -100,6 +100,7 @@ describe("MCP Apps client-capability carrier — legacy vs 2026-07-28", () => {
     const cap = await withCapturingFetch(async (cap) => {
       await manager.connectToServer("fixture", {
         url: served.url,
+        mcpProtocolVersion: "2025-11-25",
         timeout: 10_000,
       });
       return cap;
