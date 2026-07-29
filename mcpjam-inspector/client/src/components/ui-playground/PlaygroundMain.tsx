@@ -3023,11 +3023,8 @@ export function PlaygroundMain({
     []
   );
 
-  const queueBroadcastRequest = useCallback(
-    (
-      request: Omit<BroadcastChatTurnRequest, "id">,
-      captureProps?: Record<string, unknown>
-    ) => {
+  const trackSendMessage = useCallback(
+    (captureProps?: Record<string, unknown>) => {
       track("app_builder_send_message", {
         location: "app_builder_tab",
         model_id: selectedModel?.id ?? null,
@@ -3037,11 +3034,6 @@ export function PlaygroundMain({
         multi_model_count: isMultiModelMode ? resolvedSelectedModels.length : 1,
         ...(captureProps ?? {}),
       });
-
-      setBroadcastRequest({
-        ...request,
-        id: Date.now(),
-      });
     },
     [
       isMultiModelMode,
@@ -3050,6 +3042,25 @@ export function PlaygroundMain({
       selectedModel?.name,
       selectedModel?.provider,
     ]
+  );
+
+  // Compare mode ONLY. `broadcastRequest` has no consumer in single-model
+  // mode, but freshly mounted compare cards replay whatever request is stored
+  // here — so a single-model send that wrote this state would be re-sent to
+  // every column when the user later enables compare. Single-model paths call
+  // `trackSendMessage` directly instead.
+  const queueBroadcastRequest = useCallback(
+    (
+      request: Omit<BroadcastChatTurnRequest, "id">,
+      captureProps?: Record<string, unknown>
+    ) => {
+      trackSendMessage(captureProps);
+      setBroadcastRequest({
+        ...request,
+        id: Date.now(),
+      });
+    },
+    [trackSendMessage]
   );
 
   const mergedToolRenderOverrides = useMemo(
@@ -3259,14 +3270,7 @@ export function PlaygroundMain({
       });
       setModelContextQueue([]);
     } else {
-      queueBroadcastRequest(
-        {
-          text: composerText,
-          files,
-          prependMessages,
-        },
-        { single_model_send: true }
-      );
+      trackSendMessage({ single_model_send: true });
       // Single-model mode has no broadcast consumer, so the prepends have to
       // land in the thread here — before `sendMessage`, so the request carries
       // them as history rather than arriving after the model answered.
@@ -3301,6 +3305,7 @@ export function PlaygroundMain({
     displayMode,
     isWidgetFullscreen,
     queueBroadcastRequest,
+    trackSendMessage,
     modelContextQueue,
     sendMessage,
     setMessages,
@@ -3388,10 +3393,7 @@ export function PlaygroundMain({
             widgetModelContext: modelContextQueue,
           });
         } else {
-          queueBroadcastRequest(
-            { text: prompt, prependMessages: [] },
-            { single_model_send: true }
-          );
+          trackSendMessage({ single_model_send: true });
           sendMessage({
             text: prompt,
             metadata: outgoingSenderMetadata,
@@ -3417,6 +3419,7 @@ export function PlaygroundMain({
       queueBroadcastRequest,
       sendBlocked,
       sendMessage,
+      trackSendMessage,
     ]
   );
   // "Ask agent to run" (harness built-in tools): the rail builds a structured
@@ -3441,10 +3444,7 @@ export function PlaygroundMain({
         });
         setModelContextQueue([]);
       } else {
-        queueBroadcastRequest(
-          { text, prependMessages: [] },
-          { single_model_send: true }
-        );
+        trackSendMessage({ single_model_send: true });
         sendMessage({
           text,
           metadata: outgoingSenderMetadata,
@@ -3461,6 +3461,7 @@ export function PlaygroundMain({
       ensureSelectedServerReadyForChat,
       isCompareMode,
       queueBroadcastRequest,
+      trackSendMessage,
       sendMessage,
       outgoingSenderMetadata,
       modelContextQueue,

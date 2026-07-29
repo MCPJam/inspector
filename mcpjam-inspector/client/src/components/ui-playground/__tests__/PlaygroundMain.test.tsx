@@ -1488,6 +1488,40 @@ describe("PlaygroundMain", () => {
         screen.queryByText("Try one of these to get started"),
       ).not.toBeInTheDocument();
     });
+
+    it("does not replay a single-model send into compare cards mounted later", async () => {
+      const { rerender } = render(
+        <PlaygroundMain {...defaultProps} enableMultiModelChat={true} />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
+      await waitFor(() => {
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalled();
+      });
+
+      mockUseChatSession.availableModels = [
+        { id: "gpt-4", name: "GPT-4", provider: "openai" },
+        {
+          id: "claude-sonnet-4-5",
+          name: "Claude Sonnet 4.5",
+          provider: "anthropic",
+        },
+      ];
+      mockUseChatSession.selectedModelIds = ["gpt-4", "claude-sonnet-4-5"];
+      mockUseChatSession.multiModelEnabled = true;
+      rerender(<PlaygroundMain {...defaultProps} enableMultiModelChat={true} />);
+
+      await waitFor(() => {
+        expect(
+          screen.getAllByTestId("multi-model-playground-card"),
+        ).toHaveLength(2);
+      });
+
+      const staleRequests = mockMultiModelPlaygroundCard.mock.calls
+        .map(([props]) => props.broadcastRequest)
+        .filter(Boolean);
+      expect(staleRequests).toEqual([]);
+    });
   });
 
   describe("chat input", () => {
