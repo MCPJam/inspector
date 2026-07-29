@@ -253,6 +253,9 @@ export class TraceContextMetaClient implements ManagedMcpClient {
   ping(options?: RequestOptions) {
     return this.inner.ping(options);
   }
+  discover(options?: RequestOptions) {
+    return this.inner.discover?.(options) ?? Promise.resolve(undefined);
+  }
   setLoggingLevel(level: LoggingLevel, options?: RequestOptions): Promise<void> {
     // Legacy-era delivery channel — never carries modern `_meta`.
     return this.inner.setLoggingLevel(level, options);

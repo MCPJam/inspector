@@ -245,6 +245,11 @@ export class LogLevelMetaClient implements ManagedMcpClient {
   ping(options?: RequestOptions) {
     return this.inner.ping(options);
   }
+  discover(options?: RequestOptions) {
+    // Upstream stamps the discover envelope itself; no log-level injection
+    // (the reserved key rides operation requests, not the discovery probe).
+    return this.inner.discover?.(options) ?? Promise.resolve(undefined);
+  }
   setLoggingLevel(level: LoggingLevel, options?: RequestOptions): Promise<void> {
     // Legacy delivery channel — always forwarded verbatim, never gated.
     return this.inner.setLoggingLevel(level, options);

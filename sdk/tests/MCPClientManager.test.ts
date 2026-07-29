@@ -833,6 +833,45 @@ describe("MCPClientManager", () => {
       expect(fakeClient.ping).toHaveBeenCalledTimes(2);
     });
 
+    it("probes with server/discover instead of ping on a modern-era connection", async () => {
+      // `ping` was removed from the 2026-07-28 vocabulary — the upstream
+      // client throws MethodNotSupportedByProtocolVersion rather than send it
+      // on a modern-classified connection. The modern liveness probe is
+      // `server/discover`; the ping contract's EmptyResult is preserved.
+      const fakeClient = {
+        getProtocolEra: jest.fn().mockReturnValue("modern"),
+        discover: jest.fn().mockResolvedValue({ supportedVersions: ["2026-07-28"] }),
+        ping: jest.fn(),
+      };
+
+      seedRegisteredServer(manager, "modern-ping", {
+        url: new URL("https://example.test/mcp"),
+      });
+      seedLiveState(manager, "modern-ping", { client: fakeClient });
+
+      await expect(manager.pingServer("modern-ping")).resolves.toEqual({});
+
+      expect(fakeClient.discover).toHaveBeenCalledTimes(1);
+      expect(fakeClient.ping).not.toHaveBeenCalled();
+    });
+
+    it("falls back to ping when a modern-shaped client lacks discover", async () => {
+      // Test doubles / non-upstream adapters may not carry `discover` — the
+      // probe must not become a TypeError.
+      const fakeClient = {
+        getProtocolEra: jest.fn().mockReturnValue("modern"),
+        ping: jest.fn().mockResolvedValue({}),
+      };
+
+      seedRegisteredServer(manager, "modern-noprobe", {
+        url: new URL("https://example.test/mcp"),
+      });
+      seedLiveState(manager, "modern-noprobe", { client: fakeClient });
+
+      await expect(manager.pingServer("modern-noprobe")).resolves.toEqual({});
+      expect(fakeClient.ping).toHaveBeenCalledTimes(1);
+    });
+
     it("retries read operations without tearing down an existing live session", async () => {
       const fakeClient = {
         listTools: jest
