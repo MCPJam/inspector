@@ -229,7 +229,8 @@ for (const flow of result.results) {
 | `logs` | `InfoLogEntry[]` | Structured log entries |
 | `http` | `HttpHistoryEntry` | Primary HTTP exchange (if any) |
 | `httpAttempts` | `HttpHistoryEntry[]` | All HTTP traces including retries |
-| `error` | `{ message, details? }` | Error info (if failed) |
+| `error` | `{ message, details? }` | Error info (if failed or skipped) |
+| `warnings` | `string[]` | Non-fatal evidence on a passing step (e.g. a spec-preferred but not mandated behavior was missed). Never present on a failed step. |
 | `teachableMoments` | `string[]` | Educational hints for this step |
 
 ### VerificationResult
