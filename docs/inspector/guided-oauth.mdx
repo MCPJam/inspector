@@ -33,6 +33,15 @@ When the server's Protected Resource Metadata (PRM) advertises a `resource` iden
 
 The debugger intentionally proceeds rather than failing so you can observe real server behavior. Use the [OAuth Conformance](/cli/oauth-conformance) tool if you need strict RFC 9728 validation.
 
+### Authorization-response `iss` mismatch warnings
+
+When the authorization server returns an `iss` parameter on the callback that does not match the issuer recorded from its metadata, Inspector's behavior depends on the protocol version selected for the flow:
+
+- **2026-07-28 (Draft)** — The flow is blocked before the authorization code is redeemed. The error names both the recorded issuer and the one returned on the callback so you can compare them directly.
+- **2025-11-25 and earlier** — The flow continues and a warning toast is shown naming both issuers. These protocol versions do not mention `iss` or RFC 9207 issuer validation, so blocking would enforce a rule the selected version does not contain.
+
+In both cases the mismatch is recorded on the OAuth trace at the `received_authorization_code` step, visible in the **Last OAuth Trace** panel.
+
 ## Inline OAuth tracing
 
 When you connect a server using OAuth 2.0, Inspector automatically records a trace of every step in the flow and surfaces it in the connection UI — no separate tool required.

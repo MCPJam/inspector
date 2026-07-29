@@ -12,9 +12,10 @@ const { mockFlagValue, mockListEnvironments, mockConsumers } = vi.hoisted(
     mockFlagValue: { value: true as boolean | undefined },
     mockListEnvironments: vi.fn(() => [] as unknown[]),
     mockConsumers: {
-      value: { suiteCount: 0, journeyCount: 0 } as {
+      value: { suiteCount: 0, journeyCount: 0, chatboxCount: 0 } as {
         suiteCount: number | null;
         journeyCount: number | null;
+        chatboxCount: number | null;
       },
     },
   })
@@ -34,6 +35,10 @@ vi.mock("../ProjectEnvironmentEditor", () => ({
 }));
 vi.mock("../use-project-environment-consumers", () => ({
   useProjectEnvironmentConsumers: () => mockConsumers.value,
+}));
+// The publish panel has its own Convex reads/mutations; out of scope here.
+vi.mock("../environment-chatbox-section", () => ({
+  EnvironmentChatboxSection: () => null,
 }));
 
 import { ProjectEnvironmentsRoute } from "../ProjectEnvironmentsRoute";
@@ -72,7 +77,7 @@ beforeEach(() => {
 
 describe("archive-confirm consumer counts", () => {
   it("names both the suite and the journey counts", () => {
-    mockConsumers.value = { suiteCount: 2, journeyCount: 3 };
+    mockConsumers.value = { suiteCount: 2, journeyCount: 3, chatboxCount: 0 };
     renderAndOpenArchiveConfirm();
 
     const summary = screen.getByText(/reference it/i);
@@ -81,7 +86,7 @@ describe("archive-confirm consumer counts", () => {
   });
 
   it("reports zero of each (not 'journeys aren't scanned') when nothing references it", () => {
-    mockConsumers.value = { suiteCount: 0, journeyCount: 0 };
+    mockConsumers.value = { suiteCount: 0, journeyCount: 0, chatboxCount: 0 };
     renderAndOpenArchiveConfirm();
 
     expect(
@@ -91,7 +96,7 @@ describe("archive-confirm consumer counts", () => {
   });
 
   it("singularizes a single journey reference", () => {
-    mockConsumers.value = { suiteCount: 0, journeyCount: 1 };
+    mockConsumers.value = { suiteCount: 0, journeyCount: 1, chatboxCount: 0 };
     renderAndOpenArchiveConfirm();
 
     const summary = screen.getByText(/reference it/i);
@@ -99,9 +104,25 @@ describe("archive-confirm consumer counts", () => {
   });
 
   it("shows a checking state until both scans settle", () => {
-    mockConsumers.value = { suiteCount: 2, journeyCount: null };
+    mockConsumers.value = { suiteCount: 2, journeyCount: null, chatboxCount: 0 };
     renderAndOpenArchiveConfirm();
 
     expect(screen.getByText(/checking references/i)).toBeInTheDocument();
+  });
+
+  it("holds the checking state until the chatbox scan settles too (Phase 5)", () => {
+    mockConsumers.value = { suiteCount: 2, journeyCount: 3, chatboxCount: null };
+    renderAndOpenArchiveConfirm();
+
+    expect(screen.getByText(/checking references/i)).toBeInTheDocument();
+  });
+
+  it("warns that a published chatbox link stops working immediately (Phase 5)", () => {
+    mockConsumers.value = { suiteCount: 0, journeyCount: 0, chatboxCount: 1 };
+    renderAndOpenArchiveConfirm();
+
+    expect(
+      screen.getByText(/chatbox link stops working immediately/i)
+    ).toBeInTheDocument();
   });
 });

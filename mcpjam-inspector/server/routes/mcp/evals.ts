@@ -282,6 +282,8 @@ evals.post("/stream-test-case", async (c) => {
     const stream = await streamEvalTestCaseWithManager(
       c.mcpClientManager,
       validationResult.data,
+      // Client disconnect aborts the run (including any awaited task).
+      { requestSignal: c.req.raw.signal },
     );
 
     return new Response(stream, {
