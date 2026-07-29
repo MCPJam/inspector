@@ -313,6 +313,7 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     pulseSubmit,
     clientSelector,
     onChangeSkillResults,
+    skillResults,
   }: {
     value: string;
     onChange: (v: string) => void;
@@ -324,10 +325,12 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     pulseSubmit?: boolean;
     clientSelector?: unknown;
     onChangeSkillResults?: (results: unknown[]) => void;
+    skillResults?: unknown[];
   }) => (
     <form
       data-testid="chat-input"
       data-loading={isLoading ? "true" : "false"}
+      data-skill-count={skillResults?.length ?? 0}
       data-client-selector={clientSelector ? "true" : "false"}
       onSubmit={(e) => {
         e.preventDefault();
@@ -1487,6 +1490,28 @@ describe("PlaygroundMain", () => {
       expect(
         screen.queryByText("Try one of these to get started"),
       ).not.toBeInTheDocument();
+    });
+
+    it("clears staged skill results after a starter chip send", async () => {
+      render(<PlaygroundMain {...defaultProps} />);
+
+      fireEvent.click(screen.getByTestId("chat-input-attach-skill"));
+      expect(screen.getByTestId("chat-input")).toHaveAttribute(
+        "data-skill-count",
+        "1",
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
+
+      await waitFor(() => {
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalled();
+      });
+      await waitFor(() => {
+        expect(screen.getByTestId("chat-input")).toHaveAttribute(
+          "data-skill-count",
+          "0",
+        );
+      });
     });
 
     it("does not replay a single-model send into compare cards mounted later", async () => {

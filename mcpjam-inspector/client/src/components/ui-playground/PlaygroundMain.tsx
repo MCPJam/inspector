@@ -3402,6 +3402,11 @@ export function PlaygroundMain({
         }
         setModelContextQueue([]);
         composer.setInput("");
+        // Starter sends are text-only: staged prompt/skill results are
+        // discarded like the typed draft and file attachments, so they don't
+        // silently ride along on the next composer submit.
+        setMcpPromptResults([]);
+        setSkillResults([]);
         revokeFileAttachmentUrls(fileAttachments);
         setFileAttachments([]);
         onFirstMessageSent?.();
