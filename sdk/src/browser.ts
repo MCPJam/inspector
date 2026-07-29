@@ -371,6 +371,26 @@ export {
   type McpProtocolVersion,
 } from "./mcp-client-manager/mcp-protocol-version.js";
 
+// SEP-2243 mirrored request-metadata headers. Browser-safe by construction
+// (pure string work, no transport): the Tracing panel runs the SAME decode and
+// header/body cross-check a server runs, so a `-32020 HeaderMismatch` can be
+// explained against the captured wire instead of guessed at.
+export {
+  MCP_HEADER_SENTINEL_PREFIX,
+  MCP_HEADER_SENTINEL_SUFFIX,
+  MCP_PARAM_HEADER_PREFIX,
+  classifyMcpHeader,
+  decodeMcpHeaderValue,
+  findMcpHeaderIssues,
+} from "./mcp-client-manager/mcp-header-mirror.js";
+export type {
+  DecodedMcpHeaderValue,
+  McpHeaderFamily,
+  McpHeaderIssue,
+  MirroredBodyValues,
+} from "./mcp-client-manager/mcp-header-mirror.js";
+export type { HttpExchangeLogEvent } from "./mcp-client-manager/http-exchange-log.js";
+
 // OpenTelemetry trace context over the 2026-07-28 reserved `_meta` keys.
 // Browser-safe by construction: pure string validation, no transport. The
 // browser side is the READ half — surfacing a trace context a server sent so

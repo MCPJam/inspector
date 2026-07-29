@@ -38,6 +38,8 @@ export type {
   ProgressEvent,
   RpcLogger,
   RpcLogEvent,
+  HttpExchangeLogEvent,
+  HttpExchangeLogger,
 } from "./mcp-client-manager/index.js";
 
 // Tool and task types

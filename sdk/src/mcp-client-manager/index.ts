@@ -317,6 +317,14 @@ export {
   wrapFetchForTaskRouting,
   wrapTransportForTaskResults,
 } from "./transport-utils.js";
+export {
+  wrapFetchForHttpLogging,
+  deriveMirroredBodyValues,
+} from "./http-exchange-log.js";
+export type {
+  HttpExchangeLogEvent,
+  HttpExchangeLogger,
+} from "./http-exchange-log.js";
 
 // Notification schemas (for advanced use cases)
 export {
