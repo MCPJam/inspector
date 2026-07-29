@@ -77,6 +77,8 @@ import { BASH_TOOL_NAME } from "../../utils/built-in-tools/bash.js";
 import { maybeAppendEnvironmentContext } from "../../utils/computers/environment-context.js";
 import { convertToMcpjamModelMessages } from "../../utils/mcp-tool-result-model-output.js";
 import { type ExecutionScope } from "../../utils/execution-scope.js";
+import { wrapToolsWithScopeStepUp } from "../../utils/insufficient-scope-step-up.js";
+import type { ElicitationChunkWriter } from "../web/hosted-elicitation.js";
 
 function formatStreamError(error: unknown, provider?: ModelProvider): string {
   if (!(error instanceof Error)) {
@@ -845,13 +847,20 @@ chatV2.post("/", async (c) => {
     }
 
     const {
-      allTools,
+      allTools: preparedTools,
       enhancedSystemPrompt,
       resolvedTemperature,
       scrubMessages,
       progressivePlan,
       discoveryState,
     } = prepared;
+    // The stream writer is created after tools are prepared, so the wrapper
+    // resolves it lazily when a tool actually reports a scope challenge.
+    let scopeChallengeWriter: ElicitationChunkWriter | null = null;
+    const allTools = wrapToolsWithScopeStepUp(
+      preparedTools,
+      () => scopeChallengeWriter,
+    );
     const widgetModelContextSystemPrompt = buildWidgetModelContextSystemPrompt(
       validatedWidgetModelContext,
     );
@@ -935,13 +944,12 @@ chatV2.post("/", async (c) => {
         selectedServers,
         requireToolApproval,
         modelVisibleMcpToolResults,
-        ...(taskCreatedBridge
-          ? {
-              onStreamWriterReady: (writer: {
-                write: (chunk: UIMessageChunk) => void;
-              }) => taskCreatedBridge.attachStreamWriter(writer),
-            }
-          : {}),
+        onStreamWriterReady: (writer: {
+          write: (chunk: UIMessageChunk) => void;
+        }) => {
+          scopeChallengeWriter = writer;
+          taskCreatedBridge?.attachStreamWriter(writer);
+        },
         ...(resolvedExecution.harness
           ? {
               harness: resolvedExecution.harness,
@@ -1149,13 +1157,12 @@ chatV2.post("/", async (c) => {
           // synchronously from the tool loop, so a missing attach means the
           // bridge warn-drops the task-created part and the task is orphaned
           // (see `server/utils/web-chat-turn.ts`).
-          ...(taskCreatedBridge
-            ? {
-                onStreamWriterReady: (writer: {
-                  write: (chunk: UIMessageChunk) => void;
-                }) => taskCreatedBridge.attachStreamWriter(writer),
-              }
-            : {}),
+          onStreamWriterReady: (writer: {
+            write: (chunk: UIMessageChunk) => void;
+          }) => {
+            scopeChallengeWriter = writer;
+            taskCreatedBridge?.attachStreamWriter(writer);
+          },
         });
       }
 
@@ -1180,13 +1187,12 @@ chatV2.post("/", async (c) => {
         onConversationComplete,
         // Same invariant as the local-org call above: attach the bridge
         // before the first tool call, or created tasks are orphaned.
-        ...(taskCreatedBridge
-          ? {
-              onStreamWriterReady: (writer: {
-                write: (chunk: UIMessageChunk) => void;
-              }) => taskCreatedBridge.attachStreamWriter(writer),
-            }
-          : {}),
+        onStreamWriterReady: (writer: {
+          write: (chunk: UIMessageChunk) => void;
+        }) => {
+          scopeChallengeWriter = writer;
+          taskCreatedBridge?.attachStreamWriter(writer);
+        },
       });
     }
 
@@ -1260,13 +1266,12 @@ chatV2.post("/", async (c) => {
       abortSignal: inboundAbortSignalDirect,
       // Same invariant as the org-BYOK calls above: attach the bridge before
       // the first tool call, or created tasks are orphaned.
-      ...(taskCreatedBridge
-        ? {
-            onStreamWriterReady: (writer: {
-              write: (chunk: UIMessageChunk) => void;
-            }) => taskCreatedBridge.attachStreamWriter(writer),
-          }
-        : {}),
+      onStreamWriterReady: (writer: {
+        write: (chunk: UIMessageChunk) => void;
+      }) => {
+        scopeChallengeWriter = writer;
+        taskCreatedBridge?.attachStreamWriter(writer);
+      },
       onPersist: chatSessionId
         ? async ({
             responseMessages,
