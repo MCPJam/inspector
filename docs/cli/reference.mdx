@@ -637,7 +637,21 @@ Both pin fields are narrower than they look:
 
 ## `images` commands
 
-Manage custom Computer sandbox images (Dockerfiles) in your hosted MCPJam projects. All `images` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam login`.
+Manage custom Computer sandbox images in your hosted MCPJam projects. An image is defined by a **blueprint** — YAML with a digest-pinned `base` image, `initialize` steps baked into the image at build time, and `maintenance` / `knowledge` text delivered to the agent at runtime (never executed automatically):
+
+```yaml
+base: debian:bookworm-slim@sha256:<64-hex-digest>
+initialize:
+  - name: Install tooling
+    run: apt-get update && apt-get install -y git jq
+maintenance:
+  - name: Refresh deps
+    run: cd ~/app && npm install
+knowledge:
+  - name: Test notes
+    contents: Run `make test` before pushing.
+```
+ All `images` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam login`.
 
 ### Shared platform flags
 
@@ -659,12 +673,21 @@ Manage custom Computer sandbox images (Dockerfiles) in your hosted MCPJam projec
 | `--image <id-or-name>` | Yes | Sandbox image name or ID |
 | `--project <id-or-name>` | No | Project name or ID |
 
+### `images validate`
+
+Lint a blueprint without saving it. Prints `ok` plus the resolved base digest, or structured errors with the YAML path of each violation.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--file <path>` | Yes | Blueprint YAML path, or `-` to read from stdin |
+| `--project <id-or-name>` | No | Project name or ID |
+
 ### `images create`
 
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--name <name>` | Yes | Display name for the new sandbox image |
-| `--file <path>` | Yes | Dockerfile path, or `-` to read from stdin |
+| `--file <path>` | Yes | Blueprint YAML path, or `-` to read from stdin |
 | `--project <id-or-name>` | No | Project name or ID |
 
 ### `images edit`
@@ -674,7 +697,7 @@ Manage custom Computer sandbox images (Dockerfiles) in your hosted MCPJam projec
 | `--image <id-or-name>` | Yes | Sandbox image name or ID |
 | `--project <id-or-name>` | No | Project name or ID |
 | `--name <name>` | No | New display name |
-| `--file <path>` | No | Replacement Dockerfile path (or `-` for stdin) |
+| `--file <path>` | No | Replacement blueprint YAML path (or `-` for stdin) |
 
 ### `images build`
 
@@ -1130,3 +1153,9 @@ No additional flags. Removes the stored MCPJam session.
 | `0` | Success / all checks passed |
 | `1` | Command ran but reported a failure |
 | `2` | Invalid arguments or configuration |
+| `3` | `tasks conformance` only: the run was incomplete — its task-dependent checks never ran, so it is neither a pass nor a spec violation |
+| `6` | `tasks watch` only: the task needs input this run could not answer. Answer it with `tasks update`, or re-run with `--interactive` in a TTY |
+| `7` | `tasks watch` only: `--duration-ms` elapsed before the task reached a terminal status |
+| `130` | Interrupted by a signal (`tasks watch` aborted, or a second Ctrl-C during `tunnel` shutdown) |
+
+Codes above `2` are reserved for outcomes a script should act on *differently* — not merely for naming a failure. See [MCP Tasks](/cli/tasks#watch-exit-codes) for the full `tasks watch` mapping.

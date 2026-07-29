@@ -340,6 +340,12 @@ mcpjamAgent.post("/", async (c) => {
           uiMessages: body.messages,
           uiTools: validatedUiTools,
           builtInTools,
+          // No `tasks`: the agent has no host config (see `hostConfig: null`
+          // below), so its policy is `unset`, which the matrix resolves to
+          // `off` for the `agent` surface. Passing a resolved seam here would
+          // be a call that can only ever return undefined. If the agent ever
+          // gains a host config, resolve it with surface `"agent"` — not
+          // `"chat"` — even though both arrive through `prepareChatV2`.
         },
         persist: {
           chatSessionId: body.chatSessionId,

@@ -106,3 +106,11 @@ These components appear in the preview and in the expanded card under **Unsuppor
 ## Credential setup
 
 After installing a plugin, each MCP server component that requires credentials shows its readiness in the plugin card. The setup section of the install summary lists the environment variable and header names the bundle declared. You configure the actual values per server — MCPJam never reads or stores credential values from the bundle itself.
+
+## Plugin provenance in runs and sessions
+
+When an eval run or swarm simulation executes against an environment that pins a plugin, MCPJam records the exact bundle hash alongside the run. This record is immutable: re-importing the plugin after a run completes does not change what that run reports.
+
+- **Eval run detail** — a **Plugins** row below the environment label shows each pinned plugin's name and short bundle hash. See [Plugin provenance on runs](/inspector/evals#plugin-provenance-on-runs).
+- **Swarm session pane** — the transcript pane for a completed simulation shows the same plugin chips so you can tell which bundle produced that session's transcript.
+- **OpenAI submission report** — for runs that pinned a plugin, a **Submission report** button in the run header downloads a Markdown document formatted for OpenAI's plugin directory review. See [OpenAI submission report](/inspector/evals#openai-submission-report).
