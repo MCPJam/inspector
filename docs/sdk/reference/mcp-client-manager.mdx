@@ -708,6 +708,50 @@ async function main() {
 }
 ```
 
+---
+
+## Era capabilities
+
+`eraCapabilities` lets you declare capabilities that are only safe to advertise once the connection's protocol era is known — without requiring an explicit version pin.
+
+### The problem it solves
+
+Client capabilities are resolved at connect time, before era negotiation has run. The base set must therefore be conservative enough for the oldest era the connection could land on. For auto-negotiated ("Client default") connections this meant url-mode elicitation stayed undeclared even when the connection then negotiated `2026-07-28`, causing url-mode `input_required` rounds to fail at the server's capability gate (`-32021`).
+
+### How it works
+
+`eraCapabilities.modern` is a merge-style overlay applied **once**, immediately after era classification, when the connection lands on a 2026-era revision. The 2026 wire re-declares capabilities on every request's `_meta` envelope, so the widened set flows outward from the next request on and stays stable for the connection's lifetime.
+
+- **Legacy landings** — a connection that negotiates a 2025 era never applies the overlay; the conservative connect-time set remains in force.
+- **Exact `clientCapabilities` pins** — the overlay is ignored entirely; widening a pinned declaration would defeat the pin.
+- **`elicitation` gate** — the overlay's `elicitation` key is dropped unless an elicitation handler or MRTR input collector is registered (same advertise=enforce rule as the base set).
+- **No overlay configured** — wire behavior is identical to before this field existed.
+
+### Example
+
+```typescript
+const manager = new MCPClientManager({
+  myServer: {
+    url: "https://mcp.example.com/mcp",
+    // Advertise url-mode elicitation on modern (2026-era) connections.
+    // Auto-negotiated connections that land on 2026-07-28 will carry
+    // { form, url } on every post-negotiation request; legacy landings
+    // keep the conservative form-only base.
+    eraCapabilities: {
+      modern: {
+        elicitation: { form: {}, url: {} },
+      },
+    },
+  },
+});
+```
+
+<Note>
+`eraCapabilities.modern` is silently ignored when `clientCapabilities` is set on the same config object.
+</Note>
+
+---
+
 ## Related
 
 - [Connecting to Servers](/sdk/concepts/connecting-servers) - Conceptual guide
