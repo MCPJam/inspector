@@ -1,0 +1,547 @@
+{
+  "traceVersion": 1,
+  "traceId": "mcpjam/in-memory-dcr-authcode-prm/2026-07-29/emulator",
+  "subject": {
+    "kind": "emulator",
+    "hostId": "mcpjam",
+    "hostVersion": {
+      "state": "present",
+      "value": "{sdk_version}"
+    },
+    "oauthImplementation": {
+      "state": "present",
+      "value": {
+        "kind": "first-party"
+      }
+    }
+  },
+  "scenario": {
+    "scenarioId": "in-memory-dcr-authcode-prm",
+    "description": "In-memory MCP resource server + authorization server: 401 challenge → RFC 9728 PRM → RFC 8414 AS metadata → RFC 7591 DCR → authorization code + PKCE S256 → token → MCP initialize.",
+    "mcpServerUrl": "https://mcp.example.test/mcp",
+    "authorizationServerUrl": "https://as.example.test",
+    "capabilities": {
+      "publishesPrm": true,
+      "prmResource": "https://mcp.example.test/mcp",
+      "supportsDcr": true,
+      "supportsCimd": false,
+      "codeChallengeMethods": [
+        "S256"
+      ],
+      "asMetadataDocuments": [
+        "/.well-known/oauth-authorization-server"
+      ],
+      "challengesUnauthenticated": true
+    }
+  },
+  "capture": {
+    "capturedAt": "2026-07-29",
+    "method": {
+      "via": "mcpjam-emulator",
+      "sdkVersion": "{sdk_version}",
+      "stateMachine": "debug-oauth-2025-11-25"
+    },
+    "redaction": {
+      "applied": true,
+      "normalizerVersion": 1
+    },
+    "notes": [
+      "Captured in-process against the in-memory scenario in tests/oauth-golden-trace/scenario.ts. No network, no credentials."
+    ]
+  },
+  "wire": [
+    {
+      "ordinal": 0,
+      "leg": "mcp-unauthenticated",
+      "legBasis": "OAuthFlowStep=request_without_token",
+      "request": {
+        "method": "POST",
+        "url": "{mcp_server}/mcp",
+        "headers": {
+          "accept": "application/json, text/event-stream",
+          "content-type": "application/json",
+          "mcp-protocol-version": "2025-11-25"
+        },
+        "body": {
+          "encoding": "jsonrpc",
+          "method": "initialize",
+          "json": {
+            "jsonrpc": "2.0",
+            "method": "initialize",
+            "params": {
+              "protocolVersion": "2025-11-25",
+              "capabilities": {},
+              "clientInfo": {
+                "name": "MCPJam Inspector",
+                "version": "1.0.0"
+              }
+            },
+            "id": "{id}"
+          }
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "www-authenticate": "Bearer resource_metadata=\"{mcp_server}/.well-known/oauth-protected-resource/mcp\""
+        }
+      }
+    },
+    {
+      "ordinal": 1,
+      "leg": "prm-discovery",
+      "legBasis": "OAuthFlowStep=request_resource_metadata",
+      "request": {
+        "method": "GET",
+        "url": "{mcp_server}/.well-known/oauth-protected-resource/mcp",
+        "headers": {
+          "accept": "application/json",
+          "mcp-protocol-version": "2025-11-25"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "encoding": "json",
+          "json": {
+            "resource": "{mcp_server}/mcp",
+            "authorization_servers": [
+              "{as}"
+            ],
+            "scopes_supported": [
+              "mcp:read",
+              "mcp:write"
+            ],
+            "bearer_methods_supported": [
+              "header"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "ordinal": 2,
+      "leg": "as-metadata-discovery",
+      "legBasis": "OAuthFlowStep=request_authorization_server_metadata",
+      "request": {
+        "method": "GET",
+        "url": "{as}/.well-known/oauth-authorization-server",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "encoding": "json",
+          "json": {
+            "issuer": "{as}",
+            "authorization_endpoint": "{as}/authorize",
+            "token_endpoint": "{as}/token",
+            "registration_endpoint": "{as}/register",
+            "response_types_supported": [
+              "code"
+            ],
+            "grant_types_supported": [
+              "authorization_code",
+              "refresh_token"
+            ],
+            "code_challenge_methods_supported": [
+              "S256"
+            ],
+            "scopes_supported": [
+              "mcp:read",
+              "mcp:write"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "ordinal": 3,
+      "leg": "dcr-register",
+      "legBasis": "OAuthFlowStep=request_client_registration",
+      "request": {
+        "method": "POST",
+        "url": "{as}/register",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "encoding": "json",
+          "json": {
+            "client_name": "MCPJam SDK OAuth Conformance",
+            "client_uri": "https://github.com/MCPJam/inspector",
+            "logo_uri": "https://www.mcpjam.com/mcp_jam_2row.png",
+            "grant_types": [
+              "authorization_code",
+              "refresh_token"
+            ],
+            "response_types": [
+              "code"
+            ],
+            "token_endpoint_auth_method": "none",
+            "redirect_uris": [
+              "http://127.0.0.1:{port}/callback"
+            ],
+            "scope": "mcp:read mcp:write"
+          }
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "encoding": "json",
+          "json": {
+            "client_id": "{client_id}",
+            "client_id_issued_at": "{timestamp}",
+            "redirect_uris": [
+              "http://127.0.0.1:{port}/callback"
+            ],
+            "grant_types": [
+              "authorization_code",
+              "refresh_token"
+            ],
+            "response_types": [
+              "code"
+            ],
+            "token_endpoint_auth_method": "none"
+          }
+        }
+      }
+    },
+    {
+      "ordinal": 4,
+      "leg": "authorize",
+      "legBasis": "reconstructed from the `authorization_request` info log: the client hands this URL to a browser rather than fetching it, so no intercepted request exists",
+      "request": {
+        "method": "GET",
+        "url": "{as}/authorize?client_id={client_id}&code_challenge={code_challenge:len=43,charset=base64url}&code_challenge_method=S256&redirect_uri=http://127.0.0.1:{port}/callback&resource={mcp_server}/mcp&response_type=code&scope=mcp:read mcp:write&state={state:len=16}",
+        "headers": {},
+        "headersObserved": false,
+        "query": {
+          "client_id": [
+            "{client_id}"
+          ],
+          "code_challenge": [
+            "{code_challenge:len=43,charset=base64url}"
+          ],
+          "code_challenge_method": [
+            "S256"
+          ],
+          "redirect_uri": [
+            "http://127.0.0.1:{port}/callback"
+          ],
+          "resource": [
+            "{mcp_server}/mcp"
+          ],
+          "response_type": [
+            "code"
+          ],
+          "scope": [
+            "mcp:read mcp:write"
+          ],
+          "state": [
+            "{state:len=16}"
+          ]
+        }
+      }
+    },
+    {
+      "ordinal": 5,
+      "leg": "token",
+      "legBasis": "OAuthFlowStep=token_request",
+      "request": {
+        "method": "POST",
+        "url": "{as}/token",
+        "headers": {
+          "content-type": "application/x-www-form-urlencoded"
+        },
+        "body": {
+          "encoding": "form",
+          "fields": {
+            "client_id": [
+              "{client_id}"
+            ],
+            "code": [
+              "[REDACTED]"
+            ],
+            "code_verifier": [
+              "[REDACTED]"
+            ],
+            "grant_type": [
+              "authorization_code"
+            ],
+            "redirect_uri": [
+              "http://127.0.0.1:{port}/callback"
+            ],
+            "resource": [
+              "{mcp_server}/mcp"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "encoding": "json",
+          "json": {
+            "access_token": "[REDACTED]",
+            "refresh_token": "[REDACTED]",
+            "token_type": "Bearer",
+            "expires_in": 3600,
+            "scope": "mcp:read mcp:write"
+          }
+        }
+      }
+    },
+    {
+      "ordinal": 6,
+      "leg": "mcp-initialize",
+      "legBasis": "OAuthFlowStep=authenticated_mcp_request",
+      "request": {
+        "method": "POST",
+        "url": "{mcp_server}/mcp",
+        "headers": {
+          "accept": "application/json, text/event-stream",
+          "authorization": "[REDACTED]",
+          "content-type": "application/json",
+          "mcp-protocol-version": "2025-11-25"
+        },
+        "body": {
+          "encoding": "jsonrpc",
+          "method": "initialize",
+          "json": {
+            "jsonrpc": "2.0",
+            "method": "initialize",
+            "params": {
+              "protocolVersion": "2025-11-25",
+              "capabilities": {},
+              "clientInfo": {
+                "name": "MCPJam Inspector",
+                "version": "1.0.0"
+              }
+            },
+            "id": "{id}"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "encoding": "jsonrpc",
+          "json": {
+            "jsonrpc": "2.0",
+            "id": "{id}",
+            "result": {
+              "protocolVersion": "2025-11-25",
+              "serverInfo": {
+                "name": "hp44-in-memory-server",
+                "version": "1.0.0"
+              },
+              "capabilities": {}
+            }
+          }
+        }
+      }
+    }
+  ],
+  "observations": {
+    "legOrder": [
+      "mcp-unauthenticated",
+      "prm-discovery",
+      "as-metadata-discovery",
+      "dcr-register",
+      "authorize",
+      "token",
+      "mcp-initialize"
+    ],
+    "endpointsHit": [
+      "{mcp_server}/mcp",
+      "{mcp_server}/.well-known/oauth-protected-resource/mcp",
+      "{as}/.well-known/oauth-authorization-server",
+      "{as}/register",
+      "{as}/authorize",
+      "{as}/token"
+    ],
+    "discoveryLadder": [
+      "/.well-known/oauth-protected-resource/mcp",
+      "/.well-known/oauth-authorization-server"
+    ],
+    "userAgent": {
+      "byLeg": {
+        "mcp-unauthenticated": {
+          "state": "absent"
+        },
+        "prm-discovery": {
+          "state": "absent"
+        },
+        "as-metadata-discovery": {
+          "state": "absent"
+        },
+        "dcr-register": {
+          "state": "absent"
+        },
+        "authorize": {
+          "state": "not-observed",
+          "reason": "the authorize request was reconstructed rather than intercepted, so its headers were never on the wire we recorded"
+        },
+        "token": {
+          "state": "absent"
+        },
+        "mcp-initialize": {
+          "state": "absent"
+        }
+      },
+      "consistent": true
+    },
+    "resourceIndicator": {
+      "onAuthorize": {
+        "state": "present",
+        "value": [
+          "{mcp_server}/mcp"
+        ]
+      },
+      "onToken": {
+        "state": "present",
+        "value": [
+          "{mcp_server}/mcp"
+        ]
+      },
+      "onRefresh": {
+        "state": "not-observed",
+        "reason": "no token-refresh request was captured in this trace"
+      },
+      "valueSource": {
+        "state": "present",
+        "value": "mcp-server-url"
+      }
+    },
+    "protocolVersion": {
+      "initializeBody": {
+        "state": "present",
+        "value": "2025-11-25"
+      },
+      "headerByLeg": {
+        "mcp-unauthenticated": {
+          "state": "present",
+          "value": [
+            "2025-11-25"
+          ]
+        },
+        "prm-discovery": {
+          "state": "present",
+          "value": [
+            "2025-11-25"
+          ]
+        },
+        "as-metadata-discovery": {
+          "state": "absent"
+        },
+        "dcr-register": {
+          "state": "absent"
+        },
+        "authorize": {
+          "state": "not-observed",
+          "reason": "the authorize request was reconstructed rather than intercepted, so its headers were never on the wire we recorded"
+        },
+        "token": {
+          "state": "absent"
+        },
+        "mcp-initialize": {
+          "state": "present",
+          "value": [
+            "2025-11-25"
+          ]
+        }
+      },
+      "headerOnOAuthDiscovery": {
+        "state": "present",
+        "value": [
+          "2025-11-25"
+        ]
+      },
+      "headerOnMcpTraffic": {
+        "state": "present",
+        "value": [
+          "2025-11-25"
+        ]
+      },
+      "wiresDisagree": false,
+      "headerDisagreesWithInitializeBody": false
+    },
+    "dcrIdentity": {
+      "clientName": {
+        "state": "present",
+        "value": "MCPJam SDK OAuth Conformance"
+      },
+      "redirectUris": {
+        "state": "present",
+        "value": [
+          "http://127.0.0.1:{port}/callback"
+        ]
+      },
+      "observedLoopbackPorts": {
+        "state": "present",
+        "value": [
+          33418
+        ]
+      },
+      "grantTypes": {
+        "state": "present",
+        "value": [
+          "authorization_code",
+          "refresh_token"
+        ]
+      },
+      "responseTypes": {
+        "state": "present",
+        "value": [
+          "code"
+        ]
+      },
+      "tokenEndpointAuthMethod": {
+        "state": "present",
+        "value": "none"
+      },
+      "scope": {
+        "state": "present",
+        "value": "mcp:read mcp:write"
+      },
+      "extraFields": {
+        "state": "present",
+        "value": [
+          "client_uri",
+          "logo_uri"
+        ]
+      }
+    },
+    "pkce": {
+      "challengeMethod": {
+        "state": "present",
+        "value": "S256"
+      },
+      "challengeLength": {
+        "state": "present",
+        "value": 43
+      },
+      "verifierSentOnToken": {
+        "state": "present",
+        "value": true
+      }
+    }
+  }
+}

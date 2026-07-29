@@ -726,6 +726,49 @@ export type {
 } from "./oauth-conformance/index.js";
 export { CONFORMANCE_CHECK_METADATA } from "./oauth-conformance/index.js";
 
+// HP-44 golden-trace parity harness — capture real host handshakes, diff
+// emulator dances against them, and project the result onto
+// HostConfigOAuthProfileV1.
+export {
+  GOLDEN_TRACE_VERSION,
+  NORMALIZER_VERSION,
+  TRACE_DIFF_DIMENSIONS,
+  TRACE_DIFF_SEVERITIES,
+  TRACE_LEGS,
+  assertTraceIsRedacted,
+  captureEmulatorTrace,
+  captureHarTrace,
+  classifyLeg,
+  deriveObservations,
+  diffGoldenTraces,
+  findObservationDrift,
+  findRedactionViolations,
+  formatHarIngestReportHuman,
+  formatTraceDiffHuman,
+  formatTraceSummaryHuman,
+  traceToOAuthProfile,
+} from "./oauth-golden-trace/index.js";
+export type {
+  CaptureEmulatorTraceInput,
+  CaptureHarTraceInput,
+  GoldenTrace,
+  HarIngestReport,
+  Observation,
+  TraceDiffDimension,
+  TraceDiffFinding,
+  TraceDiffMode,
+  TraceDiffOptions,
+  TraceDiffResult,
+  TraceDiffSeverity,
+  TraceExchange,
+  TraceLeg,
+  TraceOAuthImplementation,
+  TraceObservations,
+  TraceScenario,
+  TraceScenarioCapabilities,
+  TraceSubject,
+} from "./oauth-golden-trace/index.js";
+
 // MCP Operations (pure functions for common MCP workflows)
 export {
   listResources,
