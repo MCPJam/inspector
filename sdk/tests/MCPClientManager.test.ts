@@ -1,4 +1,9 @@
-import { MCPAuthError, MCPClientManager } from "../src/mcp-client-manager";
+import {
+  MCPAuthError,
+  MCPClientManager,
+  LogLevelMetaClient,
+  TraceContextMetaClient,
+} from "../src/mcp-client-manager";
 import { realpathSync, rmSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -869,6 +874,32 @@ describe("MCPClientManager", () => {
       seedLiveState(manager, "modern-noprobe", { client: fakeClient });
 
       await expect(manager.pingServer("modern-noprobe")).resolves.toEqual({});
+      expect(fakeClient.ping).toHaveBeenCalledTimes(1);
+    });
+
+    it("still falls back to ping when a discover-less client is wrapped in the meta decorators", async () => {
+      // The decorators must propagate `discover` ABSENCE, not synthesize a
+      // stub — otherwise `pingServer` sees a truthy `discover` on the
+      // outermost client, sends nothing, and reports a healthy connection
+      // without any wire traffic.
+      const fakeClient = {
+        getProtocolEra: jest.fn().mockReturnValue("modern"),
+        ping: jest.fn().mockResolvedValue({}),
+      };
+      const decorated = new TraceContextMetaClient(
+        new LogLevelMetaClient(fakeClient as any, () => undefined),
+        () => undefined
+      );
+      expect(decorated.discover).toBeUndefined();
+
+      seedRegisteredServer(manager, "modern-decorated-noprobe", {
+        url: new URL("https://example.test/mcp"),
+      });
+      seedLiveState(manager, "modern-decorated-noprobe", { client: decorated });
+
+      await expect(
+        manager.pingServer("modern-decorated-noprobe")
+      ).resolves.toEqual({});
       expect(fakeClient.ping).toHaveBeenCalledTimes(1);
     });
 
