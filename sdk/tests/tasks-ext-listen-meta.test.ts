@@ -271,11 +271,19 @@ describe("the declaration on a real subscriptions/listen frame", () => {
     // establishes the 2026-07-28 era from a supplied `DiscoverResult` with no
     // handshake, which is all `listen()`'s era gate needs. Nothing private is
     // touched to get here.
+    //
+    // Client 2.0.0 made the blob era-discriminated (`validatePrior`): the
+    // verdict is the `kind`, and the `DiscoverResult` moved under `discover`
+    // so a corrupt blob can never era-choose by shape alone. `discover` is
+    // schema-parsed, and that schema has no `serverInfo` — 2026 identity is
+    // `_meta`-stamped per result (spec PR #3002), not a discover member.
     await client.connect(transport as never, {
       prior: {
-        supportedVersions: [MODERN_PROTOCOL_VERSION],
-        capabilities: {},
-        serverInfo: { name: "fake", version: "0.0.0" },
+        kind: "modern",
+        discover: {
+          supportedVersions: [MODERN_PROTOCOL_VERSION],
+          capabilities: {},
+        },
       } as never,
     });
     return { client, transport };

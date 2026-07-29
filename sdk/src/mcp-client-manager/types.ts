@@ -199,6 +199,44 @@ export type BaseServerConfig = {
    * When provided, this bypasses manager defaults and legacy capability merging.
    */
   clientCapabilities?: ClientCapabilityOptions;
+  /**
+   * Era-conditional capability overlays, applied once the connection's era is
+   * actually KNOWN — the post-negotiation re-resolution seam.
+   *
+   * Capabilities are resolved at connect time, before negotiation has run, so
+   * the base set must be honest under the most conservative era the connection
+   * could land on (a capability the legacy bridge cannot fulfil must not ride
+   * an `initialize` that a 2025 server holds for the whole session). That
+   * forces auto-negotiated connections to under-advertise on the modern era —
+   * e.g. url-mode elicitation, perfectly fulfillable on 2026-07-28, stayed
+   * undeclared because the connect-time resolver couldn't rule out a legacy
+   * landing.
+   *
+   * `modern` is a merge-style overlay (same semantics as `capabilities`)
+   * merged over the connect-time set exactly ONCE, immediately after era
+   * classification, when the connection lands on a 2026-era revision:
+   *
+   * - The 2026 wire re-sends capabilities on EVERY request (the `_meta`
+   *   envelope reads the live set), so the widened declaration simply flows
+   *   outward from the next request on; the only frames that carried the
+   *   narrow set are the negotiation probe itself.
+   * - After that single application the declaration is STABLE for the
+   *   connection's lifetime — MRTR rounds of one logical operation always
+   *   see one consistent set.
+   * - A connection that lands on a 2025 era never applies the overlay, and
+   *   its `initialize` already carried the conservative base: fail-closed.
+   *
+   * The overlay's `elicitation` key is subject to the same advertise=enforce
+   * gate as the runtime-added one: it is dropped unless an elicitation
+   * handler or MRTR input collector is actually registered.
+   *
+   * Ignored entirely when `clientCapabilities` (an EXACT set) is configured —
+   * widening a pinned declaration would defeat the point of pinning one.
+   */
+  eraCapabilities?: {
+    /** Overlay merged when the connection classifies as 2026-era (stateless). */
+    modern?: ClientCapabilityOptions;
+  };
   /** Request timeout in milliseconds */
   timeout?: number;
   /** Client version to report */
