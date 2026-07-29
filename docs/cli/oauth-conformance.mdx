@@ -187,7 +187,7 @@ mcpjam oauth conformance \
   --verify-tools
 ```
 
-This adds 6 checks after the main flow: DCR redirect URI policy, invalid client rejection, invalid redirect enforcement at the authorization endpoint, invalid bearer token rejection at the MCP server, invalid redirect enforcement at the token endpoint, and token format validation.
+This adds 9 checks after the main flow: 6 negative checks (DCR redirect URI policy, invalid client rejection, invalid redirect enforcement at the authorization endpoint, invalid bearer token rejection at the MCP server, invalid redirect enforcement at the token endpoint, and token format validation) plus 3 server-side obligation checks (unauthenticated request challenge, resource metadata URL in challenge, and stale session rejection).
 
 ## Registration strategies
 
