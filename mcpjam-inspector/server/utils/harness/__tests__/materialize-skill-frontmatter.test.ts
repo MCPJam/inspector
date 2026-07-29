@@ -110,6 +110,28 @@ describe("materializeSkillFrontmatter", () => {
     expect(writes[0].content).toContain('allowed-tools: ["Read"]');
   });
 
+  it("rewrites under the runtime's own root when given one (codex)", async () => {
+    // The rewrite REPLACES the SKILL.md the adapter just wrote. Aiming it at
+    // the Claude root during a Codex turn would leave codex's file (without
+    // extras) in place and drop a stray file the CLI never reads.
+    const { session, writes } = fakeSession();
+    const res = await materializeSkillFrontmatter({
+      session,
+      skills: [
+        skill({
+          skillId: "sk_1",
+          name: "with-extras",
+          extraFrontmatter: { allowedTools: ["Read"] },
+        }),
+      ],
+      skillsBase: "/home/user/.agents/skills",
+    });
+    expect(res).toEqual({ rewritten: 1, skipped: 0 });
+    expect(writes[0].path).toBe(
+      "/home/user/.agents/skills/with-extras/SKILL.md"
+    );
+  });
+
   it("makes no session call when no skill has extras", async () => {
     const { session, writes } = fakeSession();
     const res = await materializeSkillFrontmatter({

@@ -18,7 +18,9 @@ import {
   skillsFingerprint,
   toHarnessSkills,
   toPinnableSkill,
-  claudeCodeSafeSkills,
+  frontmatterSafeSkills,
+  prepareClaudeCodeSkills,
+  prepareCodexSkills,
   toYamlDoubleQuoted,
   type RuntimeSkill,
 } from "../runtime-skills";
@@ -192,7 +194,7 @@ describe("toPinnableSkill", () => {
   });
 });
 
-describe("description handling (adapter-agnostic vs Claude shim)", () => {
+describe("description handling (adapter-agnostic vs frontmatter shim)", () => {
   it("toHarnessSkills leaves descriptions SEMANTIC (unmodified)", () => {
     const out = toHarnessSkills([
       skill({ skillId: "s1", description: 'Process: PDFs "safely"' }),
@@ -200,8 +202,8 @@ describe("description handling (adapter-agnostic vs Claude shim)", () => {
     expect(out[0].description).toBe('Process: PDFs "safely"');
   });
 
-  it("claudeCodeSafeSkills pre-encodes a YAML double-quoted scalar", () => {
-    const out = claudeCodeSafeSkills([
+  it("frontmatterSafeSkills pre-encodes a YAML double-quoted scalar", () => {
+    const out = frontmatterSafeSkills([
       skill({ skillId: "s1", description: 'Process: PDFs "safely"' }),
     ]);
     // `description: ${value}` must be valid frontmatter — quoted + escaped.
@@ -212,5 +214,53 @@ describe("description handling (adapter-agnostic vs Claude shim)", () => {
     expect(toYamlDoubleQuoted("a\nb")).toBe('"a\\nb"');
     expect(toYamlDoubleQuoted('he said "hi"')).toBe('"he said \\"hi\\""');
     expect(toYamlDoubleQuoted("c:\\path")).toBe('"c:\\\\path"');
+  });
+});
+
+describe("prepareSkills (per-adapter delivery shaping)", () => {
+  it("Claude Code delivers every skill, descriptions YAML-encoded", () => {
+    const skills = [
+      skill({ skillId: "s1", name: "alpha", description: 'a "b"' }),
+      skill({ skillId: "s2", name: "beta" }),
+    ];
+    const prepared = prepareClaudeCodeSkills(skills);
+    expect(prepared.delivered).toEqual(skills);
+    expect(prepared.skipped).toEqual([]);
+    expect(prepared.payload.map((p) => p.name)).toEqual(["alpha", "beta"]);
+    expect(prepared.payload[0].description).toBe('"a \\"b\\""');
+  });
+
+  it("Codex delivers valid names with the same YAML encoding", () => {
+    const skills = [
+      skill({ skillId: "s1", name: "pdf-tools", description: 'a "b"' }),
+    ];
+    const prepared = prepareCodexSkills(skills);
+    expect(prepared.delivered).toEqual(skills);
+    expect(prepared.skipped).toEqual([]);
+    expect(prepared.payload).toEqual([
+      {
+        name: "pdf-tools",
+        description: '"a \\"b\\""',
+        content: skills[0].content,
+      },
+    ]);
+  });
+
+  it("Codex FILTERS a name it could not write instead of failing the turn", () => {
+    // The Codex adapter validates names inside `doStart` and THROWS on a
+    // reject — one bad name would take the whole turn down, so it must never
+    // reach the adapter. The good skill still ships.
+    const good = skill({ skillId: "s1", name: "pdf-tools" });
+    const prepared = prepareCodexSkills([
+      good,
+      skill({ skillId: "s2", name: ".." }),
+      skill({ skillId: "s3", name: "Bad Name!" }),
+    ]);
+    expect(prepared.delivered).toEqual([good]);
+    expect(prepared.payload.map((p) => p.name)).toEqual(["pdf-tools"]);
+    expect(prepared.skipped).toEqual([
+      { name: "..", reason: "invalid-skill-name" },
+      { name: "Bad Name!", reason: "invalid-skill-name" },
+    ]);
   });
 });
