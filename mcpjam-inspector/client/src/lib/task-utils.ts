@@ -176,6 +176,57 @@ export function restoredPlaceholderTask(tracked: {
   };
 }
 
+/**
+ * A row for a handle recovered from the hosted registry — the sibling of
+ * {@link restoredPlaceholderTask} for entries that were never in this
+ * browser's tracker (cleared storage, another device).
+ *
+ * Renders the registry's `lastKnownStatus` and `createdAt` until the first
+ * live read replaces it. The registry's own `expired` status maps onto the
+ * local `unavailable` tombstone — the registry recorded that a live read
+ * already answered -32602 for this handle, which is the same conclusion
+ * `expiredPlaceholderTask` draws locally. Any other unrecognized status
+ * falls back to `working` for the same reason as the restored placeholder:
+ * a bogus value must not read as terminal and freeze a live task.
+ */
+export function registryPlaceholderTask(entry: {
+  taskId: string;
+  wire: TasksWire;
+  lastKnownStatus: string;
+  /** Epoch milliseconds, as the registry stores it. */
+  createdAt: number;
+  updatedAt?: number;
+}): NormalizedTask {
+  if (entry.lastKnownStatus === "expired") {
+    return expiredPlaceholderTask({
+      taskId: entry.taskId,
+      wire: entry.wire,
+      createdAt: new Date(entry.createdAt).toISOString(),
+    });
+  }
+  const status: NormalizedTask["status"] =
+    entry.lastKnownStatus === "working" ||
+    entry.lastKnownStatus === "input_required" ||
+    entry.lastKnownStatus === "completed" ||
+    entry.lastKnownStatus === "failed" ||
+    entry.lastKnownStatus === "cancelled"
+      ? entry.lastKnownStatus
+      : "working";
+  const createdAt = new Date(entry.createdAt).toISOString();
+  return {
+    wire: entry.wire,
+    taskId: entry.taskId,
+    status,
+    createdAt,
+    lastUpdatedAt:
+      entry.updatedAt !== undefined
+        ? new Date(entry.updatedAt).toISOString()
+        : createdAt,
+    ttl: null,
+    raw: { taskId: entry.taskId },
+  };
+}
+
 export function expiredPlaceholderTask(tracked: {
   taskId: string;
   wire: TasksWire;

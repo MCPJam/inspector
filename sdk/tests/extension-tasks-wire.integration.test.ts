@@ -841,3 +841,53 @@ describe("tasks extension wire — resultType on tasks/* results", () => {
     expect((await wire.cancel(taskId)).result).toEqual({});
   });
 });
+
+describe("tasks extension wire — declared subscriptions/listen (real client)", () => {
+  it("puts the eligibility declaration on a task-filtered listen", async () => {
+    const fixture = await serve();
+    const manager = await connect(fixture.url);
+
+    // The probe agrees with what the open below relies on: extension wire,
+    // a listen-capable client, and the listen-meta seam behind it.
+    expect(manager.supportsTaskDeclaredListen(SERVER_ID)).toBe(true);
+
+    // The fixture is POST-only: it validates and acknowledges the listen
+    // request but can never deliver notifications (nor the modern ack
+    // notification), so the returned promise may not settle usefully.
+    // What is pinned here is the WIRE: the request that reached the server
+    // carried the declaration. The fixture answers -32003 to an UNDECLARED
+    // task-filtered listen (asserted above), so the recorded params are the
+    // exact complement of that case.
+    const pending = manager
+      .listenWithTasksDeclaration(SERVER_ID, { taskIds: ["ext-task-1"] })
+      .catch(() => undefined);
+
+    const deadline = Date.now() + 5_000;
+    while (
+      !fixture.received.some((r) => r.method === "subscriptions/listen") &&
+      Date.now() < deadline
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const listen = fixture.received.find(
+      (r) => r.method === "subscriptions/listen"
+    );
+    expect(listen, "listen request reached the fixture").toBeDefined();
+    expect(
+      (listen!.params?.notifications as { taskIds?: string[] })?.taskIds
+    ).toEqual(["ext-task-1"]);
+    const declared = (
+      listen!.params?._meta as Record<string, unknown> | undefined
+    )?.["io.modelcontextprotocol/clientCapabilities"] as
+      | { extensions?: Record<string, unknown> }
+      | undefined;
+    expect(declared?.extensions?.[TASKS_EXTENSION_ID]).toEqual({});
+
+    // Bounded settle so a hanging listen cannot leak past the test body; the
+    // afterEach disconnect tears the connection down either way.
+    await Promise.race([
+      pending,
+      new Promise((resolve) => setTimeout(resolve, 250)),
+    ]);
+  });
+});

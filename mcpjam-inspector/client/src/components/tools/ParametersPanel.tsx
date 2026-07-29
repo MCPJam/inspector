@@ -12,6 +12,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+} from "@mcpjam/design-system/tooltip";
 import type { FormField } from "@/lib/tool-form";
 import { track } from "@/lib/analytics";
 
@@ -36,6 +41,15 @@ interface ParametersPanelProps {
   onTaskTtlChange?: (value: number) => void;
   /** Whether server declares tasks.requests.tools.call capability */
   serverSupportsTaskToolCalls?: boolean;
+  /**
+   * Execution is blocked for the selected tool (e.g. it requires task
+   * execution while the host disabled tasks). Affordance only — the owning
+   * tab guards its execute path itself; this keeps the button and the Enter
+   * shortcut honest.
+   */
+  executeDisabled?: boolean;
+  /** Human-readable reason shown as a tooltip when `executeDisabled` is set. */
+  executeDisabledReason?: string;
 }
 
 export function ParametersPanel({
@@ -55,10 +69,13 @@ export function ParametersPanel({
   taskWire,
   onTaskTtlChange,
   serverSupportsTaskToolCalls,
+  executeDisabled,
+  executeDisabledReason,
 }: ParametersPanelProps) {
-  // Handle Enter key in input fields
+  // Handle Enter key in input fields. Gated on `executeDisabled` too — the
+  // shortcut must not fire an execution the button refuses.
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" && !loading) {
+    if (e.key === "Enter" && !loading && !executeDisabled) {
       e.preventDefault();
       onExecute();
     }
@@ -165,30 +182,49 @@ export function ParametersPanel({
                 )}
               </div>
             ) : null}
-            <Button
-              onClick={() => {
-                track("execute_tool", {
-                  location: "parameters_panel",
-                  as_task: executeAsTask ?? false,
-                });
-                onExecute();
-              }}
-              disabled={loading || !selectedTool}
-              className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm transition-all duration-200 cursor-pointer"
-              size="sm"
-            >
-              {loading ? (
-                <>
-                  <RefreshCw className="h-3 w-3 animate-spin" />
-                  {waitingOnElicitation ? "Waiting..." : "Running"}
-                </>
-              ) : (
-                <>
-                  <Play className="h-3 w-3" />
-                  Execute
-                </>
-              )}
-            </Button>
+            {(() => {
+              const executeButton = (
+                <Button
+                  onClick={() => {
+                    track("execute_tool", {
+                      location: "parameters_panel",
+                      as_task: executeAsTask ?? false,
+                    });
+                    onExecute();
+                  }}
+                  disabled={loading || !selectedTool || executeDisabled}
+                  className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm transition-all duration-200 cursor-pointer"
+                  size="sm"
+                >
+                  {loading ? (
+                    <>
+                      <RefreshCw className="h-3 w-3 animate-spin" />
+                      {waitingOnElicitation ? "Waiting..." : "Running"}
+                    </>
+                  ) : (
+                    <>
+                      <Play className="h-3 w-3" />
+                      Execute
+                    </>
+                  )}
+                </Button>
+              );
+              if (!executeDisabled || !executeDisabledReason) {
+                return executeButton;
+              }
+              // A disabled button swallows pointer events, so the tooltip
+              // trigger wraps it (same pattern as the Tasks tab's controls).
+              return (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="inline-flex">{executeButton}</span>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="max-w-xs">
+                    {executeDisabledReason}
+                  </TooltipContent>
+                </Tooltip>
+              );
+            })()}
             <Button
               onClick={() => {
                 track("save_tool_button_clicked", {
