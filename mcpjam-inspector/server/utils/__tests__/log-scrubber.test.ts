@@ -89,6 +89,41 @@ describe("scrubLogPayload", () => {
       const result = scrubLogPayload({ note: "sk-abcdefghijklmnopqrstuvwx" }) as any;
       expect(result.note).toContain("[redacted-secret]");
     });
+
+    // Key-based redaction only walks object keys, so a secret sitting in a URL
+    // *inside* a string (an error message, a logged path) used to survive.
+    it("redacts secrets carried in URL query params", () => {
+      const result = scrubLogPayload({
+        errorMessage:
+          "fetch failed for https://srv.example.com/mcp?access_token=abc123secret&foo=bar",
+      }) as any;
+
+      expect(result.errorMessage).not.toContain("abc123secret");
+      expect(result.errorMessage).toContain("access_token=[redacted]");
+      // The rest of the URL stays readable — that's the debugging value.
+      expect(result.errorMessage).toContain("https://srv.example.com/mcp");
+      expect(result.errorMessage).toContain("foo=bar");
+    });
+
+    it("redacts the OAuth authorization code and other secret params", () => {
+      const result = scrubLogPayload({
+        note: "cb https://a.dev/callback?code=authcode123&state=xyz789#api_key=k9",
+      }) as any;
+
+      expect(result.note).not.toContain("authcode123");
+      expect(result.note).not.toContain("xyz789");
+      expect(result.note).not.toContain("k9");
+    });
+
+    it("leaves non-secret query params alone", () => {
+      const result = scrubLogPayload({
+        note: "https://srv.example.com/mcp?projectId=v97abc&limit=10",
+      }) as any;
+
+      expect(result.note).toBe(
+        "https://srv.example.com/mcp?projectId=v97abc&limit=10",
+      );
+    });
   });
 
   describe("recursion", () => {
