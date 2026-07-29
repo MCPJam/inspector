@@ -274,6 +274,11 @@ supported way to persist live tokens.
 | `authenticated_mcp_request` 401 | Token `aud` doesn't match MCP resource URL | Ensure your auth server sets `aud` correctly |
 | `verify_list_tools` auth error | Token works for OAuth but MCP layer rejects it — scope issue | Check that the token's scope matches what tool handlers require |
 | DCR + `client_credentials`: "Dynamic registration produced a public client" | DCR returned `token_endpoint_auth_method: "none"` | Use `--registration preregistered` with explicit credentials instead |
+| `oauth_unauthenticated_challenge` failed — "instead of 401" | Server returned 5xx on an unauthenticated request | Return HTTP 401 with `WWW-Authenticate: Bearer` for unauthenticated requests (RFC 6750 §3) |
+| `oauth_unauthenticated_challenge` failed — "expected HTTP 401, received 403" | Server returns 403 instead of 401 | Return 401 with a Bearer challenge so clients can discover the auth server |
+| `oauth_resource_metadata_challenge` failed — "omitted the resource_metadata parameter" | Bearer challenge missing `resource_metadata` | Add `resource_metadata="https://..."` to the `WWW-Authenticate: Bearer` header (RFC 9728 §5.1) |
+| `oauth_resource_metadata_challenge` failed — "must be an absolute http(s) URL" | `resource_metadata` is a relative URL | Use an absolute `https://` URL for `resource_metadata` |
+| `oauth_stale_session_rejection` failed — "instead of a 4xx" | Server crashes with 5xx on an unknown `Mcp-Session-Id` | Return 404 (or another 4xx) when the session ID is not recognized |
 
 ## CI/CD integration
 
