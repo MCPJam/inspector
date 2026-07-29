@@ -227,6 +227,48 @@ const manager = new MCPClientManager(
 
 ---
 
+### HTTP exchange logging
+
+`httpLogger` receives an `HttpExchangeLogEvent` for every HTTP request/response cycle on HTTP (Streamable HTTP and SSE) transports. It is a separate channel from `rpcLogger`: `rpcLogger` carries JSON-RPC message bodies; `httpLogger` carries the HTTP envelope those messages rode in — the `Mcp-*` mirrored headers that a `-32020 HeaderMismatch` error is about.
+
+`HttpExchangeLogEvent` fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `serverId` | `string` | The server this exchange belongs to. |
+| `request.method` | `string` | HTTP method (e.g. `"POST"`). |
+| `request.url` | `string` | Full request URL. |
+| `request.headers` | `Record<string, string>` | Request headers. Credential headers (`Authorization`, `Cookie`, `x-api-key`, and similar) are redacted at capture; the auth scheme is preserved (e.g. `Bearer <redacted>`). |
+| `response.status` | `number` | HTTP status code. |
+| `response.statusText` | `string` | HTTP status text. |
+| `response.headers` | `Record<string, string>` | Response headers, redacted the same way. |
+| `error` | `string` | Set when the fetch itself rejected (DNS, TLS, abort) — no `response` in that case. |
+| `durationMs` | `number` | Round-trip duration in milliseconds. |
+| `bodyValues` | `MirroredBodyValues` | Values derived from the request body that the mirrored headers are supposed to equal (`method`, `name`, `protocolVersion`). Present only for single JSON-RPC requests. |
+
+`httpLogger` can be set globally on the manager or per server. A per-server value overrides the global one. Stdio servers never reach a fetch, so they emit nothing regardless of configuration.
+
+```typescript
+import { MCPClientManager, HttpExchangeLogEvent } from "@mcpjam/sdk";
+
+const manager = new MCPClientManager(
+  {
+    myServer: { url: "https://mcp.example.com/mcp" },
+  },
+  {
+    httpLogger: (event: HttpExchangeLogEvent) => {
+      console.log(
+        `[${event.serverId}] ${event.request.method} ${event.request.url}`,
+        event.response?.status ?? event.error,
+        `${event.durationMs}ms`,
+      );
+    },
+  },
+);
+```
+
+---
+
 ## Methods
 
 ### connectToServer()
