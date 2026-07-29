@@ -43,15 +43,12 @@ import type {
 } from "./turn-execution.js";
 
 /**
- * Per-run attribution stamped onto the resulting usage record. Exactly one of
- * `synthesisRunId` (chatbox session simulation) / `journeyRunId` (swarm) is
- * set; today only `synthesisRunId` is wired. Kept as a closed XOR so a caller
- * can't accidentally stamp both onto one spend row.
+ * Per-run attribution stamped onto the resulting usage record. `journeyRunId`
+ * ties spend to a swarm (journey-execution) run; absent for real chat.
+ * (The chatbox session-simulation arm — `synthesisRunId` — was removed with
+ * the chatbox synthetic surface.)
  */
-export type TurnRunAttribution =
-  | { synthesisRunId: string; journeyRunId?: never }
-  | { journeyRunId: string; synthesisRunId?: never }
-  | undefined;
+export type TurnRunAttribution = { journeyRunId: string } | undefined;
 
 /**
  * The narrowed source-of-traffic marker forwarded into chat-ingestion /
@@ -219,7 +216,6 @@ export async function resolveTurnRuntime(
         accessVersion: args.accessVersion,
         selectedServers: args.serverIds,
         serverIds: args.serverIds,
-        synthesisRunId: args.attribution?.synthesisRunId,
         journeyRunId: args.attribution?.journeyRunId,
       }).catch((err) => {
         logger.warn("[org/local] Failed to post local usage", {

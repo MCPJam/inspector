@@ -38,6 +38,8 @@ export type {
   ProgressEvent,
   RpcLogger,
   RpcLogEvent,
+  HttpExchangeLogEvent,
+  HttpExchangeLogger,
 } from "./mcp-client-manager/index.js";
 
 // Tool and task types
@@ -117,6 +119,12 @@ export type {
   CacheHitEvent,
   CacheEventLogger,
 } from "./mcp-client-manager/index.js";
+// Phase 5 auto-negotiation-activation telemetry (new exports only).
+export type {
+  NegotiationOutcomeEvent,
+  NegotiationOutcomeLogger,
+  ConfiguredNegotiationMode,
+} from "./mcp-client-manager/index.js";
 export {
   ObservableResponseCache,
   type ObservableResponseCacheOptions,
@@ -130,6 +138,7 @@ export {
   isMCPAuthError,
   isUnauthorized401,
   isInsufficientScopeError,
+  unwrapEraNegotiationCause,
   MCPTasksWireError,
   isMCPTasksWireError,
 } from "./mcp-client-manager/index.js";
@@ -634,6 +643,73 @@ export {
   MCP_APPS_CHECK_IDS,
 } from "./apps-conformance/index.js";
 
+// MCP Tasks conformance
+export { MCPTasksConformanceTest } from "./tasks-conformance/index.js";
+export type {
+  MCPTasksCheckCategory,
+  MCPTasksCheckId,
+  MCPTasksCheckResult,
+  MCPTasksCheckStatus,
+  MCPTasksConformanceConfig,
+  MCPTasksConformanceResult,
+  MCPTasksRunOutcome,
+  MCPTasksSkipReason,
+} from "./tasks-conformance/index.js";
+export {
+  decideOutcome,
+  MCP_TASKS_CHECK_CATEGORIES,
+  MCP_TASKS_CHECK_IDS,
+  resolveProbeTool,
+} from "./tasks-conformance/index.js";
+
+// MCP Tasks runtime — the lifecycle engine, the wire adapters, the creation
+// fan-out, the `await` driver, and the tool-call seam. Previously reachable
+// only through `@mcpjam/sdk/browser`, which left every Node consumer (the
+// inspector server, the CLI) re-deriving these rules locally.
+export {
+  TaskLifecycleEngine,
+  taskLifecycleKey,
+  isTerminalLifecycleStatus,
+  toTaskLifecycleSnapshot,
+  TERMINAL_LIFECYCLE_STATUSES,
+  extensionTaskToObservation,
+  legacyTaskToObservation,
+  isUnknownTaskError,
+  isTasksDeclarationRequiredError,
+  parseRetryAfterMs,
+  UNKNOWN_TASK_ERROR_CODE,
+  TASKS_DECLARATION_REQUIRED_ERROR_CODE,
+  TaskCreatedSink,
+  driveTaskToTerminal,
+  runToolTaskSeam,
+  toolTaskSeamOptionsFor,
+  TASK_SEAM_META_KEY,
+  isCreateTaskExtResult,
+  assertCreateTaskExtResult,
+  assertGetTaskExtResult,
+  InvalidTaskExtPayloadError,
+  isInvalidTaskExtPayloadError,
+  resolveTasksSupport,
+} from "./mcp-client-manager/index.js";
+export type {
+  LiveTasksWire,
+  TaskLifecycleIdentity,
+  TaskLifecycleObservation,
+  TaskLifecycleSnapshot,
+  TaskLifecycleStatus,
+  TaskCreatedConsumer,
+  TaskCreatedEvent,
+  TaskCreationSurface,
+  TaskAwaitOutcome,
+  TaskAwaitResult,
+  ToolTaskAwaitOptions,
+  ToolTaskSeamContext,
+  ToolTaskSeamMeta,
+  ToolTaskSeamOptions,
+  TasksSupport,
+  TasksWire,
+} from "./mcp-client-manager/index.js";
+
 export type {
   ConformanceResult,
   ConformanceStepId,
@@ -720,6 +796,25 @@ export type {
   McpAppsCapabilities,
 } from "./host-config/index.js";
 
+// MCPJam's Tasks **product policy** (`com.mcpjam/tasks`) — never a wire
+// capability. Exported so the surfaces that resolve a mode can do so without
+// reaching into a subpath, and so `taskModeForSurface` stays the single place
+// the matrix lives.
+export {
+  MCPJAM_TASKS_POLICY_EXTENSION_ID,
+  readTasksPolicy,
+  describeInvalidTasksPolicy,
+  setTasksPolicy,
+  clearTasksPolicy,
+  taskModeForSurface,
+  surfaceMayDeclareTasks,
+} from "./host-config/index.js";
+export type {
+  TasksPolicy,
+  TaskMode,
+  TaskSurface,
+} from "./host-config/index.js";
+
 // Multi-round-trip (`input_required`) manual driver — MCP 2026-07-28 spec §12.
 // New public exports only (API stability): the serializable stepper, the
 // convenience loop, guards, error classes, and the re-exported upstream
@@ -785,4 +880,38 @@ export type {
   SubscriptionReconnectPolicy,
   SubscriptionStreamRecord,
   SubscriptionStreamStatus,
+} from "./mcp-client-manager/index.js";
+
+// MCP Tasks manual-drive surface — the `input_required` driver's trust rules
+// plus the creation-time status whitelist. The lifecycle engine, the `await`
+// driver, and the observation adapters are already exported by the MCP Tasks
+// runtime block above; this block carries only what that one does not, so a
+// consumer outside the SDK (the CLI's `tasks` verbs) can drive a task to
+// terminal without reaching into the client-manager subpath. New exports only.
+//
+// `InputRequests` / `InputResponses` (the `tasks/update` payload maps) are
+// already exported by the MRTR block above and are deliberately not repeated.
+// The lifecycle block above (added by the tool-task seam work) already
+// re-exports the engine, the observation adapters, the driver and the shared
+// task types. Only what it does NOT carry is listed here, so the two blocks
+// stay a single source of truth rather than two lists to keep in step.
+export {
+  LEGACY_TASK_STATUSES,
+  canDeclareTasksExtension,
+  readDeclaredInputCapabilities,
+  TaskInputRejectedError,
+  DEFAULT_TASK_INPUT_LIMITS,
+  createStrictElicitationContentValidator,
+  retryAfterMsFromError,
+} from "./mcp-client-manager/index.js";
+export type {
+  DriveTaskToTerminalArgs,
+  DeclaredInputCapabilities,
+  TaskInputDriverOptions,
+  TaskInputHandlerContext,
+  TaskInputHandlers,
+  TaskInputRejection,
+  DetailedTaskExt,
+  GetTaskExtResult,
+  UpdateTaskExtResult,
 } from "./mcp-client-manager/index.js";

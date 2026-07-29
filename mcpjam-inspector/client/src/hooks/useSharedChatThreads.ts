@@ -48,6 +48,31 @@ export interface SharedChatThread {
    * to model / server / etc.
    */
   hostConfigIdAtStart?: string;
+  /**
+   * Replay configuration recorded on the session. For a SYNTHETIC (swarm)
+   * session, BE-5 derives the plugin fields SERVER-SIDE from the journey run's
+   * immutable target snapshot — never from anything the runner sends — so they
+   * are provenance about the run, not a claim the caller could make.
+   *
+   * Only the plugin fields are declared: `getSession` spreads the whole
+   * session document, and re-mirroring the rest of the resume config here
+   * would create a second, drifting copy of a contract that already has one.
+   *
+   * `pluginServerIds` is a SIBLING of the ordinary server selection, never
+   * merged into it, for the same reason it is on the journey snapshot: a
+   * plugin-materialized id inside a resumable selection would outlive the
+   * plugin's own lifecycle controls. Anything that resumes must re-gate them
+   * (decision D2) rather than reconnecting on the strength of this record.
+   */
+  resumeConfig?: {
+    pluginVersions?: Array<{
+      pluginId: string;
+      pluginVersionId: string;
+      name: string;
+      bundleHash: string;
+    }>;
+    pluginServerIds?: string[];
+  };
   /** AI-generated chatbox session. Drives the "Synthetic" badge + filter. */
   synthetic?: boolean;
   personaId?: string;

@@ -198,11 +198,13 @@ describe("web routes — oauth error contract", () => {
     const { status, data } = await expectJson<OAuthErrorResponse>(response);
 
     expect(status).toBe(502);
-    expect(data).toEqual({
-      code: "SERVER_UNREACHABLE",
-      message: "connect ECONNREFUSED",
-      error: "connect ECONNREFUSED",
-    });
+    // mapRuntimeError frames connection-class failures as a target-server
+    // problem (the raw errno alone reads like an MCPJam outage in the client
+    // toast) while preserving the raw error for debugging.
+    expect(data.code).toBe("SERVER_UNREACHABLE");
+    expect(data.message).toContain("connect ECONNREFUSED");
+    expect(data.message).toContain("not an MCPJam outage");
+    expect(data.error).toBe(data.message);
   });
 });
 

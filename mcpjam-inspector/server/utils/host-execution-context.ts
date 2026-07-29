@@ -41,6 +41,7 @@ import {
   type McpToolResultImageRenderingPolicy,
   type ModelVisibleMcpToolResults,
 } from "@mcpjam/sdk/host-config/internal";
+import { readTasksPolicy, type TasksPolicy } from "@mcpjam/sdk";
 
 /**
  * How the resolver picks a winner when both the hostConfig and the
@@ -116,6 +117,18 @@ export interface ResolvedExecutionContext {
   modelId: string | undefined;
   /** Which real agent harness runs the turn (host-level). Absent ⇒ emulated. */
   harness: Harness | undefined;
+  /**
+   * MCPJam's Tasks product policy, read HOST-ONLY — exactly like `harness`,
+   * and for a stronger reason.
+   *
+   * It is deliberately absent from `ExecutionOverrides`, so there is no
+   * precedence merge to get wrong: a share-link visitor owns the request body,
+   * and a body-supplied opt-in must not be able to turn tasks on against a
+   * host that said off. Because the field never enters the override path, that
+   * holds at every precedence including `override-wins` — by construction
+   * rather than by a check someone has to remember.
+   */
+  tasksPolicy: TasksPolicy;
   selectedServerIds: string[] | undefined;
   /**
    * HostConfig v2 built-in tool ids (e.g. `["web_search"]`). The resolver
@@ -299,6 +312,10 @@ export function resolveExecutionContext(args: {
       progressiveToolDiscovery: overrides.progressiveToolDiscovery,
       modelId: overrides.modelId,
       harness: undefined,
+      // No host config means nothing said anything about tasks. `unset`, not
+      // `off`: the two differ on the Tools tab, which keeps its own per-call
+      // controls under `unset` and loses them under `off`.
+      tasksPolicy: "unset",
       selectedServerIds: overrides.selectedServerIds,
       builtInToolIds: overrides.builtInToolIds,
       modelVisibleMcpToolResults: overrides.modelVisibleMcpToolResults,
@@ -433,6 +450,7 @@ export function resolveExecutionContext(args: {
     progressiveToolDiscovery: progressiveToolDiscovery.value,
     modelId: modelId.value,
     harness: readHarness(hostConfig),
+    tasksPolicy: readTasksPolicy(hostConfig as Parameters<typeof readTasksPolicy>[0]),
     selectedServerIds: selectedServerIds.value,
     builtInToolIds: builtInToolIds.value,
     modelVisibleMcpToolResults: modelVisibleMcpToolResults.value,

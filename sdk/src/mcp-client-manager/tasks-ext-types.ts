@@ -72,17 +72,72 @@ export interface TaskExt {
 }
 
 /**
- * `tasks/get` response. Beyond the task handle it carries, per status:
- *   - `completed` → `result` INLINE (the original request's result);
- *   - `failed` → `error` (a JSON-RPC error object);
- *   - `input_required` → `inputRequests`, a keyed snapshot map re-sent on
- *     every poll (dedupe by key; partial responses are allowed).
+ * The five `DetailedTask` variants (`schema/draft/schema.ts:217-222`, rendered
+ * in `schema.json` as an `anyOf` with per-variant `required`). The status is
+ * the discriminator and the status payload is NOT optional:
+ * `specification/draft/tasks.md:330-336` states each as a MUST.
+ *
+ * Fields a variant does not carry are declared `?: undefined` rather than
+ * omitted so that reading `task.result` / `task.error` / `task.inputRequests`
+ * off the bare union still type-checks (narrowing on `status` gives the
+ * precise type). Runtime passthrough is unaffected — a server that sends an
+ * extra key still has it preserved, because a debugger must show what was
+ * actually sent.
  */
-export interface DetailedTaskExt extends TaskExt {
-  result?: unknown;
-  error?: TaskExtError;
-  inputRequests?: InputRequests;
+export interface WorkingTaskExt extends TaskExt {
+  status: "working";
+  result?: undefined;
+  error?: undefined;
+  inputRequests?: undefined;
 }
+
+export interface InputRequiredTaskExt extends TaskExt {
+  status: "input_required";
+  /**
+   * Keyed snapshot map re-sent on every poll (dedupe by key; partial
+   * responses are allowed).
+   */
+  inputRequests: InputRequests;
+  result?: undefined;
+  error?: undefined;
+}
+
+export interface CompletedTaskExt extends TaskExt {
+  status: "completed";
+  /** The original request's result, INLINE (there is no `tasks/result`). */
+  result: Record<string, unknown>;
+  error?: undefined;
+  inputRequests?: undefined;
+}
+
+export interface FailedTaskExt extends TaskExt {
+  status: "failed";
+  /**
+   * The JSON-RPC error that caused the failure. `failed` is ONLY for
+   * protocol-level faults: a tool result with `isError: true` is a `completed`
+   * task (tasks.md:837, :891-892).
+   */
+  error: TaskExtError;
+  result?: undefined;
+  inputRequests?: undefined;
+}
+
+export interface CancelledTaskExt extends TaskExt {
+  status: "cancelled";
+  result?: undefined;
+  error?: undefined;
+  inputRequests?: undefined;
+}
+
+/**
+ * `tasks/get` / `notifications/tasks` body — the status-discriminated union.
+ */
+export type DetailedTaskExt =
+  | WorkingTaskExt
+  | InputRequiredTaskExt
+  | CompletedTaskExt
+  | FailedTaskExt
+  | CancelledTaskExt;
 
 /** Discriminator shared by every 2026-07-28 result. */
 export type TaskExtResultType = "complete" | "input_required" | "task";
@@ -91,15 +146,27 @@ export type TaskExtResultType = "complete" | "input_required" | "task";
  * The flat `CreateTaskResult` a server MAY return in place of the requested
  * result. MUST NOT be returned before the task is durably readable via
  * `tasks/get`.
+ *
+ * `CreateTaskResult = Result & Task` is FLAT (schema.ts:232): it legitimately
+ * never carries `result` / `error` / `inputRequests`, so the DetailedTask
+ * union does NOT apply to it. `resultType: "task"` stays required — it is the
+ * documented discriminator (tasks.md:102, MUST).
  */
 export interface CreateTaskExtResult extends TaskExt {
   resultType: "task";
 }
 
-/** `tasks/get` result. */
-export interface GetTaskExtResult extends DetailedTaskExt {
-  resultType?: "complete";
-}
+/**
+ * `tasks/get` result.
+ *
+ * SPEC CONFLICT (pin 2c1425d9): tasks.md:338 says `resultType` **MUST** be
+ * `"complete"` here, but `resultType` appears in `schema.json` nowhere, and
+ * every DetailedTask variant is `additionalProperties: false` — so a validator
+ * built from the JSON Schema would REJECT the key the prose mandates. We
+ * therefore accept the response with OR without it and never require it. Do
+ * not "fix" this by making it required until the two agree upstream.
+ */
+export type GetTaskExtResult = DetailedTaskExt & { resultType?: "complete" };
 
 /**
  * `tasks/update` result — per SEP-2663 `UpdateTaskResult = Result`: an EMPTY,
@@ -120,6 +187,6 @@ export type CancelTaskExtResult = Record<string, unknown>;
  * SEP-2663 carries a full `DetailedTask`, so the extra task fields are part of
  * the payload rather than an unrelated envelope.
  */
-export interface TaskExtNotificationParams extends DetailedTaskExt {
+export type TaskExtNotificationParams = DetailedTaskExt & {
   _meta?: Record<string, unknown>;
-}
+};

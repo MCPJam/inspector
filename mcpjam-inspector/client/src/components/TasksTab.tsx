@@ -2,8 +2,15 @@ import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { isHostedMode } from "@/lib/apis/mode-client";
 import {
   HOSTED_TASK_BATCH_LIMIT,
+  HOSTED_TASK_POLL_FLOOR_MS,
   hostedPollIntervalMs,
+  isTerminalRegistryStatus,
+  type RegistryTaskEntry,
 } from "@/shared/hosted-tasks";
+import {
+  MAX_RECOVERY_READ_ATTEMPTS,
+  useTaskScheduler,
+} from "@/hooks/use-task-scheduler";
 import { Button } from "@mcpjam/design-system/button";
 import { Badge } from "@mcpjam/design-system/badge";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
@@ -42,21 +49,34 @@ import {
   clearTrackedTasksForServer,
   getDismissedTaskIds,
   dismissTasksForServer,
+  dismissRegistryTasks,
 } from "@/lib/task-tracker";
 import { Switch } from "@mcpjam/design-system/switch";
 import { Input } from "@mcpjam/design-system/input";
-import { Tooltip, TooltipTrigger, TooltipContent } from "@mcpjam/design-system/tooltip";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+} from "@mcpjam/design-system/tooltip";
 import { Progress } from "@mcpjam/design-system/progress";
 import { TaskInlineProgress } from "./tasks/TaskInlineProgress";
 import {
   STATUS_CONFIG,
   expiredPlaceholderTask,
+  registryPlaceholderTask,
+  restoredPlaceholderTask,
   formatRelativeTime,
   isTerminalStatus,
   normalizeTask,
   type NormalizedTask,
   type TaskDisplayStatus,
 } from "@/lib/task-utils";
+import {
+  fetchSubscriptionState,
+  setDesiredSubscriptionInterests,
+} from "@/lib/apis/mcp-subscriptions-api";
+import { addTokenToUrl } from "@/lib/session-token";
+import type { SubscriptionBridgeEvent } from "@/shared/subscription-bridge.js";
 import { useTaskElicitation } from "@/hooks/use-task-elicitation";
 import { ElicitationDialog } from "./ElicitationDialog";
 import type { DialogElicitation } from "./ToolsTab";
@@ -65,6 +85,12 @@ import { buildTasksSnapshot } from "@/lib/webmcp/review-surface-snapshots";
 
 const POLL_INTERVAL_STORAGE_KEY = "mcp-inspector-tasks-poll-interval";
 const DEFAULT_POLL_INTERVAL = 3000;
+/**
+ * Debounce for re-posting the task-notification interest set. A listen filter
+ * is immutable, so every change is a close+reopen on the wire — worth batching
+ * a burst of status flips into one revision.
+ */
+const TASK_INTEREST_DEBOUNCE_MS = 300;
 
 interface TasksTabProps {
   serverConfig?: MCPServerConfig;
@@ -82,7 +108,9 @@ function TaskStatusIcon({ status }: { status: TaskDisplayStatus }) {
   const Icon = config.icon;
   return (
     <Icon
-      className={`h-4 w-4 ${config.color} ${config.animate ? "animate-spin" : ""}`}
+      className={`h-4 w-4 ${config.color} ${
+        config.animate ? "animate-spin" : ""
+      }`}
     />
   );
 }
@@ -101,6 +129,14 @@ export function TasksTab({
   isActive = true,
 }: TasksTabProps) {
   const [tasks, setTasks] = useState<NormalizedTask[]>([]);
+  // Read inside `fetchTasks` to carry not-yet-due handles forward without
+  // making the callback depend on `tasks` — that would rebuild it on every
+  // render and restart the poll timer each tick.
+  const tasksRef = useRef<NormalizedTask[]>([]);
+  tasksRef.current = tasks;
+  // Last `tasks/list` snapshot (legacy wire only), so a tick that is not due
+  // can carry it forward instead of re-issuing the call or blanking the list.
+  const listedTasksRef = useRef<NormalizedTask[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string>("");
   const [taskResult, setTaskResult] = useState<unknown>(null);
   const [pendingRequest, setPendingRequest] = useState<unknown>(null);
@@ -144,6 +180,30 @@ export function TasksTab({
   // Track the task ID for pending input_required requests to avoid race conditions
   const pendingInputRequestTaskIdRef = useRef<string | null>(null);
 
+  // Handles recovered from the hosted registry (`registryTasks` on `/list`),
+  // keyed by taskId. A REF, never the localStorage tracker: registry entries
+  // are another device's (or a cleared profile's) handles, and writing them
+  // into the tracker would resurrect entries the user cleared and duplicate
+  // the registry's own persistence. They render as placeholders and join the
+  // poll set until a live read (or a -32602) settles them.
+  const registryHandlesRef = useRef<
+    Map<string, RegistryTaskEntry & { terminalReadDone?: boolean }>
+  >(new Map());
+  // The server the one recovery read of this mount has been done for. Reset on
+  // server change and on manual refresh; a failed read leaves it unset so the
+  // next tick retries.
+  const registryReadDoneRef = useRef<string | null>(null);
+
+  // Signature of the last `taskIds` interest set POSTED to the subscription
+  // bridge, so an unchanged active set never re-posts (each post can be a
+  // close+reopen of the listen stream). `null` = nothing posted yet this
+  // server: an initially-empty set then leaves the panel-owned desired filter
+  // completely untouched.
+  const postedTaskInterestsRef = useRef<string | null>(null);
+  // Task ids with a notification-triggered `tasks/get` already in flight —
+  // one notification burst, ONE immediate read.
+  const notifiedRefreshInFlightRef = useRef<Set<string>>(new Set());
+
   // Collapsible sidebar state
   const [isSidebarVisible, setIsSidebarVisible] = useState(true);
 
@@ -153,16 +213,61 @@ export function TasksTab({
   // never poll faster than the floor, because each tick is a full connect.
   const hosted = isHostedMode();
 
+  // Two DIFFERENT numbers, and conflating them starves fast tasks.
+  //
+  // `tickFloorMs` is how often the shared timer may wake at all. It carries
+  // only the GLOBAL floors — the user's preferred minimum, plus the hosted
+  // connection-cost floor — and deliberately NOT the per-server task floors:
+  // those are enforced per task by the scheduler, which decides which handles
+  // a given tick is allowed to read. Folding the slowest task's floor in here
+  // would make a 60s task delay a 2s task by 58 seconds, potentially past its
+  // TTL.
+  const userPreferredMinimum = userOverride ?? userPollInterval;
+  const tickFloorMs = Math.max(
+    userPreferredMinimum,
+    // Each hosted tick is a full authorize → connect → request → disconnect
+    // round trip, so the hosted surface carries its own connection-cost floor.
+    hosted ? hostedPollIntervalMs(userPreferredMinimum) : 0
+  );
+
+  // Per-task due-time scheduling. The shared tick fires at `tickFloorMs`; the
+  // scheduler decides which handles that tick is actually allowed to read, so
+  // a 30s task is not read every time a 1s task is.
+  const scheduler = useTaskScheduler({
+    serverId: serverName,
+    wire,
+    userMinimumIntervalMs: userPreferredMinimum,
+    surfaceFloorMs: hosted ? HOSTED_TASK_POLL_FLOOR_MS : 0,
+  });
+
   const selectedTask = useMemo(() => {
     return tasks.find((t) => t.taskId === selectedTaskId) ?? null;
   }, [tasks, selectedTaskId]);
   const pendingRequestDisplay = extractDisplayFromToolResult(pendingRequest);
   const taskResultDisplay = extractDisplayFromToolResult(taskResult);
 
+  // Restored handles that still owe the one `tasks/get` carrying their inline
+  // result. Read from the scheduler rather than from the rows, because the rows
+  // cannot show it: such a handle renders as `completed` and reads as finished
+  // while its result has never actually been fetched.
+  const recoveryReads = useMemo(
+    () => scheduler.recoveryReadState(tasks.map((t) => t.taskId)),
+    [tasks, scheduler]
+  );
+
   // Check if any task is in a non-terminal state (working, input_required, pending)
   const hasActiveTasks = useMemo(() => {
-    return tasks.some((t) => !isTerminalStatus(t.status));
-  }, [tasks]);
+    return (
+      tasks.some((t) => !isTerminalStatus(t.status)) ||
+      // ...or a restored terminal still owes its recovery read. Without this
+      // term the loop stops on the DISPLAYED status and the read never
+      // happens: not when it was scheduled for later (a stored `nextPollAt`
+      // in the future is not due on the first tick, so the timer never arms
+      // at all), and not after it failed (the backoff is recorded, then
+      // nothing is left running to honor it).
+      recoveryReads.pendingTaskIds.length > 0
+    );
+  }, [tasks, recoveryReads]);
 
   // Auto-enable polling when there are active tasks, unless user explicitly disabled
   useEffect(() => {
@@ -175,17 +280,31 @@ export function TasksTab({
     }
   }, [hasActiveTasks]);
 
-  // Per MCP Tasks spec: "Requestors SHOULD respect the pollInterval provided in responses"
-  // Calculate server-suggested poll interval from non-terminal tasks
-  // Use the minimum pollInterval from active tasks to not miss updates
+  // The slowest floor among the active tasks — NOT the fastest.
+  //
+  // A tick reads every due task, so honoring the fastest task's floor would
+  // breach every slower task's. This value is what the shared tick must
+  // respect and what the UI reports; the per-task decision of *which* tasks
+  // are actually due is the scheduler's, not this number's.
   const serverSuggestedPollInterval = useMemo(() => {
-    const activeTasksWithPollInterval = tasks
+    const activeFloors = tasks
       .filter((t) => !isTerminalStatus(t.status) && t.pollInterval)
       .map((t) => t.pollInterval!);
 
-    if (activeTasksWithPollInterval.length === 0) return null;
-    return Math.min(...activeTasksWithPollInterval);
+    if (activeFloors.length === 0) return null;
+    return Math.max(...activeFloors);
   }, [tasks]);
+
+  // The number the UI reports and the poll-interval box edits: the pace a
+  // caller would observe, including the slowest active task's floor.
+  const pollInterval = Math.max(tickFloorMs, serverSuggestedPollInterval ?? 0);
+  // The server is setting the pace whenever its floor is the binding term.
+  const usingServerInterval =
+    serverSuggestedPollInterval !== null &&
+    // Against the TICK floor, not the user's preference: on the hosted surface
+    // a 1500ms suggestion under a 1000ms user minimum would otherwise light the
+    // badge while the 2000ms hosted floor is what actually sets the pace.
+    serverSuggestedPollInterval >= tickFloorMs;
 
   // Subscribe to task-related elicitations via SSE
   // Per MCP Tasks spec (2025-11-25): when a task is in input_required status,
@@ -213,10 +332,16 @@ export function TasksTab({
     if (!isExtensionWire || selectedTask?.status !== "input_required") {
       return null;
     }
-    const answered = answeredInputKeys.get(selectedTask.taskId);
+    // Union of this session's answers and the keys persisted from earlier
+    // sessions — a reload must not re-prompt for something the server already
+    // acknowledged.
+    const answered = new Set([
+      ...(answeredInputKeys.get(selectedTask.taskId) ?? []),
+      ...scheduler.respondedInputKeys(selectedTask.taskId),
+    ]);
     const entries = Object.entries(selectedTask.inputRequests ?? {});
     for (const [key, value] of entries) {
-      if (answered?.has(key)) continue;
+      if (answered.has(key)) continue;
       const request = value as {
         method?: string;
         params?: { message?: string; requestedSchema?: unknown };
@@ -226,14 +351,13 @@ export function TasksTab({
       }
     }
     return null;
-  }, [isExtensionWire, selectedTask, answeredInputKeys]);
+  }, [isExtensionWire, selectedTask, answeredInputKeys, scheduler]);
 
   /** Keys in the current snapshot this UI cannot answer (sampling/roots). */
   const unanswerableInputCount = useMemo(() => {
     if (!isExtensionWire || selectedTask?.status !== "input_required") return 0;
     return Object.values(selectedTask.inputRequests ?? {}).filter(
-      (value) =>
-        (value as { method?: string })?.method !== "elicitation/create",
+      (value) => (value as { method?: string })?.method !== "elicitation/create"
     ).length;
   }, [isExtensionWire, selectedTask]);
 
@@ -251,20 +375,6 @@ export function TasksTab({
         }
       : null;
 
-  // Priority: user override > server suggestion > user default
-  // Per MCP Tasks spec: "Requestors SHOULD respect the pollInterval provided in responses"
-  // But we allow user to explicitly override if they want
-  const requestedPollInterval =
-    userOverride ?? serverSuggestedPollInterval ?? userPollInterval;
-  const pollInterval = hosted
-    ? hostedPollIntervalMs(
-        requestedPollInterval,
-        serverSuggestedPollInterval ?? undefined,
-      )
-    : requestedPollInterval;
-  const usingServerInterval =
-    serverSuggestedPollInterval !== null && userOverride === null;
-
   const handlePollIntervalChange = useCallback(
     (value: string) => {
       const parsed = parseInt(value, 10);
@@ -278,7 +388,7 @@ export function TasksTab({
         localStorage.setItem(POLL_INTERVAL_STORAGE_KEY, String(parsed));
       }
     },
-    [serverSuggestedPollInterval],
+    [serverSuggestedPollInterval]
   );
 
   // Clear override when server suggestion goes away (tasks complete)
@@ -295,11 +405,20 @@ export function TasksTab({
     const taskIds = tasks.map((t) => t.taskId);
     dismissTasksForServer(serverName, taskIds);
     clearTrackedTasksForServer(serverName);
+    scheduler.forget(taskIds);
+    // Registry-recovered handles have no tracker entry for the dismissal to
+    // stick to, so their ids go into the durable per-server dismissed set —
+    // the merge filter consults getDismissedTaskIds, which unions it in, so
+    // they stay hidden across refetches on THIS browser. A local view
+    // preference only: the registry row itself survives (global removal is
+    // the delete route's job, deferred in v1).
+    dismissRegistryTasks(serverName, [...registryHandlesRef.current.keys()]);
+    registryHandlesRef.current = new Map();
     setTasks([]);
     setSelectedTaskId("");
     setTaskResult(null);
     setPendingRequest(null);
-  }, [serverName, tasks]);
+  }, [serverName, tasks, scheduler]);
 
   const fetchTasks = useCallback(async () => {
     if (!serverName) return;
@@ -320,14 +439,170 @@ export function TasksTab({
 
       // Per MCP Tasks spec (2025-11-25): clients SHOULD only call tasks/list
       // if the server declares tasks.list capability
-      let serverResult: { tasks: Task[] } = { tasks: [] };
+      let serverResult: { tasks: Task[]; registryTasks?: RegistryTaskEntry[] } =
+        { tasks: [] };
       let serverTaskIds = new Set<string>();
 
+      // Folds a `/list` response's registry attachment in. An ABSENT
+      // `registryTasks` is "no recovery source this tick" (local mode, chatbox
+      // scope, registry off/unreachable): it leaves whatever we already
+      // recovered untouched AND leaves the recovery read armed, so the next
+      // tick retries — only a PRESENT array (possibly `[]`, a verified empty
+      // registry) completes the once-per-mount read.
+      const captureRegistry = (registryTasks?: RegistryTaskEntry[]) => {
+        if (!registryTasks) return;
+        registryReadDoneRef.current = serverName;
+        const previous = registryHandlesRef.current;
+        registryHandlesRef.current = new Map(
+          registryTasks.map((entry) => [
+            entry.taskId,
+            {
+              ...entry,
+              // A terminal handle's one recovery read (see below) stays spent
+              // across re-reads: a manual refresh must not re-fetch a result
+              // we already read (or already gave up on).
+              ...(previous.get(entry.taskId)?.terminalReadDone
+                ? { terminalReadDone: true }
+                : {}),
+            },
+          ])
+        );
+      };
+
       // The extension has no tasks/list: the tracker is the list.
+      //
+      // On the legacy wire the call returns EVERY task at once, so "is this
+      // due" is a question about the list as a whole: issue it when we have
+      // never listed, or when at least one previously-listed active task has
+      // reached its own floor. Calling it on every tick would read a 30s task
+      // at the tab's pace just because a 1s task shares the connection — the
+      // same floor breach the per-task scheduler exists to prevent, one level
+      // up.
+      // Ids a live read CONFIRMED gone this tick. They answered — retired,
+      // not unreachable — so they must not be classified as failed reads
+      // below: a tracked handle gets its expired placeholder instead, and a
+      // registry-recovered one (which has no tracker entry to hang a
+      // placeholder on) simply leaves the list.
+      const confirmedGoneIds = new Set<string>();
+      const onUnknownTask = (taskId: string) => {
+        // Stop scheduling it too. Without this the engine's map grows for the
+        // life of the session, and a record that stays due-but-never-polled
+        // pins `msUntilNextDue()` at zero, collapsing every re-arm to the
+        // floor.
+        scheduler.forget([taskId]);
+        // Unknown/expired is not an error: flag it and keep the handle so the
+        // user sees what happened instead of a silent removal. Any other
+        // failure (transient connect, structureless 404 from an older hosted
+        // replica) keeps the handle untouched and retries on the next tick.
+        markTaskExpired(taskId, serverName);
+        // A recovered handle the server has forgotten is done for good: drop
+        // the registry entry so it is neither re-polled nor re-rendered.
+        // (`markTaskExpired` above no-ops for ids the tracker never held.)
+        registryHandlesRef.current.delete(taskId);
+        confirmedGoneIds.add(taskId);
+      };
+
+      let listedCarriedForward: NormalizedTask[] = [];
       if (taskCapabilities?.list) {
-        // Server supports tasks/list - fetch from server
-        serverResult = await listTasks(serverName);
-        serverTaskIds = new Set(serverResult.tasks.map((t) => t.taskId));
+        // `tasks/list` is an INSEPARABLE batch: one request returns every task,
+        // so issuing it reads — and reschedules — the slowest member along with
+        // the fastest. Gating on "any member is due" therefore lets a task
+        // advertising 1s drag a task advertising 60s down to 1s polling: the
+        // exact floor breach the per-task scheduler exists to prevent, one
+        // level up. A batch's floor is its SLOWEST member's, so every active
+        // member has to be due before the call goes out.
+        //
+        // Terminal rows are excluded rather than counted. They never become due
+        // again, so including even one would freeze the list forever. When
+        // nothing active is left there is no floor to breach at all, and
+        // listing is how a task created elsewhere gets discovered — so that
+        // case falls back to the tab's own tick.
+        const knownListed = listedTasksRef.current;
+        const activeListed = knownListed.filter(
+          (task) => !isTerminalStatus(task.status)
+        );
+        const dueListed = scheduler.dueTaskIds(
+          activeListed.map((task) => task.taskId)
+        );
+        const listDue =
+          activeListed.length === 0 || dueListed.length === activeListed.length;
+
+        if (listDue) {
+          try {
+            serverResult = await listTasks(serverName);
+            serverTaskIds = new Set(serverResult.tasks.map((t) => t.taskId));
+            captureRegistry(serverResult.registryTasks);
+          } finally {
+            // Claims taken by the due check above. The fold-back below releases
+            // what it covers; this releases the rest (terminal members, and any
+            // id the list no longer returns) so a claim cannot outlive its tick.
+            scheduler.release(dueListed);
+          }
+        } else {
+          // Not due as a batch: keep the last snapshot on screen rather than
+          // blanking the list, and do not re-issue the call.
+          listedCarriedForward = knownListed;
+          serverTaskIds = new Set(knownListed.map((task) => task.taskId));
+
+          // ...but the batch's floor must not STARVE its fastest member. A
+          // listed id is excluded from the per-handle path below (it is in
+          // `serverTaskIds`), so with a 1s task and a 60s task sharing the
+          // list, waiting for the batch would leave the 1s task unread for a
+          // minute — long enough to finish, and on a short TTL to be forgotten,
+          // before anything observed it. Each individually-due member gets its
+          // own `tasks/get` instead: discovery keeps the slowest member's
+          // floor, status does not.
+          const refreshed = await Promise.all(
+            dueListed.map(async (taskId) => {
+              try {
+                const envelope = await getTask(serverName, taskId);
+                return normalizeTask(envelope.wire, envelope.task);
+              } catch (err) {
+                if (err instanceof TaskUnknownOrExpiredError) {
+                  onUnknownTask(taskId);
+                }
+                // Anything else is transient; the handle backs off below.
+                return null;
+              }
+            })
+          );
+          const byRefreshedId = new Map(
+            refreshed
+              .filter((task): task is NormalizedTask => task !== null)
+              .map((task) => [task.taskId, task])
+          );
+          scheduler.recordObservations(
+            [...byRefreshedId.values()].map((task) => ({
+              taskId: task.taskId,
+              status: task.status,
+              pollIntervalMs: task.pollInterval,
+              ttlMs: task.ttl ?? null,
+              lastUpdatedAt: task.lastUpdatedAt,
+            }))
+          );
+          // Reads that produced nothing back off; both calls release the claim.
+          scheduler.recordErrors(
+            dueListed.filter((taskId) => !byRefreshedId.has(taskId))
+          );
+          listedCarriedForward = knownListed.map(
+            (task) => byRefreshedId.get(task.taskId) ?? task
+          );
+        }
+      }
+
+      // The ONE registry recovery read of this mount (re-armed by a manual
+      // refresh), for ticks where the ordinary `tasks/list` did not run — on
+      // the extension wire it never runs, and there the route answers
+      // `{tasks: []}` locally while the registry attachment is the only way a
+      // fresh browser can discover a running task at all. Hosted-only: local
+      // mode has no registry and the extra call would buy nothing.
+      if (hosted && registryReadDoneRef.current !== serverName) {
+        try {
+          const recovery = await listTasks(serverName);
+          captureRegistry(recovery.registryTasks);
+        } catch {
+          // Leave the ref unset: the next tick retries the recovery read.
+        }
       }
 
       // Get locally tracked tasks and fetch their current status
@@ -335,22 +610,94 @@ export function TasksTab({
       const pending = trackedTasks
         .filter((t) => !serverTaskIds.has(t.taskId))
         .filter((t) => !dismissedIds.has(t.taskId));
+
+      // Registry-recovered handles this browser does not track. Merge filter:
+      // same wire as the tab, not dismissed here, not already in the server's
+      // list, not already tracked (the tracker copy wins — it carries scheduling
+      // state the registry doesn't).
+      const trackedIds = new Set(trackedTasks.map((t) => t.taskId));
+      const recoveredEntries = [...registryHandlesRef.current.values()].filter(
+        (entry) =>
+          entry.wire === wire &&
+          !dismissedIds.has(entry.taskId) &&
+          !serverTaskIds.has(entry.taskId) &&
+          !trackedIds.has(entry.taskId)
+      );
+      // A terminal registry row renders as a placeholder and is not part of
+      // the recurring poll set — with ONE exception. On the EXTENSION wire a
+      // completed result / failed error is carried EXCLUSIVELY by `tasks/get`
+      // (there is no `tasks/result`), and the registry stores neither: a
+      // recovered `completed`/`failed` handle is a status with nothing behind
+      // it, so it owes exactly one bounded recovery read for its inline
+      // result. `cancelled` (and the registry's own `expired`) owe nothing —
+      // there is no result to fetch — and the legacy wire keeps its
+      // placeholder-only behavior: its results come from `tasks/result`
+      // semantics, which this one-shot must not be conflated with.
+      const recoveredTerminal = recoveredEntries.filter((entry) =>
+        isTerminalRegistryStatus(entry.lastKnownStatus)
+      );
+      const terminalNeedingRead = isExtensionWire
+        ? recoveredTerminal.filter(
+            (entry) =>
+              (entry.lastKnownStatus === "completed" ||
+                entry.lastKnownStatus === "failed") &&
+              !entry.terminalReadDone
+          )
+        : [];
+      const terminalReadIdSet = new Set(
+        terminalNeedingRead.map((entry) => entry.taskId)
+      );
+      // Spent at ISSUE time, success or not: the read is bounded to one
+      // attempt, and a failure below falls back to the placeholder rather
+      // than retrying forever against a server that may have purged the task.
+      for (const entry of terminalNeedingRead) entry.terminalReadDone = true;
+      const recoveredActive = recoveredEntries.filter(
+        (entry) => !isTerminalRegistryStatus(entry.lastKnownStatus)
+      );
+      const recoveredById = new Map(
+        recoveredActive.map((entry) => [entry.taskId, entry])
+      );
+      // Non-terminal recovered ids join the same due-gated poll set as
+      // tracked handles. The scheduler has never seen them and the tracker
+      // holds no persisted schedule, so they are due immediately — once; the
+      // observations recorded from that first read seed their real floors.
+      const dueRecovered = scheduler.dueTaskIds(
+        recoveredActive.map((entry) => entry.taskId)
+      );
+      const dueRecoveredSet = new Set(dueRecovered);
+      const notDueRecovered = recoveredActive.filter(
+        (entry) => !dueRecoveredSet.has(entry.taskId)
+      );
       // An expired handle is never re-polled: the server has forgotten it, so
       // it renders from tracker data until the user dismisses it.
       const expiredEntries = pending
         .filter((t) => t.expired)
         .map((t) => expiredPlaceholderTask(t));
-      const livePending = pending.filter((t) => !t.expired);
+      // Only the handles whose own floor has elapsed. A tick that read every
+      // pending handle would poll a 30s task at the tab's 1s pace.
+      const dueIds = new Set(
+        scheduler.dueTaskIds(
+          pending.filter((t) => !t.expired).map((t) => t.taskId)
+        )
+      );
+      const livePending = pending.filter(
+        (t) => !t.expired && dueIds.has(t.taskId)
+      );
+      // Handles that exist but are not due keep their last-known state on
+      // screen rather than blinking out until their next read.
+      const notDue = pending.filter((t) => !t.expired && !dueIds.has(t.taskId));
       const byId = new Map(livePending.map((t) => [t.taskId, t]));
-      const pendingIds = livePending.map((t) => t.taskId);
-
-      const onUnknownTask = (taskId: string) => {
-        // Unknown/expired is not an error: flag it and keep the handle so the
-        // user sees what happened instead of a silent removal. Any other
-        // failure (transient connect, structureless 404 from an older hosted
-        // replica) keeps the handle untouched and retries on the next tick.
-        markTaskExpired(taskId, serverName);
-      };
+      const pendingIds = [
+        ...livePending.map((t) => t.taskId),
+        // Due registry-recovered handles ride the same batch; their results
+        // (and -32602s) are handled exactly like tracked ones below, except
+        // that nothing is ever written into the tracker for them.
+        ...dueRecovered,
+        // The one-shot terminal recovery reads (extension wire only). These
+        // bypass the scheduler — they are not a recurring poll — and are
+        // excluded from the failed-read bookkeeping below for the same reason.
+        ...terminalNeedingRead.map((entry) => entry.taskId),
+      ];
 
       let trackedTaskStatuses: (NormalizedTask | null)[];
       if (hosted && pendingIds.length > 0) {
@@ -367,7 +714,7 @@ export function TasksTab({
               } catch {
                 return [];
               }
-            }),
+            })
           )
         ).flat();
         trackedTaskStatuses = entries.map((entry) => {
@@ -395,20 +742,147 @@ export function TasksTab({
               // wire there is no `tasks/list` to recover them from.
               return null;
             }
-          }),
+          })
         );
       }
-      trackedTaskStatuses = [...trackedTaskStatuses, ...expiredEntries];
+      // Feed the scheduler what we actually observed, so each handle is
+      // rescheduled by its OWN advertised floor. A due handle that came back
+      // empty is a failed read: it backs off rather than being retried at the
+      // tab's pace.
+      // Expired PLACEHOLDERS are excluded. `expiredPlaceholderTask` returns a
+      // real `NormalizedTask`, so without this filter it would flow into
+      // `recordObservations` and re-register the very handle `onUnknownTask`
+      // just told the scheduler to forget — and it carries a display-only
+      // status that is not a lifecycle status, so the resurrected record would
+      // never read as terminal, stay permanently due, and pin
+      // `msUntilNextDue()` at zero for the rest of the session.
+      const observed = trackedTaskStatuses.filter(
+        (task): task is NormalizedTask => task !== null && !task.expired
+      );
+      scheduler.recordObservations(
+        observed.map((task) => ({
+          taskId: task.taskId,
+          status: task.status,
+          pollIntervalMs: task.pollInterval,
+          ttlMs: task.ttl ?? null,
+          lastUpdatedAt: task.lastUpdatedAt,
+        }))
+      );
+      const settledIds = new Set(
+        trackedTaskStatuses
+          .filter((task): task is NormalizedTask => task !== null)
+          .map((task) => task.taskId)
+      );
+      // Only ids that produced NOTHING are failed reads. A confirmed-expired
+      // handle answered — it is retired, not unreachable — and backing it off
+      // would be recording an error against a handle nobody will poll again.
+      const failedIds = pendingIds.filter(
+        (id) =>
+          !settledIds.has(id) &&
+          !confirmedGoneIds.has(id) &&
+          // A failed one-shot terminal read is spent, not backed off: it must
+          // neither enter the scheduler's error bookkeeping nor keep the
+          // auto-refresh loop armed. The placeholder fallback below covers it.
+          !terminalReadIdSet.has(id)
+      );
+      scheduler.recordErrors(failedIds);
+
+      // A handle that was not due this tick keeps its last-known state rather
+      // than disappearing from the list until its next read.
+      //
+      // The fallback is load-bearing, not defensive. On the FIRST tick after a
+      // reload `tasksRef.current` is empty while every restored handle is
+      // not-yet-due, so without it the list renders empty — which makes
+      // `hasActiveTasks` false, so auto-refresh never starts, so the handle is
+      // never polled when its floor finally elapses. The task would stay
+      // invisible until a manual refresh, and could expire server-side first.
+      const previousById = new Map(
+        tasksRef.current.map((task) => [task.taskId, task])
+      );
+      const carriedForward = notDue.map(
+        (tracked) =>
+          previousById.get(tracked.taskId) ?? restoredPlaceholderTask(tracked)
+      );
+
+      // A due read that FAILED keeps its row for exactly the same reason. The
+      // failure is transient by construction — a confirmed `-32602` produced an
+      // expired placeholder instead, and never lands here — so dropping the row
+      // would be self-defeating: with the last active task gone from the list,
+      // `hasActiveTasks` goes false, auto-refresh stops, and the backoff
+      // `recordErrors` just persisted is never actually retried. The handle
+      // strands until the user does something, which is the opposite of what a
+      // backoff is for.
+      const failedCarriedForward = failedIds
+        .map((taskId) => {
+          const previous = previousById.get(taskId);
+          if (previous) return previous;
+          const tracked = byId.get(taskId);
+          if (tracked) return restoredPlaceholderTask(tracked);
+          const recovered = recoveredById.get(taskId);
+          return recovered ? registryPlaceholderTask(recovered) : null;
+        })
+        .filter((task): task is NormalizedTask => task !== null);
+
+      // Recovered handles that were not due this tick, and terminal registry
+      // rows (render-only, never polled), keep a row on screen: last live
+      // state when we have one, otherwise the registry's own last-known view.
+      const recoveredCarriedForward = notDueRecovered.map(
+        (entry) => previousById.get(entry.taskId) ?? registryPlaceholderTask(entry)
+      );
+
+      // Terminal registry rows: a handle whose one-shot read answered this
+      // tick already has its live row in `trackedTaskStatuses` (and later
+      // ticks carry it via `previousById`); a confirmed -32602 dropped it; a
+      // failed or never-owed read renders the registry placeholder.
+      const recoveredTerminalRows = recoveredTerminal
+        .filter(
+          (entry) =>
+            !settledIds.has(entry.taskId) && !confirmedGoneIds.has(entry.taskId)
+        )
+        .map(
+          (entry) =>
+            previousById.get(entry.taskId) ?? registryPlaceholderTask(entry)
+        );
+
+      trackedTaskStatuses = [
+        ...trackedTaskStatuses,
+        ...carriedForward,
+        ...failedCarriedForward,
+        ...recoveredCarriedForward,
+        ...recoveredTerminalRows,
+        ...expiredEntries,
+      ];
 
       // Merge server tasks with tracked tasks (tracked tasks first for recency)
       // Filter out dismissed tasks from server results
+      const listed =
+        listedCarriedForward.length > 0
+          ? listedCarriedForward.filter((t) => !dismissedIds.has(t.taskId))
+          : serverResult.tasks
+              .filter((t) => !dismissedIds.has(t.taskId))
+              .map((t) =>
+                normalizeTask("legacy", t as unknown as Record<string, unknown>)
+              );
+      listedTasksRef.current = listed;
+      // Learn each listed task's own floor, so the NEXT decision about whether
+      // to call `tasks/list` is made per task rather than at the tab's pace.
+      if (listedCarriedForward.length === 0 && listed.length > 0) {
+        scheduler.recordObservations(
+          listed
+            .filter((task) => !isTerminalStatus(task.status))
+            .map((task) => ({
+              taskId: task.taskId,
+              status: task.status,
+              pollIntervalMs: task.pollInterval,
+              ttlMs: task.ttl ?? null,
+              lastUpdatedAt: task.lastUpdatedAt,
+            }))
+        );
+      }
+
       const allTasks: NormalizedTask[] = [
         ...trackedTaskStatuses.filter((t): t is NormalizedTask => t !== null),
-        ...serverResult.tasks
-          .filter((t) => !dismissedIds.has(t.taskId))
-          .map((t) =>
-            normalizeTask("legacy", t as unknown as Record<string, unknown>),
-          ),
+        ...listed,
       ];
 
       // Sort by createdAt descending (most recent first)
@@ -424,13 +898,178 @@ export function TasksTab({
     } finally {
       setFetchingTasks(false);
     }
-  }, [serverName, taskCapabilities, hosted, wire]);
+  }, [serverName, taskCapabilities, hosted, wire, scheduler]);
+
+  // The Refresh button, as distinct from a tick.
+  //
+  // A recovery read the tab has given up on is sitting on a backoff that can
+  // be a minute long, so plain `fetchTasks` would find it not due and the
+  // button would look broken on the one handle the message just told the user
+  // to retry. A person clicking Refresh is a better signal than our own guess
+  // about a failing transport, so their click drops that guess — and only that
+  // one: the server's advertised floor and any `Retry-After` still hold, and
+  // the automatic loop keeps backing off exactly as before.
+  const handleManualRefresh = useCallback(() => {
+    scheduler.retryRecoveryReads(recoveryReads.exhaustedTaskIds);
+    // Re-arm the once-per-mount registry recovery read: a person clicking
+    // Refresh is exactly the "did I lose a task somewhere?" moment.
+    registryReadDoneRef.current = null;
+    void fetchTasks();
+  }, [scheduler, recoveryReads, fetchTasks]);
+
+  // -------------------------------------------------------------------------
+  // Extension task notifications (local persistent connections only).
+  //
+  // The Tasks tab OWNS the `taskIds` member of the desired subscription
+  // interests: the ids worth being told about are exactly the ones this
+  // browser tracks — extension wire, not dismissed, not terminal. The
+  // SubscriptionStreamsPanel owns every other member, so writes here are
+  // fetch-merge-post, never replace. A delivered `notifications/tasks` is a
+  // POLL-NOW HINT and nothing more: it triggers one immediate `tasks/get`
+  // through the same observation path a scheduled poll uses, and the
+  // notification params are never written into state as truth. Polling stays
+  // fully sufficient; hosted mode (reconnect-per-op, no persistent stream)
+  // posts no `taskIds` at all.
+  // -------------------------------------------------------------------------
+
+  /** The active notification interest set, sorted for a stable signature. */
+  const notificationTaskIds = useMemo(() => {
+    if (!serverName || hosted || !isExtensionWire) return [] as string[];
+    const dismissed = getDismissedTaskIds(serverName);
+    const tracked = new Set(
+      getTrackedTasksForServer(serverName).map((t) => t.taskId)
+    );
+    return tasks
+      .filter(
+        (t) =>
+          tracked.has(t.taskId) &&
+          !dismissed.has(t.taskId) &&
+          !t.expired &&
+          !isTerminalStatus(t.status)
+      )
+      .map((t) => t.taskId)
+      .sort();
+  }, [serverName, hosted, isExtensionWire, tasks]);
+
+  // Debounced fetch-merge-post of the interest set on active-set change.
+  useEffect(() => {
+    if (!serverName || hosted || !isExtensionWire) return;
+    const signature = JSON.stringify(notificationTaskIds);
+    if (postedTaskInterestsRef.current === signature) return;
+    if (
+      postedTaskInterestsRef.current === null &&
+      notificationTaskIds.length === 0
+    ) {
+      // Nothing to declare and nothing declared before: do not touch the
+      // panel-owned desired filter at all.
+      postedTaskInterestsRef.current = signature;
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        // Merge over the CURRENT bridge state so the interests the
+        // Subscriptions panel owns survive; only `taskIds` is ours to write
+        // (and to remove, once the set empties).
+        const state = await fetchSubscriptionState(serverName);
+        const { taskIds: _ours, ...panelOwned } = state.desired;
+        await setDesiredSubscriptionInterests(serverName, {
+          ...panelOwned,
+          ...(notificationTaskIds.length > 0
+            ? { taskIds: notificationTaskIds }
+            : {}),
+        });
+        postedTaskInterestsRef.current = signature;
+      } catch {
+        // Notifications only ever reduce polling latency; a failed post
+        // changes nothing about correctness. The ref stays unset, so the
+        // next active-set change (or effect re-run) retries.
+      }
+    }, TASK_INTEREST_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [serverName, hosted, isExtensionWire, notificationTaskIds]);
+
+  /**
+   * The poll-now hint's landing: ONE immediate `tasks/get` for the notified
+   * task, folded back through the scheduler exactly like a scheduled read.
+   * `tasks/get` stays the source of truth — the notification's own params are
+   * discarded.
+   */
+  const refreshNotifiedTask = useCallback(
+    async (taskId: string) => {
+      if (!serverName) return;
+      // Untracked or dismissed ids are ignored: the interest filter should
+      // exclude them already, but the server chooses what it sends.
+      const tracked = getTrackedTasksForServer(serverName).some(
+        (t) => t.taskId === taskId
+      );
+      if (!tracked) return;
+      if (getDismissedTaskIds(serverName).has(taskId)) return;
+      const inFlight = notifiedRefreshInFlightRef.current;
+      if (inFlight.has(taskId)) return;
+      inFlight.add(taskId);
+      try {
+        const envelope = await getTask(serverName, taskId);
+        const refreshed = normalizeTask(envelope.wire, envelope.task);
+        // Same fold-back as a scheduled poll: the observation reschedules the
+        // handle by its own advertised floor.
+        scheduler.recordObservations([
+          {
+            taskId: refreshed.taskId,
+            status: refreshed.status,
+            pollIntervalMs: refreshed.pollInterval,
+            ttlMs: refreshed.ttl ?? null,
+            lastUpdatedAt: refreshed.lastUpdatedAt,
+          },
+        ]);
+        setTasks((prev) =>
+          prev.some((t) => t.taskId === taskId)
+            ? prev.map((t) => (t.taskId === taskId ? refreshed : t))
+            : [refreshed, ...prev]
+        );
+      } catch (err) {
+        if (err instanceof TaskUnknownOrExpiredError) {
+          scheduler.forget([taskId]);
+          markTaskExpired(taskId, serverName);
+        }
+        // Anything else is transient; the ordinary poll loop retries on its
+        // own schedule — the hint carried no obligation.
+      } finally {
+        inFlight.delete(taskId);
+      }
+    },
+    [serverName, scheduler]
+  );
+
+  // Observe the bridge's SSE broadcast for `tasks` notifications. Local mode
+  // only: hosted connections are reconnect-per-op and never hold the
+  // persistent stream a listen rides on.
+  useEffect(() => {
+    if (!serverName || hosted || !isExtensionWire || !isActive) return;
+    // Environments without SSE (jsdom without a stub, SSR) simply keep
+    // polling; the notification channel is an optional latency win.
+    if (typeof EventSource === "undefined") return;
+    const es = new EventSource(addTokenToUrl("/api/mcp/subscriptions/stream"));
+    es.onmessage = (ev) => {
+      let event: SubscriptionBridgeEvent;
+      try {
+        event = JSON.parse(ev.data) as SubscriptionBridgeEvent;
+      } catch {
+        return;
+      }
+      if (event.type !== "subscription_notification") return;
+      if (event.serverId !== serverName) return;
+      const notification = event.notification;
+      if (notification.kind !== "tasks" || !notification.taskId) return;
+      void refreshNotifiedTask(notification.taskId);
+    };
+    return () => es.close();
+  }, [serverName, hosted, isExtensionWire, isActive, refreshNotifiedTask]);
 
   // Handle elicitation response from the dialog
   const handleElicitationResponse = useCallback(
     async (
       action: "accept" | "decline" | "cancel",
-      parameters?: Record<string, unknown>,
+      parameters?: Record<string, unknown>
     ) => {
       try {
         await respondToElicitation(action, parameters);
@@ -440,11 +1079,11 @@ export function TasksTab({
         setError(
           err instanceof Error
             ? err.message
-            : "Failed to respond to elicitation",
+            : "Failed to respond to elicitation"
         );
       }
     },
-    [respondToElicitation, fetchTasks],
+    [respondToElicitation, fetchTasks]
   );
 
   const fetchTaskResult = useCallback(
@@ -459,13 +1098,13 @@ export function TasksTab({
         setTaskResult(result);
       } catch (err) {
         setError(
-          err instanceof Error ? err.message : "Failed to fetch task result",
+          err instanceof Error ? err.message : "Failed to fetch task result"
         );
       } finally {
         setLoading(false);
       }
     },
-    [serverName],
+    [serverName]
   );
 
   const handleCancelTask = useCallback(async () => {
@@ -480,9 +1119,7 @@ export function TasksTab({
         // Cooperative cancel: the ack is empty, so record the request and
         // stop polling by default rather than waiting for a `cancelled` that
         // may never arrive.
-        setCancellationRequested((prev) =>
-          new Set(prev).add(selectedTaskId),
-        );
+        setCancellationRequested((prev) => new Set(prev).add(selectedTaskId));
         setAutoRefresh(false);
         userDisabledAutoRefresh.current = true;
       }
@@ -498,28 +1135,30 @@ export function TasksTab({
   // Extension input_required: submit responses to the keyed inputRequests
   // snapshot via tasks/update. Partial responses are allowed.
   const handleSubmitInputResponses = useCallback(
-    async (inputResponses: Record<string, unknown>) => {
-      if (!serverName || !selectedTaskId) return;
+    async (inputResponses: Record<string, unknown>): Promise<boolean> => {
+      if (!serverName || !selectedTaskId) return false;
       setSubmittingInput(true);
       setError("");
       try {
         await updateTask(serverName, selectedTaskId, inputResponses);
         await fetchTasks();
+        return true;
       } catch (err) {
         setError(
-          err instanceof Error ? err.message : "Failed to submit task input",
+          err instanceof Error ? err.message : "Failed to submit task input"
         );
+        return false;
       } finally {
         setSubmittingInput(false);
       }
     },
-    [serverName, selectedTaskId, fetchTasks],
+    [serverName, selectedTaskId, fetchTasks]
   );
 
   const handleExtensionInputResponse = useCallback(
     async (
       action: "accept" | "decline" | "cancel",
-      parameters?: Record<string, unknown>,
+      parameters?: Record<string, unknown>
     ) => {
       if (!extensionInputRequest) return;
       // Partial responses are allowed: answer the key the user just handled.
@@ -527,6 +1166,17 @@ export function TasksTab({
       // `{method, result}` envelope, which a conforming server would ignore
       // (leaving the task stuck in `input_required`).
       const key = extensionInputRequest.key;
+      const acknowledged = await handleSubmitInputResponses({
+        [key]: {
+          action,
+          ...(action === "accept" && parameters ? { content: parameters } : {}),
+        },
+      });
+      // ONLY after the acknowledgement. Marking the key optimistically would
+      // silently discard the user's answer whenever the update failed: the
+      // re-sent snapshot would still carry the key, we would skip it as
+      // "answered", and the task would sit in `input_required` forever.
+      if (!acknowledged) return;
       setAnsweredInputKeys((prev) => {
         const next = new Map(prev);
         const keys = new Set(next.get(selectedTaskId) ?? []);
@@ -534,14 +1184,16 @@ export function TasksTab({
         next.set(selectedTaskId, keys);
         return next;
       });
-      await handleSubmitInputResponses({
-        [key]: {
-          action,
-          ...(action === "accept" && parameters ? { content: parameters } : {}),
-        },
-      });
+      // Durable, so a reload does not re-prompt. Keys only — never the prompt
+      // or the response.
+      scheduler.markInputResponded(selectedTaskId, [key]);
     },
-    [extensionInputRequest, handleSubmitInputResponses, selectedTaskId],
+    [
+      extensionInputRequest,
+      handleSubmitInputResponses,
+      selectedTaskId,
+      scheduler,
+    ]
   );
 
   // The "cancellation requested" banner is transient: once the task reaches a
@@ -568,6 +1220,13 @@ export function TasksTab({
 
     // Reset to undefined while fetching
     setTaskCapabilities(undefined);
+    // Registry recovery is per server: drop the previous server's handles and
+    // re-arm the one recovery read for the new one.
+    registryHandlesRef.current = new Map();
+    registryReadDoneRef.current = null;
+    // The notification interest set is per server too: the new server's
+    // bridge has no `taskIds` posted yet, whatever the old one had.
+    postedTaskInterestsRef.current = null;
 
     const fetchCapabilities = async () => {
       try {
@@ -598,17 +1257,42 @@ export function TasksTab({
     }
   }, [serverConfig, serverName, fetchTasks, isActive, taskCapabilities]);
 
-  // Auto-refresh logic - uses user-configured pollInterval (persisted in localStorage)
-  // Only poll when tab is active
+  // Auto-refresh: a self-rearming timeout rather than a fixed interval.
+  //
+  // The delay is whatever the scheduler says the SOONEST task is waiting for,
+  // clamped to the tab's own pace. A fixed `setInterval(pollInterval)` would
+  // wake up at the fastest task's rate and then find nothing due — burning a
+  // render and, on the hosted path, tempting a connection per tick. Only poll
+  // when the tab is active.
   useEffect(() => {
     if (!autoRefresh || !serverName || !isActive) return;
 
-    const interval = setInterval(() => {
-      fetchTasks();
-    }, pollInterval);
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
 
-    return () => clearInterval(interval);
-  }, [autoRefresh, serverName, fetchTasks, pollInterval, isActive]);
+    const arm = (delayMs: number) => {
+      timer = setTimeout(async () => {
+        if (cancelled) return;
+        // `finally`, so a throw escaping `fetchTasks` cannot break the chain
+        // permanently and silently — the switch would still read "Auto" while
+        // nothing ticked again until a dependency changed.
+        try {
+          await fetchTasks();
+        } finally {
+          if (!cancelled) {
+            // The EARLIEST due handle, floored only by the global terms.
+            arm(Math.max(scheduler.msUntilNextDue(), tickFloorMs));
+          }
+        }
+      }, delayMs);
+    };
+    arm(tickFloorMs);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [autoRefresh, serverName, fetchTasks, tickFloorMs, isActive, scheduler]);
 
   // Fetch result when selecting a completed or failed task, or pending request for input_required
   // Per MCP Tasks spec: when task is input_required, tasks/result returns the pending request
@@ -827,7 +1511,7 @@ export function TasksTab({
           {/* Secondary actions */}
           <div className="flex items-center gap-0.5 text-muted-foreground/80">
             <Button
-              onClick={fetchTasks}
+              onClick={handleManualRefresh}
               variant="ghost"
               size="sm"
               disabled={fetchingTasks}
@@ -859,6 +1543,24 @@ export function TasksTab({
             </Button>
           </div>
         </div>
+
+        {/* Giving up on a recovery read has to SAY so. Going quietly idle is
+            the failure this whole path exists to prevent: the row still reads
+            "completed" while its result was never fetched, so silence would
+            look like success. */}
+        {recoveryReads.exhaustedTaskIds.length > 0 && (
+          <div className="px-2 pb-1.5 flex items-start gap-1.5">
+            <AlertCircle className="h-3 w-3 text-warning mt-[3px] flex-shrink-0" />
+            <p className="text-[10px] text-muted-foreground leading-snug">
+              Could not read back{" "}
+              {recoveryReads.exhaustedTaskIds.length === 1
+                ? "1 restored task's result"
+                : `${recoveryReads.exhaustedTaskIds.length} restored tasks' results`}{" "}
+              after {MAX_RECOVERY_READ_ATTEMPTS} attempts. Stopped retrying
+              automatically — use Refresh to try again.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Tasks List */}
@@ -952,7 +1654,9 @@ export function TasksTab({
                 <TaskStatusIcon status={selectedTask.status} />
                 <Badge
                   variant="outline"
-                  className={`text-xs ${statusConfigFor(selectedTask.status).bgColor} ${statusConfigFor(selectedTask.status).color} border-0`}
+                  className={`text-xs ${
+                    statusConfigFor(selectedTask.status).bgColor
+                  } ${statusConfigFor(selectedTask.status).color} border-0`}
                 >
                   {selectedTask.status}
                 </Badge>
@@ -1202,7 +1906,9 @@ export function TasksTab({
       {/* Per MCP Tasks spec (2025-11-25): when a task needs input, server sends */}
       {/* elicitation requests with relatedTaskId in the metadata */}
       <ElicitationDialog
-        elicitationRequest={extensionDialogElicitation ?? legacyDialogElicitation}
+        elicitationRequest={
+          extensionDialogElicitation ?? legacyDialogElicitation
+        }
         onResponse={
           extensionDialogElicitation
             ? handleExtensionInputResponse

@@ -65,6 +65,7 @@ export function formatFilter(filter?: SubscriptionFilterView): string {
   if (filter.promptsListChanged) parts.push("prompts/list_changed");
   if (filter.resourcesListChanged) parts.push("resources/list_changed");
   for (const uri of filter.resourceSubscriptions ?? []) parts.push(uri);
+  for (const taskId of filter.taskIds ?? []) parts.push(`task:${taskId}`);
   return parts.length ? parts.join(", ") : "(empty)";
 }
 
@@ -85,10 +86,18 @@ export function unacknowledgedInterests(
   stream: SubscriptionStreamView,
 ): string[] {
   return stream.rejectedInterests.map((rejection) => {
-    const what = rejection.uri ?? rejection.interest;
-    return rejection.reason === "capability-not-advertised"
-      ? `${what} (not advertised)`
-      : `${what} (not acknowledged)`;
+    const what = rejection.uri ?? rejection.taskId ?? rejection.interest;
+    switch (rejection.reason) {
+      case "capability-not-advertised":
+        return `${what} (not advertised)`;
+      // The connection cannot put the tasks declaration on the listen, so the
+      // task-id selection was dropped rather than sent undeclared (-32003).
+      // Polling continues — nothing is lost but latency.
+      case "tasks-declaration-unavailable":
+        return `${what} (cannot declare tasks extension; polling instead)`;
+      default:
+        return `${what} (not acknowledged)`;
+    }
   });
 }
 
@@ -203,6 +212,10 @@ export function applySubscriptionEvent(
         serverId,
         era: event.era,
         supportsListen: event.era === "modern",
+        // A placeholder built from a stream event alone cannot know the
+        // declared-listen probe; false is the safe default until a snapshot
+        // or REST response replaces it.
+        supportsTaskDeclaredListen: false,
         desired: {},
         streams: [],
         notifications: [],

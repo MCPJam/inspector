@@ -132,6 +132,64 @@ export function selectDeliverableServerIds(args: {
   return deliverable;
 }
 
+/** Where a delivered plugin skill LANDED on the box, and which immutable plugin
+ *  revision it came from. */
+export interface DeliveredPluginSkillOrigin {
+  skillId: string;
+  /** Environment-scoped ref (`<plugin>/<skill>`) — the id the emulated engine's
+   *  skill tools address, kept here so both engines attribute identically. */
+  ref: string;
+  /** Absolute on-box dir the runtime reads the skill from. This is the only
+   *  identity the model ever sees, so it is the key an observer needs to map a
+   *  skill back to its plugin revision. */
+  dir: string;
+  pluginId: string;
+  pluginVersionId: string;
+  /** Content address of the bundle the skill came from; `null` on deploy skew
+   *  (older backend) — unknown, never "same as before". */
+  bundleHash: string | null;
+}
+
+/**
+ * Attribute the skills a turn ACTUALLY delivered back to their plugin revision
+ * (INS-8 origin mapping).
+ *
+ * Keyed on the on-box dir rather than the skill name alone because that is what
+ * the runtime exposes: a Codex turn reads `~/.agents/skills/<name>`, a Claude
+ * Code turn `~/.claude/skills/<name>`, and the same skill can be delivered to
+ * either. Only skills present in `deliveredNameBySkillId` are reported — an
+ * adapter that dropped a skill (name it cannot write) must not be described as
+ * having run it — and only PLUGIN skills, since a standalone skill has no plugin
+ * revision to attribute to.
+ *
+ * This is provenance: it records what ran, and is never read back to restore or
+ * pin a plugin version.
+ */
+export function deliveredPluginSkillOrigins(args: {
+  set: EffectiveCapabilitySet;
+  /** The runtime's skills root (`HarnessRuntimeAdapter.skillsBaseDir`). */
+  skillsBaseDir: string;
+  /** skillId → on-box dir name, for the skills the adapter was given. */
+  deliveredNameBySkillId: Map<string, string>;
+}): DeliveredPluginSkillOrigin[] {
+  const origins: DeliveredPluginSkillOrigin[] = [];
+  for (const skill of args.set.pluginSkills) {
+    const name = args.deliveredNameBySkillId.get(skill.skillId);
+    if (!name) continue;
+    const plugin = skill.plugin;
+    if (!plugin) continue;
+    origins.push({
+      skillId: skill.skillId,
+      ref: skill.ref,
+      dir: `${args.skillsBaseDir}/${name}`,
+      pluginId: plugin.pluginId,
+      pluginVersionId: plugin.pluginVersionId,
+      bundleHash: plugin.bundleHash,
+    });
+  }
+  return origins;
+}
+
 /** One line per delivered plugin skill, for the turn's provenance log. */
 export function pluginSkillDeliverySummary(
   set: EffectiveCapabilitySet

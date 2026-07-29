@@ -152,8 +152,7 @@ describe("runAssistantTurn", () => {
       approvalMode: "auto-deny",
       streamSink: "none",
       persistMode: "caller",
-      synthesisRunId: "run_abc",
-      synthesisJobId: "job_xyz",
+      extraBodyFields: { journeyRunId: "run_abc" },
     });
 
     // `runAssistantTurn` awaits the engine completion internally.
@@ -182,13 +181,13 @@ describe("runAssistantTurn", () => {
       totalTokens: 5,
     });
 
-    // synthesisRunId / synthesisJobId are threaded into the /stream
-    // request body so Convex spend wiring can attribute usage.
+    // extraBodyFields (the swarm journeyRunId attribution channel) are
+    // threaded into the /stream request body so Convex spend wiring can
+    // attribute usage.
     const fetchBody = JSON.parse(
       ((global.fetch as any).mock.calls[0]?.[1]?.body as string) ?? "{}"
     );
-    expect(fetchBody.synthesisRunId).toBe("run_abc");
-    expect(fetchBody.synthesisJobId).toBe("job_xyz");
+    expect(fetchBody.journeyRunId).toBe("run_abc");
   });
 
   it("returns a Response when streamSink:ui and threads through to the engine", async () => {
