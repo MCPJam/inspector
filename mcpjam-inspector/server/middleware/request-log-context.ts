@@ -143,11 +143,15 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
     const errorCode = thrown
       ? classifyError(thrown)
       : (webErrorMeta?.code ?? "internal_error");
-    const errorMessage = thrown
+    const rawErrorMessage = thrown
       ? thrown instanceof Error
         ? thrown.message
         : String(thrown)
       : webErrorMeta?.message;
+    // Cap the message: SDK connect errors sometimes embed the upstream
+    // response body ("Error POSTing to endpoint (HTTP 502): <html>…"), and an
+    // unbounded string would bloat the log line. 500 chars keeps the cause.
+    const errorMessage = rawErrorMessage?.slice(0, 500);
 
     // Sentry capture is owned by the route's error handler / Sentry middleware;
     // we deliberately don't forward here (default is sentry: false) to avoid

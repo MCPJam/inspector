@@ -271,6 +271,26 @@ describe("requestLogContextMiddleware", () => {
     expect(payload.errorMessage).toBe("ECONNRESET talking to upstream");
   });
 
+  it("caps a huge error message at 500 chars", async () => {
+    const app = new Hono();
+    app.use("/api/*", requestLogContextMiddleware);
+    app.get("/api/web/huge", (c) => {
+      c.set("webErrorMeta", {
+        status: 502,
+        code: "SERVER_UNREACHABLE",
+        message: "x".repeat(5000),
+      });
+      return c.json({ code: "SERVER_UNREACHABLE" }, 502);
+    });
+
+    await app.request("/api/web/huge");
+
+    const failed = vi
+      .mocked(logger.event)
+      .mock.calls.filter(([name]) => name === "http.request.failed");
+    expect((failed[0][2] as any).errorMessage).toHaveLength(500);
+  });
+
   it("does not emit anything for /api/mcp/health", async () => {
     const app = createTestApp();
     app.get("/api/mcp/health", (c) => c.json({ status: "ok" }));
