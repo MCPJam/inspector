@@ -56,8 +56,12 @@ export function extensionTaskToObservation(
 /**
  * Legacy 2025-11-25 statuses. The in-core utility used the same five names, so
  * the normalized status needs no remapping — only the surrounding fields do.
+ *
+ * Exported because callers that validate a status before this normalizer ever
+ * runs — a creation-time check, say — must test the SAME five names. A second
+ * hand-written copy would be free to drift from the one the normalizer trusts.
  */
-const LEGACY_STATUSES = new Set([
+export const LEGACY_TASK_STATUSES: ReadonlySet<string> = new Set([
   "working",
   "input_required",
   "completed",
@@ -91,7 +95,7 @@ export function legacyTaskToObservation(
   task: MCPTask & Record<string, unknown>
 ): TaskLifecycleObservation {
   const rawStatus = String(task.status ?? "");
-  const status = LEGACY_STATUSES.has(rawStatus)
+  const status = LEGACY_TASK_STATUSES.has(rawStatus)
     ? (rawStatus as TaskLifecycleObservation["status"])
     : "working";
   const ttl = task.ttl;
@@ -163,4 +167,77 @@ export function parseRetryAfterMs(
   const at = Date.parse(trimmed);
   if (Number.isNaN(at)) return undefined;
   return Math.max(0, at - now);
+}
+
+/**
+ * Best-effort `Retry-After` recovery from a failed read's error object.
+ *
+ * The lifecycle engine has honored `Retry-After` as a scheduling floor since
+ * it was built, but nothing ever fed one to it: the official client (as of
+ * `2.0.0-beta.4`) does not attach response headers to the error it throws for
+ * a non-2xx POST, so a 429's hint died in the transport. This probe is the
+ * seam where the hint lands whenever ANY layer preserves it — an upgraded
+ * upstream client, an MCPJam-side fetch wrapper, or a test fixture — checked
+ * from most- to least-explicit shape:
+ *
+ * - `retryAfterMs` — already milliseconds, trusted verbatim
+ * - `retryAfter` — seconds or HTTP date (the platform error convention)
+ * - `headers` / `response.headers` — a `Headers` instance or plain record
+ *   carrying the raw header
+ *
+ * `undefined` when nothing matches, in which case the engine's ordinary error
+ * backoff is the only pacing — the pre-existing behavior, not a new fallback.
+ */
+export function retryAfterMsFromError(
+  error: unknown,
+  now: number = Date.now()
+): number | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  const source = error as Record<string, unknown>;
+
+  const ms = source.retryAfterMs;
+  if (typeof ms === "number" && Number.isFinite(ms) && ms >= 0) return ms;
+
+  const direct = source.retryAfter;
+  if (typeof direct === "number" || typeof direct === "string") {
+    const parsed = parseRetryAfterMs(direct, now);
+    if (parsed !== undefined) return parsed;
+  }
+
+  const response = source.response;
+  for (const headers of [
+    source.headers,
+    typeof response === "object" && response !== null
+      ? (response as Record<string, unknown>).headers
+      : undefined,
+  ]) {
+    const parsed = parseRetryAfterMs(headerValue(headers, "retry-after"), now);
+    if (parsed !== undefined) return parsed;
+  }
+  return undefined;
+}
+
+/** Reads one header from a `Headers`-like `.get()` carrier or a plain record. */
+function headerValue(headers: unknown, name: string): string | undefined {
+  if (typeof headers !== "object" || headers === null) return undefined;
+  const get = (headers as { get?: unknown }).get;
+  if (typeof get === "function") {
+    const value = (get as (n: string) => unknown).call(headers, name);
+    return typeof value === "string" ? value : undefined;
+  }
+  // Case-insensitive, because HTTP header names are — and this branch exists
+  // precisely for a record some unknown layer preserved, so its casing cannot
+  // be assumed. Testing two spellings would still miss `RETRY-AFTER` and
+  // `Retry-after`, and silently skipping the pacing hint is worse than the
+  // scan: the CLI would poll a server that just asked it to wait.
+  const record = headers as Record<string, unknown>;
+  const wanted = name.toLowerCase();
+  const key = Object.keys(record).find((k) => k.toLowerCase() === wanted);
+  const value = key === undefined ? undefined : record[key];
+  // Node's raw header records type multi-valued headers as `string[]`; a
+  // preserved record may carry that shape even though `Retry-After` is single.
+  if (Array.isArray(value)) {
+    return typeof value[0] === "string" ? value[0] : undefined;
+  }
+  return typeof value === "string" ? value : undefined;
 }

@@ -42,14 +42,14 @@ import {
   getTaskCapabilities,
   type TasksSupport,
 } from "@/lib/apis/mcp-tasks-api";
-import { trackTask } from "@/lib/task-tracker";
+import { getTrackedTaskScope, trackTask } from "@/lib/task-tracker";
 import { validateToolOutput } from "@/lib/schema-utils";
 import {
   driveScopeStepUpFromChallenge,
   resetScopeStepUp,
 } from "@/lib/scope-step-up";
 import type { ServerWithName } from "@/state/app-types";
-import type { MCPServerConfig } from "@mcpjam/sdk/browser";
+import type { MCPServerConfig, TaskMode } from "@mcpjam/sdk/browser";
 import { isNormalizedError } from "@mcpjam/sdk/browser";
 import { WebApiError } from "@/lib/apis/web/base";
 import { track } from "@/lib/analytics";
@@ -95,6 +95,13 @@ type ActiveElicitation = {
   requestId: string;
   request: ElicitRequest["params"];
   timestamp: string;
+  /**
+   * The auth/org scope captured when the ORIGINATING execution started.
+   * Carried on this per-execution record — never a shared mutable ref — so a
+   * second execution started while this elicitation is pending cannot
+   * overwrite the scope the eventual resume files its task under.
+   */
+  scope?: string;
 };
 
 export type DialogElicitation = {
@@ -163,6 +170,12 @@ interface ToolsTabProps {
   server?: ServerWithName;
   serverConnectionStatus?: ConnectionStatus;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
+  /**
+   * Resolved host task policy for the `tools` surface. Defaults to `expose`,
+   * which is what the matrix returns for an `unset` host — so a caller that
+   * doesn't pass it gets exactly today's behavior.
+   */
+  tasksMode?: TaskMode;
 }
 
 export function ToolsTab({
@@ -171,6 +184,7 @@ export function ToolsTab({
   server,
   serverConnectionStatus,
   mcpToolResultImageRendering,
+  tasksMode = "expose",
 }: ToolsTabProps) {
   const logger = useLogger("ToolsTab");
   const [tools, setTools] = useState<ToolMap>({});
@@ -273,7 +287,36 @@ export function ToolsTab({
   // Check if server supports task-augmented tool calls (MCP Tasks spec 2025-11-25)
   // Per spec: clients MUST NOT use task augmentation if server doesn't declare capability
   const tasksWire = taskCapabilities?.wire ?? "none";
+  // Deliberately reports what the SERVER supports, independent of the host
+  // policy. Faking this to false under an `off` policy would let the panel
+  // claim a task-capable server isn't one, which corrupts the thing a debugger
+  // exists to show. The policy hides the affordance below; it does not rewrite
+  // the server's capabilities.
   const serverSupportsTaskToolCalls = taskCapabilities?.toolCalls ?? false;
+  // `off` removes every task affordance, including the Tools tab's own
+  // per-call controls. `unset` and `expose` both keep today's behavior — the
+  // matrix resolves `tools` to `expose` under `unset` precisely so this tab is
+  // unchanged for hosts that never opted in.
+  //
+  // This HIDES A CONTROL; it does not enforce a boundary.
+  // `/api/web/tools/execute` builds an ephemeral connection from the request
+  // body and never sees the host config, so a crafted request can still create
+  // a task. The boundary, when there is one, is server-side.
+  const tasksDisabledByHost = tasksMode === "off";
+  // Legacy wire + a tool that REQUIRES task execution + host said off: the
+  // only spec-compliant way to run this tool is as a task, and the host has
+  // disabled tasks — so executing it would either violate the tool's
+  // declaration or the host policy. Disable the affordance and say why.
+  // Affordance framing only, same as `tasksDisabledByHost` above: this is not
+  // a security boundary (the route never sees the host config).
+  const taskRequiredButTasksOff =
+    tasksDisabledByHost &&
+    tasksWire === "legacy" &&
+    serverSupportsTaskToolCalls &&
+    selectedToolTaskSupport === "required";
+  const executeDisabledReason = taskRequiredButTasksOff
+    ? "This tool requires task execution, and tasks are disabled by the host configuration."
+    : undefined;
 
   const resetLoadedToolState = ({
     invalidateRequests = true,
@@ -555,9 +598,16 @@ export function ToolsTab({
   // `completed` result and a task-augmented `task_created`.
   const resetStepUpOnSuccess = () => resetScopeStepUp(server);
 
+  // `scopeAtCall` is the auth/org scope captured when the ORIGINATING
+  // execution started, threaded as a plain parameter: `executeTool` passes
+  // its own capture, and the elicitation resume passes the scope stored on
+  // its per-execution record. A single shared ref here was a bug — a second
+  // execution started while an elicitation was pending overwrote it, so the
+  // resumed first execution's task was filed under the second call's scope.
   const handleExecutionResponse = (
     response: ToolExecutionResponse,
-    toolName: string
+    toolName: string,
+    scopeAtCall: string | undefined
   ) => {
     const durationMs =
       "durationMs" in response && typeof response.durationMs === "number"
@@ -592,6 +642,9 @@ export function ToolsTab({
         requestId: response.requestId,
         request: response.request,
         timestamp: response.timestamp,
+        // Rides on the record so the resume files any task_created under the
+        // originating call's scope.
+        ...(scopeAtCall !== undefined ? { scope: scopeAtCall } : {}),
       });
       return;
     }
@@ -605,7 +658,8 @@ export function ToolsTab({
       // count doesn't prematurely throw a later legitimate step-up.
       resetStepUpOnSuccess();
 
-      // Track the task locally so it appears in the Tasks tab
+      // Track the task locally so it appears in the Tasks tab, under the
+      // scope captured when the originating call started (`scopeAtCall`).
       if (serverName) {
         trackTask({
           taskId: task.taskId,
@@ -615,6 +669,7 @@ export function ToolsTab({
           toolName,
           primitiveType: "tool",
           primitiveName: toolName,
+          ...(scopeAtCall !== undefined ? { scope: scopeAtCall } : {}),
         });
       }
 
@@ -663,8 +718,22 @@ export function ToolsTab({
   };
 
   const executeTool = async () => {
+    // Captured before ANY await, as a local owned by THIS execution: the
+    // scope the call belongs to is the one active when the user hit Execute,
+    // not the one active when the (possibly much later) task_created
+    // response arrives — and a concurrent execution must not clobber it.
+    const scopeAtCall = getTrackedTaskScope();
     if (!selectedTool) {
       logger.warn("Cannot execute tool: no tool selected");
+      return;
+    }
+    // Guarded HERE, not only at the button: the global Enter keydown and
+    // ParametersPanel's own Enter handler both funnel into this function.
+    if (taskRequiredButTasksOff) {
+      setError(
+        "This tool requires task execution, and tasks are disabled by the host configuration."
+      );
+      setNormalizedError(null);
       return;
     }
     if (!serverName) {
@@ -698,10 +767,13 @@ export function ToolsTab({
       // Extension wire: no ttl and no `params.task` — the client only
       // declares that a task response is acceptable and the server decides.
       const allowTaskResult =
-        tasksWire === "extension" && serverSupportsTaskToolCalls
+        !tasksDisabledByHost &&
+        tasksWire === "extension" &&
+        serverSupportsTaskToolCalls
           ? executeAsTask
           : undefined;
       const shouldUseTask =
+        !tasksDisabledByHost &&
         tasksWire === "legacy" &&
         serverSupportsTaskToolCalls &&
         (executeAsTask || selectedToolTaskSupport === "required");
@@ -718,7 +790,7 @@ export function ToolsTab({
         taskOptions,
         allowTaskResult
       );
-      handleExecutionResponse(response, selectedTool);
+      handleExecutionResponse(response, selectedTool, scopeAtCall);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       logger.error("Tool execution network error", {
@@ -781,7 +853,9 @@ export function ToolsTab({
         activeElicitation.requestId,
         payload
       );
-      handleExecutionResponse(response, selectedTool);
+      // The resume reads the scope from ITS OWN execution's record, not from
+      // any shared state a later execution could have overwritten.
+      handleExecutionResponse(response, selectedTool, activeElicitation.scope);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       logger.error("Error responding to elicitation", {
@@ -950,12 +1024,16 @@ export function ToolsTab({
           : undefined
       }
       taskRequired={
+        !tasksDisabledByHost &&
         tasksWire === "legacy" &&
         serverSupportsTaskToolCalls &&
         selectedToolTaskSupport === "required"
       }
       taskTtl={taskTtl}
       taskWire={tasksWire}
+      tasksDisabledByHost={tasksDisabledByHost}
+      executeDisabled={taskRequiredButTasksOff}
+      executeDisabledReason={executeDisabledReason}
       onTaskTtlChange={tasksWire === "extension" ? undefined : setTaskTtl}
       serverSupportsTaskToolCalls={serverSupportsTaskToolCalls}
       onClose={() => setIsSidebarVisible(false)}

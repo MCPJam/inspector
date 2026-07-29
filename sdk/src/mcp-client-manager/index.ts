@@ -183,6 +183,7 @@ export {
   getTaskExt,
   updateTaskExt,
   cancelTaskExt,
+  canOpenTaskDeclaredListen,
   openTaskDeclaredListen,
 } from "./tasks-ext.js";
 export type {
@@ -240,12 +241,16 @@ export type {
 export {
   extensionTaskToObservation,
   legacyTaskToObservation,
+  LEGACY_TASK_STATUSES,
   isUnknownTaskError,
   isTasksDeclarationRequiredError,
   parseRetryAfterMs,
+  retryAfterMsFromError,
   UNKNOWN_TASK_ERROR_CODE,
   TASKS_DECLARATION_REQUIRED_ERROR_CODE,
 } from "./task-lifecycle-adapters.js";
+// Node-only (Ajv compiles via `new Function`); not re-exported from browser.
+export { createStrictElicitationContentValidator } from "./elicitation-content-validator.js";
 
 // `input_required` driver — routes a task's embedded elicitation / roots /
 // sampling requests through the SAME trust rules as the standalone path.
@@ -276,6 +281,19 @@ export type {
   TaskAwaitOutcome,
   TaskAwaitResult,
 } from "./task-await-driver.js";
+
+// The one place a model-facing tool call may become a task.
+export {
+  runToolTaskSeam,
+  toolTaskSeamOptionsFor,
+  TASK_SEAM_META_KEY,
+} from "./tool-task-seam.js";
+export type {
+  ToolTaskAwaitOptions,
+  ToolTaskSeamContext,
+  ToolTaskSeamMeta,
+  ToolTaskSeamOptions,
+} from "./tool-task-seam.js";
 export type {
   CollectTaskInputResult,
   DeclaredInputCapabilities,
@@ -299,6 +317,14 @@ export {
   wrapFetchForTaskRouting,
   wrapTransportForTaskResults,
 } from "./transport-utils.js";
+export {
+  wrapFetchForHttpLogging,
+  deriveMirroredBodyValues,
+} from "./http-exchange-log.js";
+export type {
+  HttpExchangeLogEvent,
+  HttpExchangeLogger,
+} from "./http-exchange-log.js";
 
 // Notification schemas (for advanced use cases)
 export {
@@ -331,6 +357,27 @@ export {
   LogLevelMetaClient,
   type LogLevelProvider,
 } from "./log-level-meta-client.js";
+// OpenTelemetry trace-context propagation over the 2026-07-28 reserved
+// `_meta` keys. Propagation only: with no provider wired, nothing is emitted.
+export {
+  TraceContextMetaClient,
+  type ConnectionTraceContextProvider,
+} from "./trace-context-meta-client.js";
+export {
+  BAGGAGE_META_KEY,
+  TRACEPARENT_META_KEY,
+  TRACESTATE_META_KEY,
+  extractTraceContext,
+  isValidBaggage,
+  isValidTraceparent,
+  isValidTracestate,
+  parseTraceparent,
+  sanitizeTraceContext,
+  traceContextToMeta,
+  type ParsedTraceparent,
+  type TraceContext,
+  type TraceContextProvider,
+} from "./trace-context.js";
 export {
   DialectAwareJsonSchemaValidator,
   type DialectAwareJsonSchemaValidatorOptions,

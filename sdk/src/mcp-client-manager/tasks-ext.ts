@@ -217,18 +217,39 @@ async function sendTasksExtRequest(
  * on purpose: a silent fallback would hide a client bump that broke the
  * declaration, and the caller can catch it to degrade to polling deliberately.
  */
+/**
+ * Whether {@link openTaskDeclaredListen} would have a wire to ride on this
+ * client: the managed client exposes `listen`, AND an upstream `Client` with
+ * the outbound-envelope seam is reachable behind it. A test double with no
+ * upstream client probes false — it has no envelope to widen, so a declared
+ * listen through it could never carry the declaration.
+ *
+ * This is the SAME availability check `openTaskDeclaredListen` performs before
+ * returning `undefined`, extracted so callers that install the opener onto a
+ * port (where availability is expressed by method PRESENCE, per
+ * `SubscriptionClientPort.listenWithTasksDeclaration`) probe the one shared
+ * predicate instead of re-deriving it.
+ */
+export function canOpenTaskDeclaredListen(client: ManagedMcpClient): boolean {
+  return (
+    typeof (client as { listen?: unknown }).listen === "function" &&
+    resolveListenMetaTarget(client as unknown as object) !== undefined
+  );
+}
+
 export async function openTaskDeclaredListen(
   ctx: Omit<TasksExtCallContext, "options">,
   filter: Record<string, unknown>
 ): Promise<unknown | undefined> {
+  // One shared availability predicate with the callers that probe before
+  // installing the opener onto a port — see `canOpenTaskDeclaredListen`.
+  if (!canOpenTaskDeclaredListen(ctx.client)) return undefined;
   const listen = (
     ctx.client as {
-      listen?: (filter: unknown, options?: unknown) => Promise<unknown>;
+      listen: (filter: unknown, options?: unknown) => Promise<unknown>;
     }
   ).listen;
-  if (typeof listen !== "function") return undefined;
-  const target = resolveListenMetaTarget(ctx.client as unknown as object);
-  if (target === undefined) return undefined;
+  const target = resolveListenMetaTarget(ctx.client as unknown as object)!;
   return withTasksExtensionEnvelope(
     target,
     ctx.declaredCapabilities,

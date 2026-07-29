@@ -67,6 +67,21 @@ interface ToolsSidebarProps {
   taskWire?: "none" | "legacy" | "extension";
   onTaskTtlChange?: (value: number) => void;
   serverSupportsTaskToolCalls?: boolean;
+  /**
+   * The host's task policy is `off`. Kept SEPARATE from
+   * `serverSupportsTaskToolCalls`, which stays truthful about the server, so
+   * the panel can say "this server supports tasks; this host disabled them"
+   * rather than pretending the capability isn't there.
+   */
+  tasksDisabledByHost?: boolean;
+  /**
+   * Execution is blocked for the SELECTED tool (e.g. it requires task
+   * execution while the host disabled tasks). Affordance only — the owning
+   * tab guards `executeTool` itself, so this just keeps the buttons honest.
+   */
+  executeDisabled?: boolean;
+  /** Human-readable reason shown when `executeDisabled` is set. */
+  executeDisabledReason?: string;
   // Collapsible sidebar
   onClose?: () => void;
 }
@@ -111,6 +126,9 @@ export function ToolsSidebar({
   taskWire,
   onTaskTtlChange,
   serverSupportsTaskToolCalls,
+  tasksDisabledByHost,
+  executeDisabled,
+  executeDisabledReason,
   onClose,
 }: ToolsSidebarProps) {
   const selectedTool = selectedToolName ? tools[selectedToolName] : null;
@@ -121,11 +139,12 @@ export function ToolsSidebar({
   useEffect(() => {
     setOpenSections(hasParameters ? ["parameters"] : ["description"]);
   }, [selectedToolName, hasParameters]);
-  const canExecute = serverConnected && !!selectedToolName && !!onExecute;
+  const canExecute =
+    serverConnected && !!selectedToolName && !!onExecute && !executeDisabled;
   const canSave = !!selectedToolName && !!onSave;
 
   const handleExecute = () => {
-    if (!onExecute) return;
+    if (!onExecute || executeDisabled) return;
     track("execute_tool", {
       location: "tools_sidebar",
       as_task: executeAsTask ?? false,
@@ -228,6 +247,7 @@ export function ToolsSidebar({
             disabled={loading || !canExecute}
             size="sm"
             className="h-8 px-3 text-xs ml-auto"
+            title={executeDisabled ? executeDisabledReason : undefined}
           >
             {loading ? (
               <RefreshCw className="h-3 w-3 animate-spin" />
@@ -312,7 +332,26 @@ export function ToolsSidebar({
               </Accordion>
 
               {/* Task execution options */}
-              {serverSupportsTaskToolCalls && (
+              {serverSupportsTaskToolCalls && tasksDisabledByHost && (
+                <div className="px-3 py-3 border-t border-border space-y-1.5">
+                  <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <Clock className="h-3 w-3" />
+                    <span>
+                      This server supports tasks, but this host has task
+                      execution turned off.
+                    </span>
+                  </span>
+                  {executeDisabled && executeDisabledReason && (
+                    // The required case: the selected tool can ONLY run as a
+                    // task, so with tasks off it cannot run at all.
+                    <span className="flex items-center gap-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+                      <Clock className="h-3 w-3" />
+                      <span>{executeDisabledReason}</span>
+                    </span>
+                  )}
+                </div>
+              )}
+              {serverSupportsTaskToolCalls && !tasksDisabledByHost && (
                 <div className="px-3 py-3 border-t border-border">
                   {taskWire === "extension" ? (
                     // The extension has no client-side TTL or opt-in: the

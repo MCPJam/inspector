@@ -1019,3 +1019,138 @@ describe("MRTR composition (one result state machine)", () => {
     expect(sent[1].params.requestState).toBe("state-1");
   });
 });
+
+describe("task-declared subscriptions/listen (manager)", () => {
+  /**
+   * `seedManager`'s client has no `listen` and no upstream envelope member.
+   * These helpers add the two facts the declared-listen path keys on.
+   */
+  function seedListenManager(options: {
+    protocolVersion?: string;
+    capabilities?: Record<string, unknown>;
+    withListen?: boolean;
+    withEnvelope?: boolean;
+    declaredCapabilities?: Record<string, unknown>;
+  }) {
+    const seeded = seedManager({
+      protocolVersion: options.protocolVersion ?? "2026-07-28",
+      capabilities: options.capabilities ?? EXT_CAPS,
+      declaredCapabilities: options.declaredCapabilities,
+    });
+    const client = (seeded.manager as any).liveClientStates.get(
+      seeded.serverId
+    ).client as Record<string, unknown>;
+
+    const observedEnvelopes: Array<Record<string, unknown> | undefined> = [];
+    const listenedFilters: Array<Record<string, unknown>> = [];
+    const handle = {
+      honoredFilter: { taskIds: ["t-1"] },
+      close: vi.fn(async () => {}),
+      closed: new Promise<never>(() => {}),
+    };
+
+    if (options.withEnvelope) {
+      client._outboundMetaEnvelope = function (): Record<string, unknown> {
+        return { existing: "envelope-key" };
+      };
+    }
+    if (options.withListen) {
+      client.listen = function (filter: Record<string, unknown>) {
+        listenedFilters.push(filter);
+        // Mirror upstream: the envelope is read SYNCHRONOUSLY while building
+        // the request, which is the window the per-call shadow covers.
+        const envelope = (
+          this as { _outboundMetaEnvelope?: () => Record<string, unknown> }
+        )._outboundMetaEnvelope?.();
+        observedEnvelopes.push(envelope);
+        return Promise.resolve(handle);
+      };
+    }
+    return { ...seeded, observedEnvelopes, listenedFilters, handle };
+  }
+
+  it("refuses to send a task-filtered listen on a non-extension wire", async () => {
+    const { manager, serverId } = seedListenManager({
+      protocolVersion: "2025-11-25",
+      capabilities: LEGACY_CAPS,
+      withListen: true,
+      withEnvelope: true,
+    });
+    await expect(
+      manager.listenWithTasksDeclaration(serverId, { taskIds: ["t-1"] })
+    ).rejects.toBeInstanceOf(MCPTasksWireError);
+  });
+
+  it("throws (never resolves undefined) when the connection cannot declare", async () => {
+    // Port contract: availability is method PRESENCE on the port, so a
+    // defined opener answering `undefined` would read as "opened nothing,
+    // successfully" — it must throw instead.
+    const { manager, serverId } = seedListenManager({ withListen: false });
+    await expect(
+      manager.listenWithTasksDeclaration(serverId, { taskIds: ["t-1"] })
+    ).rejects.toThrow(/cannot open a task-declared/);
+  });
+
+  it("puts the tasks declaration on the listen envelope and hands back the handle", async () => {
+    const { manager, serverId, observedEnvelopes, listenedFilters, handle } =
+      seedListenManager({
+        withListen: true,
+        withEnvelope: true,
+        declaredCapabilities: { roots: { listChanged: true } },
+      });
+
+    const opened = await manager.listenWithTasksDeclaration(serverId, {
+      taskIds: ["t-1"],
+    });
+
+    expect(opened).toBe(handle);
+    expect(listenedFilters).toEqual([{ taskIds: ["t-1"] }]);
+    expect(observedEnvelopes).toHaveLength(1);
+    const envelope = observedEnvelopes[0] as Record<string, any>;
+    // Upstream's own envelope keys survive; only the capabilities key is
+    // replaced, and it carries the extension MERGED into the declared caps.
+    expect(envelope.existing).toBe("envelope-key");
+    const declared = envelope[CLIENT_CAPABILITIES_META_KEY];
+    expect(declared.extensions[EXT_ID]).toEqual({});
+    expect(declared.roots).toEqual({ listChanged: true });
+  });
+
+  it("supportsTaskDeclaredListen requires the wire, the listen method and the seam", () => {
+    const cases = [
+      {
+        name: "legacy wire",
+        seed: seedListenManager({
+          protocolVersion: "2025-11-25",
+          capabilities: LEGACY_CAPS,
+          withListen: true,
+          withEnvelope: true,
+        }),
+        expected: false,
+      },
+      {
+        name: "no listen method",
+        seed: seedListenManager({ withListen: false, withEnvelope: true }),
+        expected: false,
+      },
+      {
+        name: "no envelope seam behind the client",
+        seed: seedListenManager({ withListen: true, withEnvelope: false }),
+        expected: false,
+      },
+      {
+        name: "extension wire + listen + seam",
+        seed: seedListenManager({ withListen: true, withEnvelope: true }),
+        expected: true,
+      },
+    ];
+    for (const { name, seed, expected } of cases) {
+      expect(seed.manager.supportsTaskDeclaredListen(seed.serverId), name).toBe(
+        expected
+      );
+    }
+    // Unknown server: probe is false, never a throw.
+    expect(cases[3].seed.manager.supportsTaskDeclaredListen("missing")).toBe(
+      false
+    );
+  });
+});
