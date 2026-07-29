@@ -8,10 +8,6 @@ import type {
   MrtrInputCollector,
   MrtrOperationState,
 } from "@mcpjam/sdk";
-import {
-  isKnownProtocolVersion,
-  isStatelessProtocolVersion,
-} from "@mcpjam/sdk";
 import { logger } from "../../utils/logger";
 
 /**
@@ -220,10 +216,6 @@ function makeCollector(serverId: string): MrtrInputCollector {
 // Registration (before connect)
 // ---------------------------------------------------------------------------
 
-// Per-manager set of server ids whose collector is already registered. WeakMap
-// so a discarded manager (hot reload) is collected with its set.
-const registered = new WeakMap<MCPClientManager, Set<string>>();
-
 /**
  * The `elicitation` capability a local MRTR connection may advertise.
  *
@@ -237,8 +229,9 @@ const registered = new WeakMap<MCPClientManager, Set<string>>();
 const MRTR_ELICITATION_CAPABILITY = { form: {}, url: {} } as const;
 
 /**
- * Widens the advertised `elicitation` capability to include `url` — but ONLY
- * when the connection cannot land on a pre-2026 version.
+ * Declares the full MRTR elicitation capability for the modern era via the
+ * SDK's `eraCapabilities.modern` overlay — the post-negotiation re-resolution
+ * seam.
  *
  * The two eras share ONE capability on the wire, and they are fulfilled by
  * different bridges. On 2026-07-28 elicitation arrives exclusively inside an
@@ -249,49 +242,46 @@ const MRTR_ELICITATION_CAPABILITY = { form: {}, url: {} } as const;
  * `{requestId, message, schema}` with no url, so a url request would ask the
  * user to approve a destination they cannot see.
  *
- * Capabilities are sent in `initialize`, before the negotiated version is
- * known, so declaring `url` is only safe when every acceptable version is
- * modern. An `auto` accept-list that still permits a legacy answer stays
- * form-only — fail closed. Lifting this needs the legacy bridge to carry url
- * (it can reuse the same consent dialog), not a wider declaration here.
+ * The overlay expresses exactly that split without guessing: the SDK merges
+ * it once the connection has actually CLASSIFIED as 2026-era, so a modern
+ * landing (pinned or auto-negotiated) declares `{form, url}` on every
+ * subsequent request's envelope, while a legacy landing keeps the bare
+ * connect-time declaration — form-only, fail-closed. Lifting THAT still
+ * needs the legacy bridge to carry url (it can reuse the same consent
+ * dialog), not a wider declaration here.
  *
- * TWO signals can prove "modern", and they are not interchangeable:
- *
- *  - The per-server wire pin (`mcpProtocolVersion`) — how a user actually
- *    selects 2026-07-28 in the UI. The SDK routes on it alone for non-stdio
- *    configs (`wantsStateless` in `MCPClientManager.connectToServer`): a
- *    stateless pin goes to the preview client no matter what the accept-list
- *    says, so it settles the era outright. It is ignored for stdio, so it
- *    proves nothing there.
- *  - The initialize accept-list (`supportedProtocolVersions`, from
- *    `hostConfig.mcpProfile.initialize`) — the only signal on stdio, and the
- *    fallback when no pin is stamped.
- *
- * Checking only the accept-list (as the first cut did) left every pinned
- * 2026-07-28 HTTP server advertising bare `{}`, i.e. form-only, which is
- * precisely the failure this helper exists to prevent.
+ * This replaced a pre-connect predicate (`isModernOnlyLocalConnection`) that
+ * tried to prove "cannot land pre-2026" from the pin and the accept-list.
+ * It could not say anything about the common case — an unpinned Client
+ * default connection, where auto-negotiation lands modern but the predicate
+ * had to answer `false` — so url-mode MRTR silently required an explicit
+ * version pin. The era seam replaces the guess with the classified fact.
  */
 export function withLocalMrtrElicitationCapability<T extends MCPServerConfig>(
   config: T,
 ): T {
   // An exact set (host profile / explicit client capabilities) is advertised
-  // verbatim — widening it would defeat the point of pinning one.
+  // verbatim — widening it would defeat the point of pinning one. (The SDK
+  // ignores `eraCapabilities` for exact sets too; this early-return keeps the
+  // config itself clean.)
   if ((config as { clientCapabilities?: unknown }).clientCapabilities) {
     return config;
   }
-  if (!isModernOnlyLocalConnection(config)) return config;
 
-  const capabilities = ((config as { capabilities?: Record<string, unknown> })
-    .capabilities ?? {}) as Record<string, unknown>;
+  const era = (config as { eraCapabilities?: { modern?: Record<string, unknown> } })
+    .eraCapabilities;
   return {
     ...config,
-    capabilities: {
-      ...capabilities,
-      elicitation: {
-        ...MRTR_ELICITATION_CAPABILITY,
-        ...(isPlainObject(capabilities.elicitation)
-          ? capabilities.elicitation
-          : {}),
+    eraCapabilities: {
+      ...era,
+      modern: {
+        ...era?.modern,
+        elicitation: {
+          ...MRTR_ELICITATION_CAPABILITY,
+          ...(isPlainObject(era?.modern?.elicitation)
+            ? era.modern.elicitation
+            : {}),
+        },
       },
     },
   } as T;
@@ -301,56 +291,42 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
-/** Modern iff known AND off the closed stateful list (validate, then route). */
-function isModernVersion(version: unknown): boolean {
-  return (
-    typeof version === "string" &&
-    isKnownProtocolVersion(version) &&
-    isStatelessProtocolVersion(version)
-  );
-}
-
 /**
- * `true` iff this connection cannot land on a pre-2026 version. Fail-closed:
- * an unrecognized, absent, or mixed-era signal answers `false`.
- */
-function isModernOnlyLocalConnection(config: MCPServerConfig): boolean {
-  // The SDK only consults `mcpProtocolVersion` for non-stdio configs, so a pin
-  // on a stdio server says nothing about the negotiated era — fall through to
-  // the accept-list there.
-  const isStdio = "command" in config;
-  const pin = (config as { mcpProtocolVersion?: unknown }).mcpProtocolVersion;
-  if (!isStdio && pin !== undefined) {
-    // A stateless pin routes to the preview client outright; a stateful one
-    // routes legacy regardless of the accept-list. Either way the pin decides.
-    return isModernVersion(pin);
-  }
-
-  const accepted = (config as { supportedProtocolVersions?: unknown })
-    .supportedProtocolVersions;
-  if (!Array.isArray(accepted) || accepted.length === 0) return false;
-  return accepted.every(isModernVersion);
-}
-
-/**
- * Idempotently registers the MRTR input collector for `serverId` on `manager`.
+ * Registers the MRTR input collector for `serverId` on `manager`.
  * MUST be called BEFORE `manager.connectToServer(serverId, …)` so the
  * `elicitation` client capability is advertised on the connect envelope (see
  * the module header).
+ *
+ * ## Why this re-registers unconditionally
+ *
+ * `MCPClientManager.removeServer()` PURGES `mrtrInputCollectors` (deliberately
+ * — a re-registered server must not inherit the previous owner's collector
+ * closure). The local connect route runs with `removeOnFailure: true`, so
+ * every failed connect, and every explicit remove from the servers route,
+ * silently drops the collector.
+ *
+ * This function used to mirror "already registered" in a module-level
+ * `WeakMap<manager, Set<serverId>>`. That mirror had no way to observe the
+ * purge, so after ONE failed connect it answered "already registered" forever:
+ * the collector was never restored, `buildCapabilities` saw no collector, and
+ * every subsequent connection advertised no `elicitation` at all. A 2026-07-28
+ * server then correctly refuses to embed `elicitation/create` in an
+ * `input_required` result, and every MRTR tool fails with "the request's
+ * client capabilities do not declare the required capability" — with a
+ * successful connect and a full tool list, so nothing looks wrong.
+ *
+ * Re-registering is cheap and safe: `setMrtrInputCollector` is a `Map.set`,
+ * and `makeCollector` is a pure factory closing over `serverId` (all round
+ * state lives in the module-level `pendingRounds` / `subscribers`). The
+ * manager's own map is the single source of truth for whether a collector is
+ * installed — this module keeps no second copy of that fact.
  */
 export function registerLocalMrtrCollector(
   manager: MCPClientManager,
   serverId: string,
 ): void {
-  let ids = registered.get(manager);
-  if (!ids) {
-    ids = new Set<string>();
-    registered.set(manager, ids);
-  }
-  if (ids.has(serverId)) return;
   try {
     manager.setMrtrInputCollector(serverId, makeCollector(serverId));
-    ids.add(serverId);
   } catch (err) {
     // Pass the original error as the 2nd (error) arg so Sentry captures a stack
     // and Axiom serializes the real message; serverId is the context (3rd) arg.

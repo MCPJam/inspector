@@ -335,6 +335,9 @@ describe("getHostedNavigationSections", () => {
         disabled: true,
         disabledTooltip: HOSTED_LOCAL_ONLY_TOOLTIP,
       },
+      // Tasks are hosted-capable (reconnect-per-poll routes), so the item is
+      // enabled rather than a disabled local-only stub.
+      { title: "Tasks", url: "#tasks", icon: FakeIcon },
       {
         title: "Testing",
         url: "#ci-evals",

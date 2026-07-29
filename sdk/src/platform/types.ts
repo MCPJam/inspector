@@ -419,7 +419,7 @@ export interface PlatformEnvironmentResolved {
 
 // ── Sandbox images ───────────────────────────────────────────────────────────
 //
-// A project's custom Computer base image: a Dockerfile plus its builds. Named
+// A project's custom Computer base image: a blueprint plus its builds. Named
 // "image" (the OCI term) and NOT "environment" — a Project Environment is an
 // unrelated concept (a client + server group + skill/plugin bundle that suites
 // and journeys run against), and it owns that word.
@@ -437,13 +437,13 @@ export interface PlatformImageBuild {
   finishedAt?: number;
 }
 
-/** A project's custom Computer sandbox image (Dockerfile + its latest build).
+/** A project's custom Computer sandbox image (its blueprint + latest build).
  * The list and detail routes return the same shape. */
 export interface PlatformImage {
   id: string;
   projectId: string;
   name: string;
-  dockerfile: string;
+  blueprint: string;
   contentHash: string;
   sharing: "user" | "project";
   isOwner: boolean;
@@ -456,6 +456,12 @@ export interface PlatformImageDeleted {
   id: string;
   deleted: true;
 }
+
+/** Result of linting blueprint YAML via `POST …/images/validate`. Always
+ * HTTP 200 — `ok: false` is a successful lint with structured errors. */
+export type PlatformImageBlueprintValidation =
+  | { ok: true; baseImageDigest: string }
+  | { ok: false; errors: { path: string; message: string }[] };
 
 /** `POST …/build` is async (202): the build runs in the background — poll the
  * builds list for status. */

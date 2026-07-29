@@ -110,14 +110,51 @@ describe("projectInputRequests", () => {
 });
 
 describe("registerLocalMrtrCollector", () => {
-  it("registers exactly once per (manager, serverId)", () => {
+  it("re-registers on every call so a removeServer() purge is repaired", () => {
     const { manager } = fakeManager();
     const spy = vi.spyOn(manager, "setMrtrInputCollector");
     registerLocalMrtrCollector(manager, "srv");
     registerLocalMrtrCollector(manager, "srv");
-    expect(spy).toHaveBeenCalledTimes(1);
-    registerLocalMrtrCollector(manager, "other");
+    // Not deduped: the manager's own map is the source of truth for whether a
+    // collector is installed, and `removeServer()` can empty it behind our
+    // back (the local connect route runs with `removeOnFailure: true`).
     expect(spy).toHaveBeenCalledTimes(2);
+    registerLocalMrtrCollector(manager, "other");
+    expect(spy).toHaveBeenCalledTimes(3);
+  });
+
+  it("restores the collector after the manager purges it", () => {
+    // The regression: connect fails -> removeServer() purges the collector ->
+    // reconnect must re-register, or `elicitation` is never advertised again
+    // and every MRTR tool fails with a capability error on a healthy-looking
+    // connection.
+    const collectors = new Map<string, MrtrInputCollector>();
+    const manager = {
+      setMrtrInputCollector: (serverId: string, c: MrtrInputCollector) => {
+        collectors.set(serverId, c);
+      },
+      removeServer: (serverId: string) => {
+        collectors.delete(serverId);
+      },
+    } as any;
+
+    registerLocalMrtrCollector(manager, "srv");
+    expect(collectors.has("srv")).toBe(true);
+
+    manager.removeServer("srv");
+    expect(collectors.has("srv")).toBe(false);
+
+    registerLocalMrtrCollector(manager, "srv");
+    expect(collectors.has("srv")).toBe(true);
+  });
+
+  it("does not throw when the manager rejects the registration", () => {
+    const manager = {
+      setMrtrInputCollector: () => {
+        throw new Error("boom");
+      },
+    } as any;
+    expect(() => registerLocalMrtrCollector(manager, "srv")).not.toThrow();
   });
 });
 
@@ -222,118 +259,76 @@ describe("collector round-trip", () => {
 
 describe("advertised elicitation capability", () => {
   // Bare `{}` is form-ONLY under the spec's back-compat rule, and the SDK
-  // derives the MRTR mode allowlist from what was advertised — so leaving it
-  // bare makes every url round fail validation before `UrlElicitationConsent`
-  // is ever reached. The two eras share one capability on the wire, so `url`
-  // may only be declared when no legacy version can be negotiated.
-  const modern = ["2026-07-28"];
-  const mixed = ["2026-07-28", "2025-11-25"];
+  // derives the MRTR mode allowlist from what was advertised. The two eras
+  // share one capability on the wire and are fulfilled by different bridges
+  // (the legacy inbound bridge is form-only), so `{form, url}` rides the
+  // SDK's `eraCapabilities.modern` overlay: applied by the manager once the
+  // connection actually CLASSIFIES as 2026-era, never guessed from the pin
+  // or the accept-list at config time.
+  type EraShaped = {
+    capabilities?: Record<string, unknown>;
+    eraCapabilities?: { modern?: Record<string, unknown> };
+  };
 
-  it("declares both modes on a modern-only connection", () => {
-    const config = withLocalMrtrElicitationCapability({
-      url: new URL("https://example.test/mcp"),
-      supportedProtocolVersions: modern,
-    } as never) as { capabilities?: Record<string, unknown> };
-    expect(config.capabilities?.elicitation).toEqual({ form: {}, url: {} });
-  });
-
-  it("stays form-only when a legacy version can still be negotiated", () => {
-    // `auto` proposes 2026-07-28 but accepts 2025-11-25, whose inbound
-    // `elicitation/create` is fulfilled by the form-only legacy bridge.
-    const config = withLocalMrtrElicitationCapability({
-      url: new URL("https://example.test/mcp"),
-      supportedProtocolVersions: mixed,
-    } as never) as { capabilities?: Record<string, unknown> };
-    expect(config.capabilities?.elicitation).toBeUndefined();
-  });
-
-  it("stays form-only with no accept-list and with an unknown version", () => {
-    const noList = withLocalMrtrElicitationCapability({
-      url: new URL("https://example.test/mcp"),
-    } as never) as { capabilities?: Record<string, unknown> };
-    expect(noList.capabilities?.elicitation).toBeUndefined();
-
-    const bogus = withLocalMrtrElicitationCapability({
-      url: new URL("https://example.test/mcp"),
-      supportedProtocolVersions: ["2099-01-01"],
-    } as never) as { capabilities?: Record<string, unknown> };
-    expect(bogus.capabilities?.elicitation).toBeUndefined();
-  });
-
-  it("declares url from the per-server wire pin alone (no accept-list)", () => {
-    // How a user actually selects 2026-07-28: the version dropdown stamps
-    // `mcpProtocolVersion`, NOT `supportedProtocolVersions` (that one only
-    // comes from `hostConfig.mcpProfile.initialize`). Gating on the accept-list
-    // alone left every pinned modern server advertising bare `{}` — form-only —
-    // so url rounds died at the SDK's mode backstop before the consent dialog.
-    const config = withLocalMrtrElicitationCapability({
-      url: new URL("https://example.test/mcp"),
-      mcpProtocolVersion: "2026-07-28",
-    } as never) as { capabilities?: Record<string, unknown> };
-    expect(config.capabilities?.elicitation).toEqual({ form: {}, url: {} });
-  });
-
-  it("a stateful pin stays form-only even with a modern accept-list", () => {
-    // The SDK routes on the pin alone for non-stdio configs, so a 2025-11-25
-    // pin lands on the legacy client whatever the accept-list proposes. The
-    // combination is ambiguous config — fail closed.
-    const config = withLocalMrtrElicitationCapability({
-      url: new URL("https://example.test/mcp"),
-      mcpProtocolVersion: "2025-11-25",
-      supportedProtocolVersions: modern,
-    } as never) as { capabilities?: Record<string, unknown> };
-    expect(config.capabilities?.elicitation).toBeUndefined();
-  });
-
-  it("ignores the pin on stdio and falls back to the accept-list", () => {
-    // `MCPClientManager` reads `mcpProtocolVersion` for non-stdio configs only,
-    // so a pin on a stdio server proves nothing about the negotiated era.
-    const pinOnly = withLocalMrtrElicitationCapability({
-      command: "node",
-      args: ["server.js"],
-      mcpProtocolVersion: "2026-07-28",
-    } as never) as { capabilities?: Record<string, unknown> };
-    expect(pinOnly.capabilities?.elicitation).toBeUndefined();
-
-    const withList = withLocalMrtrElicitationCapability({
-      command: "node",
-      args: ["server.js"],
-      supportedProtocolVersions: modern,
-    } as never) as { capabilities?: Record<string, unknown> };
-    expect(withList.capabilities?.elicitation).toEqual({ form: {}, url: {} });
-  });
-
-  it("stays form-only on an unknown pin", () => {
-    const config = withLocalMrtrElicitationCapability({
-      url: new URL("https://example.test/mcp"),
-      mcpProtocolVersion: "2099-01-01",
-    } as never) as { capabilities?: Record<string, unknown> };
-    expect(config.capabilities?.elicitation).toBeUndefined();
+  it("declares both modes in the modern-era overlay, whatever the config", () => {
+    // The overlay is unconditional config-side — the SDK applies it iff the
+    // era lands modern, which covers the case the old pre-connect predicate
+    // could not: an unpinned Client-default connection that auto-negotiates
+    // onto 2026-07-28.
+    for (const config of [
+      { url: new URL("https://example.test/mcp") },
+      { url: new URL("https://example.test/mcp"), mcpProtocolVersion: "2026-07-28" },
+      { url: new URL("https://example.test/mcp"), supportedProtocolVersions: ["2026-07-28", "2025-11-25"] },
+      { command: "node", args: ["server.js"] },
+    ]) {
+      const out = withLocalMrtrElicitationCapability(config as never) as EraShaped;
+      expect(out.eraCapabilities?.modern?.elicitation).toEqual({
+        form: {},
+        url: {},
+      });
+      // The BASE set is untouched: a legacy landing keeps its conservative
+      // connect-time declaration (form-only via the collector gate).
+      expect(out.capabilities?.elicitation).toBeUndefined();
+    }
   });
 
   it("leaves an exact client capability set untouched", () => {
     // A host profile pins exactly what that host advertises; widening it would
-    // defeat the point of the pin.
+    // defeat the point of the pin. (The SDK also ignores `eraCapabilities`
+    // for exact sets — this keeps the config itself clean.)
     const exact = { elicitation: {} };
     const config = withLocalMrtrElicitationCapability({
       url: new URL("https://example.test/mcp"),
-      supportedProtocolVersions: modern,
       clientCapabilities: exact,
-    } as never) as {
-      clientCapabilities?: Record<string, unknown>;
-      capabilities?: Record<string, unknown>;
-    };
+    } as never) as EraShaped & { clientCapabilities?: Record<string, unknown> };
     expect(config.clientCapabilities).toBe(exact);
-    expect(config.capabilities?.elicitation).toBeUndefined();
+    expect(config.eraCapabilities).toBeUndefined();
   });
 
-  it("preserves other declared capabilities", () => {
+  it("preserves other base capabilities and other overlay keys", () => {
     const config = withLocalMrtrElicitationCapability({
       url: new URL("https://example.test/mcp"),
-      supportedProtocolVersions: modern,
       capabilities: { roots: { listChanged: true } },
-    } as never) as { capabilities?: Record<string, unknown> };
+      eraCapabilities: { modern: { sampling: {} } },
+    } as never) as EraShaped;
     expect(config.capabilities?.roots).toEqual({ listChanged: true });
-    expect(config.capabilities?.elicitation).toEqual({ form: {}, url: {} });
+    expect(config.eraCapabilities?.modern?.sampling).toEqual({});
+    expect(config.eraCapabilities?.modern?.elicitation).toEqual({
+      form: {},
+      url: {},
+    });
+  });
+
+  it("keeps caller-specified elicitation members over the defaults", () => {
+    const config = withLocalMrtrElicitationCapability({
+      url: new URL("https://example.test/mcp"),
+      eraCapabilities: {
+        modern: { elicitation: { form: { applyDefaults: true } } },
+      },
+    } as never) as EraShaped;
+    expect(config.eraCapabilities?.modern?.elicitation).toEqual({
+      form: { applyDefaults: true },
+      url: {},
+    });
   });
 });

@@ -61,6 +61,10 @@
  */
 
 import type { ServerCapabilities } from "@modelcontextprotocol/client";
+// The ONE module allowed to read the tasks extension capability. Importing the
+// predicate rather than re-deriving it here is what keeps the "treat the
+// extension as absent on 2025-11-25" rule in a single place.
+import { serverDeclaresTasksExtension } from "./tasks-dispatch.js";
 
 /**
  * `_meta` key carrying the JSON-RPC id of the `subscriptions/listen` request a
@@ -82,21 +86,29 @@ export const ResourceListChangedNotificationMethod =
   "notifications/resources/list_changed" as const;
 export const ResourceUpdatedNotificationMethod =
   "notifications/resources/updated" as const;
+/**
+ * Optional `io.modelcontextprotocol/tasks` (SEP-2663) task notification.
+ *
+ * OPTIONAL is load-bearing: the extension never requires a server to send
+ * these, so this channel may only ever *reduce* polling. Correctness always
+ * rests on `tasks/get`, and every path below falls back to it.
+ */
+export const TasksNotificationMethod = "notifications/tasks" as const;
 
 /** The notification kinds this coordinator owns. */
 export type SubscriptionNotificationKind =
   | "tools-list-changed"
   | "prompts-list-changed"
   | "resources-list-changed"
-  | "resource-updated";
+  | "resource-updated"
+  | "tasks";
 
-const METHOD_TO_KIND: Readonly<
-  Record<string, SubscriptionNotificationKind>
-> = {
+const METHOD_TO_KIND: Readonly<Record<string, SubscriptionNotificationKind>> = {
   [ToolListChangedNotificationMethod]: "tools-list-changed",
   [PromptListChangedNotificationMethod]: "prompts-list-changed",
   [ResourceListChangedNotificationMethod]: "resources-list-changed",
   [ResourceUpdatedNotificationMethod]: "resource-updated",
+  [TasksNotificationMethod]: "tasks",
 };
 
 /** Product-level, era-neutral statement of what the user wants to observe. */
@@ -106,14 +118,30 @@ export interface DesiredSubscriptionInterests {
   resourcesListChanged?: boolean;
   /** Resource URIs to watch for `notifications/resources/updated`. */
   resourceUris?: readonly string[];
+  /**
+   * Task IDs to watch for `notifications/tasks`. Extension wire only. The
+   * caller is expected to drop terminal and dismissed IDs, which changes the
+   * filter and therefore closes and re-opens the stream — a listen filter is
+   * immutable for the life of a subscription.
+   */
+  taskIds?: readonly string[];
 }
 
-/** Wire-shaped filter (structurally the SDK's `SubscriptionFilter`). */
+/**
+ * Wire-shaped filter (structurally the SDK's `SubscriptionFilter`, plus the
+ * extension's `taskIds`).
+ *
+ * `taskIds` is not in upstream's `SubscriptionFilter` type, and does not need
+ * to be: `Client.listen` puts the filter on the wire verbatim
+ * (`notifications: filter`, client `dist/index.mjs:3711`) with no outbound
+ * schema strip, so the extension member survives the round trip.
+ */
 export interface SubscriptionFilterShape {
   toolsListChanged?: boolean;
   promptsListChanged?: boolean;
   resourcesListChanged?: boolean;
   resourceSubscriptions?: string[];
+  taskIds?: string[];
 }
 
 export type SubscriptionStreamStatus =
@@ -144,7 +172,18 @@ export interface SubscriptionInterestRejection {
   interest: SubscriptionNotificationKind;
   /** Present for `resource-updated` rejections. */
   uri?: string;
-  reason: "capability-not-advertised" | "not-acknowledged-by-server";
+  /** Present for `tasks` rejections. */
+  taskId?: string;
+  reason:
+    | "capability-not-advertised"
+    | "not-acknowledged-by-server"
+    /**
+     * A task-filtered listen was wanted but this connection cannot put the
+     * extension's per-request eligibility declaration on the listen request,
+     * so sending it would earn `-32003`. Polling continues; the handle is not
+     * lost. See `tasks-ext-listen-meta.ts`.
+     */
+    | "tasks-declaration-unavailable";
 }
 
 /** A notification the coordinator refused to deliver, kept for the debugger. */
@@ -195,6 +234,8 @@ export interface DeliveredSubscriptionNotification {
   params?: Record<string, unknown>;
   /** Resource URI for `resource-updated`. */
   uri?: string;
+  /** Task id for `tasks`. The params themselves are the full `DetailedTask`. */
+  taskId?: string;
   subscriptionId?: string;
   localSubscriptionId: string;
   at: number;
@@ -231,6 +272,19 @@ export interface SubscriptionClientPort {
   subscribeResource(params: { uri: string }): Promise<unknown>;
   unsubscribeResource(params: { uri: string }): Promise<unknown>;
   listen?(filter: SubscriptionFilterShape): Promise<McpSubscriptionHandle>;
+  /**
+   * Opens a listen stream carrying the `io.modelcontextprotocol/tasks`
+   * per-request eligibility declaration.
+   *
+   * Separate from {@link listen} on purpose. A task-filtered listen without
+   * the declaration MUST be answered `-32003` (`tasks.md:797-799`), so a
+   * connection that cannot declare must not send one at all — it drops the
+   * `taskIds` selection, records it as `tasks-declaration-unavailable`, and
+   * keeps polling. Absent method ⇒ exactly that.
+   */
+  listenWithTasksDeclaration?(
+    filter: SubscriptionFilterShape
+  ): Promise<McpSubscriptionHandle>;
 }
 
 /** Bounded re-listen policy. Re-listen, never resume: no replay exists. */
@@ -283,7 +337,17 @@ function cloneFilter(filter: SubscriptionFilterShape): SubscriptionFilterShape {
     ...(filter.resourceSubscriptions
       ? { resourceSubscriptions: [...filter.resourceSubscriptions] }
       : {}),
+    ...(filter.taskIds ? { taskIds: [...filter.taskIds] } : {}),
   };
+}
+
+/**
+ * Order-insensitive comparison key for the extension's `taskIds` member.
+ * `JSON.stringify` rather than a joined string: task IDs are opaque handles
+ * that may contain any character, so no separator is safe to assume.
+ */
+function taskIds(filter: SubscriptionFilterShape): string {
+  return JSON.stringify([...(filter.taskIds ?? [])].sort());
 }
 
 function filtersEqual(
@@ -296,7 +360,8 @@ function filtersEqual(
     Boolean(a.toolsListChanged) === Boolean(b.toolsListChanged) &&
     Boolean(a.promptsListChanged) === Boolean(b.promptsListChanged) &&
     Boolean(a.resourcesListChanged) === Boolean(b.resourcesListChanged) &&
-    uris(a) === uris(b)
+    uris(a) === uris(b) &&
+    taskIds(a) === taskIds(b)
   );
 }
 
@@ -305,28 +370,64 @@ function isEmptyFilter(filter: SubscriptionFilterShape): boolean {
     !filter.toolsListChanged &&
     !filter.promptsListChanged &&
     !filter.resourcesListChanged &&
-    (filter.resourceSubscriptions?.length ?? 0) === 0
+    (filter.resourceSubscriptions?.length ?? 0) === 0 &&
+    (filter.taskIds?.length ?? 0) === 0
   );
 }
 
+/**
+ * Whether a notification is one this stream may deliver.
+ *
+ * Takes BOTH filters, and for the identifier-bearing kinds requires membership
+ * in each. The acknowledged filter alone is not enough: `markAcknowledged`
+ * stores whatever the server honored, and `diffAcknowledgement` only records
+ * what the server *dropped* — an id the server ADDED survives into
+ * `acknowledgedFilter` unchallenged. Checking that filter by itself therefore
+ * let a server deliver a task or resource we never asked about simply by
+ * claiming it had honored it, which is the exact inverse of the isolation this
+ * predicate exists to enforce.
+ *
+ * Requested-only would be wrong too: the server must not send a type it never
+ * agreed to honor. The safe set is the intersection, so an id has to have been
+ * both asked for and agreed to.
+ *
+ * The boolean list-changed kinds stay on the acknowledged filter. They carry no
+ * identifier, so there is no cross-surface state to leak — the worst case is a
+ * redundant list refetch.
+ */
 function filterAllows(
-  filter: SubscriptionFilterShape,
+  acknowledged: SubscriptionFilterShape,
+  requested: SubscriptionFilterShape,
   kind: SubscriptionNotificationKind,
-  uri?: string
+  uri?: string,
+  taskId?: string
 ): boolean {
   switch (kind) {
     case "tools-list-changed":
-      return Boolean(filter.toolsListChanged);
+      return Boolean(acknowledged.toolsListChanged);
     case "prompts-list-changed":
-      return Boolean(filter.promptsListChanged);
+      return Boolean(acknowledged.promptsListChanged);
     case "resources-list-changed":
-      return Boolean(filter.resourcesListChanged);
+      return Boolean(acknowledged.resourcesListChanged);
     case "resource-updated": {
-      const uris = filter.resourceSubscriptions ?? [];
       // A server may legitimately stamp an update for a URI whose exact form
       // differs only by template expansion; MCPJam does not guess — the URI
-      // must be one we asked for.
-      return uri !== undefined && uris.includes(uri);
+      // must be one we asked for AND one the server agreed to.
+      return (
+        uri !== undefined &&
+        (acknowledged.resourceSubscriptions ?? []).includes(uri) &&
+        (requested.resourceSubscriptions ?? []).includes(uri)
+      );
+    }
+    case "tasks": {
+      // Same rule as resources, and it matters more here: task ids are
+      // bearer-like handles, so accepting an unrequested one lets a server push
+      // state for a task belonging to another surface.
+      return (
+        taskId !== undefined &&
+        (acknowledged.taskIds ?? []).includes(taskId) &&
+        (requested.taskIds ?? []).includes(taskId)
+      );
     }
   }
 }
@@ -334,10 +435,20 @@ function filterAllows(
 /**
  * Splits desired interests into the filter we will actually request and the
  * selections the server does not advertise (shown as rejected, not dropped).
+ *
+ * `era` is required for `taskIds` and for nothing else. The extension
+ * capability is a plain capability read with no era in it, so on 2025-11-25 a
+ * server that advertises `io.modelcontextprotocol/tasks` still reads as
+ * declaring it — while SEP-2663 says that on that revision the extension MUST
+ * be treated as absent. Omitting `era` therefore means "not a modern
+ * connection" and drops `taskIds`: the legacy wire must never carry an
+ * extension-only filter member, and defaulting the other way would put one
+ * there for every caller that has not been updated.
  */
 export function resolveRequestedFilter(
   desired: DesiredSubscriptionInterests,
-  capabilities: ServerCapabilities | undefined
+  capabilities: ServerCapabilities | undefined,
+  era?: "legacy" | "modern"
 ): {
   requested: SubscriptionFilterShape;
   rejected: SubscriptionInterestRejection[];
@@ -398,6 +509,28 @@ export function resolveRequestedFilter(
     }
   }
 
+  const wantedTaskIds = [...new Set(desired.taskIds ?? [])];
+  if (wantedTaskIds.length > 0) {
+    // Gated on the tasks EXTENSION capability, not on any `notifications`
+    // sub-flag: SEP-2663 has no per-operation capability flags, so declaring
+    // the extension declares the whole method set — including this channel.
+    // `serverDeclaresTasksExtension` is the one place allowed to READ that
+    // capability, but it is a pure capability read: the "treat the extension as
+    // absent on 2025-11-25" rule is the `era` term next to it, not something
+    // the predicate knows.
+    if (era === "modern" && serverDeclaresTasksExtension(capabilities)) {
+      requested.taskIds = wantedTaskIds;
+    } else {
+      for (const taskId of wantedTaskIds) {
+        rejected.push({
+          interest: "tasks",
+          taskId,
+          reason: "capability-not-advertised",
+        });
+      }
+    }
+  }
+
   return { requested, rejected };
 }
 
@@ -433,8 +566,35 @@ export function diffAcknowledgement(
       });
     }
   }
+  // An unacknowledged task ID is precisely the case the polling fallback
+  // exists for: the handle is still ours and still pollable, we just will not
+  // be told about it. Recording it keeps that visible instead of leaving the
+  // caller to assume a stream it never got.
+  const ackedTasks = new Set(acknowledged.taskIds ?? []);
+  for (const taskId of requested.taskIds ?? []) {
+    if (!ackedTasks.has(taskId)) {
+      rejected.push({
+        interest: "tasks",
+        taskId,
+        reason: "not-acknowledged-by-server",
+      });
+    }
+  }
   return rejected;
 }
+
+/**
+ * How many stream records a coordinator keeps.
+ *
+ * The history exists for the debugger, so it has to be long enough to show a
+ * reconnect sequence and the failures around it — but it cannot be unbounded.
+ * Task interest is revised as handles are created and reach terminal states,
+ * and every revision either opens a stream or records an unopened one, so on a
+ * long-lived connection this map grows with the SESSION rather than with
+ * anything the user can see. The oldest terminal records are the ones nobody
+ * is reading.
+ */
+const MAX_RETAINED_STREAMS = 50;
 
 let coordinatorSeq = 0;
 
@@ -455,7 +615,10 @@ export class SubscriptionCoordinator {
   private handlersRegistered = false;
   private disposed = false;
   private streamSeq = 0;
-  /** Local id → record. Insertion-ordered; closed records are retained. */
+  /**
+   * Local id → record. Insertion-ordered; closed records are retained up to
+   * {@link MAX_RETAINED_STREAMS}.
+   */
   private readonly streams = new Map<string, SubscriptionStreamRecord>();
   /** Local id → live handle (modern only). */
   private readonly handles = new Map<string, McpSubscriptionHandle>();
@@ -468,6 +631,8 @@ export class SubscriptionCoordinator {
   private readonly rejections: RejectedSubscriptionNotification[] = [];
   /** Legacy adapter bookkeeping: URIs currently `resources/subscribe`d. */
   private legacySubscribedUris = new Set<string>();
+  /** Signature of the last all-rejected interest set recorded, for dedupe. */
+  private lastUnopenedSignature?: string;
 
   constructor(options: SubscriptionCoordinatorOptions) {
     this.options = options;
@@ -497,6 +662,13 @@ export class SubscriptionCoordinator {
       ...(this.desired.resourceUris
         ? { resourceUris: [...this.desired.resourceUris] }
         : {}),
+      // Copied for the same reason as `resourceUris`, and more urgently: the
+      // docs tell callers to drop terminal ids from this list, so a caller
+      // mutating the array it got back would silently change the desired
+      // filter with no reconcile — and `filtersEqual` would then compare the
+      // mutated array against itself and report "unchanged", leaving the live
+      // stream watching the wrong set.
+      ...(this.desired.taskIds ? { taskIds: [...this.desired.taskIds] } : {}),
     };
   }
 
@@ -531,7 +703,10 @@ export class SubscriptionCoordinator {
   ): Promise<void> {
     this.desired = {
       ...desired,
-      ...(desired.resourceUris ? { resourceUris: [...desired.resourceUris] } : {}),
+      ...(desired.resourceUris
+        ? { resourceUris: [...desired.resourceUris] }
+        : {}),
+      ...(desired.taskIds ? { taskIds: [...desired.taskIds] } : {}),
     };
     await this.enqueue(() => this.reconcile());
   }
@@ -581,8 +756,8 @@ export class SubscriptionCoordinator {
     return typeof raw === "string"
       ? raw
       : typeof raw === "number"
-        ? String(raw)
-        : undefined;
+      ? String(raw)
+      : undefined;
   }
 
   /**
@@ -634,8 +809,7 @@ export class SubscriptionCoordinator {
       return;
     }
     const acknowledged =
-      ((notification.params?.notifications as SubscriptionFilterShape) ??
-        undefined) ?? {};
+      (notification.params?.notifications as SubscriptionFilterShape) ?? {};
     this.markAcknowledged(stream, acknowledged);
   }
 
@@ -699,10 +873,19 @@ export class SubscriptionCoordinator {
       typeof notification.params?.uri === "string"
         ? (notification.params.uri as string)
         : undefined;
-    // Enforce against the ACKNOWLEDGED filter: the server must not send a type
-    // it did not agree to honor.
-    const effective = stream.acknowledgedFilter ?? stream.requestedFilter;
-    if (!filterAllows(effective, kind, uri)) {
+    // `notifications/tasks` carries a full `DetailedTask`, so the task id is a
+    // top-level member of the params rather than a nested envelope field.
+    const taskId =
+      typeof notification.params?.taskId === "string"
+        ? (notification.params.taskId as string)
+        : undefined;
+    // Enforce against BOTH: the server must not send a type it did not agree to
+    // honor, and must not deliver an identifier we never asked about even if it
+    // claims to have honored one.
+    const acknowledged = stream.acknowledgedFilter ?? stream.requestedFilter;
+    if (
+      !filterAllows(acknowledged, stream.requestedFilter, kind, uri, taskId)
+    ) {
       this.recordRejection({
         method: notification.method,
         subscriptionId,
@@ -718,6 +901,7 @@ export class SubscriptionCoordinator {
       kind,
       params: notification.params,
       ...(uri ? { uri } : {}),
+      ...(taskId ? { taskId } : {}),
       ...(subscriptionId ? { subscriptionId } : {}),
       localSubscriptionId: stream.localId,
       at,
@@ -747,15 +931,60 @@ export class SubscriptionCoordinator {
   // ---- Reconciliation ----
 
   private async reconcile(): Promise<void> {
-    const { requested, rejected } = resolveRequestedFilter(
-      this.desired,
-      this.client.getServerCapabilities()
-    );
+    const resolved = this.resolveFilter();
     if (this.era === "legacy") {
-      await this.reconcileLegacy(requested, rejected);
+      await this.reconcileLegacy(resolved.requested, resolved.rejected);
       return;
     }
-    await this.reconcileModern(requested, rejected);
+    await this.reconcileModern(resolved.requested, resolved.rejected);
+  }
+
+  /**
+   * `resolveRequestedFilter` plus the tasks-declaration gate.
+   *
+   * Kept together so every caller — reconcile and re-listen alike — sees the
+   * same filter. A re-listen that skipped the gate would resurrect a `taskIds`
+   * selection this connection cannot declare and earn a `-32003` on reconnect.
+   */
+  private resolveFilter(): {
+    requested: SubscriptionFilterShape;
+    rejected: SubscriptionInterestRejection[];
+  } {
+    const { requested, rejected } = resolveRequestedFilter(
+      this.desired,
+      this.client.getServerCapabilities(),
+      this.era
+    );
+    const wantedTaskIds = requested.taskIds ?? [];
+    if (wantedTaskIds.length === 0) return { requested, rejected };
+
+    if (typeof this.client.listenWithTasksDeclaration === "function") {
+      return { requested, rejected };
+    }
+
+    // Drop rather than downgrade: an undeclared task-filtered listen is a
+    // guaranteed -32003, and the polling fallback loses nothing but latency.
+    //
+    // Only ONE reason is reachable here. `resolveRequestedFilter` was given the
+    // era, so a legacy connection already had its `taskIds` rejected as
+    // `capability-not-advertised` — whatever the server advertised, because on
+    // 2025-11-25 the extension MUST be treated as absent. So a non-empty
+    // `taskIds` at this point means a modern connection, and the only thing
+    // still missing is the declaration seam.
+    const { taskIds: _dropped, ...withoutTasks } = requested;
+    return {
+      requested: withoutTasks,
+      rejected: [
+        ...rejected,
+        ...wantedTaskIds.map(
+          (taskId): SubscriptionInterestRejection => ({
+            interest: "tasks",
+            taskId,
+            reason: "tasks-declaration-unavailable",
+          })
+        ),
+      ],
+    };
   }
 
   // ---- Legacy adapter: list-changed handlers + per-URI subscribe RPCs ----
@@ -774,7 +1003,10 @@ export class SubscriptionCoordinator {
         await this.safeUnsubscribe(uri);
       }
       this.legacySubscribedUris.clear();
-      if (current && (current.status === "active" || current.status === "opening")) {
+      if (
+        current &&
+        (current.status === "active" || current.status === "opening")
+      ) {
         current.status = "cancelled";
         current.closeReason = "local-abort";
         current.closedAt = this.now();
@@ -844,8 +1076,37 @@ export class SubscriptionCoordinator {
       reconnectAttempt: 0,
     };
     this.streams.set(stream.localId, stream);
+    this.pruneStreams();
     this.currentLocalId = stream.localId;
     this.emitStream(stream);
+  }
+
+  /**
+   * Trims the retained stream history to {@link MAX_RETAINED_STREAMS}, oldest
+   * first.
+   *
+   * Only records nothing else still points at are eligible: the intended
+   * stream, anything holding a live handle, and anything not yet closed stay
+   * regardless of age, because dropping one of those would strand the handle
+   * and break `resolveStream`'s id binding. In practice the eviction set is
+   * exactly the old terminal records — closed streams and the synthetic
+   * never-opened ones — which is what actually accumulates.
+   */
+  private pruneStreams(): void {
+    if (this.streams.size <= MAX_RETAINED_STREAMS) return;
+    for (const [localId, stream] of this.streams) {
+      if (this.streams.size <= MAX_RETAINED_STREAMS) return;
+      if (localId === this.currentLocalId) continue;
+      if (this.handles.has(localId)) continue;
+      if (stream.status === "opening" || stream.status === "active") continue;
+      this.streams.delete(localId);
+      // The id index outlives nothing: a subscription id that maps to a record
+      // we no longer hold would make `resolveStream` return `undefined` for a
+      // KNOWN id instead of falling through to the unbound-stream adoption.
+      if (stream.mcpSubscriptionId !== undefined) {
+        this.idIndex.delete(stream.mcpSubscriptionId);
+      }
+    }
   }
 
   private async safeUnsubscribe(uri: string): Promise<void> {
@@ -867,14 +1128,21 @@ export class SubscriptionCoordinator {
       ? this.streams.get(this.currentLocalId)
       : undefined;
     const live =
-      current &&
-      (current.status === "opening" || current.status === "active")
+      current && (current.status === "opening" || current.status === "active")
         ? current
         : undefined;
 
     if (this.disposed || isEmptyFilter(requested)) {
       if (live) await this.closeStream(live, "local-abort", "cancelled");
       this.currentLocalId = undefined;
+      // A filter that is empty ONLY because task ids were dropped is not the
+      // same as wanting nothing. Without a record here, the reason we fell
+      // back to polling would vanish and the caller would have no way to
+      // explain why notifications never arrived.
+      if (!this.disposed && rejected.length > 0) {
+        this.recordUnopenedStream(rejected);
+      }
+
       return;
     }
 
@@ -886,12 +1154,59 @@ export class SubscriptionCoordinator {
     await this.openModernStream(requested, rejected, 0);
   }
 
+  /**
+   * Records a stream that was never opened, purely so its rejected interests
+   * remain visible through `getStreams()`. Terminal on arrival — there is no
+   * transport behind it.
+   */
+  private recordUnopenedStream(
+    rejected: SubscriptionInterestRejection[]
+  ): void {
+    // Deduplicated. A caller that periodically reasserts an interest set which
+    // is entirely unavailable would otherwise accumulate one synthetic failure
+    // record — and one `onStreamChange` — per reassertion, turning a single
+    // steady condition into an ever-growing list of distinct "failures".
+    const signature = JSON.stringify(
+      [...rejected]
+        .map(
+          (r) => `${r.interest}|${r.uri ?? ""}|${r.taskId ?? ""}|${r.reason}`
+        )
+        .sort()
+    );
+    if (this.lastUnopenedSignature === signature) return;
+    this.lastUnopenedSignature = signature;
+
+    const at = this.now();
+    const stream: SubscriptionStreamRecord = {
+      localId: `${this.instanceId}-unopened-${++this.streamSeq}`,
+      era: "modern",
+      requestedFilter: {},
+      rejectedInterests: [...rejected],
+      status: "error",
+      closeReason: "error",
+      error:
+        "No subscription was opened: every requested interest was rejected.",
+      openedAt: at,
+      closedAt: at,
+      reconnectAttempt: 0,
+    };
+    this.streams.set(stream.localId, stream);
+    this.pruneStreams();
+    this.emitStream(stream);
+  }
+
   private async openModernStream(
     requested: SubscriptionFilterShape,
     rejected: SubscriptionInterestRejection[],
     reconnectAttempt: number
   ): Promise<void> {
-    const listen = this.client.listen?.bind(this.client);
+    // A filter carrying `taskIds` MUST go out declared. `resolveFilter` has
+    // already dropped `taskIds` when no declared opener exists, so reaching
+    // here with them means the opener is present.
+    const listen =
+      (requested.taskIds?.length ?? 0) > 0
+        ? this.client.listenWithTasksDeclaration?.bind(this.client)
+        : this.client.listen?.bind(this.client);
     const stream: SubscriptionStreamRecord = {
       localId: `${this.instanceId}-listen-${++this.streamSeq}`,
       era: "modern",
@@ -902,14 +1217,21 @@ export class SubscriptionCoordinator {
       reconnectAttempt,
     };
     this.streams.set(stream.localId, stream);
+    this.pruneStreams();
     this.currentLocalId = stream.localId;
+    // A real open clears the memo, so if the interest set later becomes
+    // entirely unavailable again that IS recorded rather than suppressed.
+    this.lastUnopenedSignature = undefined;
     this.emitStream(stream);
 
     if (!listen) {
       stream.status = "error";
       stream.closeReason = "error";
       stream.error =
-        "The connected client does not implement subscriptions/listen.";
+        (requested.taskIds?.length ?? 0) > 0
+          ? "The connected client cannot open a task-filtered subscriptions/listen " +
+            "with the io.modelcontextprotocol/tasks declaration; task state will be polled."
+          : "The connected client does not implement subscriptions/listen.";
       stream.closedAt = this.now();
       this.emitStream(stream);
       return;
@@ -921,10 +1243,25 @@ export class SubscriptionCoordinator {
     try {
       handle = await listen(cloneFilter(requested));
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      stream.closedAt = this.now();
+      stream.error = message;
+      if (reconnectAttempt > 0) {
+        // A re-listen whose open fails is still the SAME unexpected remote
+        // loss, not a new kind of failure: a server that is still down when
+        // the backoff expires is precisely what the attempt budget is for.
+        // Ending the sequence on the first failed re-open would spend one
+        // attempt and report `error`, hiding the loss the user is chasing.
+        stream.status = "remote-closed";
+        stream.closeReason = "remote";
+        this.emitStream(stream);
+        if (this.currentLocalId === stream.localId) {
+          void this.enqueue(() => this.scheduleRelisten(stream));
+        }
+        return;
+      }
       stream.status = "error";
       stream.closeReason = "error";
-      stream.error = error instanceof Error ? error.message : String(error);
-      stream.closedAt = this.now();
       this.emitStream(stream);
       return;
     }
@@ -987,10 +1324,7 @@ export class SubscriptionCoordinator {
   ): Promise<void> {
     if (this.disposed) return;
     if (this.currentLocalId !== closed.localId) return;
-    const { requested, rejected } = resolveRequestedFilter(
-      this.desired,
-      this.client.getServerCapabilities()
-    );
+    const { requested, rejected } = this.resolveFilter();
     if (isEmptyFilter(requested)) return;
     const attempt = closed.reconnectAttempt + 1;
     if (attempt > this.reconnectPolicy.maxAttempts) return;
