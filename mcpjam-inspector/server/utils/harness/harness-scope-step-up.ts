@@ -4,10 +4,13 @@ import {
   type ScopeStepUpToolError,
 } from "../insufficient-scope-step-up.js";
 import { logger } from "../logger.js";
-export { HARNESS_SCOPE_STEP_UP_CORRELATION_HEADER } from "./mcp-config.js";
+export {
+  HARNESS_SCOPE_STEP_UP_CORRELATION_HEADER,
+  HARNESS_SCOPE_STEP_UP_CORRELATION_QUERY,
+} from "./mcp-config.js";
 
 /**
- * Opaque per-turn header carried by every generated harness `.mcp.json` entry.
+ * Opaque per-turn marker carried by every generated harness `.mcp.json` entry.
  * It correlates a proxy-observed tool failure back to exactly one live chat
  * stream without broadcasting by server id.
  */

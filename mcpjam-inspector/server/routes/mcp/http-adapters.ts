@@ -14,6 +14,7 @@ import { getRequestLogger } from "../../utils/request-logger";
 import { verifyHarnessProxyToken } from "../../utils/harness/harness-proxy-token";
 import {
   HARNESS_SCOPE_STEP_UP_CORRELATION_HEADER,
+  HARNESS_SCOPE_STEP_UP_CORRELATION_QUERY,
   normalizeHarnessScopeStepUpCorrelationId,
   publishHarnessScopeStepUpFromToolError,
 } from "../../utils/harness/harness-scope-step-up.js";
@@ -177,8 +178,14 @@ function readProxyToken(c: any): string | undefined {
 }
 
 function readScopeStepUpCorrelationId(c: any): string | undefined {
-  return normalizeHarnessScopeStepUpCorrelationId(
+  const fromHeader = normalizeHarnessScopeStepUpCorrelationId(
     c.req.header(HARNESS_SCOPE_STEP_UP_CORRELATION_HEADER),
+  );
+  if (fromHeader) return fromHeader;
+  return normalizeHarnessScopeStepUpCorrelationId(
+    new URL(c.req.url).searchParams.get(
+      HARNESS_SCOPE_STEP_UP_CORRELATION_QUERY,
+    ),
   );
 }
 

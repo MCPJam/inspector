@@ -20,6 +20,7 @@ import { signTestProxyToken } from "../../../utils/harness/__tests__/sign-test-t
 import {
   __resetHarnessScopeStepUpForTests,
   HARNESS_SCOPE_STEP_UP_CORRELATION_HEADER,
+  HARNESS_SCOPE_STEP_UP_CORRELATION_QUERY,
   subscribeHarnessScopeStepUp,
 } from "../../../utils/harness/harness-scope-step-up.js";
 
@@ -101,7 +102,7 @@ describe("adapter-http harness proxy-token (validate-when-present)", () => {
     expect(res.status).toBe(401);
   });
 
-  it("forwards an actionable direct-POST tool error to only its harness turn", async () => {
+  it("forwards an actionable direct-POST tool error from the URL correlation", async () => {
     const challenge = new InsufficientScopeError({
       requiredScope: "bench:write",
       resourceMetadataUrl: new URL(
@@ -112,19 +113,21 @@ describe("adapter-http harness proxy-token (validate-when-present)", () => {
     const received: unknown[] = [];
     subscribeHarnessScopeStepUp(TURN_ID, (info) => received.push(info));
 
-    const res = await app.request("/api/mcp/adapter-http/test-server", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        [HARNESS_SCOPE_STEP_UP_CORRELATION_HEADER]: TURN_ID,
+    const res = await app.request(
+      `/api/mcp/adapter-http/test-server?${HARNESS_SCOPE_STEP_UP_CORRELATION_QUERY}=${TURN_ID}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: "call-1",
+          method: "tools/call",
+          params: { name: "bench_write", arguments: { value: "x" } },
+        }),
       },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: "call-1",
-        method: "tools/call",
-        params: { name: "bench_write", arguments: { value: "x" } },
-      }),
-    });
+    );
 
     const { status, data } = await expectJson(res);
     expect(status).toBe(200);
@@ -149,12 +152,9 @@ describe("adapter-http harness proxy-token (validate-when-present)", () => {
     subscribeHarnessScopeStepUp(TURN_ID, (info) => received.push(info));
 
     const streamResponse = await app.request(
-      "/api/mcp/adapter-http/test-server",
+      `/api/mcp/adapter-http/test-server?${HARNESS_SCOPE_STEP_UP_CORRELATION_QUERY}=${TURN_ID}`,
       {
         method: "GET",
-        headers: {
-          [HARNESS_SCOPE_STEP_UP_CORRELATION_HEADER]: TURN_ID,
-        },
       },
     );
     const reader = streamResponse.body!.getReader();
