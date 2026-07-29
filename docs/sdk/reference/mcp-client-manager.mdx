@@ -188,6 +188,7 @@ The second argument to the constructor accepts an `MCPClientManagerOptions` obje
 | `negotiationOutcomeLogger` | `NegotiationOutcomeLogger` | Optional callback invoked once per connection attempt with the negotiation outcome. Use it to forward telemetry to your own analytics pipeline. The manager guards it — a throw inside the callback never disturbs the connection. |
 | `cacheEventLogger` | `CacheEventLogger` | Optional callback for response-cache hit events. |
 | `rpcLogger` | `RpcLogger` | Optional callback for raw RPC request/response pairs. |
+| `httpLogger` | `HttpExchangeLogger` | Optional callback for HTTP exchange headers. A separate channel from `rpcLogger`: receives the request and response header sets for each HTTP exchange, with credential headers redacted at capture. HTTP transports only; stdio servers emit nothing. See [HTTP exchange logging](#http-exchange-logging) below. |
 | `retryPolicy` | `RetryPolicy` | Default retry policy for retryable manager operations. |
 | `lazyConnect` | `boolean` | When `true`, defers the actual transport connection until the first RPC call. |
 
