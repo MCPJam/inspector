@@ -33,13 +33,38 @@ import {
   applyToolCallStepUp,
   resetToolCallStepUp,
 } from "@/state/oauth-orchestrator";
-import type { ServerWithName } from "@/state/app-types";
+import type { AppState, ServerWithName } from "@/state/app-types";
 
 /**
  * Servers with a step-up in flight. Module-level so the dedup holds ACROSS
  * surfaces; keyed by server name, cleared when the attempt settles.
  */
 const inFlight = new Set<string>();
+
+/**
+ * Resolve a stream/app event's server identifier against the same local and
+ * project-scoped maps on every scope-step-up delivery path.
+ */
+export function resolveScopeStepUpServer(
+  appState: AppState | null | undefined,
+  input: {
+    serverId: string;
+    serverName?: string;
+    projectId?: string | null;
+  },
+): ServerWithName | undefined {
+  if (!appState) return undefined;
+  const activeProject =
+    appState.projects[input.projectId ?? appState.activeProjectId];
+  return (
+    (input.serverName
+      ? (appState.servers[input.serverName] ??
+        activeProject?.servers[input.serverName])
+      : undefined) ??
+    appState.servers[input.serverId] ??
+    activeProject?.servers[input.serverId]
+  );
+}
 
 /** Test seam: no production caller should need this. */
 export function __resetScopeStepUpInFlightForTests(): void {

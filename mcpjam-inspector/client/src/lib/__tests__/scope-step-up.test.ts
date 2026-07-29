@@ -13,10 +13,11 @@ import {
   driveScopeStepUpFromChallenge,
   driveScopeStepUpFromError,
   resetScopeStepUp,
+  resolveScopeStepUpServer,
   runWithScopeStepUp,
 } from "../scope-step-up";
 import { McpRequestError } from "@/lib/apis/insufficient-scope";
-import type { ServerWithName } from "@/state/app-types";
+import type { AppState, ServerWithName } from "@/state/app-types";
 
 const applyToolCallStepUp = vi.fn();
 const resetToolCallStepUp = vi.fn();
@@ -138,5 +139,30 @@ describe("scope step-up lifecycle", () => {
     // The in-flight guard must clear so a later attempt is still possible.
     driveScopeStepUpFromError(server, insufficientScopeError());
     expect(applyToolCallStepUp).toHaveBeenCalledTimes(2);
+  });
+
+  it("resolves the same server from runtime and active-project maps", () => {
+    const runtimeServer = {
+      name: "runtime",
+    } as unknown as ServerWithName;
+    const projectServer = {
+      name: "auth-bench",
+    } as unknown as ServerWithName;
+    const appState = {
+      activeProjectId: "project-1",
+      servers: { runtime: runtimeServer },
+      projects: {
+        "project-1": {
+          servers: { "auth-bench": projectServer },
+        },
+      },
+    } as unknown as AppState;
+
+    expect(
+      resolveScopeStepUpServer(appState, { serverId: "runtime" }),
+    ).toBe(runtimeServer);
+    expect(
+      resolveScopeStepUpServer(appState, { serverId: "auth-bench" }),
+    ).toBe(projectServer);
   });
 });

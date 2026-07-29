@@ -504,15 +504,19 @@ export async function runHarnessTurn(
     // Harness MCP-server tools run out of process through the generated
     // `.mcp.json`. The proxy publishes an actionable scope challenge under
     // this turn's opaque id; bridge it into the same transient stream part the
-    // in-process tool wrapper emits. Correlation by turn (not server) prevents
-    // concurrent chats using the same MCP server from receiving each other's
-    // authorization request.
+    // in-process tool wrapper emits. Exact turn correlation handles concurrent
+    // chats; the registry's server fallback is used only when one live turn can
+    // possibly receive a stale resumed-session event.
     const stopScopeStepUpBridge =
       harnessMcpProxy?.plane === "local-mcp"
-        ? subscribeHarnessScopeStepUp(turnId, (info) => {
-            if (!selectedServers?.includes(info.serverId)) return;
-            emitInsufficientScopeChunk(writer, undefined, info);
-          })
+        ? subscribeHarnessScopeStepUp(
+            turnId,
+            (info) => {
+              if (!selectedServers?.includes(info.serverId)) return;
+              emitInsufficientScopeChunk(writer, undefined, info);
+            },
+            selectedServers,
+          )
         : () => {};
 
     // Hoisted so the catch can close an open text block if the turn fails

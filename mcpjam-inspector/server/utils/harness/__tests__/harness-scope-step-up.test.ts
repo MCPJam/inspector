@@ -7,6 +7,7 @@ import {
   publishHarnessScopeStepUpFromToolError,
   subscribeHarnessScopeStepUp,
 } from "../harness-scope-step-up.js";
+import { inspectorCommandBus } from "../../../services/inspector-command-bus.js";
 
 const TURN_A = "11111111-1111-4111-8111-111111111111";
 const TURN_B = "22222222-2222-4222-8222-222222222222";
@@ -19,8 +20,10 @@ describe("harness scope step-up correlation", () => {
   it("isolates concurrent turns and ignores late events after teardown", () => {
     const listenerA = vi.fn();
     const listenerB = vi.fn();
-    const stopA = subscribeHarnessScopeStepUp(TURN_A, listenerA);
-    subscribeHarnessScopeStepUp(TURN_B, listenerB);
+    const stopA = subscribeHarnessScopeStepUp(TURN_A, listenerA, [
+      "auth-bench",
+    ]);
+    subscribeHarnessScopeStepUp(TURN_B, listenerB, ["other-server"]);
 
     publishHarnessScopeStepUp(TURN_A, {
       serverId: "auth-bench",
@@ -35,6 +38,63 @@ describe("harness scope step-up correlation", () => {
       requiredScope: "bench:write",
     });
     expect(listenerA).toHaveBeenCalledTimes(1);
+  });
+
+  it("recovers a missing or stale turn id for one live turn on the server", () => {
+    const listener = vi.fn();
+    subscribeHarnessScopeStepUp(TURN_A, listener, ["auth-bench"]);
+
+    publishHarnessScopeStepUp(undefined, {
+      serverId: "auth-bench",
+      requiredScope: "bench:write",
+    });
+    publishHarnessScopeStepUp(TURN_B, {
+      serverId: "AUTH-BENCH",
+      requiredScope: "bench:write",
+    });
+
+    expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  it("also notifies the active local Inspector client", () => {
+    const sendEvent = vi.fn();
+    const unregister = inspectorCommandBus.registerSubscriber({
+      clientId: "scope-step-up-test",
+      send: vi.fn(),
+      sendEvent,
+      supersede: vi.fn(),
+      close: vi.fn(),
+    });
+    subscribeHarnessScopeStepUp(TURN_A, vi.fn(), ["auth-bench"]);
+
+    publishHarnessScopeStepUp(undefined, {
+      serverId: "auth-bench",
+      toolCallId: "call-1",
+      requiredScope: "bench:write",
+    });
+
+    expect(sendEvent).toHaveBeenCalledWith({
+      kind: "scope_step_up",
+      serverId: "auth-bench",
+      toolCallId: "call-1",
+      requiredScope: "bench:write",
+    });
+    unregister();
+  });
+
+  it("drops an uncorrelated challenge when two live turns share the server", () => {
+    const listenerA = vi.fn();
+    const listenerB = vi.fn();
+    subscribeHarnessScopeStepUp(TURN_A, listenerA, ["auth-bench"]);
+    subscribeHarnessScopeStepUp(TURN_B, listenerB, ["auth-bench"]);
+
+    publishHarnessScopeStepUp(undefined, {
+      serverId: "auth-bench",
+      requiredScope: "bench:write",
+    });
+
+    expect(listenerA).not.toHaveBeenCalled();
+    expect(listenerB).not.toHaveBeenCalled();
   });
 
   it("shares the branded-error extraction and actionable-field gate", () => {
