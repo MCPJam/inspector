@@ -14,6 +14,7 @@
  */
 
 import type { MCPClientManager } from "@mcpjam/sdk";
+import { isCreateTaskExtResult, isUnknownTaskError } from "@mcpjam/sdk";
 
 type Manager = InstanceType<typeof MCPClientManager>;
 
@@ -22,10 +23,13 @@ export const TASK_UNKNOWN_OR_EXPIRED = "task-unknown-or-expired";
 /**
  * JSON-RPC -32602 on a task read means the server no longer knows the task
  * (expired, purged after cancellation, or forgotten with the session).
+ *
+ * Re-exported from the SDK rather than reimplemented. The local copy read only
+ * `error.code`, while the SDK's also unwraps a nested `error.error.code` — so a
+ * wrapped JSON-RPC error was a dead handle to the `await` driver and a live one
+ * to these routes. Two answers to "is this handle gone?" is one too many.
  */
-export function isUnknownTaskError(error: unknown): boolean {
-  return (error as { code?: unknown } | null)?.code === -32602;
-}
+export { isUnknownTaskError };
 
 /**
  * A tasks request the connection cannot serve — no tasks wire, a method that
@@ -258,10 +262,12 @@ export function detectCreatedTask(
     | undefined;
 
   if (wire === "extension") {
-    // Flat `resultType: "task"` only. The nested legacy shape is NOT accepted
-    // here: on the extension wire it would be a nonconforming payload, and
-    // classifying it as a task creation would hide that from the debugger.
-    return body?.resultType === "task"
+    // Flat `resultType: "task"` only, via the SDK's guard so the seam and this
+    // route cannot drift on what counts as a creation. The nested legacy shape
+    // is NOT accepted here: on the extension wire it would be a nonconforming
+    // payload, and classifying it as a task creation would hide that from the
+    // debugger.
+    return isCreateTaskExtResult(body)
       ? {
           status: "task_created",
           wire,

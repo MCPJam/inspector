@@ -35,19 +35,34 @@ export type SubscriptionInterestKindView =
   | "tools-list-changed"
   | "prompts-list-changed"
   | "resources-list-changed"
-  | "resource-updated";
+  | "resource-updated"
+  /** `notifications/tasks` (SEP-2663 extension; modern era only). */
+  | "tasks";
 
 export interface SubscriptionFilterView {
   toolsListChanged?: boolean;
   promptsListChanged?: boolean;
   resourcesListChanged?: boolean;
   resourceSubscriptions?: string[];
+  /** Task ids watched for `notifications/tasks` (extension wire only). */
+  taskIds?: string[];
 }
 
 export interface SubscriptionInterestRejectionView {
   interest: SubscriptionInterestKindView;
   uri?: string;
-  reason: "capability-not-advertised" | "not-acknowledged-by-server";
+  /** Present for `tasks` rejections. */
+  taskId?: string;
+  reason:
+    | "capability-not-advertised"
+    | "not-acknowledged-by-server"
+    /**
+     * A task-filtered listen was wanted but this connection cannot put the
+     * extension's per-request eligibility declaration on the listen request
+     * (sending it undeclared would earn `-32003`). Polling continues — a
+     * notification is only ever a poll-now hint, so the handle is not lost.
+     */
+    | "tasks-declaration-unavailable";
 }
 
 export interface SubscriptionStreamView {
@@ -72,12 +87,20 @@ export interface SubscriptionDesiredInterestsView {
   promptsListChanged?: boolean;
   resourcesListChanged?: boolean;
   resourceUris?: string[];
+  /**
+   * Task ids to watch for `notifications/tasks`. Extension wire only; the
+   * Tasks tab owns this member (tracked ∧ not dismissed ∧ not terminal) while
+   * the Subscriptions panel owns the rest — writers merge, never replace.
+   */
+  taskIds?: string[];
 }
 
 export interface SubscriptionNotificationView {
   method: string;
   kind: SubscriptionInterestKindView;
   uri?: string;
+  /** Task id for `tasks` notifications — the poll-now hint's target. */
+  taskId?: string;
   subscriptionId?: string;
   localSubscriptionId: string;
   at: number;
@@ -101,6 +124,13 @@ export interface SubscriptionServerStateView {
   era: SubscriptionEra;
   /** Whether the connection can open a modern `subscriptions/listen` stream. */
   supportsListen: boolean;
+  /**
+   * Whether a task-filtered listen can go out DECLARED (extension tasks wire ∧
+   * listen ∧ the declaration seam). When false, posting `taskIds` records a
+   * `tasks-declaration-unavailable` rejection and polling stays the only
+   * channel — which is always sufficient.
+   */
+  supportsTaskDeclaredListen: boolean;
   desired: SubscriptionDesiredInterestsView;
   streams: SubscriptionStreamView[];
   notifications: SubscriptionNotificationView[];
