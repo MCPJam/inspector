@@ -452,13 +452,19 @@ export function HostBuilderViewRedesigned({
     <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
       <div className="@container relative shrink-0 border-b border-border/40 px-4 py-2.5 md:px-8">
         {/* 3-column grid mirrors the Servers view (ConnectViewHeader): the
-            centered selector and the right-side controls each own a column so
-            they can never overlap. The switch is gated on the header's own
-            width via `@container` (not the viewport) so it stacks correctly
-            when the sidebar is open and the container — not the window — is
-            narrow. Below the container breakpoint it stacks into one column. */}
+            client selector, the centered view selector, and the right-side
+            controls each own a column so they can never overlap. The switch is
+            gated on the header's own width via `@container` (not the viewport)
+            so it stacks correctly when the sidebar is open and the container —
+            not the window — is narrow. Below the container breakpoint it
+            stacks into one column. */}
         <div className="flex flex-col items-stretch gap-2 @2xl:grid @2xl:grid-cols-[1fr_auto_1fr] @2xl:items-center @2xl:gap-3">
-          <div className="hidden @2xl:block" aria-hidden="true" />
+          {/* Client selector lives in the nav row rather than floating over
+              the canvas, so Add client / the switcher sit on the same line as
+              Servers|Client instead of overlapping the flow. */}
+          <div className="flex min-w-0 justify-center @2xl:justify-start">
+            <HostCanvasSelector projectId={projectId} activeHostId={hostId} />
+          </div>
           <div className="flex min-w-0 justify-center">
             <ViewModeSelector
               value="host"
@@ -567,19 +573,6 @@ export function HostBuilderViewRedesigned({
                     shellStyle={canvasShellStyle}
                   />
                 </ReactFlowProvider>
-                {/* Client selector pinned top-left over the canvas (fixed
-                    position — it does not pan/zoom with the flow) so it stays
-                    accessible without blocking the canvas content. The
-                    header's GlobalHostBar hides itself while this canvas is
-                    open. */}
-                <div className="pointer-events-none absolute inset-x-0 top-5 z-20 flex justify-start pl-5 pr-2">
-                  <div className="pointer-events-auto">
-                    <HostCanvasSelector
-                      projectId={projectId}
-                      activeHostId={hostId}
-                    />
-                  </div>
-                </div>
               </div>
             </ResizablePanel>
             {focusState.open ? (

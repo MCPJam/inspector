@@ -67,7 +67,10 @@ export type InspectorCommandType =
   | "resetChat"
   | "stopGeneration"
   | "readResource"
-  | "getPrompt";
+  | "getPrompt"
+  | "openOauthServerConfig"
+  | "advanceOauthFlow"
+  | "resetOauthFlow";
 
 export const KNOWN_INSPECTOR_COMMAND_TYPES = [
   "navigate",
@@ -111,6 +114,9 @@ export const KNOWN_INSPECTOR_COMMAND_TYPES = [
   "stopGeneration",
   "readResource",
   "getPrompt",
+  "openOauthServerConfig",
+  "advanceOauthFlow",
+  "resetOauthFlow",
 ] as const satisfies readonly InspectorCommandType[];
 
 export interface InspectorCommandError {
@@ -702,6 +708,51 @@ export interface GetPromptInspectorCommand {
   timeoutMs?: number;
 }
 
+/**
+ * OAuth-debugger commands, handled by `OAuthFlowTab` while `/oauth-flow` is
+ * mounted.
+ *
+ * Two deliberate postures:
+ * - **Prefill-over-commit for config.** `openOauthServerConfig` only opens the
+ *   Configure-Server modal for the USER to finish and save. The payload can
+ *   never carry credentials (no clientId/clientSecret fields — the no-env /
+ *   no-headers precedent): the human types those into the modal.
+ * - **One protocol step per dispatch.** `advanceOauthFlow` mirrors the
+ *   Continue button exactly: it runs a single state-machine step. At the
+ *   authorization step it opens the human sign-in popup instead of advancing —
+ *   consent always happens on the third party's page, never in the agent.
+ */
+export interface OpenOauthServerConfigInspectorCommand {
+  id: string;
+  type: "openOauthServerConfig";
+  payload: {
+    /**
+     * Server to configure. Omitted → edit the selected server (or open blank
+     * when none is selected). A name matching a DIFFERENT existing server is
+     * rejected — select it first instead of silently editing it.
+     */
+    serverName?: string;
+    serverUrl?: string;
+    registrationMode?: "preregistered" | "dcr" | "cimd";
+  };
+  timeoutMs?: number;
+}
+
+export interface AdvanceOauthFlowInspectorCommand {
+  id: string;
+  type: "advanceOauthFlow";
+  payload?: Record<string, never>;
+  timeoutMs?: number;
+}
+
+/** Reset the debugger's local flow state (re-runnable; nothing external). */
+export interface ResetOauthFlowInspectorCommand {
+  id: string;
+  type: "resetOauthFlow";
+  payload?: Record<string, never>;
+  timeoutMs?: number;
+}
+
 export type InspectorCommand =
   | NavigateInspectorCommand
   | SelectServerInspectorCommand
@@ -743,7 +794,10 @@ export type InspectorCommand =
   | ResetChatInspectorCommand
   | StopGenerationInspectorCommand
   | ReadResourceInspectorCommand
-  | GetPromptInspectorCommand;
+  | GetPromptInspectorCommand
+  | OpenOauthServerConfigInspectorCommand
+  | AdvanceOauthFlowInspectorCommand
+  | ResetOauthFlowInspectorCommand;
 
 export interface InspectorCommandSuccessResponse {
   id: string;
