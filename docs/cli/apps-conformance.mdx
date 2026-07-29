@@ -202,6 +202,23 @@ mcpjam resources read \
   --format json
 ```
 
+## Pinning the protocol version
+
+Use `--protocol-version` to run the conformance suite against a specific MCP protocol era. This is useful when you want to verify that your server's MCP Apps surface behaves identically on a modern connection as it does on a legacy one.
+
+```bash
+mcpjam apps conformance \
+  --url https://your-server.com/mcp \
+  --protocol-version 2026-07-28
+```
+
+**Constraints:**
+
+- Only known protocol versions are accepted (for example `2026-07-28`, `2025-11-25`). An unknown value exits with a usage error.
+- Only HTTP targets (`--url`) are supported. Passing `--protocol-version` with a stdio target (`--command`) exits with a usage error.
+
+Without `--protocol-version`, the runner uses the default legacy connection (no pin).
+
 ## Shared connection flags
 
 `apps conformance` uses the same shared target flags as the rest of the CLI:
@@ -210,6 +227,7 @@ mcpjam resources read \
 |------|-------------|
 | `--transport <transport>` | Explicit transport type (`http` or `stdio`) |
 | `--url <url>` | HTTP MCP server URL |
+| `--protocol-version <version>` | Pin the MCP protocol version for the conformance connection (HTTP targets only) |
 | `--access-token <token>` | Bearer access token |
 | `--oauth-access-token <token>` | OAuth bearer access token |
 | `--refresh-token <token>` | OAuth refresh token |
