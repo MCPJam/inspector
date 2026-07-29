@@ -2235,7 +2235,18 @@ export class MCPClientManager {
 
       state.client = client;
       state.transport = transport;
-      state.initializedClientCapabilities = clientCapabilities;
+      // Post-negotiation re-resolution: now that the era is known, a
+      // modern-classified connection applies the config's
+      // `eraCapabilities.modern` overlay. The stored snapshot is the set
+      // actually in force, so the MRTR mode allowlist
+      // (`negotiatedElicitationCapability`) and `getServerConnectionInfo`
+      // report what the wire really carries.
+      state.initializedClientCapabilities = this.applyModernEraCapabilities(
+        serverId,
+        config,
+        upstreamClient,
+        clientCapabilities
+      );
       state.connectPromise = undefined;
       this.liveClientStates.set(serverId, state);
 
@@ -2928,9 +2939,20 @@ export class MCPClientManager {
     }
   }
 
+  /**
+   * Resolves the client capabilities to advertise to `serverId`.
+   *
+   * `era` is the connection's classified era when it is actually KNOWN —
+   * `undefined` at connect time (pre-negotiation), `"modern"` once the
+   * connection has landed on a 2026-era revision. With `era: "modern"` the
+   * config's `eraCapabilities.modern` overlay is merged over the base set;
+   * see {@link BaseServerConfig.eraCapabilities} for the seam's contract and
+   * {@link applyModernEraCapabilities} for when the re-resolution runs.
+   */
   private buildCapabilities(
     serverId: string,
-    config: MCPServerConfig
+    config: MCPServerConfig,
+    era?: "modern"
   ): ClientCapabilityOptions {
     // Advertise `elicitation` when EITHER a legacy elicitation handler OR a
     // modern MRTR input collector is registered — a 2026-07-28 server checks
@@ -2943,6 +2965,9 @@ export class MCPClientManager {
       this.elicitationManager.hasHandler(serverId) ||
       this.mrtrInputCollectors.has(serverId);
     if (config.clientCapabilities) {
+      // An EXACT set is advertised verbatim (minus the elicitation gate) on
+      // every era — the `eraCapabilities` overlay is deliberately ignored,
+      // since widening a pinned declaration would defeat the pin.
       const exactCapabilities = normalizeClientCapabilities(
         config.clientCapabilities
       ) as Record<string, unknown>;
@@ -2954,14 +2979,84 @@ export class MCPClientManager {
       return exactCapabilities as ClientCapabilityOptions;
     }
 
-    const configuredCapabilities = mergeClientCapabilities(
+    let configuredCapabilities = mergeClientCapabilities(
       this.defaultCapabilities,
       config.capabilities
     );
 
+    if (era === "modern" && config.eraCapabilities?.modern) {
+      // The overlay's `elicitation` key gets the strict advertise=enforce
+      // gate (dropped without a registered fulfiller) rather than the
+      // merge-style leniency `config.capabilities` historically has — it is
+      // a new field, so there is no wire behavior to preserve.
+      const overlay = {
+        ...config.eraCapabilities.modern,
+      } as Record<string, unknown>;
+      if (!hasElicitationHandler) {
+        delete overlay.elicitation;
+      }
+      configuredCapabilities = mergeClientCapabilities(
+        configuredCapabilities,
+        overlay as ClientCapabilityOptions
+      );
+    }
+
     return applyRuntimeClientCapabilities(configuredCapabilities, {
       elicitation: hasElicitationHandler,
     });
+  }
+
+  /**
+   * The post-negotiation capability re-resolution seam: applies the config's
+   * `eraCapabilities.modern` overlay once the connection has classified as
+   * 2026-era, and returns the set actually in force for this connection.
+   *
+   * Runs exactly once per connection, between transport establishment and the
+   * live-state publication in {@link performConnection} — so no caller-visible
+   * request ever races the widening, and the declaration is stable for the
+   * connection's lifetime (MRTR rounds of one logical operation always see one
+   * consistent set). Connections that land on a 2025 era — where capabilities
+   * were already fixed by the `initialize` handshake — return the connect-time
+   * set unchanged, as does any config without an overlay (byte-identical wire
+   * behavior to before this seam existed).
+   *
+   * ## Why this writes the upstream client's private `_capabilities`
+   *
+   * The upstream `Client` stamps the per-request `_meta` envelope from
+   * `this._capabilities` LIVE at request time (`_outboundMetaEnvelope`), so
+   * updating the field is sufficient for every subsequent frame. The public
+   * `registerCapabilities()` refuses to run once a transport is attached —
+   * a guard written for the legacy era, where the declaration really was
+   * frozen by `initialize`, that upstream has not yet relaxed for the modern
+   * era, where the wire re-declares per request and negotiation (which is
+   * what makes the era knowable) cannot complete until after the transport
+   * attaches. Until upstream exposes a post-negotiation capability update,
+   * this assignment is the seam — same pattern as the tasks era-gate shadow
+   * (`tasks-ext-era-gate.ts`). The inbound elicitation mode checks
+   * (`getSupportedElicitationModes`) also read `_capabilities` live, so
+   * client-side enforcement and the wire stay in lockstep.
+   */
+  private applyModernEraCapabilities(
+    serverId: string,
+    config: MCPServerConfig,
+    upstreamClient: Client,
+    connectCapabilities: ClientCapabilityOptions
+  ): ClientCapabilityOptions {
+    if (!config.eraCapabilities?.modern || config.clientCapabilities) {
+      return connectCapabilities;
+    }
+    const negotiatedVersion = upstreamClient.getNegotiatedProtocolVersion?.();
+    if (
+      negotiatedVersion === undefined ||
+      !isStatelessProtocolVersion(negotiatedVersion)
+    ) {
+      return connectCapabilities;
+    }
+    const widened = this.buildCapabilities(serverId, config, "modern");
+    (
+      upstreamClient as unknown as { _capabilities: ClientCapabilityOptions }
+    )._capabilities = widened;
+    return widened;
   }
 
   /**
