@@ -359,9 +359,14 @@ export type OAuthSpecRevision = string;
  * Two arms, because the evidence comes in two genuinely different strengths
  * and collapsing them would overstate the weaker one:
  *
- *   `constant`   — a literal revision string exists in the client's source.
- *                  `revisions` is the EXACT set it implements (clients are
- *                  often multi-revision: MCPJam ships four state machines).
+ *   `constant`   — a literal revision is STATED, either in the client's source
+ *                  or in its official vendor documentation. `revisions` is the
+ *                  EXACT set it implements (clients are often multi-revision:
+ *                  MCPJam ships four state machines, and Cline inherits five
+ *                  from its bundled SDK). Vendor docs count here because a
+ *                  vendor naming the revision is an exact claim, not an
+ *                  inference from observed shape — which is the only
+ *                  distinction this discriminant is drawing.
  *   `behavioral` — no revision constant exists anywhere in the client (this
  *                  is the real state of VS Code), so the revision is inferred
  *                  from observed OAuth shape — e.g. an RFC 9728 PRM ladder
