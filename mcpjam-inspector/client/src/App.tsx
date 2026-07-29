@@ -1327,6 +1327,9 @@ export function TasksRoute() {
         serverConfig={selectedMCPConfig}
         serverName={appState.selectedServer}
         isActive
+        connectionStatus={
+          appState.servers[appState.selectedServer]?.connectionStatus
+        }
       />
     </div>
   );
