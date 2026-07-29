@@ -156,7 +156,7 @@ describe("ServerDetailModal", () => {
     mockUseFeatureFlagEnabled.mockReturnValue(false);
     mockUseQuery.mockReturnValue(undefined);
     mockSetProjectServerConfig.mockResolvedValue({
-      projectId: "project_123",
+      projectId: "jh7abc123def456ghi789jk",
       serverIds: [],
       overrides: {},
     });
@@ -165,6 +165,45 @@ describe("ServerDetailModal", () => {
     mockListTools.mockResolvedValue({
       tools: [],
       toolsMetadata: {},
+    });
+  });
+
+  // Regression: local mode used to hand this modal the LOCAL project id (a
+  // `crypto.randomUUID()` value). `projectServerConfig:getConfig` validates
+  // `projectId` as `v.id("projects")`, so the query rejected during render
+  // and — with no route ErrorBoundary — replaced the entire page with the
+  // router error screen the moment you opened a server's Config.
+  it.each([
+    ["a local UUID project id", "d0b25b78-8daa-429e-b7cc-9af4716cbe84"],
+    ["a local_ placeholder project id", "local_pending"],
+    ["no project id", null],
+  ])("skips the project-server-config query for %s", (_label, projectId) => {
+    render(<ServerDetailModal {...defaultProps} projectId={projectId} />);
+
+    const configCalls = mockUseQuery.mock.calls.filter(
+      ([name]) => name === "projectServerConfig:getConfig"
+    );
+    expect(configCalls.length).toBeGreaterThan(0);
+    for (const [, args] of configCalls) {
+      expect(args).toBe("skip");
+    }
+  });
+
+  it("queries the project-server config for a real Convex project id", () => {
+    render(
+      <ServerDetailModal
+        {...defaultProps}
+        projectId="jh7abc123def456ghi789jk"
+        hostedServerId="server_123"
+      />
+    );
+
+    const configCalls = mockUseQuery.mock.calls.filter(
+      ([name]) => name === "projectServerConfig:getConfig"
+    );
+    expect(configCalls.length).toBeGreaterThan(0);
+    expect(configCalls.at(-1)?.[1]).toEqual({
+      projectId: "jh7abc123def456ghi789jk",
     });
   });
 
@@ -303,7 +342,7 @@ describe("ServerDetailModal", () => {
     installPointerCaptureMocks();
     mockUseFeatureFlagEnabled.mockReturnValue(true);
     mockUseQuery.mockReturnValue({
-      projectId: "project_123",
+      projectId: "jh7abc123def456ghi789jk",
       serverIds: [],
       overrides: {},
     });
@@ -311,7 +350,7 @@ describe("ServerDetailModal", () => {
     render(
       <ServerDetailModal
         {...defaultProps}
-        projectId="project_123"
+        projectId="jh7abc123def456ghi789jk"
         hostedServerId="server_123"
         hostDefaultMcpProtocolVersion="2026-07-28"
       />
@@ -326,12 +365,12 @@ describe("ServerDetailModal", () => {
 
     await user.click(protocolSelect);
     await user.click(
-      await screen.findByRole("option", { name: "Latest (2025-11-25)" })
+      await screen.findByRole("option", { name: "November (2025-11-25)" })
     );
 
     await waitFor(() => {
       expect(mockSetProjectServerConfig).toHaveBeenCalledWith({
-        projectId: "project_123",
+        projectId: "jh7abc123def456ghi789jk",
         input: {
           serverIds: ["server_123"],
           overrides: {
@@ -349,7 +388,7 @@ describe("ServerDetailModal", () => {
     installPointerCaptureMocks();
     mockUseFeatureFlagEnabled.mockReturnValue(true);
     let projectServerConfig = {
-      projectId: "project_123",
+      projectId: "jh7abc123def456ghi789jk",
       serverIds: [] as string[],
       overrides: {},
     };
@@ -358,7 +397,7 @@ describe("ServerDetailModal", () => {
     const renderModal = () => (
       <ServerDetailModal
         {...defaultProps}
-        projectId="project_123"
+        projectId="jh7abc123def456ghi789jk"
         hostedServerId="server_123"
         hostDefaultMcpProtocolVersion="2026-07-28"
       />
@@ -373,12 +412,12 @@ describe("ServerDetailModal", () => {
 
     await user.click(hostDefaultSelect);
     await user.click(
-      await screen.findByRole("option", { name: "Latest (2025-11-25)" })
+      await screen.findByRole("option", { name: "November (2025-11-25)" })
     );
 
     await waitFor(() => {
       expect(mockSetProjectServerConfig).toHaveBeenCalledWith({
-        projectId: "project_123",
+        projectId: "jh7abc123def456ghi789jk",
         input: {
           serverIds: ["server_123"],
           overrides: {
@@ -391,13 +430,13 @@ describe("ServerDetailModal", () => {
     });
     await waitFor(() => {
       expect(
-        screen.queryByRole("option", { name: "Latest (2025-11-25)" })
+        screen.queryByRole("option", { name: "November (2025-11-25)" })
       ).not.toBeInTheDocument();
     });
     unmount();
 
     projectServerConfig = {
-      projectId: "project_123",
+      projectId: "jh7abc123def456ghi789jk",
       serverIds: ["server_123"],
       overrides: {
         server_123: {
@@ -413,7 +452,7 @@ describe("ServerDetailModal", () => {
     );
 
     const latestSelect = getProtocolVersionCombobox();
-    expect(latestSelect).toHaveTextContent("Latest (2025-11-25)");
+    expect(latestSelect).toHaveTextContent("November (2025-11-25)");
 
     await user.click(latestSelect);
     await user.click(
@@ -422,7 +461,7 @@ describe("ServerDetailModal", () => {
 
     await waitFor(() => {
       expect(mockSetProjectServerConfig).toHaveBeenCalledWith({
-        projectId: "project_123",
+        projectId: "jh7abc123def456ghi789jk",
         input: {
           serverIds: [],
           overrides: {},
@@ -436,7 +475,7 @@ describe("ServerDetailModal", () => {
     installPointerCaptureMocks();
     mockUseFeatureFlagEnabled.mockReturnValue(true);
     mockUseQuery.mockReturnValue({
-      projectId: "project_123",
+      projectId: "jh7abc123def456ghi789jk",
       serverIds: ["server_123"],
       overrides: {
         server_123: {
@@ -448,7 +487,7 @@ describe("ServerDetailModal", () => {
     render(
       <ServerDetailModal
         {...defaultProps}
-        projectId="project_123"
+        projectId="jh7abc123def456ghi789jk"
         hostedServerId="server_123"
         hostDefaultMcpProtocolVersion="2026-07-28"
       />
@@ -458,7 +497,7 @@ describe("ServerDetailModal", () => {
       screen.getByRole("button", { name: /connection overrides/i })
     );
     const protocolSelect = getProtocolVersionCombobox();
-    expect(protocolSelect).toHaveTextContent("Latest (2025-11-25)");
+    expect(protocolSelect).toHaveTextContent("November (2025-11-25)");
 
     await user.click(protocolSelect);
     await user.click(
@@ -467,7 +506,7 @@ describe("ServerDetailModal", () => {
 
     await waitFor(() => {
       expect(mockSetProjectServerConfig).toHaveBeenCalledWith({
-        projectId: "project_123",
+        projectId: "jh7abc123def456ghi789jk",
         input: {
           serverIds: ["server_123"],
           overrides: {},
@@ -697,7 +736,7 @@ describe("ServerDetailModal", () => {
   // preview use), NOT the raw ActiveMcpProfile context — otherwise a modal
   // rendered without an ActiveMcpProfileProvider (context undefined) would
   // save the 2025 default while the chip/host advertise 2026.
-  describe("bakes the Auto OAuth era against the effective wire pin at save", () => {
+  describe("preserves Auto OAuth intent independently of wire pins", () => {
     const renameAndSave = async (name = "test-server-renamed") => {
       const nameInput = screen.getByDisplayValue("test-server");
       fireEvent.change(nameInput, { target: { value: name } });
@@ -708,7 +747,7 @@ describe("ServerDetailModal", () => {
       fireEvent.submit(form!);
     };
 
-    it("saves the 2026 era from the host default when no per-server pin is set", async () => {
+    it("keeps Auto when the host default is pinned to 2026", async () => {
       const onSubmit = vi.fn().mockResolvedValue({
         ok: true,
         serverName: "test-server",
@@ -730,14 +769,14 @@ describe("ServerDetailModal", () => {
           expect.objectContaining({
             authMethod: "auto",
             useOAuth: true,
-            oauthProtocolMode: "2026-07-28",
+            oauthProtocolMode: "auto",
           }),
           "test-server"
         );
       });
     });
 
-    it("saves the current default era when the host is not 2026-pinned", async () => {
+    it("keeps Auto when the host is not pinned", async () => {
       const onSubmit = vi.fn().mockResolvedValue({
         ok: true,
         serverName: "test-server",
@@ -758,22 +797,22 @@ describe("ServerDetailModal", () => {
           expect.objectContaining({
             authMethod: "auto",
             useOAuth: true,
-            oauthProtocolMode: "2025-11-25",
+            oauthProtocolMode: "auto",
           }),
           "test-server"
         );
       });
     });
 
-    it("re-resolves to the 2026 era from a per-server override even when the host default is not 2026", async () => {
+    it("keeps Auto when a per-server wire override is pinned to 2026", async () => {
       const onSubmit = vi.fn().mockResolvedValue({
         ok: true,
         serverName: "test-server",
       });
-      // Per-server wire pin (project-layer override) is 2026 while the host
-      // default is unset — the override must win and bake the 2026 era.
+      // The per-server wire pin controls negotiation but must not replace the
+      // user's canonical OAuth Auto intent.
       mockUseQuery.mockReturnValue({
-        projectId: "project_123",
+        projectId: "jh7abc123def456ghi789jk",
         serverIds: ["server_123"],
         overrides: {
           server_123: { mcpProtocolVersionOverride: "2026-07-28" },
@@ -785,7 +824,7 @@ describe("ServerDetailModal", () => {
           {...defaultProps}
           server={createServer({ authMethod: "auto" })}
           onSubmit={onSubmit}
-          projectId="project_123"
+          projectId="jh7abc123def456ghi789jk"
           hostedServerId="server_123"
         />
       );
@@ -797,7 +836,7 @@ describe("ServerDetailModal", () => {
           expect.objectContaining({
             authMethod: "auto",
             useOAuth: true,
-            oauthProtocolMode: "2026-07-28",
+            oauthProtocolMode: "auto",
           }),
           "test-server"
         );

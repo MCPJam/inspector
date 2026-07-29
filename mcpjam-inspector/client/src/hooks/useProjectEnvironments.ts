@@ -20,6 +20,16 @@ export type ProjectEnvironmentSkillSelection = {
   skillIds: string[];
 };
 
+/**
+ * THE client mirror of a Project environment row. Every client surface
+ * (management route, suite picker, swarms) imports this one — do not add a
+ * second per-surface copy.
+ *
+ * This mirrors the CONVEX view shape (`environmentId`, `archivedAt`), which is
+ * what the reactive queries below return. It is deliberately NOT the SDK's
+ * `PlatformEnvironment`: that is the public `/api/v1` wire shape (`id`,
+ * `archived: boolean`) and the browser never speaks that API.
+ */
 export interface ProjectEnvironmentView {
   environmentId: string;
   projectId: string;
@@ -27,12 +37,16 @@ export interface ProjectEnvironmentView {
   description?: string;
   /** Exactly one host per environment. */
   hostId: string;
-  /** Resolved for display by the backend list/get queries (wire-tolerant). */
-  hostName?: string | null;
   /** Standalone server group scope; absent ⇒ the host's own server picks. */
   serverAttachmentId?: string | null;
   /** Additive standalone skill channel; absent ⇒ no env-channel skills. */
   skillSelection?: ProjectEnvironmentSkillSelection | null;
+  /**
+   * Pinned plugin VERSION ids. Read-only from the client today — the editor
+   * has no plugin-version picker yet, so edits must leave this field ABSENT
+   * (undefined = unchanged) rather than sending it and clearing the pins.
+   */
+  pluginVersionIds?: string[];
   /** Bumped on every effective edit; optimistic-concurrency token. */
   revision: number;
   /** Present ⇒ archived (hidden from pickers; launches fail fast). */
@@ -69,13 +83,38 @@ export function useProjectEnvironments(
   ) as ProjectEnvironmentView[] | undefined;
 }
 
-/** One environment, or `null` when not visible. */
+/**
+ * One environment, or `null` when not visible.
+ *
+ * `projectId` is REQUIRED by the backend query: it scopes the lookup, so an id
+ * from another of the caller's projects reads as not-found instead of leaking
+ * across projects. Passing only the environment id fails validation.
+ */
 export function useProjectEnvironment(
+  projectId: string | null,
   environmentId: string | null
 ): ProjectEnvironmentView | null | undefined {
+  // Same gate as the list hook: without the auth/db-ready checks the query can
+  // fire before the backend identity exists and fail rather than skip.
+  const { isAuthenticated } = useConvexAuth();
+  const isUserReady = useDbUserReady();
+  // Normalize BOTH ids for the same reason: a whitespace-padded value passes a
+  // bare truthiness check but would target a different (invalid) row.
+  const normalizedProjectId = projectId?.trim() || null;
+  const normalizedEnvironmentId = environmentId?.trim() || null;
+  const enableQuery =
+    isAuthenticated &&
+    isUserReady &&
+    shouldQueryProjectId(normalizedProjectId) &&
+    Boolean(normalizedEnvironmentId);
   return useQuery(
     "projectEnvironments:getEnvironment" as any,
-    environmentId ? ({ environmentId } as any) : "skip"
+    enableQuery
+      ? ({
+          projectId: normalizedProjectId,
+          environmentId: normalizedEnvironmentId,
+        } as any)
+      : "skip"
   ) as ProjectEnvironmentView | null | undefined;
 }
 
@@ -86,6 +125,12 @@ export function useCreateProjectEnvironment(): (args: {
   hostId: string;
   serverAttachmentId?: string | null;
   skillSelection?: ProjectEnvironmentSkillSelection | null;
+  /**
+   * Pinned plugin versions. No editor control ships this yet; the argument
+   * exists so the client mirror matches the backend contract. An empty array
+   * is REJECTED by the backend — omit the field to mean "no pins".
+   */
+  pluginVersionIds?: string[];
 }) => Promise<ProjectEnvironmentView> {
   return useMutation("projectEnvironments:createEnvironment" as any) as never;
 }
@@ -107,6 +152,14 @@ export function useUpdateProjectEnvironment(): (args: {
   hostId?: string;
   serverAttachmentId?: string | null;
   skillSelection?: ProjectEnvironmentSkillSelection | null;
+  /**
+   * Tri-state, like the other clearable fields: OMIT to leave the pins
+   * untouched, `null` to clear them. Since no editor can author pins yet,
+   * every current caller must omit it — sending `null` from a form that simply
+   * doesn't render the control would silently drop pins the user set through
+   * the API or CLI. An empty array is rejected by the backend.
+   */
+  pluginVersionIds?: string[] | null;
 }) => Promise<ProjectEnvironmentView> {
   return useMutation("projectEnvironments:updateEnvironment" as any) as never;
 }
@@ -123,6 +176,99 @@ export function useRestoreProjectEnvironment(): (args: {
   expectedRevision: number;
 }) => Promise<ProjectEnvironmentView> {
   return useMutation("projectEnvironments:restoreEnvironment" as any) as never;
+}
+
+// ── Environment-backed chatbox (Phase 5, live-follow) ───────────────────────
+
+/**
+ * Projection returned by `chatboxes:publishEnvironmentChatbox` /
+ * carried per-row by `chatboxes:listChatboxes` for env-backed rows. The
+ * chatbox is a POINTER to the environment (no host-config pin): editing the
+ * environment updates the published chatbox immediately, so there is no
+ * revision captured here on purpose.
+ */
+export interface EnvironmentChatboxSummary {
+  chatboxId: string;
+  environmentId: string;
+  name: string;
+  mode: "anyone_with_link" | "invited_only" | "project_members";
+  allowGuestAccess: boolean;
+  link: { token: string; path: string; url: string } | null;
+}
+
+/**
+ * The published chatbox for one environment, or `null` when unpublished.
+ * Reads the project chatbox list (which carries `environmentId` per row since
+ * mcpjam-backend #805) rather than a dedicated query — one-per-environment is
+ * backend-enforced, so `find` is exact. `undefined` while loading; a backend
+ * predating #805 never marks a row, which correctly reads as unpublished.
+ */
+export function useEnvironmentChatbox(
+  projectId: string | null,
+  environmentId: string | null
+): EnvironmentChatboxSummary | null | undefined {
+  const { isAuthenticated } = useConvexAuth();
+  const isUserReady = useDbUserReady();
+  const normalizedProjectId = projectId?.trim() || null;
+  const enableQuery =
+    isAuthenticated &&
+    isUserReady &&
+    shouldQueryProjectId(normalizedProjectId) &&
+    Boolean(environmentId?.trim());
+  const chatboxes = useQuery(
+    "chatboxes:listChatboxes" as any,
+    enableQuery ? ({ projectId: normalizedProjectId } as any) : "skip"
+  ) as
+    | Array<{
+        chatboxId: string;
+        environmentId?: string | null;
+        name: string;
+        mode: EnvironmentChatboxSummary["mode"];
+        allowGuestAccess: boolean;
+        link?: { token: string; path: string; url: string } | null;
+      }>
+    | undefined;
+  if (!enableQuery || chatboxes === undefined) return undefined;
+  const row = chatboxes.find(
+    (chatbox) => chatbox.environmentId === environmentId?.trim()
+  );
+  if (!row) return null;
+  return {
+    chatboxId: row.chatboxId,
+    environmentId: environmentId!.trim(),
+    name: row.name,
+    mode: row.mode,
+    allowGuestAccess: row.allowGuestAccess,
+    link: row.link ?? null,
+  };
+}
+
+/**
+ * Publish an environment as a chatbox (project-admin gated, idempotent:
+ * a second publish returns the existing row with `created: false`).
+ */
+export function usePublishEnvironmentChatbox(): (args: {
+  environmentId: string;
+}) => Promise<{
+  chatboxId: string;
+  environmentId: string;
+  name: string;
+  mode: EnvironmentChatboxSummary["mode"];
+  accessVersion: number;
+  link: { token: string; path: string; url: string } | null;
+  created: boolean;
+}> {
+  return useMutation("chatboxes:publishEnvironmentChatbox" as any) as never;
+}
+
+/**
+ * Unpublish: deletes the chatbox row + its cascade ONLY — the host and the
+ * environment both survive (backend-guarded).
+ */
+export function useUnpublishEnvironmentChatbox(): (args: {
+  environmentId: string;
+}) => Promise<{ deleted: boolean; chatboxId?: string }> {
+  return useMutation("chatboxes:unpublishEnvironmentChatbox" as any) as never;
 }
 
 /**

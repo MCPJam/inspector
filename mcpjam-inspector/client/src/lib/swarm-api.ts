@@ -90,21 +90,11 @@ export interface JourneySnapshotTarget {
 }
 
 /**
- * Hand-mirrored `projectEnvironments:listEnvironments` row subset the Swarms
- * surface needs (picker labels + compat-host recompute). `skillSelection` is
- * inline per backend #767 (no skill-group ref).
+ * NOTE: a project environment row is `ProjectEnvironmentView` from
+ * `@/hooks/useProjectEnvironments` — the ONE client mirror. Import it from
+ * there; do not redeclare the shape here. A second copy is how
+ * `pluginVersionIds` went missing and a phantom `hostName` appeared.
  */
-export interface EnvironmentView {
-  environmentId: string;
-  projectId: string;
-  name: string;
-  description?: string;
-  hostId: string;
-  serverAttachmentId?: string | null;
-  skillSelection?: { mode: "explicit"; skillIds: string[] } | null;
-  revision: number;
-  archivedAt?: number;
-}
 
 /**
  * Aggregated goal-completion judge rollup — backend `GoalScoreSummary`
@@ -409,6 +399,97 @@ export async function launchJourneyRun(
     );
   }
   return { runId };
+}
+
+// ── REST generation ─────────────────────────────────────────────────────────
+
+export interface SwarmGeneratedJourney {
+  name?: string;
+  goal: string;
+}
+
+export interface SwarmGeneratedPersona {
+  name: string;
+  role: string;
+  notes?: string;
+}
+
+/**
+ * Error thrown by {@link generateSwarmPersona} / {@link generateSwarmJourneys}
+ * carrying the backend HTTP status so the dialog can render a 429 quota
+ * message (or a 4xx validation reject) inline instead of a hard failure.
+ */
+export class SwarmGenerateError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "SwarmGenerateError";
+    this.status = status;
+  }
+}
+
+async function postGenerate<T>(
+  path: string,
+  body: unknown,
+  fallbackMessage: string,
+): Promise<T> {
+  const response = await authFetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  let parsed: unknown = undefined;
+  try {
+    parsed = await response.json();
+  } catch {
+    parsed = undefined;
+  }
+  if (!response.ok) {
+    const rawMessage =
+      parsed && typeof parsed === "object"
+        ? (parsed as { message?: unknown }).message
+        : undefined;
+    const message =
+      typeof rawMessage === "string" && rawMessage.length > 0
+        ? rawMessage
+        : `${fallbackMessage} (${response.status})`;
+    throw new SwarmGenerateError(response.status, message);
+  }
+  return parsed as T;
+}
+
+/**
+ * Generate one persona + its journey slate, grounded in a server group's
+ * captured tool inventory. Two model calls behind one backend request; the
+ * caller creates the actual persona/journey rows via the Convex mutations.
+ */
+export async function generateSwarmPersona(args: {
+  projectId: string;
+  serverAttachmentId: string;
+  journeyCount: number;
+}): Promise<{
+  persona: SwarmGeneratedPersona;
+  journeys: SwarmGeneratedJourney[];
+}> {
+  return postGenerate(
+    "/api/web/swarm/generate/persona",
+    args,
+    "Failed to generate persona",
+  );
+}
+
+/** Generate a journey slate for an existing persona (fields passed inline). */
+export async function generateSwarmJourneys(args: {
+  projectId: string;
+  serverAttachmentId: string;
+  journeyCount: number;
+  persona: SwarmGeneratedPersona;
+}): Promise<{ journeys: SwarmGeneratedJourney[] }> {
+  return postGenerate(
+    "/api/web/swarm/generate/journeys",
+    args,
+    "Failed to generate journeys",
+  );
 }
 
 /**

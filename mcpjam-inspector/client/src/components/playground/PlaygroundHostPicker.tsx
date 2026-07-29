@@ -2,6 +2,9 @@ import { useConvexAuth } from "convex/react";
 import { useHostList } from "@/hooks/useClients";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { MultiHostPicker } from "@/components/hosts/MultiHostPicker";
+import { PlaygroundEnvironmentSection } from "@/components/playground/PlaygroundEnvironmentSection";
+import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import type { PlaygroundEnvironmentState } from "@/hooks/use-playground-environment";
 
 interface PlaygroundHostPickerProps {
   /**
@@ -44,6 +47,18 @@ interface PlaygroundHostPickerProps {
    * scope between the promote write and the array read.
    */
   onPromoteLead: (hostId: string) => void;
+  /**
+   * Project Environments (Phase 2.5). When supplied AND the
+   * `project-environments-enabled` flag is on, an Environments section renders
+   * above the host controls.
+   *
+   * Environment mode is mutually exclusive with multi-host comparison in v1: an
+   * environment pins exactly one host, and comparison exists to run one turn
+   * against several. The owner of the state (PlaygroundMain) enforces the exit
+   * from comparison; this component only hides the comparison affordance while
+   * an environment is active so the two can't be driven into conflict.
+   */
+  environment?: PlaygroundEnvironmentState;
 }
 
 /**
@@ -63,6 +78,7 @@ export function PlaygroundHostPicker({
   onSelectedHostIdsChange,
   onMultiHostEnabledChange,
   onPromoteLead,
+  environment,
 }: PlaygroundHostPickerProps) {
   const { isAuthenticated } = useConvexAuth();
   const { hosts, isLoading } = useHostList({
@@ -70,19 +86,37 @@ export function PlaygroundHostPicker({
     projectId,
   });
   const [previewedHostId] = usePreviewedHostId(projectId);
+  const environmentsEnabled = useProjectEnvironmentsEnabled();
+  const showEnvironments = environmentsEnabled && !!environment;
+  const inEnvironmentMode = showEnvironments && environment.isEnvironmentMode;
 
   return (
-    <MultiHostPicker
-      projectId={projectId}
-      hosts={hosts}
-      currentHostId={previewedHostId}
-      selectedHostIds={selectedHostIds}
-      multiHostEnabled={multiHostEnabled}
-      onMultiHostEnabledChange={onMultiHostEnabledChange}
-      onSelectedHostIdsChange={onSelectedHostIdsChange}
-      onPromoteLead={onPromoteLead}
-      disabled={disabled || !projectId}
-      isLoading={isLoading}
-    />
+    <div className="flex min-w-0 flex-col gap-1.5">
+      {showEnvironments ? (
+        <PlaygroundEnvironmentSection
+          projectId={projectId}
+          environment={environment}
+          disabled={disabled}
+        />
+      ) : null}
+      {/* Comparison is hidden — not merely disabled — while an environment is
+          selected: an environment resolves to ONE host, so a comparison grid
+          driven from it would either duplicate the same column or silently run
+          hosts the environment never named. */}
+      {inEnvironmentMode ? null : (
+        <MultiHostPicker
+          projectId={projectId}
+          hosts={hosts}
+          currentHostId={previewedHostId}
+          selectedHostIds={selectedHostIds}
+          multiHostEnabled={multiHostEnabled}
+          onMultiHostEnabledChange={onMultiHostEnabledChange}
+          onSelectedHostIdsChange={onSelectedHostIdsChange}
+          onPromoteLead={onPromoteLead}
+          disabled={disabled || !projectId}
+          isLoading={isLoading}
+        />
+      )}
+    </div>
   );
 }

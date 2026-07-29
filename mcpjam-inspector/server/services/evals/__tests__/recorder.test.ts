@@ -210,6 +210,102 @@ describe("startSuiteRunWithRecorder", () => {
     expect(result.config.environment).toEqual(snapshotEnvironment);
   });
 
+  it("forwards all three environment preconditions to the start mutation", async () => {
+    // The revision alone does not make an environment launch atomic: the env
+    // pins a hostId (not a config) and optionally an attachment, both
+    // dereferenced live, so a host rotation or server-group edit drifts the
+    // resolution at an UNCHANGED revision. All three echoes must reach Convex
+    // or that drift is undetectable.
+    const mutationMock = vi
+      .fn()
+      .mockResolvedValueOnce({ runId: "run-1", testCases: [] })
+      .mockResolvedValueOnce(undefined);
+
+    await startSuiteRunWithRecorder({
+      convexClient: { mutation: mutationMock } as any,
+      suiteId: "suite-1",
+      serverIds: ["ps_1", "ps_plugin"],
+      environmentId: "env-1",
+      expectedEnvironmentRevision: 4,
+      expectedEnvironmentHostConfigId: "hc_1",
+      expectedEnvironmentServerIds: ["ps_1", "ps_plugin"],
+    });
+
+    expect(mutationMock).toHaveBeenNthCalledWith(
+      1,
+      "testSuites:startTestSuiteRun",
+      expect.objectContaining({
+        environmentId: "env-1",
+        expectedEnvironmentRevision: 4,
+        expectedEnvironmentHostConfigId: "hc_1",
+        expectedEnvironmentServerIds: ["ps_1", "ps_plugin"],
+      })
+    );
+  });
+
+  it("omits the environment preconditions entirely for a non-environment run", async () => {
+    const mutationMock = vi
+      .fn()
+      .mockResolvedValueOnce({ runId: "run-1", testCases: [] })
+      .mockResolvedValueOnce(undefined);
+
+    await startSuiteRunWithRecorder({
+      convexClient: { mutation: mutationMock } as any,
+      suiteId: "suite-1",
+      serverIds: ["alpha"],
+    });
+
+    const args = mutationMock.mock.calls[0][1];
+    expect(args).not.toHaveProperty("environmentId");
+    expect(args).not.toHaveProperty("expectedEnvironmentRevision");
+    expect(args).not.toHaveProperty("expectedEnvironmentHostConfigId");
+    expect(args).not.toHaveProperty("expectedEnvironmentServerIds");
+  });
+
+  it("translates a host-drift rejection into the 409 that names the cause", async () => {
+    const { ConvexError } = await import("convex/values");
+    const mutationMock = vi
+      .fn()
+      .mockRejectedValueOnce(new ConvexError({ code: "ENV_HOST_DRIFT" }));
+
+    await expect(
+      startSuiteRunWithRecorder({
+        convexClient: { mutation: mutationMock } as any,
+        suiteId: "suite-1",
+        serverIds: ["ps_1"],
+        environmentId: "env-1",
+        expectedEnvironmentRevision: 4,
+        expectedEnvironmentHostConfigId: "hc_1",
+        expectedEnvironmentServerIds: ["ps_1"],
+      })
+    ).rejects.toMatchObject({
+      status: 409,
+      message: expect.stringMatching(/host or server group changed/i),
+    });
+  });
+
+  it("translates a revision conflict even when only the drift echoes were sent", async () => {
+    // The gate is "any echo present", not "revision present" — a launch that
+    // echoed only host config / servers still needs its conflict translated
+    // rather than surfacing as a raw 500.
+    const { ConvexError } = await import("convex/values");
+    const mutationMock = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new ConvexError({ code: "ENV_REVISION_CONFLICT" })
+      );
+
+    await expect(
+      startSuiteRunWithRecorder({
+        convexClient: { mutation: mutationMock } as any,
+        suiteId: "suite-1",
+        serverIds: ["ps_1"],
+        environmentId: "env-1",
+        expectedEnvironmentHostConfigId: "hc_1",
+      })
+    ).rejects.toMatchObject({ status: 409 });
+  });
+
   it("marks the suite run failed when iteration precreate fails", async () => {
     const mutationMock = vi
       .fn()

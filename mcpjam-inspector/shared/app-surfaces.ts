@@ -400,7 +400,6 @@ export const APP_SURFACES = [
     purpose:
       "Inspect long-running MCP tasks a connected server exposes, and their status.",
     userActivities: ["Browse a server's tasks", "Inspect a task's status"],
-    hostedBlocked: true,
     hasSnapshotProvider: true,
     agentTools: {
       kind: "none",

@@ -19,6 +19,8 @@ import {
   warnOnConvexDevMisconfiguration,
 } from "./env";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy";
+import { cacheEventLogger } from "./utils/cache-events";
+import { negotiationTelemetryLogger } from "./utils/negotiation-telemetry";
 
 // Security imports
 import {
@@ -78,7 +80,9 @@ process.on("unhandledRejection", (reason, _promise) => {
     "process.unhandled_rejection",
     { errorCode: reason instanceof Error ? reason.name : "unknown" },
     {
-      error: reason instanceof Error ? reason : undefined,
+      // Always forward the reason — a non-Error rejection still carries the
+      // only clue to what fired (emit stringifies it for Axiom).
+      error: reason,
       sentry: true,
     }
   );
@@ -131,7 +135,6 @@ import { createXaaWebRouter } from "./routes/web/xaa";
 import workosAuthkitRoutes from "./routes/workos-authkit";
 import { rpcLogBus } from "./services/rpc-log-bus";
 import { tunnelManager } from "./services/tunnel-manager";
-import { shutdownRunningSimulations } from "./services/sessionSimulation/runner";
 import { shutdownRunningJourneyRuns } from "./services/sessionSimulation/swarm-runner";
 import {
   isScheduledEvalsWorkerEnabled,
@@ -264,6 +267,18 @@ const computersStartup = initComputersStartup();
 const app = new Hono().onError((err, c) => {
   appLogger.error("Unhandled error:", err);
 
+  // Hono runs `onError` INSIDE `next()`, so `requestLogContextMiddleware` never
+  // observes the throw — it just sees a 500 response. Record the cause here so
+  // `http.request.failed` carries something better than "internal_error" with
+  // no message. (`/api/web/*` has its own handler that routes through
+  // `webError`, which stashes the same shape.)
+  c.set("webErrorMeta", {
+    status: err instanceof HTTPException ? err.status : 500,
+    code:
+      err instanceof HTTPException ? "http_exception" : "unhandled_exception",
+    message: err instanceof Error ? err.message : String(err),
+  });
+
   // Return appropriate response
   if (err instanceof HTTPException) {
     return err.getResponse();
@@ -297,6 +312,25 @@ const mcpClientManager = new MCPClientManager(
         message,
       });
     },
+    // HTTP-exchange capture (headers only). A separate SDK channel from
+    // `rpcLogger`: from 2026-07-28 the routing/cross-check metadata a
+    // `-32020 HeaderMismatch` is about lives in HTTP headers, which the
+    // JSON-RPC body log cannot show. Every era is captured — the legacy
+    // session/resumption headers are just as debuggable.
+    httpLogger: (exchange) => {
+      rpcLogBus.publish({
+        kind: "http",
+        serverId: exchange.serverId,
+        timestamp: new Date().toISOString(),
+        exchange,
+      });
+    },
+    // SEP-2549 cache-serve provenance — a channel SEPARATE from rpcLogger
+    // (see server/utils/cache-events.ts). Routes opt in per-request via
+    // `withCacheEventCapture`; this callback is a no-op outside that scope.
+    cacheEventLogger,
+    // Auto-negotiation outcome telemetry (always-on negotiation).
+    negotiationOutcomeLogger: negotiationTelemetryLogger("local-inspector"),
   }
 );
 // Middleware to inject client manager into context
@@ -752,8 +786,7 @@ async function shutdown() {
     // Abort active synthetic-session runs and write a terminal "failed"
     // status so the dialog/UI doesn't see a stuck "running" run. Bounded
     // by an internal timeout; the outer `forceExitTimer` still wins.
-    await shutdownRunningSimulations();
-    // Abort active swarm (journey-execution) runs — stops each run's heartbeat
+      // Abort active swarm (journey-execution) runs — stops each run's heartbeat
     // and lets in-flight sessions report a terminal attempt. Bounded internally.
     await shutdownRunningJourneyRuns();
     await tunnelManager.closeAll();

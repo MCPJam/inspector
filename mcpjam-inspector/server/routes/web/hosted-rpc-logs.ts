@@ -1,9 +1,17 @@
 import type { UIMessageChunk } from "ai";
 import type { RpcLogger } from "@mcpjam/sdk";
-import { rpcLogBus } from "../../services/rpc-log-bus.js";
+import {
+  isRpcMessageLogEvent,
+  rpcLogBus,
+} from "../../services/rpc-log-bus.js";
 import { logger } from "../../utils/logger.js";
+import {
+  isRpcLogSinkConfigured,
+  readCrossInstanceRpcLogs,
+} from "../../utils/harness/harness-rpc-log-sink.js";
 import type {
   HostedRpcLogEvent,
+  HostedRpcLogPluginOrigin,
   HostedRpcLogsEnvelope,
 } from "@/shared/hosted-rpc-log";
 
@@ -13,7 +21,7 @@ type HostedRpcChunkWriter = {
 
 function normalizeServerName(
   serverId: string,
-  serverNamesById: Record<string, string>,
+  serverNamesById: Record<string, string>
 ): string {
   const resolved = serverNamesById[serverId];
   return typeof resolved === "string" && resolved.trim().length > 0
@@ -23,7 +31,7 @@ function normalizeServerName(
 
 function writeHostedRpcLogDataPart(
   writer: HostedRpcChunkWriter,
-  event: HostedRpcLogEvent,
+  event: HostedRpcLogEvent
 ): void {
   writer.write({
     type: "data-rpc-log",
@@ -34,7 +42,7 @@ function writeHostedRpcLogDataPart(
 
 function readOptionalString(
   value: unknown,
-  fallback?: string,
+  fallback?: string
 ): string | undefined {
   return typeof value === "string" && value.trim().length > 0
     ? value
@@ -43,7 +51,7 @@ function readOptionalString(
 
 function mapAlignedServerNames(
   serverIds: unknown,
-  serverNames: unknown,
+  serverNames: unknown
 ): Record<string, string> {
   if (!Array.isArray(serverIds) || serverIds.length === 0) {
     return {};
@@ -64,7 +72,7 @@ function mapAlignedServerNames(
 }
 
 function extractServerNamesById(
-  body: Record<string, unknown> | null | undefined,
+  body: Record<string, unknown> | null | undefined
 ): Record<string, string> {
   if (!body) {
     return {};
@@ -79,11 +87,11 @@ function extractServerNamesById(
 
   Object.assign(
     resolved,
-    mapAlignedServerNames(body.serverIds, body.serverNames),
+    mapAlignedServerNames(body.serverIds, body.serverNames)
   );
   Object.assign(
     resolved,
-    mapAlignedServerNames(body.selectedServerIds, body.selectedServerNames),
+    mapAlignedServerNames(body.selectedServerIds, body.selectedServerNames)
   );
 
   return resolved;
@@ -94,15 +102,32 @@ export class HostedRpcLogCollector {
   private streamedCount = 0;
   private writer: HostedRpcChunkWriter | null = null;
 
+  /**
+   * INS-3 plugin provenance, keyed by server id. Set AFTER construction
+   * because the collector is built from the raw body (before auth) while
+   * plugin origin only exists once the environment has resolved. Frames logged
+   * before that point simply carry no origin — absence is honest, and no MCP
+   * traffic can precede manager construction anyway.
+   */
+  private pluginOriginByServerId: Record<string, HostedRpcLogPluginOrigin> = {};
+
   constructor(private readonly serverNamesById: Record<string, string>) {}
 
+  setPluginOriginByServerId(
+    origins: Record<string, HostedRpcLogPluginOrigin>
+  ): void {
+    this.pluginOriginByServerId = origins;
+  }
+
   readonly rpcLogger: RpcLogger = ({ direction, message, serverId }) => {
+    const pluginOrigin = this.pluginOriginByServerId[serverId];
     const event: HostedRpcLogEvent = {
       serverId,
       serverName: normalizeServerName(serverId, this.serverNamesById),
       direction,
       timestamp: new Date().toISOString(),
       message,
+      ...(pluginOrigin ? { pluginOrigin } : {}),
     };
 
     this.logs.push(event);
@@ -138,7 +163,7 @@ export class HostedRpcLogCollector {
       } catch (error) {
         logger.warn(
           "Hosted RPC log stream write failed; falling back to envelope delivery",
-          { error },
+          { error }
         );
         this.writer = null;
         return;
@@ -148,7 +173,7 @@ export class HostedRpcLogCollector {
 }
 
 export function createHostedRpcLogCollector(
-  body: Record<string, unknown> | null | undefined,
+  body: Record<string, unknown> | null | undefined
 ): HostedRpcLogCollector {
   return new HostedRpcLogCollector(extractServerNamesById(body));
 }
@@ -164,10 +189,11 @@ export function createHostedRpcLogCollector(
  * emulated engine uses (`data-rpc-log` stream parts / response envelope), so
  * the Playground Logs panel fills for harness turns with zero client changes.
  *
- * SINGLE-INSTANCE by design: the bus is per-process, so this covers local dev
- * and self-hosted. In the horizontally-scaled hosted plane a harness-mcp
- * request may land on another instance and its entries won't reach this turn —
- * cross-instance fan-in needs a shared sink (tracked as a follow-up issue).
+ * Covers the SAME-INSTANCE case: the bus is per-process, so this alone handles
+ * local dev and self-hosted. On the horizontally-scaled hosted plane a
+ * harness-mcp request may land on another instance; those frames are pulled from
+ * the shared Convex sink by `startCrossInstanceRpcLogPoll` (COMP-21), which pairs
+ * with this bridge — start both, tear both down.
  *
  * Scoped by serverId only (the proxy token carries no turn id), so a
  * concurrent turn against the same server on this instance would also see the
@@ -178,12 +204,17 @@ export function createHostedRpcLogCollector(
  */
 export function bridgeHarnessRpcLogsToCollector(
   serverIds: string[],
-  collector: HostedRpcLogCollector,
+  collector: HostedRpcLogCollector
 ): () => void {
   // An empty filter would subscribe to EVERY server's traffic (bus semantics);
   // a harness turn with no MCP servers has nothing to bridge.
   if (serverIds.length === 0) return () => {};
   return rpcLogBus.subscribe(serverIds, (event) => {
+    // HTTP-exchange events are local-Tracing only. The hosted delivery
+    // (`data-rpc-log` parts, the Convex sink, `isHostedRpcLogEvent`) is a
+    // closed JSON-RPC-frame shape defined across two repos; widening it is its
+    // own change, so hosted stays header-blind rather than half-wired.
+    if (!isRpcMessageLogEvent(event)) return;
     collector.rpcLogger({
       direction: event.direction,
       message: event.message,
@@ -192,9 +223,82 @@ export function bridgeHarnessRpcLogsToCollector(
   });
 }
 
+/** How often a live turn polls the shared sink for other instances' frames. */
+const CROSS_INSTANCE_POLL_MS = 1000;
+
+/**
+ * COMP-21: the cross-instance half of the bridge. `bridgeHarnessRpcLogsToCollector`
+ * only sees frames the LOCAL process produced; this polls the shared Convex sink
+ * for frames OTHER instances wrote and feeds them into the SAME collector, so the
+ * Logs panel completes even when a harness-mcp request lands on a different
+ * instance than the chat stream.
+ *
+ * The sink read EXCLUDES this process's own instance, so a frame the bus already
+ * delivered is never pulled again — the two paths never double-deliver. Dedups
+ * on the sink row id (a batch write stamps one `createdAt`, so cursors are
+ * inclusive and the id set prevents re-delivery of the boundary rows).
+ *
+ * Cursors are PER-SERVER and come from the sink's response — never derived from
+ * the frames we received. Two reasons, both silent-data-loss bugs otherwise:
+ * own-instance rows are filtered server-side AFTER the index scan, so a busy
+ * server can yield zero frames while the scan still advanced (deriving the
+ * cursor from delivered frames would stall that server for the rest of the
+ * turn); and a single global cursor would let a busy server drag a quiet one
+ * past rows it hasn't flushed yet.
+ *
+ * No-op when the sink isn't configured (single-instance / self-hosted) or the
+ * turn has no servers. Best-effort throughout — a slow or erroring sink never
+ * blocks the stream. Returns a stop fn callers MUST run on stream completion.
+ */
+export function startCrossInstanceRpcLogPoll(
+  serverIds: string[],
+  collector: HostedRpcLogCollector
+): () => void {
+  if (serverIds.length === 0 || !isRpcLogSinkConfigured()) return () => {};
+  let stopped = false;
+  const startedAt = Date.now(); // only frames from this turn onward
+  let cursors = [...new Set(serverIds)].map((serverId) => ({
+    serverId,
+    sinceMs: startedAt,
+  }));
+  const seen = new Set<string>(); // sink row ids already delivered
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const tick = async () => {
+    if (stopped) return;
+    try {
+      const page = await readCrossInstanceRpcLogs({ servers: cursors });
+      for (const e of page.entries) {
+        if (seen.has(e.id)) continue;
+        seen.add(e.id);
+        collector.rpcLogger({
+          direction: e.direction,
+          message: e.message,
+          serverId: e.serverId,
+        });
+      }
+      cursors = page.cursors;
+    } catch {
+      // Best-effort; observation-only. Cursors stay put, so a failed tick
+      // re-reads rather than skipping frames.
+    }
+    if (!stopped) {
+      timer = setTimeout(tick, CROSS_INSTANCE_POLL_MS);
+      timer.unref?.();
+    }
+  };
+  timer = setTimeout(tick, CROSS_INSTANCE_POLL_MS);
+  timer.unref?.();
+
+  return () => {
+    stopped = true;
+    if (timer) clearTimeout(timer);
+  };
+}
+
 export function attachHostedRpcLogs<T>(
   payload: T,
-  collector?: HostedRpcLogCollector,
+  collector?: HostedRpcLogCollector
 ): T | (T & HostedRpcLogsEnvelope) {
   if (
     !collector?.hasLogs() ||

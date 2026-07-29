@@ -7,6 +7,7 @@ import {
   parseLocalConnectRequestBody,
   respondWithLocalRouteError,
 } from "../../utils/local-server-resolver.js";
+import { releasePluginLease } from "../../services/plugins/local-stdio.js";
 
 function hasBearerAuthorizationHeader(headers: unknown): boolean {
   if (!headers || typeof headers !== "object") {
@@ -182,6 +183,9 @@ servers.delete("/:serverId", async (c) => {
     }
 
     mcpClientManager.removeServer(serverId);
+    // The plugin bundle this entry may have been running from is now
+    // unreferenced, so cache GC may reclaim it. No-op for ordinary servers.
+    releasePluginLease(serverId);
 
     return c.json({
       success: true,
@@ -254,13 +258,13 @@ servers.get("/rpc/stream", async (c) => {
           isNaN(replay) ? 0 : replay
         );
         for (const evt of recent) {
-          send({ type: "rpc", ...evt });
+          send({ type: evt.kind === "http" ? "http" : "rpc", ...evt });
         }
       } catch {}
 
       // Subscribe to live events for all known servers
       const unsubscribe = rpcLogBus.subscribe(serverIds, (evt: RpcLogEvent) => {
-        send({ type: "rpc", ...evt });
+        send({ type: evt.kind === "http" ? "http" : "rpc", ...evt });
       });
 
       // Keepalive comments

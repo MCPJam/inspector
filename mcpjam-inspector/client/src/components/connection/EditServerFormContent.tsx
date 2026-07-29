@@ -125,7 +125,6 @@ export function EditServerFormContent({
           onChange={(e) => formState.setName(e.target.value)}
           placeholder="my-mcp-server"
           required
-          className="h-10"
         />
         {isDuplicateServerName && (
           <p className="text-xs text-destructive">
@@ -310,69 +309,76 @@ export function EditServerFormContent({
         </div>
       )}
 
-      {formState.type === "stdio" && (
-        <EnvVarsSection
-          envVars={formState.envVars}
-          showEnvVars={formState.showEnvVars}
-          onToggle={() => formState.setShowEnvVars(!formState.showEnvVars)}
-          onAdd={formState.addEnvVar}
-          onRemove={formState.removeEnvVar}
-          onUpdate={formState.updateEnvVar}
-          hasStoredEnv={formState.hasStoredEnv}
-          isRevealing={revealingEnv}
-          revealError={envRevealError}
-          onReveal={() => revealSecrets("env")}
-        />
-      )}
+      {/* Optional sections. The rule separates the required identity /
+          transport fields above from the two disclosures, which otherwise sit
+          on the same rhythm and read as more required fields. */}
+      <div className="space-y-4 border-t border-border/60 pt-5">
+        {formState.type === "stdio" && (
+          <EnvVarsSection
+            envVars={formState.envVars}
+            showEnvVars={formState.showEnvVars}
+            onToggle={() => formState.setShowEnvVars(!formState.showEnvVars)}
+            onAdd={formState.addEnvVar}
+            onRemove={formState.removeEnvVar}
+            onUpdate={formState.updateEnvVar}
+            hasStoredEnv={formState.hasStoredEnv}
+            isRevealing={revealingEnv}
+            revealError={envRevealError}
+            onReveal={() => revealSecrets("env")}
+          />
+        )}
 
-      <AdvancedConnectionSettingsSection
-        showConfiguration={formState.showConfiguration}
-        onToggle={() =>
-          formState.setShowConfiguration(!formState.showConfiguration)
-        }
-        requestTimeout={formState.requestTimeout}
-        onRequestTimeoutChange={formState.setRequestTimeout}
-        inheritedRequestTimeout={formState.inheritedRequestTimeout}
-        clientCapabilitiesOverrideEnabled={
-          formState.clientCapabilitiesOverrideEnabled
-        }
-        onClientCapabilitiesOverrideEnabledChange={(enabled) => {
-          formState.setClientCapabilitiesOverrideEnabled(enabled);
-          if (!enabled) {
-            formState.setClientCapabilitiesOverrideError(null);
+        <AdvancedConnectionSettingsSection
+          showConfiguration={formState.showConfiguration}
+          onToggle={() =>
+            formState.setShowConfiguration(!formState.showConfiguration)
           }
-        }}
-        clientCapabilitiesOverrideText={
-          formState.clientCapabilitiesOverrideText
-        }
-        onClientCapabilitiesOverrideTextChange={
-          formState.setClientCapabilitiesOverrideText
-        }
-        clientCapabilitiesOverrideError={
-          formState.clientCapabilitiesOverrideError
-        }
-        /* Render the row regardless of whether a setter is wired. When
-           `onMcpProtocolVersionOverrideChange` is absent (no project/server
-           id, or project config still loading), the select disables but
-           remains visible for discoverability. */
-        showMcpProtocolVersionOverride
-        mcpProtocolVersionOverride={mcpProtocolVersionOverride}
-        onMcpProtocolVersionOverrideChange={onMcpProtocolVersionOverrideChange}
-        transportKind={formState.type}
-        {...(formState.type === "http"
-          ? {
-              customHeaders: formState.customHeaders,
-              onAddHeader: formState.addCustomHeader,
-              onRemoveHeader: formState.removeCustomHeader,
-              onUpdateHeader: formState.updateCustomHeader,
-              hasStoredHeaders: formState.hasStoredHeaders,
-              isRevealingHeaders: revealingHeaders,
-              headersRevealError,
-              onRevealHeaders: () => revealSecrets("headers"),
-              headersWarning: formState.oauthAuthorizationHeaderWarning,
+          requestTimeout={formState.requestTimeout}
+          onRequestTimeoutChange={formState.setRequestTimeout}
+          inheritedRequestTimeout={formState.inheritedRequestTimeout}
+          clientCapabilitiesOverrideEnabled={
+            formState.clientCapabilitiesOverrideEnabled
+          }
+          onClientCapabilitiesOverrideEnabledChange={(enabled) => {
+            formState.setClientCapabilitiesOverrideEnabled(enabled);
+            if (!enabled) {
+              formState.setClientCapabilitiesOverrideError(null);
             }
-          : {})}
-      />
+          }}
+          clientCapabilitiesOverrideText={
+            formState.clientCapabilitiesOverrideText
+          }
+          onClientCapabilitiesOverrideTextChange={
+            formState.setClientCapabilitiesOverrideText
+          }
+          clientCapabilitiesOverrideError={
+            formState.clientCapabilitiesOverrideError
+          }
+          /* Render the row regardless of whether a setter is wired. When
+             `onMcpProtocolVersionOverrideChange` is absent (no project/server
+             id, or project config still loading), the select disables but
+             remains visible for discoverability. */
+          showMcpProtocolVersionOverride
+          mcpProtocolVersionOverride={mcpProtocolVersionOverride}
+          onMcpProtocolVersionOverrideChange={
+            onMcpProtocolVersionOverrideChange
+          }
+          transportKind={formState.type}
+          {...(formState.type === "http"
+            ? {
+                customHeaders: formState.customHeaders,
+                onAddHeader: formState.addCustomHeader,
+                onRemoveHeader: formState.removeCustomHeader,
+                onUpdateHeader: formState.updateCustomHeader,
+                hasStoredHeaders: formState.hasStoredHeaders,
+                isRevealingHeaders: revealingHeaders,
+                headersRevealError,
+                onRevealHeaders: () => revealSecrets("headers"),
+                headersWarning: formState.oauthAuthorizationHeaderWarning,
+              }
+            : {})}
+        />
+      </div>
     </div>
   );
 }

@@ -20,6 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@mcpjam/design-system/select";
+import { Switch } from "@mcpjam/design-system/switch";
 import {
   ingestOAuthTraceLogs,
   useTrafficLogStore,
@@ -28,6 +29,10 @@ import {
   type UiProtocol,
 } from "@/stores/traffic-log-store";
 import type { LoggingLevel } from "@modelcontextprotocol/client";
+import {
+  isKnownProtocolVersion,
+  isStatelessProtocolVersion,
+} from "@mcpjam/sdk/browser";
 import { setServerLoggingLevel } from "@/state/mcp-api";
 import { toast } from "@/lib/toast";
 import { useSharedAppState } from "@/state/app-state-context";
@@ -50,8 +55,10 @@ import {
   requestOpenOAuthDebugger,
 } from "@/lib/oauth/oauth-debugger-navigation";
 import { cn } from "@/lib/utils";
+import { HttpExchangeDetails } from "@/components/tracing/HttpExchangeDetails";
+import type { HttpExchangeLogEvent } from "@mcpjam/sdk/browser";
 
-type TrafficSource = "mcp-server" | "mcp-apps" | "oauth";
+type TrafficSource = "mcp-server" | "mcp-apps" | "oauth" | "http";
 
 interface RenderableRpcItem {
   id: string;
@@ -87,6 +94,37 @@ const LOGGING_LEVELS: LoggingLevel[] = [
   "alert",
   "emergency",
 ];
+
+type LoggingMechanism = "setLevel" | "per-request-meta" | "none";
+
+/**
+ * Client-side mirror of `MCPClientManager.getLoggingMechanism` (server/sdk)
+ * — same predicate (capability + negotiated era), computed here from the
+ * connection's already-fetched `initializationInfo` so the popover can
+ * choose which control to render without an extra round trip. Keep this in
+ * sync with the SDK helper if the era predicate ever changes.
+ */
+function getClientLoggingMechanism(
+  server: ServerWithName,
+): LoggingMechanism {
+  const info = server.initializationInfo;
+  if (!info?.serverCapabilities?.logging) return "none";
+  // Mirror `MCPClientManager.getLoggingMechanism` (server/sdk): the modern
+  // `per-request-meta` path is chosen only when the NEGOTIATED version is a
+  // *known* stateless (modern-era) version. This matches the SDK's own version
+  // routing, whose `isStatelessProtocolVersion` is documented to be called
+  // ONLY after `isKnownProtocolVersion` — without the known-check, an
+  // unrecognized/typo version would misroute to `per-request-meta` (it returns
+  // true for any non-empty non-stateful string). An absent or unknown version
+  // resolves to the legacy `setLevel` path, exactly as the SDK does when
+  // `getProtocolEra() !== "modern"`.
+  const version = info.protocolVersion;
+  return version &&
+    isKnownProtocolVersion(version) &&
+    isStatelessProtocolVersion(version)
+    ? "per-request-meta"
+    : "setLevel";
+}
 
 function buildOAuthTraceIngestionKey(trace: {
   source: string;
@@ -233,6 +271,14 @@ function DirectionLabel({
     );
   }
 
+  if (source === "http") {
+    return (
+      <span className="font-mono text-[10px] leading-none flex-shrink-0 text-amber-600 dark:text-amber-400">
+        http
+      </span>
+    );
+  }
+
   const isSend = direction === "SEND";
   return (
     <span
@@ -262,6 +308,13 @@ export function LoggerView({
   const [searchQuery, setSearchQuery] = useState("");
   const [serverLogLevels, setServerLogLevels] = useState<
     Record<string, LoggingLevel>
+  >({});
+  // Modern (per-request `_meta`) mechanism only: whether this session has
+  // opted in to logging for a server. Defaults to OFF/opt-out — the level
+  // select is inert until this is flipped on, matching the wire default
+  // (absent `_meta` key ⇒ no `logLevel` sent).
+  const [serverLogOptIn, setServerLogOptIn] = useState<
+    Record<string, boolean>
   >({});
   const [sourceFilter, setSourceFilter] = useState<"all" | TrafficSource>(
     "all"
@@ -328,6 +381,8 @@ export function LoggerView({
       source:
         item.kind === "oauth"
           ? ("oauth" as TrafficSource)
+          : item.kind === "http"
+          ? ("http" as TrafficSource)
           : ("mcp-server" as TrafficSource),
       oauthStatus: item.oauthStatus,
       oauthRecovered: item.oauthRecovered,
@@ -552,6 +607,9 @@ export function LoggerView({
                     <DropdownMenuRadioItem value="oauth" className="text-xs">
                       OAuth
                     </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="http" className="text-xs">
+                      HTTP
+                    </DropdownMenuRadioItem>
                     <DropdownMenuRadioItem value="mcp-apps" className="text-xs">
                       Apps
                     </DropdownMenuRadioItem>
@@ -581,62 +639,146 @@ export function LoggerView({
                           No connected servers
                         </p>
                       ) : (
-                        <div className="space-y-2">
-                          {selectableServers.map((server) => (
-                            <div
-                              key={server.id}
-                              className="flex items-center justify-between gap-2"
-                            >
-                              <span
-                                className="max-w-[120px] truncate text-[11px] font-medium"
-                                title={server.id}
-                              >
-                                {server.id}
-                              </span>
+                        <div className="space-y-3">
+                          {selectableServers.map(({ id, server }) => {
+                            const mechanism = getClientLoggingMechanism(
+                              server,
+                            );
+                            const level = serverLogLevels[id] || "debug";
+
+                            const applyLevel = (
+                              nextLevel: LoggingLevel | null,
+                            ) => {
+                              captureLogger("logger_log_level_changed", {
+                                to: nextLevel ?? "opt-out",
+                              });
+                              setServerLoggingLevel(id, nextLevel)
+                                .then((res) => {
+                                  if (res?.success)
+                                    toast.success(
+                                      nextLevel === null
+                                        ? `Opted ${id} out of logging`
+                                        : `Updated ${id} to ${nextLevel}`,
+                                    );
+                                  else
+                                    toast.error(
+                                      res?.error || "Failed to update",
+                                    );
+                                })
+                                .catch(() =>
+                                  toast.error("Failed to update"),
+                                );
+                            };
+
+                            const levelSelect = (
+                              disabled: boolean,
+                            ) => (
                               <Select
-                                value={serverLogLevels[server.id] || "debug"}
+                                value={level}
+                                disabled={disabled}
                                 onValueChange={(val) => {
-                                  const level = val as LoggingLevel;
-                                  captureLogger("logger_log_level_changed", {
-                                    to: level,
-                                  });
+                                  const nextLevel = val as LoggingLevel;
                                   setServerLogLevels((prev) => ({
                                     ...prev,
-                                    [server.id]: level,
+                                    [id]: nextLevel,
                                   }));
-                                  setServerLoggingLevel(server.id, level)
-                                    .then((res) => {
-                                      if (res?.success)
-                                        toast.success(
-                                          `Updated ${server.id} to ${level}`
-                                        );
-                                      else
-                                        toast.error(
-                                          res?.error || "Failed to update"
-                                        );
-                                    })
-                                    .catch(() =>
-                                      toast.error("Failed to update")
-                                    );
+                                  applyLevel(nextLevel);
                                 }}
                               >
                                 <SelectTrigger className="h-6 w-[100px] text-[10px]">
                                   <SelectValue placeholder="Level" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  {LOGGING_LEVELS.map((level) => (
+                                  {LOGGING_LEVELS.map((l) => (
                                     <SelectItem
-                                      key={level}
-                                      value={level}
+                                      key={l}
+                                      value={l}
                                       className="text-[10px]"
                                     >
-                                      {level}
+                                      {l}
                                     </SelectItem>
                                   ))}
                                 </SelectContent>
                               </Select>
-                            </div>
-                          ))}
+                            );
+
+                            if (mechanism === "none") {
+                              return (
+                                <div
+                                  key={id}
+                                  className="flex items-center justify-between gap-2"
+                                >
+                                  <span
+                                    className="max-w-[120px] truncate text-[11px] font-medium text-muted-foreground"
+                                    title={id}
+                                  >
+                                    {id}
+                                  </span>
+                                  <span className="text-[10px] text-muted-foreground">
+                                    Not supported
+                                  </span>
+                                </div>
+                              );
+                            }
+
+                            if (mechanism === "setLevel") {
+                              return (
+                                <div key={id} className="space-y-0.5">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span
+                                      className="max-w-[120px] truncate text-[11px] font-medium"
+                                      title={id}
+                                    >
+                                      {id}
+                                    </span>
+                                    {levelSelect(false)}
+                                  </div>
+                                  <div
+                                    className="text-right text-[9px] text-muted-foreground"
+                                    title="logging/setLevel — SEP-2577 deprecates this mechanism in favor of the modern per-request opt-in"
+                                  >
+                                    Deprecated (SEP-2577)
+                                  </div>
+                                </div>
+                              );
+                            }
+
+                            // mechanism === "per-request-meta": default is
+                            // OFF/opt-out — no `_meta` key rides the wire
+                            // until the switch is flipped on.
+                            const optedIn = serverLogOptIn[id] ?? false;
+                            return (
+                              <div key={id} className="space-y-0.5">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span
+                                    className="max-w-[100px] truncate text-[11px] font-medium"
+                                    title={id}
+                                  >
+                                    {id}
+                                  </span>
+                                  <div className="flex items-center gap-1.5">
+                                    {levelSelect(!optedIn)}
+                                    <Switch
+                                      checked={optedIn}
+                                      onCheckedChange={(checked) => {
+                                        setServerLogOptIn((prev) => ({
+                                          ...prev,
+                                          [id]: checked,
+                                        }));
+                                        applyLevel(checked ? level : null);
+                                      }}
+                                      aria-label={`Toggle per-request logging for ${id}`}
+                                    />
+                                  </div>
+                                </div>
+                                <div className="text-right text-[9px] text-muted-foreground">
+                                  {optedIn
+                                    ? "opt-in — level sent with every request"
+                                    : "opt-out (no logLevel sent)"}
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
                       )}
                     </div>
@@ -710,6 +852,10 @@ export function LoggerView({
               const isExpanded = expanded.has(it.id);
               const isAppsTraffic = it.source === "mcp-apps";
               const isOAuthTraffic = it.source === "oauth";
+              const isHttpExchange = it.source === "http";
+              const httpExchange = isHttpExchange
+                ? (it.payload as HttpExchangeLogEvent)
+                : undefined;
               const oauthInlineSummary = isOAuthTraffic
                 ? getOAuthInlineSummary(it.payload)
                 : undefined;
@@ -720,7 +866,13 @@ export function LoggerView({
               const isError =
                 it.method === "error" ||
                 it.method === "csp-violation" ||
-                (isOAuthTraffic && it.oauthStatus === "error");
+                (isOAuthTraffic && it.oauthStatus === "error") ||
+                // A 4xx/5xx or a fetch that never got a response. `401` is not
+                // excluded here the way the OAuth card excludes its expected
+                // challenge: on the RPC endpoint a 401 IS the failure.
+                (httpExchange !== undefined &&
+                  (httpExchange.error !== undefined ||
+                    (httpExchange.response?.status ?? 0) >= 400));
 
               // Left border: 2px — red for errors (incl. OAuth failures), purple for Apps,
               // transparent otherwise (OAuth success has no rail)
@@ -757,7 +909,7 @@ export function LoggerView({
                         isExpanded && "rotate-90"
                       )}
                     />
-                    {isError && !isOAuthTraffic ? (
+                    {isError && !isOAuthTraffic && !isHttpExchange ? (
                       <AlertCircle className="h-3 w-3 flex-shrink-0 text-destructive" />
                     ) : (
                       <DirectionLabel
@@ -835,15 +987,21 @@ export function LoggerView({
                   {isExpanded && (
                     <div className="border-t border-border bg-muted/10 p-2">
                       <div className="max-h-[40vh] overflow-auto">
-                        <JsonEditor
-                          height="100%"
-                          value={normalizePayload(it.payload) as object}
-                          readOnly
-                          showToolbar={false}
-                          collapsible
-                          defaultExpandDepth={2}
-                          collapseStringsAfterLength={100}
-                        />
+                        {isHttpExchange ? (
+                          <HttpExchangeDetails
+                            exchange={it.payload as HttpExchangeLogEvent}
+                          />
+                        ) : (
+                          <JsonEditor
+                            height="100%"
+                            value={normalizePayload(it.payload) as object}
+                            readOnly
+                            showToolbar={false}
+                            collapsible
+                            defaultExpandDepth={2}
+                            collapseStringsAfterLength={100}
+                          />
+                        )}
                       </div>
                     </div>
                   )}

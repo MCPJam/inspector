@@ -30,6 +30,8 @@ import { runHarnessTurn } from "./harness/run-harness-turn.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import type { ExecutionScope } from "./execution-scope.js";
 import type { PinnedSkillArtifact } from "../../shared/skill-types.js";
+import type { RuntimeSkill } from "./harness/runtime-skills.js";
+import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { HarnessMcpProxyStrategy } from "./harness/harness-proxy-strategy.js";
 import {
   buildFinishChunk,
@@ -45,6 +47,12 @@ import {
   hasUnresolvedToolCalls,
   executeToolCallsFromMessages,
 } from "@/shared/http-tool-calls";
+import { isMrtrSuspendSignalShape } from "@/shared/mrtr-continuation";
+import {
+  spliceMrtrToolResult,
+  hasUnresolvedToolCall,
+  type MrtrEngineResume,
+} from "./mrtr-hosted-chat.js";
 import {
   isClientFulfilledToolName,
   type UiToolApprovalClassification,
@@ -413,6 +421,15 @@ export interface MCPJamHandlerOptions {
    * browser-fulfilled) and skills (the harness has its own).
    */
   builtInTools?: ToolSet;
+  /**
+   * The host's configured computer working directory (`hostConfig.computer
+   * .workdir`), COMP-16. Single source of truth for WHERE commands run on the
+   * box: the chat `bash` tool already reads it via `builtInTools`; the harness
+   * path needs it separately here to root its Shell under the same directory
+   * (the harness framework then nests a per-session `<workdir>/claude-code-<id>`
+   * subdir). Absent ⇒ the box default (`/home/user`). Confined server-side.
+   */
+  computerWorkdir?: string;
   authHeader?: string;
   chatboxId?: string;
   accessVersion?: number;
@@ -439,6 +456,29 @@ export interface MCPJamHandlerOptions {
    * harness+pinned — the two paths are deliberately disjoint).
    */
   pinnedHarnessSkills?: PinnedSkillArtifact[];
+  /**
+   * Resolved Project-Environment skills for THIS turn (Phase 1.4). When set —
+   * even EMPTY — the harness turn delivers exactly these and SKIPS the live
+   * project-wide `fetchRuntimeSkills` query. Ranks BELOW `pinnedHarnessSkills`
+   * (a pinned run's reproducibility outranks a live environment resolution) and
+   * ABOVE the legacy live fetch; see `harness/skill-delivery.ts` for the single
+   * place that precedence is written down. An empty override is semantic: the
+   * environment delivers no skills, which is not the same as "ask the project".
+   */
+  runtimeSkillsOverride?: RuntimeSkill[];
+  /**
+   * The turn's resolved `EffectiveCapabilitySet` (INS-3), harness side (INS-7).
+   * Set alongside `runtimeSkillsOverride` for an environment turn; it carries
+   * what the flat skill list structurally cannot — per-skill SUPPORTING FILES
+   * (the only source that includes a plugin skill's, since the project-wide file
+   * query excludes `plugin_component` rows) and the pinned plugin VERSIONS,
+   * which fold into the harness runtime fingerprint so a plugin change
+   * invalidates an incompatible resumed sandbox.
+   *
+   * Delivery input only. Nothing derived from it is persisted as a pin: every
+   * launch re-resolves the environment, so a recorded version is provenance.
+   */
+  effectiveCapabilities?: EffectiveCapabilitySet;
   /**
    * Phase 3 execution scope from the server-resolved runtime config (chatbox OR
    * host-by-id). Threaded into the harness path (sandbox reserve, runtime skills,
@@ -482,6 +522,15 @@ export interface MCPJamHandlerOptions {
    * passes `"auto-deny"`.
    */
   approvalMode?: "prompt" | "auto-deny";
+  /**
+   * Hosted MRTR (§12.5, PR5) resume descriptor. Present only on a fresh request
+   * that resumes a suspended tool call: the engine drives one retry leg BEFORE
+   * the first model call, splices the driven result into the identified
+   * tool-call slot, and resumes the loop — or pauses again on a further round /
+   * a terminal (indeterminate / cancelled / expired) outcome. Emulated engine
+   * only; the harness path never suspends through this manager.
+   */
+  mrtrResume?: MrtrEngineResume;
   onConversationComplete?: (
     fullHistory: ModelMessage[],
     turnTrace: PersistedTurnTrace,
@@ -2576,6 +2625,22 @@ async function processOneStep(
       if (isAbortError(error)) {
         throw error;
       }
+      // Hosted MRTR (§12.5): a tool call returned `input_required` and the
+      // suspending collector persisted it to a durable continuation, emitted
+      // the `data-mrtr-input-required` part, and threw to unwind. This is a
+      // PAUSE, not a failure — modeled on the client-fulfilled rail: emit the
+      // finish chunk and return control to the browser WITHOUT blocking,
+      // erroring, or polling. The unresolved tool-call stays in history (the
+      // browser resends it on resume); the epilogue persists it and closes the
+      // stream. The whole point of the durable transport vs legacy elicitation
+      // is that the worker does not hold open awaiting a human.
+      if (isMrtrSuspendSignalShape(error)) {
+        emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
+        if (finishChunk) {
+          writer.write(createClientFinishChunk(finishChunk, traceTurn, "stop"));
+        }
+        return { shouldContinue: false, didEmitFinish: !!finishChunk };
+      }
       const failAbs = Date.now();
       pushBackendStepToolFailureSpans(
         traceTurn.turnSpans,
@@ -2734,6 +2799,7 @@ export async function runChatEngineLoop(
     uiToolApprovals,
     modelVisibleMcpToolResults,
     approvalMode,
+    mrtrResume,
     onConversationComplete,
     onStreamComplete,
     onStreamWriterReady,
@@ -2972,7 +3038,78 @@ export async function runChatEngineLoop(
         }
       }
 
-      while (effectiveSteps() < resolvedMaxSteps) {
+      // ── Hosted MRTR resume pre-phase (§12.5, PR5) ─────────────────────────
+      // A fresh request resuming a suspended tool call drives ONE retry leg
+      // here — before the first model call — against the durable continuation.
+      // On completion the driven result is spliced into the suspended tool-call
+      // slot and the loop runs the model with it (resuming the agent loop to a
+      // final assistant message). A further round re-suspends; a terminal /
+      // indeterminate outcome pauses. This is the SAME engine that produced the
+      // suspension, re-entered on any replica.
+      let mrtrPaused = false;
+      if (mrtrResume && !aborted && !hasUnresolvedToolCall(messageHistory, mrtrResume.toolCallId)) {
+        // The resume request's `toolCallId` does not identify an unresolved
+        // tool-call in the resent history (stale, tampered, or already
+        // resolved). Do NOT drive — driving would claim/consume the durable
+        // continuation and then have nowhere to splice the result, losing it.
+        // Pause and let the client reconcile.
+        logger.warn(
+          "[mcpjam-stream-handler] MRTR resume: toolCallId is not an unresolved tool-call; skipping resume",
+          { toolCallId: mrtrResume.toolCallId },
+        );
+        mrtrPaused = true;
+      } else if (mrtrResume && !aborted) {
+        const resolution = await mrtrResume.resolve((chunk) =>
+          safeWriter.write(chunk),
+        );
+        if (resolution.kind === "complete" || resolution.kind === "recover") {
+          const spliced = spliceMrtrToolResult(
+            messageHistory,
+            mrtrResume.toolCallId,
+            resolution.toolResultMessage,
+          );
+          if (spliced) {
+            await emitToolResults(
+              safeWriter,
+              mcpClientManager,
+              [resolution.toolResultMessage],
+              traceTurn,
+              effectiveSteps(),
+              onToolResult,
+            );
+            emitTraceSnapshot(safeWriter, messageHistory, tools, traceTurn);
+            // Only run the model once EVERY tool-call in the resent history has
+            // a result. If a sibling tool call in the same assistant step also
+            // suspended to its own continuation, it is still unresolved here;
+            // invoking the model now would send an assistant tool-call with no
+            // matching tool-result (an invalid request) and strand that
+            // sibling's continuation. Keep the turn paused so the client drives
+            // the remaining continuation(s) on subsequent resume requests.
+            if (hasUnresolvedToolCalls(messageHistory)) {
+              mrtrPaused = true;
+            }
+            // Otherwise fall through to the loop: the model now sees the
+            // resolved tool result and produces the final assistant message.
+          } else {
+            // The browser's resent history lacked the suspended tool-call. Do
+            // not run the model on a mismatched turn; pause and let the client
+            // reconcile.
+            logger.warn(
+              "[mcpjam-stream-handler] MRTR resume: suspended tool-call not found in history; pausing",
+              { toolCallId: mrtrResume.toolCallId },
+            );
+            mrtrPaused = true;
+          }
+        } else {
+          // suspended (another round) or halted (indeterminate / cancelled /
+          // expired): the data part / resolved event was already emitted by the
+          // leg. Pause without a model call — the epilogue emits finish and
+          // persists the (still-unresolved) tool-call.
+          mrtrPaused = true;
+        }
+      }
+
+      while (!mrtrPaused && effectiveSteps() < resolvedMaxSteps) {
         if (aborted) break;
         const { shouldContinue, didEmitFinish } = await processOneStep({
           writer: safeWriter,

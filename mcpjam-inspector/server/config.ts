@@ -117,6 +117,55 @@ export const ELICITATION_SERVICE_ROUTE_TIMEOUT_MS = 10_000;
  */
 export const ELICITATION_TIMEOUT_EXTENSION_MS = ELICITATION_FORM_TTL_MS + 30_000;
 
+// ── Hosted MRTR continuation transport (MCP 2026-07-28 §12.5) ────────────────
+//
+// A suspended `input_required` operation is durably parked in Convex (PR3a) and
+// resumed on a fresh request. Unlike legacy elicitation the worker does NOT
+// block, so the TTL can be generous — it bounds how long a human has to answer
+// across a whole round before the continuation is expired and scrubbed.
+/** How long a suspended MRTR continuation survives awaiting a human answer. */
+export const MRTR_CONTINUATION_TTL_MS = 10 * 60_000;
+/** Deadline for a single Convex continuation-store call. */
+export const MRTR_CONTINUATION_ROUTE_TIMEOUT_MS = 10_000;
+/**
+ * Lease TTL for a single resume claim; a resume that stalls past this is swept.
+ *
+ * DERIVED, not a round number: one resume leg can legally spend
+ * `claim + submit + mark-wire-started + (finalize | resuspend)` store calls at
+ * the full route deadline each, plus one MCP leg at the full call timeout. A
+ * flat 60s lease is exactly that worst case, so a slow-but-legal side-effecting
+ * resume could lose its lease *after* the wire left and before it could
+ * finalize — the store would 409 an operation that actually executed. Keep the
+ * headroom term below any time this budget or `WEB_CALL_TIMEOUT_MS` grows.
+ *
+ * (`heartbeatContinuation` in `utils/mrtr-continuation-state.ts` is the other
+ * half of the frozen PR3a contract and stays unused by design: PR3b's leg is
+ * bounded by the budget above. A PR5 leg that can outrun this — a long-running
+ * task-backed operation — must heartbeat rather than widen this constant.)
+ */
+export const MRTR_CONTINUATION_LEASE_TTL_MS =
+  4 * MRTR_CONTINUATION_ROUTE_TIMEOUT_MS + WEB_CALL_TIMEOUT_MS + 60_000;
+/**
+ * Hard byte cap on the serialized opaque `resumeState` blob (the encoded
+ * `MrtrOperationState`). Oversized state is rejected at the codec, never
+ * silently truncated — a truncated blob would deserialize to a corrupt
+ * operation and re-drive the wrong request.
+ */
+export const MRTR_RESUME_STATE_MAX_BYTES = 128 * 1024;
+/** Per-field cap for the safe display carried to the browser (message, schema). */
+export const MRTR_DISPLAY_FIELD_MAX_BYTES = 16 * 1024;
+/** Cap on a single browser-submitted response's serialized content. */
+export const MRTR_RESPONSE_CONTENT_MAX_BYTES = 64 * 1024;
+/**
+ * How long an MRTR route waits for connection teardown before answering the
+ * browser anyway. Teardown is cleanup, never the outcome: once a round has been
+ * persisted (suspend) or a leg has already gone out (resume), the response must
+ * not be held hostage by a transport that is slow to close. Comfortably above
+ * the upstream stdio transport's own ~4s close budget, which is the slowest
+ * close path any connection here can take.
+ */
+export const MRTR_TEARDOWN_TIMEOUT_MS = 5_000;
+
 // Hosted app origin the LOCAL inspector server forwards XAA hosted-issuer
 // mint requests to (server-to-server; hosted CORS blocks the browser from
 // calling it directly). Override for staging. Never derived from a request.

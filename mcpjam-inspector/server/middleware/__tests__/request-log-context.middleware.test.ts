@@ -184,6 +184,113 @@ describe("requestLogContextMiddleware", () => {
     expect((completed[0][2] as any).statusCode).toBe(401);
   });
 
+  // Regression: hosted connect 502s were logged as `errorCode: "internal_error"`
+  // with the cause discarded, because these routes *return* a `webError`
+  // response instead of throwing — so the middleware only ever saw a status
+  // code. A week of user-facing failures was undiagnosable as a result.
+  it("logs the route's own error code and message for a returned 5xx", async () => {
+    const app = new Hono();
+    app.use("/api/*", requestLogContextMiddleware);
+    app.get("/api/web/connect", (c) => {
+      c.set("webErrorMeta", {
+        status: 502,
+        code: "SERVER_UNREACHABLE",
+        message: "Failed to reach MCP server: fetch failed",
+      });
+      return c.json({ code: "SERVER_UNREACHABLE" }, 502);
+    });
+
+    await app.request("/api/web/connect");
+
+    const failed = vi
+      .mocked(logger.event)
+      .mock.calls.filter(([name]) => name === "http.request.failed");
+    expect(failed).toHaveLength(1);
+    const payload = failed[0][2] as any;
+    expect(payload.statusCode).toBe(502);
+    expect(payload.errorCode).toBe("SERVER_UNREACHABLE");
+    expect(payload.errorMessage).toBe(
+      "Failed to reach MCP server: fetch failed",
+    );
+  });
+
+  it("ignores stale webErrorMeta from a different status", async () => {
+    // A route may emit a 4xx webError and then fail with an unrelated 500;
+    // attributing the earlier code to the later failure would be a lie.
+    const app = new Hono();
+    app.use("/api/*", requestLogContextMiddleware);
+    app.get("/api/web/mixed", (c) => {
+      c.set("webErrorMeta", {
+        status: 401,
+        code: "UNAUTHORIZED",
+        message: "no bearer",
+      });
+      return c.json({ error: "boom" }, 500);
+    });
+
+    await app.request("/api/web/mixed");
+
+    const failed = vi
+      .mocked(logger.event)
+      .mock.calls.filter(([name]) => name === "http.request.failed");
+    const payload = failed[0][2] as any;
+    expect(payload.errorCode).toBe("internal_error");
+    expect(payload.errorMessage).toBeUndefined();
+  });
+
+  // Hono runs `onError` INSIDE `next()`, so this middleware's catch block never
+  // fires for a route exception — it only ever sees the resulting 500 response.
+  // That is why the cause has to be handed over via `webErrorMeta`, and why the
+  // `thrown` branch cannot be relied on. Locking the ordering here so a Hono
+  // upgrade that changes it doesn't silently reintroduce blind 5xx logging.
+  it("captures the cause of a route exception via the error handler", async () => {
+    const app = new Hono();
+    app.use("/api/*", requestLogContextMiddleware);
+    app.get("/api/web/throws", () => {
+      throw new Error("ECONNRESET talking to upstream");
+    });
+    // Mirrors the real handlers (web router + global app onError), which stash
+    // the mapped code/message before returning the response.
+    app.onError((err, c) => {
+      c.set("webErrorMeta", {
+        status: 500,
+        code: "unhandled_exception",
+        message: (err as Error).message,
+      });
+      return c.json({ error: (err as Error).message }, 500);
+    });
+
+    await app.request("/api/web/throws");
+
+    const failed = vi
+      .mocked(logger.event)
+      .mock.calls.filter(([name]) => name === "http.request.failed");
+    expect(failed).toHaveLength(1);
+    const payload = failed[0][2] as any;
+    expect(payload.errorCode).toBe("unhandled_exception");
+    expect(payload.errorMessage).toBe("ECONNRESET talking to upstream");
+  });
+
+  it("caps a huge error message at 500 chars", async () => {
+    const app = new Hono();
+    app.use("/api/*", requestLogContextMiddleware);
+    app.get("/api/web/huge", (c) => {
+      c.set("webErrorMeta", {
+        status: 502,
+        code: "SERVER_UNREACHABLE",
+        message: "x".repeat(5000),
+      });
+      return c.json({ code: "SERVER_UNREACHABLE" }, 502);
+    });
+
+    await app.request("/api/web/huge");
+
+    const failed = vi
+      .mocked(logger.event)
+      .mock.calls.filter(([name]) => name === "http.request.failed");
+    expect((failed[0][2] as any).errorMessage).toHaveLength(500);
+  });
+
   it("does not emit anything for /api/mcp/health", async () => {
     const app = createTestApp();
     app.get("/api/mcp/health", (c) => c.json({ status: "ok" }));

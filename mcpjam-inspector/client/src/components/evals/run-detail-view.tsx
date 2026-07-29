@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   DropdownMenu,
@@ -9,6 +15,11 @@ import {
 } from "@mcpjam/design-system/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { formatRunId } from "./helpers";
+import {
+  buildOpenAiSubmissionReport,
+  renderOpenAiSubmissionReport,
+} from "@/lib/evals/openai-submission-report";
+import { buildSubmissionCasesFromRun } from "./run-submission";
 import { computeIterationPassed } from "./pass-criteria";
 import { EvalIteration, EvalJudgeConfig, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
@@ -48,7 +59,8 @@ import {
   type RunTrendPoint,
 } from "./run-insight-rail";
 import { runDetailMetaLabelClass } from "./run-detail-typography";
-import { useEnvironments } from "@/hooks/useComputerEnvironments";
+import { RunPluginSnapshot } from "./run-plugin-snapshot";
+import { useSandboxImages } from "@/hooks/useSandboxImages";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import {
   ResizableHandle,
@@ -426,7 +438,7 @@ export function RunDetailView({
     runComputerEnv?.environmentId ??
     selectedRunDetails.configSnapshot?.environment?.computerEnvironmentId ??
     null;
-  const runEnvironments = useEnvironments(
+  const runEnvironments = useSandboxImages(
     runComputerEnvId ? selectedRunDetails.projectId ?? null : null
   );
   // Friendly name when resolvable; otherwise the RAW id (never truncated — it's
@@ -441,8 +453,46 @@ export function RunDetailView({
   // kill-switch hides env names/revisions on retained historical runs too.
   const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
   const runProjectEnvironmentRef = projectEnvironmentsEnabled
-    ? (selectedRunDetails.configSnapshot?.environmentRef ?? null)
+    ? selectedRunDetails.configSnapshot?.environmentRef ?? null
     : null;
+  // OpenAI submission evidence (INS-5). Offered only when the run pinned a
+  // plugin: the document's value is naming the exact bundle it is evidence
+  // about, which a plugin-free run cannot do.
+  const pluginSubmissionVersions =
+    selectedRunDetails.configSnapshot?.environmentPluginVersions ?? [];
+  const downloadSubmissionReport = useCallback(() => {
+    const report = buildOpenAiSubmissionReport({
+      // The run row carries no suite NAME (CI/commit-detail parents have no
+      // live suite handle), so title the document by suite id rather than
+      // guessing a name that might not be the suite's.
+      suiteName: `Suite ${formatRunId(selectedRunDetails.suiteId)}`,
+      runLabel: `Run ${formatRunId(selectedRunDetails._id)} (#${selectedRunDetails.runNumber})`,
+      cases: buildSubmissionCasesFromRun(caseGroupsForSelectedRun),
+      pluginVersions: pluginSubmissionVersions.map((version) => ({
+        name: version.name,
+        pluginVersionId: version.pluginVersionId,
+        bundleHash: version.bundleHash,
+      })),
+      skillsExcluded: selectedRunDetails.configSnapshot?.skillsExcluded,
+    });
+    const blob = new Blob([renderOpenAiSubmissionReport(report)], {
+      type: "text/markdown;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const anchorEl = document.createElement("a");
+    anchorEl.href = url;
+    anchorEl.download = `openai-submission-${formatRunId(selectedRunDetails._id)}.md`;
+    anchorEl.click();
+    URL.revokeObjectURL(url);
+  }, [
+    caseGroupsForSelectedRun,
+    pluginSubmissionVersions,
+    selectedRunDetails._id,
+    selectedRunDetails.configSnapshot?.skillsExcluded,
+    selectedRunDetails.runNumber,
+    selectedRunDetails.suiteId,
+  ]);
+
   const {
     result: goalCompletionResult,
     pending: goalCompletionPending,
@@ -709,13 +759,12 @@ export function RunDetailView({
           </div>
         )}
 
-      {runClient && !showAccuracyHero && !embeddedInResultsSplit ? (
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          <span className={runDetailMetaLabelClass}>Client</span>
-          <HostChip name={runClient.displayName} hostId={runClient.hostId} />
-        </div>
-      ) : null}
-
+      {/* Run IDENTITY, in precedence order. When the run launched from a
+          project environment, the ENVIRONMENT is what produced it — the host
+          below is a detail of how the environment resolved, not the run's
+          identity. Two environments can resolve to the same host, so the host
+          alone cannot name the run. `rev N` is the exact revision THIS run
+          pinned; grouping elsewhere keys on the environment id, never this. */}
       {runProjectEnvironmentRef ? (
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <span className={runDetailMetaLabelClass}>Environment</span>
@@ -730,6 +779,22 @@ export function RunDetailView({
               rev {runProjectEnvironmentRef.revision}
             </span>
           </span>
+        </div>
+      ) : null}
+
+      {/* The plugin surface, directly under the environment that pinned it:
+          a plugin reaches a run only through an environment, so the two are
+          one fact read top to bottom. Renders nothing when no plugin was
+          pinned. */}
+      <RunPluginSnapshot
+        pluginVersions={selectedRunDetails.configSnapshot?.environmentPluginVersions}
+        skillsExcluded={selectedRunDetails.configSnapshot?.skillsExcluded}
+      />
+
+      {runClient && !showAccuracyHero && !embeddedInResultsSplit ? (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <span className={runDetailMetaLabelClass}>Client</span>
+          <HostChip name={runClient.displayName} hostId={runClient.hostId} />
         </div>
       ) : null}
 
@@ -828,20 +893,37 @@ export function RunDetailView({
         omitIterationList && "px-3 py-3"
       )}
     >
-      {onExportTraces ? (
-        // Always-on run-level action — placed here (not the accuracy hero) so it
-        // survives the folded run-detail layout that hides the hero.
-        <div className="mb-3 flex shrink-0 justify-end">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onExportTraces}
-            className="gap-1.5"
-            data-testid="run-detail-export-traces"
-          >
-            <Download className="h-3.5 w-3.5" />
-            Export
-          </Button>
+      {onExportTraces || pluginSubmissionVersions.length > 0 ? (
+        // Always-on run-level actions — placed here (not the accuracy hero) so
+        // they survive the folded run-detail layout that hides the hero.
+        <div className="mb-3 flex shrink-0 justify-end gap-2">
+          {pluginSubmissionVersions.length > 0 ? (
+            // Offered only for a run that pinned a plugin. The document's
+            // entire value is naming the bundle it is evidence about, so on a
+            // plugin-free run there is nothing to submit and no button.
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={downloadSubmissionReport}
+              className="gap-1.5"
+              data-testid="run-detail-openai-submission"
+            >
+              <Download className="h-3.5 w-3.5" />
+              Submission report
+            </Button>
+          ) : null}
+          {onExportTraces ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onExportTraces}
+              className="gap-1.5"
+              data-testid="run-detail-export-traces"
+            >
+              <Download className="h-3.5 w-3.5" />
+              Export
+            </Button>
+          ) : null}
         </div>
       ) : null}
 

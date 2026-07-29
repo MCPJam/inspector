@@ -77,6 +77,7 @@ describe("web routes — oauth requires bearer token", () => {
       statusText: "OK",
       headers: {},
       body: { ok: true },
+      finalUrl: "https://example.com/token",
     });
 
     const response = await postJson(
@@ -93,12 +94,17 @@ describe("web routes — oauth requires bearer token", () => {
       statusText: "OK",
       headers: {},
       body: { ok: true },
+      finalUrl: "https://example.com/token",
     });
+    expect(response.headers.get("x-mcpjam-oauth-upstream-url")).toBe(
+      "https://example.com/token"
+    );
   });
 
   it("GET /metadata succeeds with bearer token", async () => {
     fetchOAuthMetadataMock.mockResolvedValueOnce({
       metadata: { issuer: "https://example.com" },
+      finalUrl: "https://example.com/.well-known/oauth",
     });
 
     const response = await getJson(
@@ -110,6 +116,9 @@ describe("web routes — oauth requires bearer token", () => {
 
     expect(status).toBe(200);
     expect(data).toEqual({ issuer: "https://example.com" });
+    expect(response.headers.get("x-mcpjam-oauth-upstream-url")).toBe(
+      "https://example.com/.well-known/oauth"
+    );
   });
 });
 
@@ -189,11 +198,13 @@ describe("web routes — oauth error contract", () => {
     const { status, data } = await expectJson<OAuthErrorResponse>(response);
 
     expect(status).toBe(502);
-    expect(data).toEqual({
-      code: "SERVER_UNREACHABLE",
-      message: "connect ECONNREFUSED",
-      error: "connect ECONNREFUSED",
-    });
+    // mapRuntimeError frames connection-class failures as a target-server
+    // problem (the raw errno alone reads like an MCPJam outage in the client
+    // toast) while preserving the raw error for debugging.
+    expect(data.code).toBe("SERVER_UNREACHABLE");
+    expect(data.message).toContain("connect ECONNREFUSED");
+    expect(data.message).toContain("not an MCPJam outage");
+    expect(data.error).toBe(data.message);
   });
 });
 

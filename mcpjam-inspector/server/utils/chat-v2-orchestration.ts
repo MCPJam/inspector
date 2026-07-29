@@ -17,7 +17,11 @@
 
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { jsonSchema, tool, type ToolSet } from "ai";
-import { MCPClientManager, type Harness } from "@mcpjam/sdk";
+import {
+  MCPClientManager,
+  type Harness,
+  type ToolTaskSeamOptions,
+} from "@mcpjam/sdk";
 import {
   filterAppOnlyTools,
   type ModelVisibleMcpToolResults,
@@ -35,6 +39,8 @@ import {
   getCloudSkillToolsAndPrompt,
   getPinnedSkillToolsAndPrompt,
 } from "./computers/cloud-skill-tools.js";
+import { getEffectiveSkillToolsAndPrompt } from "./computers/effective-skill-tools.js";
+import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { PinnableSkill } from "../../shared/skill-types.js";
 import { logger } from "./logger.js";
 import { isGPT5Model, type ModelDefinition } from "@/shared/types";
@@ -665,6 +671,16 @@ export interface PrepareChatV2Options {
    */
   harness?: Harness;
   /**
+   * Resolved task-seam options, or absent for "tasks off".
+   *
+   * The MODE is resolved by the route (from the host policy and its own
+   * `TaskSurface`), never here: web chat, local chat and the agent all reach
+   * this function, and they are three different surfaces in the policy matrix.
+   * Absent leaves `toolOptions` undefined for a default turn, which is what
+   * keeps those turns byte-identical.
+   */
+  tasks?: ToolTaskSeamOptions;
+  /**
    * Prior conversation messages, used to hydrate progressive discovery
    * state across turns. Without these, `discoveryState.loadedToolIds`
    * resets every request and any tools the model loaded earlier in the
@@ -684,14 +700,57 @@ export interface PrepareChatV2Options {
    */
   cloudSkills?: { authHeader: string; projectId: string };
   /**
-   * Explicit skill source, ABOVE the cloud/HOSTED/local chain. Set ONLY by eval
-   * runners: `pinned` mints frozen in-memory tools over snapshotted content
-   * (zero network in execute), `none` suppresses skills entirely. Chat callers
-   * never set it → the existing precedence is byte-identical. `pinned` tools
-   * bypass approval (pure reads of frozen content under an auto-deny eval run).
+   * Explicit skill source, ABOVE the cloud/HOSTED/local chain. Chat callers on
+   * the legacy paths never set it → the existing precedence is byte-identical.
+   *
+   *  - `pinned`   — EVAL RUNNERS ONLY. Frozen in-memory tools over snapshotted
+   *    content (zero network in execute). Tools bypass approval: pure reads of
+   *    frozen content under an auto-deny eval run.
+   *  - `resolved` — a Project-Environment turn. Same in-memory delivery,
+   *    DIFFERENT policy: this is an ordinary interactive turn, so the skill
+   *    tools follow the host's normal `requireToolApproval` rule. The eval
+   *    approval exemption is deliberately NOT inherited — a user watching their
+   *    own turn should still get the approval prompt they configured. It
+   *    carries the whole `EffectiveCapabilitySet` rather than a skill list
+   *    (INS-3) because the tools address skills by REF: a plugin skill is
+   *    `<plugin>/<skill>`, and the origin/file metadata the ref surface needs
+   *    lives on the set, not on a flattened `PinnableSkill`.
+   *  - `pinned-effective` — EVAL RUNNERS ONLY, for a run whose pins carry a
+   *    plugin `modelRef` or supporting FILES (INS-5). Same frozen-content,
+   *    approval-exempt policy as `pinned`; the ref-addressed `resolved` tool
+   *    surface, because a bare-name surface cannot express `<plugin>/<skill>`
+   *    and has no file tools to serve a pinned `scripts/` directory with. The
+   *    set is built from the RUN SNAPSHOT, so "in-memory over frozen content"
+   *    still holds — the only network is the signed `_storage` GET for a file
+   *    the model actually asks for, and that URL was minted against the pinned
+   *    blob, not the live one.
+   *  - `none`     — suppress skills entirely.
+   *
+   * `resolved` and the two pinned kinds are separate kinds rather than one
+   * "in-memory" kind with a flag precisely because that approval divergence is
+   * the whole distinction, and a shared kind would make it a caller's job to
+   * remember.
    */
   skillsSource?:
     | { kind: "pinned"; skills: PinnableSkill[] }
+    | {
+        kind: "pinned-effective";
+        capabilities: EffectiveCapabilitySet;
+        /** See `resolved` below — same reason, same lifetime. */
+        abortSignal?: AbortSignal;
+      }
+    | {
+        kind: "resolved";
+        capabilities: EffectiveCapabilitySet;
+        /**
+         * The turn's abort signal. Carried HERE rather than added to
+         * `PrepareChatV2Options` because this is the only consumer: a skill
+         * supporting-file read fetches a signed `_storage` URL, and without it
+         * that fetch runs its full 30s timeout after the client has already
+         * disconnected.
+         */
+        abortSignal?: AbortSignal;
+      }
     | { kind: "none" };
 }
 
@@ -878,6 +937,7 @@ export async function prepareChatV2(
     cloudSkills,
     skillsSource,
     harness,
+    tasks,
   } = options;
 
   // Drop ids the manager hasn't registered (server disabled/disconnected, or
@@ -890,7 +950,8 @@ export async function prepareChatV2(
   const toolOptions =
     requireToolApproval ||
     respectToolVisibility === false ||
-    modelVisibleMcpToolResults !== undefined
+    modelVisibleMcpToolResults !== undefined ||
+    tasks !== undefined
       ? {
           ...(requireToolApproval
             ? { needsApproval: requireToolApproval }
@@ -899,6 +960,9 @@ export async function prepareChatV2(
           ...(modelVisibleMcpToolResults !== undefined
             ? { modelVisibleMcpToolResults }
             : {}),
+          // Absent for every default turn, which is what keeps those turns on
+          // the pre-existing no-options overload.
+          ...(tasks !== undefined ? { tasks } : {}),
         }
       : undefined;
 
@@ -922,14 +986,18 @@ export async function prepareChatV2(
     filterAppOnlyTools(mcpTools, mcpClientManager);
   }
   // Skills source, in precedence order:
-  //   0. skillsSource set (EVAL RUNNERS ONLY) ⇒ pinned frozen tools or none.
-  //      Above everything; chat callers never set it, so the chain below is
-  //      byte-identical for them. Pinned tools bypass approval (decision 12).
+  //   0. skillsSource set ⇒ in-memory tools (`pinned` for eval runs,
+  //      `resolved` for a Project-Environment turn) or none. Above everything;
+  //      legacy chat callers never set it, so the chain below is byte-identical
+  //      for them. Only PINNED tools bypass approval (decision 12) — `resolved`
+  //      is an interactive turn and keeps the host's approval rule.
   //   1. cloudSkills set ⇒ the caller's Computer (E2B sandbox) — hosted path
   //      with a provisioned computer. Lazy discovery (no upfront wake).
   //   2. HOSTED_MODE without a computer ⇒ no skills (local FS unavailable).
   //   3. local ⇒ the inspector's own filesystem.
-  const skillsArePinned = skillsSource?.kind === "pinned";
+  const skillsArePinned =
+    skillsSource?.kind === "pinned" ||
+    skillsSource?.kind === "pinned-effective";
   // Decision 11: harness eval turns live-fetch skills, so a pinned set would
   // falsify the snapshot claim. Harness is stripped from suite configs already;
   // this throw is belt-and-suspenders at the single point both paths funnel through.
@@ -942,7 +1010,20 @@ export async function prepareChatV2(
     skillsSource
       ? skillsSource.kind === "pinned"
         ? getPinnedSkillToolsAndPrompt(skillsSource.skills)
-        : { tools: {}, systemPromptSection: "" }
+        : skillsSource.kind === "resolved" ||
+            skillsSource.kind === "pinned-effective"
+          ? getEffectiveSkillToolsAndPrompt(skillsSource.capabilities, {
+              ...(skillsSource.abortSignal
+                ? { signal: skillsSource.abortSignal }
+                : {}),
+              // The discovery listing is budgeted against THIS model's context
+              // (INS-3 / OpenAI's 2% rule). `contextLength` is optional on a
+              // model definition; the budget helper falls back to 8,000 chars.
+              ...(modelDefinition.contextLength !== undefined
+                ? { modelContextTokens: modelDefinition.contextLength }
+                : {}),
+            })
+          : { tools: {}, systemPromptSection: "" }
       : cloudSkills
         ? getCloudSkillToolsAndPrompt({
             authHeader: cloudSkills.authHeader,

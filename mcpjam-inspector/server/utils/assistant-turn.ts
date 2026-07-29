@@ -128,15 +128,6 @@ export interface RunAssistantTurnOptions {
   streamSink: RunAssistantTurnStreamSink;
   persistMode: RunAssistantTurnPersistMode;
 
-  /**
-   * When provided, threaded into the `/stream` request body so Convex's
-   * spend-record path can attribute usage to the synthetic run/job. The
-   * backend ignores unknown fields until the matching wiring lands per
-   * `feedback_bridge_preserves_unknown_fields`.
-   */
-  synthesisRunId?: string;
-  synthesisJobId?: string;
-
   // --- The fields below are pass-throughs to `handleMCPJamFreeChatModel`
   //     that the live-chat callers already supply today. Exposed here so
   //     a thin wrapper can forward them without losing behavior. ---
@@ -213,6 +204,14 @@ export interface RunAssistantTurnOptions {
    * skips the live skills fetch and delivers exactly these pinned artifacts.
    */
   pinnedHarnessSkills?: MCPJamHandlerOptions["pinnedHarnessSkills"];
+
+  /**
+   * Resolved Project-Environment skills for this turn (Phase 1.4).
+   * Pass-through to `runHarnessTurn`: when set (even empty) the harness turn
+   * delivers exactly these and skips the live project-wide fetch. Ranks below
+   * `pinnedHarnessSkills` — see `harness/skill-delivery.ts`.
+   */
+  runtimeSkillsOverride?: MCPJamHandlerOptions["runtimeSkillsOverride"];
 
   /**
    * Override the Convex endpoint path. Stage 1 keeps this wired so
@@ -320,21 +319,14 @@ function extractToolResults(
 }
 
 /**
- * Build the merged `extraBodyFields` payload forwarded to the Convex
- * `/stream` request. Caller-supplied fields win; the synthesis
- * attribution keys are appended last so they never override a real
- * upstream key collision (none today — they're new).
+ * Build the `extraBodyFields` payload forwarded to the Convex `/stream`
+ * request. (The synthesis attribution keys this used to append were removed
+ * with the chatbox synthetic surface.)
  */
 function buildExtraBodyFields(
   opts: RunAssistantTurnOptions
 ): Record<string, unknown> | undefined {
   const base = { ...(opts.extraBodyFields ?? {}) };
-  if (opts.synthesisRunId) {
-    base.synthesisRunId = opts.synthesisRunId;
-  }
-  if (opts.synthesisJobId) {
-    base.synthesisJobId = opts.synthesisJobId;
-  }
   return Object.keys(base).length > 0 ? base : undefined;
 }
 
@@ -409,6 +401,12 @@ function buildHandlerOptions(
     // empty authoritative set means "run skill-less", never "fall back live".
     ...(opts.pinnedHarnessSkills !== undefined
       ? { pinnedHarnessSkills: opts.pinnedHarnessSkills }
+      : {}),
+    // Environment skill override: same presence-is-semantic rule as pinned —
+    // an empty resolved set means "this environment delivers no skills", never
+    // "fall back to the project pool".
+    ...(opts.runtimeSkillsOverride !== undefined
+      ? { runtimeSkillsOverride: opts.runtimeSkillsOverride }
       : {}),
     ...(opts.requireToolApproval !== undefined
       ? { requireToolApproval: opts.requireToolApproval }
