@@ -203,7 +203,7 @@ export function mapRuntimeError(error: unknown): WebRouteError {
     return new WebRouteError(
       502,
       ErrorCode.SERVER_UNREACHABLE,
-      message,
+      formatServerUnreachableMessage(message),
       undefined,
       normalized
     );
@@ -212,9 +212,24 @@ export function mapRuntimeError(error: unknown): WebRouteError {
   return new WebRouteError(
     500,
     ErrorCode.INTERNAL_ERROR,
-    message,
+    message.trim() || "An unexpected error occurred.",
     undefined,
     normalized
+  );
+}
+
+/**
+ * User-facing framing for connection-class 502s. The raw errno text
+ * ("fetch failed", "ECONNRESET") reads like an MCPJam outage in the client
+ * toast, when the failure is the TARGET server refusing/resetting the
+ * connection — say so explicitly, and keep the raw error for debugging.
+ */
+export function formatServerUnreachableMessage(rawMessage: string): string {
+  const raw = rawMessage.trim();
+  return (
+    "Couldn't reach the MCP server" +
+    (raw ? ` (${raw})` : "") +
+    ". The server appears to be down, restarting, or unreachable from MCPJam — this is a connection problem with the target server, not an MCPJam outage."
   );
 }
 

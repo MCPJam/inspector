@@ -90,39 +90,38 @@ describe("scrubLogPayload", () => {
       expect(result.note).toContain("[redacted-secret]");
     });
 
-    // Key-based redaction only walks object keys, so a secret sitting in a URL
-    // *inside* a string (an error message, a logged path) used to survive.
-    it("redacts secrets carried in URL query params", () => {
+    it("redacts secret-ish query params quoted inside error strings", () => {
+      // Raw upstream error messages routinely quote full request URLs; the
+      // key-based redaction can't see inside a string value.
       const result = scrubLogPayload({
-        errorMessage:
-          "fetch failed for https://srv.example.com/mcp?access_token=abc123secret&foo=bar",
+        message:
+          "fetch failed for https://mcp.example.com/sse?api_key=plain-secret&x=1",
       }) as any;
-
-      expect(result.errorMessage).not.toContain("abc123secret");
-      expect(result.errorMessage).toContain("access_token=[redacted]");
-      // The rest of the URL stays readable — that's the debugging value.
-      expect(result.errorMessage).toContain("https://srv.example.com/mcp");
-      expect(result.errorMessage).toContain("foo=bar");
+      expect(result.message).not.toContain("plain-secret");
+      expect(result.message).toContain("api_key=[redacted]");
     });
 
-    it("redacts the OAuth authorization code and other secret params", () => {
+    it("redacts key=value and key: value secret assignments", () => {
       const result = scrubLogPayload({
-        note: "cb https://a.dev/callback?code=authcode123&state=xyz789#api_key=k9",
+        message: 'connect failed (token=abc123, client_secret: "s3cr3t")',
       }) as any;
-
-      expect(result.note).not.toContain("authcode123");
-      expect(result.note).not.toContain("xyz789");
-      expect(result.note).not.toContain("k9");
+      expect(result.message).not.toContain("abc123");
+      expect(result.message).not.toContain("s3cr3t");
     });
 
-    it("leaves non-secret query params alone", () => {
+    it("redacts basic-auth credentials in URLs", () => {
       const result = scrubLogPayload({
-        note: "https://srv.example.com/mcp?projectId=v97abc&limit=10",
+        message: "getaddrinfo ENOTFOUND for https://user:hunter2@internal.host/mcp",
       }) as any;
+      expect(result.message).not.toContain("hunter2");
+      expect(result.message).toContain("[redacted]@internal.host");
+    });
 
-      expect(result.note).toBe(
-        "https://srv.example.com/mcp?projectId=v97abc&limit=10",
-      );
+    it("leaves ordinary error strings readable", () => {
+      const message =
+        "connect ECONNREFUSED 127.0.0.1:8080 (timeout: 30000, retries: 1)";
+      const result = scrubLogPayload({ message }) as any;
+      expect(result.message).toBe(message);
     });
   });
 

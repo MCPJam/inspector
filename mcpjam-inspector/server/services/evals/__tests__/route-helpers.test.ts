@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { INSPECTOR_MCP_RETRY_POLICY } from "../../../utils/mcp-retry-policy.js";
 
 const { mcpClientManagerConstructorMock } = vi.hoisted(() => ({
   mcpClientManagerConstructorMock: vi.fn(),
@@ -164,10 +165,9 @@ describe("buildReplayManager", () => {
       {
         defaultTimeout: expect.any(Number),
         lazyConnect: true,
-        retryPolicy: {
-          retries: 0,
-          retryDelayMs: 3000,
-        },
+        // The shared inspector policy — asserts the replay manager uses it
+        // rather than pinning its literal values here.
+        retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
       },
     );
   });

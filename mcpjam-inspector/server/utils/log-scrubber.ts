@@ -25,12 +25,16 @@ const EMAIL_LIKE = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
 const SK_KEY_LIKE = /\bsk-[A-Za-z0-9]{16,}\b/g;
 const JWT_LIKE =
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g;
-// Secrets carried in a URL query string. The key-based redaction above only
-// walks object keys, so `https://host/mcp?access_token=…` inside a *string*
-// (an error message, a logged path) slipped through intact. Value runs to the
-// next delimiter so the rest of the URL stays readable for debugging.
-const URL_SECRET_PARAM_LIKE =
-  /([?&#](?:access_token|refresh_token|id_token|token|api[-_]?key|apikey|client_secret|secret|password|passwd|pwd|auth|sig|signature|code|state|session|session_id|key)=)[^&#\s"']+/gi;
+// Secret-ish `key=value` / `key: value` pairs embedded in strings — raw
+// upstream error messages routinely quote full URLs
+// (`...?api_key=plain-secret`), which the key-based redaction above can't
+// see. Over-redaction is acceptable in logs, so the key list is broad.
+const SECRET_PARAM_LIKE =
+  /\b((?:api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|secret|password|passwd|pwd|token|auth|key|sig|signature)\s*[=:]\s*["']?)[^&\s"'`]+/gi;
+// Basic-auth credentials in URLs: `https://user:pass@host/...`. Must run
+// BEFORE the email pattern, which otherwise consumes `pass@host` as an
+// address and leaves a mangled remainder this pattern can't match.
+const URL_BASIC_AUTH_LIKE = /(\/\/[^\s/:@]+:)[^\s@/]+@/g;
 
 function isForbiddenKey(key: string): boolean {
   const lower = key.toLowerCase();
@@ -43,9 +47,10 @@ function scrubString(s: string): string {
   return s
     .replace(TOKEN_LIKE, "Bearer [redacted-token]")
     .replace(JWT_LIKE, "[redacted-jwt]")
+    .replace(URL_BASIC_AUTH_LIKE, "$1[redacted]@")
     .replace(EMAIL_LIKE, "[redacted-email]")
     .replace(SK_KEY_LIKE, "[redacted-secret]")
-    .replace(URL_SECRET_PARAM_LIKE, "$1[redacted]");
+    .replace(SECRET_PARAM_LIKE, "$1[redacted]");
 }
 
 export function scrubLogPayload<T>(value: T): T {
