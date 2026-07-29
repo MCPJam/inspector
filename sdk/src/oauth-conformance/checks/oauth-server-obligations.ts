@@ -20,9 +20,12 @@ import type {
 // text, not a readiness warning.
 //
 //   Finding 3 — the `WWW-Authenticate` challenge must carry an absolute
-//     `resource_metadata` URL (RFC 9728 §5.1).
+//     `resource_metadata` URL (RFC 9728 §5.1). RFC 9728 entered the MCP spec
+//     at 2025-06-18, so this check skips on a 2025-03-26 target.
 //   Finding 4 — an unauthenticated request must be answered with 401 + a Bearer
-//     challenge, never a 500 (RFC 6750 §3 / MCP authorization).
+//     challenge, never a 500 (RFC 6750 §3 / MCP authorization). A 2xx is not a
+//     violation — the spec permits anonymous `initialize` with authorization
+//     enforced on later requests — so it skips as unverifiable.
 //   Finding 5 — a stale `Mcp-Session-Id` must be rejected with a 4xx, never a
 //     500 (MCP Streamable HTTP transport). Per HP-17 the spec prefers 404 and
 //     does NOT mandate a parseable body, so only the 5xx crash is a failure;
@@ -65,6 +68,23 @@ function errorDetails(error: unknown) {
   return error;
 }
 
+/** Strip credential-bearing headers before a request is embedded in error
+ * details. Raw StepResults reach consumers (the inspector panel, persisted
+ * runs) that never pass through the report-level redaction in
+ * conformance-reporting.ts, and no consumer needs the token. */
+function redactRequestForDetails(request: {
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  body?: Record<string, unknown>;
+}) {
+  const headers: Record<string, string> = {};
+  for (const [key, value] of Object.entries(request.headers)) {
+    headers[key] = key.toLowerCase() === "authorization" ? "[REDACTED]" : value;
+  }
+  return { ...request, headers };
+}
+
 function buildTransportFailure(
   step: OAuthServerObligationStep,
   startedAt: number,
@@ -84,7 +104,7 @@ function buildTransportFailure(
     error: {
       message: `${messagePrefix}: ${error instanceof Error ? error.message : String(error)}`,
       details: {
-        request,
+        request: redactRequestForDetails(request),
         error: errorDetails(error),
       },
     },
@@ -237,6 +257,26 @@ export async function runUnauthenticatedChallengeCheck(
     };
   }
 
+  // 2xx: the server served an anonymous `initialize`. The spec does not
+  // require every request to be authenticated — authorization may only be
+  // enforced on later requests (e.g. tools/call) — so, as with the
+  // stale-session 2xx path, this is unverifiable rather than a violation.
+  if (response.status >= 200 && response.status < 300) {
+    return {
+      step: "oauth_unauthenticated_challenge",
+      status: "skipped",
+      durationMs,
+      error: {
+        message:
+          "MCP server accepted an unauthenticated initialize; authorization may only be enforced on later requests, so the 401 challenge could not be observed",
+        details: {
+          status: response.status,
+          statusText: response.statusText,
+        },
+      },
+    };
+  }
+
   if (response.status !== 401) {
     return {
       step: "oauth_unauthenticated_challenge",
@@ -285,6 +325,21 @@ export async function runUnauthenticatedChallengeCheck(
 export async function runResourceMetadataChallengeCheck(
   input: OAuthServerObligationInput,
 ): Promise<OAuthServerObligationOutcome> {
+  // RFC 9728 protected-resource metadata entered the MCP authorization spec at
+  // 2025-06-18; a 2025-03-26 server owes no resource_metadata parameter, so
+  // there is nothing to probe.
+  if (input.config.protocolVersion === "2025-03-26") {
+    return {
+      step: "oauth_resource_metadata_challenge",
+      status: "skipped",
+      durationMs: 0,
+      error: {
+        message:
+          "The 2025-03-26 authorization spec predates RFC 9728 protected-resource metadata; resource_metadata is not required on this protocol version",
+      },
+    };
+  }
+
   const startedAt = Date.now();
   const request = buildUnauthenticatedMcpRequest(input.config);
   let response: Awaited<ReturnType<TrackedRequestFn>>;
@@ -372,11 +427,10 @@ export async function runResourceMetadataChallengeCheck(
   };
 }
 
-// Unlike every other check, this request carries the REAL access token, and a
-// transport failure embeds it in error.details.request.headers. That is safe
-// in reports only because renderConformanceReportJson (conformance-reporting.ts)
-// deep-redacts authorization keys via redaction.ts before serializing — any
-// consumer of raw StepResults bypasses that redaction.
+// Unlike every other check, this request carries the REAL access token.
+// buildTransportFailure redacts the Authorization header before embedding the
+// request in error details, so the token never enters a StepResult regardless
+// of whether the consumer applies the report-level redaction.
 function buildStaleSessionMcpRequest(
   config: NormalizedOAuthConformanceConfig,
   accessToken: string,

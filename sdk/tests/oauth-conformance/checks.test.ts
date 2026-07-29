@@ -543,7 +543,10 @@ describe("oauth server obligation checks", () => {
       });
     });
 
-    it("fails when the server accepts an unauthenticated request", async () => {
+    it("skips when the server accepts an unauthenticated initialize", async () => {
+      // Anonymous initialize is spec-legal (authorization may be enforced on
+      // later requests), so a 2xx is unverifiable, not a violation — mirrors
+      // the stale-session 2xx handling.
       const result = await runUnauthenticatedChallengeCheck({
         ...(baseObligationInput as any),
         trackedRequest: jest.fn().mockResolvedValue({
@@ -557,8 +560,31 @@ describe("oauth server obligation checks", () => {
 
       expect(result).toMatchObject({
         step: "oauth_unauthenticated_challenge",
+        status: "skipped",
+        error: {
+          message: expect.stringContaining(
+            "accepted an unauthenticated initialize",
+          ),
+        },
+      });
+    });
+
+    it("still fails a non-401 rejection such as 403", async () => {
+      const result = await runUnauthenticatedChallengeCheck({
+        ...(baseObligationInput as any),
+        trackedRequest: jest.fn().mockResolvedValue({
+          ok: false,
+          status: 403,
+          statusText: "Forbidden",
+          headers: {},
+          body: { error: "forbidden" },
+        }),
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_unauthenticated_challenge",
         status: "failed",
-        error: { message: expect.stringContaining("expected HTTP 401, received 200") },
+        error: { message: expect.stringContaining("expected HTTP 401, received 403") },
       });
     });
 
@@ -682,6 +708,25 @@ describe("oauth server obligation checks", () => {
           ),
         },
       });
+    });
+
+    it("skips on 2025-03-26, which predates RFC 9728, without probing", async () => {
+      const trackedRequest = jest.fn();
+      const result = await runResourceMetadataChallengeCheck({
+        ...(baseObligationInput as any),
+        config: {
+          ...baseObligationInput.config,
+          protocolVersion: "2025-03-26",
+        },
+        trackedRequest,
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_resource_metadata_challenge",
+        status: "skipped",
+        error: { message: expect.stringContaining("predates RFC 9728") },
+      });
+      expect(trackedRequest).not.toHaveBeenCalled();
     });
 
     it("skips when there is no challenge to inspect", async () => {
@@ -846,6 +891,24 @@ describe("oauth server obligation checks", () => {
         error: { message: expect.stringContaining("stateless") },
       });
       expect(trackedRequest).not.toHaveBeenCalled();
+    });
+
+    it("redacts the access token from transport-failure details", async () => {
+      const result = await runStaleSessionRejectionCheck({
+        ...(baseObligationInput as any),
+        trackedRequest: jest.fn().mockRejectedValue(new Error("timeout")),
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_stale_session_rejection",
+        status: "failed",
+        error: { message: "Stale-session MCP request failed: timeout" },
+      });
+      const details = result.error?.details as {
+        request: { headers: Record<string, string> };
+      };
+      expect(details.request.headers.Authorization).toBe("[REDACTED]");
+      expect(JSON.stringify(details)).not.toContain("valid-access-token");
     });
 
     it("skips when no access token is available", async () => {
