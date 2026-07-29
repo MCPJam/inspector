@@ -32,7 +32,10 @@ tools.post("/projects/:projectId/servers/:serverId/tools/call", async (c) =>
     c,
     toolsExecuteSchema,
     async (manager, body) => {
-      if (body.taskOptions) {
+      // Both task opt-ins are refused here: the public API contract is a
+      // separate decision from the hosted UI's, so /api/v1 stays task-free
+      // even though hosted /web now allows them.
+      if (body.taskOptions || body.allowTaskResult) {
         throw new WebRouteError(
           400,
           ErrorCode.FEATURE_NOT_SUPPORTED,

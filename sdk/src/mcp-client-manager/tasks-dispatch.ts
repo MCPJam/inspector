@@ -46,6 +46,21 @@ export type TasksWire = "none" | "legacy" | "extension";
  */
 const FIRST_EXTENSION_VERSION = "2026-07-28";
 
+/**
+ * Whether a negotiated version is in the era that can carry the tasks
+ * extension. Fails closed on unknown/missing versions, so era-gated wire
+ * hacks (result rewriting, routing headers) never fire on older traffic.
+ */
+export function isTasksExtensionEra(
+  protocolVersion: string | undefined
+): boolean {
+  return (
+    !!protocolVersion &&
+    isKnownProtocolVersion(protocolVersion) &&
+    protocolVersion >= FIRST_EXTENSION_VERSION
+  );
+}
+
 /** The only version that carries the in-core (legacy) tasks utility. */
 const LEGACY_TASKS_VERSION = "2025-11-25";
 
@@ -57,13 +72,29 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * Whether a server advertises `io.modelcontextprotocol/tasks` in
  * `capabilities.extensions`. Only `tasks-dispatch` and `tasks-ext` may
  * consult this — the "treat as absent on 2025-11-25" rule lives here.
+ *
+ * The VALUE must itself be a non-array object: the capability map is
+ * `{ [extensionId]: settingsObject }`, so `true` / `"x"` / `[]` / `null` are
+ * malformed and do NOT count as a declaration (key presence alone would let a
+ * garbage value route real `tasks/*` traffic). A NON-EMPTY object is accepted:
+ * SEP-2663 says the settings are "not currently defined", so rejecting unknown
+ * settings would be forward-incompatible.
  */
 export function serverDeclaresTasksExtension(
   capabilities: ServerCapabilities | undefined
 ): boolean {
   const extensions = (capabilities as { extensions?: unknown } | undefined)
     ?.extensions;
-  return isRecord(extensions) && MCP_TASKS_EXTENSION_ID in extensions;
+  if (!isRecord(extensions)) {
+    return false;
+  }
+  const settings = Object.prototype.hasOwnProperty.call(
+    extensions,
+    MCP_TASKS_EXTENSION_ID
+  )
+    ? extensions[MCP_TASKS_EXTENSION_ID]
+    : undefined;
+  return isRecord(settings);
 }
 
 /**
@@ -94,4 +125,70 @@ export function resolveTasksWire(
   }
 
   return "none";
+}
+
+/**
+ * Everything a caller (route, UI, CLI) needs to know about a connection's
+ * tasks capability, derived in ONE place so no other module has to know the
+ * per-wire rules.
+ */
+export interface TasksSupport {
+  wire: TasksWire;
+  /** A `tools/call` may produce a task on this connection. */
+  toolCalls: boolean;
+  /** `tasks/list` exists (legacy only; on the extension the client tracks). */
+  list: boolean;
+  /** `tasks/cancel` may be sent. */
+  cancel: boolean;
+  /** `tasks/update` exists (extension only). */
+  update: boolean;
+  /** A completed `tasks/get` carries its result inline (extension only). */
+  inlineResult: boolean;
+}
+
+const NO_TASKS_SUPPORT: TasksSupport = {
+  wire: "none",
+  toolCalls: false,
+  list: false,
+  cancel: false,
+  update: false,
+  inlineResult: false,
+};
+
+/**
+ * Resolves the full tasks support matrix for a connection. This module is the
+ * only place allowed to consult the extension capability, which is what keeps
+ * the "treat as absent on 2025-11-25" rule honest.
+ */
+export function resolveTasksSupport(
+  protocolVersion: string | undefined,
+  capabilities: ServerCapabilities | undefined
+): TasksSupport {
+  const wire = resolveTasksWire(protocolVersion, capabilities);
+
+  if (wire === "legacy") {
+    return {
+      wire,
+      toolCalls: supportsTasksForToolCalls(capabilities),
+      list: supportsTasksList(capabilities),
+      cancel: supportsTasksCancel(capabilities),
+      update: false,
+      inlineResult: false,
+    };
+  }
+
+  if (wire === "extension") {
+    // SEP-2663 has no per-operation capability sub-flags: declaring the
+    // extension declares the whole method set.
+    return {
+      wire,
+      toolCalls: true,
+      list: false,
+      cancel: true,
+      update: true,
+      inlineResult: true,
+    };
+  }
+
+  return { ...NO_TASKS_SUPPORT };
 }

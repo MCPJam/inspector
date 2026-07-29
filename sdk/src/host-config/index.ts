@@ -50,3 +50,22 @@ export type {
   OpenAiAppsCapabilities,
   McpAppsCapabilities,
 } from "./public-types.js";
+
+// Tasks PRODUCT policy (`com.mcpjam/tasks`). Kept apart from the wire
+// extension on purpose: nothing here produces a capability value, and
+// `com.mcpjam/tasks` is never advertised to a server. The wire declaration is
+// always `io.modelcontextprotocol/tasks: {}`, and it lives in `tasks-ext.ts`.
+export {
+  MCPJAM_TASKS_POLICY_EXTENSION_ID,
+  readTasksPolicy,
+  describeInvalidTasksPolicy,
+  setTasksPolicy,
+  clearTasksPolicy,
+  taskModeForSurface,
+  surfaceMayDeclareTasks,
+} from "./tasks-policy.js";
+export type {
+  TasksPolicy,
+  TaskMode,
+  TaskSurface,
+} from "./tasks-policy.js";

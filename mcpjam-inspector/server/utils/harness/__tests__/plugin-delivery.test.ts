@@ -4,10 +4,12 @@ import { runtimeSkills } from "../../../services/environments/runtime";
 import { resolveEffectiveCapabilities } from "../../../services/environments/effective-capabilities";
 import {
   capabilitySkillFiles,
+  deliveredPluginSkillOrigins,
   pluginSkillDeliverySummary,
   pluginVersionsFingerprint,
   selectDeliverableServerIds,
 } from "../plugin-delivery";
+import { getHarnessAdapter } from "../registry";
 import type {
   EffectiveCapabilitySet,
   RuntimePluginVersion,
@@ -301,6 +303,28 @@ describe("plugin delivery into a Computer sandbox (end-to-end)", () => {
     ]);
   });
 
+  it("materializes into the CODEX root when the turn's adapter is codex (INS-8)", async () => {
+    // Same resolved capabilities, different runtime: the writer must follow the
+    // adapter's own root, or a Codex turn's plugin skill would get its SKILL.md
+    // from codex (`~/.agents/skills`) and its supporting files somewhere codex
+    // never reads.
+    const set = resolveEffectiveCapabilities(spec, null);
+    const skills = runtimeSkills(spec);
+    const { session, writes } = fakeSession();
+
+    await materializeSkillFiles({
+      session,
+      files: capabilitySkillFiles(set),
+      skillNamesById: new Map(skills.map((s) => [s.skillId, s.name])),
+      skillsBase: getHarnessAdapter("codex").skillsBaseDir,
+    });
+
+    expect(writes.map((w) => w.path)).toEqual([
+      "/home/user/.agents/skills/forecast/scripts/run.py",
+      "/home/user/.agents/skills/notes/references/a.md",
+    ]);
+  });
+
   it("prunes a plugin skill file the new version dropped", async () => {
     const set = resolveEffectiveCapabilities(spec, null);
     const skills = runtimeSkills(spec);
@@ -376,5 +400,91 @@ describe("pluginSkillDeliverySummary", () => {
       ],
     });
     expect(pluginSkillDeliverySummary(set)[0]?.pluginVersionId).toBeNull();
+  });
+});
+
+describe("deliveredPluginSkillOrigins (INS-8 origin mapping)", () => {
+  const pluginSkill = (over: Record<string, unknown> = {}) => ({
+    ref: "weather/forecast",
+    skillId: "sk_1",
+    name: "forecast",
+    description: "d",
+    content: "c",
+    aggregateHash: "agg",
+    files: [],
+    plugin: version({ pluginVersionId: "pv_9", bundleHash: "hash-z" }),
+    ...over,
+  });
+
+  it("maps the on-box dir of a delivered skill to its immutable plugin revision", () => {
+    const set = capabilities({ pluginSkills: [pluginSkill()] });
+    expect(
+      deliveredPluginSkillOrigins({
+        set,
+        skillsBaseDir: getHarnessAdapter("codex").skillsBaseDir,
+        deliveredNameBySkillId: new Map([["sk_1", "forecast"]]),
+      })
+    ).toEqual([
+      {
+        skillId: "sk_1",
+        ref: "weather/forecast",
+        dir: "/home/user/.agents/skills/forecast",
+        pluginId: "plg_1",
+        pluginVersionId: "pv_9",
+        bundleHash: "hash-z",
+      },
+    ]);
+  });
+
+  it("keys the dir off the RUNTIME's root, so the same skill maps per harness", () => {
+    const set = capabilities({ pluginSkills: [pluginSkill()] });
+    const delivered = new Map([["sk_1", "forecast"]]);
+    expect(
+      deliveredPluginSkillOrigins({
+        set,
+        skillsBaseDir: getHarnessAdapter("claude-code").skillsBaseDir,
+        deliveredNameBySkillId: delivered,
+      })[0]?.dir
+    ).toBe("/home/user/.claude/skills/forecast");
+  });
+
+  it("omits a skill the adapter did NOT deliver — provenance records what RAN", () => {
+    const set = capabilities({
+      pluginSkills: [pluginSkill(), pluginSkill({ skillId: "sk_2" })],
+    });
+    const origins = deliveredPluginSkillOrigins({
+      set,
+      skillsBaseDir: getHarnessAdapter("codex").skillsBaseDir,
+      deliveredNameBySkillId: new Map([["sk_1", "forecast"]]),
+    });
+    expect(origins.map((o) => o.skillId)).toEqual(["sk_1"]);
+  });
+
+  it("omits standalone skills and unattributed plugin skills", () => {
+    const set = capabilities({
+      pluginSkills: [pluginSkill({ plugin: undefined })],
+      standaloneSkills: [
+        {
+          ref: "notes",
+          skillId: "sk_std",
+          name: "notes",
+          description: "d",
+          content: "c",
+          aggregateHash: "agg",
+          files: [],
+          channels: ["environment"],
+        },
+      ],
+    });
+    expect(
+      deliveredPluginSkillOrigins({
+        set,
+        skillsBaseDir: getHarnessAdapter("codex").skillsBaseDir,
+        deliveredNameBySkillId: new Map([
+          ["sk_1", "forecast"],
+          ["sk_std", "notes"],
+        ]),
+      })
+    ).toEqual([]);
   });
 });
