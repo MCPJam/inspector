@@ -1752,11 +1752,10 @@ describe("mcp-oauth", () => {
       expect(mockExchangeAuthorization).not.toHaveBeenCalled();
     });
 
-    it("stops a 2025 issuer mismatch before token exchange too", async () => {
-      // RFC 9207 Section 2.4's local-policy row: a PRESENT `iss` is compared
-      // on every era. Pre-draft specs are silent on `iss`, so comparing is
-      // permitted — and it protects our own token handling rather than
-      // changing anything the user is debugging server-side.
+    it("warns but still exchanges on a 2025 issuer mismatch", async () => {
+      // `MUST validate a present iss` is SEP-2468, introduced in the
+      // 2026-07-28 draft. 2025-11-25 never mentions `iss`, so blocking here
+      // would enforce a rule the selected version does not contain.
       await seedPendingOAuth(
         undefined,
         createAsanaDiscoveryState(),
@@ -1772,12 +1771,29 @@ describe("mcp-oauth", () => {
         callbackIss: "https://different.example.com",
       });
 
-      expect(result.success).toBe(false);
-      expect(result.error).toMatch(/issuer validation failed/i);
-      expect(mockExchangeAuthorization).not.toHaveBeenCalled();
+      expect(result.success).toBe(true);
+      expect(mockExchangeAuthorization).toHaveBeenCalledTimes(1);
+      // Surfaced on the result so the connection layer can toast it. A trace
+      // step alone only shows in the OAuth logs panel, which is not where
+      // someone completing a connection is looking.
+      expect(result.warning).toMatch(/does not match/i);
+      // ...and still on the trace, for the logs panel.
+      const issSteps = (result.oauthTrace?.steps ?? []).filter((step) =>
+        step.message?.includes("RFC 9207")
+      );
+      expect(issSteps).toHaveLength(1);
+      expect(issSteps[0]?.details).toMatchObject({
+        recordedIssuer: "https://app.asana.com",
+        returnedIss: "https://different.example.com",
+        protocolVersion: "2025-11-25",
+      });
+      // The warning must not rewind a completed flow's progress state.
+      expect(result.oauthTrace?.currentStep).not.toBe(
+        "received_authorization_code"
+      );
     });
 
-    it("stops an issuer mismatch on an old stored session with no version", async () => {
+    it("warns but still exchanges on an old stored session with no version", async () => {
       await seedPendingOAuth(
         undefined,
         createAsanaDiscoveryState(),
@@ -1797,9 +1813,10 @@ describe("mcp-oauth", () => {
         callbackIss: "https://different.example.com",
       });
 
-      expect(result.success).toBe(false);
-      expect(result.error).toMatch(/issuer validation failed/i);
-      expect(mockExchangeAuthorization).not.toHaveBeenCalled();
+      // An unrecoverable version is treated as pre-draft, matching how the
+      // reject-on-absence row already handles a missing version.
+      expect(result.success).toBe(true);
+      expect(mockExchangeAuthorization).toHaveBeenCalledTimes(1);
     });
 
     it("still exchanges a 2025 flow whose AS omits iss entirely", async () => {
@@ -3496,20 +3513,45 @@ describe("evaluateCallbackSecurity (2R-iss callback gate)", () => {
   });
 
   it.each(["2025-03-26", "2025-06-18", "2025-11-25", undefined] as const)(
-    "rejects a mismatched iss on a %s flow (RFC 9207 local policy)",
+    "warns but does not reject a mismatched iss on a %s flow",
     async (protocolVersion) => {
-      // Pre-draft versions are silent on `iss`, so comparing a PRESENT one is
-      // permitted — and the mix-up attack it blocks targets our own token
-      // handling, not any server-observable behavior being debugged.
+      // `MUST validate a present iss` is introduced by SEP-2468 in the
+      // 2026-07-28 draft. Pre-draft specs never mention `iss` at all, so
+      // rejecting there would enforce a rule the selected version does not
+      // contain. An unknown version is treated as pre-draft, matching how the
+      // reject-on-absence row already handles `undefined`.
       const { evaluateCallbackSecurity } = await import("../mcp-oauth");
       const result = evaluateCallbackSecurity({
         ...base,
         protocolVersion,
         callbackIss: "https://different.example.com",
       });
-      expect(result.ok).toBe(false);
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        // The finding must survive as a visible warning — dropping it would
+        // be a silent downgrade rather than an era gate.
+        expect(result.warning).toContain("`https://as.example.com`");
+        expect(result.warning).toContain("`https://different.example.com`");
+      }
     }
   );
+
+  it("still rejects a mismatched iss on the modern era", async () => {
+    const { evaluateCallbackSecurity } = await import("../mcp-oauth");
+    const result = evaluateCallbackSecurity({
+      ...base,
+      protocolVersion: "2026-07-28",
+      callbackIss: "https://different.example.com",
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("a matching iss carries no warning on a pre-draft flow", async () => {
+    const { evaluateCallbackSecurity } = await import("../mcp-oauth");
+    expect(
+      evaluateCallbackSecurity({ ...base, protocolVersion: "2025-11-25" })
+    ).toEqual({ ok: true });
+  });
 
   it.each(["2025-11-25", undefined] as const)(
     "does not reject an absent-but-advertised iss on a %s flow",

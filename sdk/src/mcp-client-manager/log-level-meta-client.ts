@@ -126,6 +126,9 @@ export class LogLevelMetaClient implements ManagedMcpClient {
   getProtocolEra(): ProtocolEra | undefined {
     return this.inner.getProtocolEra?.();
   }
+  getNegotiatedProtocolVersion(): string | undefined {
+    return this.inner.getNegotiatedProtocolVersion?.();
+  }
 
   // ---- Request-bearing methods (inject `_meta` when modern + level set) ----
   listTools(

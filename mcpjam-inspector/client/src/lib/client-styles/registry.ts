@@ -83,9 +83,9 @@ export function getHostStyleOrDefault(
 
 /**
  * Build the `HostCapabilities` blob advertised in `ui/initialize` from a
- * resolved per-dimension matrix + optional preset-only augment. This is
- * the single derivation point for advertisement — the matrix is the
- * source of truth (per the foundation PR's D1 decision).
+ * resolved per-dimension matrix plus optional preset-only augment/replacement
+ * detail. This is the single derivation point for advertisement — the matrix
+ * is the source of truth (per the foundation PR's D1 decision).
  *
  * Every advertised field is matrix-controlled:
  *   - `openLinks` / `serverTools` / `serverResources` / `logging` /
@@ -101,16 +101,16 @@ export function getHostStyleOrDefault(
  *     via `resolveSandboxCsp` / `resolveSandboxPermissions` and adds it
  *     onto the advertised blob before passing to AppBridge.
  *
- * The `augment` argument carries preset-specific sub-field detail the
- * M365-grain matrix can't express (currently only Cursor's
- * `listChanged: false` markers). Augment keys are merged onto the
- * advertised value of the matching matrix-derived key — augment is NEVER
- * additive (if the matrix dropped a key, the augment doesn't bring it
- * back).
+ * `augment` carries preset-specific sub-fields merged onto a matrix-derived
+ * key (for example Cursor's `listChanged: false`). `replacement` carries an
+ * exact typed value that must replace the generic matrix-derived shape (for
+ * example VS Code's non-text updateModelContext set). Neither can add a key
+ * the matrix omitted.
  */
 export function buildHostCapabilities(
   matrix: ResolvedMcpAppsCapabilities,
-  augment?: Partial<Omit<McpUiHostCapabilities, "sandbox">>
+  augment?: Partial<Omit<McpUiHostCapabilities, "sandbox">>,
+  replacement?: Partial<Omit<McpUiHostCapabilities, "sandbox">>
 ): Omit<McpUiHostCapabilities, "sandbox"> {
   const caps: Omit<McpUiHostCapabilities, "sandbox"> = {};
   if (matrix.openLinks) caps.openLinks = {};
@@ -120,21 +120,28 @@ export function buildHostCapabilities(
   if (matrix.updateModelContext) caps.updateModelContext = { text: {} };
   if (matrix.message) caps.message = { text: {} };
   if (matrix.downloadFile) caps.downloadFile = {};
-  if (!augment) return caps;
-  for (const [key, value] of Object.entries(augment) as Array<
-    [
-      keyof Omit<McpUiHostCapabilities, "sandbox">,
-      Omit<McpUiHostCapabilities, "sandbox">[keyof Omit<
-        McpUiHostCapabilities,
-        "sandbox"
-      >]
-    ]
-  >) {
-    if (caps[key] === undefined) continue;
-    (caps as Record<string, unknown>)[key] = {
-      ...(caps[key] as object),
-      ...(value as object),
-    };
+  if (augment) {
+    for (const [key, value] of Object.entries(augment) as Array<
+      [
+        keyof Omit<McpUiHostCapabilities, "sandbox">,
+        Omit<McpUiHostCapabilities, "sandbox">[keyof Omit<
+          McpUiHostCapabilities,
+          "sandbox"
+        >]
+      ]
+    >) {
+      if (caps[key] === undefined) continue;
+      (caps as Record<string, unknown>)[key] = {
+        ...(caps[key] as object),
+        ...(value as object),
+      };
+    }
+  }
+  if (replacement) {
+    for (const [key, value] of Object.entries(replacement)) {
+      if ((caps as Record<string, unknown>)[key] === undefined) continue;
+      (caps as Record<string, unknown>)[key] = value;
+    }
   }
   return caps;
 }
@@ -156,7 +163,8 @@ export function getHostCapabilitiesForStyle(
   if (!def) return SPEC_DEFAULT_HOST_CAPABILITIES;
   return buildHostCapabilities(
     def.mcp.mcpAppsCapabilities,
-    def.mcp.hostCapabilitiesAugment
+    def.mcp.hostCapabilitiesAugment,
+    def.mcp.hostCapabilitiesReplacement
   );
 }
 

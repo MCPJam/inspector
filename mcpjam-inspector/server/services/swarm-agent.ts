@@ -15,8 +15,7 @@ import type { PinnedSkillArtifact } from "../../shared/skill-types.js";
  * snapshot — it NEVER refetches a live host config.
  *
  * Every call is authenticated with the launching member's user bearer and is
- * LAUNCHER-gated + PROJECT-member-gated server-side. Mirrors the fetch/error
- * shape of `server/services/session-agent.ts`.
+ * LAUNCHER-gated + PROJECT-member-gated server-side.
  */
 
 /**
@@ -47,7 +46,8 @@ export interface PinnedSkillMeta {
   description: string;
   contentHash: string;
   sharing?: "user" | "project";
-  channels?: Array<"host" | "environment">;
+  /** Stable `host` → `environment` → `plugin` order; see PinnedSkillArtifact. */
+  channels?: Array<"host" | "environment" | "plugin">;
 }
 
 export interface PinnedHostExecutionSpec {

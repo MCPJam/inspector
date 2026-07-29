@@ -1673,6 +1673,14 @@ export interface OAuthResult {
   error?: string;
   oauthTrace?: OAuthTrace;
   oauthResourceUrl?: string;
+  /**
+   * A conformance problem that did not stop the flow — currently only an RFC
+   * 9207 `iss` mismatch on a protocol version that does not mandate the check.
+   * Carried on the result (not just the trace) so the connection layer can
+   * surface it: a trace step alone is only visible in the OAuth logs panel,
+   * which is not where someone completing a connection is looking.
+   */
+  warning?: string;
 }
 
 export function buildMCPOAuthState(): string {
@@ -3458,13 +3466,22 @@ export async function completeHostedOAuthCallback(
  *
  * - CSRF `state` is validated on every version (2025-11-25 makes it a SHOULD;
  *   we treat it as mandatory whenever this flow issued one).
- * - A PRESENT `iss` is compared against the recorded issuer on every version.
- *   The draft table's third row applies RFC 9207 Section 2.4's local-policy
- *   provision — compare regardless of advertisement — and pre-draft versions
- *   are silent on `iss`, so comparing is permitted there. This defends our own
- *   token handling; it changes nothing a user is debugging server-side.
- * - Rejecting an ABSENT `iss` that the AS advertised support for is the rule
- *   the draft actually introduces, so it fires on the modern era only.
+ * - A PRESENT `iss` is compared against the recorded issuer on every version,
+ *   but only the modern era REJECTS on a mismatch. SEP-2468 introduces
+ *   `MUST validate a present iss` in the 2026-07-28 draft; 2025-11-25 and
+ *   earlier never mention `iss`, RFC 9207, or issuer identification at all, so
+ *   enforcing there would apply a rule the selected version does not contain.
+ *   Pre-draft eras surface the mismatch as a `warning` and let the flow finish.
+ * - Rejecting an ABSENT `iss` that the AS advertised support for is likewise
+ *   the rule the draft introduces, so it too fires on the modern era only.
+ *
+ * Warning-not-blocking on pre-draft eras is a deliberate, narrow concession:
+ * PKCE S256 is already mandatory there and defeats code injection, the token
+ * endpoint always comes from the RECORDED metadata (never from the callback,
+ * so a hostile `iss` cannot redirect the code), and tokens are persisted
+ * issuer-keyed to the recorded issuer. RFC 9207 Section 2.4 explicitly leaves
+ * this to local policy. The warning MUST stay visible — a silent downgrade
+ * would be a regression rather than a fix.
  *
  * On failure the caller must reject without touching the token endpoint or
  * echoing attacker-controlled callback error parameters.
@@ -3480,7 +3497,7 @@ export function evaluateCallbackSecurity(input: {
   issParameterSupported: boolean | undefined;
   /** Concrete version frozen when this OAuth flow started. */
   protocolVersion?: OAuthProtocolVersion;
-}): { ok: true } | { ok: false; error: string } {
+}): { ok: true; warning?: string } | { ok: false; error: string } {
   // CSRF: if this flow issued a `state`, the callback MUST return it exactly.
   if (input.expectedState && input.callbackState !== input.expectedState) {
     return {
@@ -3495,9 +3512,11 @@ export function evaluateCallbackSecurity(input: {
     input.protocolVersion !== undefined &&
     isStatelessProtocolVersion(input.protocolVersion);
   const issCheck = validateAuthorizationResponseIssuer({
-    // Suppressing the advertisement flag disables ONLY the reject-on-absence
-    // row for pre-draft eras; the present-`iss` comparison still runs.
+    // Both rows are draft-era rules, so both are scoped to the modern era:
+    // suppressing the advertisement flag disables reject-on-absence, and
+    // `enforcePresentIssMismatch` downgrades the mismatch row to a warning.
     issParameterSupported: isModernEra ? input.issParameterSupported : false,
+    enforcePresentIssMismatch: isModernEra,
     recordedIssuer: input.recordedIssuer,
     returnedIss: input.callbackIss ?? undefined,
   });
@@ -3507,7 +3526,68 @@ export function evaluateCallbackSecurity(input: {
       error: `OAuth issuer validation failed (RFC 9207): ${issCheck.reason}. Authorization was not completed.`,
     };
   }
-  return { ok: true };
+  return issCheck.warning
+    ? { ok: true, warning: issCheck.warning }
+    : { ok: true };
+}
+
+/**
+ * Record a non-blocking RFC 9207 mismatch on the OAuth TRACE, not as an info
+ * log. `infoLogs` only reach the Debug OAuth tab's own flow state; the callback
+ * path here surfaces through the trace (App.tsx ingests it into server logs),
+ * and `projectOAuthTraceSnapshot` never reads `infoLogs`. Era-gating the
+ * REJECTION is the fix — dropping the finding as well would be the silent
+ * downgrade this change explicitly avoids, so it has to land where it renders.
+ *
+ * Must be applied to the FINAL merged trace. Seeding the merge base does not
+ * work: the flow-state trace contributes its own `received_authorization_code`
+ * step, and `mergeTraceSteps` lets that one win.
+ *
+ * Augments that existing step in place rather than calling
+ * `completeOAuthTraceStep`. That helper only updates a step still marked
+ * `pending`; by merge time this one is already `success`, so it would push a
+ * DUPLICATE step and — worse — reset `trace.currentStep` back to the
+ * authorization-code step, rewinding the progress UI on a completed flow.
+ */
+function recordIssMismatchWarning(
+  trace: OAuthTrace,
+  warning: string,
+  details: {
+    recordedIssuer: string | undefined;
+    returnedIss: string | null | undefined;
+    protocolVersion: OAuthProtocolVersion | undefined;
+  }
+): void {
+  const summary =
+    "RFC 9207 — authorization response `iss` mismatch (not enforced on this protocol version).";
+  const payload = {
+    recordedIssuer: details.recordedIssuer ?? "(none recorded)",
+    returnedIss: details.returnedIss ?? "(absent)",
+    protocolVersion: details.protocolVersion ?? "(unknown)",
+    issMismatchWarning: warning,
+  };
+
+  const existing = [...trace.steps]
+    .reverse()
+    .find((entry) => entry.step === "received_authorization_code");
+
+  if (existing) {
+    existing.message = existing.message
+      ? `${existing.message} ${summary}`
+      : summary;
+    existing.details = { ...(existing.details ?? {}), ...payload };
+    return;
+  }
+
+  trace.steps.push({
+    step: "received_authorization_code",
+    title: "Received authorization code",
+    status: "success",
+    message: summary,
+    details: payload,
+    startedAt: Date.now(),
+    completedAt: Date.now(),
+  });
 }
 
 export async function handleOAuthCallback(
@@ -3577,6 +3657,19 @@ export async function handleOAuthCallback(
         return { success: false, error: security.error, serverName };
       }
       let state = cloneFlowState(storedSession.state);
+      // Applied AFTER the trace merge below: the flow-state trace carries its
+      // own `received_authorization_code` step, which would overwrite anything
+      // seeded on the merge base.
+      const issWarning = security.warning
+        ? {
+            warning: security.warning,
+            recordedIssuer:
+              storedSession.state.recordedIssuer ??
+              storedSession.state.authorizationServerMetadata?.issuer,
+            returnedIss: options.callbackIss,
+            protocolVersion: storedSession.protocolVersion,
+          }
+        : undefined;
       const updateState = (updates: Partial<OAuthFlowState>) => {
         state = { ...state, ...updates };
       };
@@ -3668,6 +3761,9 @@ export async function handleOAuthCallback(
           | undefined,
       });
       const mergedTrace = mergeOAuthTraces(previousTrace, callbackTrace);
+      if (issWarning) {
+        recordIssMismatchWarning(mergedTrace, issWarning.warning, issWarning);
+      }
       publishOAuthTraceUpdate(serverName, mergedTrace, options.onTraceUpdate);
 
       if (
@@ -3702,6 +3798,7 @@ export async function handleOAuthCallback(
         serverName,
         oauthTrace: mergedTrace,
         oauthResourceUrl,
+        ...(issWarning ? { warning: issWarning.warning } : {}),
       };
     }
 
@@ -3770,10 +3867,24 @@ export async function handleOAuthCallback(
       localStorage.removeItem("mcp-oauth-pending");
       return { success: false, error: fallbackSecurity.error, serverName };
     }
+    // This recovery path carries no OAuthFlowState, so the non-blocking RFC
+    // 9207 finding rides on the trace step instead of an info log. Same rule as
+    // the stored-session branch: warn visibly, do not drop it.
     completeOAuthTraceStep(callbackTrace, "received_authorization_code", {
-      message: "Callback state restored.",
+      message: fallbackSecurity.warning
+        ? "Callback state restored. RFC 9207 — authorization response `iss` mismatch (not enforced on this protocol version)."
+        : "Callback state restored.",
       details: {
         clientId: clientInformation.client_id,
+        ...(fallbackSecurity.warning
+          ? {
+              issMismatchWarning: fallbackSecurity.warning,
+              recordedIssuer:
+                fallbackIssuerMetadata?.issuer ?? "(none recorded)",
+              returnedIss: options.callbackIss ?? "(absent)",
+              protocolVersion: oauthConfig.protocolVersion ?? "(unknown)",
+            }
+          : {}),
       },
     });
     emitTrace(callbackTrace);
@@ -3837,6 +3948,9 @@ export async function handleOAuthCallback(
       serverName, // Return server name so caller doesn't need to look it up
       oauthTrace: mergedTrace,
       oauthResourceUrl,
+      ...(fallbackSecurity.warning
+        ? { warning: fallbackSecurity.warning }
+        : {}),
     };
   } catch (error) {
     const callbackTrace = buildOAuthTraceFromFlowState({

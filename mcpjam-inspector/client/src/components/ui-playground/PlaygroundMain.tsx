@@ -26,6 +26,7 @@ import {
   ElicitationRequestDialog,
   UrlElicitationRequiredDialog,
 } from "@/components/elicitation/ElicitationRequestDialog";
+import { HostedMrtrHost } from "@/components/elicitation/HostedMrtrHost";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -4391,6 +4392,9 @@ export function PlaygroundMain({
         event={urlElicitationRequired[0] ?? null}
         onDismiss={dismissUrlElicitationRequired}
       />
+      {/* Hosted MRTR (§12.5): a suspended `input_required` round. Durable, so
+          it outlives its turn — answering it re-drives the chat turn. */}
+      <HostedMrtrHost />
     </WidgetSurfaceProvider>
   );
 }

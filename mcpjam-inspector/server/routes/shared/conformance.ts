@@ -12,6 +12,7 @@
 import {
   MCPAppsConformanceTest,
   MCPConformanceTest,
+  MCPTasksConformanceTest,
   OAuthConformanceTest,
   canRunConformance,
   normalizeCustomHeaders,
@@ -21,6 +22,8 @@ import {
   type MCPConformanceConfig,
   type MCPConformanceResult,
   type MCPServerConfig,
+  type MCPTasksConformanceConfig,
+  type MCPTasksConformanceResult,
   type OAuthConformanceConfig,
   type OAuthConformanceProfile,
 } from "@mcpjam/sdk";
@@ -99,6 +102,16 @@ export async function runAppsConformance(
   serverConfig: MCPAppsConformanceConfig,
 ): Promise<{ result: MCPAppsConformanceResult }> {
   const test = new MCPAppsConformanceTest(serverConfig);
+  const result = await test.run();
+  return { result };
+}
+
+// ── Tasks ───────────────────────────────────────────────────────────────
+
+export async function runTasksConformance(
+  serverConfig: MCPTasksConformanceConfig,
+): Promise<{ result: MCPTasksConformanceResult }> {
+  const test = new MCPTasksConformanceTest(serverConfig);
   const result = await test.run();
   return { result };
 }
