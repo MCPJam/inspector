@@ -15,7 +15,6 @@ import { ViewModeSelector } from "@/components/shared/view-mode-selector";
 import { SegmentedControl } from "@/components/ui/json-editor/segmented-control";
 import { ChatboxShareSection } from "@/components/chatboxes/ChatboxShareSection";
 import { ChatboxUsagePanel } from "@/components/chatboxes/ChatboxUsagePanel";
-import { PersonasTab } from "@/components/chatboxes/PersonasTab";
 import {
   ChatboxHostPickerPill,
   ChatboxPublishClientBar,
@@ -67,38 +66,24 @@ import { cn } from "@/lib/utils";
  */
 /**
  * Product variant. Both surfaces render this same component over the same
- * underlying chatbox (1:1 with the selected host); they differ only in which
- * tabs/affordances are exposed:
- *   - `chatbox` (human): Publish + Sessions + Clusters. No Personas / no
- *     AI-generate / no synthetic-session controls.
- *   - `swarm` (agent): Publish + Personas + Sessions. No Clusters.
+ * underlying chatbox (1:1 with the selected host).
+ *
+ * Chatboxes carry real-user traffic only: Publish + Sessions + Clusters.
+ * Everything synthetic (personas, AI generation, synthetic runs) lives in
+ * Swarms — see `components/swarms/SwarmsTab`.
  */
-export type ChatboxProduct = "chatbox" | "swarm";
-
 interface ChatboxesTabProps {
   projectId: string | null;
   isAuthenticated: boolean;
-  /** Defaults to `chatbox` (the human publish surface). */
-  product?: ChatboxProduct;
 }
 
-type ChatboxTab = "publish" | "personas" | "sessions" | "clusters";
+type ChatboxTab = "publish" | "sessions" | "clusters";
 
-const TAB_OPTIONS_BY_PRODUCT: Record<
-  ChatboxProduct,
-  ReadonlyArray<{ value: ChatboxTab; label: string }>
-> = {
-  chatbox: [
-    { value: "publish", label: "Publish" },
-    { value: "sessions", label: "Sessions" },
-    { value: "clusters", label: "Clusters" },
-  ],
-  swarm: [
-    { value: "publish", label: "Publish" },
-    { value: "personas", label: "Personas" },
-    { value: "sessions", label: "Sessions" },
-  ],
-};
+const TAB_OPTIONS: ReadonlyArray<{ value: ChatboxTab; label: string }> = [
+  { value: "publish", label: "Publish" },
+  { value: "sessions", label: "Sessions" },
+  { value: "clusters", label: "Clusters" },
+];
 
 type PublishPanelView = "preview" | "graph";
 
@@ -111,9 +96,8 @@ const PUBLISH_PANEL_OPTIONS: Array<{ value: PublishPanelView; label: string }> =
 export function ChatboxesTab({
   projectId,
   isAuthenticated,
-  product = "chatbox",
 }: ChatboxesTabProps) {
-  const tabOptions = TAB_OPTIONS_BY_PRODUCT[product];
+  const tabOptions = TAB_OPTIONS;
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   // Deep link: `/chatboxes?host=<id>&session=<threadId>` (the Sessions tab's
@@ -126,9 +110,8 @@ export function ChatboxesTab({
   const [tab, setTab] = useState<ChatboxTab>(() =>
     sessionDeepLinkThreadId ? "sessions" : "publish"
   );
-  // Clamp to a tab valid for this product — a deep link (or a product switch)
-  // could otherwise land on a tab this surface doesn't expose (e.g. `personas`
-  // on the human Chatbox, `clusters` on the agent Swarm).
+  // Clamp to a tab this surface exposes — a deep link could otherwise land on
+  // a tab that no longer exists (e.g. the retired `personas`).
   const activeTab: ChatboxTab = tabOptions.some((t) => t.value === tab)
     ? tab
     : "publish";
@@ -294,19 +277,12 @@ export function ChatboxesTab({
   //
   // ChatboxesTab owns the previewed host's chatbox and the publish/generate/
   // delete flows; the bridge registers the literal "chatboxes" surface id (the
-  // agent Swarm product renders SwarmsTab, a separate component, so this can't
-  // be mis-scoped). Publish/delete resolve a host by name/id against the live
-  // host list and honor the Swarms-owned dead-end; generate acts on the
-  // on-screen chatbox through the SAME gated endpoints the Generate-with-AI
-  // dialog uses. Snapshot is REDACTED state only — never transcript text, the
-  // share token, or visitor PII.
+  // Swarms product renders SwarmsTab, a separate component, so this can't be
+  // mis-scoped). Publish/delete resolve a host by name/id against the live
+  // host list and honor the Swarms-owned dead-end. Snapshot is REDACTED state
+  // only — never transcript text, the share token, or visitor PII.
   const AGENT_SNAPSHOT_MAX_SESSIONS = 30;
   const agentOperable = effectiveAuth && Boolean(projectId);
-  // Synthetic sessions are a Swarms-product affordance (the human Chatbox
-  // surface passes allowSynthetic={false} to ChatboxUsagePanel). Mirror that
-  // gate here so ui_generate_chatbox_sessions is inert exactly where the
-  // "Generate with AI" button is.
-  const allowSynthetic = product === "swarm";
   const { hosts: agentHosts } = useHostList({
     isAuthenticated: effectiveAuth,
     projectId,
@@ -455,9 +431,7 @@ export function ChatboxesTab({
           modelId: t.modelId ?? null,
         }));
       return {
-        product,
         activeTab,
-        syntheticSessionsAllowed: allowSynthetic,
         selectedHostId: previewedHostId ?? null,
         selectedHostName: host?.name ?? null,
         // A standalone Journeys host has no publish surface (the dead-end).
@@ -625,7 +599,7 @@ export function ChatboxesTab({
         <div className="flex min-w-0 items-center justify-center">
           <ViewModeSelector
             value={activeTab}
-            ariaLabel={product === "swarm" ? "Swarm view" : "Chatbox view"}
+            ariaLabel="Chatbox view"
             onChange={(next) => {
               setTab(next as ChatboxTab);
               // Manual navigation supersedes the deep link — drop the params
@@ -726,17 +700,11 @@ export function ChatboxesTab({
               </div>
             </ResizablePanel>
           </ResizablePanelGroup>
-        ) : activeTab === "personas" ? (
-          <PersonasTab chatbox={chatbox} />
         ) : activeTab === "sessions" ? (
           <ChatboxUsagePanel
             chatbox={chatbox}
             section="sessions"
             initialThreadId={sessionDeepLinkThreadId}
-            // Synthetic-session affordances (AI-generate + "Hide synthetic")
-            // belong to the agent Swarm product only; the human Chatbox has
-            // no synthetic traffic.
-            allowSynthetic={product === "swarm"}
           />
         ) : (
           <ChatboxUsagePanel

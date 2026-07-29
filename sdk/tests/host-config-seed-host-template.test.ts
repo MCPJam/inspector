@@ -52,8 +52,8 @@ describe("seedHostTemplate", () => {
   it("advertises EMA on the mcpjam template and on no other", () => {
     for (const id of ALL_IDS) {
       const config = seedHostTemplate(id, { theme: "dark" });
-      const exts =
-        (config.clientCapabilities as { extensions?: unknown })?.extensions;
+      const exts = (config.clientCapabilities as { extensions?: unknown })
+        ?.extensions;
       const hasEma =
         typeof exts === "object" &&
         exts !== null &&
@@ -141,6 +141,47 @@ describe("seedHostTemplate", () => {
     );
   });
 
+  it("keeps ChatGPT raw host capabilities faithful to the probe", () => {
+    const config = seedHostTemplate("chatgpt", { theme: "dark" });
+
+    expect(config.hostCapabilitiesOverride).toMatchObject({
+      serverResources: {},
+      logging: {},
+    });
+    expect(config.hostCapabilitiesOverride).not.toHaveProperty("downloadFile");
+  });
+
+  it("labels and persists the Copilot 1.0.1 documented runtime surface", () => {
+    const config = seedHostTemplate("copilot", { theme: "dark" });
+    const profile = config.mcpProfile;
+
+    expect(profile?.initialize?.clientInfo).toEqual({
+      name: "ms-copilot",
+      version: "1.0.1",
+    });
+    expect(profile?.apps?.uiInitialize?.hostInfo).toEqual({
+      name: "Copilot",
+      version: "1.0.1",
+    });
+    expect(profile?.apps?.compatRuntime).toMatchObject({
+      openaiApps: true,
+      openaiAppsOverrides: {
+        callTool: true,
+        sendFollowUpMessage: true,
+        requestDisplayMode: "fullscreen-only",
+        uploadFile: false,
+        getFileDownloadUrl: false,
+        requestModal: false,
+      },
+    });
+    expect(config.hostCapabilitiesOverride).toEqual({
+      openLinks: {},
+      serverTools: {},
+      message: { text: {} },
+      updateModelContext: { text: {} },
+    });
+  });
+
   it("keeps Goose host capabilities faithful to the raw probe", () => {
     const config = seedHostTemplate("goose", { theme: "dark" });
     const apps = config.mcpProfile?.apps as any;
@@ -209,6 +250,87 @@ describe("seedHostTemplate", () => {
       message: false,
       sandboxPermissions: false,
     });
+  });
+
+  it("keeps VS Code 1.130 handshake facts and deliberate emulator defaults", () => {
+    const config = seedHostTemplate("vscode", { theme: "dark" });
+    const profile = config.mcpProfile;
+    const hostContext = config.hostContext as {
+      styles: { variables: Record<string, string> };
+    };
+
+    expect(config.clientCapabilities).toMatchObject({
+      roots: { listChanged: true },
+      sampling: {},
+      elicitation: { form: {}, url: {} },
+      tasks: {
+        list: {},
+        cancel: {},
+        requests: {
+          sampling: { createMessage: {} },
+          elicitation: { create: {} },
+        },
+      },
+    });
+    expect(config.hostCapabilitiesOverride).toMatchObject({
+      serverTools: { listChanged: true },
+      serverResources: { listChanged: true },
+      updateModelContext: {
+        audio: {},
+        image: {},
+        resourceLink: {},
+        resource: {},
+        structuredContent: {},
+      },
+      downloadFile: {},
+    });
+    expect(config.hostContext).toMatchObject({
+      theme: "dark",
+      availableDisplayModes: ["inline"],
+      containerDimensions: { width: 494, maxHeight: 720 },
+      locale: "en-us",
+      deviceCapabilities: { touch: false, hover: true },
+    });
+    expect(hostContext.styles.variables["--font-text-md-size"]).toBe("13px");
+    expect(hostContext.styles.variables["--color-background-primary"]).toBe(
+      "#1e1e1e"
+    );
+    const lightConfig = seedHostTemplate("vscode", { theme: "light" });
+    expect(
+      (lightConfig.hostContext as typeof hostContext).styles.variables[
+        "--color-background-primary"
+      ]
+    ).toBe("#ffffff");
+    expect(profile?.initialize).toEqual({
+      supportedProtocolVersions: ["2025-11-25"],
+      clientInfo: { name: "Visual Studio Code", version: "1.130.0" },
+    });
+    expect(profile?.apps?.uiInitialize?.hostInfo).toEqual({
+      name: "Visual Studio Code",
+      version: "1.130.0",
+    });
+    expect(profile?.apps?.compatRuntime).toEqual({ openaiApps: false });
+    expect(profile?.apps?.mcpAppsOverrides).toMatchObject({
+      availableDisplayModes: ["inline"],
+      toolInputPartial: true,
+      toolCancelled: true,
+      hostContextChanged: true,
+      resourceTeardown: true,
+      toolInfo: false,
+      updateModelContext: true,
+      message: false,
+      cspFrameDomains: true,
+      cspBaseUriDomains: true,
+      resourcePrefersBorder: true,
+      requestTeardown: true,
+      widgetDisplayModeRequests: "accept",
+    });
+    expect(profile?.apps?.sandbox?.sandboxAttrs).toEqual([
+      "allow-pointer-lock",
+      "allow-downloads",
+      "allow-forms",
+    ]);
+    expect(profile?.apps?.sandbox?.csp).toEqual({ mode: "declared" });
   });
 
   it("emptyHostConfigInputV2 deep-clones inputs (no aliasing)", () => {

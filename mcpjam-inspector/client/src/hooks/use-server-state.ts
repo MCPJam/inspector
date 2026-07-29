@@ -2670,6 +2670,21 @@ export function useServerState({
             );
           }
 
+          // A conformance problem that did not block the OAuth flow (today: an
+          // RFC 9207 `iss` mismatch on a version that does not mandate the
+          // check). Surfaced here, on the successful OAuth completion, rather
+          // than alongside the connection result: the MCP connection test that
+          // follows can fail for entirely unrelated reasons, and the mismatch
+          // must not disappear behind that error. The trace step alone lives in
+          // the OAuth logs panel, which nobody is looking at while connecting.
+          if (result.warning) {
+            logger.warn("OAuth conformance warning", {
+              serverName,
+              warning: result.warning,
+            });
+            toast.warning(result.warning);
+          }
+
           dispatch({
             type: "CONNECT_REQUEST",
             name: serverName,
