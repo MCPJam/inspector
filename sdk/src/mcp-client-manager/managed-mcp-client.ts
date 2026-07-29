@@ -24,6 +24,7 @@
 import type {
   CacheableRequestOptions,
   CallToolResult,
+  Client,
   CompleteRequest,
   CompleteResult,
   EmptyResult,
@@ -34,7 +35,9 @@ import type {
   ListResourceTemplatesResult,
   ListToolsResult,
   LoggingLevel,
+  McpSubscription,
   ProtocolEra,
+  SubscriptionFilter,
   ReadResourceResult,
   Request,
   RequestOptions,
@@ -108,6 +111,21 @@ export type ManagedMcpClientRequestHandler = (
  * behavior-agnostic so it never has to know which adapter is wired.
  */
 export interface ManagedMcpClient {
+  /**
+   * The client this one delegates to: the upstream `Client` for
+   * `OfficialSdkClientAdapter`, the wrapped `ManagedMcpClient` for a decorator
+   * such as `LogLevelMetaClient`. OPTIONAL — a hand-rolled implementation or a
+   * test double may bottom out with no delegate at all.
+   *
+   * Declared so the delegation chain is a stated seam rather than a private
+   * detail each consumer re-guesses. `tasks-ext-era-gate.ts` walks it to find
+   * the upstream instance whose outbound era gate must be shadowed, so that a
+   * directly-constructed adapter behaves like one built by
+   * `managed-mcp-client-factory.ts`. Consumers MUST treat an absent `inner` as
+   * "the chain ends here" and degrade, never throw.
+   */
+  readonly inner?: ManagedMcpClient | Client;
+
   // ---- Lifecycle ----
   connect(
     transport: Transport,
@@ -130,6 +148,16 @@ export interface ManagedMcpClient {
    * or `undefined` as "era unknown — do not apply modern-only behavior".
    */
   getProtocolEra?(): ProtocolEra | undefined;
+  /**
+   * The negotiated protocol version wire literal (e.g. `"2025-11-25"`), or
+   * `undefined` before `initialize` completes. OPTIONAL for the same reason
+   * as `getProtocolEra()`: only adapters over an upstream `Client` can report
+   * it (upstream `Client.getNegotiatedProtocolVersion()`, client
+   * `index.d.mts:2047`). Consumers MUST treat an absent method or
+   * `undefined` as "version unknown" and fail closed rather than assuming a
+   * version — never read the private `transport._protocolVersion`.
+   */
+  getNegotiatedProtocolVersion?(): string | undefined;
 
   // ---- Tool calls ----
   // The five cacheable verbs (SEP-2549) widen their options to
@@ -210,6 +238,15 @@ export interface ManagedMcpClient {
 
   // ---- Health ----
   ping(options?: RequestOptions): Promise<EmptyResult>;
+  /**
+   * `server/discover` (2026-07-28+): the modern era's only universally
+   * available request, and therefore its liveness probe — `ping` was removed
+   * from the 2026 vocabulary, so the upstream client refuses to send it on a
+   * modern-classified connection (`MethodNotSupportedByProtocolVersion`).
+   * Optional because non-upstream adapters (test doubles) may not carry it;
+   * `MCPClientManager.pingServer` era-gates before reaching for it.
+   */
+  discover?(options?: RequestOptions): Promise<unknown>;
 
   // ---- Subscriptions (passthrough; stateless preview throws) ----
   subscribeResource(
@@ -220,6 +257,18 @@ export interface ManagedMcpClient {
     params: { uri: string },
     options?: RequestOptions
   ): Promise<EmptyResult>;
+  /**
+   * Opens a 2026-07-28 `subscriptions/listen` stream. OPTIONAL: only adapters
+   * over an upstream `Client` can provide it, and it throws a typed
+   * `SdkErrorCode.MethodNotSupportedByProtocolVersion` on a legacy connection.
+   * Consumers MUST treat an absent method as "this connection has no modern
+   * subscription stream" and fall back to the legacy per-URI RPCs — see
+   * `SubscriptionCoordinator` in `./subscription-coordinator.ts`.
+   */
+  listen?(
+    filter: SubscriptionFilter,
+    options?: RequestOptions
+  ): Promise<McpSubscription>;
 
   // ---- Logging (stateless preview is a no-op + warning) ----
   setLoggingLevel(level: LoggingLevel, options?: RequestOptions): Promise<void>;

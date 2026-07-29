@@ -46,6 +46,16 @@ export const ErrorCode = {
   // 409; interactive callers surface "Environment changed — retry the run",
   // the scheduled worker retries through its trigger/idempotency path.
   ENVIRONMENT_REVISION_CONFLICT: "ENVIRONMENT_REVISION_CONFLICT",
+  // A task read/write hit JSON-RPC -32602: the server no longer knows the
+  // task. Distinct from a structureless 404 (route missing on an older
+  // replica during a mixed-version rollout) and from a transient connect
+  // failure, so the client can mark the handle "unavailable" instead of
+  // retrying forever or dropping it.
+  TASK_NOT_FOUND: "TASK_NOT_FOUND",
+  // A tasks request the resolved wire cannot serve: no tasks wire at all, a
+  // method that does not exist on that wire (`tasks/result` on the extension),
+  // or an undeclared capability. A caller/feature error (400), never a 500.
+  TASKS_UNSUPPORTED: "TASKS_UNSUPPORTED",
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -91,6 +101,13 @@ export function webError(
     string,
     unknown
   > & { normalized?: NormalizedError };
+  // Stash the real code/message for `requestLogContextMiddleware`. A route that
+  // *returns* an error response (rather than throwing) leaves the middleware
+  // with nothing but a status code, so every such 5xx used to log as the
+  // catch-all "internal_error" regardless of its actual cause.
+  if (typeof c?.set === "function") {
+    c.set("webErrorMeta", { status, code, message });
+  }
   return c.json(
     {
       ...restExtras,
@@ -186,7 +203,7 @@ export function mapRuntimeError(error: unknown): WebRouteError {
     return new WebRouteError(
       502,
       ErrorCode.SERVER_UNREACHABLE,
-      message,
+      formatServerUnreachableMessage(message),
       undefined,
       normalized
     );
@@ -195,9 +212,24 @@ export function mapRuntimeError(error: unknown): WebRouteError {
   return new WebRouteError(
     500,
     ErrorCode.INTERNAL_ERROR,
-    message,
+    message.trim() || "An unexpected error occurred.",
     undefined,
     normalized
+  );
+}
+
+/**
+ * User-facing framing for connection-class 502s. The raw errno text
+ * ("fetch failed", "ECONNRESET") reads like an MCPJam outage in the client
+ * toast, when the failure is the TARGET server refusing/resetting the
+ * connection — say so explicitly, and keep the raw error for debugging.
+ */
+export function formatServerUnreachableMessage(rawMessage: string): string {
+  const raw = rawMessage.trim();
+  return (
+    "Couldn't reach the MCP server" +
+    (raw ? ` (${raw})` : "") +
+    ". The server appears to be down, restarting, or unreachable from MCPJam — this is a connection problem with the target server, not an MCPJam outage."
   );
 }
 

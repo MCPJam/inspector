@@ -32,6 +32,43 @@ import type {
   ManagedMcpClientRequestHandler,
   ManagedMcpClientRequestMethod,
 } from "./managed-mcp-client.js";
+import { TasksExtNotificationMethod } from "./tasks-ext.js";
+
+/**
+ * Notification methods MCPJam registers that live outside both spec codecs.
+ *
+ * Upstream 2.0.0 tightened the two-argument `setNotificationHandler(method,
+ * handler)` overload to `isSpecNotificationMethod(method)` and throws a
+ * `TypeError` otherwise, so an extension method must go through the
+ * three-argument schema form. Only the tasks extension's `notifications/tasks`
+ * (SEP-2663) qualifies today: the legacy `notifications/tasks/status` is
+ * 2025-11-25 spec and stays on the two-argument path.
+ */
+const EXTENSION_NOTIFICATION_METHODS: ReadonlySet<string> = new Set([
+  TasksExtNotificationMethod,
+]);
+
+function isExtensionNotificationMethod(method: string): boolean {
+  return EXTENSION_NOTIFICATION_METHODS.has(method);
+}
+
+/**
+ * Params schema for the three-argument form above. Upstream has no wire schema
+ * for an extension payload — validating `notifications/tasks` is MCPJam's job
+ * (`tasks-ext-guards.ts`, which the coordinator and manager already run on
+ * delivery) — so this only satisfies the overload and forwards params verbatim.
+ * Anything narrower would drop extension members before our own guards see them.
+ */
+const PassthroughNotificationParamsSchema: StandardSchemaV1<
+  Record<string, unknown>,
+  Record<string, unknown>
+> = {
+  "~standard": {
+    version: 1,
+    vendor: "mcpjam",
+    validate: (value: unknown) => ({ value: value as Record<string, unknown> }),
+  },
+};
 
 export class OfficialSdkClientAdapter implements ManagedMcpClient {
   readonly inner: Client;
@@ -80,6 +117,11 @@ export class OfficialSdkClientAdapter implements ManagedMcpClient {
     // Upstream `Client.getProtocolEra()` returns the negotiated era once
     // `initialize` completes (`undefined` before). Pure pass-through.
     return this.inner.getProtocolEra();
+  }
+  getNegotiatedProtocolVersion() {
+    // Upstream `Client.getNegotiatedProtocolVersion()` returns the negotiated
+    // wire literal once `initialize` completes. Pure pass-through.
+    return this.inner.getNegotiatedProtocolVersion();
   }
 
   // ---- RPC ----
@@ -172,6 +214,9 @@ export class OfficialSdkClientAdapter implements ManagedMcpClient {
   ping(options?: Parameters<Client["ping"]>[0]) {
     return this.inner.ping(options) as ReturnType<ManagedMcpClient["ping"]>;
   }
+  discover(options?: Parameters<Client["discover"]>[0]) {
+    return this.inner.discover(options);
+  }
   subscribeResource(
     params: Parameters<Client["subscribeResource"]>[0],
     options?: Parameters<Client["subscribeResource"]>[1],
@@ -188,6 +233,12 @@ export class OfficialSdkClientAdapter implements ManagedMcpClient {
       ManagedMcpClient["unsubscribeResource"]
     >;
   }
+  listen(
+    filter: Parameters<Client["listen"]>[0],
+    options?: Parameters<Client["listen"]>[1],
+  ) {
+    return this.inner.listen(filter, options);
+  }
   async setLoggingLevel(
     level: Parameters<Client["setLoggingLevel"]>[0],
     options?: Parameters<Client["setLoggingLevel"]>[1],
@@ -202,6 +253,17 @@ export class OfficialSdkClientAdapter implements ManagedMcpClient {
     method: ManagedMcpClientNotificationMethod,
     handler: ManagedMcpClientNotificationHandler,
   ): void {
+    if (isExtensionNotificationMethod(method)) {
+      // Three-argument form: the handler is called with the validated params,
+      // so drop them and forward the raw notification the manager expects.
+      this.inner.setNotificationHandler(
+        method as never,
+        { params: PassthroughNotificationParamsSchema } as never,
+        ((_params: unknown, notification: unknown) =>
+          handler(notification as never)) as never,
+      );
+      return;
+    }
     // beta.4 overloaded this (typed `NotificationMethod` vs Standard-Schema).
     // The manager keys by method string; cast to the pass-through form.
     this.inner.setNotificationHandler(method as never, handler as never);

@@ -1,3 +1,8 @@
+import type {
+  EnvironmentOverrides,
+  HostedExecutionTarget,
+} from "@/shared/execution-target";
+
 export type HostedRuntimeContext = {
   projectId?: string | null;
   selectedServerIds?: string[];
@@ -11,6 +16,42 @@ export type HostedRuntimeContext = {
    * previewed host forks the chat session.
    */
   hostId?: string;
+  /**
+   * The host this surface PRESENTS as (Playground's previewed host). Purely a
+   * client-side cache key — it is never put on the request wire, never part of
+   * the session scope, and makes no statement about what executes.
+   *
+   * It exists because an environment target deliberately omits `hostId` (the
+   * server re-resolves the host from the environment), which left client caches
+   * keyed by host — the harness workdir cache the Playground Shell reads —
+   * writing under the project fallback while the reader looked under the
+   * environment's resolved host id, so the terminal opened outside the harness
+   * session directory. In host mode this is simply the same value as `hostId`.
+   */
+  presentationHostId?: string | null;
+  /**
+   * Project Environments (Phase 2). What this session executes against, as ONE
+   * serializable pointer. Mutually exclusive with `hostId` and `chatboxId`:
+   * `normalizeExecutionTarget` REJECTS a body carrying both rather than picking
+   * a winner, so a surface that sets an environment target must stop sending
+   * `hostId` (the environment's host is still fine to use for *presentation* —
+   * model chip, harness built-ins — it just must not be a second statement
+   * about what to run).
+   *
+   * Absent ⇒ unchanged legacy behavior (`hostId` / `chatboxId` / ad-hoc).
+   */
+  executionTarget?: HostedExecutionTarget;
+  /**
+   * Per-turn narrowing of an environment's server set. Sent ONLY when the user
+   * explicitly overrode the environment: `undefined` means "follow the
+   * environment", `{ serverIds: [] }` means "run with no MCP servers", and the
+   * backend keeps those distinct. Never inferred from `selectedServerIds` —
+   * that field describes the UI selection, not override intent.
+   *
+   * Only meaningful alongside an `executionTarget` of kind `"environment"`;
+   * ingress rejects it otherwise.
+   */
+  environmentOverrides?: EnvironmentOverrides;
   /**
    * Resolved chatbox identity (post-redeem). Threaded into every
    * chatbox-aware request body and cache key.

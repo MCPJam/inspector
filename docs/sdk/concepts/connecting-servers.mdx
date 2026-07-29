@@ -42,6 +42,10 @@ const manager = new MCPClientManager({
 - CLI-based MCP servers
 - Servers requiring local resources
 
+<Note>
+Unconfigured stdio connections auto-negotiate the MCP era: the SDK probes `server/discover` on a sibling process to detect 2026 support, then falls back to the legacy `initialize` handshake if the server doesn't respond. This means your server binary may be spawned a second time during the probe. The probe is bounded (at most one extra spawn) and only occurs when no explicit protocol version pin is set.
+</Note>
+
 ### HTTP Servers (Remote)
 
 HTTP servers connect via SSE (Server-Sent Events) or Streamable HTTP over the network.
@@ -239,13 +243,15 @@ Verify a server is responsive:
 
 ```typescript
 try {
-  manager.pingServer("myServer");
+  await manager.pingServer("myServer");
 } catch {
   console.warn("Server not responding, reconnecting...");
   await manager.disconnectServer("myServer");
   await manager.connectToServer("myServer");
 }
 ```
+
+`pingServer` is era-aware: on a modern (2026-07-28) connection it probes with `server/discover`; on a legacy connection it uses `ping`. Callers don't need to handle the difference.
 
 ## Next Steps
 

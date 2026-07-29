@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { MessageSquare, Sparkles } from "lucide-react";
+import { MessageSquare } from "lucide-react";
 import { toast } from "@/lib/toast";
 import type { ChatboxSettings } from "@/hooks/useChatboxes";
 import {
@@ -18,11 +18,9 @@ import {
   ResizablePanel,
   ResizableHandle,
 } from "@/components/ui/resizable";
-import { Button } from "@mcpjam/design-system/button";
 import { ShareUsageThreadList } from "@/components/connection/share-usage/ShareUsageThreadList";
 import { ShareUsageThreadDetail } from "@/components/connection/share-usage/ShareUsageThreadDetail";
 import { ChatboxTopicMapPanel } from "@/components/chatboxes/ChatboxTopicMapPanel";
-import { GenerateSessionsDialog } from "@/components/chatboxes/GenerateSessionsDialog";
 import { buildChatboxSessionPath, routePaths } from "@/lib/app-navigation";
 import { getShareableAppOrigin } from "@/lib/chatbox-session";
 
@@ -38,13 +36,6 @@ interface ChatboxUsagePanelProps {
    */
   initialThreadId?: string | null;
   /**
-   * Whether synthetic-session affordances (the "Generate with AI" dialog and
-   * the "Hide synthetic" filter toggle) are shown. Only the agent Swarm product
-   * generates synthetic traffic; the human Chatbox passes `false`. Defaults to
-   * `true` for existing callers.
-   */
-  allowSynthetic?: boolean;
-  /**
    * Called when the topic map asks to open a session in the Sessions tab.
    * The parent owns the tab switch; this panel handles the thread selection
    * itself (the same instance survives the insights → sessions flip).
@@ -52,7 +43,10 @@ interface ChatboxUsagePanelProps {
   onOpenSession?: (threadId: string) => void;
 }
 
-/** Filter chip that excludes synthetic (AI-generated) sessions from the list. */
+/** Filter chip that excludes synthetic (AI-generated) sessions from the list.
+ * Chatboxes carry real-user traffic only, but historical synthetic rows from
+ * the retired chatbox session-simulation flow are still in the database — this
+ * chip is force-applied below so they stay hidden. */
 const HIDE_SYNTHETIC_CHIP: UsageFilterChip = {
   kind: "dimension",
   key: "synthetic",
@@ -64,7 +58,6 @@ export function ChatboxUsagePanel({
   chatbox,
   section,
   initialThreadId,
-  allowSynthetic = true,
   onOpenSession,
 }: ChatboxUsagePanelProps) {
   // Scope selection to the current chatbox so switching chatboxes can't briefly
@@ -74,21 +67,17 @@ export function ChatboxUsagePanel({
     threadId: string | null;
   }>({ chatboxId: chatbox.chatboxId, threadId: initialThreadId ?? null });
   const [filter, setFilter] = useState<UsageFilterState>(EMPTY_USAGE_FILTER);
-  // The human Chatbox product has no synthetic traffic, so force synthetic
-  // sessions out of the fetched + rendered list regardless of the user's own
-  // filter chips. Only the data path uses this; the filter UI still shows the
-  // user's chips.
+  // Chatboxes have no synthetic traffic, so force synthetic sessions out of
+  // the fetched + rendered list regardless of the user's own filter chips
+  // (historical rows predating the removal stay in the database). Only the
+  // data path uses this; the filter UI still shows the user's chips.
   const effectiveFilter = useMemo<UsageFilterState>(() => {
-    if (allowSynthetic) return filter;
-    if (
-      filter.chips.some((c) => chipKey(c) === chipKey(HIDE_SYNTHETIC_CHIP))
-    ) {
+    if (filter.chips.some((c) => chipKey(c) === chipKey(HIDE_SYNTHETIC_CHIP))) {
       return filter;
     }
     return { ...filter, chips: [...filter.chips, HIDE_SYNTHETIC_CHIP] };
-  }, [filter, allowSynthetic]);
+  }, [filter]);
   const [rebuildBusy, setRebuildBusy] = useState(false);
-  const [generateOpen, setGenerateOpen] = useState(false);
   // Synchronous latch so double-clicks can't queue two concurrent rebuilds
   // before React commits `rebuildBusy`.
   const rebuildInFlightRef = useRef(false);
@@ -247,51 +236,15 @@ export function ChatboxUsagePanel({
     );
   }
 
-  const isHideSyntheticActive = filter.chips.some(
-    (c) => chipKey(c) === chipKey(HIDE_SYNTHETIC_CHIP)
-  );
-
   return (
     <div className="flex h-full flex-col">
-      {allowSynthetic ? (
-        <GenerateSessionsDialog
-          isOpen={generateOpen}
-          onClose={() => setGenerateOpen(false)}
-          chatbox={chatbox}
-        />
-      ) : null}
-
       <div className="min-h-0 flex-1">
         <ResizablePanelGroup direction="horizontal">
           <ResizablePanel defaultSize={30} minSize={20} maxSize={50}>
             <div className="flex h-full flex-col overflow-hidden">
               {/* min-h matches the thread-detail header across the resize
                   handle so the two border-b lines read as one. */}
-              <div className="flex min-h-[60px] shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2">
-                {allowSynthetic ? (
-                  <>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant={isHideSyntheticActive ? "secondary" : "outline"}
-                      className="rounded-full"
-                      onClick={() => handleToggleChip(HIDE_SYNTHETIC_CHIP)}
-                    >
-                      Hide synthetic
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="rounded-full"
-                      onClick={() => setGenerateOpen(true)}
-                    >
-                      <Sparkles className="mr-1 size-3" />
-                      Generate with AI
-                    </Button>
-                  </>
-                ) : null}
-              </div>
+              <div className="flex min-h-[60px] shrink-0 flex-wrap items-center gap-2 border-b px-3 py-2" />
               <div className="min-h-0 flex-1 overflow-hidden">
                 <ShareUsageThreadList
                   threads={sortedThreads}
@@ -311,9 +264,7 @@ export function ChatboxUsagePanel({
                   sessionLink={`${getShareableAppOrigin()}${buildChatboxSessionPath(
                     chatbox.namedHostId,
                     selectedThreadId,
-                    // `allowSynthetic` distinguishes the agent Swarm product —
-                    // keep its session links on /swarms.
-                    allowSynthetic ? routePaths.swarms : routePaths.chatboxes
+                    routePaths.chatboxes
                   )}`}
                 />
               ) : (

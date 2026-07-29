@@ -10,16 +10,19 @@ import type {
   ConfidentialCimdProvider,
   ElicitationCallback,
   HttpServerConfig,
+  MrtrInputCollector,
   RpcLogger,
   UnauthorizedRefreshHandler,
   XaaEnterprisePolicy,
 } from "@mcpjam/sdk";
 import { HOSTED_MODE, WEB_CALL_TIMEOUT_MS } from "../../config.js";
+import { HOSTED_TASK_BATCH_MAX as HOSTED_TASK_BATCH_MAX_SHARED } from "../../../shared/hosted-tasks.js";
 import {
   attachHostedRpcLogs,
   createHostedRpcLogCollector,
 } from "./hosted-rpc-logs.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
+import { negotiationTelemetryLogger } from "../../utils/negotiation-telemetry.js";
 import { setRequestLogContext } from "../../utils/request-logger.js";
 import { logger } from "../../utils/logger.js";
 import {
@@ -153,11 +156,54 @@ export const toolsListSchema = projectServerSchema.extend({
   cursor: z.string().optional(),
 });
 
-export const toolsExecuteSchema = projectServerSchema.extend({
-  toolName: z.string().min(1),
-  parameters: z.record(z.string(), z.unknown()).default({}),
-  taskOptions: z.record(z.string(), z.unknown()).optional(),
+// Legacy (2025-11-25) task augmentation: the concrete `{ttl?}` shape, not a
+// free-form record — this is a write path that reaches the MCP server verbatim.
+export const taskOptionsSchema = z
+  .object({ ttl: z.number().int().positive().optional() })
+  .strict();
+
+export const toolsExecuteSchema = projectServerSchema
+  .extend({
+    toolName: z.string().min(1),
+    parameters: z.record(z.string(), z.unknown()).default({}),
+    taskOptions: taskOptionsSchema.optional(),
+    // Extension wire: the client only declares that a task response is
+    // acceptable; the server decides whether to create one.
+    allowTaskResult: z.boolean().optional(),
+  })
+  // The two are mutually exclusive wires: `taskOptions` is the 2025-11-25
+  // `params.task` opt-in, `allowTaskResult` the SEP-2663 per-request
+  // declaration. Sending both means the caller does not know which wire it is
+  // on, so reject it at the edge instead of guessing.
+  .refine((body) => !(body.taskOptions && body.allowTaskResult), {
+    message:
+      "taskOptions (2025-11-25) and allowTaskResult (io.modelcontextprotocol/tasks) are different wires; send at most one",
+    path: ["allowTaskResult"],
+  });
+
+export { HOSTED_TASK_BATCH_MAX } from "../../../shared/hosted-tasks.js";
+
+export const taskGetSchema = projectServerSchema.extend({
+  taskId: z.string().min(1),
 });
+
+export const taskGetBatchSchema = projectServerSchema.extend({
+  taskIds: z
+    .array(z.string().min(1))
+    .min(1)
+    .max(HOSTED_TASK_BATCH_MAX_SHARED),
+});
+
+export const taskListSchema = projectServerSchema.extend({
+  cursor: z.string().optional(),
+});
+
+export const taskUpdateSchema = projectServerSchema.extend({
+  taskId: z.string().min(1),
+  inputResponses: z.record(z.string(), z.unknown()),
+});
+
+export const taskCapabilitiesSchema = projectServerSchema;
 
 export const resourcesListSchema = projectServerSchema.extend({
   cursor: z.string().optional(),
@@ -711,10 +757,17 @@ export function toHttpConfig(
   }
 ): HttpServerConfig {
   if (authResponse.serverConfig.transportType !== "http") {
+    // Hosted web has no local process to spawn into, so a stdio server — an
+    // ordinary one or a plugin's local component — is reported with the
+    // backend's own readiness vocabulary (`getPluginSetupStatus` marks
+    // `placement: "local"` components `local_runtime_required`) rather than
+    // attempted. Same word on both surfaces means a client can render one
+    // "open the desktop app" affordance without guessing from prose.
     throw new WebRouteError(
       400,
       ErrorCode.FEATURE_NOT_SUPPORTED,
-      "Only HTTP transport is supported in hosted mode"
+      "This server runs over stdio and requires the local runtime (desktop app); hosted mode cannot spawn local processes.",
+      { readiness: "local_runtime_required", transport: "stdio" }
     );
   }
 
@@ -909,6 +962,29 @@ export async function createAuthorizedManager(
      * (SDK-side watchdog). Only meaningful alongside `elicitationCallback`.
      */
     elicitationTimeoutExtensionMs?: number;
+    /**
+     * Per-server MRTR (`input_required`) input collector factory (MCP
+     * 2026-07-28 §12.5). Returns the collector for a given serverId, or
+     * `undefined` to leave that server on today's non-MRTR path.
+     *
+     * Registered SYNCHRONOUSLY below for the SAME reason as
+     * `elicitationCallback`: a 2026-07-28 server only embeds an elicitation
+     * when the client advertised the capability at connect, and the manager
+     * constructor kicks off connects in a microtask — so a collector registered
+     * after `await createAuthorizedManager(...)` loses the race and
+     * `buildCapabilities` strips `elicitation` before the round can ever occur.
+     * Registering here always wins.
+     *
+     * For HOSTED surfaces this collector SUSPENDS (persists an
+     * `MrtrOperationState` to the continuation store, emits a
+     * `data-mrtr-input-required` part, and throws `MrtrSuspendedSignal` to
+     * return control) rather than blocking the worker on a human answer — the
+     * whole point of the durable continuation transport (see
+     * `server/utils/mrtr-hosted-collector.ts`).
+     */
+    mrtrInputCollectorForServer?: (
+      serverId: string,
+    ) => MrtrInputCollector | undefined;
   }
 ): Promise<AuthorizedManagerResult> {
   const serverNamesById = buildServerNamesById(serverIds, options?.serverNames);
@@ -921,6 +997,8 @@ export async function createAuthorizedManager(
           defaultTimeout: timeoutMs,
           rpcLogger: options?.rpcLogger,
           retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
+          // Auto-negotiation outcome telemetry (always-on negotiation).
+          negotiationOutcomeLogger: negotiationTelemetryLogger("hosted-direct"),
         }
       ),
       oauthServerUrls: {},
@@ -1328,6 +1406,8 @@ export async function createAuthorizedManager(
     defaultTimeout: timeoutMs,
     rpcLogger: options?.rpcLogger,
     retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
+    // Auto-negotiation outcome telemetry (always-on negotiation).
+    negotiationOutcomeLogger: negotiationTelemetryLogger("hosted-direct"),
     ...(options?.elicitationTimeoutExtensionMs !== undefined
       ? { elicitationTimeoutExtensionMs: options.elicitationTimeoutExtensionMs }
       : {}),
@@ -1338,6 +1418,17 @@ export async function createAuthorizedManager(
   // wins that race; registering after an await never does.
   if (options?.elicitationCallback) {
     manager.setElicitationCallback(options.elicitationCallback);
+  }
+  // ALSO synchronous, same microtask-race discipline: register each server's
+  // MRTR collector before the constructor's connects run, so `buildCapabilities`
+  // advertises `elicitation` on the initialize wire for MRTR-capable servers.
+  if (options?.mrtrInputCollectorForServer) {
+    for (const serverId of uniqueServerIds) {
+      const collector = options.mrtrInputCollectorForServer(serverId);
+      if (collector) {
+        manager.setMrtrInputCollector(serverId, collector);
+      }
+    }
   }
   return {
     manager,
@@ -1568,6 +1659,19 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
     timeoutMs?: number;
     guestUnsupportedMessage?: string;
     rpcLogger?: ReturnType<typeof createHostedRpcLogCollector>["rpcLogger"];
+    /**
+     * Per-server MRTR (`input_required`) collector factory (MCP 2026-07-28
+     * §12.5). Threaded to `createAuthorizedManager` so a hosted DIRECT op
+     * (tools/execute, prompts/get, resources/read) can suspend a modern
+     * `input_required` round to the durable continuation store instead of
+     * blocking the worker. Registered SYNCHRONOUSLY at construction (same
+     * microtask discipline as `elicitationCallback`) so `buildCapabilities`
+     * advertises `elicitation` on the initialize wire. Omit to leave the
+     * connection on today's non-MRTR path.
+     */
+    mrtrInputCollectorForServer?: (
+      serverId: string,
+    ) => MrtrInputCollector | undefined;
   }
 ): Promise<{
   manager: InstanceType<typeof MCPClientManager>;
@@ -1666,6 +1770,12 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
       // Resolve the XAA issuer here (we hold the request `Context`) so the
       // manager builder can mint Cross-App Access tokens for `useXaa` servers.
       xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
+      // MRTR direct-op suspend collector (PR4). Registered synchronously with
+      // the same microtask discipline as `elicitationCallback` so `elicitation`
+      // is advertised before the constructor's connects run.
+      ...(options?.mrtrInputCollectorForServer
+        ? { mrtrInputCollectorForServer: options.mrtrInputCollectorForServer }
+        : {}),
     }
   );
 

@@ -1,9 +1,14 @@
 import type {
   MCPConformanceResult,
   MCPAppsConformanceResult,
+  MCPTasksConformanceResult,
   ConformanceResult as OAuthConformanceResult,
 } from "@mcpjam/sdk";
-import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
+import {
+  ensureLocalMode,
+  isHostedMode,
+  runByMode,
+} from "@/lib/apis/mode-client";
 import { buildServerRequest } from "@/lib/apis/web/context";
 import { webPost } from "@/lib/apis/web/base";
 import { localPost } from "@/lib/apis/local-post";
@@ -68,6 +73,25 @@ export async function runAppsConformance(
       const request = buildServerRequest(serverNameOrId);
       return webPost("/api/web/conformance/apps", request);
     },
+  });
+}
+
+/**
+ * Tasks conformance provokes a real task and then polls it, which needs a
+ * stable connection for the length of the run — hosted mode reconnects per
+ * request, so the suite is local-only.
+ */
+export async function runTasksConformance(
+  serverNameOrId: string,
+  options?: { toolName?: string; toolArguments?: Record<string, unknown> },
+): Promise<{ success: boolean; result: MCPTasksConformanceResult }> {
+  ensureLocalMode(
+    "Tasks conformance requires a persistent connection; run it from the local inspector.",
+  );
+  return localPost("/api/mcp/conformance/tasks", {
+    serverId: serverNameOrId,
+    ...(options?.toolName ? { toolName: options.toolName } : {}),
+    ...(options?.toolArguments ? { toolArguments: options.toolArguments } : {}),
   });
 }
 

@@ -178,8 +178,10 @@ const SKILLS_PROMPT_BASE =
   `what's available, then \`loadSkill\` to load a skill's full instructions when ` +
   `a task matches its purpose.`;
 // File-tools sentence — only for paths that ALSO expose listSkillFiles/readSkillFile
-// (the live cloud path). Pinned eval skills are supporting-file-free by design
-// (decision 8c), so the pinned path omits this to avoid advertising absent tools.
+// (the live cloud path). The tools BELOW are the bare-name pinned surface, which
+// serves only file-free pins (decision 8c), so it omits this to avoid
+// advertising absent tools. A run whose pins DO carry files takes the
+// ref-addressed surface instead (INS-5 — `skillsSource: pinned-effective`).
 const SKILLS_FILE_TOOLS_SENTENCE =
   ` If a loaded skill references supporting files, use \`listSkillFiles\` and ` +
   `\`readSkillFile\` to access them.`;
@@ -211,9 +213,11 @@ export function getCloudSkillToolsAndPrompt(ctx: CloudSkillsContext): {
  * `execute()` does ZERO network I/O (a mid-run skill edit can't change behavior
  * between iterations, which is the whole point of pinning). The supporting-file
  * tools (`listSkillFiles`/`readSkillFile`) are intentionally OMITTED: pinned
- * eval skills are file-free by design (decision 8c), and the pinned prompt omits
- * the file-tools guidance to match. Never `needsApproval` — pure reads of frozen
- * content under an auto-deny eval run.
+ * eval skills reaching THIS surface are file-free (decision 8c), and the pinned
+ * prompt omits the file-tools guidance to match. A run whose pins carry
+ * supporting files or a plugin ref is routed to the ref-addressed surface in
+ * `./effective-skill-tools.ts` instead (INS-5), which can serve both. Never
+ * `needsApproval` — pure reads of frozen content under an auto-deny eval run.
  */
 export function createPinnedSkillTools(skills: PinnableSkill[]) {
   const byName = new Map(skills.map((s) => [s.name, s]));
@@ -262,30 +266,16 @@ export function getPinnedSkillToolsAndPrompt(skills: PinnableSkill[]): {
 } {
   return {
     tools: createPinnedSkillTools(skills),
-    // Pinned skills have no supporting files (decision 8c blocks file-backed
-    // skills from eval selection), so the pinned tool set omits the file tools —
-    // and the prompt omits the file-tools sentence to match (no absent-tool ask).
+    // Pins reaching this surface have no supporting files (decision 8c blocks
+    // file-backed skills from eval selection; INS-5 routes the ones BE-5 made
+    // pinnable elsewhere), so the tool set omits the file tools — and the prompt
+    // omits the file-tools sentence to match (no absent-tool ask).
     systemPromptSection: SKILLS_PROMPT_BASE,
   };
 }
 
-/**
- * RESOLVED skill tools for a Project-Environment turn (Phase 1.4). Structurally
- * identical to the pinned set — an in-memory closure over exactly the artifacts
- * the environment resolved, with no live project-pool read — because the
- * environment's set is authoritative for the turn and a live `listSkills` would
- * advertise skills the environment deliberately excluded.
- *
- * The behavioral difference lives at the CALL SITE, not here: `prepareChatV2`
- * wraps these with `needsApproval` under the host's ordinary
- * `requireToolApproval`, whereas pinned tools bypass approval. Same reason the
- * file tools stay omitted: an environment turn delivers SKILL.md bodies through
- * `loadSkill`; supporting files reach a harness box through materialization, not
- * through emulated tool calls.
- */
-export function getResolvedSkillToolsAndPrompt(skills: PinnableSkill[]): {
-  tools: ReturnType<typeof createPinnedSkillTools>;
-  systemPromptSection: string;
-} {
-  return getPinnedSkillToolsAndPrompt(skills);
-}
+// The Project-Environment turn used to reuse the pinned tools verbatim
+// (`getResolvedSkillToolsAndPrompt`). INS-3 replaced that with
+// `./effective-skill-tools.ts`, which addresses skills by REF rather than bare
+// name so two plugins may declare the same skill name, and which exposes the
+// supporting-file tools an environment turn genuinely can serve.

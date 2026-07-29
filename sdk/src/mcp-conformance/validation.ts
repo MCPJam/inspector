@@ -1,6 +1,7 @@
 import {
   MCP_CHECK_CATEGORIES,
   MCP_CHECK_IDS,
+  PROTOCOL_VERSION_ERAS,
   type MCPCheckCategory,
   type MCPCheckEra,
   type MCPCheckId,
@@ -9,7 +10,6 @@ import {
 } from "./types.js";
 import {
   isKnownProtocolVersion,
-  isStatelessProtocolVersion,
   type McpProtocolVersion,
 } from "../mcp-client-manager/mcp-protocol-version.js";
 
@@ -47,6 +47,21 @@ function normalizeCheckIds(
   return normalized;
 }
 
+/**
+ * Era of a protocol version, read off the {@link PROTOCOL_VERSION_ERAS}
+ * registry (§15.1). An unrecognized version is a CONFIGURATION ERROR, never a
+ * silent fall back to legacy: running the legacy check set against a version
+ * nobody classified would report a verdict about the wrong requirements.
+ */
+export function eraForProtocolVersion(protocolVersion: string): MCPCheckEra {
+  if (!isKnownProtocolVersion(protocolVersion)) {
+    throw new Error(
+      `Unknown MCP conformance protocolVersion: ${protocolVersion}`,
+    );
+  }
+  return PROTOCOL_VERSION_ERAS[protocolVersion];
+}
+
 function normalizeProtocolVersion(
   protocolVersion: MCPConformanceConfig["protocolVersion"],
 ): { protocolVersion?: McpProtocolVersion; era: MCPCheckEra } {
@@ -55,16 +70,28 @@ function normalizeProtocolVersion(
     return { era: "legacy" };
   }
 
-  if (!isKnownProtocolVersion(protocolVersion)) {
+  return {
+    protocolVersion,
+    era: eraForProtocolVersion(protocolVersion),
+  };
+}
+
+function normalizeToolProbe(
+  probe: MCPConformanceConfig["inputRequiredProbe"],
+  optionName: "inputRequiredProbe" | "logProbe",
+): NormalizedMCPConformanceConfig["inputRequiredProbe"] {
+  if (!probe) {
+    return undefined;
+  }
+
+  const toolName = probe.toolName.trim();
+  if (!toolName) {
     throw new Error(
-      `Unknown MCP conformance protocolVersion: ${protocolVersion}`,
+      `MCP conformance ${optionName} requires a non-empty toolName`,
     );
   }
 
-  return {
-    protocolVersion,
-    era: isStatelessProtocolVersion(protocolVersion) ? "modern" : "legacy",
-  };
+  return { toolName, arguments: probe.arguments };
 }
 
 export function normalizeMCPConformanceConfig(
@@ -98,5 +125,10 @@ export function normalizeMCPConformanceConfig(
     clientName: config.clientName?.trim() || "mcpjam-sdk-conformance",
     protocolVersion,
     era,
+    inputRequiredProbe: normalizeToolProbe(
+      config.inputRequiredProbe,
+      "inputRequiredProbe",
+    ),
+    logProbe: normalizeToolProbe(config.logProbe, "logProbe"),
   };
 }

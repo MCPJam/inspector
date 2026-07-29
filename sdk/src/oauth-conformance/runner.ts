@@ -30,6 +30,11 @@ import {
   runInvalidRedirectCheck,
 } from "./checks/oauth-negative.js";
 import { runTokenFormatCheck } from "./checks/oauth-token-format.js";
+import {
+  runUnauthenticatedChallengeCheck,
+  runResourceMetadataChallengeCheck,
+  runStaleSessionRejectionCheck,
+} from "./checks/oauth-server-obligations.js";
 import type { HttpServerConfig } from "../mcp-client-manager/index.js";
 import { withEphemeralClient, listTools } from "../operations.js";
 import {
@@ -170,6 +175,7 @@ function buildStepResult(
   logs: StepResult["logs"],
   httpAttempts: StepResult["httpAttempts"],
   error?: StepResult["error"],
+  warnings?: StepResult["warnings"],
 ): StepResult {
   const metadata = resolveStepInfo(step);
   return {
@@ -182,6 +188,7 @@ function buildStepResult(
     http: httpAttempts[httpAttempts.length - 1],
     httpAttempts,
     error,
+    ...(warnings?.length ? { warnings } : {}),
     teachableMoments: metadata.teachableMoments,
   };
 }
@@ -283,6 +290,7 @@ export class OAuthConformanceTest {
         status: StepResult["status"];
         durationMs: number;
         error?: StepResult["error"];
+        warnings?: StepResult["warnings"];
       }>,
     ) => {
       const beforeHistory = state.httpHistory?.length ?? 0;
@@ -299,6 +307,7 @@ export class OAuthConformanceTest {
             [],
             attempts,
             outcome.error,
+            outcome.warnings,
           ),
         );
       } catch (error) {
@@ -706,6 +715,31 @@ export class OAuthConformanceTest {
         } else {
           steps.push(buildSkippedStepResult("oauth_invalid_redirect"));
         }
+
+        // Server-side spec obligations (HP-17 findings 3/4/5). These probe the
+        // server independently of the client-capability matrix; a violation is
+        // a hard failure against normative spec text.
+        await recordOAuthCheck("oauth_unauthenticated_challenge", () =>
+          runUnauthenticatedChallengeCheck({
+            config: this.config,
+            state,
+            trackedRequest,
+          }),
+        );
+        await recordOAuthCheck("oauth_resource_metadata_challenge", () =>
+          runResourceMetadataChallengeCheck({
+            config: this.config,
+            state,
+            trackedRequest,
+          }),
+        );
+        await recordOAuthCheck("oauth_stale_session_rejection", () =>
+          runStaleSessionRejectionCheck({
+            config: this.config,
+            state,
+            trackedRequest,
+          }),
+        );
 
         const tokenRequestStep = [...steps]
           .reverse()

@@ -1,39 +1,652 @@
-diff --git a/.changeset/dialect-aware-schema-validation.md b/.changeset/dialect-aware-schema-validation.md
+diff --git a/.changeset/auto-negotiation-activation-flag.md b/.changeset/auto-negotiation-activation-flag.md
 deleted file mode 100644
-index 35734d183..000000000
---- a/.changeset/dialect-aware-schema-validation.md
+index ca0abd35d..000000000
+--- a/.changeset/auto-negotiation-activation-flag.md
++++ /dev/null
+@@ -1,10 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+-"@mcpjam/inspector": minor
+----
+-
+-Make automatic MCP era negotiation always-on for unconfigured connections and extend it to stdio. An unconfigured connection (no explicit `mcpProtocolVersion` pin) resolves to `versionNegotiation: { mode: "auto" }` on **both HTTP and stdio** — the client probes `server/discover` for a modern server and conservatively falls back to the legacy `initialize` handshake otherwise. This preserves the HTTP auto-detection already shipped in #3441 and extends the same behavior to stdio (where the probe runs on a sibling process). There is no flag and no OFF path.
+-
+-Explicit pins are unchanged: an explicit modern pin negotiates modern with no legacy fallback, and an explicit legacy pin runs that version's exact handshake.
+-
+-Additive value: per-connection negotiation telemetry (configured mode + negotiated era + transport + surface + outcome + failure class) is emitted to Axiom via the existing system-event pipeline (`mcp.connection.negotiated`) through the new optional `MCPClientManagerOptions.negotiationOutcomeLogger`. New SDK exports (additive): `unwrapEraNegotiationCause` and the types `NegotiationOutcomeEvent`, `NegotiationOutcomeLogger`, `ConfiguredNegotiationMode`. `isUnauthorized401`/`isAuthError` now see through an `SdkError(EraNegotiationFailed)` wrapper so an auto-probe 401 still triggers OAuth.
+diff --git a/.changeset/cache-policy-core.md b/.changeset/cache-policy-core.md
+deleted file mode 100644
+index 37972f60c..000000000
+--- a/.changeset/cache-policy-core.md
++++ /dev/null
+@@ -1,10 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-Thread the SEP-2549 response-cache disposition (`cacheMode`) through the manager's cacheable read verbs and add a local cache-serve provenance channel.
+-
+-- `ClientRequestOptions` now carries an optional `cacheMode` (`"use" | "refresh" | "bypass"`); the type is re-exported as `CacheMode` (plus `CacheScope`). `listTools` / `listResources` / `listResourceTemplates` / `listPrompts` / `readResource` (and the `operations.ts` params) forward it to the underlying client.
+-- New `MCPClientManagerOptions.cacheEventLogger` reports fresh cache serves (`{ serverId, method, params, ageMs, scope }`) via a new `ObservableResponseCache` store wrapper. This is a channel DISTINCT from `rpcLogger`: a cache hit never touches the wire and is never a wire-log entry.
+-- Raw-evidence surfaces (`server-snapshot`, `server-doctor`, `mcp-conformance` list/read checks) pass `cacheMode: "bypass"` so they always exercise the live wire.
+-- `defaultCacheTtlMs` is left at its `0` default: a result without a server-sent `ttlMs` is stored but never served. Persisted-discovery (`prior` DiscoverResult) reconnect is explicitly deferred.
+diff --git a/.changeset/calm-caniuse-themes.md b/.changeset/calm-caniuse-themes.md
+deleted file mode 100644
+index b583acb82..000000000
+--- a/.changeset/calm-caniuse-themes.md
 +++ /dev/null
 @@ -1,5 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Add a light and dark theme toggle to the public host comparison page.
+diff --git a/.changeset/cli-subscriptions-listen.md b/.changeset/cli-subscriptions-listen.md
+deleted file mode 100644
+index 115e4a9c9..000000000
+--- a/.changeset/cli-subscriptions-listen.md
++++ /dev/null
+@@ -1,24 +0,0 @@
+----
+-"@mcpjam/cli": minor
+-"@mcpjam/sdk": patch
+----
+-
+-Add `mcpjam subscriptions listen` — a terminal mode for the MCP 2026-07-28
+-`subscriptions/listen` stream, driving the SDK's `SubscriptionCoordinator`.
+-Interests are selected with `--tools-list-changed` / `--prompts-list-changed` /
+-`--resources-list-changed` / `--list-changed` / `--resource-uri`, the
+-acknowledgement is printed as its own `subscription.acknowledged` event
+-(distinct from notifications, which are each tagged with their local and MCP
+-subscription ids), and Ctrl-C cancels the subscription locally and exits 0.
+-Close reasons are distinct outcomes: `graceful` and `cancelled` exit 0, while a
+-remote loss exits 1 with `SUBSCRIPTION_REMOTE_CLOSED`. `--relisten <count>`
+-opts into a bounded re-listen with exponential backoff. stdout carries only
+-NDJSON events (no human progress text, in either `--format`); human status goes
+-to stderr.
+-
+-`SubscriptionCoordinator` now treats a re-listen whose `listen()` itself throws
+-as the same remote loss rather than a terminal `error`, so a server that is
+-still down when the backoff expires keeps consuming the attempt budget instead
+-of ending the sequence after one try. The coordinator surface is also
+-re-exported from the SDK package root so the CLI can drive it without a subpath
+-import.
+diff --git a/.changeset/cli-tasks-manual-drive.md b/.changeset/cli-tasks-manual-drive.md
+deleted file mode 100644
+index e9311a2bb..000000000
+--- a/.changeset/cli-tasks-manual-drive.md
++++ /dev/null
+@@ -1,10 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+-"@mcpjam/cli": minor
+----
+-
+-CLI: manual MCP Tasks loop matching the Inspector Tasks tab. New commands `tasks capabilities | get | list | result | cancel | update | watch`, plus `tools call --task` / `--task-watch` (with `--task-ttl`, `--wire`, and watch-tuning flags) driving a created task to a terminal status over one connection on both the legacy 2025-11-25 wire and the SEP-2663 extension wire. Watch exit codes: 0 completed, 6 input-required, 7 timeout, 130 aborted, 1 otherwise.
+-
+-SDK (additive): task manual-drive surface re-exported at the package root — `LEGACY_TASK_STATUSES`, `canDeclareTasksExtension`, `readDeclaredInputCapabilities`, `TaskInputRejectedError`, `DEFAULT_TASK_INPUT_LIMITS`, `createStrictElicitationContentValidator` (the strict dialect-aware elicitation self-validation rule the manager's MRTR path uses, as a shared factory), `retryAfterMsFromError`, and the associated types. The CLI statically imports these exports, which do not exist in published 2.0.x — coupling both packages in this changeset makes `changeset version` (via `updateInternalDependencies`) rewrite the CLI's `@mcpjam/sdk` range to `^2.1.0` in the same release, so a consumer upgrading the CLI against an old lockfile cannot pair it with an SDK that lacks them. The in-repo range stays `^2.0.0` until then because npm only links the workspace SDK while the range is satisfied by the workspace version.
+-
+-Behavior fixes in the shared task machinery: the await driver now honors a `Retry-After` recovered from a failed read's error object as the engine's scheduling floor (previously the engine supported it but nothing fed it, and the plain-record header lookup is case-insensitive per RFC 9110); an abort that fires during interactive `input_required` collection settles the drive as `aborted` instead of `input-required`; task `input_required` requests and handler responses are now validated against the canonical spec-type schemas (`ElicitRequest`/`ElicitResult`, `ListRootsRequest`/`ListRootsResult`, `CreateMessageRequest`/`CreateMessageResult`) — the same validation the upstream client applies on the standalone channel — with a new `"malformed-response"` rejection reason, and accepted elicitation answers are additionally self-validated against the request's `requestedSchema` with the same strict dialect-aware rule as standalone MRTR; `setElicitationHandler` no longer requires prior server registration, restoring handler registration before connect.
+diff --git a/.changeset/discover-identity-meta-stamp.md b/.changeset/discover-identity-meta-stamp.md
+deleted file mode 100644
+index fa48c3ac1..000000000
+--- a/.changeset/discover-identity-meta-stamp.md
++++ /dev/null
+@@ -1,9 +0,0 @@
 ----
 -"@mcpjam/sdk": patch
 ----
 -
--Validate declared draft-07 tool schemas instead of rejecting them. The upstream v2 client's default validator is 2020-12-only and hard-fails `tools/call` for any tool whose `outputSchema` declares `"$schema": ".../draft-07/schema#"` — which is every MCP TypeScript SDK v1 server built with zod. The spec permits an explicitly declared draft-07 dialect on all protocol versions (2020-12 is only the default when `$schema` is absent), so the SDK now dispatches on the declared `$schema`: absent/2020-12 → a 2020-12 engine, draft-07 → a draft-07 engine, unknown dialects → skipped with a deduped `console.warn` (overridable via `onUnknownDialect`) rather than failing the call. Two runtime flavors share the dispatch core: `DialectAwareJsonSchemaValidator` (Ajv, wired into `MCPClientManager` and `createManagedMcpClient` on Node) and `CspSafeDialectAwareJsonSchemaValidator` (`@cfworker/json-schema`, wired into the HTTP doctor, which ships in the browser/workerd entries where Ajv's `new Function` compilation is unavailable).
-diff --git a/.changeset/swarm-journey-judge.md b/.changeset/swarm-journey-judge.md
+-Fix `modern-server-discover` failing every spec-correct 2026 server. The check demanded a top-level `serverInfo` in the `server/discover` result, but `DiscoverResult` has no such member — the 2026 encode seam stamps identity into `_meta["io.modelcontextprotocol/serverInfo"]` on every result instead (spec PR #3002). Any server built on the official server SDK, MCPJam's own stateless reference server included, failed the check.
+-
+-The check now reads the `_meta` stamp, keeps a top-level `serverInfo` as a lenient fallback, and treats identity as the SHOULD it is: a present-but-malformed stamp still fails, an absent one does not, and either way the value is reported in the check details so a silent server stays visible in the run artifact. `supportedVersions` and `capabilities` remain hard MUST failures.
+-
+-Also repairs test rot from the 2.0.0 client bump so the SDK suite is green again: `connect({ prior })` is now era-discriminated (`{ kind: "modern", discover }`), and upstream's default validators no longer reject a declared draft-07 dialect — that assertion is re-pointed at the boundary that is still real (draft-04). Upstream now covering draft-06/07/2019-09/2020-12 makes `DialectAwareJsonSchemaValidator` and its CSP-safe twin redundant for the dialects they dispatch; retiring them touches the client factory and the browser/workerd bundles, so it is left as a separate deliberate change.
+diff --git a/.changeset/enable-http-protocol-auto-detection.md b/.changeset/enable-http-protocol-auto-detection.md
 deleted file mode 100644
-index 6461d8a27..000000000
---- a/.changeset/swarm-journey-judge.md
+index 169b8b972..000000000
+--- a/.changeset/enable-http-protocol-auto-detection.md
 +++ /dev/null
 @@ -1,9 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-Enable automatic MCP protocol negotiation for unpinned HTTP connections. MCPJam now probes `server/discover` for modern servers and conservatively falls back to the legacy `initialize` handshake, while explicit protocol pins and stdio connections retain their existing behavior.
+-
+-Fallback is deliberately conservative: definitive legacy signals **and anything unrecognized** (opaque `400`, `404`, `405`, `406`, `5xx`, `-32601`) fall back to the plain `initialize` handshake on the same connection, byte-equivalent to a 2025 client. Only two outcomes fail the connect: a network outage, and an HTTP probe timeout (on HTTP, silence from a deployed server indicates an outage rather than a legacy server).
+-
+-OAuth protocol resolution changes for servers left on **Auto**. Auto is now stored as intent rather than baked into a concrete pin at save time, and resolves per flow from: explicit OAuth selection → explicit wire pin → freshly negotiated version → `2025-11-25` when a `401` blocks detection. One consequence worth calling out: an Auto server pinned to an older wire version (for example `2025-06-18`) now runs **that** version's OAuth flow, where it previously always ran `2025-11-25`. Tokens are re-obtained from the top on each login, so no stored credential needs migrating.
+diff --git a/.changeset/era-aware-ping.md b/.changeset/era-aware-ping.md
+deleted file mode 100644
+index dd8ddd7a1..000000000
+--- a/.changeset/era-aware-ping.md
++++ /dev/null
+@@ -1,23 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+----
+-
+-Make `pingServer` era-aware: probe modern (2026-07-28) connections with
+-`server/discover` instead of the retired `ping` method.
+-
+-`ping` was removed from the 2026 vocabulary (SEP-2575), so the upstream client refuses to
+-send it on a modern-classified connection (`MethodNotSupportedByProtocolVersion`).
+-Every caller that health-checked a modern connection — most visibly the MRTR
+-resume path, which pings before driving the retry leg — failed with
+-"Method 'ping' is not supported by the negotiated protocol version" right after
+-the user answered an elicitation dialog.
+-
+-`pingServer` now probes with `server/discover` (the modern era's only
+-universally available request) when the connection's era is modern, discarding
+-the result and returning the ping contract's `EmptyResult` so callers stay
+-era-agnostic. Legacy connections keep the wire-identical `ping`. `discover` is
+-forwarded through the managed-client surface (adapter + both meta decorators)
+-as an optional member; the decorators bind it only when the inner client
+-carries it, so absence propagates through the stack and a client without
+-`discover` falls back to `ping` rather than reporting a health check that
+-never touched the wire.
+diff --git a/.changeset/era-capability-reresolution.md b/.changeset/era-capability-reresolution.md
+deleted file mode 100644
+index 2db0980cc..000000000
+--- a/.changeset/era-capability-reresolution.md
++++ /dev/null
+@@ -1,34 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+-"@mcpjam/inspector": patch
+----
+-
+-Add the post-negotiation capability re-resolution seam (`eraCapabilities.modern`),
+-and use it to declare url-mode elicitation on auto-negotiated modern connections.
+-
+-Client capabilities are resolved at connect time, before era negotiation has
+-run, so the base set must be honest under the most conservative era the
+-connection could land on. That forced auto-negotiated (Client default)
+-connections to under-advertise on 2026-07-28: url-mode elicitation — which the
+-local MRTR bridge fully fulfils — stayed undeclared because the connect-time
+-resolver could not rule out a legacy landing, so every url-mode `input_required`
+-round died at the server's mode-aware capability gate (`-32021`) unless the
+-user explicitly pinned the protocol version.
+-
+-`MCPServerConfig.eraCapabilities.modern` is a merge-style capability overlay
+-the manager applies exactly once, immediately after era classification, when
+-the connection lands on a 2026-era revision. The 2026 wire re-declares
+-capabilities on every request's `_meta` envelope (the upstream client stamps it
+-from the live set), so the widened declaration flows outward from the next
+-request on and then stays stable for the connection's lifetime — MRTR rounds of
+-one logical operation always see one consistent set. Legacy landings never
+-apply the overlay (their `initialize` already carried the conservative base:
+-fail-closed), exact `clientCapabilities` pins ignore it entirely, and the
+-overlay's `elicitation` key is subject to the same advertise=enforce gate as
+-the runtime-added one.
+-
+-The Inspector's local MRTR helper (`withLocalMrtrElicitationCapability`) now
+-rides the seam instead of guessing "provably modern" from the pin and the
+-accept-list — a predicate that had to answer "no" for the common unpinned
+-connection. url-mode elicitation (`open-dashboard`-style tools) now works on
+-Client-default connections that auto-negotiate onto 2026-07-28.
+diff --git a/.changeset/era-gate-rfc9207-iss-mismatch.md b/.changeset/era-gate-rfc9207-iss-mismatch.md
+deleted file mode 100644
+index 48cc4328d..000000000
+--- a/.changeset/era-gate-rfc9207-iss-mismatch.md
++++ /dev/null
+@@ -1,11 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+----
+-
+-Scope the RFC 9207 authorization-response `iss` mismatch rejection to the protocol era that mandates it. `MUST validate a present iss` is introduced by SEP-2468 in the 2026-07-28 draft; 2025-11-25 and earlier never mention `iss`, RFC 9207, or issuer identification, so enforcing there applied a rule the selected version does not contain. A mismatch still hard-blocks before code redemption on 2026-07-28; pre-draft flows now surface it as a non-blocking warning and complete.
+-
+-This completes the era gating started in #3441, which scoped only the reject-on-absence row and deliberately left the present-but-mismatched row firing on every version.
+-
+-Warning-not-blocking on pre-draft eras is narrow by design: PKCE S256 is already mandatory there, the token endpoint always comes from the recorded metadata (never the callback, so a hostile `iss` cannot redirect the code), and tokens are persisted issuer-keyed to the recorded issuer. RFC 9207 Section 2.4 leaves an unadvertised `iss` to local policy. `validateAuthorizationResponseIssuer` gains an optional `enforcePresentIssMismatch` that defaults to enforcing, so an omitted flag fails closed.
+-
+-Mismatch diagnostics now name both issuers — the recorded one and the one returned on the callback — because an exact comparison fails on differences too small to infer from "does not match" alone.
+diff --git a/.changeset/fresh-vscode-themes.md b/.changeset/fresh-vscode-themes.md
+deleted file mode 100644
+index 961cd24c5..000000000
+--- a/.changeset/fresh-vscode-themes.md
++++ /dev/null
+@@ -1,6 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+-"@mcpjam/inspector": patch
+----
+-
+-Resolve VS Code host style variables to the captured light and dark theme colors when emulating the VS Code client.
+diff --git a/.changeset/harden-oauth-proxy-transport.md b/.changeset/harden-oauth-proxy-transport.md
+deleted file mode 100644
+index ede6a428d..000000000
+--- a/.changeset/harden-oauth-proxy-transport.md
++++ /dev/null
+@@ -1,7 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-Harden generic OAuth proxy requests by validating and pinning DNS results, checking every followed redirect before connecting, and bounding response bodies. Explicit local loopback flows may redirect to validated public hosts, while redirects to other private or reserved destinations remain blocked.
+-
+-`OAuthProxyResponse` gains a required `finalUrl` field reporting the effective URL after redirects. Reading a proxy response is unaffected; code that constructs an `OAuthProxyResponse` (typically test doubles) must add `finalUrl`.
+diff --git a/.changeset/hosted-mrtr-browser-consumer.md b/.changeset/hosted-mrtr-browser-consumer.md
+deleted file mode 100644
+index f656473df..000000000
+--- a/.changeset/hosted-mrtr-browser-consumer.md
++++ /dev/null
+@@ -1,11 +0,0 @@
 ----
 -"@mcpjam/inspector": minor
 ----
 -
--Surface and configure the Swarm goal-completion judge.
+-Wire the BROWSER consumer leg of the hosted MCP 2026-07-28 multi-round-trip (`input_required`) transport (spec §12.5). The hosted server side (durable continuation store, suspend collector, `/api/web/mrtr/*` resume + cancel routes, `data-mrtr-input-required` part, version handshake) already shipped fail-closed; this makes it user-drivable. New exports only.
 -
--- The per-session judge badge (`SessionGoalScoreBadge`) moves to the shared `session-quality` module (reusing the eval `ScoreBadge`) and now renders in the Sessions list and run matrix cells; `SwarmJudgeSection` is reachable even for sessions with no transcript.
--- The judge config type/defaults are extracted to a shared `GoalJudgeConfig` (evals re-export the historical `EvalJudgeConfig` names), so the eval `JudgesSection` is reusable.
--- New journeys expose an **Advanced → Judge** disclosure that reuses `JudgesSection` to set the judge model and auto-grade toggle (`journeys:createJourney` carries the config). Pairs with the backend `judgeConfig` snapshot + config-driven auto-run.
+-- **Handshake on the wire.** Hosted chat turns and hosted direct `tools/execute` / `prompts/get` / `resources/read` requests now carry `hostedMrtrVersion: HOSTED_MRTR_VERSION`. The server only registers the suspending collector when it sees this, so a stale bundle is never handed a `continuationId` it can neither render nor resume.
+-- **A hosted round rail** (`stores/hosted-mrtr-store.ts` + `components/elicitation/HostedMrtrHost.tsx`): the durable-continuation counterpart of the local SSE-backed `MrtrElicitationHost`, reusing the SAME `ElicitationDialog` / `UrlElicitationConsent` (form + modern URL variant) behind the same single-active-dialog election. Rounds dedupe by `continuationId:round`, collect one keyed request at a time, and submit the whole round's `ElicitResult`s together; decline/cancel are responses, not withdrawals.
+-- **Per-round transport**, because the two hosted surfaces resume differently: a chat round re-drives the turn with an `mrtrResume` descriptor (so the server splices the driven tool result into the suspended tool-call and the agent loop continues), while a direct op resumes over `/api/web/mrtr/resume` — `driveHostedDirectMrtr` runs that loop transparently, so existing call sites still await one result in the verb's own envelope.
+-- **Terminal outcomes are surfaced, not swallowed:** `completed` / `failed` / `cancelled` / `expired` close the rail, and an `indeterminate` outcome tells the user the call may or may not have run instead of auto-retrying a side effect.
+-- **Mixed-version rollout fails fast.** An incompatible `version` on a round withdraws the continuation and tells the user to refresh rather than rendering a dialog this bundle could never complete. A user abort — and a resume with no unresolved tool call left in the transcript — likewise withdraws the continuation instead of leaving it to time out.
+diff --git a/.changeset/hp-45-oauth-server-obligation-checks.md b/.changeset/hp-45-oauth-server-obligation-checks.md
+deleted file mode 100644
+index e82ba3540..000000000
+--- a/.changeset/hp-45-oauth-server-obligation-checks.md
++++ /dev/null
+@@ -1,28 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-feat(oauth-conformance): add three server-side spec-obligation checks (HP-17 findings 3/4/5)
+-
+-The OAuth conformance suite now verifies obligations the MCP server owes every
+-client, gated behind `oauthConformanceChecks` alongside the existing negative
+-checks:
+-
+-- `oauth_unauthenticated_challenge` — an unauthenticated request must be
+-  answered with HTTP 401 and a `WWW-Authenticate: Bearer` challenge, never a
+-  500 (RFC 6750 §3). A 2xx skips as unverifiable — anonymous `initialize` with
+-  authorization enforced on later requests is spec-legal.
+-- `oauth_resource_metadata_challenge` — the Bearer challenge must advertise an
+-  absolute `resource_metadata` URL (RFC 9728 §5.1). Skipped on 2025-03-26,
+-  which predates RFC 9728 in the MCP authorization spec.
+-- `oauth_stale_session_rejection` — a request carrying an unknown
+-  `Mcp-Session-Id` must be rejected with a 4xx (404 preferred), never a 500
+-  (Streamable HTTP transport). Skipped on the stateless 2026-07-28 wire.
+-
+-These are hard failures against normative spec text, distinct from the
+-host-capability readiness matrix.
+-
+-`StepResult` gains an optional `warnings` array for non-fatal evidence on a
+-passing step (e.g. a stale session rejected with 400 instead of the
+-spec-preferred 404). Warnings surface in conformance report details and render
+-distinctly from errors in the inspector UI.
+diff --git a/.changeset/log-5xx-error-cause.md b/.changeset/log-5xx-error-cause.md
+deleted file mode 100644
+index 847951cde..000000000
+--- a/.changeset/log-5xx-error-cause.md
++++ /dev/null
+@@ -1,30 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Record *why* a server 5xx failed, not just that one did.
+-
+-`http.request.failed` previously carried a status code and a blanket
+-`errorCode: "internal_error"`, with the message discarded. That made a week of
+-hosted-connect 502s (`/api/web/servers/validate`, `/api/web/tools/list`,
+-`/api/web/chat-v2`) undiagnosable — Axiom could count them but never explain
+-them.
+-
+-The cause was structural rather than a missing field: Hono runs `onError`
+-*inside* `next()`, so `requestLogContextMiddleware` never observes a route's
+-throw. Its `thrown` branch is unreachable whenever an error handler is
+-registered, which is always, so every 5xx fell through to the catch-all label.
+-
+-The handlers now hand the cause over explicitly via a `webErrorMeta` context
+-var — set by `webError()` and by the global `onError` — and the middleware
+-emits the route's real `ErrorCode` (`SERVER_UNREACHABLE`, `TIMEOUT`, …) plus a
+-new `errorMessage` field. The meta is bound to its status and ignored on
+-mismatch, so a route that emits a 4xx and later fails with an unrelated 500
+-cannot mislabel the 500. Messages are capped at 500 chars.
+-
+-Also hardens `scrubLogPayload`: secrets carried in a URL query string
+-(`?access_token=`, `?code=`, `?api_key=`, …) are now redacted inside string
+-values. Key-based redaction only walked object keys, so a URL embedded in an
+-error message previously survived into Axiom intact.
+-
+-Logging only — no status codes, response bodies, or routing change.
+diff --git a/.changeset/mrtr-collector-reregister.md b/.changeset/mrtr-collector-reregister.md
+deleted file mode 100644
+index bc7a4b128..000000000
+--- a/.changeset/mrtr-collector-reregister.md
++++ /dev/null
+@@ -1,27 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Fix MRTR elicitation silently dying for the rest of the process after one
+-failed connect.
+-
+-`MCPClientManager.removeServer()` purges `mrtrInputCollectors` by design, and
+-the local connect route runs with `removeOnFailure: true` — so any failed
+-connect (or an explicit remove from the servers route) drops the collector.
+-`registerLocalMrtrCollector` mirrored "already registered" in a module-level
+-`WeakMap<manager, Set<serverId>>` that could not observe that purge, so after
+-the first failure it answered "already registered" forever and never restored
+-the collector.
+-
+-Downstream, `buildCapabilities` advertises `elicitation` exactly when a
+-collector is registered, so every subsequent connection advertised none. A
+-2026-07-28 server then correctly refuses to embed `elicitation/create` in an
+-`input_required` result, and every MRTR surface — `tools/call`,
+-`resources/read`, `prompts/get` — fails with "the request's client capabilities
+-do not declare the required capability". The connection succeeds and the tool
+-list populates, so nothing looks broken until a tool is actually run.
+-
+-The mirror is removed: the manager's own collector map is now the single source
+-of truth, and registration is unconditional. Re-registering is a `Map.set` with
+-a pure factory closure (all round state lives in the module-level
+-`pendingRounds`), so the repeat cost is nil.
+diff --git a/.changeset/mrtr-sdk-driver-core.md b/.changeset/mrtr-sdk-driver-core.md
+deleted file mode 100644
+index c8a0e7565..000000000
+--- a/.changeset/mrtr-sdk-driver-core.md
++++ /dev/null
+@@ -1,14 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-Add the SDK core for the MCP 2026-07-28 multi-round-trip (`input_required`) interaction — the manual driver that lets `tools/call`, `prompts/get`, and `resources/read` return embedded elicitation requests, collect input, and retry the original operation (spec §12). New exports only.
+-
+-- **Manual mode.** The manager constructs its client with `inputRequired: { autoFulfill: false }`, so an `input_required` result surfaces to MCPJam's own driver instead of the SDK's automatic one.
+-- **Serializable stepper** (`mrtr-driver.ts`): `executeInputRequiredLeg` / `resumeInputRequiredOperation` operate on a data-only `MrtrOperationState` (stable id, method, immutable original params, round, echoed `requestState`, current round's pending requests) — never a client, promise, closure, or `AbortSignal` — so hosted surfaces can persist and resume it. `runInputRequiredOperation` layers a local/CLI convenience loop on top.
+-- **MCPJam owns the round cap** (`DEFAULT_MAX_MRTR_ROUNDS = 10`, persisted in the state); exceeding it raises the upstream `SdkError(InputRequiredRoundsExceeded, …, { rounds })` shape. Guards `isMaxRoundsExceeded` / `isUnsupportedResultType`.
+-- **Per-round replacement** of `inputResponses` (never accumulated) with byte-exact `requestState` echo; state-only, inputs-without-state, and no-state rounds all supported. Response maps are built with a null prototype (server keys are untrusted).
+-- **Undeclared-request rejection (Decision 8):** embedded `roots/list` / `sampling/createMessage` and unsupported elicitation modes are rejected at the result — before any UI — via `MrtrUndeclaredInputError` / `MrtrUnsupportedElicitationModeError`.
+-- **Strict self-validation (§12.1.11):** accepted elicitation content is validated against the request's `requestedSchema` (unknown dialect → invalid, not fail-open) before it is sent; decline/cancel are responses, not errors.
+-- **New `requestWithSchema` seam** on `ManagedMcpClient`, `OfficialSdkClientAdapter`, and the `LogLevelMetaClient` decorator (which injects the modern per-request logging `_meta`) — the type-correct explicit-schema path for the loop.
+-- **Three verbs wired** through per-server MRTR input collectors (`setMrtrInputCollector`) without regressing Phase-3 helper semantics: resource reads keep the response cache, prompt/tool legs carry the per-request log level, and the final tool result is re-validated against its output schema. `buildCapabilities` now advertises `elicitation` when an MRTR collector is registered; roots/sampling stay unadvertised.
+diff --git a/.changeset/otel-trace-context-meta.md b/.changeset/otel-trace-context-meta.md
+deleted file mode 100644
+index c40968d45..000000000
+--- a/.changeset/otel-trace-context-meta.md
++++ /dev/null
+@@ -1,25 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-Propagate OpenTelemetry trace context over MCP `_meta` (SEP-414).
+-
+-The 2026-07-28 spec reserves the unprefixed `traceparent`, `tracestate` and
+-`baggage` `_meta` keys for OpenTelemetry trace context. The requirement is
+-conditional on presence — when the keys are sent their values MUST follow W3C
+-Trace Context / W3C Baggage format — so this is propagation support, not a
+-mandate to emit.
+-
+-`TraceContextMetaClient` is a `ManagedMcpClient` decorator built as a sibling of
+-`LogLevelMetaClient`: it merges a caller-supplied context into outbound
+-`params._meta` only on a negotiated `modern` era, caller-supplied `_meta` keys
+-always win, and a malformed `traceparent` rejects the whole context rather than
+-forwarding it. The context comes from the new optional
+-`MCPClientManagerOptions.traceContextProvider`, read fresh per request; with no
+-provider the decorator is never constructed, so legacy (2025-\*) wire output is
+-byte-identical and modern connections send nothing.
+-
+-Inbound, a valid trace context on a result's `_meta` is surfaced in the tools
+-Response panel — collapsed to the trace id, expanding to span id, sampled flag
+-and the raw header values. `baggage` is arbitrary server-controlled data and is
+-treated as untrusted display-only: it is never sent to analytics.
+diff --git a/.changeset/phase7-modern-conformance.md b/.changeset/phase7-modern-conformance.md
+deleted file mode 100644
+index 5a9186e5f..000000000
+--- a/.changeset/phase7-modern-conformance.md
++++ /dev/null
+@@ -1,13 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-Expand the MCP conformance suite to judge 2026-07-28 (draft) servers.
+-
+-- Protocol versions are now classified by era in a `satisfies Record<McpProtocolVersion, MCPCheckEra>` map, so adding a supported version is a compile-time obligation to assign its check set. An unknown `protocolVersion` fails configuration instead of silently falling back to legacy.
+-- New modern MUST checks (`modern-*`), covering `server/discover`, wire `resultType`, cacheable `ttlMs`/`cacheScope`, reserved-header mismatches (`-32020`), unsupported envelope versions (`-32022`), undeclared client capabilities on `input_required` (`-32021`), removed methods (`-32601`), unknown resources (`-32602`), level-gated logging, and sessionless responses. Each raw check asserts the HTTP status and the in-band JSON-RPC code as separate facts.
+-- New `MCPConformanceResult.readiness`: SHOULD/RECOMMENDED/MAY interoperability advice (tool ordering, metadata quality, deprecated features, cache TTL usefulness, OAuth `iss`) reported as warnings that never affect the conformance verdict.
+-- New optional `logProbe` config, alongside `inputRequiredProbe`, naming a tool that emits log records.
+-- Raw frame inspection is consolidated on one production capture primitive (`sdk/src/mcp-conformance/raw-capture.ts`), replacing the private SSE parser in the transport checks.
+-
+-Legacy runs (absent pin and a 2025-era pin) keep their existing statuses; modern-only checks era-skip on legacy, and legacy-only checks era-skip on modern.
+diff --git a/.changeset/plugin-mcp-shape-primitives.md b/.changeset/plugin-mcp-shape-primitives.md
+deleted file mode 100644
+index b3cdd7539..000000000
+--- a/.changeset/plugin-mcp-shape-primitives.md
++++ /dev/null
+@@ -1,29 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-`@mcpjam/sdk/plugin-bundle` exports two pure MCP-config shape primitives:
+-`selectPluginMcpServerMap` resolves which of the three compatible document
+-shapes a config uses (direct map, `mcp_servers`, `mcpServers`) and returns its
+-entries verbatim, and `detectPluginMcpTransport` classifies a single server
+-config as stdio or http.
+-
+-Both are policy-free: they report what the shape says and apply none of the
+-plugin import path's stricter rules (HTTPS-only URLs, server-name format,
+-secret stripping), so a consumer with different policy — the inspector's
+-MCP-JSON import, which must keep plain-HTTP URLs and free-form server names
+-working — can share the shape and transport handling without inheriting them.
+-`normalizePluginMcpConfig` now delegates to both, so the strict path and every
+-other consumer can never drift.
+-
+-A selection failure also carries a typed `reason` (`document-not-an-object` |
+-`duplicate-wrapper` | `bare-server-config` | `server-map-not-an-object`) so
+-callers can render their own guidance without matching on message text —
+-several of these share one persisted issue code.
+-
+-Transport spelling is now normalized by folding away separators rather than
+-only underscores, so `streamable-http`, `streamable_http`, and
+-`streamableHttp` all classify as http. The MCP spec fixes the transport's name
+-but leaves the config spelling to each implementation, and all three appear in
+-the wild. This only ADDS accepted spellings; nothing that classified before
+-now fails.
+diff --git a/.changeset/sep-2243-mirroring-cold-client.md b/.changeset/sep-2243-mirroring-cold-client.md
+deleted file mode 100644
+index 062c0592a..000000000
+--- a/.changeset/sep-2243-mirroring-cold-client.md
++++ /dev/null
+@@ -1,25 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+----
+-
+-Close a silent SEP-2243 (`x-mcp-header`) spec MUST violation on cold clients.
+-
+-The 2026-07-28 Streamable HTTP spec requires conforming clients to mirror
+-`x-mcp-header`-annotated tool parameters into `Mcp-Param-*` headers. Upstream
+-`@modelcontextprotocol/client` reads the tool's `inputSchema` for that scan from
+-exactly two places: an explicit `CallToolRequestOptions.toolDefinition`, or the
+-aggregated `tools/list` entry in its response cache — and on a miss it sends the
+-call with no headers and no warning.
+-
+-MCPJam surfaces that call a tool without first listing tools on the same
+-connection (hosted `/api/web/tools/execute` and `/api/v1 … /tools/call`
+-per-request connections, `mcpjam tools call`) therefore skipped the MUST
+-silently, as did any surface that walks `tools/list` pagination by hand (an
+-explicit-`{ cursor }` list writes no cache).
+-
+-`MCPClientManager.executeTool` now warms that source once per connection before
+-a modern-era `tools/call` over a non-stdio transport, so upstream keeps
+-ownership of freshness, `list_changed` eviction and its `HEADER_MISMATCH`
+-recovery retry. Surfaces that already called `listTools()` pay no extra round
+-trip, and legacy (2025-*) connections and stdio transports are byte-identical —
+-mirroring is 2026-07-28 + Streamable-HTTP only.
+diff --git a/.changeset/subscriptions-listen-conformance.md b/.changeset/subscriptions-listen-conformance.md
+deleted file mode 100644
+index f57313af8..000000000
+--- a/.changeset/subscriptions-listen-conformance.md
++++ /dev/null
+@@ -1,13 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-Wire the three `subscriptions/listen` conformance checks for real.
+-
+-`modern-subscription-ack-precedes-notifications`, `modern-subscription-filter-and-tagging` and `modern-subscription-graceful-close` were authored as explicit skips pending the subscription surface. They now observe one live listen stream per run and judge it:
+-
+-- New `observeListenStream` primitive (`sdk/src/mcp-conformance/raw-listen.ts`): reads an SSE listen body INCREMENTALLY, frame by frame, and stops on the first of completion result / stream end / idle window / deadline. The existing raw capture buffers a whole response and so cannot hold a subscription open. The three facts under test — frame ORDER, the `_meta` subscription-id tag, and the completion result — are all normalized away before app code sees them, so only the wire can prove them.
+-- The probe requests exactly what the server advertises (`tools`/`prompts`/`resources` `listChanged`, `resources.subscribe`), then asserts: the acknowledgement precedes every notification; every message carries the subscription id and no notification falls outside the requested filter; a stream that ends does so with the `subscriptions/listen` completion result.
+-- Safety is asymmetric by design: nothing subscribable advertised, a refused stream, an unreadable body, or a subscription still open at the end of the observation window are SKIPS with a reason, never failures. A graceful close is server-initiated and cannot be induced by a client-side probe.
+-
+-The three checks stay modern-only in `CHECK_ERAS`; legacy runs (absent pin and a 2025-era pin) keep their existing statuses.
+diff --git a/.changeset/subscriptions-listen-coordinator.md b/.changeset/subscriptions-listen-coordinator.md
+deleted file mode 100644
+index d94a8ad93..000000000
+--- a/.changeset/subscriptions-listen-coordinator.md
++++ /dev/null
+@@ -1,13 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-Add an era-neutral subscription coordinator for MCP 2026-07-28
+-`subscriptions/listen` (`SubscriptionCoordinator`, new exports only). Modern
+-connections drive an explicit `client.listen(filter)` stream — requested vs
+-acknowledged filter tracked separately, active only after
+-`notifications/subscriptions/acknowledged`, notifications demultiplexed by
+-subscription id, graceful/remote/local close reasons distinguished, bounded
+-re-listen (never resume) after unexpected loss. Legacy connections keep the
+-existing list-changed handlers plus per-URI `resources/subscribe`.
+-`ManagedMcpClient` gains an optional `listen` passthrough.
+diff --git a/.changeset/subscriptions-listen-local-ui.md b/.changeset/subscriptions-listen-local-ui.md
+deleted file mode 100644
+index 6b5b0ba96..000000000
+--- a/.changeset/subscriptions-listen-local-ui.md
++++ /dev/null
+@@ -1,17 +0,0 @@
+----
+-"@mcpjam/inspector": minor
+-"@mcpjam/sdk": minor
+----
+-
+-Surface the MCP 2026-07-28 `subscriptions/listen` lifecycle in the LOCAL
+-Inspector. A new `/api/mcp/subscriptions` bridge (SSE + desired-interest POSTs,
+-mirroring the elicitation/MRTR bridges) exposes the `SubscriptionCoordinator`
+-the local manager owns: stream status (opening / active / graceful-closed /
+-remote-closed / cancelled / error), the MCP subscription id and how it was
+-bound, the requested filter next to the acknowledged one, close reasons, and
+-refused notifications. The Resources tab renders those facts plus a History
+-log, and branches on the negotiated era: modern connections edit a desired
+-filter (which closes and reopens the stream, since a listen filter is
+-immutable), while legacy connections keep the per-URI Subscribe / Unsubscribe
+-buttons backed by `resources/subscribe`. The SDK re-exports the coordinator
+-from the package root (new exports only).
+diff --git a/.changeset/tasks-notification-schema-overload.md b/.changeset/tasks-notification-schema-overload.md
+deleted file mode 100644
+index 7a5fe2393..000000000
+--- a/.changeset/tasks-notification-schema-overload.md
++++ /dev/null
+@@ -1,7 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+----
+-
+-Fix every modern `subscriptions/listen` failing with `'notifications/tasks' is not a spec notification method`. The v2 client bump to 2.0.0 tightened the two-argument `setNotificationHandler(method, handler)` overload to methods carried by one of its two spec codecs, and the tasks extension's `notifications/tasks` (SEP-2663) is by definition not one — so the registration threw a `TypeError` and took the whole subscription down, with or without a `taskIds` filter.
+-
+-`OfficialSdkClientAdapter` now routes extension notification methods through upstream's three-argument schema form and unwraps the handler back to the raw notification the manager and coordinator read. The params schema is a pass-through: upstream has no wire schema for an extension payload, and validating `notifications/tasks` is already MCPJam's job in `tasks-ext-guards.ts`, so narrowing here would strip extension members before those guards run. Because the adapter is the innermost wrapper, this covers both registration sites — the subscription coordinator's `ensureHandlers()` and `MCPClientManager.addNotificationHandler` (reached by the Inspector's `onTaskStatusChanged`). The legacy `notifications/tasks/status` is 2025-11-25 spec and stays on the codec-validated path.
+diff --git a/.changeset/tasks-tab-capability-probe-race.md b/.changeset/tasks-tab-capability-probe-race.md
+deleted file mode 100644
+index 4c42b2e2e..000000000
+--- a/.changeset/tasks-tab-capability-probe-race.md
++++ /dev/null
+@@ -1,17 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Stop the Tasks tab sticking on "Tasks not supported" when the capabilities
+-probe races the connect.
+-
+-The probe fails closed to `wire: "none"` against a server that is still
+-connecting, and the fetch was keyed only on server identity — so a probe that
+-landed before the connection came up left the tab permanently claiming the
+-server has no tasks support. The effect is now keyed on the connection status
+-too, re-probing once the connection is actually up (and again after a
+-reconnect).
+-
+-A probe that THROWS (network, auth, connect race) is also no longer conflated
+-with a server declaring no tasks support: it renders a retryable error state
+-instead of a false "Tasks not supported".
+diff --git a/.changeset/tracing-http-headers.md b/.changeset/tracing-http-headers.md
+deleted file mode 100644
+index 13e7d8aac..000000000
+--- a/.changeset/tracing-http-headers.md
++++ /dev/null
+@@ -1,16 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-Add an HTTP-exchange log channel: `httpLogger` on the manager options and per
+-server config, plus `wrapFetchForHttpLogging` and the SEP-2243 header helpers
+-(`classifyMcpHeader`, `decodeMcpHeaderValue`, `findMcpHeaderIssues`, exported
+-from `@mcpjam/sdk/browser`).
+-
+-`rpcLogger` carries JSON-RPC bodies; from `2026-07-28` the routing and
+-cross-check metadata a `-32020 HeaderMismatch` is about rides in HTTP headers
+-instead, which a body-only log cannot show. The new channel captures the header
+-halves of each exchange — never bodies — with credential headers redacted at
+-the capture point. Capture is opt-in and applies to every protocol version:
+-`MCP-Protocol-Version` exists from `2025-06-18`, and the session/resumption
+-headers exist only in the legacy eras.
+diff --git a/.changeset/zod-4-2-bump.md b/.changeset/zod-4-2-bump.md
+deleted file mode 100644
+index 56c3b8a1f..000000000
+--- a/.changeset/zod-4-2-bump.md
++++ /dev/null
+@@ -1,7 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+-"@mcpjam/cli": patch
+-"@mcpjam/inspector": patch
+----
+-
+-Bump `zod` to `^4.2.0` across the workspace (resolves to 4.3.x). No API changes; the existing `z.toJSONSchema` tool-schema paths (including `describe()`-into-`inputSchema`) are preserved and covered by a regression test.
+diff --git a/cli/package.json b/cli/package.json
+index 93729f2cb..3930ebfb6 100644
+--- a/cli/package.json
++++ b/cli/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@mcpjam/cli",
+-  "version": "3.15.2",
++  "version": "3.16.0",
+   "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
+   "type": "module",
+   "main": "dist/index.js",
+@@ -17,7 +17,7 @@
+     "prepublishOnly": "npm run build"
+   },
+   "dependencies": {
+-    "@mcpjam/sdk": "^2.0.0",
++    "@mcpjam/sdk": "^2.1.0",
+     "@modelcontextprotocol/server": "2.0.0",
+     "commander": "^12.1.0",
+     "posthog-node": "^5.24.10",
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 809166595..bb55d039d 100644
+index de9177595..1eae61903 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.29.0",
-+  "version": "2.30.0",
+-  "version": "2.30.0",
++  "version": "2.31.0",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
@@ -41,34 +654,46 @@ index 809166595..bb55d039d 100644
      "@hookform/resolvers": "^3.10.0",
      "@lezer/highlight": "^1.2.3",
      "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^2.0.0",
-+    "@mcpjam/sdk": "^2.0.1",
-     "@modelcontextprotocol/client": "2.0.0-beta.4",
+-    "@mcpjam/sdk": "^2.0.1",
++    "@mcpjam/sdk": "^2.1.0",
+     "@modelcontextprotocol/client": "2.0.0",
      "@modelcontextprotocol/ext-apps": "^1.7.4",
      "@openrouter/ai-sdk-provider": "^2.0.2",
 diff --git a/package-lock.json b/package-lock.json
-index 117cea299..b4d0c8fb3 100644
+index 08e826f5f..255bb4308 100644
 --- a/package-lock.json
 +++ b/package-lock.json
-@@ -340,7 +340,7 @@
+@@ -58,9 +58,9 @@
+     },
+     "cli": {
+       "name": "@mcpjam/cli",
+-      "version": "3.15.2",
++      "version": "3.16.0",
+       "dependencies": {
+-        "@mcpjam/sdk": "^2.0.0",
++        "@mcpjam/sdk": "^2.1.0",
+         "@modelcontextprotocol/server": "2.0.0",
+         "commander": "^12.1.0",
+         "posthog-node": "^5.24.10",
+@@ -327,7 +327,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.29.0",
-+      "version": "2.30.0",
+-      "version": "2.30.0",
++      "version": "2.31.0",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
-@@ -373,7 +373,7 @@
+@@ -360,7 +360,7 @@
          "@hookform/resolvers": "^3.10.0",
          "@lezer/highlight": "^1.2.3",
          "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^2.0.0",
-+        "@mcpjam/sdk": "^2.0.1",
-         "@modelcontextprotocol/client": "2.0.0-beta.4",
+-        "@mcpjam/sdk": "^2.0.1",
++        "@mcpjam/sdk": "^2.1.0",
+         "@modelcontextprotocol/client": "2.0.0",
          "@modelcontextprotocol/ext-apps": "^1.7.4",
          "@openrouter/ai-sdk-provider": "^2.0.2",
-@@ -881,7 +881,7 @@
+@@ -869,7 +869,7 @@
        "version": "0.9.31",
        "resolved": "https://registry.npmjs.org/@acemir/cssom/-/cssom-0.9.31.tgz",
        "integrity": "sha512-ZnR3GSaH+/vJ0YlHau21FjfLYjMpYVIzTD8M8vIEQvIGxeOXyXdzCI140rrCY862p/C/BbzWsjc1dgnM9mkoTA==",
@@ -77,7 +702,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT"
      },
      "node_modules/@adobe/css-tools": {
-@@ -1700,7 +1700,7 @@
+@@ -1688,7 +1688,7 @@
        "version": "4.1.2",
        "resolved": "https://registry.npmjs.org/@asamuzakjp/css-color/-/css-color-4.1.2.tgz",
        "integrity": "sha512-NfBUvBaYgKIuq6E/RBLY1m0IohzNHAYyaJGuTK79Z23uNwmz2jl1mPsC5ZxCCxylinKhT1Amn5oNTlx1wN8cQg==",
@@ -86,7 +711,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT",
        "dependencies": {
          "@csstools/css-calc": "^3.0.0",
-@@ -1714,7 +1714,7 @@
+@@ -1702,7 +1702,7 @@
        "version": "11.3.5",
        "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-11.3.5.tgz",
        "integrity": "sha512-NxVFwLAnrd9i7KUBxC4DrUhmgjzOs+1Qm50D3oF1/oL+r1NpZ4gA7xvG0/zJ8evR7zIKn4vLf7qTNduWFtCrRw==",
@@ -95,7 +720,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "BlueOak-1.0.0",
        "engines": {
          "node": "20 || >=22"
-@@ -1724,7 +1724,7 @@
+@@ -1712,7 +1712,7 @@
        "version": "6.8.1",
        "resolved": "https://registry.npmjs.org/@asamuzakjp/dom-selector/-/dom-selector-6.8.1.tgz",
        "integrity": "sha512-MvRz1nCqW0fsy8Qz4dnLIvhOlMzqDVBabZx6lH+YywFDdjXhMY37SmpV1XFX3JzG5GWHn63j6HX6QPr3lZXHvQ==",
@@ -104,7 +729,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT",
        "dependencies": {
          "@asamuzakjp/nwsapi": "^2.3.9",
-@@ -1738,7 +1738,7 @@
+@@ -1726,7 +1726,7 @@
        "version": "11.3.5",
        "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-11.3.5.tgz",
        "integrity": "sha512-NxVFwLAnrd9i7KUBxC4DrUhmgjzOs+1Qm50D3oF1/oL+r1NpZ4gA7xvG0/zJ8evR7zIKn4vLf7qTNduWFtCrRw==",
@@ -113,7 +738,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "BlueOak-1.0.0",
        "engines": {
          "node": "20 || >=22"
-@@ -1748,7 +1748,7 @@
+@@ -1736,7 +1736,7 @@
        "version": "2.3.9",
        "resolved": "https://registry.npmjs.org/@asamuzakjp/nwsapi/-/nwsapi-2.3.9.tgz",
        "integrity": "sha512-n8GuYSrI9bF7FFZ/SjhwevlHc8xaVlb/7HmHelnc/PZXBD2ZR49NnN9sMMuDdEGPeeRQ5d0hqlSlEpgCX3Wl0Q==",
@@ -122,7 +747,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT"
      },
      "node_modules/@aws-crypto/crc32": {
-@@ -2938,7 +2938,7 @@
+@@ -2926,7 +2926,7 @@
        "version": "6.0.2",
        "resolved": "https://registry.npmjs.org/@csstools/color-helpers/-/color-helpers-6.0.2.tgz",
        "integrity": "sha512-LMGQLS9EuADloEFkcTBR3BwV/CGHV7zyDxVRtVDTwdI2Ca4it0CCVTT9wCkxSgokjE5Ho41hEPgb8OEUwoXr6Q==",
@@ -131,7 +756,7 @@ index 117cea299..b4d0c8fb3 100644
        "funding": [
          {
            "type": "github",
-@@ -2958,7 +2958,7 @@
+@@ -2946,7 +2946,7 @@
        "version": "3.2.0",
        "resolved": "https://registry.npmjs.org/@csstools/css-calc/-/css-calc-3.2.0.tgz",
        "integrity": "sha512-bR9e6o2BDB12jzN/gIbjHa5wLJ4UjD1CB9pM7ehlc0ddk6EBz+yYS1EV2MF55/HUxrHcB/hehAyt5vhsA3hx7w==",
@@ -140,7 +765,7 @@ index 117cea299..b4d0c8fb3 100644
        "funding": [
          {
            "type": "github",
-@@ -2982,7 +2982,7 @@
+@@ -2970,7 +2970,7 @@
        "version": "4.1.0",
        "resolved": "https://registry.npmjs.org/@csstools/css-color-parser/-/css-color-parser-4.1.0.tgz",
        "integrity": "sha512-U0KhLYmy2GVj6q4T3WaAe6NPuFYCPQoE3b0dRGxejWDgcPp8TP7S5rVdM5ZrFaqu4N67X8YaPBw14dQSYx3IyQ==",
@@ -149,7 +774,7 @@ index 117cea299..b4d0c8fb3 100644
        "funding": [
          {
            "type": "github",
-@@ -3010,7 +3010,7 @@
+@@ -2998,7 +2998,7 @@
        "version": "4.0.0",
        "resolved": "https://registry.npmjs.org/@csstools/css-parser-algorithms/-/css-parser-algorithms-4.0.0.tgz",
        "integrity": "sha512-+B87qS7fIG3L5h3qwJ/IFbjoVoOe/bpOdh9hAjXbvx0o8ImEmUsGXN0inFOnk2ChCFgqkkGFQ+TpM5rbhkKe4w==",
@@ -158,7 +783,7 @@ index 117cea299..b4d0c8fb3 100644
        "funding": [
          {
            "type": "github",
-@@ -3033,7 +3033,7 @@
+@@ -3021,7 +3021,7 @@
        "version": "1.1.3",
        "resolved": "https://registry.npmjs.org/@csstools/css-syntax-patches-for-csstree/-/css-syntax-patches-for-csstree-1.1.3.tgz",
        "integrity": "sha512-SH60bMfrRCJF3morcdk57WklujF4Jr/EsQUzqkarfHXEFcAR1gg7fS/chAE922Sehgzc1/+Tz5H3Ypa1HiEKrg==",
@@ -167,7 +792,7 @@ index 117cea299..b4d0c8fb3 100644
        "funding": [
          {
            "type": "github",
-@@ -3058,7 +3058,7 @@
+@@ -3046,7 +3046,7 @@
        "version": "4.0.0",
        "resolved": "https://registry.npmjs.org/@csstools/css-tokenizer/-/css-tokenizer-4.0.0.tgz",
        "integrity": "sha512-QxULHAm7cNu72w97JUNCBFODFaXpbDg+dP8b/oWFAZ2MTRppA3U00Y2L1HqaS4J6yBqxwa/Y3nMBaxVKbB/NsA==",
@@ -176,7 +801,7 @@ index 117cea299..b4d0c8fb3 100644
        "funding": [
          {
            "type": "github",
-@@ -5298,7 +5298,7 @@
+@@ -5286,7 +5286,7 @@
        "version": "1.15.0",
        "resolved": "https://registry.npmjs.org/@exodus/bytes/-/bytes-1.15.0.tgz",
        "integrity": "sha512-UY0nlA+feH81UGSHv92sLEPLCeZFjXOuHhrIo0HQydScuQc8s0A7kL/UdgwgDq8g8ilksmuoF35YVTNphV2aBQ==",
@@ -185,7 +810,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT",
        "engines": {
          "node": "^20.19.0 || ^22.12.0 || >=24.0.0"
-@@ -6822,7 +6822,7 @@
+@@ -6810,7 +6810,7 @@
        "version": "0.3.11",
        "resolved": "https://registry.npmjs.org/@jridgewell/source-map/-/source-map-0.3.11.tgz",
        "integrity": "sha512-ZMp1V8ZFcPG5dIWnQLr3NSI1MiCU7UETdS/A0G8V/XWHvJv3ZsFqutJn1Y5RPmAPX6F3BiE397OqveU/9NCuIA==",
@@ -194,7 +819,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT",
        "dependencies": {
          "@jridgewell/gen-mapping": "^0.3.5",
-@@ -9003,7 +9003,7 @@
+@@ -9026,7 +9026,7 @@
        "version": "1.59.1",
        "resolved": "https://registry.npmjs.org/@playwright/test/-/test-1.59.1.tgz",
        "integrity": "sha512-PG6q63nQg5c9rIi4/Z5lR5IVF7yU5MqmKaPOe0HSc0O2cX1fPi96sUQu5j7eo4gKCkB2AnNGoWt7y4/Xx3Kcqg==",
@@ -203,7 +828,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "Apache-2.0",
        "dependencies": {
          "playwright": "1.59.1"
-@@ -14326,6 +14326,7 @@
+@@ -14349,6 +14349,7 @@
        "version": "19.2.14",
        "resolved": "https://registry.npmjs.org/@types/react/-/react-19.2.14.tgz",
        "integrity": "sha512-ilcTH/UniCkMdtexkoCN0bI7pMcJDvmQFPvuPvmEaYA/NSfFTAgdUSLAoVjaRJm7+6PvcM+q1zYOwS4wTYMF9w==",
@@ -211,7 +836,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT",
        "dependencies": {
          "csstype": "^3.2.2"
-@@ -14335,7 +14336,7 @@
+@@ -14358,7 +14359,7 @@
        "version": "19.2.3",
        "resolved": "https://registry.npmjs.org/@types/react-dom/-/react-dom-19.2.3.tgz",
        "integrity": "sha512-jp2L/eY6fn+KgVVQAOqYItbF0VY/YApe5Mz2F0aykSO8gx31bYCZyvSeYxCHKvzHG5eZjc+zyaS5BrBWya2+kQ==",
@@ -220,7 +845,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT",
        "peerDependencies": {
          "@types/react": "^19.2.0"
-@@ -16877,7 +16878,7 @@
+@@ -16900,7 +16901,7 @@
        "version": "1.0.3",
        "resolved": "https://registry.npmjs.org/bidi-js/-/bidi-js-1.0.3.tgz",
        "integrity": "sha512-RKshQI1R3YQ+n9YJz2QQ147P66ELpa1FQEg20Dk8oW9t2KgLbpDLLp9aGZ7y8WHSshDknG0bknqGw5/tyCs5tw==",
@@ -229,7 +854,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT",
        "dependencies": {
          "require-from-string": "^2.0.2"
-@@ -17099,7 +17100,7 @@
+@@ -17122,7 +17123,7 @@
        "version": "1.1.2",
        "resolved": "https://registry.npmjs.org/buffer-from/-/buffer-from-1.1.2.tgz",
        "integrity": "sha512-E+XQCRwSbaaiChtv6k6Dwgc+bx+Bs6vuKJHHl5kox/BaKbhiXzqQOwK4cO22yElGp2OCmjwVhT3HmxgyPGnJfQ==",
@@ -238,7 +863,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT"
      },
      "node_modules/bundle-name": {
-@@ -18212,7 +18213,7 @@
+@@ -18234,7 +18235,7 @@
        "version": "3.2.1",
        "resolved": "https://registry.npmjs.org/css-tree/-/css-tree-3.2.1.tgz",
        "integrity": "sha512-X7sjQzceUhu1u7Y/ylrRZFU2FS6LRiFVp6rKLPg23y3x3c3DOKAwuXGDp+PAGjh6CSnCjYeAul8pcT8bAl+lSA==",
@@ -247,7 +872,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT",
        "dependencies": {
          "mdn-data": "2.27.1",
-@@ -18233,7 +18234,7 @@
+@@ -18255,7 +18256,7 @@
        "version": "5.3.7",
        "resolved": "https://registry.npmjs.org/cssstyle/-/cssstyle-5.3.7.tgz",
        "integrity": "sha512-7D2EPVltRrsTkhpQmksIu+LxeWAIEk6wRDMJ1qljlv+CKHJM+cJLlfhWIzNA44eAsHXSNe3+vO6DW1yCYx8SuQ==",
@@ -256,7 +881,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT",
        "dependencies": {
          "@asamuzakjp/css-color": "^4.1.1",
-@@ -18249,7 +18250,7 @@
+@@ -18271,7 +18272,7 @@
        "version": "11.3.5",
        "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-11.3.5.tgz",
        "integrity": "sha512-NxVFwLAnrd9i7KUBxC4DrUhmgjzOs+1Qm50D3oF1/oL+r1NpZ4gA7xvG0/zJ8evR7zIKn4vLf7qTNduWFtCrRw==",
@@ -265,7 +890,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "BlueOak-1.0.0",
        "engines": {
          "node": "20 || >=22"
-@@ -18820,7 +18821,7 @@
+@@ -18842,7 +18843,7 @@
        "version": "6.0.1",
        "resolved": "https://registry.npmjs.org/data-urls/-/data-urls-6.0.1.tgz",
        "integrity": "sha512-euIQENZg6x8mj3fO6o9+fOW8MimUI4PpD/fZBhJfeioZVy9TUpM4UY7KjQNVZFlqwJ0UdzRDzkycB997HEq1BQ==",
@@ -274,7 +899,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT",
        "dependencies": {
          "whatwg-mimetype": "^5.0.0",
-@@ -18834,7 +18835,7 @@
+@@ -18856,7 +18857,7 @@
        "version": "5.0.0",
        "resolved": "https://registry.npmjs.org/whatwg-mimetype/-/whatwg-mimetype-5.0.0.tgz",
        "integrity": "sha512-sXcNcHOC51uPGF0P/D4NVtrkjSU2fNsm9iog4ZvZJsL3rjoDAzXZhkm2MWt1y+PUdggKAYVoMAIYcs78wJ51Cw==",
@@ -283,7 +908,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT",
        "engines": {
          "node": ">=20"
-@@ -18931,7 +18932,7 @@
+@@ -18953,7 +18954,7 @@
        "version": "10.6.0",
        "resolved": "https://registry.npmjs.org/decimal.js/-/decimal.js-10.6.0.tgz",
        "integrity": "sha512-YpgQiITW3JXGntzdUmyUR1V812Hn8T1YVXhCu+wO3OpS4eU9l4YdD3qjyiKdV6mvV29zapkMeD390UVEf2lkUg==",
@@ -292,7 +917,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT"
      },
      "node_modules/decimal.js-light": {
-@@ -20308,6 +20309,7 @@
+@@ -20330,6 +20331,7 @@
        "version": "0.1.13",
        "resolved": "https://registry.npmjs.org/encoding/-/encoding-0.1.13.tgz",
        "integrity": "sha512-ETBauow1T35Y/WZMkio9jiM0Z5xjHHmJ4XmjZOq1l/dXz3lr2sRn87nJy20RupqSh1F2m3HHPSp8ShIPQJrJ3A==",
@@ -300,7 +925,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT",
        "optional": true,
        "dependencies": {
-@@ -20318,6 +20320,7 @@
+@@ -20340,6 +20342,7 @@
        "version": "0.6.3",
        "resolved": "https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.6.3.tgz",
        "integrity": "sha512-4fCk79wshMdzMp2rH06qWrJE4iolqLhCUH+OiuIgU++RB0+94NlDL81atO7GX55uUKueo0txHNtvEyI6D7WdMw==",
@@ -308,7 +933,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT",
        "optional": true,
        "dependencies": {
-@@ -23099,7 +23102,7 @@
+@@ -23121,7 +23124,7 @@
        "version": "6.0.0",
        "resolved": "https://registry.npmjs.org/html-encoding-sniffer/-/html-encoding-sniffer-6.0.0.tgz",
        "integrity": "sha512-CV9TW3Y3f8/wT0BRFc1/KAVQ3TUHiXmaAb6VW9vtiMFf7SLoMd1PdAc4W3KFOFETBJUb90KatHqlsZMWV+R9Gg==",
@@ -317,7 +942,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT",
        "dependencies": {
          "@exodus/bytes": "^1.6.0"
-@@ -23166,7 +23169,7 @@
+@@ -23188,7 +23191,7 @@
        "version": "7.0.2",
        "resolved": "https://registry.npmjs.org/http-proxy-agent/-/http-proxy-agent-7.0.2.tgz",
        "integrity": "sha512-T1gkAiYYDWYx3V5Bmyu7HcfcvL7mUrTWiM6yOfa3PIphViJ/gFPbvidQ+veqSOHci/PxBcDabeUNCzpOODJZig==",
@@ -326,7 +951,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT",
        "dependencies": {
          "agent-base": "^7.1.0",
-@@ -23180,7 +23183,7 @@
+@@ -23202,7 +23205,7 @@
        "version": "7.1.4",
        "resolved": "https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz",
        "integrity": "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==",
@@ -335,7 +960,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT",
        "engines": {
          "node": ">= 14"
-@@ -23993,7 +23996,7 @@
+@@ -24014,7 +24017,7 @@
        "version": "1.0.1",
        "resolved": "https://registry.npmjs.org/is-potential-custom-element-name/-/is-potential-custom-element-name-1.0.1.tgz",
        "integrity": "sha512-bCYeRA2rVibKZd+s2625gGnGF/t7DSqDs4dP7CrLA1m7jKWz6pps0LpYLJN8Q64HtmPKJ1hrN3nzPNKFEKOUiQ==",
@@ -344,7 +969,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT"
      },
      "node_modules/is-promise": {
-@@ -25396,7 +25399,7 @@
+@@ -25417,7 +25420,7 @@
        "version": "27.4.0",
        "resolved": "https://registry.npmjs.org/jsdom/-/jsdom-27.4.0.tgz",
        "integrity": "sha512-mjzqwWRD9Y1J1KUi7W97Gja1bwOOM5Ug0EZ6UDK3xS7j7mndrkwozHtSblfomlzyB4NepioNt+B2sOSzczVgtQ==",
@@ -353,7 +978,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT",
        "dependencies": {
          "@acemir/cssom": "^0.9.28",
-@@ -25436,7 +25439,7 @@
+@@ -25457,7 +25460,7 @@
        "version": "7.1.4",
        "resolved": "https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz",
        "integrity": "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==",
@@ -362,7 +987,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT",
        "engines": {
          "node": ">= 14"
-@@ -25446,7 +25449,7 @@
+@@ -25467,7 +25470,7 @@
        "version": "7.0.6",
        "resolved": "https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-7.0.6.tgz",
        "integrity": "sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw==",
@@ -371,7 +996,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT",
        "dependencies": {
          "agent-base": "^7.1.2",
-@@ -25460,7 +25463,7 @@
+@@ -25481,7 +25484,7 @@
        "version": "8.20.0",
        "resolved": "https://registry.npmjs.org/ws/-/ws-8.20.0.tgz",
        "integrity": "sha512-sAt8BhgNbzCtgGbt2OxmpuryO63ZoDk/sqaB/znQm94T4fCEsy/yV+7CdC1kJhOU9lboAEU7R3kquuycDoibVA==",
@@ -380,7 +1005,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT",
        "engines": {
          "node": ">=10.0.0"
-@@ -25855,7 +25858,7 @@
+@@ -25870,7 +25873,7 @@
        "version": "1.32.0",
        "resolved": "https://registry.npmjs.org/lightningcss/-/lightningcss-1.32.0.tgz",
        "integrity": "sha512-NXYBzinNrblfraPGyrbPoD19C1h9lfI/1mzgWYvXUTe414Gz/X1FD2XBZSZM7rRTrMA8JL3OtAaGifrIKhQ5yQ==",
@@ -389,7 +1014,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MPL-2.0",
        "dependencies": {
          "detect-libc": "^2.0.3"
-@@ -25888,6 +25891,7 @@
+@@ -25903,6 +25906,7 @@
        "cpu": [
          "arm64"
        ],
@@ -397,7 +1022,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MPL-2.0",
        "optional": true,
        "os": [
-@@ -25908,6 +25912,7 @@
+@@ -25923,6 +25927,7 @@
        "cpu": [
          "arm64"
        ],
@@ -405,7 +1030,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MPL-2.0",
        "optional": true,
        "os": [
-@@ -25928,6 +25933,7 @@
+@@ -25943,6 +25948,7 @@
        "cpu": [
          "x64"
        ],
@@ -413,7 +1038,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MPL-2.0",
        "optional": true,
        "os": [
-@@ -25948,6 +25954,7 @@
+@@ -25963,6 +25969,7 @@
        "cpu": [
          "x64"
        ],
@@ -421,7 +1046,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MPL-2.0",
        "optional": true,
        "os": [
-@@ -25968,6 +25975,7 @@
+@@ -25983,6 +25990,7 @@
        "cpu": [
          "arm"
        ],
@@ -429,7 +1054,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MPL-2.0",
        "optional": true,
        "os": [
-@@ -25988,6 +25996,7 @@
+@@ -26003,6 +26011,7 @@
        "cpu": [
          "arm64"
        ],
@@ -437,7 +1062,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MPL-2.0",
        "optional": true,
        "os": [
-@@ -26008,6 +26017,7 @@
+@@ -26023,6 +26032,7 @@
        "cpu": [
          "arm64"
        ],
@@ -445,7 +1070,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MPL-2.0",
        "optional": true,
        "os": [
-@@ -26028,6 +26038,7 @@
+@@ -26043,6 +26053,7 @@
        "cpu": [
          "x64"
        ],
@@ -453,7 +1078,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MPL-2.0",
        "optional": true,
        "os": [
-@@ -26048,6 +26059,7 @@
+@@ -26063,6 +26074,7 @@
        "cpu": [
          "x64"
        ],
@@ -461,7 +1086,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MPL-2.0",
        "optional": true,
        "os": [
-@@ -26068,6 +26080,7 @@
+@@ -26083,6 +26095,7 @@
        "cpu": [
          "arm64"
        ],
@@ -469,7 +1094,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MPL-2.0",
        "optional": true,
        "os": [
-@@ -26088,6 +26101,7 @@
+@@ -26103,6 +26116,7 @@
        "cpu": [
          "x64"
        ],
@@ -477,7 +1102,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MPL-2.0",
        "optional": true,
        "os": [
-@@ -27006,7 +27020,7 @@
+@@ -27021,7 +27035,7 @@
        "version": "2.27.1",
        "resolved": "https://registry.npmjs.org/mdn-data/-/mdn-data-2.27.1.tgz",
        "integrity": "sha512-9Yubnt3e8A0OKwxYSXyhLymGW4sCufcLG6VdiDdUGVkPhpqLxlvP5vl1983gQjJl3tqbrM731mjaZaP68AgosQ==",
@@ -486,7 +1111,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "CC0-1.0"
      },
      "node_modules/media-typer": {
-@@ -29757,7 +29771,7 @@
+@@ -29771,7 +29785,7 @@
        "version": "8.0.0",
        "resolved": "https://registry.npmjs.org/parse5/-/parse5-8.0.0.tgz",
        "integrity": "sha512-9m4m5GSgXjL4AjumKzq1Fgfp3Z8rsvjRNbnkVwfu2ImRqE5D0LnY2QfDen18FSY9C573YU5XxSapdHZTZ2WolA==",
@@ -495,7 +1120,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT",
        "dependencies": {
          "entities": "^6.0.0"
-@@ -30673,7 +30687,7 @@
+@@ -30686,7 +30700,7 @@
        "version": "2.3.1",
        "resolved": "https://registry.npmjs.org/punycode/-/punycode-2.3.1.tgz",
        "integrity": "sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==",
@@ -504,7 +1129,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT",
        "engines": {
          "node": ">=6"
-@@ -32096,7 +32110,7 @@
+@@ -32109,7 +32123,7 @@
        "version": "7.8.2",
        "resolved": "https://registry.npmjs.org/rxjs/-/rxjs-7.8.2.tgz",
        "integrity": "sha512-dhKf903U/PQZY6boNNtAGdWbG85WAbjT/1xYoZIC7FAY0yWapOBQVsVrDl58W86//e1VpMNBtRV4MaXfdMySFA==",
@@ -513,7 +1138,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "Apache-2.0",
        "dependencies": {
          "tslib": "^2.1.0"
-@@ -32188,7 +32202,7 @@
+@@ -32201,7 +32215,7 @@
        "version": "6.0.0",
        "resolved": "https://registry.npmjs.org/saxes/-/saxes-6.0.0.tgz",
        "integrity": "sha512-xAg7SOnEhrm5zI3puOOKyy1OMcMlIJZYNJY7xLBwSze0UjhPLnWfj2GF2EpT0jmzaJKIWKHLsaSSajf35bcYnA==",
@@ -522,7 +1147,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "ISC",
        "dependencies": {
          "xmlchars": "^2.2.0"
-@@ -32862,7 +32876,7 @@
+@@ -32874,7 +32888,7 @@
        "version": "0.6.1",
        "resolved": "https://registry.npmjs.org/source-map/-/source-map-0.6.1.tgz",
        "integrity": "sha512-UjgapumWlbMhkBgzT7Ykc5YXUT46F0iKu8SGXq0bcwP5dz/h0Plj6enJqjz1Zbq2l5WaqYnrVbwWOWMyF3F47g==",
@@ -531,7 +1156,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "BSD-3-Clause",
        "engines": {
          "node": ">=0.10.0"
-@@ -32881,7 +32895,7 @@
+@@ -32893,7 +32907,7 @@
        "version": "0.5.21",
        "resolved": "https://registry.npmjs.org/source-map-support/-/source-map-support-0.5.21.tgz",
        "integrity": "sha512-uBHU3L3czsIyYXKX88fdrGovxdSCoTGDRZ6SYXtSRxLZUzHg5P/66Ht6uoUlHu9EZod+inXhKo3qQgwXUT/y1w==",
@@ -540,7 +1165,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT",
        "dependencies": {
          "buffer-from": "^1.0.0",
-@@ -33578,7 +33592,7 @@
+@@ -33590,7 +33604,7 @@
        "version": "3.2.4",
        "resolved": "https://registry.npmjs.org/symbol-tree/-/symbol-tree-3.2.4.tgz",
        "integrity": "sha512-9QNk5KwDF+Bvz+PyObkmSYjI5ksVUYtjW7AU22r2NKcfLJcXp96hkDWU3+XndOsUb+AQ9QhfzfCT2O+CNWT5Tw==",
@@ -549,7 +1174,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT"
      },
      "node_modules/synckit": {
-@@ -33725,7 +33739,7 @@
+@@ -33737,7 +33751,7 @@
        "version": "5.46.1",
        "resolved": "https://registry.npmjs.org/terser/-/terser-5.46.1.tgz",
        "integrity": "sha512-vzCjQO/rgUuK9sf8VJZvjqiqiHFaZLnOiimmUuOKODxWL8mm/xua7viT7aqX7dgPY60otQjUotzFMmCB4VdmqQ==",
@@ -558,7 +1183,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "BSD-2-Clause",
        "dependencies": {
          "@jridgewell/source-map": "^0.3.3",
-@@ -33809,7 +33823,7 @@
+@@ -33821,7 +33835,7 @@
        "version": "2.20.3",
        "resolved": "https://registry.npmjs.org/commander/-/commander-2.20.3.tgz",
        "integrity": "sha512-GpVkmM8vF2vQUkj2LvZmD35JxeJOLCwJ9cUkugyk2nuhbv3+mJvpLYYt+0+USMxE+oj+ey/lJEnhZw75x/OMcQ==",
@@ -567,7 +1192,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT"
      },
      "node_modules/test-exclude": {
-@@ -34067,7 +34081,7 @@
+@@ -34079,7 +34093,7 @@
        "version": "7.0.28",
        "resolved": "https://registry.npmjs.org/tldts/-/tldts-7.0.28.tgz",
        "integrity": "sha512-+Zg3vWhRUv8B1maGSTFdev9mjoo8Etn2Ayfs4cnjlD3CsGkxXX4QyW3j2WJ0wdjYcYmy7Lx2RDsZMhgCWafKIw==",
@@ -576,7 +1201,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT",
        "dependencies": {
          "tldts-core": "^7.0.28"
-@@ -34080,7 +34094,7 @@
+@@ -34092,7 +34106,7 @@
        "version": "7.0.28",
        "resolved": "https://registry.npmjs.org/tldts-core/-/tldts-core-7.0.28.tgz",
        "integrity": "sha512-7W5Efjhsc3chVdFhqtaU0KtK32J37Zcr9RKtID54nG+tIpcY79CQK/veYPODxtD/LJ4Lue66jvrQzIX2Z2/pUQ==",
@@ -585,7 +1210,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT"
      },
      "node_modules/tmp": {
-@@ -34184,7 +34198,7 @@
+@@ -34196,7 +34210,7 @@
        "version": "6.0.1",
        "resolved": "https://registry.npmjs.org/tough-cookie/-/tough-cookie-6.0.1.tgz",
        "integrity": "sha512-LktZQb3IeoUWB9lqR5EWTHgW/VTITCXg4D21M+lvybRVdylLrRMnqaIONLVb5mav8vM19m44HIcGq4qASeu2Qw==",
@@ -594,7 +1219,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "BSD-3-Clause",
        "dependencies": {
          "tldts": "^7.0.5"
-@@ -34197,7 +34211,7 @@
+@@ -34209,7 +34223,7 @@
        "version": "6.0.0",
        "resolved": "https://registry.npmjs.org/tr46/-/tr46-6.0.0.tgz",
        "integrity": "sha512-bLVMLPtstlZ4iMQHpFHTR7GAGj2jxi8Dg0s2h2MafAE4uSWF98FC/3MomU51iQAMf8/qDUbKWf5GxuvvVcXEhw==",
@@ -603,7 +1228,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT",
        "dependencies": {
          "punycode": "^2.3.1"
-@@ -34545,7 +34559,7 @@
+@@ -34557,7 +34571,7 @@
        "version": "4.21.0",
        "resolved": "https://registry.npmjs.org/tsx/-/tsx-4.21.0.tgz",
        "integrity": "sha512-5C1sg4USs1lfG0GFb2RLXsdpXqBSEhAaA/0kPL01wxzpMqLILNxIxIOKiILz+cdg/pLnOUxFYOR5yhHU666wbw==",
@@ -612,7 +1237,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT",
        "dependencies": {
          "esbuild": "~0.27.0",
-@@ -34728,7 +34742,7 @@
+@@ -34740,7 +34754,7 @@
        "version": "5.9.3",
        "resolved": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
        "integrity": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
@@ -621,7 +1246,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "Apache-2.0",
        "bin": {
          "tsc": "bin/tsc",
-@@ -35741,7 +35755,7 @@
+@@ -35752,7 +35766,7 @@
        "version": "5.0.0",
        "resolved": "https://registry.npmjs.org/w3c-xmlserializer/-/w3c-xmlserializer-5.0.0.tgz",
        "integrity": "sha512-o8qghlI8NZHU1lLPrpi2+Uq7abh4GGPpYANlalzWxyWteJOCsr/P+oPBA49TOLu5FTZO4d3F9MnWJfiMo4BkmA==",
@@ -630,7 +1255,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT",
        "dependencies": {
          "xml-name-validator": "^5.0.0"
-@@ -35817,7 +35831,7 @@
+@@ -35828,7 +35842,7 @@
        "version": "8.0.1",
        "resolved": "https://registry.npmjs.org/webidl-conversions/-/webidl-conversions-8.0.1.tgz",
        "integrity": "sha512-BMhLD/Sw+GbJC21C/UgyaZX41nPt8bUTg+jWyDeg7e7YN4xOM05YPSIXceACnXVtqyEw/LMClUQMtMZ+PGGpqQ==",
@@ -639,7 +1264,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "BSD-2-Clause",
        "engines": {
          "node": ">=20"
-@@ -35922,7 +35936,7 @@
+@@ -35933,7 +35947,7 @@
        "version": "4.0.0",
        "resolved": "https://registry.npmjs.org/whatwg-mimetype/-/whatwg-mimetype-4.0.0.tgz",
        "integrity": "sha512-QaKxh0eNIi2mE9p2vEdzfagOKHCcj1pJ56EEHGQOVxp8r9/iszLUUV7v89x9O1p/T+NlTM5W7jW6+cz4Fq1YVg==",
@@ -648,7 +1273,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT",
        "engines": {
          "node": ">=18"
-@@ -35932,7 +35946,7 @@
+@@ -35943,7 +35957,7 @@
        "version": "15.1.0",
        "resolved": "https://registry.npmjs.org/whatwg-url/-/whatwg-url-15.1.0.tgz",
        "integrity": "sha512-2ytDk0kiEj/yu90JOAp44PVPUkO9+jVhyf+SybKlRHSDlvOOZhdPIrr7xTH64l4WixO2cP+wQIcgujkGBPPz6g==",
@@ -657,7 +1282,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT",
        "dependencies": {
          "tr46": "^6.0.0",
-@@ -36803,7 +36817,7 @@
+@@ -36814,7 +36828,7 @@
        "version": "5.0.0",
        "resolved": "https://registry.npmjs.org/xml-name-validator/-/xml-name-validator-5.0.0.tgz",
        "integrity": "sha512-EvGK8EJ3DhaHfbRlETOWAS5pO9MZITeauHKJyb8wyajUfQUenkIg2MvLDTZ4T/TgIcm3HU0TFBgWWboAZ30UHg==",
@@ -666,7 +1291,7 @@ index 117cea299..b4d0c8fb3 100644
        "license": "Apache-2.0",
        "engines": {
          "node": ">=18"
-@@ -36823,7 +36837,7 @@
+@@ -36834,7 +36848,7 @@
        "version": "2.2.0",
        "resolved": "https://registry.npmjs.org/xmlchars/-/xmlchars-2.2.0.tgz",
        "integrity": "sha512-JZnDKK8B0RCDw84FNdDAIpZK+JuJw+s7Lz8nksI7SIuU3UXJJslUthsi+uWBUYOwPFwW7W7PRLRfUKpxjtjFCw==",
@@ -675,24 +1300,24 @@ index 117cea299..b4d0c8fb3 100644
        "license": "MIT"
      },
      "node_modules/xpath": {
-@@ -37040,7 +37054,7 @@
+@@ -37051,7 +37065,7 @@
      },
      "sdk": {
        "name": "@mcpjam/sdk",
--      "version": "2.0.0",
-+      "version": "2.0.1",
+-      "version": "2.0.1",
++      "version": "2.1.0",
        "license": "MIT",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^3.0.101",
 diff --git a/sdk/package.json b/sdk/package.json
-index 7cd95acf2..0b8360d30 100644
+index 106a18fde..6c563343e 100644
 --- a/sdk/package.json
 +++ b/sdk/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/sdk",
--  "version": "2.0.0",
-+  "version": "2.0.1",
+-  "version": "2.0.1",
++  "version": "2.1.0",
    "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
    "type": "module",
    "main": "dist/index.js",

@@ -74,6 +74,105 @@ const MCPJAM_MODEL_LIMIT_PATTERN = /mcpjam[\w\s-]*model limit/i;
 const MINUTES_PER_HOUR = 60;
 const MINUTES_PER_DAY = 24 * MINUTES_PER_HOUR;
 
+/**
+ * Plain-English copy for the connection failures a chat turn can hit.
+ *
+ * The server already sends an accurate `code` (`WebRouteError` → `webError`),
+ * but the raw `message` beside it is written for us, not for the person in the
+ * playground: a failed OAuth refresh renders as "Authorization failed" and an
+ * unreachable server as "fetch failed". Both leave the user with no idea what
+ * to do next. Translate the codes we understand and leave everything else on
+ * the existing verbatim path.
+ *
+ * The raw message is preserved as `details`, so the "More details" collapsible
+ * still shows exactly what the server said.
+ */
+const describeServer = (serverName: string | undefined) =>
+  serverName ? `“${serverName}”` : "the MCP server";
+
+const humanizeConnectionError = (
+  code: unknown,
+  rawDetails: unknown,
+): string | null => {
+  if (typeof code !== "string") return null;
+
+  const detailBag =
+    rawDetails && typeof rawDetails === "object"
+      ? (rawDetails as Record<string, unknown>)
+      : undefined;
+  const serverName =
+    typeof detailBag?.serverName === "string" && detailBag.serverName.length > 0
+      ? detailBag.serverName
+      : undefined;
+  const server = describeServer(serverName);
+
+  // An expired/revoked OAuth grant is flagged by the backend regardless of the
+  // code it rides in on (see hosted-oauth-refresh.ts), so check it first.
+  if (
+    detailBag?.refreshTokenInvalid === true ||
+    detailBag?.oauthRequired === true
+  ) {
+    return `Your connection to ${server} has expired. Reconnect it to keep chatting.`;
+  }
+
+  switch (code) {
+    case "SERVER_UNREACHABLE":
+      return `Couldn't reach ${server}. It may be offline or blocking the connection.`;
+    case "TIMEOUT":
+      return `${serverName ? `“${serverName}”` : "The MCP server"} took too long to respond.`;
+    // UNAUTHORIZED / FORBIDDEN are NOT unambiguous: the same codes carry
+    // MCPJam's own auth failures (expired session, missing bearer via
+    // `assertBearerToken`) and project-permission denials, neither of which is
+    // the user's MCP server misbehaving. Sending someone to reconnect a server
+    // that is working fine is worse than the jargon this replaces, so only
+    // rewrite when the payload actually names a server. Everything else falls
+    // through to the verbatim path.
+    case "UNAUTHORIZED":
+      if (!serverName) return null;
+      return `${server} rejected the connection. Reconnect it to refresh your access.`;
+    case "FORBIDDEN":
+      if (!serverName) return null;
+      return `${server} refused this request. Your access may not cover the tools this chat needs.`;
+    default:
+      return null;
+  }
+};
+
+/**
+ * Build the "More details" payload for a humanized banner.
+ *
+ * The banner no longer leads with the server's own wording, so that wording has
+ * to survive here or it is lost outright. Fold it into the structured details
+ * rather than replacing them (a bare `details ?? message` drops one or the
+ * other), and keep the result JSON-shaped when the server sent an object so
+ * `ErrorBox` still renders it through `JsonEditor` instead of a flat `<pre>`.
+ */
+const preserveServerMessageInDetails = (
+  message: string,
+  rawDetails: unknown,
+): string | undefined => {
+  if (rawDetails == null) return message;
+
+  if (
+    typeof rawDetails === "object" &&
+    !Array.isArray(rawDetails) &&
+    // `serverMessage` (not `message`) so a details bag that already carries its
+    // own `message` key can't silently swallow the server's wording.
+    !("serverMessage" in (rawDetails as Record<string, unknown>))
+  ) {
+    return normalizeDetails({
+      ...(rawDetails as Record<string, unknown>),
+      serverMessage: message,
+    });
+  }
+
+  const normalized = normalizeDetails(rawDetails);
+  if (!normalized) return message;
+  return normalized.includes(message)
+    ? normalized
+    : `${message}\n\n${normalized}`;
+};
+
 const normalizeDetails = (details: unknown): string | undefined => {
   if (details == null) return undefined;
   if (typeof details === "string") return details;
@@ -88,7 +187,9 @@ const normalizeDetails = (details: unknown): string | undefined => {
 const lowercaseFirst = (value: string) =>
   value.length > 0 ? value[0].toLowerCase() + value.slice(1) : value;
 
-const pluralize = (value: number, unit: string) =>
+/** `1 server`, `0 servers`. Exported so other count strips reuse this instead
+ *  of re-deriving the same `s` suffix. */
+export const pluralize = (value: number, unit: string) =>
   `${value} ${unit}${value === 1 ? "" : "s"}`;
 
 const collectStringValues = (
@@ -312,6 +413,24 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
             retryAfterMs,
           },
         );
+      }
+
+      // Connection failures get human copy; the server's own wording stays
+      // reachable under "More details" rather than leading the banner. Copy
+      // only — `isRetryable` and every other field keep whatever the server
+      // sent, so the banner's affordances are unchanged.
+      const humanized = humanizeConnectionError(code, parsed.details);
+      if (humanized) {
+        return {
+          message: humanized,
+          details: preserveServerMessageInDetails(message, parsed.details),
+          code,
+          statusCode: parsed.statusCode,
+          isRetryable: parsed.isRetryable,
+          isMCPJamPlatformError: code
+            ? MCPJAM_PLATFORM_CODES.includes(code)
+            : false,
+        };
       }
 
       return {

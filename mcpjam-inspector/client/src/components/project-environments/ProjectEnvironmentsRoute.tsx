@@ -21,6 +21,7 @@ import {
   type ProjectEnvironmentView,
 } from "@/hooks/useProjectEnvironments";
 import { ProjectEnvironmentEditor } from "./ProjectEnvironmentEditor";
+import { EnvironmentChatboxSection } from "./environment-chatbox-section";
 import { useProjectEnvironmentConsumers } from "./use-project-environment-consumers";
 
 /**
@@ -288,12 +289,37 @@ function EnvironmentDetail({
   const restoreEnvironment = useRestoreProjectEnvironment();
   const [confirmingArchive, setConfirmingArchive] = useState(false);
   const [busy, setBusy] = useState(false);
-  const { suiteCount } = useProjectEnvironmentConsumers(
-    projectId,
-    confirmingArchive ? environment.environmentId : null
-  );
+  const { suiteCount, journeyCount, chatboxCount } =
+    useProjectEnvironmentConsumers(
+      projectId,
+      confirmingArchive ? environment.environmentId : null
+    );
 
   const isArchived = !!environment.archivedAt;
+
+  // Advisory reference summary for the archive confirm. Both the eval-suite and
+  // the journey scans are client-side and persona/visibility bound, so the copy
+  // stays hedged ("may be incomplete"). Wait for BOTH to settle before
+  // reporting, so a half-loaded state can't flash a misleading zero.
+  const referenceSummary =
+    suiteCount === null || journeyCount === null || chatboxCount === null
+      ? "Checking references…"
+      : (() => {
+          const suitePart = `${suiteCount} suite${suiteCount === 1 ? "" : "s"}`;
+          const journeyPart = `${journeyCount} journey${
+            journeyCount === 1 ? "" : "s"
+          }`;
+          // The published chatbox is called out separately: unlike suites and
+          // journeys (which fail at their next launch), a chatbox share link
+          // is live for outsiders and starts failing the moment this archives.
+          const chatboxPart =
+            chatboxCount > 0
+              ? " Its published chatbox link stops working immediately."
+              : "";
+          return suiteCount + journeyCount > 0
+            ? `${suitePart} and ${journeyPart} reference it (count may be incomplete).${chatboxPart}`
+            : `No referencing suites or journeys found (count may be incomplete).${chatboxPart}`;
+        })();
 
   const onArchive = async () => {
     setBusy(true);
@@ -367,20 +393,25 @@ function EnvironmentDetail({
         canManage={canManage && !isArchived}
       />
 
+      {/* Publish-as-chatbox (Phase 5). Hidden for archived environments: the
+          backend rejects publish on archived, and an existing published link
+          already fails loudly with the archived error. */}
+      {!isArchived ? (
+        <EnvironmentChatboxSection
+          projectId={projectId}
+          environmentId={environment.environmentId}
+          environmentName={environment.name}
+          canManage={canManage}
+        />
+      ) : null}
+
       {canManage && !isArchived ? (
         <div className="flex items-center justify-between border-t pt-4">
           {confirmingArchive ? (
             <span className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               <span>
-                Archive “{environment.name}”?{" "}
-                {suiteCount === null
-                  ? "Checking references…"
-                  : suiteCount > 0
-                  ? `${suiteCount} suite${
-                      suiteCount === 1 ? "" : "s"
-                    } reference it (count may be incomplete — journeys aren't scanned).`
-                  : "No referencing suites found (count may be incomplete — journeys aren't scanned)."}{" "}
-                Referencing runs fail fast at their next launch.
+                Archive “{environment.name}”? {referenceSummary} Referencing
+                runs fail fast at their next launch.
               </span>
               <Button
                 type="button"

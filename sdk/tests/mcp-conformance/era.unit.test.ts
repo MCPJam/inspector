@@ -11,10 +11,14 @@
 import {
   CHECK_ERAS,
   MCP_CHECK_IDS,
+  MCP_PROTOCOL_VERSION_ERA_IDS,
+  PROTOCOL_VERSION_ERAS,
   type MCPCheckId,
   type NormalizedMCPConformanceConfig,
 } from "../../src/mcp-conformance/types.js";
+import { MCP_PROTOCOL_VERSIONS } from "../../src/mcp-client-manager/mcp-protocol-version.js";
 import { normalizeMCPConformanceConfig } from "../../src/mcp-conformance/validation.js";
+import { runModernChecks } from "../../src/mcp-conformance/checks/modern.js";
 import { runProtocolChecks } from "../../src/mcp-conformance/checks/protocol.js";
 import { runSecurityChecks } from "../../src/mcp-conformance/checks/security.js";
 import { runTransportChecks } from "../../src/mcp-conformance/checks/transport.js";
@@ -84,9 +88,12 @@ describe("CHECK_ERAS map", () => {
     expect(eraKeys).toEqual(ids);
   });
 
-  it("every check applies to the legacy era (byte-identical legacy guarantee)", () => {
+  it("assigns every check a non-empty era list (no check is dead in both eras)", () => {
     for (const id of MCP_CHECK_IDS) {
-      expect(CHECK_ERAS[id]).toContain("legacy");
+      expect(CHECK_ERAS[id].length).toBeGreaterThan(0);
+      for (const era of CHECK_ERAS[id]) {
+        expect(["legacy", "modern"]).toContain(era);
+      }
     }
   });
 
@@ -94,7 +101,6 @@ describe("CHECK_ERAS map", () => {
     const legacyOnly: MCPCheckId[] = [
       "server-initialize",
       "ping",
-      "capabilities-consistent",
       "server-sse-polling-session",
       "server-accepts-multiple-post-streams",
       "server-sse-streams-functional",
@@ -102,6 +108,7 @@ describe("CHECK_ERAS map", () => {
       "localhost-host-valid-accepted",
     ];
     const bothEras: MCPCheckId[] = [
+      "capabilities-consistent",
       "tools-list",
       "tools-input-schemas-valid",
       "prompts-list",
@@ -110,6 +117,7 @@ describe("CHECK_ERAS map", () => {
       "completion-complete",
       "protocol-invalid-method-error",
     ];
+    const modernOnly = MCP_CHECK_IDS.filter((id) => id.startsWith("modern-"));
 
     for (const id of legacyOnly) {
       expect(CHECK_ERAS[id]).toEqual(["legacy"]);
@@ -117,10 +125,101 @@ describe("CHECK_ERAS map", () => {
     for (const id of bothEras) {
       expect([...CHECK_ERAS[id]].sort()).toEqual(["legacy", "modern"]);
     }
-    // Sanity: the two partitions cover every id exactly once.
-    expect([...legacyOnly, ...bothEras].sort()).toEqual(
+    for (const id of modernOnly) {
+      expect(CHECK_ERAS[id]).toEqual(["modern"]);
+    }
+    // Sanity: the three partitions cover every id exactly once.
+    expect([...legacyOnly, ...bothEras, ...modernOnly].sort()).toEqual(
       [...MCP_CHECK_IDS].sort()
     );
+  });
+});
+
+describe("PROTOCOL_VERSION_ERAS map (§15.1 version registry)", () => {
+  it("classifies every supported protocol version exactly once", () => {
+    expect(Object.keys(PROTOCOL_VERSION_ERAS).sort()).toEqual(
+      [...MCP_PROTOCOL_VERSIONS].sort()
+    );
+    expect(MCP_PROTOCOL_VERSION_ERA_IDS.sort()).toEqual(
+      [...MCP_PROTOCOL_VERSIONS].sort()
+    );
+  });
+
+  it("classifies only the 2026 revision as modern", () => {
+    for (const version of MCP_PROTOCOL_VERSIONS) {
+      expect(PROTOCOL_VERSION_ERAS[version]).toBe(
+        version === "2026-07-28" ? "modern" : "legacy"
+      );
+    }
+  });
+});
+
+describe("modern checks on a legacy run", () => {
+  it("era-skip before any HTTP is attempted", async () => {
+    let fetchCalled = false;
+    const fetchFn = (async () => {
+      fetchCalled = true;
+      return new Response("{}");
+    }) as unknown as typeof fetch;
+
+    const config = normalize({ fetchFn });
+    const modernIds = MCP_CHECK_IDS.filter(
+      (id): id is MCPCheckId =>
+        id.startsWith("modern-") && id !== "modern-client-handshake"
+    );
+    const results = await runModernChecks(
+      { config, serverUrl: SERVER_URL, fetchFn: config.fetchFn },
+      new Set(modernIds)
+    );
+
+    expect(fetchCalled).toBe(false);
+    expect(results).toHaveLength(modernIds.length);
+    for (const result of results) {
+      expect(result.status).toBe("skipped");
+      expect(result.error?.message).toMatch(/Not applicable to the legacy era/);
+    }
+  });
+
+  it("the three subscription checks skip — never fail — when nothing is subscribable", async () => {
+    const methods: string[] = [];
+    const fetchFn = (async (_url: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { method: string };
+      methods.push(body.method);
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          result: {
+            resultType: "discover",
+            protocolVersions: ["2026-07-28"],
+            // No listChanged / subscribe: there is nothing to subscribe to.
+            capabilities: { tools: {}, prompts: {}, resources: {} },
+            serverInfo: { name: "stub", version: "1.0.0" },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    }) as unknown as typeof fetch;
+
+    const config = normalize({ protocolVersion: "2026-07-28", fetchFn });
+    const results = await runModernChecks(
+      { config, serverUrl: SERVER_URL, fetchFn: config.fetchFn },
+      new Set<MCPCheckId>([
+        "modern-subscription-ack-precedes-notifications",
+        "modern-subscription-filter-and-tagging",
+        "modern-subscription-graceful-close",
+      ])
+    );
+
+    expect(results).toHaveLength(3);
+    for (const result of results) {
+      expect(result.status).toBe("skipped");
+      expect(result.error?.message).toMatch(
+        /no subscribable notification type/
+      );
+    }
+    // The discover answer alone settles it: no stream is opened.
+    expect(methods).toEqual(["server/discover"]);
   });
 });
 
@@ -150,8 +249,8 @@ describe("runProtocolChecks — era-aware invalid-method probe", () => {
     expect(initBody.method).toBe("initialize");
     expect(initBody.params.protocolVersion).toBe("2025-11-25");
     // The bad-method POST carries the session obtained from the prelude.
-    const badHeaders = calls[1]?.init?.headers as Record<string, string>;
-    expect(badHeaders["mcp-session-id"]).toBe("sess-1");
+    const badHeaders = new Headers(calls[1]?.init?.headers as HeadersInit);
+    expect(badHeaders.get("mcp-session-id")).toBe("sess-1");
   });
 
   it("legacy: uses the pinned stateful version in the initialize prelude", async () => {

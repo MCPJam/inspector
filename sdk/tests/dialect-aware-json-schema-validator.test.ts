@@ -8,7 +8,7 @@ const DRAFT_07 = "http://json-schema.org/draft-07/schema#";
 const DRAFT_2020_12 = "https://json-schema.org/draft/2020-12/schema";
 
 // Shape of what zod-to-json-schema emits for a v1-SDK server's outputSchema
-// (the Atlas `listFlights` regression: upstream's defaults reject the
+// (the Atlas `listFlights` regression: upstream's defaults rejected the
 // declared draft-07 dialect outright instead of validating with it).
 const draft07Schema = {
   $schema: DRAFT_07,
@@ -20,16 +20,50 @@ const draft07Schema = {
   additionalProperties: false,
 } as const;
 
-describe("upstream defaults reject declared draft-07 (the regression these classes guard against)", () => {
-  it("AjvJsonSchemaValidator (node default)", () => {
-    expect(() =>
-      new AjvJsonSchemaValidator().getValidator(draft07Schema)
-    ).toThrow(/unsupported dialect/);
+/**
+ * Where upstream's own defaults stand today.
+ *
+ * The Atlas regression these classes were written for is FIXED upstream as of
+ * client 2.0.0: both default validators now compile a declared draft-07 schema
+ * and validate with it. This block pins the boundary that is still real —
+ * draft-04 is rejected by both — so the day upstream moves again, this fails
+ * loudly instead of the dialect-aware classes silently carrying a dead load.
+ *
+ * Consequence worth acting on separately: for the two dialects the dispatcher
+ * covers (2020-12 and draft-07) `DialectAwareJsonSchemaValidator` and
+ * `CspSafeDialectAwareJsonSchemaValidator` are now redundant with upstream.
+ * Retiring them touches the factory default and the browser/workerd bundles,
+ * so it is a deliberate product change, not test cleanup — see the tests below
+ * for the behavior any replacement must keep.
+ */
+describe("upstream defaults, post-2.0.0", () => {
+  it("AjvJsonSchemaValidator (node default) now validates declared draft-07", () => {
+    const validate = new AjvJsonSchemaValidator().getValidator(draft07Schema);
+
+    expect(validate({ flights: [] }).valid).toBe(true);
+    expect(validate({ nope: true }).valid).toBe(false);
   });
 
-  it("CfWorkerJsonSchemaValidator (browser/workerd default)", () => {
+  it("CfWorkerJsonSchemaValidator (browser/workerd default) now validates declared draft-07", () => {
+    const validate = new CfWorkerJsonSchemaValidator().getValidator(
+      draft07Schema
+    );
+
+    expect(validate({ flights: [] }).valid).toBe(true);
+    expect(validate({ nope: true }).valid).toBe(false);
+  });
+
+  it("still rejects a dialect neither engine carries (draft-04)", () => {
+    const draft04Schema = {
+      ...draft07Schema,
+      $schema: "http://json-schema.org/draft-04/schema#",
+    };
+
     expect(() =>
-      new CfWorkerJsonSchemaValidator().getValidator(draft07Schema)
+      new AjvJsonSchemaValidator().getValidator(draft04Schema)
+    ).toThrow(/unsupported dialect/);
+    expect(() =>
+      new CfWorkerJsonSchemaValidator().getValidator(draft04Schema)
     ).toThrow(/unsupported dialect/);
   });
 });

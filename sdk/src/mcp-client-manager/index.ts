@@ -65,6 +65,12 @@ export type {
   CacheHitEvent,
   CacheEventLogger,
 } from "./types.js";
+// Phase 5 auto-negotiation-activation telemetry (new exports only).
+export type {
+  NegotiationOutcomeEvent,
+  NegotiationOutcomeLogger,
+  ConfiguredNegotiationMode,
+} from "./types.js";
 export {
   ObservableResponseCache,
   type ObservableResponseCacheOptions,
@@ -138,6 +144,9 @@ export {
   isUnauthorized401,
   isInsufficientScopeError,
   isMCPAuthError,
+  unwrapEraNegotiationCause,
+  MCPTasksWireError,
+  isMCPTasksWireError,
 } from "./errors.js";
 
 export type { RetryPolicy } from "../retry.js";
@@ -154,6 +163,168 @@ export {
   supportsTasksList,
   supportsTasksCancel,
 } from "./tasks.js";
+export {
+  MCP_TASKS_EXTENSION_ID,
+  resolveTasksWire,
+  serverDeclaresTasksExtension,
+} from "./tasks-dispatch.js";
+export { resolveTasksSupport } from "./tasks-dispatch.js";
+export type { TasksWire, TasksSupport } from "./tasks-dispatch.js";
+
+// io.modelcontextprotocol/tasks (SEP-2663) extension wire.
+export {
+  CLIENT_CAPABILITIES_META_KEY,
+  TasksExtGetMethod,
+  TasksExtUpdateMethod,
+  TasksExtCancelMethod,
+  TasksExtNotificationMethod,
+  buildTasksExtensionRequestMeta,
+  withTasksExtensionDeclaration,
+  getTaskExt,
+  updateTaskExt,
+  cancelTaskExt,
+  canOpenTaskDeclaredListen,
+  openTaskDeclaredListen,
+} from "./tasks-ext.js";
+export type {
+  TaskExt,
+  TaskExtStatus,
+  TaskExtError,
+  DetailedTaskExt,
+  WorkingTaskExt,
+  InputRequiredTaskExt,
+  CompletedTaskExt,
+  FailedTaskExt,
+  CancelledTaskExt,
+  CreateTaskExtResult,
+  GetTaskExtResult,
+  UpdateTaskExtResult,
+  CancelTaskExtResult,
+  TaskExtNotificationParams,
+  TaskExtResultType,
+} from "./tasks-ext-types.js";
+export { TERMINAL_TASK_EXT_STATUSES } from "./tasks-ext-types.js";
+export {
+  InvalidTaskExtPayloadError,
+  isInvalidTaskExtPayloadError,
+  isCreateTaskExtResult,
+  assertCreateTaskExtResult,
+  assertGetTaskExtResult,
+  assertDetailedTaskExt,
+  assertTaskExtAck,
+  parseTaskExtNotificationParams,
+  assertTaskExtNotificationParams,
+} from "./tasks-ext-guards.js";
+
+// Shared task lifecycle engine — per-task due-time scheduling, dynamic
+// TTL/poll interval, backoff, durable input-key state. Every Tasks surface
+// drives this instead of writing its own polling loop.
+export {
+  TaskLifecycleEngine,
+  taskLifecycleKey,
+  isTerminalLifecycleStatus,
+  toSnapshot as toTaskLifecycleSnapshot,
+  TERMINAL_LIFECYCLE_STATUSES,
+} from "./task-lifecycle.js";
+export type {
+  LiveTasksWire,
+  TaskLifecycleCallbacks,
+  TaskLifecycleEngineOptions,
+  TaskLifecycleError,
+  TaskLifecycleIdentity,
+  TaskLifecycleObservation,
+  TaskLifecycleRecord,
+  TaskLifecycleSnapshot,
+  TaskLifecycleStatus,
+  TaskObservationSource,
+} from "./task-lifecycle.js";
+export {
+  extensionTaskToObservation,
+  legacyTaskToObservation,
+  LEGACY_TASK_STATUSES,
+  isUnknownTaskError,
+  isTasksDeclarationRequiredError,
+  parseRetryAfterMs,
+  retryAfterMsFromError,
+  UNKNOWN_TASK_ERROR_CODE,
+  TASKS_DECLARATION_REQUIRED_ERROR_CODE,
+} from "./task-lifecycle-adapters.js";
+// Node-only (Ajv compiles via `new Function`); not re-exported from browser.
+export { createStrictElicitationContentValidator } from "./elicitation-content-validator.js";
+
+// `input_required` driver — routes a task's embedded elicitation / roots /
+// sampling requests through the SAME trust rules as the standalone path.
+export {
+  TASK_INPUT_METHODS,
+  isTaskInputMethod,
+  TaskInputRejectedError,
+  collectTaskInputResponses,
+  canDeclareTasksExtension,
+  readDeclaredInputCapabilities,
+  DEFAULT_TASK_INPUT_LIMITS,
+} from "./task-input-driver.js";
+
+// The single task-creation fan-out point (durable tracking, hosted stream,
+// best-effort registry, analytics) and the bounded `await`-mode driver used
+// by automation surfaces.
+export { TaskCreatedSink } from "./task-created-event.js";
+export type {
+  TaskCreatedConsumer,
+  TaskCreatedConsumerFailure,
+  TaskCreatedDispatchResult,
+  TaskCreatedEvent,
+  TaskCreationSurface,
+} from "./task-created-event.js";
+export { driveTaskToTerminal } from "./task-await-driver.js";
+export type {
+  DriveTaskToTerminalArgs,
+  TaskAwaitOutcome,
+  TaskAwaitResult,
+} from "./task-await-driver.js";
+
+// The one place a model-facing tool call may become a task.
+export {
+  runToolTaskSeam,
+  toolTaskSeamOptionsFor,
+  TASK_SEAM_META_KEY,
+} from "./tool-task-seam.js";
+export type {
+  ToolTaskAwaitOptions,
+  ToolTaskSeamContext,
+  ToolTaskSeamMeta,
+  ToolTaskSeamOptions,
+} from "./tool-task-seam.js";
+export type {
+  CollectTaskInputResult,
+  DeclaredInputCapabilities,
+  TaskInputHandlerContext,
+  TaskInputHandlers,
+  TaskInputKeyOutcome,
+  TaskInputLimits,
+  TaskInputMethod,
+  TaskInputDriverOptions,
+  TaskInputRejection,
+  TaskInputRejectionReason,
+} from "./task-input-driver.js";
+export {
+  TASK_EXT_INPUT_REQUEST_METHODS,
+  isRecognizedInputRequestMethod,
+  describeTaskExtInputRequests,
+} from "./tasks-ext-schemas.js";
+export type { TaskExtInputRequestMethod } from "./tasks-ext-schemas.js";
+export {
+  TASK_CREATED_META_KEY,
+  wrapFetchForTaskRouting,
+  wrapTransportForTaskResults,
+} from "./transport-utils.js";
+export {
+  wrapFetchForHttpLogging,
+  deriveMirroredBodyValues,
+} from "./http-exchange-log.js";
+export type {
+  HttpExchangeLogEvent,
+  HttpExchangeLogger,
+} from "./http-exchange-log.js";
 
 // Notification schemas (for advanced use cases)
 export {
@@ -186,6 +357,27 @@ export {
   LogLevelMetaClient,
   type LogLevelProvider,
 } from "./log-level-meta-client.js";
+// OpenTelemetry trace-context propagation over the 2026-07-28 reserved
+// `_meta` keys. Propagation only: with no provider wired, nothing is emitted.
+export {
+  TraceContextMetaClient,
+  type ConnectionTraceContextProvider,
+} from "./trace-context-meta-client.js";
+export {
+  BAGGAGE_META_KEY,
+  TRACEPARENT_META_KEY,
+  TRACESTATE_META_KEY,
+  extractTraceContext,
+  isValidBaggage,
+  isValidTraceparent,
+  isValidTracestate,
+  parseTraceparent,
+  sanitizeTraceContext,
+  traceContextToMeta,
+  type ParsedTraceparent,
+  type TraceContext,
+  type TraceContextProvider,
+} from "./trace-context.js";
 export {
   DialectAwareJsonSchemaValidator,
   type DialectAwareJsonSchemaValidatorOptions,
@@ -202,6 +394,34 @@ export {
   isKnownProtocolVersion,
   isStatelessProtocolVersion,
 } from "./mcp-protocol-version.js";
+
+// Era-neutral subscription coordinator (2026-07-28 `subscriptions/listen`
+// + legacy list-changed/`resources/subscribe`). New exports only.
+export {
+  SubscriptionCoordinator,
+  DEFAULT_SUBSCRIPTION_RECONNECT_POLICY,
+  SUBSCRIPTION_ID_META_KEY,
+  SubscriptionsAcknowledgedNotificationMethod,
+  ToolListChangedNotificationMethod,
+  TasksNotificationMethod,
+  diffAcknowledgement,
+  resolveRequestedFilter,
+} from "./subscription-coordinator.js";
+export type {
+  DesiredSubscriptionInterests,
+  DeliveredSubscriptionNotification,
+  McpSubscriptionHandle,
+  RejectedSubscriptionNotification,
+  SubscriptionClientPort,
+  SubscriptionCloseReason,
+  SubscriptionCoordinatorOptions,
+  SubscriptionFilterShape,
+  SubscriptionInterestRejection,
+  SubscriptionNotificationKind,
+  SubscriptionReconnectPolicy,
+  SubscriptionStreamRecord,
+  SubscriptionStreamStatus,
+} from "./subscription-coordinator.js";
 
 // Multi-round-trip (`input_required`) manual driver — spec §12 (new exports).
 export {

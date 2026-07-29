@@ -1,20 +1,23 @@
 /**
  * runner.browser.test.ts — browser-rendered MCP App pipeline wiring in the
- * synthetic-session runner.
+ * shared synthetic-session core (`runSyntheticHostSession`).
  *
  * Locks the per-session browser-context lifecycle (create → per-turn
  * setActivePromptIndex + dismissCarriedWidget → dispose-on-every-exit), the
  * Computer Use tool merge + hook threading into `drainAssistantTurn`, the
- * per-turn artifact drain → `chatSessions:recordBrowserArtifacts` persist,
- * and that the inert widget-snapshot capture (Data/Sandbox iframe) still
- * runs alongside.
+ * per-turn artifact drain surfaced to `onTurnPersisted`, Cloud Skills wiring,
+ * and failure classification. This is the core the swarm runner executes every
+ * attempt through, so these are swarm-critical guarantees.
+ *
+ * Drives the core directly (the chatbox batch loop that used to wrap it is
+ * gone). Chatbox-only side-persistence — `chatSessions:recordBrowserArtifacts`
+ * — went with it; the surviving surface-injected side-persist is the widget
+ * snapshot capture, exercised via `onTurnPersisted` below.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const runAssistantTurnMock = vi.fn();
 const resolveSyntheticModelSourceMock = vi.fn();
-const personaNextTurnMock = vi.fn();
-const updateRunMock = vi.fn();
 const persistChatSessionToConvexMock = vi.fn();
 const captureMcpAppWidgetSnapshotsMock = vi.fn();
 const prepareChatV2Mock = vi.fn();
@@ -39,17 +42,6 @@ vi.mock("../../../utils/org-model-config.js", async () => {
     ...actual,
     resolveSyntheticModelSource: (...args: unknown[]) =>
       resolveSyntheticModelSourceMock(...args),
-  };
-});
-
-vi.mock("../../session-agent.js", async () => {
-  const actual = await vi.importActual<typeof import("../../session-agent.js")>(
-    "../../session-agent.js"
-  );
-  return {
-    ...actual,
-    personaNextTurn: (...args: unknown[]) => personaNextTurnMock(...args),
-    updateRun: (...args: unknown[]) => updateRunMock(...args),
   };
 });
 
@@ -96,26 +88,6 @@ vi.mock("../../browser-session-context.js", async () => {
   };
 });
 
-// Identity serializers: skip the screenshot blob upload, keep the rows.
-vi.mock("../../browser-artifact-serialization.js", async () => {
-  const actual = await vi.importActual<
-    typeof import("../../browser-artifact-serialization.js")
-  >("../../browser-artifact-serialization.js");
-  return {
-    ...actual,
-    serializeRenderObservationsForBackend: async (obs: unknown[] | undefined) =>
-      (obs ?? []).map((o) => {
-        const { screenshotBase64: _s, ...rest } = o as Record<string, unknown>;
-        return rest;
-      }),
-    serializeBrowserStepsForBackend: async (steps: unknown[] | undefined) =>
-      (steps ?? []).map((s) => {
-        const { screenshotBase64: _s, ...rest } = s as Record<string, unknown>;
-        return rest;
-      }),
-  };
-});
-
 vi.mock("convex/browser", async () => {
   const actual = await vi.importActual<typeof import("convex/browser")>(
     "convex/browser"
@@ -131,7 +103,7 @@ vi.mock("convex/browser", async () => {
   };
 });
 
-import { startSimulation } from "../runner.js";
+import { runSyntheticHostSession } from "../runner.js";
 
 const TURN_TRACE = {
   turnId: "turn-1",
@@ -191,19 +163,26 @@ function buildFakeBrowserContext(opts: { computerUse: boolean }) {
   return ctx;
 }
 
-function baseOptions() {
+/** Records what `onTurnPersisted` saw, mirroring the swarm surface's hook. */
+let turnPersistedCalls: Array<{ promptIndex: number }> = [];
+
+function baseAdapter(overrides?: {
+  modelId?: string;
+  runtime?: Record<string, unknown>;
+}) {
   return {
     runId: "run-1",
-    chatboxId: "chatbox-1",
     projectId: "proj-1",
-    personas: [{ id: "p1", name: "Persona One", role: "tester", notes: "" }],
-    sessionsPerPersona: 1,
+    chatSessionId: "synth_run-1_p1_0",
     maxTurns: 3,
-    modelId: "anthropic/claude-haiku-4.5",
-    systemPrompt: "system",
-    requireToolApproval: false,
-    convexHttpUrl: "https://convex.site",
-    convexAuthToken: "Bearer token",
+    runtime: {
+      modelDefinition: {
+        id: overrides?.modelId ?? "anthropic/claude-haiku-4.5",
+      } as never,
+      systemPrompt: "system",
+      requireToolApproval: false,
+      ...(overrides?.runtime ?? {}),
+    } as never,
     authHeader: "Bearer token",
     managerFactory: async () => ({
       manager: {
@@ -215,16 +194,31 @@ function baseOptions() {
       connectedServerNames: ["Server One"],
       dispose: async () => {},
     }),
+    // One user turn, then the persona ends the session.
+    nextPersonaTurn: vi
+      .fn()
+      .mockResolvedValueOnce({ message: "draw me a box", endSession: false })
+      .mockResolvedValue({ message: "", endSession: true }),
+    persist: {
+      sourceType: "swarm" as const,
+      origin: "swarm" as const,
+      journeyRunId: "run-1",
+      hostId: "host-1",
+      personaId: "p1",
+      personaLabel: "Persona One",
+    },
+    onTurnPersisted: vi.fn(async (args: { promptIndex: number }) => {
+      turnPersistedCalls.push({ promptIndex: args.promptIndex });
+    }),
   };
 }
 
 beforeEach(() => {
   callOrder = [];
+  turnPersistedCalls = [];
   vi.stubEnv("CONVEX_URL", "https://convex.cloud");
   runAssistantTurnMock.mockReset();
   resolveSyntheticModelSourceMock.mockReset();
-  personaNextTurnMock.mockReset();
-  updateRunMock.mockReset().mockResolvedValue(undefined);
   persistChatSessionToConvexMock.mockReset().mockResolvedValue(undefined);
   captureMcpAppWidgetSnapshotsMock.mockReset().mockResolvedValue([]);
   prepareChatV2Mock.mockReset().mockResolvedValue({
@@ -237,10 +231,6 @@ beforeEach(() => {
   convexMutationMock.mockReset().mockResolvedValue(null);
   createBrowserSessionContextMock.mockReset();
   resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
-  // One user turn, then the persona ends the session.
-  personaNextTurnMock
-    .mockResolvedValueOnce({ message: "draw me a box", endSession: false })
-    .mockResolvedValue({ message: "", endSession: true });
   runAssistantTurnMock.mockImplementation(async (opts: any) => {
     callOrder.push("runAssistantTurn");
     return {
@@ -261,46 +251,19 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("synthetic-session runner — browser pipeline wiring", () => {
-  it("creates one context per session, runs per-turn hygiene before the engine, merges computer tools, threads hooks, persists artifacts, and disposes", async () => {
+describe("runSyntheticHostSession — browser pipeline wiring", () => {
+  it("creates one context per session, runs per-turn hygiene before the engine, merges computer tools, threads hooks, and disposes", async () => {
     const fake = buildFakeBrowserContext({ computerUse: true });
-    fake._queueArtifacts(
-      [
-        {
-          toolCallId: "tc-1",
-          toolName: "create_view",
-          serverId: "server-1",
-          status: "rendered",
-          elapsedMs: 50,
-          ts: 1,
-          promptIndex: 0,
-          screenshotBase64: "img",
-        },
-      ],
-      [
-        {
-          toolCallId: "tc-1",
-          stepIndex: 0,
-          promptIndex: 0,
-          action: "left_click",
-          coordinateX: 1,
-          coordinateY: 2,
-          elapsedMs: 5,
-          ts: 2,
-          screenshotBase64: "img2",
-        },
-      ]
-    );
     createBrowserSessionContextMock.mockReturnValue(fake);
 
-    await startSimulation(baseOptions());
+    const result = await runSyntheticHostSession(baseAdapter() as never);
+    expect(result.outcome).toBe("succeeded");
 
-    // Context per session, surface-scoped logging, the session's manager.
+    // Context per session, surface-scoped logging, Computer Use opted in.
     expect(createBrowserSessionContextMock).toHaveBeenCalledTimes(1);
     expect(createBrowserSessionContextMock.mock.calls[0]![0]).toMatchObject({
       model: "anthropic/claude-haiku-4.5",
       logScope: "sessionSimulation",
-      // Session simulation is the one surface that opts into Computer Use.
       enableComputerUse: true,
     });
 
@@ -328,90 +291,38 @@ describe("synthetic-session runner — browser pipeline wiring", () => {
       input: { a: 1 },
     });
 
-    // The turn persisted, the inert snapshot capture still ran, and the
-    // drained artifacts went to recordBrowserArtifacts with the turn index.
+    // The turn persisted and the surface's per-turn side-persist hook fired
+    // with the turn index (this is how the swarm captures widget snapshots).
     expect(persistChatSessionToConvexMock).toHaveBeenCalledTimes(1);
-    expect(captureMcpAppWidgetSnapshotsMock).toHaveBeenCalledTimes(1);
-    const artifactCall = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "chatSessions:recordBrowserArtifacts"
-    );
-    expect(artifactCall).toBeDefined();
-    expect(artifactCall![1]).toMatchObject({
-      chatboxId: "chatbox-1",
-      chatSessionId: "synth_run-1_p1_0",
-      promptIndex: 0,
-    });
-    const payload = artifactCall![1] as any;
-    // promptIndex + transient base64 are stripped from rows (the mutation
-    // stamps the batch-level promptIndex; validators reject unknown keys).
-    expect(payload.widgetRenderObservations).toEqual([
-      {
-        toolCallId: "tc-1",
-        toolName: "create_view",
-        serverId: "server-1",
-        status: "rendered",
-        elapsedMs: 50,
-        ts: 1,
-      },
-    ]);
-    expect(payload.browserInteractionSteps).toEqual([
-      {
-        toolCallId: "tc-1",
-        stepIndex: 0,
-        action: "left_click",
-        coordinateX: 1,
-        coordinateY: 2,
-        elapsedMs: 5,
-        ts: 2,
-      },
-    ]);
+    expect(turnPersistedCalls).toEqual([{ promptIndex: 0 }]);
   });
 
-  it("non-Claude drivers get no computer tools but artifacts still persist", async () => {
+  it("gives non-Claude drivers no computer tools", async () => {
     const fake = buildFakeBrowserContext({ computerUse: false });
-    fake._queueArtifacts(
-      [
-        {
-          toolCallId: "tc-9",
-          toolName: "create_view",
-          serverId: "server-1",
-          status: "bridge_timeout",
-          elapsedMs: 9,
-          ts: 3,
-          promptIndex: 0,
-        },
-      ],
-      []
-    );
     createBrowserSessionContextMock.mockReturnValue(fake);
 
-    await startSimulation({
-      ...baseOptions(),
-      modelId: "openai/gpt-5-mini",
-    });
+    await runSyntheticHostSession(
+      baseAdapter({ modelId: "openai/gpt-5-mini" }) as never
+    );
 
     const engineOpts = runAssistantTurnMock.mock.calls[0]![0] as any;
     expect(Object.keys(engineOpts.tools)).toEqual(["search"]);
     expect(engineOpts.prepareAdvertisedTools).toBeUndefined();
-
-    const artifactCall = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "chatSessions:recordBrowserArtifacts"
-    );
-    expect(artifactCall).toBeDefined();
-    expect((artifactCall![1] as any).widgetRenderObservations).toHaveLength(1);
-    expect((artifactCall![1] as any).browserInteractionSteps).toBeUndefined();
   });
 
-  it("passes chatbox computer resources to the built-in tool resolver", async () => {
+  it("passes computer resources to the built-in tool resolver", async () => {
     const fake = buildFakeBrowserContext({ computerUse: false });
     createBrowserSessionContextMock.mockReturnValue(fake);
 
-    await startSimulation({
-      ...baseOptions(),
-      builtInToolIds: ["bash"],
-      computer: { kind: "personal", workdir: "/workspace" },
-      requireToolApproval: true,
-    });
+    await runSyntheticHostSession(
+      baseAdapter({
+        runtime: {
+          builtInToolIds: ["bash"],
+          computer: { kind: "personal", workdir: "/workspace" },
+          requireToolApproval: true,
+        },
+      }) as never
+    );
 
     const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
     expect(Object.keys(prepareOpts.builtInTools ?? {})).toEqual(["bash"]);
@@ -422,7 +333,7 @@ describe("synthetic-session runner — browser pipeline wiring", () => {
     const fake = buildFakeBrowserContext({ computerUse: false });
     createBrowserSessionContextMock.mockReturnValue(fake);
 
-    await startSimulation({ ...baseOptions() });
+    await runSyntheticHostSession(baseAdapter() as never);
 
     const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
     expect(prepareOpts.cloudSkills).toEqual({
@@ -438,7 +349,9 @@ describe("synthetic-session runner — browser pipeline wiring", () => {
     // claude-code + an MCPJam-provided model ⇒ the turn runs the real harness,
     // which writes skills into the sandbox itself; the emulated listSkills/
     // loadSkill tools must NOT also be advertised.
-    await startSimulation({ ...baseOptions(), harness: "claude-code" });
+    await runSyntheticHostSession(
+      baseAdapter({ runtime: { harness: "claude-code" } }) as never
+    );
 
     const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
     expect(prepareOpts.cloudSkills).toBeUndefined();
@@ -451,22 +364,24 @@ describe("synthetic-session runner — browser pipeline wiring", () => {
     // A synthetic visitor can't grant approval; the local-BYOK path fail-closes
     // on any non-empty tool set, so the always-present listSkills/loadSkill
     // meta-tools must not be injected when requireToolApproval is on.
-    await startSimulation({ ...baseOptions(), requireToolApproval: true });
+    await runSyntheticHostSession(
+      baseAdapter({ runtime: { requireToolApproval: true } }) as never
+    );
 
     const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
     expect(prepareOpts.cloudSkills).toBeUndefined();
   });
 
-  it("disposes the context when the turn throws (session failure path)", async () => {
+  it("disposes the context when the turn throws, and reports failed", async () => {
     const fake = buildFakeBrowserContext({ computerUse: true });
     createBrowserSessionContextMock.mockReturnValue(fake);
     runAssistantTurnMock.mockRejectedValue(new Error("provider exploded"));
 
-    await startSimulation(baseOptions());
+    // The core never throws — it classifies and returns.
+    const result = await runSyntheticHostSession(baseAdapter() as never);
 
     expect(fake.dispose).toHaveBeenCalledTimes(1);
-    // The failed session is counted, not thrown out of the batch loop.
-    expect(updateRunMock).toHaveBeenCalled();
+    expect(result.outcome).toBe("failed");
   });
 
   it("routes a rate-limit turn error to the rate_limited outcome (shared classifyTurnFailure)", async () => {
@@ -475,35 +390,11 @@ describe("synthetic-session runner — browser pipeline wiring", () => {
     // A spend-cap / rate-limit error from the turn must fold into the amber
     // `rate_limited` outcome via the shared `classifyTurnFailure`, not `failed`.
     runAssistantTurnMock.mockRejectedValue(
-      new Error("Daily spend cap reached for free models"),
+      new Error("Daily spend cap reached for free models")
     );
 
-    await startSimulation(baseOptions());
+    const result = await runSyntheticHostSession(baseAdapter() as never);
 
-    // runOneSession → catch → classifyTurnFailure("...cap...") === "rate_limited"
-    // → tryUpdateRunWithRetry with a { rateLimited: 1 } delta.
-    const rateLimitedProgress = updateRunMock.mock.calls.some(
-      (call) => (call[4] as { rateLimited?: number })?.rateLimited === 1,
-    );
-    expect(rateLimitedProgress).toBe(true);
-    // Whole batch tripped the cap (no successes, no hard failures) → terminal
-    // status is rate_limited.
-    const terminalRateLimited = updateRunMock.mock.calls.some(
-      (call) => call[5] === "rate_limited",
-    );
-    expect(terminalRateLimited).toBe(true);
-  });
-
-  it("skips the artifact mutation when a turn drained nothing", async () => {
-    const fake = buildFakeBrowserContext({ computerUse: true });
-    createBrowserSessionContextMock.mockReturnValue(fake);
-
-    await startSimulation(baseOptions());
-
-    expect(
-      convexMutationMock.mock.calls.some(
-        (c) => c[0] === "chatSessions:recordBrowserArtifacts"
-      )
-    ).toBe(false);
+    expect(result.outcome).toBe("rate_limited");
   });
 });

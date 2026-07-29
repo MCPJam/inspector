@@ -47,6 +47,7 @@ import type {
   PlatformEnvironmentResolved,
   PlatformEnvironmentUpdateBody,
   PlatformImage,
+  PlatformImageBlueprintValidation,
   PlatformImageBuild,
   PlatformImageBuildStarted,
   PlatformImageDeleted,
@@ -3274,7 +3275,7 @@ export const listImagesOperation: PlatformOperation<
   name: "list_sandbox_images",
   title: "List sandbox images",
   description:
-    "List the custom Computer sandbox images (Dockerfiles) in an MCPJam project. If no project is specified, uses the most recently updated accessible project.",
+    "List the custom Computer sandbox images (blueprints) in an MCPJam project. If no project is specified, uses the most recently updated accessible project.",
   readOnly: true,
   inputSchema: projectScopedInput,
   async execute(input, { client, signal }) {
@@ -3299,7 +3300,7 @@ export const getImageOperation: PlatformOperation<
   name: "get_sandbox_image",
   title: "Show a sandbox image",
   description:
-    "Show one sandbox image's Dockerfile, sharing, and latest build status.",
+    "Show one sandbox image's blueprint, sharing, and latest build status.",
   readOnly: true,
   inputSchema: imageSelectorInput,
   async execute(input, { client, signal }) {
@@ -3328,11 +3329,11 @@ const createImageInput = z.object({
     .trim()
     .min(1)
     .describe("Display name for the new sandbox image."),
-  dockerfile: z
+  blueprint: z
     .string()
     .min(1)
     .describe(
-      "Dockerfile text. Must start FROM an allowlisted official base pinned by @sha256 digest; only FROM + RUN are supported."
+      "Blueprint YAML (base / initialize / maintenance / knowledge). `base` must be an allowlisted official image pinned by @sha256 digest."
     ),
 });
 export type CreateImageInput = z.infer<typeof createImageInput>;
@@ -3344,7 +3345,7 @@ export const createImageOperation: PlatformOperation<
   name: "create_sandbox_image",
   title: "Create a sandbox image",
   description:
-    "Create a custom Computer sandbox image from a Dockerfile. Build it (build_sandbox_image) before a computer can boot from it.",
+    "Create a custom Computer sandbox image from a blueprint. Build it (build_sandbox_image) before a computer can boot from it.",
   readOnly: false,
   inputSchema: createImageInput,
   async execute(input, { client, signal }) {
@@ -3356,7 +3357,7 @@ export const createImageOperation: PlatformOperation<
     return client.createImage(
       {
         projectId: project.id,
-        body: { name: input.name, dockerfile: input.dockerfile },
+        body: { name: input.name, blueprint: input.blueprint },
       },
       { signal }
     );
@@ -3378,16 +3379,16 @@ const updateImageInput = z
       .min(1)
       .optional()
       .describe("New display name for the sandbox image."),
-    dockerfile: z
+    blueprint: z
       .string()
       .min(1)
       .optional()
-      .describe("Replacement Dockerfile text."),
+      .describe("Replacement blueprint YAML."),
   })
   .refine(
-    (value) => value.name !== undefined || value.dockerfile !== undefined,
+    (value) => value.name !== undefined || value.blueprint !== undefined,
     {
-      message: "Provide at least one of `name` or `dockerfile` to update.",
+      message: "Provide at least one of `name` or `blueprint` to update.",
     }
   );
 export type UpdateImageInput = z.infer<typeof updateImageInput>;
@@ -3399,7 +3400,7 @@ export const updateImageOperation: PlatformOperation<
   name: "update_sandbox_image",
   title: "Update a sandbox image",
   description:
-    "Edit a sandbox image's name and/or Dockerfile. Re-build it for changes to take effect on a computer.",
+    "Edit a sandbox image's name and/or blueprint. Base/initialize edits need a re-build; maintenance/knowledge edits apply at the next chat turn without one.",
   readOnly: false,
   inputSchema: updateImageInput,
   async execute(input, { client, signal }) {
@@ -3409,11 +3410,47 @@ export const updateImageOperation: PlatformOperation<
       signal
     );
     const image = await resolveImage(client, project, input.image, signal);
-    const body: { name?: string; dockerfile?: string } = {};
+    const body: { name?: string; blueprint?: string } = {};
     if (input.name !== undefined) body.name = input.name;
-    if (input.dockerfile !== undefined) body.dockerfile = input.dockerfile;
+    if (input.blueprint !== undefined) body.blueprint = input.blueprint;
     return client.updateImage(
       { projectId: project.id, imageId: image.id, body },
+      { signal }
+    );
+  },
+};
+
+const validateImageBlueprintInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  blueprint: z.string().min(1).describe("Blueprint YAML to lint."),
+});
+export type ValidateImageBlueprintInput = z.infer<
+  typeof validateImageBlueprintInput
+>;
+
+export const validateImageBlueprintOperation: PlatformOperation<
+  ValidateImageBlueprintInput,
+  PlatformImageBlueprintValidation
+> = {
+  name: "validate_sandbox_image_blueprint",
+  title: "Validate a blueprint",
+  description:
+    "Lint sandbox-image blueprint YAML without saving it. Returns ok + the resolved base digest, or structured errors.",
+  readOnly: true,
+  inputSchema: validateImageBlueprintInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    return client.validateImageBlueprint(
+      { projectId: project.id, body: { blueprint: input.blueprint } },
       { signal }
     );
   },
