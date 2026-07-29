@@ -165,3 +165,16 @@ Each OAuth log entry displays a status indicator:
 | `oauth ↺` | Step failed but was recovered (for example, after re-registering the client) |
 
 Click any entry to expand it and inspect the full step payload, including HTTP request and response details.
+
+### HTTP exchange log entries
+
+For HTTP (Streamable HTTP and SSE) servers, each MCP request/response cycle also appears as an **HTTP** row in the traffic log. Use the **Source** filter dropdown and select **HTTP** to show only these entries.
+
+HTTP rows capture the header halves of each exchange — request headers and response headers — but not the bodies (request bodies are already in the JSON-RPC rows; response bodies are the streams the transport parses). Credential headers (`Authorization`, `Cookie`, `x-api-key`, and similar) are redacted at capture; the auth scheme is preserved (for example, `Bearer <redacted>`).
+
+Expanding an HTTP row shows:
+
+- **Request line** — method, URL, response status, and round-trip duration.
+- **Header/body disagreement warning** — if the `Mcp-Method`, `Mcp-Name`, or `MCP-Protocol-Version` headers disagree with the request body, a red banner identifies the specific header and the conflicting values. This is the information a `-32020 HeaderMismatch` error is reporting.
+- **MCP headers** — the `Mcp-*` and `MCP-Protocol-Version` headers pulled to the top, with their family labeled (`routing`, `mirrored argument`, `session`, `resumption`, `protocol version`). Values encoded with the `=?base64?…?=` sentinel are decoded inline.
+- **Full request headers** and **full response headers**.
