@@ -172,6 +172,71 @@ describe("validateAuthorizationResponseIssuer (RFC 9207)", () => {
     if (!result.ok) expect(result.reason).toMatch(/RFC 9207/);
   });
 
+  it("row 2 names both issuers so a same-looking mismatch is diagnosable", () => {
+    const result = validateAuthorizationResponseIssuer({
+      recordedIssuer: ISS,
+      returnedIss: `${ISS}/`,
+      issParameterSupported: true,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toContain(`\`${ISS}\``);
+      expect(result.reason).toContain(`\`${ISS}/\``);
+    }
+  });
+
+  it("row 2 neutralizes a hostile `iss` that tries to forge message lines", () => {
+    // C0/DEL are not the only line breakers: NEL and the Unicode LINE/PARAGRAPH
+    // separators also split lines when the diagnostic is rendered.
+    for (const breaker of ["\n", "\r", "\u0085", "\u2028", "\u2029"]) {
+      const result = validateAuthorizationResponseIssuer({
+        recordedIssuer: ISS,
+        returnedIss: `https://evil.example.com${breaker}${breaker}Authorization succeeded.`,
+        issParameterSupported: true,
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.reason).not.toContain(breaker);
+        expect(result.reason).toContain("https://evil.example.com");
+      }
+    }
+  });
+
+  it("row 2 warns instead of rejecting when the era does not enforce it", () => {
+    const result = validateAuthorizationResponseIssuer({
+      recordedIssuer: ISS,
+      returnedIss: "https://evil.example.com",
+      issParameterSupported: true,
+      enforcePresentIssMismatch: false,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.warning).toContain(`\`${ISS}\``);
+      expect(result.warning).toContain("`https://evil.example.com`");
+    }
+  });
+
+  it("row 2 fails closed when the enforcement flag is omitted", () => {
+    const result = validateAuthorizationResponseIssuer({
+      recordedIssuer: ISS,
+      returnedIss: "https://evil.example.com",
+      issParameterSupported: true,
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("a matching iss never warns, enforced or not", () => {
+    for (const enforce of [true, false]) {
+      const result = validateAuthorizationResponseIssuer({
+        recordedIssuer: ISS,
+        returnedIss: ISS,
+        issParameterSupported: true,
+        enforcePresentIssMismatch: enforce,
+      });
+      expect(result).toEqual({ ok: true });
+    }
+  });
+
   it("row 3: absent but advertised supported → reject (missing required iss)", () => {
     const result = validateAuthorizationResponseIssuer({
       recordedIssuer: ISS,

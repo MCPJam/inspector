@@ -123,6 +123,14 @@ Open a completed run and find the **LLM as Judge** panel (labelled **Goal judge*
 
 The same judge config and defaults are shared with **Swarm journeys**. When creating a new journey, expand **Advanced → Judge** to set the judge model and enable auto-grade for that journey. Session score badges (showing the verdict and score) appear in the Sessions list and run matrix cells whenever a session has been graded. Sessions with no transcript still expose the on-demand judge entry point so failed or empty sessions can be graded against the journey goal.
 
+### MCP App widgets in swarm sessions
+
+When a swarm session uses MCP App tools that return widgets, the session viewer replays those widgets as full interactive components — the same rendering you see in the Playground. Widgets are captured per turn as the run executes and are available once the run completes.
+
+<Note>
+  During a live run, MCP App tool calls appear as plain tool pills in the session pane. The interactive widget renders once the run finishes and the snapshots are persisted.
+</Note>
+
 ## Running
 
 A run needs three things, all picked from the suite header:
@@ -259,6 +267,32 @@ In both cases the dialog shows the servers recorded for that session, lets you s
 The **Generate** button reads your attached servers' tool catalog and drafts realistic cases — a mix of positive ("call `search` with a query") and negative ("don't call `delete_user` on a meta-question"). Treat it as a draft: skim, edit the prompts to match how your users actually talk, tighten the checks, then save.
 
 When the suite has a saved server group spanning two or more servers, the generator produces coverage for each server individually plus at least one cross-server case. Suites without a saved server group treat all available servers as a single pool.
+
+## Plugin provenance on runs
+
+When a run executed against an environment that pins a plugin, the run detail page shows a **Plugins** row directly below the environment label. Each chip displays the plugin name and a short bundle hash — the content-addressed identity of the exact bundle the run used.
+
+The bundle hash is what makes two runs of the "same" plugin comparable: a re-import mints a new hash even when the name is unchanged, and an edit changes the hash under an unchanged name. The row is read-only provenance — it records what ran and offers no way to restore or re-pin those versions.
+
+When a run is the "without skills" arm of an A/B compare, a **skills excluded** badge appears alongside the plugin chips. This distinguishes a deliberately skill-free run from one whose skills failed to load; the plugin's MCP servers were still connected for that run.
+
+## OpenAI submission report
+
+For runs that pinned a plugin, a **Submission report** button appears in the run header alongside **Export traces**. Clicking it downloads a Markdown document formatted for OpenAI's plugin directory review, which asks for five prompts where the plugin should be invoked and three where it must not.
+
+The report is built from the run's own frozen case records — not from the live suite — so it names the exact bundle hash the run executed. It selects up to five passing positive cases and up to three passing negative cases. When there are not enough passing cases to fill the quota, failing cases are included to reach the count and listed explicitly at the top of the document under **Not ready to submit**.
+
+The report also flags these conditions as not ready to submit:
+
+| Condition | What it means |
+|-----------|---------------|
+| Fewer than 5 positive cases | The run did not execute enough "should invoke" cases. Add cases to the suite and re-run. |
+| Fewer than 3 negative cases | The run did not execute enough "should NOT invoke" cases. Mark cases as negative tests and re-run. |
+| Failing cases included | One or more selected cases failed; they are named at the top of the document. |
+| No plugin pinned | The run pinned no plugin version, so the report cannot state which bundle was evaluated. |
+| Skills excluded | The run is the "without skills" A/B arm. Submit the arm that includes skills. |
+
+The button only appears on runs that pinned a plugin. Plugin-free runs produce no submission document.
 
 ## Exporting traces
 

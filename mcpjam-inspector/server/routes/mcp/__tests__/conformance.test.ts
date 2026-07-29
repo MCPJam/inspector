@@ -98,6 +98,61 @@ describe("POST /api/mcp/conformance/apps", () => {
   });
 });
 
+describe("POST /api/mcp/conformance/tasks", () => {
+  it("returns 400 when serverId is missing", async () => {
+    const app = createTestApp(createMockManager());
+    const res = await postJson(app, "/api/mcp/conformance/tasks", {});
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.success).toBe(false);
+  });
+
+  it("returns notConnected when server is not connected", async () => {
+    const app = createTestApp(createMockManager());
+    const res = await postJson(app, "/api/mcp/conformance/tasks", {
+      serverId: "test-server",
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.code).toBe("notConnected");
+  });
+
+  it("rejects a non-positive poll timeout", async () => {
+    const manager = createMockManager({
+      getServerConfig: vi
+        .fn()
+        .mockReturnValue({ url: "https://example.test/mcp" }),
+    });
+    const app = createTestApp(manager);
+    const res = await postJson(app, "/api/mcp/conformance/tasks", {
+      serverId: "test-server",
+      pollTimeoutMs: 0,
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("runs the suite against the connected server config", async () => {
+    const manager = createMockManager({
+      getServerConfig: vi
+        .fn()
+        .mockReturnValue({ url: new URL("https://example.test/mcp") }),
+    });
+    const app = createTestApp(manager);
+    const res = await postJson(app, "/api/mcp/conformance/tasks", {
+      serverId: "test-server",
+      toolName: "long_job",
+    });
+
+    // The fake target is unreachable, so the suite reports a connection
+    // failure rather than throwing: the route still answers 200 with a result.
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.result.passed).toBe(false);
+    expect(body.result.checks[0].id).toBe("tasks-wire-resolvable");
+  });
+});
+
 describe("POST /api/mcp/conformance/oauth/start", () => {
   it("returns 400 when serverId is missing", async () => {
     const app = createTestApp(createMockManager());

@@ -25,6 +25,7 @@ import {
   getMcpJamStyleVariables,
 } from "./mcpjam-style.js";
 import { getMistralStyleVariables } from "./mistral-style.js";
+import { getVscodeStyleVariables } from "./vscode-style.js";
 import {
   GOOSE_FONT_CSS,
   GOOSE_HOST_STYLE_VARIABLES,
@@ -864,11 +865,10 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           sandbox: {
             csp: {
               // No host-side `restrictTo` — see the Claude template for
-              // the full rationale. Real ChatGPT does ship the same
-              // captured allowlist (anthropic / openai / jsdelivr), but
-              // mirroring it here only narrows the view's declared CSP
-              // (intersection trap) and silently breaks widgets reaching
-              // any other origin. The view's declaration is authoritative.
+              // the full rationale. The host-probe resource declared the
+              // captured anthropic / openai / jsdelivr allowlist, so it is
+              // per-resource evidence rather than a global ChatGPT allowlist.
+              // The view's declaration is authoritative.
               mode: "declared",
               // cspDirectives — verbatim from a live chatgpt response
               // Content-Security-Policy header (captured 2026-05-18 via
@@ -1409,8 +1409,9 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
   },
   {
     id: "copilot",
-    label: "Copilot",
-    description: "Microsoft 365 Copilot host. OpenAI-shaped Apps SDK.",
+    label: "Copilot 1.0.1",
+    description:
+      "Microsoft 365 Copilot 1.0.1 compatibility profile. OpenAI-shaped Apps SDK.",
     seed: (opts) => {
       const base = emptyHostConfigInputV2({
         hostStyle: "copilot",
@@ -1489,17 +1490,17 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         initialize: {
           // Base MCP protocol: clientInfo sent during MCP `initialize`.
           // Matches Microsoft's "ms-copilot" identity convention. The
-          // specific name/version values are guesses (no live probe and no
-          // learn.microsoft.com source confirms them).
-          clientInfo: { name: "ms-copilot", version: "1.0.0" },
+          // name is an emulation convention and 1.0.1 labels MCPJam's
+          // vendor-doc profile, not a Microsoft product build.
+          clientInfo: { name: "ms-copilot", version: "1.0.1" },
         },
         apps: {
           uiInitialize: {
             // MCP Apps extension: hostInfo sent in `ui/initialize`. Apps
             // that branch on `hostInfo.name === "Copilot"` need this to
-            // take that path. The specific name/version values are guesses
-            // (no live probe and no learn.microsoft.com source confirms them).
-            hostInfo: { name: "Copilot", version: "1.0.0" },
+            // take that path. Version 1.0.1 is MCPJam's compatibility-profile
+            // label, not a Microsoft-published host build number.
+            hostInfo: { name: "Copilot", version: "1.0.1" },
           },
           // Vendor compat-runtime shims. Copilot routes widgets through
           // the OpenAI Apps SDK under the hood, so the `window.openai`
@@ -1507,7 +1508,24 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           // inherited from the preset) so the JSON editor surfaces the
           // field on day one and the injected-globals chip reads as a
           // template choice, not "(from preset)".
-          compatRuntime: { openaiApps: true },
+          compatRuntime: {
+            openaiApps: true,
+            // Explicitly persist every method covered by Microsoft's
+            // component-bridge table. Methods absent from the vendor table
+            // continue to inherit the Copilot style preset.
+            openaiAppsOverrides: {
+              callTool: true,
+              sendFollowUpMessage: true,
+              setWidgetState: true,
+              requestDisplayMode: "fullscreen-only",
+              notifyIntrinsicHeight: true,
+              openExternal: true,
+              setOpenInAppUrl: true,
+              requestModal: false,
+              uploadFile: false,
+              getFileDownloadUrl: false,
+            },
+          },
           sandbox: {
             csp: {
               // No host-side `restrictTo` on connect/resource/baseUri
@@ -1559,7 +1577,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
     id: "vscode",
     label: "VS Code",
     description:
-      "Visual Studio Code chat panel (GitHub Copilot). MCP UI extension on, no message/updateModelContext.",
+      "Visual Studio Code 1.130 chat panel. Inline MCP Apps with tasks, model-context updates, downloads, and a VS Code webview sandbox.",
     seed: (opts) => {
       const base = emptyHostConfigInputV2({
         hostStyle: "vscode",
@@ -1570,70 +1588,121 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         modelId: "anthropic/claude-sonnet-4.5",
         temperature: 0.7,
         requireToolApproval: false,
-        // VS Code, like Cursor, doesn't yet implement SEP-1865 visibility
-        // filtering — leave it off to mirror that. Best-effort: no live VS
-        // Code probe yet, so capability values are inherited from Cursor's.
+        // The 1.130 probe did not exercise SEP-1865 visibility filtering, so
+        // preserve the existing product default instead of inventing support.
         respectToolVisibility: false,
       });
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
-      // VS Code is the editor Cursor forks (Cursor's own clientInfo.name is
-      // "cursor-vscode"). Its MCP client declares the UI extension plus
-      // elicitation and roots, same shape as Cursor. Keep the SDK-default
-      // UI extension entry and layer those on top. Values inherited from
-      // Cursor's probe pending a dedicated VS Code capture.
+      // Verbatim base-MCP initialize capabilities from VS Code 1.130.0.
       base.clientCapabilities = {
-        ...base.clientCapabilities,
-        elicitation: { form: {} },
         roots: { listChanged: true },
+        sampling: {},
+        elicitation: { form: {}, url: {} },
+        tasks: {
+          list: {},
+          cancel: {},
+          requests: {
+            sampling: { createMessage: {} },
+            elicitation: { create: {} },
+          },
+        },
+        extensions: {
+          "io.modelcontextprotocol/ui": {
+            mimeTypes: ["text/html;profile=mcp-app"],
+          },
+        },
       };
-      // hostCapabilities: mirror Cursor's subset (VS Code shares the editor
-      // base). No `updateModelContext` / `message`; `listChanged: false`
-      // markers kept explicit so apps gating on them know VS Code doesn't
-      // forward those notifications.
+      // Exact non-sandbox portion of ui/initialize.hostCapabilities. The
+      // profile matrix is the runtime source of truth; this legacy field keeps
+      // Node-only consumers and exported configs faithful to the raw capture.
       base.hostCapabilitiesOverride = {
         openLinks: {},
-        serverTools: { listChanged: false },
-        serverResources: { listChanged: false },
+        serverTools: { listChanged: true },
+        serverResources: { listChanged: true },
         logging: {},
+        updateModelContext: {
+          audio: {},
+          image: {},
+          resourceLink: {},
+          resource: {},
+          structuredContent: {},
+        },
+        downloadFile: {},
       };
-      // Per-resource environment context. Inherits Cursor's editor-surface
-      // shape; `containerDimensions` is a placeholder pending a VS Code
-      // probe. Inline-only — VS Code renders MCP UI in the chat panel
-      // without fullscreen / pip modes.
+      // Stable host-context fields from the capture. `toolCall`, webview
+      // origin, navigator details, and resize deltas are per session and are
+      // intentionally not persisted.
       base.hostContext = {
         theme,
         displayMode: "inline",
         availableDisplayModes: ["inline"],
-        containerDimensions: { width: 649, maxHeight: 800 },
-        locale: "en-US",
-        timeZone: "America/Los_Angeles",
-        userAgent: "vscode",
+        containerDimensions: { width: 494, maxHeight: 720 },
+        locale: "en-us",
         platform: "desktop",
+        deviceCapabilities: { touch: false, hover: true },
+        styles: {
+          variables: getVscodeStyleVariables(theme),
+        },
       };
       base.mcpProfile = {
         profileVersion: 1,
         initialize: {
-          // Base MCP protocol clientInfo. Not probed — "Visual Studio Code"
-          // matches VS Code's product identity (Cursor reports the forked
-          // "cursor-vscode"); refine when a live capture lands.
-          clientInfo: { name: "Visual Studio Code", version: "1.105.0" },
+          supportedProtocolVersions: ["2025-11-25"],
+          clientInfo: { name: "Visual Studio Code", version: "1.130.0" },
         },
         apps: {
           uiInitialize: {
-            // hostInfo sent in `ui/initialize`. Apps branching on
-            // `hostInfo.name === "Visual Studio Code"` need this. Not probed.
-            hostInfo: { name: "Visual Studio Code", version: "1.105.0" },
+            hostInfo: { name: "Visual Studio Code", version: "1.130.0" },
           },
+          compatRuntime: { openaiApps: false },
           sandbox: {
             csp: {
-              // Honor the view's declared CSP — no host-side restrictTo (see
-              // the Claude template for the full intersection-trap rationale).
+              // The captured OpenAI, Anthropic, and jsDelivr entries were
+              // granted to the host-probe resource because it declared them;
+              // they are not a global VS Code allowlist.
               mode: "declared",
             },
             permissions: {
               mode: "custom",
               allow: { clipboardWrite: true },
             },
+            sandboxAttrs: [
+              "allow-pointer-lock",
+              "allow-downloads",
+              "allow-forms",
+            ],
+            // VS Code's bare `allow="feature;"` directives use the iframe
+            // source-origin default. Spell it explicitly for our builder.
+            allowFeatures: {
+              "cross-origin-isolated": "'src'",
+              autoplay: "'src'",
+              "local-network-access": "'src'",
+              "clipboard-read": "'src'",
+            },
+          },
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline"],
+            // The handshake probe did not exercise lifecycle, display-request,
+            // or resource-metadata behavior. These values deliberately retain
+            // the existing emulator defaults rather than claiming host evidence.
+            toolInputPartial: true,
+            toolCancelled: true,
+            hostContextChanged: true,
+            resourceTeardown: true,
+            toolInfo: false,
+            openLinks: true,
+            serverTools: true,
+            serverResources: true,
+            logging: true,
+            updateModelContext: true,
+            message: false,
+            sandboxPermissions: true,
+            cspFrameDomains: true,
+            cspBaseUriDomains: true,
+            resourcePrefersBorder: true,
+            downloadFile: true,
+            requestTeardown: true,
+            widgetDisplayModeRequests: "accept",
           },
         },
       };

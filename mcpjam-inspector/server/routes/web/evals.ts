@@ -300,6 +300,8 @@ evals.post("/stream-test-case", async (c) => {
       },
       {
         onStreamComplete: () => manager.disconnectAllServers(),
+        // Client disconnect aborts the run (including any awaited task).
+        requestSignal: c.req.raw.signal,
       },
     );
 

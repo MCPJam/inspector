@@ -241,7 +241,6 @@ interface PersistChatSessionOptions {
   personaLabel?: string;
   /** Durable roster row id; stamped onto `chatSessions.personaRefId`. */
   personaRefId?: string;
-  synthesisRunId?: string;
   /**
    * Swarm (journey-execution) attribution. `journeyRunId` is the parent
    * journey run; `hostId` is the pinned host this synthetic session ran
@@ -452,9 +451,6 @@ export async function persistChatSessionToConvex(
         ...(options.personaId ? { personaId: options.personaId } : {}),
         ...(options.personaLabel ? { personaLabel: options.personaLabel } : {}),
         ...(options.personaRefId ? { personaRefId: options.personaRefId } : {}),
-        ...(options.synthesisRunId
-          ? { synthesisRunId: options.synthesisRunId }
-          : {}),
         ...(options.journeyRunId
           ? { journeyRunId: options.journeyRunId }
           : {}),
