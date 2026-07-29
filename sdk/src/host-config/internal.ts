@@ -17,12 +17,17 @@
  * the low-level canonicalizer.
  */
 
-export { canonicalizeHostConfigV2 } from "./canonicalize.js";
+export {
+  canonicalizeHostConfigV2,
+  canonicalizeOAuthProfile,
+} from "./canonicalize.js";
 export { sha256Hex, computeHostConfigHashV2 } from "./hash.js";
 export {
   HARNESS_IDS,
   HOST_CONFIG_SCHEMA_VERSION_V2,
   isHarness,
+  OAUTH_AUTH_MODELS,
+  OAUTH_PROFILE_EVIDENCE_STATUSES,
   SEP_1865_PERMISSION_FEATURES,
 } from "./types.js";
 export type { Harness } from "./types.js";
@@ -37,6 +42,12 @@ export type {
   HostConfigSkillSelection,
   HostConfigComputer,
   HostConfigMcpProfileV1,
+  HostConfigOAuthProfileV1,
+  OAuthAuthModel,
+  OAuthDcrIdentity,
+  OAuthProfileEvidence,
+  OAuthProfileEvidenceStatus,
+  OAuthProtocolVersionPinning,
   HostConfigConnectionDefaults,
   CspDomainSet,
   McpProtocolVersion,

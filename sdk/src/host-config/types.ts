@@ -2,15 +2,22 @@
  * HostConfig v2 — portable type surface.
  *
  * SOURCE OF TRUTH. This module is the canonical home of the host-config
- * shape, canonicalizer, and hash. It is hand-mirrored (NOT imported) by the
- * Convex backend in `convex/lib/hostConfigV2.ts`, because Convex's isolate
- * bundling forbids importing `@mcpjam/sdk` (Node-only deps). Drift between
- * the two implementations is caught by a golden-vector parity test that runs
- * identical inputs through both canonicalizers and asserts byte-identical
- * canonical JSON + sha256 (see `sdk/tests/host-config-parity.test.ts` and
- * `mcpjam-backend/tests/convex/hostConfigV2Parity.test.ts`). When you change
- * a type or canonicalization rule here, update the backend mirror in the
- * same change set and regenerate both fixture copies.
+ * shape, canonicalizer, and hash.
+ *
+ * The canonicalizer is no longer hand-mirrored: mcpjam-backend PR #409
+ * collapsed the mirror into a one-import delegation, so
+ * `convex/lib/hostConfigV2.ts` IMPORTS `canonicalizeHostConfigV2` from
+ * `@mcpjam/sdk/host-config/internal`. There is exactly one canonicalizer and
+ * one golden-vector fixture (`sdk/tests/host-config-parity.test.ts`) — no
+ * cross-repo parity ritual, and nothing to regenerate unless you
+ * intentionally change an existing vector's canonical output.
+ *
+ * The backend does still hand-mirror the TYPES and, more importantly, keeps
+ * an explicit persistence projection that copies known fields onto the stored
+ * document. A new optional field added here is hashed by the shared
+ * canonicalizer but will NOT be persisted until that projection and the
+ * Convex validator learn about it — so ship the backend half in the same
+ * change set as anything that must round-trip.
  *
  * Pure + browser-safe: no `convex/values`, no `ctx.db`, no Node-only APIs.
  */
@@ -255,6 +262,123 @@ export type McpAppsCapabilities = {
   widgetDisplayModeRequests?: "accept" | "user-initiated-only" | "decline";
 };
 
+// ── OAuth profile (HP-1 / HP-3) ───────────────────────────────────────
+//
+// Versioned envelope for per-host OAuth handshake knobs — how a given real
+// client behaves during the OAuth dance, so emulators can replay it (HP-43)
+// and the capability matrix can report it.
+//
+// EVERY field is an evidence envelope, never a bare value. This is a
+// deliberate reaction to HP-17: a partner supplied nine cross-client OAuth
+// claims and four did not survive verification, because the matrix had no way
+// to distinguish "we observed this" from "someone said this". Here a value
+// cannot be recorded without a citation and a capture date, and a field you
+// could not confirm is representable ONLY as `unverifiable` — which carries
+// no value at all (see `OAuthProfileEvidence`). Unverified lore is therefore
+// unrepresentable rather than merely discouraged.
+
+export const OAUTH_PROFILE_EVIDENCE_STATUSES = [
+  "verified",
+  "refuted",
+  "unverifiable",
+] as const;
+
+/**
+ * Verification state of a single profile field.
+ *   `verified`     — read in first-party source or official docs.
+ *   `refuted`      — positive evidence the claim is FALSE. Carries the true
+ *                    value, so a refutation is durable and can't be
+ *                    re-proposed later (HP-45 "keep refuted lore out").
+ *   `unverifiable` — could not be confirmed. Carries a reason, never a value.
+ */
+export type OAuthProfileEvidenceStatus =
+  (typeof OAUTH_PROFILE_EVIDENCE_STATUSES)[number];
+
+/**
+ * A profile field plus the evidence behind it.
+ *
+ * The union is the load-bearing part: `value` exists on the verified/refuted
+ * arm ONLY. There is no way to spell "I think it's X but I couldn't check" —
+ * that input is a type error in TS and a canonicalizer throw for untyped JS
+ * callers. Downstream consumers (HP-43 emulator enforcement) can therefore
+ * treat "has a value" as "is evidence-backed" without a second check.
+ */
+export type OAuthProfileEvidence<T> =
+  | {
+      status: "verified" | "refuted";
+      value: T;
+      /** Citation: an absolute URL, or `repo/path.ts:123`. Non-empty. */
+      source: string;
+      /** ISO calendar date (`YYYY-MM-DD`) the evidence was captured. */
+      capturedAt: string;
+    }
+  | {
+      status: "unverifiable";
+      /** Why it could not be confirmed (e.g. "closed-source client"). */
+      reason: string;
+      /** Optional: when the attempt was made, for staleness tracking. */
+      capturedAt?: string;
+    };
+
+export const OAUTH_AUTH_MODELS = [
+  "oauth2-dcr",
+  "oauth2-preregistered",
+  "api-key",
+  "none",
+] as const;
+
+/** How a client authenticates to an MCP server. */
+export type OAuthAuthModel = (typeof OAUTH_AUTH_MODELS)[number];
+
+/**
+ * Whether the client hardcodes `MCP-Protocol-Version` or negotiates it.
+ * Discriminated so "pinned" cannot be recorded without the pinned value.
+ */
+export type OAuthProtocolVersionPinning =
+  | { mode: "pinned"; version: McpProtocolVersion }
+  | { mode: "negotiated" };
+
+/**
+ * The exact identity a client asserts at Dynamic Client Registration.
+ *
+ * Per RFC 7591 this metadata is self-asserted and therefore attacker
+ * controllable, so it is NOT a sound input to server authorization policy —
+ * but servers in the wild DO gate on `clientName`, so emulators must replay
+ * these strings byte-exactly to reproduce real-world behavior. Recorded as
+ * observation, not endorsement.
+ */
+export type OAuthDcrIdentity = {
+  clientName?: string;
+  redirectUris?: string[];
+  userAgent?: string;
+};
+
+/**
+ * Per-host OAuth handshake profile. Every field optional and absent-by-default
+ * so a host that has not been investigated yet hashes byte-identically to a
+ * pre-feature row.
+ */
+export type HostConfigOAuthProfileV1 = {
+  profileVersion: 1;
+  /** RFC 8707: does the client send `resource` on /authorize + /token? */
+  sendsResourceIndicator?: OAuthProfileEvidence<boolean>;
+  /**
+   * Which MCP authorization spec revision the client implements. Drives the
+   * discovery ladder — notably, clients on `2025-03-26` assume same-origin
+   * AS endpoints. Modeled as the spec revision, NOT as a standalone
+   * "same-origin" quirk flag, so the behavior is derived from one fact
+   * instead of duplicated across two fields that can disagree.
+   *
+   * Reuses the `McpProtocolVersion` date vocabulary: MCP stamps auth-spec
+   * revisions with the same dates, and it buys closed-enum validation.
+   */
+  oauthSpecVersion?: OAuthProfileEvidence<McpProtocolVersion>;
+  protocolVersionPinning?: OAuthProfileEvidence<OAuthProtocolVersionPinning>;
+  dcrIdentity?: OAuthProfileEvidence<OAuthDcrIdentity>;
+  authModel?: OAuthProfileEvidence<OAuthAuthModel>;
+  extensions?: Record<string, unknown>;
+};
+
 // Personal cloud workstation attached to a host: one machine per
 // (project, user), surfaced through computer-backed built-in tools (e.g.
 // `bash` in `builtInToolIds`) and the web terminal. `computer` is the
@@ -410,6 +534,10 @@ export type HostConfigInputV2 = {
   // Versioned envelope for host-level MCP state. Optional; absent means "use
   // SDK defaults / no host-level sandbox override."
   mcpProfile?: HostConfigMcpProfileV1;
+  // Versioned envelope for per-host OAuth handshake behavior. Optional; absent
+  // means "this host's OAuth behavior has not been investigated yet" — which
+  // is distinct from "it has no OAuth", spelled `authModel: { value: "none" }`.
+  oauthProfile?: HostConfigOAuthProfileV1;
   // Per-server connection overrides scoped to this host config. Keys are
   // server IDs. Included in the canonical hash.
   serverConnectionOverrides?: Record<
@@ -464,6 +592,9 @@ export type CanonicalHostConfigV2 = {
   hostCapabilitiesOverride?: Record<string, unknown>;
   chatUiOverride?: Record<string, unknown>;
   mcpProfile?: HostConfigMcpProfileV1;
+  // Mirrors HostConfigInputV2.oauthProfile. Optional + omitted when absent so
+  // every pre-feature row hashes byte-identically.
+  oauthProfile?: HostConfigOAuthProfileV1;
   serverConnectionOverrides?: Record<
     string,
     {

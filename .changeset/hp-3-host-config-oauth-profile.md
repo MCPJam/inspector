@@ -1,0 +1,13 @@
+---
+"@mcpjam/sdk": minor
+---
+
+Add `HostConfigOAuthProfileV1` — a versioned, evidence-backed envelope for per-host OAuth handshake behavior — plus `canonicalizeOAuthProfile`, wired into `canonicalizeHostConfigV2` as the optional `oauthProfile` field (HP-1/HP-3).
+
+The profile records how a real client behaves during the OAuth dance so emulators can replay it and the capability matrix can report it: `sendsResourceIndicator` (RFC 8707), `oauthSpecVersion` (the MCP auth revision, which the same-origin discovery-ladder behavior is *derived* from rather than duplicated into a separate quirk flag), `protocolVersionPinning`, `dcrIdentity` (exact `client_name` / redirect URIs / user-agent for DCR replay), and `authModel`.
+
+Every field is an `OAuthProfileEvidence<T>` envelope rather than a bare value, and the union is the load-bearing part: `value` + `source` + `capturedAt` exist on the `verified`/`refuted` arm only, while `unverifiable` carries a `reason` and **no value at all**. Recording a reading you could not confirm is therefore a type error for TS callers and a canonicalizer throw for untyped ones. This is a direct response to HP-17, where four of nine partner-supplied cross-client OAuth claims turned out to be false because the matrix had no way to separate observation from hearsay; `refuted` keeps the true value on the record so a disproven claim cannot quietly re-enter the matrix later.
+
+Canonicalization is byte-stable and additive: absent profiles are dropped from the canonical JSON, so every row written before this field hashes byte-identically (the existing golden parity vectors are unchanged). `redirectUris` dedupe and sort (registration order is not semantic per RFC 7591) while `clientName` casing is preserved byte-exactly, because servers in the wild gate authorization policy on that self-asserted string. `capturedAt` is validated as a real calendar date, so a bogus date cannot silently corrupt staleness reporting.
+
+Exported from `@mcpjam/sdk/host-config/internal`. The public `Host` builder surface is unchanged.
