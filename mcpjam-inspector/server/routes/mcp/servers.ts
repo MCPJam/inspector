@@ -258,13 +258,13 @@ servers.get("/rpc/stream", async (c) => {
           isNaN(replay) ? 0 : replay
         );
         for (const evt of recent) {
-          send({ type: "rpc", ...evt });
+          send({ type: evt.kind === "http" ? "http" : "rpc", ...evt });
         }
       } catch {}
 
       // Subscribe to live events for all known servers
       const unsubscribe = rpcLogBus.subscribe(serverIds, (evt: RpcLogEvent) => {
-        send({ type: "rpc", ...evt });
+        send({ type: evt.kind === "http" ? "http" : "rpc", ...evt });
       });
 
       // Keepalive comments

@@ -538,6 +538,27 @@ describe("resolveEffectiveHostCapabilities", () => {
     });
     expect(resolved).not.toHaveProperty("serverResources");
   });
+
+  it("preserves VS Code's exact typed updateModelContext replacement", () => {
+    const resolved = resolveEffectiveHostCapabilities({
+      hostStyle: "vscode",
+      profile: {
+        profileVersion: 1,
+        apps: {
+          mcpAppsOverrides: { updateModelContext: true },
+        },
+      },
+    });
+
+    expect(resolved.updateModelContext).toEqual({
+      audio: {},
+      image: {},
+      resourceLink: {},
+      resource: {},
+      structuredContent: {},
+    });
+    expect(resolved.updateModelContext).not.toHaveProperty("text");
+  });
 });
 
 describe("resolveEffectiveMcpAppsCapabilities", () => {

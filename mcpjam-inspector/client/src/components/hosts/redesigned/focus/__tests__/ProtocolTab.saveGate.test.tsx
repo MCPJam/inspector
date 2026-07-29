@@ -149,16 +149,16 @@ describe("ProtocolTab arms the Save gate on edit", () => {
     expect(screen.getByTestId("dirty").textContent).toBe("dirty");
   });
 
-  it("selecting the 2026 RC protocol version marks dirty", async () => {
+  it("selecting the latest protocol version marks dirty", async () => {
     const user = userEvent.setup();
     const initial = realisticHost();
     render(<Harness initial={initial} />);
 
     expect(screen.getByTestId("dirty").textContent).toBe("clean");
 
-    // Radix Select: open then pick the RC option.
+    // Radix Select: open then pick the latest option.
     await user.click(screen.getByRole("combobox"));
-    await user.click(screen.getByText(/2026 RC/i));
+    await user.click(screen.getByText(/Latest \(2026-07-28\)/i));
 
     expect(screen.getByTestId("dirty").textContent).toBe("dirty");
   });

@@ -1,12 +1,40 @@
 import { EventEmitter } from "events";
+import type { HttpExchangeLogEvent } from "@mcpjam/sdk";
 import { logger } from "../utils/logger";
 
-export type RpcLogEvent = {
+/** A JSON-RPC frame. `kind` is optional so existing publishers are unchanged. */
+export type RpcMessageLogEvent = {
+  kind?: "rpc";
   serverId: string;
   direction: "send" | "receive";
   timestamp: string; // ISO
   message: unknown;
 };
+
+/**
+ * One HTTP exchange, headers only — the envelope the frames rode in.
+ *
+ * A SEPARATE event kind rather than a field on the frame: the transport hands
+ * us the headers when the fetch resolves, which is after the `send` frame was
+ * already logged and before the `receive` frames are parsed out of the
+ * response. There is no moment at which a frame and its headers are both in
+ * hand, so pretending otherwise would mean holding frames back or attaching
+ * headers to the wrong one.
+ */
+export type HttpExchangeBusEvent = {
+  kind: "http";
+  serverId: string;
+  timestamp: string; // ISO
+  exchange: HttpExchangeLogEvent;
+};
+
+export type RpcLogEvent = RpcMessageLogEvent | HttpExchangeBusEvent;
+
+export function isRpcMessageLogEvent(
+  event: RpcLogEvent,
+): event is RpcMessageLogEvent {
+  return event.kind !== "http";
+}
 
 /** Per-server replay-buffer cap, enforced on WRITE. The buffer exists only to
  *  seed the Logs SSE with recent history (`getBuffer`); without a cap a
