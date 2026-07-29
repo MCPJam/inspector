@@ -110,14 +110,51 @@ describe("projectInputRequests", () => {
 });
 
 describe("registerLocalMrtrCollector", () => {
-  it("registers exactly once per (manager, serverId)", () => {
+  it("re-registers on every call so a removeServer() purge is repaired", () => {
     const { manager } = fakeManager();
     const spy = vi.spyOn(manager, "setMrtrInputCollector");
     registerLocalMrtrCollector(manager, "srv");
     registerLocalMrtrCollector(manager, "srv");
-    expect(spy).toHaveBeenCalledTimes(1);
-    registerLocalMrtrCollector(manager, "other");
+    // Not deduped: the manager's own map is the source of truth for whether a
+    // collector is installed, and `removeServer()` can empty it behind our
+    // back (the local connect route runs with `removeOnFailure: true`).
     expect(spy).toHaveBeenCalledTimes(2);
+    registerLocalMrtrCollector(manager, "other");
+    expect(spy).toHaveBeenCalledTimes(3);
+  });
+
+  it("restores the collector after the manager purges it", () => {
+    // The regression: connect fails -> removeServer() purges the collector ->
+    // reconnect must re-register, or `elicitation` is never advertised again
+    // and every MRTR tool fails with a capability error on a healthy-looking
+    // connection.
+    const collectors = new Map<string, MrtrInputCollector>();
+    const manager = {
+      setMrtrInputCollector: (serverId: string, c: MrtrInputCollector) => {
+        collectors.set(serverId, c);
+      },
+      removeServer: (serverId: string) => {
+        collectors.delete(serverId);
+      },
+    } as any;
+
+    registerLocalMrtrCollector(manager, "srv");
+    expect(collectors.has("srv")).toBe(true);
+
+    manager.removeServer("srv");
+    expect(collectors.has("srv")).toBe(false);
+
+    registerLocalMrtrCollector(manager, "srv");
+    expect(collectors.has("srv")).toBe(true);
+  });
+
+  it("does not throw when the manager rejects the registration", () => {
+    const manager = {
+      setMrtrInputCollector: () => {
+        throw new Error("boom");
+      },
+    } as any;
+    expect(() => registerLocalMrtrCollector(manager, "srv")).not.toThrow();
   });
 });
 
