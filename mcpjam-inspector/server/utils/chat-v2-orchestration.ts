@@ -17,7 +17,11 @@
 
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { jsonSchema, tool, type ToolSet } from "ai";
-import { MCPClientManager, type Harness } from "@mcpjam/sdk";
+import {
+  MCPClientManager,
+  type Harness,
+  type ToolTaskSeamOptions,
+} from "@mcpjam/sdk";
 import {
   filterAppOnlyTools,
   type ModelVisibleMcpToolResults,
@@ -667,6 +671,16 @@ export interface PrepareChatV2Options {
    */
   harness?: Harness;
   /**
+   * Resolved task-seam options, or absent for "tasks off".
+   *
+   * The MODE is resolved by the route (from the host policy and its own
+   * `TaskSurface`), never here: web chat, local chat and the agent all reach
+   * this function, and they are three different surfaces in the policy matrix.
+   * Absent leaves `toolOptions` undefined for a default turn, which is what
+   * keeps those turns byte-identical.
+   */
+  tasks?: ToolTaskSeamOptions;
+  /**
    * Prior conversation messages, used to hydrate progressive discovery
    * state across turns. Without these, `discoveryState.loadedToolIds`
    * resets every request and any tools the model loaded earlier in the
@@ -923,6 +937,7 @@ export async function prepareChatV2(
     cloudSkills,
     skillsSource,
     harness,
+    tasks,
   } = options;
 
   // Drop ids the manager hasn't registered (server disabled/disconnected, or
@@ -935,7 +950,8 @@ export async function prepareChatV2(
   const toolOptions =
     requireToolApproval ||
     respectToolVisibility === false ||
-    modelVisibleMcpToolResults !== undefined
+    modelVisibleMcpToolResults !== undefined ||
+    tasks !== undefined
       ? {
           ...(requireToolApproval
             ? { needsApproval: requireToolApproval }
@@ -944,6 +960,9 @@ export async function prepareChatV2(
           ...(modelVisibleMcpToolResults !== undefined
             ? { modelVisibleMcpToolResults }
             : {}),
+          // Absent for every default turn, which is what keeps those turns on
+          // the pre-existing no-options overload.
+          ...(tasks !== undefined ? { tasks } : {}),
         }
       : undefined;
 

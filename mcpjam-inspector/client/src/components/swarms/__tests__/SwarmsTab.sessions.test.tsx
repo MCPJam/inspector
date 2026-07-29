@@ -285,7 +285,7 @@ async function selectPersonaFilter(name: string) {
 describe("SwarmsTab — sessions-by-run query contract", () => {
   it("queries listSessionsByJourneyRun with { journeyRunId } and opens the viewer on the row's `id`", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    fireEvent.click(screen.getByText("Persona One"));
+    fireEvent.click(screen.getAllByText("Persona One")[0]);
 
     await expandJourneyAndOpenRunSessions();
 
@@ -316,7 +316,7 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
 
   it("opens the promote dialog with the selected session row", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    fireEvent.click(screen.getByText("Persona One"));
+    fireEvent.click(screen.getAllByText("Persona One")[0]);
     await expandJourneyAndOpenRunSessions();
 
     // The dialog is mounted closed until a session is selected + promoted.
@@ -337,7 +337,7 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
 
   it("opens a specific run when its trend segment is clicked", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    fireEvent.click(screen.getByText("Persona One"));
+    fireEvent.click(screen.getAllByText("Persona One")[0]);
 
     // Host One's strip has one segment per run; clicking the completed (run-1)
     // segment must open THAT run, not the latest.
@@ -358,7 +358,7 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
 
   it("surfaces failed attempts that never persisted a session transcript", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    fireEvent.click(screen.getByText("Persona One"));
+    fireEvent.click(screen.getAllByText("Persona One")[0]);
     await expandJourneyAndOpenRunSessions("partial");
     fireEvent.click(
       await screen.findByRole("button", {
@@ -377,7 +377,7 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
 
   it("maps sticky chat-session 'active' to 'done' once the run completed", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    fireEvent.click(screen.getByText("Persona One"));
+    fireEvent.click(screen.getAllByText("Persona One")[0]);
     await expandJourneyAndOpenRunSessions();
 
     const matrix = await screen.findByTestId("swarm-sessions-matrix");
@@ -395,7 +395,7 @@ describe("SwarmsTab — sessions-by-run query contract", () => {
 
   it("shows playground-style Trace / Chat / Raw tabs in the live pane", async () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
-    fireEvent.click(screen.getByText("Persona One"));
+    fireEvent.click(screen.getAllByText("Persona One")[0]);
     await expandJourneyAndOpenRunSessions();
     await selectFirstDoneCell();
 

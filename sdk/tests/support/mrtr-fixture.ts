@@ -91,6 +91,37 @@ export function buildMrtrFixtureServer(): McpServer {
     },
   );
 
+  // Tool that requests URL-mode input. The server SDK enforces the mode-aware
+  // capability rule before embedding ("a server MUST NOT send a mode the
+  // client did not declare"): this call answers `-32021` unless the request's
+  // declared client capabilities carry `elicitation.url` — which is exactly
+  // what the manager's post-negotiation `eraCapabilities.modern` overlay
+  // exists to declare on an auto-negotiated modern connection.
+  server.registerTool(
+    "confirm-url",
+    {
+      description: "Requests URL-mode consent, then completes.",
+      inputSchema: { topic: z.string() },
+    },
+    async (_args, ctx) => {
+      const consent = ctx.mcpReq.inputResponses?.["u"];
+      if (consent === undefined) {
+        return inputRequired({
+          inputRequests: {
+            u: inputRequired.elicitUrl({
+              message: "Approve at the linked page.",
+              url: "https://example.test/consent",
+            }),
+          },
+          requestState: "url-state-1",
+        });
+      }
+      return {
+        content: [{ type: "text" as const, text: `consent:${consent.action}` }],
+      };
+    },
+  );
+
   // Prompt that requests input then embeds it.
   server.registerPrompt(
     "confirm-prompt",

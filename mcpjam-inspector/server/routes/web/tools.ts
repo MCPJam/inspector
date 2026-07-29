@@ -11,10 +11,71 @@ import { runHostedDirectMrtrOperation } from "./mrtr-direct.js";
 import { isMrtrSuspendedSignal } from "../../utils/mrtr-hosted-collector.js";
 import { listTools } from "../../utils/route-handlers.js";
 import { detectCreatedTask } from "../../utils/task-route-handlers.js";
+import { toRegistryTaskStatus } from "../../../shared/hosted-tasks.js";
+import { recordCreatedTask } from "../../services/hosted-task-registry.js";
+import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { logger } from "../../utils/logger.js";
 import { getRequestLogger } from "../../utils/request-logger.js";
 import { classifyError } from "../../utils/error-classify.js";
 
 const tools = new Hono();
+
+/**
+ * Writes a recovery-index row for a task the hosted `tools/execute` route just
+ * created — the Tools-tab twin of the chat route's task-created sink consumer.
+ *
+ * Fire-and-forget: never awaited by the route, catches everything, and a
+ * failure is one warn — the tool call already succeeded and the task is
+ * running on the MCP server whether or not this row lands.
+ *
+ * Chatbox visitors are skipped (they are not project members; the registry's
+ * membership check on the forwarded bearer would 403 them). There is
+ * deliberately NO guest branch: the backend route header says "Guests are not
+ * a special case" — a guest session has a real `users` row and the same
+ * organization-membership authorization as an authed user, so branching on
+ * guestness here would only create the fork the backend removed.
+ */
+async function registerCreatedTaskInRegistry(
+  c: Parameters<typeof getConvexBearerForRequest>[0],
+  body: {
+    projectId: string;
+    serverId: string;
+    accessScope?: "project_member" | "chat_v2";
+    chatboxId?: string;
+  },
+  created: { wire: string; task: unknown },
+): Promise<void> {
+  try {
+    if (body.accessScope === "chat_v2" || body.chatboxId) return;
+    if (created.wire !== "legacy" && created.wire !== "extension") return;
+    const task = created.task as
+      | { taskId?: unknown; status?: unknown; createdAt?: unknown }
+      | null
+      | undefined;
+    if (typeof task?.taskId !== "string" || task.taskId.length === 0) return;
+    const createdAt =
+      typeof task.createdAt === "string" ? Date.parse(task.createdAt) : NaN;
+    // Extension statuses hyphenate; the registry stores underscores. An
+    // unrecognized status is omitted (the service defaults to "working")
+    // rather than sent — the backend 400s unknown statuses.
+    const status = toRegistryTaskStatus(task.status);
+    const bearer = await getConvexBearerForRequest(c);
+    await recordCreatedTask(
+      { bearer, projectId: body.projectId, serverId: body.serverId },
+      {
+        wire: created.wire,
+        taskId: task.taskId,
+        ...(status !== null ? { status } : {}),
+        ...(Number.isFinite(createdAt) ? { createdAt } : {}),
+      },
+    );
+  } catch (error) {
+    logger.warn("[web/tools] task registry write skipped", {
+      serverId: body.serverId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
 
 tools.post("/list", async (c) =>
   withEphemeralConnection(c, toolsListSchema, (manager, body) =>
@@ -65,7 +126,15 @@ tools.post("/execute", async (c) =>
               body.taskOptions,
             );
         const created = detectCreatedTask(manager, body.serverId, result);
-        if (created) return created;
+        if (created) {
+          // Recovery-index write, deliberately un-awaited: the CreateTaskResult
+          // is already in hand, and a registry outage must never convert this
+          // successful tool call into a failure. The helper catches everything,
+          // so the dangling promise cannot reject. A non-task result writes
+          // nothing — the registry indexes task handles, not tool calls.
+          void registerCreatedTaskInRegistry(c, body, created);
+          return created;
+        }
 
         return {
           status: "completed" as const,

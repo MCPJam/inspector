@@ -147,6 +147,14 @@ export type RequestEventMap = {
     computerId: string;
     errorCode: string;
   };
+  // Swarm AI generation (routes/web/swarm-generate.ts): the backend
+  // /swarms/* endpoint answered with a server error. The upstream message is
+  // deliberately NOT forwarded to the caller (it carries the deployment URL),
+  // so this event is the only record of what the backend actually said.
+  "swarm.generation.upstream_failed": {
+    statusCode: number;
+    errorCode: string;
+  };
 };
 
 export type SystemEventMap = {

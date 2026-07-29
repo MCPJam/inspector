@@ -75,6 +75,7 @@ function serverState(
     serverId: "srv",
     era: "modern",
     supportsListen: true,
+    supportsTaskDeclaredListen: false,
     desired: { toolsListChanged: true, promptsListChanged: true },
     streams: [stream()],
     notifications: [],

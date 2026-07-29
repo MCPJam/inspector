@@ -22,11 +22,15 @@ import {
   LogLevelMetaClient,
   type LogLevelProvider,
 } from "./log-level-meta-client.js";
+import {
+  TraceContextMetaClient,
+  type ConnectionTraceContextProvider,
+} from "./trace-context-meta-client.js";
 import type { McpProtocolVersion } from "./mcp-protocol-version.js";
 import { registerTasksExtensionEraGateTarget } from "./tasks-ext-era-gate.js";
 import type { RpcLogger } from "./types.js";
 
-export type { LogLevelProvider };
+export type { LogLevelProvider, ConnectionTraceContextProvider };
 
 /**
  * Wrap an adapter in the `LogLevelMetaClient` decorator when a
@@ -40,6 +44,21 @@ function withLogLevelMeta(
   return logLevelProvider
     ? new LogLevelMetaClient(adapter, logLevelProvider)
     : adapter;
+}
+
+/**
+ * Wrap in the `TraceContextMetaClient` decorator when a
+ * `traceContextProvider` is supplied, else return the client untouched. No
+ * provider means no `traceparent`/`tracestate`/`baggage` keys ever reach the
+ * wire — the default, since MCPJam runs no OpenTelemetry tracer.
+ */
+function withTraceContextMeta(
+  client: ManagedMcpClient,
+  traceContextProvider?: ConnectionTraceContextProvider,
+): ManagedMcpClient {
+  return traceContextProvider
+    ? new TraceContextMetaClient(client, traceContextProvider)
+    : client;
 }
 
 /**
@@ -58,12 +77,16 @@ function withLogLevelMeta(
 function manage(
   client: Client,
   logLevelProvider?: LogLevelProvider,
+  traceContextProvider?: ConnectionTraceContextProvider,
 ): ManagedMcpClient {
   const adapter = new OfficialSdkClientAdapter(client);
-  const managed = withLogLevelMeta(adapter, logLevelProvider);
-  // Both the adapter and the (possibly decorated) value handed back, so the
-  // lookup works whichever one a caller ends up passing to `tasks-ext.ts`.
+  const logLevelWrapped = withLogLevelMeta(adapter, logLevelProvider);
+  const managed = withTraceContextMeta(logLevelWrapped, traceContextProvider);
+  // Every layer of the chain, so the lookup works whichever one a caller ends
+  // up passing to `tasks-ext.ts` — the adapter, an intermediate decorator, or
+  // the outermost value handed back.
   registerTasksExtensionEraGateTarget(adapter, client);
+  registerTasksExtensionEraGateTarget(logLevelWrapped, client);
   registerTasksExtensionEraGateTarget(managed, client);
   return managed;
 }
@@ -83,6 +106,14 @@ export interface CreateManagedMcpClientArgs {
    * (legacy uses `logging/setLevel`). Omit to opt a connection out entirely.
    */
   logLevelProvider?: LogLevelProvider;
+  /**
+   * Optional live accessor for the ambient OpenTelemetry trace context to
+   * propagate. When provided, the returned client is wrapped in
+   * `TraceContextMetaClient`, which injects the reserved `traceparent` /
+   * `tracestate` / `baggage` `_meta` keys on the modern era only. Omit (the
+   * default everywhere in MCPJam) and no such key is ever emitted.
+   */
+  traceContextProvider?: ConnectionTraceContextProvider;
 }
 
 /**
@@ -108,19 +139,22 @@ export function createManagedMcpClient(
       args.clientOptions.jsonSchemaValidator ??
       new DialectAwareJsonSchemaValidator(),
   });
-  return manage(inner, args.logLevelProvider);
+  return manage(inner, args.logLevelProvider, args.traceContextProvider);
 }
 
 /**
  * Helper for callers that already have an upstream `Client`. Wraps without
  * re-constructing. Pass `logLevelProvider` to layer on the modern
- * per-request logging opt-in (see {@link CreateManagedMcpClientArgs}).
+ * per-request logging opt-in, and `traceContextProvider` to layer on
+ * OpenTelemetry trace-context propagation (see
+ * {@link CreateManagedMcpClientArgs}).
  */
 export function wrapLegacyClient(
   client: Client,
   logLevelProvider?: LogLevelProvider,
+  traceContextProvider?: ConnectionTraceContextProvider,
 ): ManagedMcpClient {
-  return manage(client, logLevelProvider);
+  return manage(client, logLevelProvider, traceContextProvider);
 }
 
 export type { RpcLogger };

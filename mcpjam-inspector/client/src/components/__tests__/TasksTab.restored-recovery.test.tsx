@@ -51,6 +51,7 @@ vi.mock("@/lib/task-tracker", () => ({
   clearTrackedTasksForServer: vi.fn(),
   getDismissedTaskIds: vi.fn().mockReturnValue(new Set()),
   dismissTasksForServer: vi.fn(),
+  dismissRegistryTasks: vi.fn(),
   recordTaskObservation: vi.fn(),
   recordTaskObservations: vi.fn(),
   getTrackedTaskSchedule: vi.fn().mockReturnValue(undefined),
