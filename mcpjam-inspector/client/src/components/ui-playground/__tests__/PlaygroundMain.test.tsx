@@ -567,7 +567,8 @@ vi.mock("@/state/app-state-context", () => ({
   useSharedAppState: () => mockSharedAppState,
 }));
 
-// Mock chat-helpers (keep real placeholders; stub formatError + empty starters for stable tests)
+// Mock chat-helpers (keep real placeholders; stub formatError + a fixed
+// starter so tests don't churn when the real starter copy changes)
 vi.mock("@/components/chat-v2/shared/chat-helpers", async (importOriginal) => {
   const actual =
     await importOriginal<
@@ -577,7 +578,7 @@ vi.mock("@/components/chat-v2/shared/chat-helpers", async (importOriginal) => {
     ...actual,
     formatErrorMessage: (error: any) =>
       error ? { message: error.message || "Error", details: null } : null,
-    STARTER_PROMPTS: [],
+    STARTER_PROMPTS: [{ label: "Starter chip", text: "Starter chip prompt" }],
   };
 });
 
@@ -1440,6 +1441,49 @@ describe("PlaygroundMain", () => {
       expect(
         screen.getByTestId("playground-multi-model-compare-section"),
       ).toHaveClass("hidden");
+      expect(
+        screen.queryByText("Try one of these to get started"),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  describe("single-model starter prompts", () => {
+    it("shows starter prompt chips in the single-model empty state", () => {
+      render(<PlaygroundMain {...defaultProps} />);
+
+      expect(
+        screen.getByText("Try one of these to get started"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Starter chip" }),
+      ).toBeInTheDocument();
+    });
+
+    it("sends the starter prompt through the single-model chat on click", async () => {
+      render(<PlaygroundMain {...defaultProps} />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
+
+      await waitFor(() => {
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ text: "Starter chip prompt" }),
+        );
+      });
+    });
+
+    it("hides starter chips when the welcome hero is suppressed", () => {
+      render(<PlaygroundMain {...defaultProps} hideWelcomeHero />);
+
+      expect(
+        screen.queryByText("Try one of these to get started"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("hides starter chips when the auth upsell is active", () => {
+      mockUseChatSession.disableForAuthentication = true;
+
+      render(<PlaygroundMain {...defaultProps} />);
+
       expect(
         screen.queryByText("Try one of these to get started"),
       ).not.toBeInTheDocument();

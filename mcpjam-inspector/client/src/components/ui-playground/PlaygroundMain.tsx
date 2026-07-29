@@ -58,7 +58,10 @@ import {
 } from "@/components/chat-v2/shared/chat-helpers";
 import { SaveAsTestCaseAction } from "@/components/chat-v2/shared/save-as-test-case-action";
 import { MultiModelEmptyTraceDiagnosticsPanel } from "@/components/chat-v2/multi-model-empty-trace-diagnostics";
-import { MultiModelStartersEmptyLayout } from "@/components/chat-v2/multi-model-starters-empty";
+import {
+  MultiModelStarterPromptsBlock,
+  MultiModelStartersEmptyLayout,
+} from "@/components/chat-v2/multi-model-starters-empty";
 import { ErrorBox } from "@/components/chat-v2/error";
 import { ConfirmChatResetDialog } from "@/components/chat-v2/chat-input/dialogs/confirm-chat-reset-dialog";
 import {
@@ -3363,7 +3366,11 @@ export function PlaygroundMain({
 
   const errorMessage = formatErrorMessage(error);
 
-  const handleMultiModelStarterPrompt = useCallback(
+  // Starter chips render in both empty states (compare grid and single-model
+  // hero), so route by mode like `submitAgentToolPrompt`: compare mode feeds
+  // the broadcast queue, single mode must call `sendMessage` itself — there is
+  // no broadcast consumer in single-model mode.
+  const handleStarterPrompt = useCallback(
     (prompt: string) => {
       if (composerDisabled || sendBlocked) {
         composer.setInput(prompt);
@@ -3374,11 +3381,23 @@ export function PlaygroundMain({
           composer.setInput(prompt);
           return;
         }
-        queueBroadcastRequest({
-          text: prompt,
-          prependMessages: [],
-          widgetModelContext: modelContextQueue,
-        });
+        if (isCompareMode) {
+          queueBroadcastRequest({
+            text: prompt,
+            prependMessages: [],
+            widgetModelContext: modelContextQueue,
+          });
+        } else {
+          queueBroadcastRequest(
+            { text: prompt, prependMessages: [] },
+            { single_model_send: true }
+          );
+          sendMessage({
+            text: prompt,
+            metadata: outgoingSenderMetadata,
+            widgetModelContext: modelContextQueue,
+          });
+        }
         setModelContextQueue([]);
         composer.setInput("");
         revokeFileAttachmentUrls(fileAttachments);
@@ -3391,9 +3410,13 @@ export function PlaygroundMain({
       composerDisabled,
       ensureSelectedServerReadyForChat,
       fileAttachments,
+      isCompareMode,
+      modelContextQueue,
       onFirstMessageSent,
+      outgoingSenderMetadata,
       queueBroadcastRequest,
       sendBlocked,
+      sendMessage,
     ]
   );
   // "Ask agent to run" (harness built-in tools): the rail builds a structured
@@ -3675,6 +3698,9 @@ export function PlaygroundMain({
                         </h3>
                       </div>
                     </div>
+                    <MultiModelStarterPromptsBlock
+                      onStarterPrompt={handleStarterPrompt}
+                    />
                     {errorMessage && (
                       <div className="w-full">
                         <ErrorBox
@@ -3999,7 +4025,7 @@ export function PlaygroundMain({
                       </div>
                     ) : null
                   }
-                  onStarterPrompt={handleMultiModelStarterPrompt}
+                  onStarterPrompt={handleStarterPrompt}
                   chatInputSlot={
                     <ChatInput {...sharedChatInputProps} hasMessages={false} />
                   }
