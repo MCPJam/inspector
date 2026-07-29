@@ -29,8 +29,13 @@ const JWT_LIKE =
 // upstream error messages routinely quote full URLs
 // (`...?api_key=plain-secret`), which the key-based redaction above can't
 // see. Over-redaction is acceptable in logs, so the key list is broad.
+// `authorization` is spelled out ahead of `auth`: the object-key scrubber
+// already treats it as a secret, but `auth` alone can't match it (the trailing
+// `orization` blocks the `[=:]`), so `?authorization=…` used to survive inside
+// a quoted URL. camelCase spellings (`accessToken`, `clientSecret`) already
+// match via the `[_-]?` separator plus the `i` flag.
 const SECRET_PARAM_LIKE =
-  /\b((?:api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|secret|password|passwd|pwd|token|auth|key|sig|signature)\s*[=:]\s*["']?)[^&\s"'`]+/gi;
+  /\b((?:api[_-]?key|apikey|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|authorization|secret|password|passwd|pwd|token|auth|key|sig|signature)\s*[=:]\s*["']?)[^&\s"'`]+/gi;
 // Basic-auth credentials in URLs: `https://user:pass@host/...`. Must run
 // BEFORE the email pattern, which otherwise consumes `pass@host` as an
 // address and leaves a mangled remainder this pattern can't match.

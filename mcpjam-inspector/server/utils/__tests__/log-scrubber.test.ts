@@ -101,6 +101,31 @@ describe("scrubLogPayload", () => {
       expect(result.message).toContain("api_key=[redacted]");
     });
 
+    // The object-key scrubber redacts all of these names; a URL quoted inside
+    // a string value has to reach the same bar. `authorization` needed its own
+    // alternative — `auth` alone can't match it, since the trailing
+    // "orization" blocks the `[=:]` that has to follow.
+    it("redacts camelCase and authorization credentials in quoted URLs", () => {
+      const names = [
+        "accessToken",
+        "refreshToken",
+        "idToken",
+        "clientSecret",
+        "apiKey",
+        "authorization",
+      ];
+
+      for (const name of names) {
+        const result = scrubLogPayload({
+          message: `fetch failed for https://mcp.example.com/sse?${name}=plain-secret&x=1`,
+        }) as any;
+        expect(result.message, `${name} leaked`).not.toContain("plain-secret");
+        expect(result.message).toContain(`${name}=[redacted]`);
+        // The rest of the URL stays readable — that's the debugging value.
+        expect(result.message).toContain("https://mcp.example.com/sse");
+      }
+    });
+
     it("redacts key=value and key: value secret assignments", () => {
       const result = scrubLogPayload({
         message: 'connect failed (token=abc123, client_secret: "s3cr3t")',
