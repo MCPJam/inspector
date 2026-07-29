@@ -24,6 +24,7 @@
 import type {
   CacheableRequestOptions,
   CallToolResult,
+  Client,
   CompleteRequest,
   CompleteResult,
   EmptyResult,
@@ -110,6 +111,21 @@ export type ManagedMcpClientRequestHandler = (
  * behavior-agnostic so it never has to know which adapter is wired.
  */
 export interface ManagedMcpClient {
+  /**
+   * The client this one delegates to: the upstream `Client` for
+   * `OfficialSdkClientAdapter`, the wrapped `ManagedMcpClient` for a decorator
+   * such as `LogLevelMetaClient`. OPTIONAL — a hand-rolled implementation or a
+   * test double may bottom out with no delegate at all.
+   *
+   * Declared so the delegation chain is a stated seam rather than a private
+   * detail each consumer re-guesses. `tasks-ext-era-gate.ts` walks it to find
+   * the upstream instance whose outbound era gate must be shadowed, so that a
+   * directly-constructed adapter behaves like one built by
+   * `managed-mcp-client-factory.ts`. Consumers MUST treat an absent `inner` as
+   * "the chain ends here" and degrade, never throw.
+   */
+  readonly inner?: ManagedMcpClient | Client;
+
   // ---- Lifecycle ----
   connect(
     transport: Transport,

@@ -516,6 +516,42 @@ export type EvalSuiteRun = {
     /** The environment's standalone server-group pointer at resolve time. */
     environmentServerAttachmentId?: string;
     /**
+     * Plugin provenance for this run (BE-5): identity + `bundleHash` of every
+     * plugin version the environment pinned, in pin order.
+     *
+     * EXACT AND IMMUTABLE. It records which bundles executed, so nothing may
+     * re-resolve it to the plugin's current active version — that is the whole
+     * reason a re-import cannot change what an in-flight run or a replay means.
+     * It is provenance, not a restorable pin: no surface may offer to "restore"
+     * these versions, or the ephemeral Playground override becomes persistent
+     * through the back door.
+     *
+     * Absent on a legacy run, a plugin-free environment, or a pre-BE-5 backend.
+     */
+    environmentPluginVersions?: Array<{
+      pluginId: string;
+      pluginVersionId: string;
+      name: string;
+      bundleHash: string;
+    }>;
+    /**
+     * The servers those versions materialized at launch — the suite twin of a
+     * journey target's `pluginServerIds`. Cross-checked at execution, never
+     * trusted: a recorded id the live resolution no longer contributes fails
+     * the run rather than silently shrinking it.
+     */
+    environmentPluginServerIds?: string[];
+    /**
+     * This run is the "without skills" arm of an A/B compare: no skills were
+     * pinned from ANY channel (host, environment, or plugin).
+     *
+     * Worth showing, because a skill-less run and a run whose skills failed to
+     * load look identical in the transcript. Note the deliberate backend
+     * asymmetry — the arm drops plugin SKILLS, not plugin SERVERS, so
+     * `environmentPluginVersions` above is still populated for it.
+     */
+    skillsExcluded?: boolean;
+    /**
      * Suite-level judge config snapshotted at run-create. The run-detail
      * card reads `modelUsed` / `threshold` from here when displaying the
      * judge config, so a config edit after the run started doesn't

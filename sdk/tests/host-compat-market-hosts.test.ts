@@ -56,6 +56,14 @@ describe("buildMarketHostProfiles", () => {
     expect(profileFor("perplexity")?.capabilities).toBeUndefined();
   });
 
+  it("keeps ChatGPT app capabilities faithful to the raw probe", () => {
+    expect(profileFor("chatgpt")?.capabilities).toMatchObject({
+      serverResources: true,
+      logging: true,
+      downloadFile: false,
+    });
+  });
+
   it("carries each host's advertised protocol versions (or none)", () => {
     expect(profileFor("goose")?.supportedProtocolVersions).toEqual([
       "2025-03-26",

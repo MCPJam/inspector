@@ -180,8 +180,28 @@ describe("modern checks on a legacy run", () => {
     }
   });
 
-  it("the three subscription checks skip with an explicit reason on a modern run", async () => {
-    const config = normalize({ protocolVersion: "2026-07-28" });
+  it("the three subscription checks skip — never fail — when nothing is subscribable", async () => {
+    const methods: string[] = [];
+    const fetchFn = (async (_url: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { method: string };
+      methods.push(body.method);
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          result: {
+            resultType: "discover",
+            protocolVersions: ["2026-07-28"],
+            // No listChanged / subscribe: there is nothing to subscribe to.
+            capabilities: { tools: {}, prompts: {}, resources: {} },
+            serverInfo: { name: "stub", version: "1.0.0" },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    }) as unknown as typeof fetch;
+
+    const config = normalize({ protocolVersion: "2026-07-28", fetchFn });
     const results = await runModernChecks(
       { config, serverUrl: SERVER_URL, fetchFn: config.fetchFn },
       new Set<MCPCheckId>([
@@ -194,8 +214,12 @@ describe("modern checks on a legacy run", () => {
     expect(results).toHaveLength(3);
     for (const result of results) {
       expect(result.status).toBe("skipped");
-      expect(result.error?.message).toMatch(/subscriptions\/listen/);
+      expect(result.error?.message).toMatch(
+        /no subscribable notification type/
+      );
     }
+    // The discover answer alone settles it: no stream is opened.
+    expect(methods).toEqual(["server/discover"]);
   });
 });
 
