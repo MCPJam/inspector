@@ -8,6 +8,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { computeHostConfigHashV2 } from "../src/host-config/hash.js";
 import {
   MCPJAM_TASKS_POLICY_EXTENSION_ID,
   clearTasksPolicy,
@@ -238,5 +239,71 @@ describe("the published surface matrix", () => {
     // the same as a hang.
     expect(taskModeForSurface("on", "eval")).toBe("await");
     expect(taskModeForSurface("on", "chat")).toBe("expose");
+  });
+});
+
+/**
+ * The content-addressed guarantee, at the level that actually matters.
+ *
+ * The JSON byte-identity checks above prove the object round-trips; this
+ * proves the DIGEST does. `hostConfigs` are keyed by their own hash, so a
+ * pre-feature host that survives a set→clear round trip has to hash to the
+ * same literal it hashed to before the policy existed — otherwise the round
+ * trip silently mints a new row for a host nobody changed.
+ */
+const PRE_FEATURE_DIGEST =
+  "f0f4fb70fcd748a67f8f5f9cc3402453aee6c6d44e03e5fbbb18225666ec9ef3";
+
+describe("host config hash stability", () => {
+  // A complete, valid V2 input — the hash canonicalizer validates required
+  // fields, so a partial fixture would fail before it could prove anything.
+  const preFeatureHost = {
+    hostStyle: "claude" as const,
+    modelId: "anthropic/claude-sonnet-4-6",
+    systemPrompt: "You are a helpful assistant.",
+    temperature: 0.7,
+    requireToolApproval: false,
+    connectionDefaults: { headers: {}, requestTimeout: 10000 },
+    clientCapabilities: {},
+    hostContext: {},
+    mcpProfile: {
+      profileVersion: 1 as const,
+      mcpProtocolVersion: "2025-06-18" as const,
+    },
+  };
+
+  it("hashes a pre-feature host to a pinned literal", async () => {
+    // Pinned rather than recomputed: a test that hashes the same input twice
+    // proves determinism, not stability. Only a literal catches a
+    // canonicalization change that moves every existing host's id.
+    expect(await computeHostConfigHashV2(preFeatureHost)).toBe(
+      PRE_FEATURE_DIGEST,
+    );
+  });
+
+  it("reproduces that digest byte-for-byte after a set → clear round trip", async () => {
+    for (const enabled of [true, false]) {
+      const roundTripped = clearTasksPolicy(
+        setTasksPolicy(preFeatureHost, enabled),
+      ) as typeof preFeatureHost;
+      expect(await computeHostConfigHashV2(roundTripped)).toBe(
+        PRE_FEATURE_DIGEST,
+      );
+    }
+  });
+
+  it("mints a different digest while a policy IS stored", async () => {
+    // Explicit off is a real stored state, so it SHOULD hash distinctly from
+    // absent. If these ever collide, `off` and `unset` have become the same
+    // row and the tri-state has quietly collapsed.
+    const on = await computeHostConfigHashV2(
+      setTasksPolicy(preFeatureHost, true),
+    );
+    const off = await computeHostConfigHashV2(
+      setTasksPolicy(preFeatureHost, false),
+    );
+    expect(on).not.toBe(PRE_FEATURE_DIGEST);
+    expect(off).not.toBe(PRE_FEATURE_DIGEST);
+    expect(on).not.toBe(off);
   });
 });

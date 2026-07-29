@@ -64,12 +64,12 @@ export async function webPost<TRequest, TResponse>(
         : typeof errBody?.error === "string"
           ? errBody.error
           : null;
+    // Empty-string messages fall through to the next candidate — an error
+    // with a blank message would otherwise surface as a blank toast.
     const message =
-      typeof errBody?.message === "string"
-        ? errBody.message
-        : typeof errBody?.error === "string"
-          ? errBody.error
-          : `Request failed (${response.status})`;
+      (typeof errBody?.message === "string" && errBody.message.trim()) ||
+      (typeof errBody?.error === "string" && errBody.error.trim()) ||
+      `Request failed (${response.status})`;
     const normalized =
       errBody && typeof errBody.normalized === "object" && errBody.normalized
         ? (errBody.normalized as NormalizedError)

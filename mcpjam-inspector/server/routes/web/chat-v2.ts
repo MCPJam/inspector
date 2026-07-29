@@ -3,7 +3,11 @@ import type { ChatV2Request } from "@/shared/chat-v2";
 import { getCanonicalModelId } from "@/shared/types";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import { shouldEnableCloudSkillTools } from "../../utils/computers/cloud-skill-tools.js";
-import { isMCPAuthError } from "@mcpjam/sdk";
+import { isMCPAuthError, TaskCreatedSink } from "@mcpjam/sdk";
+import { isCompatibleHostedTasksVersion } from "@/shared/hosted-task-created";
+import { HostedTaskCreatedBridge } from "../../utils/hosted-task-created-bridge.js";
+import { recordHostedTask } from "../../services/hosted-task-registry.js";
+import { resolveToolTaskSeam } from "../../utils/task-seam.js";
 import { resolveHostModelDefinition } from "../../utils/org-model-config.js";
 import {
   ELICITATION_TIMEOUT_EXTENSION_MS,
@@ -735,6 +739,20 @@ chatV2.post("/", async (c) => {
       clientVersion: hostedBody.hostedElicitationVersion,
     });
 
+    // ── Tasks (`com.mcpjam/tasks`) ──────────────────────────────────────────
+    // Read from the RESOLVED host, never the body. Same authority rule as the
+    // elicitation gate above: a share-link visitor owns the request body, so a
+    // body-supplied opt-in must not be able to turn tasks on against a host
+    // that said off. `tasksPolicy` is absent from `ExecutionOverrides`
+    // entirely, so this holds at every precedence rather than by a check here.
+    const tasksSink = new TaskCreatedSink();
+    const tasksSeam = resolveToolTaskSeam({
+      tasksPolicy: resolvedExecution.tasksPolicy,
+      surface: "chat",
+      scope: hostedBody.projectId,
+      sink: tasksSink,
+    });
+
     // ── Hosted MRTR (input_required, §12.5) gate + resume parse ─────────────
     // MRTR suspend/resume rides the SAME elicitation capability (a round embeds
     // `elicitation/create`), so it is enabled only alongside elicitation (both
@@ -777,8 +795,14 @@ chatV2.post("/", async (c) => {
     // Resolve the Convex-valid bearer once for both bridges (NOT the raw
     // Authorization header: WorkOS API-key callers send an `sk_…` key Convex
     // cannot verify; this resolves the delegated JWT and passes JWTs through).
+    // `tasksSeam` is in the condition because the hosted task registry needs
+    // the same bearer: the backend derives the row's owner from it. Without
+    // this, a host with Tasks on but elicitation and MRTR off would resolve no
+    // bearer, silently skip the registry consumer, and lose the cross-device
+    // recovery index for exactly the ordinary task-only turns it is meant to
+    // cover.
     const convexBearer =
-      elicitationEnabled || mrtrEnabled || mrtrResumeRequest
+      elicitationEnabled || mrtrEnabled || mrtrResumeRequest || tasksSeam
         ? await getConvexBearerForRequest(c)
         : undefined;
     const mrtrAuthPrincipal =
@@ -811,6 +835,50 @@ chatV2.post("/", async (c) => {
             authPrincipal: mrtrAuthPrincipal,
           })
         : undefined;
+
+    // Delivery to the browser is a SEPARATE decision from whether tasks run.
+    // A stale bundle that cannot render the part must not stop the host's
+    // policy from taking effect — the task still gets created, it just isn't
+    // pushed live. Absent or mismatched version ⇒ no bridge, and the turn
+    // proceeds normally. Never a 409: see `HOSTED_TASKS_VERSION`.
+    const taskCreatedBridge =
+      tasksSeam &&
+      isCompatibleHostedTasksVersion(
+        (rawBody as Record<string, unknown>).hostedTasksVersion,
+      )
+        ? new HostedTaskCreatedBridge({
+            serverNamesById:
+              buildServerNamesById(effectiveServerIds, effectiveServerNames) ??
+              {},
+          })
+        : undefined;
+    if (taskCreatedBridge) {
+      // Functional, not best-effort: this is the path the user's next page
+      // load depends on to know the task exists.
+      tasksSink.register({
+        name: "hosted-task-created-bridge",
+        handle: taskCreatedBridge.handle,
+      });
+    }
+    if (tasksSeam && convexBearer) {
+      // Best-effort, and registered AFTER the bridge so the durable local
+      // handle always lands first — a slow registry write can never cost the
+      // user the thing they need to find the task again.
+      //
+      // Dark until the backend's owner-binding gate is switched on, at which
+      // point this starts writing rows with no change here: the disabled state
+      // answers with the same 404 envelope as "not deployed" and degrades to a
+      // single log line.
+      tasksSink.register({
+        name: "hosted-task-registry",
+        bestEffort: true,
+        handle: (event) =>
+          recordHostedTask(event, {
+            bearer: convexBearer,
+            projectId: hostedBody.projectId,
+          }).then(() => undefined),
+      });
+    }
 
     // Membership chat (no share/chatbox token) is the default — the backend
     // authorizes via project ownership for both guest and authed users.
@@ -1034,6 +1102,7 @@ chatV2.post("/", async (c) => {
           ...(resolvedExecution.harness
             ? { harness: resolvedExecution.harness }
             : {}),
+          ...(tasksSeam ? { tasks: tasksSeam } : {}),
           ...(resolvedProgressiveToolDiscovery !== undefined
             ? {
                 progressiveToolDiscovery: {
@@ -1150,6 +1219,7 @@ chatV2.post("/", async (c) => {
           rpcCollector,
           elicitationBridge,
           ...(mrtrBridge ? { mrtrBridge } : {}),
+          ...(taskCreatedBridge ? { taskCreatedBridge } : {}),
           ...(mrtrEngineResume ? { mrtrResume: mrtrEngineResume } : {}),
           c,
         },

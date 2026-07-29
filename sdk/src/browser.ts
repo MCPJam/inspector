@@ -179,9 +179,9 @@ export {
   isLoopbackOAuthUrl,
   OAuthOutboundUrlBlockedError,
 } from "./oauth/ssrf-guard.js";
-// RFC 9207 authorization-response `iss` validation. Era-agnostic (validating a
-// present `iss` is permitted on every version), so the browser callback gate
-// reuses it across 2025/2026 flows.
+// RFC 9207 authorization-response `iss` validation. The comparison itself is
+// era-agnostic, but REJECTING on a mismatch is a 2026-07-28 (SEP-2468) rule —
+// callers pass `enforcePresentIssMismatch` so pre-draft flows warn instead.
 export {
   validateAuthorizationResponseIssuer,
   type AuthorizationResponseIssuerCheck,
@@ -370,6 +370,49 @@ export {
   isStatelessProtocolVersion,
   type McpProtocolVersion,
 } from "./mcp-client-manager/mcp-protocol-version.js";
+
+// SEP-2243 mirrored request-metadata headers. Browser-safe by construction
+// (pure string work, no transport): the Tracing panel runs the SAME decode and
+// header/body cross-check a server runs, so a `-32020 HeaderMismatch` can be
+// explained against the captured wire instead of guessed at.
+export {
+  MCP_HEADER_SENTINEL_PREFIX,
+  MCP_HEADER_SENTINEL_SUFFIX,
+  MCP_PARAM_HEADER_PREFIX,
+  classifyMcpHeader,
+  decodeMcpHeaderValue,
+  findMcpHeaderIssues,
+} from "./mcp-client-manager/mcp-header-mirror.js";
+export type {
+  DecodedMcpHeaderValue,
+  McpHeaderFamily,
+  McpHeaderIssue,
+  MirroredBodyValues,
+} from "./mcp-client-manager/mcp-header-mirror.js";
+export type { HttpExchangeLogEvent } from "./mcp-client-manager/http-exchange-log.js";
+
+// OpenTelemetry trace context over the 2026-07-28 reserved `_meta` keys.
+// Browser-safe by construction: pure string validation, no transport. The
+// browser side is the READ half — surfacing a trace context a server sent so
+// a user debugging it can see which trace their call joined. `baggage` here
+// is untrusted, display-only data; it must never reach PostHog/Axiom.
+export {
+  BAGGAGE_META_KEY,
+  TRACEPARENT_META_KEY,
+  TRACESTATE_META_KEY,
+  extractTraceContext,
+  isValidBaggage,
+  isValidTraceparent,
+  isValidTracestate,
+  parseTraceparent,
+  sanitizeTraceContext,
+  traceContextToMeta,
+} from "./mcp-client-manager/trace-context.js";
+export type {
+  ParsedTraceparent,
+  TraceContext,
+  TraceContextProvider,
+} from "./mcp-client-manager/trace-context.js";
 
 // HostConfig — the public `Host` builder (also at `@mcpjam/sdk/host-config`).
 // Browser-safe: the class wraps the pure canonicalizer + Web Crypto hash.
