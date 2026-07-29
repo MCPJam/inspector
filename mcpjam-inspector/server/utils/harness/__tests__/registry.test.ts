@@ -17,12 +17,45 @@ describe("harness registry", () => {
     const a = getHarnessAdapter("codex");
     expect(a.id).toBe("codex");
     expect(a.displayName).toBe("Codex");
-    // Codex v1: no MCP servers, no skills, can't pause for tool approval.
+    // Codex: no MCP servers (the CLI never makes an MCP tool model-callable in
+    // the mode the SDK drives), no native plugin install, can't pause for tool
+    // approval — but skills ARE delivered (INS-8), under its own root.
     expect(a.supportsSelectedMcpServers).toBe(false);
-    expect(a.supportsSkills).toBe(false);
+    expect(a.supportsSkills).toBe(true);
+    expect(a.skillsBaseDir).toBe("/home/user/.agents/skills");
+    expect(a.supportsPluginBundles).toBe(false);
     expect(a.supportsNativeToolApproval).toBe(false);
     expect(a.requiresComputer).toBe(true);
     expect(a.fileChangeToolName).toBe("fileChange");
+  });
+
+  it("every adapter that advertises a capability carries its strategy", () => {
+    // The repo convention: advertising a capability means implementing it.
+    // `runHarnessTurn` throws on a violation at turn time; this catches it in
+    // CI, for every registered adapter, before a turn is ever attempted.
+    for (const id of registeredHarnessIds()) {
+      const adapter = getHarnessAdapter(id);
+      if (adapter.supportsSelectedMcpServers) {
+        expect(adapter.deliverMcpServers).toBeTypeOf("function");
+      }
+      if (adapter.supportsPluginBundles) {
+        expect(adapter.deliverPluginBundles).toBeTypeOf("function");
+      }
+      if (adapter.supportsSkills) {
+        expect(adapter.skillsBaseDir.startsWith("/")).toBe(true);
+      }
+    }
+  });
+
+  it("no adapter claims native plugin-bundle installation yet (INS-8)", () => {
+    // Codex exposes no plugin-install hook and cannot surface a plugin's MCP
+    // tools to the model at all (openai/codex#19425); Claude Code delivers a
+    // plugin's COMPONENTS, not a plugin unit. Neither is a bundle install, so
+    // neither flag may be on. Flipping one without a parity test is exactly the
+    // failure this asserts against.
+    for (const id of registeredHarnessIds()) {
+      expect(getHarnessAdapter(id).supportsPluginBundles).toBe(false);
+    }
   });
 
   it("maps Gateway Anthropic model ids to Claude Code selectable models", () => {
@@ -209,7 +242,7 @@ const toUserMessage = (text) => ({
         keyToServerId
       )
     ).toEqual({ serverId: "srv_123", toolName: "forecast" });
-    // Codex v1 has no MCP namespacing — names pass through as native tools.
+    // Codex has no MCP namespacing — names pass through as native tools.
     expect(
       getHarnessAdapter("codex").parseToolName(
         "mcp__weather__forecast",
@@ -258,7 +291,7 @@ const toUserMessage = (text) => ({
       expect(JSON.parse(writes[0]!.content)).toEqual(mcpJson);
     });
 
-    it("Codex declares no MCP delivery (v1: no servers)", () => {
+    it("Codex declares no MCP delivery (no model-callable MCP tools)", () => {
       expect(getHarnessAdapter("codex").deliverMcpServers).toBeUndefined();
       expect(getHarnessAdapter("codex").supportsSelectedMcpServers).toBe(false);
     });

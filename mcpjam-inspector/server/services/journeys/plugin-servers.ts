@@ -21,67 +21,51 @@
  * server set runs an environment nobody configured, and does it silently. "I
  * couldn't check" must never be delivered as "nothing to add".
  *
+ * The shape validation, the reason-code prose, and the "which problems mean
+ * stop?" rule now live in `services/plugins/run-plugin-servers.ts`, shared with
+ * the suite twin BE-5 added. Only the journey-shaped envelope (`{ targets: [] }`,
+ * with a per-target id to cross-check) and the journey wording are here.
+ *
  * Hand-mirrored contract (no codegen; string function refs like the rest of the
  * inspector→Convex surface).
  */
 import type { ConvexHttpClient } from "convex/browser";
-
-/** One connectable server contributed by a still-valid pin. */
-export interface RunPluginServer {
-  serverId: string;
-  name: string;
-  pluginVersionId: string;
-  pluginId: string;
-  pluginName: string;
-  componentKey: string;
-}
-
-interface RunPluginServerUnavailable {
-  pluginVersionId: string;
-  reason: string;
-  pluginName?: string;
-  componentKey?: string;
-}
+import {
+  RunPluginServersUnavailableError,
+  assertRunPluginResolutionShape,
+  assertRunPluginResolutionUsable,
+  queryRunPluginResolution,
+  readRunPluginServerIds,
+  type RunPluginServer,
+  type RunPluginServerResolution,
+} from "../plugins/run-plugin-servers.js";
 
 interface JourneyRunPluginServerResolution {
-  targets: Array<{
-    targetId?: string;
-    servers: RunPluginServer[];
-    unavailable: RunPluginServerUnavailable[];
-    droppedSnapshotServerIds: string[];
-  }>;
+  targets: Array<Partial<RunPluginServerResolution> & { targetId?: string }>;
 }
 
-/** Thrown when a target's pins cannot be verified as still-connectable. */
-export class JourneyPluginServersUnavailableError extends Error {
+/**
+ * Thrown when a target's pins cannot be verified as still-connectable.
+ *
+ * Extends the shared error so a caller may catch either, and every shared throw
+ * is re-wrapped into it below so journey callers keep seeing exactly one type.
+ */
+export class JourneyPluginServersUnavailableError extends RunPluginServersUnavailableError {
   constructor(message: string) {
     super(message);
     this.name = "JourneyPluginServersUnavailableError";
   }
 }
 
-function describeUnavailable(entry: RunPluginServerUnavailable): string {
-  const who = entry.pluginName ?? entry.pluginVersionId;
-  switch (entry.reason) {
-    case "disabled":
-      return `"${who}" is disabled`;
-    case "uninstalled":
-      return `"${who}" was uninstalled`;
-    case "not_found":
-      return `"${who}" no longer exists in this project`;
-    case "not_ready":
-      return `"${who}" has not finished importing`;
-    case "server_missing":
-      return `"${who}" no longer provides its server${
-        entry.componentKey ? ` "${entry.componentKey}"` : ""
-      }`;
-    case "unsupported_placement":
-      return `"${who}" provides a server that can't run in a hosted journey`;
-    case "unresolvable_scope":
-      return `"${who}" could not be resolved in this project`;
-    default:
-      return `"${who}" is unavailable (${entry.reason})`;
+/** Re-wrap a shared-core failure without altering its (journey-worded) message. */
+function asJourneyError(error: unknown): unknown {
+  if (
+    error instanceof RunPluginServersUnavailableError &&
+    !(error instanceof JourneyPluginServersUnavailableError)
+  ) {
+    return new JourneyPluginServersUnavailableError(error.message);
   }
+  return error;
 }
 
 /**
@@ -111,6 +95,26 @@ export async function resolveTargetPluginServerIds(
     snapshotPluginServerIds?: string[];
   }
 ): Promise<string[]> {
+  return (await resolveTargetPluginServers(getConvexClient, args)).map(
+    (server) => server.serverId
+  );
+}
+
+/**
+ * The same re-gate, returning the RICH rows (plugin id / version / name /
+ * component key) rather than bare ids. Internal for now: the journey connect
+ * path needs only the ids, and a synthetic session's plugin provenance is
+ * derived server-side by Convex from the run snapshot (BE-5), never sent up
+ * from here.
+ */
+async function resolveTargetPluginServers(
+  getConvexClient: () => ConvexHttpClient,
+  args: {
+    runId: string;
+    targetId?: string;
+    snapshotPluginServerIds?: string[];
+  }
+): Promise<RunPluginServer[]> {
   const pinned = args.snapshotPluginServerIds ?? [];
   if (pinned.length === 0) return [];
 
@@ -123,85 +127,45 @@ export async function resolveTargetPluginServerIds(
     );
   }
 
-  let raw: unknown;
   try {
-    raw = await getConvexClient().query(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- string
-      // function refs are the established inspector→Convex pattern (see
-      // services/environments/resolve.ts); there is no codegen here.
-      "journeyRuns:resolveJourneyRunPluginServersForExecution" as any,
-      { runId: args.runId, targetId: args.targetId }
+    const raw = (await queryRunPluginResolution(
+      getConvexClient,
+      "journeyRuns:resolveJourneyRunPluginServersForExecution",
+      { runId: args.runId, targetId: args.targetId },
+      "This deployment can't verify pinned plugins yet, so the journey was stopped rather than run without them. Retry after the backend deploys."
+    )) as JourneyRunPluginServerResolution | null;
+
+    // `null` is the backend's "no answer" (run gone, or this target isn't in
+    // the run) — deliberately NOT the same shape as "no plugins".
+    if (!raw || !Array.isArray(raw.targets)) {
+      throw new JourneyPluginServersUnavailableError(
+        "This journey run's pinned plugins could not be resolved. Re-launch the journey."
+      );
+    }
+    const target = raw.targets[0];
+    const unrecognized =
+      "This journey target's pinned plugins could not be resolved (unrecognized response). Retry after the backend deploys, or re-launch the journey.";
+    assertRunPluginResolutionShape(target, unrecognized);
+
+    // A response for a DIFFERENT target would apply the wrong plugin set to
+    // this one. The backend echoes `targetId`; when it does, it must match.
+    const echoedTargetId = (target as { targetId?: string }).targetId;
+    if (echoedTargetId !== undefined && echoedTargetId !== args.targetId) {
+      throw new JourneyPluginServersUnavailableError(
+        "This journey target's pinned plugins resolved against a different target. Re-launch the journey."
+      );
+    }
+
+    assertRunPluginResolutionUsable(target, {
+      surfaceNoun: "journey",
+      remedy: "Update the environment's plugin pins and re-launch.",
+    });
+    readRunPluginServerIds(
+      target,
+      "This journey target's pinned plugins resolved to an unrecognized server entry. Retry after the backend deploys, or re-launch the journey."
     );
+    return target.servers;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (/could not find public function/i.test(message)) {
-      throw new JourneyPluginServersUnavailableError(
-        "This deployment can't verify pinned plugins yet, so the journey was stopped rather than run without them. Retry after the backend deploys."
-      );
-    }
-    throw error;
+    throw asJourneyError(error);
   }
-
-  const resolution = raw as JourneyRunPluginServerResolution | null;
-  // `null` is the backend's "no answer" (run gone, or this target isn't in the
-  // run) — deliberately NOT the same shape as "no plugins".
-  if (!resolution || !Array.isArray(resolution.targets)) {
-    throw new JourneyPluginServersUnavailableError(
-      "This journey run's pinned plugins could not be resolved. Re-launch the journey."
-    );
-  }
-  const target = resolution.targets[0];
-
-  // Validate the SHAPE before trusting it. This crosses a deploy boundary, so
-  // an incompatible or truncated payload is a live possibility during skew —
-  // and a permissive read of one is indistinguishable from a clean all-clear.
-  // `{ targets: [{}] }` would satisfy every check above and then fall through
-  // three `?? []` defaults to "no plugins, proceed", silently shrinking the
-  // environment: the exact failure this whole module exists to prevent. The
-  // three arrays are REQUIRED, not optional-with-a-default, because an absent
-  // `unavailable` is "I didn't get told about problems", never "there are
-  // none".
-  if (
-    !target ||
-    !Array.isArray(target.servers) ||
-    !Array.isArray(target.unavailable) ||
-    !Array.isArray(target.droppedSnapshotServerIds)
-  ) {
-    throw new JourneyPluginServersUnavailableError(
-      "This journey target's pinned plugins could not be resolved (unrecognized response). Retry after the backend deploys, or re-launch the journey."
-    );
-  }
-  // A response for a DIFFERENT target would apply the wrong plugin set to this
-  // one. The backend echoes `targetId`; when it does, it must match.
-  if (target.targetId !== undefined && target.targetId !== args.targetId) {
-    throw new JourneyPluginServersUnavailableError(
-      "This journey target's pinned plugins resolved against a different target. Re-launch the journey."
-    );
-  }
-
-  const problems = [
-    ...target.unavailable.map(describeUnavailable),
-    ...target.droppedSnapshotServerIds.map(
-      (id) => `a pinned plugin server (${id}) is no longer provided`
-    ),
-  ];
-  if (problems.length > 0) {
-    throw new JourneyPluginServersUnavailableError(
-      `This journey pins plugins that can't be used right now: ${problems.join(
-        "; "
-      )}. Update the environment's plugin pins and re-launch.`
-    );
-  }
-
-  // Each entry must actually carry an id. A malformed row would otherwise map
-  // to `undefined` and be handed to the connection manager as a server.
-  return target.servers.map((server) => {
-    const serverId = server?.serverId;
-    if (typeof serverId !== "string" || serverId.length === 0) {
-      throw new JourneyPluginServersUnavailableError(
-        "This journey target's pinned plugins resolved to an unrecognized server entry. Retry after the backend deploys, or re-launch the journey."
-      );
-    }
-    return serverId;
-  });
 }
