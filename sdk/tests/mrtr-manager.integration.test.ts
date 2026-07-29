@@ -142,3 +142,110 @@ describe("MCPClientManager × modern MRTR fixture over HTTP", () => {
     );
   });
 });
+
+describe("post-negotiation capability re-resolution (eraCapabilities.modern)", () => {
+  let served: ServedFixture;
+  let manager: MCPClientManager;
+
+  beforeEach(async () => {
+    served = await serveFixture();
+    manager = new MCPClientManager();
+  });
+
+  afterEach(async () => {
+    await manager.disconnectAllServers().catch(() => {});
+    await served.close();
+  });
+
+  it("applies the overlay after AUTO negotiation lands modern (url-mode elicitation)", async () => {
+    // The bug this seam fixes: capabilities resolve at connect time, before
+    // the era is known, so an UNPINNED connection had to advertise the
+    // conservative form-only set even when auto-negotiation then landed on
+    // 2026-07-28 — and every url-mode elicitation died at the server's
+    // mode-aware capability gate (-32021). The overlay is applied once the
+    // era is classified, so the same unpinned connection now declares
+    // `{form, url}` on every post-negotiation request envelope.
+    manager.setMrtrInputCollector("fixture", acceptAllCollector());
+    await manager.connectToServer("fixture", {
+      url: served.url,
+      // NO mcpProtocolVersion pin — auto era negotiation.
+      timeout: 10_000,
+      eraCapabilities: { modern: { elicitation: { form: {}, url: {} } } },
+    });
+
+    const info = manager.getInitializationInfo("fixture");
+    const caps = (info?.clientCapabilities ?? {}) as Record<string, unknown>;
+    expect(caps.elicitation).toEqual({ form: {}, url: {} });
+
+    const result = (await manager.executeTool("fixture", "confirm-url", {
+      topic: "x",
+    })) as { content: Array<{ text?: string }> };
+    expect(result.content[0]?.text).toBe("consent:accept");
+  });
+
+  it("without the overlay, an auto-negotiated url-mode elicitation still fails closed", async () => {
+    // Locks the baseline the seam widens FROM: a bare `elicitation: {}`
+    // declaration is form-only under the spec's back-compat rule, so the
+    // server refuses to embed a url-mode request (-32021). If this ever
+    // starts passing, the conservative base has silently widened.
+    manager.setMrtrInputCollector("fixture", acceptAllCollector());
+    await manager.connectToServer("fixture", {
+      url: served.url,
+      timeout: 10_000,
+    });
+    const error = await manager
+      .executeTool("fixture", "confirm-url", { topic: "x" })
+      .then(() => undefined, (e: unknown) => e);
+    expect((error as { code?: number })?.code).toBe(-32021);
+  });
+
+  it("ignores the overlay for an EXACT clientCapabilities set", async () => {
+    // Pinning an exact set means exactly that — the era overlay must not
+    // widen it, or the pin stops being a pin.
+    manager.setMrtrInputCollector("fixture", acceptAllCollector());
+    await manager.connectToServer("fixture", {
+      url: served.url,
+      timeout: 10_000,
+      clientCapabilities: { elicitation: {} },
+      eraCapabilities: { modern: { elicitation: { form: {}, url: {} } } },
+    });
+
+    const info = manager.getInitializationInfo("fixture");
+    const caps = (info?.clientCapabilities ?? {}) as Record<string, unknown>;
+    expect(caps.elicitation).toEqual({});
+
+    const error = await manager
+      .executeTool("fixture", "confirm-url", { topic: "x" })
+      .then(() => undefined, (e: unknown) => e);
+    expect((error as { code?: number })?.code).toBe(-32021);
+  });
+
+  it("gates the overlay's elicitation on a registered fulfiller (advertise=enforce)", async () => {
+    // An overlay must not smuggle `elicitation` past the runtime gate: with
+    // no collector and no handler, the widened set still advertises none.
+    await manager.connectToServer("fixture", {
+      url: served.url,
+      timeout: 10_000,
+      eraCapabilities: { modern: { elicitation: { form: {}, url: {} } } },
+    });
+    const info = manager.getInitializationInfo("fixture");
+    const caps = (info?.clientCapabilities ?? {}) as Record<string, unknown>;
+    expect(caps.elicitation).toBeUndefined();
+  });
+
+  it("also applies the overlay on a PINNED modern connection", async () => {
+    // The seam keys on the classified era, not on how the era was selected —
+    // a pin and a successful auto probe land in the same place.
+    manager.setMrtrInputCollector("fixture", acceptAllCollector());
+    await manager.connectToServer("fixture", {
+      url: served.url,
+      mcpProtocolVersion: "2026-07-28",
+      timeout: 10_000,
+      eraCapabilities: { modern: { elicitation: { form: {}, url: {} } } },
+    });
+    const result = (await manager.executeTool("fixture", "confirm-url", {
+      topic: "x",
+    })) as { content: Array<{ text?: string }> };
+    expect(result.content[0]?.text).toBe("consent:accept");
+  });
+});
