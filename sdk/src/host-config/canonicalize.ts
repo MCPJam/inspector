@@ -1458,6 +1458,17 @@ function readOAuthAuthModelValue(
     }
     out.push(entry as OAuthAuthModel);
   }
+  // "none" is the ABSENCE of an auth mechanism, not one more fallback beside
+  // the others (see the `authModel` doc comment): it is how "this client has
+  // no OAuth" is spelled. Paired with a concrete model the list asserts both
+  // at once, and HP-43's emulator has no defined behavior for a host that
+  // both does and does not authenticate. Rejected in any position — order
+  // cannot rescue the contradiction.
+  if (out.length > 1 && out.includes("none")) {
+    throw new Error(
+      `hostConfigV2: ${fieldName} contains "none" alongside other entries — "none" means the client has no auth at all, so it must be the sole entry`
+    );
+  }
   // Order is semantic (first = preferred) — preserve verbatim, do NOT sort.
   return out;
 }

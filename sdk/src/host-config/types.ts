@@ -437,6 +437,12 @@ export type HostConfigOAuthProfileV1 = {
    * convention as `mcpProfile.initialize.supportedProtocolVersions`).
    * Duplicates are rejected rather than deduped, since a repeated entry means
    * the caller's precedence list is ambiguous.
+   *
+   * `none` is the one entry that is not a mechanism but the absence of one —
+   * it is how "this client has no auth" is spelled (see `oauthProfile` on
+   * `HostConfigInputV2`). It is therefore rejected unless it is the SOLE
+   * entry: `["none", "oauth2-dcr"]` claims the client both does and does not
+   * authenticate, which is not a preference an emulator can honor.
    */
   authModel?: OAuthProfileEvidence<OAuthAuthModel[]>;
   extensions?: Record<string, unknown>;
@@ -599,7 +605,8 @@ export type HostConfigInputV2 = {
   mcpProfile?: HostConfigMcpProfileV1;
   // Versioned envelope for per-host OAuth handshake behavior. Optional; absent
   // means "this host's OAuth behavior has not been investigated yet" — which
-  // is distinct from "it has no OAuth", spelled `authModel: { value: "none" }`.
+  // is distinct from "it has no OAuth", spelled `authModel: { value: ["none"] }`
+  // — which, being a claim about the whole client, must be the list's sole entry.
   oauthProfile?: HostConfigOAuthProfileV1;
   // Per-server connection overrides scoped to this host config. Keys are
   // server IDs. Included in the canonical hash.

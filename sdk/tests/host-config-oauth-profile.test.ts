@@ -401,6 +401,48 @@ describe("canonicalizeOAuthProfile — field value rules", () => {
     ).toThrow(/duplicate entry "oauth2-dcr"/);
   });
 
+  it('accepts "none" as the sole authModel entry (how "no auth at all" is spelled)', () => {
+    // Contrast with an absent oauthProfile, which means "not investigated
+    // yet". This is the positive claim that the client authenticates nowhere.
+    const value = profile({
+      authModel: {
+        status: "verified",
+        value: ["none"],
+        source: "https://example.test",
+        capturedAt: "2026-07-29",
+      },
+    })?.authModel;
+    expect((value as { value: string[] }).value).toEqual(["none"]);
+  });
+
+  it('rejects "none" alongside a real auth model (contradictory claim)', () => {
+    // "none" is the absence of a mechanism, not one more fallback: this list
+    // asserts both "has no auth" and "does DCR", which no emulator can honor.
+    expect(() =>
+      profile({
+        authModel: {
+          status: "verified",
+          value: ["none", "oauth2-dcr"],
+          source: "https://example.test",
+          capturedAt: "2026-07-29",
+        },
+      })
+    ).toThrow(/contains "none" alongside other entries/);
+  });
+
+  it('rejects "none" in a trailing position too — order cannot rescue it', () => {
+    expect(() =>
+      profile({
+        authModel: {
+          status: "verified",
+          value: ["oauth2-dcr", "none"],
+          source: "https://example.test",
+          capturedAt: "2026-07-29",
+        },
+      })
+    ).toThrow(/must be the sole entry/);
+  });
+
   it("preserves authModel order verbatim — it encodes preference, not a set", () => {
     // Goose and Codex both try static headers/bearer BEFORE OAuth. Sorting
     // would invert that and make the emulator reach for the wrong path first.
