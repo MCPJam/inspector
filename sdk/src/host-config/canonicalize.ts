@@ -38,6 +38,7 @@ import {
   type OAuthDcrIdentity,
   type OAuthProfileEvidence,
   type OAuthProtocolVersionPinning,
+  type OAuthSpecVersionClaim,
   type McpAppsCapabilities,
   type McpToolResultBlobVisibility,
   type McpToolResultImageRenderingPolicy,
@@ -1372,20 +1373,59 @@ function readOAuthBooleanValue(raw: unknown, fieldName: string): boolean {
   return raw;
 }
 
+/**
+ * Spec revisions are validated by FORMAT, not against MCP_PROTOCOL_VERSIONS —
+ * that enum is what this inspector speaks, not what a third-party client
+ * implements. See the `OAuthSpecRevision` doc comment.
+ */
+function readOAuthSpecRevision(raw: unknown, fieldName: string): string {
+  return requireIsoCalendarDate(raw, fieldName);
+}
+
 function readOAuthSpecVersionValue(
   raw: unknown,
   fieldName: string
-): McpProtocolVersion {
-  // `isKnownProtocolVersion` narrows a `string`; these values arrive as
-  // `unknown` from untyped callers, so gate on the type first.
-  if (typeof raw !== "string" || !isKnownProtocolVersion(raw)) {
+): OAuthSpecVersionClaim {
+  if (!isPlainObject(raw)) {
     throw new Error(
-      `hostConfigV2: ${fieldName} must be one of ${MCP_PROTOCOL_VERSIONS.join(
-        ", "
-      )} (got "${String(raw)}")`
+      `hostConfigV2: ${fieldName} must be a plain object with a "basis" of "constant" or "behavioral"`
     );
   }
-  return raw;
+
+  if (raw.basis === "constant") {
+    assertOnlyKnownKeys(raw, new Set(["basis", "revisions"]), fieldName);
+    if (!Array.isArray(raw.revisions)) {
+      throw new Error(
+        `hostConfigV2: ${fieldName}.revisions must be a string[]`
+      );
+    }
+    if (raw.revisions.length === 0) {
+      throw new Error(
+        `hostConfigV2: ${fieldName}.revisions must be non-empty when basis is "constant"`
+      );
+    }
+    const revisions = raw.revisions.map((revision, i) =>
+      readOAuthSpecRevision(revision, `${fieldName}.revisions[${i}]`)
+    );
+    // A SET of implemented revisions — unlike `authModel`, order carries no
+    // meaning here, so dedupe + sort for hash stability.
+    return { basis: "constant", revisions: [...new Set(revisions)].sort() };
+  }
+
+  if (raw.basis === "behavioral") {
+    assertOnlyKnownKeys(raw, new Set(["basis", "minimumRevision"]), fieldName);
+    return {
+      basis: "behavioral",
+      minimumRevision: readOAuthSpecRevision(
+        raw.minimumRevision,
+        `${fieldName}.minimumRevision`
+      ),
+    };
+  }
+
+  throw new Error(
+    `hostConfigV2: ${fieldName}.basis must be "constant" or "behavioral"`
+  );
 }
 
 function readOAuthAuthModelValue(
@@ -1441,10 +1481,9 @@ function readOAuthProtocolVersionPinningValue(
   }
   if (mode === "pinned") {
     assertOnlyKnownKeys(raw, new Set(["mode", "version"]), fieldName);
-    const version = readOAuthSpecVersionValue(
-      raw.version,
-      `${fieldName}.version`
-    );
+    // Format-validated, not enum-checked: a client can pin a revision this
+    // inspector does not speak (rmcp pins 2024-11-05 on OAuth discovery).
+    const version = readOAuthSpecRevision(raw.version, `${fieldName}.version`);
     return { mode: "pinned", version };
   }
   throw new Error(

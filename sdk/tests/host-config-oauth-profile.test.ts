@@ -276,28 +276,75 @@ describe("canonicalizeOAuthProfile — capturedAt", () => {
 });
 
 describe("canonicalizeOAuthProfile — field value rules", () => {
-  it("enforces the closed protocol-version enum on oauthSpecVersion", () => {
-    expect(() =>
-      profile({
-        oauthSpecVersion: {
-          status: "verified",
-          value: "2024-11-05" as never,
-          source: "https://example.test",
-          capturedAt: "2026-07-29",
-        },
-      })
-    ).toThrow(/must be one of 2025-03-26, 2025-06-18, 2025-11-25, 2026-07-28/);
+  const specVersion = (value: unknown) =>
+    profile({
+      oauthSpecVersion: {
+        status: "verified",
+        value,
+        source: "https://example.test",
+        capturedAt: "2026-07-29",
+      } as never,
+    })?.oauthSpecVersion;
 
+  it("accepts revisions this inspector does not itself speak", () => {
+    // The whole reason oauthSpecVersion is NOT McpProtocolVersion: Cline's
+    // bundled SDK supports 2024-11-05 and 2024-10-07, and rmcp pins
+    // 2024-11-05 on OAuth discovery. Enum membership would make real, sourced
+    // findings unrecordable.
+    const value = specVersion({
+      basis: "constant",
+      revisions: ["2024-10-07", "2024-11-05"],
+    })?.value as { revisions: string[] };
+    expect(value.revisions).toEqual(["2024-10-07", "2024-11-05"]);
+  });
+
+  it("still rejects a revision that is not a real calendar date", () => {
+    expect(() =>
+      specVersion({ basis: "constant", revisions: ["2025-02-31"] })
+    ).toThrow(/is not a real date/);
+    expect(() => specVersion({ basis: "constant", revisions: ["v2"] })).toThrow(
+      /must be an ISO calendar date/
+    );
+  });
+
+  it("dedupes and sorts a constant revision set (order is not semantic here)", () => {
+    // Contrast with authModel, where order IS semantic. A multi-revision
+    // client implements a SET; two orderings must hash identically.
+    const a = specVersion({
+      basis: "constant",
+      revisions: ["2025-11-25", "2025-03-26", "2025-11-25"],
+    });
+    const b = specVersion({
+      basis: "constant",
+      revisions: ["2025-03-26", "2025-11-25"],
+    });
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+
+  it("requires a non-empty revision set on the constant arm", () => {
+    expect(() => specVersion({ basis: "constant", revisions: [] })).toThrow(
+      /revisions must be non-empty when basis is "constant"/
+    );
+  });
+
+  it("records a behavioral finding as a FLOOR, not an exact value", () => {
+    // VS Code has no revision constant anywhere in its source. The verified
+    // claim is "at least this revision", which is why the arms are distinct.
     expect(
-      profile({
-        oauthSpecVersion: {
-          status: "verified",
-          value: "2025-03-26",
-          source: "https://example.test",
-          capturedAt: "2026-07-29",
-        },
-      })?.oauthSpecVersion?.status
-    ).toBe("verified");
+      specVersion({ basis: "behavioral", minimumRevision: "2025-06-18" })?.value
+    ).toEqual({ basis: "behavioral", minimumRevision: "2025-06-18" });
+  });
+
+  it("keeps the two arms from bleeding into each other", () => {
+    expect(() =>
+      specVersion({ basis: "behavioral", revisions: ["2025-06-18"] })
+    ).toThrow(/revisions is not supported/);
+    expect(() =>
+      specVersion({ basis: "constant", minimumRevision: "2025-06-18" })
+    ).toThrow(/minimumRevision is not supported/);
+    expect(() => specVersion({ basis: "guessed" })).toThrow(
+      /basis must be "constant" or "behavioral"/
+    );
   });
 
   it("enforces the closed authModel enum on every entry", () => {
@@ -399,7 +446,22 @@ describe("canonicalizeOAuthProfile — field value rules", () => {
           capturedAt: "2026-07-29",
         },
       })
-    ).toThrow(/must be one of 2025-03-26/);
+    ).toThrow(/version must be an ISO calendar date/);
+  });
+
+  it("accepts a pinned version outside the versions we speak", () => {
+    // rmcp hardcodes MCP-Protocol-Version: 2024-11-05 on OAuth discovery,
+    // which both Codex and Goose inherit. Enum-checking would erase it.
+    expect(
+      profile({
+        protocolVersionPinning: {
+          status: "verified",
+          value: { mode: "pinned", version: "2024-11-05" },
+          source: "rmcp auth.rs:2623",
+          capturedAt: "2026-07-29",
+        },
+      })?.protocolVersionPinning?.value
+    ).toEqual({ mode: "pinned", version: "2024-11-05" });
   });
 
   it("rejects a version when protocolVersionPinning is negotiated", () => {

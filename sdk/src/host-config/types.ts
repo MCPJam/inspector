@@ -340,11 +340,48 @@ export const OAUTH_AUTH_MODELS = [
 export type OAuthAuthModel = (typeof OAUTH_AUTH_MODELS)[number];
 
 /**
+ * An MCP authorization-spec revision, as its `YYYY-MM-DD` stamp.
+ *
+ * Deliberately NOT `McpProtocolVersion`. That enum is the set of revisions
+ * *this inspector speaks*, which is a different set from the revisions a
+ * third-party client implements: Cline's bundled SDK supports `2024-11-05`
+ * and `2024-10-07`, and `rmcp` pins `2024-11-05` on OAuth discovery — none of
+ * which are members. Reusing the enum silently made real, sourced findings
+ * unrecordable. Validated by FORMAT (a real calendar date), not membership,
+ * so a client on an older or newer revision than we support is still
+ * expressible.
+ */
+export type OAuthSpecRevision = string;
+
+/**
+ * What we actually know about a client's OAuth spec revision.
+ *
+ * Two arms, because the evidence comes in two genuinely different strengths
+ * and collapsing them would overstate the weaker one:
+ *
+ *   `constant`   — a literal revision string exists in the client's source.
+ *                  `revisions` is the EXACT set it implements (clients are
+ *                  often multi-revision: MCPJam ships four state machines).
+ *   `behavioral` — no revision constant exists anywhere in the client (this
+ *                  is the real state of VS Code), so the revision is inferred
+ *                  from observed OAuth shape — e.g. an RFC 9728 PRM ladder
+ *                  implies 2025-06-18 or later. `minimumRevision` is a FLOOR,
+ *                  NOT an exact value.
+ *
+ * Keeping the floor distinct from the exact set is what lets a behavioral
+ * finding be recorded as `verified` honestly: the verified claim is "at least
+ * this revision", not "exactly this revision".
+ */
+export type OAuthSpecVersionClaim =
+  | { basis: "constant"; revisions: OAuthSpecRevision[] }
+  | { basis: "behavioral"; minimumRevision: OAuthSpecRevision };
+
+/**
  * Whether the client hardcodes `MCP-Protocol-Version` or negotiates it.
  * Discriminated so "pinned" cannot be recorded without the pinned value.
  */
 export type OAuthProtocolVersionPinning =
-  | { mode: "pinned"; version: McpProtocolVersion }
+  | { mode: "pinned"; version: OAuthSpecRevision }
   | { mode: "negotiated" };
 
 /**
@@ -372,16 +409,18 @@ export type HostConfigOAuthProfileV1 = {
   /** RFC 8707: does the client send `resource` on /authorize + /token? */
   sendsResourceIndicator?: OAuthProfileEvidence<boolean>;
   /**
-   * Which MCP authorization spec revision the client implements. Drives the
-   * discovery ladder — notably, clients on `2025-03-26` assume same-origin
-   * AS endpoints. Modeled as the spec revision, NOT as a standalone
-   * "same-origin" quirk flag, so the behavior is derived from one fact
-   * instead of duplicated across two fields that can disagree.
+   * Which MCP authorization spec revision(s) the client's OAuth layer
+   * implements. Drives the discovery ladder — notably, clients on
+   * `2025-03-26` assume same-origin AS endpoints. Modeled as the spec
+   * revision, NOT as a standalone "same-origin" quirk flag, so the behavior
+   * is derived from one fact instead of duplicated across two fields that can
+   * disagree.
    *
-   * Reuses the `McpProtocolVersion` date vocabulary: MCP stamps auth-spec
-   * revisions with the same dates, and it buys closed-enum validation.
+   * This is the OAUTH layer only. The MCP layer's version lives in
+   * `protocolVersionPinning`, and the two genuinely disagree in the wild —
+   * Goose runs a PRM-era OAuth ladder while hard-pinning 2025-03-26 on MCP.
    */
-  oauthSpecVersion?: OAuthProfileEvidence<McpProtocolVersion>;
+  oauthSpecVersion?: OAuthProfileEvidence<OAuthSpecVersionClaim>;
   protocolVersionPinning?: OAuthProfileEvidence<OAuthProtocolVersionPinning>;
   dcrIdentity?: OAuthProfileEvidence<OAuthDcrIdentity>;
   /**

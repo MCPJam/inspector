@@ -48,6 +48,8 @@ export type {
   OAuthProfileEvidence,
   OAuthProfileEvidenceStatus,
   OAuthProtocolVersionPinning,
+  OAuthSpecRevision,
+  OAuthSpecVersionClaim,
   HostConfigConnectionDefaults,
   CspDomainSet,
   McpProtocolVersion,
