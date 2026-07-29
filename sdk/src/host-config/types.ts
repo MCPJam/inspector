@@ -322,12 +322,21 @@ export type OAuthProfileEvidence<T> =
 
 export const OAUTH_AUTH_MODELS = [
   "oauth2-dcr",
+  "oauth2-cimd",
   "oauth2-preregistered",
   "api-key",
   "none",
 ] as const;
 
-/** How a client authenticates to an MCP server. */
+/**
+ * One way a client can authenticate to an MCP server.
+ *
+ * `oauth2-cimd` (Client ID Metadata Documents) is kept distinct from
+ * `oauth2-dcr`: both obtain a client identity, but DCR self-asserts metadata
+ * to a `registration_endpoint` (RFC 7591) while CIMD anchors identity to a
+ * fetchable URL. A server that supports one does not necessarily support the
+ * other, so collapsing them would lose the distinction the emulator needs.
+ */
 export type OAuthAuthModel = (typeof OAUTH_AUTH_MODELS)[number];
 
 /**
@@ -375,7 +384,22 @@ export type HostConfigOAuthProfileV1 = {
   oauthSpecVersion?: OAuthProfileEvidence<McpProtocolVersion>;
   protocolVersionPinning?: OAuthProfileEvidence<OAuthProtocolVersionPinning>;
   dcrIdentity?: OAuthProfileEvidence<OAuthDcrIdentity>;
-  authModel?: OAuthProfileEvidence<OAuthAuthModel>;
+  /**
+   * Every auth model the client supports, **in preference order** — the first
+   * entry is what it reaches for first.
+   *
+   * A list rather than a single value because real clients are almost never
+   * single-mode: Claude advertises six paths, Slack four, and both Codex and
+   * Goose try static headers/bearer BEFORE falling back to OAuth on a 401.
+   * Recording only a primary mode would discard the fallbacks an emulator has
+   * to reproduce, and recording an unordered set would discard the precedence.
+   *
+   * Order is therefore semantic and is preserved verbatim — NOT sorted (same
+   * convention as `mcpProfile.initialize.supportedProtocolVersions`).
+   * Duplicates are rejected rather than deduped, since a repeated entry means
+   * the caller's precedence list is ambiguous.
+   */
+  authModel?: OAuthProfileEvidence<OAuthAuthModel[]>;
   extensions?: Record<string, unknown>;
 };
 

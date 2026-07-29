@@ -54,7 +54,7 @@ describe("canonicalizeOAuthProfile — legacy compatibility", () => {
         profileVersion: 1,
         authModel: {
           status: "verified",
-          value: "oauth2-dcr",
+          value: ["oauth2-dcr"],
           source: "https://example.test/src/auth.ts#L1",
           capturedAt: "2026-07-29",
         },
@@ -300,17 +300,93 @@ describe("canonicalizeOAuthProfile — field value rules", () => {
     ).toBe("verified");
   });
 
-  it("enforces the closed authModel enum", () => {
+  it("enforces the closed authModel enum on every entry", () => {
     expect(() =>
       profile({
         authModel: {
           status: "verified",
-          value: "magic" as never,
+          value: ["oauth2-dcr", "magic"] as never,
           source: "https://example.test",
           capturedAt: "2026-07-29",
         },
       })
-    ).toThrow(/must be one of oauth2-dcr, oauth2-preregistered, api-key, none/);
+    ).toThrow(
+      /authModel\.value\[1\] must be one of oauth2-dcr, oauth2-cimd, oauth2-preregistered, api-key, none/
+    );
+  });
+
+  it("rejects a bare authModel string (it is a preference list)", () => {
+    expect(() =>
+      profile({
+        authModel: {
+          status: "verified",
+          value: "oauth2-dcr" as never,
+          source: "https://example.test",
+          capturedAt: "2026-07-29",
+        },
+      })
+    ).toThrow(/must be a non-empty array of auth models in preference order/);
+  });
+
+  it("rejects an empty authModel list", () => {
+    expect(() =>
+      profile({
+        authModel: {
+          status: "verified",
+          value: [] as never,
+          source: "https://example.test",
+          capturedAt: "2026-07-29",
+        },
+      })
+    ).toThrow(/must be non-empty when set/);
+  });
+
+  it("rejects duplicate authModel entries (ambiguous precedence)", () => {
+    expect(() =>
+      profile({
+        authModel: {
+          status: "verified",
+          value: ["oauth2-dcr", "api-key", "oauth2-dcr"],
+          source: "https://example.test",
+          capturedAt: "2026-07-29",
+        },
+      })
+    ).toThrow(/duplicate entry "oauth2-dcr"/);
+  });
+
+  it("preserves authModel order verbatim — it encodes preference, not a set", () => {
+    // Goose and Codex both try static headers/bearer BEFORE OAuth. Sorting
+    // would invert that and make the emulator reach for the wrong path first.
+    const value = profile({
+      authModel: {
+        status: "verified",
+        value: ["api-key", "oauth2-dcr"],
+        source: "https://example.test",
+        capturedAt: "2026-07-29",
+      },
+    })?.authModel;
+    expect((value as { value: string[] }).value).toEqual([
+      "api-key",
+      "oauth2-dcr",
+    ]);
+  });
+
+  it("hashes two different preference orders distinctly", async () => {
+    const mk = (value: string[]) =>
+      base({
+        oauthProfile: {
+          profileVersion: 1,
+          authModel: {
+            status: "verified",
+            value: value as never,
+            source: "https://example.test",
+            capturedAt: "2026-07-29",
+          },
+        },
+      });
+    expect(await hash(mk(["api-key", "oauth2-dcr"]))).not.toBe(
+      await hash(mk(["oauth2-dcr", "api-key"]))
+    );
   });
 
   it("requires a version when protocolVersionPinning is pinned", () => {
@@ -417,7 +493,7 @@ describe("canonicalizeOAuthProfile — hash stability", () => {
   const full: Omit<HostConfigOAuthProfileV1, "profileVersion"> = {
     authModel: {
       status: "verified",
-      value: "oauth2-dcr",
+      value: ["oauth2-dcr"],
       source: "https://example.test/a",
       capturedAt: "2026-07-29",
     },
@@ -479,7 +555,7 @@ describe("canonicalizeOAuthProfile — hash stability", () => {
         profileVersion: 1,
         authModel: {
           status: "verified",
-          value: "none",
+          value: ["none"],
           source: "  https://example.test  ",
           capturedAt: "2026-07-29",
         },
@@ -490,7 +566,7 @@ describe("canonicalizeOAuthProfile — hash stability", () => {
         profileVersion: 1,
         authModel: {
           status: "verified",
-          value: "none",
+          value: ["none"],
           source: "https://example.test",
           capturedAt: "2026-07-29",
         },

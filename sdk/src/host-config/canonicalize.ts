@@ -1391,13 +1391,35 @@ function readOAuthSpecVersionValue(
 function readOAuthAuthModelValue(
   raw: unknown,
   fieldName: string
-): OAuthAuthModel {
-  if (typeof raw !== "string" || !OAUTH_AUTH_MODEL_SET.has(raw)) {
+): OAuthAuthModel[] {
+  if (!Array.isArray(raw)) {
     throw new Error(
-      `hostConfigV2: ${fieldName} must be one of ${OAUTH_AUTH_MODELS.join(", ")}`
+      `hostConfigV2: ${fieldName} must be a non-empty array of auth models in preference order`
     );
   }
-  return raw as OAuthAuthModel;
+  if (raw.length === 0) {
+    throw new Error(
+      `hostConfigV2: ${fieldName} must be non-empty when set (omit the field instead)`
+    );
+  }
+  const out: OAuthAuthModel[] = [];
+  for (const [i, entry] of raw.entries()) {
+    if (typeof entry !== "string" || !OAUTH_AUTH_MODEL_SET.has(entry)) {
+      throw new Error(
+        `hostConfigV2: ${fieldName}[${i}] must be one of ${OAUTH_AUTH_MODELS.join(", ")}`
+      );
+    }
+    // Reject rather than dedupe: a repeat makes the precedence list ambiguous,
+    // and silently collapsing it would hide the caller's mistake.
+    if (out.includes(entry as OAuthAuthModel)) {
+      throw new Error(
+        `hostConfigV2: ${fieldName} contains duplicate entry "${entry}" — the preference order must be unambiguous`
+      );
+    }
+    out.push(entry as OAuthAuthModel);
+  }
+  // Order is semantic (first = preferred) — preserve verbatim, do NOT sort.
+  return out;
 }
 
 function readOAuthProtocolVersionPinningValue(
