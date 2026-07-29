@@ -126,6 +126,45 @@ describe("scrubLogPayload", () => {
       }
     });
 
+    // `SECRET_PARAM_LIKE` stops at the first whitespace — right for a query
+    // param, wrong for a header, where it redacted only the scheme word and
+    // left the credential. `Bearer` was covered incidentally by TOKEN_LIKE;
+    // these schemes were not.
+    it("redacts the whole Authorization header value for any scheme", () => {
+      const credentials: Array<[string, string]> = [
+        ["Basic", "dXNlcjpwYXNz"],
+        ["Digest", "username=alice, response=deadbeef"],
+        ["Negotiate", "YIIZkAYGKwYBBQUCoIIZ"],
+        ["Bearer", "abc.def.ghi"],
+      ];
+
+      for (const [scheme, credential] of credentials) {
+        const result = scrubLogPayload({
+          message: `Authorization: ${scheme} ${credential}`,
+        }) as any;
+        expect(result.message, `${scheme} leaked`).not.toContain(credential);
+        expect(result.message).toBe("Authorization: [redacted]");
+      }
+    });
+
+    it("does not swallow siblings of a JSON-embedded Authorization header", () => {
+      const result = scrubLogPayload({
+        message: '{"authorization":"Basic dXNlcjpwYXNz","keep":"me"}',
+      }) as any;
+
+      expect(result.message).not.toContain("dXNlcjpwYXNz");
+      expect(result.message).toContain('"keep":"me"');
+    });
+
+    it("still redacts authorization as a URL query param", () => {
+      const result = scrubLogPayload({
+        message: "https://h/mcp?authorization=urlsecret&x=1",
+      }) as any;
+
+      expect(result.message).not.toContain("urlsecret");
+      expect(result.message).toBe("https://h/mcp?authorization=[redacted]&x=1");
+    });
+
     it("redacts key=value and key: value secret assignments", () => {
       const result = scrubLogPayload({
         message: 'connect failed (token=abc123, client_secret: "s3cr3t")',

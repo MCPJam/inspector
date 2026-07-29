@@ -20,6 +20,18 @@ const FORBIDDEN_KEY_SUBSTRINGS = [
 
 const ALLOWLISTED_KEYS = new Set(["emaildomain"]);
 
+// A full `Authorization:` header value, whatever the scheme. `SECRET_PARAM_LIKE`
+// below stops at the first whitespace, which is correct for a query param but
+// leaves a header's credential exposed: `Authorization: Basic dXNlcjpwYXNz`
+// redacted only the word "Basic". `Bearer` survived that gap purely because
+// TOKEN_LIKE happened to catch it; `Basic`, `Digest` and `Negotiate` did not.
+// Consumes to end of line, stopping at a quote so a JSON-embedded header
+// (`{"authorization":"Basic …","keep":"me"}`) doesn't swallow its siblings.
+// Runs FIRST so the whole value is gone before any narrower pattern nibbles it.
+// The optional quote before the colon matters for the JSON spelling
+// (`"authorization":"Basic …"`), where the key's closing quote sits between
+// the name and the separator.
+const AUTH_HEADER_LIKE = /\b(authorization["']?\s*:\s*)["']?[^\n\r"'`]+/gi;
 const TOKEN_LIKE = /\bBearer\s+[A-Za-z0-9._\-+/=]+\b/gi;
 const EMAIL_LIKE = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
 const SK_KEY_LIKE = /\bsk-[A-Za-z0-9]{16,}\b/g;
@@ -50,6 +62,7 @@ function isForbiddenKey(key: string): boolean {
 
 function scrubString(s: string): string {
   return s
+    .replace(AUTH_HEADER_LIKE, "$1[redacted]")
     .replace(TOKEN_LIKE, "Bearer [redacted-token]")
     .replace(JWT_LIKE, "[redacted-jwt]")
     .replace(URL_BASIC_AUTH_LIKE, "$1[redacted]@")
