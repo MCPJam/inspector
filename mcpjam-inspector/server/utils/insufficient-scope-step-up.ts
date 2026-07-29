@@ -20,6 +20,27 @@ export type ScopeStepUpObserverOptions = {
 };
 
 /**
+ * Convert a thrown MCP tool error into the actionable, serializable step-up
+ * payload shared by both in-process tools and the harness proxy.
+ */
+export function scopeStepUpInfoFromToolError(
+  context: ScopeStepUpToolError,
+): InsufficientScopeInfo | undefined {
+  const challenge = extractInsufficientScopeChallenge(context.error);
+  if (
+    !challenge ||
+    (!challenge.requiredScope?.trim() && !challenge.resourceMetadataUrl?.trim())
+  ) {
+    return undefined;
+  }
+  return {
+    serverId: context.serverId,
+    ...(context.toolCallId ? { toolCallId: context.toolCallId } : {}),
+    ...challenge,
+  };
+}
+
+/**
  * Observe in-process chat tool failures and surface actionable SEP-2350 scope
  * challenges before the AI SDK turns them into model-facing error text.
  *
@@ -27,9 +48,9 @@ export type ScopeStepUpObserverOptions = {
  * stream starts. Tool errors are always rethrown so this wrapper only observes
  * execution; the existing tool-loop error handling remains authoritative.
  *
- * Contract boundary: harness MCP-server tools execute out of process through
- * the generated `.mcp.json`, not through this ToolSet. Supporting scope step-up
- * there requires a correlated harness-proxy-to-chat side channel.
+ * Harness MCP-server tools execute out of process through the generated
+ * `.mcp.json`; their proxy path calls {@link scopeStepUpInfoFromToolError}
+ * directly and forwards the result through the harness turn bridge.
  */
 export function wrapToolsWithScopeStepUp<TTools extends ToolSet>(
   tools: TTools,
@@ -53,13 +74,12 @@ export function wrapToolsWithScopeStepUp<TTools extends ToolSet>(
               const toolCallId = options?.toolCallId;
               observerOptions.onToolError?.({ error, serverId, toolCallId });
 
-              const challenge = extractInsufficientScopeChallenge(error);
-              if (
-                challenge &&
-                (challenge.requiredScope?.trim() ||
-                  challenge.resourceMetadataUrl?.trim())
-              ) {
-                const info = { serverId, toolCallId, ...challenge };
+              const info = scopeStepUpInfoFromToolError({
+                error,
+                serverId,
+                toolCallId,
+              });
+              if (info) {
                 if (observerOptions.emitInsufficientScope) {
                   observerOptions.emitInsufficientScope(info);
                 } else {

@@ -15,6 +15,8 @@
  * This is the pure generator. Resolving each server's tunnel URL + minting its
  * token is the caller's job — see `run-harness-turn`.
  */
+export const HARNESS_SCOPE_STEP_UP_CORRELATION_HEADER =
+  "X-MCPJam-Scope-Step-Up-Correlation";
 
 /** One server, resolved to its MCPJam proxy endpoint + per-turn token. */
 export interface HarnessProxyServerInput {
@@ -30,6 +32,8 @@ export interface HarnessProxyServerInput {
    * tunnel's `?k=` secret is the auth (`adapter-http` is validate-when-present).
    */
   proxyToken?: string;
+  /** Opaque live-turn id used only to route proxy-observed scope challenges. */
+  scopeStepUpCorrelationId?: string;
 }
 
 /** A single Claude Code `.mcp.json` server entry (http transport). */
@@ -88,10 +92,20 @@ export function buildHarnessProxyMcpJson(
     mcpServers[key] = {
       type: "http",
       url: server.proxyUrl,
-      // Header only when a token was minted (hosted plane); the local plane is
-      // gated by the tunnel `?k=` and sends none.
-      ...(server.proxyToken
-        ? { headers: { "X-MCPJam-Proxy-Token": server.proxyToken } }
+      ...(server.proxyToken || server.scopeStepUpCorrelationId
+        ? {
+            headers: {
+              ...(server.proxyToken
+                ? { "X-MCPJam-Proxy-Token": server.proxyToken }
+                : {}),
+              ...(server.scopeStepUpCorrelationId
+                ? {
+                    [HARNESS_SCOPE_STEP_UP_CORRELATION_HEADER]:
+                      server.scopeStepUpCorrelationId,
+                  }
+                : {}),
+            },
+          }
         : {}),
     };
   }
