@@ -953,6 +953,11 @@ chatV2.post("/", async (c) => {
         ...(resolvedExecution.harness
           ? {
               harness: resolvedExecution.harness,
+              // SEP-2350 contract boundary: harness MCP-server tools execute
+              // out of process through `.mcp.json`, bypassing `allTools`.
+              // Supporting their scope challenges requires a correlated
+              // adapter-http → chat-stream side channel. Host-executed harness
+              // tools remain covered by the wrapper above.
               // LOCAL-MCP plane: this is an /api/mcp request (desktop), so the
               // harness reaches the private inspector via a tunnel landing on
               // adapter-http (the persistent singleton manager).

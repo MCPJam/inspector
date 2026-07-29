@@ -129,6 +129,44 @@ describe("wrapToolsWithScopeStepUp", () => {
     );
   });
 
+  it("shares extraction and gating with custom hosted observers", async () => {
+    const error = new InsufficientScopeError({
+      requiredScope: "bench:write",
+      errorDescription: "Write access required",
+    });
+    const onToolError = vi.fn();
+    const emitInsufficientScope = vi.fn();
+    const wrapped = wrapToolsWithScopeStepUp(
+      {
+        bench_write: {
+          inputSchema: {},
+          _serverId: "server-1",
+          execute: async () => {
+            throw error;
+          },
+        },
+      } as any,
+      () => null,
+      { onToolError, emitInsufficientScope },
+    );
+
+    await expect(
+      wrapped.bench_write.execute?.({}, { toolCallId: "call-1" } as any),
+    ).rejects.toBe(error);
+    expect(onToolError).toHaveBeenCalledWith({
+      error,
+      serverId: "server-1",
+      toolCallId: "call-1",
+    });
+    expect(emitInsufficientScope).toHaveBeenCalledWith({
+      serverId: "server-1",
+      toolCallId: "call-1",
+      requiredScope: "bench:write",
+      resourceMetadataUrl: undefined,
+      errorDescription: "Write access required",
+    });
+  });
+
   it("preserves successful results and tools without execute", async () => {
     const result = { content: [{ type: "text", text: "ok" }] };
     const withoutExecute = {
