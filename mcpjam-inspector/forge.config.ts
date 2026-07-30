@@ -70,11 +70,13 @@ const config: ForgeConfig = {
     appCategoryType: "public.app-category.developer-tools",
     executableName: "mcpjam-inspector",
     // Writes CFBundleURLTypes into the macOS Info.plist so LaunchServices
-    // knows the bundle owns mcpjam://. The runtime
-    // app.setAsDefaultProtocolClient("mcpjam") call in src/main.ts is what
-    // registers the scheme on Windows/Linux, but macOS only honors schemes
-    // declared in the bundle — without this, the browser leg of desktop
-    // sign-in has nowhere to hand the OAuth callback back to.
+    // knows the bundle owns mcpjam://. macOS only routes a scheme to a
+    // bundle that declares it, and the plist can't be modified at runtime:
+    // the app.setAsDefaultProtocolClient("mcpjam") call in src/main.ts
+    // registers the scheme on Windows (via the registry), while Linux
+    // resolves the handler from the installed .desktop entry. Without this
+    // declaration the browser leg of desktop sign-in has nowhere to hand
+    // the OAuth callback back to.
     protocols: [
       {
         name: "MCPJam Inspector",
