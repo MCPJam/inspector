@@ -140,6 +140,10 @@ import { useApiContext } from "./hooks/hosted/use-hosted-api-context";
 import { useLocalStateMigration } from "./hooks/use-local-state-migration";
 import { AppReadyProvider } from "./hooks/use-app-ready";
 import { useInspectorCommandBus } from "./hooks/use-inspector-command-bus";
+import {
+  driveScopeStepUp,
+  resolveScopeStepUpServer,
+} from "./lib/scope-step-up";
 import { HOSTED_MODE, NON_PROD_LOCKDOWN } from "./lib/config";
 import {
   createInspectorCommandClientError,
@@ -2120,7 +2124,23 @@ export default function App() {
       }
     }
   }, [appState.servers, handleDisconnect]);
-  useInspectorCommandBus();
+  const handleInspectorScopeStepUp = useCallback(
+    (event: {
+      serverId: string;
+      requiredScope?: string;
+      resourceMetadataUrl?: string;
+    }) => {
+      const server = resolveScopeStepUpServer(appState, {
+        serverId: event.serverId,
+      });
+      driveScopeStepUp(server, {
+        requiredScope: event.requiredScope,
+        resourceMetadataUrl: event.resourceMetadataUrl,
+      });
+    },
+    [appState],
+  );
+  useInspectorCommandBus({ onScopeStepUp: handleInspectorScopeStepUp });
   // MCPJam UI tools: registered in both modes for the in-app "Ask MCPJam"
   // agent (the registry's only consumer); the always-available side panel
   // drives whichever inspector surface is open, so registration lives at the
