@@ -6,6 +6,27 @@ icon: "bug"
 
 MCPJam Inspector gives you full visibility into every exchange between the inspector and your MCP server, across the Playground, Tools, Prompts, and Resources tabs.
 
+## MCP header tracing (2026-07-28)
+
+When connected to a `2026-07-28` server, the Tracing tab shows an **MCP headers** section for each HTTP exchange. Each mirrored `Mcp-*` header gets its own row with three columns: the header name, its wire value, and a verdict.
+
+The verdict tells you whether the header agrees with the request body it was copied from:
+
+| Verdict | Meaning |
+| --- | --- |
+| `✓ matches body` | Header value equals the body field it mirrors. |
+| `✕ body says <value> → -32020` | Header disagrees with the body — the server will return `-32020 HeaderMismatch`. |
+| `✕ not sent, body says <value> → -32020` | A required header was omitted — the server will return `-32020 HeaderMismatch`. |
+| `✕ does not decode → -32020` | `Mcp-Param-*` carries an invalid base64 sentinel. |
+| `not required here` | `Mcp-Name` is absent and not required for this method. |
+| `routing` / `session` / etc. | Header is outside the cross-checked set (legacy era or `Mcp-Session-Id`). |
+
+`Mcp-Name` is required only for `tools/call`, `resources/read`, `prompts/get`, `tasks/get`, `tasks/update`, and `tasks/cancel`. On any other method the absent header shows `not required here` rather than a blank, so you can tell the difference from a genuine mismatch.
+
+The **Other request headers** section below the MCP headers block omits the mirrored `Mcp-*` headers — they are already shown above with their verdicts, so hiding them avoids printing the same values twice.
+
+For connections on `2025-11-25` or earlier, the `Mcp-Method` and `Mcp-Name` headers are not mirrored by the protocol, so every header in the block shows the `routing` or `session` family label instead of a verdict.
+
 ## JSON-RPC logging
 
 Every tab that talks to a connected server renders a live JSON-RPC logger. Each entry records the direction (client → server or server → client), the method name, a timestamp, and the full request/response payload. Click an entry to expand and inspect.
