@@ -12,6 +12,7 @@ import {
   effectiveRunResult,
   executeClaimedCheck,
   outcomeForRunResult,
+  snapshotBelongsToAnotherCheck,
   LeaseLostError,
   startGithubChecksWorker,
   type CheckExecutionDeps,
@@ -855,5 +856,92 @@ describe("startGithubChecksWorker loop", () => {
     await flush(2);
     await handle.stop();
     expect(claim).not.toHaveBeenCalled();
+  });
+});
+
+describe("snapshotBelongsToAnotherCheck", () => {
+  // The dedicated suite is shared and `refreshSnapshot` rewrites its environment
+  // before the run freezes it, so two concurrent checks can interleave and one can
+  // end up evaluating the other's server. This cannot prevent that; it decides when
+  // the theft is PROVEN, because a verdict about somebody else's PR is worse than
+  // no verdict.
+  const clientWith = (snapshot: unknown) =>
+    ({
+      query: async () => ({ configSnapshot: { environment: snapshot } }),
+    } as unknown as Parameters<typeof snapshotBelongsToAnotherCheck>[0]);
+
+  it("passes a snapshot naming our own check", async () => {
+    const snapshot = {
+      servers: ["srv_1"],
+      serverBindings: [{ name: "gh-check-trig-1", id: "srv_1" }],
+    };
+    expect(
+      await snapshotBelongsToAnotherCheck(
+        clientWith(snapshot),
+        "run-1",
+        "trig-1"
+      )
+    ).toBe(false);
+  });
+
+  it("catches a snapshot naming a different check", async () => {
+    const snapshot = {
+      servers: ["srv_2"],
+      serverBindings: [{ name: "gh-check-trig-9", id: "srv_2" }],
+    };
+    expect(
+      await snapshotBelongsToAnotherCheck(
+        clientWith(snapshot),
+        "run-1",
+        "trig-1"
+      )
+    ).toBe(true);
+  });
+
+  it("passes when ours appears alongside another", async () => {
+    // A display list can carry stale entries; ours being present is what matters.
+    const snapshot = {
+      serverBindings: [
+        { name: "gh-check-trig-9", id: "srv_2" },
+        { name: "gh-check-trig-1", id: "srv_1" },
+      ],
+    };
+    expect(
+      await snapshotBelongsToAnotherCheck(
+        clientWith(snapshot),
+        "run-1",
+        "trig-1"
+      )
+    ).toBe(false);
+  });
+
+  it("proves nothing from a snapshot naming no check server", async () => {
+    // The snapshot's shape is the backend's, not this module's, so an unrecognised
+    // one must not fail every check.
+    expect(
+      await snapshotBelongsToAnotherCheck(
+        clientWith({ servers: ["srv_manual"] }),
+        "run-1",
+        "trig-1"
+      )
+    ).toBe(false);
+  });
+
+  it("proves nothing when there is no snapshot, or the query fails", async () => {
+    expect(
+      await snapshotBelongsToAnotherCheck(
+        clientWith(undefined),
+        "run-1",
+        "trig-1"
+      )
+    ).toBe(false);
+    const broken = {
+      query: async () => {
+        throw new Error("convex down");
+      },
+    } as unknown as Parameters<typeof snapshotBelongsToAnotherCheck>[0];
+    expect(await snapshotBelongsToAnotherCheck(broken, "run-1", "trig-1")).toBe(
+      false
+    );
   });
 });

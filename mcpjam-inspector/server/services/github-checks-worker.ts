@@ -660,6 +660,54 @@ async function runCompleted(
  * the suite's stored binding is never consulted — which is also why this suite
  * must never be launched from the UI.
  */
+/**
+ * Whether this run's frozen environment names a DIFFERENT check's server.
+ *
+ * The dedicated suite is shared, and `refreshSnapshot: true` rewrites its stored
+ * environment before the run-start mutation freezes it — two mutations, no
+ * atomicity. Two checks running at once (two workers, or two replicas of one) can
+ * therefore interleave as: A rewrites → B rewrites → A starts and freezes B's
+ * server. A would then evaluate the wrong PR's server, or fail when B deletes it,
+ * and either way report a verdict about somebody else's code.
+ *
+ * This does not fix that race — it detects the case it can prove. Every check names
+ * its server `gh-check-<triggerId>`, so:
+ *
+ *   - the snapshot mentions OUR trigger → ours, proceed;
+ *   - it mentions some other check's trigger and not ours → stolen, and the check
+ *     is abandoned as neutral rather than reporting a verdict from it;
+ *   - it mentions no `gh-check-` server at all → nothing is proven. The snapshot's
+ *     shape is not this module's contract to rely on, so an unrecognised one must
+ *     not fail every check. Proceed.
+ *
+ * Best effort by design: a query that fails proves nothing either, and must not
+ * turn into a verdict.
+ */
+export async function snapshotBelongsToAnotherCheck(
+  client: ReturnType<typeof createConvexClient>,
+  runId: string,
+  triggerId: string
+): Promise<boolean> {
+  let snapshot: unknown;
+  try {
+    const run = (await client.query("testSuites:getTestSuiteRun" as any, {
+      runId,
+    })) as { configSnapshot?: { environment?: unknown } } | null;
+    snapshot = run?.configSnapshot?.environment;
+  } catch {
+    return false;
+  }
+  if (snapshot === undefined || snapshot === null) return false;
+  // Serialized rather than walked: the snapshot carries servers, bindings and
+  // display copies in shapes owned by the backend, and a name match anywhere in it
+  // is the signal — the ids are unique per ephemeral server.
+  const named = [
+    ...JSON.stringify(snapshot).matchAll(/gh-check-([A-Za-z0-9_-]+)/g),
+  ].map((match) => match[1]);
+  if (named.length === 0) return false;
+  return !named.includes(triggerId);
+}
+
 async function defaultRunEvalSuite(args: {
   claimed: ClaimedGithubCheck;
   bearer: string;
@@ -711,6 +759,25 @@ async function defaultRunEvalSuite(args: {
     });
 
     const client = createConvexClient(args.bearer);
+
+    // The suite is SHARED by every check, and rewriting its environment then
+    // starting the run are two separate mutations. Another check's rewrite can
+    // land in between, so this run's frozen snapshot can name ITS ephemeral
+    // server instead of ours. Verified before anything is evaluated, because a
+    // verdict from a run that tested a different PR's server is worse than no
+    // verdict at all. See `snapshotBelongsToAnotherCheck` for what is provable.
+    if (
+      await snapshotBelongsToAnotherCheck(
+        client,
+        prepared.runId,
+        args.claimed.triggerId
+      )
+    ) {
+      throw new CheckStepError(
+        "infra_error",
+        "another check's server was snapshotted onto this run"
+      );
+    }
 
     try {
       await prepared.execute();
