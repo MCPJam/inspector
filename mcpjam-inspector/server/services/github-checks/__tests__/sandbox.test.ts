@@ -152,10 +152,20 @@ function okInitialize(): Response {
  * parseable document. All ASCII, so characters and bytes agree.
  */
 function cappedDocument(): string {
-  const answer = { jsonrpc: "2.0", id: 1, result: INITIALIZE_RESULT, pad: "" };
+  // The padding goes INSIDE `result`, where the result schema is loose. At the top
+  // level it would be a fourth key on a strict arm — an envelope the transport
+  // rejects, and one the probe therefore rejects too.
+  const answer = {
+    jsonrpc: "2.0",
+    id: 1,
+    result: { ...INITIALIZE_RESULT, pad: "" },
+  };
   const padding = PROBE_MAX_RESPONSE_BYTES - JSON.stringify(answer).length;
   if (padding <= 0) throw new Error("initialize fixture exceeds the probe cap");
-  const document = JSON.stringify({ ...answer, pad: "a".repeat(padding) });
+  const document = JSON.stringify({
+    ...answer,
+    result: { ...answer.result, pad: "a".repeat(padding) },
+  });
   if (document.length !== PROBE_MAX_RESPONSE_BYTES) {
     throw new Error(`padded to ${document.length}, not the cap`);
   }
@@ -985,6 +995,56 @@ describe("waitForMcpInitialize", () => {
     expect(
       await waitForMcpInitialize("https://box/mcp", { ...seams, fetchImpl })
     ).toBe(true);
+  });
+
+  it("does not accept an envelope mixing result with error", async () => {
+    // The result-response arm is `{ jsonrpc, id, result }` and it is strict, so an
+    // envelope carrying `error` as well matches no arm of the union and the
+    // transport throws on it. The result inside is irrelevant — the client never
+    // gets to look at it.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: INITIALIZE_RESULT,
+            error: { code: -32603, message: "also broken" },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 5,
+      })
+    ).toBe(false);
+  });
+
+  it("does not accept an envelope carrying an extra top-level key", async () => {
+    // Same rule, less obvious case: `.strict()` rejects any unknown key, not just a
+    // conflicting discriminator.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: INITIALIZE_RESULT,
+            method: "initialize",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 5,
+      })
+    ).toBe(false);
   });
 
   it("accepts an answer delivered in a JSON batch", async () => {

@@ -1038,14 +1038,13 @@ function carriesAcceptedAnswer(
  * throws for the client, so a batch carrying one is unusable however good its
  * siblings are.
  *
- * What is NOT modelled is `.strict()`. Every arm rejects unknown top-level keys,
- * and reproducing that means hand-copying each arm's exact key set. Fidelity there
- * is not reachable anyway — the schema is not exported from
- * `@modelcontextprotocol/client`, and `@modelcontextprotocol/core` is a transitive
- * dependency this module has no business importing — so what remains is a shade
- * LOOSER than the transport. That is the side to err on: the cost is a broken
- * server reaching us as a neutral `infra_error`, where being stricter would risk a
- * red X on a PR the eval run can drive.
+ * `.strict()` is modelled too: each arm's key set is small and fixed, so a sibling
+ * carrying an extra key — `result` next to `error` being the obvious one — matches
+ * no arm and throws for the client. Hand-copied out of necessity, since the schema
+ * is not exported from `@modelcontextprotocol/client` and
+ * `@modelcontextprotocol/core` is a transitive dependency this module has no
+ * business importing; the risk of that copy drifting is real but bounded, and the
+ * alternative was staying knowingly looser than the transport.
  */
 function batchCarriesAcceptedAnswer(
   batch: unknown[],
@@ -1073,11 +1072,22 @@ function isJsonRpcMessageShaped(value: unknown): boolean {
     error?: unknown;
   };
   if (message.jsonrpc !== "2.0") return false;
+  const keys = Object.keys(message);
   const hasId =
     typeof message.id === "string" ||
     (typeof message.id === "number" && Number.isInteger(message.id));
+  // Every arm is STRICT, so an arm matches only if the key set is within what it
+  // allows. That is what makes `result` next to `error` a violation rather than a
+  // curiosity, and it is why each branch below checks the keys and not just the
+  // presence of its discriminator.
+  const within = (allowed: readonly string[]) =>
+    keys.every((key) => allowed.includes(key));
   if (message.result !== undefined) {
-    return isPlainObject(message.result) && hasId;
+    return (
+      isPlainObject(message.result) &&
+      hasId &&
+      within(["jsonrpc", "id", "result"])
+    );
   }
   if (message.error !== undefined) {
     if (!isPlainObject(message.error)) return false;
@@ -1085,10 +1095,15 @@ function isJsonRpcMessageShaped(value: unknown): boolean {
     return (
       typeof error.code === "number" &&
       Number.isInteger(error.code) &&
-      typeof error.message === "string"
+      typeof error.message === "string" &&
+      within(["jsonrpc", "id", "error"])
     );
   }
-  return typeof message.method === "string";
+  // Request and notification differ only by `id`, and both allow `params`.
+  return (
+    typeof message.method === "string" &&
+    within(["jsonrpc", "id", "method", "params"])
+  );
 }
 
 /**
@@ -1447,8 +1462,20 @@ function jsonRpcResultFor(parsed: unknown, expectedId: number): object | null {
   };
   if (message.jsonrpc !== "2.0") return null;
   if (message.id !== expectedId) return null;
-  return isPlainObject(message.result) ? (message.result as object) : null;
+  if (!isPlainObject(message.result)) return null;
+  // The result-response arm is `{ jsonrpc, id, result }` and it is STRICT, so a
+  // fourth key means the envelope matches no arm of the union and the transport
+  // throws on it — `result` alongside `error` or `method` most obviously, but any
+  // extra key does it. An envelope the client cannot parse is not an answer,
+  // however good the result inside it looks, and accepting one would hand the PR's
+  // fault to us as a neutral `infra_error`.
+  return RESULT_RESPONSE_KEYS.length === Object.keys(message).length
+    ? (message.result as object)
+    : null;
 }
+
+/** Every key the strict result-response arm allows, and it requires all three. */
+const RESULT_RESPONSE_KEYS = ["jsonrpc", "id", "result"] as const;
 
 /** An object, and not an array — `typeof [] === "object"` alone is too loose. */
 function isPlainObject(value: unknown): boolean {
