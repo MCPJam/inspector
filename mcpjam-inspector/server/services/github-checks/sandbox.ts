@@ -1064,45 +1064,51 @@ function batchCarriesAcceptedAnswer(
  */
 function isJsonRpcMessageShaped(value: unknown): boolean {
   if (!isPlainObject(value)) return false;
-  const message = value as {
-    jsonrpc?: unknown;
-    id?: unknown;
-    method?: unknown;
-    result?: unknown;
-    error?: unknown;
-  };
+  const message = value as Record<string, unknown>;
   if (message.jsonrpc !== "2.0") return false;
   const keys = Object.keys(message);
-  const hasId =
-    typeof message.id === "string" ||
-    (typeof message.id === "number" && Number.isInteger(message.id));
-  // Every arm is STRICT, so an arm matches only if the key set is within what it
+  // Every arm is STRICT, so an arm matches only when the key set is within what it
   // allows. That is what makes `result` next to `error` a violation rather than a
-  // curiosity, and it is why each branch below checks the keys and not just the
-  // presence of its discriminator.
+  // curiosity, and why each branch checks keys and not just its discriminator.
   const within = (allowed: readonly string[]) =>
     keys.every((key) => allowed.includes(key));
+  // `RequestIdSchema` is `string | int` — `null` is not an id, and neither is a
+  // fractional number.
+  const idIsValid =
+    typeof message.id === "string" ||
+    (typeof message.id === "number" && Number.isInteger(message.id));
+  // `params` is a LOOSE object where it appears, so being an object is all of it.
+  const paramsAreShaped =
+    message.params === undefined || isPlainObject(message.params);
+
   if (message.result !== undefined) {
     return (
-      isPlainObject(message.result) &&
-      hasId &&
-      within(["jsonrpc", "id", "result"])
+      within(RESULT_RESPONSE_KEYS) && idIsValid && isPlainObject(message.result)
     );
   }
   if (message.error !== undefined) {
+    if (!within(["jsonrpc", "id", "error"])) return false;
+    // `id` is OPTIONAL on this arm, but a present one still has to be an id.
+    if (message.id !== undefined && !idIsValid) return false;
     if (!isPlainObject(message.error)) return false;
     const error = message.error as { code?: unknown; message?: unknown };
     return (
       typeof error.code === "number" &&
       Number.isInteger(error.code) &&
-      typeof error.message === "string" &&
-      within(["jsonrpc", "id", "error"])
+      typeof error.message === "string"
     );
   }
-  // Request and notification differ only by `id`, and both allow `params`.
+  if (typeof message.method !== "string") return false;
+  // Request when it carries an id, notification when it does not. The notification
+  // arm is strict and has no `id` at all, so a message with an INVALID id matches
+  // neither arm — it is not a notification with a stray key, and not a request.
+  if (message.id === undefined) {
+    return within(["jsonrpc", "method", "params"]) && paramsAreShaped;
+  }
   return (
-    typeof message.method === "string" &&
-    within(["jsonrpc", "id", "method", "params"])
+    within(["jsonrpc", "id", "method", "params"]) &&
+    idIsValid &&
+    paramsAreShaped
   );
 }
 

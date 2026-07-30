@@ -1116,6 +1116,93 @@ describe("waitForMcpInitialize", () => {
     ).toBe(false);
   });
 
+  it("does not accept a batch whose sibling has an invalid request id", async () => {
+    // `null` is not a `RequestIdSchema` value, and the notification arm is strict
+    // with no `id` at all — so this sibling matches neither arm, the transport's
+    // `.map` throws, and the batch (our answer with it) is discarded.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify([
+            { jsonrpc: "2.0", id: 1, result: INITIALIZE_RESULT },
+            { jsonrpc: "2.0", method: "ping", id: null },
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 5,
+      })
+    ).toBe(false);
+  });
+
+  it("does not accept a batch whose error sibling has an invalid id", async () => {
+    // The error arm's `id` is optional, but a PRESENT one still has to be an id.
+    // Same class as the request case, on the arm the finding did not name.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify([
+            { jsonrpc: "2.0", id: 1, result: INITIALIZE_RESULT },
+            { jsonrpc: "2.0", id: null, error: { code: -1, message: "x" } },
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 5,
+      })
+    ).toBe(false);
+  });
+
+  it("does not accept a batch whose sibling has non-object params", async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify([
+            { jsonrpc: "2.0", id: 1, result: INITIALIZE_RESULT },
+            { jsonrpc: "2.0", method: "ping", params: "nope" },
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 5,
+      })
+    ).toBe(false);
+  });
+
+  it("accepts a batch alongside a well-formed request sibling", async () => {
+    // The other direction: a server-initiated request with a real id and object
+    // params is a legal arm, so the batch parses and our answer is delivered.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify([
+            { jsonrpc: "2.0", id: 7, method: "roots/list", params: {} },
+            { jsonrpc: "2.0", id: 1, result: INITIALIZE_RESULT },
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 1_000,
+      })
+    ).toBe(true);
+  });
+
   it("accepts a batch alongside a notification and an error response", async () => {
     // The other direction: these siblings are all legal arms of the union — a
     // notification with no id, and an error response — so the batch parses and our
