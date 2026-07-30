@@ -2145,6 +2145,40 @@ export const runEvalSuiteWithAiSdk = async ({
 
 export type StreamEmit = (event: EvalStreamEvent) => void;
 
+/**
+ * COMP-17: resolve + seed this iteration's case attachments into the fresh
+ * sandbox, then splice the COMP-14 note into the case's first model turn.
+ * Shared by both iteration runners (local-BYOK + hosted) so the
+ * resolve→seed→note-injection sequence can't drift between them. Mutates
+ * `promptTurns` in place (each caller builds its own copy per iteration, so
+ * this stays iteration-local); fail-honest — a seed failure throws.
+ */
+async function seedAndAnnotateEvalAttachments(args: {
+  bearer: string;
+  runId: string;
+  testCaseId: string | undefined;
+  sandboxId: string;
+  promptTurns: PromptTurn[];
+  signal?: AbortSignal;
+}): Promise<void> {
+  const seeded = await seedEvalCaseAttachments({
+    bearer: args.bearer,
+    runId: args.runId,
+    testCaseId: args.testCaseId,
+    sandboxId: args.sandboxId,
+    ...(args.signal ? { signal: args.signal } : {}),
+  });
+  if (!seeded.note) return;
+  const firstModelTurnIndex = args.promptTurns.findIndex(
+    (t) => !isPinnedTurn(t)
+  );
+  if (firstModelTurnIndex < 0) return;
+  args.promptTurns[firstModelTurnIndex] = {
+    ...args.promptTurns[firstModelTurnIndex],
+    prompt: `${args.promptTurns[firstModelTurnIndex].prompt}\n\n${seeded.note}`,
+  };
+}
+
 // PR6: the single local (BYOK) iteration runner for BOTH quick-run modes.
 // `emit` present ⇒ streaming (SSE sinks built per turn); absent ⇒ batch (no
 // sinks → driveLocalEvalTurn runs headless via a no-op terminal). Replaces the
@@ -2530,26 +2564,14 @@ const runLocalIteration = async ({
         // first turn already sees the files. Fail-honest — a seed failure throws
         // (we're inside the try) and becomes a recorded failed iteration rather
         // than a silent run without the files.
-        const seeded = await seedEvalCaseAttachments({
+        await seedAndAnnotateEvalAttachments({
           bearer: convexAuthToken,
           runId: String(runId),
           testCaseId: test.testCaseId,
           sandboxId: evalSandbox.value.sandboxId,
+          promptTurns,
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
-        if (seeded.note) {
-          const firstModelTurnIndex = promptTurns.findIndex(
-            (t) => !isPinnedTurn(t)
-          );
-          if (firstModelTurnIndex >= 0) {
-            // Replace the slot (don't mutate the turn object) — promptTurns is
-            // freshly built per iteration, so this stays iteration-local.
-            promptTurns[firstModelTurnIndex] = {
-              ...promptTurns[firstModelTurnIndex],
-              prompt: `${promptTurns[firstModelTurnIndex].prompt}\n\n${seeded.note}`,
-            };
-          }
-        }
         prepared.allTools[EVAL_BASH_TOOL_NAME] = buildEvalBashTool({
           sandboxId: evalSandbox.value.sandboxId,
         });
@@ -3356,24 +3378,14 @@ const runHostedIterationWithBrowser = async (
       // COMP-17: seed the case's pinned attachments before exposing `bash`
       // (parity with the local-BYOK path). Fail-honest — a throw here is caught
       // below and persisted as a failed iteration, never a silent run.
-      const seeded = await seedEvalCaseAttachments({
+      await seedAndAnnotateEvalAttachments({
         bearer: convexAuthToken,
         runId: String(runId),
         testCaseId: test.testCaseId,
         sandboxId: evalSandbox.value.sandboxId,
+        promptTurns,
         ...(abortSignal ? { signal: abortSignal } : {}),
       });
-      if (seeded.note) {
-        const firstModelTurnIndex = promptTurns.findIndex(
-          (t) => !isPinnedTurn(t)
-        );
-        if (firstModelTurnIndex >= 0) {
-          promptTurns[firstModelTurnIndex] = {
-            ...promptTurns[firstModelTurnIndex],
-            prompt: `${promptTurns[firstModelTurnIndex].prompt}\n\n${seeded.note}`,
-          };
-        }
-      }
       prepared.allTools[EVAL_BASH_TOOL_NAME] = buildEvalBashTool({
         sandboxId: evalSandbox.value.sandboxId,
       });

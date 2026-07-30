@@ -137,7 +137,8 @@ export function buildAttachmentsNote(
  * `provisionEvalSandbox` and `buildEvalBashTool`: the box is fresh and nothing
  * runs before the files land. Matches the iteration's case by `testCaseId`
  * against the run's frozen snapshot. Returns the note to append (or `null` when
- * the case has no attachments); REJECTS if seeding fails (fail-honest).
+ * the case has no attachments); REJECTS if seeding fails, if the pin is gone, or
+ * if a `testCaseId` is provided but not found in the snapshot (fail-honest).
  */
 export async function seedEvalCaseAttachments(args: {
   bearer: string;
@@ -161,13 +162,25 @@ export async function seedEvalCaseAttachments(args: {
     );
   }
 
-  // Match this iteration's case by its frozen id. A case with no attachments
-  // (or no id match — every case is emitted, so a miss means id drift) simply
-  // seeds nothing; the common no-attachment path costs one cheap query.
-  const match = args.testCaseId
-    ? resolved.value.cases.find((c) => c.testCaseId === args.testCaseId)
-    : undefined;
-  const attachments = match?.attachments ?? [];
+  // Match this iteration's case by its frozen id. Every case the run was
+  // authored against is emitted here, even ones with zero attachments — so
+  // when a testCaseId IS provided, a miss means id drift, not "no
+  // attachments". Silently seeding nothing would let a case with attachments
+  // it was authored to rely on run file-less and still pass, exactly what
+  // this module's fail-honest contract exists to prevent — so fail loudly
+  // instead, same as a gone pin or an exceeded cap below. No testCaseId at
+  // all (e.g. an ad-hoc quick run not tied to a saved case) legitimately has
+  // no case to match and seeds nothing.
+  if (!args.testCaseId) return { note: null };
+  const match = resolved.value.cases.find(
+    (c) => c.testCaseId === args.testCaseId
+  );
+  if (!match) {
+    throw new Error(
+      `Could not find case "${args.testCaseId}" in this run's attachments snapshot — refusing to run it without checking for files it may rely on.`
+    );
+  }
+  const attachments = match.attachments;
   if (attachments.length === 0) return { note: null };
 
   await seedAttachmentsIntoSandbox({

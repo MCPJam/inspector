@@ -173,6 +173,49 @@ describe("seedEvalCaseAttachments", () => {
     expect(writer).not.toHaveBeenCalled();
   });
 
+  it("FAILS HONESTLY when testCaseId is provided but not found (id drift) — never seeds", async () => {
+    const writer = vi.fn(async () => {});
+    const resolver = vi.fn(async () => ({
+      ok: true as const,
+      value: {
+        cases: [{ testCaseId: "case_B", attachments: [att({ name: "a.csv" })] }],
+      },
+    }));
+    await expect(
+      seedEvalCaseAttachments({
+        bearer: "tok",
+        runId: "run_1",
+        testCaseId: "case_A",
+        sandboxId: "sbx_1",
+        resolver: resolver as any,
+        writer,
+        fetchImpl: okFetch(),
+      })
+    ).rejects.toThrow(/could not find case/i);
+    expect(writer).not.toHaveBeenCalled();
+  });
+
+  it("seeds nothing (no lookup) when the iteration carries no testCaseId at all", async () => {
+    const writer = vi.fn(async () => {});
+    const resolver = vi.fn(async () => ({
+      ok: true as const,
+      value: {
+        cases: [{ testCaseId: "case_A", attachments: [att({ name: "a.csv" })] }],
+      },
+    }));
+    const { note } = await seedEvalCaseAttachments({
+      bearer: "tok",
+      runId: "run_1",
+      testCaseId: undefined,
+      sandboxId: "sbx_1",
+      resolver: resolver as any,
+      writer,
+      fetchImpl: okFetch(),
+    });
+    expect(note).toBeNull();
+    expect(writer).not.toHaveBeenCalled();
+  });
+
   it("throws when the run's attachments cannot be resolved", async () => {
     const resolver = vi.fn(async () => ({
       ok: false as const,
