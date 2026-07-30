@@ -3378,6 +3378,10 @@ export function PlaygroundMain({
   // no broadcast consumer in single-model mode.
   const handleStarterPrompt = useCallback(
     (prompt: string) => {
+      track("chat_starter_prompt_clicked", {
+        prompt,
+        location: isCompareMode ? "playground_compare" : "playground_single",
+      });
       if (composerDisabled || sendBlocked) {
         composer.setInput(prompt);
         return;
