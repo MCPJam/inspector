@@ -75,7 +75,7 @@ interface EraCase {
 }
 
 const ERAS: EraCase[] = [
-  { label: "legacy (no pin)" },
+  { label: "legacy (2025-11-25)", mcpProtocolVersion: "2025-11-25" },
   { label: "modern (2026-07-28)", mcpProtocolVersion: "2026-07-28" },
 ];
 
