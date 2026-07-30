@@ -122,6 +122,11 @@ import {
   type HarnessMcpProxyStrategy,
 } from "./harness-proxy-strategy.js";
 import { fetchHarnessProxyTokens } from "./harness-proxy-token-client.js";
+import {
+  harnessScopeStepUpServerMatches,
+  subscribeHarnessScopeStepUp,
+} from "./harness-scope-step-up.js";
+import { emitInsufficientScopeChunk } from "../../routes/web/hosted-elicitation.js";
 
 /** A minimal writer matching what `createUIMessageStream` hands `execute` and
  *  what the no-op (`streamSink: "none"`) path supplies. */
@@ -145,6 +150,7 @@ async function buildHarnessProxyMcpJsonFromManager(args: {
   authHeader: string;
   projectId: string;
   strategy: HarnessMcpProxyStrategy;
+  scopeStepUpCorrelationId: string;
   /** Plugin origin per server id (INS-7). A plugin-contributed server that
    *  can't be delivered fails the turn instead of being skipped. */
   pluginOrigins?: Record<string, RuntimePluginVersion>;
@@ -156,6 +162,7 @@ async function buildHarnessProxyMcpJsonFromManager(args: {
     projectId,
     strategy,
     pluginOrigins,
+    scopeStepUpCorrelationId,
   } = args;
   const configured = selectDeliverableServerIds({
     selectedServerIds,
@@ -213,7 +220,7 @@ async function buildHarnessProxyMcpJsonFromManager(args: {
         serverId: id,
         authHeader,
       });
-      inputs.push({ name: id, proxyUrl: url });
+      inputs.push({ name: id, proxyUrl: url, scopeStepUpCorrelationId });
     }
   }
   return {
@@ -497,6 +504,27 @@ export async function runHarnessTurn(
       aborted = true;
       return;
     }
+    // Harness MCP-server tools run out of process through the generated
+    // `.mcp.json`. The proxy publishes an actionable scope challenge under
+    // this turn's opaque id; bridge it into the same transient stream part the
+    // in-process tool wrapper emits. Exact turn correlation handles concurrent
+    // chats; the registry's server fallback is used only when one live turn can
+    // possibly receive a stale resumed-session event.
+    const stopScopeStepUpBridge =
+      harnessMcpProxy?.plane === "local-mcp"
+        ? subscribeHarnessScopeStepUp(
+            turnId,
+            (info) => {
+              if (
+                !harnessScopeStepUpServerMatches(selectedServers, info.serverId)
+              ) {
+                return;
+              }
+              emitInsufficientScopeChunk(writer, undefined, info);
+            },
+            selectedServers,
+          )
+        : () => {};
 
     // Hoisted so the catch can close an open text block if the turn fails
     // after emitting text-start.
@@ -642,6 +670,7 @@ export async function runHarnessTurn(
               authHeader,
               projectId,
               strategy: harnessMcpProxy ?? { plane: "local-mcp" },
+              scopeStepUpCorrelationId: turnId,
               // INS-7: plugin-contributed servers ride this SAME proxy path as
               // ordinary server ids (they are ordinary server ids) — the origin
               // map only decides how a delivery failure is reported.
@@ -2035,6 +2064,8 @@ export async function runHarnessTurn(
         rawText: errorText,
         promptIndex,
       });
+    } finally {
+      stopScopeStepUpBridge();
     }
   };
 

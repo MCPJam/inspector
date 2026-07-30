@@ -267,6 +267,18 @@ const computersStartup = initComputersStartup();
 const app = new Hono().onError((err, c) => {
   appLogger.error("Unhandled error:", err);
 
+  // Hono runs `onError` INSIDE `next()`, so `requestLogContextMiddleware` never
+  // observes the throw — it just sees a 500 response. Record the cause here so
+  // `http.request.failed` carries something better than "internal_error" with
+  // no message. (`/api/web/*` has its own handler that routes through
+  // `webError`, which stashes the same shape.)
+  c.set("webErrorMeta", {
+    status: err instanceof HTTPException ? err.status : 500,
+    code:
+      err instanceof HTTPException ? "http_exception" : "unhandled_exception",
+    message: err instanceof Error ? err.message : String(err),
+  });
+
   // Return appropriate response
   if (err instanceof HTTPException) {
     return err.getResponse();
