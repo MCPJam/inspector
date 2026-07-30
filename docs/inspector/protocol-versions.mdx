@@ -120,6 +120,7 @@ If your server already speaks `2026-07-28`, you mostly won't notice. A few thing
 - If your server doesn't speak `2026-07-28`, `server/discover` returns `-32004 UnsupportedProtocolVersionError` and the connection fails with the supported-versions list visible in the Activity log.
 - If your server is missing a capability the inspector needs for a request, you'll get `-32003 MissingRequiredClientCapability` back from your server — surface those in the Activity log to confirm they reach you.
 - The **Activity** log (server card → **Activity**) is the source of truth — every request and response, success or error, lands there so you can verify headers and `_meta` content.
+- The **Tracing** tab shows a per-header verdict for each mirrored `Mcp-*` header — `✓ matches body`, `✕ body says … → -32020`, `not required here`, and so on — so you can see at a glance whether the headers agree with the body before a `-32020 HeaderMismatch` surfaces. See [MCP header tracing](/inspector/debugging#mcp-header-tracing-2026-07-28) for the full verdict reference.
 
 ### Not yet supported in the RC client
 
