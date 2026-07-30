@@ -1287,15 +1287,27 @@ export class MCPClientManager {
   // ===========================================================================
 
   /**
-   * Pings a server to check connectivity.
+   * Pings a server to check connectivity — era-aware.
+   *
+   * `ping` was removed from the 2026-07-28 vocabulary, so the upstream
+   * client refuses to send it on a modern-classified connection
+   * (`MethodNotSupportedByProtocolVersion`). The modern era's universally
+   * available request is `server/discover`, so that is the liveness probe
+   * there; its result is discarded and the ping contract's `EmptyResult`
+   * returned, so callers stay era-agnostic. Legacy connections keep the
+   * wire-identical `ping`.
    */
   async pingServer(
     serverId: string,
     options?: RequestOptions
   ): Promise<Awaited<ReturnType<Client["ping"]>>> {
-    return this.runRetryableReadOperation(serverId, options, async (client) =>
-      client.ping(options)
-    );
+    return this.runRetryableReadOperation(serverId, options, async (client) => {
+      if (client.getProtocolEra?.() === "modern" && client.discover) {
+        await client.discover(options);
+        return {} as Awaited<ReturnType<Client["ping"]>>;
+      }
+      return client.ping(options);
+    });
   }
 
   /**

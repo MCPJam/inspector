@@ -153,6 +153,13 @@ interface MultiModelPlaygroundCardProps {
   onHasMessagesChange?: (compareId: string, hasMessages: boolean) => void;
   /** When false, hides per-card model title and Latency/Tokens/Tools (single selected model in compare mode). */
   showComparisonChrome?: boolean;
+  /**
+   * When true, shows a compact host identity row (logo + name) above the
+   * Trace/Chat/Raw strip. Used for multi-host columns.
+   */
+  showIdentityHeader?: boolean;
+  /** Host / client logo for the identity header. */
+  logoSrc?: string | null;
   /** Hide in-card “send a shared message” empty hint when the parent shows the shared starter strip + footer composer. */
   suppressThreadEmptyHint?: boolean;
   compareEnterVersion?: number;
@@ -224,6 +231,8 @@ export function MultiModelPlaygroundCard({
   onSummaryChange,
   onHasMessagesChange,
   showComparisonChrome = true,
+  showIdentityHeader = false,
+  logoSrc = null,
   suppressThreadEmptyHint = false,
   compareEnterVersion = 0,
   compareEnterMessages = [],
@@ -713,6 +722,8 @@ export function MultiModelPlaygroundCard({
         onModeChange={handleTraceViewModeChange}
         showTraceTabs={showTraceTabs}
         showComparisonChrome={showComparisonChrome}
+        showIdentityHeader={showIdentityHeader}
+        logoSrc={logoSrc}
       />
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">

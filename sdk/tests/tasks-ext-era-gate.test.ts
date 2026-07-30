@@ -269,7 +269,7 @@ describe("tasks extension era-gate shadow", () => {
         message = (error as Error).message;
       }
       expect(message).toContain("tasks/get, tasks/update, tasks/cancel");
-      expect(message).toContain("2.0.0-beta.4");
+      expect(message).toContain("2.0.0");
       expect(message).toContain(MODERN_ERA);
     });
   });

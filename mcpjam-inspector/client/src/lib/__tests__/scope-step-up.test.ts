@@ -13,10 +13,11 @@ import {
   driveScopeStepUpFromChallenge,
   driveScopeStepUpFromError,
   resetScopeStepUp,
+  resolveScopeStepUpServer,
   runWithScopeStepUp,
 } from "../scope-step-up";
 import { McpRequestError } from "@/lib/apis/insufficient-scope";
-import type { ServerWithName } from "@/state/app-types";
+import type { AppState, ServerWithName } from "@/state/app-types";
 
 const applyToolCallStepUp = vi.fn();
 const resetToolCallStepUp = vi.fn();
@@ -138,5 +139,46 @@ describe("scope step-up lifecycle", () => {
     // The in-flight guard must clear so a later attempt is still possible.
     driveScopeStepUpFromError(server, insufficientScopeError());
     expect(applyToolCallStepUp).toHaveBeenCalledTimes(2);
+  });
+
+  const runtimeServer = {
+    name: "runtime",
+  } as unknown as ServerWithName;
+  const projectServer = {
+    name: "auth-bench",
+  } as unknown as ServerWithName;
+  const resolutionAppState = {
+    activeProjectId: "project-1",
+    servers: { runtime: runtimeServer },
+    projects: {
+      "project-1": {
+        sharedProjectId: "convex-project-1",
+        servers: { "auth-bench": projectServer },
+      },
+    },
+  } as unknown as AppState;
+
+  it("resolves a server from the runtime map", () => {
+    expect(
+      resolveScopeStepUpServer(resolutionAppState, { serverId: "runtime" }),
+    ).toBe(runtimeServer);
+  });
+
+  it("resolves a server from the active-project map", () => {
+    expect(
+      resolveScopeStepUpServer(resolutionAppState, {
+        serverId: "auth-bench",
+      }),
+    ).toBe(projectServer);
+  });
+
+  it("resolves a project named by its Convex/shared id", () => {
+    // Hosted events can carry the shared id, which is NOT the `projects` key.
+    expect(
+      resolveScopeStepUpServer(resolutionAppState, {
+        serverId: "auth-bench",
+        projectId: "convex-project-1",
+      }),
+    ).toBe(projectServer);
   });
 });

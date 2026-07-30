@@ -6,12 +6,40 @@ function createSubscriber(clientId: string) {
   return {
     clientId,
     send: vi.fn(),
+    sendEvent: vi.fn(),
     supersede: vi.fn(),
     close: vi.fn(),
   };
 }
 
 describe("InspectorCommandBus", () => {
+  it("delivers one-way events without creating pending command state", () => {
+    const bus = new InspectorCommandBus();
+    const subscriber = createSubscriber("active-tab");
+    bus.registerSubscriber(subscriber);
+    const event = {
+      kind: "scope_step_up" as const,
+      serverId: "auth-bench",
+      requiredScope: "bench:write",
+    };
+
+    expect(bus.notify(event)).toBe(true);
+    expect(subscriber.sendEvent).toHaveBeenCalledWith(event);
+    expect(subscriber.send).not.toHaveBeenCalled();
+  });
+
+  it("drops one-way events when no Inspector client is active", () => {
+    const bus = new InspectorCommandBus();
+
+    expect(
+      bus.notify({
+        kind: "scope_step_up",
+        serverId: "auth-bench",
+        requiredScope: "bench:write",
+      }),
+    ).toBe(false);
+  });
+
   it("keeps a superseded EventSource reconnect from evicting the active subscriber", async () => {
     const bus = new InspectorCommandBus();
     const first = createSubscriber("first-tab");

@@ -2989,6 +2989,14 @@ const createEnvironmentInput = z.object({
     ),
   skillSelection: skillSelectionInput.optional(),
   pluginVersionIds: pluginVersionIdsInput.optional(),
+  sandboxImageId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Optional sandbox image (see the images operations) to pin: eval runs in this environment boot a fresh sandbox from it. Must be project-shared; personal drafts are rejected — promote first."
+    ),
 });
 export type CreateEnvironmentInput = z.infer<typeof createEnvironmentInput>;
 
@@ -3025,6 +3033,9 @@ export const createEnvironmentOperation: PlatformOperation<
             : {}),
           ...(input.pluginVersionIds !== undefined
             ? { pluginVersionIds: input.pluginVersionIds }
+            : {}),
+          ...(input.sandboxImageId !== undefined
+            ? { sandboxImageId: input.sandboxImageId }
             : {}),
         },
       },
@@ -3083,6 +3094,15 @@ const updateEnvironmentInput = z
       .describe(
         "New pinned plugin versions, or null to clear them. Omit to leave unchanged."
       ),
+    sandboxImageId: z
+      .string()
+      .trim()
+      .min(1)
+      .nullable()
+      .optional()
+      .describe(
+        "New sandbox-image pin (project-shared image id), or null to clear it and use the default image. Omit to leave unchanged."
+      ),
   })
   .refine(
     (value) =>
@@ -3091,10 +3111,11 @@ const updateEnvironmentInput = z
       value.hostId !== undefined ||
       value.serverAttachmentId !== undefined ||
       value.skillSelection !== undefined ||
-      value.pluginVersionIds !== undefined,
+      value.pluginVersionIds !== undefined ||
+      value.sandboxImageId !== undefined,
     {
       message:
-        "Provide at least one of `name`, `description`, `hostId`, `serverAttachmentId`, `skillSelection`, or `pluginVersionIds` to update.",
+        "Provide at least one of `name`, `description`, `hostId`, `serverAttachmentId`, `skillSelection`, `pluginVersionIds`, or `sandboxImageId` to update.",
     }
   );
 export type UpdateEnvironmentInput = z.infer<typeof updateEnvironmentInput>;
@@ -3135,6 +3156,8 @@ export const updateEnvironmentOperation: PlatformOperation<
       body.skillSelection = input.skillSelection;
     if (input.pluginVersionIds !== undefined)
       body.pluginVersionIds = input.pluginVersionIds;
+    if (input.sandboxImageId !== undefined)
+      body.sandboxImageId = input.sandboxImageId;
     return client.updateEnvironment(
       { projectId: project.id, environmentId: environment.id, body },
       { signal }
