@@ -479,3 +479,84 @@ describe("evaluateMcpHeaders", () => {
     });
   });
 });
+
+describe("SEP-2663 task routing headers", () => {
+  // The extension makes `Mcp-Name: <taskId>` a MUST for these three methods
+  // (SEP-2663, "Streamable HTTP: Routing Headers"). `transport-utils` already
+  // SENDS it; a verdict that called it optional would hide the exact routing
+  // defect a routed deployment fails on.
+  for (const method of ["tasks/get", "tasks/update", "tasks/cancel"]) {
+    it(`requires Mcp-Name for ${method} and names taskId as its source`, () => {
+      const rows = evaluateMcpHeaders(
+        { "MCP-Protocol-Version": MODERN, "Mcp-Method": method },
+        // `name` is what `deriveMirroredBodyValues` reads out of
+        // `params.taskId` for these methods — the header is what's absent.
+        { method, name: "task-42", protocolVersion: MODERN },
+      );
+      expect(rows[2]).toMatchObject({
+        name: "mcp-name",
+        status: "missing",
+        bodyField: ".params.taskId",
+      });
+    });
+  }
+
+  it("matches Mcp-Name against the task id when it was sent", () => {
+    const rows = evaluateMcpHeaders(
+      {
+        "MCP-Protocol-Version": MODERN,
+        "Mcp-Method": "tasks/get",
+        "Mcp-Name": "task-42",
+      },
+      { method: "tasks/get", name: "task-42", protocolVersion: MODERN },
+    );
+    expect(rows[2]).toMatchObject({ status: "match", bodyField: ".params.taskId" });
+  });
+
+  it("leaves a non-routed tasks method optional", () => {
+    // Only get/update/cancel are listed; `tasks/list` carries no routing key.
+    const rows = evaluateMcpHeaders(
+      { "MCP-Protocol-Version": MODERN, "Mcp-Method": "tasks/list" },
+      { method: "tasks/list", protocolVersion: MODERN },
+    );
+    expect(rows[2]).toMatchObject({ name: "mcp-name", status: "not-required" });
+  });
+});
+
+describe("undecodable is claimed only where the sentinel is defined", () => {
+  it("flags a malformed sentinel in Mcp-Param-*", () => {
+    // Servers MUST reject a recognized `Mcp-Param-{Name}` carrying invalid
+    // characters, so this one IS a defect even though the value cannot be
+    // cross-checked against the body.
+    const rows = evaluateMcpHeaders(
+      {
+        "MCP-Protocol-Version": MODERN,
+        "Mcp-Method": "tools/call",
+        "Mcp-Name": "execute_sql",
+        "Mcp-Param-Region": "=?base64?not valid!?=",
+      },
+      { method: "tools/call", name: "execute_sql", protocolVersion: MODERN },
+    );
+    expect(rows[3]).toMatchObject({
+      name: "Mcp-Param-Region",
+      status: "undecodable",
+    });
+  });
+
+  it("does NOT flag a sentinel-looking session or resumption value", () => {
+    // Neither header has an encoded form in any version, so a value that
+    // resembles the sentinel is just a value — not a -32020.
+    const rows = evaluateMcpHeaders(
+      {
+        "MCP-Protocol-Version": MODERN,
+        "Mcp-Method": "tools/list",
+        "MCP-Session-Id": "=?base64?not valid!?=",
+        "Last-Event-ID": "=?base64?not valid!?=",
+      },
+      { method: "tools/list", protocolVersion: MODERN },
+    );
+    const byName = Object.fromEntries(rows.map((row) => [row.name, row.status]));
+    expect(byName["MCP-Session-Id"]).toBe("unchecked");
+    expect(byName["Last-Event-ID"]).toBe("unchecked");
+  });
+});

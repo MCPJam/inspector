@@ -127,12 +127,34 @@ export type MirroredBodyValues = {
   protocolVersion?: string;
 };
 
-/** Methods for which `Mcp-Name` is REQUIRED. */
+/** Methods for which `Mcp-Name` is REQUIRED (SEP-2243 Standard Request Headers). */
 const NAME_REQUIRED_METHODS = new Set([
   "tools/call",
   "resources/read",
   "prompts/get",
 ]);
+
+/**
+ * The `io.modelcontextprotocol/tasks` methods that MUST carry
+ * `Mcp-Name: <taskId>` (SEP-2663, "Streamable HTTP: Routing Headers").
+ *
+ * A second required-name set rather than an addition to the one above: the
+ * source field differs (`params.taskId`, not `params.name`), and the
+ * requirement comes from the extension, which is versioned independently of
+ * core. `transport-utils` sends these headers; this module judges them, and
+ * both read the set from here so the two halves cannot drift.
+ */
+export const TASK_ROUTED_METHODS = new Set([
+  "tasks/get",
+  "tasks/update",
+  "tasks/cancel",
+]);
+
+/** Whether `Mcp-Name` is required for `method`, across core and the tasks extension. */
+export function isNameRequiredMethod(method: string | undefined): boolean {
+  if (method === undefined) return false;
+  return NAME_REQUIRED_METHODS.has(method) || TASK_ROUTED_METHODS.has(method);
+}
 
 export type McpHeaderIssue =
   | { kind: "mismatch"; header: string; headerValue: string; bodyValue: string }
@@ -188,6 +210,9 @@ export type McpHeaderAssessment = {
 
 /** Which body field a given method's `Mcp-Name` is mirrored FROM. */
 function nameSourceField(method: string | undefined): string {
+  if (method !== undefined && TASK_ROUTED_METHODS.has(method)) {
+    return ".params.taskId";
+  }
   return method === "resources/read" ? ".params.uri" : ".params.name";
 }
 
@@ -250,8 +275,7 @@ export function evaluateMcpHeaders(
             family: "name",
             bodyValue: body.name,
             bodyField: nameSourceField(body.method),
-            required:
-              body.method !== undefined && NAME_REQUIRED_METHODS.has(body.method),
+            required: isNameRequiredMethod(body.method),
           },
         ]
       : [];
@@ -306,9 +330,12 @@ export function evaluateMcpHeaders(
     const family = classifyMcpHeader(found.name);
     if (!family) continue;
     const decoded = decodeMcpHeaderValue(found.value);
-    // A sentinel that will not decode is only a defect where the spec defines
-    // the sentinel at all — a legacy value that merely resembles it is not.
-    const undecodable = crossCheck && !!decoded.decodeError;
+    // A sentinel that will not decode is a defect only where the spec defines
+    // the sentinel: `Mcp-Name` (handled above) and `Mcp-Param-{Name}`, whose
+    // invalid characters servers MUST reject. `Mcp-Session-Id`/`Last-Event-ID`
+    // have no encoded form at all, and a legacy value merely RESEMBLING the
+    // sentinel is just a value — claiming -32020 for either would be invented.
+    const undecodable = crossCheck && family === "param" && !!decoded.decodeError;
     out.push({
       name: found.name,
       family,
