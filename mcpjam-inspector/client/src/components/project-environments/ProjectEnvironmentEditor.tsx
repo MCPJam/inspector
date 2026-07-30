@@ -5,6 +5,9 @@ import { Button } from "@mcpjam/design-system/button";
 import { Label } from "@mcpjam/design-system/label";
 import { HostPicker } from "@/components/hosts/HostPicker";
 import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
+import { EnvironmentBuildBadge } from "@/components/computer/EnvironmentBuildBadge";
+import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useSandboxImages } from "@/hooks/useSandboxImages";
 import { convexErrMessage } from "@/lib/convex-error";
 import {
   isRevisionConflictError,
@@ -21,6 +24,7 @@ type EnvironmentDraft = {
   hostId: string | null;
   serverAttachmentId: string | null;
   skillSelection: ProjectEnvironmentSkillSelection | null;
+  computerEnvironmentId: string | null;
 };
 
 function draftFromEnvironment(env: ProjectEnvironmentView): EnvironmentDraft {
@@ -30,6 +34,7 @@ function draftFromEnvironment(env: ProjectEnvironmentView): EnvironmentDraft {
     hostId: env.hostId,
     serverAttachmentId: env.serverAttachmentId ?? null,
     skillSelection: env.skillSelection ?? null,
+    computerEnvironmentId: env.computerEnvironmentId ?? null,
   };
 }
 
@@ -59,6 +64,7 @@ export function ProjectEnvironmentEditor({
   projectId,
   environment,
   canManage,
+  initialDraft,
   onCreated,
   onCancelCreate,
 }: {
@@ -67,11 +73,32 @@ export function ProjectEnvironmentEditor({
   environment: ProjectEnvironmentView | null;
   /** Admin-gated writes; members get a read-only form. */
   canManage: boolean;
+  /**
+   * Create-mode-only pre-seed (the Connect "Save as environment" handoff).
+   * Merged into the create initializer ONLY — deliberately NOT into the
+   * projectId-reset effect, whose whole job is wiping cross-project host ids;
+   * a seed surviving that reset would reintroduce exactly that hazard.
+   * Ignored in edit mode.
+   */
+  initialDraft?: Partial<EnvironmentDraft>;
   onCreated?: (env: ProjectEnvironmentView) => void;
   onCancelCreate?: () => void;
 }) {
   const createEnvironment = useCreateProjectEnvironment();
   const updateEnvironment = useUpdateProjectEnvironment();
+  // Double gate: the editor already sits behind `project-environments-enabled`
+  // (the route); the sandbox-image section additionally requires
+  // `computers-enabled` (fail-closed) — mirroring how the eval suite settings
+  // gate their adjacent "Computer environment" row.
+  //
+  // This flag is load-bearing for the WRITE path, not just visibility: while the
+  // picker is hidden the pin must be treated as if it weren't part of this form
+  // at all — excluded from `dirty` and omitted from both payloads — so a
+  // flag-off save can never set or clear a pin configured through the API/CLI.
+  // Draft divergence alone is NOT a sufficient guard, because the flag can flip
+  // false after an edit and leave a diverged value behind a vanished control.
+  const computersEnabled = useComputersEnabled();
+  const sandboxImages = useSandboxImages(computersEnabled ? projectId : null);
 
   const [draft, setDraft] = useState<EnvironmentDraft>(() =>
     environment
@@ -82,6 +109,8 @@ export function ProjectEnvironmentEditor({
           hostId: null,
           serverAttachmentId: null,
           skillSelection: null,
+          computerEnvironmentId: null,
+          ...initialDraft,
         }
   );
   // Captured at draft init/reset — the ONLY revision update may send.
@@ -104,12 +133,19 @@ export function ProjectEnvironmentEditor({
       !sameSkillSelection(
         draft.skillSelection,
         environment.skillSelection ?? null
-      )
+      ) ||
+      // Only counts while the picker is rendered — otherwise a flag flip would
+      // leave Save enabled for a field the payload deliberately omits, i.e. a
+      // "Saved." that changes nothing but bumps the revision.
+      (computersEnabled &&
+        draft.computerEnvironmentId !==
+          (environment.computerEnvironmentId ?? null))
     : trimmedName.length > 0 ||
       trimmedDescription.length > 0 ||
       draft.hostId !== null ||
       draft.serverAttachmentId !== null ||
-      draft.skillSelection !== null;
+      draft.skillSelection !== null ||
+      (computersEnabled && draft.computerEnvironmentId !== null);
 
   // Reactivity observed someone else's edit while this draft diverged.
   const stale =
@@ -142,6 +178,7 @@ export function ProjectEnvironmentEditor({
             hostId: null,
             serverAttachmentId: null,
             skillSelection: null,
+            computerEnvironmentId: null,
           }
     );
     setBaseRevision(environment?.revision ?? null);
@@ -174,6 +211,13 @@ export function ProjectEnvironmentEditor({
           ...(draft.skillSelection
             ? { skillSelection: draft.skillSelection }
             : {}),
+          // Gated on the LIVE flag, not just the draft: PostHog can flip
+          // `computers-enabled` false after the user picked an image, which
+          // unmounts the picker but leaves the draft value — shipping it then
+          // would contradict the fail-closed contract.
+          ...(computersEnabled && draft.computerEnvironmentId
+            ? { computerEnvironmentId: draft.computerEnvironmentId }
+            : {}),
         });
         toast.success(`Created “${created.name}”.`);
         onCreated?.(created);
@@ -201,6 +245,18 @@ export function ProjectEnvironmentEditor({
           environment.skillSelection ?? null
         )
           ? { skillSelection: draft.skillSelection }
+          : {}),
+        // Included only when CHANGED **and** the picker is currently rendered.
+        // Draft divergence alone is not enough: if the flag flips false after
+        // an edit the picker unmounts while the diverged draft value survives,
+        // and a "flag-off" save would then set or clear the pin — exactly what
+        // the fail-closed contract promises it cannot do. Gating on the live
+        // flag makes a hidden picker always omit the field (tri-state:
+        // omitted = unchanged, null = clear).
+        ...(computersEnabled &&
+        draft.computerEnvironmentId !==
+          (environment.computerEnvironmentId ?? null)
+          ? { computerEnvironmentId: draft.computerEnvironmentId }
           : {}),
       });
       setDraft(draftFromEnvironment(updated));
@@ -331,6 +387,94 @@ export function ProjectEnvironmentEditor({
           disabled={readOnly}
         />
       </div>
+
+      {computersEnabled ? (
+        <div className="space-y-1.5">
+          <Label htmlFor="project-environment-sandbox-image" className="text-xs">
+            Sandbox image
+          </Label>
+          <div className="flex items-center gap-2">
+            <select
+              id="project-environment-sandbox-image"
+              data-testid="project-environment-sandbox-image"
+              value={draft.computerEnvironmentId ?? ""}
+              disabled={readOnly}
+              onChange={(e) =>
+                setDraft((d) => ({
+                  ...d,
+                  computerEnvironmentId: e.target.value || null,
+                }))
+              }
+              className="h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus:ring-1 focus:ring-ring disabled:opacity-60"
+            >
+              <option value="">None (default image)</option>
+              {(sandboxImages ?? []).map((img) => {
+                const ready = img.currentBuild?.status === "ready";
+                // Personal drafts are listed but not selectable — the backend
+                // rejects them (a draft would resolve for every member while
+                // being visible/mutable only to its owner). Showing them
+                // disabled keeps the promote step discoverable.
+                const isDraft = img.sharing !== "project";
+                return (
+                  <option
+                    key={img.environmentId}
+                    value={img.environmentId}
+                    disabled={isDraft}
+                  >
+                    {img.name}
+                    {isDraft
+                      ? " (draft — promote to project first)"
+                      : ready
+                        ? ""
+                        : " (not built)"}
+                  </option>
+                );
+              })}
+              {/* A pinned id with no matching option would leave the <select>
+                  displaying "None" — a pinned environment reading as unpinned.
+                  Two DIFFERENT causes need two different labels:
+
+                  1. still loading: say so. Labeling it "Unknown image" here
+                     would alarm an admin about a perfectly valid pin on every
+                     mount until the query resolves.
+                  2. resolved and genuinely absent (deleted image): name it, so
+                     the pin stays visible and explicitly clearable instead of
+                     being silently coerced to "None" on the next save. */}
+              {draft.computerEnvironmentId && sandboxImages === undefined ? (
+                <option value={draft.computerEnvironmentId} disabled>
+                  Loading image…
+                </option>
+              ) : null}
+              {sandboxImages !== undefined &&
+              draft.computerEnvironmentId &&
+              !sandboxImages.some(
+                (img) => img.environmentId === draft.computerEnvironmentId
+              ) ? (
+                <option value={draft.computerEnvironmentId} disabled>
+                  Unknown image ({draft.computerEnvironmentId})
+                </option>
+              ) : null}
+            </select>
+            {/* Badge only for a real selection — "None" has no build status
+                (the badge component renders "Not built" for null/undefined). */}
+            {draft.computerEnvironmentId ? (
+              <EnvironmentBuildBadge
+                build={
+                  (sandboxImages ?? []).find(
+                    (img) => img.environmentId === draft.computerEnvironmentId
+                  )?.currentBuild ?? null
+                }
+              />
+            ) : null}
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Applies to eval runs in this environment: each run boots a fresh,
+            isolated sandbox from this image. Playground, chatboxes, and swarms
+            don&apos;t use the sandbox image yet. A not-built image fails at
+            launch — build it first under Computer → Images.
+          </p>
+        </div>
+      ) : null}
 
       {readOnly ? (
         <p className="text-[11px] text-muted-foreground">

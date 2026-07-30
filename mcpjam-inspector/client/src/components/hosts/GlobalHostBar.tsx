@@ -12,9 +12,10 @@ export function GlobalHostBar({
   const location = useLocation();
   const [previewedHostId, setPreviewedHostId] = usePreviewedHostId(projectId);
 
-  // While the Connect host canvas is open, the client selector lives INSIDE
-  // the canvas (`HostCanvasSelector`) — hide the header instance so the
-  // control isn't duplicated. Mirrors HostsTab's open-canvas condition:
+  // While the Connect host canvas is open, the client selector lives in the
+  // canvas's own nav row (`HostCanvasSelector`, beside Servers|Client) — hide
+  // the header instance so the control isn't duplicated. Mirrors HostsTab's
+  // open-canvas condition:
   // on the hosts route with either a URL host id or a previewed fallback.
   const onHostsRoute =
     location.pathname === routePaths.hosts ||

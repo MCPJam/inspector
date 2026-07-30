@@ -37,7 +37,11 @@ import {
   recordAppToolInvocation,
 } from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
 import { scrubAppToolResultForModel } from "@/components/chat-v2/thread/mcp-apps/app-tools-sanitizer";
-import { driveScopeStepUp, resetScopeStepUp } from "@/lib/scope-step-up";
+import {
+  driveScopeStepUp,
+  resetScopeStepUp,
+  resolveScopeStepUpServer,
+} from "@/lib/scope-step-up";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvex, useConvexAuth } from "convex/react";
 import { ModelDefinition, type ModelProvider } from "@/shared/types";
@@ -1673,17 +1677,11 @@ export function useChatSession(
             // visitor (even an authenticated one) does not own the host's MCP
             // servers and cannot re-authorize the owner's OAuth; connect-time
             // chatbox OAuth is handled separately by `useHostedOAuthGate`.
-            const activeProject =
-              appState?.projects?.[
-                hostedProjectId ?? appState?.activeProjectId ?? ""
-              ];
-            const server =
-              (event.serverName
-                ? (appState?.servers?.[event.serverName] ??
-                  activeProject?.servers?.[event.serverName])
-                : undefined) ??
-              appState?.servers?.[event.serverId] ??
-              activeProject?.servers?.[event.serverId];
+            const server = resolveScopeStepUpServer(appState, {
+              serverId: event.serverId,
+              serverName: event.serverName,
+              projectId: hostedProjectId,
+            });
             // The shared lifecycle applies the same actionable-challenge gate
             // (a `requiredScope` OR a `resourceMetadataUrl` is now actionable —
             // discovery consumes the PRM pointer, SEP-2350 follow-up to #3427)

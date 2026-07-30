@@ -238,6 +238,15 @@ export interface ManagedMcpClient {
 
   // ---- Health ----
   ping(options?: RequestOptions): Promise<EmptyResult>;
+  /**
+   * `server/discover` (2026-07-28+): the modern era's only universally
+   * available request, and therefore its liveness probe — `ping` was removed
+   * from the 2026 vocabulary, so the upstream client refuses to send it on a
+   * modern-classified connection (`MethodNotSupportedByProtocolVersion`).
+   * Optional because non-upstream adapters (test doubles) may not carry it;
+   * `MCPClientManager.pingServer` era-gates before reaching for it.
+   */
+  discover?(options?: RequestOptions): Promise<unknown>;
 
   // ---- Subscriptions (passthrough; stateless preview throws) ----
   subscribeResource(
