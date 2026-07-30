@@ -39,6 +39,7 @@ import {
   CheckStepError,
   clampOutput,
   cloneAndCheckout,
+  isGithubChecksSandboxConfigured,
   killCheckSandbox,
   provisionCheckSandbox,
   type CheckSandbox,
@@ -228,10 +229,26 @@ async function sendHeartbeat(
     throw new Error(`heartbeat rejected (${status}): ${JSON.stringify(body)}`);
   }
   // The route answers 200 with `result.ok: false` when this worker no longer
-  // holds the claim (lease recovered, row superseded). Nothing to retry, but the
-  // lease is gone and that belongs in the logs beside the lost check.
+  // holds the claim (lease recovered, row superseded). That is DEFINITIVE, not a
+  // transient failure: the backend has already concluded this check and will
+  // reject the completion, so the work in flight is worthless.
   if (body.result && body.result.ok === false) {
-    throw new Error(`heartbeat not applied: ${body.result.error ?? "unknown"}`);
+    throw new LeaseLostError(String(body.result.error ?? "unknown"));
+  }
+}
+
+/**
+ * The backend no longer considers this worker the holder of the claim.
+ *
+ * Distinct from a transport failure on purpose: a failed REQUEST is worth
+ * retrying on the next beat, whereas a lost LEASE means the check has already
+ * been concluded by someone else and every further minute of building or
+ * evaluating is wasted — up to the sandbox's full lifetime.
+ */
+export class LeaseLostError extends Error {
+  constructor(readonly reason: string) {
+    super(`lease lost: ${reason}`);
+    this.name = "LeaseLostError";
   }
 }
 
@@ -660,18 +677,38 @@ export async function executeClaimedCheck(
     sha: claimed.headSha.slice(0, 8),
   };
 
+  // Set once the backend tells us the claim is no longer ours. Checked at each
+  // step boundary below: there is no point building or evaluating for a check
+  // somebody else has already concluded, and the completion would be rejected.
+  let leaseLost: LeaseLostError | null = null;
+
   // The lease is refreshed for the WHOLE duration, including the eval run — a
   // suite legitimately takes many minutes and must not look like a dead worker.
   const heartbeat = setInterval(() => {
-    void deps.heartbeat(claimed.triggerId, claimedBy).catch((error) =>
+    void deps.heartbeat(claimed.triggerId, claimedBy).catch((error) => {
+      if (error instanceof LeaseLostError) {
+        // Definitive. Stop beating and let the next step boundary bail out.
+        leaseLost = error;
+        clearInterval(heartbeat);
+        logger.warn("[github-checks] lease lost; abandoning this check", {
+          ...logContext,
+          reason: error.reason,
+        });
+        return;
+      }
       logger.warn("[github-checks] heartbeat failed", {
         ...logContext,
         error: error instanceof Error ? error.message : String(error),
-      })
-    );
+      });
+    });
   }, deps.heartbeatIntervalMs);
   // Don't hold the event loop open on shutdown.
   (heartbeat as unknown as { unref?: () => void }).unref?.();
+
+  /** Throw out of the pipeline if the claim stopped being ours. */
+  const assertLeaseHeld = () => {
+    if (leaseLost) throw leaseLost;
+  };
 
   let sandbox: CheckSandbox | null = null;
   let serverId: string | null = null;
@@ -711,11 +748,13 @@ export async function executeClaimedCheck(
       repoFullName: claimed.repoFullName,
       prNumber: claimed.prNumber,
     });
+    assertLeaseHeld();
     await deps.cloneAndCheckout(sandbox, {
       repoFullName: claimed.repoFullName,
       prNumber: claimed.prNumber,
       headSha: claimed.headSha,
     });
+    assertLeaseHeld();
     // Builds, revokes egress, starts, and waits for `initialize` — in that
     // order, which `buildAndStart` owns precisely so it can't be reordered here.
     const started = await deps.buildAndStart(sandbox, recipe);
@@ -746,6 +785,8 @@ export async function executeClaimedCheck(
       })
     );
 
+    // The last and most valuable boundary: the eval run is the twenty-minute part.
+    assertLeaseHeld();
     const run = await deps.runEvalSuite({
       claimed,
       bearer,
@@ -764,6 +805,16 @@ export async function executeClaimedCheck(
         : {}),
     });
   } catch (error) {
+    if (error instanceof LeaseLostError) {
+      // Nothing to report: the backend already concluded this check, which is why
+      // the lease was taken away. Reporting anyway would just be rejected. The
+      // `finally` below still tears the sandbox down.
+      logger.warn("[github-checks] abandoned a check whose lease was lost", {
+        ...logContext,
+        reason: error.reason,
+      });
+      return;
+    }
     const classified = classifyCheckFailure(error);
     logger.error("[github-checks] check failed", error, {
       ...logContext,
@@ -850,6 +901,17 @@ export function startGithubChecksWorker(options?: {
   if (!requiredEnv()) {
     logger.warn(
       "[github-checks] worker enabled but CONVEX_HTTP_URL / INSPECTOR_SERVICE_TOKEN missing; not starting"
+    );
+    return { stop: async () => {} };
+  }
+
+  // Claiming without a usable sandbox configuration is WORSE than not starting:
+  // every queued trigger would be claimed, fail to provision, and be concluded
+  // `infra_error` — permanently, since a verdict is final. Not polling leaves
+  // those checks queued until the deployment is fixed.
+  if (!isGithubChecksSandboxConfigured()) {
+    logger.warn(
+      "[github-checks] worker enabled but E2B_API_KEY / GITHUB_CHECKS_E2B_TEMPLATE_ID missing; not starting (queued checks stay claimable)"
     );
     return { stop: async () => {} };
   }

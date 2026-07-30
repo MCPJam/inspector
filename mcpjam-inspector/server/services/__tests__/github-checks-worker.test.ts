@@ -577,6 +577,10 @@ describe("startGithubChecksWorker loop", () => {
     vi.useFakeTimers();
     vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
+    // The sandbox configuration is part of the startup gate: without it the
+    // worker refuses to poll (see the test at the end of this block).
+    vi.stubEnv("E2B_API_KEY", "e2b_test");
+    vi.stubEnv("GITHUB_CHECKS_E2B_TEMPLATE_ID", "tmpl_test");
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -613,6 +617,23 @@ describe("startGithubChecksWorker loop", () => {
     await handle.stop();
     expect(execute).not.toHaveBeenCalled();
     expect(claim).toHaveBeenCalled();
+  });
+
+  it("refuses to poll when the sandbox is not configured", async () => {
+    // Claiming without E2B is worse than not starting: every queued trigger would
+    // be claimed, fail to provision, and be concluded `infra_error` — and a
+    // verdict is final. Not polling leaves them claimable until the deploy is fixed.
+    vi.stubEnv("E2B_API_KEY", "");
+    vi.stubEnv("GITHUB_CHECKS_E2B_TEMPLATE_ID", "");
+    const claim = vi.fn().mockResolvedValue(null);
+
+    const worker = startGithubChecksWorker({ claim, claimedBy: "worker-1" });
+    onTestFinished(async () => {
+      await worker.stop();
+    });
+    await flush();
+
+    expect(claim).not.toHaveBeenCalled();
   });
 
   it("survives claim errors instead of crashing the loop", async () => {

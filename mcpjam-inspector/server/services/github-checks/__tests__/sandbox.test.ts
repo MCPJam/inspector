@@ -313,11 +313,15 @@ describe("buildAndStart", () => {
       healthIntervalMs: 1,
     }).catch((e) => e)) as CheckStepError;
 
-    // The spawn streams nothing back and redirects to a file…
+    // The spawn streams nothing back and appends to a file…
     const spawn = box.calls.find((call) => call.opts?.background === true);
-    expect(spawn?.command).toContain("> /tmp/mcp-server.log 2>&1");
+    expect(spawn?.command).toContain(">> /tmp/mcp-server.log 2>&1");
     expect(spawn?.opts?.onStderr).toBeUndefined();
     expect(spawn?.opts?.onStdout).toBeUndefined();
+    // …with a watchdog so the file cannot fill the sandbox's disk either, which
+    // would take down the very server being evaluated.
+    expect(spawn?.command).toContain("wc -c < /tmp/mcp-server.log");
+    expect(spawn?.command).toContain("4194304");
     // …and the truncation is done by the sandbox, not after the fact.
     expect(
       box.calls.some((call) => call.command.includes("tail -c 8000"))

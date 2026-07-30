@@ -113,6 +113,10 @@ const STDERR_TAIL_CHARS = 8_000;
 
 /** Where the PR's server writes stdout+stderr, inside the box. */
 const SERVER_LOG_PATH = "/tmp/mcp-server.log";
+/** Cap on that file. A watchdog truncates it; see `startCommandScript`. */
+const SERVER_LOG_MAX_BYTES = 4 * 1024 * 1024;
+/** How often the watchdog checks the log's size. */
+const SERVER_LOG_CHECK_SECONDS = 30;
 
 /**
  * The protocol version we offer in the health probe. Deliberately a plain
@@ -478,7 +482,7 @@ export async function buildAndStart(
     // heap without limit, which no client-side ring buffer can prevent. Nothing
     // is streamed now; the tail is fetched, bounded, only if we need it.
     await sandbox.commands.run(
-      `bash -lc ${shellQuote(`${recipe.start} > ${SERVER_LOG_PATH} 2>&1`)}`,
+      `bash -lc ${shellQuote(startCommandScript(recipe.start))}`,
       {
         cwd: CHECKOUT_DIR,
         background: true,
@@ -517,6 +521,34 @@ export async function buildAndStart(
 }
 
 /**
+ * The PR's start command, wrapped so its output is bounded on BOTH sides.
+ *
+ * Redirecting to a file keeps untrusted output out of this process's heap (see
+ * the spawn site), but a file alone is just the same denial-of-service moved to
+ * the sandbox's disk: a server that logs continuously fills it, and `ENOSPC` can
+ * take down the very server we are evaluating — turning a chatty PR into a
+ * failing one. So a watchdog truncates the log whenever it grows past the cap.
+ *
+ * Details that matter:
+ *   - APPEND (`>>`), not truncate (`>`). With `>` the writer keeps its offset
+ *     across a truncation, leaving a sparse hole whose tail reads as NUL padding;
+ *     `O_APPEND` restarts cleanly at zero and keeps `tail -c` meaningful.
+ *   - `exec` for the server, so it replaces the shell and kill/signal semantics
+ *     stay those of the process itself.
+ *   - the watchdog is a child of that shell and needs no cleanup: it dies with
+ *     the sandbox, and if it dies early the only consequence is an unbounded log.
+ */
+function startCommandScript(startCommand: string): string {
+  return [
+    `: > ${SERVER_LOG_PATH}`,
+    `( while :; do sleep ${SERVER_LOG_CHECK_SECONDS};` +
+      ` if [ "$(wc -c < ${SERVER_LOG_PATH} 2>/dev/null || echo 0)" -gt ${SERVER_LOG_MAX_BYTES} ];` +
+      ` then : > ${SERVER_LOG_PATH}; fi; done ) &`,
+    `exec ${startCommand} >> ${SERVER_LOG_PATH} 2>&1`,
+  ].join("\n");
+}
+
+/**
  * Fetch a bounded tail of the PR server's log, from inside the box.
  *
  * `tail -c` does the truncation in the sandbox, so untrusted output is bounded
@@ -527,7 +559,9 @@ export async function buildAndStart(
 async function readLogTail(sandbox: CheckSandbox): Promise<string> {
   try {
     const result = (await sandbox.commands.run(
-      `bash -lc ${shellQuote(`tail -c ${STDERR_TAIL_CHARS} ${SERVER_LOG_PATH} 2>/dev/null || true`)}`,
+      `bash -lc ${shellQuote(
+        `tail -c ${STDERR_TAIL_CHARS} ${SERVER_LOG_PATH} 2>/dev/null || true`
+      )}`,
       { timeoutMs: 30_000 }
     )) as { stdout?: string } | undefined;
     return result?.stdout ?? "";
