@@ -96,6 +96,13 @@ interface TasksTabProps {
   serverConfig?: MCPServerConfig;
   serverName?: string;
   isActive?: boolean;
+  /**
+   * Connection status of the selected server. The capabilities probe fails
+   * closed to `wire: "none"` while the connection is still coming up, so the
+   * tab must refetch when this reaches "connected" — otherwise a fetch that
+   * raced the connect leaves a sticky "Tasks not supported".
+   */
+  connectionStatus?: string;
 }
 
 /** Unknown statuses should never reach the UI, but must not crash it. */
@@ -127,6 +134,7 @@ export function TasksTab({
   serverConfig,
   serverName,
   isActive = true,
+  connectionStatus,
 }: TasksTabProps) {
   const [tasks, setTasks] = useState<NormalizedTask[]>([]);
   // Read inside `fetchTasks` to carry not-yet-due handles forward without
@@ -161,10 +169,14 @@ export function TasksTab({
   const [userOverride, setUserOverride] = useState<number | null>(null);
   const [progress, setProgress] = useState<ProgressEvent | null>(null);
   // Task capabilities from server (MCP Tasks spec 2025-11-25)
-  // undefined = not yet fetched, null = server doesn't support, object = loaded
+  // undefined = not yet fetched, null = the probe itself FAILED (transient:
+  // network, auth, connect race — NOT "server doesn't support"), object = loaded
   const [taskCapabilities, setTaskCapabilities] = useState<
     TasksSupport | null | undefined
   >(undefined);
+  // Bumped by the "Retry" button on the probe-failed state to re-run the
+  // capabilities fetch without switching servers.
+  const [capabilitiesFetchAttempt, setCapabilitiesFetchAttempt] = useState(0);
   // Extension cancellation is cooperative: after the empty ack the task may
   // keep working, complete, or be purged. Stop auto-polling and say so.
   const [cancellationRequested, setCancellationRequested] = useState<
@@ -1210,8 +1222,14 @@ export function TasksTab({
     });
   }, [tasks]);
 
-  // Fetch task capabilities when server changes
-  // Per MCP Tasks spec (2025-11-25): clients SHOULD check capabilities before using task features
+  // Fetch task capabilities when the server changes AND when its connection
+  // comes up. Per MCP Tasks spec (2025-11-25) clients SHOULD check
+  // capabilities before using task features — but the probe fails closed to
+  // `wire: "none"` against a not-yet-connected server, so a fetch keyed only
+  // on server identity can race the connect and stick on "Tasks not
+  // supported" forever. Keying on `isServerConnected` re-probes once the
+  // connection is actually up (and again after a reconnect).
+  const isServerConnected = connectionStatus === "connected";
   useEffect(() => {
     if (!serverConfig || !serverName) {
       setTaskCapabilities(undefined);
@@ -1233,13 +1251,14 @@ export function TasksTab({
         const capabilities = await getTaskCapabilities(serverName);
         setTaskCapabilities(capabilities);
       } catch {
-        // Server may not support tasks - set to null (vs undefined = loading)
+        // The PROBE failed (transient), which is not the same thing as the
+        // server declaring no tasks — null renders a retryable error state.
         setTaskCapabilities(null);
       }
     };
 
     fetchCapabilities();
-  }, [serverConfig, serverName]);
+  }, [serverConfig, serverName, isServerConnected, capabilitiesFetchAttempt]);
 
   // Fetch tasks on mount and when server changes (only when tab is active)
   // Wait for capabilities to be fetched first (undefined = still loading)
@@ -1413,6 +1432,28 @@ export function TasksTab({
         title="No Server Selected"
         description="Connect to an MCP server to browse and manage its tasks."
       />
+    );
+  }
+
+  // The capabilities probe itself failed (network, auth, or it raced the
+  // connect). That says nothing about the server's tasks support — offer a
+  // retry instead of a false "not supported".
+  if (taskCapabilities === null) {
+    return (
+      <EmptyState
+        icon={AlertCircle}
+        title="Couldn't check tasks support"
+        description="The tasks capability check failed — the server may still be connecting."
+      >
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setCapabilitiesFetchAttempt((n) => n + 1)}
+        >
+          <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+          Retry
+        </Button>
+      </EmptyState>
     );
   }
 

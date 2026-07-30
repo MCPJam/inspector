@@ -361,10 +361,15 @@ export async function ensureAuthorizedForReconnect(
 // to clear the counter so a future legitimate step-up starts fresh.
 
 const STEP_UP_ATTEMPTS_PREFIX = "mcp-stepup-attempts-";
+const STEP_UP_PENDING_PREFIX = "mcp-stepup-pending-";
 const DEFAULT_STEP_UP_MAX_RETRIES = 1;
 
 function stepUpAttemptsKey(serverName: string): string {
   return `${STEP_UP_ATTEMPTS_PREFIX}${serverName}`;
+}
+
+function stepUpPendingKey(serverName: string): string {
+  return `${STEP_UP_PENDING_PREFIX}${serverName}`;
 }
 
 // The bounded step-up counter lives in `sessionStorage`, NOT `localStorage`: it
@@ -434,6 +439,60 @@ function writeStepUpAttempts(
     // Best-effort: a full/unavailable store must not abort the OAuth flow. The
     // upstream transport still bounds retries within a single request; only the
     // cross-redirect count is lost, so the guard degrades, never disappears.
+  }
+}
+
+function hasPendingStepUp(
+  serverName: string,
+  issuer: string | undefined,
+): boolean {
+  try {
+    const store = stepUpAttemptsStore();
+    if (!store) return false;
+    const raw = store.getItem(stepUpPendingKey(serverName));
+    if (!raw) return false;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return parsed?.[issuerBucket(issuer)] === true;
+  } catch {
+    return false;
+  }
+}
+
+function writePendingStepUp(
+  serverName: string,
+  issuer: string | undefined,
+  pending: boolean,
+): void {
+  try {
+    const store = stepUpAttemptsStore();
+    if (!store) return;
+    const key = stepUpPendingKey(serverName);
+    const raw = store.getItem(key);
+    let map: Record<string, boolean> = {};
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") {
+          map = parsed as Record<string, boolean>;
+        }
+      } catch {
+        // Corrupt record — replace it with the current issuer's state.
+      }
+    }
+    const bucket = issuerBucket(issuer);
+    if (pending) {
+      map[bucket] = true;
+    } else {
+      delete map[bucket];
+    }
+    if (Object.keys(map).length === 0) {
+      store.removeItem(key);
+    } else {
+      store.setItem(key, JSON.stringify(map));
+    }
+  } catch {
+    // Best-effort. Losing this marker can allow one extra redirect, while the
+    // transport still keeps its per-request retry bound.
   }
 }
 
@@ -513,20 +572,22 @@ export function resetInsufficientScopeStepUp(
 ): void {
   try {
     const store = stepUpAttemptsStore();
-    if (!store) return;
-    const raw = store.getItem(stepUpAttemptsKey(serverName));
-    if (!raw) return;
-    const parsed = JSON.parse(raw) as Record<string, number>;
-    if (!parsed || typeof parsed !== "object") return;
-    delete parsed[issuerBucket(issuer)];
-    if (Object.keys(parsed).length === 0) {
-      store.removeItem(stepUpAttemptsKey(serverName));
-    } else {
-      store.setItem(stepUpAttemptsKey(serverName), JSON.stringify(parsed));
+    const raw = store?.getItem(stepUpAttemptsKey(serverName));
+    if (store && raw) {
+      const parsed = JSON.parse(raw) as Record<string, number>;
+      if (parsed && typeof parsed === "object") {
+        delete parsed[issuerBucket(issuer)];
+        if (Object.keys(parsed).length === 0) {
+          store.removeItem(stepUpAttemptsKey(serverName));
+        } else {
+          store.setItem(stepUpAttemptsKey(serverName), JSON.stringify(parsed));
+        }
+      }
     }
   } catch {
     // Best-effort reset.
   }
+  writePendingStepUp(serverName, issuer, false);
 }
 
 // ===========================================================================
@@ -632,6 +693,20 @@ export async function applyToolCallStepUp(
 ): Promise<ToolCallStepUpOutcome> {
   const serverUrl = readServerUrlForStepUp(server);
   const issuer = resolveStoredIssuer(server.name, serverUrl);
+
+  // Migration/recovery: older builds persisted only the numeric attempt. If a
+  // broken delivery path consumed that attempt without ever starting a real
+  // step-up, every later challenge in this tab was silently bounded to
+  // `throw`, even after reconnecting with a fresh normal token. A current
+  // in-progress step-up always carries the companion marker below; an attempt
+  // without it is stale and safe to clear once.
+  if (
+    readStepUpAttempts(server.name, issuer) > 0 &&
+    !hasPendingStepUp(server.name, issuer)
+  ) {
+    resetInsufficientScopeStepUp(server.name, issuer);
+  }
+
   const challengedScopes = parseOAuthScopes(challenge.requiredScope);
   // The challenge's `resource_metadata` hint is untrusted: thread it only when
   // it parses as an absolute https URL (RFC 9728). A valid cross-origin pointer
@@ -672,17 +747,25 @@ export async function applyToolCallStepUp(
     };
   }
 
-  const reauthorization = await ensureAuthorizedForReconnect(server, {
-    allowInteractiveOAuthFlow: true,
-    // A resolved `reauthorize` IS the confirmed escalation — without this an
-    // auto server's tokenless guard would short-circuit to
-    // ready-unauthenticated instead of redirecting for the widened scopes.
-    interactiveOAuthConfirmed: true,
-    stepUpScopes: decision.scopes,
-    resourceMetadataUrl,
-    onTraceUpdate: options?.onTraceUpdate,
-    beforeRedirect: options?.beforeRedirect,
-  });
+  writePendingStepUp(server.name, issuer, true);
+  let reauthorization: OAuthResult;
+  try {
+    reauthorization = await ensureAuthorizedForReconnect(server, {
+      allowInteractiveOAuthFlow: true,
+      // A resolved `reauthorize` IS the confirmed escalation — without this an
+      // auto server's tokenless guard would short-circuit to
+      // ready-unauthenticated instead of redirecting for the widened scopes.
+      interactiveOAuthConfirmed: true,
+      stepUpScopes: decision.scopes,
+      resourceMetadataUrl,
+      onTraceUpdate: options?.onTraceUpdate,
+      beforeRedirect: options?.beforeRedirect,
+    });
+  } catch (error) {
+    writeStepUpAttempts(server.name, issuer, decision.attempt);
+    writePendingStepUp(server.name, issuer, false);
+    throw error;
+  }
 
   // The resolver already bumped the per-session counter (it must persist BEFORE
   // the redirect so the bound survives the round-trip). Roll it back to its
@@ -706,6 +789,7 @@ export async function applyToolCallStepUp(
     reauthorization.kind === "reauth_required"
   ) {
     writeStepUpAttempts(server.name, issuer, decision.attempt);
+    writePendingStepUp(server.name, issuer, false);
   }
 
   return {
