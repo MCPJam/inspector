@@ -417,40 +417,48 @@ export async function executeToolCallsFromMessages(
           ...(signal ? { abortSignal: signal } : {}),
         });
         throwIfAborted(signal);
-        const providerOptions = mergeMcpToolOriginMetadata(
-          undefined,
-          serverId
-        );
-        // MCP App tools scrub structuredContent from the model-facing copy
-        // (`mappedOutput`), but their widgets read structuredContent from
-        // the raw result. Preserve the raw result for UI hydration whenever
-        // it carries structuredContent — the model copy no longer does.
-        // Other toModelOutput tools (e.g. the eval `computer` tool) return
-        // no structuredContent, so they keep omitting `result:` and don't
-        // bloat subsequent per-step request bodies with large content.
-        const rawHasStructuredContent =
-          !!result &&
-          typeof result === "object" &&
-          "structuredContent" in (result as Record<string, unknown>);
-        const preserveRawResultForUi = shouldPreserveRawResultForUi(tool);
-        return {
-          role: "tool" as const,
-          content: [
-            {
-              type: "tool-result",
-              toolCallId: content.toolCallId,
-              toolName: toolName,
-              output: mappedOutput,
-              // UI-only raw result for app-tool widgets (stripped from the
-              // model copy via `output`/toModelOutput above).
-              ...(rawHasStructuredContent || preserveRawResultForUi
-                ? { result }
-                : {}),
-              serverId,
-              ...(providerOptions ? { providerOptions } : {}),
-            },
-          ],
-        } as any;
+        // SDK-converted MCP tools intentionally return `undefined` from
+        // toModelOutput for ordinary text/JSON results: the mapper is an
+        // image-specialization hook, not a replacement for the normal
+        // serialization path. Falling through preserves the CallToolResult
+        // instead of emitting an output-less tool result (which becomes `{}`
+        // on the wire and can leave the resumed model turn with no answer).
+        if (mappedOutput !== undefined) {
+          const providerOptions = mergeMcpToolOriginMetadata(
+            undefined,
+            serverId
+          );
+          // MCP App tools scrub structuredContent from the model-facing copy
+          // (`mappedOutput`), but their widgets read structuredContent from
+          // the raw result. Preserve the raw result for UI hydration whenever
+          // it carries structuredContent — the model copy no longer does.
+          // Other toModelOutput tools (e.g. the eval `computer` tool) return
+          // no structuredContent, so they keep omitting `result:` and don't
+          // bloat subsequent per-step request bodies with large content.
+          const rawHasStructuredContent =
+            !!result &&
+            typeof result === "object" &&
+            "structuredContent" in (result as Record<string, unknown>);
+          const preserveRawResultForUi = shouldPreserveRawResultForUi(tool);
+          return {
+            role: "tool" as const,
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: content.toolCallId,
+                toolName: toolName,
+                output: mappedOutput,
+                // UI-only raw result for app-tool widgets (stripped from the
+                // model copy via `output`/toModelOutput above).
+                ...(rawHasStructuredContent || preserveRawResultForUi
+                  ? { result }
+                  : {}),
+                serverId,
+                ...(providerOptions ? { providerOptions } : {}),
+              },
+            ],
+          } as any;
+        }
       }
 
       let output: ToolResultPart;
