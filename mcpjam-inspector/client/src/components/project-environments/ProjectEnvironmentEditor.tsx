@@ -5,6 +5,9 @@ import { Button } from "@mcpjam/design-system/button";
 import { Label } from "@mcpjam/design-system/label";
 import { HostPicker } from "@/components/hosts/HostPicker";
 import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
+import { EnvironmentBuildBadge } from "@/components/computer/EnvironmentBuildBadge";
+import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useSandboxImages } from "@/hooks/useSandboxImages";
 import { convexErrMessage } from "@/lib/convex-error";
 import {
   isRevisionConflictError,
@@ -21,6 +24,7 @@ type EnvironmentDraft = {
   hostId: string | null;
   serverAttachmentId: string | null;
   skillSelection: ProjectEnvironmentSkillSelection | null;
+  computerEnvironmentId: string | null;
 };
 
 function draftFromEnvironment(env: ProjectEnvironmentView): EnvironmentDraft {
@@ -30,6 +34,7 @@ function draftFromEnvironment(env: ProjectEnvironmentView): EnvironmentDraft {
     hostId: env.hostId,
     serverAttachmentId: env.serverAttachmentId ?? null,
     skillSelection: env.skillSelection ?? null,
+    computerEnvironmentId: env.computerEnvironmentId ?? null,
   };
 }
 
@@ -72,6 +77,15 @@ export function ProjectEnvironmentEditor({
 }) {
   const createEnvironment = useCreateProjectEnvironment();
   const updateEnvironment = useUpdateProjectEnvironment();
+  // Double gate: the editor already sits behind `project-environments-enabled`
+  // (the route); the sandbox-image section additionally requires
+  // `computers-enabled` (fail-closed) — mirroring how the eval suite settings
+  // gate their adjacent "Computer environment" row. When the flag is off the
+  // picker never renders, the draft field never diverges, and the update
+  // payload omits it (see the save() comment) — so a flag-off save can never
+  // clear a pin set through the API/CLI.
+  const computersEnabled = useComputersEnabled();
+  const sandboxImages = useSandboxImages(computersEnabled ? projectId : null);
 
   const [draft, setDraft] = useState<EnvironmentDraft>(() =>
     environment
@@ -82,6 +96,7 @@ export function ProjectEnvironmentEditor({
           hostId: null,
           serverAttachmentId: null,
           skillSelection: null,
+          computerEnvironmentId: null,
         }
   );
   // Captured at draft init/reset — the ONLY revision update may send.
@@ -104,12 +119,14 @@ export function ProjectEnvironmentEditor({
       !sameSkillSelection(
         draft.skillSelection,
         environment.skillSelection ?? null
-      )
+      ) ||
+      draft.computerEnvironmentId !== (environment.computerEnvironmentId ?? null)
     : trimmedName.length > 0 ||
       trimmedDescription.length > 0 ||
       draft.hostId !== null ||
       draft.serverAttachmentId !== null ||
-      draft.skillSelection !== null;
+      draft.skillSelection !== null ||
+      draft.computerEnvironmentId !== null;
 
   // Reactivity observed someone else's edit while this draft diverged.
   const stale =
@@ -142,6 +159,7 @@ export function ProjectEnvironmentEditor({
             hostId: null,
             serverAttachmentId: null,
             skillSelection: null,
+            computerEnvironmentId: null,
           }
     );
     setBaseRevision(environment?.revision ?? null);
@@ -174,6 +192,9 @@ export function ProjectEnvironmentEditor({
           ...(draft.skillSelection
             ? { skillSelection: draft.skillSelection }
             : {}),
+          ...(draft.computerEnvironmentId
+            ? { computerEnvironmentId: draft.computerEnvironmentId }
+            : {}),
         });
         toast.success(`Created “${created.name}”.`);
         onCreated?.(created);
@@ -201,6 +222,14 @@ export function ProjectEnvironmentEditor({
           environment.skillSelection ?? null
         )
           ? { skillSelection: draft.skillSelection }
+          : {}),
+        // Included only when CHANGED — this is what keeps a flag-off save from
+        // clearing an API/CLI-set pin: with the picker unrendered the draft
+        // value never diverges from the row, so the field is omitted entirely
+        // (tri-state contract: omitted = unchanged, null = clear).
+        ...(draft.computerEnvironmentId !==
+        (environment.computerEnvironmentId ?? null)
+          ? { computerEnvironmentId: draft.computerEnvironmentId }
           : {}),
       });
       setDraft(draftFromEnvironment(updated));
@@ -331,6 +360,81 @@ export function ProjectEnvironmentEditor({
           disabled={readOnly}
         />
       </div>
+
+      {computersEnabled ? (
+        <div className="space-y-1.5">
+          <Label htmlFor="project-environment-sandbox-image" className="text-xs">
+            Sandbox image
+          </Label>
+          <div className="flex items-center gap-2">
+            <select
+              id="project-environment-sandbox-image"
+              data-testid="project-environment-sandbox-image"
+              value={draft.computerEnvironmentId ?? ""}
+              disabled={readOnly}
+              onChange={(e) =>
+                setDraft((d) => ({
+                  ...d,
+                  computerEnvironmentId: e.target.value || null,
+                }))
+              }
+              className="h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus:ring-1 focus:ring-ring disabled:opacity-60"
+            >
+              <option value="">None (default image)</option>
+              {(sandboxImages ?? []).map((img) => {
+                const ready = img.currentBuild?.status === "ready";
+                // Personal drafts are listed but not selectable — the backend
+                // rejects them (a draft would resolve for every member while
+                // being visible/mutable only to its owner). Showing them
+                // disabled keeps the promote step discoverable.
+                const isDraft = img.sharing !== "project";
+                return (
+                  <option
+                    key={img.environmentId}
+                    value={img.environmentId}
+                    disabled={isDraft}
+                  >
+                    {img.name}
+                    {isDraft
+                      ? " (draft — promote to project first)"
+                      : ready
+                        ? ""
+                        : " (not built)"}
+                  </option>
+                );
+              })}
+              {/* A pinned image that vanished from the list (deleted) must stay
+                  visible and explicitly clearable — silently coercing to "None"
+                  would clear the pin on the next unrelated save. */}
+              {draft.computerEnvironmentId &&
+              !(sandboxImages ?? []).some(
+                (img) => img.environmentId === draft.computerEnvironmentId
+              ) ? (
+                <option value={draft.computerEnvironmentId} disabled>
+                  Unknown image ({draft.computerEnvironmentId})
+                </option>
+              ) : null}
+            </select>
+            {/* Badge only for a real selection — "None" has no build status
+                (the badge component renders "Not built" for null/undefined). */}
+            {draft.computerEnvironmentId ? (
+              <EnvironmentBuildBadge
+                build={
+                  (sandboxImages ?? []).find(
+                    (img) => img.environmentId === draft.computerEnvironmentId
+                  )?.currentBuild ?? null
+                }
+              />
+            ) : null}
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Applies to eval runs in this environment: each run boots a fresh,
+            isolated sandbox from this image. Playground, chatboxes, and swarms
+            don&apos;t use the sandbox image yet. A not-built image fails at
+            launch — build it first under Computer → Images.
+          </p>
+        </div>
+      ) : null}
 
       {readOnly ? (
         <p className="text-[11px] text-muted-foreground">
