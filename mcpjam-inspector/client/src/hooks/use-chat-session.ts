@@ -34,6 +34,7 @@ import {
   lastAssistantMessageIsCompleteWithToolCalls,
   type ModelMessage,
 } from "ai";
+import { lastStepHasPendingApproval } from "@/lib/chat-auto-resume";
 import {
   useAppToolsRegistry,
   recordAppToolInvocation,
@@ -2648,16 +2649,13 @@ export function useChatSession(
         registry.unregisterPendingCall(entry.instance.bridgeId, controller);
       }
     },
-    // Combine the approval predicate (existing) with the no-execute
-    // tool-call predicate (new). App-aliased tool calls are completed by
-    // our `onToolCall` above; that triggers an auto-send which carries
-    // the new tool results back to the server so the agent loop resumes.
-    // Both AI SDK helpers take the options object: `({ messages }) => …`.
-    // The approval branch is deliberately NOT gated on the CURRENT
-    // `requireToolApproval`: a pill minted while the toggle was on must
-    // still resume the turn if the user flips it off before answering, and
-    // the predicate is inert when the message holds no approval requests.
+    // Resume only browser-fulfilled app/UI calls. Server-executed MCP calls
+    // already have their result in this response; posting them again would
+    // create a redundant turn and can reuse a one-shot scope continuation.
+    // Preserve main's BUG-4 guard: a pending approval must never be answered
+    // by an automatic follow-up.
     sendAutomaticallyWhen: (options) => {
+      if (lastStepHasPendingApproval(options)) return false;
       if (
         shouldAutoSendCompletedClientToolCalls(
           options,

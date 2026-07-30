@@ -19,6 +19,22 @@
   border-width: 1px;
 }
 
+[data-sonner-toaster][data-sonner-theme]
+  [data-sonner-toast][data-styled="true"]
+  [data-close-button] {
+  background: var(--popover);
+  color: var(--popover-foreground);
+  border-color: var(--border);
+}
+
+[data-sonner-toaster][data-sonner-theme]
+  [data-sonner-toast][data-styled="true"]
+  [data-close-button]:hover {
+  background: var(--popover-foreground);
+  color: var(--popover);
+  border-color: var(--popover-foreground);
+}
+
 :root[data-theme-preset="brutalist"],
 .app-theme-scope[data-theme-preset="brutalist"] {
   --radius: 0px;
