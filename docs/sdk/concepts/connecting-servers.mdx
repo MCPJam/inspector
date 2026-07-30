@@ -243,13 +243,15 @@ Verify a server is responsive:
 
 ```typescript
 try {
-  manager.pingServer("myServer");
+  await manager.pingServer("myServer");
 } catch {
   console.warn("Server not responding, reconnecting...");
   await manager.disconnectServer("myServer");
   await manager.connectToServer("myServer");
 }
 ```
+
+`pingServer` is era-aware: on a modern (2026-07-28) connection it probes with `server/discover`; on a legacy connection it uses `ping`. Callers don't need to handle the difference.
 
 ## Next Steps
 

@@ -346,6 +346,12 @@ export interface PlatformEnvironment {
    * files. Not a general-purpose plugin list.
    */
   pluginVersionIds?: string[];
+  /**
+   * Sandbox-image pin: a `PlatformImage` id this environment's reproducibility
+   * runs boot a fresh sandbox from. Must be a project-shared image (personal
+   * drafts are rejected — promote first). Applies to eval runs today.
+   */
+  sandboxImageId?: string;
   /** Pass back as `expectedRevision` on the next mutation. */
   revision: number;
   /** Archived environments cannot be edited or launched until restored. */
@@ -362,6 +368,8 @@ export interface PlatformEnvironmentCreateBody {
   serverAttachmentId?: string;
   skillSelection?: PlatformEnvironmentSkillSelection;
   pluginVersionIds?: string[];
+  /** Project-shared `PlatformImage` id to pin; omit for the default image. */
+  sandboxImageId?: string;
 }
 
 /**
@@ -379,6 +387,8 @@ export interface PlatformEnvironmentUpdateBody {
   serverAttachmentId?: string | null;
   skillSelection?: PlatformEnvironmentSkillSelection | null;
   pluginVersionIds?: string[] | null;
+  /** New sandbox-image pin, or null to clear it. Omit to leave unchanged. */
+  sandboxImageId?: string | null;
 }
 
 /** Body for the archive/restore sub-actions — the precondition only. */
@@ -415,6 +425,9 @@ export interface PlatformEnvironmentResolved {
   }>;
   /** Connectable projection of `effectiveServerIds`, healed to live servers. */
   servers: Array<{ serverId: string; name: string }>;
+  /** The environment's sandbox-image pin, when set (and the backend is new
+   *  enough to carry it through the resolve). */
+  sandboxImageId?: string;
 }
 
 // ── Sandbox images ───────────────────────────────────────────────────────────

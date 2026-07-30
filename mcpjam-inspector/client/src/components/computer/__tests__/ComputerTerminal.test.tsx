@@ -64,6 +64,25 @@ afterEach(() => {
   h.writes.length = 0;
 });
 
+describe("ComputerTerminal — reconnect overlay", () => {
+  it("stacks the reconnect overlay above xterm after a disconnect", async () => {
+    const mintToken = vi.fn(async () => "tok");
+    const { getByRole } = render(
+      <ComputerTerminal mintToken={mintToken} themeMode="dark" />
+    );
+
+    await waitFor(() => expect(h.connections).toHaveLength(1));
+    const connection = h.connections[0];
+    act(() => connection.opts.onEvent({ type: "ready", sessionId: "s1" }));
+    act(() => connection.opts.onClose(1006, "dropped"));
+
+    const reconnect = await waitFor(() =>
+      getByRole("button", { name: "Reconnect" })
+    );
+    expect(reconnect.closest(".z-20")).not.toBeNull();
+  });
+});
+
 describe("ComputerTerminal — stale-connection guards", () => {
   it("ignores output and close callbacks from a superseded connection after reconnect", async () => {
     const mintToken = vi.fn(async () => "tok");

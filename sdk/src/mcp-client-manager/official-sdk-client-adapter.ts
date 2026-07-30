@@ -214,6 +214,9 @@ export class OfficialSdkClientAdapter implements ManagedMcpClient {
   ping(options?: Parameters<Client["ping"]>[0]) {
     return this.inner.ping(options) as ReturnType<ManagedMcpClient["ping"]>;
   }
+  discover(options?: Parameters<Client["discover"]>[0]) {
+    return this.inner.discover(options);
+  }
   subscribeResource(
     params: Parameters<Client["subscribeResource"]>[0],
     options?: Parameters<Client["subscribeResource"]>[1],

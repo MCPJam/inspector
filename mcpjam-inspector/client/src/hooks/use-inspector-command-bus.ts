@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { HOSTED_MODE } from "@/lib/config";
 import { addTokenToUrl, authFetch } from "@/lib/session-token";
 import { executeInspectorCommand } from "@/lib/inspector-command-handlers";
@@ -6,6 +6,10 @@ import type {
   InspectorCommand,
   InspectorCommandResponse,
 } from "@/shared/inspector-command.js";
+import {
+  isInspectorScopeStepUpEvent,
+  type InspectorScopeStepUpEvent,
+} from "@/shared/inspector-event.js";
 
 function buildCommandBusClientId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -24,7 +28,11 @@ async function postCommandResult(
   });
 }
 
-export function useInspectorCommandBus(): void {
+export function useInspectorCommandBus(options?: {
+  onScopeStepUp?: (event: InspectorScopeStepUpEvent) => void;
+}): void {
+  const onScopeStepUpRef = useRef(options?.onScopeStepUp);
+  onScopeStepUpRef.current = options?.onScopeStepUp;
   useEffect(() => {
     if (HOSTED_MODE) {
       return;
@@ -66,6 +74,17 @@ export function useInspectorCommandBus(): void {
         "[inspector-command-bus] command SSE connection error, browser will retry",
       );
     };
+
+    eventSource.addEventListener("inspector-event", (message) => {
+      try {
+        const event = JSON.parse(message.data) as unknown;
+        if (isInspectorScopeStepUpEvent(event)) {
+          onScopeStepUpRef.current?.(event);
+        }
+      } catch (error) {
+        console.warn("[inspector-command-bus] Invalid event payload", error);
+      }
+    });
 
     eventSource.addEventListener("superseded", () => {
       eventSource.close();
