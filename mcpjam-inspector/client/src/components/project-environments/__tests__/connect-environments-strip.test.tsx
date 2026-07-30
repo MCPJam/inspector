@@ -18,6 +18,8 @@ const {
   mockPreviewedHostId,
   mockCanManage,
   mockSaveSeed,
+  mockComputersEnabled,
+  mockSandboxImages,
 } = vi.hoisted(() => ({
   mockFlagValue: { value: true as boolean | undefined },
   mockEnvironments: { value: undefined as unknown },
@@ -27,6 +29,8 @@ const {
   mockPreviewedHostId: { value: null as string | null },
   mockCanManage: { value: true },
   mockSaveSeed: vi.fn(),
+  mockComputersEnabled: { value: true },
+  mockSandboxImages: vi.fn(),
 }));
 
 vi.mock("posthog-js/react", () => ({
@@ -61,6 +65,17 @@ vi.mock("@/hooks/useProjects", () => ({
 vi.mock("@/lib/environment-draft-seed", () => ({
   saveEnvironmentDraftSeed: mockSaveSeed,
 }));
+vi.mock("@/hooks/useComputersEnabled", () => ({
+  useComputersEnabled: () => mockComputersEnabled.value,
+}));
+vi.mock("@/hooks/useSandboxImages", () => ({
+  useSandboxImages: (projectId: string | null) => {
+    mockSandboxImages(projectId);
+    return projectId
+      ? [{ environmentId: "img_1", name: "Node 20" }]
+      : undefined;
+  },
+}));
 
 import { ConnectEnvironmentsStrip } from "../ConnectEnvironmentsStrip";
 
@@ -70,6 +85,7 @@ beforeEach(() => {
   mockFlagValue.value = true;
   mockPreviewedHostId.value = null;
   mockCanManage.value = true;
+  mockComputersEnabled.value = true;
   mockHosts.value = [{ hostId: "host_1", name: "Claude Code" }];
   mockEnvironments.value = [
     {
@@ -155,6 +171,72 @@ describe("ConnectEnvironmentsStrip", () => {
     expect(
       screen.getByTestId("connect-environments-save-as")
     ).toBeInTheDocument();
+  });
+
+  it("shows the sandbox-image name on a pinned card (single list query)", () => {
+    mockEnvironments.value = [
+      {
+        environmentId: "env_1",
+        projectId: "proj_1",
+        name: "Staging",
+        hostId: "host_1",
+        computerEnvironmentId: "img_1",
+        revision: 3,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    render(<ConnectEnvironmentsStrip projectId="proj_1" />);
+    expect(
+      screen.getByTestId("connect-environment-image-env_1")
+    ).toHaveTextContent("Node 20");
+    expect(mockSandboxImages).toHaveBeenCalledWith("proj_1");
+  });
+
+  it("falls back to a truncated raw id when the pinned image was deleted", () => {
+    mockEnvironments.value = [
+      {
+        environmentId: "env_1",
+        projectId: "proj_1",
+        name: "Staging",
+        hostId: "host_1",
+        computerEnvironmentId: "img_gone_123456789",
+        revision: 3,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    render(<ConnectEnvironmentsStrip projectId="proj_1" />);
+    expect(
+      screen.getByTestId("connect-environment-image-env_1")
+    ).toHaveTextContent("image img_gone…");
+  });
+
+  it("unpinned card shows no image chip; computers flag off shows none and skips the query", () => {
+    render(<ConnectEnvironmentsStrip projectId="proj_1" />);
+    expect(
+      screen.queryByTestId("connect-environment-image-env_1")
+    ).not.toBeInTheDocument();
+
+    mockComputersEnabled.value = false;
+    mockSandboxImages.mockClear();
+    mockEnvironments.value = [
+      {
+        environmentId: "env_2",
+        projectId: "proj_1",
+        name: "Pinned",
+        hostId: "host_1",
+        computerEnvironmentId: "img_1",
+        revision: 1,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    render(<ConnectEnvironmentsStrip projectId="proj_1" />);
+    expect(
+      screen.queryByTestId("connect-environment-image-env_2")
+    ).not.toBeInTheDocument();
+    expect(mockSandboxImages).toHaveBeenCalledWith(null);
   });
 
   it("populated strip hides the CTA for non-admins but keeps the cards", () => {

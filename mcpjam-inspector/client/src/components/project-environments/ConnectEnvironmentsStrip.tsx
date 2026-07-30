@@ -7,6 +7,8 @@ import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { usePreviewedEnvironmentId } from "@/hooks/use-previewed-environment-id";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
+import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useSandboxImages } from "@/hooks/useSandboxImages";
 import { useProjectMembers } from "@/hooks/useProjects";
 import { saveEnvironmentDraftSeed } from "@/lib/environment-draft-seed";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
@@ -76,6 +78,20 @@ export function ConnectEnvironmentsStrip({
   const hostNamesById = useMemo(
     () => new Map(hosts.map((host) => [host.hostId, host.name])),
     [hosts]
+  );
+
+  // Sandbox-image names for the card chips. ONE project-wide list query (the
+  // documented row-data-only / no-N+1 budget) — the same resolve-by-find
+  // precedent the eval run detail uses. Flag off ⇒ null projectId ⇒ query
+  // skipped entirely.
+  const computersEnabled = useComputersEnabled();
+  const sandboxImages = useSandboxImages(
+    enabled && computersEnabled ? normalizedProjectId : null
+  );
+  const imageNamesById = useMemo(
+    () =>
+      new Map((sandboxImages ?? []).map((img) => [img.environmentId, img.name])),
+    [sandboxImages]
   );
 
   // "Save as environment": capture what Connect is currently pointed at into a
@@ -206,6 +222,20 @@ export function ConnectEnvironmentsStrip({
                 {pinnedSkillCount} skill pin{pinnedSkillCount === 1 ? "" : "s"}
                 {" · "}
                 {pluginPinCount} plugin pin{pluginPinCount === 1 ? "" : "s"}
+                {/* Image chip only when pinned AND the computers flag is on —
+                    absence is semantic (default image), so unpinned rows show
+                    nothing rather than a filler label. Deleted image ⇒
+                    truncated raw id, never a silent blank. */}
+                {computersEnabled && environment.computerEnvironmentId ? (
+                  <span
+                    title="Sandbox image for eval runs in this environment — Playground, chatboxes, and swarms don't use it yet."
+                    data-testid={`connect-environment-image-${environment.environmentId}`}
+                  >
+                    {" · "}
+                    {imageNamesById.get(environment.computerEnvironmentId) ??
+                      `image ${environment.computerEnvironmentId.slice(0, 8)}…`}
+                  </span>
+                ) : null}
               </p>
               <Button
                 variant="outline"
