@@ -689,6 +689,46 @@ describe("waitForMcpInitialize", () => {
     ).toBe(false);
   });
 
+  it("does not accept a correct result served with the wrong content type", async () => {
+    // The eval run's transport rejects anything that is not `application/json`
+    // or `text/event-stream` before it parses the body at all. A server that
+    // answers perfectly as `text/plain` therefore cannot be driven, and calling
+    // it healthy here hands its failure to us as a neutral `infra_error` instead
+    // of the `server_unhealthy` the PR earned.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ jsonrpc: "2.0", id: 1, result: INITIALIZE_RESULT }),
+          { status: 200, headers: { "content-type": "text/plain" } }
+        )
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 5,
+      })
+    ).toBe(false);
+  });
+
+  it("accepts a media type that carries parameters", async () => {
+    // `application/json; charset=utf-8` is the same essence, and the transport
+    // compares essences — so this must not be turned away.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ jsonrpc: "2.0", id: 1, result: INITIALIZE_RESULT }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json; charset=utf-8" },
+          }
+        )
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", { ...seams, fetchImpl })
+    ).toBe(true);
+  });
+
   it("does not accept a discover result offering only legacy versions", async () => {
     // `server/discover` is the MODERN arm. A result naming only 2025-era
     // revisions says nothing about it: for such a server the client falls back to

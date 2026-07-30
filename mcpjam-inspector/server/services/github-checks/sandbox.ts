@@ -797,6 +797,13 @@ async function probeResponseIsHealthy(
   response: Response,
   accepts: (parsed: unknown) => boolean
 ): Promise<boolean> {
+  // Same gate the eval run's transport applies: a streamable-HTTP response must
+  // be `application/json` or `text/event-stream`, or the transport throws
+  // `Unexpected content type` before it ever looks at the body. Accepting a
+  // well-formed result served as `text/plain` would call that server healthy and
+  // then hand its failure to us as neutral `infra_error`, when it is the PR's.
+  if (!hasTransportMediaType(response)) return false;
+
   const body = (response as { body?: unknown }).body as
     | ReadableStream<Uint8Array>
     | null
@@ -844,6 +851,19 @@ async function probeResponseIsHealthy(
     // holding the stream open, so drop it rather than leaking the socket.
     void reader.cancel().catch(() => {});
   }
+}
+
+/**
+ * Whether the response declares a media type the streamable-HTTP transport can
+ * consume. Compared on the essence only — parameters (`; charset=utf-8`) are
+ * legal and the transport ignores them too. A missing header is a rejection: the
+ * transport has nothing to match and fails the same way.
+ */
+function hasTransportMediaType(response: Response): boolean {
+  const header = response.headers?.get?.("content-type");
+  if (typeof header !== "string") return false;
+  const essence = header.split(";", 1)[0].trim().toLowerCase();
+  return essence === "application/json" || essence === "text/event-stream";
 }
 
 /**
