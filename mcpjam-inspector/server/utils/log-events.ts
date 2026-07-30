@@ -65,7 +65,18 @@ export type BaseLogContext = RequestLogContext | SystemLogContext;
 
 export type RequestEventMap = {
   "http.request.completed": { statusCode: number };
-  "http.request.failed": { statusCode: number; errorCode: string };
+  /**
+   * `errorCode` is the route's own `ErrorCode` (SERVER_UNREACHABLE, TIMEOUT, …)
+   * whenever one is known, and only falls back to a `classifyError` bucket for
+   * genuinely uncaught throws. `errorMessage` carries the scrubbed text —
+   * without it a 5xx is only ever "something failed", which is what made the
+   * hosted connect 502s undiagnosable.
+   */
+  "http.request.failed": {
+    statusCode: number;
+    errorCode: string;
+    errorMessage?: string;
+  };
   "http.stream.opened": { statusCode: number };
   "http.stream.closed": { statusCode: number; durationMs: number };
   "mcp.oauth.proxy.failed": {

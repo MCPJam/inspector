@@ -115,7 +115,7 @@ import { TasksExtRequestMethods } from "./tasks-ext.js";
 const ERA_GATE_MEMBER = "_assertOutboundRequestInEra" as const;
 
 /** Client package version this shadow was verified against. */
-const VERIFIED_CLIENT_VERSION = "2.0.0-beta.4 / 2.0.0-beta.5";
+const VERIFIED_CLIENT_VERSION = "2.0.0";
 
 /**
  * `rev2026Codec.era` (`src-*.mjs:3790`) — the ONLY era on which the exemption
