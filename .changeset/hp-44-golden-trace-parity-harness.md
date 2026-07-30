@@ -40,3 +40,12 @@ non-zero on any difference, so it works as a CI gate.
 Ships a committed golden trace of `mcpjam` against itself plus 57 tests, including
 nine negative tests that prove the oracle is not vacuous (a differ hardcoded to
 return parity would pass the positive tests alone).
+
+Also ships a real HTTP MCP server + authorization server that records its own
+traffic as a HAR (`tests/support/oauth-capture-server.ts`), the first golden trace
+of a real third-party host (`claude-code` 2.1.220 — which settled two cells prior
+desk research could not and corrected two it had read from a published CIMD
+document), and the emulator-vs-real-host diff that turns those into a concrete work
+list. Running against real HTTP found four bugs an in-memory fixture could not,
+including one that would have written a live authorization code into a committed
+artifact via a `302 Location` header.
