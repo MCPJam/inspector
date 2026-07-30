@@ -330,10 +330,10 @@ await manager.disconnectServer("myServer");
 
 ### pingServer()
 
-Sends a ping to check if a server is responsive.
+Sends a liveness probe to check if a server is responsive. The probe is era-aware: on a modern (2026-07-28) connection it uses `server/discover`; on a legacy connection it uses `ping`.
 
 ```typescript
-pingServer(serverId: string): void
+pingServer(serverId: string): Promise<EmptyResult>
 ```
 
 #### Parameters
@@ -344,18 +344,18 @@ pingServer(serverId: string): void
 
 #### Returns
 
-`void` - This method is synchronous and does not return a value.
+`Promise<EmptyResult>` - Resolves with an empty result if the server is responsive.
 
 #### Throws
 
 - Error if the server is not connected
-- Error if the ping fails
+- Error if the probe fails
 
 #### Example
 
 ```typescript
 try {
-  manager.pingServer("myServer");
+  await manager.pingServer("myServer");
   console.log("Server is responsive");
 } catch (error) {
   console.warn("Server not responding:", error.message);
