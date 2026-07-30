@@ -171,6 +171,44 @@ describe("deriveMirroredBodyValues", () => {
     });
   });
 
+  it("reads params.taskId as the name source for the SEP-2663 routed methods", () => {
+    // Without this the tracing verdict has nothing to compare `Mcp-Name`
+    // against on a task poll, and reports the required header as optional.
+    expect(
+      deriveMirroredBodyValues(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tasks/get",
+          params: { taskId: "task-42" },
+        }),
+      ),
+    ).toEqual({
+      method: "tasks/get",
+      name: "task-42",
+      protocolVersion: undefined,
+    });
+  });
+
+  it("ignores a taskId on a method the routing requirement does not cover", () => {
+    // Only get/update/cancel mirror the task id; reading it elsewhere would
+    // cross-check `Mcp-Name` against a field it was never copied from.
+    expect(
+      deriveMirroredBodyValues(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tasks/list",
+          params: { taskId: "task-42" },
+        }),
+      ),
+    ).toEqual({
+      method: "tasks/list",
+      name: undefined,
+      protocolVersion: undefined,
+    });
+  });
+
   it("returns nothing for a batch, a non-JSON body, or a non-string body", () => {
     expect(deriveMirroredBodyValues(JSON.stringify([{ method: "a" }]))).toBeUndefined();
     expect(deriveMirroredBodyValues("not json")).toBeUndefined();
