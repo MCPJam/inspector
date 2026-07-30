@@ -889,7 +889,17 @@ export async function executeClaimedCheck(
       .catch(async (error: unknown) => {
         // A failure here may be the PR's server dying mid-run rather than an
         // outage of ours, and the difference decides who gets the red X.
-        throw await attributeEvalFailure(error, runningBox, recipe.port);
+        const attributed = await attributeEvalFailure(
+          error,
+          runningBox,
+          recipe.port
+        );
+        // The diagnostic above talks to the box, so it takes real time — long
+        // enough for the lease to be taken away while it runs. Re-checked here so
+        // a check somebody else has already concluded is abandoned rather than
+        // reported on, which is what every other step boundary does.
+        assertLeaseHeld();
+        throw attributed;
       });
 
     const outcome = outcomeForRunResult(run.result);

@@ -12,6 +12,7 @@ import {
   effectiveRunResult,
   executeClaimedCheck,
   outcomeForRunResult,
+  LeaseLostError,
   startGithubChecksWorker,
   type CheckExecutionDeps,
   type CheckReport,
@@ -317,6 +318,47 @@ describe("executeClaimedCheck — failure attribution", () => {
     const h = harness(evalDies, "");
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
     expect(h.reports[0].outcome).toBe("infra_error");
+  });
+
+  it("abandons the check when the lease is lost during the liveness diagnostic", async () => {
+    // The diagnostic talks to the box, so it takes real time — and the lease can be
+    // taken away inside that window, AFTER the last step boundary checked it.
+    // Reporting `server_unhealthy` for a claim somebody else has already concluded
+    // is what the lease guard exists to prevent, so the re-check has to happen
+    // after the diagnostic and not only before the eval.
+    let inDiagnostic = false;
+    const h = harness(
+      {
+        runEvalSuite: async () => {
+          throw new Error("fetch failed: ECONNREFUSED");
+        },
+        heartbeat: async () => {
+          // Only once the diagnostic is under way, so the earlier boundaries pass.
+          if (inDiagnostic) throw new LeaseLostError("taken over");
+        },
+        heartbeatIntervalMs: 1,
+      },
+      "MCPJAM_CHECK_PORT_CLOSED\n"
+    );
+    const provision = h.deps.provisionSandbox!;
+    h.deps.provisionSandbox = async (args) => {
+      const box = await provision(args);
+      const inner = box.commands.run;
+      box.commands.run = async (command: string, opts?: unknown) => {
+        if (command.includes("MCPJAM_CHECK_PORT_OPEN")) {
+          inDiagnostic = true;
+          // Let the 1ms heartbeat fire and register the loss mid-diagnostic.
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        return inner.call(box.commands, command, opts as never);
+      };
+      return box;
+    };
+
+    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
+    // Abandoned, not reported — and the box is still torn down.
+    expect(h.reports).toHaveLength(0);
+    expect(h.events).toContain("killSandbox");
   });
 
   it("checks liveness over the command RPC, never the public URL", async () => {
