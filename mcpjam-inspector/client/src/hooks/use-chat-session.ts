@@ -38,10 +38,13 @@ import {
 } from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
 import { scrubAppToolResultForModel } from "@/components/chat-v2/thread/mcp-apps/app-tools-sanitizer";
 import {
-  driveScopeStepUp,
+  beginChatTurnScopeStepUpHold,
+  driveChatScopeStepUp,
+  endChatTurnScopeStepUpHold,
   resetScopeStepUp,
   resolveScopeStepUpServer,
 } from "@/lib/scope-step-up";
+import { getChatHistoryDetail } from "@/lib/apis/web/chat-history-api";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvex, useConvexAuth } from "convex/react";
 import { ModelDefinition, type ModelProvider } from "@/shared/types";
@@ -1686,7 +1689,13 @@ export function useChatSession(
             // (a `requiredScope` OR a `resourceMetadataUrl` is now actionable —
             // discovery consumes the PRM pointer, SEP-2350 follow-up to #3427)
             // and the same cross-surface in-flight dedup.
-            driveScopeStepUp(server, {
+            //
+            // The chat variant additionally DEFERS the redirect to the end of
+            // the turn. The redirect is a full-page navigation, and the server
+            // only persists the transcript once this stream drains — redirect
+            // now and the user returns from the authorization server to a
+            // transcript missing the tool call that sent them there.
+            driveChatScopeStepUp(server, {
               requiredScope: event.requiredScope,
               resourceMetadataUrl: event.resourceMetadataUrl,
             });
@@ -2591,6 +2600,76 @@ export function useChatSession(
     [baseSendMessage],
   );
   mrtrResumeSenderRef.current = submitMrtrResume;
+
+  // SEP-2350: hold chat-triggered scope step-ups for the duration of the turn.
+  //
+  // The redirect that re-authorization performs is a full-page navigation, and
+  // the server writes the transcript only after this stream drains. Redirecting
+  // the moment the `403 insufficient_scope` arrives therefore destroys the turn
+  // that motivated it. Holding across the turn — and then briefly across
+  // persistence — is what lets the user come back to a transcript that still
+  // shows the failed tool call.
+  const stopRef = useRef(stop);
+  stopRef.current = stop;
+  const statusRef = useRef(status);
+  statusRef.current = status;
+  const hostedProjectIdRef = useRef(hostedProjectId);
+  hostedProjectIdRef.current = hostedProjectId;
+
+  // Bounded wait for the turn to land server-side. There is no "persisted"
+  // event on the wire, so this polls the same detail row the post-stream
+  // refresh does. It always resolves: persistence is worth a moment's delay,
+  // never worth withholding authorization over.
+  const turnStartVersionRef = useRef<number | null>(null);
+  const waitForTurnPersisted = useCallback(async () => {
+    const sessionId = chatSessionIdRef.current;
+    if (!sessionId) return;
+    // Captured at turn start: by the time this runs the post-stream refresh may
+    // already have advanced the local cursor, and comparing against that would
+    // never register the bump we are waiting for.
+    const baselineVersion = turnStartVersionRef.current;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 250));
+      try {
+        const detail = await getChatHistoryDetail({
+          chatSessionId: sessionId,
+          projectId: hostedProjectIdRef.current ?? undefined,
+        });
+        const version = detail?.session?.version;
+        // A brand-new chat is persisted the moment the row exists; a resumed
+        // thread needs the version to move past what we sent against.
+        if (
+          baselineVersion === null ||
+          (typeof version === "number" && version > baselineVersion)
+        ) {
+          return;
+        }
+      } catch {
+        // Keep trying; the loop bound is the real deadline.
+      }
+    }
+  }, []);
+  const waitForTurnPersistedRef = useRef(waitForTurnPersisted);
+  waitForTurnPersistedRef.current = waitForTurnPersisted;
+
+  // Depend on the derived boolean, not `status`: the submitted → streaming
+  // transition is mid-turn, and re-running on it would release the hold (and
+  // fire the redirect) while the stream is still open.
+  const isTurnActive = status === "submitted" || status === "streaming";
+  useEffect(() => {
+    if (!isTurnActive) return;
+    turnStartVersionRef.current = resumedVersionRef.current;
+    beginChatTurnScopeStepUpHold(() => stopRef.current());
+    return () => {
+      // A turn that errored has nothing left to persist — don't make the user
+      // wait out a poll that cannot succeed.
+      endChatTurnScopeStepUpHold(
+        statusRef.current === "error"
+          ? undefined
+          : waitForTurnPersistedRef.current
+      );
+    };
+  }, [isTurnActive]);
 
   const queueSessionHydration = useCallback(
     (hydration: PendingSessionHydration) => {

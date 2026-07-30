@@ -265,6 +265,7 @@ import {
   Navigate,
   Outlet,
   UNSAFE_LocationContext,
+  useLocation,
   useOutletContext,
   useParams,
 } from "react-router";
@@ -1598,7 +1599,16 @@ export function OrganizationsRoute() {
 }
 
 export function ChatAliasRoute() {
-  return <Navigate to={routePaths.playground} replace />;
+  // Forward the query string: `/chat?conversation=<id>` is what an OAuth return
+  // marker or an old bookmark can still carry, and dropping the search here
+  // would land the user on an empty Playground with the id already gone.
+  const location = useLocation();
+  return (
+    <Navigate
+      to={{ pathname: routePaths.playground, search: location.search }}
+      replace
+    />
+  );
 }
 
 export function ServersRedirectRoute() {

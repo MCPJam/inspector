@@ -10,8 +10,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   __resetScopeStepUpInFlightForTests,
+  beginChatTurnScopeStepUpHold,
+  driveChatScopeStepUp,
   driveScopeStepUpFromChallenge,
   driveScopeStepUpFromError,
+  endChatTurnScopeStepUpHold,
   resetScopeStepUp,
   resolveScopeStepUpServer,
   runWithScopeStepUp,
@@ -180,5 +183,151 @@ describe("scope step-up lifecycle", () => {
         projectId: "convex-project-1",
       }),
     ).toBe(projectServer);
+  });
+});
+
+/**
+ * Chat-triggered step-up is deferred to the end of the turn.
+ *
+ * The redirect is a full-page navigation and the server persists the transcript
+ * only once the stream drains, so redirecting on arrival loses the very tool
+ * call that raised the 403.
+ */
+describe("chat turn step-up deferral", () => {
+  const challenge = { requiredScope: "files:write" };
+
+  beforeEach(() => {
+    applyToolCallStepUp.mockReset().mockResolvedValue(undefined);
+    resetToolCallStepUp.mockReset();
+    __resetScopeStepUpInFlightForTests();
+  });
+
+  it("redirects immediately when no turn is in flight", () => {
+    driveChatScopeStepUp(server, challenge);
+    expect(applyToolCallStepUp).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds the redirect until the turn ends", () => {
+    beginChatTurnScopeStepUpHold();
+    driveChatScopeStepUp(server, challenge);
+    expect(applyToolCallStepUp).not.toHaveBeenCalled();
+
+    endChatTurnScopeStepUpHold();
+    expect(applyToolCallStepUp).toHaveBeenCalledTimes(1);
+    expect(applyToolCallStepUp).toHaveBeenCalledWith(server, {
+      requiredScope: "files:write",
+      resourceMetadataUrl: undefined,
+    });
+  });
+
+  it("waits for persistence before redirecting", async () => {
+    let persisted: (() => void) | undefined;
+    const waitForPersist = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          persisted = resolve;
+        }),
+    );
+
+    beginChatTurnScopeStepUpHold();
+    driveChatScopeStepUp(server, challenge);
+    endChatTurnScopeStepUpHold(waitForPersist);
+
+    await Promise.resolve();
+    expect(waitForPersist).toHaveBeenCalledTimes(1);
+    expect(applyToolCallStepUp).not.toHaveBeenCalled();
+
+    persisted?.();
+    await vi.waitFor(() => expect(applyToolCallStepUp).toHaveBeenCalledTimes(1));
+  });
+
+  it("redirects anyway when the persistence wait rejects", async () => {
+    beginChatTurnScopeStepUpHold();
+    driveChatScopeStepUp(server, challenge);
+    endChatTurnScopeStepUpHold(() => Promise.reject(new Error("offline")));
+
+    await vi.waitFor(() => expect(applyToolCallStepUp).toHaveBeenCalledTimes(1));
+  });
+
+  it("does not poll for persistence when nothing was queued", () => {
+    const waitForPersist = vi.fn(() => Promise.resolve());
+    beginChatTurnScopeStepUpHold();
+    endChatTurnScopeStepUpHold(waitForPersist);
+    expect(waitForPersist).not.toHaveBeenCalled();
+    expect(applyToolCallStepUp).not.toHaveBeenCalled();
+  });
+
+  it("dedupes a server across delivery channels within one turn", () => {
+    beginChatTurnScopeStepUpHold();
+    // The harness delivers the same 403 twice — as a stream part and as an
+    // Inspector event. One redirect, not two.
+    driveChatScopeStepUp(server, challenge);
+    driveChatScopeStepUp(server, { requiredScope: "files:write" });
+    endChatTurnScopeStepUpHold();
+    expect(applyToolCallStepUp).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases every distinct server queued during the turn", () => {
+    const other = { name: "srv-2" } as unknown as ServerWithName;
+    beginChatTurnScopeStepUpHold();
+    driveChatScopeStepUp(server, challenge);
+    driveChatScopeStepUp(other, challenge);
+    expect(applyToolCallStepUp).not.toHaveBeenCalled();
+
+    endChatTurnScopeStepUpHold();
+    expect(applyToolCallStepUp).toHaveBeenCalledTimes(2);
+  });
+
+  it("never queues an unactionable challenge or an unresolved server", () => {
+    beginChatTurnScopeStepUpHold();
+    // A share-link chatbox turn resolves to no server; it must stay inert
+    // rather than authorize on the host's behalf after the turn.
+    driveChatScopeStepUp(undefined, challenge);
+    driveChatScopeStepUp(server, { errorDescription: "nope" });
+    endChatTurnScopeStepUpHold();
+    expect(applyToolCallStepUp).not.toHaveBeenCalled();
+  });
+
+  it("authorizes anyway when the turn never ends", () => {
+    vi.useFakeTimers();
+    try {
+      const stopTurn = vi.fn();
+      beginChatTurnScopeStepUpHold(stopTurn);
+      driveChatScopeStepUp(server, challenge);
+
+      vi.advanceTimersByTime(14_000);
+      expect(applyToolCallStepUp).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(2_000);
+      // The stuck stream is aborted first — it would otherwise keep streaming
+      // into a page the redirect is about to discard.
+      expect(stopTurn).toHaveBeenCalledTimes(1);
+      expect(applyToolCallStepUp).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not double-fire when the turn ends after the timeout", () => {
+    vi.useFakeTimers();
+    try {
+      beginChatTurnScopeStepUpHold(vi.fn());
+      driveChatScopeStepUp(server, challenge);
+      vi.advanceTimersByTime(16_000);
+      expect(applyToolCallStepUp).toHaveBeenCalledTimes(1);
+
+      endChatTurnScopeStepUpHold();
+      expect(applyToolCallStepUp).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores an end without a matching begin", () => {
+    endChatTurnScopeStepUpHold();
+    expect(applyToolCallStepUp).not.toHaveBeenCalled();
+    // The gate must still be open afterwards.
+    driveChatScopeStepUp(server, challenge);
+    expect(applyToolCallStepUp).toHaveBeenCalledTimes(1);
   });
 });

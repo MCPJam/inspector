@@ -77,9 +77,152 @@ export function resolveScopeStepUpServer(
   );
 }
 
+/**
+ * How long a queued chat step-up will wait for its turn before authorizing
+ * anyway. The wait exists to save the turn, not to gate authorization on it —
+ * a model that never stops streaming must not be able to lock the user out of
+ * re-authorizing.
+ */
+const CHAT_TURN_HOLD_TIMEOUT_MS = 15_000;
+
+/**
+ * Chat step-ups deferred until the current turn finishes and persists.
+ *
+ * A step-up redirect is a full-page navigation. Fired mid-stream it kills the
+ * request the server persists the turn from, so the user comes back from the
+ * authorization server to a transcript missing the very tool call that sent
+ * them there. Holding the redirect until the stream ends is what makes the
+ * failed call survive the round trip.
+ *
+ * Module-level for the same reason {@link inFlight} is: a turn's step-up can
+ * arrive on more than one channel (the chat stream part, and — once the harness
+ * work lands — an Inspector event handled at the app root). One shared hold
+ * covers every channel; a component-local one would leave the others free to
+ * redirect out from under the stream.
+ */
+type PendingChatStepUp = {
+  server: ServerWithName;
+  challenge: InsufficientScopeChallenge;
+};
+const pendingChatStepUps = new Map<string, PendingChatStepUp>();
+let chatTurnHoldDepth = 0;
+let holdTimeoutId: ReturnType<typeof setTimeout> | null = null;
+/** Aborts the in-flight turn when the hold times out. Registered by the chat. */
+let abortHeldChatTurn: (() => void) | null = null;
+
 /** Test seam: no production caller should need this. */
 export function __resetScopeStepUpInFlightForTests(): void {
   inFlight.clear();
+  pendingChatStepUps.clear();
+  chatTurnHoldDepth = 0;
+  abortHeldChatTurn = null;
+  if (holdTimeoutId !== null) {
+    clearTimeout(holdTimeoutId);
+    holdTimeoutId = null;
+  }
+}
+
+function clearHoldTimeout(): void {
+  if (holdTimeoutId === null) return;
+  clearTimeout(holdTimeoutId);
+  holdTimeoutId = null;
+}
+
+function flushPendingChatStepUps(): void {
+  clearHoldTimeout();
+  if (pendingChatStepUps.size === 0) return;
+  const queued = [...pendingChatStepUps.values()];
+  pendingChatStepUps.clear();
+  for (const { server, challenge } of queued) {
+    driveScopeStepUp(server, challenge);
+  }
+}
+
+/**
+ * Marks the start of a chat turn: step-ups raised from here on are queued
+ * rather than redirected.
+ *
+ * @param onTimeout Stops the turn if the hold times out, so the redirect isn't
+ *   waiting on a stream that will never end.
+ */
+export function beginChatTurnScopeStepUpHold(onTimeout?: () => void): void {
+  chatTurnHoldDepth += 1;
+  if (onTimeout) {
+    abortHeldChatTurn = onTimeout;
+  }
+}
+
+/**
+ * Marks the end of a chat turn and releases anything queued during it.
+ *
+ * @param waitForPersist Resolves once the turn has been written server-side.
+ *   Raced against a cap: persistence is best-effort here, and a slow write must
+ *   delay the redirect, not cancel it.
+ */
+export function endChatTurnScopeStepUpHold(
+  waitForPersist?: () => Promise<unknown>,
+): void {
+  if (chatTurnHoldDepth === 0) return;
+  chatTurnHoldDepth -= 1;
+  if (chatTurnHoldDepth > 0) return;
+
+  abortHeldChatTurn = null;
+  if (pendingChatStepUps.size === 0) {
+    clearHoldTimeout();
+    return;
+  }
+  if (!waitForPersist) {
+    flushPendingChatStepUps();
+    return;
+  }
+  void Promise.resolve()
+    .then(waitForPersist)
+    .catch(() => {
+      // A failed persistence check is not a reason to withhold authorization.
+    })
+    .finally(() => {
+      flushPendingChatStepUps();
+    });
+}
+
+/**
+ * {@link driveScopeStepUp} for a step-up raised by a chat turn.
+ *
+ * Outside a turn this is exactly {@link driveScopeStepUp}. Inside one the
+ * challenge is queued — deduped by server, since the same 403 can reach the
+ * browser by more than one route — and released when the turn ends.
+ */
+export function driveChatScopeStepUp(
+  server: ServerWithName | undefined,
+  challenge: InsufficientScopeChallenge | undefined,
+): void {
+  // Apply the same gates the immediate path does, up front: a chatbox /
+  // share-link turn (no resolvable server) and a challenge with nothing to
+  // widen must not hold a slot in the queue.
+  if (!server) return;
+  if (!isActionableStepUpChallenge(challenge)) return;
+  if (chatTurnHoldDepth === 0) {
+    driveScopeStepUp(server, challenge);
+    return;
+  }
+  if (inFlight.has(server.name)) return;
+  if (pendingChatStepUps.has(server.name)) return;
+  pendingChatStepUps.set(server.name, { server, challenge });
+  if (holdTimeoutId !== null) return;
+  holdTimeoutId = setTimeout(() => {
+    holdTimeoutId = null;
+    // Stop the turn first: the redirect is about to discard it anyway, and
+    // leaving the request open would keep streaming into a dead page.
+    const abort = abortHeldChatTurn;
+    abortHeldChatTurn = null;
+    chatTurnHoldDepth = 0;
+    try {
+      abort?.();
+    } catch {
+      // A failed abort must not strand the queued authorization.
+    }
+    flushPendingChatStepUps();
+  }, CHAT_TURN_HOLD_TIMEOUT_MS);
 }
 
 /**
