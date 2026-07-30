@@ -1,0 +1,287 @@
+/**
+ * The MCP server the GitHub PR-check walking skeleton tests against.
+ *
+ * This file is the seed for the public repo `mcpjam/mcp-check-fixture` (see the
+ * README next to it). It exists so the check pipeline can be exercised
+ * end-to-end against something we control: a deliberately boring,
+ * deterministic, dependency-free streamable-HTTP MCP server.
+ *
+ * Two properties are load-bearing for the check pipeline and must not be
+ * "cleaned up":
+ *
+ *   1. It binds 0.0.0.0, not 127.0.0.1. E2B's host bridge only forwards to
+ *      ports bound on all interfaces, so a loopback-only server is invisible
+ *      from outside the sandbox and the check reports `server_unhealthy`.
+ *   2. It answers `initialize` immediately on `/mcp`. That handshake IS the
+ *      health probe — the worker polls it until it succeeds, so anything that
+ *      delays it (a warm-up, a lazy route mount) shows up as an unhealthy
+ *      server.
+ *
+ * The tools are intentionally trivial and side-effect-free: the eval suite's job
+ * here is to prove the pipeline works, not to be an interesting test.
+ */
+
+import {
+  createServer,
+  type IncomingMessage,
+  type ServerResponse,
+} from "node:http";
+
+const PORT = Number(process.env.PORT ?? 3001);
+/** All interfaces — see property (1) in the file comment. */
+const HOST = "0.0.0.0";
+const MCP_PATH = "/mcp";
+const PROTOCOL_VERSION = "2025-06-18";
+/** Bound on the request body; nothing here needs a large one. */
+const MAX_BODY_BYTES = 256 * 1024;
+
+type JsonRpcRequest = {
+  jsonrpc?: string;
+  id?: string | number | null;
+  method?: string;
+  params?: Record<string, unknown>;
+};
+
+const TOOLS = [
+  {
+    name: "echo",
+    description: "Return the text you pass in, unchanged.",
+    inputSchema: {
+      type: "object",
+      properties: { text: { type: "string", description: "Text to echo." } },
+      required: ["text"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "add",
+    description: "Add two numbers and return the sum.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        a: { type: "number", description: "First addend." },
+        b: { type: "number", description: "Second addend." },
+      },
+      required: ["a", "b"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "server_info",
+    description:
+      "Return this fixture server's name and version. Takes no arguments.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+  },
+] as const;
+
+function textResult(text: string) {
+  return { content: [{ type: "text", text }] };
+}
+
+function callTool(
+  name: string,
+  args: Record<string, unknown>
+): { result?: unknown; error?: { code: number; message: string } } {
+  switch (name) {
+    case "echo": {
+      const text = args?.text;
+      if (typeof text !== "string") {
+        return { error: { code: -32602, message: "`text` must be a string" } };
+      }
+      return { result: textResult(text) };
+    }
+    case "add": {
+      const { a, b } = args ?? {};
+      if (typeof a !== "number" || typeof b !== "number") {
+        return {
+          error: { code: -32602, message: "`a` and `b` must be numbers" },
+        };
+      }
+      return { result: textResult(String(a + b)) };
+    }
+    case "server_info":
+      return {
+        result: textResult(
+          JSON.stringify({ name: "mcp-check-fixture", version: "1.0.0" })
+        ),
+      };
+    default:
+      return { error: { code: -32601, message: `Unknown tool: ${name}` } };
+  }
+}
+
+function handleRpc(request: JsonRpcRequest): {
+  status: number;
+  body?: unknown;
+} {
+  switch (request.method) {
+    case "initialize":
+      return {
+        status: 200,
+        body: {
+          jsonrpc: "2.0",
+          id: request.id ?? null,
+          result: {
+            protocolVersion: PROTOCOL_VERSION,
+            capabilities: { tools: {} },
+            serverInfo: { name: "mcp-check-fixture", version: "1.0.0" },
+          },
+        },
+      };
+    // Notifications carry no id and get no body — 202 per the transport.
+    case "notifications/initialized":
+      return { status: 202 };
+    case "ping":
+      return {
+        status: 200,
+        body: { jsonrpc: "2.0", id: request.id ?? null, result: {} },
+      };
+    case "tools/list":
+      return {
+        status: 200,
+        body: {
+          jsonrpc: "2.0",
+          id: request.id ?? null,
+          result: { tools: TOOLS },
+        },
+      };
+    case "tools/call": {
+      const name = String(request.params?.name ?? "");
+      const args = (request.params?.arguments ?? {}) as Record<string, unknown>;
+      const outcome = callTool(name, args);
+      return {
+        status: 200,
+        body: {
+          jsonrpc: "2.0",
+          id: request.id ?? null,
+          ...(outcome.error
+            ? { error: outcome.error }
+            : { result: outcome.result }),
+        },
+      };
+    }
+    default:
+      return {
+        status: 200,
+        body: {
+          jsonrpc: "2.0",
+          id: request.id ?? null,
+          error: {
+            code: -32601,
+            message: `Method not found: ${request.method ?? "(none)"}`,
+          },
+        },
+      };
+  }
+}
+
+function readBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > MAX_BODY_BYTES) {
+        reject(new Error("Payload too large"));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    req.on("error", reject);
+  });
+}
+
+function sendJson(res: ServerResponse, status: number, body: unknown): void {
+  const payload = JSON.stringify(body);
+  res.writeHead(status, {
+    "content-type": "application/json",
+    "content-length": Buffer.byteLength(payload),
+  });
+  res.end(payload);
+}
+
+const server = createServer(async (req, res) => {
+  const url = new URL(
+    req.url ?? "/",
+    `http://${req.headers.host ?? "localhost"}`
+  );
+
+  // A plain liveness endpoint, for humans. The CHECK's health probe is the MCP
+  // `initialize` on /mcp, not this.
+  if (req.method === "GET" && url.pathname === "/healthz") {
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (url.pathname !== MCP_PATH) {
+    sendJson(res, 404, { error: "Not found" });
+    return;
+  }
+  if (req.method !== "POST") {
+    // No server-initiated stream in this fixture.
+    res.writeHead(405, { allow: "POST" }).end();
+    return;
+  }
+
+  let raw: string;
+  try {
+    raw = await readBody(req);
+  } catch {
+    sendJson(res, 413, { error: "Payload too large" });
+    return;
+  }
+
+  let parsed: JsonRpcRequest | JsonRpcRequest[];
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    sendJson(res, 400, {
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32700, message: "Parse error" },
+    });
+    return;
+  }
+
+  // Batches are legal on the wire; answer them so a client that sends one
+  // doesn't look like a broken server.
+  if (Array.isArray(parsed)) {
+    const bodies = parsed
+      .map((entry) => handleRpc(entry))
+      .filter((entry) => entry.body !== undefined)
+      .map((entry) => entry.body);
+    if (bodies.length === 0) {
+      res.writeHead(202).end();
+      return;
+    }
+    sendJson(res, 200, bodies);
+    return;
+  }
+
+  const { status, body } = handleRpc(parsed);
+  if (body === undefined) {
+    res.writeHead(status).end();
+    return;
+  }
+  sendJson(res, status, body);
+});
+
+server.listen(PORT, HOST, () => {
+  // Log the bind address explicitly: "127.0.0.1" here is the single most likely
+  // cause of a `server_unhealthy` check, so make it visible in the check logs.
+  console.log(
+    `mcp-check-fixture listening on http://${HOST}:${PORT}${MCP_PATH}`
+  );
+});
+
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.on(signal, () => {
+    server.close(() => process.exit(0));
+  });
+}
