@@ -233,6 +233,19 @@ describe("post-negotiation capability re-resolution (eraCapabilities.modern)", (
     expect(caps.elicitation).toBeUndefined();
   });
 
+  it("pingServer probes a modern connection without sending the retired ping method", async () => {
+    // The MRTR resume path health-checks with pingServer before driving the
+    // retry leg; `ping` does not exist on the 2026 wire, so the probe must be
+    // `server/discover` there or every modern resume dies with
+    // MethodNotSupportedByProtocolVersion.
+    manager.setMrtrInputCollector("fixture", acceptAllCollector());
+    await manager.connectToServer("fixture", {
+      url: served.url,
+      timeout: 10_000,
+    });
+    await expect(manager.pingServer("fixture")).resolves.toEqual({});
+  });
+
   it("also applies the overlay on a PINNED modern connection", async () => {
     // The seam keys on the classified era, not on how the era was selected —
     // a pin and a successful auto probe land in the same place.

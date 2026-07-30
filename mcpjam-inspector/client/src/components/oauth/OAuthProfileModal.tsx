@@ -36,11 +36,23 @@ import {
   AccordionTrigger,
 } from "@mcpjam/design-system/accordion";
 
+/**
+ * Prefill an agent command may seed the form with when it opens. Deliberately
+ * cannot carry credentials — there are no clientId/clientSecret fields here;
+ * the human types those. Overlays the server-derived seed on open.
+ */
+export interface OAuthProfileAgentSeed {
+  serverName?: string;
+  serverUrl?: string;
+  registrationStrategy?: OAuthRegistrationStrategy;
+}
+
 interface OAuthProfileModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   server?: ServerWithName;
   existingServerNames: string[];
+  agentSeed?: OAuthProfileAgentSeed | null;
   onSave: (payload: {
     formData: ServerFormData;
     profile: OAuthTestProfile;
@@ -77,6 +89,7 @@ export function OAuthProfileModal({
   onOpenChange,
   server,
   existingServerNames,
+  agentSeed,
   onSave,
 }: OAuthProfileModalProps) {
   const derivedProfile = useMemo(
@@ -104,8 +117,17 @@ export function OAuthProfileModal({
 
   useEffect(() => {
     if (open) {
-      setServerName(generateDefaultName());
-      setDraft(derivedProfile);
+      // The agent seed overlays the server-derived values; anything it omits
+      // keeps the derived default. It never carries credentials (see the
+      // OAuthProfileAgentSeed type).
+      setServerName(agentSeed?.serverName ?? generateDefaultName());
+      setDraft({
+        ...derivedProfile,
+        ...(agentSeed?.serverUrl ? { serverUrl: agentSeed.serverUrl } : {}),
+        ...(agentSeed?.registrationStrategy
+          ? { registrationStrategy: agentSeed.registrationStrategy }
+          : {}),
+      });
       setHeaderRows(
         derivedProfile.customHeaders.length
           ? derivedProfile.customHeaders.map((header) =>
@@ -115,7 +137,7 @@ export function OAuthProfileModal({
       );
       setError(null);
     }
-  }, [open, derivedProfile, generateDefaultName]);
+  }, [open, derivedProfile, generateDefaultName, agentSeed]);
 
   const normalizedHeaders = useMemo(
     () =>
