@@ -111,6 +111,9 @@ export const OUTPUT_CLAMP_CHARS = 4_000;
 /** How much of the started server's log we keep, for a health failure. */
 const STDERR_TAIL_CHARS = 8_000;
 
+/** Where the PR's BUILD writes stdout+stderr, inside the box. */
+const BUILD_LOG_PATH = "/tmp/mcp-build.log";
+
 /** Where the PR's server writes stdout+stderr, inside the box. */
 const SERVER_LOG_PATH = "/tmp/mcp-server.log";
 /** Cap on that file. A watchdog truncates it; see `startCommandScript`. */
@@ -512,22 +515,36 @@ export async function buildAndStart(
     healthIntervalMs?: number;
   }
 ): Promise<StartedServer> {
-  const build = await runForeground(
-    sandbox,
-    `bash -lc ${shellQuote(recipe.build)}`,
-    {
-      cwd: CHECKOUT_DIR,
-      timeoutMs: options?.buildTimeoutMs ?? BUILD_TIMEOUT_MS,
-      timeoutOutcome: "build_failed",
+  let build: RunResult;
+  try {
+    build = await runForeground(
+      sandbox,
+      `bash -lc ${shellQuote(buildCommandScript(recipe.build))}`,
+      {
+        cwd: CHECKOUT_DIR,
+        timeoutMs: options?.buildTimeoutMs ?? BUILD_TIMEOUT_MS,
+        timeoutOutcome: "build_failed",
+      }
+    );
+  } catch (error) {
+    // A build that ran out its own deadline. Its output is in the box's log, not
+    // on the error, so the tail is fetched here rather than left empty.
+    if (error instanceof CheckStepError && error.outcome === "build_failed") {
+      throw new CheckStepError(
+        error.outcome,
+        error.message,
+        clampOutput(await readLogTail(sandbox, BUILD_LOG_PATH)) || undefined
+      );
     }
-  );
+    throw error;
+  }
   if (build.exitCode !== 0) {
     // The PR's own build broke. This is a check FAILURE, attributed to the PR —
     // not an infrastructure error, and not something to retry.
     throw new CheckStepError(
       "build_failed",
       `build command exited ${build.exitCode}`,
-      clampOutput(`${build.stdout}\n${build.stderr}`)
+      clampOutput(await readLogTail(sandbox, BUILD_LOG_PATH))
     );
   }
 
@@ -609,6 +626,35 @@ function startCommandScript(startCommand: string): string {
 }
 
 /**
+ * The build, with its output bounded INSIDE the box.
+ *
+ * Same hazard as the start path, and for the same reason: E2B's `CommandHandle`
+ * accumulates every chunk it receives into an internal string, so a build script
+ * that prints continuously for its ten-minute window grows THIS process's heap
+ * without limit — and the build is PR-controlled code, so "it would not do that"
+ * is not an assumption available here. Redirecting to a file keeps the output in
+ * the sandbox, a watchdog keeps the FILE bounded so a runaway build cannot fill
+ * the disk either, and only a bounded tail is ever fetched.
+ *
+ * The exit status has to survive all that, because it is what distinguishes a
+ * broken build from a working one: the status is captured immediately, the
+ * watchdog is stopped, and the captured status is what the script exits with.
+ */
+function buildCommandScript(buildCommand: string): string {
+  return [
+    `: > ${BUILD_LOG_PATH}`,
+    `( while :; do sleep ${SERVER_LOG_CHECK_SECONDS};` +
+      ` if [ "$(wc -c < ${BUILD_LOG_PATH} 2>/dev/null || echo 0)" -gt ${SERVER_LOG_MAX_BYTES} ];` +
+      ` then : > ${BUILD_LOG_PATH}; fi; done ) &`,
+    `MCPJAM_WATCHDOG=$!`,
+    `${buildCommand} >> ${BUILD_LOG_PATH} 2>&1`,
+    `MCPJAM_STATUS=$?`,
+    `kill $MCPJAM_WATCHDOG 2>/dev/null || :`,
+    `exit $MCPJAM_STATUS`,
+  ].join("\n");
+}
+
+/**
  * Fetch a bounded tail of the PR server's log, from inside the box.
  *
  * `tail -c` does the truncation in the sandbox, so untrusted output is bounded
@@ -616,11 +662,14 @@ function startCommandScript(startCommand: string): string {
  * runs to enrich a failure message, and failing to read a log must not change
  * the verdict.
  */
-async function readLogTail(sandbox: CheckSandbox): Promise<string> {
+async function readLogTail(
+  sandbox: CheckSandbox,
+  logPath: string = SERVER_LOG_PATH
+): Promise<string> {
   try {
     const result = (await sandbox.commands.run(
       `bash -lc ${shellQuote(
-        `tail -c ${STDERR_TAIL_CHARS} ${SERVER_LOG_PATH} 2>/dev/null || true`
+        `tail -c ${STDERR_TAIL_CHARS} ${logPath} 2>/dev/null || true`
       )}`,
       { timeoutMs: 30_000 }
     )) as { stdout?: string } | undefined;
@@ -968,25 +1017,62 @@ function carriesAcceptedAnswer(
  * has to look like a JSON-RPC message, and one of them has to be the answer. An
  * empty array satisfies neither, and dispatches nothing.
  *
- * The per-element test is `jsonrpc: "2.0"` on an object, which every arm of that
- * schema's union requires. It is not the full union, so a sibling that is an object
- * with the right `jsonrpc` and nothing else passes here and would throw for the
- * client. That leaves this a shade LOOSER than the transport, which is the side to
- * err on: the cost is a broken server reaching us as a neutral `infra_error`, where
- * being stricter would risk a red X on a PR the eval run can drive.
+ * The per-element test discriminates the four arms of that union, because
+ * `jsonrpc: "2.0"` alone does not: `{"jsonrpc":"2.0"}` matches none of them and
+ * throws for the client, so a batch carrying one is unusable however good its
+ * siblings are.
+ *
+ * What is NOT modelled is `.strict()`. Every arm rejects unknown top-level keys,
+ * and reproducing that means hand-copying each arm's exact key set. Fidelity there
+ * is not reachable anyway — the schema is not exported from
+ * `@modelcontextprotocol/client`, and `@modelcontextprotocol/core` is a transitive
+ * dependency this module has no business importing — so what remains is a shade
+ * LOOSER than the transport. That is the side to err on: the cost is a broken
+ * server reaching us as a neutral `infra_error`, where being stricter would risk a
+ * red X on a PR the eval run can drive.
  */
 function batchCarriesAcceptedAnswer(
   batch: unknown[],
   accepts: (parsed: unknown) => boolean
 ): boolean {
   if (batch.length === 0) return false;
-  const everyElementIsAMessage = batch.every(
-    (message) =>
-      isPlainObject(message) &&
-      (message as { jsonrpc?: unknown }).jsonrpc === "2.0"
-  );
-  if (!everyElementIsAMessage) return false;
+  if (!batch.every(isJsonRpcMessageShaped)) return false;
   return batch.some((message) => accepts(message));
+}
+
+/**
+ * Whether one value matches an arm of the JSON-RPC message union: a result
+ * response, an error response, or a request/notification.
+ *
+ * `id` is not required of a method-bearing message, because a notification
+ * legitimately has none — requiring it would reject valid traffic.
+ */
+function isJsonRpcMessageShaped(value: unknown): boolean {
+  if (!isPlainObject(value)) return false;
+  const message = value as {
+    jsonrpc?: unknown;
+    id?: unknown;
+    method?: unknown;
+    result?: unknown;
+    error?: unknown;
+  };
+  if (message.jsonrpc !== "2.0") return false;
+  const hasId =
+    typeof message.id === "string" ||
+    (typeof message.id === "number" && Number.isInteger(message.id));
+  if (message.result !== undefined) {
+    return isPlainObject(message.result) && hasId;
+  }
+  if (message.error !== undefined) {
+    if (!isPlainObject(message.error)) return false;
+    const error = message.error as { code?: unknown; message?: unknown };
+    return (
+      typeof error.code === "number" &&
+      Number.isInteger(error.code) &&
+      typeof error.message === "string"
+    );
+  }
+  return typeof message.method === "string";
 }
 
 /**

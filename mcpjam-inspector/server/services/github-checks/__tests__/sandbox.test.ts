@@ -227,7 +227,9 @@ describe("buildAndStart", () => {
   it("attributes a non-zero build to the PR, with a clamped log tail", async () => {
     const box = fakeSandbox({
       exitCodes: { "npm run build": 1 },
-      stderr: { "npm run build": "npm ERR! missing script: build" },
+      // The build's own output never crosses into this process — it is redirected
+      // to a file in the box, and only a bounded `tail -c` of it is fetched.
+      stdout: { "tail -c": "npm ERR! missing script: build" },
     });
 
     const error = await buildAndStart(box.sandbox, RECIPE, {
@@ -260,6 +262,32 @@ describe("buildAndStart", () => {
     }).catch((e) => e as CheckStepError);
     expect((error as CheckStepError).outcome).toBe("server_unhealthy");
     expect((error as CheckStepError).detailsMarkdown).toContain("EADDRINUSE");
+  });
+
+  it("keeps the BUILD's output inside the box, never streaming it to us", async () => {
+    // The same hazard the start path already guards: E2B's command handle
+    // accumulates every chunk it receives into an internal string, so a build
+    // script that prints for its whole ten-minute window would grow THIS process's
+    // heap without limit — and the build is PR-controlled code. The output must be
+    // redirected in the box and only a bounded tail fetched.
+    const box = fakeSandbox();
+    await buildAndStart(box.sandbox, RECIPE, {
+      fetchImpl: vi.fn(async () => okInitialize()) as unknown as typeof fetch,
+    });
+
+    const buildCall = box.calls.find((call) =>
+      call.command.includes("npm run build")
+    );
+    expect(buildCall).toBeDefined();
+    // Redirected to a file, with a watchdog bounding that file too.
+    expect(buildCall!.command).toContain("/tmp/mcp-build.log");
+    expect(buildCall!.command).toContain("wc -c");
+    // No stream callbacks: supplying one is what makes the handle buffer eagerly.
+    expect(buildCall!.opts?.onStdout).toBeUndefined();
+    expect(buildCall!.opts?.onStderr).toBeUndefined();
+    // And the build's exit status still has to survive the redirection, or a
+    // broken build would read as a passing one.
+    expect(buildCall!.command).toContain("exit $MCPJAM_STATUS");
   });
 
   it("attributes a build that runs out its deadline to the PR, not to us", async () => {
@@ -960,6 +988,53 @@ describe("waitForMcpInitialize", () => {
         timeoutMs: 5,
       })
     ).toBe(false);
+  });
+
+  it("does not accept a batch whose sibling matches no message arm", async () => {
+    // `{"jsonrpc":"2.0"}` is not a request, a notification, a result or an error, so
+    // the transport's schema throws on it and the whole batch — our answer with it —
+    // is discarded. `jsonrpc: "2.0"` alone is not enough to call a sibling valid.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify([
+            { jsonrpc: "2.0", id: 1, result: INITIALIZE_RESULT },
+            { jsonrpc: "2.0" },
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 5,
+      })
+    ).toBe(false);
+  });
+
+  it("accepts a batch alongside a notification and an error response", async () => {
+    // The other direction: these siblings are all legal arms of the union — a
+    // notification with no id, and an error response — so the batch parses and our
+    // answer is delivered. Rejecting them would be a false `server_unhealthy`.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify([
+            { jsonrpc: "2.0", method: "notifications/message" },
+            { jsonrpc: "2.0", id: 9, error: { code: -32601, message: "nope" } },
+            { jsonrpc: "2.0", id: 1, result: INITIALIZE_RESULT },
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 1_000,
+      })
+    ).toBe(true);
   });
 
   it("does not accept a batch inside an SSE event", async () => {
