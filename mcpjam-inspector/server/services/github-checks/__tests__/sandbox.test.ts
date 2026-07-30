@@ -711,6 +711,50 @@ describe("waitForMcpInitialize", () => {
     ).toBe(false);
   });
 
+  it("accepts an SSE frame separated by bare CRs, after a BOM", async () => {
+    // LF, CRLF and bare CR are all legal separators and a leading BOM is stripped
+    // — the transport's parser accepts all of it, so a server it can drive must
+    // not read as unhealthy here.
+    const frame = `﻿event: message\rdata: ${JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      result: INITIALIZE_RESULT,
+    })}\r\r`;
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(frame, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        })
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", { ...seams, fetchImpl })
+    ).toBe(true);
+  });
+
+  it("does not accept a capability the client's schema types as an object", async () => {
+    // `tools: true` fails the client's capabilities schema, so the eval run cannot
+    // drive this server — that is the PR's fault, not ours.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: { ...INITIALIZE_RESULT, capabilities: { tools: true } },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 5,
+      })
+    ).toBe(false);
+  });
+
   it("accepts a media type that carries parameters", async () => {
     // `application/json; charset=utf-8` is the same essence, and the transport
     // compares essences — so this must not be turned away.
@@ -722,6 +766,29 @@ describe("waitForMcpInitialize", () => {
             status: 200,
             headers: { "content-type": "application/json; charset=utf-8" },
           }
+        )
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", { ...seams, fetchImpl })
+    ).toBe(true);
+  });
+
+  it("accepts an unknown capability of any shape", async () => {
+    // The client's schema passes unknown keys through, so an extension advertised
+    // as a bare string is still a server the eval run can drive. Rejecting it
+    // would be stricter than the client — a false server_unhealthy.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: {
+              ...INITIALIZE_RESULT,
+              capabilities: { tools: {}, "com.example/thing": "on" },
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
         )
     ) as unknown as typeof fetch;
     expect(

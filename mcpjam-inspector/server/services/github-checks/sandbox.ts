@@ -920,17 +920,23 @@ function ssePayloads(text: string, streamEnded: boolean): string[] {
     }
   };
 
-  const segments = text.split("\n");
-  // The final segment is whatever follows the last newline, so mid-stream it is a
-  // PARTIAL line, not a line. Treating it as one is subtly wrong in both
+  // LF, CRLF and bare CR are all legal SSE line separators, and a leading BOM is
+  // stripped before parsing — that is what the transport's EventSource parser
+  // does, so a server it can drive must not be turned away here. Splitting on LF
+  // alone left a CR-separated frame unrecognised and the probe timed out.
+  const segments = text.replace(/^﻿/, "").split(/\r\n|\r|\n/);
+  // The final segment is whatever follows the last separator, so mid-stream it is
+  // a PARTIAL line, not a line. Treating it as one is subtly wrong in both
   // directions: a half-written `data:` field would be parsed a character short,
-  // and — the case that actually bites — the empty tail left by a trailing "\n"
-  // would read as the event's blank-line terminator, flushing an event the server
-  // has not finished. A real terminator ("\n\n") shows up as an empty segment with
-  // another segment after it.
+  // and — the case that actually bites — the empty tail left by a trailing
+  // separator would read as the event's blank-line terminator, flushing an event
+  // the server has not finished. A real terminator shows up as an empty segment
+  // with another segment after it. (A CRLF split across chunk boundaries is safe
+  // because the whole accumulated text is re-split on every read, never appended
+  // to a previous parse.)
   const lineCount = streamEnded ? segments.length : segments.length - 1;
   for (let index = 0; index < lineCount; index += 1) {
-    const line = segments[index].replace(/\r$/, "");
+    const line = segments[index];
     if (line.startsWith("data:")) {
       sawFrame = true;
       current.push(line.slice("data:".length).trim());
@@ -980,8 +986,37 @@ function isUsableInitializeResponse(parsed: unknown): boolean {
   ) {
     return false;
   }
-  if (!isPlainObject(initialize.capabilities)) return false;
+  if (!isUsableCapabilities(initialize.capabilities)) return false;
   return isServerIdentity(initialize.serverInfo);
+}
+
+/**
+ * The capability fields the client's schema gives a shape to. Every one it types
+ * is an object, so `tools: true` is a schema violation the client will reject.
+ *
+ * Deliberately a closed list rather than "every value must be an object": the
+ * client's capabilities schema passes unknown keys through untouched, so a server
+ * advertising some extension as a bare string is still one the eval run can
+ * drive. Rejecting it here would be stricter than the client — a false
+ * `server_unhealthy` on a working PR, which is the failure this whole predicate
+ * exists to avoid.
+ */
+const TYPED_CAPABILITY_FIELDS = [
+  "tools",
+  "prompts",
+  "resources",
+  "logging",
+  "completions",
+  "experimental",
+] as const;
+
+function isUsableCapabilities(value: unknown): boolean {
+  if (!isPlainObject(value)) return false;
+  const capabilities = value as Record<string, unknown>;
+  return TYPED_CAPABILITY_FIELDS.every(
+    (field) =>
+      capabilities[field] === undefined || isPlainObject(capabilities[field])
+  );
 }
 
 /**
@@ -993,7 +1028,7 @@ function isUsableInitializeResponse(parsed: unknown): boolean {
  *     MODERN arm can actually speak — an endpoint offering nothing in common is
  *     no more usable than a legacy server naming an unsupported version, and one
  *     offering only legacy revisions is a question for the legacy probe;
- *   - `capabilities`, an object.
+ *   - `capabilities`, an object whose typed fields are objects.
  *
  * Server identity lives in `_meta` here and is a SHOULD, not a member of the
  * result, so its absence is not a defect and is not required.
@@ -1013,7 +1048,7 @@ function isUsableDiscoverResponse(parsed: unknown): boolean {
   if (!offered.some((version) => MODERN_PROBE_ACCEPTED_VERSIONS.has(version))) {
     return false;
   }
-  return isPlainObject(discover.capabilities);
+  return isUsableCapabilities(discover.capabilities);
 }
 
 /**
