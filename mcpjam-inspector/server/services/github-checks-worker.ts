@@ -33,7 +33,10 @@ import { getConvexBearerForDelegation } from "../utils/v1-convex-token.js";
 import { createAuthorizedManager } from "../routes/web/auth.js";
 import { prepareEvalRun } from "../routes/shared/evals.js";
 import { createConvexClient } from "./evals/route-helpers.js";
-import { resolveCheckRecipe } from "./github-checks/recipes.js";
+import {
+  resolveCheckRecipe,
+  type CheckRecipe,
+} from "./github-checks/recipes.js";
 import {
   buildAndStart,
   CheckStepError,
@@ -415,17 +418,40 @@ export type CheckExecutionDeps = {
 const EVAL_FAILURE_PROBE_TIMEOUT_MS = 15_000;
 
 /** Sentinels the in-box liveness check prints. Matched exactly, never parsed. */
-const PORT_OPEN_MARKER = "MCPJAM_CHECK_PORT_OPEN";
+const HTTP_ANSWERED_MARKER = "MCPJAM_CHECK_HTTP_ANSWERED";
+const HTTP_SILENT_MARKER = "MCPJAM_CHECK_HTTP_SILENT";
 const PORT_CLOSED_MARKER = "MCPJAM_CHECK_PORT_CLOSED";
+/**
+ * How long the in-box request waits for response headers. Generous next to the
+ * milliseconds a healthy server took at startup, because the only thing a short
+ * budget buys here is a chance of blaming a merely slow server.
+ */
+const IN_BOX_RESPONSE_TIMEOUT_MS = 10_000;
+/**
+ * The version the liveness request names. Which revision it is does not matter —
+ * only whether response headers come back at all — so this is deliberately a local
+ * literal rather than a coupling to the health probe's negotiation constants.
+ */
+const LIVENESS_PROBE_PROTOCOL_VERSION = "2025-06-18";
 
 /**
- * Whether the PR's server is still listening — asked from INSIDE the sandbox.
+ * Whether the PR's server is still ANSWERING — asked from INSIDE the sandbox.
  *
  * Deliberately not a fetch to the public URL. That path traverses E2B's ingress,
  * DNS and TLS, and the health probe reports every one of those failures exactly the
  * way it reports a dead server: `false`. Blaming the PR for an ingress outage of
  * OURS would be a red X on an innocent PR, so the question goes over the command
- * RPC, where a loopback connect can only be answered by the server process itself.
+ * RPC, where a loopback request can only be answered by the server process itself.
+ *
+ * It sends a real HTTP request rather than merely opening a socket, because a bound
+ * listener proves very little: a server whose event loop is wedged, deadlocked or
+ * thrashing still accepts connections while answering nothing, and that is the PR's
+ * bug to own. What it does NOT do is validate the MCP answer. That would mean
+ * reimplementing media-type selection, SSE framing and JSON-RPC validation inside a
+ * shell one-liner — the semantics this module gets right in typed, tested code — and
+ * a simplified copy would drift from the client and reintroduce the very mismatch
+ * class it was meant to catch. So the question asked is "does it still answer HTTP
+ * at all", and a server that answers WRONGLY stays neutral.
  *
  * Three-valued on purpose: `null` is "could not tell", which the caller must treat
  * as neutral, because the command channel failing is itself our symptom. Node is
@@ -434,16 +460,33 @@ const PORT_CLOSED_MARKER = "MCPJAM_CHECK_PORT_CLOSED";
  * through stdout — an exit code cannot distinguish "connection refused" from "the
  * command never ran".
  */
-async function serverStillListening(
+async function serverStillResponding(
   sandbox: CheckSandbox,
-  port: number
+  recipe: CheckRecipe
 ): Promise<boolean | null> {
+  const body = JSON.stringify({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: {
+      protocolVersion: LIVENESS_PROBE_PROTOCOL_VERSION,
+      capabilities: {},
+      clientInfo: { name: "mcpjam-github-checks-liveness", version: "1.0.0" },
+    },
+  });
   const script =
-    `const s=require('net').connect(${port},'127.0.0.1');` +
-    `const done=(m)=>{console.log(m);s.destroy();};` +
-    `s.on('connect',()=>done('${PORT_OPEN_MARKER}'));` +
-    `s.on('error',()=>done('${PORT_CLOSED_MARKER}'));` +
-    `s.setTimeout(5000,()=>s.destroy());`;
+    `const http=require('http');let said=false;` +
+    `const say=(m)=>{if(!said){said=true;console.log(m);}};` +
+    `const body=${JSON.stringify(body)};` +
+    `const req=http.request({host:'127.0.0.1',port:${recipe.port},` +
+    `path:${JSON.stringify(recipe.mcpPath)},method:'POST',headers:{` +
+    `'content-type':'application/json',` +
+    `'accept':'application/json, text/event-stream',` +
+    `'content-length':Buffer.byteLength(body)}},` +
+    `(res)=>{say('${HTTP_ANSWERED_MARKER} '+res.statusCode);res.destroy();});` +
+    `req.on('error',(e)=>say(e&&e.code==='ECONNREFUSED'?'${PORT_CLOSED_MARKER}':'err '+(e&&e.code)));` +
+    `req.setTimeout(${IN_BOX_RESPONSE_TIMEOUT_MS},()=>{say('${HTTP_SILENT_MARKER}');req.destroy();});` +
+    `req.end(body);`;
   let stdout = "";
   try {
     const result = (await sandbox.commands.run(
@@ -455,10 +498,17 @@ async function serverStillListening(
     // The box did not answer at all. That is an E2B problem, which is ours.
     return null;
   }
-  if (stdout.includes(PORT_OPEN_MARKER)) return true;
-  if (stdout.includes(PORT_CLOSED_MARKER)) return false;
-  // Neither sentinel: the connect timed out, or node produced nothing. Not
-  // evidence of anything, so it must not become evidence against the PR.
+  if (stdout.includes(HTTP_ANSWERED_MARKER)) return true;
+  // Refused, or accepted the connection and then said nothing at all. Either way
+  // the server is not serving, and it is the PR's process.
+  if (
+    stdout.includes(PORT_CLOSED_MARKER) ||
+    stdout.includes(HTTP_SILENT_MARKER)
+  ) {
+    return false;
+  }
+  // Some other socket error, or no output at all: not evidence of anything, so it
+  // must not become evidence against the PR.
   return null;
 }
 
@@ -480,19 +530,19 @@ async function serverStillListening(
 async function attributeEvalFailure(
   error: unknown,
   sandbox: CheckSandbox,
-  port: number
+  recipe: CheckRecipe
 ): Promise<unknown> {
   // Our own typed failures and the lease guard already know what they are.
   if (error instanceof CheckStepError || error instanceof LeaseLostError) {
     return error;
   }
-  if ((await serverStillListening(sandbox, port)) !== false) return error;
+  if ((await serverStillResponding(sandbox, recipe)) !== false) return error;
   const message = error instanceof Error ? error.message : String(error);
   return new CheckStepError(
     "server_unhealthy",
-    "the server stopped listening after it started",
+    "the server stopped answering after it started",
     clampOutput(
-      `The server answered the health probe, then stopped listening on port ${port} while the eval suite was running. Checked from inside the sandbox, so this is the server process rather than the network path to it.\n\n${message}`
+      `The server answered the health probe, then stopped answering on port ${recipe.port} while the eval suite was running — it either refused the connection or accepted it and sent nothing back. Checked from inside the sandbox, so this is the server process and not the network path to it.\n\n${message}`
     )
   );
 }
@@ -892,7 +942,7 @@ export async function executeClaimedCheck(
         const attributed = await attributeEvalFailure(
           error,
           runningBox,
-          recipe.port
+          recipe
         );
         // The diagnostic above talks to the box, so it takes real time — long
         // enough for the lease to be taken away while it runs. Re-checked here so

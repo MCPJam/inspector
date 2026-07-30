@@ -74,7 +74,7 @@ function harness(
     commands: {
       run: async (command: string) => {
         // The post-failure liveness check is the only command this fake sees.
-        if (command.includes("MCPJAM_CHECK_PORT_OPEN")) {
+        if (command.includes("MCPJAM_CHECK_HTTP_ANSWERED")) {
           events.push("livenessCheck");
           if (liveness === "throws") throw new Error("sandbox not found");
           return { stdout: liveness ?? "" };
@@ -284,24 +284,35 @@ describe("executeClaimedCheck — failure attribution", () => {
     },
   };
 
-  it("blames the PR when its server stops listening during the eval", async () => {
+  it("blames the PR when its server stops accepting connections during the eval", async () => {
     // The server passed the health probe and then died. Asked from inside the box,
-    // nothing is listening on its port — so this is the PR's server, not a network
-    // path of ours, and it must earn `server_unhealthy`.
+    // the connection is refused — so this is the PR's server, not a network path of
+    // ours, and it must earn `server_unhealthy`.
     const h = harness(evalDies, "MCPJAM_CHECK_PORT_CLOSED\n");
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
     expect(h.reports[0]).toMatchObject({ outcome: "server_unhealthy" });
     expect(h.reports[0].detailsMarkdown).toContain("ECONNREFUSED");
-    expect(h.reports[0].detailsMarkdown).toContain("stopped listening");
+    expect(h.reports[0].detailsMarkdown).toContain("stopped answering");
     expect(h.events).toContain("livenessCheck");
   });
 
-  it("stays neutral when the eval fails but the PR's server is still listening", async () => {
+  it("stays neutral when the eval fails but the PR's server still answers", async () => {
     // Same transport-shaped error, but the process is alive. The failure came from
     // somewhere else — ours — so the check must not blame the PR.
-    const h = harness(evalDies, "MCPJAM_CHECK_PORT_OPEN\n");
+    const h = harness(evalDies, "MCPJAM_CHECK_HTTP_ANSWERED 200\n");
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
     expect(h.reports[0].outcome).toBe("infra_error");
+  });
+
+  it("blames the PR when its listener stays bound but answers nothing", async () => {
+    // A bound socket proves very little: an event loop that is wedged, deadlocked
+    // or thrashing still accepts connections while answering nothing. That is the
+    // PR's bug, and a TCP-connect-only diagnostic would have called it healthy and
+    // left the eval failure neutral.
+    const h = harness(evalDies, "MCPJAM_CHECK_HTTP_SILENT\n");
+    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
+    expect(h.reports[0]).toMatchObject({ outcome: "server_unhealthy" });
+    expect(h.reports[0].detailsMarkdown).toContain("sent nothing back");
   });
 
   it("stays neutral when the sandbox command channel has gone away", async () => {
@@ -345,7 +356,7 @@ describe("executeClaimedCheck — failure attribution", () => {
       const box = await provision(args);
       const inner = box.commands.run;
       box.commands.run = async (command: string, opts?: unknown) => {
-        if (command.includes("MCPJAM_CHECK_PORT_OPEN")) {
+        if (command.includes("MCPJAM_CHECK_HTTP_ANSWERED")) {
           inDiagnostic = true;
           // Let the 1ms heartbeat fire and register the loss mid-diagnostic.
           await new Promise((resolve) => setTimeout(resolve, 20));
@@ -379,7 +390,9 @@ describe("executeClaimedCheck — failure attribution", () => {
       return box;
     };
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
-    const liveness = commands.find((c) => c.includes("MCPJAM_CHECK_PORT_OPEN"));
+    const liveness = commands.find((c) =>
+      c.includes("MCPJAM_CHECK_HTTP_ANSWERED")
+    );
     expect(liveness).toBeDefined();
     expect(liveness).toContain("127.0.0.1");
     expect(liveness).toContain(String(RECIPE.port));
