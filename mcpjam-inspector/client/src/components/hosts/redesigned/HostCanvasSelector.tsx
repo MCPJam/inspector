@@ -22,17 +22,18 @@ import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
 import { getCatalogHost } from "@mcpjam/sdk/host-compat";
 
 /**
- * Client selector pinned to the top-left of the Connect host canvas.
+ * Client selector for the Connect host canvas, mounted in the canvas nav row
+ * beside the Servers|Client view selector (it used to float over the flow —
+ * one nav row reads as chrome instead of covering canvas content).
  *
  * Replaces the header `HostOverlayBar` while the canvas is open (the header
  * instance hides itself — see `GlobalHostBar`). Layout settled in the #3269
- * review round: two pills pinned top-left so they stay accessible without
- * blocking the canvas —
+ * review round: two pills —
  *   1. an "Add client" pill (left-most) carrying the quick-add template
  *      logos, and
  *   2. a switcher pill (to its right) that opens the full client list.
  * The add action lives only in the left pill; the switcher menu no longer
- * duplicates it. The menu opens downward, over empty canvas below the pills.
+ * duplicates it. The menu opens downward, under its trigger.
  */
 
 const QUICK_ADD_TEMPLATES = ["claude", "chatgpt", "copilot"] as const;
@@ -42,8 +43,13 @@ const LAST_HOST_DELETE_REASON =
   "A project needs at least one client. Create another client first.";
 const ANALYTICS_LOCATION = "host_canvas";
 
+// Sits on the nav row's own surface, so no elevation/blur — just a bordered
+// pill sized to line up with the view selector and the Save button.
 const PILL_CLASS =
-  "flex items-center rounded-2xl border border-border/60 bg-card/95 p-1.5 shadow-lg shadow-black/[0.06] backdrop-blur-sm";
+  "flex items-center rounded-xl border border-border/60 bg-card/60 p-0.5";
+
+/** Height of the interactive controls inside each pill. */
+const CONTROL_HEIGHT = "h-8";
 
 /**
  * Hosts don't persist which catalog template they came from, so the logo is
@@ -192,22 +198,22 @@ export function HostCanvasSelector({
 
   if (isLoading || !active) {
     return (
-      <div className="flex items-center gap-2">
-        <div className="h-14 w-40 animate-pulse rounded-2xl border border-border/60 bg-card/80" />
-        <div className="h-14 w-56 animate-pulse rounded-2xl border border-border/60 bg-card/80" />
+      <div className="flex items-center gap-1.5">
+        <div className="h-9 w-32 animate-pulse rounded-xl border border-border/60 bg-card/80" />
+        <div className="h-9 w-40 animate-pulse rounded-xl border border-border/60 bg-card/80" />
       </div>
     );
   }
 
   return (
     <div
-      className="flex items-center gap-2"
+      className="flex min-w-0 items-center gap-1.5"
       data-testid="host-canvas-selector"
     >
       {/* Add client — left-most. Carries the quick-add template logos so the
           add path stays a single control (the switcher menu no longer has its
           own add action). */}
-      <div className={PILL_CLASS}>
+      <div className={cn(PILL_CLASS, "shrink-0")}>
         <button
           type="button"
           data-testid="host-canvas-add"
@@ -219,7 +225,8 @@ export function HostCanvasSelector({
             openCreateWithTemplate(undefined);
           }}
           className={cn(
-            "inline-flex h-11 items-center gap-1.5 rounded-xl px-3 text-sm font-medium text-primary transition-colors",
+            "inline-flex items-center gap-1.5 rounded-lg px-2.5 text-sm font-medium text-primary transition-colors",
+            CONTROL_HEIGHT,
             "hover:bg-primary/10",
             "focus-visible:ring-2 focus-visible:ring-ring/45 focus-visible:outline-none"
           )}
@@ -228,7 +235,7 @@ export function HostCanvasSelector({
           Add client
         </button>
         <span
-          className="ml-0.5 flex shrink-0 items-center gap-0.5 pr-1"
+          className="ml-0.5 flex shrink-0 items-center gap-0.5 pr-0.5"
           data-testid="host-canvas-quick-add"
         >
           {QUICK_ADD_TEMPLATES.map((id) => {
@@ -246,7 +253,7 @@ export function HostCanvasSelector({
                 data-testid={`host-canvas-quick-add-${id}`}
                 onClick={() => openCreateWithTemplate(id)}
                 className={cn(
-                  "inline-flex size-7 items-center justify-center rounded-md transition-colors",
+                  "inline-flex size-6 items-center justify-center rounded-md transition-colors",
                   "hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
                 )}
               >
@@ -263,7 +270,7 @@ export function HostCanvasSelector({
 
       {/* Switcher — to the right of Add client. Click to see all clients and
           switch between them; per-client delete lives on hover. */}
-      <div className={PILL_CLASS}>
+      <div className={cn(PILL_CLASS, "min-w-0")}>
         <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
           <DropdownMenuTrigger asChild>
             <button
@@ -271,7 +278,8 @@ export function HostCanvasSelector({
               aria-label="Client used for preview"
               data-testid="host-canvas-current"
               className={cn(
-                "flex h-11 items-center gap-2.5 rounded-xl pr-2.5 pl-3.5 outline-none transition-colors",
+                "flex min-w-0 items-center gap-1.5 rounded-lg pr-1.5 pl-2 outline-none transition-colors",
+                CONTROL_HEIGHT,
                 "hover:bg-muted/50 data-[state=open]:bg-muted/50",
                 "focus-visible:ring-2 focus-visible:ring-ring/45"
               )}
@@ -279,18 +287,18 @@ export function HostCanvasSelector({
               <img
                 src={logoFor(active.name)}
                 alt=""
-                className="size-5 shrink-0 object-contain"
+                className="size-4 shrink-0 object-contain"
               />
-              <span className="max-w-[16rem] truncate text-[15px] font-semibold">
+              <span className="max-w-[10rem] truncate text-sm font-semibold">
                 {active.name}
               </span>
-              <span className="rounded-full border border-border/60 px-2 py-0.5 text-[11px] font-medium tabular-nums text-muted-foreground">
+              <span className="shrink-0 rounded-full border border-border/60 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-muted-foreground">
                 {activeIndex + 1} / {sortedHosts.length}
               </span>
-              <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground" />
+              <ChevronsUpDown className="size-3.5 shrink-0 text-muted-foreground" />
             </button>
           </DropdownMenuTrigger>
-          {/* Opens downward, over the empty canvas below the top-left pills. */}
+          {/* Opens downward, under the trigger — over the canvas below the nav row. */}
           <DropdownMenuContent
             side="bottom"
             align="start"

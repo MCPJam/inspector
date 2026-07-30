@@ -6,11 +6,13 @@ import {
   INSPECTOR_COMMAND_DEFAULT_TIMEOUT_MS,
   buildInspectorCommandError,
 } from "@/shared/inspector-command.js";
+import type { InspectorEvent } from "@/shared/inspector-event.js";
 import { logger } from "../utils/logger.js";
 
 type Subscriber = {
   clientId: string;
   send: (command: InspectorCommand) => void;
+  sendEvent: (event: InspectorEvent) => void;
   supersede: () => void;
   close: () => void;
 };
@@ -35,6 +37,21 @@ export class InspectorCommandBus {
 
   hasActiveClient(): boolean {
     return this.subscriber !== null;
+  }
+
+  /** Best-effort one-way delivery; events never create pending command state. */
+  notify(event: InspectorEvent): boolean {
+    if (!this.subscriber) return false;
+    try {
+      this.subscriber.sendEvent(event);
+      return true;
+    } catch (error) {
+      logger.debug("[inspector-command-bus] Event delivery threw", {
+        kind: event.kind,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return false;
+    }
   }
 
   registerSubscriber(subscriber: Subscriber): () => void {
