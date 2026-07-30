@@ -153,8 +153,15 @@ async function postServiceRoute(
       // A malformed body is tolerated — the status carries the signal. A body
       // read that hit the abort deadline is NOT: silently returning
       // `body: null` would make a timed-out call look like a successful one
-      // whose response merely lacked a body.
-      if (controller.signal.aborted) throw error;
+      // whose response merely lacked a body. Rethrown as a TIMEOUT, since the
+      // underlying error is a parse failure and would otherwise read in the
+      // logs (and in an `infra_error` detail) as a malformed-response bug.
+      if (controller.signal.aborted) {
+        throw new Error(
+          `service route ${path} timed out after ${SERVICE_ROUTE_TIMEOUT_MS}ms while reading the response body`,
+          { cause: error }
+        );
+      }
     }
     return { status: response.status, body: parsed };
   } finally {
@@ -309,7 +316,12 @@ export function outcomeForRunResult(
  * `client/src/components/evals/suite-runs-list.tsx`); this is the server-side
  * mirror, kept here because the worker must not import client code.
  *
- * `passRate` and `minimumPassRate` are both 0-100 (see the backend schema).
+ * The percentage is computed from `passed`/`total` and NOT read from
+ * `summary.passRate`. The stored field is a 0-1 FRACTION (`evals-runner.ts`
+ * writes `passed / total`) while `minimumPassRate` is a 0-100 PERCENTAGE, so
+ * comparing them directly fails every run: a perfect run stores `1`, which is
+ * below any threshold. The client recomputes from the counts for the same
+ * reason — it never reads the stored rate either.
  */
 export function effectiveRunResult(
   run: {
@@ -322,9 +334,10 @@ export function effectiveRunResult(
   if (!run) return undefined;
   if (run.result) return run.result;
   if (run.status === "completed") {
-    const passRate = run.summary?.passRate;
-    if (typeof passRate === "number") {
-      return passRate >= (run.passCriteria?.minimumPassRate ?? 100)
+    const total = run.summary?.total ?? 0;
+    if (total > 0) {
+      const passRatePercent = ((run.summary?.passed ?? 0) / total) * 100;
+      return passRatePercent >= (run.passCriteria?.minimumPassRate ?? 100)
         ? "passed"
         : "failed";
     }

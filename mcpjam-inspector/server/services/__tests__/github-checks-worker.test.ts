@@ -494,28 +494,46 @@ describe("outcomeForRunResult", () => {
 });
 
 describe("effectiveRunResult", () => {
+  // Every fixture here carries `passRate` in the shape the runner ACTUALLY
+  // persists — a 0-1 fraction (`passed / total`) — because the threshold it is
+  // compared against is a 0-100 percentage. A fixture written as a percentage
+  // would let the unit bug back in unnoticed.
   it("derives the verdict for a completed run whose record omits `result`", () => {
     // The recorder finalizes with `status: "completed"` and a summary but does
     // not always populate `result`. Reading `result` alone puts a red X on a PR
     // that passed every single test.
+    const perfect = {
+      status: "completed",
+      summary: { total: 4, passed: 4, failed: 0, passRate: 1 },
+    };
+    expect(effectiveRunResult(perfect)).toBe("passed");
+    expect(outcomeForRunResult(effectiveRunResult(perfect))).toBe("passed");
+  });
+
+  it("compares a PERCENTAGE against the threshold, not the stored fraction", () => {
+    // The regression this pins: `summary.passRate` is `passed / total`, so a
+    // perfect run stores 1. Comparing that to `minimumPassRate` (0-100) fails
+    // every run, including one that passed everything — the exact false failure
+    // the derivation exists to prevent.
     expect(
       effectiveRunResult({
         status: "completed",
-        summary: { total: 4, passed: 4, failed: 0, passRate: 100 },
+        summary: { total: 2, passed: 2, failed: 0, passRate: 1 },
+        passCriteria: { minimumPassRate: 100 },
       })
     ).toBe("passed");
+    // And a stored rate that disagrees with the counts does not get a vote.
     expect(
-      outcomeForRunResult(
-        effectiveRunResult({
-          status: "completed",
-          summary: { total: 4, passed: 4, failed: 0, passRate: 100 },
-        })
-      )
-    ).toBe("passed");
+      effectiveRunResult({
+        status: "completed",
+        summary: { total: 4, passed: 1, failed: 3, passRate: 99 },
+        passCriteria: { minimumPassRate: 90 },
+      })
+    ).toBe("failed");
   });
 
   it("honors the suite's own pass criteria", () => {
-    const summary = { total: 10, passed: 8, failed: 2, passRate: 80 };
+    const summary = { total: 10, passed: 8, failed: 2, passRate: 0.8 };
     expect(
       effectiveRunResult({
         status: "completed",
@@ -539,7 +557,7 @@ describe("effectiveRunResult", () => {
       effectiveRunResult({
         status: "completed",
         result: "failed",
-        summary: { total: 1, passed: 1, failed: 0, passRate: 100 },
+        summary: { total: 1, passed: 1, failed: 0, passRate: 1 },
       })
     ).toBe("failed");
   });

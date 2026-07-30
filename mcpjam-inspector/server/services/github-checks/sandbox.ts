@@ -570,7 +570,11 @@ async function probeResponseIsHealthy(response: Response): Promise<boolean> {
     while (text.length < PROBE_MAX_RESPONSE_CHARS) {
       const { done, value } = await reader.read();
       if (value && value.byteLength > 0) {
-        text += decoder.decode(value, { stream: true });
+        // Decode only what fits in the remaining budget. Decoding the whole
+        // chunk first would let one large write blow past the cap — the bound
+        // has to be applied to the bytes, not checked after the fact.
+        const remaining = PROBE_MAX_RESPONSE_CHARS - text.length;
+        text += decoder.decode(value.subarray(0, remaining), { stream: true });
         // Checked per chunk: a frame can arrive split, and a partial JSON just
         // fails to parse and waits for the rest.
         if (looksLikeInitializeResult(text)) return true;
