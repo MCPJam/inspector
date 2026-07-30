@@ -28,10 +28,9 @@ import {
   type ChatTransport,
   DefaultChatTransport,
   generateId,
-  lastAssistantMessageIsCompleteWithApprovalResponses,
-  lastAssistantMessageIsCompleteWithToolCalls,
   type ModelMessage,
 } from "ai";
+import { shouldAutoResumeTurn } from "@/lib/chat-auto-resume";
 import {
   useAppToolsRegistry,
   recordAppToolInvocation,
@@ -2521,19 +2520,14 @@ export function useChatSession(
         registry.unregisterPendingCall(entry.instance.bridgeId, controller);
       }
     },
-    // Combine the approval predicate (existing) with the no-execute
-    // tool-call predicate (new). App-aliased tool calls are completed by
-    // our `onToolCall` above; that triggers an auto-send which carries
-    // the new tool results back to the server so the agent loop resumes.
-    // Both AI SDK helpers take the options object: `({ messages }) => …`.
-    // The approval branch is deliberately NOT gated on the CURRENT
-    // `requireToolApproval`: a pill minted while the toggle was on must
-    // still resume the turn if the user flips it off before answering, and
-    // the predicate is inert when the message holds no approval requests.
-    sendAutomaticallyWhen: (options) => {
-      if (lastAssistantMessageIsCompleteWithToolCalls(options)) return true;
-      return lastAssistantMessageIsCompleteWithApprovalResponses(options);
-    },
+    // Resume once the last step's tool calls settle (app-aliased calls are
+    // completed by `onToolCall` above; that auto-send carries their results
+    // back so the agent loop resumes) or its approvals are answered — but
+    // never while an approval pill is still pending (BUG-4). Shared with the
+    // agent surface so the two can't drift; see `shouldAutoResumeTurn` for the
+    // full rationale, including why the approval branch is not gated on the
+    // current `requireToolApproval`.
+    sendAutomaticallyWhen: shouldAutoResumeTurn,
   });
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
