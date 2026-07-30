@@ -144,6 +144,7 @@ import {
   driveChatScopeStepUp,
   resolveScopeStepUpServer,
 } from "./lib/scope-step-up";
+import { markPendingChatScopeStepUpCancelled } from "./lib/scope-step-up-pending";
 import { HOSTED_MODE, NON_PROD_LOCKDOWN } from "./lib/config";
 import {
   createInspectorCommandClientError,
@@ -1005,7 +1006,7 @@ export function ToolsRoute() {
           }
           tasksMode={taskModeForSurface(
             readTasksPolicy(activeHost?.config),
-            "tools",
+            "tools"
           )}
           mcpToolResultImageRendering={gateMcpToolResultImageRenderingByModelVisibility(
             activeHost?.config?.mcpToolResultImageRendering,
@@ -1811,6 +1812,12 @@ export default function App() {
 
     const finalizeHostedOAuth = (errorMessage?: string | null) => {
       if (cancelled) return;
+      if (errorMessage && callbackContext.serverName) {
+        markPendingChatScopeStepUpCancelled(
+          callbackContext.serverName,
+          errorMessage
+        );
+      }
       if (callbackContext.serverName) {
         writeHostedOAuthResumeMarker({
           surface: callbackContext.surface,
@@ -1963,6 +1970,7 @@ export default function App() {
 
   const isDebugCallback = isDebugOAuthCallbackPath(window.location.pathname);
   const isOAuthCallback = window.location.pathname === "/callback";
+  const isMcpOAuthCallback = window.location.pathname === "/oauth/callback";
   const electronMcpCallbackUrl = buildElectronMcpCallbackUrl();
 
   useEffect(() => {
@@ -2153,7 +2161,7 @@ export default function App() {
         resourceMetadataUrl: event.resourceMetadataUrl,
       });
     },
-    [appState],
+    [appState]
   );
   useInspectorCommandBus({ onScopeStepUp: handleInspectorScopeStepUp });
   // MCPJam UI tools: registered in both modes for the in-app "Ask MCPJam"
@@ -3598,6 +3606,13 @@ export default function App() {
   }
 
   if (hostedOAuthHandling) {
+    return <LoadingScreen />;
+  }
+
+  // MCP OAuth completion/reconnect is handled by useServerState above. Keep
+  // the app shell hidden until that effect restores the exact saved route so
+  // the Connect tab never flashes between the authorization server and chat.
+  if (isMcpOAuthCallback) {
     return <LoadingScreen />;
   }
 

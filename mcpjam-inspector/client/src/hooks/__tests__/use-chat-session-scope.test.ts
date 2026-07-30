@@ -17,7 +17,12 @@ type StepUpLog = {
 const send = (serverId: string, id: string | number): StepUpLog => ({
   direction: "send",
   serverId,
-  message: { jsonrpc: "2.0", id, method: "tools/call", params: {} },
+  message: {
+    jsonrpc: "2.0",
+    id,
+    method: "tools/call",
+    params: { name: "bench_write" },
+  },
 });
 const receiveSuccess = (serverId: string, id: string | number): StepUpLog => ({
   direction: "receive",
@@ -35,7 +40,7 @@ const receiveError = (serverId: string, id: string | number): StepUpLog => ({
 });
 const receiveToolsListSuccess = (
   serverId: string,
-  id: string | number,
+  id: string | number
 ): StepUpLog => ({
   // A tools/list REPLY carries no method — indistinguishable on the wire from
   // any other success; correlation is purely by id, which is why a reused id
@@ -55,21 +60,21 @@ const receiveToolsListSuccess = (
 describe("tools/call reset correlation helpers (SEP-2350)", () => {
   it("rpcRequestMethod picks out tools/call but not discovery/handshake methods", () => {
     expect(
-      rpcRequestMethod({ jsonrpc: "2.0", id: 1, method: "tools/call" }),
+      rpcRequestMethod({ jsonrpc: "2.0", id: 1, method: "tools/call" })
     ).toBe("tools/call");
     // A tools/list / initialize / ping success must NOT be treated as a
     // tool invocation — the hook never tracks their ids, so a later success
     // for them can never reset the budget.
     expect(
-      rpcRequestMethod({ jsonrpc: "2.0", id: 2, method: "tools/list" }),
+      rpcRequestMethod({ jsonrpc: "2.0", id: 2, method: "tools/list" })
     ).toBe("tools/list");
     expect(
-      rpcRequestMethod({ jsonrpc: "2.0", id: 3, method: "initialize" }),
+      rpcRequestMethod({ jsonrpc: "2.0", id: 3, method: "initialize" })
     ).toBe("initialize");
     // A response frame carries no method, so it can never be mistaken for the
     // request that gates tracking.
     expect(rpcRequestMethod({ jsonrpc: "2.0", id: 1, result: {} })).toBe(
-      undefined,
+      undefined
     );
   });
 
@@ -79,10 +84,10 @@ describe("tools/call reset correlation helpers (SEP-2350)", () => {
     // A notification (no id) or a malformed id can't be correlated across the
     // request/response pair, so it never gates a reset.
     expect(rpcMessageId({ jsonrpc: "2.0", method: "notifications/foo" })).toBe(
-      undefined,
+      undefined
     );
     expect(rpcMessageId({ jsonrpc: "2.0", id: { nested: true } })).toBe(
-      undefined,
+      undefined
     );
     expect(rpcMessageId(null)).toBe(undefined);
   });
@@ -95,7 +100,7 @@ describe("tools/call reset correlation helpers (SEP-2350)", () => {
     expect(isSuccessfulRpcResponse(toolsListResponse)).toBe(true);
     // The correlated request was a tools/list, which the hook never records.
     expect(
-      rpcRequestMethod({ jsonrpc: "2.0", id: 42, method: "tools/list" }),
+      rpcRequestMethod({ jsonrpc: "2.0", id: 42, method: "tools/list" })
     ).not.toBe("tools/call");
   });
 });
@@ -113,7 +118,10 @@ describe("areHostedSessionScopesEqual — target switch forks the session", () =
 
   it("treats a different previewed hostId as a different scope (⇒ reset)", () => {
     expect(
-      areHostedSessionScopesEqual(scope(base), scope({ ...base, hostId: "host-b" }))
+      areHostedSessionScopesEqual(
+        scope(base),
+        scope({ ...base, hostId: "host-b" })
+      )
     ).toBe(false);
   });
 
@@ -125,7 +133,10 @@ describe("areHostedSessionScopesEqual — target switch forks the session", () =
 
   it("a different project forks; a different chatbox forks", () => {
     expect(
-      areHostedSessionScopesEqual(scope(base), scope({ ...base, projectId: "p2" }))
+      areHostedSessionScopesEqual(
+        scope(base),
+        scope({ ...base, projectId: "p2" })
+      )
     ).toBe(false);
     expect(
       areHostedSessionScopesEqual(
@@ -155,7 +166,9 @@ describe("hostedTargetKey", () => {
     // silently continue the host's transcript.
     expect(hostedTargetKey({ hostId: "x" })).toBe("host:x");
     expect(
-      hostedTargetKey({ executionTarget: { kind: "environment", environmentId: "x" } })
+      hostedTargetKey({
+        executionTarget: { kind: "environment", environmentId: "x" },
+      })
     ).toBe("environment:x");
     expect(hostedTargetKey({ chatboxId: "x" })).toBe("chatbox:x");
     expect(hostedTargetKey({ projectId: "x" })).toBe("adhoc:x");
@@ -231,66 +244,68 @@ describe("isSuccessfulRpcResponse — chat step-up reset gate", () => {
 // false-match a later reused id and wrongly clear the budget.
 describe("reconcileChatToolCallStepUp — chat step-up reset correlation", () => {
   it("resets ONLY when a tracked tools/call SUCCEEDS", () => {
-    const pending = new Map<string, Set<string | number>>();
+    const pending = new Map<string, Map<string | number, string>>();
     // Outgoing tool call is recorded, not yet a reset.
-    expect(reconcileChatToolCallStepUp(pending, send("srv", 7))).toBe(false);
-    expect(pending.get("srv")?.has(7)).toBe(true);
+    expect(
+      reconcileChatToolCallStepUp(pending, send("srv", 7))
+    ).toBeUndefined();
+    expect(pending.get("srv")?.get(7)).toBe("bench_write");
     // Its successful reply is the one signal that clears the budget, and the id
     // is evicted so it can't fire twice.
     expect(reconcileChatToolCallStepUp(pending, receiveSuccess("srv", 7))).toBe(
-      true,
+      "bench_write"
     );
     expect(pending.has("srv")).toBe(false);
   });
 
   it("evicts a FAILED tools/call id without resetting, so a later reused id can't false-match", () => {
-    const pending = new Map<string, Set<string | number>>();
+    const pending = new Map<string, Map<string | number, string>>();
     reconcileChatToolCallStepUp(pending, send("srv", 5));
     // The insufficient_scope error settles the call: evict, never reset.
     expect(reconcileChatToolCallStepUp(pending, receiveError("srv", 5))).toBe(
-      false,
+      undefined
     );
     expect(pending.has("srv")).toBe(false);
     // A later turn's tools/list reconnect success REUSES id 5 (fresh per-turn
     // client restarts numeric ids). It must NOT reset — the id was already
     // evicted when the tool call failed.
     expect(
-      reconcileChatToolCallStepUp(pending, receiveToolsListSuccess("srv", 5)),
-    ).toBe(false);
+      reconcileChatToolCallStepUp(pending, receiveToolsListSuccess("srv", 5))
+    ).toBeUndefined();
   });
 
   it("a turn-boundary clear() drops a lingering id whose error was never logged, so a reused-id success does NOT reset", () => {
-    const pending = new Map<string, Set<string | number>>();
+    const pending = new Map<string, Map<string | number, string>>();
     reconcileChatToolCallStepUp(pending, send("srv", 3));
-    expect(pending.get("srv")?.has(3)).toBe(true);
+    expect(pending.get("srv")?.get(3)).toBe("bench_write");
     // The tool call fails at the transport level with no per-id error frame
     // logged; the wrapped sendMessage clears the map at the next turn boundary.
     pending.clear();
     // The new turn's reconnect reuses id 3 for a tools/list success.
     expect(
-      reconcileChatToolCallStepUp(pending, receiveToolsListSuccess("srv", 3)),
-    ).toBe(false);
+      reconcileChatToolCallStepUp(pending, receiveToolsListSuccess("srv", 3))
+    ).toBeUndefined();
   });
 
   it("never resets for a response id that was never a tracked tools/call (e.g. initialize / tools/list)", () => {
-    const pending = new Map<string, Set<string | number>>();
+    const pending = new Map<string, Map<string | number, string>>();
     // No prior tools/call send for id 1 — a discovery/handshake success alone
     // can never clear the budget.
     expect(
-      reconcileChatToolCallStepUp(pending, receiveSuccess("srv", 1)),
-    ).toBe(false);
+      reconcileChatToolCallStepUp(pending, receiveSuccess("srv", 1))
+    ).toBeUndefined();
   });
 
   it("scopes pending ids per server (an id matched under a different serverId does not reset)", () => {
-    const pending = new Map<string, Set<string | number>>();
+    const pending = new Map<string, Map<string | number, string>>();
     reconcileChatToolCallStepUp(pending, send("srvA", 9));
     // Same id, different server — not the call we tracked.
     expect(
-      reconcileChatToolCallStepUp(pending, receiveSuccess("srvB", 9)),
-    ).toBe(false);
+      reconcileChatToolCallStepUp(pending, receiveSuccess("srvB", 9))
+    ).toBeUndefined();
     // The original server's success still resets.
     expect(
-      reconcileChatToolCallStepUp(pending, receiveSuccess("srvA", 9)),
-    ).toBe(true);
+      reconcileChatToolCallStepUp(pending, receiveSuccess("srvA", 9))
+    ).toBe("bench_write");
   });
 });

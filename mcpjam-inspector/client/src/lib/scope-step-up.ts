@@ -32,6 +32,7 @@ import {
 import {
   applyToolCallStepUp,
   resetToolCallStepUp,
+  type ToolCallStepUpOperation,
 } from "@/state/oauth-orchestrator";
 import {
   findProjectByAnyId,
@@ -44,6 +45,15 @@ import {
  * surfaces; keyed by server name, cleared when the attempt settles.
  */
 const inFlight = new Set<string>();
+
+function operationIdentity(
+  server: ServerWithName,
+  operation?: ToolCallStepUpOperation,
+): string {
+  return `${server.name}\u0000${operation?.method ?? "tools/call"}\u0000${
+    operation?.operation ?? `server:${server.name}`
+  }`;
+}
 
 /**
  * Resolve a stream/app event's server identifier against the same local and
@@ -103,6 +113,7 @@ const CHAT_TURN_HOLD_TIMEOUT_MS = 15_000;
 type PendingChatStepUp = {
   server: ServerWithName;
   challenge: InsufficientScopeChallenge;
+  operation?: ToolCallStepUpOperation;
 };
 const pendingChatStepUps = new Map<string, PendingChatStepUp>();
 
@@ -147,8 +158,8 @@ function flushPendingChatStepUps(): void {
   if (pendingChatStepUps.size === 0) return;
   const queued = [...pendingChatStepUps.values()];
   pendingChatStepUps.clear();
-  for (const { server, challenge } of queued) {
-    driveScopeStepUp(server, challenge);
+  for (const { server, challenge, operation } of queued) {
+    driveScopeStepUp(server, challenge, operation);
   }
 }
 
@@ -237,6 +248,7 @@ export function endChatTurnScopeStepUpHold(
 export function driveChatScopeStepUp(
   server: ServerWithName | undefined,
   challenge: InsufficientScopeChallenge | undefined,
+  operation?: ToolCallStepUpOperation,
 ): void {
   // Apply the same gates the immediate path does, up front: a chatbox /
   // share-link turn (no resolvable server) and a challenge with nothing to
@@ -244,12 +256,13 @@ export function driveChatScopeStepUp(
   if (!server) return;
   if (!isActionableStepUpChallenge(challenge)) return;
   if (activeHolds.size === 0) {
-    driveScopeStepUp(server, challenge);
+    driveScopeStepUp(server, challenge, operation);
     return;
   }
-  if (inFlight.has(server.name)) return;
-  if (pendingChatStepUps.has(server.name)) return;
-  pendingChatStepUps.set(server.name, { server, challenge });
+  const key = operationIdentity(server, operation);
+  if (inFlight.has(key)) return;
+  if (pendingChatStepUps.has(key)) return;
+  pendingChatStepUps.set(key, { server, challenge, operation });
   if (holdTimeoutId !== null) return;
   holdTimeoutId = setTimeout(() => {
     holdTimeoutId = null;
@@ -276,10 +289,17 @@ export function driveChatScopeStepUp(
  * Best-effort by design: a failed reset must never mask the success that
  * triggered it.
  */
-export function resetScopeStepUp(server: ServerWithName | undefined): void {
+export function resetScopeStepUp(
+  server: ServerWithName | undefined,
+  operation?: ToolCallStepUpOperation,
+): void {
   if (!server) return;
   try {
-    resetToolCallStepUp(server);
+    if (operation) {
+      resetToolCallStepUp(server, operation);
+    } else {
+      resetToolCallStepUp(server);
+    }
   } catch {
     // Best-effort: swallowed so a failed reset cannot mask the success that
     // triggered it. Logging is deliberately absent — this module is plain (the
@@ -299,16 +319,20 @@ export function resetScopeStepUp(server: ServerWithName | undefined): void {
 export function driveScopeStepUp(
   server: ServerWithName | undefined,
   challenge: InsufficientScopeChallenge | undefined,
+  operation?: ToolCallStepUpOperation,
 ): void {
   if (!server) return;
   if (!isActionableStepUpChallenge(challenge)) return;
-  const key = server.name;
+  const key = operationIdentity(server, operation);
   if (inFlight.has(key)) return;
   inFlight.add(key);
-  void applyToolCallStepUp(server, {
+  const stepUp = {
     requiredScope: challenge.requiredScope,
     resourceMetadataUrl: challenge.resourceMetadataUrl,
-  })
+  };
+  void (operation
+    ? applyToolCallStepUp(server, stepUp, { operation })
+    : applyToolCallStepUp(server, stepUp))
     .catch(() => {
       // The operation's own error is already surfaced by the caller, so a
       // failed step-up has nothing further to report to the user.
@@ -322,8 +346,9 @@ export function driveScopeStepUp(
 export function driveScopeStepUpFromError(
   server: ServerWithName | undefined,
   error: unknown,
+  operation?: ToolCallStepUpOperation,
 ): void {
-  driveScopeStepUp(server, insufficientScopeFromError(error));
+  driveScopeStepUp(server, insufficientScopeFromError(error), operation);
 }
 
 /**
@@ -333,8 +358,13 @@ export function driveScopeStepUpFromError(
 export function driveScopeStepUpFromChallenge(
   server: ServerWithName | undefined,
   rawChallenge: unknown,
+  operation?: ToolCallStepUpOperation,
 ): void {
-  driveScopeStepUp(server, parseInsufficientScopeChallenge(rawChallenge));
+  driveScopeStepUp(
+    server,
+    parseInsufficientScopeChallenge(rawChallenge),
+    operation,
+  );
 }
 
 /**
@@ -348,14 +378,37 @@ export function driveScopeStepUpFromChallenge(
  */
 export async function runWithScopeStepUp<T>(
   server: ServerWithName | undefined,
-  operation: () => Promise<T>,
+  operationKeyOrOperation:
+    | ToolCallStepUpOperation
+    | (() => Promise<T>),
+  maybeOperation?: () => Promise<T>,
+  options?: {
+    beforeStepUp?: (
+      challenge: InsufficientScopeChallenge,
+    ) => void;
+  },
 ): Promise<T> {
+  const operationKey =
+    typeof operationKeyOrOperation === "function"
+      ? undefined
+      : operationKeyOrOperation;
+  const operation =
+    typeof operationKeyOrOperation === "function"
+      ? operationKeyOrOperation
+      : maybeOperation;
+  if (!operation) {
+    throw new TypeError("scope step-up operation is required");
+  }
   try {
     const result = await operation();
-    resetScopeStepUp(server);
+    resetScopeStepUp(server, operationKey);
     return result;
   } catch (error) {
-    driveScopeStepUpFromError(server, error);
+    const challenge = insufficientScopeFromError(error);
+    if (isActionableStepUpChallenge(challenge)) {
+      options?.beforeStepUp?.(challenge);
+    }
+    driveScopeStepUp(server, challenge, operationKey);
     throw error;
   }
 }

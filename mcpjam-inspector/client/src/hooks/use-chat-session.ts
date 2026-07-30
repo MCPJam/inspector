@@ -65,10 +65,7 @@ import {
   composeAvailableModels,
 } from "@/components/chat-v2/shared/available-models";
 import { useOutOfCredits } from "@/hooks/useCreditBalance";
-import {
-  isBedrockModelId,
-  isMCPJamGuestAllowedModel,
-} from "@/shared/types";
+import { isBedrockModelId, isMCPJamGuestAllowedModel } from "@/shared/types";
 import { useDetectedOllamaModels } from "@/hooks/use-detected-ollama-models";
 import { useHostedModelCatalog } from "@/hooks/use-hosted-model-catalog";
 import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
@@ -106,6 +103,17 @@ import {
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { WidgetModelContextEntry } from "@/shared/chat-v2";
 import {
+  isScopeStepUpDataPart,
+  isScopeStepUpFinishedDataPart,
+} from "@/shared/scope-step-up";
+import {
+  claimCancelledChatScopeStepUp,
+  claimPendingChatScopeStepUp,
+  clearPendingChatScopeStepUp,
+  readPendingChatScopeStepUp,
+  savePendingChatScopeStepUp,
+} from "@/lib/scope-step-up-pending";
+import {
   getTraceSpansDurationMs,
   mergeLiveChatTraceUsage,
   rebaseTraceSpans,
@@ -128,8 +136,7 @@ import {
   type HostedElicitationRequestEvent,
   type HostedElicitationUrlRequiredEvent,
 } from "@/shared/hosted-elicitation";
-import {
-} from "@/state/oauth-orchestrator";
+import {} from "@/state/oauth-orchestrator";
 import { respondToChatElicitation } from "@/lib/apis/elicitation-api";
 import {
   HOSTED_MRTR_VERSION,
@@ -172,10 +179,7 @@ import {
   subscribeApiContext,
 } from "@/lib/apis/web/context";
 import * as AppStateContext from "@/state/app-state-context";
-import {
-  findProjectByAnyId,
-  type AppState,
-} from "@/state/app-types";
+import { findProjectByAnyId, type AppState } from "@/state/app-types";
 import { isLocalOnlyMcpServerConfig } from "@/shared/local-only-mcp";
 
 // User-facing copy for a harness session reset, keyed by reason. Only hard
@@ -771,6 +775,18 @@ function isTraceEventDataPart(
   return part.type === "data-trace-event" && !!part.data;
 }
 
+function hasChatToolCall(
+  chatMessages: UIMessage[],
+  toolCallId: string
+): boolean {
+  return chatMessages.some((message) =>
+    message.parts?.some((part) => {
+      if (!part || typeof part !== "object") return false;
+      return (part as { toolCallId?: unknown }).toolCallId === toolCallId;
+    })
+  );
+}
+
 // SEP-2350: a JSON-RPC message that carries a `result` (and no `error`) is a
 // SUCCESSFUL response — the signal used to clear a server's bounded step-up
 // counter once its grant is proven sufficient again.
@@ -783,9 +799,7 @@ export function isSuccessfulRpcResponse(message: unknown): boolean {
 // SEP-2350: the JSON-RPC `id` correlating a request with its response. Only
 // string/number ids can be matched across the two log frames; a notification
 // (no id) or a malformed id yields `undefined` and never correlates.
-export function rpcMessageId(
-  message: unknown,
-): string | number | undefined {
+export function rpcMessageId(message: unknown): string | number | undefined {
   if (!message || typeof message !== "object") return undefined;
   const id = (message as Record<string, unknown>).id;
   return typeof id === "string" || typeof id === "number" ? id : undefined;
@@ -800,6 +814,14 @@ export function rpcRequestMethod(message: unknown): string | undefined {
   if (!message || typeof message !== "object") return undefined;
   const method = (message as Record<string, unknown>).method;
   return typeof method === "string" ? method : undefined;
+}
+
+export function rpcToolCallOperation(message: unknown): string | undefined {
+  if (!message || typeof message !== "object") return undefined;
+  const params = (message as Record<string, unknown>).params;
+  if (!params || typeof params !== "object") return undefined;
+  const name = (params as Record<string, unknown>).name;
+  return typeof name === "string" && name.trim() ? name.trim() : undefined;
 }
 
 /**
@@ -817,35 +839,37 @@ export function rpcRequestMethod(message: unknown): string | undefined {
  * return `true`. The caller resolves the server + performs the actual reset.
  */
 export function reconcileChatToolCallStepUp(
-  pending: Map<string, Set<string | number>>,
-  log: { direction: string; serverId: string; message: unknown },
-): boolean {
+  pending: Map<string, Map<string | number, string>>,
+  log: { direction: string; serverId: string; message: unknown }
+): string | undefined {
   if (log.direction === "send") {
     // Track only tool invocations; ids from other methods never gate a reset,
     // so recording them would only grow the map.
     if (rpcRequestMethod(log.message) === "tools/call") {
       const id = rpcMessageId(log.message);
-      if (id !== undefined) {
-        const set =
-          pending.get(log.serverId) ?? new Set<string | number>();
-        set.add(id);
-        pending.set(log.serverId, set);
+      const operation = rpcToolCallOperation(log.message);
+      if (id !== undefined && operation) {
+        const operations =
+          pending.get(log.serverId) ?? new Map<string | number, string>();
+        operations.set(id, operation);
+        pending.set(log.serverId, operations);
       }
     }
-    return false;
+    return undefined;
   }
   if (log.direction === "receive") {
     const id = rpcMessageId(log.message);
-    const set = pending.get(log.serverId);
-    if (id !== undefined && set?.has(id)) {
-      set.delete(id);
-      if (set.size === 0) {
+    const operations = pending.get(log.serverId);
+    const operation = id !== undefined ? operations?.get(id) : undefined;
+    if (id !== undefined && operation) {
+      operations!.delete(id);
+      if (operations!.size === 0) {
         pending.delete(log.serverId);
       }
-      return isSuccessfulRpcResponse(log.message);
+      return isSuccessfulRpcResponse(log.message) ? operation : undefined;
     }
   }
-  return false;
+  return undefined;
 }
 
 function dedupeTraceToolCalls(
@@ -1434,7 +1458,7 @@ export function useChatSession(
   const mrtrResumeSenderRef = useRef<
     | ((
         round: HostedMrtrRound,
-        responses: Record<string, MrtrElicitationResponse>,
+        responses: Record<string, MrtrElicitationResponse>
       ) => Promise<void>)
     | null
   >(null);
@@ -1448,9 +1472,9 @@ export function useChatSession(
   // counter. Discovery/handshake successes (`initialize`, `tools/list`, ping)
   // that fire on post-OAuth reconnect must NOT clear the budget — only a
   // `tools/call` success proves the widened grant is now sufficient.
-  const chatToolCallRequestIdsRef = useRef<Map<string, Set<string | number>>>(
-    new Map(),
-  );
+  const chatToolCallRequestIdsRef = useRef<
+    Map<string, Map<string | number, string>>
+  >(new Map());
   const resumedVersionRef = useRef<number | null>(null);
   const restoredToolRenderOverridesRef = useRef<
     Record<string, ToolRenderOverride>
@@ -1606,7 +1630,7 @@ export function useChatSession(
         withdraw("client hosted-MRTR version mismatch");
         toast.error(
           `This tab is running an outdated build (hosted-MRTR v${HOSTED_MRTR_VERSION}; ` +
-            `this request needs v${event.version}). Refresh the page and try again.`,
+            `this request needs v${event.version}). Refresh the page and try again.`
         );
         return;
       }
@@ -1639,13 +1663,57 @@ export function useChatSession(
         cancel: () => withdraw("dismissed by user"),
       });
     },
-    [],
+    []
   );
 
   const handleStreamDataPart = useCallback(
     (part: unknown) => {
       if (!isTraceEventDataPart(part)) {
-        if (isHostedElicitationDataPart(part)) {
+        if (isScopeStepUpFinishedDataPart(part)) {
+          const event = part.data;
+          const pending = readPendingChatScopeStepUp();
+          if (pending?.event.continuationId === event.continuationId) {
+            if (
+              event.outcome === "completed" ||
+              event.outcome === "cancelled"
+            ) {
+              const server = resolveScopeStepUpServer(appState, {
+                serverId: event.serverId,
+                serverName: pending.event.serverName,
+                projectId: hostedProjectId,
+              });
+              resetScopeStepUp(server, event.operation);
+            }
+            clearPendingChatScopeStepUp(event.continuationId);
+          }
+        } else if (isScopeStepUpDataPart(part)) {
+          const event = part.data;
+          const server = resolveScopeStepUpServer(appState, {
+            serverId: event.serverId,
+            serverName: event.serverName,
+            projectId: hostedProjectId,
+          });
+          const sessionId = chatSessionIdRef.current;
+          if (!server || !sessionId) {
+            toast.error(
+              "Authorization is required, but this conversation cannot be resumed automatically. Authorize, then retry the tool."
+            );
+            return;
+          }
+          savePendingChatScopeStepUp({
+            event,
+            serverName: server.name,
+            chatSessionId: sessionId,
+          });
+          driveChatScopeStepUp(
+            server,
+            {
+              requiredScope: event.requiredScope,
+              resourceMetadataUrl: event.resourceMetadataUrl,
+            },
+            event.operation
+          );
+        } else if (isHostedElicitationDataPart(part)) {
           const event = part.data;
           if (event.kind === "request") {
             // Dedupe on rendezvousId: a re-delivered part must not stack a
@@ -1653,14 +1721,14 @@ export function useChatSession(
             setPendingElicitations((queue) =>
               queue.some((e) => e.rendezvousId === event.rendezvousId)
                 ? queue
-                : [...queue, event],
+                : [...queue, event]
             );
           } else if (event.kind === "resolved") {
             // The server reached a terminal state on its own (TTL expiry, or
             // an answer that landed elsewhere) — close the dialog rather than
             // leave the user submitting into a dead rendezvous.
             setPendingElicitations((queue) =>
-              queue.filter((e) => e.rendezvousId !== event.rendezvousId),
+              queue.filter((e) => e.rendezvousId !== event.rendezvousId)
             );
           } else if (event.kind === "url_required") {
             setUrlElicitationRequired((current) => [...current, event]);
@@ -1715,10 +1783,12 @@ export function useChatSession(
               // Exactly-once: a side-effecting call may or may not have run, so
               // never auto-retry — say so and let the user decide.
               toast.error(
-                "That tool call was interrupted and may or may not have run. Check the server before retrying.",
+                "That tool call was interrupted and may or may not have run. Check the server before retrying."
               );
             } else if (event.outcome === "expired") {
-              toast.info("That request timed out, so the operation was cancelled.");
+              toast.info(
+                "That request timed out, so the operation was cancelled."
+              );
             }
             return;
           }
@@ -1743,21 +1813,26 @@ export function useChatSession(
           // Track outgoing `tools/call` ids and evict them on any settled
           // response; a `true` return means a tracked `tools/call` SUCCEEDED —
           // the only signal that clears this server's bounded step-up counter.
-          if (
-            reconcileChatToolCallStepUp(chatToolCallRequestIdsRef.current, log)
-          ) {
+          const successfulOperation = reconcileChatToolCallStepUp(
+            chatToolCallRequestIdsRef.current,
+            log
+          );
+          if (successfulOperation) {
             const activeProject =
               appState?.projects?.[
                 hostedProjectId ?? appState?.activeProjectId ?? ""
               ];
             const server =
               (log.serverName
-                ? (appState?.servers?.[log.serverName] ??
-                  activeProject?.servers?.[log.serverName])
+                ? appState?.servers?.[log.serverName] ??
+                  activeProject?.servers?.[log.serverName]
                 : undefined) ??
               appState?.servers?.[log.serverId] ??
               activeProject?.servers?.[log.serverId];
-            resetScopeStepUp(server);
+            resetScopeStepUp(server, {
+              method: "tools/call",
+              operation: successfulOperation,
+            });
           }
         } else if (isHarnessSessionDataPart(part)) {
           // Cache the harness workdir so the Playground Shell can open a
@@ -1771,7 +1846,7 @@ export function useChatSession(
             .setWorkdir(
               hostedProjectId ?? null,
               hostedHostId ?? hostedPresentationHostId ?? null,
-              part.data.workdir,
+              part.data.workdir
             );
         } else if (isHarnessResetDataPart(part)) {
           // The harness couldn't warm-resume the prior in-box session and
@@ -1804,7 +1879,9 @@ export function useChatSession(
             createdAt: part.data.createdAt ?? new Date().toISOString(),
             ...(part.data.toolName ? { toolName: part.data.toolName } : {}),
             ...(part.data.status ? { status: part.data.status } : {}),
-            ...(part.data.ttlMs !== undefined ? { ttlMs: part.data.ttlMs } : {}),
+            ...(part.data.ttlMs !== undefined
+              ? { ttlMs: part.data.ttlMs }
+              : {}),
             ...(part.data.pollIntervalMs !== undefined
               ? { pollIntervalMs: part.data.pollIntervalMs }
               : {}),
@@ -1824,7 +1901,7 @@ export function useChatSession(
       hostedPresentationHostId,
       appState,
       handleMrtrInputRequired,
-    ],
+    ]
   );
 
   const syncResumedVersion = useCallback((version: number | null) => {
@@ -2167,13 +2244,13 @@ export function useChatSession(
                 : {}),
             }
           : // Host-bound direct preview: forward the saved host id so the server
-            // re-resolves the host's authoritative runtime config (harness /
-            // computer included). Only on the direct path — chatbox sessions own
-            // their host via chatboxId and the server ignores hostId when
-            // chatboxId is set.
-            isHostedDirectChat && hostedHostId
-            ? { hostId: hostedHostId }
-            : {}),
+          // re-resolves the host's authoritative runtime config (harness /
+          // computer included). Only on the direct path — chatbox sessions own
+          // their host via chatboxId and the server ignores hostId when
+          // chatboxId is set.
+          isHostedDirectChat && hostedHostId
+          ? { hostId: hostedHostId }
+          : {}),
         ...(hostedChatboxId && hostedChatboxSurface
           ? { surface: hostedChatboxSurface }
           : {}),
@@ -2547,6 +2624,63 @@ export function useChatSession(
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
 
+  useEffect(() => {
+    const sessionId = chatSessionIdRef.current;
+    if (!sessionId) return;
+    const pending = readPendingChatScopeStepUp();
+    if (
+      !pending ||
+      (pending.phase !== "ready" && pending.phase !== "cancelled") ||
+      pending.chatSessionId !== sessionId ||
+      !hasChatToolCall(messagesRef.current, pending.event.toolCallId)
+    ) {
+      return;
+    }
+    if (pending.phase === "ready") {
+      const server = resolveScopeStepUpServer(appState, {
+        serverId: pending.event.serverId,
+        serverName: pending.event.serverName,
+        projectId: hostedProjectId,
+      });
+      if (!server || server.connectionStatus !== "connected") return;
+    }
+    const claimed =
+      pending.phase === "ready"
+        ? claimPendingChatScopeStepUp(sessionId)
+        : claimCancelledChatScopeStepUp(sessionId);
+    if (!claimed) return;
+    const wasCancelled = pending.phase === "cancelled";
+
+    void baseSendMessage(undefined, {
+      body: {
+        ...(wasCancelled
+          ? {
+              scopeStepUpCancel: {
+                continuationId: claimed.event.continuationId,
+                toolCallId: claimed.event.toolCallId,
+              },
+            }
+          : {
+              scopeStepUpResume: {
+                continuationId: claimed.event.continuationId,
+                toolCallId: claimed.event.toolCallId,
+              },
+            }),
+      },
+    })
+      .then(() => {
+        clearPendingChatScopeStepUp(claimed.event.continuationId);
+      })
+      .catch(() => {
+        clearPendingChatScopeStepUp(claimed.event.continuationId);
+        toast.error(
+          wasCancelled
+            ? "Authorization was cancelled, but the suspended tool call could not be updated."
+            : "The authorized tool call could not be resumed safely. Check whether it ran before retrying manually."
+        );
+      });
+  }, [appState, baseSendMessage, hostedProjectId, messages]);
+
   /**
    * Resume a suspended hosted MRTR operation (§12.5) by re-driving a chat turn
    * that carries the `mrtrResume` descriptor. The server claims the durable
@@ -2562,11 +2696,11 @@ export function useChatSession(
   const submitMrtrResume = useCallback(
     async (
       round: HostedMrtrRound,
-      responses: Record<string, MrtrElicitationResponse>,
+      responses: Record<string, MrtrElicitationResponse>
     ) => {
       const toolCallId = findUnresolvedMrtrToolCallId(
         messagesRef.current,
-        round.operationLabel,
+        round.operationLabel
       );
       if (!toolCallId) {
         // Nothing to splice the driven result into (history was reset/forked
@@ -2577,7 +2711,7 @@ export function useChatSession(
           reason: "no unresolved tool call to resume",
         }).catch(() => {});
         toast.error(
-          "This chat no longer has the tool call that needed input, so the operation was cancelled.",
+          "This chat no longer has the tool call that needed input, so the operation was cancelled."
         );
         return;
       }
@@ -2597,7 +2731,7 @@ export function useChatSession(
         console.warn("[hosted-mrtr] resume turn failed", error);
       });
     },
-    [baseSendMessage],
+    [baseSendMessage]
   );
   mrtrResumeSenderRef.current = submitMrtrResume;
 
@@ -2988,7 +3122,9 @@ export function useChatSession(
         // a resolver (Playground). On failure, fail the send CLOSED with a
         // visible toast (callers fire-and-forget, so don't reject).
         const usesWebEngine =
-          HOSTED_MODE || selectedModelUsesOrgRuntime || hostedRequiresWebChatApi;
+          HOSTED_MODE ||
+          selectedModelUsesOrgRuntime ||
+          hostedRequiresWebChatApi;
         // Snapshot the selection ONCE: the resolved ids must ride with the
         // names they were resolved from, even if the user edits the selection
         // while the preflight is in flight.
@@ -3017,7 +3153,7 @@ export function useChatSession(
               pendingWidgetModelContextRef.current = undefined;
               resolvedHostedServersRef.current = null;
               toast.error(
-                "The chat target changed while this message was being prepared. Send it again to run it against the current selection.",
+                "The chat target changed while this message was being prepared. Send it again to run it against the current selection."
               );
               return;
             }
@@ -3410,7 +3546,8 @@ export function useChatSession(
         tokenCountSelectionKey !== "" && messages.length === 0;
       const selectionChanged =
         lastObservedTokenCountSelectionKeyRef.current !== null &&
-        lastObservedTokenCountSelectionKeyRef.current !== tokenCountSelectionKey;
+        lastObservedTokenCountSelectionKeyRef.current !==
+          tokenCountSelectionKey;
       lastObservedTokenCountSelectionKeyRef.current = tokenCountSelectionKey;
       const modelIdForTokens = shouldCountTokens
         ? isMCPJamProvidedModelMenuItem(selectedModel)
@@ -3623,13 +3760,13 @@ export function useChatSession(
         // the row is terminal either way, so keeping the dialog open would
         // only invite a second doomed submit.
         setPendingElicitations((queue) =>
-          queue.filter((e) => e.rendezvousId !== answer.rendezvousId),
+          queue.filter((e) => e.rendezvousId !== answer.rendezvousId)
         );
         if (!result.ok) {
           toast.info(
             result.reason === "expired"
               ? "That request timed out, so it was cancelled."
-              : "That request was already resolved.",
+              : "That request was already resolved."
           );
         }
       } catch (error) {
@@ -3639,12 +3776,12 @@ export function useChatSession(
         setElicitationResponding(false);
       }
     },
-    [convexClient],
+    [convexClient]
   );
 
   const dismissUrlElicitationRequired = useCallback((toolCallId?: string) => {
     setUrlElicitationRequired((current) =>
-      current.filter((e) => e.toolCallId !== toolCallId),
+      current.filter((e) => e.toolCallId !== toolCallId)
     );
   }, []);
 
