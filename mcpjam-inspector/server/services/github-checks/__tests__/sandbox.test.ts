@@ -584,6 +584,30 @@ describe("waitForMcpInitialize", () => {
     ).toBe(false);
   });
 
+  it("does not accept an unsupported protocol version as healthy", async () => {
+    // Present is not the same as usable: the real client rejects a version it
+    // does not support, which would surface as `infra_error` (neutral) from the
+    // eval run instead of the `server_unhealthy` the PR earned.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: { protocolVersion: "bogus-9999" },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 5,
+      })
+    ).toBe(false);
+  });
+
   it("does not accept a JSON-RPC error response as healthy", async () => {
     const fetchImpl = vi.fn(
       async () =>

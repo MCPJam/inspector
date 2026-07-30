@@ -26,6 +26,7 @@
  */
 
 import { Sandbox } from "e2b";
+import { SUPPORTED_PROTOCOL_VERSIONS } from "@modelcontextprotocol/sdk/types.js";
 import { logger } from "../../utils/logger.js";
 import type { CheckRecipe } from "./recipes.js";
 
@@ -723,7 +724,8 @@ async function probeResponseIsHealthy(response: Response): Promise<boolean> {
 }
 
 /**
- * A successful `initialize` carries a `result` with a `protocolVersion`. An
+ * A successful `initialize` carries a `result` with a SUPPORTED
+ * `protocolVersion`. An
  * error response is still a live MCP server, but not a usable one — the eval
  * run's own handshake would fail the same way, so treat it as not-yet-healthy
  * and keep polling until the deadline.
@@ -746,7 +748,16 @@ function looksLikeInitializeResult(text: string): boolean {
       const parsed = JSON.parse(payload) as {
         result?: { protocolVersion?: unknown };
       };
-      if (parsed?.result && "protocolVersion" in (parsed.result ?? {})) {
+      // The version has to be one the real client will ACCEPT, not merely
+      // present. A server answering `protocolVersion: "bogus"` looks healthy
+      // here, and then the eval run's own handshake rejects it — surfacing as
+      // `infra_error` (neutral) and letting a broken PR server dodge the
+      // `server_unhealthy` it earned.
+      const version = parsed?.result?.protocolVersion;
+      if (
+        typeof version === "string" &&
+        SUPPORTED_PROTOCOL_VERSIONS.includes(version)
+      ) {
         return true;
       }
     } catch {
