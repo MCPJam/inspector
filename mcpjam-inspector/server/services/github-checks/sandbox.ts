@@ -122,12 +122,21 @@ const SERVER_LOG_MAX_BYTES = 4 * 1024 * 1024;
 const SERVER_LOG_CHECK_SECONDS = 30;
 
 /**
- * The protocol version we offer in the health probe. Deliberately a plain
- * constant rather than the connect-form list: this probe only has to prove a
- * server is up and speaking MCP, and a server that negotiates down still
- * answers.
+ * The protocol version the legacy probe OFFERS, which is the one the eval run's
+ * client offers: `_legacyHandshake` sends `legacyVersions[0]`, and an unpinned
+ * connection leaves that list to the SDK's built-in `SUPPORTED_PROTOCOL_VERSIONS`,
+ * whose first entry is the latest legacy revision.
+ *
+ * Offering something older would probe a handshake the eval never performs. A
+ * server whose `2025-06-18` path works while its latest path is broken would pass
+ * here and then fail the eval, and that failure would reach us as a neutral
+ * `infra_error` instead of the PR's `server_unhealthy`.
+ *
+ * This is only what we PROPOSE. `LEGACY_PROBE_ACCEPTED_VERSIONS` is what we accept
+ * back, and it stays wide, because a server that negotiates down is one the client
+ * accepts too.
  */
-const HEALTH_PROBE_PROTOCOL_VERSION = "2025-06-18";
+const HEALTH_PROBE_PROTOCOL_VERSION = "2025-11-25";
 
 /** The version the modern-era probe self-describes with. */
 const MODERN_PROBE_PROTOCOL_VERSION = "2026-07-28";

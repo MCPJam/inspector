@@ -432,7 +432,7 @@ const IN_BOX_RESPONSE_TIMEOUT_MS = 10_000;
  * only whether response headers come back at all — so this is deliberately a local
  * literal rather than a coupling to the health probe's negotiation constants.
  */
-const LIVENESS_PROBE_PROTOCOL_VERSION = "2025-06-18";
+const LIVENESS_PROBE_PROTOCOL_VERSION = "2025-11-25";
 
 /**
  * Whether the PR's server is still ANSWERING — asked from INSIDE the sandbox.
@@ -626,6 +626,20 @@ async function runTerminality(
   } catch {
     return "unknown";
   }
+}
+
+/**
+ * Whether a run's status means an eval verdict was actually reached.
+ *
+ * Only `completed` does. The runner writes it on its own success path; `timed_out`,
+ * `cancelled` and `failed` all mean the machinery stopped, and two of those arrive
+ * WITHOUT a throw — a lifecycle stop (iteration or whole-run timeout) is finalized
+ * and returned normally. Since `outcomeForRunResult` calls everything that is not
+ * `passed` a PR failure, letting one of those through is a red X on a PR whose
+ * assertions were never judged.
+ */
+export function runReachedAVerdict(status: string | undefined): boolean {
+  return status === "completed";
 }
 
 /**
@@ -838,12 +852,17 @@ async function defaultRunEvalSuite(args: {
       passCriteria?: { minimumPassRate?: number };
     } | null;
 
-    // A run that is somehow STILL not terminal has no verdict to report. Raising
-    // here lands it as `infra_error` (neutral) rather than a false failure — this
-    // is our problem, not the PR's.
-    if (!TERMINAL_RUN_STATUSES.has(String(run?.status))) {
+    // Only `completed` carries a verdict — the same rule `runCompleted` states for
+    // the throwing path, applied here too. The runner reaches THIS path without
+    // throwing for a lifecycle stop as well: an iteration or whole-run timeout is
+    // finalized `timed_out` and returned normally, and `cancelled` arrives the same
+    // way. `effectiveRunResult` would hand those straight to `outcomeForRunResult`,
+    // which calls everything that is not `passed` a PR failure — so a provider
+    // timeout or a cancelled run would put a red X on a PR whose assertions were
+    // never judged. Raising instead lands them as `infra_error` (neutral).
+    if (!runReachedAVerdict(run?.status)) {
       throw new Error(
-        `eval run ${prepared.runId} never reached a terminal status (last: ${
+        `eval run ${prepared.runId} did not complete (status: ${
           run?.status ?? "unknown"
         })`
       );

@@ -12,6 +12,7 @@ import {
   effectiveRunResult,
   executeClaimedCheck,
   outcomeForRunResult,
+  runReachedAVerdict,
   snapshotBelongsToAnotherCheck,
   LeaseLostError,
   startGithubChecksWorker,
@@ -943,5 +944,31 @@ describe("snapshotBelongsToAnotherCheck", () => {
     expect(await snapshotBelongsToAnotherCheck(broken, "run-1", "trig-1")).toBe(
       false
     );
+  });
+});
+
+describe("runReachedAVerdict", () => {
+  it("trusts only a completed run", async () => {
+    expect(runReachedAVerdict("completed")).toBe(true);
+    // Each of these means the machinery stopped, not that the PR failed — and
+    // `timed_out`/`cancelled` reach the verdict path WITHOUT a throw, because a
+    // lifecycle stop is finalized and returned normally. `outcomeForRunResult`
+    // would turn every one of them into `evals_failed`.
+    for (const status of [
+      "timed_out",
+      "cancelled",
+      "failed",
+      "running",
+      undefined,
+    ]) {
+      expect(runReachedAVerdict(status)).toBe(false);
+    }
+  });
+
+  it("guards exactly the statuses outcomeForRunResult would misread", async () => {
+    // The pairing is the point: anything not `passed` is a PR failure downstream,
+    // so anything not `completed` has to be stopped before it gets there.
+    expect(outcomeForRunResult("timed_out")).toBe("evals_failed");
+    expect(runReachedAVerdict("timed_out")).toBe(false);
   });
 });

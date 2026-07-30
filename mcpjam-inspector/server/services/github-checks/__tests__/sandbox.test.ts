@@ -784,6 +784,31 @@ describe("waitForMcpInitialize", () => {
     ).toBe(false);
   });
 
+  it("offers the same legacy version the eval client offers", async () => {
+    // `_legacyHandshake` sends `legacyVersions[0]`, and an unpinned connection
+    // leaves that list to the SDK's built-in `SUPPORTED_PROTOCOL_VERSIONS`, whose
+    // first entry is the latest legacy revision. Proposing an older one would probe
+    // a handshake the eval never performs: a server whose `2025-06-18` path works
+    // while its latest path is broken would pass here and fail the eval, arriving as
+    // a neutral `infra_error` instead of the PR's `server_unhealthy`.
+    const offered: unknown[] = [];
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      const parsed = JSON.parse(String(init.body)) as {
+        method: string;
+        params?: { protocolVersion?: unknown };
+      };
+      if (parsed.method === "initialize") {
+        offered.push(parsed.params?.protocolVersion);
+      }
+      return okInitialize();
+    }) as unknown as typeof fetch;
+
+    expect(
+      await waitForMcpInitialize("https://box/mcp", { ...seams, fetchImpl })
+    ).toBe(true);
+    expect(offered).toEqual(["2025-11-25"]);
+  });
+
   it("does not accept an initialize result naming the modern protocol version", async () => {
     // The legacy handshake accepts only `legacyProtocolVersions(...)` — everything
     // before 2026-07-28 — and throws otherwise, and the eval run's unpinned
