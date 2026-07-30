@@ -330,6 +330,105 @@ describe("waitForMcpInitialize", () => {
     ).toBe(true);
   });
 
+  it("accepts an initialize result on a stream the server never closes", async () => {
+    // THE realistic shape: a streamable-HTTP server answers `initialize` on an
+    // SSE stream and then holds it open for server-initiated messages. Reading
+    // the body with `response.text()` waits for the stream to END, so it never
+    // resolves — every attempt aborts and a perfectly healthy server reads as
+    // `server_unhealthy`.
+    let cancelled = false;
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(
+                  'event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}}\n\n'
+                )
+              );
+              // …and then nothing. No close(): the stream stays open, exactly
+              // like a real session.
+            },
+            cancel() {
+              cancelled = true;
+            },
+          }),
+          { status: 200, headers: { "content-type": "text/event-stream" } }
+        )
+    ) as unknown as typeof fetch;
+
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 5_000,
+      })
+    ).toBe(true);
+    // One attempt, and the socket is released rather than leaked.
+    expect(
+      (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls
+    ).toHaveLength(1);
+    expect(cancelled).toBe(true);
+  });
+
+  it("decides from a frame that arrives split across chunks", async () => {
+    const payload =
+      'data: {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}}\n\n';
+    const cut = 40;
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              const encoder = new TextEncoder();
+              // A partial frame is not a verdict: it just fails to parse and the
+              // read continues.
+              controller.enqueue(encoder.encode(payload.slice(0, cut)));
+              controller.enqueue(encoder.encode(payload.slice(cut)));
+            },
+          }),
+          { status: 200, headers: { "content-type": "text/event-stream" } }
+        )
+    ) as unknown as typeof fetch;
+
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 5_000,
+      })
+    ).toBe(true);
+  });
+
+  it("gives up on a stream that never carries an initialize result", async () => {
+    // Untrusted code streaming its own logs at us. Bounded by the deadline, not
+    // by how long it is willing to talk.
+    const fetchImpl = vi.fn(
+      async (_url: string, init?: { signal?: AbortSignal }) =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            pull(controller) {
+              if (init?.signal?.aborted) {
+                controller.close();
+                return;
+              }
+              controller.enqueue(new TextEncoder().encode("noise\n"));
+            },
+          }),
+          { status: 200 }
+        )
+    ) as unknown as typeof fetch;
+
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        fetchImpl,
+        timeoutMs: 60,
+        intervalMs: 10,
+      })
+    ).toBe(false);
+  });
+
   it("keeps polling through connection refusals and succeeds once the server boots", async () => {
     let call = 0;
     const fetchImpl = vi.fn(async () => {

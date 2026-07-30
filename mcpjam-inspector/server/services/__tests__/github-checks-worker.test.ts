@@ -9,6 +9,7 @@ import {
 } from "vitest";
 import {
   classifyCheckFailure,
+  effectiveRunResult,
   executeClaimedCheck,
   outcomeForRunResult,
   startGithubChecksWorker,
@@ -489,6 +490,67 @@ describe("outcomeForRunResult", () => {
     ]) {
       expect(outcomeForRunResult(result)).toBe("evals_failed");
     }
+  });
+});
+
+describe("effectiveRunResult", () => {
+  it("derives the verdict for a completed run whose record omits `result`", () => {
+    // The recorder finalizes with `status: "completed"` and a summary but does
+    // not always populate `result`. Reading `result` alone puts a red X on a PR
+    // that passed every single test.
+    expect(
+      effectiveRunResult({
+        status: "completed",
+        summary: { total: 4, passed: 4, failed: 0, passRate: 100 },
+      })
+    ).toBe("passed");
+    expect(
+      outcomeForRunResult(
+        effectiveRunResult({
+          status: "completed",
+          summary: { total: 4, passed: 4, failed: 0, passRate: 100 },
+        })
+      )
+    ).toBe("passed");
+  });
+
+  it("honors the suite's own pass criteria", () => {
+    const summary = { total: 10, passed: 8, failed: 2, passRate: 80 };
+    expect(
+      effectiveRunResult({
+        status: "completed",
+        summary,
+        passCriteria: { minimumPassRate: 80 },
+      })
+    ).toBe("passed");
+    expect(
+      effectiveRunResult({
+        status: "completed",
+        summary,
+        passCriteria: { minimumPassRate: 90 },
+      })
+    ).toBe("failed");
+    // No criteria ⇒ 100% required, matching the client's derivation.
+    expect(effectiveRunResult({ status: "completed", summary })).toBe("failed");
+  });
+
+  it("prefers an explicit result over anything derived", () => {
+    expect(
+      effectiveRunResult({
+        status: "completed",
+        result: "failed",
+        summary: { total: 1, passed: 1, failed: 0, passRate: 100 },
+      })
+    ).toBe("failed");
+  });
+
+  it("never invents a pass when there is nothing to derive from", () => {
+    expect(effectiveRunResult({ status: "completed" })).toBeUndefined();
+    expect(effectiveRunResult(null)).toBeUndefined();
+    expect(effectiveRunResult({ status: "running" })).toBeUndefined();
+    expect(effectiveRunResult({ status: "timed_out" })).toBe("timed_out");
+    expect(effectiveRunResult({ status: "cancelled" })).toBe("cancelled");
+    expect(effectiveRunResult({ status: "failed" })).toBe("failed");
   });
 });
 

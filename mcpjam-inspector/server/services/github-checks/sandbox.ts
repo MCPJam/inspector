@@ -95,6 +95,12 @@ export const HEALTH_INTERVAL_MS = 2_000;
  * point is that an unresponsive one cannot outlive the overall window.
  */
 export const PROBE_ATTEMPT_TIMEOUT_MS = 10_000;
+/**
+ * Cap on how much of a probe response we read before deciding. The answer we are
+ * looking for is the first frame; anything past this is a server streaming at us,
+ * not a handshake.
+ */
+export const PROBE_MAX_RESPONSE_CHARS = 64 * 1024;
 /** Where the PR is checked out inside the box. */
 export const CHECKOUT_DIR = "/home/user/repo";
 
@@ -508,15 +514,17 @@ export async function waitForMcpInitialize(
         // bounded too.
         signal: abort.signal,
       });
-      if (response.ok) {
-        const text = await response.text();
-        if (looksLikeInitializeResult(text)) return true;
+      if (response.ok && (await probeResponseIsHealthy(response))) {
+        return true;
       }
     } catch {
       // Connection refused, DNS not ready, or our own abort — all expected
       // while it boots, all "not healthy yet".
     } finally {
       clearTimeout(abortTimer);
+      // Tear the request down unconditionally. A streamable-HTTP server holds the
+      // response stream open after answering, and we have our answer.
+      abort.abort();
     }
     if (now() + intervalMs > deadline) break;
     await pause(intervalMs);
@@ -526,6 +534,58 @@ export async function waitForMcpInitialize(
     attempts,
   });
   return false;
+}
+
+/**
+ * Decide from the probe response WITHOUT waiting for the body to end.
+ *
+ * `response.text()` cannot be used here. A streamable-HTTP MCP server answers
+ * `initialize` on an SSE stream and then KEEPS THAT STREAM OPEN — that is the
+ * whole point of the transport. `text()` only resolves when the body ends, so it
+ * would never resolve against a healthy server: every attempt would hit its
+ * abort timer and the check would report `server_unhealthy` for a server that
+ * answered correctly in milliseconds. (The fixture happens to close after each
+ * response, which is exactly why this could pass its tests and still fail on a
+ * real server.)
+ *
+ * So read incrementally and return the moment the accumulated text carries an
+ * initialize result, then cancel the stream. `PROBE_MAX_RESPONSE_CHARS` bounds
+ * a server that streams unrelated output at us forever.
+ */
+async function probeResponseIsHealthy(response: Response): Promise<boolean> {
+  const body = (response as { body?: unknown }).body as
+    | ReadableStream<Uint8Array>
+    | null
+    | undefined;
+  if (!body || typeof body.getReader !== "function") {
+    // No streaming body available (a buffered runtime, or a test stub): the
+    // payload is already in hand, so reading it cannot block.
+    return looksLikeInitializeResult(await response.text());
+  }
+
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  try {
+    while (text.length < PROBE_MAX_RESPONSE_CHARS) {
+      const { done, value } = await reader.read();
+      if (value && value.byteLength > 0) {
+        text += decoder.decode(value, { stream: true });
+        // Checked per chunk: a frame can arrive split, and a partial JSON just
+        // fails to parse and waits for the rest.
+        if (looksLikeInitializeResult(text)) return true;
+      }
+      if (done) {
+        text += decoder.decode();
+        return looksLikeInitializeResult(text);
+      }
+    }
+    return looksLikeInitializeResult(text);
+  } finally {
+    // We are done with this response either way — a healthy server is still
+    // holding the stream open, so drop it rather than leaking the socket.
+    void reader.cancel().catch(() => {});
+  }
 }
 
 /**

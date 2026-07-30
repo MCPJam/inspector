@@ -299,6 +299,46 @@ export function outcomeForRunResult(
 }
 
 /**
+ * The run's verdict, derived when the record does not carry one.
+ *
+ * The recorder finalizes a run with `status: "completed"` and a `summary` but
+ * does NOT always populate `result`. Reading `result` alone therefore turns a
+ * run that passed every test into `evals_failed` — a red X on a good PR, which
+ * is the exact failure mode the outcome taxonomy exists to prevent. The client
+ * has the same derivation (`computeEffectiveRunResult` in
+ * `client/src/components/evals/suite-runs-list.tsx`); this is the server-side
+ * mirror, kept here because the worker must not import client code.
+ *
+ * `passRate` and `minimumPassRate` are both 0-100 (see the backend schema).
+ */
+export function effectiveRunResult(
+  run: {
+    status?: string;
+    result?: string;
+    summary?: CheckSummary | null;
+    passCriteria?: { minimumPassRate?: number } | null;
+  } | null
+): string | undefined {
+  if (!run) return undefined;
+  if (run.result) return run.result;
+  if (run.status === "completed") {
+    const passRate = run.summary?.passRate;
+    if (typeof passRate === "number") {
+      return passRate >= (run.passCriteria?.minimumPassRate ?? 100)
+        ? "passed"
+        : "failed";
+    }
+    // Completed with no counts at all — nothing to derive from. Left undefined
+    // so the caller reports `evals_failed` rather than inventing a pass.
+    return undefined;
+  }
+  if (run.status === "cancelled") return "cancelled";
+  if (run.status === "timed_out") return "timed_out";
+  if (run.status === "failed") return "failed";
+  return undefined;
+}
+
+/**
  * Injectable collaborators. Every external effect the executor performs is one
  * of these, so the failure-path tests drive real control flow (including the
  * `finally` cleanup and the heartbeat lifecycle) without an E2B box, a Convex
@@ -372,20 +412,33 @@ const TERMINAL_RUN_STATUSES = new Set([
   "timed_out",
 ]);
 
-async function isRunTerminal(
+/**
+ * Whether the run already has a terminal record — with `unknown` kept distinct
+ * from `non_terminal`.
+ *
+ * That distinction is the point. `unknown` means the LOOKUP failed, not that the
+ * run is unfinished, and treating it as unfinished means finalizing the run
+ * `failed` on the strength of a transient Convex outage — overwriting a verdict
+ * that may well have been a pass. Callers must not write on `unknown`; leaving
+ * the run alone lands the check as `infra_error` (neutral), which is the honest
+ * answer when we cannot see the run.
+ */
+type RunTerminality = "terminal" | "non_terminal" | "unknown";
+
+async function runTerminality(
   client: { query: (name: any, args: any) => Promise<any> },
   runId: string
-): Promise<boolean> {
+): Promise<RunTerminality> {
   try {
     const run = (await client.query("testSuites:getTestSuiteRun" as any, {
       runId,
     })) as { status?: string } | null;
-    return TERMINAL_RUN_STATUSES.has(String(run?.status));
+    if (!run) return "unknown";
+    return TERMINAL_RUN_STATUSES.has(String(run.status))
+      ? "terminal"
+      : "non_terminal";
   } catch {
-    // Can't tell. Let the defensive finalize proceed — `recorder.finalize`
-    // tolerates an already-terminal run, so the worst case is a duplicate
-    // terminal write rather than a run stranded mid-flight.
-    return false;
+    return "unknown";
   }
 }
 
@@ -466,8 +519,16 @@ async function defaultRunEvalSuite(args: {
         error: error instanceof Error ? error.message : String(error),
       });
 
-      const terminal = await isRunTerminal(client, prepared.runId);
-      if (!terminal) {
+      const terminality = await runTerminality(client, prepared.runId);
+      if (terminality === "unknown") {
+        // We could not read the run. Writing `failed` here would be a guess that
+        // can overwrite a real verdict, so leave the record alone — the read
+        // below decides, and if that fails too the check lands neutral.
+        logger.warn(
+          "[github-checks] could not read the run's state; not finalizing it",
+          { triggerId: args.claimed.triggerId, runId: prepared.runId }
+        );
+      } else if (terminality === "non_terminal") {
         if (!prepared.recorder) {
           // Nothing can finalize the run, so do not invent a verdict from it.
           throw error;
@@ -492,7 +553,12 @@ async function defaultRunEvalSuite(args: {
 
     const run = (await client.query("testSuites:getTestSuiteRun" as any, {
       runId: prepared.runId,
-    })) as { status?: string; result?: string; summary?: CheckSummary } | null;
+    })) as {
+      status?: string;
+      result?: string;
+      summary?: CheckSummary;
+      passCriteria?: { minimumPassRate?: number };
+    } | null;
 
     // A run that is somehow STILL not terminal has no verdict to report. Raising
     // here lands it as `infra_error` (neutral) rather than a false failure — this
@@ -505,9 +571,10 @@ async function defaultRunEvalSuite(args: {
       );
     }
 
+    const result = effectiveRunResult(run);
     return {
       runId: prepared.runId,
-      ...(run?.result ? { result: run.result } : {}),
+      ...(result ? { result } : {}),
       ...(run?.summary ? { summary: run.summary } : {}),
     };
   } finally {

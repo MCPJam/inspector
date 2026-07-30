@@ -114,13 +114,37 @@ function callTool(
   }
 }
 
+/**
+ * A well-formed JSON-RPC 2.0 request object.
+ *
+ * `jsonrpc` and the id's TYPE are checked, not just `method`: this fixture is
+ * the control for the check pipeline, so it has to be strict about the wire
+ * format. A client sending `{"method":"initialize"}` with no `jsonrpc`, or an
+ * id that is an object, is malformed and gets `-32600` — accepting it here
+ * would let the pipeline pass against a server that is more permissive than the
+ * spec.
+ */
 function isRpcRequest(value: unknown): value is JsonRpcRequest {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    typeof (value as JsonRpcRequest).method === "string"
-  );
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value as JsonRpcRequest & { id?: unknown };
+  if (candidate.jsonrpc !== "2.0") return false;
+  if (typeof candidate.method !== "string") return false;
+  return isValidRpcId(candidate.id);
+}
+
+/**
+ * A legal id: a string, an integer-valued number, or ABSENT (a notification).
+ *
+ * `null` is rejected. JSON-RPC 2.0 discourages it and MCP forbids it outright,
+ * and "absent" is the thing that means notification — a client sending an
+ * explicit `null` has a bug this fixture should surface rather than absorb.
+ */
+function isValidRpcId(id: unknown): boolean {
+  if (id === undefined) return true;
+  if (typeof id === "string") return true;
+  return typeof id === "number" && Number.isInteger(id);
 }
 
 function invalidRequest(value: unknown): { status: number; body?: unknown } {
@@ -285,6 +309,14 @@ const server = createServer(async (req, res) => {
   // Batches are legal on the wire; answer them so a client that sends one
   // doesn't look like a broken server.
   if (Array.isArray(parsed)) {
+    // An EMPTY batch is itself an invalid request per JSON-RPC 2.0 — not a batch
+    // of zero notifications. Answering 202 there would tell a client its
+    // malformed payload was accepted.
+    if (parsed.length === 0) {
+      const { status, body } = invalidRequest(null);
+      sendJson(res, status, body);
+      return;
+    }
     const bodies = parsed
       .map((entry) =>
         isRpcRequest(entry) ? handleRpc(entry) : invalidRequest(entry)
