@@ -2221,7 +2221,7 @@ async function processOneStep(
       stepIndex,
       errorText,
     });
-    emitError(writer, errorText);
+      emitError(writer, errorText);
     // PR 5b-followup-2: surface the structured guardrail body to
     // `streamSink: "none"` consumers (eval backend stream runner). The
     // writer-side `error` chunk above is fire-and-forget here; the
@@ -2695,7 +2695,7 @@ async function processOneStep(
         stepIndex,
         errorText,
       });
-      emitError(writer, errorText);
+    emitError(writer, errorText);
       // PR 5b-followup-2: surface the error to `streamSink: "none"`
       // consumers (eval backend stream runner). The processStream /
       // tool-execution catch path doesn't have a structured body, so
@@ -3337,8 +3337,25 @@ export async function runChatEngineLoop(
 
   if (streamSink === "ui") {
     const stream = createUIMessageStream({
-      execute: executeEngine,
-      onFinish: onFinishEngine,
+      // Do not pass `onFinishEngine` as createUIMessageStream's `onFinish`.
+      // AI SDK enables its own message-state reducer whenever that callback is
+      // present. A resumed scope step-up begins with `tool-output-available`
+      // for a tool call created in the pre-OAuth response, but this stream has
+      // no matching `tool-input-available`; the reducer throws after the first
+      // trace chunk and strands the browser in "streaming".
+      //
+      // Our engine already owns the authoritative ModelMessage history, so run
+      // persistence/cleanup directly after execution. With no SDK `onFinish`
+      // reducer, cross-response tool results pass through to the browser and
+      // the exact resumed transcript is still persisted before the stream
+      // closes.
+      execute: async (context) => {
+        try {
+          await executeEngine(context);
+        } finally {
+          await onFinishEngine();
+        }
+      },
     });
     const response = createUIMessageStreamResponse({ stream });
     return {

@@ -2691,7 +2691,9 @@ export function useChatSession(
         serverName: pending.event.serverName,
         projectId: hostedProjectId,
       });
-      if (!server || server.connectionStatus !== "connected") return;
+      if (!server || server.connectionStatus !== "connected") {
+        return;
+      }
     }
     const claimed =
       pending.phase === "ready"
@@ -2817,11 +2819,19 @@ export function useChatSession(
     const baselineVersion = turnStartVersionRef.current;
     for (let attempt = 0; attempt < 4; attempt += 1) {
       await new Promise((resolve) => window.setTimeout(resolve, 250));
+      // This is only a best-effort confirmation after the chat response has
+      // already drained. A stalled history endpoint must not postpone OAuth
+      // until the 15-second emergency hold fires.
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), 750);
       try {
-        const detail = await getChatHistoryDetail({
-          chatSessionId: sessionId,
-          projectId: hostedProjectIdRef.current ?? undefined,
-        });
+        const detail = await getChatHistoryDetail(
+          {
+            chatSessionId: sessionId,
+            projectId: hostedProjectIdRef.current ?? undefined,
+          },
+          { signal: controller.signal }
+        );
         const version = detail?.session?.version;
         // A brand-new chat is persisted the moment the row exists; a resumed
         // thread needs the version to move past what we sent against.
@@ -2833,6 +2843,8 @@ export function useChatSession(
         }
       } catch {
         // Keep trying; the loop bound is the real deadline.
+      } finally {
+        window.clearTimeout(timeoutId);
       }
     }
   }, []);
