@@ -117,8 +117,10 @@ const pendingChatStepUps = new Map<string, PendingChatStepUp>();
  */
 export type ChatTurnScopeStepUpHold = { abort?: () => void };
 const activeHolds = new Set<ChatTurnScopeStepUpHold>();
-/** Persistence checks owed by turns that have already ended this round. */
+/** Persistence checks owed by turns that have already ended. */
 const pendingPersistWaits = new Set<() => Promise<unknown>>();
+/** Guards against two release rounds racing each other to the redirect. */
+let releaseInProgress = false;
 let holdTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
 /** Test seam: no production caller should need this. */
@@ -127,6 +129,7 @@ export function __resetScopeStepUpInFlightForTests(): void {
   pendingChatStepUps.clear();
   activeHolds.clear();
   pendingPersistWaits.clear();
+  releaseInProgress = false;
   if (holdTimeoutId !== null) {
     clearTimeout(holdTimeoutId);
     holdTimeoutId = null;
@@ -149,29 +152,42 @@ function flushPendingChatStepUps(): void {
   }
 }
 
-/** Release the queue once every lane has ended and had a chance to persist. */
-function releaseQueuedChatStepUps(): void {
-  if (pendingChatStepUps.size === 0) {
-    pendingPersistWaits.clear();
-    clearHoldTimeout();
-    return;
+/**
+ * Release the queue once every turn has ended and had a chance to persist.
+ *
+ * Deliberately a LOOP under a single-runner guard rather than one
+ * `Promise.allSettled` per caller. A turn that ends while an earlier turn's
+ * persistence check is still running would otherwise open a second, concurrent
+ * release round — and whichever settled first would redirect, discarding the
+ * other turn before it was written. Instead the running loop picks up the newly
+ * owed checks on its next pass, so the redirect waits for all of them.
+ */
+async function releaseQueuedChatStepUps(): Promise<void> {
+  if (releaseInProgress) return;
+  releaseInProgress = true;
+  try {
+    while (activeHolds.size === 0 && pendingChatStepUps.size > 0) {
+      const waits = [...pendingPersistWaits];
+      pendingPersistWaits.clear();
+      if (waits.length === 0) {
+        flushPendingChatStepUps();
+        return;
+      }
+      // Every turn that has ended so far, not just the one that triggered this
+      // pass: the queued challenge may well have come from a different turn
+      // than the one whose persistence we happen to be holding.
+      await Promise.allSettled(waits.map((wait) => wait()));
+    }
+    // Either nothing is queued, or the user started another turn while we
+    // waited. Redirecting into a live turn is the exact failure this hold
+    // exists to prevent, so leave the queue for that turn's own release.
+    if (pendingChatStepUps.size === 0) {
+      pendingPersistWaits.clear();
+      clearHoldTimeout();
+    }
+  } finally {
+    releaseInProgress = false;
   }
-  const waits = [...pendingPersistWaits];
-  pendingPersistWaits.clear();
-  if (waits.length === 0) {
-    flushPendingChatStepUps();
-    return;
-  }
-  // Every lane that ended this round, not just the last one: the queued
-  // challenge may well have come from a different lane than the one whose
-  // persistence we happen to be holding.
-  void Promise.allSettled(waits.map((wait) => wait())).then(() => {
-    // The user can send again while we wait. Redirecting now would abandon
-    // that new turn — the exact failure this hold exists to prevent — so stay
-    // queued and let the new turn's own release do it.
-    if (activeHolds.size > 0) return;
-    flushPendingChatStepUps();
-  });
 }
 
 /**
@@ -208,7 +224,7 @@ export function endChatTurnScopeStepUpHold(
     pendingPersistWaits.add(waitForPersist);
   }
   if (activeHolds.size > 0) return;
-  releaseQueuedChatStepUps();
+  void releaseQueuedChatStepUps();
 }
 
 /**

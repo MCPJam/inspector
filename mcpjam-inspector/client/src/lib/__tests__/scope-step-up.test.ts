@@ -418,6 +418,46 @@ describe("chat turn step-up deferral across concurrent lanes", () => {
     }
   });
 
+  it("waits for a follow-up turn that ends during the first turn's persistence check", async () => {
+    // The dangerous ordering: turn B starts AND finishes inside turn A's
+    // persistence poll. If A's completion is allowed to redirect on its own,
+    // B's transcript is discarded before it was ever written.
+    let releaseA: (() => void) | undefined;
+    let releaseB: (() => void) | undefined;
+    const persistA = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseA = resolve;
+        }),
+    );
+    const persistB = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseB = resolve;
+        }),
+    );
+
+    const turnA = beginChatTurnScopeStepUpHold();
+    driveChatScopeStepUp(server, challenge);
+    endChatTurnScopeStepUpHold(turnA, persistA);
+    expect(persistA).toHaveBeenCalledTimes(1);
+
+    const turnB = beginChatTurnScopeStepUpHold();
+    endChatTurnScopeStepUpHold(turnB, persistB);
+
+    releaseA?.();
+    // Drain the microtask queue rather than `waitFor`, which would succeed on
+    // its first synchronous check and let a racing redirect slip through
+    // unobserved.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(persistB).toHaveBeenCalledTimes(1);
+    expect(applyToolCallStepUp).not.toHaveBeenCalled();
+
+    releaseB?.();
+    await vi.waitFor(() => expect(applyToolCallStepUp).toHaveBeenCalledTimes(1));
+  });
+
   it("keeps holding when a new turn starts during the persistence wait", async () => {
     let persisted: (() => void) | undefined;
     const waitForPersist = vi.fn(
