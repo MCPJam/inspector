@@ -31,6 +31,8 @@ import {
 } from "./checks/oauth-negative.js";
 import { runTokenFormatCheck } from "./checks/oauth-token-format.js";
 import {
+  runAsRegistrationEndpointCheck,
+  runDiscoveryStaleProtocolHeaderCheck,
   runUnauthenticatedChallengeCheck,
   runResourceMetadataChallengeCheck,
   runStaleSessionRejectionCheck,
@@ -741,6 +743,21 @@ export class OAuthConformanceTest {
           }),
         );
 
+        // S16 stays inside the green-flow gate because it costs a live network
+        // round-trip and its baseline — "a discovery document that already
+        // succeeded" — is a *precondition*, not an assertion: on a flow that
+        // failed at discovery it can only skip, and on one that failed later
+        // the check is meaningful but not diagnostic of the failure. Unlike S13
+        // below there is no argument that its value peaks on a red run, so it
+        // does not justify probing a server whose OAuth is already known broken.
+        await recordOAuthCheck("oauth_discovery_stale_protocol_header", () =>
+          runDiscoveryStaleProtocolHeaderCheck({
+            config: this.config,
+            state,
+            trackedRequest,
+          }),
+        );
+
         const tokenRequestStep = [...steps]
           .reverse()
           .find((step) => step.step === "token_request");
@@ -757,6 +774,34 @@ export class OAuthConformanceTest {
             [],
             tokenFormatOutcome.error,
           ),
+        );
+      }
+
+      // ── S13 runs OUTSIDE the green-flow gate above ──────────────────
+      //
+      // Every other post-flow check requires `currentStep === "complete"` and a
+      // clean step list, which is right for probes that tamper with a working
+      // flow — there is nothing to tamper with on a broken one. It is backwards
+      // for S13. A missing `registration_endpoint` is frequently the very reason
+      // a DCR run failed, so gating the check on success guarantees it is silent
+      // in exactly the runs it explains.
+      //
+      // Running it here is safe for three reasons:
+      //   1. It issues no HTTP request and reads only
+      //      `state.authorizationServerMetadata`, so it cannot perturb the flow,
+      //      the request history, or a server already known to be broken.
+      //   2. It is appended AFTER the flow steps, so `buildSummary` — which
+      //      quotes the FIRST failed step — still headlines the real root cause,
+      //      and the existing exact `steps` ordering assertions (which run with
+      //      `oauthConformanceChecks` disabled) are untouched.
+      //   3. `passed` is already false whenever the flow failed, so adding a
+      //      step here can only turn a green run red via a genuine violation —
+      //      never resurrect a red one.
+      //
+      // Still gated on `oauthConformanceChecks` so the check set stays opt-in.
+      if (this.config.oauthConformanceChecks) {
+        await recordOAuthCheck("oauth_as_registration_endpoint", async () =>
+          runAsRegistrationEndpointCheck({ config: this.config, state }),
         );
       }
     } finally {

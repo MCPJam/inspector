@@ -26,7 +26,10 @@ export type OAuthConformanceCheckId =
   // Server-side spec obligations (HP-17 findings 3/4/5).
   | "oauth_unauthenticated_challenge"
   | "oauth_resource_metadata_challenge"
-  | "oauth_stale_session_rejection";
+  | "oauth_stale_session_rejection"
+  // Catalog-derived server obligations (HP-47 S13/S16).
+  | "oauth_as_registration_endpoint"
+  | "oauth_discovery_stale_protocol_header";
 
 /** A step in a conformance result: either a real flow step or a post-flow check. */
 export type ConformanceStepId = OAuthFlowStep | OAuthConformanceCheckId;
@@ -105,6 +108,24 @@ export const CONFORMANCE_CHECK_METADATA: Record<
       "Send an authenticated request carrying an unknown Mcp-Session-Id and confirm the server rejects it with a 4xx, never a 500.",
     teachableMoments: [
       "The Streamable HTTP transport requires a stale or unknown session id to fail with a clean 4xx (404 preferred), not crash the server with a 500.",
+    ],
+  },
+  oauth_as_registration_endpoint: {
+    title: "OAuth Check: AS Advertises a Registration Endpoint",
+    summary:
+      "Confirm the discovered authorization server metadata advertises an absolute registration_endpoint so clients with no pre-registered identity can obtain one.",
+    teachableMoments: [
+      "RFC 7591 / RFC 8414: without a registration_endpoint, DCR-only clients such as Cline, n8n, and Codex cannot obtain a client_id and cannot connect at all.",
+      "A relative or malformed registration_endpoint is as unusable as a missing one — the value must be an absolute http(s) URL.",
+    ],
+  },
+  oauth_discovery_stale_protocol_header: {
+    title: "OAuth Check: Discovery Tolerates a Stale Protocol Header",
+    summary:
+      "Re-request a discovery document that already succeeded, this time sending MCP-Protocol-Version: 2024-11-05, and confirm the server still serves the same document.",
+    teachableMoments: [
+      "rmcp — the Rust MCP SDK behind Codex and Goose — hardcodes MCP-Protocol-Version: 2024-11-05 on OAuth discovery requests while negotiating a modern revision on MCP traffic.",
+      "Gating /.well-known/* responses on the protocol version header breaks every rmcp-based client while TypeScript-SDK clients keep working, so the failure is easy to ship unnoticed.",
     ],
   },
 };
