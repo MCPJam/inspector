@@ -498,6 +498,19 @@ async function serverStillResponding(
     // The box did not answer at all. That is an E2B problem, which is ours.
     return null;
   }
+  const answered = new RegExp(`${HTTP_ANSWERED_MARKER} (\\d{3})`).exec(stdout);
+  if (answered) {
+    // A 5xx is the server failing on its own terms — it is running, it is not
+    // serving, and that is the PR's code either way.
+    //
+    // A 4xx deliberately does NOT blame it. This request is a simplified,
+    // legacy-shaped `initialize` with none of the modern `_meta` envelope headers
+    // the real client sends, so a modern-only server can reject it correctly while
+    // remaining perfectly drivable by the eval run. Reading that as the PR's fault
+    // would put a red X on a working server, which is the error this whole
+    // predicate is shaped to avoid.
+    return Number(answered[1]) < 500;
+  }
   if (stdout.includes(HTTP_ANSWERED_MARKER)) return true;
   // Refused, or accepted the connection and then said nothing at all. Either way
   // the server is not serving, and it is the PR's process.

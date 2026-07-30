@@ -315,6 +315,24 @@ describe("executeClaimedCheck — failure attribution", () => {
     expect(h.reports[0].detailsMarkdown).toContain("sent nothing back");
   });
 
+  it("blames the PR when its server answers the liveness request with a 5xx", async () => {
+    // Running but not serving: a 500 is the server failing on its own terms, and
+    // the eval transport would fail on it too.
+    const h = harness(evalDies, "MCPJAM_CHECK_HTTP_ANSWERED 500\n");
+    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
+    expect(h.reports[0]).toMatchObject({ outcome: "server_unhealthy" });
+  });
+
+  it("stays neutral when the liveness request draws a 4xx", async () => {
+    // The liveness request is a simplified, legacy-shaped `initialize` without the
+    // modern `_meta` envelope headers the real client sends, so a modern-only server
+    // can reject it correctly while still being drivable by the eval run. A 4xx is
+    // therefore evidence about OUR request, not about the PR's server.
+    const h = harness(evalDies, "MCPJAM_CHECK_HTTP_ANSWERED 400\n");
+    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
+    expect(h.reports[0].outcome).toBe("infra_error");
+  });
+
   it("stays neutral when the sandbox command channel has gone away", async () => {
     // The box no longer answers, so we cannot tell whose fault the eval failure
     // was — and an E2B outage is ours. Ambiguity must never produce a red X.

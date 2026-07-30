@@ -107,6 +107,17 @@ function fakeSandbox(options?: {
 }
 
 /**
+ * Undo the outer `bash -lc '<script>'` quoting so a test can assert on the script
+ * itself rather than on its escaped form. Nested quoting is correct but unreadable:
+ * an inner `'...'` arrives as `'\''...'\''`.
+ */
+function scriptOf(command: string): string {
+  const match = /^bash -lc '([\s\S]*)'$/.exec(command);
+  if (!match) throw new Error(`not a quoted bash -lc command: ${command}`);
+  return match[1].replace(/'\\''/g, "'");
+}
+
+/**
  * A COMPLETE initialize result. The probe mirrors the real client, which
  * validates the JSON-RPC envelope and `InitializeResultSchema` — so a fixture
  * missing `capabilities` or `serverInfo` is not a server the eval run could
@@ -280,14 +291,21 @@ describe("buildAndStart", () => {
     );
     expect(buildCall).toBeDefined();
     // Redirected to a file, with a watchdog bounding that file too.
-    expect(buildCall!.command).toContain("/tmp/mcp-build.log");
-    expect(buildCall!.command).toContain("wc -c");
+    const script = scriptOf(buildCall!.command);
+    expect(script).toContain("/tmp/mcp-build.log");
+    expect(script).toContain("wc -c");
+    // The WHOLE recipe is redirected, not just its last command. A redirection
+    // binds to one simple command, so `npm ci && npm run build >> log` would leave
+    // `npm ci` — most of the output — streaming into the accumulating handle.
+    expect(script).toContain(
+      `bash -lc '${RECIPE.build}' >> /tmp/mcp-build.log 2>&1`
+    );
     // No stream callbacks: supplying one is what makes the handle buffer eagerly.
     expect(buildCall!.opts?.onStdout).toBeUndefined();
     expect(buildCall!.opts?.onStderr).toBeUndefined();
     // And the build's exit status still has to survive the redirection, or a
     // broken build would read as a passing one.
-    expect(buildCall!.command).toContain("exit $MCPJAM_STATUS");
+    expect(script).toContain("exit $MCPJAM_STATUS");
   });
 
   it("attributes a build that runs out its deadline to the PR, not to us", async () => {

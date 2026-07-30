@@ -647,7 +647,14 @@ function buildCommandScript(buildCommand: string): string {
       ` if [ "$(wc -c < ${BUILD_LOG_PATH} 2>/dev/null || echo 0)" -gt ${SERVER_LOG_MAX_BYTES} ];` +
       ` then : > ${BUILD_LOG_PATH}; fi; done ) &`,
     `MCPJAM_WATCHDOG=$!`,
-    `${buildCommand} >> ${BUILD_LOG_PATH} 2>&1`,
+    // The recipe runs in its OWN shell, and the redirection is applied to that
+    // shell rather than to the recipe text. A redirection binds to one simple
+    // command, so `npm ci && npm run build >> log` would send only `npm run
+    // build`'s output to the file and let `npm ci` stream into the accumulating
+    // handle — which is most of a build's output, and the whole point of the
+    // redirection. Wrapping also keeps the recipe's shell state (`cd`, `exit`,
+    // `set -e`) from reaching this script's watchdog cleanup.
+    `bash -lc ${shellQuote(buildCommand)} >> ${BUILD_LOG_PATH} 2>&1`,
     `MCPJAM_STATUS=$?`,
     `kill $MCPJAM_WATCHDOG 2>/dev/null || :`,
     `exit $MCPJAM_STATUS`,
