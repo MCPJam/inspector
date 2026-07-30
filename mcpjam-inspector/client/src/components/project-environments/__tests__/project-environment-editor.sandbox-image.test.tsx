@@ -176,6 +176,82 @@ describe("flag gating + the omission contract", () => {
   });
 });
 
+describe("flag flips false AFTER an edit (review regression)", () => {
+  it("omits the pin when the flag turns off between editing and saving", async () => {
+    const { rerender } = renderEditor(envRow({ computerEnvironmentId: "img-ready" }));
+    // Admin clears the pin while the picker is visible…
+    fireEvent.change(select(), { target: { value: "" } });
+    // …then PostHog re-evaluates the flag to false and the picker unmounts.
+    mockComputersEnabled.value = false;
+    rerender(
+      <ProjectEnvironmentEditor
+        projectId="proj-1"
+        environment={envRow({ computerEnvironmentId: "img-ready" })}
+        canManage
+      />
+    );
+    expect(
+      screen.queryByTestId("project-environment-sandbox-image")
+    ).not.toBeInTheDocument();
+
+    // The diverged draft value must NOT ship: a hidden picker always omits.
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Renamed" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(mockUpdateEnvironment).toHaveBeenCalled());
+    const args = mockUpdateEnvironment.mock.calls[0]![0] as Record<
+      string,
+      unknown
+    >;
+    expect(args.name).toBe("Renamed");
+    expect("computerEnvironmentId" in args).toBe(false);
+  });
+
+  it("create also omits a picked image once the flag turns off", async () => {
+    const { rerender } = renderEditor(null);
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "New env" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "pick-host" }));
+    fireEvent.change(select(), { target: { value: "img-ready" } });
+
+    mockComputersEnabled.value = false;
+    rerender(
+      <ProjectEnvironmentEditor
+        projectId="proj-1"
+        environment={null}
+        canManage
+      />
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(mockCreateEnvironment).toHaveBeenCalled());
+    expect(
+      "computerEnvironmentId" in
+        (mockCreateEnvironment.mock.calls[0]![0] as Record<string, unknown>)
+    ).toBe(false);
+  });
+});
+
+describe("loading state (review regression)", () => {
+  it("does not flash 'Unknown image' while the image list is still loading", () => {
+    mockSandboxImages.value = undefined;
+    renderEditor(envRow({ computerEnvironmentId: "img-ready" }));
+    expect(
+      Array.from(select().options).some((o) =>
+        o.text.startsWith("Unknown image")
+      )
+    ).toBe(false);
+    // …and the pin still reads as selected rather than collapsing to "None"
+    // (a <select> whose value matches no option renders as the first option,
+    // which would make a pinned environment look unpinned mid-load).
+    expect(select().value).toBe("img-ready");
+    expect(
+      Array.from(select().options).some((o) => o.text === "Loading image…")
+    ).toBe(true);
+  });
+});
+
 describe("wire shapes", () => {
   it("attach sends the id on update", async () => {
     renderEditor(envRow());
