@@ -381,12 +381,15 @@ export {
   MCP_PARAM_HEADER_PREFIX,
   classifyMcpHeader,
   decodeMcpHeaderValue,
+  evaluateMcpHeaders,
   findMcpHeaderIssues,
 } from "./mcp-client-manager/mcp-header-mirror.js";
 export type {
   DecodedMcpHeaderValue,
+  McpHeaderAssessment,
   McpHeaderFamily,
   McpHeaderIssue,
+  McpHeaderStatus,
   MirroredBodyValues,
 } from "./mcp-client-manager/mcp-header-mirror.js";
 export type { HttpExchangeLogEvent } from "./mcp-client-manager/http-exchange-log.js";

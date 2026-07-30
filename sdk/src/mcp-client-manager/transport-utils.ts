@@ -11,6 +11,9 @@ import type {
 } from "@modelcontextprotocol/client";
 import type { RpcLogger } from "./types.js";
 import { isTasksExtensionEra } from "./tasks-dispatch.js";
+// The send side and the Tracing verdict read ONE set, so a method added to the
+// SEP-2663 routing requirement cannot be sent-but-unjudged (or vice versa).
+import { TASK_ROUTED_METHODS } from "./mcp-header-mirror.js";
 
 /**
  * Normalizes headers from various formats (Headers, string[][], or plain object)
@@ -209,16 +212,6 @@ export function createDefaultRpcLogger(): RpcLogger {
 // ============================================================================
 // Tasks extension: `Mcp-Name` routing header
 // ============================================================================
-
-/**
- * The `io.modelcontextprotocol/tasks` methods that MUST carry
- * `Mcp-Name: <taskId>` (SEP-2663, HTTP binding).
- */
-const TASK_ROUTED_METHODS = new Set([
-  "tasks/get",
-  "tasks/update",
-  "tasks/cancel",
-]);
 
 function taskRoutingHeadersFor(
   body: unknown
