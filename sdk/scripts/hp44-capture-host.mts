@@ -29,15 +29,36 @@ function arg(name: string, fallback?: string): string | undefined {
 }
 
 const port = Number(arg("port", "3999"));
+/** Bind interface. Use 0.0.0.0 when a tunnel needs to reach us from outside. */
+const host = arg("host", "127.0.0.1")!;
+/**
+ * Public base URL the CLIENT will use, when it differs from where we bind.
+ *
+ * Required for any HOSTED client — Slack, ChatGPT, Claude.ai web, Mistral, Notion,
+ * Perplexity, M365 Copilot. Those perform OAuth from the vendor's own
+ * infrastructure, so `127.0.0.1` resolves to their server and the handshake never
+ * reaches us. Put a tunnel in front and pass its https URL here.
+ */
+const publicOrigin = arg("public-origin");
 const out = arg("out", "hp44-capture.har")!;
 /** Exit this long after the LAST request, once at least one has arrived. */
 const idleMs = Number(arg("idle-ms", "6000"));
 /** Hard ceiling, so an unattended run cannot hang forever. */
 const timeoutMs = Number(arg("timeout-ms", "120000"));
 
-const server = await startCaptureServer({ port });
+const server = await startCaptureServer({
+  port,
+  host,
+  ...(publicOrigin ? { publicOrigin } : {}),
+});
 
-console.log(`[hp44] recording server listening on ${server.origin}`);
+console.log(`[hp44] bound on ${host}:${port}`);
+console.log(`[hp44] advertising itself as ${server.origin}`);
+if (!publicOrigin) {
+  console.log(
+    "[hp44] NOTE: no --public-origin, so only LOCAL clients can reach this. Hosted clients (Slack, ChatGPT, Claude.ai, Mistral, Notion, Perplexity, M365 Copilot) run OAuth from the vendor's own servers and cannot see 127.0.0.1 — put an https tunnel in front and pass --public-origin.",
+  );
+}
 console.log(`[hp44] point your host at:  ${server.mcpUrl}`);
 console.log(`[hp44] scenario id:         ${server.scenario.scenarioId}`);
 console.log(`[hp44] writing HAR to:      ${out}`);

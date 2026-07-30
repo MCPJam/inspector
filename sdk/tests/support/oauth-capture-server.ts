@@ -73,6 +73,31 @@ export type CaptureServerOptions = {
   serverProtocolVersion?: string;
   /** Fixed port. Default 0 (ephemeral) — pass one for a stable external URL. */
   port?: number;
+  /**
+   * Interface to bind. Default `127.0.0.1`. Pass `0.0.0.0` to accept connections
+   * from outside the machine, which a tunnel needs.
+   */
+  host?: string;
+  /**
+   * The base URL this server is reachable at FROM THE CLIENT, when that differs
+   * from where it binds — e.g. `https://abc123.ngrok.app` in front of
+   * `127.0.0.1:3999`.
+   *
+   * This is what makes HOSTED clients capturable at all, and it is not a
+   * convenience. A local client (Claude Code, VS Code, Codex, Goose, Cline) runs
+   * OAuth on the user's machine and can reach `127.0.0.1`. A hosted client
+   * (Slack, ChatGPT, Claude.ai web, Mistral, Notion, Perplexity, M365 Copilot)
+   * performs the handshake from ITS OWN infrastructure, so `127.0.0.1` resolves to
+   * that vendor's server, not ours — the capture would never arrive.
+   *
+   * Every URL the server ADVERTISES must therefore be the public one: the PRM
+   * `resource` and `authorization_servers`, the AS metadata endpoints, and the
+   * `resource_metadata` pointer in the 401 challenge. Several clients hard-fail
+   * when the PRM `resource` does not equal the URL they were configured with
+   * (RFC 9728), so advertising the bind origin would break the flow rather than
+   * merely mislabel it.
+   */
+  publicOrigin?: string;
 };
 
 export type CaptureServer = {
@@ -128,6 +153,9 @@ export async function startCaptureServer(
   const serverProtocolVersion = options.serverProtocolVersion ?? "2025-11-25";
 
   let entries: HarEntry[] = [];
+  /** Where the server actually listens. Used only to parse inbound request URLs. */
+  let bindOrigin = "";
+  /** What the server ADVERTISES, and what the client sees. See `publicOrigin`. */
   let origin = "";
 
   const server = createServer((request, response) => {
@@ -142,7 +170,7 @@ export async function startCaptureServer(
     const startedDateTime = new Date(startedAt).toISOString();
     const requestBody = await readBody(request);
     const requestHeaders = headerList(request.headers);
-    const url = new URL(request.url ?? "/", origin || "http://127.0.0.1");
+    const url = new URL(request.url ?? "/", bindOrigin || "http://127.0.0.1");
     const path = url.pathname;
 
     const authorization =
@@ -167,6 +195,8 @@ export async function startCaptureServer(
         time: Date.now() - startedAt,
         request: {
           method: request.method ?? "GET",
+          // Recorded as the CLIENT addressed it, so the trace and the scenario
+          // agree on one origin and `{mcp_server}` substitutes cleanly.
           url: `${origin}${request.url ?? "/"}`,
           httpVersion: `HTTP/${request.httpVersion}`,
           headers: requestHeaders,
@@ -359,12 +389,16 @@ export async function startCaptureServer(
     json(404, { error: "not_found" });
   }
 
+  const host = options.host ?? "127.0.0.1";
   await new Promise<void>((resolve) => {
-    server.listen(options.port ?? 0, "127.0.0.1", () => resolve());
+    server.listen(options.port ?? 0, host, () => resolve());
   });
 
   const address = server.address() as AddressInfo;
-  origin = `http://127.0.0.1:${address.port}`;
+  bindOrigin = `http://${host === "0.0.0.0" ? "127.0.0.1" : host}:${address.port}`;
+  // Advertise the public origin when one is supplied (a tunnel in front of us);
+  // otherwise the bind origin IS the public origin.
+  origin = (options.publicOrigin ?? bindOrigin).replace(/\/$/, "");
 
   const scenario: TraceScenario = {
     scenarioId: `http-capture-dcr-authcode${publishesPrm ? "-prm" : "-noprm"}`,
