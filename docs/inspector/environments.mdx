@@ -1,0 +1,79 @@
+---
+title: "Environments"
+description: "Save a named client + server configuration as a reusable environment that evals, chatboxes, and swarms can run against"
+icon: "layers"
+---
+
+A **project environment** is a named, reusable snapshot of a client and its associated server group and skills. Once saved, an environment can be selected in eval suites, chatboxes, and swarms so every run uses the same configuration — no per-run setup required.
+
+<Note>
+Project environments are available to signed-in project members. Only project admins can create or edit environments; members can view and select them.
+</Note>
+
+## What an environment contains
+
+| Field | Description |
+|---|---|
+| **Name** | A short label shown in pickers across the app (e.g. `Staging on Claude`). |
+| **Description** | Optional free-text note about what the environment is for. |
+| **Client** | The project client every run in this environment uses. Required. |
+| **Server group** | An optional named set of MCP servers. When omitted, the client's own server picks apply. |
+| **Skills** | An optional set of skills pre-loaded for every run. |
+| **Sandbox image** | (When computers are enabled) A pre-built sandbox image used for eval runs. |
+
+## Creating an environment
+
+### From the Environments page
+
+1. Open **Environments** from the sidebar.
+2. Click **New environment**.
+3. Fill in a name and select a client.
+4. Optionally pick a server group and skills.
+5. Click **Create**.
+
+### From Connect — Save as environment
+
+The Connect canvas shows an **Environments** strip at the bottom. If you have a client previewed and want to capture that setup as a reusable environment:
+
+1. In the Connect canvas, make sure the client you want is selected (previewed).
+2. In the **Environments** strip header, click **Save as environment**.
+3. You land on the Environments page in create mode, with the client pre-filled and the name defaulting to the client's name.
+4. Adjust the name and any other fields, then click **Create**.
+
+<Note>
+**Save as environment** is visible only to project admins. The captured draft pre-fills `hostId` from the previewed client. Server group and skills are left blank — Connect has no server-group concept (the client's own server picks apply, which is exactly what Connect runs), and skills are per-message attachments in Connect rather than environment-level settings.
+</Note>
+
+When there are no environments yet, the strip shows an empty-state row with the same **Save as environment** button so the capture entry is always reachable.
+
+## Editing an environment
+
+1. Open **Environments** from the sidebar.
+2. Select the environment you want to edit from the list.
+3. Make your changes and click **Save**.
+
+If another admin edits the same environment while your form is open, a conflict banner appears. Click **Load latest** to reload the current values (discarding your unsaved edits) before saving again.
+
+Members see the form in read-only mode and cannot save changes.
+
+## Using environments
+
+Once created, environments appear in pickers across the app:
+
+- **Eval suites** — Select an environment in the suite header or create dialog. All hosts in the suite run against that environment's client, server group, and skills.
+- **Chatboxes** — Pick an environment on the chatbox Publish tab.
+- **Swarms** — Target an environment in a journey's configuration.
+
+## Archiving and restoring
+
+Environments that are no longer active can be archived to keep the list tidy without deleting them. Archived environments are hidden from pickers but can be restored at any time.
+
+To archive: select the environment, open the action menu, and choose **Archive**.
+
+To restore: switch to the **Archived** view, select the environment, and choose **Restore**.
+
+## Related features
+
+- [Clients](/inspector/clients) — Create and configure the clients that environments reference.
+- [Projects](/inspector/projects) — Environments are scoped to a project and shared with all project members.
+- [Evals](/inspector/evals) — Run eval suites against a specific environment.
