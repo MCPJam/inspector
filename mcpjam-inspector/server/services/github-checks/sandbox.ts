@@ -942,12 +942,51 @@ function carriesAcceptedAnswer(
 ): boolean {
   for (const payload of candidatePayloads(text, bodyComplete, mode)) {
     try {
-      if (accepts(JSON.parse(payload))) return true;
+      const parsed = JSON.parse(payload);
+      // A BATCH, and only under `application/json`: the transport unwraps a JSON
+      // array there and dispatches each element. Its SSE path parses one message
+      // per event and would reject an array outright, so the asymmetry is the
+      // client's, not an oversight here.
+      if (mode === "json" && Array.isArray(parsed)) {
+        if (batchCarriesAcceptedAnswer(parsed, accepts)) return true;
+        continue;
+      }
+      if (accepts(parsed)) return true;
     } catch {
       // Not JSON (a proxy's HTML error page, a partial frame) — keep looking.
     }
   }
   return false;
+}
+
+/**
+ * Whether a batched `application/json` body carries our answer.
+ *
+ * The transport maps the array through its message schema — `data.map((msg) =>
+ * JSONRPCMessageSchema.parse(msg))` — so ONE malformed element throws and takes the
+ * whole batch with it, our answer included. Hence the two conditions: every element
+ * has to look like a JSON-RPC message, and one of them has to be the answer. An
+ * empty array satisfies neither, and dispatches nothing.
+ *
+ * The per-element test is `jsonrpc: "2.0"` on an object, which every arm of that
+ * schema's union requires. It is not the full union, so a sibling that is an object
+ * with the right `jsonrpc` and nothing else passes here and would throw for the
+ * client. That leaves this a shade LOOSER than the transport, which is the side to
+ * err on: the cost is a broken server reaching us as a neutral `infra_error`, where
+ * being stricter would risk a red X on a PR the eval run can drive.
+ */
+function batchCarriesAcceptedAnswer(
+  batch: unknown[],
+  accepts: (parsed: unknown) => boolean
+): boolean {
+  if (batch.length === 0) return false;
+  const everyElementIsAMessage = batch.every(
+    (message) =>
+      isPlainObject(message) &&
+      (message as { jsonrpc?: unknown }).jsonrpc === "2.0"
+  );
+  if (!everyElementIsAMessage) return false;
+  return batch.some((message) => accepts(message));
 }
 
 /**

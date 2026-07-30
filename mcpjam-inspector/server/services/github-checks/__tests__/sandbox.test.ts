@@ -916,6 +916,74 @@ describe("waitForMcpInitialize", () => {
     ).toBe(true);
   });
 
+  it("accepts an answer delivered in a JSON batch", async () => {
+    // Under `application/json` the transport unwraps an array and dispatches each
+    // element, so a batched answer is one the eval run receives. Rejecting it would
+    // be a false `server_unhealthy` on a server the client drives fine.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify([
+            { jsonrpc: "2.0", id: 1, result: INITIALIZE_RESULT },
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+    ) as unknown as typeof fetch;
+    // Bounded: this must be accepted on the first attempt, so a regression fails in
+    // a second instead of spinning out the full health window.
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 1_000,
+      })
+    ).toBe(true);
+  });
+
+  it("does not accept a JSON batch whose sibling is not a message", async () => {
+    // The transport maps the whole array through its message schema, so one
+    // malformed element throws and takes our answer with it. The batch is unusable.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify([
+            { jsonrpc: "2.0", id: 1, result: INITIALIZE_RESULT },
+            { not: "a jsonrpc message" },
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 5,
+      })
+    ).toBe(false);
+  });
+
+  it("does not accept a batch inside an SSE event", async () => {
+    // Batching is a JSON-body affordance. The transport's SSE path parses one
+    // message per event, so an array in `data:` fails its schema and is dropped —
+    // the client's `initialize` goes unanswered.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          `data: ${JSON.stringify([
+            { jsonrpc: "2.0", id: 1, result: INITIALIZE_RESULT },
+          ])}\n\n`,
+          { status: 200, headers: { "content-type": "text/event-stream" } }
+        )
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 5,
+      })
+    ).toBe(false);
+  });
+
   it("does not accept a correct result acknowledged with 202", async () => {
     // 202 is an acknowledgement: the transport drains the body, discards it, and
     // returns before any result processing. So this answer never reaches the
