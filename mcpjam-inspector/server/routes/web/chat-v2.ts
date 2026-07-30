@@ -941,6 +941,7 @@ chatV2.post("/", async (c) => {
         chatboxId,
         accessVersion,
         rpcLogger: rpcCollector.rpcLogger,
+        httpLogger: rpcCollector.httpLogger,
         serverNames: effectiveServerNames,
         initializePins,
         mcpProtocolVersionsByServerId,

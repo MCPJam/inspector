@@ -1,7 +1,10 @@
 import type { NormalizedError } from "@mcpjam/sdk/browser";
 import { authFetch } from "@/lib/session-token";
 import { stripHostedRpcLogs } from "./rpc-logs";
-import { ingestHostedRpcLogs } from "@/stores/traffic-log-store";
+import {
+  ingestHostedHttpLogs,
+  ingestHostedRpcLogs,
+} from "@/stores/traffic-log-store";
 
 export class WebApiError extends Error {
   code: string | null;
@@ -53,8 +56,13 @@ export async function webPost<TRequest, TResponse>(
     // ignored
   }
 
-  const { payload: sanitizedPayload, rpcLogs } = stripHostedRpcLogs(body);
+  const {
+    payload: sanitizedPayload,
+    rpcLogs,
+    httpLogs,
+  } = stripHostedRpcLogs(body);
   ingestHostedRpcLogs(rpcLogs);
+  ingestHostedHttpLogs(httpLogs);
 
   if (!response.ok) {
     const errBody = sanitizedPayload as Record<string, unknown> | null;
