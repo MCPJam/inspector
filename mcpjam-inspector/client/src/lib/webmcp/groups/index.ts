@@ -21,6 +21,7 @@ import { buildComputerUiTools } from "./computer";
 import { buildChatboxesUiTools } from "./chatboxes";
 import { buildResourcesUiTools } from "./resources";
 import { buildPromptsUiTools } from "./prompts";
+import { buildOAuthFlowUiTools } from "./oauth-flow";
 
 export type { UiToolGroup } from "./types";
 
@@ -34,6 +35,10 @@ export const SURFACE_TOOL_GROUPS: Partial<Record<AppSurfaceId, UiToolGroup>> =
     chatboxes: { surfaceId: "chatboxes", buildTools: buildChatboxesUiTools },
     resources: { surfaceId: "resources", buildTools: buildResourcesUiTools },
     prompts: { surfaceId: "prompts", buildTools: buildPromptsUiTools },
+    "oauth-flow": {
+      surfaceId: "oauth-flow",
+      buildTools: buildOAuthFlowUiTools,
+    },
   };
 
 /**
