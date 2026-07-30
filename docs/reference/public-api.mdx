@@ -228,7 +228,7 @@ of overwriting a concurrent edit.
 | Endpoint | What it does |
 | --- | --- |
 | `GET`, `POST /projects/{projectId}/environments` | List environments (`?includeArchived=true` to include archived ones), or create one |
-| `GET`, `PATCH /projects/{projectId}/environments/{environmentId}` | Read one environment, or edit it (send `null` to clear `serverAttachmentId`, `skillSelection`, or `pluginVersionIds`) |
+| `GET`, `PATCH /projects/{projectId}/environments/{environmentId}` | Read one environment, or edit it (send `null` to clear `serverAttachmentId`, `skillSelection`, `pluginVersionIds`, or `sandboxImageId`) |
 | `GET /projects/{projectId}/environments/{environmentId}/resolve` | Preview the host config, closed server set, and pinned plugin versions this environment resolves to right now |
 | `POST /projects/{projectId}/environments/{environmentId}/archive` | Archive it — reversible, and frees the name for a new one |
 | `POST /projects/{projectId}/environments/{environmentId}/restore` | Restore an archived environment |
