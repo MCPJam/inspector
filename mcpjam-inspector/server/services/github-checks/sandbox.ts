@@ -26,7 +26,6 @@
  */
 
 import { Sandbox } from "e2b";
-import { SUPPORTED_PROTOCOL_VERSIONS } from "@modelcontextprotocol/sdk/types.js";
 import { logger } from "../../utils/logger.js";
 import type { CheckRecipe } from "./recipes.js";
 
@@ -126,6 +125,31 @@ const SERVER_LOG_CHECK_SECONDS = 30;
  * answers.
  */
 const HEALTH_PROBE_PROTOCOL_VERSION = "2025-06-18";
+
+/** The id the probe sends, and therefore the id a real answer must carry. */
+const HEALTH_PROBE_REQUEST_ID = 1;
+
+/**
+ * Versions the probe will accept back from the PR's server.
+ *
+ * Hand-listed rather than imported: `check:mcp-v1-runtime-imports` forbids
+ * reaching into the upstream v1 protocol SDK from inspector server code, and
+ * `MCP_PROTOCOL_VERSIONS` in our own SDK is the narrower set a connection can be
+ * PINNED to — it omits the legacy wire versions the client still accepts.
+ *
+ * The list must stay at least as permissive as the real client. A version this
+ * probe rejects but the client would have accepted turns a working PR server
+ * into a false `server_unhealthy`, which is worse than the neutral it replaces.
+ * So: upstream's supported list, plus the newest revision our SDK knows.
+ */
+const HEALTH_PROBE_ACCEPTED_VERSIONS: ReadonlySet<string> = new Set([
+  "2024-10-07",
+  "2024-11-05",
+  "2025-03-26",
+  "2025-06-18",
+  "2025-11-25",
+  "2026-07-28",
+]);
 
 /**
  * Make untrusted PR output safe to put in a GitHub check body.
@@ -724,8 +748,7 @@ async function probeResponseIsHealthy(response: Response): Promise<boolean> {
 }
 
 /**
- * A successful `initialize` carries a `result` with a SUPPORTED
- * `protocolVersion`. An
+ * A usable `initialize` answer is one the REAL client would also accept. An
  * error response is still a live MCP server, but not a usable one — the eval
  * run's own handshake would fail the same way, so treat it as not-yet-healthy
  * and keep polling until the deadline.
@@ -745,26 +768,57 @@ function looksLikeInitializeResult(text: string): boolean {
   for (const payload of payloads) {
     if (!payload) continue;
     try {
-      const parsed = JSON.parse(payload) as {
-        result?: { protocolVersion?: unknown };
-      };
-      // The version has to be one the real client will ACCEPT, not merely
-      // present. A server answering `protocolVersion: "bogus"` looks healthy
-      // here, and then the eval run's own handshake rejects it — surfacing as
-      // `infra_error` (neutral) and letting a broken PR server dodge the
-      // `server_unhealthy` it earned.
-      const version = parsed?.result?.protocolVersion;
-      if (
-        typeof version === "string" &&
-        SUPPORTED_PROTOCOL_VERSIONS.includes(version)
-      ) {
-        return true;
-      }
+      if (isUsableInitializeResponse(JSON.parse(payload))) return true;
     } catch {
       // Not JSON (a proxy's HTML error page, a partial frame) — keep looking.
     }
   }
   return false;
+}
+
+/**
+ * Whether one parsed payload is an `initialize` answer the eval run's client
+ * would accept.
+ *
+ * Every condition here is one the real client checks a moment later. Accepting
+ * something looser buys nothing: the client rejects it, that rejection escapes
+ * the eval path, and the worker reports neutral `infra_error` — so a broken PR
+ * server dodges the `server_unhealthy` it earned and the failure lands on us
+ * instead of on the PR. So mirror the client:
+ *
+ *   - the JSON-RPC envelope (`jsonrpc: "2.0"`, and the id we actually sent, so a
+ *     stray notification or an answer to someone else's request is not ours);
+ *   - a `result`, not an `error`;
+ *   - `protocolVersion` the client can speak;
+ *   - `capabilities` and `serverInfo`, both required by `InitializeResultSchema`.
+ */
+function isUsableInitializeResponse(parsed: unknown): boolean {
+  if (typeof parsed !== "object" || parsed === null) return false;
+  const message = parsed as {
+    jsonrpc?: unknown;
+    id?: unknown;
+    result?: unknown;
+  };
+  if (message.jsonrpc !== "2.0") return false;
+  if (message.id !== HEALTH_PROBE_REQUEST_ID) return false;
+  if (typeof message.result !== "object" || message.result === null) {
+    return false;
+  }
+  const result = message.result as {
+    protocolVersion?: unknown;
+    capabilities?: unknown;
+    serverInfo?: unknown;
+  };
+  if (
+    typeof result.protocolVersion !== "string" ||
+    !HEALTH_PROBE_ACCEPTED_VERSIONS.has(result.protocolVersion)
+  ) {
+    return false;
+  }
+  if (typeof result.capabilities !== "object" || result.capabilities === null) {
+    return false;
+  }
+  return typeof result.serverInfo === "object" && result.serverInfo !== null;
 }
 
 /** Best-effort teardown. E2B's TTL + `onTimeout: "kill"` is the real backstop. */

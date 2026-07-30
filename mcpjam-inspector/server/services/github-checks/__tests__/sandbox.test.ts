@@ -105,12 +105,30 @@ function fakeSandbox(options?: {
   } as const;
 }
 
+/**
+ * A COMPLETE initialize result. The probe mirrors the real client, which
+ * validates the JSON-RPC envelope and `InitializeResultSchema` — so a fixture
+ * missing `capabilities` or `serverInfo` is not a server the eval run could
+ * have used either.
+ */
+const INITIALIZE_RESULT = {
+  protocolVersion: "2025-06-18",
+  capabilities: {},
+  serverInfo: { name: "fixture", version: "1.0.0" },
+} as const;
+
+const SSE_INITIALIZE_FRAME = `event: message\ndata: ${JSON.stringify({
+  jsonrpc: "2.0",
+  id: 1,
+  result: INITIALIZE_RESULT,
+})}\n\n`;
+
 function okInitialize(): Response {
   return new Response(
     JSON.stringify({
       jsonrpc: "2.0",
       id: 1,
-      result: { protocolVersion: "2025-06-18", capabilities: {} },
+      result: INITIALIZE_RESULT,
     }),
     { status: 200, headers: { "content-type": "application/json" } }
   );
@@ -432,7 +450,7 @@ describe("waitForMcpInitialize", () => {
     const fetchImpl = vi.fn(
       async () =>
         new Response(
-          'event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}}\n\n',
+          SSE_INITIALIZE_FRAME,
           { status: 200, headers: { "content-type": "text/event-stream" } }
         )
     ) as unknown as typeof fetch;
@@ -455,7 +473,7 @@ describe("waitForMcpInitialize", () => {
             start(controller) {
               controller.enqueue(
                 new TextEncoder().encode(
-                  'event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}}\n\n'
+                  SSE_INITIALIZE_FRAME
                 )
               );
               // …and then nothing. No close(): the stream stays open, exactly
@@ -485,7 +503,7 @@ describe("waitForMcpInitialize", () => {
 
   it("decides from a frame that arrives split across chunks", async () => {
     const payload =
-      'data: {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}}\n\n';
+      SSE_INITIALIZE_FRAME.replace("event: message\n", "");
     const cut = 40;
     const fetchImpl = vi.fn(
       async () =>
@@ -608,6 +626,53 @@ describe("waitForMcpInitialize", () => {
     ).toBe(false);
   });
 
+  it("does not accept an initialize result missing required fields", async () => {
+    // `InitializeResultSchema` requires `capabilities` and `serverInfo`. A
+    // result carrying only a good `protocolVersion` passes this probe but fails
+    // the client's own validation moments later — the same false neutral.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: { protocolVersion: "2025-06-18" },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 5,
+      })
+    ).toBe(false);
+  });
+
+  it("does not accept an answer to a different request as healthy", async () => {
+    // Someone else's response, or a server echoing a wrong id, is not proof our
+    // handshake completed — the client correlates by id and so does this.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 99,
+            result: INITIALIZE_RESULT,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 5,
+      })
+    ).toBe(false);
+  });
+
   it("does not accept a JSON-RPC error response as healthy", async () => {
     const fetchImpl = vi.fn(
       async () =>
@@ -668,6 +733,7 @@ describe("waitForMcpInitialize", () => {
             id: 1,
             result: {
               protocolVersion: "2025-06-18",
+              capabilities: {},
               serverInfo: { name: "reads data: urls", version: "1" },
             },
           }),
