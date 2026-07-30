@@ -142,6 +142,11 @@ import {
   type ScheduledEvalsWorkerHandle,
 } from "./services/scheduled-evals-worker";
 import {
+  isGithubChecksWorkerEnabled,
+  startGithubChecksWorker,
+  type GithubChecksWorkerHandle,
+} from "./services/github-checks-worker";
+import {
   SERVER_PORT,
   CORS_ORIGINS,
   HOSTED_MODE,
@@ -657,8 +662,7 @@ if (process.env.NODE_ENV === "production") {
         })
       ) {
         try {
-          const { session, setCookies } =
-            await mintGuestSessionForDocument(c);
+          const { session, setCookies } = await mintGuestSessionForDocument(c);
           if (session && session.expiresAt > Date.now()) {
             const bootstrapScript = buildGuestBootstrapScript(session);
             htmlContent = htmlContent.replace(
@@ -737,6 +741,14 @@ if (isScheduledEvalsWorkerEnabled()) {
   scheduledEvalsWorker = startScheduledEvalsWorker();
 }
 
+// GitHub PR check runs: claim a PR trigger, build its MCP server in a sandbox,
+// run the dedicated eval suite, report an outcome. Env-gated; the backend has
+// its own GITHUB_CHECKS_ENABLED gate and 404s the routes when it is off.
+let githubChecksWorker: GithubChecksWorkerHandle | undefined;
+if (isGithubChecksWorkerEnabled()) {
+  githubChecksWorker = startGithubChecksWorker();
+}
+
 const expectedParentPid = Number.parseInt(
   process.env.MCPJAM_INSPECTOR_PARENT_PID ?? "",
   10
@@ -767,6 +779,7 @@ async function shutdown() {
 
   shuttingDown = true;
   await scheduledEvalsWorker?.stop();
+  await githubChecksWorker?.stop();
   if (orphanCheckInterval) {
     clearInterval(orphanCheckInterval);
     orphanCheckInterval = undefined;
@@ -786,7 +799,7 @@ async function shutdown() {
     // Abort active synthetic-session runs and write a terminal "failed"
     // status so the dialog/UI doesn't see a stuck "running" run. Bounded
     // by an internal timeout; the outer `forceExitTimer` still wins.
-      // Abort active swarm (journey-execution) runs — stops each run's heartbeat
+    // Abort active swarm (journey-execution) runs — stops each run's heartbeat
     // and lets in-flight sessions report a terminal attempt. Bounded internally.
     await shutdownRunningJourneyRuns();
     await tunnelManager.closeAll();
