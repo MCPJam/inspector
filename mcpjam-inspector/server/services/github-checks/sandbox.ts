@@ -140,29 +140,39 @@ const PROBE_CLIENT_INFO = {
 } as const;
 
 /**
- * Versions the probe will accept back from the PR's server.
+ * Versions the LEGACY `initialize` arm will accept back from the PR's server.
+ *
+ * Exactly the upstream SDK's built-in legacy list, and the modern revision is
+ * deliberately NOT in it. `_legacyHandshake` accepts only
+ * `legacyProtocolVersions(supportedProtocolVersions)` — everything before
+ * 2026-07-28 — and throws on anything else, and the eval run's unpinned
+ * connection passes no list of its own, so that built-in set is the one in force.
+ * Upstream keeps the two lists apart for this exact reason: "adding a revision
+ * here can never leak a modern version string into a 2025-era handshake". A server
+ * answering `initialize` with `2026-07-28` is one the client refuses, so accepting
+ * it here would hand the PR's fault to us as a neutral `infra_error`. The modern
+ * revision is reachable through `server/discover`, which is the arm that tests it.
  *
  * Hand-listed rather than imported: `check:mcp-v1-runtime-imports` forbids
  * reaching into the upstream v1 protocol SDK from inspector server code, and
  * `MCP_PROTOCOL_VERSIONS` in our own SDK is the narrower set a connection can be
  * PINNED to — it omits the legacy wire versions the client still accepts.
  *
- * The list must stay at least as permissive as the real client. A version this
- * probe rejects but the client would have accepted turns a working PR server
- * into a false `server_unhealthy`, which is worse than the neutral it replaces.
- * So: upstream's supported list, plus the newest revision our SDK knows.
+ * The list must stay exactly as permissive as the real client. Rejecting a version
+ * it accepts is a false `server_unhealthy` on a working PR; accepting one it
+ * rejects lets a broken PR dodge the blame.
  */
-const HEALTH_PROBE_ACCEPTED_VERSIONS: ReadonlySet<string> = new Set([
+const LEGACY_PROBE_ACCEPTED_VERSIONS: ReadonlySet<string> = new Set([
   "2024-10-07",
   "2024-11-05",
   "2025-03-26",
   "2025-06-18",
   "2025-11-25",
-  "2026-07-28",
 ]);
 
 /**
- * The subset of the above the MODERN negotiation arm can speak.
+ * Versions the MODERN `server/discover` arm can speak — the other side of that
+ * same split.
  *
  * A `server/discover` result is only evidence of a usable server if the versions
  * it offers overlap THIS set. A discover answer naming nothing but legacy
@@ -1085,7 +1095,8 @@ function sseField(line: string): [string, string] {
  *   - the JSON-RPC envelope (`jsonrpc: "2.0"`, and the id we actually sent, so a
  *     stray notification or an answer to someone else's request is not ours);
  *   - a `result`, not an `error`;
- *   - `protocolVersion` the client can speak;
+ *   - `protocolVersion` the client can speak IN THIS ERA — a modern revision here
+ *     is refused by the legacy handshake, so it is not usable evidence;
  *   - `capabilities` and `serverInfo`, both required by `InitializeResultSchema`.
  */
 function isUsableInitializeResponse(parsed: unknown): boolean {
@@ -1098,7 +1109,7 @@ function isUsableInitializeResponse(parsed: unknown): boolean {
   };
   if (
     typeof initialize.protocolVersion !== "string" ||
-    !HEALTH_PROBE_ACCEPTED_VERSIONS.has(initialize.protocolVersion)
+    !LEGACY_PROBE_ACCEPTED_VERSIONS.has(initialize.protocolVersion)
   ) {
     return false;
   }

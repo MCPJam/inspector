@@ -738,6 +738,59 @@ describe("waitForMcpInitialize", () => {
     ).toBe(false);
   });
 
+  it("does not accept an initialize result naming the modern protocol version", async () => {
+    // The legacy handshake accepts only `legacyProtocolVersions(...)` — everything
+    // before 2026-07-28 — and throws otherwise, and the eval run's unpinned
+    // connection uses the SDK's built-in list. So a server answering `initialize`
+    // with a modern revision is one the client refuses; accepting it here would let
+    // that server's failure reach us as a neutral `infra_error`. The modern revision
+    // is legitimate on the discover arm, which is tested separately.
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      const parsed = JSON.parse(String(init.body)) as { method: string };
+      if (parsed.method === "initialize") {
+        return new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: { ...INITIALIZE_RESULT, protocolVersion: "2026-07-28" },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }
+      // No modern era either, so the verdict rests on the initialize answer.
+      return new Response("{}", {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 5,
+      })
+    ).toBe(false);
+  });
+
+  it("accepts an initialize result naming the newest legacy version", async () => {
+    // The boundary just below the modern era must still be accepted: it is in the
+    // SDK's built-in list, so the client speaks it.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: { ...INITIALIZE_RESULT, protocolVersion: "2025-11-25" },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", { ...seams, fetchImpl })
+    ).toBe(true);
+  });
+
   it("does not accept a discover result whose nested capability flags are mistyped", async () => {
     // `ServerCapabilitiesSchema` types `tools.listChanged` as a boolean, and the
     // client runs that schema over the discover result. `{ listChanged: "yes" }` is
