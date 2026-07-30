@@ -12,11 +12,18 @@ import {
 import { recordTunnelRequest } from "../../services/tunnel-request-log";
 import { getRequestLogger } from "../../utils/request-logger";
 import { verifyHarnessProxyToken } from "../../utils/harness/harness-proxy-token";
+import {
+  HARNESS_SCOPE_STEP_UP_CORRELATION_HEADER,
+  HARNESS_SCOPE_STEP_UP_CORRELATION_QUERY,
+  normalizeHarnessScopeStepUpCorrelationId,
+  publishHarnessScopeStepUpFromToolError,
+} from "../../utils/harness/harness-scope-step-up.js";
 
 // In-memory SSE session store per serverId:sessionId
 type Session = {
   send: (event: string, data: string) => void;
   close: () => void;
+  scopeStepUpCorrelationId?: string;
 };
 const sessions: Map<string, Session> = new Map();
 const latestSessionByServer: Map<string, string> = new Map();
@@ -170,6 +177,18 @@ function readProxyToken(c: any): string | undefined {
   return c.req.header("x-mcpjam-proxy-token") || undefined;
 }
 
+function readScopeStepUpCorrelationId(c: any): string | undefined {
+  const fromHeader = normalizeHarnessScopeStepUpCorrelationId(
+    c.req.header(HARNESS_SCOPE_STEP_UP_CORRELATION_HEADER),
+  );
+  if (fromHeader) return fromHeader;
+  return normalizeHarnessScopeStepUpCorrelationId(
+    new URL(c.req.url).searchParams.get(
+      HARNESS_SCOPE_STEP_UP_CORRELATION_QUERY,
+    ),
+  );
+}
+
 // Unified HTTP adapter for adapter-http + manager-http (same robust
 // implementation, different JSON-RPC response modes).
 function createHttpHandler(mode: BridgeMode, routePrefix: string) {
@@ -259,7 +278,12 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
           };
 
           // Register session
-          sessions.set(`${serverId}:${sessionId}`, { send, close });
+          const scopeStepUpCorrelationId = readScopeStepUpCorrelationId(c);
+          sessions.set(`${serverId}:${sessionId}`, {
+            send,
+            close,
+            ...(scopeStepUpCorrelationId ? { scopeStepUpCorrelationId } : {}),
+          });
           latestSessionByServer.set(serverId, sessionId);
 
           // Relay real server notifications down this SSE stream.
@@ -346,7 +370,14 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
       normalizedServerId,
       body as any,
       clientManager,
-      mode
+      mode,
+      {
+        onToolCallError: (context) =>
+          publishHarnessScopeStepUpFromToolError(
+            readScopeStepUpCorrelationId(c),
+            context,
+          ),
+      },
     );
     if (!response) {
       // Notification → 202 Accepted
@@ -408,7 +439,14 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
         normalizedServerId,
         { id, method, params },
         c.mcpClientManager,
-        mode
+        mode,
+        {
+          onToolCallError: (context) =>
+            publishHarnessScopeStepUpFromToolError(
+              readScopeStepUpCorrelationId(c) ?? sess.scopeStepUpCorrelationId,
+              context,
+            ),
+        },
       );
       // If there is a JSON-RPC response, emit it over SSE to the client
       if (responseMessage) {
