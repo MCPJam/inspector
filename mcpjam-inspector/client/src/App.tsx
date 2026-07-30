@@ -141,7 +141,7 @@ import { useLocalStateMigration } from "./hooks/use-local-state-migration";
 import { AppReadyProvider } from "./hooks/use-app-ready";
 import { useInspectorCommandBus } from "./hooks/use-inspector-command-bus";
 import {
-  driveScopeStepUp,
+  driveChatScopeStepUp,
   resolveScopeStepUpServer,
 } from "./lib/scope-step-up";
 import { HOSTED_MODE, NON_PROD_LOCKDOWN } from "./lib/config";
@@ -2143,7 +2143,12 @@ export default function App() {
       const server = resolveScopeStepUpServer(appState, {
         serverId: event.serverId,
       });
-      driveScopeStepUp(server, {
+      // The harness delivers a turn's 403 out-of-band, but it is still a CHAT
+      // step-up: redirecting here while the turn streams loses the transcript
+      // just the same. Same queue as the stream-part channel, so whichever of
+      // the two arrives second is deduped rather than doubling the redirect.
+      // Outside a turn this is exactly `driveScopeStepUp`.
+      driveChatScopeStepUp(server, {
         requiredScope: event.requiredScope,
         resourceMetadataUrl: event.resourceMetadataUrl,
       });
