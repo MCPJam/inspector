@@ -596,10 +596,11 @@ mcpjam environments create --project Acme --json '{
 | `--name <name>` | No | New display name |
 | `--host-id <id>` | No | New host |
 | `--description <text>` | No | New description (empty string clears it) |
+| `--sandbox-image <id>` | No | New sandbox-image pin (project-shared image ID); clear via `--json '{"sandboxImageId": null}'` |
 | `--file <path>` | No | Environment JSON with the fields to change (or `-` for stdin) |
 | `--json <json>` | No | Inline environment JSON (or `@file`, or `-`) |
 
-Only the fields you pass change. To **clear** `serverAttachmentId`, `skillSelection`, or `pluginVersionIds`, send an explicit `null` in the JSON body — an empty array is rejected, it is not a way to clear:
+Only the fields you pass change. To **clear** `serverAttachmentId`, `skillSelection`, `pluginVersionIds`, or `sandboxImageId`, send an explicit `null` in the JSON body — an empty array is rejected, it is not a way to clear:
 
 ```bash
 mcpjam environments update --environment Staging --expected-revision 3 \
