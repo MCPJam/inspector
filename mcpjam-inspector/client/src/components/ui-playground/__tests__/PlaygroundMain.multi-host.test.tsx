@@ -801,7 +801,7 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(leadProps.compareSubLabel).toBe(secondaryProps.compareSubLabel);
   });
 
-  it("multi-host card chrome is hidden — Trace/Chat/Raw tab strip is the only header content", () => {
+  it("multi-host cards hide Latency/Tokens chrome but show host identity", () => {
     const hostA = makeHost("h-A", "Host A", { hostStyle: "chatgpt" });
     const hostB = makeHost("h-B", "Host B", { hostStyle: "claude" });
     multiHostFixture.hostList = [
@@ -816,10 +816,13 @@ describe("PlaygroundMain — multi-host render path", () => {
     const calls = mockMultiModelPlaygroundCard.mock.calls;
     expect(calls.length).toBeGreaterThanOrEqual(2);
     // `showComparisonChrome=false` removes the per-card model title +
-    // Latency/Tokens block. The tab strip stays because it's gated on
-    // `showTraceTabs` inside `ModelCompareCardHeader`.
+    // Latency/Tokens block. Identity header brands each column; the tab
+    // strip stays via `showTraceTabs` inside `ModelCompareCardHeader`.
     for (const [props] of calls) {
       expect(props.showComparisonChrome).toBe(false);
+      expect(props.showIdentityHeader).toBe(true);
+      expect(typeof props.logoSrc).toBe("string");
+      expect(props.logoSrc.length).toBeGreaterThan(0);
     }
   });
 

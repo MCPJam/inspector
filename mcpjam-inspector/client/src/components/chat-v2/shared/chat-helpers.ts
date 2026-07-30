@@ -11,18 +11,22 @@ export const DEFAULT_CHAT_COMPOSER_PLACEHOLDER = `Ask something… Use Slash "/"
 /** Match ChatTabV2 minimalMode / compact composer (e.g. overlays, narrow NUX). */
 export const MINIMAL_CHAT_COMPOSER_PLACEHOLDER = "Message…";
 
+// Starter prompts must be answerable from the model's own tool list — the
+// playground/chat model only sees the selected servers' model-visible tools,
+// so prompts that need meta-data (server inventory, activity logs) always
+// dead-end in "I don't have access to that".
 export const STARTER_PROMPTS: Array<{ label: string; text: string }> = [
   {
-    label: "Show me connected tools",
-    text: "List my connected MCP servers and their available tools.",
+    label: "What can this server do?",
+    text: "What can this server do?",
   },
   {
-    label: "Suggest an automation",
-    text: "Suggest an automation I can build with my current MCP setup.",
+    label: "What tools can I use?",
+    text: "What tools can I use?",
   },
   {
-    label: "Summarize recent activity",
-    text: "Summarize the most recent activity across my MCP servers.",
+    label: "Give me example prompts to try",
+    text: "Give me example prompts to try",
   },
 ];
 

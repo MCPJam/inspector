@@ -6,31 +6,29 @@
  * screen needs is the opposite — the mirrored `Mcp-*` headers pulled to the
  * top, sentinel values decoded, and the header/body cross-check run — so it
  * gets its own presentation rather than growing options on a shared card.
+ *
+ * Each mirrored header is one line: name, value, verdict. The third slot
+ * carries the only thing `2026-07-28` added that a reader cannot see for
+ * themselves — whether the header still agrees with the body it was copied
+ * from — rather than restating the family the header name already implies.
  */
 
 import { useMemo } from "react";
-import { AlertTriangle } from "lucide-react";
 import { ScrollableJsonView } from "@/components/ui/json-editor";
 import { cn } from "@/lib/utils";
 import {
   classifyMcpHeader,
-  decodeMcpHeaderValue,
-  findMcpHeaderIssues,
+  evaluateMcpHeaders,
   type HttpExchangeLogEvent,
+  type McpHeaderAssessment,
   type McpHeaderFamily,
-  type McpHeaderIssue,
 } from "@mcpjam/sdk/browser";
 
-/** Display order: the routing/cross-check headers first, params after. */
-const FAMILY_ORDER: McpHeaderFamily[] = [
-  "protocol-version",
-  "method",
-  "name",
-  "param",
-  "session",
-  "resumption",
-];
-
+/**
+ * Fallback slot text for a header no cross-check applies to: a legacy request
+ * mirrors nothing, and `Mcp-Param-*` body values are not captured. Naming the
+ * family is all that can honestly be said there.
+ */
 const FAMILY_LABEL: Record<McpHeaderFamily, string> = {
   "protocol-version": "protocol version",
   method: "routing",
@@ -40,48 +38,40 @@ const FAMILY_LABEL: Record<McpHeaderFamily, string> = {
   resumption: "resumption",
 };
 
-type ProtocolHeaderRow = {
-  name: string;
-  family: McpHeaderFamily;
-  raw: string;
-  decoded?: string;
-  decodeError?: string;
-};
-
-function collectProtocolHeaders(
-  headers: Record<string, string>,
-): ProtocolHeaderRow[] {
-  const rows: ProtocolHeaderRow[] = [];
-  for (const [name, raw] of Object.entries(headers)) {
-    const family = classifyMcpHeader(name);
-    if (!family) continue;
-    const decoded = decodeMcpHeaderValue(raw);
-    rows.push({
-      name,
-      family,
-      raw,
-      // Show the decoded value only when it adds something — an unencoded
-      // value shown twice reads as if the two could differ.
-      decoded: decoded.encoded ? decoded.value : undefined,
-      decodeError: decoded.decodeError,
-    });
+/** The verdict slot: what the cross-check concluded, in the row's own words. */
+function verdictText(row: McpHeaderAssessment): string {
+  switch (row.status) {
+    case "match":
+      return "✓ matches body";
+    case "mismatch":
+      return `✕ body says ${row.bodyValue} → -32020`;
+    case "missing":
+      return `✕ not sent, body says ${row.bodyValue} → -32020`;
+    case "undecodable":
+      return "✕ does not decode → -32020";
+    case "not-required":
+      return "not required here";
+    case "unchecked":
+      return FAMILY_LABEL[row.family];
   }
-  return rows.sort(
-    (a, b) =>
-      FAMILY_ORDER.indexOf(a.family) - FAMILY_ORDER.indexOf(b.family) ||
-      a.name.localeCompare(b.name),
+}
+
+function isFailure(status: McpHeaderAssessment["status"]): boolean {
+  return (
+    status === "mismatch" || status === "missing" || status === "undecodable"
   );
 }
 
-function describeIssue(issue: McpHeaderIssue): string {
-  switch (issue.kind) {
-    case "missing":
-      return `${issue.header} is required for this request and was not sent (body has "${issue.bodyValue}")`;
-    case "mismatch":
-      return `${issue.header} is "${issue.headerValue}" but the body says "${issue.bodyValue}"`;
-    case "undecodable":
-      return `${issue.header} carries the base64 sentinel but did not decode: "${issue.headerValue}"`;
-  }
+/**
+ * The mirrored headers are rendered above with their verdicts, so leaving them
+ * in the raw map prints them twice on one screen.
+ */
+function withoutMirroredHeaders(
+  headers: Record<string, string>,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(headers).filter(([name]) => !classifyMcpHeader(name)),
+  );
 }
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
@@ -97,13 +87,13 @@ export function HttpExchangeDetails({
 }: {
   exchange: HttpExchangeLogEvent;
 }) {
-  const requestProtocolHeaders = useMemo(
-    () => collectProtocolHeaders(exchange.request.headers),
-    [exchange.request.headers],
-  );
-  const issues = useMemo(
-    () => findMcpHeaderIssues(exchange.request.headers, exchange.bodyValues),
+  const mcpHeaders = useMemo(
+    () => evaluateMcpHeaders(exchange.request.headers, exchange.bodyValues),
     [exchange.request.headers, exchange.bodyValues],
+  );
+  const otherRequestHeaders = useMemo(
+    () => withoutMirroredHeaders(exchange.request.headers),
+    [exchange.request.headers],
   );
 
   const status = exchange.response?.status;
@@ -139,51 +129,42 @@ export function HttpExchangeDetails({
         </span>
       </div>
 
-      {issues.length > 0 && (
-        <div className="rounded-sm border border-red-400 bg-red-50/50 p-2 dark:border-red-500 dark:bg-red-950/20">
-          <div className="mb-1 flex items-center gap-1 text-xs font-medium text-red-600 dark:text-red-400">
-            <AlertTriangle className="h-3.5 w-3.5" />
-            Header/body disagreement — this is what a -32020 HeaderMismatch
-            reports
-          </div>
-          <ul className="space-y-0.5">
-            {issues.map((issue) => (
-              <li
-                key={`${issue.kind}:${issue.header}`}
-                className="font-mono text-[11px] text-red-600 dark:text-red-400"
-              >
-                {describeIssue(issue)}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {requestProtocolHeaders.length > 0 && (
+      {mcpHeaders.length > 0 && (
         <div>
           <SectionLabel>MCP headers</SectionLabel>
           <div className="rounded-sm bg-background/60 p-2 space-y-1">
-            {requestProtocolHeaders.map((row) => (
+            {mcpHeaders.map((row) => (
               <div
                 key={row.name}
                 className="flex flex-wrap items-baseline gap-x-2 font-mono text-[11px]"
               >
                 <span className="text-foreground">{row.name}</span>
-                <span className="text-muted-foreground break-all">
-                  {row.raw}
+                <span
+                  className={cn(
+                    "break-all",
+                    row.raw === undefined
+                      ? "text-muted-foreground/50"
+                      : "text-muted-foreground",
+                  )}
+                >
+                  {row.raw ?? "—"}
                 </span>
                 {row.decoded !== undefined && (
                   <span className="text-sky-600 dark:text-sky-400 break-all">
                     → {row.decoded}
                   </span>
                 )}
-                {row.decodeError && (
-                  <span className="text-red-600 dark:text-red-400">
-                    → does not decode
-                  </span>
-                )}
-                <span className="text-muted-foreground/70">
-                  {FAMILY_LABEL[row.family]}
+                <span
+                  className={cn(
+                    "break-all",
+                    isFailure(row.status)
+                      ? "text-red-600 dark:text-red-400"
+                      : row.status === "match"
+                        ? "text-green-600 dark:text-green-400"
+                        : "text-muted-foreground/70",
+                  )}
+                >
+                  {verdictText(row)}
                 </span>
               </div>
             ))}
@@ -192,9 +173,9 @@ export function HttpExchangeDetails({
       )}
 
       <div>
-        <SectionLabel>Request headers</SectionLabel>
+        <SectionLabel>Other request headers</SectionLabel>
         <ScrollableJsonView
-          value={exchange.request.headers}
+          value={otherRequestHeaders}
           containerClassName="rounded-sm bg-background/60 p-2 max-h-[200px]"
         />
       </div>

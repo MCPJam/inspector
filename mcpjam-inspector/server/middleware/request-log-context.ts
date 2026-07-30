@@ -129,6 +129,30 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
     : status;
 
   if (effectiveStatus >= 500) {
+    // Prefer the route's own error code/message over a classifier bucket. A
+    // route that *returns* a `webError` response (the hosted connect paths do)
+    // never reaches the `thrown` branch, so both of these used to collapse to a
+    // bare "internal_error" with the cause discarded. `scrubLogPayload` strips
+    // bearers/JWTs/emails from the message at emit time.
+    // Only trust the stashed meta when it belongs to *this* status — a route
+    // may emit a 4xx `webError` and then fail with an unrelated 500 later.
+    const webErrorMeta =
+      c.var.webErrorMeta?.status === effectiveStatus
+        ? c.var.webErrorMeta
+        : undefined;
+    const errorCode = thrown
+      ? classifyError(thrown)
+      : (webErrorMeta?.code ?? "internal_error");
+    const rawErrorMessage = thrown
+      ? thrown instanceof Error
+        ? thrown.message
+        : String(thrown)
+      : webErrorMeta?.message;
+    // Cap the message: SDK connect errors sometimes embed the upstream
+    // response body ("Error POSTing to endpoint (HTTP 502): <html>…"), and an
+    // unbounded string would bloat the log line. 500 chars keeps the cause.
+    const errorMessage = rawErrorMessage?.slice(0, 500);
+
     // Sentry capture is owned by the route's error handler / Sentry middleware;
     // we deliberately don't forward here (default is sentry: false) to avoid
     // double-capture for the same exception.
@@ -136,7 +160,8 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
       "http.request.failed",
       {
         statusCode: effectiveStatus,
-        errorCode: thrown ? classifyError(thrown) : "internal_error",
+        errorCode,
+        ...(errorMessage ? { errorMessage } : {}),
       },
       { error: thrown instanceof Error ? thrown : undefined },
     );
