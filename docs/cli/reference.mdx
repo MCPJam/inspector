@@ -572,10 +572,11 @@ Preview what the environment resolves to right now: the host's current config, t
 | `--host-id <id>` | Yes\* | ID of the host this environment runs against |
 | `--project <id-or-name>` | No | Project name or ID |
 | `--description <text>` | No | Optional description |
+| `--sandbox-image <id>` | No | Project-shared sandbox image ID (see `mcpjam images`) to pin; eval runs boot a fresh sandbox from it |
 | `--file <path>` | No | Environment JSON file (or `-` for stdin) |
 | `--json <json>` | No | Inline environment JSON (or `@file`, or `-`) |
 
-\* `--name` and `--host-id` may instead be supplied inside `--file`/`--json`; explicit flags override the same key in the JSON body. Use the JSON body for the structured fields that have no flag — `serverAttachmentId`, `skillSelection`, and `pluginVersionIds`:
+\* `--name` and `--host-id` may instead be supplied inside `--file`/`--json`; explicit flags override the same key in the JSON body. Use the JSON body for the structured fields that have no flag — `serverAttachmentId`, `skillSelection`, `pluginVersionIds`, and `sandboxImageId`:
 
 ```bash
 mcpjam environments create --project Acme --json '{
