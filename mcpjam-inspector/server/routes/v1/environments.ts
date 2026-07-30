@@ -59,6 +59,9 @@ type EnvironmentRow = {
   serverAttachmentId?: string;
   skillSelection?: SkillSelection;
   pluginVersionIds?: string[];
+  /** Internal (Convex) name for the sandbox-image pin — public DTOs expose it
+   *  as `sandboxImageId`, matching the SDK's `PlatformImage` vocabulary. */
+  computerEnvironmentId?: string;
   revision: number;
   archivedAt?: number;
   createdAt: number;
@@ -71,6 +74,9 @@ type ResolvedEnvironmentRow = {
   hostName: string;
   hostConfigId: string;
   serverAttachmentId?: string;
+  /** Optional for deploy skew: present once the backend resolve carries the
+   *  env-level sandbox-image pin through. */
+  computerEnvironmentId?: string;
   selectedServerIds: string[];
   effectiveServerIds: string[];
   pluginVersions: Array<{
@@ -99,6 +105,12 @@ function toEnvironmentDto(row: EnvironmentRow) {
     ...(row.pluginVersionIds !== undefined
       ? { pluginVersionIds: row.pluginVersionIds }
       : {}),
+    // Public name: `sandboxImageId` (a `PlatformImage` / `mcpjam images` id).
+    // The internal Convex field keeps its historical name; the rename lives
+    // ONLY at this DTO boundary and its inverse in the write handlers.
+    ...(row.computerEnvironmentId !== undefined
+      ? { sandboxImageId: row.computerEnvironmentId }
+      : {}),
     revision: row.revision,
     // Presence is the live/archived signal; `archived` is derived so callers
     // don't have to know that.
@@ -121,6 +133,9 @@ function toResolvedDto(resolved: ResolvedEnvironmentRow) {
     hostConfigId: resolved.hostConfigId,
     ...(resolved.serverAttachmentId !== undefined
       ? { serverAttachmentId: resolved.serverAttachmentId }
+      : {}),
+    ...(resolved.computerEnvironmentId !== undefined
+      ? { sandboxImageId: resolved.computerEnvironmentId }
       : {}),
     selectedServerIds: resolved.selectedServerIds ?? [],
     effectiveServerIds: resolved.effectiveServerIds ?? [],
@@ -345,6 +360,9 @@ const createEnvironmentSchema = z.strictObject({
   serverAttachmentId: z.string().trim().min(1).optional(),
   skillSelection: skillSelectionSchema.optional(),
   pluginVersionIds: pluginVersionIdsSchema.optional(),
+  /** Public name for the internal `computerEnvironmentId` pin; must be a
+   *  project-shared image (backend rejects personal drafts). */
+  sandboxImageId: z.string().trim().min(1).optional(),
 });
 
 /**
@@ -360,6 +378,7 @@ const updateEnvironmentSchema = z
     serverAttachmentId: z.string().trim().min(1).nullable().optional(),
     skillSelection: skillSelectionSchema.nullable().optional(),
     pluginVersionIds: pluginVersionIdsSchema.nullable().optional(),
+    sandboxImageId: z.string().trim().min(1).nullable().optional(),
   })
   .refine(
     (value) =>
@@ -368,10 +387,11 @@ const updateEnvironmentSchema = z
       value.hostId !== undefined ||
       value.serverAttachmentId !== undefined ||
       value.skillSelection !== undefined ||
-      value.pluginVersionIds !== undefined,
+      value.pluginVersionIds !== undefined ||
+      value.sandboxImageId !== undefined,
     {
       message:
-        "Provide at least one of `name`, `description`, `hostId`, `serverAttachmentId`, `skillSelection`, or `pluginVersionIds` to update.",
+        "Provide at least one of `name`, `description`, `hostId`, `serverAttachmentId`, `skillSelection`, `pluginVersionIds`, or `sandboxImageId` to update.",
     }
   );
 
@@ -456,11 +476,20 @@ environments.post("/projects/:projectId/environments", async (c) => {
   const token = await getConvexBearerForRequest(c);
   const convexClient = createConvexClient(token);
 
+  // Rename at the boundary: the public `sandboxImageId` becomes the internal
+  // `computerEnvironmentId` — the spread must not forward the public name.
+  const { sandboxImageId, ...createRest } = body;
   let created: EnvironmentRow;
   try {
     created = (await convexClient.mutation(
       "projectEnvironments:createEnvironment" as any,
-      { projectId, ...body } as any
+      {
+        projectId,
+        ...createRest,
+        ...(sandboxImageId !== undefined
+          ? { computerEnvironmentId: sandboxImageId }
+          : {}),
+      } as any
     )) as EnvironmentRow;
   } catch (error) {
     throw translateConvexError(error);
@@ -500,6 +529,10 @@ environments.patch(
       updateArgs.skillSelection = body.skillSelection;
     if (body.pluginVersionIds !== undefined)
       updateArgs.pluginVersionIds = body.pluginVersionIds;
+    // Boundary rename (public sandboxImageId ↔ internal computerEnvironmentId);
+    // `null` forwards as null (clear), omitted stays absent (unchanged).
+    if (body.sandboxImageId !== undefined)
+      updateArgs.computerEnvironmentId = body.sandboxImageId;
 
     const convexClient = createConvexClient(token);
     let updated: EnvironmentRow;

@@ -583,4 +583,92 @@ describe("v1 project environment routes", () => {
       expect(res.status).toBe(409);
     });
   });
+
+  describe("sandboxImageId boundary rename", () => {
+    it("exposes the row's computerEnvironmentId as sandboxImageId in DTOs", async () => {
+      mockQuery({
+        "projectEnvironments:getEnvironment": {
+          ...ENV_ROW,
+          computerEnvironmentId: "img1",
+        },
+      });
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/environments/env1"
+      );
+      expect(res.status).toBe(200);
+      const dto = (await res.json()) as Record<string, unknown>;
+      expect(dto.sandboxImageId).toBe("img1");
+      // The internal name never leaks.
+      expect(dto).not.toHaveProperty("computerEnvironmentId");
+    });
+
+    it("create maps sandboxImageId -> computerEnvironmentId and never forwards the public name", async () => {
+      convexMutationMock.mockResolvedValue(ENV_ROW);
+      const res = await request("POST", "/api/v1/projects/p1/environments", {
+        body: { name: "Staging", hostId: "h1", sandboxImageId: "img1" },
+      });
+      expect(res.status).toBe(201);
+      const args = mutationArgs("projectEnvironments:createEnvironment");
+      expect(args.computerEnvironmentId).toBe("img1");
+      expect(args).not.toHaveProperty("sandboxImageId");
+    });
+
+    it("PATCH tri-state: null clears, value sets, omitted stays absent", async () => {
+      convexMutationMock.mockResolvedValue(ENV_ROW);
+      await request("PATCH", "/api/v1/projects/p1/environments/env1", {
+        body: { expectedRevision: 3, sandboxImageId: null },
+      });
+      expect(
+        mutationArgs("projectEnvironments:updateEnvironment")
+          .computerEnvironmentId
+      ).toBeNull();
+
+      convexMutationMock.mockClear();
+      convexMutationMock.mockResolvedValue(ENV_ROW);
+      await request("PATCH", "/api/v1/projects/p1/environments/env1", {
+        body: { expectedRevision: 3, sandboxImageId: "img2" },
+      });
+      expect(
+        mutationArgs("projectEnvironments:updateEnvironment")
+          .computerEnvironmentId
+      ).toBe("img2");
+
+      convexMutationMock.mockClear();
+      convexMutationMock.mockResolvedValue(ENV_ROW);
+      await request("PATCH", "/api/v1/projects/p1/environments/env1", {
+        body: { expectedRevision: 3, name: "Renamed" },
+      });
+      const args = mutationArgs("projectEnvironments:updateEnvironment");
+      expect(args).not.toHaveProperty("computerEnvironmentId");
+      expect(args).not.toHaveProperty("sandboxImageId");
+    });
+
+    it("a sandboxImageId-only PATCH satisfies the at-least-one-field refine", async () => {
+      convexMutationMock.mockResolvedValue(ENV_ROW);
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/environments/env1",
+        { body: { expectedRevision: 3, sandboxImageId: "img1" } }
+      );
+      expect(res.status).toBe(200);
+    });
+
+    it("resolve exposes the pin as sandboxImageId when the backend carries it", async () => {
+      mockQuery({
+        "projectEnvironments:resolveEnvironmentForLaunch": {
+          ...RESOLVED_ROW,
+          computerEnvironmentId: "img1",
+        },
+      });
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/environments/env1/resolve"
+      );
+      expect(res.status).toBe(200);
+      const dto = (await res.json()) as Record<string, unknown>;
+      expect(dto.sandboxImageId).toBe("img1");
+      expect(dto).not.toHaveProperty("computerEnvironmentId");
+    });
+  });
 });

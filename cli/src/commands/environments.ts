@@ -260,8 +260,12 @@ export function registerEnvironmentsCommands(program: Command): void {
       .option("--host-id <id>", "ID of the host this environment runs against")
       .option("--description <text>", "Optional description")
       .option(
+        "--sandbox-image <id>",
+        "Project-shared sandbox image (see `mcpjam images`) to pin: eval runs boot a fresh sandbox from it"
+      )
+      .option(
         "--file <path>",
-        "Environment JSON file with any of name/hostId/description/serverAttachmentId/skillSelection/pluginVersionIds (or - for stdin)"
+        "Environment JSON file with any of name/hostId/description/serverAttachmentId/skillSelection/pluginVersionIds/sandboxImageId (or - for stdin)"
       )
       .option("--json <json>", "Inline environment JSON (or @file, or -)")
   ).action(
@@ -271,6 +275,7 @@ export function registerEnvironmentsCommands(program: Command): void {
         name?: string;
         hostId?: string;
         description?: string;
+        sandboxImage?: string;
         file?: string;
         json?: string;
       },
@@ -288,6 +293,9 @@ export function registerEnvironmentsCommands(program: Command): void {
         ...(options.description !== undefined
           ? { description: options.description }
           : {}),
+        ...(options.sandboxImage !== undefined
+          ? { sandboxImageId: options.sandboxImage }
+          : {}),
       });
       const result = await runPlatformCommand(
         options,
@@ -303,7 +311,7 @@ export function registerEnvironmentsCommands(program: Command): void {
     environments
       .command("update")
       .description(
-        "Edit an environment. Only the fields you pass change; use --file/--json with a null value to clear serverAttachmentId, skillSelection, or pluginVersionIds"
+        "Edit an environment. Only the fields you pass change; use --file/--json with a null value to clear serverAttachmentId, skillSelection, pluginVersionIds, or sandboxImageId"
       )
       .requiredOption("--environment <id-or-name>", "Environment name or ID")
       .requiredOption(
@@ -316,6 +324,10 @@ export function registerEnvironmentsCommands(program: Command): void {
       .option(
         "--description <text>",
         "New description (empty string clears it)"
+      )
+      .option(
+        "--sandbox-image <id>",
+        "New sandbox-image pin (clear via --json '{\"sandboxImageId\": null}')"
       )
       .option(
         "--file <path>",
@@ -331,6 +343,7 @@ export function registerEnvironmentsCommands(program: Command): void {
         name?: string;
         hostId?: string;
         description?: string;
+        sandboxImage?: string;
         file?: string;
         json?: string;
       },
@@ -347,6 +360,9 @@ export function registerEnvironmentsCommands(program: Command): void {
         ...(options.hostId !== undefined ? { hostId: options.hostId } : {}),
         ...(options.description !== undefined
           ? { description: options.description }
+          : {}),
+        ...(options.sandboxImage !== undefined
+          ? { sandboxImageId: options.sandboxImage }
           : {}),
       });
       const result = await runPlatformCommand(
