@@ -336,7 +336,12 @@ export function effectiveRunResult(
   if (run.status === "completed") {
     const total = run.summary?.total ?? 0;
     if (total > 0) {
-      const passRatePercent = ((run.summary?.passed ?? 0) / total) * 100;
+      // ROUNDED, like the client's `computeRunEffectiveStats`. Rounding the same
+      // way is what keeps the check's verdict and the eval UI's badge from
+      // disagreeing on a fractional rate (2/3 is 67% to both, not 66.67% to one).
+      const passRatePercent = Math.round(
+        ((run.summary?.passed ?? 0) / total) * 100
+      );
       return passRatePercent >= (run.passCriteria?.minimumPassRate ?? 100)
         ? "passed"
         : "failed";

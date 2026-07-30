@@ -96,11 +96,12 @@ export const HEALTH_INTERVAL_MS = 2_000;
  */
 export const PROBE_ATTEMPT_TIMEOUT_MS = 10_000;
 /**
- * Cap on how much of a probe response we read before deciding. The answer we are
- * looking for is the first frame; anything past this is a server streaming at us,
- * not a handshake.
+ * Cap on how much of a probe response we read before deciding, in BYTES off the
+ * wire — the unit the budget is actually spent in, so multi-byte output cannot
+ * buy more of it than ASCII does. The answer we are looking for is the first
+ * frame; anything past this is a server streaming at us, not a handshake.
  */
-export const PROBE_MAX_RESPONSE_CHARS = 64 * 1024;
+export const PROBE_MAX_RESPONSE_BYTES = 64 * 1024;
 /** Where the PR is checked out inside the box. */
 export const CHECKOUT_DIR = "/home/user/repo";
 
@@ -245,8 +246,19 @@ type RunResult = { exitCode: number; stdout: string; stderr: string };
 async function runForeground(
   sandbox: CheckSandbox,
   command: string,
-  opts: { cwd?: string; timeoutMs: number }
+  opts: {
+    cwd?: string;
+    timeoutMs: number;
+    /**
+     * Whose fault it is when the command hits ITS OWN deadline. A build that
+     * hangs is the PR's (`build_failed`) — E2B reports that as a timeout with no
+     * exit code, which would otherwise land in the transport branch below and
+     * conclude `neutral`, letting a hanging build dodge a red check.
+     */
+    timeoutOutcome: CheckStepOutcome;
+  }
 ): Promise<RunResult> {
+  const startedAt = Date.now();
   try {
     const result = (await sandbox.commands.run(command, {
       cwd: opts.cwd,
@@ -266,12 +278,42 @@ async function runForeground(
         stderr: exit.stderr ?? "",
       };
     }
+    if (hitCommandDeadline(error, startedAt, opts.timeoutMs)) {
+      throw new CheckStepError(
+        opts.timeoutOutcome,
+        `command exceeded its ${Math.round(opts.timeoutMs / 1000)}s deadline`,
+        clampOutput(`${exit.stdout ?? ""}\n${exit.stderr ?? ""}`) || undefined
+      );
+    }
     // Not a command failure — the sandbox itself is unreachable.
     throw new CheckStepError(
       "infra_error",
       `sandbox command failed: ${errorMessage(error)}`
     );
   }
+}
+
+/**
+ * Did the command run out its own clock, as opposed to the sandbox failing?
+ *
+ * Two independent signals, because getting this wrong in either direction is
+ * costly: calling an infra failure a build failure puts a red X on a good PR,
+ * and calling a hung build an infra failure lets it pass as neutral.
+ *
+ *   - elapsed time reached the deadline we ourselves set. Objective, and it does
+ *     not depend on how the error is shaped;
+ *   - the error identifies itself as a timeout. E2B's own handshake timeout also
+ *     uses that name, so it is excluded by message — that one is transport.
+ */
+function hitCommandDeadline(
+  error: unknown,
+  startedAt: number,
+  timeoutMs: number
+): boolean {
+  if (Date.now() - startedAt >= timeoutMs) return true;
+  const name = (error as { name?: unknown } | null)?.name;
+  if (name !== "TimeoutError") return false;
+  return !/handshake/i.test(errorMessage(error));
 }
 
 /**
@@ -307,6 +349,9 @@ export async function cloneAndCheckout(
     `bash -lc ${shellQuote(script)}`,
     {
       timeoutMs: CLONE_TIMEOUT_MS,
+      // A public repo we were just told about should clone promptly; a stall is
+      // ours or GitHub's, matching how a non-zero clone exit is attributed.
+      timeoutOutcome: "infra_error",
     }
   );
   if (result.exitCode !== 0) {
@@ -324,6 +369,8 @@ export async function cloneAndCheckout(
     `git -C ${CHECKOUT_DIR} rev-parse HEAD`,
     {
       timeoutMs: 60_000,
+      // `rev-parse` on a fresh clone is instant; a stall is the sandbox, not the PR.
+      timeoutOutcome: "infra_error",
     }
   );
   const checkedOut = head.stdout.trim();
@@ -397,6 +444,7 @@ export async function buildAndStart(
     {
       cwd: CHECKOUT_DIR,
       timeoutMs: BUILD_TIMEOUT_MS,
+      timeoutOutcome: "build_failed",
     }
   );
   if (build.exitCode !== 0) {
@@ -420,6 +468,14 @@ export async function buildAndStart(
     await sandbox.commands.run(`bash -lc ${shellQuote(recipe.start)}`, {
       cwd: CHECKOUT_DIR,
       background: true,
+      // REQUIRED. `timeoutMs` defaults to 60 SECONDS and applies to background
+      // commands too, so without this the PR's server — and the stderr stream
+      // this reads for the health-failure message — dies about a minute after it
+      // starts, in the middle of a suite that legitimately runs for twenty. The
+      // box's own TTL is the real bound, so use it. (Not `0`: E2B forwards the
+      // value to connect-rpc, which treats <= 0 as an already-expired deadline
+      // and would abort the spawn instantly.)
+      timeoutMs: CHECK_SANDBOX_TIMEOUT_MS,
       onStderr: appendStderr,
     });
   } catch (error) {
@@ -549,7 +605,7 @@ export async function waitForMcpInitialize(
  * real server.)
  *
  * So read incrementally and return the moment the accumulated text carries an
- * initialize result, then cancel the stream. `PROBE_MAX_RESPONSE_CHARS` bounds
+ * initialize result, then cancel the stream. `PROBE_MAX_RESPONSE_BYTES` bounds
  * a server that streams unrelated output at us forever.
  */
 async function probeResponseIsHealthy(response: Response): Promise<boolean> {
@@ -566,15 +622,21 @@ async function probeResponseIsHealthy(response: Response): Promise<boolean> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let text = "";
+  // Spent in bytes, tracked separately from `text.length`. Decoded length is in
+  // UTF-16 units, so budgeting by it would let non-ASCII output read more of the
+  // wire than the cap allows — the slice below is in bytes either way.
+  let remainingBytes = PROBE_MAX_RESPONSE_BYTES;
   try {
-    while (text.length < PROBE_MAX_RESPONSE_CHARS) {
+    while (remainingBytes > 0) {
       const { done, value } = await reader.read();
       if (value && value.byteLength > 0) {
-        // Decode only what fits in the remaining budget. Decoding the whole
-        // chunk first would let one large write blow past the cap — the bound
-        // has to be applied to the bytes, not checked after the fact.
-        const remaining = PROBE_MAX_RESPONSE_CHARS - text.length;
-        text += decoder.decode(value.subarray(0, remaining), { stream: true });
+        // Decode only what fits. Decoding the whole chunk and checking after the
+        // fact would let one large write blow straight past the cap. A sequence
+        // cut in half here is held by the decoder (`stream: true`) and completed
+        // by the next chunk, or dropped if the budget runs out first.
+        const consumed = Math.min(value.byteLength, remainingBytes);
+        remainingBytes -= consumed;
+        text += decoder.decode(value.subarray(0, consumed), { stream: true });
         // Checked per chunk: a frame can arrive split, and a partial JSON just
         // fails to parse and waits for the rest.
         if (looksLikeInitializeResult(text)) return true;

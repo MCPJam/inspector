@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   buildAndStart,
+  CHECK_SANDBOX_TIMEOUT_MS,
   CheckStepError,
   clampOutput,
   cloneAndCheckout,
@@ -192,6 +193,65 @@ describe("buildAndStart", () => {
     }).catch((e) => e as CheckStepError);
     expect((error as CheckStepError).outcome).toBe("server_unhealthy");
     expect((error as CheckStepError).detailsMarkdown).toContain("EADDRINUSE");
+  });
+
+  it("attributes a build that runs out its deadline to the PR, not to us", async () => {
+    // E2B reports a command deadline as a TimeoutError with no exit code, which
+    // lands in the transport branch and concludes `neutral` — letting a hanging
+    // (or deliberately hanging) build dodge a red check.
+    const box = fakeSandbox({
+      throwOn: (command) =>
+        command.includes("npm run build")
+          ? Object.assign(new Error("command timed out"), {
+              name: "TimeoutError",
+            })
+          : undefined,
+    });
+
+    const error = await buildAndStart(box.sandbox, RECIPE, {
+      fetchImpl: vi.fn(async () => okInitialize()) as unknown as typeof fetch,
+    }).catch((e) => e as CheckStepError);
+
+    expect((error as CheckStepError).outcome).toBe("build_failed");
+    // And still no server, and no egress change.
+    expect(box.events.some((e) => e.startsWith("spawn:"))).toBe(false);
+  });
+
+  it("keeps a transport failure that merely looks like a timeout as infra_error", async () => {
+    // E2B's own handshake timeout carries the same error name. That one is the
+    // sandbox failing, and calling it `build_failed` puts a red X on a good PR.
+    const box = fakeSandbox({
+      throwOn: (command) =>
+        command.includes("npm run build")
+          ? Object.assign(
+              new Error("Request handshake timed out after 30000ms"),
+              { name: "TimeoutError" }
+            )
+          : undefined,
+    });
+
+    const error = await buildAndStart(box.sandbox, RECIPE, {
+      fetchImpl: vi.fn(async () => okInitialize()) as unknown as typeof fetch,
+    }).catch((e) => e as CheckStepError);
+
+    expect((error as CheckStepError).outcome).toBe("infra_error");
+  });
+
+  it("gives the PR's server a timeout covering the sandbox lifetime", async () => {
+    // E2B's `timeoutMs` defaults to 60 SECONDS and applies to background
+    // commands too, so an unset value kills the server (and its stderr stream)
+    // about a minute in — mid-suite, as a false failure.
+    const box = fakeSandbox();
+    await buildAndStart(box.sandbox, RECIPE, {
+      fetchImpl: vi.fn(async () => okInitialize()) as unknown as typeof fetch,
+    });
+
+    const spawn = box.calls.find((call) => call.opts?.background === true);
+    expect(spawn).toBeDefined();
+    expect(spawn?.opts?.timeoutMs).toBe(CHECK_SANDBOX_TIMEOUT_MS);
+    // Not 0: E2B forwards it to connect-rpc, which treats <= 0 as an expired
+    // deadline and would abort the spawn instantly.
+    expect(spawn?.opts?.timeoutMs).toBeGreaterThan(0);
   });
 
   it("treats a sandbox that cannot run commands at all as infra_error", async () => {
