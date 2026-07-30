@@ -149,8 +149,12 @@ async function postServiceRoute(
     let parsed: any = null;
     try {
       parsed = await response.json();
-    } catch {
-      // Tolerated; status carries the signal.
+    } catch (error) {
+      // A malformed body is tolerated — the status carries the signal. A body
+      // read that hit the abort deadline is NOT: silently returning
+      // `body: null` would make a timed-out call look like a successful one
+      // whose response merely lacked a body.
+      if (controller.signal.aborted) throw error;
     }
     return { status: response.status, body: parsed };
   } finally {
@@ -227,14 +231,30 @@ async function sendHeartbeat(
 /** Test seam: the heartbeat's response validation is the whole point of it. */
 export const sendHeartbeatForTests = sendHeartbeat;
 
+/**
+ * Register the ephemeral `servers` row, and THROW if the backend refused.
+ *
+ * Same reasoning as the heartbeat: a discarded status makes a rejected
+ * registration look successful, and the consequence is specific — recovery loses
+ * the pointer it needs to soft-delete the row, so a worker that dies mid-check
+ * leaks a live server row that nothing reaps. The caller keeps going (the PR
+ * still deserves its verdict) but the failure lands in the logs.
+ */
 async function recordEphemeralServer(
   triggerId: string,
   serverId: string
 ): Promise<void> {
-  await postServiceRoute(`${SERVICE_BASE}/ephemeral-server`, {
-    triggerId,
-    serverId,
-  });
+  const { status, body } = await postServiceRoute(
+    `${SERVICE_BASE}/ephemeral-server`,
+    { triggerId, serverId }
+  );
+  if (status !== 200 || !body?.ok) {
+    throw new Error(
+      `ephemeral-server registration rejected (${status}): ${JSON.stringify(
+        body
+      )}`
+    );
+  }
 }
 
 /**
@@ -405,6 +425,21 @@ async function defaultRunEvalSuite(args: {
       serverIds: [args.serverId],
       serverNames: [args.serverName],
       suiteRerun: true,
+      // REQUIRED, not incidental. `serverIds` is honored by the manager and by
+      // cap math, but it is NOT forwarded to the run-start mutation — the run's
+      // `configSnapshot.environment` comes from the suite's PERSISTED
+      // environment, and `suiteRerun: true` alone suppresses updating it
+      // (`authorEvalSuite`: `shouldUpdateSnapshot = !suiteRerun ||
+      // refreshSnapshot`). Without this flag the snapshot keeps naming the
+      // previous check's ephemeral server, which no longer exists, and the
+      // runner fails against a dead reference instead of testing the PR.
+      //
+      // This is the "suite binding rewrite" the design already called out as
+      // expected: the dedicated suite's stored server ref is rewritten every
+      // run. Harmless because we always override `serverIds` too — and the
+      // reason this suite is named `[github-checks] …` and must never be
+      // launched from the UI.
+      refreshSnapshot: true,
       // `source: 'github_check'` would be a two-repo union change; 'api' is the
       // closest existing value and keeps this to one repo (see plan follow-up).
       source: "api",

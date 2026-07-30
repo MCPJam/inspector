@@ -792,8 +792,8 @@ async function shutdown() {
   }, shutdownForceExitMs);
   forceExitTimer.unref();
 
-  await scheduledEvalsWorker?.stop();
-  await githubChecksWorker?.stop();
+  // Cleared BEFORE the worker awaits: a `stop()` that rejects must not leave a
+  // live interval behind, and this needs no await of its own.
   if (orphanCheckInterval) {
     clearInterval(orphanCheckInterval);
     orphanCheckInterval = undefined;
@@ -801,6 +801,10 @@ async function shutdown() {
 
   appLogger.info("Shutting down gracefully...");
   try {
+    // Inside the guarded path so a rejecting worker still reaches the rest of
+    // shutdown rather than skipping straight to the force-exit deadline.
+    await scheduledEvalsWorker?.stop();
+    await githubChecksWorker?.stop();
     // Abort active synthetic-session runs and write a terminal "failed"
     // status so the dialog/UI doesn't see a stuck "running" run. Bounded
     // by an internal timeout; the outer `forceExitTimer` still wins.

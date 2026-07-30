@@ -124,9 +124,18 @@ function isRpcRequest(value: unknown): value is JsonRpcRequest {
 }
 
 function invalidRequest(value: unknown): { status: number; body?: unknown } {
-  const id =
+  // Echo the id only when it is a legal JSON-RPC id. A malformed request can
+  // carry anything here (an object, NaN), and reflecting that produces a
+  // response a strict client will itself reject — `null` is what the spec asks
+  // for when the id cannot be determined.
+  const candidate =
     typeof value === "object" && value !== null
-      ? (value as JsonRpcRequest).id ?? null
+      ? (value as { id?: unknown }).id
+      : null;
+  const id =
+    typeof candidate === "string" ||
+    (typeof candidate === "number" && Number.isFinite(candidate))
+      ? candidate
       : null;
   return {
     status: 400,

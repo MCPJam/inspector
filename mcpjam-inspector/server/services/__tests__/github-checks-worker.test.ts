@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from "vitest";
 import {
   classifyCheckFailure,
   executeClaimedCheck,
@@ -146,6 +154,31 @@ describe("executeClaimedCheck — happy path", () => {
     expect(h.events.indexOf("recordServer:trig-1:server-1")).toBeLessThan(
       h.events.indexOf("runEvalSuite")
     );
+  });
+
+  it("targets the run at THIS check's server and refreshes the suite snapshot", async () => {
+    // `serverIds` alone is not enough: it never reaches the run-start mutation,
+    // so the run's configSnapshot.environment comes from the suite's persisted
+    // environment — which names the PREVIOUS check's deleted server unless the
+    // snapshot is refreshed. Without this the runner fails on a dead reference
+    // instead of testing the PR.
+    const prepared: Array<Record<string, unknown>> = [];
+    const h = harness({
+      runEvalSuite: async (args) => {
+        prepared.push({ ...args });
+        return { runId: "run-1", result: "passed" };
+      },
+    });
+    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
+
+    // The suite-snapshot refresh itself lives in `defaultRunEvalSuite`, which
+    // needs a live Convex + connected manager and is covered by the end-to-end
+    // pass; what is checkable here is that the run is handed THIS check's
+    // freshly-created server rather than anything the suite has stored.
+    expect(prepared[0]).toMatchObject({
+      serverId: "server-1",
+      serverName: "gh-check-trig-1",
+    });
   });
 
   it("reports evals_failed with the pass counts when the run does not pass", async () => {
@@ -350,6 +383,12 @@ describe("executeClaimedCheck — cleanup and heartbeat", () => {
     const rejections: unknown[] = [];
     vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
+    // Cleaned up explicitly: this describe block has no env/global teardown, and
+    // a leaked `fetch` stub makes an unrelated later test fail confusingly.
+    onTestFinished(() => {
+      vi.unstubAllEnvs();
+      vi.unstubAllGlobals();
+    });
     vi.stubGlobal(
       "fetch",
       vi.fn(
