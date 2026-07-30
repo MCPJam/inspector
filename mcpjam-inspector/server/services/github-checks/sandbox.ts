@@ -802,7 +802,8 @@ async function probeResponseIsHealthy(
   // `Unexpected content type` before it ever looks at the body. Accepting a
   // well-formed result served as `text/plain` would call that server healthy and
   // then hand its failure to us as neutral `infra_error`, when it is the PR's.
-  if (!hasTransportMediaType(response)) return false;
+  const mode = transportPayloadMode(response);
+  if (mode === null) return false;
 
   const body = (response as { body?: unknown }).body as
     | ReadableStream<Uint8Array>
@@ -812,7 +813,7 @@ async function probeResponseIsHealthy(
     // No streaming body available (a buffered runtime, or a test stub): the
     // payload is already in hand, so reading it cannot block — and nothing more
     // is coming, so an unterminated last event is all we will ever get.
-    return carriesAcceptedAnswer(await response.text(), accepts, true);
+    return carriesAcceptedAnswer(await response.text(), accepts, true, mode);
   }
 
   const reader = body.getReader();
@@ -836,16 +837,16 @@ async function probeResponseIsHealthy(
         // Checked per chunk: a frame can arrive split, and a partial JSON just
         // fails to parse and waits for the rest. Mid-stream, so an event whose
         // terminating blank line has not arrived yet is held, not parsed.
-        if (carriesAcceptedAnswer(text, accepts, false)) return true;
+        if (carriesAcceptedAnswer(text, accepts, false, mode)) return true;
       }
       if (done) {
         text += decoder.decode();
-        return carriesAcceptedAnswer(text, accepts, true);
+        return carriesAcceptedAnswer(text, accepts, true, mode);
       }
     }
     // Out of byte budget. Nothing further will be read, so this is the last look:
     // parse whatever the truncated tail holds rather than discarding it.
-    return carriesAcceptedAnswer(text, accepts, true);
+    return carriesAcceptedAnswer(text, accepts, true, mode);
   } finally {
     // We are done with this response either way — a healthy server is still
     // holding the stream open, so drop it rather than leaking the socket.
@@ -854,16 +855,29 @@ async function probeResponseIsHealthy(
 }
 
 /**
- * Whether the response declares a media type the streamable-HTTP transport can
- * consume. Compared on the essence only — parameters (`; charset=utf-8`) are
- * legal and the transport ignores them too. A missing header is a rejection: the
- * transport has nothing to match and fails the same way.
+ * How the streamable-HTTP transport would read this response's body, or `null`
+ * if it would refuse to read it at all.
+ *
+ * The transport does not sniff the body: it switches on the declared media type,
+ * handing `text/event-stream` to its EventSource parser and `application/json`
+ * to `response.json()`. So the header decides which framing is in force, and the
+ * OTHER framing is not a fallback — an SSE-framed body under `application/json`
+ * makes `response.json()` throw, and a bare JSON body under `text/event-stream`
+ * yields no events at all, leaving the client's `initialize` unanswered until it
+ * times out. Either way that server is unusable, and accepting it here would
+ * turn the PR's fault into our neutral `infra_error`.
+ *
+ * Compared on the essence only — parameters (`; charset=utf-8`) are legal and
+ * the transport ignores them too. A missing header is a rejection: the transport
+ * has nothing to match and fails the same way.
  */
-function hasTransportMediaType(response: Response): boolean {
+function transportPayloadMode(response: Response): "json" | "sse" | null {
   const header = response.headers?.get?.("content-type");
-  if (typeof header !== "string") return false;
+  if (typeof header !== "string") return null;
   const essence = header.split(";", 1)[0].trim().toLowerCase();
-  return essence === "application/json" || essence === "text/event-stream";
+  if (essence === "application/json") return "json";
+  if (essence === "text/event-stream") return "sse";
+  return null;
 }
 
 /**
@@ -875,9 +889,10 @@ function hasTransportMediaType(response: Response): boolean {
 function carriesAcceptedAnswer(
   text: string,
   accepts: (parsed: unknown) => boolean,
-  streamEnded: boolean
+  streamEnded: boolean,
+  mode: "json" | "sse"
 ): boolean {
-  for (const payload of ssePayloads(text, streamEnded)) {
+  for (const payload of candidatePayloads(text, streamEnded, mode)) {
     try {
       if (accepts(JSON.parse(payload))) return true;
     } catch {
@@ -888,13 +903,44 @@ function carriesAcceptedAnswer(
 }
 
 /**
- * The candidate JSON payloads in a probe response body.
+ * The candidate JSON payloads in the body, framed the way its declared media
+ * type says to frame them.
+ */
+function candidatePayloads(
+  text: string,
+  streamEnded: boolean,
+  mode: "json" | "sse"
+): string[] {
+  return mode === "sse"
+    ? ssePayloads(text, streamEnded)
+    : jsonPayloads(text, streamEnded);
+}
+
+/**
+ * The one candidate payload in an `application/json` body: the whole body.
  *
- * SSE framing is detected by a line that STARTS with `data:`, not by the
- * substring appearing anywhere: a single-line JSON body can legitimately contain
- * "data:" inside a string (a serverInfo name, an instructions blob, a tool
- * description), and treating that as SSE yielded zero payloads and a false
- * `server_unhealthy`.
+ * Withheld until the body is complete, because `response.json()` is what the
+ * transport calls and that needs the whole thing. Deciding early would also let
+ * a server whose body is one valid JSON document followed by more content (a
+ * second document, trailing junk) be accepted at the instant the first document
+ * lands — and `response.json()` rejects exactly that, so the client would fail
+ * where the probe passed.
+ */
+function jsonPayloads(text: string, streamEnded: boolean): string[] {
+  if (!streamEnded) return [];
+  const document = text.trim();
+  return document ? [document] : [];
+}
+
+/**
+ * The candidate JSON payloads in a `text/event-stream` body: the data of each
+ * complete event.
+ *
+ * A payload comes only from a line that STARTS with `data:` — a body under this
+ * media type that carries no such line carries no events, and the transport's
+ * EventSource parser would surface nothing to the client no matter how valid the
+ * JSON in it looks. (Which is also why "data:" appearing INSIDE a JSON string —
+ * a serverInfo name, an instructions blob, a tool description — is not a frame.)
  *
  * Within one event, consecutive `data:` fields are JOINED with newlines, per SSE
  * semantics. A server that spreads one JSON-RPC message across several fields is
@@ -912,7 +958,6 @@ function carriesAcceptedAnswer(
 function ssePayloads(text: string, streamEnded: boolean): string[] {
   const payloads: string[] = [];
   let current: string[] = [];
-  let sawFrame = false;
   const flush = () => {
     if (current.length > 0) {
       payloads.push(current.join("\n"));
@@ -938,7 +983,6 @@ function ssePayloads(text: string, streamEnded: boolean): string[] {
   for (let index = 0; index < lineCount; index += 1) {
     const line = segments[index];
     if (line.startsWith("data:")) {
-      sawFrame = true;
       current.push(line.slice("data:".length).trim());
       continue;
     }
@@ -947,12 +991,6 @@ function ssePayloads(text: string, streamEnded: boolean): string[] {
     if (line === "") flush();
   }
   if (streamEnded) flush();
-
-  if (!sawFrame) {
-    // Not SSE at all: a plain JSON body. Mid-stream it may be half-written, which
-    // just fails to parse — no framing to get wrong, so hand it over either way.
-    return text ? [text] : [];
-  }
   return payloads.filter((payload) => payload.length > 0);
 }
 

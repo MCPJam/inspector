@@ -755,6 +755,100 @@ describe("waitForMcpInitialize", () => {
     ).toBe(false);
   });
 
+  it("does not accept an SSE-framed result declared as application/json", async () => {
+    // The transport switches on the declared type, and for `application/json` it
+    // calls `response.json()` — which throws on `event: …\ndata: …` framing. So
+    // this server cannot be driven, however well-formed the JSON inside the frame
+    // is, and reading the frame anyway would call it healthy on the strength of
+    // something the client never gets to see.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(SSE_INITIALIZE_FRAME, {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 5,
+      })
+    ).toBe(false);
+  });
+
+  it("does not accept a bare JSON result declared as text/event-stream", async () => {
+    // The mirror case: under `text/event-stream` the transport runs its
+    // EventSource parser, and a body with no `data:` line carries no events — the
+    // client's `initialize` would go unanswered until it timed out.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ jsonrpc: "2.0", id: 1, result: INITIALIZE_RESULT }),
+          { status: 200, headers: { "content-type": "text/event-stream" } }
+        )
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 5,
+      })
+    ).toBe(false);
+  });
+
+  it("does not accept a JSON body that continues past its first document", async () => {
+    // `response.json()` rejects trailing content, so a second document (or junk)
+    // after the first makes the whole body unparseable for the client. Deciding as
+    // soon as a valid prefix landed would pass a server the eval run cannot use.
+    const answer = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      result: INITIALIZE_RESULT,
+    });
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(`${answer}\n${answer}\n`, {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 5,
+      })
+    ).toBe(false);
+  });
+
+  it("accepts a JSON body that arrives in several chunks", async () => {
+    // The flip side of withholding a JSON decision until the body ends: a body
+    // split across writes must still be accepted once the last one lands.
+    const answer = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      result: INITIALIZE_RESULT,
+    });
+    const split = Math.floor(answer.length / 2);
+    const fetchImpl = vi.fn(async () => {
+      const encoder = new TextEncoder();
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encoder.encode(answer.slice(0, split)));
+            controller.enqueue(encoder.encode(answer.slice(split)));
+            controller.close();
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    }) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", { ...seams, fetchImpl })
+    ).toBe(true);
+  });
+
   it("accepts a media type that carries parameters", async () => {
     // `application/json; charset=utf-8` is the same essence, and the transport
     // compares essences — so this must not be turned away.
