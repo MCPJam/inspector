@@ -936,6 +936,9 @@ function jsonPayloads(text: string, streamEnded: boolean): string[] {
  * The candidate JSON payloads in a `text/event-stream` body: the data of each
  * complete event.
  *
+ * Only events the transport would actually dispatch count: unnamed or named
+ * `message` (see `flush`), and carrying data.
+ *
  * A payload comes only from a line that STARTS with `data:` — a body under this
  * media type that carries no such line carries no events, and the transport's
  * EventSource parser would surface nothing to the client no matter how valid the
@@ -958,11 +961,20 @@ function jsonPayloads(text: string, streamEnded: boolean): string[] {
 function ssePayloads(text: string, streamEnded: boolean): string[] {
   const payloads: string[] = [];
   let current: string[] = [];
+  let eventName = "";
   const flush = () => {
-    if (current.length > 0) {
+    // The transport dispatches an event's data only when the event is UNNAMED or
+    // named `message`; anything else (`event: ping`, `event: error`, a server's
+    // own progress channel) is dropped before it reaches the JSON parser. So a
+    // handshake answer smuggled inside a named event never arrives, the eval
+    // run's `initialize` goes unanswered, and reading it here would hand the PR's
+    // fault to us as a neutral `infra_error`. An empty `event:` value counts as
+    // unnamed, which is also how the spec dispatches it.
+    if (current.length > 0 && (eventName === "" || eventName === "message")) {
       payloads.push(current.join("\n"));
-      current = [];
     }
+    current = [];
+    eventName = "";
   };
 
   // LF, CRLF and bare CR are all legal SSE line separators, and a leading BOM is
@@ -986,7 +998,12 @@ function ssePayloads(text: string, streamEnded: boolean): string[] {
       current.push(line.slice("data:".length).trim());
       continue;
     }
-    // A blank line ends the event. Any other field (`event:`, `id:`, a comment)
+    if (line.startsWith("event:")) {
+      // Last one wins within an event, per the spec.
+      eventName = line.slice("event:".length).trim();
+      continue;
+    }
+    // A blank line ends the event. Any other field (`id:`, `retry:`, a comment)
     // carries no data but does not split it either.
     if (line === "") flush();
   }

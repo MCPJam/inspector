@@ -969,6 +969,51 @@ describe("waitForMcpInitialize", () => {
     ).toBe(true);
   });
 
+  it("does not accept an answer carried by a named non-message event", async () => {
+    // The transport dispatches an event's data only when the event is unnamed or
+    // named `message` — `event: ping` is dropped before its data is ever parsed.
+    // So the eval run's `initialize` would go unanswered here, and reading the
+    // payload anyway would call this server healthy off bytes the client discards.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          `event: ping\ndata: ${JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: INITIALIZE_RESULT,
+          })}\n\n`,
+          { status: 200, headers: { "content-type": "text/event-stream" } }
+        )
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 5,
+      })
+    ).toBe(false);
+  });
+
+  it("accepts a real answer that follows a named non-message event", async () => {
+    // The name belongs to its own event and must not leak into the next one: a
+    // server that emits `event: ping` before answering is perfectly usable, so the
+    // filter must not turn the answer behind it into a false `server_unhealthy`.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          `event: ping\ndata: {"noise":true}\n\ndata: ${JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: INITIALIZE_RESULT,
+          })}\n\n`,
+          { status: 200, headers: { "content-type": "text/event-stream" } }
+        )
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", { ...seams, fetchImpl })
+    ).toBe(true);
+  });
+
   it("does not decide on a multi-field event before its terminator arrives", async () => {
     // The first `data:` field parses on its own, but the event is not over: the
     // second field makes the joined payload something else entirely. Deciding at
