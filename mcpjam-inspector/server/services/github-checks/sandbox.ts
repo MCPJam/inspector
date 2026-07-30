@@ -108,8 +108,11 @@ export const CHECKOUT_DIR = "/home/user/repo";
 /** Cap on clamped untrusted output, in characters. */
 export const OUTPUT_CLAMP_CHARS = 4_000;
 
-/** How much stderr we keep from the started server, for a health failure. */
+/** How much of the started server's log we keep, for a health failure. */
 const STDERR_TAIL_CHARS = 8_000;
+
+/** Where the PR's server writes stdout+stderr, inside the box. */
+const SERVER_LOG_PATH = "/tmp/mcp-server.log";
 
 /**
  * The protocol version we offer in the health probe. Deliberately a plain
@@ -420,8 +423,8 @@ export async function lockDownEgress(sandbox: CheckSandbox): Promise<void> {
 export type StartedServer = {
   /** Public https URL of the MCP endpoint, via the sandbox host bridge. */
   url: string;
-  /** Most recent server stderr, for a health failure message. */
-  readStderrTail: () => string;
+  /** Bounded tail of the server's own log, for a health failure message. */
+  readStderrTail: () => Promise<string>;
 };
 
 /**
@@ -466,25 +469,28 @@ export async function buildAndStart(
 
   await lockDownEgress(sandbox);
 
-  let stderrTail = "";
-  const appendStderr = (chunk: string) => {
-    stderrTail = `${stderrTail}${chunk}`.slice(-STDERR_TAIL_CHARS);
-  };
-
   try {
-    await sandbox.commands.run(`bash -lc ${shellQuote(recipe.start)}`, {
-      cwd: CHECKOUT_DIR,
-      background: true,
-      // REQUIRED. `timeoutMs` defaults to 60 SECONDS and applies to background
-      // commands too, so without this the PR's server — and the stderr stream
-      // this reads for the health-failure message — dies about a minute after it
-      // starts, in the middle of a suite that legitimately runs for twenty. The
-      // box's own TTL is the real bound, so use it. (Not `0`: E2B forwards the
-      // value to connect-rpc, which treats <= 0 as an already-expired deadline
-      // and would abort the spawn instantly.)
-      timeoutMs: CHECK_SANDBOX_TIMEOUT_MS,
-      onStderr: appendStderr,
-    });
+    // Output goes to a FILE IN THE BOX, not to a stream callback. E2B's
+    // `CommandHandle` appends every chunk it receives to an internal string —
+    // it does that whether or not `onStderr` is supplied, and it starts doing it
+    // the moment the handle is constructed. A PR server that logs continuously
+    // for the twenty minutes an eval takes would therefore grow THIS process's
+    // heap without limit, which no client-side ring buffer can prevent. Nothing
+    // is streamed now; the tail is fetched, bounded, only if we need it.
+    await sandbox.commands.run(
+      `bash -lc ${shellQuote(`${recipe.start} > ${SERVER_LOG_PATH} 2>&1`)}`,
+      {
+        cwd: CHECKOUT_DIR,
+        background: true,
+        // REQUIRED. `timeoutMs` defaults to 60 SECONDS and applies to background
+        // commands too, so without this the PR's server dies about a minute
+        // after it starts, in the middle of a suite that legitimately runs for
+        // twenty. The box's own TTL is the real bound, so use it. (Not `0`: E2B
+        // forwards the value to connect-rpc, which treats <= 0 as an
+        // already-expired deadline and would abort the spawn instantly.)
+        timeoutMs: CHECK_SANDBOX_TIMEOUT_MS,
+      }
+    );
   } catch (error) {
     throw new CheckStepError(
       "infra_error",
@@ -492,6 +498,7 @@ export async function buildAndStart(
     );
   }
 
+  const readServerLogTail = () => readLogTail(sandbox);
   const url = `https://${sandbox.getHost(recipe.port)}${recipe.mcpPath}`;
   const healthy = await waitForMcpInitialize(url, {
     timeoutMs: options?.healthTimeoutMs ?? HEALTH_TIMEOUT_MS,
@@ -502,11 +509,31 @@ export async function buildAndStart(
     throw new CheckStepError(
       "server_unhealthy",
       `server never completed MCP initialize on port ${recipe.port}${recipe.mcpPath}`,
-      clampOutput(stderrTail)
+      clampOutput(await readServerLogTail())
     );
   }
 
-  return { url, readStderrTail: () => stderrTail };
+  return { url, readStderrTail: readServerLogTail };
+}
+
+/**
+ * Fetch a bounded tail of the PR server's log, from inside the box.
+ *
+ * `tail -c` does the truncation in the sandbox, so untrusted output is bounded
+ * BEFORE it crosses into this process. Best effort by design: this only ever
+ * runs to enrich a failure message, and failing to read a log must not change
+ * the verdict.
+ */
+async function readLogTail(sandbox: CheckSandbox): Promise<string> {
+  try {
+    const result = (await sandbox.commands.run(
+      `bash -lc ${shellQuote(`tail -c ${STDERR_TAIL_CHARS} ${SERVER_LOG_PATH} 2>/dev/null || true`)}`,
+      { timeoutMs: 30_000 }
+    )) as { stdout?: string } | undefined;
+    return result?.stdout ?? "";
+  } catch {
+    return "";
+  }
 }
 
 /**

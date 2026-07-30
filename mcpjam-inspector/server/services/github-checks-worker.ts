@@ -461,6 +461,28 @@ async function runTerminality(
 }
 
 /**
+ * Did the runner FINISH the run, as opposed to abandoning it?
+ *
+ * `status: 'completed'` is written only on the runner's own success path, so it
+ * is the one status that means a verdict was actually reached. Everything else
+ * (`failed`, `timed_out`, `cancelled`) after a throw means the machinery gave
+ * up, which is ours to own — neutral, not the PR's failure.
+ */
+async function runCompleted(
+  client: { query: (name: any, args: any) => Promise<any> },
+  runId: string
+): Promise<boolean> {
+  try {
+    const run = (await client.query("testSuites:getTestSuiteRun" as any, {
+      runId,
+    })) as { status?: string } | null;
+    return run?.status === "completed";
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Run the dedicated suite against the just-built server.
  *
  * The `serverIds` override is what makes this work at all: the suite is a
@@ -524,13 +546,19 @@ async function defaultRunEvalSuite(args: {
     try {
       await prepared.execute();
     } catch (error) {
-      // `runEvalSuiteWithAiSdk` finalizes a failed run itself before rethrowing,
-      // so USUALLY the terminal write already happened and we can just read the
-      // verdict. But a throw from OUTSIDE its own try leaves the run
-      // non-terminal, and reading that gives `result: undefined` → a bogus
-      // `evals_failed` on the PR with a run left running forever. Mirror the
-      // detached /api/v1 path: check terminality, and finalize defensively when
-      // the runner did not.
+      // A throw from `execute()` is NOT an eval verdict, and must not be read as
+      // one. `runEvalSuiteWithAiSdk` finalizes a normal run — pass or fail —
+      // with `status: 'completed'` and a summary; its outer catch writes
+      // `status: 'failed'` for any UNEXPECTED exception (Convex unreachable, tool
+      // discovery blew up, the transport died) before rethrowing. So a `failed`
+      // status here says "the machinery broke", not "the PR's assertions
+      // failed" — deriving `evals_failed` from it is a red X on a PR that was
+      // never actually judged.
+      //
+      // Two jobs then: make sure the run does not sit non-terminal forever, and
+      // let the original error propagate so it classifies as `infra_error`
+      // (neutral). The one exception is a run the runner DID finish
+      // (`completed`), where a late throw cannot invalidate a delivered verdict.
       logger.warn("[github-checks] eval run threw; checking its run state", {
         triggerId: args.claimed.triggerId,
         runId: prepared.runId,
@@ -538,19 +566,7 @@ async function defaultRunEvalSuite(args: {
       });
 
       const terminality = await runTerminality(client, prepared.runId);
-      if (terminality === "unknown") {
-        // We could not read the run. Writing `failed` here would be a guess that
-        // can overwrite a real verdict, so leave the record alone — the read
-        // below decides, and if that fails too the check lands neutral.
-        logger.warn(
-          "[github-checks] could not read the run's state; not finalizing it",
-          { triggerId: args.claimed.triggerId, runId: prepared.runId }
-        );
-      } else if (terminality === "non_terminal") {
-        if (!prepared.recorder) {
-          // Nothing can finalize the run, so do not invent a verdict from it.
-          throw error;
-        }
+      if (terminality === "non_terminal" && prepared.recorder) {
         await prepared.recorder
           .finalize({
             status: "failed",
@@ -566,6 +582,15 @@ async function defaultRunEvalSuite(args: {
               { triggerId: args.claimed.triggerId, runId: prepared.runId }
             );
           });
+      }
+
+      // `unknown` (we could not read the run) also lands here: not being able to
+      // see the run is not evidence the PR failed.
+      if (
+        terminality !== "terminal" ||
+        !(await runCompleted(client, prepared.runId))
+      ) {
+        throw error;
       }
     }
 

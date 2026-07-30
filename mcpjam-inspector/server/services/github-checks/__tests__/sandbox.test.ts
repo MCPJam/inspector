@@ -177,10 +177,10 @@ describe("buildAndStart", () => {
     expect(box.events.some((e) => e.startsWith("network:"))).toBe(false);
   });
 
-  it("reports server_unhealthy with the server’s stderr tail when initialize never lands", async () => {
-    // The started process complains on stderr while the probe keeps failing.
+  it("reports server_unhealthy with the server’s log tail when initialize never lands", async () => {
+    // The started process complains in its log while the probe keeps failing.
     const box = fakeSandbox({
-      stderrOnSpawn: ["Error: listen EADDRINUSE 127.0.0.1:3001"],
+      stdout: { "tail -c": "Error: listen EADDRINUSE 127.0.0.1:3001" },
     });
     const fetchImpl = vi.fn(async () => {
       throw new Error("ECONNREFUSED");
@@ -296,9 +296,14 @@ describe("buildAndStart", () => {
     expect((error as CheckStepError).outcome).toBe("infra_error");
   });
 
-  it("keeps only the tail of a firehose stderr", async () => {
+  it("bounds a firehose of server output INSIDE the box, and clamps what arrives", async () => {
+    // E2B's CommandHandle buffers every chunk it receives into an internal
+    // string, from the moment the handle exists and regardless of callbacks. A PR
+    // server that logs for twenty minutes would grow this process's heap without
+    // limit, so nothing is streamed: output goes to a file and only a bounded
+    // tail is ever fetched.
     const box = fakeSandbox({
-      stderrOnSpawn: ["x".repeat(50_000), "THE-LAST-LINE"],
+      stdout: { "tail -c": `${"x".repeat(50_000)}THE-LAST-LINE` },
     });
     const error = (await buildAndStart(box.sandbox, RECIPE, {
       fetchImpl: vi.fn(async () => {
@@ -307,6 +312,17 @@ describe("buildAndStart", () => {
       healthTimeoutMs: 30,
       healthIntervalMs: 1,
     }).catch((e) => e)) as CheckStepError;
+
+    // The spawn streams nothing back and redirects to a file…
+    const spawn = box.calls.find((call) => call.opts?.background === true);
+    expect(spawn?.command).toContain("> /tmp/mcp-server.log 2>&1");
+    expect(spawn?.opts?.onStderr).toBeUndefined();
+    expect(spawn?.opts?.onStdout).toBeUndefined();
+    // …and the truncation is done by the sandbox, not after the fact.
+    expect(
+      box.calls.some((call) => call.command.includes("tail -c 8000"))
+    ).toBe(true);
+    // Whatever still comes back is clamped before it can reach a check body.
     expect(error.detailsMarkdown).toContain("THE-LAST-LINE");
     expect(error.detailsMarkdown!.length).toBeLessThan(
       OUTPUT_CLAMP_CHARS + 200

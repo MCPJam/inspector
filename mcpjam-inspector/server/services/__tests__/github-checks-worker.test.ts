@@ -80,7 +80,7 @@ function harness(overrides?: Partial<CheckExecutionDeps>): Harness {
       events.push("buildAndStart");
       return {
         url: "https://3001-sb_1.e2b.app/mcp",
-        readStderrTail: () => "",
+        readStderrTail: async () => "",
       };
     },
     killSandbox: async () => {
