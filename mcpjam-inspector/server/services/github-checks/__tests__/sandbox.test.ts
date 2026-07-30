@@ -7,6 +7,7 @@ import {
   cloneAndCheckout,
   lockDownEgress,
   OUTPUT_CLAMP_CHARS,
+  PROBE_MAX_RESPONSE_BYTES,
   waitForMcpInitialize,
   type CheckSandbox,
 } from "../sandbox";
@@ -1199,10 +1200,12 @@ describe("waitForMcpInitialize", () => {
     ).toBe(false);
   });
 
-  it("accepts a final event the server terminated by closing the stream", async () => {
-    // Withholding an unterminated event must not mean withholding it forever. A
-    // server that writes the frame and then closes without a trailing blank line
-    // has still said everything it is going to say, so the tail gets parsed.
+  it("does not accept a final event the server left unterminated", async () => {
+    // Closing the body does NOT terminate the event. `EventSourceParserStream` is a
+    // `TransformStream` with no `flush`, so a pending event with no blank line after
+    // it is dropped on close rather than delivered — the client's `initialize` never
+    // gets an answer. Parsing the tail here anyway would call such a server healthy
+    // off a message the eval run never receives.
     const fetchImpl = vi.fn(
       async () =>
         new Response(
@@ -1221,8 +1224,53 @@ describe("waitForMcpInitialize", () => {
     ) as unknown as typeof fetch;
 
     expect(
-      await waitForMcpInitialize("https://box/mcp", { ...seams, fetchImpl })
-    ).toBe(true);
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 5,
+      })
+    ).toBe(false);
+  });
+
+  it("does not accept a capped JSON body that parses as a prefix", async () => {
+    // A body whose first `PROBE_MAX_RESPONSE_BYTES` happen to be a complete JSON
+    // document, followed by more content. We stop reading at the cap; the client
+    // does not — `response.json()` reads to EOF and rejects the trailing bytes. So
+    // the cap must not stand in for the body ending, or the probe passes a server
+    // the eval run cannot parse.
+    const answer = {
+      jsonrpc: "2.0",
+      id: 1,
+      result: INITIALIZE_RESULT,
+      pad: "",
+    };
+    const padding = PROBE_MAX_RESPONSE_BYTES - JSON.stringify(answer).length;
+    expect(padding).toBeGreaterThan(0);
+    const document = JSON.stringify({ ...answer, pad: "a".repeat(padding) });
+    expect(document.length).toBe(PROBE_MAX_RESPONSE_BYTES);
+
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(`${document}{"trailing":"junk"}`)
+              );
+              controller.close();
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+    ) as unknown as typeof fetch;
+
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 5,
+      })
+    ).toBe(false);
   });
 
   it("does not accept a serverInfo without a name and version", async () => {

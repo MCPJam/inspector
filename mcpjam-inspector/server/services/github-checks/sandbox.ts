@@ -834,9 +834,8 @@ async function probeResponseIsHealthy(
         const consumed = Math.min(value.byteLength, remainingBytes);
         remainingBytes -= consumed;
         text += decoder.decode(value.subarray(0, consumed), { stream: true });
-        // Checked per chunk: a frame can arrive split, and a partial JSON just
-        // fails to parse and waits for the rest. Mid-stream, so an event whose
-        // terminating blank line has not arrived yet is held, not parsed.
+        // Checked per chunk: an SSE event completes the moment its blank line
+        // arrives, so waiting for the body to end would hang on a healthy server.
         if (carriesAcceptedAnswer(text, accepts, false, mode)) return true;
       }
       if (done) {
@@ -844,9 +843,11 @@ async function probeResponseIsHealthy(
         return carriesAcceptedAnswer(text, accepts, true, mode);
       }
     }
-    // Out of byte budget. Nothing further will be read, so this is the last look:
-    // parse whatever the truncated tail holds rather than discarding it.
-    return carriesAcceptedAnswer(text, accepts, true, mode);
+    // Out of byte budget — which is NOT the body ending. We stop reading; the eval
+    // run's client does not, so a JSON body must not be judged on this prefix even
+    // if the prefix happens to parse. Whatever the cap cut off is the client's
+    // problem to hit, not ours to guess at.
+    return carriesAcceptedAnswer(text, accepts, false, mode);
   } finally {
     // We are done with this response either way — a healthy server is still
     // holding the stream open, so drop it rather than leaking the socket.
@@ -889,10 +890,10 @@ function transportPayloadMode(response: Response): "json" | "sse" | null {
 function carriesAcceptedAnswer(
   text: string,
   accepts: (parsed: unknown) => boolean,
-  streamEnded: boolean,
+  bodyComplete: boolean,
   mode: "json" | "sse"
 ): boolean {
-  for (const payload of candidatePayloads(text, streamEnded, mode)) {
+  for (const payload of candidatePayloads(text, bodyComplete, mode)) {
     try {
       if (accepts(JSON.parse(payload))) return true;
     } catch {
@@ -905,15 +906,17 @@ function carriesAcceptedAnswer(
 /**
  * The candidate JSON payloads in the body, framed the way its declared media
  * type says to frame them.
+ *
+ * `bodyComplete` says the body ENDED — not merely that we stopped reading it. Only
+ * the JSON side cares: SSE payloads are complete events, and an event is complete
+ * when its blank line arrives, whatever the body does afterwards.
  */
 function candidatePayloads(
   text: string,
-  streamEnded: boolean,
+  bodyComplete: boolean,
   mode: "json" | "sse"
 ): string[] {
-  return mode === "sse"
-    ? ssePayloads(text, streamEnded)
-    : jsonPayloads(text, streamEnded);
+  return mode === "sse" ? ssePayloads(text) : jsonPayloads(text, bodyComplete);
 }
 
 /**
@@ -924,10 +927,11 @@ function candidatePayloads(
  * a server whose body is one valid JSON document followed by more content (a
  * second document, trailing junk) be accepted at the instant the first document
  * lands — and `response.json()` rejects exactly that, so the client would fail
- * where the probe passed.
+ * where the probe passed. That includes the byte cap: a prefix that parses is
+ * still a prefix, and the client reads past where we stopped.
  */
-function jsonPayloads(text: string, streamEnded: boolean): string[] {
-  if (!streamEnded) return [];
+function jsonPayloads(text: string, bodyComplete: boolean): string[] {
+  if (!bodyComplete) return [];
   const document = text.trim();
   return document ? [document] : [];
 }
@@ -949,16 +953,17 @@ function jsonPayloads(text: string, streamEnded: boolean): string[] {
  * semantics. A server that spreads one JSON-RPC message across several fields is
  * legal, and parsing each line on its own made every fragment fail to parse.
  *
- * `streamEnded` says whether more bytes can still arrive. While the stream is
- * live, an event whose terminating blank line has not been seen yet is INCOMPLETE
- * and is withheld: a multi-field event read at a chunk boundary would otherwise be
- * handed to `JSON.parse` a field short. That mostly just fails to parse, but a
- * server whose first field happens to be a complete JSON object followed by more
- * fields would be accepted off a truncated read. The unfinished event stays in
- * `text`, so the next chunk simply re-parses it whole. Once the stream is over
- * (or we stop reading), the tail is all there is, so parse it.
+ * An event is dispatched on its terminating BLANK LINE and at no other moment.
+ * Nothing here depends on whether the body has ended, because nothing in the
+ * transport does: `EventSourceParserStream` is a `TransformStream` with no `flush`,
+ * so a pending event with no blank line after it is dropped when the stream closes
+ * rather than delivered. An unterminated tail is therefore never a payload — not
+ * mid-stream, not at EOF, not when the byte cap stops us. Withholding it also keeps
+ * a multi-field event from being handed to `JSON.parse` a field short, which mostly
+ * just fails to parse but would otherwise accept a server whose first field happens
+ * to be a complete JSON object followed by more fields.
  */
-function ssePayloads(text: string, streamEnded: boolean): string[] {
+function ssePayloads(text: string): string[] {
   const payloads: string[] = [];
   let current: string[] = [];
   let eventName = "";
@@ -982,16 +987,16 @@ function ssePayloads(text: string, streamEnded: boolean): string[] {
   // does, so a server it can drive must not be turned away here. Splitting on LF
   // alone left a CR-separated frame unrecognised and the probe timed out.
   const segments = text.replace(/^﻿/, "").split(/\r\n|\r|\n/);
-  // The final segment is whatever follows the last separator, so mid-stream it is
-  // a PARTIAL line, not a line. Treating it as one is subtly wrong in both
-  // directions: a half-written `data:` field would be parsed a character short,
-  // and — the case that actually bites — the empty tail left by a trailing
-  // separator would read as the event's blank-line terminator, flushing an event
-  // the server has not finished. A real terminator shows up as an empty segment
-  // with another segment after it. (A CRLF split across chunk boundaries is safe
-  // because the whole accumulated text is re-split on every read, never appended
-  // to a previous parse.)
-  const lineCount = streamEnded ? segments.length : segments.length - 1;
+  // The final segment is whatever follows the last separator, so it is a PARTIAL
+  // line, not a line — a half-written `data:` field, or the empty tail left by a
+  // trailing separator. Neither is a line the parser has seen, and treating the
+  // empty tail as a line would read it as a blank-line terminator and dispatch an
+  // event the server has not finished. A REAL terminator shows up as an empty
+  // segment with another segment after it, so a properly terminated event is always
+  // inside this bound. (A CRLF split across chunk boundaries is safe because the
+  // whole accumulated text is re-split on every read, never appended to a previous
+  // parse.)
+  const lineCount = segments.length - 1;
   for (let index = 0; index < lineCount; index += 1) {
     const line = segments[index];
     if (line.startsWith("data:")) {
@@ -1007,7 +1012,6 @@ function ssePayloads(text: string, streamEnded: boolean): string[] {
     // carries no data but does not split it either.
     if (line === "") flush();
   }
-  if (streamEnded) flush();
   return payloads.filter((payload) => payload.length > 0);
 }
 
