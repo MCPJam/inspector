@@ -9,7 +9,7 @@ import { usePreviewedEnvironmentId } from "@/hooks/use-previewed-environment-id"
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useSandboxImages } from "@/hooks/useSandboxImages";
-import { useProjectMembers } from "@/hooks/useProjects";
+import { shouldQueryProjectId, useProjectMembers } from "@/hooks/useProjects";
 import { saveEnvironmentDraftSeed } from "@/lib/environment-draft-seed";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { cn } from "@/lib/utils";
@@ -70,9 +70,16 @@ export function ConnectEnvironmentsStrip({
   // members), so the capture CTA is hidden for non-admins rather than leading
   // them into a form they can't save. Same client mirror of the backend gate
   // ServersTab uses for project-server settings; Convex dedupes the query.
+  // `useProjectMembers` gates only on truthiness, so — unlike the environment
+  // and host queries above — a transient/local project id would reach Convex as
+  // an invalid id and throw a validation error while Connect is still resolving
+  // its shared project. Apply the same guard those queries use.
   const { canManageMembers: canManageEnvironments } = useProjectMembers({
     isAuthenticated,
-    projectId: enabled ? normalizedProjectId : null,
+    projectId:
+      enabled && shouldQueryProjectId(normalizedProjectId)
+        ? normalizedProjectId
+        : null,
   });
 
   const hostNamesById = useMemo(
@@ -82,11 +89,19 @@ export function ConnectEnvironmentsStrip({
 
   // Sandbox-image names for the card chips. ONE project-wide list query (the
   // documented row-data-only / no-N+1 budget) — the same resolve-by-find
-  // precedent the eval run detail uses. Flag off ⇒ null projectId ⇒ query
-  // skipped entirely.
+  // precedent the eval run detail uses.
+  //
+  // Skipped entirely unless a LOADED row actually carries a pin: the chip is the
+  // only consumer, so firing this for the empty/loading strip or a project whose
+  // environments pin nothing would add a project-wide request that can never
+  // render anything. Flag off skips it too. Once a pinned row appears the query
+  // starts, and the raw-id fallback below covers the frame before it resolves.
   const computersEnabled = useComputersEnabled();
+  const hasPinnedImage = (environments ?? []).some(
+    (environment) => environment.computerEnvironmentId
+  );
   const sandboxImages = useSandboxImages(
-    enabled && computersEnabled ? normalizedProjectId : null
+    enabled && computersEnabled && hasPinnedImage ? normalizedProjectId : null
   );
   const imageNamesById = useMemo(
     () =>

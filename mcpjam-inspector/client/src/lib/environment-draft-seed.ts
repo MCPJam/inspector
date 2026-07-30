@@ -14,6 +14,13 @@
  *   visit to `/environments` from re-entering create mode. No event
  *   subscription — the handoff is same-tab and single-hop.
  *
+ * Both entry points NORMALIZE the project key (trim) rather than trusting the
+ * caller: Connect reads a normalized id while the `/environments` route holds
+ * the raw active-project id, so a whitespace-padded id would otherwise be
+ * written under one key and looked up under another — silently dropping the
+ * handoff. Keeping the trim here (not at each call site) makes that mismatch
+ * structurally impossible.
+ *
  * The literal `null`s on `serverAttachmentId`/`skillSelection` document the v1
  * capture decision: Connect has no server-group or enabled-skills state to
  * capture, and `serverAttachmentId: null` already MEANS "the client's own
@@ -33,12 +40,14 @@ export function saveEnvironmentDraftSeed(
   projectId: string,
   seed: EnvironmentDraftSeed
 ): void {
+  const key = projectId.trim();
+  if (!key) return;
   try {
     const raw = sessionStorage.getItem(STORAGE_KEY);
     const all = raw
       ? (JSON.parse(raw) as Record<string, EnvironmentDraftSeed>)
       : {};
-    all[projectId] = seed;
+    all[key] = seed;
     sessionStorage.setItem(STORAGE_KEY, JSON.stringify(all));
   } catch {
     // Storage unavailable ⇒ the CTA degrades to plain navigation.
@@ -49,13 +58,15 @@ export function saveEnvironmentDraftSeed(
 export function takeEnvironmentDraftSeed(
   projectId: string
 ): EnvironmentDraftSeed | null {
+  const key = projectId.trim();
+  if (!key) return null;
   try {
     const raw = sessionStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const all = JSON.parse(raw) as Record<string, EnvironmentDraftSeed>;
-    const seed = all[projectId];
+    const seed = all[key];
     if (!seed || typeof seed !== "object") return null;
-    delete all[projectId];
+    delete all[key];
     sessionStorage.setItem(STORAGE_KEY, JSON.stringify(all));
     return {
       ...(typeof seed.name === "string" ? { name: seed.name } : {}),

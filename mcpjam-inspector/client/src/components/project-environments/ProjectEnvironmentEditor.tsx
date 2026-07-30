@@ -89,10 +89,14 @@ export function ProjectEnvironmentEditor({
   // Double gate: the editor already sits behind `project-environments-enabled`
   // (the route); the sandbox-image section additionally requires
   // `computers-enabled` (fail-closed) — mirroring how the eval suite settings
-  // gate their adjacent "Computer environment" row. When the flag is off the
-  // picker never renders, the draft field never diverges, and the update
-  // payload omits it (see the save() comment) — so a flag-off save can never
-  // clear a pin set through the API/CLI.
+  // gate their adjacent "Computer environment" row.
+  //
+  // This flag is load-bearing for the WRITE path, not just visibility: while the
+  // picker is hidden the pin must be treated as if it weren't part of this form
+  // at all — excluded from `dirty` and omitted from both payloads — so a
+  // flag-off save can never set or clear a pin configured through the API/CLI.
+  // Draft divergence alone is NOT a sufficient guard, because the flag can flip
+  // false after an edit and leave a diverged value behind a vanished control.
   const computersEnabled = useComputersEnabled();
   const sandboxImages = useSandboxImages(computersEnabled ? projectId : null);
 
@@ -130,13 +134,18 @@ export function ProjectEnvironmentEditor({
         draft.skillSelection,
         environment.skillSelection ?? null
       ) ||
-      draft.computerEnvironmentId !== (environment.computerEnvironmentId ?? null)
+      // Only counts while the picker is rendered — otherwise a flag flip would
+      // leave Save enabled for a field the payload deliberately omits, i.e. a
+      // "Saved." that changes nothing but bumps the revision.
+      (computersEnabled &&
+        draft.computerEnvironmentId !==
+          (environment.computerEnvironmentId ?? null))
     : trimmedName.length > 0 ||
       trimmedDescription.length > 0 ||
       draft.hostId !== null ||
       draft.serverAttachmentId !== null ||
       draft.skillSelection !== null ||
-      draft.computerEnvironmentId !== null;
+      (computersEnabled && draft.computerEnvironmentId !== null);
 
   // Reactivity observed someone else's edit while this draft diverged.
   const stale =
@@ -202,7 +211,11 @@ export function ProjectEnvironmentEditor({
           ...(draft.skillSelection
             ? { skillSelection: draft.skillSelection }
             : {}),
-          ...(draft.computerEnvironmentId
+          // Gated on the LIVE flag, not just the draft: PostHog can flip
+          // `computers-enabled` false after the user picked an image, which
+          // unmounts the picker but leaves the draft value — shipping it then
+          // would contradict the fail-closed contract.
+          ...(computersEnabled && draft.computerEnvironmentId
             ? { computerEnvironmentId: draft.computerEnvironmentId }
             : {}),
         });
@@ -233,12 +246,16 @@ export function ProjectEnvironmentEditor({
         )
           ? { skillSelection: draft.skillSelection }
           : {}),
-        // Included only when CHANGED — this is what keeps a flag-off save from
-        // clearing an API/CLI-set pin: with the picker unrendered the draft
-        // value never diverges from the row, so the field is omitted entirely
-        // (tri-state contract: omitted = unchanged, null = clear).
-        ...(draft.computerEnvironmentId !==
-        (environment.computerEnvironmentId ?? null)
+        // Included only when CHANGED **and** the picker is currently rendered.
+        // Draft divergence alone is not enough: if the flag flips false after
+        // an edit the picker unmounts while the diverged draft value survives,
+        // and a "flag-off" save would then set or clear the pin — exactly what
+        // the fail-closed contract promises it cannot do. Gating on the live
+        // flag makes a hidden picker always omit the field (tri-state:
+        // omitted = unchanged, null = clear).
+        ...(computersEnabled &&
+        draft.computerEnvironmentId !==
+          (environment.computerEnvironmentId ?? null)
           ? { computerEnvironmentId: draft.computerEnvironmentId }
           : {}),
       });
@@ -413,11 +430,24 @@ export function ProjectEnvironmentEditor({
                   </option>
                 );
               })}
-              {/* A pinned image that vanished from the list (deleted) must stay
-                  visible and explicitly clearable — silently coercing to "None"
-                  would clear the pin on the next unrelated save. */}
-              {draft.computerEnvironmentId &&
-              !(sandboxImages ?? []).some(
+              {/* A pinned id with no matching option would leave the <select>
+                  displaying "None" — a pinned environment reading as unpinned.
+                  Two DIFFERENT causes need two different labels:
+
+                  1. still loading: say so. Labeling it "Unknown image" here
+                     would alarm an admin about a perfectly valid pin on every
+                     mount until the query resolves.
+                  2. resolved and genuinely absent (deleted image): name it, so
+                     the pin stays visible and explicitly clearable instead of
+                     being silently coerced to "None" on the next save. */}
+              {draft.computerEnvironmentId && sandboxImages === undefined ? (
+                <option value={draft.computerEnvironmentId} disabled>
+                  Loading image…
+                </option>
+              ) : null}
+              {sandboxImages !== undefined &&
+              draft.computerEnvironmentId &&
+              !sandboxImages.some(
                 (img) => img.environmentId === draft.computerEnvironmentId
               ) ? (
                 <option value={draft.computerEnvironmentId} disabled>

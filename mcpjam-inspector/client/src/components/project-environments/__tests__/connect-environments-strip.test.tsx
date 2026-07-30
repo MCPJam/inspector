@@ -20,6 +20,7 @@ const {
   mockSaveSeed,
   mockComputersEnabled,
   mockSandboxImages,
+  mockMembersQueryProjectId,
 } = vi.hoisted(() => ({
   mockFlagValue: { value: true as boolean | undefined },
   mockEnvironments: { value: undefined as unknown },
@@ -31,6 +32,7 @@ const {
   mockSaveSeed: vi.fn(),
   mockComputersEnabled: { value: true },
   mockSandboxImages: vi.fn(),
+  mockMembersQueryProjectId: vi.fn(),
 }));
 
 vi.mock("posthog-js/react", () => ({
@@ -60,7 +62,13 @@ vi.mock("@/hooks/use-previewed-client-id", () => ({
   usePreviewedHostId: () => [mockPreviewedHostId.value, vi.fn()] as const,
 }));
 vi.mock("@/hooks/useProjects", () => ({
-  useProjectMembers: () => ({ canManageMembers: mockCanManage.value }),
+  useProjectMembers: (args: { projectId: string | null }) => {
+    mockMembersQueryProjectId(args.projectId);
+    return { canManageMembers: mockCanManage.value };
+  },
+  // Real guard: rejects ids that aren't valid Convex ids (transient/local).
+  shouldQueryProjectId: (id: string | null | undefined) =>
+    typeof id === "string" && /^[a-z0-9]{20,}$/i.test(id),
 }));
 vi.mock("@/lib/environment-draft-seed", () => ({
   saveEnvironmentDraftSeed: mockSaveSeed,
@@ -90,7 +98,7 @@ beforeEach(() => {
   mockEnvironments.value = [
     {
       environmentId: "env_1",
-      projectId: "proj_1",
+      projectId: "kd7abc123def456ghi789",
       name: "Staging",
       hostId: "host_1",
       serverAttachmentId: "grp_1",
@@ -107,14 +115,14 @@ describe("ConnectEnvironmentsStrip", () => {
   it("renders nothing when the feature flag is off", () => {
     mockFlagValue.value = false;
     const { container } = render(
-      <ConnectEnvironmentsStrip projectId="proj_1" />
+      <ConnectEnvironmentsStrip projectId="kd7abc123def456ghi789" />
     );
     expect(container).toBeEmptyDOMElement();
   });
 
   it("zero environments: admins get the capture empty-state, members nothing", () => {
     mockEnvironments.value = [];
-    render(<ConnectEnvironmentsStrip projectId="proj_1" />);
+    render(<ConnectEnvironmentsStrip projectId="kd7abc123def456ghi789" />);
     expect(
       screen.getByTestId("connect-environments-strip-empty")
     ).toBeInTheDocument();
@@ -127,7 +135,7 @@ describe("ConnectEnvironmentsStrip", () => {
     mockEnvironments.value = [];
     mockCanManage.value = false;
     const { container } = render(
-      <ConnectEnvironmentsStrip projectId="proj_1" />
+      <ConnectEnvironmentsStrip projectId="kd7abc123def456ghi789" />
     );
     expect(container).toBeEmptyDOMElement();
   });
@@ -135,7 +143,7 @@ describe("ConnectEnvironmentsStrip", () => {
   it("renders nothing while environments are still loading", () => {
     mockEnvironments.value = undefined;
     const { container } = render(
-      <ConnectEnvironmentsStrip projectId="proj_1" />
+      <ConnectEnvironmentsStrip projectId="kd7abc123def456ghi789" />
     );
     expect(container).toBeEmptyDOMElement();
   });
@@ -143,9 +151,9 @@ describe("ConnectEnvironmentsStrip", () => {
   it("Save as environment seeds the previewed host + honest nulls, then navigates", () => {
     mockEnvironments.value = [];
     mockPreviewedHostId.value = "host_1";
-    render(<ConnectEnvironmentsStrip projectId="proj_1" />);
+    render(<ConnectEnvironmentsStrip projectId="kd7abc123def456ghi789" />);
     fireEvent.click(screen.getByTestId("connect-environments-save-as"));
-    expect(mockSaveSeed).toHaveBeenCalledWith("proj_1", {
+    expect(mockSaveSeed).toHaveBeenCalledWith("kd7abc123def456ghi789", {
       hostId: "host_1",
       name: "Claude Code",
       serverAttachmentId: null,
@@ -156,9 +164,9 @@ describe("ConnectEnvironmentsStrip", () => {
 
   it("Save as environment with no previewed host still seeds (hostId null, no name)", () => {
     mockEnvironments.value = [];
-    render(<ConnectEnvironmentsStrip projectId="proj_1" />);
+    render(<ConnectEnvironmentsStrip projectId="kd7abc123def456ghi789" />);
     fireEvent.click(screen.getByTestId("connect-environments-save-as"));
-    expect(mockSaveSeed).toHaveBeenCalledWith("proj_1", {
+    expect(mockSaveSeed).toHaveBeenCalledWith("kd7abc123def456ghi789", {
       hostId: null,
       serverAttachmentId: null,
       skillSelection: null,
@@ -167,7 +175,7 @@ describe("ConnectEnvironmentsStrip", () => {
   });
 
   it("populated strip: header CTA present for admins, hidden for members", () => {
-    render(<ConnectEnvironmentsStrip projectId="proj_1" />);
+    render(<ConnectEnvironmentsStrip projectId="kd7abc123def456ghi789" />);
     expect(
       screen.getByTestId("connect-environments-save-as")
     ).toBeInTheDocument();
@@ -177,7 +185,7 @@ describe("ConnectEnvironmentsStrip", () => {
     mockEnvironments.value = [
       {
         environmentId: "env_1",
-        projectId: "proj_1",
+        projectId: "kd7abc123def456ghi789",
         name: "Staging",
         hostId: "host_1",
         computerEnvironmentId: "img_1",
@@ -186,18 +194,18 @@ describe("ConnectEnvironmentsStrip", () => {
         updatedAt: 1,
       },
     ];
-    render(<ConnectEnvironmentsStrip projectId="proj_1" />);
+    render(<ConnectEnvironmentsStrip projectId="kd7abc123def456ghi789" />);
     expect(
       screen.getByTestId("connect-environment-image-env_1")
     ).toHaveTextContent("Node 20");
-    expect(mockSandboxImages).toHaveBeenCalledWith("proj_1");
+    expect(mockSandboxImages).toHaveBeenCalledWith("kd7abc123def456ghi789");
   });
 
   it("falls back to a truncated raw id when the pinned image was deleted", () => {
     mockEnvironments.value = [
       {
         environmentId: "env_1",
-        projectId: "proj_1",
+        projectId: "kd7abc123def456ghi789",
         name: "Staging",
         hostId: "host_1",
         computerEnvironmentId: "img_gone_123456789",
@@ -206,14 +214,14 @@ describe("ConnectEnvironmentsStrip", () => {
         updatedAt: 1,
       },
     ];
-    render(<ConnectEnvironmentsStrip projectId="proj_1" />);
+    render(<ConnectEnvironmentsStrip projectId="kd7abc123def456ghi789" />);
     expect(
       screen.getByTestId("connect-environment-image-env_1")
     ).toHaveTextContent("image img_gone…");
   });
 
   it("unpinned card shows no image chip; computers flag off shows none and skips the query", () => {
-    render(<ConnectEnvironmentsStrip projectId="proj_1" />);
+    render(<ConnectEnvironmentsStrip projectId="kd7abc123def456ghi789" />);
     expect(
       screen.queryByTestId("connect-environment-image-env_1")
     ).not.toBeInTheDocument();
@@ -223,7 +231,7 @@ describe("ConnectEnvironmentsStrip", () => {
     mockEnvironments.value = [
       {
         environmentId: "env_2",
-        projectId: "proj_1",
+        projectId: "kd7abc123def456ghi789",
         name: "Pinned",
         hostId: "host_1",
         computerEnvironmentId: "img_1",
@@ -232,16 +240,36 @@ describe("ConnectEnvironmentsStrip", () => {
         updatedAt: 1,
       },
     ];
-    render(<ConnectEnvironmentsStrip projectId="proj_1" />);
+    render(<ConnectEnvironmentsStrip projectId="kd7abc123def456ghi789" />);
     expect(
       screen.queryByTestId("connect-environment-image-env_2")
     ).not.toBeInTheDocument();
     expect(mockSandboxImages).toHaveBeenCalledWith(null);
   });
 
+  it("skips the image query entirely when no loaded row is pinned (review regression)", () => {
+    // Default fixture has no `computerEnvironmentId`, so the chip has nothing to
+    // resolve — the project-wide list request must not fire at all.
+    render(<ConnectEnvironmentsStrip projectId="kd7abc123def456ghi789" />);
+    expect(mockSandboxImages).toHaveBeenCalledWith(null);
+
+    // Empty strip: also nothing to resolve.
+    mockSandboxImages.mockClear();
+    mockEnvironments.value = [];
+    render(<ConnectEnvironmentsStrip projectId="kd7abc123def456ghi789" />);
+    expect(mockSandboxImages).toHaveBeenCalledWith(null);
+  });
+
+  it("skips the members query for a transient/non-Convex project id (review regression)", () => {
+    render(<ConnectEnvironmentsStrip projectId="local" />);
+    // An invalid id must not reach `projects:getProjectMembers` — it would fail
+    // Convex arg validation while Connect resolves its shared project.
+    expect(mockMembersQueryProjectId).toHaveBeenCalledWith(null);
+  });
+
   it("populated strip hides the CTA for non-admins but keeps the cards", () => {
     mockCanManage.value = false;
-    render(<ConnectEnvironmentsStrip projectId="proj_1" />);
+    render(<ConnectEnvironmentsStrip projectId="kd7abc123def456ghi789" />);
     expect(
       screen.queryByTestId("connect-environments-save-as")
     ).not.toBeInTheDocument();
@@ -249,7 +277,7 @@ describe("ConnectEnvironmentsStrip", () => {
   });
 
   it("shows only row-available data — never a resolved server count", () => {
-    render(<ConnectEnvironmentsStrip projectId="proj_1" />);
+    render(<ConnectEnvironmentsStrip projectId="kd7abc123def456ghi789" />);
 
     expect(screen.getByText("Staging")).toBeTruthy();
     // Client name comes from the hosts query Connect already runs.
@@ -265,7 +293,7 @@ describe("ConnectEnvironmentsStrip", () => {
   });
 
   it("opens the selected environment in the Playground", () => {
-    render(<ConnectEnvironmentsStrip projectId="proj_1" />);
+    render(<ConnectEnvironmentsStrip projectId="kd7abc123def456ghi789" />);
     fireEvent.click(screen.getByTestId("connect-environment-open-env_1"));
 
     // Both halves, in this order: the Playground reads the previewed
@@ -273,7 +301,7 @@ describe("ConnectEnvironmentsStrip", () => {
     // previous target.
     expect(
       JSON.parse(localStorage.getItem("mcp-previewed-environment-id") ?? "{}")
-    ).toEqual({ proj_1: "env_1" });
+    ).toEqual({ kd7abc123def456ghi789: "env_1" });
     expect(mockNavigateApp).toHaveBeenCalledWith("/playground");
   });
 
@@ -282,21 +310,21 @@ describe("ConnectEnvironmentsStrip", () => {
     // regardless. `useHostList` and the previewed-environment storage do not —
     // untrimmed they would label every card "Unknown client" and write the
     // selection under a scope the Playground never reads back.
-    render(<ConnectEnvironmentsStrip projectId="  proj_1  " />);
+    render(<ConnectEnvironmentsStrip projectId="  kd7abc123def456ghi789  " />);
 
     expect(mockUseHostList).toHaveBeenCalledWith(
-      expect.objectContaining({ projectId: "proj_1" })
+      expect.objectContaining({ projectId: "kd7abc123def456ghi789" })
     );
     expect(screen.getByText("Claude Code")).toBeTruthy();
 
     fireEvent.click(screen.getByTestId("connect-environment-open-env_1"));
     expect(
       JSON.parse(localStorage.getItem("mcp-previewed-environment-id") ?? "{}")
-    ).toEqual({ proj_1: "env_1" });
+    ).toEqual({ kd7abc123def456ghi789: "env_1" });
   });
 
   it("sends editing to /environments, not to an inline editor", () => {
-    render(<ConnectEnvironmentsStrip projectId="proj_1" />);
+    render(<ConnectEnvironmentsStrip projectId="kd7abc123def456ghi789" />);
     fireEvent.click(screen.getByTestId("connect-environments-manage"));
     expect(mockNavigateApp).toHaveBeenCalledWith("/environments");
   });
