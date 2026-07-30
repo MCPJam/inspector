@@ -134,6 +134,38 @@ function okInitialize(): Response {
   );
 }
 
+/**
+ * A server that has no `initialize` and answers `server/discover` with the given
+ * capabilities — the modern arm in isolation, so a capability-shape verdict is not
+ * masked by the legacy arm accepting the same server.
+ */
+function discoverCapabilitiesFetch(
+  capabilities: unknown,
+  instructions?: unknown
+): typeof fetch {
+  return vi.fn(async (_url: string, init: RequestInit) => {
+    const parsed = JSON.parse(String(init.body)) as { method: string };
+    if (parsed.method === "initialize") {
+      return new Response("{}", {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        result: {
+          supportedVersions: ["2026-07-28"],
+          capabilities,
+          ...(instructions === undefined ? {} : { instructions }),
+        },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
+  }) as unknown as typeof fetch;
+}
+
 describe("buildAndStart", () => {
   it("locks down egress AFTER the build and BEFORE the server starts", async () => {
     const box = fakeSandbox();
@@ -687,6 +719,115 @@ describe("waitForMcpInitialize", () => {
         timeoutMs: 5,
       })
     ).toBe(false);
+  });
+
+  it("does not accept a discover result whose nested capability flags are mistyped", async () => {
+    // `ServerCapabilitiesSchema` types `tools.listChanged` as a boolean, and the
+    // client runs that schema over the discover result. `{ listChanged: "yes" }` is
+    // an object at the top level and a violation one level down, so the client
+    // classifies this result `legacy` and declines the modern era — which is the
+    // only thing this arm is asked about.
+    const fetchImpl = discoverCapabilitiesFetch({
+      tools: { listChanged: "yes" },
+    });
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 5,
+      })
+    ).toBe(false);
+  });
+
+  it("does not accept a discover result whose extensions are not a map of objects", async () => {
+    // `extensions` is a record of name → object, so a bare `true` fails the schema,
+    // as does a member that is not an object.
+    for (const extensions of [true, { "com.example/thing": "on" }]) {
+      expect(
+        await waitForMcpInitialize("https://box/mcp", {
+          ...seams,
+          fetchImpl: discoverCapabilitiesFetch({ extensions }),
+          timeoutMs: 5,
+        })
+      ).toBe(false);
+    }
+  });
+
+  it("accepts a discover result whose nested capabilities are all well typed", async () => {
+    // The other direction, and the one that would hurt: every typed member here is
+    // the type the schema asks for, and the unknown extension member is an object,
+    // so the client drives this server in the modern era. Rejecting it would be a
+    // false `server_unhealthy` on a working PR.
+    const fetchImpl = discoverCapabilitiesFetch(
+      {
+        tools: { listChanged: true },
+        prompts: {},
+        resources: { subscribe: true, listChanged: false },
+        logging: {},
+        experimental: { "com.example/lab": {} },
+        extensions: { "com.example/thing": { enabled: true } },
+        tasks: { list: {}, requests: { tools: { call: {} } } },
+      },
+      "how to drive me"
+    );
+    expect(
+      await waitForMcpInitialize("https://box/mcp", { ...seams, fetchImpl })
+    ).toBe(true);
+  });
+
+  it("does not accept a discover result whose instructions are not a string", async () => {
+    const fetchImpl = discoverCapabilitiesFetch({ tools: {} }, 42);
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 5,
+      })
+    ).toBe(false);
+  });
+
+  it("does not accept an answer whose event type carries trailing whitespace", async () => {
+    // The parser strips ONE optional space after the colon and keeps the rest, so
+    // this event's type is `"message "` — which is not `"message"`, so the transport
+    // drops it. Trimming the value here would normalise it and accept an answer the
+    // eval run never receives.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          `event: message \ndata: ${JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: INITIALIZE_RESULT,
+          })}\n\n`,
+          { status: 200, headers: { "content-type": "text/event-stream" } }
+        )
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 5,
+      })
+    ).toBe(false);
+  });
+
+  it("accepts a data field written with no space after the colon", async () => {
+    // `data:{...}` is legal and the space is optional, so the single-space rule must
+    // not eat the payload's first character.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          `data:${JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: INITIALIZE_RESULT,
+          })}\n\n`,
+          { status: 200, headers: { "content-type": "text/event-stream" } }
+        )
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", { ...seams, fetchImpl })
+    ).toBe(true);
   });
 
   it("does not accept a correct result served with the wrong content type", async () => {

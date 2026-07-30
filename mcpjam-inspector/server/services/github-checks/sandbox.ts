@@ -995,12 +995,12 @@ function ssePayloads(text: string, streamEnded: boolean): string[] {
   for (let index = 0; index < lineCount; index += 1) {
     const line = segments[index];
     if (line.startsWith("data:")) {
-      current.push(line.slice("data:".length).trim());
+      current.push(sseFieldValue(line, "data:"));
       continue;
     }
     if (line.startsWith("event:")) {
       // Last one wins within an event, per the spec.
-      eventName = line.slice("event:".length).trim();
+      eventName = sseFieldValue(line, "event:");
       continue;
     }
     // A blank line ends the event. Any other field (`id:`, `retry:`, a comment)
@@ -1009,6 +1009,22 @@ function ssePayloads(text: string, streamEnded: boolean): string[] {
   }
   if (streamEnded) flush();
   return payloads.filter((payload) => payload.length > 0);
+}
+
+/**
+ * The value of an SSE field line, stripped exactly the way the transport's parser
+ * strips it: ONE optional space after the colon, and nothing else.
+ *
+ * Trimming instead is wrong in a way that matters for `event:`. The parser keeps
+ * the rest of the whitespace, so `event: message ` is the event type `"message "`,
+ * which is not `"message"` and is therefore dropped — while a trim would normalise
+ * it to `message` and let the probe accept an answer the eval run never receives.
+ * For `data:` the difference is invisible to `JSON.parse`, but a payload assembled
+ * from several fields is joined verbatim, so the same rule keeps that text intact.
+ */
+function sseFieldValue(line: string, field: string): string {
+  const value = line.slice(field.length);
+  return value.startsWith(" ") ? value.slice(1) : value;
 }
 
 /**
@@ -1046,15 +1062,20 @@ function isUsableInitializeResponse(parsed: unknown): boolean {
 }
 
 /**
- * The capability fields the client's schema gives a shape to. Every one it types
- * is an object, so `tools: true` is a schema violation the client will reject.
+ * The capability fields typed as objects by the shape a server is expected to send.
  *
- * Deliberately a closed list rather than "every value must be an object": the
- * client's capabilities schema passes unknown keys through untouched, so a server
- * advertising some extension as a bare string is still one the eval run can
- * drive. Rejecting it here would be stricter than the client — a false
- * `server_unhealthy` on a working PR, which is the failure this whole predicate
- * exists to avoid.
+ * This is the LEGACY arm's check, and it is deliberately shallow. `_legacyHandshake`
+ * assigns `result.capabilities` straight through without running a schema over it
+ * — the JSON-RPC envelope validates `result` as a loose object and stops there — so
+ * nothing below is forced by the client on this path. Nested field types are
+ * mirrored only on the discover arm, where the client really does run
+ * `ServerCapabilitiesSchema`.
+ *
+ * A closed list rather than "every value must be an object": the capabilities shape
+ * passes unknown keys through untouched, so a server advertising some extension as
+ * a bare string is still one the eval run can drive. Rejecting it here would be
+ * stricter than the client — a false `server_unhealthy` on a working PR, which is
+ * the failure this whole predicate exists to avoid.
  */
 const TYPED_CAPABILITY_FIELDS = [
   "tools",
@@ -1083,7 +1104,14 @@ function isUsableCapabilities(value: unknown): boolean {
  *     MODERN arm can actually speak — an endpoint offering nothing in common is
  *     no more usable than a legacy server naming an unsupported version, and one
  *     offering only legacy revisions is a question for the legacy probe;
- *   - `capabilities`, an object whose typed fields are objects.
+ *   - `capabilities` and `instructions` as the discover result schema types them.
+ *
+ * Unlike the legacy arm, this one has a schema to mirror and mirrors it. The client
+ * runs the discover result through `codecForVersion(...).validateResult`, and a
+ * result that FAILS is classified `legacy` — the connection falls back to
+ * `initialize` rather than erroring. So a payload rejected here is not necessarily
+ * a dead server; it is a server the client will not drive in the modern era, which
+ * is precisely what this arm is asked about. The legacy arm answers the rest.
  *
  * Server identity lives in `_meta` here and is a SHOULD, not a member of the
  * result, so its absence is not a defect and is not required.
@@ -1094,6 +1122,7 @@ function isUsableDiscoverResponse(parsed: unknown): boolean {
   const discover = result as {
     supportedVersions?: unknown;
     capabilities?: unknown;
+    instructions?: unknown;
   };
   if (!Array.isArray(discover.supportedVersions)) return false;
   const offered = discover.supportedVersions.filter(
@@ -1103,7 +1132,99 @@ function isUsableDiscoverResponse(parsed: unknown): boolean {
   if (!offered.some((version) => MODERN_PROBE_ACCEPTED_VERSIONS.has(version))) {
     return false;
   }
-  return isUsableCapabilities(discover.capabilities);
+  if (
+    discover.instructions !== undefined &&
+    typeof discover.instructions !== "string"
+  ) {
+    return false;
+  }
+  return matchesServerCapabilitiesSchema(discover.capabilities);
+}
+
+/**
+ * The capability fields whose nested flags the schema types as booleans.
+ */
+const CAPABILITY_BOOLEAN_FLAGS: ReadonlyArray<
+  readonly [string, readonly string[]]
+> = [
+  ["tools", ["listChanged"]],
+  ["prompts", ["listChanged"]],
+  ["resources", ["subscribe", "listChanged"]],
+];
+
+/**
+ * Whether `capabilities` would survive `ServerCapabilitiesSchema`, the schema the
+ * client validates a `server/discover` result with.
+ *
+ * Mirrored field by field rather than shape-only, because the schema types the
+ * nesting: `tools: { listChanged: "yes" }` and `extensions: true` are both objects
+ * at the top level and both rejected a level down. A probe that stops at "is it an
+ * object" reports the modern arm healthy for a server the client declines to drive
+ * there.
+ *
+ * Unknown keys stay welcome, at every level the schema leaves open: the capability
+ * objects are non-strict, so extra members are ignored rather than fatal, and
+ * capabilities is explicitly "not a closed set". Only the members it gives a type
+ * are checked. `JSONObject`-typed fields need only be objects — anything that came
+ * off the wire as JSON already satisfies the value type.
+ */
+function matchesServerCapabilitiesSchema(value: unknown): boolean {
+  if (!isPlainObject(value)) return false;
+  const capabilities = value as Record<string, unknown>;
+
+  for (const field of ["logging", "completions"] as const) {
+    const capability = capabilities[field];
+    if (capability !== undefined && !isPlainObject(capability)) return false;
+  }
+
+  // Name-keyed maps of objects, not free-form values.
+  for (const field of ["experimental", "extensions"] as const) {
+    const record = capabilities[field];
+    if (record === undefined) continue;
+    if (!isPlainObject(record)) return false;
+    const entries = Object.values(record as Record<string, unknown>);
+    if (!entries.every((entry) => isPlainObject(entry))) return false;
+  }
+
+  for (const [field, flags] of CAPABILITY_BOOLEAN_FLAGS) {
+    const capability = capabilities[field];
+    if (capability === undefined) continue;
+    if (!isPlainObject(capability)) return false;
+    const flagged = capability as Record<string, unknown>;
+    const flagsAreBooleans = flags.every(
+      (flag) =>
+        flagged[flag] === undefined || typeof flagged[flag] === "boolean"
+    );
+    if (!flagsAreBooleans) return false;
+  }
+
+  return matchesTasksCapabilitySchema(capabilities.tasks);
+}
+
+/**
+ * The `tasks` capability, whose schema nests two levels deeper
+ * (`requests.tools.call`) and types every level as an object.
+ */
+function matchesTasksCapabilitySchema(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (!isPlainObject(value)) return false;
+  const tasks = value as Record<string, unknown>;
+
+  for (const field of ["list", "cancel"] as const) {
+    const capability = tasks[field];
+    if (capability !== undefined && !isPlainObject(capability)) return false;
+  }
+
+  const requests = tasks.requests;
+  if (requests === undefined) return true;
+  if (!isPlainObject(requests)) return false;
+
+  const tools = (requests as Record<string, unknown>).tools;
+  if (tools === undefined) return true;
+  if (!isPlainObject(tools)) return false;
+
+  const call = (tools as Record<string, unknown>).call;
+  return call === undefined || isPlainObject(call);
 }
 
 /**
