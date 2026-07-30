@@ -261,11 +261,20 @@ jobs:
     needs:
       - preflight
       - artifact-gate
+      - deploy-backend-prod
+    # Publishing is gated on the backend deployment because a released client
+    # can start sending a new field the moment it lands on npm. Shipping the
+    # Convex schema first means the window where a fresh client talks to a
+    # backend that does not understand it yet never opens.
     if: |
       always() &&
       needs.preflight.result == 'success' &&
       needs.artifact-gate.result == 'success' &&
-      needs.preflight.outputs.publish_any == 'true'
+      needs.preflight.outputs.publish_any == 'true' &&
+      (
+        !fromJSON(inputs.deploy_backend_prod) ||
+        needs.deploy-backend-prod.result == 'success'
+      )
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -338,10 +347,15 @@ jobs:
   deploy-backend-prod:
     needs:
       - preflight
-      - publish-packages
+      - artifact-gate
+    # Runs ahead of publish-packages. `publish_any` is still required so a run
+    # that publishes nothing does not deploy the backend on its own — that was
+    # the effect of the old gate on publish-packages having succeeded.
     if: |
       always() &&
-      needs.publish-packages.result == 'success' &&
+      needs.preflight.result == 'success' &&
+      needs.artifact-gate.result == 'success' &&
+      needs.preflight.outputs.publish_any == 'true' &&
       fromJSON(inputs.deploy_backend_prod)
     runs-on: ubuntu-latest
     environment: backend-production
