@@ -6,6 +6,18 @@ import { z } from "zod";
 
 export type BridgeMode = "adapter" | "manager";
 
+export type JsonRpcBridgeOptions = {
+  /**
+   * Observation-only hook for a failed `tools/call`. Failures in the hook are
+   * isolated so they can never change the JSON-RPC response.
+   */
+  onToolCallError?: (context: {
+    error: unknown;
+    serverId: string;
+    toolCallId?: string;
+  }) => void;
+};
+
 type JsonRpcBody = {
   id?: string | number | null;
   method?: string;
@@ -155,7 +167,8 @@ export async function handleJsonRpc(
   serverId: string,
   body: JsonRpcBody,
   clientManager: MCPClientManager,
-  mode: BridgeMode
+  mode: BridgeMode,
+  options: JsonRpcBridgeOptions = {},
 ): Promise<any | null> {
   const id = (body?.id ?? null) as any;
   const method = body?.method as string | undefined;
@@ -217,8 +230,8 @@ export async function handleJsonRpc(
         return respond({ result: { tools } });
       }
       case "tools/call": {
+        let targetServerId = serverId;
         try {
-          let targetServerId = serverId;
           let toolName = params?.name as string | undefined;
           if (toolName?.includes(":")) {
             const [prefix, actualName] = toolName.split(":", 2);
@@ -243,6 +256,18 @@ export async function handleJsonRpc(
           // adapter mode returns raw call-tool result for compatibility
           return respond({ result: exec });
         } catch (e: any) {
+          try {
+            options.onToolCallError?.({
+              error: e,
+              serverId: targetServerId,
+              ...(typeof id === "string" || typeof id === "number"
+                ? { toolCallId: String(id) }
+                : {}),
+            });
+          } catch {
+            // Observation-only: never turn a side-channel failure into an MCP
+            // tool failure different from the upstream error.
+          }
           if (mode === "manager") {
             const result = {
               content: [

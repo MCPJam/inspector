@@ -47,6 +47,14 @@ export interface ProjectEnvironmentView {
    * (undefined = unchanged) rather than sending it and clearing the pins.
    */
   pluginVersionIds?: string[];
+  /**
+   * Sandbox-image pin: the `computerEnvironments` image (see
+   * `useSandboxImages.ts` — NOT another project environment, despite the
+   * backend field name) that reproducibility runs boot a fresh ephemeral
+   * sandbox from. Backend accepts project-shared images only. Absent ⇒
+   * provider default base image.
+   */
+  computerEnvironmentId?: string | null;
   /** Bumped on every effective edit; optimistic-concurrency token. */
   revision: number;
   /** Present ⇒ archived (hidden from pickers; launches fail fast). */
@@ -131,6 +139,8 @@ export function useCreateProjectEnvironment(): (args: {
    * is REJECTED by the backend — omit the field to mean "no pins".
    */
   pluginVersionIds?: string[];
+  /** Sandbox-image pin; omit for the default base image (create never clears). */
+  computerEnvironmentId?: string;
 }) => Promise<ProjectEnvironmentView> {
   return useMutation("projectEnvironments:createEnvironment" as any) as never;
 }
@@ -160,6 +170,13 @@ export function useUpdateProjectEnvironment(): (args: {
    * the API or CLI. An empty array is rejected by the backend.
    */
   pluginVersionIds?: string[] | null;
+  /**
+   * Sandbox-image pin. Tri-state like the fields above: OMIT to leave the pin
+   * untouched, `null` to clear it, a value to set it. A form that does not
+   * RENDER the picker (e.g. the `computers-enabled` flag is off) must omit the
+   * field — sending `null` would silently drop a pin set through the API/CLI.
+   */
+  computerEnvironmentId?: string | null;
 }) => Promise<ProjectEnvironmentView> {
   return useMutation("projectEnvironments:updateEnvironment" as any) as never;
 }

@@ -488,7 +488,7 @@ export function ComputerTerminal({
             </div>
           ) : null}
           {showOverlay ? (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background/80 text-sm">
+            <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-background/80 text-sm">
               {state === "connecting" ? (
                 <span className="inline-flex items-center gap-2 text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin" />
