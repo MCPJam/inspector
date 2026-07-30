@@ -11,6 +11,12 @@ declare module "hono" {
     guestId?: string;
     requestLogContext?: RequestLogContext;
     /**
+     * Code + message from the last `webError()` on this request. Set so
+     * `requestLogContextMiddleware` can record *why* a returned (non-thrown)
+     * 5xx failed; without it the middleware only ever sees a status code.
+     */
+    webErrorMeta?: { status: number; code: string; message: string };
+    /**
      * Auth method used to resolve the caller. Set by `bearerAuthMiddleware`:
      * - `"workos_api_key"` — caller presented a WorkOS `sk_…` API key
      *   (validated via `WorkOS.apiKeys.createValidation`).

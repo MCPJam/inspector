@@ -4,9 +4,11 @@ import {
   MCP_APPS_CHECK_IDS,
   MCPAppsConformanceSuite,
   MCPAppsConformanceTest,
+  isKnownProtocolVersion,
   type MCPAppsCheckCategory,
   type MCPAppsCheckId,
   type MCPAppsConformanceConfig,
+  type McpProtocolVersion,
 } from "@mcpjam/sdk";
 import { loadAppsSuiteConfig } from "../lib/config-file.js";
 import {
@@ -64,6 +66,7 @@ const APPS_CHECK_IDS_BY_CATEGORY: Record<
 export interface AppsConformanceOptions extends SharedServerTargetOptions {
   category?: string[];
   checkId?: string[];
+  protocolVersion?: string;
 }
 
 export interface AppsRenderOptions extends SharedServerTargetOptions {
@@ -174,6 +177,10 @@ export function registerAppsCommands(program: Command): void {
       .option(
         "--reporter <reporter>",
         "Structured reporter output: json-summary or junit-xml",
+      )
+      .option(
+        "--protocol-version <version>",
+        "Pin the MCP protocol version for the conformance connection (e.g. 2026-07-28). HTTP targets only.",
       ),
   ).action(async (options, command) => {
     const reporter = parseReporterFormat(options.reporter as string | undefined);
@@ -592,8 +599,23 @@ export function buildAppsConformanceConfig(
         )
       : undefined;
 
+  const trimmedProtocolVersion = options.protocolVersion?.trim();
+  let mcpProtocolVersion: McpProtocolVersion | undefined;
+  if (trimmedProtocolVersion) {
+    if (!isKnownProtocolVersion(trimmedProtocolVersion)) {
+      throw usageError(`Unknown --protocol-version: ${trimmedProtocolVersion}`);
+    }
+    if (!("url" in serverConfig) || !serverConfig.url) {
+      throw usageError(
+        "--protocol-version can only be used with an HTTP target (--url).",
+      );
+    }
+    mcpProtocolVersion = trimmedProtocolVersion;
+  }
+
   return {
     ...serverConfig,
+    ...(mcpProtocolVersion ? { mcpProtocolVersion } : {}),
     ...(resolvedCheckIds && resolvedCheckIds.length > 0
       ? { checkIds: resolvedCheckIds as MCPAppsConformanceConfig["checkIds"] }
       : {}),

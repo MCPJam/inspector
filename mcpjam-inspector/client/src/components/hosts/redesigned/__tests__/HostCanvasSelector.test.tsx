@@ -113,7 +113,7 @@ describe("HostCanvasSelector", () => {
     });
   });
 
-  it("opens the client menu downward, below the top-left pills", async () => {
+  it("opens the client menu downward, below the nav-row pills", async () => {
     const user = userEvent.setup();
     mockUseHostList.mockReturnValue({ hosts: twoHosts, isLoading: false });
     render(<HostCanvasSelector projectId="proj-1" activeHostId="host-a" />);
