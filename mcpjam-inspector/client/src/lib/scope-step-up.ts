@@ -33,13 +33,49 @@ import {
   applyToolCallStepUp,
   resetToolCallStepUp,
 } from "@/state/oauth-orchestrator";
-import type { ServerWithName } from "@/state/app-types";
+import {
+  findProjectByAnyId,
+  type AppState,
+  type ServerWithName,
+} from "@/state/app-types";
 
 /**
  * Servers with a step-up in flight. Module-level so the dedup holds ACROSS
  * surfaces; keyed by server name, cleared when the attempt settles.
  */
 const inFlight = new Set<string>();
+
+/**
+ * Resolve a stream/app event's server identifier against the same local and
+ * project-scoped maps on every scope-step-up delivery path.
+ *
+ * The project goes through `findProjectByAnyId` because a hosted event's
+ * `projectId` can be the Convex/shared id rather than the local key
+ * `AppState.projects` is keyed by; a bare key lookup would miss the project
+ * and dead-end the step-up for a server held only in the project map.
+ */
+export function resolveScopeStepUpServer(
+  appState: AppState | null | undefined,
+  input: {
+    serverId: string;
+    serverName?: string;
+    projectId?: string | null;
+  },
+): ServerWithName | undefined {
+  if (!appState) return undefined;
+  const activeProject = findProjectByAnyId(
+    appState.projects,
+    input.projectId ?? appState.activeProjectId,
+  );
+  return (
+    (input.serverName
+      ? (appState.servers[input.serverName] ??
+        activeProject?.servers[input.serverName])
+      : undefined) ??
+    appState.servers[input.serverId] ??
+    activeProject?.servers[input.serverId]
+  );
+}
 
 /** Test seam: no production caller should need this. */
 export function __resetScopeStepUpInFlightForTests(): void {

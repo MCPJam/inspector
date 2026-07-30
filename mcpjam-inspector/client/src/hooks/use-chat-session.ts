@@ -28,16 +28,19 @@ import {
   type ChatTransport,
   DefaultChatTransport,
   generateId,
-  lastAssistantMessageIsCompleteWithApprovalResponses,
-  lastAssistantMessageIsCompleteWithToolCalls,
   type ModelMessage,
 } from "ai";
+import { shouldAutoResumeTurn } from "@/lib/chat-auto-resume";
 import {
   useAppToolsRegistry,
   recordAppToolInvocation,
 } from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
 import { scrubAppToolResultForModel } from "@/components/chat-v2/thread/mcp-apps/app-tools-sanitizer";
-import { driveScopeStepUp, resetScopeStepUp } from "@/lib/scope-step-up";
+import {
+  driveScopeStepUp,
+  resetScopeStepUp,
+  resolveScopeStepUpServer,
+} from "@/lib/scope-step-up";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvex, useConvexAuth } from "convex/react";
 import { ModelDefinition, type ModelProvider } from "@/shared/types";
@@ -145,6 +148,11 @@ import {
   isHarnessResetDataPart,
   type HarnessResetReason,
 } from "@/shared/harness-session";
+import {
+  HOSTED_TASKS_VERSION,
+  isTaskCreatedDataPart,
+} from "@/shared/hosted-task-created";
+import { getTrackedTaskScope, trackTask } from "@/lib/task-tracker";
 import { useHarnessWorkdirStore } from "@/stores/harness-workdir-store";
 import { ingestHostedRpcLogsFromResponse } from "@/lib/apis/web/rpc-logs";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
@@ -1668,17 +1676,11 @@ export function useChatSession(
             // visitor (even an authenticated one) does not own the host's MCP
             // servers and cannot re-authorize the owner's OAuth; connect-time
             // chatbox OAuth is handled separately by `useHostedOAuthGate`.
-            const activeProject =
-              appState?.projects?.[
-                hostedProjectId ?? appState?.activeProjectId ?? ""
-              ];
-            const server =
-              (event.serverName
-                ? (appState?.servers?.[event.serverName] ??
-                  activeProject?.servers?.[event.serverName])
-                : undefined) ??
-              appState?.servers?.[event.serverId] ??
-              activeProject?.servers?.[event.serverId];
+            const server = resolveScopeStepUpServer(appState, {
+              serverId: event.serverId,
+              serverName: event.serverName,
+              projectId: hostedProjectId,
+            });
             // The shared lifecycle applies the same actionable-challenge gate
             // (a `requiredScope` OR a `resourceMetadataUrl` is now actionable —
             // discovery consumes the PRM pointer, SEP-2350 follow-up to #3427)
@@ -1767,6 +1769,39 @@ export function useChatSession(
           // explained reset, not the model silently "forgetting".
           const message = HARNESS_RESET_MESSAGES[part.data.reason];
           if (message) toast.info(message);
+        } else if (isTaskCreatedDataPart(part)) {
+          // Track it and stop. Deliberately NO navigation: a chat turn must
+          // not yank the user out of the conversation to a task list.
+          //
+          // `trackTask` needs nothing added for at-least-once delivery — it
+          // dedupes on the full task identity, so a duplicated part is a
+          // no-op. The scope is passed EXPLICITLY, from the value captured at
+          // submit: letting `trackTask` stamp the live active scope was the
+          // bug — a part delivered after a mid-stream project switch filed
+          // the task under the NEW project.
+          //
+          // Keyed by server NAME when the server sent one: the tracker and the
+          // Tasks tab both read by name, while a hosted `serverId` is a Convex
+          // document id, so tracking under the id files the task where the
+          // Tasks tab never looks.
+          trackTask({
+            taskId: part.data.taskId,
+            serverId: part.data.serverName ?? part.data.serverId,
+            wire: part.data.wire,
+            // Required by the tracker. The server's own timestamp when it sent
+            // one; a local reading only as a last resort, since the tracker
+            // renders it as the handle's age.
+            createdAt: part.data.createdAt ?? new Date().toISOString(),
+            ...(part.data.toolName ? { toolName: part.data.toolName } : {}),
+            ...(part.data.status ? { status: part.data.status } : {}),
+            ...(part.data.ttlMs !== undefined ? { ttlMs: part.data.ttlMs } : {}),
+            ...(part.data.pollIntervalMs !== undefined
+              ? { pollIntervalMs: part.data.pollIntervalMs }
+              : {}),
+            ...(turnTaskScopeRef.current !== undefined
+              ? { scope: turnTaskScopeRef.current }
+              : {}),
+          });
         }
         return;
       }
@@ -2003,6 +2038,12 @@ export function useChatSession(
     serverIds: string[];
     serverNames: string[];
   } | null>(null);
+  // The auth/org scope the CURRENT turn started under, captured once at
+  // submit (in the transport body builder) and read by the task-created
+  // data-part handler. A task created by a turn belongs to the scope the turn
+  // was submitted under — never to whatever scope happens to be active when a
+  // late part arrives after a project switch.
+  const turnTaskScopeRef = useRef<string | undefined>(undefined);
 
   const transport = useMemo(() => {
     const shouldUseOrgAwareChatApi =
@@ -2091,6 +2132,11 @@ export function useChatSession(
         // durable continuation path — when it sees this, so a stale bundle is
         // never handed a `continuationId` it can do nothing with.
         hostedMrtrVersion: HOSTED_MRTR_VERSION,
+        // Handshake: tells the server this bundle can track a task the turn
+        // creates. Unlike the two above, a mismatch here is NOT fatal — the
+        // server simply skips the bridge. The task already exists on the MCP
+        // server, so refusing the turn would fail a call that succeeded.
+        hostedTasksVersion: HOSTED_TASKS_VERSION,
         ...(isHostedDirectChat ? { directVisibility } : {}),
         // What this turn executes against. EXACTLY ONE of these two shapes ever
         // ships: `normalizeExecutionTarget` 400s on `hostId` + `executionTarget`
@@ -2128,6 +2174,15 @@ export function useChatSession(
       api: chatApi,
       fetch: chatFetch,
       body: () => {
+        // Capture the task scope this turn is SUBMITTED under, next to
+        // `buildHostedBody` (which hard-requires the project id): hosted
+        // turns scope created tasks by the turn's project, non-hosted turns
+        // by the tracker's active scope. Captured here — never read live in
+        // the data-part handler, whose closure is recreated on a project
+        // switch and would stamp the NEW project on a late part.
+        turnTaskScopeRef.current = shouldUseOrgAwareChatApi
+          ? hostedProjectId ?? undefined
+          : getTrackedTaskScope();
         const widgetModelContext = pendingWidgetModelContextRef.current;
         pendingWidgetModelContextRef.current = undefined;
         return {
@@ -2465,19 +2520,14 @@ export function useChatSession(
         registry.unregisterPendingCall(entry.instance.bridgeId, controller);
       }
     },
-    // Combine the approval predicate (existing) with the no-execute
-    // tool-call predicate (new). App-aliased tool calls are completed by
-    // our `onToolCall` above; that triggers an auto-send which carries
-    // the new tool results back to the server so the agent loop resumes.
-    // Both AI SDK helpers take the options object: `({ messages }) => …`.
-    // The approval branch is deliberately NOT gated on the CURRENT
-    // `requireToolApproval`: a pill minted while the toggle was on must
-    // still resume the turn if the user flips it off before answering, and
-    // the predicate is inert when the message holds no approval requests.
-    sendAutomaticallyWhen: (options) => {
-      if (lastAssistantMessageIsCompleteWithToolCalls(options)) return true;
-      return lastAssistantMessageIsCompleteWithApprovalResponses(options);
-    },
+    // Resume once the last step's tool calls settle (app-aliased calls are
+    // completed by `onToolCall` above; that auto-send carries their results
+    // back so the agent loop resumes) or its approvals are answered — but
+    // never while an approval pill is still pending (BUG-4). Shared with the
+    // agent surface so the two can't drift; see `shouldAutoResumeTurn` for the
+    // full rationale, including why the approval branch is not gated on the
+    // current `requireToolApproval`.
+    sendAutomaticallyWhen: shouldAutoResumeTurn,
   });
   const messagesRef = useRef(messages);
   messagesRef.current = messages;

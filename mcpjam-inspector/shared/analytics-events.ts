@@ -68,6 +68,8 @@ export const ANALYTICS_EVENTS = {
   chat_cleared: { source: "client" },
   chat_model_selector_clicked: { source: "client" },
   chat_options_plus_clicked: { source: "client" },
+  // Every starter-chip surface fires this one event; props: prompt (chip
+  // text), location: chat_tab | playground_single | playground_compare.
   chat_starter_prompt_clicked: { source: "client" },
   chat_tab_viewed: { source: "client" },
   chat_voice_input_recording_canceled: { source: "client" },

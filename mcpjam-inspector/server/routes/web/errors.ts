@@ -101,6 +101,13 @@ export function webError(
     string,
     unknown
   > & { normalized?: NormalizedError };
+  // Stash the real code/message for `requestLogContextMiddleware`. A route that
+  // *returns* an error response (rather than throwing) leaves the middleware
+  // with nothing but a status code, so every such 5xx used to log as the
+  // catch-all "internal_error" regardless of its actual cause.
+  if (typeof c?.set === "function") {
+    c.set("webErrorMeta", { status, code, message });
+  }
   return c.json(
     {
       ...restExtras,
@@ -196,7 +203,7 @@ export function mapRuntimeError(error: unknown): WebRouteError {
     return new WebRouteError(
       502,
       ErrorCode.SERVER_UNREACHABLE,
-      message,
+      formatServerUnreachableMessage(message),
       undefined,
       normalized
     );
@@ -205,9 +212,24 @@ export function mapRuntimeError(error: unknown): WebRouteError {
   return new WebRouteError(
     500,
     ErrorCode.INTERNAL_ERROR,
-    message,
+    message.trim() || "An unexpected error occurred.",
     undefined,
     normalized
+  );
+}
+
+/**
+ * User-facing framing for connection-class 502s. The raw errno text
+ * ("fetch failed", "ECONNRESET") reads like an MCPJam outage in the client
+ * toast, when the failure is the TARGET server refusing/resetting the
+ * connection — say so explicitly, and keep the raw error for debugging.
+ */
+export function formatServerUnreachableMessage(rawMessage: string): string {
+  const raw = rawMessage.trim();
+  return (
+    "Couldn't reach the MCP server" +
+    (raw ? ` (${raw})` : "") +
+    ". The server appears to be down, restarting, or unreachable from MCPJam — this is a connection problem with the target server, not an MCPJam outage."
   );
 }
 

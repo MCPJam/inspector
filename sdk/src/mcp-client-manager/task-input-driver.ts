@@ -25,6 +25,7 @@
  * can, updates, and observes the next snapshot.
  */
 
+import { specTypeSchemas } from "@modelcontextprotocol/client";
 import type { InputRequests, InputResponses } from "./tasks-ext-types.js";
 import type { ClientCapabilityOptions } from "./types.js";
 import type { ElicitationContentValidator } from "./mrtr-driver.js";
@@ -67,7 +68,9 @@ export type TaskInputRejectionReason =
   /** The handler threw. */
   | "handler-failed"
   /** The request's own shape was invalid. */
-  | "malformed-request";
+  | "malformed-request"
+  /** The handler's response failed the method's canonical result schema. */
+  | "malformed-response";
 
 export class TaskInputRejectedError extends Error {
   readonly code = "TASK_INPUT_REJECTED";
@@ -82,6 +85,75 @@ export class TaskInputRejectedError extends Error {
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }
+
+/**
+ * The canonical spec-type schemas for each embedded method — the SAME
+ * validation the upstream client applies to a standalone server→client request
+ * before any app handler runs (SEP-2663 tasks.md: task `inputRequests` route
+ * through the standalone trust rules, not a laxer copy). A task channel must
+ * not accept a request the direct channel would have refused, and must not
+ * submit a response via `tasks/update` that the direct channel could not have
+ * produced.
+ */
+type CanonicalIssues = ReadonlyArray<{
+  readonly message?: string;
+  readonly path?: ReadonlyArray<PropertyKey | { readonly key: PropertyKey }>;
+}>;
+
+/**
+ * The spec-type schemas are typed as Standard Schema (their zod identity is a
+ * runtime detail), so validation goes through the `~standard` interface.
+ */
+interface CanonicalSchema {
+  readonly "~standard": {
+    validate(value: unknown): unknown;
+  };
+}
+
+function validateCanonical(
+  schema: CanonicalSchema,
+  value: unknown
+): { ok: true } | { ok: false; detail: string } {
+  const result = schema["~standard"].validate(value);
+  if (result instanceof Promise) {
+    // Spec-type schemas validate synchronously today; an async one cannot be
+    // awaited here, and unvalidated input must fail closed, not sail through.
+    return { ok: false, detail: "schema validated asynchronously" };
+  }
+  const issues = (result as { issues?: CanonicalIssues }).issues;
+  if (!issues || issues.length === 0) return { ok: true };
+  const issue = issues[0];
+  const path = issue?.path?.length
+    ? ` at ${issue.path
+        .map((segment) =>
+          typeof segment === "object" && segment !== null && "key" in segment
+            ? String(segment.key)
+            : String(segment)
+        )
+        .join(".")}`
+    : "";
+  return { ok: false, detail: `${issue?.message ?? "invalid"}${path}` };
+}
+
+const TASK_INPUT_REQUEST_SCHEMAS: Record<TaskInputMethod, CanonicalSchema> = {
+  "elicitation/create": specTypeSchemas.ElicitRequest,
+  "roots/list": specTypeSchemas.ListRootsRequest,
+  "sampling/createMessage": specTypeSchemas.CreateMessageRequest,
+};
+
+// Sampling accepts either result flavor: plain, or the tool-use variant the
+// modern spec allows a sampling handler to produce.
+const TASK_INPUT_RESPONSE_SCHEMAS: Record<
+  TaskInputMethod,
+  readonly CanonicalSchema[]
+> = {
+  "elicitation/create": [specTypeSchemas.ElicitResult],
+  "roots/list": [specTypeSchemas.ListRootsResult],
+  "sampling/createMessage": [
+    specTypeSchemas.CreateMessageResult,
+    specTypeSchemas.CreateMessageResultWithTools,
+  ],
+};
 
 /** A key this driver could not answer, with the reason to show the user. */
 export interface TaskInputRejection {
@@ -298,6 +370,12 @@ export async function collectTaskInputResponses(args: {
   }
 
   for (const key of keys.slice(0, limits.maxRequests)) {
+    // An aborted caller gets a truncated collection, not a string of forced
+    // failures: prompting the next key into a dead terminal would record a
+    // `handler-failed` for every remaining request, and the driver reads those
+    // rejections as "the task needs input this run could not answer" — the
+    // wrong verdict when the truth is "the user hit Ctrl-C".
+    if (signal?.aborted) break;
     if (respondedKeys.has(key)) {
       alreadyAnsweredKeys.push(key);
       continue;
@@ -358,6 +436,30 @@ export async function collectTaskInputResponses(args: {
       continue;
     }
 
+    // Canonical shape, judged against the FULL request (`params` presence
+    // rules differ per method: `roots/list` may omit them, `elicitation/create`
+    // may not) — the SAME schema the upstream client applies before a
+    // standalone handler runs. The raw `request.params` is validated rather
+    // than the `{}`-defaulted copy, so an absent params object is judged as
+    // absent. After the declaration gate deliberately: "you never declared
+    // this capability" is the more actionable verdict for a request that is
+    // both undeclared and malformed.
+    const canonical = validateCanonical(TASK_INPUT_REQUEST_SCHEMAS[method], {
+      method,
+      params: request.params,
+    });
+    if (!canonical.ok) {
+      rejections.push({
+        inputKey: key,
+        method,
+        reason: "malformed-request",
+        message:
+          `Input request "${key}" is not a valid ${method} request: ` +
+          canonical.detail,
+      });
+      continue;
+    }
+
     if (method === "elicitation/create") {
       const mode = (params.mode as string | undefined) ?? "form";
       if (!modes.includes(mode as ElicitationMode)) {
@@ -382,6 +484,11 @@ export async function collectTaskInputResponses(args: {
         signal,
       });
     } catch (error) {
+      // A handler torn down by the caller's abort is not a failed handler.
+      // The prompt's readline rejects when the signal fires, and recording
+      // that as `handler-failed` is what made a Ctrl-C mid-prompt settle as
+      // `input-required` instead of `aborted` upstream.
+      if (signal?.aborted) break;
       rejections.push({
         inputKey: key,
         method,
@@ -389,6 +496,26 @@ export async function collectTaskInputResponses(args: {
         message: error instanceof Error ? error.message : String(error),
       });
       continue;
+    }
+
+    {
+      // The response must be one the standalone channel could have produced:
+      // an `{action:"bogus"}` elicitation answer or a sampling result with no
+      // `model` is refused here, not submitted via `tasks/update`.
+      const shapes = TASK_INPUT_RESPONSE_SCHEMAS[method];
+      const outcomes = shapes.map((shape) => validateCanonical(shape, response));
+      if (!outcomes.some((outcome) => outcome.ok)) {
+        const first = outcomes[0];
+        rejections.push({
+          inputKey: key,
+          method,
+          reason: "malformed-response",
+          message:
+            `Handler response for "${key}" is not a valid ${method} result: ` +
+            (first && !first.ok ? first.detail : "invalid"),
+        });
+        continue;
+      }
     }
 
     if (method === "elicitation/create") {

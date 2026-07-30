@@ -1,5 +1,7 @@
 import { ConvexHttpClient } from "convex/browser";
 import type { MCPClientManager, MCPServerReplayConfig } from "@mcpjam/sdk";
+import { readTasksPolicy } from "@mcpjam/sdk";
+import { resolveToolTaskSeam } from "../../utils/task-seam.js";
 import { z } from "zod";
 import { generateTestCases } from "../../services/eval-agent";
 import {
@@ -2312,6 +2314,13 @@ export async function streamEvalTestCaseWithManager(
   options?: {
     skipLastMessageRunUpdate?: boolean;
     onStreamComplete?: () => void;
+    /**
+     * The HTTP request's abort signal (`c.req.raw.signal`). Aborts the
+     * single-case run — including an in-flight `await`-mode task drive — when
+     * the client goes away. The returned stream's own `cancel()` aborts too,
+     * so either teardown path stops the work.
+     */
+    requestSignal?: AbortSignal;
   }
 ): Promise<ReadableStream<Uint8Array>> {
   const {
@@ -2472,12 +2481,54 @@ export async function streamEvalTestCaseWithManager(
   // full tool set (including app-only) so the policy can both filter and
   // count drops honestly. Without this, app-only tools are pre-stripped by
   // getToolsForAiSdk and host visibility signals are blank.
+  // Host-only, and never merged with `hostConfigOverride`: a single-case
+  // override must not be able to switch tasks on for a suite whose host said
+  // off. Eval resolves to `await` — a run has nobody watching a handle.
+  // Abort umbrella for this single-case run, fired from BOTH teardown paths:
+  // the HTTP request aborting (client disconnect) and the SSE stream being
+  // cancelled by its consumer. Wired into the task seam (stops an in-flight
+  // `await`-mode task drive promptly instead of leaving it polling until the
+  // driver timeout) and into `streamTestCase` (stops the iteration loop).
+  const streamAbortController = new AbortController();
+  const abortSingleCaseRun = () => {
+    if (!streamAbortController.signal.aborted) {
+      streamAbortController.abort(
+        new Error("Eval stream aborted by the client")
+      );
+    }
+  };
+  const requestSignal = options?.requestSignal;
+  if (requestSignal?.aborted) {
+    abortSingleCaseRun();
+  } else {
+    requestSignal?.addEventListener("abort", abortSingleCaseRun, {
+      once: true,
+    });
+  }
+  const releaseRequestAbortListener = () => {
+    requestSignal?.removeEventListener("abort", abortSingleCaseRun);
+  };
+
+  const singleCaseTasksSeam = resolveToolTaskSeam({
+    tasksPolicy: readTasksPolicy(
+      suiteHostConfig as Parameters<typeof readTasksPolicy>[0]
+    ),
+    surface: "eval",
+    // Driver `timeoutMs` stays at its default — the task drive nests under
+    // the run's own teardown, which aborts through this signal.
+    await: { signal: streamAbortController.signal },
+  });
   const tools = (
-    suiteHostPolicy
+    suiteHostPolicy || singleCaseTasksSeam
       ? await clientManager.getToolsForAiSdk(resolvedServerIds, {
-          includeAppOnly: true,
-          modelVisibleMcpToolResults:
-            suiteHostPolicy.modelVisibleMcpToolResults,
+          ...(suiteHostPolicy
+            ? {
+                includeAppOnly: true,
+                modelVisibleMcpToolResults:
+                  suiteHostPolicy.modelVisibleMcpToolResults,
+              }
+            : {}),
+          ...(singleCaseTasksSeam ? { tasks: singleCaseTasksSeam } : {}),
         })
       : await clientManager.getToolsForAiSdk(resolvedServerIds)
   ) as Record<string, any>;
@@ -2511,6 +2562,9 @@ export async function streamEvalTestCaseWithManager(
           testCaseId,
           suiteId: testCase.evalTestSuiteId,
           runId: null,
+          // Previously unwired here: without it, a cancelled stream kept the
+          // iteration loop (and any awaited task) running to completion.
+          abortSignal: streamAbortController.signal,
           compareRunId,
           injectOpenAiCompat: suiteInjectOpenAiCompat,
           hostPolicy: suiteHostPolicy,
@@ -2609,26 +2663,35 @@ export async function streamEvalTestCaseWithManager(
         }
 
         // Emit complete event
-        controller.enqueue(
-          sseEncode({
-            type: "complete",
-            iterationId: expectedIterationId,
-            iteration: latestIteration,
-          })
-        );
+        try {
+          controller.enqueue(
+            sseEncode({
+              type: "complete",
+              iterationId: expectedIterationId,
+              iteration: latestIteration,
+            })
+          );
+        } catch {
+          // stream cancelled mid-run; nobody is listening
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        controller.enqueue(
-          sseEncode({
-            type: "error",
-            message,
-            details:
-              error instanceof WebRouteError && error.details
-                ? JSON.stringify(error.details)
-                : undefined,
-          })
-        );
+        try {
+          controller.enqueue(
+            sseEncode({
+              type: "error",
+              message,
+              details:
+                error instanceof WebRouteError && error.details
+                  ? JSON.stringify(error.details)
+                  : undefined,
+            })
+          );
+        } catch {
+          // stream cancelled mid-run; nobody is listening
+        }
       } finally {
+        releaseRequestAbortListener();
         try {
           controller.close();
         } catch {
@@ -2636,6 +2699,14 @@ export async function streamEvalTestCaseWithManager(
         }
         options?.onStreamComplete?.();
       }
+    },
+    cancel() {
+      // The consumer walked away from the SSE stream (tab closed, fetch
+      // aborted downstream of the route). Stop the run — and release the
+      // request listener here too, since `start`'s finally may still be far
+      // away while the iteration loop unwinds.
+      abortSingleCaseRun();
+      releaseRequestAbortListener();
     },
   });
 }

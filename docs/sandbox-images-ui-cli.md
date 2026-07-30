@@ -5,9 +5,10 @@ Branch: `feat/images` (off current `origin/main`).
 ## Context
 
 The Convex backend (mcpjam-backend, merged #618–#629) ships a complete, live-
-verified "Computer environments" feature: a project-owned Dockerfile is built
-into an immutable E2B image that a member's personal Computer can boot from
-(`setComputerEnvironment`), plus reset-to-image (`resetComputer`). It's fully
+verified "Computer sandbox images" feature: a project-owned blueprint (a small
+YAML file) is built into an immutable E2B image that a member's personal Computer
+can boot from (`setComputerEnvironment`), plus reset-to-image (`resetComputer`).
+It's fully
 tested but **unreachable** — no UI surfaces it and the CLI can't drive it. This
 adds both, entirely in the inspector repo. **No backend changes** — every Convex
 function already exists and is reachable as-is.
@@ -44,15 +45,16 @@ function already exists and is reachable as-is.
 `computerEnvironments` — **NOT renamed by the images rename; these literals are
 a cross-repo contract with the mcpjam-backend Convex module and must match it
 exactly**: `listEnvironments(projectId)`, `getEnvironment(environmentId)`,
-`listEnvironmentBuilds(environmentId)`, `createEnvironment(projectId,name,dockerfile)`,
-`updateEnvironment(environmentId,name?,dockerfile?)`, `startEnvironmentBuild(environmentId)`,
-`promoteEnvironmentToProject(environmentId)`, `deleteEnvironment(environmentId)`.
+`listEnvironmentBuilds(environmentId)`, `createEnvironment(projectId,name,blueprint)`,
+`updateEnvironment(environmentId,name?,blueprint?)`, `startEnvironmentBuild(environmentId)`,
+`validateBlueprint(projectId,blueprint)`, `promoteEnvironmentToProject(environmentId)`,
+`deleteEnvironment(environmentId)`.
 `projectComputers`: `getComputerStatus(projectId)` (→ `environmentId`),
 `setComputerEnvironment(projectId, environmentId | null)`, `resetComputer(projectId)`.
 
 `SandboxImageView` (returned by list/get) includes: `environmentId` (the Convex
 row's own field name), `projectId`,
-`name`, `dockerfile`, `sharing` (`'user'|'project'`), `isOwner`, `currentBuild`
+`name`, `blueprint`, `sharing` (`'user'|'project'`), `isOwner`, `currentBuild`
 (status/error/logPreview/…). **Note it does NOT expose a "can manage shared" /
 admin flag** — see UI step 6.
 
@@ -71,9 +73,10 @@ Reference files (current `origin/main`):
 `…/components/computer/ComputerView.tsx` (the tab), `…/hooks/useProjectComputer.ts`
 (hook + view-type pattern), `…/components/computer/ComputerStatusChip.tsx`.
 Design system `@mcpjam/design-system`: `Button`, `Badge`, `Sheet`, `Dialog`,
-`Tabs`. Editor: CodeMirror 6 (`…/client/src/components/ui/json-editor/`), not
-Monaco. `projectId` comes from `useAppRouteContext()` and is passed into
-`ComputerView` as a prop today.
+`Tabs`. Blueprint editor: a plain monospace `<textarea>` with debounced inline
+lint from the backend validator (`validateBlueprint`) — no CodeMirror/Monaco in
+the shipped drawer. `projectId` comes from `useAppRouteContext()` and is passed
+into `ComputerView` as a prop today.
 
 1. **`…/client/src/hooks/useSandboxImages.ts`** — mirror
    `useProjectComputer.ts` (string-id `useQuery`/`useMutation`): `useSandboxImages`,
@@ -86,17 +89,18 @@ Monaco. `projectId` comes from `useAppRouteContext()` and is passed into
    via `useSandboxImages`), **[Change ▾]** (opens drawer), **[Reset]** (confirm →
    `resetComputer`, enabled only Ready/asleep).
 3. **`…/components/computer/SandboxImagesDrawer.tsx`** — design-system `Sheet`.
-   - **Create is first-class**: an empty state ("No environments yet — create one
-     to customize your computer's image. [+ New environment]") AND a persistent
-     **[+ New environment]** in the list. New opens a fresh editor (name +
-     Dockerfile) → `createEnvironment` → land on the new env's detail with **Build**
-     ready.
-   - **List**: own drafts + project-shared, status badges from `currentBuild`, ✓ on
-     the attached one, ⋯ = Promote/Delete.
-   - **Detail**: name, **Dockerfile editor** (CodeMirror), **Build** (+ live
-     status/log tail by polling `getEnvironment`/`listEnvironmentBuilds`), **Use on
-     computer** (`setComputerEnvironment`, disabled until a Ready build), **sharing**
-     toggle (Just me / Project → `promoteEnvironmentToProject`), **Delete**.
+   - **Create is first-class**: an empty state ("No custom sandbox images yet —
+     create one to customize your computer's image.") AND a persistent
+     **[+ New sandbox image]** in the list. New opens a fresh editor (name +
+     blueprint) → `createEnvironment` → land on the new image's detail with
+     **Build** ready.
+   - **List**: own drafts + project-shared, a Base-image row, status badges from
+     `currentBuild`, and ✓ on the attached one. Promote/Delete live in Detail.
+   - **Detail**: name, **blueprint editor** (plain textarea + inline lint), **Build**
+     (live status/log tail via reactive Convex queries — no polling), **Use on
+     computer** (`setComputerEnvironment`, disabled until a Ready build), one-way
+     **Share with project** (`promoteEnvironmentToProject`; once shared it shows
+     "Shared with the project" with no un-share control), **Delete**.
 4. **Confirms** (`Dialog`): attach/change ("rebuilds your computer; installed
    files are wiped") and reset — both wipe mutable computer state.
 5. **States**: empty, building (spinner + log), failed (error + log + retry), and
@@ -148,7 +152,7 @@ Mirror the `hosts` stack: command (`cli/src/commands/hosts.ts`) → SDK operatio
    `resolveProjectOrThrow(client, input.project, signal)`.
 4. **`cli/src/commands/images.ts`**, registered in `cli/src/index.ts`:
    `mcpjam images list|get|create|edit|build|logs|use|reset|promote|delete`.
-   `create`/`edit` read the Dockerfile from `--file <path>` or stdin (the "edit
+   `create`/`edit` read the blueprint from `--file <path>` or stdin (the "edit
    them with the CLI" requirement); `--format json` like the rest.
 5. **OpenAPI:** add entries for every new route to **`docs/reference/openapi.json`**
    — the drift test `mcpjam-inspector/server/routes/v1/__tests__/openapi-drift.test.ts`
@@ -161,11 +165,11 @@ Mirror the `hosts` stack: command (`cli/src/commands/hosts.ts`) → SDK operatio
 
 ## Verification
 
-- **UI**: run the inspector against the dev backend; create env → edit Dockerfile
+- **UI**: run the inspector against the dev backend; create image → edit blueprint
   → build (stub ⇒ instant on dev) → attach → reset → delete. With
   `COMPUTERS_PROVIDER=e2b` + default stub builder, confirm attach is rejected with
   a clean error. Real builds need `COMPUTERS_ENV_BUILDER=e2b` on the deployment.
-- **CLI**: with an `sk_` key — `mcpjam images create --file Dockerfile`,
+- **CLI**: with an `sk_` key — `mcpjam images create --file blueprint.yaml`,
   `mcpjam images build <name>`, `mcpjam images logs <name>`, `mcpjam images use <name>`;
   guest token → 401.
 - typecheck + lint each package; **openapi-drift** + the new route/CLI tests pass.

@@ -27,7 +27,11 @@ import type { Context } from "hono";
 import { type ToolSet } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { UIMessage } from "@ai-sdk/react";
-import type { Harness, MCPClientManager } from "@mcpjam/sdk";
+import type {
+  Harness,
+  MCPClientManager,
+  ToolTaskSeamOptions,
+} from "@mcpjam/sdk";
 import type {
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
@@ -70,7 +74,7 @@ import type { EffectiveCapabilitySet } from "../services/environments/effective-
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-helpers.js";
 import { ErrorCode, WebRouteError } from "./../routes/web/errors.js";
 import { readUrlElicitations } from "@/shared/http-tool-calls";
-import { extractInsufficientScopeChallenge } from "./mcp-error-serialize.js";
+import { wrapToolsWithScopeStepUp } from "./insufficient-scope-step-up.js";
 import {
   classifyUiToolApprovals,
   type UiToolApprovalClassification,
@@ -83,6 +87,7 @@ import {
   type HostedElicitationBridge,
 } from "./../routes/web/hosted-elicitation.js";
 import type { HostedMrtrBridge } from "./mrtr-hosted-bridge.js";
+import type { HostedTaskCreatedBridge } from "./hosted-task-created-bridge.js";
 import type { MrtrEngineResume } from "./mrtr-hosted-chat.js";
 import {
   bridgeHarnessRpcLogsToCollector,
@@ -245,6 +250,12 @@ export interface WebChatTurnPrepareInputs {
   progressiveToolDiscovery?: { enabled: boolean };
   /** Resolved host harness. Harness runtimes own native tool discovery. */
   harness?: Harness;
+  /**
+   * Resolved task-seam options. The CALLER resolves the mode, because hosted
+   * chat and the MCPJam agent both come through here and are different rows in
+   * the policy matrix. Absent ⇒ tasks off for this turn.
+   */
+  tasks?: ToolTaskSeamOptions;
   appTools?: AppToolEntry[];
   /** WebMCP-shaped MCPJam UI tools (client-fulfilled, like `appTools`). */
   uiTools?: UiToolEntry[];
@@ -312,6 +323,13 @@ export interface WebChatTurnRuntime {
    * elicitation bridge it is NOT disposed at end of turn.
    */
   mrtrBridge?: HostedMrtrBridge;
+  /**
+   * Delivers `data-task-created` parts. Present only when the host policy
+   * enables tasks for this surface AND the client sent a compatible
+   * `hostedTasksVersion`. A mismatch leaves this undefined — the turn proceeds
+   * without the part rather than failing, because the task already exists.
+   */
+  taskCreatedBridge?: HostedTaskCreatedBridge;
   /**
    * Hosted MRTR resume descriptor — forwarded to the emulated engine only. On a
    * fresh resume request the engine drives one retry leg before the first model
@@ -432,6 +450,7 @@ export async function streamWebChatTurn(
       customProviders: prepare.customProviders,
       priorMessages: modelMessages,
       ...(prepare.harness ? { harness: prepare.harness } : {}),
+      ...(prepare.tasks ? { tasks: prepare.tasks } : {}),
       ...(prepare.progressiveToolDiscovery !== undefined
         ? { progressiveToolDiscovery: prepare.progressiveToolDiscovery }
         : {}),
@@ -493,7 +512,8 @@ export async function streamWebChatTurn(
     {};
 
   /**
-   * Observe tool-call failures from ANY engine to surface out-of-band notices.
+   * Observe in-process tool-call failures from every ToolSet-driven engine to
+   * surface out-of-band notices.
    *
    * Wrapped here, on the tool set, rather than in the engines: `prepareChatV2`
    * builds this set once and all three consumers share it (MCPJam-free,
@@ -510,80 +530,47 @@ export async function streamWebChatTurn(
    * advertised, so it falls back to the raw stream writer when there is no
    * bridge (SEP-2350).
    *
-   * Rethrows always: this only observes. The engines' own error handling still
-   * produces the tool result the model sees.
+   * Harness MCP-server tools are deliberately outside this contract: the
+   * harness executes them out of process through `.mcp.json`, bypassing this
+   * ToolSet. Supporting their step-up challenges requires a correlated
+   * harness-proxy-to-chat side channel. Host-executed harness tools still pass
+   * through this set.
+   *
+   * The shared wrapper rethrows always: this only observes. The engines' own
+   * error handling still produces the tool result the model sees.
    */
-  const allTools = Object.fromEntries(
-    Object.entries(preparedTools as Record<string, any>).map(([name, tool]) => {
-      if (typeof tool?.execute !== "function") return [name, tool];
-      const execute = tool.execute.bind(tool);
-      return [
-        name,
-        {
-          ...tool,
-          execute: async (input: unknown, options: any) => {
-            try {
-              return await execute(input, options);
-            } catch (error) {
-              const serverId = (tool as any)._serverId ?? "unknown";
-              const elicitations = readUrlElicitations(error);
-              if (elicitations) {
-                runtime.elicitationBridge?.emitUrlRequired({
-                  serverId,
-                  toolCallId: options?.toolCallId,
-                  elicitations,
-                });
-              }
-              // SEP-2350: a runtime `403 insufficient_scope` thrown here is
-              // about to be collapsed by the AI-SDK into a model-facing
-              // error-text part, so route the challenge out-of-band on the
-              // display channel. The client drives the union-scope step-up.
-              const insufficientScope =
-                extractInsufficientScopeChallenge(error);
-              // Only emit a step-up notice the client can ACT on: a
-              // `requiredScope` (the scope to fold into the re-auth union) OR a
-              // `resourceMetadataUrl` (a PRM pointer the client's OAuth flow now
-              // discovers from — SEP-2350 follow-up to #3427). An
-              // `errorDescription`-only challenge carries nothing to
-              // re-authorize with — redirecting for it would burn the bounded
-              // one-attempt budget — so it stays plain error text the model
-              // already sees, consistent with the shared
-              // `isActionableStepUpChallenge` gate.
-              if (
-                insufficientScope &&
-                (insufficientScope.requiredScope?.trim() ||
-                  insufficientScope.resourceMetadataUrl?.trim())
-              ) {
-                const challenge = {
-                  serverId,
-                  toolCallId: options?.toolCallId,
-                  requiredScope: insufficientScope.requiredScope,
-                  resourceMetadataUrl: insufficientScope.resourceMetadataUrl,
-                  errorDescription: insufficientScope.errorDescription,
-                };
-                if (runtime.elicitationBridge) {
-                  // Bridge enriches with the server name from its id→name map.
-                  runtime.elicitationBridge.emitInsufficientScope(challenge);
-                } else {
-                  // No bridge (elicitation unadvertised): still surface the
-                  // step-up display-only on the raw writer. Resolve the display
-                  // name from the same id→name map the bridge uses so a hosted
-                  // Convex `serverId` matches the name-keyed client store; the
-                  // client falls back to `serverId` only when no name resolves.
-                  emitInsufficientScopeChunk(
-                    scopeChallengeWriter,
-                    scopeStepUpServerNamesById[serverId],
-                    challenge,
-                  );
-                }
-              }
-              throw error;
-            }
-          },
-        },
-      ];
-    })
-  ) as typeof preparedTools;
+  const allTools = wrapToolsWithScopeStepUp(
+    preparedTools,
+    () => scopeChallengeWriter,
+    {
+      onToolError: ({ error, serverId, toolCallId }) => {
+        const elicitations = readUrlElicitations(error);
+        if (elicitations) {
+          runtime.elicitationBridge?.emitUrlRequired({
+            serverId,
+            toolCallId,
+            elicitations,
+          });
+        }
+      },
+      emitInsufficientScope: (challenge) => {
+        if (runtime.elicitationBridge) {
+          // Bridge enriches with the server name from its id→name map.
+          runtime.elicitationBridge.emitInsufficientScope(challenge);
+        } else {
+          // No bridge (elicitation unadvertised): still surface the step-up
+          // display-only on the raw writer. Resolve the display name from the
+          // same id→name map the bridge uses so a hosted Convex `serverId`
+          // matches the name-keyed client store.
+          emitInsufficientScopeChunk(
+            scopeChallengeWriter,
+            scopeStepUpServerNamesById[challenge.serverId],
+            challenge,
+          );
+        }
+      },
+    }
+  );
 
   const widgetModelContextSystemPrompt = buildWidgetModelContextSystemPrompt(
     prepare.widgetModelContext ?? []
@@ -773,6 +760,7 @@ export async function streamWebChatTurn(
           scopeChallengeWriter = writer;
           runtime.rpcCollector?.attachStreamWriter(writer);
           runtime.elicitationBridge?.attachStreamWriter(writer);
+          runtime.taskCreatedBridge?.attachStreamWriter(writer);
         },
         abortSignal: runtime.abortSignal,
       });
@@ -809,6 +797,7 @@ export async function streamWebChatTurn(
         scopeChallengeWriter = writer;
         runtime.rpcCollector?.attachStreamWriter(writer);
         runtime.elicitationBridge?.attachStreamWriter(writer);
+        runtime.taskCreatedBridge?.attachStreamWriter(writer);
       },
       abortSignal: runtime.abortSignal,
     });
@@ -916,6 +905,9 @@ export async function streamWebChatTurn(
       runtime.elicitationBridge?.attachStreamWriter(writer);
       // MRTR suspend emits `data-mrtr-input-required` on this same stream.
       runtime.mrtrBridge?.attachStreamWriter(writer);
+      // A task can be created on ANY engine path, so unlike the MRTR bridge
+      // this one attaches at all three sites, following the elicitation bridge.
+      runtime.taskCreatedBridge?.attachStreamWriter(writer);
       if (persist.harness && runtime.rpcCollector && !stopHarnessRpcLogBridge) {
         stopHarnessRpcLogBridge = bridgeHarnessRpcLogsToCollector(
           persist.selectedServerIds,

@@ -42,11 +42,14 @@ export interface TracingSnapshotInput {
  */
 export function buildTracingSnapshot(input: TracingSnapshotInput) {
   const combined = [...input.serverItems, ...input.appItems];
-  const counts = { mcpServer: 0, mcpApps: 0, oauth: 0, other: 0 };
+  const counts = { mcpServer: 0, mcpApps: 0, oauth: 0, http: 0, other: 0 };
   for (const entry of combined) {
     if (entry.source === "mcp-server") counts.mcpServer += 1;
     else if (entry.source === "mcp-apps") counts.mcpApps += 1;
     else if (entry.source === "oauth") counts.oauth += 1;
+    // HTTP exchanges are counted, and their request line is listed, but their
+    // headers stay out of the snapshot along with every other payload.
+    else if (entry.source === "http") counts.http += 1;
     else counts.other += 1;
   }
   // Both slices are newest-first INDEPENDENTLY; concatenating and slicing would

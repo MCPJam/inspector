@@ -39,6 +39,7 @@ vi.mock("@/lib/task-tracker", () => ({
   clearTrackedTasksForServer: vi.fn(),
   getDismissedTaskIds: vi.fn().mockReturnValue(new Set()),
   dismissTasksForServer: vi.fn(),
+  dismissRegistryTasks: vi.fn(),
   // v3 durable scheduling state. `useTaskScheduler` reads the persisted
   // schedule when it first sees a handle (so a reload resumes rather than
   // re-polling immediately) and writes the whole tick back in one batch.
@@ -237,6 +238,89 @@ describe("TasksTab", () => {
       expect(screen.getByText("Tasks not supported")).toBeInTheDocument();
     });
     expect(mockListTasks).not.toHaveBeenCalled();
+  });
+
+  it("shows a retryable error (not 'not supported') when the capabilities probe fails", async () => {
+    mockGetTaskCapabilities.mockRejectedValueOnce(new Error("connect refused"));
+    mockGetTaskCapabilities.mockResolvedValue({
+      wire: "extension",
+      toolCalls: true,
+      list: false,
+      cancel: true,
+      update: true,
+      inlineResult: true,
+    });
+
+    render(
+      <TasksTab serverConfig={createServerConfig()} serverName="test-server" />,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Couldn't check tasks support"),
+      ).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Tasks not supported")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /retry/i }));
+
+    await waitFor(() => {
+      expect(
+        screen.queryByText("Couldn't check tasks support"),
+      ).not.toBeInTheDocument();
+    });
+    expect(mockGetTaskCapabilities).toHaveBeenCalledTimes(2);
+  });
+
+  it("re-probes capabilities when the server connection comes up", async () => {
+    // While connecting the probe fails closed to wire "none"…
+    mockGetTaskCapabilities.mockResolvedValueOnce({
+      wire: "none",
+      toolCalls: false,
+      list: false,
+      cancel: false,
+      update: false,
+      inlineResult: false,
+    });
+    // …and succeeds once the connection is actually up.
+    mockGetTaskCapabilities.mockResolvedValue({
+      wire: "extension",
+      toolCalls: true,
+      list: false,
+      cancel: true,
+      update: true,
+      inlineResult: true,
+    });
+
+    // One stable config object across rerenders, so the only effect trigger
+    // under test is the connectionStatus flip.
+    const config = createServerConfig();
+    const { rerender } = render(
+      <TasksTab
+        serverConfig={config}
+        serverName="test-server"
+        connectionStatus="connecting"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Tasks not supported")).toBeInTheDocument();
+    });
+
+    rerender(
+      <TasksTab
+        serverConfig={config}
+        serverName="test-server"
+        connectionStatus="connected"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.queryByText("Tasks not supported"),
+      ).not.toBeInTheDocument();
+    });
+    expect(mockGetTaskCapabilities).toHaveBeenCalledTimes(2);
   });
 
   describe("extension wire", () => {

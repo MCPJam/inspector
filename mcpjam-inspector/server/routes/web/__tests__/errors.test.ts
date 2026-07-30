@@ -50,6 +50,25 @@ describe("mapRuntimeError", () => {
     expect(mapRuntimeError(new Error("socket hang up")).status).toBe(502);
   });
 
+  it("frames connection-class 502s as a target-server problem, preserving the raw error", () => {
+    // The raw errno text ("read ECONNRESET") in a client toast reads like an
+    // MCPJam outage; the mapped message must name the target server as the
+    // failing side while keeping the raw error for debugging.
+    const mapped = mapRuntimeError(new Error("read ECONNRESET"));
+    expect(mapped.status).toBe(502);
+    expect(mapped.code).toBe(ErrorCode.SERVER_UNREACHABLE);
+    expect(mapped.message).toContain("read ECONNRESET");
+    expect(mapped.message).toContain("not an MCPJam outage");
+  });
+
+  it("never returns a blank message for a blank-message error", () => {
+    // A bare `new Error()` rejection maps to a blank body message, which the
+    // client renders as an empty toast.
+    const mapped = mapRuntimeError(new Error(""));
+    expect(mapped.status).toBe(500);
+    expect(mapped.message.trim()).not.toBe("");
+  });
+
   it("does NOT misclassify words that merely start with 'econ' as 502", () => {
     // Regression for code-review feedback: the errno branch was originally
     // `\becon[a-z]*` (one `n`), which matches server/tool/case names like

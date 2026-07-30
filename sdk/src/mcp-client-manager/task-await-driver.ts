@@ -29,7 +29,10 @@ import {
   type TaskLifecycleObservation,
   type TaskLifecycleSnapshot,
 } from "./task-lifecycle.js";
-import { isUnknownTaskError } from "./task-lifecycle-adapters.js";
+import {
+  isUnknownTaskError,
+  retryAfterMsFromError,
+} from "./task-lifecycle-adapters.js";
 import {
   collectTaskInputResponses,
   type TaskInputDriverOptions,
@@ -264,7 +267,12 @@ export async function driveTaskToTerminal(
         if (expired) args.onState?.(expired);
         return { outcome: "expired", task: expired };
       }
-      const record = engine.observeError(identity);
+      // A 429/503's `Retry-After` — when any layer preserved it on the error —
+      // becomes the engine's scheduling floor, so the next `waitUntilDue`
+      // honors the server's own pacing instead of just the error backoff.
+      const record = engine.observeError(identity, {
+        retryAfterMs: retryAfterMsFromError(error, now()),
+      });
       if (record.consecutiveErrors >= maxErrors) {
         return {
           outcome: "unreachable",
@@ -347,6 +355,16 @@ export async function driveTaskToTerminal(
         ? collected.rejections
         : undefined;
 
+      // Checked BEFORE the rejections are interpreted. A Ctrl-C mid-prompt
+      // reaches the handler as an abort of ITS signal, and the handler's
+      // resulting throw looks exactly like any other failure — so without this
+      // the one interrupt that lands inside a terminal prompt would settle as
+      // `input-required` while every other interrupt in the drive settles as
+      // `aborted`. The signal is the ground truth for which one happened.
+      if (args.signal?.aborted) {
+        return { outcome: "aborted", task: snapshot, unansweredInput };
+      }
+
       if (collected.answeredKeys.length === 0) {
         // Nothing answerable and nothing left pending elsewhere: stop, and say
         // which keys blocked it.
@@ -375,7 +393,9 @@ export async function driveTaskToTerminal(
         engine.markInputKeysResponded(identity, collected.answeredKeys);
       } catch (error) {
         lastError = error;
-        const record = engine.observeError(identity);
+        const record = engine.observeError(identity, {
+          retryAfterMs: retryAfterMsFromError(error, now()),
+        });
         if (record.consecutiveErrors >= maxErrors) {
           return { outcome: "unreachable", task: snapshot, lastError };
         }

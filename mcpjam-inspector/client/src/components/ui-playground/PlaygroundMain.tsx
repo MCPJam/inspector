@@ -58,7 +58,10 @@ import {
 } from "@/components/chat-v2/shared/chat-helpers";
 import { SaveAsTestCaseAction } from "@/components/chat-v2/shared/save-as-test-case-action";
 import { MultiModelEmptyTraceDiagnosticsPanel } from "@/components/chat-v2/multi-model-empty-trace-diagnostics";
-import { MultiModelStartersEmptyLayout } from "@/components/chat-v2/multi-model-starters-empty";
+import {
+  MultiModelStarterPromptsBlock,
+  MultiModelStartersEmptyLayout,
+} from "@/components/chat-v2/multi-model-starters-empty";
 import { ErrorBox } from "@/components/chat-v2/error";
 import { ConfirmChatResetDialog } from "@/components/chat-v2/chat-input/dialogs/confirm-chat-reset-dialog";
 import {
@@ -88,6 +91,7 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
   getChatboxChatBackground,
   getChatboxHostFamily,
+  getChatboxHostLogo,
   getChatboxShellStyle,
   type ChatboxHostStyle,
 } from "@/lib/chatbox-client-style";
@@ -3020,11 +3024,8 @@ export function PlaygroundMain({
     []
   );
 
-  const queueBroadcastRequest = useCallback(
-    (
-      request: Omit<BroadcastChatTurnRequest, "id">,
-      captureProps?: Record<string, unknown>
-    ) => {
+  const trackSendMessage = useCallback(
+    (captureProps?: Record<string, unknown>) => {
       track("app_builder_send_message", {
         location: "app_builder_tab",
         model_id: selectedModel?.id ?? null,
@@ -3034,11 +3035,6 @@ export function PlaygroundMain({
         multi_model_count: isMultiModelMode ? resolvedSelectedModels.length : 1,
         ...(captureProps ?? {}),
       });
-
-      setBroadcastRequest({
-        ...request,
-        id: Date.now(),
-      });
     },
     [
       isMultiModelMode,
@@ -3047,6 +3043,25 @@ export function PlaygroundMain({
       selectedModel?.name,
       selectedModel?.provider,
     ]
+  );
+
+  // Compare mode ONLY. `broadcastRequest` has no consumer in single-model
+  // mode, but freshly mounted compare cards replay whatever request is stored
+  // here — so a single-model send that wrote this state would be re-sent to
+  // every column when the user later enables compare. Single-model paths call
+  // `trackSendMessage` directly instead.
+  const queueBroadcastRequest = useCallback(
+    (
+      request: Omit<BroadcastChatTurnRequest, "id">,
+      captureProps?: Record<string, unknown>
+    ) => {
+      trackSendMessage(captureProps);
+      setBroadcastRequest({
+        ...request,
+        id: Date.now(),
+      });
+    },
+    [trackSendMessage]
   );
 
   const mergedToolRenderOverrides = useMemo(
@@ -3256,14 +3271,7 @@ export function PlaygroundMain({
       });
       setModelContextQueue([]);
     } else {
-      queueBroadcastRequest(
-        {
-          text: composerText,
-          files,
-          prependMessages,
-        },
-        { single_model_send: true }
-      );
+      trackSendMessage({ single_model_send: true });
       // Single-model mode has no broadcast consumer, so the prepends have to
       // land in the thread here — before `sendMessage`, so the request carries
       // them as history rather than arriving after the model answered.
@@ -3298,6 +3306,7 @@ export function PlaygroundMain({
     displayMode,
     isWidgetFullscreen,
     queueBroadcastRequest,
+    trackSendMessage,
     modelContextQueue,
     sendMessage,
     setMessages,
@@ -3363,8 +3372,16 @@ export function PlaygroundMain({
 
   const errorMessage = formatErrorMessage(error);
 
-  const handleMultiModelStarterPrompt = useCallback(
+  // Starter chips render in both empty states (compare grid and single-model
+  // hero), so route by mode like `submitAgentToolPrompt`: compare mode feeds
+  // the broadcast queue, single mode must call `sendMessage` itself — there is
+  // no broadcast consumer in single-model mode.
+  const handleStarterPrompt = useCallback(
     (prompt: string) => {
+      track("chat_starter_prompt_clicked", {
+        prompt,
+        location: isCompareMode ? "playground_compare" : "playground_single",
+      });
       if (composerDisabled || sendBlocked) {
         composer.setInput(prompt);
         return;
@@ -3374,13 +3391,27 @@ export function PlaygroundMain({
           composer.setInput(prompt);
           return;
         }
-        queueBroadcastRequest({
-          text: prompt,
-          prependMessages: [],
-          widgetModelContext: modelContextQueue,
-        });
+        if (isCompareMode) {
+          queueBroadcastRequest({
+            text: prompt,
+            prependMessages: [],
+            widgetModelContext: modelContextQueue,
+          });
+        } else {
+          trackSendMessage({ single_model_send: true });
+          sendMessage({
+            text: prompt,
+            metadata: outgoingSenderMetadata,
+            widgetModelContext: modelContextQueue,
+          });
+        }
         setModelContextQueue([]);
         composer.setInput("");
+        // Starter sends are text-only: staged prompt/skill results are
+        // discarded like the typed draft and file attachments, so they don't
+        // silently ride along on the next composer submit.
+        setMcpPromptResults([]);
+        setSkillResults([]);
         revokeFileAttachmentUrls(fileAttachments);
         setFileAttachments([]);
         onFirstMessageSent?.();
@@ -3391,9 +3422,14 @@ export function PlaygroundMain({
       composerDisabled,
       ensureSelectedServerReadyForChat,
       fileAttachments,
+      isCompareMode,
+      modelContextQueue,
       onFirstMessageSent,
+      outgoingSenderMetadata,
       queueBroadcastRequest,
       sendBlocked,
+      sendMessage,
+      trackSendMessage,
     ]
   );
   // "Ask agent to run" (harness built-in tools): the rail builds a structured
@@ -3418,10 +3454,7 @@ export function PlaygroundMain({
         });
         setModelContextQueue([]);
       } else {
-        queueBroadcastRequest(
-          { text, prependMessages: [] },
-          { single_model_send: true }
-        );
+        trackSendMessage({ single_model_send: true });
         sendMessage({
           text,
           metadata: outgoingSenderMetadata,
@@ -3438,6 +3471,7 @@ export function PlaygroundMain({
       ensureSelectedServerReadyForChat,
       isCompareMode,
       queueBroadcastRequest,
+      trackSendMessage,
       sendMessage,
       outgoingSenderMetadata,
       modelContextQueue,
@@ -3675,6 +3709,9 @@ export function PlaygroundMain({
                         </h3>
                       </div>
                     </div>
+                    <MultiModelStarterPromptsBlock
+                      onStarterPrompt={handleStarterPrompt}
+                    />
                     {errorMessage && (
                       <div className="w-full">
                         <ErrorBox
@@ -3999,7 +4036,7 @@ export function PlaygroundMain({
                       </div>
                     ) : null
                   }
-                  onStarterPrompt={handleMultiModelStarterPrompt}
+                  onStarterPrompt={handleStarterPrompt}
                   chatInputSlot={
                     <ChatInput {...sharedChatInputProps} hasMessages={false} />
                   }
@@ -4089,8 +4126,15 @@ export function PlaygroundMain({
                           // model title + Latency/Tokens chrome is redundant
                           // (same model in every column) and noisy. Keep the
                           // Trace/Chat/Raw tab strip — that comes from
-                          // `showTraceTabs` inside the header.
+                          // `showTraceTabs` inside the header. Show the host
+                          // identity row so columns are immediately branded.
                           showComparisonChrome={false}
+                          showIdentityHeader
+                          logoSrc={getChatboxHostLogo(
+                            column.hostSnapshot.hostStyle,
+                            column.hostSnapshot.chatUiOverride,
+                            effectiveThreadTheme
+                          )}
                           suppressThreadEmptyHint={false}
                           compareEnterVersion={multiCompareEnterVersion}
                           compareEnterMessages={multiCompareEnterMessages}
