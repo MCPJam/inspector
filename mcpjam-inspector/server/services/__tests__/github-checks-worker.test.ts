@@ -761,6 +761,9 @@ describe("startGithubChecksWorker loop", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
+    // A SEPARATE variable from the one above, read much later (when the ephemeral
+    // server is created) and therefore also part of the startup gate.
+    vi.stubEnv("CONVEX_URL", "https://convex.test");
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
     // The sandbox configuration is part of the startup gate: without it the
     // worker refuses to poll (see the test at the end of this block).
@@ -833,6 +836,23 @@ describe("startGithubChecksWorker loop", () => {
     await handle.stop();
     expect(execute).not.toHaveBeenCalled();
     expect(claim).toHaveBeenCalled();
+  });
+
+  it("refuses to poll when CONVEX_URL is missing", async () => {
+    // `CONVEX_URL` is only read when the ephemeral server is created — after the
+    // box is provisioned and the PR is built. Claiming without it would spend ten
+    // minutes on a trigger and then conclude `infra_error`, permanently, since a
+    // verdict is final. Not polling leaves the check claimable until the deploy is
+    // fixed, which is the same reasoning as the sandbox gate.
+    vi.stubEnv("CONVEX_URL", "");
+    const claim = vi.fn().mockResolvedValue(null);
+
+    const worker = startGithubChecksWorker({ claim, claimedBy: "worker-1" });
+    onTestFinished(async () => {
+      await worker.stop();
+    });
+    await flush();
+    expect(claim).not.toHaveBeenCalled();
   });
 
   it("refuses to poll when the sandbox is not configured", async () => {

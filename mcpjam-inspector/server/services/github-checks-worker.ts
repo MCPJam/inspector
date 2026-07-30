@@ -796,11 +796,31 @@ async function defaultRunEvalSuite(args: {
         ownership === "stolen"
           ? "another check's server was snapshotted onto this run"
           : "could not verify which server this run was bound to";
-      // The run row already exists — `prepareEvalRun` created it — and this throw
-      // bypasses the catch around `execute()` where the non-terminal finalize
-      // lives. Left alone it would sit in `running` forever, and every raced check
-      // would leave another one behind. Best effort: failing to tidy up must not
-      // replace the reason we are bailing out.
+      // The run row already exists — `prepareEvalRun` created it, along with a
+      // pending iteration row per attempt — and this throw bypasses the catch
+      // around `execute()` where the cleanup lives. Left alone the run sits in
+      // `running` with every iteration `pending`, and each raced check strands
+      // another set. Mirrors `prepareEvalRun`'s own setup-abort cleanup: fail the
+      // iterations first, then the run, both best effort, because failing to tidy
+      // up must not replace the reason we are bailing out.
+      await client
+        .mutation("testSuites:markSetupPendingIterationsFailed" as any, {
+          runId: prepared.runId,
+          error: reason,
+        })
+        .catch((cleanupError: unknown) => {
+          logger.warn(
+            "[github-checks] failed to fail pending iterations after an unowned run",
+            {
+              triggerId: args.claimed.triggerId,
+              runId: prepared.runId,
+              error:
+                cleanupError instanceof Error
+                  ? cleanupError.message
+                  : String(cleanupError),
+            }
+          );
+        });
       if (prepared.recorder) {
         await prepared.recorder
           .finalize({ status: "failed", notes: reason })
@@ -1192,6 +1212,19 @@ export function startGithubChecksWorker(options?: {
   if (!requiredEnv()) {
     logger.warn(
       "[github-checks] worker enabled but CONVEX_HTTP_URL / INSPECTOR_SERVICE_TOKEN missing; not starting"
+    );
+    return { stop: async () => {} };
+  }
+
+  // `CONVEX_URL` is a SEPARATE variable from `CONVEX_HTTP_URL` above, and it is
+  // read later and deeper: `createConvexClient` throws "CONVEX_URL is not set"
+  // when the ephemeral server is created, which is AFTER the box is provisioned
+  // and the PR is built. A deployment holding one but not the other would claim a
+  // trigger, spend ten minutes on it, and conclude `infra_error` — for the same
+  // reason as the sandbox gate below, checked here instead.
+  if (!process.env.CONVEX_URL) {
+    logger.warn(
+      "[github-checks] worker enabled but CONVEX_URL missing; not starting (queued checks stay claimable)"
     );
     return { stop: async () => {} };
   }
