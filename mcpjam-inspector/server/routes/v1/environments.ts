@@ -366,8 +366,11 @@ const createEnvironmentSchema = z.strictObject({
 });
 
 /**
- * `.nullable().optional()` on the three clearable fields encodes the backend's
- * tri-state: omitted = unchanged, `null` = clear, value = set.
+ * `.nullable().optional()` on every clearable field (`serverAttachmentId`,
+ * `skillSelection`, `pluginVersionIds`, `sandboxImageId`) encodes the backend's
+ * tri-state: omitted = unchanged, `null` = clear, value = set. A new clearable
+ * field must join BOTH that shape and the `.refine` below, or it silently
+ * becomes unclearable / unable to be the only field in a PATCH.
  */
 const updateEnvironmentSchema = z
   .strictObject({

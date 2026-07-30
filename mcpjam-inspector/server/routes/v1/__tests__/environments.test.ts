@@ -654,6 +654,25 @@ describe("v1 project environment routes", () => {
       expect(res.status).toBe(200);
     });
 
+    it("rejects blank and whitespace-only ids (matches the published minLength/pattern)", async () => {
+      for (const value of ["", "   "]) {
+        convexMutationMock.mockClear();
+        const created = await request("POST", "/api/v1/projects/p1/environments", {
+          body: { name: "Staging", hostId: "h1", sandboxImageId: value },
+        });
+        expect(created.status).toBe(400);
+        expect(convexMutationMock).not.toHaveBeenCalled();
+
+        const patched = await request(
+          "PATCH",
+          "/api/v1/projects/p1/environments/env1",
+          { body: { expectedRevision: 3, sandboxImageId: value } }
+        );
+        expect(patched.status).toBe(400);
+        expect(convexMutationMock).not.toHaveBeenCalled();
+      }
+    });
+
     it("resolve exposes the pin as sandboxImageId when the backend carries it", async () => {
       mockQuery({
         "projectEnvironments:resolveEnvironmentForLaunch": {

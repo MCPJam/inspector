@@ -6077,7 +6077,9 @@
           },
           "sandboxImageId": {
             "type": "string",
-            "description": "Sandbox-image pin: a project-shared image (see the images endpoints) that eval runs in this environment boot a fresh sandbox from. Absent when unpinned."
+            "description": "Sandbox-image pin: a project-shared image (see the images endpoints) that eval runs in this environment boot a fresh sandbox from. Absent when unpinned.",
+            "minLength": 1,
+            "pattern": ".*\\S.*"
           },
           "revision": {
             "type": "integer",
@@ -6151,7 +6153,8 @@
           "sandboxImageId": {
             "type": "string",
             "minLength": 1,
-            "description": "Optional sandbox-image pin. Must be a project-shared image; personal drafts are rejected \u2014 promote them first."
+            "description": "Optional sandbox-image pin. Must be a project-shared image; personal drafts are rejected \u2014 promote them first.",
+            "pattern": ".*\\S.*"
           }
         }
       },
@@ -6207,7 +6210,9 @@
               "string",
               "null"
             ],
-            "description": "New sandbox-image pin, or null to clear it. Omit to leave unchanged."
+            "description": "New sandbox-image pin, or null to clear it. Omit to leave unchanged.",
+            "minLength": 1,
+            "pattern": ".*\\S.*"
           }
         }
       },
@@ -6275,7 +6280,9 @@
           },
           "sandboxImageId": {
             "type": "string",
-            "description": "The environment's sandbox-image pin, when set."
+            "description": "The environment's sandbox-image pin, when set.",
+            "minLength": 1,
+            "pattern": ".*\\S.*"
           },
           "selectedServerIds": {
             "type": "array",
