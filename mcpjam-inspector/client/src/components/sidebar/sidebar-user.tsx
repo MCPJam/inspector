@@ -104,10 +104,17 @@ export function SidebarUser({ onBeforeSignOut }: SidebarUserProps = {}) {
 
   const avatarUrl = profilePictureUrl;
 
+  // `size="lg"` drops its icon-mode padding so a 32px avatar can fill the
+  // button; the loading/guest branches hold a bare 16px icon instead, so they
+  // must center it explicitly or it parks 8px left of the rail centerline.
   const loadingState = (
     <SidebarMenu>
       <SidebarMenuItem>
-        <SidebarMenuButton size="lg" disabled>
+        <SidebarMenuButton
+          size="lg"
+          disabled
+          className="group-data-[collapsible=icon]:justify-center"
+        >
           <RefreshCw className="size-4 animate-spin" />
           <span className="truncate group-data-[collapsible=icon]:hidden">
             Loading...
@@ -140,7 +147,7 @@ export function SidebarUser({ onBeforeSignOut }: SidebarUserProps = {}) {
             size="lg"
             onClick={() => signIn()}
             aria-label="Sign in"
-            className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+            className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground group-data-[collapsible=icon]:justify-center"
           >
             <LogIn className="size-4" />
             <span className="truncate group-data-[collapsible=icon]:hidden">

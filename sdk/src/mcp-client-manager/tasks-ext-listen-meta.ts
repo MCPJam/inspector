@@ -77,7 +77,7 @@ import type { ClientCapabilityOptions } from "./types.js";
 const ENVELOPE_MEMBER = "_outboundMetaEnvelope" as const;
 
 /** Client package version this shadow was verified against. */
-const VERIFIED_CLIENT_VERSION = "2.0.0-beta.4 / 2.0.0-beta.5";
+const VERIFIED_CLIENT_VERSION = "2.0.0";
 
 /** Thrown when the seam this shadow depends on is no longer where it was. */
 export class TasksExtListenMetaSeamError extends Error {

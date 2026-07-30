@@ -6075,6 +6075,12 @@
             },
             "description": "Pinned plugin VERSION IDs. Narrow by design: the plugin must be installed and enabled, the version must be `ready`, at most one version per plugin may be pinned, and none of its skills may carry supporting files. Not a general-purpose plugin list."
           },
+          "sandboxImageId": {
+            "type": "string",
+            "description": "Sandbox-image pin: a project-shared image (see the images endpoints) that eval runs in this environment boot a fresh sandbox from. Absent when unpinned.",
+            "minLength": 1,
+            "pattern": ".*\\S.*"
+          },
           "revision": {
             "type": "integer",
             "description": "Optimistic-concurrency counter. Pass this back as `expectedRevision` on the next write; if it no longer matches, the write is rejected with 409 instead of overwriting a concurrent edit."
@@ -6143,6 +6149,12 @@
               "type": "string"
             },
             "description": "Pinned plugin VERSION IDs. Narrow by design: the plugin must be installed and enabled, the version must be `ready`, at most one version per plugin may be pinned, and none of its skills may carry supporting files. Not a general-purpose plugin list."
+          },
+          "sandboxImageId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Optional sandbox-image pin. Must be a project-shared image; personal drafts are rejected \u2014 promote them first.",
+            "pattern": ".*\\S.*"
           }
         }
       },
@@ -6192,6 +6204,15 @@
             },
             "nullable": true,
             "description": "Pinned plugin VERSION IDs. Narrow by design: the plugin must be installed and enabled, the version must be `ready`, at most one version per plugin may be pinned, and none of its skills may carry supporting files. Not a general-purpose plugin list. `null` clears all pins."
+          },
+          "sandboxImageId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New sandbox-image pin, or null to clear it. Omit to leave unchanged.",
+            "minLength": 1,
+            "pattern": ".*\\S.*"
           }
         }
       },
@@ -6256,6 +6277,12 @@
           },
           "serverAttachmentId": {
             "type": "string"
+          },
+          "sandboxImageId": {
+            "type": "string",
+            "description": "The environment's sandbox-image pin, when set.",
+            "minLength": 1,
+            "pattern": ".*\\S.*"
           },
           "selectedServerIds": {
             "type": "array",
