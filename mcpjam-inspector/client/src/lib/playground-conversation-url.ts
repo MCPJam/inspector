@@ -1,56 +1,28 @@
 /**
  * Durable identity for the *active* Playground conversation.
  *
- * The Playground transcript is already persisted server-side, but until now
- * nothing in the browser remembered *which* conversation was on screen. A
- * refresh — or the full-page navigation an OAuth redirect performs — therefore
- * dropped the user into an empty chat next to a history rail that still listed
- * the conversation they had just been reading.
+ * The Playground transcript is already persisted server-side, but nothing in
+ * the browser remembered *which* conversation was on screen. A refresh — or the
+ * full-page navigation an OAuth redirect performs — therefore dropped the user
+ * into an empty chat next to a history rail that still listed the conversation
+ * they had just been reading.
  *
- * This module owns the two places that identity can live:
+ * The `?conversation=` query param is the *only* place that identity lives.
+ * That is deliberate: it survives a refresh and an OAuth round trip (the return
+ * path is captured as pathname + search, which is also how Electron's renderer
+ * reload finds its way back), it is what the user's own Back/Forward and
+ * bookmarks carry, and — the reason a browser-storage fallback was removed —
+ * it means arriving at a bare `/playground` starts a NEW chat. Reopening the
+ * last conversation on every visit is not something the URL can ask for by
+ * accident.
  *
- * - the `?conversation=` query param, which is the source of truth because it
- *   survives OAuth (the return path is captured as pathname + search) and is
- *   what the user's own back/forward/bookmark actions carry; and
- * - a single localStorage entry, consulted **only** when the param is missing,
- *   which covers the paths that re-enter `/playground` bare — Electron's
- *   post-OAuth renderer reload, legacy return markers, a hand-trimmed URL.
- *
- * Neither is authorization. Both hold an opaque id that is handed straight back
- * to the chat-history API, which re-checks ownership; a foreign or deleted id
- * fails the fetch and the caller starts fresh.
+ * The id is not authorization. It is handed straight back to the chat-history
+ * API, which re-checks ownership; a foreign or deleted id fails the fetch and
+ * the caller starts fresh.
  */
 
 /** Query param carrying the active conversation on `/playground`. */
 export const PLAYGROUND_CONVERSATION_PARAM = "conversation";
-
-const STORAGE_KEY = "mcpjam:playground-active-conversation:v1";
-
-/**
- * Fallback entries older than this are ignored. A stale id is not dangerous
- * (the fetch would just 404), but resurrecting a week-old chat because the user
- * happened to arrive at a bare `/playground` is surprising, and the param
- * covers every case where resuming is actually intended.
- */
-const STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
-
-/**
- * Tolerance for a timestamp that reads as being in the future.
- *
- * Age is measured against the wall clock, so an entry written while the clock
- * ran fast stays "negative age" forever once the clock is corrected — it would
- * outlive the staleness rule entirely. Anything beyond a little skew is a clock
- * we cannot reason about, so the entry is discarded rather than trusted.
- */
-const FUTURE_SKEW_TOLERANCE_MS = 5 * 60 * 1000;
-
-/** Persisted shape of the fallback entry. */
-export type ActivePlaygroundConversation = {
-  chatSessionId: string;
-  /** `null` for local/unsynced mode, where there is no Convex project. */
-  projectId: string | null;
-  updatedAt: number;
-};
 
 /**
  * Read `?conversation=` out of a search string.
@@ -63,94 +35,6 @@ export function readConversationParam(search: string): string | null {
   const value = new URLSearchParams(search).get(PLAYGROUND_CONVERSATION_PARAM);
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
-}
-
-function normalizeProjectId(projectId: string | null | undefined): string | null {
-  const trimmed = projectId?.trim();
-  return trimmed ? trimmed : null;
-}
-
-/**
- * Remember the active conversation for surfaces that re-enter `/playground`
- * without the query param. Best-effort: storage can throw (private mode, quota)
- * and losing the fallback only costs us a restore the param would have handled.
- */
-export function writeActivePlaygroundConversation(entry: {
-  chatSessionId: string;
-  projectId: string | null | undefined;
-  updatedAt: number;
-}): void {
-  if (typeof window === "undefined") return;
-  const chatSessionId = entry.chatSessionId.trim();
-  if (!chatSessionId) return;
-  try {
-    const payload: ActivePlaygroundConversation = {
-      chatSessionId,
-      projectId: normalizeProjectId(entry.projectId),
-      updatedAt: entry.updatedAt,
-    };
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-  } catch {
-    // Best-effort: see the doc comment above.
-  }
-}
-
-/** Forget the active conversation (reset, archive, or a restore that failed). */
-export function clearActivePlaygroundConversation(): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.removeItem(STORAGE_KEY);
-  } catch {
-    // Best-effort: see {@link writeActivePlaygroundConversation}.
-  }
-}
-
-/**
- * The stored conversation id, but only when it belongs to the caller's current
- * project.
- *
- * The project check is the important half: without it, switching projects and
- * landing on a bare `/playground` would try to reopen a conversation from the
- * project the user just left. A mismatch returns `null` rather than clearing
- * the entry, so switching back still finds it.
- */
-export function readActivePlaygroundConversation(
-  currentProjectId: string | null | undefined,
-  now: number,
-): string | null {
-  if (typeof window === "undefined") return null;
-  let raw: string | null = null;
-  try {
-    raw = window.localStorage.getItem(STORAGE_KEY);
-  } catch {
-    return null;
-  }
-  if (!raw) return null;
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-  if (!parsed || typeof parsed !== "object") return null;
-
-  const entry = parsed as Partial<ActivePlaygroundConversation>;
-  const chatSessionId =
-    typeof entry.chatSessionId === "string" ? entry.chatSessionId.trim() : "";
-  if (!chatSessionId) return null;
-  if (typeof entry.updatedAt !== "number" || !Number.isFinite(entry.updatedAt)) {
-    return null;
-  }
-  const age = now - entry.updatedAt;
-  if (age > STALE_AFTER_MS) return null;
-  if (age < -FUTURE_SKEW_TOLERANCE_MS) return null;
-
-  const storedProjectId =
-    typeof entry.projectId === "string" ? normalizeProjectId(entry.projectId) : null;
-  if (storedProjectId !== normalizeProjectId(currentProjectId)) return null;
-
-  return chatSessionId;
 }
 
 /**
@@ -184,7 +68,7 @@ export function isConversationRestoreOutstanding(input: {
  * Chat, but also the chat hook's auth-bootstrap reset), and inferring a clear
  * from it would silently drop the conversation the user is mid-way through
  * restoring. Clearing is driven by the explicit reset signal instead — see
- * {@link clearActivePlaygroundConversation}'s callers.
+ * the hook's `clearConversation`.
  */
 export function decideConversationUrlSync(input: {
   paramValue: string | null;

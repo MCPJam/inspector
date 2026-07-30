@@ -266,69 +266,91 @@ describe("usePlaygroundConversationUrl", () => {
     expect(result.current.search).toBe("?conversation=chat-1");
   });
 
-  it("falls back to storage when the URL arrives bare", async () => {
-    // Electron rebuilds the renderer at the OAuth callback URL, so the param
-    // is gone and localStorage is all that is left.
-    localStorage.setItem(
-      "mcpjam:playground-active-conversation:v1",
-      JSON.stringify({
-        chatSessionId: "chat-1",
-        projectId: "proj-1",
-        updatedAt: Date.now(),
-      }),
-    );
+  it("starts a new chat when the URL arrives bare", async () => {
+    // Arriving at `/playground` with no id — the sidebar link, a fresh window
+    // — must NOT reopen whatever was last on screen. Nothing outside the URL
+    // remembers the conversation, precisely so this cannot happen.
     const restoreConversation = vi.fn(
       async (): Promise<ConversationRestoreOutcome> => "restored",
     );
     const { result } = renderConversationUrl(baseProps({ restoreConversation }));
 
-    await waitFor(() =>
-      expect(restoreConversation).toHaveBeenCalledWith("chat-1"),
-    );
-    // Adopted into the URL so a second refresh takes the param path.
-    await waitFor(() =>
-      expect(result.current.search).toBe("?conversation=chat-1"),
-    );
+    await settle();
+    expect(restoreConversation).not.toHaveBeenCalled();
+    expect(result.current.search).toBe("");
   });
 
-  it("never adopts a conversation from another project", async () => {
-    localStorage.setItem(
-      "mcpjam:playground-active-conversation:v1",
-      JSON.stringify({
-        chatSessionId: "chat-1",
-        projectId: "proj-1",
-        updatedAt: Date.now(),
-      }),
-    );
+  it("keeps a reset conversation closed while the URL catches up", async () => {
+    // `resetChat` empties the transcript and mints a new id synchronously, but
+    // dropping the param is a navigation — React Router runs it as a
+    // transition, so the URL can still name the old conversation for a commit.
+    // That stale param next to an empty transcript is indistinguishable from
+    // "reopen me", and New Chat was undone by an instant re-fetch.
     const restoreConversation = vi.fn(
       async (): Promise<ConversationRestoreOutcome> => "restored",
     );
-    renderConversationUrl(baseProps({ projectId: "proj-2", restoreConversation }));
-
+    const { result, rerender } = renderConversationUrl(
+      baseProps({
+        chatSessionId: "chat-1",
+        hasMessages: true,
+        restoreConversation,
+      }),
+      "/playground?conversation=chat-1",
+    );
     await settle();
+    expect(restoreConversation).not.toHaveBeenCalled();
+
+    await act(async () => {
+      result.current.url.clearConversation();
+      // Stand in for the navigation not having committed yet.
+      result.current.navigate("/playground?conversation=chat-1", {
+        replace: true,
+      });
+      rerender(
+        baseProps({
+          chatSessionId: "new-session",
+          hasMessages: false,
+          restoreConversation,
+        }),
+      );
+    });
+
     expect(restoreConversation).not.toHaveBeenCalled();
   });
 
-  it("clears the URL and storage on an explicit reset", async () => {
-    const { result, rerender } = renderConversationUrl(baseProps());
-    rerender(baseProps({ chatSessionId: "chat-1", hasMessages: true }));
-    await waitFor(() =>
-      expect(result.current.search).toBe("?conversation=chat-1"),
+  it("reopens a conversation the user navigates back to after a reset", async () => {
+    // The mask only covers the gap until the URL agrees — Back must still work.
+    const restoreConversation = vi.fn(
+      async (): Promise<ConversationRestoreOutcome> => "restored",
     );
+    const { result, rerender } = renderConversationUrl(
+      baseProps({
+        chatSessionId: "chat-1",
+        hasMessages: true,
+        restoreConversation,
+      }),
+      "/playground?conversation=chat-1",
+    );
+    await settle();
 
-    // `resetChat` clears the URL and empties the transcript in one commit.
+    // New Chat: the reset and the URL clear land together.
     await act(async () => {
       result.current.url.clearConversation();
-      rerender(baseProps({ chatSessionId: "new-session", hasMessages: false }));
+      rerender(
+        baseProps({
+          chatSessionId: "new-session",
+          hasMessages: false,
+          restoreConversation,
+        }),
+      );
     });
-
-    await waitFor(() => expect(result.current.search).toBe(""));
-    expect(
-      localStorage.getItem("mcpjam:playground-active-conversation:v1"),
-    ).toBeNull();
-    // And the cleared id must not come back on the next render pass.
-    rerender(baseProps({ chatSessionId: "new-session", hasMessages: false }));
     expect(result.current.search).toBe("");
+    expect(restoreConversation).not.toHaveBeenCalled();
+
+    act(() => result.current.navigate("/playground?conversation=chat-1"));
+    await waitFor(() =>
+      expect(restoreConversation).toHaveBeenCalledWith("chat-1"),
+    );
   });
 
   it("is completely inert when disabled", async () => {

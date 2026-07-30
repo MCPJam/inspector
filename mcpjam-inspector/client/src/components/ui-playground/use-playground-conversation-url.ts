@@ -36,13 +36,10 @@ import { UNSAFE_LocationContext } from "react-router";
 
 import { useAppNavigate } from "@/lib/app-navigation";
 import {
-  clearActivePlaygroundConversation,
   decideConversationUrlSync,
   isConversationRestoreOutstanding,
   PLAYGROUND_CONVERSATION_PARAM,
-  readActivePlaygroundConversation,
   readConversationParam,
-  writeActivePlaygroundConversation,
 } from "@/lib/playground-conversation-url";
 
 /**
@@ -134,7 +131,25 @@ export function usePlaygroundConversationUrl(options: {
 
   const navigate = useAppNavigate();
   const { pathname, search } = useRouterLocation();
-  const paramValue = useMemo(() => readConversationParam(search), [search]);
+  const rawParamValue = useMemo(() => readConversationParam(search), [search]);
+
+  /**
+   * The conversation the user has explicitly walked away from (New Chat),
+   * masked until the URL catches up.
+   *
+   * `resetChat` empties the transcript and mints a new session id immediately,
+   * but dropping the param is a *navigation* — React Router runs it as a
+   * transition, so it can commit a render later. For that one render the stale
+   * param sits next to an empty transcript, which is exactly the signature of
+   * "conversation waiting to be reopened" — and New Chat was undone by an
+   * instant re-fetch off the history cache. Masking the id makes it invisible
+   * to both effects for precisely as long as it is stale.
+   */
+  const [clearedParam, setClearedParam] = useState<string | null>(null);
+  const paramValue =
+    clearedParam !== null && rawParamValue === clearedParam
+      ? null
+      : rawParamValue;
 
   const [isRestoringConversation, setIsRestoringConversation] = useState(false);
 
@@ -145,6 +160,8 @@ export function usePlaygroundConversationUrl(options: {
   const restoreInFlightRef = useRef(false);
   const restoreConversationRef = useRef(restoreConversation);
   restoreConversationRef.current = restoreConversation;
+  const paramValueRef = useRef(paramValue);
+  paramValueRef.current = paramValue;
 
   const scopeKey = projectId ?? "local";
   const failureKey = useCallback(
@@ -168,22 +185,18 @@ export function usePlaygroundConversationUrl(options: {
   );
 
   const clearConversation = useCallback(() => {
-    clearActivePlaygroundConversation();
+    // Masked synchronously; the navigation below only catches up later.
+    setClearedParam(paramValueRef.current);
     writeParam((params) => params.delete(PLAYGROUND_CONVERSATION_PARAM));
   }, [writeParam]);
 
   const writeConversation = useCallback(
     (conversationId: string) => {
-      writeActivePlaygroundConversation({
-        chatSessionId: conversationId,
-        projectId: projectId ?? null,
-        updatedAt: Date.now(),
-      });
       writeParam((params) =>
         params.set(PLAYGROUND_CONVERSATION_PARAM, conversationId),
       );
     },
-    [projectId, writeParam],
+    [writeParam],
   );
 
   const restoreOutstanding =
@@ -205,8 +218,6 @@ export function usePlaygroundConversationUrl(options: {
   writeConversationRef.current = writeConversation;
   const clearConversationRef = useRef(clearConversation);
   clearConversationRef.current = clearConversation;
-  const paramValueRef = useRef(paramValue);
-  paramValueRef.current = paramValue;
 
   // Restore. Declared before the sync effect so a re-armed restore (after the
   // chat hook re-mints its id) is already in flight when sync next evaluates.
@@ -223,11 +234,10 @@ export function usePlaygroundConversationUrl(options: {
     if (hasMessages) return;
     if (restoreInFlightRef.current) return;
 
-    // The param is the source of truth; storage only covers the paths that
-    // re-enter `/playground` bare — Electron's post-OAuth renderer reload above
-    // all, which rebuilds the window from a localStorage-only world.
-    const desiredId =
-      paramValue ?? readActivePlaygroundConversation(projectId, Date.now());
+    // The param is the ONLY source. Arriving at a bare `/playground` — the
+    // sidebar link, a fresh window — starts a new chat rather than reopening
+    // whatever was last on screen.
+    const desiredId = paramValue;
     if (!desiredId) return;
     if (desiredId === chatSessionId) return;
     if (failedRestoresRef.current.has(failureKey(desiredId))) return;
@@ -238,22 +248,14 @@ export function usePlaygroundConversationUrl(options: {
     void (async () => {
       try {
         const outcome = await restoreConversationRef.current(desiredId);
-        // The URL can move on mid-fetch (the user picks another thread, or a
-        // fork writes a new id). A restore that is no longer what the URL asks
-        // for must not touch it — writing would fight the newer target and
-        // clearing would erase it.
-        const stillTargeted = paramValueRef.current === paramValue;
-        if (outcome === "restored") {
-          // Adopting a storage-only id: put it in the URL so a second refresh
-          // takes the param path and everything downstream sees one shape.
-          if (stillTargeted && paramValue !== desiredId) {
-            writeConversationRef.current(desiredId);
-          }
-          return;
-        }
+        if (outcome === "restored") return;
         // Both non-success outcomes stop this id from re-firing under the
         // current scope; only a terminal one gives up the URL.
         failedRestoresRef.current.add(failureKey(desiredId));
+        // The URL can move on mid-fetch — the user navigates, or dismisses
+        // this conversation outright. Clearing then would erase whatever they
+        // moved to, so only give up the URL if it still asks for this id.
+        const stillTargeted = paramValueRef.current === desiredId;
         if (outcome === "unavailable" && stillTargeted) {
           clearConversationRef.current();
         }
@@ -272,8 +274,16 @@ export function usePlaygroundConversationUrl(options: {
     isSessionBootstrapComplete,
     isStreaming,
     paramValue,
-    projectId,
   ]);
+
+  // Drop the mask as soon as the URL stops naming the cleared conversation —
+  // it has either caught up, or the user has gone somewhere else. Without this
+  // a later Back to that conversation would stay suppressed forever.
+  useEffect(() => {
+    if (clearedParam === null) return;
+    if (rawParamValue === clearedParam) return;
+    setClearedParam(null);
+  }, [clearedParam, rawParamValue]);
 
   // Sync.
   useEffect(() => {
@@ -286,8 +296,13 @@ export function usePlaygroundConversationUrl(options: {
       restorePending: restoreOutstanding || isRestoringConversation,
     });
     if (decision.kind !== "set") return;
+    // Never put back the conversation the user just dismissed. Masking makes
+    // it invisible to the restore effect; without this the sync effect would
+    // read that same absence as "the URL is missing an id" and write it again.
+    if (decision.conversationId === clearedParam) return;
     writeConversation(decision.conversationId);
   }, [
+    clearedParam,
     chatSessionId,
     enabled,
     hasMessages,
