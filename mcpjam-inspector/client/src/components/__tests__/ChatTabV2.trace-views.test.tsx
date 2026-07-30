@@ -383,10 +383,19 @@ describe("ChatTabV2 trace views", () => {
 
       fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
 
-      expect(track).toHaveBeenCalledWith("chat_starter_prompt_clicked", {
-        prompt: "Starter chip prompt",
-        location: "chat_tab",
-      });
+      // Filter by event name: mount fires other events (chat_tab_viewed), so
+      // a bare call count can't prove the click emitted exactly one.
+      const starterCalls = vi
+        .mocked(track)
+        .mock.calls.filter(
+          ([event]) => event === "chat_starter_prompt_clicked",
+        );
+      expect(starterCalls).toEqual([
+        [
+          "chat_starter_prompt_clicked",
+          { prompt: "Starter chip prompt", location: "chat_tab" },
+        ],
+      ]);
     });
   });
 

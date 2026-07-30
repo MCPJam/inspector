@@ -1428,10 +1428,17 @@ describe("PlaygroundMain", () => {
 
       fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
 
-      expect(track).toHaveBeenCalledWith("chat_starter_prompt_clicked", {
-        prompt: "Starter chip prompt",
-        location: "playground_compare",
-      });
+      const starterCalls = vi
+        .mocked(track)
+        .mock.calls.filter(
+          ([event]) => event === "chat_starter_prompt_clicked",
+        );
+      expect(starterCalls).toEqual([
+        [
+          "chat_starter_prompt_clicked",
+          { prompt: "Starter chip prompt", location: "playground_compare" },
+        ],
+      ]);
     });
 
     it("shows trace empty diagnostics and hides compare grid when Trace is selected before first message", () => {
@@ -1502,10 +1509,19 @@ describe("PlaygroundMain", () => {
 
       fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
 
-      expect(track).toHaveBeenCalledWith("chat_starter_prompt_clicked", {
-        prompt: "Starter chip prompt",
-        location: "playground_single",
-      });
+      // Filter by event name: the single-model click also fires
+      // app_builder_send_message, so a bare call count would be racy.
+      const starterCalls = vi
+        .mocked(track)
+        .mock.calls.filter(
+          ([event]) => event === "chat_starter_prompt_clicked",
+        );
+      expect(starterCalls).toEqual([
+        [
+          "chat_starter_prompt_clicked",
+          { prompt: "Starter chip prompt", location: "playground_single" },
+        ],
+      ]);
     });
 
     it("hides starter chips when the welcome hero is suppressed", () => {
