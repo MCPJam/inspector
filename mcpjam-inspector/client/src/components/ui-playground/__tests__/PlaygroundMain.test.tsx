@@ -8,6 +8,7 @@ import {
   within,
 } from "@testing-library/react";
 import { PlaygroundMain } from "../PlaygroundMain";
+import { track } from "@/lib/analytics";
 import { DEFAULT_CHAT_COMPOSER_PLACEHOLDER } from "@/components/chat-v2/shared/chat-helpers";
 import { useHostContextStore } from "@/stores/client-context-store";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
@@ -1411,6 +1412,28 @@ describe("PlaygroundMain", () => {
       ).not.toHaveLength(0);
     });
 
+    it("tracks the chip click with the compare location when multi-model is active", () => {
+      mockUseChatSession.availableModels = [
+        { id: "gpt-4", name: "GPT-4", provider: "openai" },
+        {
+          id: "claude-sonnet-4-5",
+          name: "Claude Sonnet 4.5",
+          provider: "anthropic",
+        },
+      ];
+      mockUseChatSession.selectedModelIds = ["gpt-4", "claude-sonnet-4-5"];
+      mockUseChatSession.multiModelEnabled = true;
+
+      render(<PlaygroundMain {...defaultProps} enableMultiModelChat={true} />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
+
+      expect(track).toHaveBeenCalledWith("chat_starter_prompt_clicked", {
+        prompt: "Starter chip prompt",
+        location: "playground_compare",
+      });
+    });
+
     it("shows trace empty diagnostics and hides compare grid when Trace is selected before first message", () => {
       mockUseChatSession.availableModels = [
         {
@@ -1471,6 +1494,17 @@ describe("PlaygroundMain", () => {
         expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
           expect.objectContaining({ text: "Starter chip prompt" }),
         );
+      });
+    });
+
+    it("tracks the chip click with the prompt and single-model location", () => {
+      render(<PlaygroundMain {...defaultProps} />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
+
+      expect(track).toHaveBeenCalledWith("chat_starter_prompt_clicked", {
+        prompt: "Starter chip prompt",
+        location: "playground_single",
       });
     });
 
