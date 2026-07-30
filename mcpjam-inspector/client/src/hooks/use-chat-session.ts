@@ -2659,11 +2659,14 @@ export function useChatSession(
   useEffect(() => {
     if (!isTurnActive) return;
     turnStartVersionRef.current = resumedVersionRef.current;
-    beginChatTurnScopeStepUpHold(() => stopRef.current());
+    // The handle identifies THIS lane: compare mode runs one of these hooks per
+    // lane, and the hold has to know which turns are still live.
+    const hold = beginChatTurnScopeStepUpHold(() => stopRef.current());
     return () => {
       // A turn that errored has nothing left to persist — don't make the user
       // wait out a poll that cannot succeed.
       endChatTurnScopeStepUpHold(
+        hold,
         statusRef.current === "error"
           ? undefined
           : waitForTurnPersistedRef.current

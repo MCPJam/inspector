@@ -205,6 +205,8 @@ export function usePlaygroundConversationUrl(options: {
   writeConversationRef.current = writeConversation;
   const clearConversationRef = useRef(clearConversation);
   clearConversationRef.current = clearConversation;
+  const paramValueRef = useRef(paramValue);
+  paramValueRef.current = paramValue;
 
   // Restore. Declared before the sync effect so a re-armed restore (after the
   // chat hook re-mints its id) is already in flight when sync next evaluates.
@@ -236,10 +238,15 @@ export function usePlaygroundConversationUrl(options: {
     void (async () => {
       try {
         const outcome = await restoreConversationRef.current(desiredId);
+        // The URL can move on mid-fetch (the user picks another thread, or a
+        // fork writes a new id). A restore that is no longer what the URL asks
+        // for must not touch it — writing would fight the newer target and
+        // clearing would erase it.
+        const stillTargeted = paramValueRef.current === paramValue;
         if (outcome === "restored") {
           // Adopting a storage-only id: put it in the URL so a second refresh
           // takes the param path and everything downstream sees one shape.
-          if (paramValue !== desiredId) {
+          if (stillTargeted && paramValue !== desiredId) {
             writeConversationRef.current(desiredId);
           }
           return;
@@ -247,7 +254,7 @@ export function usePlaygroundConversationUrl(options: {
         // Both non-success outcomes stop this id from re-firing under the
         // current scope; only a terminal one gives up the URL.
         failedRestoresRef.current.add(failureKey(desiredId));
-        if (outcome === "unavailable") {
+        if (outcome === "unavailable" && stillTargeted) {
           clearConversationRef.current();
         }
       } finally {

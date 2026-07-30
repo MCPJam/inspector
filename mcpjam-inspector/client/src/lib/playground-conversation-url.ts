@@ -34,6 +34,16 @@ const STORAGE_KEY = "mcpjam:playground-active-conversation:v1";
  */
 const STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 
+/**
+ * Tolerance for a timestamp that reads as being in the future.
+ *
+ * Age is measured against the wall clock, so an entry written while the clock
+ * ran fast stays "negative age" forever once the clock is corrected — it would
+ * outlive the staleness rule entirely. Anything beyond a little skew is a clock
+ * we cannot reason about, so the entry is discarded rather than trusted.
+ */
+const FUTURE_SKEW_TOLERANCE_MS = 5 * 60 * 1000;
+
 /** Persisted shape of the fallback entry. */
 export type ActivePlaygroundConversation = {
   chatSessionId: string;
@@ -132,7 +142,9 @@ export function readActivePlaygroundConversation(
   if (typeof entry.updatedAt !== "number" || !Number.isFinite(entry.updatedAt)) {
     return null;
   }
-  if (now - entry.updatedAt > STALE_AFTER_MS) return null;
+  const age = now - entry.updatedAt;
+  if (age > STALE_AFTER_MS) return null;
+  if (age < -FUTURE_SKEW_TOLERANCE_MS) return null;
 
   const storedProjectId =
     typeof entry.projectId === "string" ? normalizeProjectId(entry.projectId) : null;

@@ -9,7 +9,7 @@
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { MemoryRouter, useLocation } from "react-router";
+import { MemoryRouter, useLocation, useNavigate } from "react-router";
 
 import {
   usePlaygroundConversationUrl,
@@ -40,10 +40,22 @@ function renderConversationUrl(props: Props, initialEntry = "/playground") {
     (hookProps: Props) => ({
       url: usePlaygroundConversationUrl(hookProps),
       search: useLocation().search,
+      // Stands in for navigation the hook doesn't perform: Back/Forward, or
+      // another part of the app changing the route.
+      navigate: useNavigate(),
     }),
     { wrapper, initialProps: props },
   );
 }
+
+/**
+ * Settle effects and the microtasks they queue.
+ *
+ * Negative assertions ("never fetched") cannot use `waitFor` — it succeeds on
+ * the first pass and would pass even if the call arrived a tick later. They
+ * need a deterministic flush instead.
+ */
+const settle = () => act(async () => {});
 
 beforeEach(() => {
   localStorage.clear();
@@ -129,7 +141,7 @@ describe("usePlaygroundConversationUrl", () => {
     expect(result.current.url.isRestoringConversation).toBe(false);
   });
 
-  it("does not restore over an existing transcript or a rail selection", async () => {
+  it("does not restore over an existing transcript", async () => {
     const restoreConversation = vi.fn(
       async (): Promise<ConversationRestoreOutcome> => "restored",
     );
@@ -137,16 +149,34 @@ describe("usePlaygroundConversationUrl", () => {
       baseProps({ hasMessages: true, restoreConversation }),
       "/playground?conversation=chat-1",
     );
+
+    await settle();
+    expect(restoreConversation).not.toHaveBeenCalled();
+  });
+
+  it("does not race a thread picked from the rail", async () => {
+    const restoreConversation = vi.fn(
+      async (): Promise<ConversationRestoreOutcome> => "restored",
+    );
     renderConversationUrl(
       baseProps({ activeHistorySessionId: "row-1", restoreConversation }),
       "/playground?conversation=chat-1",
+    );
+
+    await settle();
+    expect(restoreConversation).not.toHaveBeenCalled();
+  });
+
+  it("defers to a pending eval handoff", async () => {
+    const restoreConversation = vi.fn(
+      async (): Promise<ConversationRestoreOutcome> => "restored",
     );
     renderConversationUrl(
       baseProps({ isEvalHandoffPending: true, restoreConversation }),
       "/playground?conversation=chat-1",
     );
 
-    await Promise.resolve();
+    await settle();
     expect(restoreConversation).not.toHaveBeenCalled();
   });
 
@@ -189,8 +219,38 @@ describe("usePlaygroundConversationUrl", () => {
     await waitFor(() => expect(result.current.search).toBe(""));
 
     rerender(baseProps({ chatSessionId: "another", restoreConversation }));
-    await Promise.resolve();
+    await settle();
     expect(restoreConversation).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not let a stale restore erase a newer conversation", async () => {
+    // The user navigates (Back/Forward) while the first fetch is still in
+    // flight, and that fetch then comes back "gone". It must not take the URL
+    // the user is now on down with it.
+    let finish: ((outcome: ConversationRestoreOutcome) => void) | undefined;
+    const restoreConversation = vi.fn(
+      () =>
+        new Promise<ConversationRestoreOutcome>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const { result } = renderConversationUrl(
+      baseProps({ restoreConversation }),
+      "/playground?conversation=chat-1",
+    );
+    await waitFor(() =>
+      expect(restoreConversation).toHaveBeenCalledWith("chat-1"),
+    );
+
+    const staleFinish = finish;
+    act(() => result.current.navigate("/playground?conversation=chat-2"));
+    expect(result.current.search).toBe("?conversation=chat-2");
+
+    await act(async () => {
+      staleFinish?.("unavailable");
+    });
+
+    expect(result.current.search).toBe("?conversation=chat-2");
   });
 
   it("keeps the param after a transient failure", async () => {
@@ -245,7 +305,7 @@ describe("usePlaygroundConversationUrl", () => {
     );
     renderConversationUrl(baseProps({ projectId: "proj-2", restoreConversation }));
 
-    await Promise.resolve();
+    await settle();
     expect(restoreConversation).not.toHaveBeenCalled();
   });
 
@@ -287,7 +347,7 @@ describe("usePlaygroundConversationUrl", () => {
       "/playground?conversation=chat-9",
     );
 
-    await Promise.resolve();
+    await settle();
     expect(restoreConversation).not.toHaveBeenCalled();
     expect(result.current.search).toBe("?conversation=chat-9");
   });
@@ -323,7 +383,7 @@ describe("usePlaygroundConversationUrl", () => {
       }),
     );
 
-    await Promise.resolve();
+    await settle();
     expect(result.current.search).toBe("");
   });
 });

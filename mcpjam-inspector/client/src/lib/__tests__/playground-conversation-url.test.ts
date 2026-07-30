@@ -91,6 +91,35 @@ describe("active playground conversation storage", () => {
     ).toBeNull();
   });
 
+  it("rejects an entry stamped in the future", () => {
+    // Written while the clock ran fast: its age stays negative once the clock
+    // is corrected, so without this it would outlive the staleness rule and
+    // reopen an arbitrarily old conversation.
+    localStorage.setItem(
+      "mcpjam:playground-active-conversation:v1",
+      JSON.stringify({
+        chatSessionId: "chat-1",
+        projectId: "proj-1",
+        updatedAt: NOW + 30 * DAY_MS,
+      }),
+    );
+
+    expect(readActivePlaygroundConversation("proj-1", NOW)).toBeNull();
+  });
+
+  it("tolerates a small amount of clock skew", () => {
+    localStorage.setItem(
+      "mcpjam:playground-active-conversation:v1",
+      JSON.stringify({
+        chatSessionId: "chat-1",
+        projectId: "proj-1",
+        updatedAt: NOW + 60_000,
+      }),
+    );
+
+    expect(readActivePlaygroundConversation("proj-1", NOW)).toBe("chat-1");
+  });
+
   it("returns null for missing, malformed, or incomplete entries", () => {
     expect(readActivePlaygroundConversation("proj-1", NOW)).toBeNull();
 

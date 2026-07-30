@@ -550,8 +550,14 @@ export function PlaygroundMain({
   const historySelectionRequestIdRef = useRef(0);
   const activeHistorySessionIdRef = useRef<string | null>(null);
   const reactiveHistoryLoadRequestIdRef = useRef(0);
-  // Model id from a restored conversation that the catalog didn't know yet.
-  const pendingRestoredModelIdRef = useRef<string | null>(null);
+  // Model from a restored conversation that the catalog didn't know yet. Kept
+  // WITH its session id: the catalog can arrive after the user has moved to a
+  // different thread, and applying it then would retag their new thread with
+  // the old one's model.
+  const pendingRestoredModelRef = useRef<{
+    chatSessionId: string;
+    modelId: string;
+  } | null>(null);
   // Set by `usePlaygroundConversationUrl` below; called from the chat hook's
   // `onReset` above it, which is why this is a ref rather than the callback.
   const clearConversationUrlRef = useRef<() => void>(() => {});
@@ -931,7 +937,7 @@ export function PlaygroundMain({
       // are re-mints of the SAME conversation, and clearing on those would
       // strip the id right before the restore effect goes looking for it.
       if (reason === "reset") {
-        pendingRestoredModelIdRef.current = null;
+        pendingRestoredModelRef.current = null;
         clearConversationUrlRef.current();
       }
       composerOnResetRef.current();
@@ -2284,7 +2290,12 @@ export function PlaygroundMain({
         );
         // `loadHistorySession` skips the model when the catalog hasn't loaded
         // yet; remember it so the effect below can apply it on arrival.
-        pendingRestoredModelIdRef.current = detail.session.modelId ?? null;
+        pendingRestoredModelRef.current = detail.session.modelId
+          ? {
+              chatSessionId: detail.session.chatSessionId,
+              modelId: detail.session.modelId,
+            }
+          : null;
         restored = true;
         return "restored";
       } catch (error) {
@@ -2337,19 +2348,23 @@ export function PlaygroundMain({
   clearConversationUrlRef.current = clearConversation;
 
   // The model catalog can arrive after the transcript. Apply the restored
-  // model once — and only while the thread is still the restored one, so a
-  // user who switches models mid-load isn't snapped back.
+  // model once — and only while the restored conversation is still the one on
+  // screen, so a thread the user opened in the meantime keeps its own model.
   useEffect(() => {
-    const pendingModelId = pendingRestoredModelIdRef.current;
-    if (!pendingModelId) return;
+    const pending = pendingRestoredModelRef.current;
+    if (!pending) return;
+    if (pending.chatSessionId !== chatSessionId) {
+      pendingRestoredModelRef.current = null;
+      return;
+    }
     const matchingModel = availableModels.find(
-      (model) => String(model.id) === pendingModelId
+      (model) => String(model.id) === pending.modelId
     );
     if (!matchingModel) return;
-    pendingRestoredModelIdRef.current = null;
-    if (String(selectedModel?.id ?? "") === pendingModelId) return;
+    pendingRestoredModelRef.current = null;
+    if (String(selectedModel?.id ?? "") === pending.modelId) return;
     setSelectedModel(matchingModel);
-  }, [availableModels, selectedModel, setSelectedModel]);
+  }, [availableModels, chatSessionId, selectedModel, setSelectedModel]);
 
   const resetMultiModelSessions = useCallback(() => {
     clearMultiModelUiState();

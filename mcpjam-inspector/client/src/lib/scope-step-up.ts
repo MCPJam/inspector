@@ -105,17 +105,28 @@ type PendingChatStepUp = {
   challenge: InsufficientScopeChallenge;
 };
 const pendingChatStepUps = new Map<string, PendingChatStepUp>();
-let chatTurnHoldDepth = 0;
+
+/**
+ * One record per live turn.
+ *
+ * A SET, not a counter: compare mode runs a `useChatSession` per lane and they
+ * stream concurrently. A counter can say "some turn is running" but not *which*
+ * ones, so it cannot stop them all on timeout, and it cannot tell whose
+ * persistence still has to land. Both of those lose exactly the transcripts
+ * this hold exists to protect.
+ */
+export type ChatTurnScopeStepUpHold = { abort?: () => void };
+const activeHolds = new Set<ChatTurnScopeStepUpHold>();
+/** Persistence checks owed by turns that have already ended this round. */
+const pendingPersistWaits = new Set<() => Promise<unknown>>();
 let holdTimeoutId: ReturnType<typeof setTimeout> | null = null;
-/** Aborts the in-flight turn when the hold times out. Registered by the chat. */
-let abortHeldChatTurn: (() => void) | null = null;
 
 /** Test seam: no production caller should need this. */
 export function __resetScopeStepUpInFlightForTests(): void {
   inFlight.clear();
   pendingChatStepUps.clear();
-  chatTurnHoldDepth = 0;
-  abortHeldChatTurn = null;
+  activeHolds.clear();
+  pendingPersistWaits.clear();
   if (holdTimeoutId !== null) {
     clearTimeout(holdTimeoutId);
     holdTimeoutId = null;
@@ -138,51 +149,66 @@ function flushPendingChatStepUps(): void {
   }
 }
 
+/** Release the queue once every lane has ended and had a chance to persist. */
+function releaseQueuedChatStepUps(): void {
+  if (pendingChatStepUps.size === 0) {
+    pendingPersistWaits.clear();
+    clearHoldTimeout();
+    return;
+  }
+  const waits = [...pendingPersistWaits];
+  pendingPersistWaits.clear();
+  if (waits.length === 0) {
+    flushPendingChatStepUps();
+    return;
+  }
+  // Every lane that ended this round, not just the last one: the queued
+  // challenge may well have come from a different lane than the one whose
+  // persistence we happen to be holding.
+  void Promise.allSettled(waits.map((wait) => wait())).then(() => {
+    // The user can send again while we wait. Redirecting now would abandon
+    // that new turn — the exact failure this hold exists to prevent — so stay
+    // queued and let the new turn's own release do it.
+    if (activeHolds.size > 0) return;
+    flushPendingChatStepUps();
+  });
+}
+
 /**
  * Marks the start of a chat turn: step-ups raised from here on are queued
  * rather than redirected.
  *
- * @param onTimeout Stops the turn if the hold times out, so the redirect isn't
+ * @param abort Stops THIS turn if the hold times out, so the redirect isn't
  *   waiting on a stream that will never end.
+ * @returns The handle to pass back to {@link endChatTurnScopeStepUpHold}.
  */
-export function beginChatTurnScopeStepUpHold(onTimeout?: () => void): void {
-  chatTurnHoldDepth += 1;
-  if (onTimeout) {
-    abortHeldChatTurn = onTimeout;
-  }
+export function beginChatTurnScopeStepUpHold(
+  abort?: () => void,
+): ChatTurnScopeStepUpHold {
+  const hold: ChatTurnScopeStepUpHold = { abort };
+  activeHolds.add(hold);
+  return hold;
 }
 
 /**
- * Marks the end of a chat turn and releases anything queued during it.
+ * Marks the end of one chat turn, releasing the queue once every turn is done.
  *
- * @param waitForPersist Resolves once the turn has been written server-side.
- *   Raced against a cap: persistence is best-effort here, and a slow write must
- *   delay the redirect, not cancel it.
+ * @param waitForPersist Resolves once this turn has been written server-side.
+ *   Awaited (never awaited *on*): persistence is worth a moment's delay, never
+ *   worth withholding authorization over.
  */
 export function endChatTurnScopeStepUpHold(
+  hold: ChatTurnScopeStepUpHold,
   waitForPersist?: () => Promise<unknown>,
 ): void {
-  if (chatTurnHoldDepth === 0) return;
-  chatTurnHoldDepth -= 1;
-  if (chatTurnHoldDepth > 0) return;
-
-  abortHeldChatTurn = null;
-  if (pendingChatStepUps.size === 0) {
-    clearHoldTimeout();
-    return;
+  // Already released — by a timeout, or by a duplicate end. Registering a
+  // persistence wait now would attach it to somebody else's round.
+  if (!activeHolds.delete(hold)) return;
+  if (waitForPersist) {
+    pendingPersistWaits.add(waitForPersist);
   }
-  if (!waitForPersist) {
-    flushPendingChatStepUps();
-    return;
-  }
-  void Promise.resolve()
-    .then(waitForPersist)
-    .catch(() => {
-      // A failed persistence check is not a reason to withhold authorization.
-    })
-    .finally(() => {
-      flushPendingChatStepUps();
-    });
+  if (activeHolds.size > 0) return;
+  releaseQueuedChatStepUps();
 }
 
 /**
@@ -201,7 +227,7 @@ export function driveChatScopeStepUp(
   // widen must not hold a slot in the queue.
   if (!server) return;
   if (!isActionableStepUpChallenge(challenge)) return;
-  if (chatTurnHoldDepth === 0) {
+  if (activeHolds.size === 0) {
     driveScopeStepUp(server, challenge);
     return;
   }
@@ -211,15 +237,18 @@ export function driveChatScopeStepUp(
   if (holdTimeoutId !== null) return;
   holdTimeoutId = setTimeout(() => {
     holdTimeoutId = null;
-    // Stop the turn first: the redirect is about to discard it anyway, and
-    // leaving the request open would keep streaming into a dead page.
-    const abort = abortHeldChatTurn;
-    abortHeldChatTurn = null;
-    chatTurnHoldDepth = 0;
-    try {
-      abort?.();
-    } catch {
-      // A failed abort must not strand the queued authorization.
+    // Stop EVERY live turn first: the redirect discards the page, so any lane
+    // left streaming would be writing into a document that is about to go
+    // away — and its transcript would never be persisted.
+    const stranded = [...activeHolds];
+    activeHolds.clear();
+    pendingPersistWaits.clear();
+    for (const hold of stranded) {
+      try {
+        hold.abort?.();
+      } catch {
+        // A failed abort must not strand the queued authorization.
+      }
     }
     flushPendingChatStepUps();
   }, CHAT_TURN_HOLD_TIMEOUT_MS);
