@@ -689,6 +689,57 @@ describe("waitForMcpInitialize", () => {
     ).toBe(false);
   });
 
+  it("does not accept a discover result offering only legacy versions", async () => {
+    // `server/discover` is the MODERN arm. A result naming only 2025-era
+    // revisions says nothing about it: for such a server the client falls back to
+    // `initialize`, and whether THAT works is what the legacy probe answers. So an
+    // endpoint that answers discover with legacy-only versions while rejecting
+    // `initialize` is not a server the eval run can drive, and must not read as
+    // healthy off the arm that never proved it.
+    let clock = 0;
+    const seen: string[] = [];
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      const parsed = JSON.parse(String(init.body)) as { method: string };
+      seen.push(parsed.method);
+      if (parsed.method === "initialize") {
+        return new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            error: { code: -32600, message: "legacy era rejected" },
+          }),
+          { status: 400, headers: { "content-type": "application/json" } }
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 2,
+          result: {
+            supportedVersions: ["2025-06-18", "2025-11-25"],
+            capabilities: {},
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    }) as unknown as typeof fetch;
+
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        fetchImpl,
+        timeoutMs: 100,
+        intervalMs: 10,
+        now: () => clock,
+        sleep: async () => {
+          clock += 10;
+        },
+      })
+    ).toBe(false);
+    // The modern arm really did run — this is a rejection, not a probe that never
+    // got its turn.
+    expect(seen).toContain("server/discover");
+  });
+
   it("joins an event's data fields before parsing them", async () => {
     // SSE concatenates consecutive `data:` fields within one event. A server that
     // spreads one JSON-RPC message across several is legal; parsing each line
@@ -712,6 +763,76 @@ describe("waitForMcpInitialize", () => {
           headers: { "content-type": "text/event-stream" },
         })
     ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", { ...seams, fetchImpl })
+    ).toBe(true);
+  });
+
+  it("does not decide on a multi-field event before its terminator arrives", async () => {
+    // The first `data:` field parses on its own, but the event is not over: the
+    // second field makes the joined payload something else entirely. Deciding at
+    // the chunk boundary would accept an answer the server never finished sending.
+    // Held instead until the blank line, at which point the whole event is judged
+    // — and this one is not valid JSON, so the verdict is "not healthy".
+    const chunks = [
+      `event: message\ndata: ${JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        result: INITIALIZE_RESULT,
+      })}\n`,
+      `data: "and the rest of the message"\n\n`,
+    ];
+    let clock = 0;
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              const encoder = new TextEncoder();
+              for (const chunk of chunks) {
+                controller.enqueue(encoder.encode(chunk));
+              }
+              controller.close();
+            },
+          }),
+          { status: 200, headers: { "content-type": "text/event-stream" } }
+        )
+    ) as unknown as typeof fetch;
+
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        fetchImpl,
+        timeoutMs: 100,
+        intervalMs: 10,
+        now: () => clock,
+        sleep: async () => {
+          clock += 10;
+        },
+      })
+    ).toBe(false);
+  });
+
+  it("accepts a final event the server terminated by closing the stream", async () => {
+    // Withholding an unterminated event must not mean withholding it forever. A
+    // server that writes the frame and then closes without a trailing blank line
+    // has still said everything it is going to say, so the tail gets parsed.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(
+                  SSE_INITIALIZE_FRAME.replace(/\n+$/, "\n")
+                )
+              );
+              controller.close();
+            },
+          }),
+          { status: 200, headers: { "content-type": "text/event-stream" } }
+        )
+    ) as unknown as typeof fetch;
+
     expect(
       await waitForMcpInitialize("https://box/mcp", { ...seams, fetchImpl })
     ).toBe(true);

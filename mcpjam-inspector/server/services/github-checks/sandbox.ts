@@ -162,6 +162,21 @@ const HEALTH_PROBE_ACCEPTED_VERSIONS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * The subset of the above the MODERN negotiation arm can speak.
+ *
+ * A `server/discover` result is only evidence of a usable server if the versions
+ * it offers overlap THIS set. A discover answer naming nothing but legacy
+ * revisions asserts nothing about the modern arm — the client would fall back to
+ * `initialize` for such a server, and whether that fallback works is exactly what
+ * the legacy probe is for. Accepting it here would let a half-broken endpoint
+ * (answers discover, cannot actually serve a modern session) read as healthy off
+ * the arm that never proved it.
+ */
+const MODERN_PROBE_ACCEPTED_VERSIONS: ReadonlySet<string> = new Set([
+  MODERN_PROBE_PROTOCOL_VERSION,
+]);
+
+/**
  * Make untrusted PR output safe to put in a GitHub check body.
  *
  * Mirrors the backend's `clampCheckOutput` (the two repos share no code). Three
@@ -788,8 +803,9 @@ async function probeResponseIsHealthy(
     | undefined;
   if (!body || typeof body.getReader !== "function") {
     // No streaming body available (a buffered runtime, or a test stub): the
-    // payload is already in hand, so reading it cannot block.
-    return carriesAcceptedAnswer(await response.text(), accepts);
+    // payload is already in hand, so reading it cannot block — and nothing more
+    // is coming, so an unterminated last event is all we will ever get.
+    return carriesAcceptedAnswer(await response.text(), accepts, true);
   }
 
   const reader = body.getReader();
@@ -811,15 +827,18 @@ async function probeResponseIsHealthy(
         remainingBytes -= consumed;
         text += decoder.decode(value.subarray(0, consumed), { stream: true });
         // Checked per chunk: a frame can arrive split, and a partial JSON just
-        // fails to parse and waits for the rest.
-        if (carriesAcceptedAnswer(text, accepts)) return true;
+        // fails to parse and waits for the rest. Mid-stream, so an event whose
+        // terminating blank line has not arrived yet is held, not parsed.
+        if (carriesAcceptedAnswer(text, accepts, false)) return true;
       }
       if (done) {
         text += decoder.decode();
-        return carriesAcceptedAnswer(text, accepts);
+        return carriesAcceptedAnswer(text, accepts, true);
       }
     }
-    return carriesAcceptedAnswer(text, accepts);
+    // Out of byte budget. Nothing further will be read, so this is the last look:
+    // parse whatever the truncated tail holds rather than discarding it.
+    return carriesAcceptedAnswer(text, accepts, true);
   } finally {
     // We are done with this response either way — a healthy server is still
     // holding the stream open, so drop it rather than leaking the socket.
@@ -835,9 +854,10 @@ async function probeResponseIsHealthy(
  */
 function carriesAcceptedAnswer(
   text: string,
-  accepts: (parsed: unknown) => boolean
+  accepts: (parsed: unknown) => boolean,
+  streamEnded: boolean
 ): boolean {
-  for (const payload of ssePayloads(text)) {
+  for (const payload of ssePayloads(text, streamEnded)) {
     try {
       if (accepts(JSON.parse(payload))) return true;
     } catch {
@@ -859,8 +879,17 @@ function carriesAcceptedAnswer(
  * Within one event, consecutive `data:` fields are JOINED with newlines, per SSE
  * semantics. A server that spreads one JSON-RPC message across several fields is
  * legal, and parsing each line on its own made every fragment fail to parse.
+ *
+ * `streamEnded` says whether more bytes can still arrive. While the stream is
+ * live, an event whose terminating blank line has not been seen yet is INCOMPLETE
+ * and is withheld: a multi-field event read at a chunk boundary would otherwise be
+ * handed to `JSON.parse` a field short. That mostly just fails to parse, but a
+ * server whose first field happens to be a complete JSON object followed by more
+ * fields would be accepted off a truncated read. The unfinished event stays in
+ * `text`, so the next chunk simply re-parses it whole. Once the stream is over
+ * (or we stop reading), the tail is all there is, so parse it.
  */
-function ssePayloads(text: string): string[] {
+function ssePayloads(text: string, streamEnded: boolean): string[] {
   const payloads: string[] = [];
   let current: string[] = [];
   let sawFrame = false;
@@ -871,8 +900,17 @@ function ssePayloads(text: string): string[] {
     }
   };
 
-  for (const rawLine of text.split(/\n/)) {
-    const line = rawLine.replace(/\r$/, "");
+  const segments = text.split("\n");
+  // The final segment is whatever follows the last newline, so mid-stream it is a
+  // PARTIAL line, not a line. Treating it as one is subtly wrong in both
+  // directions: a half-written `data:` field would be parsed a character short,
+  // and — the case that actually bites — the empty tail left by a trailing "\n"
+  // would read as the event's blank-line terminator, flushing an event the server
+  // has not finished. A real terminator ("\n\n") shows up as an empty segment with
+  // another segment after it.
+  const lineCount = streamEnded ? segments.length : segments.length - 1;
+  for (let index = 0; index < lineCount; index += 1) {
+    const line = segments[index].replace(/\r$/, "");
     if (line.startsWith("data:")) {
       sawFrame = true;
       current.push(line.slice("data:".length).trim());
@@ -882,9 +920,13 @@ function ssePayloads(text: string): string[] {
     // carries no data but does not split it either.
     if (line === "") flush();
   }
-  flush();
+  if (streamEnded) flush();
 
-  if (!sawFrame) return text ? [text] : [];
+  if (!sawFrame) {
+    // Not SSE at all: a plain JSON body. Mid-stream it may be half-written, which
+    // just fails to parse — no framing to get wrong, so hand it over either way.
+    return text ? [text] : [];
+  }
   return payloads.filter((payload) => payload.length > 0);
 }
 
@@ -928,8 +970,9 @@ function isUsableInitializeResponse(parsed: unknown): boolean {
  *
  *   - the envelope and our id;
  *   - `supportedVersions`, a non-empty list of strings, with at least one the
- *     client can actually speak — an endpoint offering nothing in common is no
- *     more usable than a legacy server naming an unsupported version;
+ *     MODERN arm can actually speak — an endpoint offering nothing in common is
+ *     no more usable than a legacy server naming an unsupported version, and one
+ *     offering only legacy revisions is a question for the legacy probe;
  *   - `capabilities`, an object.
  *
  * Server identity lives in `_meta` here and is a SHOULD, not a member of the
@@ -947,7 +990,7 @@ function isUsableDiscoverResponse(parsed: unknown): boolean {
     (version): version is string => typeof version === "string"
   );
   if (offered.length !== discover.supportedVersions.length) return false;
-  if (!offered.some((version) => HEALTH_PROBE_ACCEPTED_VERSIONS.has(version))) {
+  if (!offered.some((version) => MODERN_PROBE_ACCEPTED_VERSIONS.has(version))) {
     return false;
   }
   return isPlainObject(discover.capabilities);
