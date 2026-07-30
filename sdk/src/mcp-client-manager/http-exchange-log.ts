@@ -19,7 +19,10 @@
  * so the cross-check can run later without retaining the body.
  */
 
-import type { MirroredBodyValues } from "./mcp-header-mirror.js";
+import {
+  TASK_ROUTED_METHODS,
+  type MirroredBodyValues,
+} from "./mcp-header-mirror.js";
 
 /** `_meta` key carrying the per-request protocol version in the modern era. */
 const PROTOCOL_VERSION_META_KEY = "io.modelcontextprotocol/protocolVersion";
@@ -88,10 +91,19 @@ export function deriveMirroredBodyValues(
     params?: {
       name?: unknown;
       uri?: unknown;
+      taskId?: unknown;
       _meta?: Record<string, unknown>;
     };
   };
-  const name = params?.name ?? params?.uri;
+  // `params.taskId` is the `Mcp-Name` source for the SEP-2663 routed task
+  // methods and for nothing else, so it is read only for those — otherwise a
+  // method that merely carries a taskId would be cross-checked against the
+  // wrong field.
+  const routedTaskId =
+    typeof method === "string" && TASK_ROUTED_METHODS.has(method)
+      ? params?.taskId
+      : undefined;
+  const name = params?.name ?? params?.uri ?? routedTaskId;
   const protocolVersion = params?._meta?.[PROTOCOL_VERSION_META_KEY];
   const derived: MirroredBodyValues = {
     method: typeof method === "string" ? method : undefined,
