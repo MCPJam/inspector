@@ -22,12 +22,21 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
   useArchiveProjectEnvironment: () => vi.fn(),
   useRestoreProjectEnvironment: () => vi.fn(),
 }));
-vi.mock("../ProjectEnvironmentEditor", () => ({
-  ProjectEnvironmentEditor: (props: Record<string, unknown>) => {
-    mockEditorProps(props);
-    return <div data-testid="editor" />;
-  },
-}));
+vi.mock("../ProjectEnvironmentEditor", async () => {
+  const { useState } = await import("react");
+  return {
+    // Mirrors the REAL editor's contract: `initialDraft` feeds a useState
+    // initializer, so it is read ONCE PER MOUNTED INSTANCE and later prop
+    // changes are ignored. Recording the captured value (not the live prop) is
+    // what makes a missing remount key observable — a reused instance keeps the
+    // previous project's seed.
+    ProjectEnvironmentEditor: (props: Record<string, unknown>) => {
+      const [captured] = useState(() => props.initialDraft);
+      mockEditorProps({ ...props, capturedInitialDraft: captured });
+      return <div data-testid="editor" />;
+    },
+  };
+});
 vi.mock("../environment-chatbox-section", () => ({
   EnvironmentChatboxSection: () => null,
 }));
@@ -62,10 +71,10 @@ describe("ProjectEnvironmentsRoute — seed consumption", () => {
     expect(screen.getByText("New environment")).toBeInTheDocument();
     const props = mockEditorProps.mock.calls.at(-1)![0] as {
       environment: unknown;
-      initialDraft?: { hostId: string | null; name?: string };
+      capturedInitialDraft?: { hostId: string | null; name?: string };
     };
     expect(props.environment).toBeNull();
-    expect(props.initialDraft).toMatchObject({
+    expect(props.capturedInitialDraft).toMatchObject({
       name: "Claude Code",
       hostId: "host_1",
     });
@@ -93,6 +102,63 @@ describe("ProjectEnvironmentsRoute — seed consumption", () => {
     rerender(<ProjectEnvironmentsRoute projectId="proj_1" canManage />);
     await waitFor(() => expect(screen.getByTestId("editor")).toBeVisible());
     expect(screen.getByText("New environment")).toBeInTheDocument();
+  });
+
+  it("switching from a seeded form in A to a seeded form in B applies B's seed (review regression)", async () => {
+    saveEnvironmentDraftSeed("proj_a", {
+      name: "Client A",
+      hostId: "host_a",
+      serverAttachmentId: null,
+      skillSelection: null,
+    });
+    saveEnvironmentDraftSeed("proj_b", {
+      name: "Client B",
+      hostId: "host_b",
+      serverAttachmentId: null,
+      skillSelection: null,
+    });
+
+    const { rerender } = render(
+      <ProjectEnvironmentsRoute projectId="proj_a" canManage />
+    );
+    await waitFor(() => expect(screen.getByTestId("editor")).toBeVisible());
+    expect(
+      (
+        mockEditorProps.mock.calls.at(-1)![0] as {
+          capturedInitialDraft?: { hostId: string };
+        }
+      ).capturedInitialDraft?.hostId
+    ).toBe("host_a");
+
+    // Straight from one seeded create form to another: the remount key must
+    // change, or React reuses the instance and B's already-deleted seed is lost.
+    rerender(<ProjectEnvironmentsRoute projectId="proj_b" canManage />);
+    await waitFor(() => {
+      const props = mockEditorProps.mock.calls.at(-1)![0] as {
+        capturedInitialDraft?: { hostId: string };
+      };
+      // The value the editor actually INITIALIZED with — stale (host_a) if the
+      // instance was reused instead of remounted.
+      expect(props.capturedInitialDraft?.hostId).toBe("host_b");
+    });
+  });
+
+  it("a whitespace-padded active project id still reads the seed (review regression)", async () => {
+    // Connect writes under the TRIMMED id; the route holds the raw one.
+    saveEnvironmentDraftSeed("proj_1", {
+      hostId: "host_1",
+      serverAttachmentId: null,
+      skillSelection: null,
+    });
+    render(<ProjectEnvironmentsRoute projectId="  proj_1  " canManage />);
+    await waitFor(() => expect(screen.getByTestId("editor")).toBeVisible());
+    expect(
+      (
+        mockEditorProps.mock.calls.at(-1)![0] as {
+          capturedInitialDraft?: { hostId: string };
+        }
+      ).capturedInitialDraft?.hostId
+    ).toBe("host_1");
   });
 
   it("no seed ⇒ lands on the list, not create mode", () => {

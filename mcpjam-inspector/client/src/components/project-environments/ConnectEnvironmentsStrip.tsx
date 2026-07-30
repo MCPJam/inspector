@@ -7,7 +7,7 @@ import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { usePreviewedEnvironmentId } from "@/hooks/use-previewed-environment-id";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
-import { useProjectMembers } from "@/hooks/useProjects";
+import { shouldQueryProjectId, useProjectMembers } from "@/hooks/useProjects";
 import { saveEnvironmentDraftSeed } from "@/lib/environment-draft-seed";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { cn } from "@/lib/utils";
@@ -68,9 +68,16 @@ export function ConnectEnvironmentsStrip({
   // members), so the capture CTA is hidden for non-admins rather than leading
   // them into a form they can't save. Same client mirror of the backend gate
   // ServersTab uses for project-server settings; Convex dedupes the query.
+  // `useProjectMembers` gates only on truthiness, so — unlike the environment
+  // and host queries above — a transient/local project id would reach Convex as
+  // an invalid id and throw a validation error while Connect is still resolving
+  // its shared project. Apply the same guard those queries use.
   const { canManageMembers: canManageEnvironments } = useProjectMembers({
     isAuthenticated,
-    projectId: enabled ? normalizedProjectId : null,
+    projectId:
+      enabled && shouldQueryProjectId(normalizedProjectId)
+        ? normalizedProjectId
+        : null,
   });
 
   const hostNamesById = useMemo(
