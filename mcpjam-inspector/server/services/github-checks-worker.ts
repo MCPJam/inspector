@@ -42,7 +42,6 @@ import {
   isGithubChecksSandboxConfigured,
   killCheckSandbox,
   provisionCheckSandbox,
-  waitForMcpInitialize,
   type CheckSandbox,
 } from "./github-checks/sandbox.js";
 
@@ -407,16 +406,61 @@ export type CheckExecutionDeps = {
   report: (report: CheckReport) => Promise<void>;
   heartbeat: (triggerId: string, claimedBy: string) => Promise<void>;
   heartbeatIntervalMs: number;
-  /** Re-probe used to attribute an eval failure; see `attributeEvalFailure`. */
-  probeServer: (url: string, opts: { timeoutMs: number }) => Promise<boolean>;
 };
 
 /**
- * How long the post-failure re-probe gets. Short on purpose: this runs only after
- * the eval already failed, and it is a diagnostic, not a retry. A server that
- * needs longer than this to answer is not one the eval could have used either.
+ * How long the post-failure liveness check gets. Short on purpose: it runs only
+ * after the eval already failed, and it is a diagnostic, not a retry.
  */
 const EVAL_FAILURE_PROBE_TIMEOUT_MS = 15_000;
+
+/** Sentinels the in-box liveness check prints. Matched exactly, never parsed. */
+const PORT_OPEN_MARKER = "MCPJAM_CHECK_PORT_OPEN";
+const PORT_CLOSED_MARKER = "MCPJAM_CHECK_PORT_CLOSED";
+
+/**
+ * Whether the PR's server is still listening — asked from INSIDE the sandbox.
+ *
+ * Deliberately not a fetch to the public URL. That path traverses E2B's ingress,
+ * DNS and TLS, and the health probe reports every one of those failures exactly the
+ * way it reports a dead server: `false`. Blaming the PR for an ingress outage of
+ * OURS would be a red X on an innocent PR, so the question goes over the command
+ * RPC, where a loopback connect can only be answered by the server process itself.
+ *
+ * Three-valued on purpose: `null` is "could not tell", which the caller must treat
+ * as neutral, because the command channel failing is itself our symptom. Node is
+ * the one interpreter the dedicated template is guaranteed to carry (node + git),
+ * so this is a node one-liner rather than `curl`, and it always exits 0 and answers
+ * through stdout — an exit code cannot distinguish "connection refused" from "the
+ * command never ran".
+ */
+async function serverStillListening(
+  sandbox: CheckSandbox,
+  port: number
+): Promise<boolean | null> {
+  const script =
+    `const s=require('net').connect(${port},'127.0.0.1');` +
+    `const done=(m)=>{console.log(m);s.destroy();};` +
+    `s.on('connect',()=>done('${PORT_OPEN_MARKER}'));` +
+    `s.on('error',()=>done('${PORT_CLOSED_MARKER}'));` +
+    `s.setTimeout(5000,()=>s.destroy());`;
+  let stdout = "";
+  try {
+    const result = (await sandbox.commands.run(
+      `node -e ${JSON.stringify(script)}`,
+      { timeoutMs: EVAL_FAILURE_PROBE_TIMEOUT_MS }
+    )) as { stdout?: unknown } | null;
+    stdout = typeof result?.stdout === "string" ? result.stdout : "";
+  } catch {
+    // The box did not answer at all. That is an E2B problem, which is ours.
+    return null;
+  }
+  if (stdout.includes(PORT_OPEN_MARKER)) return true;
+  if (stdout.includes(PORT_CLOSED_MARKER)) return false;
+  // Neither sentinel: the connect timed out, or node produced nothing. Not
+  // evidence of anything, so it must not become evidence against the PR.
+  return null;
+}
 
 /**
  * Decide whether an eval-phase failure belongs to the PR or to us.
@@ -428,51 +472,27 @@ const EVAL_FAILURE_PROBE_TIMEOUT_MS = 15_000;
  * escape the `server_unhealthy` it earned.
  *
  * Rather than pattern-matching error messages — fragile, and wrong the first time a
- * provider rewords a timeout — this asks the box directly, and only reclassifies on
- * POSITIVE evidence of the PR's fault:
- *
- *   1. is the sandbox still reachable? If not, the box is gone and this is ours;
- *   2. does the PR's server still answer the handshake? If it does, the server is
- *      alive and the failure came from somewhere else — ours.
- *
- * Only "box answers, server does not" is attributed to the PR. Every other result,
- * including the discriminator itself failing, leaves the original error alone and
- * therefore stays neutral. That ordering is deliberate: a false `server_unhealthy`
- * puts a red X on an innocent PR, so ambiguity must never produce one.
+ * provider rewords a timeout — this asks the box whether the server process is
+ * still listening, and reclassifies ONLY on a definite "no". A `null` verdict
+ * (command channel down, or no answer at all) and a "yes" both leave the original
+ * error alone, so they stay neutral. Ambiguity must never produce a red X.
  */
 async function attributeEvalFailure(
   error: unknown,
   sandbox: CheckSandbox,
-  serverUrl: string,
-  deps: Pick<CheckExecutionDeps, "probeServer">
+  port: number
 ): Promise<unknown> {
   // Our own typed failures and the lease guard already know what they are.
   if (error instanceof CheckStepError || error instanceof LeaseLostError) {
     return error;
   }
-  try {
-    // A trivial command: proves the box is still ours to talk to and nothing more.
-    await sandbox.commands.run("true", {
-      timeoutMs: EVAL_FAILURE_PROBE_TIMEOUT_MS,
-    });
-  } catch {
-    return error;
-  }
-  let stillAnswering: boolean;
-  try {
-    stillAnswering = await deps.probeServer(serverUrl, {
-      timeoutMs: EVAL_FAILURE_PROBE_TIMEOUT_MS,
-    });
-  } catch {
-    return error;
-  }
-  if (stillAnswering) return error;
+  if ((await serverStillListening(sandbox, port)) !== false) return error;
   const message = error instanceof Error ? error.message : String(error);
   return new CheckStepError(
     "server_unhealthy",
-    "the server stopped answering after it started",
+    "the server stopped listening after it started",
     clampOutput(
-      `The server answered the health probe, then stopped responding while the eval suite was running. The sandbox itself was still reachable when we checked.\n\n${message}`
+      `The server answered the health probe, then stopped listening on port ${port} while the eval suite was running. Checked from inside the sandbox, so this is the server process rather than the network path to it.\n\n${message}`
     )
   );
 }
@@ -726,7 +746,6 @@ function defaultDeps(): CheckExecutionDeps {
     report: reportOutcome,
     heartbeat: sendHeartbeat,
     heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
-    probeServer: (url, opts) => waitForMcpInitialize(url, opts),
   };
 }
 
@@ -870,7 +889,7 @@ export async function executeClaimedCheck(
       .catch(async (error: unknown) => {
         // A failure here may be the PR's server dying mid-run rather than an
         // outage of ours, and the difference decides who gets the red X.
-        throw await attributeEvalFailure(error, runningBox, started.url, deps);
+        throw await attributeEvalFailure(error, runningBox, recipe.port);
       });
 
     const outcome = outcomeForRunResult(run.result);

@@ -54,7 +54,15 @@ type Harness = {
   heartbeats: string[];
 };
 
-function harness(overrides?: Partial<CheckExecutionDeps>): Harness {
+/**
+ * `liveness` scripts what the post-failure in-box liveness check finds: the stdout
+ * the node one-liner prints, or "throws" for a box that no longer answers at all.
+ * Default is empty stdout — no sentinel, so "could not tell", so neutral.
+ */
+function harness(
+  overrides?: Partial<CheckExecutionDeps>,
+  liveness?: string
+): Harness {
   const reports: CheckReport[] = [];
   const events: string[] = [];
   const heartbeats: string[] = [];
@@ -62,7 +70,17 @@ function harness(overrides?: Partial<CheckExecutionDeps>): Harness {
   const sandbox = {
     sandboxId: "sb_1",
     getHost: (port: number) => `${port}-sb_1.e2b.app`,
-    commands: { run: async () => ({}) },
+    commands: {
+      run: async (command: string) => {
+        // The post-failure liveness check is the only command this fake sees.
+        if (command.includes("MCPJAM_CHECK_PORT_OPEN")) {
+          events.push("livenessCheck");
+          if (liveness === "throws") throw new Error("sandbox not found");
+          return { stdout: liveness ?? "" };
+        }
+        return {};
+      },
+    },
     updateNetwork: async () => {},
     kill: async () => {},
   } as unknown as Awaited<ReturnType<CheckExecutionDeps["provisionSandbox"]>>;
@@ -116,13 +134,6 @@ function harness(overrides?: Partial<CheckExecutionDeps>): Harness {
       heartbeats.push(triggerId);
     },
     heartbeatIntervalMs: 1_000,
-    // The eval-failure discriminator's default answer: the PR's server is still
-    // answering, so a failed run stays OUR problem unless a test says otherwise.
-    // Also keeps these tests off the network — the real default would fetch.
-    probeServer: async () => {
-      events.push("probeServer");
-      return true;
-    },
     ...overrides,
   };
 
@@ -266,74 +277,71 @@ describe("executeClaimedCheck — failure attribution", () => {
     expect(h.reports[0].detailsMarkdown).toContain("EADDRINUSE");
   });
 
-  it("blames the PR when its server stops answering during the eval", async () => {
-    // The server passed the health probe and then died. The box is still reachable,
-    // so this is not an outage of ours — it is the PR's server, and it must earn
-    // `server_unhealthy` rather than hiding behind a neutral `infra_error`.
-    const h = harness({
-      runEvalSuite: async () => {
-        throw new Error("fetch failed: ECONNREFUSED");
-      },
-      probeServer: async () => false,
-    });
+  const evalDies = {
+    runEvalSuite: async () => {
+      throw new Error("fetch failed: ECONNREFUSED");
+    },
+  };
+
+  it("blames the PR when its server stops listening during the eval", async () => {
+    // The server passed the health probe and then died. Asked from inside the box,
+    // nothing is listening on its port — so this is the PR's server, not a network
+    // path of ours, and it must earn `server_unhealthy`.
+    const h = harness(evalDies, "MCPJAM_CHECK_PORT_CLOSED\n");
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
     expect(h.reports[0]).toMatchObject({ outcome: "server_unhealthy" });
     expect(h.reports[0].detailsMarkdown).toContain("ECONNREFUSED");
-    expect(h.reports[0].detailsMarkdown).toContain("stopped responding");
+    expect(h.reports[0].detailsMarkdown).toContain("stopped listening");
+    expect(h.events).toContain("livenessCheck");
   });
 
-  it("stays neutral when the eval fails but the PR's server is still up", async () => {
-    // Same transport-shaped error, but the server answers when asked. The failure
-    // came from somewhere else — ours, so the check must not blame the PR.
-    const h = harness({
-      runEvalSuite: async () => {
-        throw new Error("fetch failed: ECONNREFUSED");
-      },
-      probeServer: async () => true,
-    });
+  it("stays neutral when the eval fails but the PR's server is still listening", async () => {
+    // Same transport-shaped error, but the process is alive. The failure came from
+    // somewhere else — ours — so the check must not blame the PR.
+    const h = harness(evalDies, "MCPJAM_CHECK_PORT_OPEN\n");
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
     expect(h.reports[0].outcome).toBe("infra_error");
   });
 
-  it("stays neutral when the sandbox itself has gone away", async () => {
-    // The box is unreachable, so we cannot tell whose fault the eval failure was —
-    // and an E2B outage is ours. Ambiguity must never produce a red X.
-    const sandboxGone = {
-      sandboxId: "sb_1",
-      getHost: (port: number) => `${port}-sb_1.e2b.app`,
-      commands: {
-        run: async () => {
-          throw new Error("sandbox not found");
-        },
-      },
-      updateNetwork: async () => {},
-      kill: async () => {},
-    } as unknown as Awaited<ReturnType<CheckExecutionDeps["provisionSandbox"]>>;
-    const h = harness({
-      provisionSandbox: async () => sandboxGone,
-      runEvalSuite: async () => {
-        throw new Error("fetch failed: ECONNREFUSED");
-      },
-      // Would say "server gone" — but must never be consulted, because the box
-      // being unreachable already makes this ours.
-      probeServer: async () => false,
-    });
+  it("stays neutral when the sandbox command channel has gone away", async () => {
+    // The box no longer answers, so we cannot tell whose fault the eval failure
+    // was — and an E2B outage is ours. Ambiguity must never produce a red X.
+    const h = harness(evalDies, "throws");
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
     expect(h.reports[0].outcome).toBe("infra_error");
-    expect(h.events).not.toContain("probeServer");
   });
 
-  it("stays neutral when the discriminator itself fails", async () => {
-    const h = harness({
-      runEvalSuite: async () => {
-        throw new Error("fetch failed: ECONNREFUSED");
-      },
-      probeServer: async () => {
-        throw new Error("probe blew up");
-      },
-    });
+  it("stays neutral when the liveness check answers with neither sentinel", async () => {
+    // A connect that timed out, or a node that printed nothing. Silence is not
+    // evidence against the PR.
+    const h = harness(evalDies, "");
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
     expect(h.reports[0].outcome).toBe("infra_error");
+  });
+
+  it("checks liveness over the command RPC, never the public URL", async () => {
+    // The load-bearing property: a fetch to `getHost(port)` traverses E2B ingress,
+    // DNS and TLS, and reports every one of those outages exactly like a dead
+    // server. Attribution must not rest on that path, so the probe runs in-box
+    // against loopback.
+    const commands: string[] = [];
+    const h = harness(evalDies, "MCPJAM_CHECK_PORT_CLOSED\n");
+    const provision = h.deps.provisionSandbox!;
+    h.deps.provisionSandbox = async (args) => {
+      const box = await provision(args);
+      const inner = box.commands.run;
+      box.commands.run = async (command: string, opts?: unknown) => {
+        commands.push(command);
+        return inner.call(box.commands, command, opts as never);
+      };
+      return box;
+    };
+    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
+    const liveness = commands.find((c) => c.includes("MCPJAM_CHECK_PORT_OPEN"));
+    expect(liveness).toBeDefined();
+    expect(liveness).toContain("127.0.0.1");
+    expect(liveness).toContain(String(RECIPE.port));
+    expect(liveness).not.toContain("e2b.app");
   });
 
   it("reports infra_error — not evals_failed — when the org is out of credits", async () => {
