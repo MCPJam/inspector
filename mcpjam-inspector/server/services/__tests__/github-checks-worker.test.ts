@@ -736,6 +736,37 @@ describe("startGithubChecksWorker loop", () => {
     expect(claim.mock.calls.length).toBeGreaterThan(1);
   });
 
+  it("stops promptly when the abort lands while a claim is in flight", async () => {
+    // The loop only tests `aborted` at the top, so a claim that settles AFTER
+    // `stop()` falls through to the backoff sleep with an already-aborted signal.
+    // An `abort` event that has already fired never fires again, so a listener
+    // registered at that point waits out the full 60s backoff and the caller's
+    // shutdown timer force-exits an otherwise idle worker.
+    vi.useRealTimers();
+    let releaseClaim: (value: null) => void = () => {};
+    const claim = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseClaim = resolve;
+        })
+    );
+    const handle = startGithubChecksWorker({ claim, execute: vi.fn() });
+    // Wait until the loop is parked inside claim().
+    while (claim.mock.calls.length === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+
+    const stopped = handle.stop();
+    // Settle the claim after the abort, which is the race under test.
+    releaseClaim(null);
+
+    const outcome = await Promise.race([
+      stopped.then(() => "stopped" as const),
+      new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 500)),
+    ]);
+    expect(outcome).toBe("stopped");
+  });
+
   it("backs off without executing when the backend reports the feature disabled", async () => {
     const claim = vi.fn().mockResolvedValue("disabled" as const);
     const execute = vi.fn();

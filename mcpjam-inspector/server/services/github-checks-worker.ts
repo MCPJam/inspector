@@ -966,6 +966,12 @@ function rawOf(detailsMarkdown: string): string {
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  // Checked BEFORE the listener goes on, because an `abort` that already fired
+  // never fires again: a listener added afterwards waits out the whole delay. The
+  // loop can reach here post-abort whenever `claim()` or `execute()` settles after
+  // `stop()`, and the delay may be the 60s backoff — long past the caller's
+  // shutdown deadline, which then force-exits an otherwise idle worker.
+  if (signal?.aborted) return Promise.resolve();
   return new Promise((resolve) => {
     const timer = setTimeout(done, ms);
     function done() {
