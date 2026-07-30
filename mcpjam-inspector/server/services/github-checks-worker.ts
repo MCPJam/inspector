@@ -42,6 +42,7 @@ import {
   isGithubChecksSandboxConfigured,
   killCheckSandbox,
   provisionCheckSandbox,
+  waitForMcpInitialize,
   type CheckSandbox,
 } from "./github-checks/sandbox.js";
 
@@ -406,7 +407,75 @@ export type CheckExecutionDeps = {
   report: (report: CheckReport) => Promise<void>;
   heartbeat: (triggerId: string, claimedBy: string) => Promise<void>;
   heartbeatIntervalMs: number;
+  /** Re-probe used to attribute an eval failure; see `attributeEvalFailure`. */
+  probeServer: (url: string, opts: { timeoutMs: number }) => Promise<boolean>;
 };
+
+/**
+ * How long the post-failure re-probe gets. Short on purpose: this runs only after
+ * the eval already failed, and it is a diagnostic, not a retry. A server that
+ * needs longer than this to answer is not one the eval could have used either.
+ */
+const EVAL_FAILURE_PROBE_TIMEOUT_MS = 15_000;
+
+/**
+ * Decide whether an eval-phase failure belongs to the PR or to us.
+ *
+ * `runEvalSuite` throws an ordinary transport error for two very different
+ * situations: the PR's server died after passing the health probe, or something on
+ * OUR side broke (Convex, the provider, E2B). Both used to land on neutral
+ * `infra_error`, which lets a PR whose server crashes seconds after `initialize`
+ * escape the `server_unhealthy` it earned.
+ *
+ * Rather than pattern-matching error messages — fragile, and wrong the first time a
+ * provider rewords a timeout — this asks the box directly, and only reclassifies on
+ * POSITIVE evidence of the PR's fault:
+ *
+ *   1. is the sandbox still reachable? If not, the box is gone and this is ours;
+ *   2. does the PR's server still answer the handshake? If it does, the server is
+ *      alive and the failure came from somewhere else — ours.
+ *
+ * Only "box answers, server does not" is attributed to the PR. Every other result,
+ * including the discriminator itself failing, leaves the original error alone and
+ * therefore stays neutral. That ordering is deliberate: a false `server_unhealthy`
+ * puts a red X on an innocent PR, so ambiguity must never produce one.
+ */
+async function attributeEvalFailure(
+  error: unknown,
+  sandbox: CheckSandbox,
+  serverUrl: string,
+  deps: Pick<CheckExecutionDeps, "probeServer">
+): Promise<unknown> {
+  // Our own typed failures and the lease guard already know what they are.
+  if (error instanceof CheckStepError || error instanceof LeaseLostError) {
+    return error;
+  }
+  try {
+    // A trivial command: proves the box is still ours to talk to and nothing more.
+    await sandbox.commands.run("true", {
+      timeoutMs: EVAL_FAILURE_PROBE_TIMEOUT_MS,
+    });
+  } catch {
+    return error;
+  }
+  let stillAnswering: boolean;
+  try {
+    stillAnswering = await deps.probeServer(serverUrl, {
+      timeoutMs: EVAL_FAILURE_PROBE_TIMEOUT_MS,
+    });
+  } catch {
+    return error;
+  }
+  if (stillAnswering) return error;
+  const message = error instanceof Error ? error.message : String(error);
+  return new CheckStepError(
+    "server_unhealthy",
+    "the server stopped answering after it started",
+    clampOutput(
+      `The server answered the health probe, then stopped responding while the eval suite was running. The sandbox itself was still reachable when we checked.\n\n${message}`
+    )
+  );
+}
 
 async function defaultCreateEphemeralServer(args: {
   bearer: string;
@@ -657,6 +726,7 @@ function defaultDeps(): CheckExecutionDeps {
     report: reportOutcome,
     heartbeat: sendHeartbeat,
     heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
+    probeServer: (url, opts) => waitForMcpInitialize(url, opts),
   };
 }
 
@@ -787,12 +857,21 @@ export async function executeClaimedCheck(
 
     // The last and most valuable boundary: the eval run is the twenty-minute part.
     assertLeaseHeld();
-    const run = await deps.runEvalSuite({
-      claimed,
-      bearer,
-      serverId,
-      serverName,
-    });
+    // Captured because the failure path reads it from inside a closure, and
+    // `sandbox` is a reassignable nullable whose narrowing does not survive that.
+    const runningBox = sandbox;
+    const run = await deps
+      .runEvalSuite({
+        claimed,
+        bearer,
+        serverId,
+        serverName,
+      })
+      .catch(async (error: unknown) => {
+        // A failure here may be the PR's server dying mid-run rather than an
+        // outage of ours, and the difference decides who gets the red X.
+        throw await attributeEvalFailure(error, runningBox, started.url, deps);
+      });
 
     const outcome = outcomeForRunResult(run.result);
     await safeReport({

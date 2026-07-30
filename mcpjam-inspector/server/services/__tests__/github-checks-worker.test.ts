@@ -116,6 +116,13 @@ function harness(overrides?: Partial<CheckExecutionDeps>): Harness {
       heartbeats.push(triggerId);
     },
     heartbeatIntervalMs: 1_000,
+    // The eval-failure discriminator's default answer: the PR's server is still
+    // answering, so a failed run stays OUR problem unless a test says otherwise.
+    // Also keeps these tests off the network — the real default would fetch.
+    probeServer: async () => {
+      events.push("probeServer");
+      return true;
+    },
     ...overrides,
   };
 
@@ -257,6 +264,76 @@ describe("executeClaimedCheck — failure attribution", () => {
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
     expect(h.reports[0].outcome).toBe("server_unhealthy");
     expect(h.reports[0].detailsMarkdown).toContain("EADDRINUSE");
+  });
+
+  it("blames the PR when its server stops answering during the eval", async () => {
+    // The server passed the health probe and then died. The box is still reachable,
+    // so this is not an outage of ours — it is the PR's server, and it must earn
+    // `server_unhealthy` rather than hiding behind a neutral `infra_error`.
+    const h = harness({
+      runEvalSuite: async () => {
+        throw new Error("fetch failed: ECONNREFUSED");
+      },
+      probeServer: async () => false,
+    });
+    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
+    expect(h.reports[0]).toMatchObject({ outcome: "server_unhealthy" });
+    expect(h.reports[0].detailsMarkdown).toContain("ECONNREFUSED");
+    expect(h.reports[0].detailsMarkdown).toContain("stopped responding");
+  });
+
+  it("stays neutral when the eval fails but the PR's server is still up", async () => {
+    // Same transport-shaped error, but the server answers when asked. The failure
+    // came from somewhere else — ours, so the check must not blame the PR.
+    const h = harness({
+      runEvalSuite: async () => {
+        throw new Error("fetch failed: ECONNREFUSED");
+      },
+      probeServer: async () => true,
+    });
+    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
+    expect(h.reports[0].outcome).toBe("infra_error");
+  });
+
+  it("stays neutral when the sandbox itself has gone away", async () => {
+    // The box is unreachable, so we cannot tell whose fault the eval failure was —
+    // and an E2B outage is ours. Ambiguity must never produce a red X.
+    const sandboxGone = {
+      sandboxId: "sb_1",
+      getHost: (port: number) => `${port}-sb_1.e2b.app`,
+      commands: {
+        run: async () => {
+          throw new Error("sandbox not found");
+        },
+      },
+      updateNetwork: async () => {},
+      kill: async () => {},
+    } as unknown as Awaited<ReturnType<CheckExecutionDeps["provisionSandbox"]>>;
+    const h = harness({
+      provisionSandbox: async () => sandboxGone,
+      runEvalSuite: async () => {
+        throw new Error("fetch failed: ECONNREFUSED");
+      },
+      // Would say "server gone" — but must never be consulted, because the box
+      // being unreachable already makes this ours.
+      probeServer: async () => false,
+    });
+    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
+    expect(h.reports[0].outcome).toBe("infra_error");
+    expect(h.events).not.toContain("probeServer");
+  });
+
+  it("stays neutral when the discriminator itself fails", async () => {
+    const h = harness({
+      runEvalSuite: async () => {
+        throw new Error("fetch failed: ECONNREFUSED");
+      },
+      probeServer: async () => {
+        throw new Error("probe blew up");
+      },
+    });
+    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
+    expect(h.reports[0].outcome).toBe("infra_error");
   });
 
   it("reports infra_error — not evals_failed — when the org is out of credits", async () => {
