@@ -823,6 +823,22 @@ describe("waitForMcpInitialize", () => {
     }
   });
 
+  it("accepts a discover result advertising tasks in any shape", async () => {
+    // `ServerCapabilities2026Schema` — the schema the rev2026 codec validates a
+    // discover result with — defines seven members and `tasks` is not one of them.
+    // So `tasks` is an unknown member, stripped rather than rejected, and the client
+    // negotiates the modern era regardless of its shape. Validating it against the
+    // 2025 schema's `tasks` shape turned working servers into `server_unhealthy`.
+    for (const tasks of [true, { list: true }, "on"]) {
+      expect(
+        await waitForMcpInitialize("https://box/mcp", {
+          ...seams,
+          fetchImpl: discoverCapabilitiesFetch({ tools: {}, tasks }),
+        })
+      ).toBe(true);
+    }
+  });
+
   it("accepts a discover result whose nested capabilities are all well typed", async () => {
     // The other direction, and the one that would hurt: every typed member here is
     // the type the schema asks for, and the unknown extension member is an object,

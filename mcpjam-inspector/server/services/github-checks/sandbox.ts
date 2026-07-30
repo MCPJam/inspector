@@ -1160,7 +1160,8 @@ function isUsableCapabilities(value: unknown): boolean {
  *     MODERN arm can actually speak — an endpoint offering nothing in common is
  *     no more usable than a legacy server naming an unsupported version, and one
  *     offering only legacy revisions is a question for the legacy probe;
- *   - `capabilities` and `instructions` as the discover result schema types them.
+ *   - `capabilities` and `instructions` as the MODERN discover result schema types
+ *     them, which is not the same schema the legacy arm's era uses.
  *
  * Unlike the legacy arm, this one has a schema to mirror and mirrors it. The client
  * runs the discover result through `codecForVersion(...).validateResult`, and a
@@ -1209,20 +1210,34 @@ const CAPABILITY_BOOLEAN_FLAGS: ReadonlyArray<
 ];
 
 /**
- * Whether `capabilities` would survive `ServerCapabilitiesSchema`, the schema the
- * client validates a `server/discover` result with.
+ * Whether `capabilities` would survive the schema the client validates a
+ * `server/discover` result with.
  *
- * Mirrored field by field rather than shape-only, because the schema types the
- * nesting: `tools: { listChanged: "yes" }` and `extensions: true` are both objects
- * at the top level and both rejected a level down. A probe that stops at "is it an
- * object" reports the modern arm healthy for a server the client declines to drive
- * there.
+ * That schema is `ServerCapabilities2026Schema`, reached through
+ * `codecForVersion(MODERN_WIRE_REVISION).validateResult("server/discover", …)` —
+ * the rev2026 codec. NOT the `ServerCapabilitiesSchema` that the 2025 codec uses
+ * for `initialize`. The two are close but not identical, and the difference is
+ * load-bearing: the 2026 schema is built from the SEVEN shared members below and
+ * omits `tasks` entirely, so a modern server advertising `tasks` in any shape at
+ * all has it stripped as an unknown member and negotiates fine. Validating it here
+ * rejected servers the client drives — a false `server_unhealthy`.
+ *
+ * Mirrored field by field rather than shape-only, because the schema does type the
+ * nesting of the members it defines: `tools: { listChanged: "yes" }` and
+ * `extensions: true` are both objects at the top level and both rejected a level
+ * down. A probe that stops at "is it an object" reports the modern arm healthy for
+ * a server the client declines to drive there.
  *
  * Unknown keys stay welcome, at every level the schema leaves open: the capability
  * objects are non-strict, so extra members are ignored rather than fatal, and
  * capabilities is explicitly "not a closed set". Only the members it gives a type
  * are checked. `JSONObject`-typed fields need only be objects — anything that came
  * off the wire as JSON already satisfies the value type.
+ *
+ * The result's own `ttlMs` and `cacheScope` are not checked either: the modern
+ * schema declares them with `.catch(…)`, so a malformed value is replaced with a
+ * default and can never fail validation. Checking them would be strictly stricter
+ * than the client.
  */
 function matchesServerCapabilitiesSchema(value: unknown): boolean {
   if (!isPlainObject(value)) return false;
@@ -1254,33 +1269,10 @@ function matchesServerCapabilitiesSchema(value: unknown): boolean {
     if (!flagsAreBooleans) return false;
   }
 
-  return matchesTasksCapabilitySchema(capabilities.tasks);
-}
-
-/**
- * The `tasks` capability, whose schema nests two levels deeper
- * (`requests.tools.call`) and types every level as an object.
- */
-function matchesTasksCapabilitySchema(value: unknown): boolean {
-  if (value === undefined) return true;
-  if (!isPlainObject(value)) return false;
-  const tasks = value as Record<string, unknown>;
-
-  for (const field of ["list", "cancel"] as const) {
-    const capability = tasks[field];
-    if (capability !== undefined && !isPlainObject(capability)) return false;
-  }
-
-  const requests = tasks.requests;
-  if (requests === undefined) return true;
-  if (!isPlainObject(requests)) return false;
-
-  const tools = (requests as Record<string, unknown>).tools;
-  if (tools === undefined) return true;
-  if (!isPlainObject(tools)) return false;
-
-  const call = (tools as Record<string, unknown>).call;
-  return call === undefined || isPlainObject(call);
+  // `tasks` is deliberately NOT checked. The modern schema does not define it, so
+  // it is an unknown member like any other and is stripped, not rejected — see the
+  // note above about which schema is actually in force here.
+  return true;
 }
 
 /**
