@@ -702,3 +702,67 @@ describe("resolveExecutionContext — hostPolicy passthrough", () => {
     expectImagePolicyLeaves(result.hostPolicy, true);
   });
 });
+
+/**
+ * Tasks policy is HOST-ONLY.
+ *
+ * A share-link visitor owns the request body, so this is the one field where
+ * "the body cannot reach it" has to be structural rather than a check. It is
+ * absent from `ExecutionOverrides` entirely, which is why the assertions below
+ * hold at `override-wins` — the precedence mode that exists specifically to let
+ * the body win.
+ */
+describe("resolveExecutionContext — tasks policy", () => {
+  const offHost = {
+    mcpProfile: {
+      extensions: { "com.mcpjam/tasks": { enabled: false } },
+    },
+  };
+
+  it("reports unset when there is no host config", () => {
+    const resolved = resolveExecutionContext({
+      hostConfig: null,
+      overrides: {},
+      precedence: "override-wins",
+    });
+    // `unset`, not `off`: the two differ on the Tools tab.
+    expect(resolved.tasksPolicy).toBe("unset");
+  });
+
+  it("reads an explicit off from the host", () => {
+    const resolved = resolveExecutionContext({
+      hostConfig: offHost,
+      overrides: {},
+      precedence: "host-wins",
+    });
+    expect(resolved.tasksPolicy).toBe("off");
+  });
+
+  it("keeps an explicit off at override-wins, with every opt-in in the body", () => {
+    const resolved = resolveExecutionContext({
+      hostConfig: offHost,
+      // Everything a tampered body could plausibly try. None of these are
+      // `ExecutionOverrides` fields, which is exactly the point — there is no
+      // key that reaches `tasksPolicy`.
+      overrides: {
+        allowTaskResult: true,
+        taskOptions: { ttl: 60_000 },
+        tasksPolicy: "on",
+        tasks: { mode: "await" },
+      } as never,
+      precedence: "override-wins",
+    });
+    expect(resolved.tasksPolicy).toBe("off");
+  });
+
+  it("fails closed on a malformed stored value", () => {
+    const resolved = resolveExecutionContext({
+      hostConfig: {
+        mcpProfile: { extensions: { "com.mcpjam/tasks": { enabled: "yes" } } },
+      },
+      overrides: {},
+      precedence: "override-wins",
+    });
+    expect(resolved.tasksPolicy).toBe("invalid");
+  });
+});

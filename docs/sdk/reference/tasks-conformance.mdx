@@ -1,0 +1,175 @@
+---
+title: "MCP Tasks Conformance SDK"
+description: "Programmatic MCP Tasks wire validation with MCPTasksConformanceTest"
+icon: "list-checks"
+---
+
+The MCP Tasks Conformance SDK lets you validate the MCP Tasks wire your server exposes: which wire the connection resolves to, whether declaration hygiene holds, and whether the server honours the observable parts of the contract.
+
+Use it when you want the same checks as the CLI's [`tasks conformance`](/cli/tasks-conformance) command, but inside your own test runner or CI pipeline.
+
+<Note>
+  Tasks conformance provokes and then polls a real task, so it requires a
+  persistent connection. It is not available in hosted mode.
+</Note>
+
+## Import
+
+```typescript
+import {
+  MCPTasksConformanceTest,
+  toConformanceReport,
+  renderConformanceReportJUnitXml,
+  renderConformanceReportJson,
+} from "@mcpjam/sdk";
+```
+
+## Basic usage
+
+```typescript
+const test = new MCPTasksConformanceTest({
+  url: "https://your-server.com/mcp",
+  timeout: 30_000,
+});
+
+const result = await test.run();
+
+console.log(result.passed);              // true
+console.log(result.outcome);            // "passed" | "failed" | "incomplete"
+console.log(result.summary);            // "8/8 checks passed, 0 failed, 0 could not run, 0 not applicable"
+console.log(result.discovery.wire);     // "extension" | "legacy" | "none"
+```
+
+Pass a tool name on the extension wire. Auto-selection reads `execution.taskSupport`, which the 2026-07-28 `ToolSchema` strips, so without `toolName` the task-dependent checks cannot run and `run()` returns `outcome: "incomplete"` with `passed: false`:
+
+```typescript
+const test = new MCPTasksConformanceTest({
+  url: "https://your-server.com/mcp",
+  toolName: "long_job",
+  timeout: 30_000,
+});
+```
+
+For a stdio server:
+
+```typescript
+const test = new MCPTasksConformanceTest({
+  command: "node",
+  args: ["server.js"],
+  timeout: 30_000,
+});
+```
+
+## MCPTasksConformanceConfig
+
+`MCPTasksConformanceConfig` extends the standard `MCPServerConfig`, so it accepts the same HTTP and stdio connection settings as `MCPClientManager`.
+
+Additional properties:
+
+| Property | Type | Required | Default | Description |
+|----------|------|----------|---------|-------------|
+| `checkIds` | `MCPTasksCheckId[]` | No | all checks | Run only the selected checks. |
+| `toolName` | `string` | No | auto-detected on the legacy wire only | Tool used to provoke a task. Required on the extension wire: auto-selection reads `execution.taskSupport`, which the 2026-07-28 `ToolSchema` strips. A name the server does not list is an error, not a silent miss — the run comes back `incomplete`. |
+| `toolArguments` | `Record<string, unknown>` | No | `{}` | Arguments passed to the probe tool. |
+| `pollTimeoutMs` | `number` | No | `30000` | Upper bound on polling a created task to a terminal status. |
+
+Example with a focused check set:
+
+```typescript
+const test = new MCPTasksConformanceTest({
+  url: "https://your-server.com/mcp",
+  toolName: "long_job",
+  toolArguments: { seconds: 1 },
+  pollTimeoutMs: 10_000,
+  checkIds: ["tasks-wire-resolvable", "tasks-ttl-shape"],
+});
+```
+
+## Check ids
+
+| Check id | Category | What it asserts |
+|---|---|---|
+| `tasks-wire-resolvable` | `dispatch` | The negotiated protocol version and capabilities resolve to exactly one tasks wire. |
+| `tasks-declaration-hygiene` | `dispatch` | Outbound requests carry `params.task` only on the legacy wire and the extension declaration only on the extension wire. |
+| `tasks-result-type-discipline` | `creation` | A task-eligible `tools/call` returns either a normal tool result or a flat `CreateTaskResult` with `resultType: "task"` and a non-empty `taskId`. The discriminator is required whether absent or wrong — it is the only signal that separates a task from a standard result. |
+| `tasks-undeclared-creation-refused` | `creation` | On the extension wire, a `tools/call` that did not carry the extension declaration must not come back as a `CreateTaskResult`. |
+| `tasks-ttl-shape` | `lifecycle` | TTL and poll interval use the era-native shapes: `ttlMs`/`pollIntervalMs` on the extension, `ttl`/`pollInterval` on the legacy wire. |
+| `tasks-inline-result` | `lifecycle` | A completed extension task carries its result inline on `tasks/get`; a legacy task exposes it via `tasks/result`. |
+| `tasks-mcp-name-routing` | `lifecycle` | Over HTTP, `tasks/get` is sent with `Mcp-Name` set to the task id. |
+| `tasks-undeclared-capability-rejected` | `lifecycle` | `tasks/get`, `tasks/update`, `tasks/cancel` and a task-filtered `subscriptions/listen` sent WITHOUT the extension declaration must each be rejected with `-32003`. Per-method outcomes are reported in the check's `details.probes`. |
+
+## Result shape
+
+`run()` returns an `MCPTasksConformanceResult`.
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `passed` | `boolean` | True only when `outcome` is `"passed"`. A check that could not run keeps this `false`. |
+| `outcome` | `"passed" \| "failed" \| "incomplete"` | `"failed"` on any violation; `"incomplete"` when nothing failed but a selected check never ran. |
+| `incompleteReason` | `string \| undefined` | Present when `outcome` is `"incomplete"`: which checks did not run and what to change. |
+| `target` | `string` | URL or stdio command under test. |
+| `checks` | `MCPTasksCheckResult[]` | Individual check results. |
+| `summary` | `string` | Human-readable summary. |
+| `durationMs` | `number` | Total duration. |
+| `categorySummary` | `Record<"dispatch" \| "creation" \| "lifecycle", ...>` | Per-category `total`, `passed`, `failed`, `skipped`, and `couldNotRun` counts. |
+| `discovery` | object | Wire, protocol version, and tool counts discovered during the run. |
+
+The `discovery` object includes:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `wire` | `"extension" \| "legacy" \| "none"` | Resolved tasks wire. |
+| `protocolVersion` | `string \| undefined` | Negotiated MCP protocol version. |
+| `toolCount` | `number` | Total tools listed. |
+| `taskCapableToolCount` | `number` | Tools with `execution.taskSupport` metadata. |
+| `probedTool` | `string \| undefined` | Name of the tool used to provoke a task. |
+| `createdTaskId` | `string \| undefined` | Task id returned by the probe tool call. |
+
+Each `MCPTasksCheckResult` includes:
+
+- `id`
+- `category`
+- `title`
+- `description`
+- `status` — `"passed"`, `"failed"`, or `"skipped"`
+- `skipReason` — set whenever `status` is `"skipped"`: `"not-applicable"` (the check cannot apply to this server, so it does not hold the run back) or `"could-not-run"` (the check applies but was never exercised, which makes the run `incomplete`)
+- `durationMs`
+- optional `details`
+- optional `warnings`
+- optional `error`
+
+## CI reporting
+
+Use the shared reporting helpers to produce JUnit XML or JSON artifacts:
+
+```typescript
+import { writeFileSync } from "node:fs";
+
+const test = new MCPTasksConformanceTest({
+  url: "https://your-server.com/mcp",
+  toolName: "long_job",
+});
+
+const result = await test.run();
+const report = toConformanceReport(result);
+
+writeFileSync(
+  "tasks-conformance.junit.xml",
+  renderConformanceReportJUnitXml(report),
+);
+writeFileSync(
+  "tasks-conformance.report.json",
+  JSON.stringify(renderConformanceReportJson(report), null, 2),
+);
+```
+
+`toConformanceReport` accepts protocol, OAuth, apps, and tasks results and normalizes them into a single report shape, so the SDK and CLI JUnit output are byte-identical for the same result.
+
+## Notes
+
+- Declaration hygiene is asserted against captured outbound JSON-RPC bytes, not re-derived from intent.
+- The `tasks-undeclared-creation-refused` and `tasks-undeclared-capability-rejected` checks apply to the extension wire only and are skipped on the legacy wire.
+- `tasks-undeclared-capability-rejected` needs a live task to probe with, and its probes run after every check that reads that task so a wrongly-accepted `tasks/update` or `tasks/cancel` cannot corrupt the rest of the run. A server with no `subscriptions/listen` (`-32601`) gets that sub-probe reported as a warning rather than a failure.
+- The `tasks-mcp-name-routing` check applies to HTTP transports only and is skipped for stdio servers.
+- Checks that require a created task report `skipReason: "could-not-run"` when no probe tool resolves, when the named tool is not listed, when the probed call produced no task, or when the task never became readable. Any of those makes the run `incomplete`; a skip can never add up to a pass.
+- CLI exit codes: `0` for `passed`, `1` for `failed`, `3` for `incomplete` (`2` stays reserved for usage errors).

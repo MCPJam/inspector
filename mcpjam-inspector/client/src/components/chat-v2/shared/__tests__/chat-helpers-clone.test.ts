@@ -222,4 +222,201 @@ describe("formatErrorMessage", () => {
     expect(result).not.toHaveProperty("walletLocked");
     expect(result).not.toHaveProperty("limitKind");
   });
+
+  // Connection failures already reached the playground intact — the AI SDK
+  // throws `new Error(await response.text())`, so the server's JSON parses
+  // fine here. What reached the user was the backend's own wording: a dead
+  // OAuth grant rendered as "Authorization failed", an unreachable server as
+  // "fetch failed". Accurate, and useless. These pin the human copy.
+  describe("connection failures", () => {
+    it("explains an unreachable server", () => {
+      const result = formatErrorMessage(
+        JSON.stringify({
+          code: "SERVER_UNREACHABLE",
+          message: "fetch failed",
+        }),
+      );
+
+      expect(result?.message).toBe(
+        "Couldn't reach the MCP server. It may be offline or blocking the connection.",
+      );
+      // The server's own wording stays reachable under "More details".
+      expect(result?.details).toBe("fetch failed");
+    });
+
+    // Copy-only: every non-message field is passed through untouched, so the
+    // banner's Retry button behaves exactly as it did before this change.
+    it("passes isRetryable through from the server rather than deriving it", () => {
+      const retryable = formatErrorMessage(
+        JSON.stringify({
+          code: "SERVER_UNREACHABLE",
+          message: "fetch failed",
+          isRetryable: true,
+        }),
+      );
+      expect(retryable?.isRetryable).toBe(true);
+
+      const notRetryable = formatErrorMessage(
+        JSON.stringify({
+          code: "SERVER_UNREACHABLE",
+          message: "fetch failed",
+          isRetryable: false,
+        }),
+      );
+      expect(notRetryable?.isRetryable).toBe(false);
+    });
+
+    it("names the server when the backend supplies one", () => {
+      const result = formatErrorMessage(
+        JSON.stringify({
+          code: "SERVER_UNREACHABLE",
+          message: "fetch failed",
+          details: { serverName: "BART MCP" },
+        }),
+      );
+
+      expect(result?.message).toBe(
+        "Couldn't reach “BART MCP”. It may be offline or blocking the connection.",
+      );
+    });
+
+    // The banner no longer leads with the server's wording, so "More details"
+    // is the only place it survives. Structured details must not displace it.
+    it("keeps the raw server message alongside structured details", () => {
+      const result = formatErrorMessage(
+        JSON.stringify({
+          code: "SERVER_UNREACHABLE",
+          message: "fetch failed",
+          details: { serverName: "BART MCP" },
+        }),
+      );
+
+      expect(result?.details).toContain("fetch failed");
+      expect(result?.details).toContain("BART MCP");
+      // Still JSON, so ErrorBox renders it through JsonEditor rather than <pre>.
+      expect(() => JSON.parse(result!.details!)).not.toThrow();
+    });
+
+    it("keeps both when details is a plain string", () => {
+      const result = formatErrorMessage(
+        JSON.stringify({
+          code: "TIMEOUT",
+          message: "Connection attempt timed out after 20 seconds",
+          details: "upstream did not respond",
+        }),
+      );
+
+      expect(result?.details).toContain(
+        "Connection attempt timed out after 20 seconds",
+      );
+      expect(result?.details).toContain("upstream did not respond");
+    });
+
+    it("does not duplicate a message the details already contain", () => {
+      const result = formatErrorMessage(
+        JSON.stringify({
+          code: "SERVER_UNREACHABLE",
+          message: "fetch failed",
+          details: "fetch failed (ECONNREFUSED)",
+        }),
+      );
+
+      expect(result?.details).toBe("fetch failed (ECONNREFUSED)");
+    });
+
+    it("tells the user to reconnect an expired OAuth grant", () => {
+      const result = formatErrorMessage(
+        JSON.stringify({
+          code: "UNAUTHORIZED",
+          message: "Hosted OAuth refresh token is invalid. Please reconnect.",
+          details: {
+            oauthRequired: true,
+            refreshTokenInvalid: true,
+            serverName: "BART MCP",
+          },
+        }),
+      );
+
+      expect(result?.message).toBe(
+        "Your connection to “BART MCP” has expired. Reconnect it to keep chatting.",
+      );
+    });
+
+    it("explains a timeout", () => {
+      const result = formatErrorMessage(
+        JSON.stringify({
+          code: "TIMEOUT",
+          message: "Connection attempt timed out after 20 seconds",
+          details: { serverName: "BART MCP" },
+        }),
+      );
+
+      expect(result?.message).toBe("“BART MCP” took too long to respond.");
+    });
+
+    // UNAUTHORIZED / FORBIDDEN double as MCPJam's OWN auth failures (expired
+    // session, missing bearer) and project-permission denials. Rewriting those
+    // into "reconnect your MCP server" would send the user to fix something
+    // that isn't broken — strictly worse than the jargon. Only rewrite when a
+    // server is actually named.
+    it("does not blame the MCP server for an unattributed 401", () => {
+      const result = formatErrorMessage(
+        JSON.stringify({
+          code: "UNAUTHORIZED",
+          message: "Missing or invalid bearer token",
+        }),
+      );
+
+      expect(result?.message).toBe("Missing or invalid bearer token");
+    });
+
+    it("does not blame the MCP server for an unattributed 403", () => {
+      const result = formatErrorMessage(
+        JSON.stringify({
+          code: "FORBIDDEN",
+          message: "Authorization denied for server",
+        }),
+      );
+
+      expect(result?.message).toBe("Authorization denied for server");
+    });
+
+    it("rewrites a 401 that names a server", () => {
+      const result = formatErrorMessage(
+        JSON.stringify({
+          code: "UNAUTHORIZED",
+          message: "Authentication failed",
+          details: { serverName: "BART MCP" },
+        }),
+      );
+
+      expect(result?.message).toBe(
+        "“BART MCP” rejected the connection. Reconnect it to refresh your access.",
+      );
+    });
+
+    it("leaves unrelated codes on the verbatim path", () => {
+      const result = formatErrorMessage(
+        JSON.stringify({
+          code: "VALIDATION_ERROR",
+          message: "projectId is invalid",
+        }),
+      );
+
+      expect(result?.message).toBe("projectId is invalid");
+    });
+
+    it("does not divert a rate-limit error onto the connection path", () => {
+      const result = formatErrorMessage(
+        JSON.stringify({
+          code: "user_rate_limit",
+          error: "Daily MCPJam model limit reached.",
+          retryAfter: 4500000,
+        }),
+      );
+
+      expect(result?.isMCPJamPlatformError).toBe(true);
+      expect(result?.message).toContain("Add your own API key");
+    });
+  });
 });

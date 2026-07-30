@@ -312,6 +312,8 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     placeholder,
     pulseSubmit,
     clientSelector,
+    onChangeSkillResults,
+    skillResults,
   }: {
     value: string;
     onChange: (v: string) => void;
@@ -322,10 +324,13 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     placeholder: string;
     pulseSubmit?: boolean;
     clientSelector?: unknown;
+    onChangeSkillResults?: (results: unknown[]) => void;
+    skillResults?: unknown[];
   }) => (
     <form
       data-testid="chat-input"
       data-loading={isLoading ? "true" : "false"}
+      data-skill-count={skillResults?.length ?? 0}
       data-client-selector={clientSelector ? "true" : "false"}
       onSubmit={(e) => {
         e.preventDefault();
@@ -339,6 +344,25 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
         disabled={disabled}
         placeholder={placeholder}
       />
+      {/* Stands in for the composer's skill picker: attaching a skill is what
+          populates `skillResults`, and the injection rule only exists on that
+          path. */}
+      <button
+        type="button"
+        data-testid="chat-input-attach-skill"
+        onClick={() =>
+          onChangeSkillResults?.([
+            {
+              id: "skill-1",
+              skillId: "sk_1",
+              name: "release-notes",
+              content: "skill body",
+            },
+          ])
+        }
+      >
+        Attach skill
+      </button>
       <button
         type="submit"
         disabled={disabled || !!submitDisabled}
@@ -546,7 +570,8 @@ vi.mock("@/state/app-state-context", () => ({
   useSharedAppState: () => mockSharedAppState,
 }));
 
-// Mock chat-helpers (keep real placeholders; stub formatError + empty starters for stable tests)
+// Mock chat-helpers (keep real placeholders; stub formatError + a fixed
+// starter so tests don't churn when the real starter copy changes)
 vi.mock("@/components/chat-v2/shared/chat-helpers", async (importOriginal) => {
   const actual =
     await importOriginal<
@@ -556,7 +581,7 @@ vi.mock("@/components/chat-v2/shared/chat-helpers", async (importOriginal) => {
     ...actual,
     formatErrorMessage: (error: any) =>
       error ? { message: error.message || "Error", details: null } : null,
-    STARTER_PROMPTS: [],
+    STARTER_PROMPTS: [{ label: "Starter chip", text: "Starter chip prompt" }],
   };
 });
 
@@ -1425,6 +1450,105 @@ describe("PlaygroundMain", () => {
     });
   });
 
+  describe("single-model starter prompts", () => {
+    it("shows starter prompt chips in the single-model empty state", () => {
+      render(<PlaygroundMain {...defaultProps} />);
+
+      expect(
+        screen.getByText("Try one of these to get started"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Starter chip" }),
+      ).toBeInTheDocument();
+    });
+
+    it("sends the starter prompt through the single-model chat on click", async () => {
+      render(<PlaygroundMain {...defaultProps} />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
+
+      await waitFor(() => {
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ text: "Starter chip prompt" }),
+        );
+      });
+    });
+
+    it("hides starter chips when the welcome hero is suppressed", () => {
+      render(<PlaygroundMain {...defaultProps} hideWelcomeHero />);
+
+      expect(
+        screen.queryByText("Try one of these to get started"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("hides starter chips when the auth upsell is active", () => {
+      mockUseChatSession.disableForAuthentication = true;
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      expect(
+        screen.queryByText("Try one of these to get started"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("clears staged skill results after a starter chip send", async () => {
+      render(<PlaygroundMain {...defaultProps} />);
+
+      fireEvent.click(screen.getByTestId("chat-input-attach-skill"));
+      expect(screen.getByTestId("chat-input")).toHaveAttribute(
+        "data-skill-count",
+        "1",
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
+
+      await waitFor(() => {
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalled();
+      });
+      await waitFor(() => {
+        expect(screen.getByTestId("chat-input")).toHaveAttribute(
+          "data-skill-count",
+          "0",
+        );
+      });
+    });
+
+    it("does not replay a single-model send into compare cards mounted later", async () => {
+      const { rerender } = render(
+        <PlaygroundMain {...defaultProps} enableMultiModelChat={true} />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
+      await waitFor(() => {
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalled();
+      });
+
+      mockUseChatSession.availableModels = [
+        { id: "gpt-4", name: "GPT-4", provider: "openai" },
+        {
+          id: "claude-sonnet-4-5",
+          name: "Claude Sonnet 4.5",
+          provider: "anthropic",
+        },
+      ];
+      mockUseChatSession.selectedModelIds = ["gpt-4", "claude-sonnet-4-5"];
+      mockUseChatSession.multiModelEnabled = true;
+      rerender(<PlaygroundMain {...defaultProps} enableMultiModelChat={true} />);
+
+      await waitFor(() => {
+        expect(
+          screen.getAllByTestId("multi-model-playground-card"),
+        ).toHaveLength(2);
+      });
+
+      const staleRequests = mockMultiModelPlaygroundCard.mock.calls
+        .map(([props]) => props.broadcastRequest)
+        .filter(Boolean);
+      expect(staleRequests).toEqual([]);
+    });
+  });
+
   describe("chat input", () => {
     it("renders chat input", () => {
       render(<PlaygroundMain {...defaultProps} />);
@@ -1494,6 +1618,26 @@ describe("PlaygroundMain", () => {
           expect.objectContaining({ text: "Hello from playground" }),
         );
       });
+    });
+
+    it("injects an explicitly attached skill into the turn (INS-4)", async () => {
+      // An attached skill is turn CONTENT. Playground built no skill messages,
+      // so the skill silently evaporated on send — and a skill-only send did
+      // not count as content at all.
+      render(<PlaygroundMain {...defaultProps} />);
+
+      fireEvent.click(screen.getByTestId("chat-input-attach-skill"));
+      fireEvent.click(screen.getByTestId("chat-submit-button"));
+
+      await waitFor(() => {
+        expect(mockUseChatSession.setMessages).toHaveBeenCalled();
+      });
+      // The prepend lands in the thread BEFORE the user turn, so the request
+      // carries it as history instead of trailing the model's answer.
+      const updater = mockUseChatSession.setMessages.mock.calls.at(-1)![0];
+      const next = typeof updater === "function" ? updater([]) : updater;
+      expect(JSON.stringify(next)).toContain("release-notes");
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalled();
     });
 
     it("shows the guided prompt in the input when post-connect onboarding is active", () => {

@@ -25,11 +25,8 @@ import {
   useMintTerminalToken,
   useReserveComputer,
 } from "@/hooks/useProjectComputer";
-import {
-  useEnvironments,
-  useResetComputer,
-} from "@/hooks/useComputerEnvironments";
-import { EnvironmentsDrawer } from "./EnvironmentsDrawer";
+import { useSandboxImages, useResetComputer } from "@/hooks/useSandboxImages";
+import { SandboxImagesDrawer } from "./SandboxImagesDrawer";
 import { toTerminalWsBase } from "@/lib/computer-terminal-connection";
 import {
   getBillingErrorMessage,
@@ -83,7 +80,7 @@ export function ComputerView({
   const [resetting, setResetting] = useState(false);
 
   const resetComputer = useResetComputer();
-  const environments = useEnvironments(effectiveProjectId);
+  const environments = useSandboxImages(effectiveProjectId);
   const attachedEnvironmentId = status?.environmentId ?? null;
   const hasCustomImage = attachedEnvironmentId != null;
   const attachedEnvName = hasCustomImage
@@ -200,7 +197,9 @@ export function ComputerView({
     try {
       const res = await resetComputer({ projectId: effectiveProjectId });
       toast.success(
-        res.reset ? "Resetting your computer to its image…" : "Nothing to reset."
+        res.reset
+          ? "Resetting your computer to its image…"
+          : "Nothing to reset."
       );
     } catch (err) {
       toast.error(getBillingErrorMessage(err, "Could not reset the computer."));
@@ -233,7 +232,7 @@ export function ComputerView({
     if (!effectiveProjectId) {
       throw createInspectorCommandClientError(
         "unsupported_in_mode",
-        "The Computer tools need a signed-in project — sign in and select a project first.",
+        "The Computer tools need a signed-in project — sign in and select a project first."
       );
     }
     // Config still loading: `dataPlaneUnavailable` is false while `dataPlane`
@@ -244,13 +243,13 @@ export function ComputerView({
     if (dataPlane === undefined) {
       throw createInspectorCommandClientError(
         "execution_failed",
-        "The Computer configuration is still loading — try again in a moment.",
+        "The Computer configuration is still loading — try again in a moment."
       );
     }
     if (dataPlaneUnavailable) {
       throw createInspectorCommandClientError(
         "unsupported_in_mode",
-        "Computers aren't available in this deployment (no data plane), so the Computer tools are off.",
+        "Computers aren't available in this deployment (no data plane), so the Computer tools are off."
       );
     }
     return effectiveProjectId;
@@ -276,12 +275,12 @@ export function ComputerView({
             // Daily start cap hit — report the cap, never a bypass.
             throw createInspectorCommandClientError(
               "execution_failed",
-              getBillingErrorMessage(err, "Daily computer start limit reached."),
+              getBillingErrorMessage(err, "Daily computer start limit reached.")
             );
           }
           throw createInspectorCommandClientError(
             "execution_failed",
-            getBillingErrorMessage(err, "Could not start the computer."),
+            getBillingErrorMessage(err, "Could not start the computer.")
           );
         }
       },
@@ -291,13 +290,15 @@ export function ComputerView({
           const res = await hibernateComputer({ projectId: pid });
           setTerminalOpen(false);
           return {
-            status: res.hibernated ? "computer_hibernating" : "nothing_to_hibernate",
+            status: res.hibernated
+              ? "computer_hibernating"
+              : "nothing_to_hibernate",
             hibernated: res.hibernated,
           };
         } catch (err) {
           throw createInspectorCommandClientError(
             "execution_failed",
-            getBillingErrorMessage(err, "Could not hibernate the computer."),
+            getBillingErrorMessage(err, "Could not hibernate the computer.")
           );
         }
       },
@@ -309,7 +310,9 @@ export function ComputerView({
         if (!canReset) {
           throw createInspectorCommandClientError(
             "execution_failed",
-            `The computer can't be reset from "${liveStatus ?? "none"}" — reset only when it's ready or hibernating.`,
+            `The computer can't be reset from "${
+              liveStatus ?? "none"
+            }" — reset only when it's ready or hibernating.`
           );
         }
         try {
@@ -321,7 +324,7 @@ export function ComputerView({
         } catch (err) {
           throw createInspectorCommandClientError(
             "execution_failed",
-            getBillingErrorMessage(err, "Could not reset the computer."),
+            getBillingErrorMessage(err, "Could not reset the computer.")
           );
         }
       },
@@ -334,7 +337,7 @@ export function ComputerView({
         } catch (err) {
           throw createInspectorCommandClientError(
             "execution_failed",
-            getBillingErrorMessage(err, "Could not delete the computer."),
+            getBillingErrorMessage(err, "Could not delete the computer.")
           );
         }
       },
@@ -687,7 +690,7 @@ export function ComputerView({
       ) : null}
 
       {effectiveProjectId ? (
-        <EnvironmentsDrawer
+        <SandboxImagesDrawer
           open={envDrawerOpen}
           onOpenChange={setEnvDrawerOpen}
           projectId={effectiveProjectId}
@@ -817,4 +820,3 @@ function Empty({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
-

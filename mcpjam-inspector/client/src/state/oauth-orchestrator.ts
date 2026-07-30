@@ -6,6 +6,7 @@ import {
   MCPOAuthOptions,
 } from "@/lib/oauth/mcp-oauth";
 import { normalizeRegistrationMode } from "@/shared/xaa.js";
+import { resolveOAuthProtocolSelection } from "@/shared/types.js";
 import { ServerWithName } from "./app-types";
 import type { OAuthTrace } from "@/lib/oauth/oauth-trace";
 import {
@@ -147,12 +148,32 @@ function buildReconnectOAuthOptions(
    * loop. Only used when a caller drives a scope step-up.
    */
   stepUpScopes?: string[],
+  /**
+   * SEP-2350 step-up: the `resource_metadata` URL a `403 insufficient_scope`
+   * challenge advertised, ALREADY validated same-origin by the caller. When
+   * present the fresh OAuth flow discovers protected-resource metadata from
+   * this URL instead of re-deriving it from the server URL — so a server that
+   * points its metadata elsewhere (Asana) is honored on re-authorization.
+   */
+  resourceMetadataUrl?: string,
 ): MCPOAuthOptions {
   const oauthConfig = readStoredOAuthConfig(server.name);
   const storedClientInfo = readStoredClientInfo(server.name);
   const profile = server.oauthFlowProfile;
-  const protocolMode =
-    profile?.protocolVersion ?? oauthConfig.protocolMode ?? "auto";
+  const configProtocolVersion =
+    "mcpProtocolVersion" in server.config &&
+    typeof server.config.mcpProtocolVersion === "string"
+      ? server.config.mcpProtocolVersion
+      : undefined;
+  const protocolSelection = resolveOAuthProtocolSelection({
+    mode:
+      server.oauthProtocolMode ??
+      profile?.protocolVersion ??
+      oauthConfig.protocolMode,
+    legacyProtocolVersion: oauthConfig.protocolVersion,
+    wireProtocolVersion: configProtocolVersion,
+    negotiatedProtocolVersion: server.initializationInfo?.protocolVersion,
+  });
   // The CANONICAL per-server registrationMode wins — it can be "auto" (resolve
   // from current server metadata at connect time), while the legacy
   // profile/localStorage values are rollback-compat concretes. Preferring a
@@ -173,6 +194,9 @@ function buildReconnectOAuthOptions(
     serverName: server.name,
     serverUrl,
     scopes: effectiveScopes,
+    // Preserve `undefined` as the default so a non-step-up reconnect never
+    // pins an override and discovery keeps deriving the URL as it does today.
+    resourceMetadataUrl: nonEmptyString(resourceMetadataUrl),
     resourceUrl: nonEmptyString(profile?.resourceUrl) ?? oauthConfig.resourceUrl,
     customHeaders:
       profileHeadersToRecord(profile?.customHeaders) ??
@@ -186,11 +210,9 @@ function buildReconnectOAuthOptions(
       storedClientInfo.client_id,
     clientSecret: undefined,
     hasClientSecret: Boolean(server.hasClientSecret),
-    protocolMode,
-    protocolVersion:
-      protocolMode !== "auto"
-        ? protocolMode
-        : profile?.protocolVersion ?? oauthConfig.protocolVersion,
+    protocolMode: protocolSelection.mode,
+    protocolVersion: protocolSelection.protocolVersion,
+    protocolResolutionSource: protocolSelection.source,
     registrationMode,
     registrationStrategy:
       registrationMode !== "auto"
@@ -220,6 +242,13 @@ export async function ensureAuthorizedForReconnect(
      * ({@link resolveInsufficientScopeStepUp}).
      */
     stepUpScopes?: string[];
+    /**
+     * SEP-2350 step-up: the `resource_metadata` URL the challenge advertised,
+     * ALREADY validated same-origin by the caller ({@link applyToolCallStepUp}).
+     * Threaded into the fresh OAuth flow so PRM discovery uses it instead of
+     * re-deriving from the server URL. `undefined` keeps today's behavior.
+     */
+    resourceMetadataUrl?: string;
   },
 ): Promise<OAuthResult> {
   // If server is explicitly configured without OAuth, skip OAuth flow entirely
@@ -268,7 +297,12 @@ export async function ensureAuthorizedForReconnect(
   // Fallback to a fresh OAuth flow if URL is present
   // This may redirect away; the hook should reflect oauth-flow state
   if (url) {
-    const opts = buildReconnectOAuthOptions(server, url, options?.stepUpScopes);
+    const opts = buildReconnectOAuthOptions(
+      server,
+      url,
+      options?.stepUpScopes,
+      options?.resourceMetadataUrl,
+    );
     clearOAuthData(server.name);
     options?.beforeRedirect?.(opts);
     opts.onTraceUpdate = options?.onTraceUpdate;
@@ -327,10 +361,15 @@ export async function ensureAuthorizedForReconnect(
 // to clear the counter so a future legitimate step-up starts fresh.
 
 const STEP_UP_ATTEMPTS_PREFIX = "mcp-stepup-attempts-";
+const STEP_UP_PENDING_PREFIX = "mcp-stepup-pending-";
 const DEFAULT_STEP_UP_MAX_RETRIES = 1;
 
 function stepUpAttemptsKey(serverName: string): string {
   return `${STEP_UP_ATTEMPTS_PREFIX}${serverName}`;
+}
+
+function stepUpPendingKey(serverName: string): string {
+  return `${STEP_UP_PENDING_PREFIX}${serverName}`;
 }
 
 // The bounded step-up counter lives in `sessionStorage`, NOT `localStorage`: it
@@ -400,6 +439,60 @@ function writeStepUpAttempts(
     // Best-effort: a full/unavailable store must not abort the OAuth flow. The
     // upstream transport still bounds retries within a single request; only the
     // cross-redirect count is lost, so the guard degrades, never disappears.
+  }
+}
+
+function hasPendingStepUp(
+  serverName: string,
+  issuer: string | undefined,
+): boolean {
+  try {
+    const store = stepUpAttemptsStore();
+    if (!store) return false;
+    const raw = store.getItem(stepUpPendingKey(serverName));
+    if (!raw) return false;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return parsed?.[issuerBucket(issuer)] === true;
+  } catch {
+    return false;
+  }
+}
+
+function writePendingStepUp(
+  serverName: string,
+  issuer: string | undefined,
+  pending: boolean,
+): void {
+  try {
+    const store = stepUpAttemptsStore();
+    if (!store) return;
+    const key = stepUpPendingKey(serverName);
+    const raw = store.getItem(key);
+    let map: Record<string, boolean> = {};
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") {
+          map = parsed as Record<string, boolean>;
+        }
+      } catch {
+        // Corrupt record — replace it with the current issuer's state.
+      }
+    }
+    const bucket = issuerBucket(issuer);
+    if (pending) {
+      map[bucket] = true;
+    } else {
+      delete map[bucket];
+    }
+    if (Object.keys(map).length === 0) {
+      store.removeItem(key);
+    } else {
+      store.setItem(key, JSON.stringify(map));
+    }
+  } catch {
+    // Best-effort. Losing this marker can allow one extra redirect, while the
+    // transport still keeps its per-request retry bound.
   }
 }
 
@@ -479,20 +572,22 @@ export function resetInsufficientScopeStepUp(
 ): void {
   try {
     const store = stepUpAttemptsStore();
-    if (!store) return;
-    const raw = store.getItem(stepUpAttemptsKey(serverName));
-    if (!raw) return;
-    const parsed = JSON.parse(raw) as Record<string, number>;
-    if (!parsed || typeof parsed !== "object") return;
-    delete parsed[issuerBucket(issuer)];
-    if (Object.keys(parsed).length === 0) {
-      store.removeItem(stepUpAttemptsKey(serverName));
-    } else {
-      store.setItem(stepUpAttemptsKey(serverName), JSON.stringify(parsed));
+    const raw = store?.getItem(stepUpAttemptsKey(serverName));
+    if (store && raw) {
+      const parsed = JSON.parse(raw) as Record<string, number>;
+      if (parsed && typeof parsed === "object") {
+        delete parsed[issuerBucket(issuer)];
+        if (Object.keys(parsed).length === 0) {
+          store.removeItem(stepUpAttemptsKey(serverName));
+        } else {
+          store.setItem(stepUpAttemptsKey(serverName), JSON.stringify(parsed));
+        }
+      }
     }
   } catch {
     // Best-effort reset.
   }
+  writePendingStepUp(serverName, issuer, false);
 }
 
 // ===========================================================================
@@ -516,6 +611,36 @@ function readServerUrlForStepUp(server: ServerWithName): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Validate an UNTRUSTED `resource_metadata` hint (from a `403 insufficient_scope`
+ * `WWW-Authenticate` header) before threading it into the OAuth flow. RFC 9728
+ * permits the protected-resource-metadata document to live on a DIFFERENT origin
+ * than the resource server (e.g. a dedicated metadata host), so this does NOT
+ * require same-origin — dropping a valid cross-origin pointer would force the
+ * flow back to the wrong derived well-known URL, the exact regression this path
+ * fixes. It only requires an absolute `https:` URL (RFC 9728 mandates https).
+ * Returns the trimmed hint when it parses as absolute https; otherwise
+ * `undefined`, so a malformed/relative/non-https hint falls back to derived
+ * discovery. Fetch safety of a cross-origin hint is enforced downstream by the
+ * SDK: the factory's outbound-host allowlist (`assertOutboundOAuthUrlAllowed`
+ * blocks private/reserved hosts → SSRF) and cross-origin MCP-Authorization
+ * header stripping (`mergeHeadersForResourceMetadataRequest`).
+ */
+function validResourceMetadataUrlHint(
+  resourceMetadataUrl: string | undefined,
+): string | undefined {
+  const hint = resourceMetadataUrl?.trim();
+  if (!hint) return undefined;
+  try {
+    if (new URL(hint).protocol === "https:") {
+      return hint;
+    }
+  } catch {
+    // Unparseable / relative hint — treat as no usable override.
+  }
+  return undefined;
 }
 
 function readOriginalOAuthScopes(
@@ -566,9 +691,45 @@ export async function applyToolCallStepUp(
     beforeRedirect?: (oauthOptions: MCPOAuthOptions) => void;
   },
 ): Promise<ToolCallStepUpOutcome> {
-  const issuer = resolveStoredIssuer(server.name, readServerUrlForStepUp(server));
-  const challengedScopes = parseOAuthScopes(challenge.requiredScope);
+  const serverUrl = readServerUrlForStepUp(server);
+  const issuer = resolveStoredIssuer(server.name, serverUrl);
 
+  // Migration/recovery: older builds persisted only the numeric attempt. If a
+  // broken delivery path consumed that attempt without ever starting a real
+  // step-up, every later challenge in this tab was silently bounded to
+  // `throw`, even after reconnecting with a fresh normal token. A current
+  // in-progress step-up always carries the companion marker below; an attempt
+  // without it is stale and safe to clear once.
+  if (
+    readStepUpAttempts(server.name, issuer) > 0 &&
+    !hasPendingStepUp(server.name, issuer)
+  ) {
+    resetInsufficientScopeStepUp(server.name, issuer);
+  }
+
+  const challengedScopes = parseOAuthScopes(challenge.requiredScope);
+  // The challenge's `resource_metadata` hint is untrusted: thread it only when
+  // it parses as an absolute https URL (RFC 9728). A valid cross-origin pointer
+  // is honored — the SDK's outbound-host guard + cross-origin header stripping
+  // enforce fetch safety. See {@link validResourceMetadataUrlHint}.
+  const resourceMetadataUrl = validResourceMetadataUrlHint(
+    challenge.resourceMetadataUrl,
+  );
+
+  // A METADATA-ONLY challenge (a `resource_metadata` pointer with NO
+  // `requiredScope`) intentionally re-authorizes with the EXISTING scopes.
+  // `challengedScopes` is empty, so the union below is just the user's
+  // previously-requested/consented scopes, which flow to the fresh grant as its
+  // requested scope value. This is deliberate, not a bug: a metadata-only
+  // `insufficient_scope` names no scope to widen to — it is a "you discovered
+  // PRM from the wrong place, rediscover it here" signal (the corrected
+  // `resourceMetadataUrl` may point at a different issuer/resource). Requesting
+  // the corrected PRM's full `scopes_supported` instead would over-grant scopes
+  // the server never asked for and the user never consented to; re-requesting
+  // the original scopes against the CORRECTED metadata is the least-privilege,
+  // intent-preserving step-up (and is not a no-op — discovery, AS, and token
+  // audience can all change). If the corrected metadata still resolves to the
+  // same insufficient scopes, the bounded retry stops the loop by design.
   const decision = resolveInsufficientScopeStepUp({
     serverName: server.name,
     issuer,
@@ -586,16 +747,25 @@ export async function applyToolCallStepUp(
     };
   }
 
-  const reauthorization = await ensureAuthorizedForReconnect(server, {
-    allowInteractiveOAuthFlow: true,
-    // A resolved `reauthorize` IS the confirmed escalation — without this an
-    // auto server's tokenless guard would short-circuit to
-    // ready-unauthenticated instead of redirecting for the widened scopes.
-    interactiveOAuthConfirmed: true,
-    stepUpScopes: decision.scopes,
-    onTraceUpdate: options?.onTraceUpdate,
-    beforeRedirect: options?.beforeRedirect,
-  });
+  writePendingStepUp(server.name, issuer, true);
+  let reauthorization: OAuthResult;
+  try {
+    reauthorization = await ensureAuthorizedForReconnect(server, {
+      allowInteractiveOAuthFlow: true,
+      // A resolved `reauthorize` IS the confirmed escalation — without this an
+      // auto server's tokenless guard would short-circuit to
+      // ready-unauthenticated instead of redirecting for the widened scopes.
+      interactiveOAuthConfirmed: true,
+      stepUpScopes: decision.scopes,
+      resourceMetadataUrl,
+      onTraceUpdate: options?.onTraceUpdate,
+      beforeRedirect: options?.beforeRedirect,
+    });
+  } catch (error) {
+    writeStepUpAttempts(server.name, issuer, decision.attempt);
+    writePendingStepUp(server.name, issuer, false);
+    throw error;
+  }
 
   // The resolver already bumped the per-session counter (it must persist BEFORE
   // the redirect so the bound survives the round-trip). Roll it back to its
@@ -619,6 +789,7 @@ export async function applyToolCallStepUp(
     reauthorization.kind === "reauth_required"
   ) {
     writeStepUpAttempts(server.name, issuer, decision.attempt);
+    writePendingStepUp(server.name, issuer, false);
   }
 
   return {

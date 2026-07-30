@@ -44,9 +44,13 @@ import type {
   PlatformComputerAttached,
   PlatformComputerReset,
   PlatformEnvironment,
-  PlatformEnvironmentBuild,
-  PlatformEnvironmentBuildStarted,
-  PlatformEnvironmentDeleted,
+  PlatformEnvironmentResolved,
+  PlatformEnvironmentUpdateBody,
+  PlatformImage,
+  PlatformImageBlueprintValidation,
+  PlatformImageBuild,
+  PlatformImageBuildStarted,
+  PlatformImageDeleted,
   PlatformHost,
   PlatformHostDeleted,
   PlatformHostDetail,
@@ -714,7 +718,12 @@ export const checkHostCompatibilityOperation: PlatformOperation<
       input.project,
       signal
     );
-    const server = await resolveLiveServer(client, project, input.server, signal);
+    const server = await resolveLiveServer(
+      client,
+      project,
+      input.server,
+      signal
+    );
     const scope = { projectId: project.id, serverId: server.id };
 
     // Gather every tool (with its inline `_meta`) across all pages.
@@ -1114,72 +1123,69 @@ const stepInputSchema = z
   ])
   .describe("One authored test step (prompt | toolCall | interact | assert).");
 
-const evalCaseInput = z
-  .object({
-    title: z.string().trim().min(1).describe("Short label for the test case."),
-    runs: z
-      .number()
-      .int()
-      .min(1)
-      .max(10)
-      .optional()
-      .describe("Iterations to run this case per eval run. Defaults to 1."),
-    steps: z
-      .array(stepInputSchema)
-      .min(1)
-      .describe(
-        "Ordered test steps (prompt / toolCall / interact / assert). The first `prompt` step's text is the case query; `toolCalledWith` asserts are the expected tool calls."
-      ),
-    expectedOutput: z
-      .string()
-      .trim()
-      .min(1)
-      .optional()
-      .describe("Expected final answer or substring to assert against."),
-    isNegativeTest: z
-      .boolean()
-      .optional()
-      .describe("When true, the case passes if the expectation is NOT met."),
-    scenario: z
-      .string()
-      .trim()
-      .min(1)
-      .optional()
-      .describe("Optional scenario/context note for the case."),
-    advancedConfig: z
-      .object({
-        system: z.string().optional(),
-        temperature: z.number().optional(),
-        toolChoice: z.any().optional(),
-      })
-      .passthrough()
-      .optional()
-      .describe(
-        "Per-case system prompt / temperature / tool-choice overrides."
-      ),
-    matchOptions: z
-      .record(z.string(), z.any())
-      .optional()
-      .describe("Per-case matcher options (advanced)."),
-    predicates: z
-      .record(z.string(), z.any())
-      .optional()
-      .describe("Per-case success-predicate gate (advanced)."),
-    model: z
-      .string()
-      .trim()
-      .min(1)
-      .optional()
-      .describe("Per-case model override; defaults to the suite-level model."),
-    provider: z
-      .string()
-      .trim()
-      .min(1)
-      .optional()
-      .describe(
-        "Per-case provider override; defaults to the suite-level provider."
-      ),
-  });
+const evalCaseInput = z.object({
+  title: z.string().trim().min(1).describe("Short label for the test case."),
+  runs: z
+    .number()
+    .int()
+    .min(1)
+    .max(10)
+    .optional()
+    .describe("Iterations to run this case per eval run. Defaults to 1."),
+  steps: z
+    .array(stepInputSchema)
+    .min(1)
+    .describe(
+      "Ordered test steps (prompt / toolCall / interact / assert). The first `prompt` step's text is the case query; `toolCalledWith` asserts are the expected tool calls."
+    ),
+  expectedOutput: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Expected final answer or substring to assert against."),
+  isNegativeTest: z
+    .boolean()
+    .optional()
+    .describe("When true, the case passes if the expectation is NOT met."),
+  scenario: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Optional scenario/context note for the case."),
+  advancedConfig: z
+    .object({
+      system: z.string().optional(),
+      temperature: z.number().optional(),
+      toolChoice: z.any().optional(),
+    })
+    .passthrough()
+    .optional()
+    .describe("Per-case system prompt / temperature / tool-choice overrides."),
+  matchOptions: z
+    .record(z.string(), z.any())
+    .optional()
+    .describe("Per-case matcher options (advanced)."),
+  predicates: z
+    .record(z.string(), z.any())
+    .optional()
+    .describe("Per-case success-predicate gate (advanced)."),
+  model: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Per-case model override; defaults to the suite-level model."),
+  provider: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Per-case provider override; defaults to the suite-level provider."
+    ),
+});
 
 const createEvalSuiteInput = z.object({
   project: z
@@ -2612,12 +2618,13 @@ const createHostInput = z
         message: "`config` must be a non-empty host config object.",
       })
       .optional()
-      .describe("Full host config v2 to use verbatim (alternative to template)."),
+      .describe(
+        "Full host config v2 to use verbatim (alternative to template)."
+      ),
   })
-  .refine(
-    (value) => (value.template ? 1 : 0) + (value.config ? 1 : 0) === 1,
-    { message: "Provide exactly one of `template` or a non-empty `config`." }
-  );
+  .refine((value) => (value.template ? 1 : 0) + (value.config ? 1 : 0) === 1, {
+    message: "Provide exactly one of `template` or a non-empty `config`.",
+  });
 export type CreateHostInput = z.infer<typeof createHostInput>;
 
 export const createHostOperation: PlatformOperation<
@@ -2738,38 +2745,83 @@ export const deleteHostOperation: PlatformOperation<
   },
 };
 
-// ── Computer environments ────────────────────────────────────────────────────
+// ── Project Environments ─────────────────────────────────────────────────────
+//
+// Named execution bundles (one host + optional server group + optional pinned
+// skills/plugins) that eval suites and journeys run against. Distinct from the
+// sandbox images below.
+//
+// Every mutation takes `expectedRevision`, the revision last read via
+// get_project_environment / list_project_environments. That is deliberate: it
+// is what stops two concurrent edits from silently clobbering each other.
 
-const ENVIRONMENT_SELECTOR_DESCRIPTION = "Environment name or ID.";
+const ENVIRONMENT_SELECTOR_DESCRIPTION = "Project environment name or ID.";
+const EXPECTED_REVISION_DESCRIPTION =
+  "The `revision` you last read for this environment (from get_project_environment). If the environment changed since, the write is rejected with a conflict instead of overwriting the other edit — re-read and retry.";
 
-async function resolveEnvironment(
+/**
+ * Resolves by id or name across LIVE **and** archived environments: restore
+ * necessarily targets an archived one, and a name-based selector has to be
+ * able to find it.
+ *
+ * Archiving frees the name, so a project can legitimately hold an archived
+ * `Staging` and a live `Staging` at once — a flat lookup would call that name
+ * ambiguous and break every name-based operation. So a name match is resolved
+ * against the side the operation is actually for first (`prefer`: live for
+ * everything except restore), and only falls back to the whole listing when
+ * that side has no match — which keeps "get an archived env by name" working
+ * and keeps the not-found message enumerating every environment.
+ *
+ * An exact ID still wins over both, and a name that is ambiguous *within* the
+ * preferred side (two archived `Staging`s for a restore) still reports as
+ * ambiguous, because there it genuinely is.
+ */
+async function resolveEnvironmentSelector(
   client: PlatformApiClient,
   project: PlatformProject,
   selector: string,
-  signal: AbortSignal | undefined
+  signal: AbortSignal | undefined,
+  prefer: "live" | "archived" = "live"
 ): Promise<PlatformEnvironment> {
   const page = await client.listEnvironments(
-    { projectId: project.id },
+    { projectId: project.id, includeArchived: true },
     { signal }
   );
+  const trimmedSelector = selector.trim();
+  const idMatch = page.items.find((item) => item.id === trimmedSelector);
+  if (idMatch) {
+    return idMatch;
+  }
+  const preferred = page.items.filter(
+    (item) => item.archived === (prefer === "archived")
+  );
+  const normalizedSelector = trimmedSelector.toLocaleLowerCase();
+  const preferredHasName = preferred.some(
+    (item) => item.name?.toLocaleLowerCase() === normalizedSelector
+  );
   return resolveByIdOrName(
-    page.items,
+    preferredHasName ? preferred : page.items,
     selector,
-    "Environment",
+    "Project environment",
     `project "${project.name}"`
   );
 }
 
-const environmentSelectorInput = z.object({
+const listEnvironmentsInput = z.object({
   project: z
     .string()
     .trim()
     .min(1)
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
-  environment: z.string().trim().min(1).describe(ENVIRONMENT_SELECTOR_DESCRIPTION),
+  includeArchived: z
+    .boolean()
+    .optional()
+    .describe(
+      "Include archived environments. Off by default; turn it on to find an environment to restore."
+    ),
 });
-export type EnvironmentSelectorInput = z.infer<typeof environmentSelectorInput>;
+export type ListEnvironmentsInput = z.infer<typeof listEnvironmentsInput>;
 
 export type ListEnvironmentsResult = {
   project: SelectedProjectInfo;
@@ -2778,15 +2830,15 @@ export type ListEnvironmentsResult = {
 };
 
 export const listEnvironmentsOperation: PlatformOperation<
-  ProjectScopedInput,
+  ListEnvironmentsInput,
   ListEnvironmentsResult
 > = {
-  name: "list_computer_environments",
-  title: "List computer environments",
+  name: "list_project_environments",
+  title: "List MCPJam project environments",
   description:
-    "List the custom Computer environments (Dockerfile images) in an MCPJam project. If no project is specified, uses the most recently updated accessible project.",
+    "List the project environments in an MCPJam project. An environment is a named execution bundle (one host, optionally a standalone server group, pinned skills, and pinned plugin versions) that eval suites and journeys run against. Not a Computer sandbox image.",
   readOnly: true,
-  inputSchema: projectScopedInput,
+  inputSchema: listEnvironmentsInput,
   async execute(input, { client, signal }) {
     const { project, sortedProjects } = await resolveProjectOrThrow(
       client,
@@ -2794,7 +2846,12 @@ export const listEnvironmentsOperation: PlatformOperation<
       signal
     );
     const page = await client.listEnvironments(
-      { projectId: project.id },
+      {
+        projectId: project.id,
+        ...(input.includeArchived !== undefined
+          ? { includeArchived: input.includeArchived }
+          : {}),
+      },
       { signal }
     );
     return {
@@ -2805,14 +2862,29 @@ export const listEnvironmentsOperation: PlatformOperation<
   },
 };
 
+const environmentSelectorInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  environment: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(ENVIRONMENT_SELECTOR_DESCRIPTION),
+});
+export type EnvironmentSelectorInput = z.infer<typeof environmentSelectorInput>;
+
 export const getEnvironmentOperation: PlatformOperation<
   EnvironmentSelectorInput,
   PlatformEnvironment
 > = {
-  name: "get_computer_environment",
-  title: "Show a computer environment",
+  name: "get_project_environment",
+  title: "Show an MCPJam project environment",
   description:
-    "Show one environment's Dockerfile, sharing, and latest build status.",
+    "Show one project environment: its host, optional standalone server group, pinned skill selection, pinned plugin versions, and its current `revision` (which you pass as `expectedRevision` when updating it).",
   readOnly: true,
   inputSchema: environmentSelectorInput,
   async execute(input, { client, signal }) {
@@ -2821,18 +2893,68 @@ export const getEnvironmentOperation: PlatformOperation<
       input.project,
       signal
     );
-    const env = await resolveEnvironment(
+    const environment = await resolveEnvironmentSelector(
       client,
       project,
       input.environment,
       signal
     );
     return client.getEnvironment(
-      { projectId: project.id, environmentId: env.id },
+      { projectId: project.id, environmentId: environment.id },
       { signal }
     );
   },
 };
+
+export const resolveEnvironmentOperation: PlatformOperation<
+  EnvironmentSelectorInput,
+  PlatformEnvironmentResolved
+> = {
+  name: "resolve_project_environment",
+  title: "Preview what an MCPJam project environment resolves to",
+  description:
+    "Resolve a project environment to the exact execution inputs a run would use right now: the host's current config, the closed server set (including servers contributed by pinned plugin versions), and the resolved plugin versions. Fails with a conflict if the environment cannot currently produce a runnable configuration — for example a pinned plugin was disabled.",
+  readOnly: true,
+  inputSchema: environmentSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const environment = await resolveEnvironmentSelector(
+      client,
+      project,
+      input.environment,
+      signal
+    );
+    return client.resolveEnvironment(
+      { projectId: project.id, environmentId: environment.id },
+      { signal }
+    );
+  },
+};
+
+const skillSelectionInput = z
+  .object({
+    mode: z.literal("explicit"),
+    skillIds: z
+      .array(z.string().trim().min(1))
+      .min(1)
+      .describe(
+        "Project-shared skill IDs to pin. Skills with supporting files or extra frontmatter, and plugin-component skills, cannot be pinned."
+      ),
+  })
+  .describe(
+    "Explicit pinned skill selection. Cannot be empty — omit the field entirely, or pass null when updating, to mean 'no pinned skills'."
+  );
+
+const pluginVersionIdsInput = z
+  .array(z.string().trim().min(1))
+  .min(1)
+  .describe(
+    "Plugin VERSION IDs to pin. Narrow by design: the plugin must be installed and enabled, the version must be ready, at most one version per plugin, and none of its skills may carry supporting files."
+  );
 
 const createEnvironmentInput = z.object({
   project: z
@@ -2841,12 +2963,39 @@ const createEnvironmentInput = z.object({
     .min(1)
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
-  name: z.string().trim().min(1).describe("Display name for the new environment."),
-  dockerfile: z
+  name: z
     .string()
+    .trim()
     .min(1)
     .describe(
-      "Dockerfile text. Must start FROM an allowlisted official base pinned by @sha256 digest; only FROM + RUN are supported."
+      "Display name for the new environment. Must be unique among the project's live (non-archived) environments."
+    ),
+  description: z
+    .string()
+    .optional()
+    .describe("Optional free-text description."),
+  hostId: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("ID of the host this environment runs against. Required."),
+  serverAttachmentId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Optional standalone server group to pin. Omit to fall back to the host config's own servers."
+    ),
+  skillSelection: skillSelectionInput.optional(),
+  pluginVersionIds: pluginVersionIdsInput.optional(),
+  sandboxImageId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Optional sandbox image (see the images operations) to pin: eval runs in this environment boot a fresh sandbox from it. Must be project-shared; personal drafts are rejected — promote first."
     ),
 });
 export type CreateEnvironmentInput = z.infer<typeof createEnvironmentInput>;
@@ -2855,10 +3004,10 @@ export const createEnvironmentOperation: PlatformOperation<
   CreateEnvironmentInput,
   PlatformEnvironment
 > = {
-  name: "create_computer_environment",
-  title: "Create a computer environment",
+  name: "create_project_environment",
+  title: "Create an MCPJam project environment",
   description:
-    "Create a custom Computer environment from a Dockerfile. Build it (build_computer_environment) before a computer can boot from it.",
+    "Create a project environment: a named execution bundle of one host plus an optional standalone server group, pinned skills, and pinned plugin versions. Requires project admin.",
   readOnly: false,
   inputSchema: createEnvironmentInput,
   async execute(input, { client, signal }) {
@@ -2870,7 +3019,25 @@ export const createEnvironmentOperation: PlatformOperation<
     return client.createEnvironment(
       {
         projectId: project.id,
-        body: { name: input.name, dockerfile: input.dockerfile },
+        body: {
+          name: input.name,
+          ...(input.description !== undefined
+            ? { description: input.description }
+            : {}),
+          hostId: input.hostId,
+          ...(input.serverAttachmentId !== undefined
+            ? { serverAttachmentId: input.serverAttachmentId }
+            : {}),
+          ...(input.skillSelection !== undefined
+            ? { skillSelection: input.skillSelection }
+            : {}),
+          ...(input.pluginVersionIds !== undefined
+            ? { pluginVersionIds: input.pluginVersionIds }
+            : {}),
+          ...(input.sandboxImageId !== undefined
+            ? { sandboxImageId: input.sandboxImageId }
+            : {}),
+        },
       },
       { signal }
     );
@@ -2890,31 +3057,77 @@ const updateEnvironmentInput = z
       .trim()
       .min(1)
       .describe(ENVIRONMENT_SELECTOR_DESCRIPTION),
-    name: z
+    expectedRevision: z
+      .number()
+      .int()
+      .nonnegative()
+      .describe(EXPECTED_REVISION_DESCRIPTION),
+    name: z.string().trim().min(1).optional().describe("New display name."),
+    description: z
+      .string()
+      .optional()
+      .describe("New description. Pass an empty string to clear it."),
+    hostId: z
       .string()
       .trim()
       .min(1)
       .optional()
-      .describe("New display name for the environment."),
-    dockerfile: z
+      .describe("New host for this environment."),
+    serverAttachmentId: z
       .string()
+      .trim()
       .min(1)
+      .nullable()
       .optional()
-      .describe("Replacement Dockerfile text."),
+      .describe(
+        "New standalone server group, or null to clear the pin and fall back to the host config's servers. Omit to leave unchanged."
+      ),
+    skillSelection: skillSelectionInput
+      .nullable()
+      .optional()
+      .describe(
+        "New pinned skill selection, or null to clear it. Omit to leave unchanged."
+      ),
+    pluginVersionIds: pluginVersionIdsInput
+      .nullable()
+      .optional()
+      .describe(
+        "New pinned plugin versions, or null to clear them. Omit to leave unchanged."
+      ),
+    sandboxImageId: z
+      .string()
+      .trim()
+      .min(1)
+      .nullable()
+      .optional()
+      .describe(
+        "New sandbox-image pin (project-shared image id), or null to clear it and use the default image. Omit to leave unchanged."
+      ),
   })
-  .refine((value) => value.name !== undefined || value.dockerfile !== undefined, {
-    message: "Provide at least one of `name` or `dockerfile` to update.",
-  });
+  .refine(
+    (value) =>
+      value.name !== undefined ||
+      value.description !== undefined ||
+      value.hostId !== undefined ||
+      value.serverAttachmentId !== undefined ||
+      value.skillSelection !== undefined ||
+      value.pluginVersionIds !== undefined ||
+      value.sandboxImageId !== undefined,
+    {
+      message:
+        "Provide at least one of `name`, `description`, `hostId`, `serverAttachmentId`, `skillSelection`, `pluginVersionIds`, or `sandboxImageId` to update.",
+    }
+  );
 export type UpdateEnvironmentInput = z.infer<typeof updateEnvironmentInput>;
 
 export const updateEnvironmentOperation: PlatformOperation<
   UpdateEnvironmentInput,
   PlatformEnvironment
 > = {
-  name: "update_computer_environment",
-  title: "Update a computer environment",
+  name: "update_project_environment",
+  title: "Update an MCPJam project environment",
   description:
-    "Edit an environment's name and/or Dockerfile. Re-build it for changes to take effect on a computer.",
+    "Edit a project environment. Only the fields you pass change; pass null for serverAttachmentId, skillSelection, or pluginVersionIds to clear them. Requires `expectedRevision` (read it first with get_project_environment) and project admin.",
   readOnly: false,
   inputSchema: updateEnvironmentInput,
   async execute(input, { client, signal }) {
@@ -2923,144 +3136,451 @@ export const updateEnvironmentOperation: PlatformOperation<
       input.project,
       signal
     );
-    const env = await resolveEnvironment(
+    const environment = await resolveEnvironmentSelector(
       client,
       project,
       input.environment,
       signal
     );
-    const body: { name?: string; dockerfile?: string } = {};
+    // `!== undefined` (never truthiness) so an explicit null is forwarded as a
+    // CLEAR while an omitted field stays absent and is left unchanged.
+    const body: PlatformEnvironmentUpdateBody = {
+      expectedRevision: input.expectedRevision,
+    };
     if (input.name !== undefined) body.name = input.name;
-    if (input.dockerfile !== undefined) body.dockerfile = input.dockerfile;
+    if (input.description !== undefined) body.description = input.description;
+    if (input.hostId !== undefined) body.hostId = input.hostId;
+    if (input.serverAttachmentId !== undefined)
+      body.serverAttachmentId = input.serverAttachmentId;
+    if (input.skillSelection !== undefined)
+      body.skillSelection = input.skillSelection;
+    if (input.pluginVersionIds !== undefined)
+      body.pluginVersionIds = input.pluginVersionIds;
+    if (input.sandboxImageId !== undefined)
+      body.sandboxImageId = input.sandboxImageId;
     return client.updateEnvironment(
-      { projectId: project.id, environmentId: env.id, body },
+      { projectId: project.id, environmentId: environment.id, body },
       { signal }
     );
   },
 };
 
-export const buildEnvironmentOperation: PlatformOperation<
-  EnvironmentSelectorInput,
-  PlatformEnvironmentBuildStarted
+const environmentRevisionInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  environment: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(ENVIRONMENT_SELECTOR_DESCRIPTION),
+  expectedRevision: z
+    .number()
+    .int()
+    .nonnegative()
+    .describe(EXPECTED_REVISION_DESCRIPTION),
+});
+export type EnvironmentRevisionInput = z.infer<typeof environmentRevisionInput>;
+
+export const archiveEnvironmentOperation: PlatformOperation<
+  EnvironmentRevisionInput,
+  PlatformEnvironment
 > = {
-  name: "build_computer_environment",
-  title: "Build a computer environment",
+  name: "archive_project_environment",
+  title: "Archive an MCPJam project environment",
   description:
-    "Trigger a build of the environment's image. Async — poll list_computer_environment_builds for status.",
+    "Archive a project environment. It stops being selectable for runs and frees its name for a new one, but the row is kept and can be restored. Requires project admin.",
   readOnly: false,
-  inputSchema: environmentSelectorInput,
+  mayBeDestructive: true,
+  inputSchema: environmentRevisionInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
       signal
     );
-    const env = await resolveEnvironment(
+    const environment = await resolveEnvironmentSelector(
       client,
       project,
       input.environment,
       signal
     );
-    return client.buildEnvironment(
-      { projectId: project.id, environmentId: env.id },
+    return client.archiveEnvironment(
+      {
+        projectId: project.id,
+        environmentId: environment.id,
+        expectedRevision: input.expectedRevision,
+      },
       { signal }
     );
   },
 };
 
-export type ListEnvironmentBuildsResult = {
-  project: SelectedProjectInfo;
-  environmentId: string;
-  items: PlatformEnvironmentBuild[];
-};
-
-export const listEnvironmentBuildsOperation: PlatformOperation<
-  EnvironmentSelectorInput,
-  ListEnvironmentBuildsResult
+export const restoreEnvironmentOperation: PlatformOperation<
+  EnvironmentRevisionInput,
+  PlatformEnvironment
 > = {
-  name: "list_computer_environment_builds",
-  title: "List computer environment builds",
+  name: "restore_project_environment",
+  title: "Restore an archived MCPJam project environment",
   description:
-    "List an environment's builds (newest first) with their status and log preview.",
-  readOnly: true,
-  inputSchema: environmentSelectorInput,
+    "Restore an archived project environment. Fails with a conflict if another live environment took its name in the meantime. Plugin pins whose version no longer exists at all are dropped — compare the returned pluginVersionIds against what you archived. Requires project admin.",
+  readOnly: false,
+  inputSchema: environmentRevisionInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
       signal
     );
-    const env = await resolveEnvironment(
+    // Restore is the one operation whose target is archived by definition, so
+    // a name shared with a live environment must resolve to the archived one.
+    const environment = await resolveEnvironmentSelector(
       client,
       project,
       input.environment,
+      signal,
+      "archived"
+    );
+    return client.restoreEnvironment(
+      {
+        projectId: project.id,
+        environmentId: environment.id,
+        expectedRevision: input.expectedRevision,
+      },
+      { signal }
+    );
+  },
+};
+
+// ── Sandbox images ───────────────────────────────────────────────────────────
+
+const IMAGE_SELECTOR_DESCRIPTION = "Sandbox image name or ID.";
+
+async function resolveImage(
+  client: PlatformApiClient,
+  project: PlatformProject,
+  selector: string,
+  signal: AbortSignal | undefined
+): Promise<PlatformImage> {
+  const page = await client.listImages({ projectId: project.id }, { signal });
+  return resolveByIdOrName(
+    page.items,
+    selector,
+    "Sandbox image",
+    `project "${project.name}"`
+  );
+}
+
+const imageSelectorInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  image: z.string().trim().min(1).describe(IMAGE_SELECTOR_DESCRIPTION),
+});
+export type ImageSelectorInput = z.infer<typeof imageSelectorInput>;
+
+export type ListImagesResult = {
+  project: SelectedProjectInfo;
+  items: PlatformImage[];
+  otherProjects: ProjectInfo[];
+};
+
+export const listImagesOperation: PlatformOperation<
+  ProjectScopedInput,
+  ListImagesResult
+> = {
+  name: "list_sandbox_images",
+  title: "List sandbox images",
+  description:
+    "List the custom Computer sandbox images (blueprints) in an MCPJam project. If no project is specified, uses the most recently updated accessible project.",
+  readOnly: true,
+  inputSchema: projectScopedInput,
+  async execute(input, { client, signal }) {
+    const { project, sortedProjects } = await resolveProjectOrThrow(
+      client,
+      input.project,
       signal
     );
-    const page = await client.listEnvironmentBuilds(
-      { projectId: project.id, environmentId: env.id },
+    const page = await client.listImages({ projectId: project.id }, { signal });
+    return {
+      project: toSelectedProjectInfo(project),
+      items: page.items,
+      otherProjects: toOtherProjects(sortedProjects, project.id),
+    };
+  },
+};
+
+export const getImageOperation: PlatformOperation<
+  ImageSelectorInput,
+  PlatformImage
+> = {
+  name: "get_sandbox_image",
+  title: "Show a sandbox image",
+  description:
+    "Show one sandbox image's blueprint, sharing, and latest build status.",
+  readOnly: true,
+  inputSchema: imageSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const image = await resolveImage(client, project, input.image, signal);
+    return client.getImage(
+      { projectId: project.id, imageId: image.id },
+      { signal }
+    );
+  },
+};
+
+const createImageInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("Display name for the new sandbox image."),
+  blueprint: z
+    .string()
+    .min(1)
+    .describe(
+      "Blueprint YAML (base / initialize / maintenance / knowledge). `base` must be an allowlisted official image pinned by @sha256 digest."
+    ),
+});
+export type CreateImageInput = z.infer<typeof createImageInput>;
+
+export const createImageOperation: PlatformOperation<
+  CreateImageInput,
+  PlatformImage
+> = {
+  name: "create_sandbox_image",
+  title: "Create a sandbox image",
+  description:
+    "Create a custom Computer sandbox image from a blueprint. Build it (build_sandbox_image) before a computer can boot from it.",
+  readOnly: false,
+  inputSchema: createImageInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    return client.createImage(
+      {
+        projectId: project.id,
+        body: { name: input.name, blueprint: input.blueprint },
+      },
+      { signal }
+    );
+  },
+};
+
+const updateImageInput = z
+  .object({
+    project: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(PROJECT_SELECTOR_DESCRIPTION),
+    image: z.string().trim().min(1).describe(IMAGE_SELECTOR_DESCRIPTION),
+    name: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe("New display name for the sandbox image."),
+    blueprint: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("Replacement blueprint YAML."),
+  })
+  .refine(
+    (value) => value.name !== undefined || value.blueprint !== undefined,
+    {
+      message: "Provide at least one of `name` or `blueprint` to update.",
+    }
+  );
+export type UpdateImageInput = z.infer<typeof updateImageInput>;
+
+export const updateImageOperation: PlatformOperation<
+  UpdateImageInput,
+  PlatformImage
+> = {
+  name: "update_sandbox_image",
+  title: "Update a sandbox image",
+  description:
+    "Edit a sandbox image's name and/or blueprint. Base/initialize edits need a re-build; maintenance/knowledge edits apply at the next chat turn without one.",
+  readOnly: false,
+  inputSchema: updateImageInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const image = await resolveImage(client, project, input.image, signal);
+    const body: { name?: string; blueprint?: string } = {};
+    if (input.name !== undefined) body.name = input.name;
+    if (input.blueprint !== undefined) body.blueprint = input.blueprint;
+    return client.updateImage(
+      { projectId: project.id, imageId: image.id, body },
+      { signal }
+    );
+  },
+};
+
+const validateImageBlueprintInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  blueprint: z.string().min(1).describe("Blueprint YAML to lint."),
+});
+export type ValidateImageBlueprintInput = z.infer<
+  typeof validateImageBlueprintInput
+>;
+
+export const validateImageBlueprintOperation: PlatformOperation<
+  ValidateImageBlueprintInput,
+  PlatformImageBlueprintValidation
+> = {
+  name: "validate_sandbox_image_blueprint",
+  title: "Validate a blueprint",
+  description:
+    "Lint sandbox-image blueprint YAML without saving it. Returns ok + the resolved base digest, or structured errors.",
+  readOnly: true,
+  inputSchema: validateImageBlueprintInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    return client.validateImageBlueprint(
+      { projectId: project.id, body: { blueprint: input.blueprint } },
+      { signal }
+    );
+  },
+};
+
+export const buildImageOperation: PlatformOperation<
+  ImageSelectorInput,
+  PlatformImageBuildStarted
+> = {
+  name: "build_sandbox_image",
+  title: "Build a sandbox image",
+  description:
+    "Trigger a build of the sandbox image. Async — poll list_sandbox_image_builds for status.",
+  readOnly: false,
+  inputSchema: imageSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const image = await resolveImage(client, project, input.image, signal);
+    return client.buildImage(
+      { projectId: project.id, imageId: image.id },
+      { signal }
+    );
+  },
+};
+
+export type ListImageBuildsResult = {
+  project: SelectedProjectInfo;
+  imageId: string;
+  items: PlatformImageBuild[];
+};
+
+export const listImageBuildsOperation: PlatformOperation<
+  ImageSelectorInput,
+  ListImageBuildsResult
+> = {
+  name: "list_sandbox_image_builds",
+  title: "List sandbox image builds",
+  description:
+    "List a sandbox image's builds (newest first) with their status and log preview.",
+  readOnly: true,
+  inputSchema: imageSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal
+    );
+    const image = await resolveImage(client, project, input.image, signal);
+    const page = await client.listImageBuilds(
+      { projectId: project.id, imageId: image.id },
       { signal }
     );
     return {
       project: toSelectedProjectInfo(project),
-      environmentId: env.id,
+      imageId: image.id,
       items: page.items,
     };
   },
 };
 
-export const promoteEnvironmentOperation: PlatformOperation<
-  EnvironmentSelectorInput,
-  PlatformEnvironment
+export const promoteImageOperation: PlatformOperation<
+  ImageSelectorInput,
+  PlatformImage
 > = {
-  name: "promote_computer_environment",
-  title: "Share a computer environment with the project",
+  name: "promote_sandbox_image",
+  title: "Share a sandbox image with the project",
   description:
-    "Promote a personal-draft environment to a project-shared one (requires project admin).",
+    "Promote a personal-draft sandbox image to a project-shared one (requires project admin).",
   readOnly: false,
-  inputSchema: environmentSelectorInput,
+  inputSchema: imageSelectorInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
       signal
     );
-    const env = await resolveEnvironment(
-      client,
-      project,
-      input.environment,
-      signal
-    );
-    return client.promoteEnvironment(
-      { projectId: project.id, environmentId: env.id },
+    const image = await resolveImage(client, project, input.image, signal);
+    return client.promoteImage(
+      { projectId: project.id, imageId: image.id },
       { signal }
     );
   },
 };
 
-export const useEnvironmentOperation: PlatformOperation<
-  EnvironmentSelectorInput,
+export const useImageOperation: PlatformOperation<
+  ImageSelectorInput,
   PlatformComputerAttached
 > = {
-  name: "use_computer_environment",
-  title: "Use a computer environment",
+  name: "use_sandbox_image",
+  title: "Use a sandbox image",
   description:
-    "Attach the environment to your computer, which rebuilds it from the pinned image (installed files are wiped). The environment must have a ready build.",
+    "Attach the sandbox image to your computer, which rebuilds it from the pinned image (installed files are wiped). The sandbox image must have a ready build.",
   readOnly: false,
-  inputSchema: environmentSelectorInput,
+  inputSchema: imageSelectorInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
       signal
     );
-    const env = await resolveEnvironment(
-      client,
-      project,
-      input.environment,
-      signal
-    );
-    return client.useEnvironment(
-      { projectId: project.id, environmentId: env.id },
+    const image = await resolveImage(client, project, input.image, signal);
+    return client.useImage(
+      { projectId: project.id, imageId: image.id },
       { signal }
     );
   },
@@ -3086,30 +3606,25 @@ export const resetComputerOperation: PlatformOperation<
   },
 };
 
-export const deleteEnvironmentOperation: PlatformOperation<
-  EnvironmentSelectorInput,
-  PlatformEnvironmentDeleted
+export const deleteImageOperation: PlatformOperation<
+  ImageSelectorInput,
+  PlatformImageDeleted
 > = {
-  name: "delete_computer_environment",
-  title: "Delete a computer environment",
+  name: "delete_sandbox_image",
+  title: "Delete a sandbox image",
   description:
-    "Permanently delete an environment. Computers booted from it fall back to the base image. This cannot be undone.",
+    "Permanently delete a sandbox image. Computers booted from it fall back to the base image. This cannot be undone.",
   readOnly: false,
-  inputSchema: environmentSelectorInput,
+  inputSchema: imageSelectorInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
       signal
     );
-    const env = await resolveEnvironment(
-      client,
-      project,
-      input.environment,
-      signal
-    );
-    return client.deleteEnvironment(
-      { projectId: project.id, environmentId: env.id },
+    const image = await resolveImage(client, project, input.image, signal);
+    return client.deleteImage(
+      { projectId: project.id, imageId: image.id },
       { signal }
     );
   },

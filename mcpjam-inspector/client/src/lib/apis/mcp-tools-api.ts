@@ -16,11 +16,19 @@ import { WebApiError } from "@/lib/apis/web/base";
 import { executeHostedTool, listHostedTools } from "@/lib/apis/web/tools-api";
 import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
 import { attachToolMetadata } from "@/lib/apis/tool-metadata";
+import {
+  parseInsufficientScopeChallenge,
+  type InsufficientScopeChallenge,
+} from "@/lib/apis/insufficient-scope";
+
+/** SEP-2549 cache-serve provenance (§11.2) — present ONLY on an actual hit. */
+export type ServedFromCache = { ageMs: number };
 
 export type ListToolsResultWithMetadata = ListToolsResult & {
   toolsMetadata?: Record<string, Record<string, any>>;
   tokenCount?: number;
   tokenCountError?: string;
+  servedFromCache?: ServedFromCache;
 };
 
 export type ToolServerMap = Record<string, string>;
@@ -74,51 +82,31 @@ export type ToolExecutionResponse =
       insufficientScope?: ToolInsufficientScopeChallenge;
     };
 
-/** The `WWW-Authenticate` step-up challenge surfaced on a failed tool call. */
-export type ToolInsufficientScopeChallenge = {
-  requiredScope?: string;
-  resourceMetadataUrl?: string;
-  errorDescription?: string;
-};
-
-/**
- * Narrow an untrusted `mcpError.insufficientScope` payload to the challenge
- * shape. Returns `undefined` unless at least one string field is present, so a
- * malformed or empty block never masquerades as an actionable step-up.
- */
-export function parseInsufficientScopeChallenge(
-  raw: unknown,
-): ToolInsufficientScopeChallenge | undefined {
-  if (!raw || typeof raw !== "object") {
-    return undefined;
-  }
-  const r = raw as Record<string, unknown>;
-  const requiredScope =
-    typeof r.requiredScope === "string" ? r.requiredScope : undefined;
-  const resourceMetadataUrl =
-    typeof r.resourceMetadataUrl === "string" ? r.resourceMetadataUrl : undefined;
-  const errorDescription =
-    typeof r.errorDescription === "string" ? r.errorDescription : undefined;
-  if (!requiredScope && !resourceMetadataUrl && !errorDescription) {
-    return undefined;
-  }
-  return { requiredScope, resourceMetadataUrl, errorDescription };
-}
+// SEP-2350 challenge plumbing now lives in the surface-agnostic
+// `insufficient-scope` module (shared by tools / resources / prompts). Re-export
+// here under the original names so existing importers stay green.
+export type ToolInsufficientScopeChallenge = InsufficientScopeChallenge;
+export { parseInsufficientScopeChallenge };
 
 export async function listTools({
   serverId,
   modelId,
   cursor,
+  refresh,
 }: {
   serverId?: string | undefined;
   modelId?: string | undefined;
   cursor?: string | undefined;
+  /** SEP-2549: force a live refetch, bypassing any still-fresh cached entry. */
+  refresh?: boolean | undefined;
 }): Promise<ListToolsResultWithMetadata> {
   return runByMode({
     hosted: async () => {
       if (!serverId) {
         throw new Error("serverId is required in hosted mode");
       }
+      // Hosted direct-ops always bypass the response cache server-side, so
+      // there's never a `servedFromCache` to surface here.
       return attachToolMetadata(await listHostedTools({
         serverNameOrId: serverId,
         modelId,
@@ -129,7 +117,7 @@ export async function listTools({
       const res = await authFetch("/api/mcp/tools/list", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ serverId, modelId, cursor }),
+        body: JSON.stringify({ serverId, modelId, cursor, refresh }),
       });
       let body: any = null;
       try {
@@ -158,6 +146,7 @@ export async function executeToolApi(
   toolName: string,
   parameters: Record<string, unknown>,
   taskOptions?: TaskOptions,
+  allowTaskResult?: boolean,
 ): Promise<ToolExecutionResponse> {
   return runByMode({
     hosted: async () => {
@@ -167,6 +156,7 @@ export async function executeToolApi(
           toolName,
           parameters,
           taskOptions: taskOptions as Record<string, unknown> | undefined,
+          allowTaskResult,
         })) as ToolExecutionResponse;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -199,7 +189,13 @@ export async function executeToolApi(
       const res = await authFetch("/api/mcp/tools/execute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ serverId, toolName, parameters, taskOptions }),
+        body: JSON.stringify({
+          serverId,
+          toolName,
+          parameters,
+          taskOptions,
+          allowTaskResult,
+        }),
       });
       let body: any = null;
       try {

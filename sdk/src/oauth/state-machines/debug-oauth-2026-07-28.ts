@@ -560,8 +560,27 @@ function buildAuthServerMetadataUrls(authServerUrl: string): string[] {
 }
 
 export type AuthorizationResponseIssuerCheck =
-  | { ok: true }
+  /** `warning` is set when a mismatch was found but the era does not enforce it. */
+  | { ok: true; warning?: string }
   | { ok: false; reason: string };
+
+/**
+ * Render a callback-supplied value inside a diagnostic. Line-breaking
+ * characters are flattened so a hostile `iss` cannot forge additional message
+ * lines, and the value is capped so it cannot crowd out the diagnostic around
+ * it. C0 and DEL are not sufficient on their own: NEL (U+0085) and the Unicode
+ * LINE/PARAGRAPH SEPARATORs (U+2028/U+2029) also break lines when a diagnostic
+ * is rendered, so they are flattened too.
+ */
+function quoteUntrusted(value: string): string {
+  // eslint-disable-next-line no-control-regex
+  const flattened = value
+    .replace(/[\u0000-\u001f\u007f\u0085\u2028\u2029]+/g, " ")
+    .trim();
+  const capped =
+    flattened.length > 256 ? `${flattened.slice(0, 256)}…` : flattened;
+  return `\`${capped}\``;
+}
 
 /**
  * RFC 9207 authorization-response `iss` validation — a 2026-07-28 requirement.
@@ -576,21 +595,54 @@ export type AuthorizationResponseIssuerCheck =
  * discipline as the RFC 8414 §3.3 issuer check. On a mismatch the caller emits
  * a fixed diagnostic and MUST NOT surface any server-supplied `error*` callback
  * parameters.
+ *
+ * Row 2 names both issuers, because an exact comparison fails on differences
+ * too small to see (trailing slash, scheme, port) and the mismatch is otherwise
+ * undiagnosable — the gate returns before anything reaches the OAuth trace. The
+ * RFC 9207 prohibition covers `error`/`error_description`, which carry AS-authored
+ * prose; `iss` is the compared value itself, and quoting it is what makes the
+ * rejection actionable. It is still attacker-controlled, hence `quoteUntrusted`.
+ *
+ * `enforcePresentIssMismatch` scopes row 2 to the era that actually mandates it.
+ * SEP-2468 introduces `MUST validate a present iss` in the 2026-07-28 draft;
+ * 2025-11-25 and earlier never mention `iss`, so a caller on those versions
+ * passes `false` to downgrade row 2 to a `warning` and let the flow continue.
+ * Defaults to enforcing: an omitted flag must fail closed, and the value that
+ * carries the era lives with the caller, not here.
  */
 export function validateAuthorizationResponseIssuer(input: {
   recordedIssuer: string | undefined;
   returnedIss: string | undefined;
   issParameterSupported: boolean | undefined;
+  enforcePresentIssMismatch?: boolean;
 }): AuthorizationResponseIssuerCheck {
-  const { recordedIssuer, returnedIss, issParameterSupported } = input;
+  const {
+    recordedIssuer,
+    returnedIss,
+    issParameterSupported,
+    enforcePresentIssMismatch = true,
+  } = input;
 
   if (returnedIss !== undefined && returnedIss !== "") {
     if (recordedIssuer !== undefined && returnedIss !== recordedIssuer) {
+      const mismatch =
+        "Authorization response `iss` does not match the issuer this flow " +
+        "started with. Recorded from authorization-server metadata: " +
+        `${quoteUntrusted(recordedIssuer)}; returned on the callback: ` +
+        `${quoteUntrusted(returnedIss)}.`;
+      if (!enforcePresentIssMismatch) {
+        return {
+          ok: true,
+          warning:
+            `${mismatch} This protocol version does not require RFC 9207 ` +
+            "issuer validation, so the flow continues; on 2026-07-28 this " +
+            "stops the flow before the authorization code is redeemed.",
+        };
+      }
       return {
         ok: false,
         reason:
-          "Authorization response `iss` does not match the issuer this flow " +
-          "started with. Refusing to exchange the authorization code; not " +
+          `${mismatch} Refusing to exchange the authorization code; not ` +
           "displaying any server-supplied error parameters (RFC 9207).",
       };
     }
@@ -628,6 +680,7 @@ export const createDebugOAuthStateMachine = (
     clientIdMetadataUrl,
     customScopes,
     customHeaders,
+    resourceMetadataUrl: overrideResourceMetadataUrl,
     authMode,
     hasClientSecret = false,
     strictConformance = false,
@@ -914,13 +967,18 @@ export const createDebugOAuthStateMachine = (
             }
             break;
 
-          case "received_401_unauthorized":
+          case "received_401_unauthorized": {
             // Step 3: Extract resource metadata URL and prepare request
             const challengeParams = parseBearerAuthenticateParameters(
               state.wwwAuthenticateHeader,
             );
+            // SEP-2350: a caller-supplied PRM URL (the step-up challenge's
+            // `resource_metadata` hint) wins over the value re-derived from the
+            // fresh `WWW-Authenticate` header, so a server that points its
+            // metadata elsewhere is honored on re-authorization. Absent an
+            // override this is exactly today's behavior.
             let extractedResourceMetadataUrl =
-              challengeParams.resource_metadata;
+              overrideResourceMetadataUrl || challengeParams.resource_metadata;
 
             // Fallback to building the URL if not found in header
             if (!extractedResourceMetadataUrl && state.serverUrl) {
@@ -959,6 +1017,7 @@ export const createDebugOAuthStateMachine = (
             // Automatically proceed to make the actual request
             autoAdvance(50);
             return;
+          }
 
           case "request_resource_metadata":
             // Step 2: Fetch and parse resource metadata using official SDK helper
@@ -1048,8 +1107,21 @@ export const createDebugOAuthStateMachine = (
             };
 
             try {
+              // Pass an explicit metadata URL to discovery ONLY when it was
+              // EXPLICITLY sourced — a SEP-2350 caller override, OR the fresh
+              // `WWW-Authenticate` header's own `resource_metadata` param — not
+              // when it was DERIVED from the server URL. A `WWW-Authenticate`
+              // header can be present yet omit `resource_metadata`, in which
+              // case `state.resourceMetadataUrl` holds the derived well-known
+              // URL; passing that as an explicit option would defeat discovery's
+              // well-known + fallback behavior, so leave `metadataOptions`
+              // undefined for a derived URL.
+              const explicitResourceMetadataUrl =
+                overrideResourceMetadataUrl ||
+                parseBearerAuthenticateParameters(state.wwwAuthenticateHeader)
+                  .resource_metadata;
               const metadataOptions =
-                state.wwwAuthenticateHeader && state.resourceMetadataUrl
+                explicitResourceMetadataUrl && state.resourceMetadataUrl
                   ? { resourceMetadataUrl: state.resourceMetadataUrl }
                   : undefined;
 
@@ -1930,6 +2002,10 @@ export const createDebugOAuthStateMachine = (
               recordedIssuer: state.recordedIssuer,
               returnedIss: state.authorizationResponseIss,
               issParameterSupported: undefined,
+              // This machine IS the 2026-07-28 era, where SEP-2468 makes the
+              // present-`iss` comparison a MUST. Stated explicitly rather than
+              // leaning on the default, so the era rule is visible here.
+              enforcePresentIssMismatch: true,
             });
             if (!issCheck.ok) {
               updateState({

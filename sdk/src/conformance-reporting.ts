@@ -14,11 +14,16 @@ import type {
   MCPAppsConformanceSuiteResult,
   MCPAppsCheckResult,
 } from "./apps-conformance/index.js";
+import type {
+  MCPTasksConformanceResult,
+  MCPTasksCheckResult,
+} from "./tasks-conformance/index.js";
 
 export type ConformanceReportKind =
   | "protocol-conformance"
   | "oauth-conformance"
-  | "apps-conformance";
+  | "apps-conformance"
+  | "tasks-conformance";
 
 export type ConformanceReportCaseStatus = "passed" | "failed" | "skipped";
 
@@ -56,7 +61,8 @@ export interface ConformanceReport {
 type SupportedSingleConformanceResult =
   | MCPConformanceResult
   | OAuthConformanceResult
-  | MCPAppsConformanceResult;
+  | MCPAppsConformanceResult
+  | MCPTasksConformanceResult;
 
 type SupportedSuiteConformanceResult =
   | MCPConformanceSuiteResult
@@ -143,8 +149,9 @@ function reportCaseFromMcpCheck(check: MCPCheckResult): ConformanceReportCase {
   };
 }
 
-function reportCaseFromAppsCheck(
-  check: MCPAppsCheckResult,
+/** Apps and Tasks checks share a result shape, so they share a case mapper. */
+function reportCaseFromCheck(
+  check: MCPAppsCheckResult | MCPTasksCheckResult,
 ): ConformanceReportCase {
   return {
     id: check.id,
@@ -180,10 +187,13 @@ function reportCaseFromOAuthStep(
     durationMs: step.durationMs,
     description: step.summary,
     ...(step.error?.message ? { error: step.error.message } : {}),
-    ...(step.error?.details !== undefined || step.teachableMoments?.length
+    ...(step.error?.details !== undefined ||
+    step.warnings?.length ||
+    step.teachableMoments?.length
       ? {
           details: buildDetailPayload({
             errorDetails: step.error?.details,
+            warnings: step.warnings,
             teachableMoments: step.teachableMoments,
           }),
         }
@@ -209,18 +219,19 @@ function mcpGroupFromResult(
 }
 
 function appsGroupFromResult(
-  result: MCPAppsConformanceResult,
+  result: MCPAppsConformanceResult | MCPTasksConformanceResult,
   title: string,
   index: number,
+  idPrefix = "apps",
 ): ConformanceReportGroup {
   return {
-    id: `apps-${index + 1}`,
+    id: `${idPrefix}-${index + 1}`,
     title,
     target: result.target,
     passed: result.passed,
     durationMs: result.durationMs,
     summary: result.summary,
-    cases: result.checks.map(reportCaseFromAppsCheck),
+    cases: result.checks.map(reportCaseFromCheck),
   };
 }
 
@@ -255,6 +266,18 @@ function isAppsSingleResult(
   result: SupportedConformanceResult,
 ): result is MCPAppsConformanceResult {
   return "checks" in result && !("results" in result) && "target" in result;
+}
+
+function isTasksSingleResult(
+  result: SupportedConformanceResult,
+): result is MCPTasksConformanceResult {
+  return (
+    "checks" in result &&
+    !("results" in result) &&
+    "discovery" in result &&
+    isPlainObject(result.discovery) &&
+    "wire" in result.discovery
+  );
 }
 
 function isOAuthSingleResult(
@@ -396,6 +419,9 @@ export function toConformanceReport(
   result: MCPAppsConformanceSuiteResult,
 ): ConformanceReport;
 export function toConformanceReport(
+  result: MCPTasksConformanceResult,
+): ConformanceReport;
+export function toConformanceReport(
   result: SupportedConformanceResult,
 ): ConformanceReport;
 export function toConformanceReport(
@@ -403,6 +429,17 @@ export function toConformanceReport(
 ): ConformanceReport {
   if (isMcpSingleResult(result) || isMcpSuiteResult(result)) {
     return createProtocolReport(result);
+  }
+
+  if (isTasksSingleResult(result)) {
+    return {
+      schemaVersion: 1,
+      kind: "tasks-conformance",
+      name: "MCP Tasks Conformance",
+      passed: result.passed,
+      durationMs: result.durationMs,
+      groups: [appsGroupFromResult(result, "MCP Tasks Conformance", 0, "tasks")],
+    };
   }
 
   if (isAppsSingleResult(result) || isAppsSuiteResult(result)) {

@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from "react";
 import {
   ServerFormData,
   normalizeOauthProtocolMode,
-  resolveEffectiveOauthProtocolMode,
   type ServerFormAuthType,
   type ServerFormOAuthProtocolMode,
 } from "@/shared/types.js";
@@ -300,7 +299,9 @@ export function useServerForm(
         // an edited server pinned to the 2026 wire era. (normalizeOauthProtocol
         // Mode also preserves a stored "auto" should one ever be persisted.)
         const storedProtocolMode =
-          typeof oauthConfig.protocolMode === "string"
+          typeof server.oauthProtocolMode === "string"
+            ? server.oauthProtocolMode
+            : typeof oauthConfig.protocolMode === "string"
             ? oauthConfig.protocolMode
             : typeof server.oauthFlowProfile?.protocolVersion === "string"
             ? server.oauthFlowProfile.protocolVersion
@@ -813,15 +814,6 @@ export function useServerForm(
      * change without wiping the headers the form can't see.
      */
     revealedHeaders?: Record<string, string>;
-    /**
-     * The server's per-server MCP wire-version pin. Only used to resolve the
-     * deferred "auto" OAuth protocol mode into a concrete era at save time so
-     * the persisted OAuth profile / localStorage config carry the 2026-07-28
-     * flow when the wire is pinned to 2026 (OAuth + transport ship together).
-     * The pin itself is NOT emitted from this hook — the Add/Edit shells own
-     * that on the project layer.
-     */
-    wireProtocolVersionOverride?: string;
   }): ServerFormData => {
     const parsedTimeout = Number.parseInt(requestTimeout.trim(), 10);
     const reqTimeout = Number.isFinite(parsedTimeout)
@@ -968,17 +960,10 @@ export function useServerForm(
           : useXaa
           ? server?.authServerMode
           : undefined,
-      // Bake the deferred "auto" sentinel into a concrete era before it is
-      // persisted: "auto" + a 2026-07-28 wire pin submits the 2026 OAuth flow,
-      // otherwise the current default. An explicit selection passes through.
-      // Same resolver the AuthenticationSection preview uses, so the saved
-      // profile matches what the form showed.
-      oauthProtocolMode: useOAuth
-        ? resolveEffectiveOauthProtocolMode(
-            oauthProtocolMode,
-            buildOptions?.wireProtocolVersionOverride
-          )
-        : undefined,
+      // Preserve the user's canonical intent. The concrete OAuth version is
+      // resolved from explicit pins / fresh MCP negotiation when a flow starts
+      // and is stored separately for callback recovery.
+      oauthProtocolMode: useOAuth ? oauthProtocolMode : undefined,
       // The unified registration mode rides with every authorization flow —
       // the XAA debugger reads the same per-server field the OAuth flow does.
       registrationMode:

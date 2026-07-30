@@ -1,6 +1,9 @@
 import type { UIMessageChunk } from "ai";
 import type { RpcLogger } from "@mcpjam/sdk";
-import { rpcLogBus } from "../../services/rpc-log-bus.js";
+import {
+  isRpcMessageLogEvent,
+  rpcLogBus,
+} from "../../services/rpc-log-bus.js";
 import { logger } from "../../utils/logger.js";
 import {
   isRpcLogSinkConfigured,
@@ -8,6 +11,7 @@ import {
 } from "../../utils/harness/harness-rpc-log-sink.js";
 import type {
   HostedRpcLogEvent,
+  HostedRpcLogPluginOrigin,
   HostedRpcLogsEnvelope,
 } from "@/shared/hosted-rpc-log";
 
@@ -98,15 +102,32 @@ export class HostedRpcLogCollector {
   private streamedCount = 0;
   private writer: HostedRpcChunkWriter | null = null;
 
+  /**
+   * INS-3 plugin provenance, keyed by server id. Set AFTER construction
+   * because the collector is built from the raw body (before auth) while
+   * plugin origin only exists once the environment has resolved. Frames logged
+   * before that point simply carry no origin — absence is honest, and no MCP
+   * traffic can precede manager construction anyway.
+   */
+  private pluginOriginByServerId: Record<string, HostedRpcLogPluginOrigin> = {};
+
   constructor(private readonly serverNamesById: Record<string, string>) {}
 
+  setPluginOriginByServerId(
+    origins: Record<string, HostedRpcLogPluginOrigin>
+  ): void {
+    this.pluginOriginByServerId = origins;
+  }
+
   readonly rpcLogger: RpcLogger = ({ direction, message, serverId }) => {
+    const pluginOrigin = this.pluginOriginByServerId[serverId];
     const event: HostedRpcLogEvent = {
       serverId,
       serverName: normalizeServerName(serverId, this.serverNamesById),
       direction,
       timestamp: new Date().toISOString(),
       message,
+      ...(pluginOrigin ? { pluginOrigin } : {}),
     };
 
     this.logs.push(event);
@@ -189,6 +210,11 @@ export function bridgeHarnessRpcLogsToCollector(
   // a harness turn with no MCP servers has nothing to bridge.
   if (serverIds.length === 0) return () => {};
   return rpcLogBus.subscribe(serverIds, (event) => {
+    // HTTP-exchange events are local-Tracing only. The hosted delivery
+    // (`data-rpc-log` parts, the Convex sink, `isHostedRpcLogEvent`) is a
+    // closed JSON-RPC-frame shape defined across two repos; widening it is its
+    // own change, so hosted stays header-blind rather than half-wired.
+    if (!isRpcMessageLogEvent(event)) return;
     collector.rpcLogger({
       direction: event.direction,
       message: event.message,

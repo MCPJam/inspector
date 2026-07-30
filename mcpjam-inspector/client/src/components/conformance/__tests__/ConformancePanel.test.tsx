@@ -3,12 +3,14 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import type {
   MCPConformanceResult,
   MCPAppsConformanceResult,
+  MCPTasksConformanceResult,
   ConformanceResult as OAuthConformanceResult,
 } from "@mcpjam/sdk";
 import type { ServerWithName } from "@/hooks/use-app-state";
 
 const mockRunProtocol = vi.fn();
 const mockRunApps = vi.fn();
+const mockRunTasks = vi.fn();
 const mockStartOAuth = vi.fn();
 const mockSubmitCode = vi.fn();
 const mockCompleteOAuth = vi.fn();
@@ -16,6 +18,7 @@ const mockCompleteOAuth = vi.fn();
 vi.mock("@/lib/apis/mcp-conformance-api", () => ({
   runProtocolConformance: (...args: unknown[]) => mockRunProtocol(...args),
   runAppsConformance: (...args: unknown[]) => mockRunApps(...args),
+  runTasksConformance: (...args: unknown[]) => mockRunTasks(...args),
   startOAuthConformance: (...args: unknown[]) => mockStartOAuth(...args),
   submitOAuthConformanceCode: (...args: unknown[]) => mockSubmitCode(...args),
   completeOAuthConformance: (...args: unknown[]) => mockCompleteOAuth(...args),
@@ -85,6 +88,30 @@ function createAppsResult(
   };
 }
 
+function createTasksResult(
+  overrides: Partial<MCPTasksConformanceResult> = {},
+): MCPTasksConformanceResult {
+  return {
+    passed: true,
+    target: "https://example.com/mcp",
+    summary: "Tasks summary",
+    durationMs: 5,
+    checks: [],
+    categorySummary: {
+      dispatch: { total: 0, passed: 0, failed: 0, skipped: 0 },
+      creation: { total: 0, passed: 0, failed: 0, skipped: 0 },
+      lifecycle: { total: 0, passed: 0, failed: 0, skipped: 0 },
+    },
+    discovery: {
+      protocolVersion: "2026-07-28",
+      wire: "extension",
+      toolCount: 1,
+      taskCapableToolCount: 0,
+    },
+    ...overrides,
+  };
+}
+
 function createOAuthResult(
   overrides: Partial<OAuthConformanceResult> = {},
 ): OAuthConformanceResult {
@@ -111,6 +138,10 @@ function setupSuccessfulRunMocks({
 } = {}) {
   mockRunProtocol.mockResolvedValue({ success: true, result: protocol });
   mockRunApps.mockResolvedValue({ success: true, result: apps });
+  mockRunTasks.mockResolvedValue({
+    success: true,
+    result: createTasksResult(),
+  });
   mockStartOAuth.mockResolvedValue({ phase: "complete", result: oauth });
 }
 
@@ -175,7 +206,7 @@ describe("ConformanceTab", () => {
     expect(screen.getByText("Conformance")).toBeDefined();
     expect(screen.getByText("Run available checks")).toBeDefined();
     expect(
-      screen.getByText(/Run Protocol, Apps, and OAuth checks against/),
+      screen.getByText(/Run Protocol, Apps, Tasks, and OAuth checks against/),
     ).toBeDefined();
   });
 
@@ -190,12 +221,29 @@ describe("ConformanceTab", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows all three suite sections", () => {
+  it("shows all suite sections", () => {
     render(<ConformanceTab server={createHttpServer()} />);
 
     expect(screen.getByText("Protocol")).toBeDefined();
     expect(screen.getByText("Apps")).toBeDefined();
+    expect(screen.getByText("Tasks")).toBeDefined();
     expect(screen.getByText("OAuth")).toBeDefined();
+  });
+
+  it("runs the tasks suite and renders its summary with the resolved wire", async () => {
+    setupSuccessfulRunMocks();
+    render(<ConformanceTab server={createHttpServer()} />);
+
+    fireEvent.click(screen.getByText("Run available checks"));
+
+    await waitFor(() => {
+      expect(mockRunTasks).toHaveBeenCalledWith("http-server");
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Tasks summary \(wire: extension\)/),
+      ).toBeDefined();
+    });
   });
 
   it("marks Protocol and OAuth as unavailable for stdio servers", () => {
@@ -366,6 +414,41 @@ describe("ConformanceTab", () => {
     ).not.toBeNull();
   });
 
+  it("renders warnings on a passed OAuth step without an error banner", async () => {
+    setupSuccessfulRunMocks({
+      oauth: createOAuthResult({
+        steps: [
+          {
+            step: "oauth_stale_session_rejection",
+            title: "OAuth Check: Stale Session Rejection",
+            summary: "Reject unknown session ids with a 4xx.",
+            status: "passed",
+            durationMs: 9,
+            logs: [],
+            httpAttempts: [],
+            warnings: [
+              "Rejected with HTTP 400 (the transport spec prefers 404)",
+            ],
+          },
+        ],
+      }),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+
+    fireEvent.click(screen.getByText("Run available checks"));
+    await screen.findByText("OAuth summary");
+
+    clickRow("OAuth Check: Stale Session Rejection");
+    const warning = screen.getByText(
+      "Rejected with HTTP 400 (the transport spec prefers 404)",
+    );
+    expect(warning).not.toBeNull();
+    expect(screen.queryByText("Warnings")).not.toBeNull();
+    // Warnings render in the muted style, never the red error treatment.
+    expect(warning.closest("div")?.className).not.toContain("red");
+  });
+
   it("collapses expanded rows when conformance is rerun", async () => {
     setupSuccessfulRunMocks({
       protocol: createProtocolResult({
@@ -404,7 +487,10 @@ describe("ConformanceTab", () => {
     }>();
 
     mockRunProtocol.mockImplementationOnce(() => staleProtocolRun.promise);
-    mockRunApps.mockResolvedValue({ success: true, result: createAppsResult() });
+    mockRunApps.mockResolvedValue({
+      success: true,
+      result: createAppsResult(),
+    });
     mockStartOAuth.mockResolvedValue({
       phase: "complete",
       result: createOAuthResult(),
@@ -435,7 +521,9 @@ describe("ConformanceTab", () => {
     expect(screen.queryByText("Apps summary")).toBeNull();
     expect(screen.queryByText("Protocol summary")).toBeNull();
     expect(
-      screen.getByText(/Run Protocol, Apps, and OAuth checks against http-server-b/),
+      screen.getByText(
+        /Run Protocol, Apps, Tasks, and OAuth checks against http-server-b/,
+      ),
     ).toBeInTheDocument();
 
     mockRunProtocol.mockResolvedValueOnce({

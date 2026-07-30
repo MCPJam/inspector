@@ -140,6 +140,10 @@ import { useApiContext } from "./hooks/hosted/use-hosted-api-context";
 import { useLocalStateMigration } from "./hooks/use-local-state-migration";
 import { AppReadyProvider } from "./hooks/use-app-ready";
 import { useInspectorCommandBus } from "./hooks/use-inspector-command-bus";
+import {
+  driveScopeStepUp,
+  resolveScopeStepUpServer,
+} from "./lib/scope-step-up";
 import { HOSTED_MODE, NON_PROD_LOCKDOWN } from "./lib/config";
 import {
   createInspectorCommandClientError,
@@ -217,7 +221,9 @@ import { getEffectiveProjectClientCapabilities } from "./lib/client-config";
 import {
   getDefaultClientCapabilities,
   isKnownProtocolVersion,
+  readTasksPolicy,
   readXaaEnterprisePolicy,
+  taskModeForSurface,
   type McpProtocolVersion,
 } from "@mcpjam/sdk/browser";
 import {
@@ -996,6 +1002,10 @@ export function ToolsRoute() {
           serverConnectionStatus={
             selectedServerEntry?.connectionStatus ?? "disconnected"
           }
+          tasksMode={taskModeForSurface(
+            readTasksPolicy(activeHost?.config),
+            "tools",
+          )}
           mcpToolResultImageRendering={gateMcpToolResultImageRenderingByModelVisibility(
             activeHost?.config?.mcpToolResultImageRendering,
             activeHost?.config?.modelVisibleMcpToolResults
@@ -1096,11 +1106,10 @@ export function CompatibilityRoute() {
 // (`ChatboxPublishClientBar` / `ChatboxHostPickerPill`) — pick a host,
 // manage its chatbox here. There is no chatbox list; identity edits
 // still live in Connect.
-// Both the human Chatbox surface (`/chatboxes`) and the agent Swarm surface
-// (`/swarms`) render `ChatboxesTab` over the same underlying chatbox; only the
-// `product` (tab set + affordances) differs. Both share the `chatboxes`
+// The Chatbox surface (`/chatboxes`) renders `ChatboxesTab`; the Swarms
+// surface (`/swarms`) renders `SwarmsTab` below. Both share the `chatboxes`
 // billing feature + `sandboxes-enabled` flag.
-function ChatboxProductRoute({ product }: { product: "chatbox" | "swarm" }) {
+export function ChatboxesRoute() {
   const {
     billingUiEnabled,
     activeTabBillingLocked,
@@ -1117,13 +1126,8 @@ function ChatboxProductRoute({ product }: { product: "chatbox" | "swarm" }) {
     <ChatboxesTab
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
-      product={product}
     />
   );
-}
-
-export function ChatboxesRoute() {
-  return <ChatboxProductRoute product="chatbox" />;
 }
 
 export function SwarmsRoute() {
@@ -1251,6 +1255,7 @@ export function ResourcesRoute() {
       <ResourcesTab
         serverConfig={selectedMCPConfig}
         serverName={appState.selectedServer}
+        server={selectedServerEntry ?? undefined}
         serverConnectionStatus={
           selectedServerEntry?.connectionStatus ?? "disconnected"
         }
@@ -1267,6 +1272,7 @@ export function PromptsRoute() {
       <PromptsTab
         serverConfig={selectedMCPConfig}
         serverName={appState.selectedServer}
+        server={selectedServerEntry ?? undefined}
         serverConnectionStatus={
           selectedServerEntry?.connectionStatus ?? "disconnected"
         }
@@ -1325,6 +1331,9 @@ export function TasksRoute() {
         serverConfig={selectedMCPConfig}
         serverName={appState.selectedServer}
         isActive
+        connectionStatus={
+          appState.servers[appState.selectedServer]?.connectionStatus
+        }
       />
     </div>
   );
@@ -2115,7 +2124,23 @@ export default function App() {
       }
     }
   }, [appState.servers, handleDisconnect]);
-  useInspectorCommandBus();
+  const handleInspectorScopeStepUp = useCallback(
+    (event: {
+      serverId: string;
+      requiredScope?: string;
+      resourceMetadataUrl?: string;
+    }) => {
+      const server = resolveScopeStepUpServer(appState, {
+        serverId: event.serverId,
+      });
+      driveScopeStepUp(server, {
+        requiredScope: event.requiredScope,
+        resourceMetadataUrl: event.resourceMetadataUrl,
+      });
+    },
+    [appState],
+  );
+  useInspectorCommandBus({ onScopeStepUp: handleInspectorScopeStepUp });
   // MCPJam UI tools: registered in both modes for the in-app "Ask MCPJam"
   // agent (the registry's only consumer); the always-available side panel
   // drives whichever inspector surface is open, so registration lives at the

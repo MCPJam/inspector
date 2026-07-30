@@ -16,6 +16,13 @@ vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => true,
 }));
 
+// The shared EnvironmentPicker reads project environments through
+// `useProjectEnvironments`, which gates on the db-user-ready context (default
+// false without a provider). Mark it ready so the picker subscribes.
+vi.mock("@/contexts/db-user-ready-context", () => ({
+  useDbUserReady: () => true,
+}));
+
 const persona = {
   _id: "persona-1",
   personaId: "p1",
@@ -127,7 +134,7 @@ beforeEach(() => {
 });
 
 function openForm() {
-  fireEvent.click(screen.getByText("Persona One"));
+  fireEvent.click(screen.getAllByText("Persona One")[0]);
   fireEvent.click(screen.getByRole("button", { name: /new journey/i }));
 }
 

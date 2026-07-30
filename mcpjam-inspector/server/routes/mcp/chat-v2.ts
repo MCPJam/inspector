@@ -19,6 +19,10 @@ import {
   handleMCPJamFreeChatModel,
   warnIfChatAbortSignalMissing,
 } from "../../utils/mcpjam-stream-handler";
+import { resolveToolTaskSeam } from "../../utils/task-seam.js";
+import { TaskCreatedSink } from "@mcpjam/sdk";
+import type { UIMessageChunk } from "ai";
+import { HostedTaskCreatedBridge } from "../../utils/hosted-task-created-bridge.js";
 import {
   handleHostedOrgChatModel,
   handleLocalOrgChatModel,
@@ -69,8 +73,12 @@ import {
 import { buildDirectChatTraceCallbacks } from "../../utils/direct-chat-sse-callbacks";
 import { resolveExecutionContext } from "../../utils/host-execution-context";
 import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
+import { BASH_TOOL_NAME } from "../../utils/built-in-tools/bash.js";
+import { maybeAppendEnvironmentContext } from "../../utils/computers/environment-context.js";
 import { convertToMcpjamModelMessages } from "../../utils/mcp-tool-result-model-output.js";
 import { type ExecutionScope } from "../../utils/execution-scope.js";
+import { wrapToolsWithScopeStepUp } from "../../utils/insufficient-scope-step-up.js";
+import type { ElicitationChunkWriter } from "../web/hosted-elicitation.js";
 
 function formatStreamError(error: unknown, provider?: ModelProvider): string {
   if (!(error instanceof Error)) {
@@ -181,6 +189,16 @@ function streamDirectChatWithLiveTrace(options: {
   progressivePlan?: ProgressiveToolPlan;
   discoveryState?: ToolDiscoveryState;
   abortSignal?: AbortSignal;
+  /**
+   * Invoked with the live stream writer before the turn starts. Every
+   * dispatch path with a tasks seam must attach the task-created bridge here,
+   * BEFORE the first tool call can fire — the sink dispatches synchronously
+   * from the tool loop, so a late attach means the bridge warn-drops the part
+   * and the task is orphaned (see `server/utils/web-chat-turn.ts`).
+   */
+  onStreamWriterReady?: (writer: {
+    write: (chunk: UIMessageChunk) => void;
+  }) => void;
   onPersist?: (event: {
     responseMessages: ModelMessage[];
     assistantText: string;
@@ -191,7 +209,8 @@ function streamDirectChatWithLiveTrace(options: {
     turnTrace: PersistedTurnTrace;
   }) => Promise<void> | void;
 }): Response {
-  const { provider, abortSignal, onPersist, ...turnOptions } = options;
+  const { provider, abortSignal, onStreamWriterReady, onPersist, ...turnOptions } =
+    options;
   // Declared before `createUIMessageStream` so the top-level `onError`
   // (which can fire before `execute` runs) can read it; assigned inside
   // `execute` once the helper is configured.
@@ -214,6 +233,11 @@ function streamDirectChatWithLiveTrace(options: {
       return formatStreamError(error, provider);
     },
     execute: async ({ writer }) => {
+      // FIRST, before `runDirectChatTurn` configures the tool loop: the
+      // task-created sink dispatches synchronously from inside a tool call,
+      // so the bridge must already hold the writer or the part is warn-dropped
+      // and the task handle never reaches the browser tracker.
+      onStreamWriterReady?.({ write: (chunk) => writer.write(chunk) });
       handle = runDirectChatTurn({
         ...turnOptions,
         // Logical provider for span metadata (OTel gen_ai.provider.name).
@@ -299,6 +323,21 @@ chatV2.post("/", async (c) => {
       surface: bodySurface,
       hostId: bodyHostId,
     } = body;
+    // Local execution cannot run a Project Environment, and must say so rather
+    // than quietly ignoring the target and running an ad-hoc turn. Resolving an
+    // environment needs a member-authorized Convex read plus the hosted
+    // authorization plane that primes the manager from the resolved server set;
+    // this route has neither. Fail clearly, at ingress, before anything else
+    // reads the body.
+    if ((body as { executionTarget?: unknown }).executionTarget !== undefined) {
+      return c.json(
+        {
+          error:
+            "Project Environments can't run on local /api/mcp execution — use the hosted chat route.",
+        },
+        400
+      );
+    }
     const isChatboxSession = Boolean(bodyChatboxId);
     const chatSessionSourceType: "chatbox" | "direct" = isChatboxSession
       ? "chatbox"
@@ -711,6 +750,20 @@ chatV2.post("/", async (c) => {
         : null,
     );
 
+    // Blueprint knowledge/maintenance: when this turn advertises bash, append
+    // the pinned image's model-facing context to the system prompt (threaded
+    // through prepareChatV2's enhanced prompt). Tri-state fetch inside — a
+    // Convex blip degrades to "no extra context", never a broken turn. The
+    // persisted direct-chat/resume configs keep the RAW user prompt; the env
+    // block is turn-injected, not user configuration.
+    const effectiveSystemPrompt = await maybeAppendEnvironmentContext({
+      systemPrompt,
+      hasBashTool: Boolean(builtInTools?.[BASH_TOOL_NAME]),
+      bearer: builtInAuthHeader,
+      projectId: typeof body.projectId === "string" ? body.projectId : undefined,
+      ...(executionScope ? { executionScope } : {}),
+    });
+
     // COMP-16: the host-configured computer working directory — the SAME
     // `computer.workdir` the bash tool runs in — threaded into the harness path
     // so its Shell roots under the same directory. Server-resolved config only.
@@ -720,13 +773,46 @@ chatV2.post("/", async (c) => {
     const harnessComputerWorkdir =
       typeof computerWorkdir === "string" ? computerWorkdir : undefined;
 
+    // Host-only, exactly as in the hosted route: a chatbox session's body must
+    // not be able to opt into tasks the host disabled. `tasksPolicy` never
+    // enters the override path, so `override-wins` above cannot reach it.
+    //
+    // The sink carries a stream bridge, and that is not optional: the
+    // extension wire has NO `tasks/list` (`resolveTasksSupport` reports
+    // `list: false`), so the browser tracker is the ONLY way a task on such a
+    // server can ever be found again. A seam with nowhere to deliver would log
+    // the handle server-side and orphan the task.
+    //
+    // No `hostedTasksVersion` gate here, unlike the hosted route. That
+    // handshake exists because a hosted browser can be running a cached bundle
+    // older than the server; a desktop install ships both halves together and
+    // cannot skew. An older bundle would ignore the part anyway — the data-part
+    // chain has no terminal `else`.
+    const tasksSink = new TaskCreatedSink();
+    const tasksSeam = resolveToolTaskSeam({
+      tasksPolicy: resolvedExecution.tasksPolicy,
+      surface: "chat",
+      sink: tasksSink,
+    });
+    // Local server ids ARE the display names, so the payload's `serverId`
+    // already carries what the tracker keys by and no name map is needed.
+    const taskCreatedBridge = tasksSeam
+      ? new HostedTaskCreatedBridge({ serverNamesById: {} })
+      : undefined;
+    if (taskCreatedBridge) {
+      tasksSink.register({
+        name: "task-created-bridge",
+        handle: taskCreatedBridge.handle,
+      });
+    }
+
     let prepared;
     try {
       prepared = await prepareChatV2({
         mcpClientManager,
         selectedServers,
         modelDefinition,
-        systemPrompt,
+        systemPrompt: effectiveSystemPrompt,
         temperature,
         requireToolApproval,
         respectToolVisibility,
@@ -736,6 +822,7 @@ chatV2.post("/", async (c) => {
         ...(resolvedExecution.harness
           ? { harness: resolvedExecution.harness }
           : {}),
+        ...(tasksSeam ? { tasks: tasksSeam } : {}),
         ...(builtInTools ? { builtInTools } : {}),
         // Body for direct chat (project default), host-re-resolved for
         // chatbox-bound sessions. undefined → auto policy.
@@ -760,13 +847,20 @@ chatV2.post("/", async (c) => {
     }
 
     const {
-      allTools,
+      allTools: preparedTools,
       enhancedSystemPrompt,
       resolvedTemperature,
       scrubMessages,
       progressivePlan,
       discoveryState,
     } = prepared;
+    // The stream writer is created after tools are prepared, so the wrapper
+    // resolves it lazily when a tool actually reports a scope challenge.
+    let scopeChallengeWriter: ElicitationChunkWriter | null = null;
+    const allTools = wrapToolsWithScopeStepUp(
+      preparedTools,
+      () => scopeChallengeWriter,
+    );
     const widgetModelContextSystemPrompt = buildWidgetModelContextSystemPrompt(
       validatedWidgetModelContext,
     );
@@ -850,9 +944,20 @@ chatV2.post("/", async (c) => {
         selectedServers,
         requireToolApproval,
         modelVisibleMcpToolResults,
+        onStreamWriterReady: (writer: {
+          write: (chunk: UIMessageChunk) => void;
+        }) => {
+          scopeChallengeWriter = writer;
+          taskCreatedBridge?.attachStreamWriter(writer);
+        },
         ...(resolvedExecution.harness
           ? {
               harness: resolvedExecution.harness,
+              // Harness MCP-server tools execute out of process through
+              // `.mcp.json`, bypassing `allTools`. runHarnessTurn adds a
+              // per-turn correlation header and bridges actionable challenges
+              // from adapter-http back into this chat stream. Host-executed
+              // harness tools remain covered by the wrapper above.
               // LOCAL-MCP plane: this is an /api/mcp request (desktop), so the
               // harness reaches the private inspector via a tunnel landing on
               // adapter-http (the persistent singleton manager).
@@ -1052,6 +1157,17 @@ chatV2.post("/", async (c) => {
           requireToolApproval,
           abortSignal: inboundAbortSignalOrg,
           onConversationComplete,
+          // Every dispatch path with a tasks seam must attach the bridge
+          // before the first tool call can fire — the sink dispatches
+          // synchronously from the tool loop, so a missing attach means the
+          // bridge warn-drops the task-created part and the task is orphaned
+          // (see `server/utils/web-chat-turn.ts`).
+          onStreamWriterReady: (writer: {
+            write: (chunk: UIMessageChunk) => void;
+          }) => {
+            scopeChallengeWriter = writer;
+            taskCreatedBridge?.attachStreamWriter(writer);
+          },
         });
       }
 
@@ -1074,6 +1190,14 @@ chatV2.post("/", async (c) => {
         modelVisibleMcpToolResults,
         abortSignal: inboundAbortSignalOrg,
         onConversationComplete,
+        // Same invariant as the local-org call above: attach the bridge
+        // before the first tool call, or created tasks are orphaned.
+        onStreamWriterReady: (writer: {
+          write: (chunk: UIMessageChunk) => void;
+        }) => {
+          scopeChallengeWriter = writer;
+          taskCreatedBridge?.attachStreamWriter(writer);
+        },
       });
     }
 
@@ -1145,6 +1269,14 @@ chatV2.post("/", async (c) => {
       progressivePlan,
       discoveryState,
       abortSignal: inboundAbortSignalDirect,
+      // Same invariant as the org-BYOK calls above: attach the bridge before
+      // the first tool call, or created tasks are orphaned.
+      onStreamWriterReady: (writer: {
+        write: (chunk: UIMessageChunk) => void;
+      }) => {
+        scopeChallengeWriter = writer;
+        taskCreatedBridge?.attachStreamWriter(writer);
+      },
       onPersist: chatSessionId
         ? async ({
             responseMessages,

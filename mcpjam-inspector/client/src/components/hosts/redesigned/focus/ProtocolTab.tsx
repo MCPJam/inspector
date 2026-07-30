@@ -12,13 +12,18 @@ import {
 import { Switch } from "@mcpjam/design-system/switch";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import {
+  clearTasksPolicy,
+  describeInvalidTasksPolicy,
   isKnownProtocolVersion,
   isStatelessProtocolVersion,
   MCP_PROTOCOL_VERSIONS,
+  readTasksPolicy,
   readXaaEnterprisePolicy,
+  setTasksPolicy,
   withXaaEnterprisePolicy,
   withoutXaaEnterprisePolicy,
   XAA_MCP_EXTENSION,
+  type TasksPolicy,
 } from "@mcpjam/sdk/browser";
 import {
   type HostConfigInputV2,
@@ -47,32 +52,53 @@ import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
 type HostProtocolDropdownValue = "auto" | McpProtocolVersion;
 
 /**
- * Decorate the two revisions that carry meaning beyond their date, and
- * derive both markers rather than hardcoding them:
+ * The three choices the tri-state policy offers. "default" is the UI sentinel
+ * for `unset` — the same absent-means-something idiom as `"auto"` above, and
+ * for the same hash reason: it clears the stored entry rather than writing a
+ * third value.
  *
- * - **Latest** = newest non-stateless revision. Computed via
- *   `isStatelessProtocolVersion` so the marker walks forward on its own
- *   when a newer stable version is appended to `MCP_PROTOCOL_VERSIONS` —
- *   a hardcoded "Latest (2025-11-25)" would quietly become a lie.
- * - **RC** = any stateless revision, i.e. the 2026-era preview.
+ * "Use default" is a real choice here, not a reset button. It restores today's
+ * behavior (the Tools tab keeps its explicit per-call controls and nothing
+ * else turns on), which is distinct from Off — Off actively removes those
+ * controls too.
+ */
+type TasksPolicyChoice = "default" | "on" | "off";
+
+const TASKS_POLICY_OPTIONS: ReadonlyArray<{
+  value: TasksPolicyChoice;
+  label: string;
+}> = [
+  { value: "default", label: "Use default" },
+  { value: "on", label: "On" },
+  { value: "off", label: "Off" },
+];
+
+/**
+ * Stored policy → dropdown value. `invalid` is absent on purpose: it has no
+ * dropdown value, and the control renders its placeholder instead.
+ */
+const TASKS_POLICY_VALUE: Partial<Record<TasksPolicy, TasksPolicyChoice>> = {
+  unset: "default",
+  on: "on",
+  off: "off",
+};
+
+/**
+ * Decorate the two newest revisions with their product labels:
+ *
+ * - **Latest** = newest known revision. Derived from
+ *   `MCP_PROTOCOL_VERSIONS` so the marker walks forward automatically.
+ * - **November** = the 2025-11-25 revision.
  *
  * `MCP_PROTOCOL_VERSIONS` is ordered oldest-first; the dropdown lists
- * newest-first, which puts the two versions anyone actually picks at the
- * top and leaves the archaeology below.
+ * newest-first.
  */
-const LATEST_STABLE_PROTOCOL_VERSION: McpProtocolVersion | undefined = [
-  ...MCP_PROTOCOL_VERSIONS,
-]
-  .reverse()
-  .find((v) => !isStatelessProtocolVersion(v));
+const LATEST_PROTOCOL_VERSION: McpProtocolVersion | undefined =
+  MCP_PROTOCOL_VERSIONS[MCP_PROTOCOL_VERSIONS.length - 1];
 
 function protocolVersionLabel(version: McpProtocolVersion): string {
-  // "2026-07-28" → "2026 RC (2026-07-28)": the era year is how the RC is
-  // spoken about, the full date is what actually goes on the wire.
-  if (isStatelessProtocolVersion(version)) {
-    return `${version.slice(0, 4)} RC (${version})`;
-  }
-  if (version === LATEST_STABLE_PROTOCOL_VERSION) return `Latest (${version})`;
+  if (version === LATEST_PROTOCOL_VERSION) return `Latest (${version})`;
+  if (version === "2025-11-25") return `November (${version})`;
   return version;
 }
 
@@ -583,6 +609,27 @@ export function ProtocolTab({
     });
   };
 
+  // MCPJam's Tasks product policy. NOT the `io.modelcontextprotocol/tasks`
+  // wire capability — that one is advertised to servers and is edited as a
+  // client capability; this one is MCPJam configuration that no server ever
+  // sees. Same derive-per-render rule as elicitation below.
+  const tasksPolicy = readTasksPolicy(draft);
+  const tasksPolicyInvalid = tasksPolicy === "invalid";
+  // Wider escape hatch than the XAA gate above. XAA tests `!== "off"` because
+  // "off" doubles as absent there; this policy has a real explicit-off state,
+  // and a host stored as explicitly `off` must still render the control or it
+  // is stranded with tasks disabled and no UI left to re-enable them.
+  const tasksFlagEnabled = useFeatureFlagEnabled("mcp-tasks");
+  const showTasksPolicy = tasksFlagEnabled === true || tasksPolicy !== "unset";
+  const fTasksPolicy = hostConfigField("tasksPolicy");
+  const setTasksPolicyChoice = (next: TasksPolicyChoice) => {
+    onDraftChange((prev) =>
+      next === "default"
+        ? clearTasksPolicy(prev)
+        : setTasksPolicy(prev, next === "on"),
+    );
+  };
+
   // Derived per render from the draft rather than mirrored into state: catalog
   // rows already ship an elicitation shape, and seeding local state from it
   // would write our canonical shape back on mount and churn the config hash
@@ -667,6 +714,50 @@ export function ProtocolTab({
             disabled={readOnly}
             aria-label="Enterprise-managed authorization"
           />
+        </div>
+        )}
+        {showTasksPolicy && (
+        <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
+          <div className="min-w-0">
+            <span className="text-[12px] font-medium">
+              {fTasksPolicy.label}
+            </span>
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              Whether chat, the agent and evals may run tools as MCP tasks on
+              servers that support them. Use default keeps today&apos;s
+              behavior: the Tools tab&apos;s own per-call controls, and nothing
+              else. Off removes every task affordance.
+            </p>
+            {tasksPolicyInvalid ? (
+              <p className="text-[11px] leading-snug text-destructive">
+                {describeInvalidTasksPolicy(draft) ??
+                  "This host's stored task policy is unsupported."}{" "}
+                Tasks stay disabled until it is fixed; any choice below repairs
+                it.
+              </p>
+            ) : null}
+          </div>
+          <Select
+            value={tasksPolicyInvalid ? undefined : TASKS_POLICY_VALUE[tasksPolicy]}
+            onValueChange={(next) =>
+              setTasksPolicyChoice(next as TasksPolicyChoice)
+            }
+            disabled={readOnly}
+          >
+            <SelectTrigger className="h-9 w-[150px] shrink-0 text-xs">
+              {/* An invalid stored value shows the placeholder rather than
+                  snapping to "Use default": pretending a broken config is the
+                  default would hide the very thing the warning is about. */}
+              <SelectValue placeholder="Unsupported value" />
+            </SelectTrigger>
+            <SelectContent>
+              {TASKS_POLICY_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         )}
         <div className="mt-2.5 border-t border-border/50 pt-2.5">
