@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { lastAssistantMessageIsCompleteWithToolCalls } from "ai";
 import {
   areHostedSessionScopesEqual,
   hostedTargetKey,
@@ -6,6 +7,7 @@ import {
   reconcileChatToolCallStepUp,
   rpcMessageId,
   rpcRequestMethod,
+  shouldAutoSendCompletedClientToolCalls,
 } from "../use-chat-session";
 
 type StepUpLog = {
@@ -102,6 +104,51 @@ describe("tools/call reset correlation helpers (SEP-2350)", () => {
     expect(
       rpcRequestMethod({ jsonrpc: "2.0", id: 42, method: "tools/list" })
     ).not.toBe("tools/call");
+  });
+});
+
+describe("scope step-up resume auto-send fence", () => {
+  const completedToolMessage = (toolName: string) =>
+    ({
+      id: "assistant-1",
+      role: "assistant",
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "call-1",
+          toolName,
+          state: "output-available",
+          input: {},
+          output: { ok: true },
+        },
+      ],
+    } as any);
+
+  it("does not auto-send a server-executed MCP tool result", () => {
+    const options = {
+      messages: [completedToolMessage("bench_write")],
+    };
+    // This is the upstream predicate that caused the loop: it cannot
+    // distinguish a server replay result from a browser-supplied result.
+    expect(lastAssistantMessageIsCompleteWithToolCalls(options)).toBe(true);
+    expect(shouldAutoSendCompletedClientToolCalls(options)).toBe(false);
+  });
+
+  it("still auto-sends a browser-fulfilled app tool result", () => {
+    expect(
+      shouldAutoSendCompletedClientToolCalls({
+        messages: [completedToolMessage("app_deadbeef")],
+      })
+    ).toBe(true);
+  });
+
+  it("suppresses even browser-tool auto-send while a one-shot resume is active", () => {
+    expect(
+      shouldAutoSendCompletedClientToolCalls(
+        { messages: [completedToolMessage("app_deadbeef")] },
+        true
+      )
+    ).toBe(false);
   });
 });
 

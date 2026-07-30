@@ -28,6 +28,8 @@ import {
   type ChatTransport,
   DefaultChatTransport,
   generateId,
+  getToolName,
+  isToolUIPart,
   lastAssistantMessageIsCompleteWithApprovalResponses,
   lastAssistantMessageIsCompleteWithToolCalls,
   type ModelMessage,
@@ -181,6 +183,7 @@ import {
 import * as AppStateContext from "@/state/app-state-context";
 import { findProjectByAnyId, type AppState } from "@/state/app-types";
 import { isLocalOnlyMcpServerConfig } from "@/shared/local-only-mcp";
+import { isClientFulfilledToolName } from "@/shared/client-fulfilled-tools";
 
 // User-facing copy for a harness session reset, keyed by reason. Only hard
 // resets are shown; `legacy-cold-resume` is a server-side log (resume is still
@@ -785,6 +788,38 @@ function hasChatToolCall(
       return (part as { toolCallId?: unknown }).toolCallId === toolCallId;
     })
   );
+}
+
+/**
+ * AI SDK's generic completed-tool predicate also matches MCP tools that the
+ * server already executed inside the same response. Auto-sending those starts
+ * a redundant turn; for a scope-step-up resume it also reuses the same opaque
+ * continuation forever. Only browser-fulfilled app/UI tools need the client to
+ * POST their newly supplied output back to the server.
+ */
+export function shouldAutoSendCompletedClientToolCalls(
+  options: Parameters<typeof lastAssistantMessageIsCompleteWithToolCalls>[0],
+  scopeStepUpResumeInFlight = false
+): boolean {
+  if (
+    scopeStepUpResumeInFlight ||
+    !lastAssistantMessageIsCompleteWithToolCalls(options)
+  ) {
+    return false;
+  }
+  const message = options.messages.at(-1);
+  if (!message || message.role !== "assistant") return false;
+  const lastStepStartIndex = message.parts.reduce(
+    (lastIndex, part, index) =>
+      part.type === "step-start" ? index : lastIndex,
+    -1
+  );
+  return message.parts
+    .slice(lastStepStartIndex + 1)
+    .some(
+      (part) =>
+        isToolUIPart(part) && isClientFulfilledToolName(getToolName(part))
+    );
 }
 
 // SEP-2350: a JSON-RPC message that carries a `result` (and no `error`) is a
@@ -2443,6 +2478,12 @@ export function useChatSession(
     []
   );
 
+  // Held until the entire userless resume request settles. AI SDK evaluates
+  // `sendAutomaticallyWhen` before `sendMessage` resolves, so this fence
+  // prevents the generic tool-output rule from recursively submitting the
+  // same one-shot continuation descriptor.
+  const scopeStepUpResumeInFlightRef = useRef(false);
+
   // useChat hook
   const {
     messages,
@@ -2617,7 +2658,14 @@ export function useChatSession(
     // still resume the turn if the user flips it off before answering, and
     // the predicate is inert when the message holds no approval requests.
     sendAutomaticallyWhen: (options) => {
-      if (lastAssistantMessageIsCompleteWithToolCalls(options)) return true;
+      if (
+        shouldAutoSendCompletedClientToolCalls(
+          options,
+          scopeStepUpResumeInFlightRef.current
+        )
+      ) {
+        return true;
+      }
       return lastAssistantMessageIsCompleteWithApprovalResponses(options);
     },
   });
@@ -2632,7 +2680,8 @@ export function useChatSession(
       !pending ||
       (pending.phase !== "ready" && pending.phase !== "cancelled") ||
       pending.chatSessionId !== sessionId ||
-      !hasChatToolCall(messagesRef.current, pending.event.toolCallId)
+      !hasChatToolCall(messagesRef.current, pending.event.toolCallId) ||
+      status !== "ready"
     ) {
       return;
     }
@@ -2651,6 +2700,7 @@ export function useChatSession(
     if (!claimed) return;
     const wasCancelled = pending.phase === "cancelled";
 
+    scopeStepUpResumeInFlightRef.current = true;
     void baseSendMessage(undefined, {
       body: {
         ...(wasCancelled
@@ -2678,8 +2728,11 @@ export function useChatSession(
             ? "Authorization was cancelled, but the suspended tool call could not be updated."
             : "The authorized tool call could not be resumed safely. Check whether it ran before retrying manually."
         );
+      })
+      .finally(() => {
+        scopeStepUpResumeInFlightRef.current = false;
       });
-  }, [appState, baseSendMessage, hostedProjectId, messages]);
+  }, [appState, baseSendMessage, hostedProjectId, messages, status]);
 
   /**
    * Resume a suspended hosted MRTR operation (§12.5) by re-driving a chat turn
