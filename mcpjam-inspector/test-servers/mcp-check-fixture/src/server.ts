@@ -350,6 +350,12 @@ const server = createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   // Log the bind address explicitly: "127.0.0.1" here is the single most likely
   // cause of a `server_unhealthy` check, so make it visible in the check logs.
+  //
+  // `console.log` on purpose, and the one place in this tree where the repo's
+  // logging rule does not apply: this file is the seed for a SEPARATE public
+  // repo and must stay dependency-free (its whole recipe is `npm ci && npm run
+  // build` with nothing but typescript + @types/node). Importing the inspector's
+  // logger would not even resolve once the file is copied out.
   console.log(
     `mcp-check-fixture listening on http://${HOST}:${PORT}${MCP_PATH}`
   );

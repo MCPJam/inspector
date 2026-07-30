@@ -254,6 +254,14 @@ async function runForeground(
      * hangs is the PR's (`build_failed`) — E2B reports that as a timeout with no
      * exit code, which would otherwise land in the transport branch below and
      * conclude `neutral`, letting a hanging build dodge a red check.
+     *
+     * Decided by ELAPSED TIME against the deadline we set, and by nothing else.
+     * The error's identity cannot be used: E2B raises `TimeoutError` for
+     * `Code.Unavailable` and `Code.Canceled` as well as `DeadlineExceeded`, so
+     * matching on the name would report an E2B outage during `npm ci` as the
+     * PR's broken build — a red X on a good PR, the one failure this taxonomy
+     * exists to prevent. Elapsed time is exact here, since the deadline is what
+     * fires the abort.
      */
     timeoutOutcome: CheckStepOutcome;
   }
@@ -278,7 +286,7 @@ async function runForeground(
         stderr: exit.stderr ?? "",
       };
     }
-    if (hitCommandDeadline(error, startedAt, opts.timeoutMs)) {
+    if (Date.now() - startedAt >= opts.timeoutMs) {
       throw new CheckStepError(
         opts.timeoutOutcome,
         `command exceeded its ${Math.round(opts.timeoutMs / 1000)}s deadline`,
@@ -291,29 +299,6 @@ async function runForeground(
       `sandbox command failed: ${errorMessage(error)}`
     );
   }
-}
-
-/**
- * Did the command run out its own clock, as opposed to the sandbox failing?
- *
- * Two independent signals, because getting this wrong in either direction is
- * costly: calling an infra failure a build failure puts a red X on a good PR,
- * and calling a hung build an infra failure lets it pass as neutral.
- *
- *   - elapsed time reached the deadline we ourselves set. Objective, and it does
- *     not depend on how the error is shaped;
- *   - the error identifies itself as a timeout. E2B's own handshake timeout also
- *     uses that name, so it is excluded by message — that one is transport.
- */
-function hitCommandDeadline(
-  error: unknown,
-  startedAt: number,
-  timeoutMs: number
-): boolean {
-  if (Date.now() - startedAt >= timeoutMs) return true;
-  const name = (error as { name?: unknown } | null)?.name;
-  if (name !== "TimeoutError") return false;
-  return !/handshake/i.test(errorMessage(error));
 }
 
 /**
@@ -434,6 +419,7 @@ export async function buildAndStart(
   recipe: CheckRecipe,
   options?: {
     fetchImpl?: typeof fetch;
+    buildTimeoutMs?: number;
     healthTimeoutMs?: number;
     healthIntervalMs?: number;
   }
@@ -443,7 +429,7 @@ export async function buildAndStart(
     `bash -lc ${shellQuote(recipe.build)}`,
     {
       cwd: CHECKOUT_DIR,
-      timeoutMs: BUILD_TIMEOUT_MS,
+      timeoutMs: options?.buildTimeoutMs ?? BUILD_TIMEOUT_MS,
       timeoutOutcome: "build_failed",
     }
   );

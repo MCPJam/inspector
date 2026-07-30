@@ -202,7 +202,7 @@ describe("buildAndStart", () => {
     const box = fakeSandbox({
       throwOn: (command) =>
         command.includes("npm run build")
-          ? Object.assign(new Error("command timed out"), {
+          ? Object.assign(new Error("deadline exceeded"), {
               name: "TimeoutError",
             })
           : undefined,
@@ -210,6 +210,8 @@ describe("buildAndStart", () => {
 
     const error = await buildAndStart(box.sandbox, RECIPE, {
       fetchImpl: vi.fn(async () => okInitialize()) as unknown as typeof fetch,
+      // Zero deadline: whatever happens, the elapsed time has reached it.
+      buildTimeoutMs: 0,
     }).catch((e) => e as CheckStepError);
 
     expect((error as CheckStepError).outcome).toBe("build_failed");
@@ -217,14 +219,17 @@ describe("buildAndStart", () => {
     expect(box.events.some((e) => e.startsWith("spawn:"))).toBe(false);
   });
 
-  it("keeps a transport failure that merely looks like a timeout as infra_error", async () => {
-    // E2B's own handshake timeout carries the same error name. That one is the
-    // sandbox failing, and calling it `build_failed` puts a red X on a good PR.
+  it("keeps an E2B failure that merely looks like a timeout as infra_error", async () => {
+    // E2B raises `TimeoutError` for Unavailable and Canceled RPCs too, not only
+    // for a command deadline. Trusting the error's name would report an E2B
+    // outage during `npm ci` as the PR's broken build — a red X on a good PR.
     const box = fakeSandbox({
       throwOn: (command) =>
         command.includes("npm run build")
           ? Object.assign(
-              new Error("Request handshake timed out after 30000ms"),
+              new Error(
+                "sandbox is unavailable: This error is likely due to sandbox timeout."
+              ),
               { name: "TimeoutError" }
             )
           : undefined,
@@ -232,6 +237,8 @@ describe("buildAndStart", () => {
 
     const error = await buildAndStart(box.sandbox, RECIPE, {
       fetchImpl: vi.fn(async () => okInitialize()) as unknown as typeof fetch,
+      // A deadline the failure cannot plausibly have reached.
+      buildTimeoutMs: 10 * 60_000,
     }).catch((e) => e as CheckStepError);
 
     expect((error as CheckStepError).outcome).toBe("infra_error");
