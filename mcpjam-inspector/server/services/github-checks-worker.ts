@@ -511,7 +511,6 @@ async function serverStillResponding(
     // predicate is shaped to avoid.
     return Number(answered[1]) < 500;
   }
-  if (stdout.includes(HTTP_ANSWERED_MARKER)) return true;
   // Refused, or accepted the connection and then said nothing at all. Either way
   // the server is not serving, and it is the PR's process.
   if (
