@@ -1083,7 +1083,7 @@ function isJsonRpcMessageShaped(value: unknown): boolean {
 
   if (message.result !== undefined) {
     return (
-      within(RESULT_RESPONSE_KEYS) && idIsValid && isPlainObject(message.result)
+      within(RESULT_RESPONSE_KEYS) && idIsValid && isResultShaped(message.result)
     );
   }
   if (message.error !== undefined) {
@@ -1468,7 +1468,7 @@ function jsonRpcResultFor(parsed: unknown, expectedId: number): object | null {
   };
   if (message.jsonrpc !== "2.0") return null;
   if (message.id !== expectedId) return null;
-  if (!isPlainObject(message.result)) return null;
+  if (!isResultShaped(message.result)) return null;
   // The result-response arm is `{ jsonrpc, id, result }` and it is STRICT, so a
   // fourth key means the envelope matches no arm of the union and the transport
   // throws on it — `result` alongside `error` or `method` most obviously, but any
@@ -1478,6 +1478,20 @@ function jsonRpcResultFor(parsed: unknown, expectedId: number): object | null {
   return RESULT_RESPONSE_KEYS.length === Object.keys(message).length
     ? (message.result as object)
     : null;
+}
+
+/**
+ * Whether a `result` payload satisfies the envelope's result schema.
+ *
+ * `ResultSchema` is a loose object with an OPTIONAL `_meta` that must itself be an
+ * object, so `_meta: true` fails the envelope parse before any handshake logic
+ * runs — the client never looks at the rest of the result. Everything else inside
+ * passes through, which is why this checks `_meta` and nothing more.
+ */
+function isResultShaped(value: unknown): boolean {
+  if (!isPlainObject(value)) return false;
+  const meta = (value as { _meta?: unknown })._meta;
+  return meta === undefined || isPlainObject(meta);
 }
 
 /** Every key the strict result-response arm allows, and it requires all three. */

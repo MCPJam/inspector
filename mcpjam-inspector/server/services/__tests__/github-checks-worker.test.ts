@@ -13,7 +13,7 @@ import {
   executeClaimedCheck,
   outcomeForRunResult,
   runReachedAVerdict,
-  snapshotBelongsToAnotherCheck,
+  verifyRunSnapshot,
   LeaseLostError,
   startGithubChecksWorker,
   type CheckExecutionDeps,
@@ -860,16 +860,16 @@ describe("startGithubChecksWorker loop", () => {
   });
 });
 
-describe("snapshotBelongsToAnotherCheck", () => {
+describe("verifyRunSnapshot", () => {
   // The dedicated suite is shared and `refreshSnapshot` rewrites its environment
   // before the run freezes it, so two concurrent checks can interleave and one can
   // end up evaluating the other's server. This cannot prevent that; it decides when
-  // the theft is PROVEN, because a verdict about somebody else's PR is worse than
-  // no verdict.
+  // the theft is PROVEN, and when we simply could not look — a verdict about
+  // somebody else's PR being worse than no verdict.
   const clientWith = (snapshot: unknown) =>
     ({
       query: async () => ({ configSnapshot: { environment: snapshot } }),
-    } as unknown as Parameters<typeof snapshotBelongsToAnotherCheck>[0]);
+    } as unknown as Parameters<typeof verifyRunSnapshot>[0]);
 
   it("passes a snapshot naming our own check", async () => {
     const snapshot = {
@@ -877,12 +877,8 @@ describe("snapshotBelongsToAnotherCheck", () => {
       serverBindings: [{ name: "gh-check-trig-1", id: "srv_1" }],
     };
     expect(
-      await snapshotBelongsToAnotherCheck(
-        clientWith(snapshot),
-        "run-1",
-        "trig-1"
-      )
-    ).toBe(false);
+      await verifyRunSnapshot(clientWith(snapshot), "run-1", "trig-1")
+    ).toBe("ours");
   });
 
   it("catches a snapshot naming a different check", async () => {
@@ -891,12 +887,8 @@ describe("snapshotBelongsToAnotherCheck", () => {
       serverBindings: [{ name: "gh-check-trig-9", id: "srv_2" }],
     };
     expect(
-      await snapshotBelongsToAnotherCheck(
-        clientWith(snapshot),
-        "run-1",
-        "trig-1"
-      )
-    ).toBe(true);
+      await verifyRunSnapshot(clientWith(snapshot), "run-1", "trig-1")
+    ).toBe("stolen");
   });
 
   it("passes when ours appears alongside another", async () => {
@@ -908,41 +900,36 @@ describe("snapshotBelongsToAnotherCheck", () => {
       ],
     };
     expect(
-      await snapshotBelongsToAnotherCheck(
-        clientWith(snapshot),
-        "run-1",
-        "trig-1"
-      )
-    ).toBe(false);
+      await verifyRunSnapshot(clientWith(snapshot), "run-1", "trig-1")
+    ).toBe("ours");
   });
 
-  it("proves nothing from a snapshot naming no check server", async () => {
-    // The snapshot's shape is the backend's, not this module's, so an unrecognised
-    // one must not fail every check.
+  it("proceeds on a snapshot naming no check server", async () => {
+    // The snapshot's shape is the backend's contract, not this module's, so an
+    // unrecognised one must not fail every check.
     expect(
-      await snapshotBelongsToAnotherCheck(
+      await verifyRunSnapshot(
         clientWith({ servers: ["srv_manual"] }),
         "run-1",
         "trig-1"
       )
-    ).toBe(false);
+    ).toBe("ours");
+    expect(
+      await verifyRunSnapshot(clientWith(undefined), "run-1", "trig-1")
+    ).toBe("ours");
   });
 
-  it("proves nothing when there is no snapshot, or the query fails", async () => {
-    expect(
-      await snapshotBelongsToAnotherCheck(
-        clientWith(undefined),
-        "run-1",
-        "trig-1"
-      )
-    ).toBe(false);
+  it("refuses to proceed when the snapshot cannot be read at all", async () => {
+    // Being unable to LOOK is different from looking and finding nothing: it removes
+    // the only guard against publishing a verdict about another PR's server. The
+    // caller turns this into a neutral check.
     const broken = {
       query: async () => {
         throw new Error("convex down");
       },
-    } as unknown as Parameters<typeof snapshotBelongsToAnotherCheck>[0];
-    expect(await snapshotBelongsToAnotherCheck(broken, "run-1", "trig-1")).toBe(
-      false
+    } as unknown as Parameters<typeof verifyRunSnapshot>[0];
+    expect(await verifyRunSnapshot(broken, "run-1", "trig-1")).toBe(
+      "unverifiable"
     );
   });
 });

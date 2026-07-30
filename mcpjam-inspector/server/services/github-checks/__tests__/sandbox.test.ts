@@ -997,6 +997,52 @@ describe("waitForMcpInitialize", () => {
     ).toBe(true);
   });
 
+  it("does not accept a result whose _meta is not an object", async () => {
+    // `ResultSchema` types `_meta` as an optional OBJECT, so `_meta: true` fails the
+    // envelope parse before any handshake logic runs — the client never looks at the
+    // rest of the result, however valid it is.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: { ...INITIALIZE_RESULT, _meta: true },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 5,
+      })
+    ).toBe(false);
+  });
+
+  it("accepts a result carrying a well-formed _meta", async () => {
+    // The other direction: `_meta` is loose, so any object passes — including the
+    // server-info key the spec suggests putting there.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: {
+              ...INITIALIZE_RESULT,
+              _meta: { "io.modelcontextprotocol/serverInfo": { name: "x" } },
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", { ...seams, fetchImpl })
+    ).toBe(true);
+  });
+
   it("does not accept an envelope mixing result with error", async () => {
     // The result-response arm is `{ jsonrpc, id, result }` and it is strict, so an
     // envelope carrying `error` as well matches no arm of the union and the

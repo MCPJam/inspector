@@ -674,7 +674,7 @@ async function runCompleted(
  * must never be launched from the UI.
  */
 /**
- * Whether this run's frozen environment names a DIFFERENT check's server.
+ * Which check's server this run's frozen environment names.
  *
  * The dedicated suite is shared, and `refreshSnapshot: true` rewrites its stored
  * environment before the run-start mutation freezes it — two mutations, no
@@ -686,21 +686,22 @@ async function runCompleted(
  * This does not fix that race — it detects the case it can prove. Every check names
  * its server `gh-check-<triggerId>`, so:
  *
- *   - the snapshot mentions OUR trigger → ours, proceed;
- *   - it mentions some other check's trigger and not ours → stolen, and the check
+ *   - the snapshot mentions OUR trigger → `ours`;
+ *   - it mentions some other check's trigger and not ours → `stolen`, and the check
  *     is abandoned as neutral rather than reporting a verdict from it;
- *   - it mentions no `gh-check-` server at all → nothing is proven. The snapshot's
- *     shape is not this module's contract to rely on, so an unrecognised one must
- *     not fail every check. Proceed.
- *
- * Best effort by design: a query that fails proves nothing either, and must not
- * turn into a verdict.
+ *   - it mentions no `gh-check-` server at all → `ours`. Nothing is proven, and the
+ *     snapshot's shape is the backend's contract rather than this module's, so an
+ *     unrecognised one must not fail every check;
+ *   - the query itself fails → `unverifiable`, which the caller also treats as
+ *     neutral. Being unable to look is different from looking and finding nothing:
+ *     it removes the only guard against publishing a verdict about another PR's
+ *     server, and a failed read of ours is ours to own.
  */
-export async function snapshotBelongsToAnotherCheck(
+export async function verifyRunSnapshot(
   client: ReturnType<typeof createConvexClient>,
   runId: string,
   triggerId: string
-): Promise<boolean> {
+): Promise<"ours" | "stolen" | "unverifiable"> {
   let snapshot: unknown;
   try {
     const run = (await client.query("testSuites:getTestSuiteRun" as any, {
@@ -708,17 +709,23 @@ export async function snapshotBelongsToAnotherCheck(
     })) as { configSnapshot?: { environment?: unknown } } | null;
     snapshot = run?.configSnapshot?.environment;
   } catch {
-    return false;
+    // We could not LOOK. During a race that is the one check standing between a
+    // wrong-PR verdict and publishing it, so it fails closed — and a Convex read
+    // of ours failing is our problem to own, which is what neutral means here.
+    return "unverifiable";
   }
-  if (snapshot === undefined || snapshot === null) return false;
+  if (snapshot === undefined || snapshot === null) return "ours";
   // Serialized rather than walked: the snapshot carries servers, bindings and
   // display copies in shapes owned by the backend, and a name match anywhere in it
   // is the signal — the ids are unique per ephemeral server.
   const named = [
     ...JSON.stringify(snapshot).matchAll(/gh-check-([A-Za-z0-9_-]+)/g),
   ].map((match) => match[1]);
-  if (named.length === 0) return false;
-  return !named.includes(triggerId);
+  // A shape we do not recognise is NOT the same as being unable to look. Failing
+  // closed on it would break every check the first time the backend's snapshot
+  // shape changed, which is a self-inflicted outage rather than a safeguard.
+  if (named.length === 0) return "ours";
+  return named.includes(triggerId) ? "ours" : "stolen";
 }
 
 async function defaultRunEvalSuite(args: {
@@ -778,17 +785,18 @@ async function defaultRunEvalSuite(args: {
     // land in between, so this run's frozen snapshot can name ITS ephemeral
     // server instead of ours. Verified before anything is evaluated, because a
     // verdict from a run that tested a different PR's server is worse than no
-    // verdict at all. See `snapshotBelongsToAnotherCheck` for what is provable.
-    if (
-      await snapshotBelongsToAnotherCheck(
-        client,
-        prepared.runId,
-        args.claimed.triggerId
-      )
-    ) {
+    // verdict at all. See `verifyRunSnapshot` for what is provable.
+    const ownership = await verifyRunSnapshot(
+      client,
+      prepared.runId,
+      args.claimed.triggerId
+    );
+    if (ownership !== "ours") {
       throw new CheckStepError(
         "infra_error",
-        "another check's server was snapshotted onto this run"
+        ownership === "stolen"
+          ? "another check's server was snapshotted onto this run"
+          : "could not verify which server this run was bound to"
       );
     }
 
