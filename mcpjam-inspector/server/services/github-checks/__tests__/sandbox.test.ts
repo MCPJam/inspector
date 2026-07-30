@@ -136,6 +136,22 @@ function okInitialize(): Response {
 }
 
 /**
+ * A complete, valid initialize answer padded to measure EXACTLY
+ * `PROBE_MAX_RESPONSE_BYTES`, so the probe's byte cap lands on the last byte of a
+ * parseable document. All ASCII, so characters and bytes agree.
+ */
+function cappedDocument(): string {
+  const answer = { jsonrpc: "2.0", id: 1, result: INITIALIZE_RESULT, pad: "" };
+  const padding = PROBE_MAX_RESPONSE_BYTES - JSON.stringify(answer).length;
+  if (padding <= 0) throw new Error("initialize fixture exceeds the probe cap");
+  const document = JSON.stringify({ ...answer, pad: "a".repeat(padding) });
+  if (document.length !== PROBE_MAX_RESPONSE_BYTES) {
+    throw new Error(`padded to ${document.length}, not the cap`);
+  }
+  return document;
+}
+
+/**
  * A server that has no `initialize` and answers `server/discover` with the given
  * capabilities — the modern arm in isolation, so a capability-shape verdict is not
  * masked by the legacy arm accepting the same server.
@@ -1232,30 +1248,130 @@ describe("waitForMcpInitialize", () => {
     ).toBe(false);
   });
 
+  it("accepts an answer whose event name a colonless event line cleared", async () => {
+    // A line with no colon is that field with an empty value, and `event` with an
+    // empty value CLEARS the type — so this event is unnamed and the transport
+    // dispatches it as `message`. Skipping the colonless line would keep `ping` and
+    // discard an answer the client does receive: a false `server_unhealthy`.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          `event: ping\nevent\ndata: ${JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: INITIALIZE_RESULT,
+          })}\n\n`,
+          { status: 200, headers: { "content-type": "text/event-stream" } }
+        )
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", { ...seams, fetchImpl })
+    ).toBe(true);
+  });
+
+  it("accepts an answer whose event carries id, retry and comment lines", async () => {
+    // None of these fields carry data and none of them end the event, so the
+    // payload must survive them intact. An unknown field is reported to an
+    // `onError` the transport never passes, so it is ignored too.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          [
+            ": keep-alive comment",
+            "id: 7",
+            "retry: 1000",
+            "x-unknown: whatever",
+            `data: ${JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              result: INITIALIZE_RESULT,
+            })}`,
+            "",
+            "",
+          ].join("\n"),
+          { status: 200, headers: { "content-type": "text/event-stream" } }
+        )
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", { ...seams, fetchImpl })
+    ).toBe(true);
+  });
+
+  it("accepts a JSON body that measures exactly the byte cap", async () => {
+    // The boundary is a working server: the whole document arrived, and the body
+    // ended there. Only the read after the cap can prove it ended, since `done`
+    // never rides along with the last chunk — and refusing to take that read would
+    // put a false `server_unhealthy` on a PR whose answer merely happens to be
+    // 64 KiB long.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode(cappedDocument()));
+              controller.close();
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+    ) as unknown as typeof fetch;
+
+    // Bounded deliberately: this must be accepted on the first attempt, so if it
+    // ever regresses the test fails in a second rather than spinning out the full
+    // two-minute health window.
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 1_000,
+      })
+    ).toBe(true);
+  });
+
+  it("does not accept a cap-sized JSON body that keeps going in a later write", async () => {
+    // Same first chunk as above, so the cap is reached with nothing dropped — but
+    // the body has not ended, and the read that follows says so. This is the case
+    // the extra read has to get right: `response.json()` would reject the trailing
+    // content.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              const encoder = new TextEncoder();
+              controller.enqueue(encoder.encode(cappedDocument()));
+              controller.enqueue(encoder.encode('{"trailing":"junk"}'));
+              controller.close();
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+    ) as unknown as typeof fetch;
+
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 5,
+      })
+    ).toBe(false);
+  });
+
   it("does not accept a capped JSON body that parses as a prefix", async () => {
     // A body whose first `PROBE_MAX_RESPONSE_BYTES` happen to be a complete JSON
     // document, followed by more content. We stop reading at the cap; the client
     // does not — `response.json()` reads to EOF and rejects the trailing bytes. So
     // the cap must not stand in for the body ending, or the probe passes a server
     // the eval run cannot parse.
-    const answer = {
-      jsonrpc: "2.0",
-      id: 1,
-      result: INITIALIZE_RESULT,
-      pad: "",
-    };
-    const padding = PROBE_MAX_RESPONSE_BYTES - JSON.stringify(answer).length;
-    expect(padding).toBeGreaterThan(0);
-    const document = JSON.stringify({ ...answer, pad: "a".repeat(padding) });
-    expect(document.length).toBe(PROBE_MAX_RESPONSE_BYTES);
-
     const fetchImpl = vi.fn(
       async () =>
         new Response(
           new ReadableStream<Uint8Array>({
             start(controller) {
               controller.enqueue(
-                new TextEncoder().encode(`${document}{"trailing":"junk"}`)
+                new TextEncoder().encode(
+                  `${cappedDocument()}{"trailing":"junk"}`
+                )
               );
               controller.close();
             },

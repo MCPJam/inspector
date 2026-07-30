@@ -823,6 +823,10 @@ async function probeResponseIsHealthy(
   // UTF-16 units, so budgeting by it would let non-ASCII output read more of the
   // wire than the cap allows — the slice below is in bytes either way.
   let remainingBytes = PROBE_MAX_RESPONSE_BYTES;
+  // Set when the cap cut a chunk we had already been handed, which proves the body
+  // is longer than what we kept. Without it, dropping those bytes and then reading
+  // EOF would look exactly like a body that ended at the cap.
+  let droppedBytes = false;
   try {
     while (remainingBytes > 0) {
       const { done, value } = await reader.read();
@@ -832,6 +836,7 @@ async function probeResponseIsHealthy(
         // cut in half here is held by the decoder (`stream: true`) and completed
         // by the next chunk, or dropped if the budget runs out first.
         const consumed = Math.min(value.byteLength, remainingBytes);
+        if (consumed < value.byteLength) droppedBytes = true;
         remainingBytes -= consumed;
         text += decoder.decode(value.subarray(0, consumed), { stream: true });
         // Checked per chunk: an SSE event completes the moment its blank line
@@ -843,10 +848,24 @@ async function probeResponseIsHealthy(
         return carriesAcceptedAnswer(text, accepts, true, mode);
       }
     }
-    // Out of byte budget — which is NOT the body ending. We stop reading; the eval
-    // run's client does not, so a JSON body must not be judged on this prefix even
-    // if the prefix happens to parse. Whatever the cap cut off is the client's
-    // problem to hit, not ours to guess at.
+    // Out of byte budget. Reaching the cap is NOT the body ending — we stop
+    // reading, the client does not — so a JSON prefix must not be judged as a whole
+    // document just because it happens to parse.
+    //
+    // But a body measuring EXACTLY the cap has ended, and nothing so far can say
+    // so: `done` never rides along with the last chunk, it takes one more read. A
+    // complete answer that lands on the boundary is a working server, so refusing to
+    // look would be a false `server_unhealthy` — the error worth avoiding. So take
+    // that read, unless the cap already cut a chunk short (then the body is provably
+    // longer and EOF here would be EOF of bytes we discarded). SSE never needs any
+    // of this: an event is complete at its blank line, whatever the body does next.
+    if (mode === "json" && !droppedBytes) {
+      const { done } = await reader.read();
+      if (done) {
+        text += decoder.decode();
+        return carriesAcceptedAnswer(text, accepts, true, mode);
+      }
+    }
     return carriesAcceptedAnswer(text, accepts, false, mode);
   } finally {
     // We are done with this response either way — a healthy server is still
@@ -943,11 +962,12 @@ function jsonPayloads(text: string, bodyComplete: boolean): string[] {
  * Only events the transport would actually dispatch count: unnamed or named
  * `message` (see `flush`), and carrying data.
  *
- * A payload comes only from a line that STARTS with `data:` — a body under this
- * media type that carries no such line carries no events, and the transport's
- * EventSource parser would surface nothing to the client no matter how valid the
- * JSON in it looks. (Which is also why "data:" appearing INSIDE a JSON string —
- * a serverInfo name, an instructions blob, a tool description — is not a frame.)
+ * A payload comes only from a `data` FIELD — a body under this media type that
+ * carries no such field carries no events, and the transport's EventSource parser
+ * would surface nothing to the client no matter how valid the JSON in it looks.
+ * (Which is also why "data:" appearing INSIDE a JSON string — a serverInfo name,
+ * an instructions blob, a tool description — is not a field: field names are read
+ * from the start of a line, never matched as a substring.)
  *
  * Within one event, consecutive `data:` fields are JOINED with newlines, per SSE
  * semantics. A server that spreads one JSON-RPC message across several fields is
@@ -999,36 +1019,57 @@ function ssePayloads(text: string): string[] {
   const lineCount = segments.length - 1;
   for (let index = 0; index < lineCount; index += 1) {
     const line = segments[index];
-    if (line.startsWith("data:")) {
-      current.push(sseFieldValue(line, "data:"));
+    // A blank line ends the event, and is the ONLY thing that does. Checked first
+    // because the parser reaches its dispatch before it ever looks at fields.
+    if (line === "") {
+      flush();
       continue;
     }
-    if (line.startsWith("event:")) {
+    const [field, value] = sseField(line);
+    if (field === "data") {
+      current.push(value);
+      continue;
+    }
+    if (field === "event") {
       // Last one wins within an event, per the spec.
-      eventName = sseFieldValue(line, "event:");
+      eventName = value;
       continue;
     }
-    // A blank line ends the event. Any other field (`id:`, `retry:`, a comment)
-    // carries no data but does not split it either.
-    if (line === "") flush();
+    // `id`, `retry`, a comment, an unknown field: carries no data, and does not
+    // split the event either. (Unknown fields are reported to an `onError` the
+    // transport does not pass, so they are ignored rather than fatal.)
   }
   return payloads.filter((payload) => payload.length > 0);
 }
 
 /**
- * The value of an SSE field line, stripped exactly the way the transport's parser
- * strips it: ONE optional space after the colon, and nothing else.
+ * One SSE line split into field name and value, by the transport's parser's rules.
  *
- * Trimming instead is wrong in a way that matters for `event:`. The parser keeps
- * the rest of the whitespace, so `event: message ` is the event type `"message "`,
- * which is not `"message"` and is therefore dropped — while a trim would normalise
- * it to `message` and let the probe accept an answer the eval run never receives.
- * For `data:` the difference is invisible to `JSON.parse`, but a payload assembled
- * from several fields is joined verbatim, so the same rule keeps that text intact.
+ * The name runs to the first colon and the value is what follows, minus ONE
+ * optional space — not trimmed. That matters for `event:`: the parser keeps the
+ * rest of the whitespace, so `event: message ` is the event type `"message "`,
+ * which is not `"message"` and is therefore dropped. A trim would normalise it and
+ * accept an answer the eval run never receives. For `data:` the difference is
+ * invisible to `JSON.parse`, but fields are joined verbatim, so the same rule keeps
+ * a multi-field payload's text intact.
+ *
+ * A line with NO colon is that field with an EMPTY value, not a line to skip. So a
+ * bare `event` CLEARS the event type (`eventType = value || void 0` in the parser)
+ * and the next dispatch is an unnamed `message` — it does not inherit the name from
+ * an earlier `event:` line. Skipping the line kept the stale name and discarded an
+ * answer the client does receive, which is a false `server_unhealthy`.
+ *
+ * A leading colon makes the name empty, which is how comments fall through to being
+ * ignored.
  */
-function sseFieldValue(line: string, field: string): string {
-  const value = line.slice(field.length);
-  return value.startsWith(" ") ? value.slice(1) : value;
+function sseField(line: string): [string, string] {
+  const separator = line.indexOf(":");
+  if (separator === -1) return [line, ""];
+  const value = line.slice(separator + 1);
+  return [
+    line.slice(0, separator),
+    value.startsWith(" ") ? value.slice(1) : value,
+  ];
 }
 
 /**
