@@ -351,6 +351,31 @@ describe("executeClaimedCheck — failure attribution", () => {
     expect(h.reports[0].outcome).toBe("infra_error");
   });
 
+  it("abandons the check when the lease is lost during a SUCCESSFUL eval", async () => {
+    // The eval is the widest window in the flow, and it can lose the lease and still
+    // resolve normally — in which case the failure path's re-check is never reached.
+    // Reporting a verdict over a check the backend already concluded is exactly what
+    // the lease guard exists to prevent.
+    let inEval = false;
+    const h = harness({
+      runEvalSuite: async () => {
+        inEval = true;
+        // Let the 1ms heartbeat fire and register the loss mid-eval.
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return { runId: "run-1", result: "passed" };
+      },
+      heartbeat: async () => {
+        if (inEval) throw new LeaseLostError("taken over");
+      },
+      heartbeatIntervalMs: 1,
+    });
+
+    await executeClaimedCheck(CLAIM, "worker-1", h.deps);
+    // Abandoned rather than reported, and the box is still torn down.
+    expect(h.reports).toHaveLength(0);
+    expect(h.events).toContain("killSandbox");
+  });
+
   it("abandons the check when the lease is lost during the liveness diagnostic", async () => {
     // The diagnostic talks to the box, so it takes real time — and the lease can be
     // taken away inside that window, AFTER the last step boundary checked it.

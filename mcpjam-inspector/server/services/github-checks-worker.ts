@@ -792,12 +792,27 @@ async function defaultRunEvalSuite(args: {
       args.claimed.triggerId
     );
     if (ownership !== "ours") {
-      throw new CheckStepError(
-        "infra_error",
+      const reason =
         ownership === "stolen"
           ? "another check's server was snapshotted onto this run"
-          : "could not verify which server this run was bound to"
-      );
+          : "could not verify which server this run was bound to";
+      // The run row already exists — `prepareEvalRun` created it — and this throw
+      // bypasses the catch around `execute()` where the non-terminal finalize
+      // lives. Left alone it would sit in `running` forever, and every raced check
+      // would leave another one behind. Best effort: failing to tidy up must not
+      // replace the reason we are bailing out.
+      if (prepared.recorder) {
+        await prepared.recorder
+          .finalize({ status: "failed", notes: reason })
+          .catch((finalizeError: unknown) => {
+            logger.error(
+              "[github-checks] failed to finalize an unowned eval run",
+              finalizeError,
+              { triggerId: args.claimed.triggerId, runId: prepared.runId }
+            );
+          });
+      }
+      throw new CheckStepError("infra_error", reason);
     }
 
     try {
@@ -1057,6 +1072,12 @@ export async function executeClaimedCheck(
         assertLeaseHeld();
         throw attributed;
       });
+
+    // The eval is the widest window in this flow — twenty minutes — so the lease
+    // can be taken away while it runs and still resolve normally. The failure path
+    // re-checks; this one has to as well, or a check the backend already concluded
+    // gets a verdict reported over the top of it.
+    assertLeaseHeld();
 
     const outcome = outcomeForRunResult(run.result);
     await safeReport({
