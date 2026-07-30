@@ -283,6 +283,25 @@ function substituteOrigins(
   return out;
 }
 
+/**
+ * Abstract a URL's origin, THEN placehold any loopback port that remains.
+ *
+ * The order is load-bearing and the two steps must never be swapped. A test
+ * server (and HP-39's CI server) lives on `http://127.0.0.1:<port>`, which is
+ * BOTH a scenario origin and a loopback address. Placeholding the port first
+ * rewrites the string to `http://127.0.0.1:{port}` — after which the origin no
+ * longer matches the scenario's `http://127.0.0.1:3999` and `{mcp_server}` is
+ * never substituted at all.
+ *
+ * Doing it in this order abstracts the SERVER's origin as an origin, and leaves
+ * `{port}` for the loopback that genuinely is ephemeral: the client's own
+ * redirect URI. Found by pointing the harness at a real loopback server — an
+ * https-origin fixture cannot expose it.
+ */
+function abstractUrl(value: string, originMap: Array<[string, string]>): string {
+  return normalizeLoopbackPort(substituteOrigins(value, originMap));
+}
+
 export type NormalizedUrl = {
   /** Origin-substituted, volatility-placeheld, query re-serialized in order. */
   url: string;
@@ -307,7 +326,7 @@ export function normalizeUrl(
   try {
     parsed = new URL(raw);
   } catch {
-    return { url: substituteOrigins(normalizeLoopbackPort(raw), originMap) };
+    return { url: abstractUrl(raw, originMap) };
   }
 
   const query: Record<string, string[]> = {};
@@ -316,7 +335,7 @@ export function normalizeUrl(
     // origins before applying scalar policy.
     const pre =
       key.toLowerCase() === "redirect_uri"
-        ? substituteOrigins(normalizeLoopbackPort(value), originMap)
+        ? abstractUrl(value, originMap)
         : substituteOrigins(value, originMap);
     const normalized = normalizeScalarField(key, pre);
     (query[key] ??= []).push(normalized);
@@ -332,7 +351,7 @@ export function normalizeUrl(
 
   const hasQuery = Object.keys(sortedQuery).length > 0;
   const base = `${parsed.origin}${parsed.pathname}`;
-  let url = substituteOrigins(normalizeLoopbackPort(base), originMap);
+  let url = abstractUrl(base, originMap);
 
   if (hasQuery) {
     const rendered = Object.entries(sortedQuery)
@@ -412,7 +431,7 @@ function normalizeJsonValue(
 
   if (typeof value === "string") {
     const pre = /^https?:\/\//i.test(value)
-      ? substituteOrigins(normalizeLoopbackPort(value), originMap)
+      ? abstractUrl(value, originMap)
       : substituteOrigins(value, originMap);
     return key ? normalizeScalarField(key, pre) : pre;
   }
@@ -448,7 +467,7 @@ export function normalizeBody(
       fields[key] = values.map((value) => {
         const pre =
           key.toLowerCase() === "redirect_uri"
-            ? substituteOrigins(normalizeLoopbackPort(value), originMap)
+            ? abstractUrl(value, originMap)
             : substituteOrigins(value, originMap);
         return normalizeScalarField(key, pre);
       });

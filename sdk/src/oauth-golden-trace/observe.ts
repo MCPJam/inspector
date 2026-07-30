@@ -339,12 +339,17 @@ function classifyResourceValueSource(
   }
 
   const originMap = buildOriginMap(origins);
+  // Origins BEFORE ports, matching `abstractUrl` in ./normalize.js. Reversing the
+  // two makes a loopback test server's origin unmatchable (the port placeholder
+  // rewrites the string first), which would leave the comparison targets in a
+  // different shape from the wire values they are compared against — and every
+  // `resource` value would classify as "other".
   const substitute = (raw: string): string => {
-    let out = normalizeLoopbackPort(raw);
+    let out = raw;
     for (const [name, origin] of originMap) {
       if (out.includes(origin)) out = out.split(origin).join(name);
     }
-    return out.replace(/\/$/, "");
+    return normalizeLoopbackPort(out).replace(/\/$/, "");
   };
 
   const value = values[0].replace(/\/$/, "");
