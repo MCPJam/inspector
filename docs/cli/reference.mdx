@@ -629,10 +629,11 @@ Fails with `CONFLICT` if another live environment took the name while this one w
 
 ### What can be pinned
 
-Both pin fields are narrower than they look:
+Pin fields are narrower than they look:
 
 - **`skillSelection`** accepts project-shared skills only. Personal skills, skills with supporting files or extra frontmatter, and plugin-component skills are all rejected.
 - **`pluginVersionIds`** accepts a plugin version only when its plugin is installed and enabled, the version is `ready`, at most one version per plugin is pinned, and none of the version's skills carry supporting files.
+- **`sandboxImageId`** must be a project-shared image (see `mcpjam images`). Personal draft images are rejected — promote them first with `images promote`.
 
 ---
 
