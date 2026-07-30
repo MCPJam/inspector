@@ -59,10 +59,23 @@ import {
 export type ConnectionTraceContextProvider = () => TraceContext | undefined;
 
 export class TraceContextMetaClient implements ManagedMcpClient {
+  /**
+   * `server/discover` pass-through — bound only when the inner client
+   * carries it, so absence propagates through the decorator stack and
+   * `MCPClientManager.pingServer` can fall back to `ping` instead of
+   * seeing a probe that "succeeds" with no wire traffic. No trace-context
+   * injection (upstream stamps the discover envelope itself).
+   */
+  readonly discover?: (options?: RequestOptions) => Promise<unknown>;
+
   constructor(
     readonly inner: ManagedMcpClient,
     private readonly getTraceContext: ConnectionTraceContextProvider,
-  ) {}
+  ) {
+    if (inner.discover) {
+      this.discover = inner.discover.bind(inner);
+    }
+  }
 
   /**
    * The context to inject on this call, or `undefined` to inject nothing.

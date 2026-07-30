@@ -265,6 +265,30 @@ describe("resolveInsufficientScopeStepUp (SEP-2350)", () => {
     expect(retry.action).toBe("throw");
   });
 
+  it("recovers a stale pre-marker attempt left by an older broken run", async () => {
+    readStoredOAuthConfigMock.mockReturnValue({ scopes: ["read"] });
+    initiateOAuthMock.mockResolvedValue({ success: true });
+
+    // Older builds stored only this counter. With no companion pending marker,
+    // it does not prove that a real browser step-up is still in progress.
+    resolveInsufficientScopeStepUp({
+      serverName: "asana",
+      issuer: ISSUER,
+      challengedScopes: ["admin"],
+      authMode: "interactive",
+      maxRetries: 1,
+    });
+
+    const outcome = await applyToolCallStepUp(createServer(), {
+      requiredScope: "admin",
+    });
+
+    expect(outcome.action).toBe("reauthorize");
+    expect(outcome.attempt).toBe(0);
+    expect(outcome.reauthorization).toEqual({ kind: "redirect" });
+    expect(initiateOAuthMock).toHaveBeenCalledTimes(1);
+  });
+
   it("applyToolCallStepUp KEEPS the attempt on a no-op `ready` (prevents an infinite step-up loop)", async () => {
     readStoredOAuthConfigMock.mockReturnValue({ scopes: ["read"] });
     // initiateOAuth resolves WITHOUT navigating: an already-authorized server
