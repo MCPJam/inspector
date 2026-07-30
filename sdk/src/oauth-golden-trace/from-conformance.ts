@@ -155,28 +155,30 @@ export function dedupeWireArtifacts(
  * see `TraceRequest.headersObserved`.
  */
 function reconstructAuthorizeExchange(
-  result: ConformanceResult,
+  authorizationUrl: string,
   ordinal: number,
-): TraceExchange | undefined {
+): TraceExchange {
+  return {
+    ordinal,
+    leg: "authorize",
+    legBasis:
+      "reconstructed from the authorization URL the client handed to a browser: the client never fetches it itself, so no intercepted request exists",
+    request: {
+      method: "GET",
+      url: authorizationUrl,
+      headers: {},
+      headersObserved: false,
+    },
+  };
+}
+
+/** Recover the authorization URL from a conformance run's info logs. */
+function findAuthorizationUrl(result: ConformanceResult): string | undefined {
   for (const step of result.steps) {
     for (const log of step.logs ?? []) {
       if (log.step !== "authorization_request") continue;
       const data = log.data as { url?: unknown } | undefined;
-      const url = data && typeof data.url === "string" ? data.url : undefined;
-      if (!url) continue;
-
-      return {
-        ordinal,
-        leg: "authorize",
-        legBasis:
-          "reconstructed from the `authorization_request` info log: the client hands this URL to a browser rather than fetching it, so no intercepted request exists",
-        request: {
-          method: "GET",
-          url,
-          headers: {},
-          headersObserved: false,
-        },
-      };
+      if (data && typeof data.url === "string") return data.url;
     }
   }
   return undefined;
@@ -231,6 +233,49 @@ function toExchange(
   };
 }
 
+/**
+ * The emulator-side inputs a trace actually needs, independent of HOW the
+ * emulator was driven.
+ *
+ * Two drivers exist today and a third is coming, so the capture path is defined
+ * against the wire record rather than against any one runner's result type:
+ *
+ *   - `OAuthConformanceTest` (the CLI / CI path) — see {@link captureEmulatorTrace}.
+ *   - `runOAuthStateMachine` directly, which is how the browser Inspector runs
+ *     its production OAuth and how a test can drive a machine with non-default
+ *     options.
+ *   - HP-43's per-host emulator, which will be configured from a host profile and
+ *     has no reason to route through the conformance runner at all.
+ *
+ * Coupling capture to `ConformanceResult` would have forced HP-43 to either fake
+ * one or duplicate this module.
+ */
+export type EmulatorFlowRecord = {
+  /** The wire, in execution order. `OAuthFlowState.httpHistory`. */
+  httpHistory: readonly HttpHistoryEntry[];
+  /**
+   * The authorization URL the client handed to a browser, when there was one.
+   *
+   * Supplied separately because it is NOT in `httpHistory`: the client builds this
+   * URL and delegates it, so no request of its own is ever intercepted. Passing it
+   * lets the harness reconstruct the `/authorize` leg — where `resource`,
+   * `code_challenge`, `state` and `scope` all live — which is otherwise the richest
+   * part of the diff and completely invisible.
+   */
+  authorizationUrl?: string;
+};
+
+/** Project a `ConformanceResult` onto the driver-independent record. */
+export function toEmulatorFlowRecord(
+  result: ConformanceResult,
+): EmulatorFlowRecord {
+  const authorizationUrl = findAuthorizationUrl(result);
+  return {
+    httpHistory: collectHttpHistory(result),
+    ...(authorizationUrl ? { authorizationUrl } : {}),
+  };
+}
+
 export type CaptureEmulatorTraceInput = {
   /** The completed (or partially completed) conformance run. */
   result: ConformanceResult;
@@ -271,8 +316,25 @@ export type CaptureEmulatorTraceInput = {
 export function captureEmulatorTrace(
   input: CaptureEmulatorTraceInput,
 ): GoldenTrace {
-  const history = collectHttpHistory(input.result);
-  const rawWire = history.map((entry, index) =>
+  const { result, ...rest } = input;
+  return captureEmulatorTraceFromFlow({
+    ...rest,
+    flow: toEmulatorFlowRecord(result),
+  });
+}
+
+/**
+ * Build a golden trace from a raw emulator flow record.
+ *
+ * The driver-independent entry point — see {@link EmulatorFlowRecord}. Use this
+ * when the emulator was not driven through `OAuthConformanceTest`: a direct
+ * `runOAuthStateMachine` call, the browser Inspector, or HP-43's per-host
+ * emulator.
+ */
+export function captureEmulatorTraceFromFlow(
+  input: Omit<CaptureEmulatorTraceInput, "result"> & { flow: EmulatorFlowRecord },
+): GoldenTrace {
+  const rawWire = input.flow.httpHistory.map((entry, index) =>
     toExchange(entry, index, input.scenario.mcpServerUrl),
   );
 
@@ -280,8 +342,8 @@ export function captureEmulatorTrace(
   // client obtained a client_id and before it redeems the code at /token. Placing
   // it by leg rather than by timestamp keeps the ordering finding meaningful even
   // though this exchange has no timestamp of its own.
-  const authorize = reconstructAuthorizeExchange(input.result, 0);
-  if (authorize) {
+  if (input.flow.authorizationUrl) {
+    const authorize = reconstructAuthorizeExchange(input.flow.authorizationUrl, 0);
     const tokenIndex = rawWire.findIndex(
       (exchange) => exchange.leg === "token" || exchange.leg === "refresh",
     );

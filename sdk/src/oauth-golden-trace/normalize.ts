@@ -392,6 +392,24 @@ export function normalizeHeaders(
       out[key] = normalizeUserAgent(rawValue, options);
       continue;
     }
+    // A header whose value IS a URL gets the full URL treatment, not just origin
+    // substitution — because its QUERY STRING can carry secrets.
+    //
+    // The motivating case: a conformant authorization server answers `/authorize`
+    // with `302 Location: <redirect_uri>?code=<authorization code>&state=…`. Any
+    // proxy or server-side capture of a real host records that header verbatim, so
+    // treating it as an opaque string would write a live authorization code into a
+    // committed artifact. Routing it through `normalizeUrl` applies the same
+    // per-param policy the request side already uses, redacting `code` and
+    // placeholding `state`.
+    //
+    // Found by `assertTraceIsRedacted` firing on the first capture that actually
+    // completed an authorize leg — the belt catching what the suspenders missed.
+    if (/^https?:\/\//i.test(rawValue.trim())) {
+      out[key] = normalizeUrl(rawValue.trim(), options).url;
+      continue;
+    }
+
     // `www-authenticate` carries `resource_metadata="<url>"`, which must be
     // origin-substituted or every trace looks host-specific.
     out[key] = substituteOrigins(rawValue, originMap);

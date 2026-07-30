@@ -146,6 +146,28 @@ describe("normalizeHeaders", () => {
     ).toBe("goose/{version}");
   });
 
+  it("redacts the authorization code out of a 302 Location header", () => {
+    // A conformant AS answers /authorize with
+    // `302 Location: <redirect_uri>?code=<code>&state=<state>`. Any proxy or
+    // server-side capture of a real host records that verbatim, so a URL-valued
+    // header has to get the same per-param treatment as a request URL or a live
+    // authorization code lands in a committed artifact.
+    const headers = normalizeHeaders(
+      {
+        Location:
+          "http://127.0.0.1:33418/callback?code=real-authorization-code-abcdefghijkl&state=Ux30hX8S90RxBF4a&iss=https://as.example.test",
+      },
+      OPTIONS,
+    );
+
+    expect(headers.location).toContain("code=[REDACTED]");
+    expect(headers.location).not.toContain("real-authorization-code");
+    expect(headers.location).toContain("state={state:len=16}");
+    // The loopback callback port is placeheld, and the issuer origin abstracted.
+    expect(headers.location).toContain("http://127.0.0.1:{port}/callback");
+    expect(headers.location).toContain("iss={as}");
+  });
+
   it("origin-substitutes inside www-authenticate", () => {
     const headers = normalizeHeaders(
       {

@@ -95,9 +95,15 @@ export type { TraceDiffMode, TraceDiffOptions } from "./diff.js";
 export {
   buildTraceId,
   captureEmulatorTrace,
+  captureEmulatorTraceFromFlow,
   collectHttpHistory,
+  dedupeWireArtifacts,
+  toEmulatorFlowRecord,
 } from "./from-conformance.js";
-export type { CaptureEmulatorTraceInput } from "./from-conformance.js";
+export type {
+  CaptureEmulatorTraceInput,
+  EmulatorFlowRecord,
+} from "./from-conformance.js";
 
 export { captureHarTrace } from "./from-har.js";
 export type { CaptureHarTraceInput, HarIngestReport } from "./from-har.js";

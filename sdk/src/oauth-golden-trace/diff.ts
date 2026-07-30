@@ -60,6 +60,50 @@ function equal(left: unknown, right: unknown): boolean {
   return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
 }
 
+/**
+ * Headers added by the HTTP stack, not chosen by the client.
+ *
+ * These have to be excluded when the two traces were recorded from DIFFERENT
+ * VANTAGE POINTS, because the two vantage points genuinely see different things:
+ *
+ *   - a CLIENT-side capture (`via: "mcpjam-emulator"`) records the headers the
+ *     client CODE set, before undici/the browser appends its own;
+ *   - a SERVER-side capture (`via: "har"` from our recording server, or a proxy)
+ *     records what ARRIVED, including everything the stack added in transit.
+ *
+ * So `host`, `content-length` and `accept-encoding` show up on the server-side
+ * trace and are missing from the client-side one for every request, in both a
+ * conformant and a broken emulator. Reporting them would add a fixed tax of false
+ * differences to every cross-vantage diff and teach a reviewer to skim past the
+ * header dimension — which is where the real findings live.
+ *
+ * They are NOT excluded when both traces share a vantage point: two server-side
+ * captures genuinely can differ here, and that would be a real finding.
+ */
+const TRANSPORT_HEADERS = new Set([
+  "host",
+  "connection",
+  "content-length",
+  "accept-encoding",
+  "keep-alive",
+  "transfer-encoding",
+  "te",
+  "upgrade",
+  "via",
+  "forwarded",
+  "x-forwarded-for",
+  "x-forwarded-host",
+  "x-forwarded-proto",
+  "sec-fetch-mode",
+  "sec-fetch-site",
+  "sec-fetch-dest",
+]);
+
+/** Client-side or server-side? Determined by how the trace was captured. */
+function vantageOf(trace: GoldenTrace): "client" | "server" {
+  return trace.capture.method.via === "mcpjam-emulator" ? "client" : "server";
+}
+
 function renderObservation<T>(observation: Observation<T>): unknown {
   switch (observation.state) {
     case "present":
@@ -288,10 +332,54 @@ function firstExchangeForLeg(
   return wire.find((exchange) => exchange.leg === leg);
 }
 
+/**
+ * Was the GOLDEN capture simply cut short?
+ *
+ * True when the golden trace's leg sequence is a strict prefix of the candidate's.
+ * That relationship is the signature of a TRUNCATED capture — a real-host recording
+ * that stopped because the operator could not drive the browser leg, or the proxy
+ * was detached — not of a client that behaves differently.
+ *
+ * It matters because the alternative is to report every leg past the truncation
+ * point as "the emulator hit an endpoint the real host did not", which is false:
+ * we did not observe the real host declining to hit it, we stopped watching. Those
+ * become gaps instead.
+ *
+ * Deliberately strict about the PREFIX: if the sequences diverge anywhere inside
+ * the overlap, this is real divergence and nothing is downgraded.
+ */
+function goldenIsTruncatedPrefix(
+  golden: GoldenTrace,
+  candidate: GoldenTrace,
+): boolean {
+  const goldenSequence = golden.wire.map((exchange) => exchange.leg);
+  const candidateSequence = candidate.wire.map((exchange) => exchange.leg);
+  if (goldenSequence.length >= candidateSequence.length) return false;
+  return goldenSequence.every((leg, index) => leg === candidateSequence[index]);
+}
+
 function orderingFindings(
   golden: GoldenTrace,
   candidate: GoldenTrace,
+  truncated: boolean,
 ): TraceDiffFinding[] {
+  const goldenSequence = golden.wire.map((exchange) => exchange.leg);
+  const candidateSequence = candidate.wire.map((exchange) => exchange.leg);
+
+  if (truncated) {
+    const extra = candidateSequence.slice(goldenSequence.length);
+    return [
+      {
+        path: "observations.legOrder",
+        dimension: "request-ordering",
+        severity: "gap",
+        message: `Ordering agrees for every stage the golden trace captured, but that capture stopped after \`${goldenSequence[goldenSequence.length - 1]}\`. The candidate continued through ${extra.map((leg) => `\`${leg}\``).join(", ")}, which the real host was never observed either doing or not doing. Complete the golden capture to compare these.`,
+        golden: goldenSequence,
+        candidate: candidateSequence,
+      },
+    ];
+  }
+
   const findings: TraceDiffFinding[] = [
     compareValue(
       "observations.legOrder",
@@ -304,8 +392,6 @@ function orderingFindings(
 
   // The full sequence catches repeat-count differences the first-appearance
   // order hides — e.g. a client that retries AS discovery at a second rung.
-  const goldenSequence = golden.wire.map((exchange) => exchange.leg);
-  const candidateSequence = candidate.wire.map((exchange) => exchange.leg);
   if (!equal(goldenSequence, candidateSequence)) {
     findings.push({
       path: "wire[].leg",
@@ -324,6 +410,7 @@ function orderingFindings(
 function endpointFindings(
   golden: GoldenTrace,
   candidate: GoldenTrace,
+  truncated: boolean,
 ): TraceDiffFinding[] {
   const findings: TraceDiffFinding[] = [];
   const goldenSet = golden.observations.endpointsHit;
@@ -331,6 +418,30 @@ function endpointFindings(
 
   const missing = goldenSet.filter((endpoint) => !candidateSet.includes(endpoint));
   const extra = candidateSet.filter((endpoint) => !goldenSet.includes(endpoint));
+
+  // A truncated golden capture cannot support "the real host does not hit this".
+  if (truncated && extra.length > 0) {
+    findings.push({
+      path: "observations.endpointsHit",
+      dimension: "endpoints",
+      severity: "gap",
+      message: `The candidate hit ${extra.length} endpoint(s) beyond where the golden capture stopped. Not a difference: the real host was never observed declining to hit them.`,
+      golden: null,
+      candidate: extra,
+    });
+    if (missing.length === 0) {
+      findings.push(
+        compareValue(
+          "observations.discoveryLadder",
+          "endpoints",
+          "Discovery ladder (well-known paths, in order tried)",
+          golden.observations.discoveryLadder,
+          candidate.observations.discoveryLadder,
+        ),
+      );
+      return findings;
+    }
+  }
 
   if (missing.length === 0 && extra.length === 0) {
     findings.push({
@@ -393,6 +504,11 @@ function perLegFindings(
   const ignoreHeaders = new Set(
     (options.ignoreHeaders ?? []).map((header) => header.toLowerCase()),
   );
+  // Cross-vantage diffs cannot compare stack-added headers. See TRANSPORT_HEADERS.
+  const crossVantage = vantageOf(golden) !== vantageOf(candidate);
+  if (crossVantage) {
+    for (const header of TRANSPORT_HEADERS) ignoreHeaders.add(header);
+  }
 
   const legs: TraceLeg[] = [];
   for (const leg of [
@@ -918,10 +1034,13 @@ export function diffGoldenTraces(
   const findings: TraceDiffFinding[] = [...gates];
 
   if (!gates.some((finding) => finding.severity === "incomparable")) {
+    // Computed once and threaded through, so the ordering and endpoint dimensions
+    // agree about whether the golden capture was cut short.
+    const truncated = goldenIsTruncatedPrefix(golden, candidate);
     findings.push(
       ...subjectFindings(golden, candidate, mode),
-      ...orderingFindings(golden, candidate),
-      ...endpointFindings(golden, candidate),
+      ...orderingFindings(golden, candidate, truncated),
+      ...endpointFindings(golden, candidate, truncated),
       ...perLegFindings(golden, candidate, options),
       ...protocolVersionFindings(golden, candidate),
       ...resourceIndicatorFindings(golden, candidate),

@@ -56,7 +56,7 @@
       "legBasis": "wire heuristic: JSON-RPC initialize, no Authorization",
       "request": {
         "method": "POST",
-        "url": "http://127.0.0.1:{port}/mcp",
+        "url": "{mcp_server}/mcp",
         "headers": {
           "accept": "application/json, text/event-stream",
           "accept-encoding": "identity",
@@ -112,7 +112,7 @@
       "legBasis": "wire heuristic: well-known path: oauth-protected-resource",
       "request": {
         "method": "GET",
-        "url": "http://127.0.0.1:{port}/.well-known/oauth-protected-resource/mcp",
+        "url": "{mcp_server}/.well-known/oauth-protected-resource/mcp",
         "headers": {
           "accept": "*/*",
           "accept-encoding": "identity",
@@ -130,9 +130,9 @@
         "body": {
           "encoding": "json",
           "json": {
-            "resource": "http://127.0.0.1:{port}/mcp",
+            "resource": "{mcp_server}/mcp",
             "authorization_servers": [
-              "http://127.0.0.1:{port}"
+              "{mcp_server}"
             ],
             "scopes_supported": [
               "mcp:read",
@@ -151,7 +151,7 @@
       "legBasis": "wire heuristic: well-known path: authorization-server metadata",
       "request": {
         "method": "GET",
-        "url": "http://127.0.0.1:{port}/.well-known/oauth-authorization-server",
+        "url": "{mcp_server}/.well-known/oauth-authorization-server",
         "headers": {
           "accept": "application/json",
           "accept-encoding": "identity",
@@ -169,10 +169,10 @@
         "body": {
           "encoding": "json",
           "json": {
-            "issuer": "http://127.0.0.1:{port}",
-            "authorization_endpoint": "http://127.0.0.1:{port}/authorize",
-            "token_endpoint": "http://127.0.0.1:{port}/token",
-            "registration_endpoint": "http://127.0.0.1:{port}/register",
+            "issuer": "{mcp_server}",
+            "authorization_endpoint": "{mcp_server}/authorize",
+            "token_endpoint": "{mcp_server}/token",
+            "registration_endpoint": "{mcp_server}/register",
             "response_types_supported": [
               "code"
             ],
@@ -201,7 +201,7 @@
       "legBasis": "wire heuristic: POST to a /register path",
       "request": {
         "method": "POST",
-        "url": "http://127.0.0.1:{port}/register",
+        "url": "{mcp_server}/register",
         "headers": {
           "accept": "application/json, text/event-stream",
           "accept-encoding": "identity",
@@ -266,10 +266,10 @@
       "dcr-register"
     ],
     "endpointsHit": [
-      "http://127.0.0.1:{port}/mcp",
-      "http://127.0.0.1:{port}/.well-known/oauth-protected-resource/mcp",
-      "http://127.0.0.1:{port}/.well-known/oauth-authorization-server",
-      "http://127.0.0.1:{port}/register"
+      "{mcp_server}/mcp",
+      "{mcp_server}/.well-known/oauth-protected-resource/mcp",
+      "{mcp_server}/.well-known/oauth-authorization-server",
+      "{mcp_server}/register"
     ],
     "discoveryLadder": [
       "/.well-known/oauth-protected-resource/mcp",
