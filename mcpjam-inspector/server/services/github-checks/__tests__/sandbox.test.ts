@@ -449,10 +449,10 @@ describe("waitForMcpInitialize", () => {
   it("accepts an SSE-framed initialize result (streamable HTTP servers send either)", async () => {
     const fetchImpl = vi.fn(
       async () =>
-        new Response(
-          SSE_INITIALIZE_FRAME,
-          { status: 200, headers: { "content-type": "text/event-stream" } }
-        )
+        new Response(SSE_INITIALIZE_FRAME, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        })
     ) as unknown as typeof fetch;
     expect(
       await waitForMcpInitialize("https://box/mcp", { ...seams, fetchImpl })
@@ -472,9 +472,7 @@ describe("waitForMcpInitialize", () => {
           new ReadableStream<Uint8Array>({
             start(controller) {
               controller.enqueue(
-                new TextEncoder().encode(
-                  SSE_INITIALIZE_FRAME
-                )
+                new TextEncoder().encode(SSE_INITIALIZE_FRAME)
               );
               // …and then nothing. No close(): the stream stays open, exactly
               // like a real session.
@@ -502,8 +500,7 @@ describe("waitForMcpInitialize", () => {
   });
 
   it("decides from a frame that arrives split across chunks", async () => {
-    const payload =
-      SSE_INITIALIZE_FRAME.replace("event: message\n", "");
+    const payload = SSE_INITIALIZE_FRAME.replace("event: message\n", "");
     const cut = 40;
     const fetchImpl = vi.fn(
       async () =>
@@ -613,6 +610,125 @@ describe("waitForMcpInitialize", () => {
             jsonrpc: "2.0",
             id: 1,
             result: { protocolVersion: "bogus-9999" },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 5,
+      })
+    ).toBe(false);
+  });
+
+  it("accepts a modern-only server through server/discover", async () => {
+    // A 2026-07-28 endpoint (the official handler with `legacy: "reject"`) has no
+    // `initialize` at all. The eval run negotiates eras automatically, so this is
+    // a server it can drive — calling it `server_unhealthy` would put a red X on
+    // a good PR. Probing alternates eras, so the discover attempt follows the
+    // rejected legacy one.
+    const seen: string[] = [];
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      const parsed = JSON.parse(String(init.body)) as { method: string };
+      seen.push(parsed.method);
+      if (parsed.method === "initialize") {
+        return new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            error: { code: -32600, message: "legacy era rejected" },
+          }),
+          { status: 400, headers: { "content-type": "application/json" } }
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 2,
+          result: {
+            supportedVersions: ["2026-07-28"],
+            capabilities: { tools: {} },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    }) as unknown as typeof fetch;
+
+    expect(
+      await waitForMcpInitialize("https://box/mcp", { ...seams, fetchImpl })
+    ).toBe(true);
+    expect(seen).toEqual(["initialize", "server/discover"]);
+  });
+
+  it("does not accept a discover result offering no version we speak", async () => {
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      const parsed = JSON.parse(String(init.body)) as { method: string };
+      if (parsed.method === "initialize") {
+        return new Response("{}", {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 2,
+          result: { supportedVersions: ["3099-01-01"], capabilities: {} },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    }) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 5,
+      })
+    ).toBe(false);
+  });
+
+  it("joins an event's data fields before parsing them", async () => {
+    // SSE concatenates consecutive `data:` fields within one event. A server that
+    // spreads one JSON-RPC message across several is legal; parsing each line
+    // alone made every fragment fail and reported a false server_unhealthy.
+    // Fields are joined with a newline, per spec — which is exactly what a
+    // pretty-printed payload needs, since a newline is JSON whitespace between
+    // tokens. (A server splitting mid-token would be sending malformed SSE.)
+    const pretty = JSON.stringify(
+      { jsonrpc: "2.0", id: 1, result: INITIALIZE_RESULT },
+      null,
+      2
+    );
+    const frame = pretty
+      .split("\n")
+      .map((line) => `data: ${line}`)
+      .join("\n");
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(`event: message\n${frame}\n\n`, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        })
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", { ...seams, fetchImpl })
+    ).toBe(true);
+  });
+
+  it("does not accept a serverInfo without a name and version", async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: {
+              protocolVersion: "2025-06-18",
+              capabilities: {},
+              serverInfo: {},
+            },
           }),
           { status: 200, headers: { "content-type": "application/json" } }
         )

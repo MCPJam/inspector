@@ -126,8 +126,18 @@ const SERVER_LOG_CHECK_SECONDS = 30;
  */
 const HEALTH_PROBE_PROTOCOL_VERSION = "2025-06-18";
 
-/** The id the probe sends, and therefore the id a real answer must carry. */
-const HEALTH_PROBE_REQUEST_ID = 1;
+/** The version the modern-era probe self-describes with. */
+const MODERN_PROBE_PROTOCOL_VERSION = "2026-07-28";
+
+/** The ids the probes send, and therefore the ids a real answer must carry. */
+const LEGACY_PROBE_REQUEST_ID = 1;
+const MODERN_PROBE_REQUEST_ID = 2;
+
+/** Who the probe says it is, in both eras. */
+const PROBE_CLIENT_INFO = {
+  name: "mcpjam-github-checks-probe",
+  version: "1.0.0",
+} as const;
 
 /**
  * Versions the probe will accept back from the PR's server.
@@ -596,15 +606,22 @@ async function readLogTail(sandbox: CheckSandbox): Promise<string> {
 }
 
 /**
- * Poll the server with a real JSON-RPC `initialize` until it answers.
+ * Poll the server until it answers a real MCP request.
  *
  * A TCP connect or an HTTP 200 on `/` would be a weaker signal: a framework
  * often serves before its MCP transport is mounted, and the eval run's very
- * first act is an `initialize`. Probing with the actual handshake means "healthy"
- * means the same thing here and there.
+ * first act is a real request. Probing with the real thing means "healthy" means
+ * the same thing here and there.
  *
- * Accepts either a JSON body or an SSE frame — streamable-HTTP servers legally
- * answer with either.
+ * BOTH eras are probed, alternating one per attempt: the legacy `initialize`
+ * handshake and the modern `server/discover`. The eval run connects with
+ * automatic era negotiation, so a modern-only endpoint (the official handler with
+ * `legacy: "reject"`, say) is one it can drive perfectly well — probing legacy
+ * alone would call that server `server_unhealthy` and put a red X on a good PR.
+ * Either answer proves the same thing this probe is asking.
+ *
+ * Accepts a JSON body or an SSE frame for either — streamable-HTTP servers
+ * legally answer with either.
  */
 export async function waitForMcpInitialize(
   url: string,
@@ -623,16 +640,9 @@ export async function waitForMcpInitialize(
   const pause = options?.sleep ?? ((ms: number) => sleep(ms));
 
   const deadline = now() + timeoutMs;
-  const body = JSON.stringify({
-    jsonrpc: "2.0",
-    id: 1,
-    method: "initialize",
-    params: {
-      protocolVersion: HEALTH_PROBE_PROTOCOL_VERSION,
-      capabilities: {},
-      clientInfo: { name: "mcpjam-github-checks-probe", version: "1.0.0" },
-    },
-  });
+  // Legacy first: nearly every server speaks it, so the common case answers on
+  // the very first attempt. A modern-only endpoint answers on the second.
+  const eras = [legacyInitializeProbe(), modernDiscoverProbe()];
 
   let attempts = 0;
   while (now() <= deadline) {
@@ -648,41 +658,108 @@ export async function waitForMcpInitialize(
       1,
       Math.min(PROBE_ATTEMPT_TIMEOUT_MS, deadline - now())
     );
+    // One era per attempt, ALTERNATING — not both inside one attempt. A server
+    // that accepts a POST and then holds the response open answers the first
+    // era's request by never finishing it, so that era would eat the whole
+    // budget every time and the other would never get a turn: a legacy-only
+    // server would read as `server_unhealthy` because its probe never ran. Over
+    // a two-minute window each era still gets tens of attempts.
+    const era = eras[(attempts - 1) % eras.length];
     const abort = new AbortController();
     const abortTimer = setTimeout(() => abort.abort(), attemptBudgetMs);
     try {
       const response = await doFetch(url, {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          accept: "application/json, text/event-stream",
-        },
-        body,
+        headers: era.headers,
+        body: era.body,
         // The same signal covers the body read below: aborting it errors the
         // response stream, so a server that sends headers and then stalls is
         // bounded too.
         signal: abort.signal,
       });
-      if (response.ok && (await probeResponseIsHealthy(response))) {
+      if (
+        response.ok &&
+        (await probeResponseIsHealthy(response, era.accepts))
+      ) {
         return true;
       }
     } catch {
-      // Connection refused, DNS not ready, or our own abort — all expected
-      // while it boots, all "not healthy yet".
+      // Connection refused, DNS not ready, this era rejected outright, or our
+      // own abort — all "not healthy yet, try the other era next poll".
     } finally {
       clearTimeout(abortTimer);
-      // Tear the request down unconditionally. A streamable-HTTP server holds the
-      // response stream open after answering, and we have our answer.
+      // Tear the requests down unconditionally. A streamable-HTTP server holds
+      // the response stream open after answering, and we have our answer.
       abort.abort();
     }
     if (now() + intervalMs > deadline) break;
     await pause(intervalMs);
   }
-  logger.warn("[github-checks] server never completed MCP initialize", {
+  logger.warn("[github-checks] server never answered an MCP request", {
     url,
     attempts,
   });
   return false;
+}
+
+/** One era's probe: what to send, and what counts as an answer. */
+interface EraProbe {
+  headers: Record<string, string>;
+  body: string;
+  accepts: (parsed: unknown) => boolean;
+}
+
+/**
+ * The legacy (2025-era) handshake: `initialize`, negotiated in the body.
+ */
+function legacyInitializeProbe(): EraProbe {
+  return {
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: LEGACY_PROBE_REQUEST_ID,
+      method: "initialize",
+      params: {
+        protocolVersion: HEALTH_PROBE_PROTOCOL_VERSION,
+        capabilities: {},
+        clientInfo: PROBE_CLIENT_INFO,
+      },
+    }),
+    accepts: isUsableInitializeResponse,
+  };
+}
+
+/**
+ * The modern (2026-07-28) era has no handshake: every request self-describes
+ * through a `_meta` envelope, and `server/discover` is its one universally
+ * available request — the same liveness probe the manager itself uses.
+ */
+function modernDiscoverProbe(): EraProbe {
+  return {
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      "mcp-protocol-version": MODERN_PROBE_PROTOCOL_VERSION,
+      "mcp-method": "server/discover",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: MODERN_PROBE_REQUEST_ID,
+      method: "server/discover",
+      params: {
+        _meta: {
+          "io.modelcontextprotocol/protocolVersion":
+            MODERN_PROBE_PROTOCOL_VERSION,
+          "io.modelcontextprotocol/clientCapabilities": {},
+          "io.modelcontextprotocol/clientInfo": PROBE_CLIENT_INFO,
+        },
+      },
+    }),
+    accepts: isUsableDiscoverResponse,
+  };
 }
 
 /**
@@ -701,7 +778,10 @@ export async function waitForMcpInitialize(
  * initialize result, then cancel the stream. `PROBE_MAX_RESPONSE_BYTES` bounds
  * a server that streams unrelated output at us forever.
  */
-async function probeResponseIsHealthy(response: Response): Promise<boolean> {
+async function probeResponseIsHealthy(
+  response: Response,
+  accepts: (parsed: unknown) => boolean
+): Promise<boolean> {
   const body = (response as { body?: unknown }).body as
     | ReadableStream<Uint8Array>
     | null
@@ -709,7 +789,7 @@ async function probeResponseIsHealthy(response: Response): Promise<boolean> {
   if (!body || typeof body.getReader !== "function") {
     // No streaming body available (a buffered runtime, or a test stub): the
     // payload is already in hand, so reading it cannot block.
-    return looksLikeInitializeResult(await response.text());
+    return carriesAcceptedAnswer(await response.text(), accepts);
   }
 
   const reader = body.getReader();
@@ -732,14 +812,14 @@ async function probeResponseIsHealthy(response: Response): Promise<boolean> {
         text += decoder.decode(value.subarray(0, consumed), { stream: true });
         // Checked per chunk: a frame can arrive split, and a partial JSON just
         // fails to parse and waits for the rest.
-        if (looksLikeInitializeResult(text)) return true;
+        if (carriesAcceptedAnswer(text, accepts)) return true;
       }
       if (done) {
         text += decoder.decode();
-        return looksLikeInitializeResult(text);
+        return carriesAcceptedAnswer(text, accepts);
       }
     }
-    return looksLikeInitializeResult(text);
+    return carriesAcceptedAnswer(text, accepts);
   } finally {
     // We are done with this response either way — a healthy server is still
     // holding the stream open, so drop it rather than leaking the socket.
@@ -748,32 +828,64 @@ async function probeResponseIsHealthy(response: Response): Promise<boolean> {
 }
 
 /**
- * A usable `initialize` answer is one the REAL client would also accept. An
- * error response is still a live MCP server, but not a usable one — the eval
- * run's own handshake would fail the same way, so treat it as not-yet-healthy
- * and keep polling until the deadline.
+ * Whether the text read so far carries an answer this era accepts. An error
+ * response is still a live MCP server, but not a usable one — the eval run's own
+ * connection would fail the same way, so treat it as not-yet-healthy and keep
+ * polling until the deadline.
  */
-function looksLikeInitializeResult(text: string): boolean {
-  // SSE framing is detected by a line that STARTS with `data:`, not by the
-  // substring appearing anywhere. A single-line JSON body can legitimately
-  // contain "data:" inside a string (a serverInfo name, an instructions blob, a
-  // tool description); treating that as SSE yielded zero payloads and a false
-  // `server_unhealthy`.
-  const frames = text
-    .split(/\n/)
-    .filter((line) => line.startsWith("data:"))
-    .map((line) => line.slice("data:".length).trim());
-  const payloads = frames.length > 0 ? frames : [text];
-
-  for (const payload of payloads) {
-    if (!payload) continue;
+function carriesAcceptedAnswer(
+  text: string,
+  accepts: (parsed: unknown) => boolean
+): boolean {
+  for (const payload of ssePayloads(text)) {
     try {
-      if (isUsableInitializeResponse(JSON.parse(payload))) return true;
+      if (accepts(JSON.parse(payload))) return true;
     } catch {
       // Not JSON (a proxy's HTML error page, a partial frame) — keep looking.
     }
   }
   return false;
+}
+
+/**
+ * The candidate JSON payloads in a probe response body.
+ *
+ * SSE framing is detected by a line that STARTS with `data:`, not by the
+ * substring appearing anywhere: a single-line JSON body can legitimately contain
+ * "data:" inside a string (a serverInfo name, an instructions blob, a tool
+ * description), and treating that as SSE yielded zero payloads and a false
+ * `server_unhealthy`.
+ *
+ * Within one event, consecutive `data:` fields are JOINED with newlines, per SSE
+ * semantics. A server that spreads one JSON-RPC message across several fields is
+ * legal, and parsing each line on its own made every fragment fail to parse.
+ */
+function ssePayloads(text: string): string[] {
+  const payloads: string[] = [];
+  let current: string[] = [];
+  let sawFrame = false;
+  const flush = () => {
+    if (current.length > 0) {
+      payloads.push(current.join("\n"));
+      current = [];
+    }
+  };
+
+  for (const rawLine of text.split(/\n/)) {
+    const line = rawLine.replace(/\r$/, "");
+    if (line.startsWith("data:")) {
+      sawFrame = true;
+      current.push(line.slice("data:".length).trim());
+      continue;
+    }
+    // A blank line ends the event. Any other field (`event:`, `id:`, a comment)
+    // carries no data but does not split it either.
+    if (line === "") flush();
+  }
+  flush();
+
+  if (!sawFrame) return text ? [text] : [];
+  return payloads.filter((payload) => payload.length > 0);
 }
 
 /**
@@ -793,32 +905,82 @@ function looksLikeInitializeResult(text: string): boolean {
  *   - `capabilities` and `serverInfo`, both required by `InitializeResultSchema`.
  */
 function isUsableInitializeResponse(parsed: unknown): boolean {
-  if (typeof parsed !== "object" || parsed === null) return false;
-  const message = parsed as {
-    jsonrpc?: unknown;
-    id?: unknown;
-    result?: unknown;
-  };
-  if (message.jsonrpc !== "2.0") return false;
-  if (message.id !== HEALTH_PROBE_REQUEST_ID) return false;
-  if (typeof message.result !== "object" || message.result === null) {
-    return false;
-  }
-  const result = message.result as {
+  const result = jsonRpcResultFor(parsed, LEGACY_PROBE_REQUEST_ID);
+  if (!result) return false;
+  const initialize = result as {
     protocolVersion?: unknown;
     capabilities?: unknown;
     serverInfo?: unknown;
   };
   if (
-    typeof result.protocolVersion !== "string" ||
-    !HEALTH_PROBE_ACCEPTED_VERSIONS.has(result.protocolVersion)
+    typeof initialize.protocolVersion !== "string" ||
+    !HEALTH_PROBE_ACCEPTED_VERSIONS.has(initialize.protocolVersion)
   ) {
     return false;
   }
-  if (typeof result.capabilities !== "object" || result.capabilities === null) {
+  if (!isPlainObject(initialize.capabilities)) return false;
+  return isServerIdentity(initialize.serverInfo);
+}
+
+/**
+ * Whether one parsed payload is a `server/discover` answer the eval run's client
+ * would accept. The modern era's equivalent of the checks above:
+ *
+ *   - the envelope and our id;
+ *   - `supportedVersions`, a non-empty list of strings, with at least one the
+ *     client can actually speak — an endpoint offering nothing in common is no
+ *     more usable than a legacy server naming an unsupported version;
+ *   - `capabilities`, an object.
+ *
+ * Server identity lives in `_meta` here and is a SHOULD, not a member of the
+ * result, so its absence is not a defect and is not required.
+ */
+function isUsableDiscoverResponse(parsed: unknown): boolean {
+  const result = jsonRpcResultFor(parsed, MODERN_PROBE_REQUEST_ID);
+  if (!result) return false;
+  const discover = result as {
+    supportedVersions?: unknown;
+    capabilities?: unknown;
+  };
+  if (!Array.isArray(discover.supportedVersions)) return false;
+  const offered = discover.supportedVersions.filter(
+    (version): version is string => typeof version === "string"
+  );
+  if (offered.length !== discover.supportedVersions.length) return false;
+  if (!offered.some((version) => HEALTH_PROBE_ACCEPTED_VERSIONS.has(version))) {
     return false;
   }
-  return typeof result.serverInfo === "object" && result.serverInfo !== null;
+  return isPlainObject(discover.capabilities);
+}
+
+/**
+ * The `result` of a JSON-RPC response to OUR request, or null. Rejects an error
+ * response, a notification, and an answer bearing someone else's id.
+ */
+function jsonRpcResultFor(parsed: unknown, expectedId: number): object | null {
+  if (!isPlainObject(parsed)) return null;
+  const message = parsed as {
+    jsonrpc?: unknown;
+    id?: unknown;
+    result?: unknown;
+  };
+  if (message.jsonrpc !== "2.0") return null;
+  if (message.id !== expectedId) return null;
+  return isPlainObject(message.result) ? (message.result as object) : null;
+}
+
+/** An object, and not an array — `typeof [] === "object"` alone is too loose. */
+function isPlainObject(value: unknown): boolean {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** `{ name, version }`, both strings — what the client's schema requires. */
+function isServerIdentity(value: unknown): boolean {
+  if (!isPlainObject(value)) return false;
+  const identity = value as { name?: unknown; version?: unknown };
+  return (
+    typeof identity.name === "string" && typeof identity.version === "string"
+  );
 }
 
 /** Best-effort teardown. E2B's TTL + `onTimeout: "kill"` is the real backstop. */
