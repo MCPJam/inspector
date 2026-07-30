@@ -6,6 +6,10 @@ import {
   serializeHarnessMcpJson,
   type HarnessProxyServerInput,
 } from "../mcp-config.js";
+import {
+  HARNESS_SCOPE_STEP_UP_CORRELATION_HEADER,
+  HARNESS_SCOPE_STEP_UP_CORRELATION_QUERY,
+} from "../harness-scope-step-up.js";
 
 const srv = (
   name: string,
@@ -57,6 +61,24 @@ describe("buildHarnessProxyMcpJson", () => {
       url: "https://t/api/mcp/adapter-http/local?k=1",
     });
     expect(out.mcpServers.local.headers).toBeUndefined();
+  });
+
+  it("carries the opaque scope-step-up correlation on the local plane", () => {
+    const correlationId = "11111111-1111-4111-8111-111111111111";
+    const out = buildHarnessProxyMcpJson([
+      {
+        name: "local",
+        proxyUrl: "https://t/api/mcp/adapter-http/local?k=1",
+        scopeStepUpCorrelationId: correlationId,
+      },
+    ]);
+    expect(out.mcpServers.local.url).toBe(
+      `https://t/api/mcp/adapter-http/local?k=1&${HARNESS_SCOPE_STEP_UP_CORRELATION_QUERY}=${correlationId}`,
+    );
+    expect(out.mcpServers.local.headers).toEqual({
+      [HARNESS_SCOPE_STEP_UP_CORRELATION_HEADER]: correlationId,
+    });
+    expect(JSON.stringify(out).toLowerCase()).not.toContain("authorization");
   });
 });
 

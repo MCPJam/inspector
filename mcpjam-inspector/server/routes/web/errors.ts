@@ -101,6 +101,13 @@ export function webError(
     string,
     unknown
   > & { normalized?: NormalizedError };
+  // Stash the real code/message for `requestLogContextMiddleware`. A route that
+  // *returns* an error response (rather than throwing) leaves the middleware
+  // with nothing but a status code, so every such 5xx used to log as the
+  // catch-all "internal_error" regardless of its actual cause.
+  if (typeof c?.set === "function") {
+    c.set("webErrorMeta", { status, code, message });
+  }
   return c.json(
     {
       ...restExtras,
