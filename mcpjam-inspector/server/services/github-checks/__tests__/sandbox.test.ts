@@ -244,6 +244,30 @@ describe("buildAndStart", () => {
     expect((error as CheckStepError).outcome).toBe("infra_error");
   });
 
+  it("still says infra_error when an E2B outage surfaces AFTER the deadline", async () => {
+    // The other direction: a spent clock must not turn an outage into the PR's
+    // failure just because it arrived late. E2B's own description of the failure
+    // closes the door the clock opened.
+    const box = fakeSandbox({
+      throwOn: (command) =>
+        command.includes("npm run build")
+          ? Object.assign(
+              new Error(
+                "connection error: This error is likely due to exceeding 'requestTimeoutMs'."
+              ),
+              { name: "TimeoutError" }
+            )
+          : undefined,
+    });
+
+    const error = await buildAndStart(box.sandbox, RECIPE, {
+      fetchImpl: vi.fn(async () => okInitialize()) as unknown as typeof fetch,
+      buildTimeoutMs: 0,
+    }).catch((e) => e as CheckStepError);
+
+    expect((error as CheckStepError).outcome).toBe("infra_error");
+  });
+
   it("gives the PR's server a timeout covering the sandbox lifetime", async () => {
     // E2B's `timeoutMs` defaults to 60 SECONDS and applies to background
     // commands too, so an unset value kills the server (and its stderr stream)

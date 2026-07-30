@@ -255,13 +255,17 @@ async function runForeground(
      * exit code, which would otherwise land in the transport branch below and
      * conclude `neutral`, letting a hanging build dodge a red check.
      *
-     * Decided by ELAPSED TIME against the deadline we set, and by nothing else.
-     * The error's identity cannot be used: E2B raises `TimeoutError` for
-     * `Code.Unavailable` and `Code.Canceled` as well as `DeadlineExceeded`, so
-     * matching on the name would report an E2B outage during `npm ci` as the
-     * PR's broken build — a red X on a good PR, the one failure this taxonomy
-     * exists to prevent. Elapsed time is exact here, since the deadline is what
-     * fires the abort.
+     * Two conditions, and both must hold: the clock we set is genuinely spent,
+     * AND the error does not identify itself as a transport failure.
+     *
+     * Neither alone is enough, in opposite directions. The error's NAME cannot
+     * decide it, because E2B raises `TimeoutError` for `Code.Unavailable` and
+     * `Code.Canceled` too — an E2B outage during `npm ci` would become the PR's
+     * broken build. Elapsed time cannot decide it alone either, because an
+     * outage that happens to surface after the deadline would be attributed the
+     * same way. So the clock opens the door and E2B's own description of the
+     * failure can still close it, which biases every uncertain case toward
+     * `infra_error` (neutral) rather than a red X on a good PR.
      */
     timeoutOutcome: CheckStepOutcome;
   }
@@ -286,7 +290,10 @@ async function runForeground(
         stderr: exit.stderr ?? "",
       };
     }
-    if (Date.now() - startedAt >= opts.timeoutMs) {
+    if (
+      Date.now() - startedAt >= opts.timeoutMs &&
+      !looksLikeSandboxTransportFailure(error)
+    ) {
       throw new CheckStepError(
         opts.timeoutOutcome,
         `command exceeded its ${Math.round(opts.timeoutMs / 1000)}s deadline`,
@@ -299,6 +306,20 @@ async function runForeground(
       `sandbox command failed: ${errorMessage(error)}`
     );
   }
+}
+
+/**
+ * Does the error say the SANDBOX failed, rather than the command overrunning?
+ *
+ * E2B funnels three distinct RPC conditions into one `TimeoutError`, and only
+ * `DeadlineExceeded` is the command's own deadline. The other two describe
+ * themselves unmistakably — the sandbox being unavailable, or the per-request
+ * timeout — and those are ours, not the PR's.
+ */
+function looksLikeSandboxTransportFailure(error: unknown): boolean {
+  return /requestTimeoutMs|sandbox timeout|handshake|unavailable|canceled|cancelled/i.test(
+    errorMessage(error)
+  );
 }
 
 /**
