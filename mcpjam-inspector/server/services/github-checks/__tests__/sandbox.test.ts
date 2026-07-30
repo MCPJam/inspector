@@ -395,6 +395,56 @@ describe("waitForMcpInitialize", () => {
     ).toBe(false);
   });
 
+  it("bounds each attempt so a server that accepts and never answers cannot hang the check", async () => {
+    // Untrusted PR code that takes the socket and goes silent. Without a
+    // per-attempt bound this await never returns and the check occupies the
+    // worker's only in-flight slot until the sandbox TTL.
+    const fetchImpl = vi.fn(
+      (_url: string, init?: { signal?: AbortSignal }) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () =>
+            reject(new Error("aborted"))
+          );
+        })
+    ) as unknown as typeof fetch;
+
+    const started = Date.now();
+    const result = await waitForMcpInitialize("https://box/mcp", {
+      fetchImpl,
+      timeoutMs: 150,
+      intervalMs: 10,
+    });
+    expect(result).toBe(false);
+    // Bounded by the health deadline, not by the server's patience.
+    expect(Date.now() - started).toBeLessThan(3_000);
+    expect(
+      (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1].signal
+    ).toBeDefined();
+  });
+
+  it('does not misread a JSON body that merely contains "data:" as an SSE frame', async () => {
+    // A serverInfo name, instructions blob, or tool description can contain
+    // "data:" — classifying the whole body as SSE yielded zero payloads and a
+    // false server_unhealthy.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            result: {
+              protocolVersion: "2025-06-18",
+              serverInfo: { name: "reads data: urls", version: "1" },
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", { ...seams, fetchImpl })
+    ).toBe(true);
+  });
+
   it("gives up at the deadline", async () => {
     const fetchImpl = vi.fn(async () => {
       throw new Error("refused");

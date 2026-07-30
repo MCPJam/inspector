@@ -778,13 +778,11 @@ async function shutdown() {
   }
 
   shuttingDown = true;
-  await scheduledEvalsWorker?.stop();
-  await githubChecksWorker?.stop();
-  if (orphanCheckInterval) {
-    clearInterval(orphanCheckInterval);
-    orphanCheckInterval = undefined;
-  }
 
+  // Arm the force-exit deadline FIRST. Both worker `stop()` calls wait for their
+  // in-flight work to settle, and a github check legitimately runs for tens of
+  // minutes — created after the awaits, this timer would never bound the case it
+  // exists for, and a deploy would hang until the platform killed the process.
   const forceExitTimer = setTimeout(() => {
     appLogger.error(
       "Shutdown timed out; forcing process exit.",
@@ -793,6 +791,13 @@ async function shutdown() {
     exitAfterLogFlush(1);
   }, shutdownForceExitMs);
   forceExitTimer.unref();
+
+  await scheduledEvalsWorker?.stop();
+  await githubChecksWorker?.stop();
+  if (orphanCheckInterval) {
+    clearInterval(orphanCheckInterval);
+    orphanCheckInterval = undefined;
+  }
 
   appLogger.info("Shutting down gracefully...");
   try {

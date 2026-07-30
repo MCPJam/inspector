@@ -114,6 +114,30 @@ function callTool(
   }
 }
 
+function isRpcRequest(value: unknown): value is JsonRpcRequest {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    typeof (value as JsonRpcRequest).method === "string"
+  );
+}
+
+function invalidRequest(value: unknown): { status: number; body?: unknown } {
+  const id =
+    typeof value === "object" && value !== null
+      ? (value as JsonRpcRequest).id ?? null
+      : null;
+  return {
+    status: 400,
+    body: {
+      jsonrpc: "2.0",
+      id,
+      error: { code: -32600, message: "Invalid Request" },
+    },
+  };
+}
+
 function handleRpc(request: JsonRpcRequest): {
   status: number;
   body?: unknown;
@@ -253,7 +277,9 @@ const server = createServer(async (req, res) => {
   // doesn't look like a broken server.
   if (Array.isArray(parsed)) {
     const bodies = parsed
-      .map((entry) => handleRpc(entry))
+      .map((entry) =>
+        isRpcRequest(entry) ? handleRpc(entry) : invalidRequest(entry)
+      )
       .filter((entry) => entry.body !== undefined)
       .map((entry) => entry.body);
     if (bodies.length === 0) {
@@ -264,7 +290,12 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  const { status, body } = handleRpc(parsed);
+  // `JSON.parse` happily yields `null`, a number, or a string — none of which
+  // have a `.method`. Dispatching those threw inside the request handler and
+  // left the client hanging instead of getting a JSON-RPC error.
+  const { status, body } = isRpcRequest(parsed)
+    ? handleRpc(parsed)
+    : invalidRequest(parsed);
   if (body === undefined) {
     res.writeHead(status).end();
     return;

@@ -13,14 +13,16 @@ the ops step is "copy and push" rather than "write from scratch".
 ```bash
 cp -R test-servers/mcp-check-fixture /tmp/mcp-check-fixture
 cd /tmp/mcp-check-fixture
-npm install          # generates package-lock.json — REQUIRED, see below
 git init && git add -A && git commit -m "mcp-check-fixture: minimal MCP server"
 gh repo create mcpjam/mcp-check-fixture --public --source=. --push
 ```
 
-`npm install` before the first commit is not optional: the run recipe uses
-`npm ci`, which fails without a committed `package-lock.json`. A check on a repo
-missing the lockfile reports `build_failed` — correctly, but confusingly.
+`package-lock.json` is committed here on purpose, and must stay committed in the
+published repo: the run recipe uses `npm ci`, which fails outright without one.
+A repo missing its lockfile reports `build_failed` — correctly, but confusingly.
+`@types/node` is likewise a real devDependency, not an assumption about the
+build environment: `tsconfig.json` declares `"types": ["node"]`, and this package
+is standalone with no workspace to hoist it from.
 
 ## The two things that must not be "cleaned up"
 

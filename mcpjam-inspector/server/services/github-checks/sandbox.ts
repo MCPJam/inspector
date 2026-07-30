@@ -89,6 +89,12 @@ export const BUILD_TIMEOUT_MS = 10 * 60_000;
 export const CLONE_TIMEOUT_MS = 5 * 60_000;
 export const HEALTH_TIMEOUT_MS = 2 * 60_000;
 export const HEALTH_INTERVAL_MS = 2_000;
+/**
+ * Per-attempt cap on the health probe, clamped to the remaining deadline. A
+ * healthy server answers `initialize` in milliseconds, so 10s is generous; the
+ * point is that an unresponsive one cannot outlive the overall window.
+ */
+export const PROBE_ATTEMPT_TIMEOUT_MS = 10_000;
 /** Where the PR is checked out inside the box. */
 export const CHECKOUT_DIR = "/home/user/repo";
 
@@ -476,6 +482,19 @@ export async function waitForMcpInitialize(
   let attempts = 0;
   while (now() <= deadline) {
     attempts += 1;
+    // Bound EACH attempt, not just the loop. A PR's server that accepts the
+    // socket and then never answers — or answers with an endless stream — would
+    // otherwise park this await indefinitely: the deadline is only consulted
+    // between attempts, so an unbounded request means the check occupies the
+    // worker's single in-flight slot until the 45-minute sandbox TTU instead of
+    // concluding `server_unhealthy` in two minutes. Untrusted code is exactly
+    // the code that does this.
+    const attemptBudgetMs = Math.max(
+      1,
+      Math.min(PROBE_ATTEMPT_TIMEOUT_MS, deadline - now())
+    );
+    const abort = new AbortController();
+    const abortTimer = setTimeout(() => abort.abort(), attemptBudgetMs);
     try {
       const response = await doFetch(url, {
         method: "POST",
@@ -484,13 +503,20 @@ export async function waitForMcpInitialize(
           accept: "application/json, text/event-stream",
         },
         body,
+        // The same signal covers the body read below: aborting it errors the
+        // response stream, so a server that sends headers and then stalls is
+        // bounded too.
+        signal: abort.signal,
       });
       if (response.ok) {
         const text = await response.text();
         if (looksLikeInitializeResult(text)) return true;
       }
     } catch {
-      // Connection refused / DNS not ready yet — expected while it boots.
+      // Connection refused, DNS not ready, or our own abort — all expected
+      // while it boots, all "not healthy yet".
+    } finally {
+      clearTimeout(abortTimer);
     }
     if (now() + intervalMs > deadline) break;
     await pause(intervalMs);
@@ -509,12 +535,16 @@ export async function waitForMcpInitialize(
  * and keep polling until the deadline.
  */
 function looksLikeInitializeResult(text: string): boolean {
-  const payloads = text.includes("data:")
-    ? text
-        .split(/\n/)
-        .filter((line) => line.startsWith("data:"))
-        .map((line) => line.slice("data:".length).trim())
-    : [text];
+  // SSE framing is detected by a line that STARTS with `data:`, not by the
+  // substring appearing anywhere. A single-line JSON body can legitimately
+  // contain "data:" inside a string (a serverInfo name, an instructions blob, a
+  // tool description); treating that as SSE yielded zero payloads and a false
+  // `server_unhealthy`.
+  const frames = text
+    .split(/\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice("data:".length).trim());
+  const payloads = frames.length > 0 ? frames : [text];
 
   for (const payload of payloads) {
     if (!payload) continue;

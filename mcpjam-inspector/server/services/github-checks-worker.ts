@@ -133,9 +133,11 @@ async function postServiceRoute(
     () => controller.abort(),
     SERVICE_ROUTE_TIMEOUT_MS
   );
-  let response: Response;
+  // The timer stays armed through the BODY read, not just the headers: a
+  // response that stalls mid-body would otherwise hang the poll loop for as long
+  // as the socket stays open, and the loop is what recovers from a sick backend.
   try {
-    response = await fetch(`${env.convexUrl}${path}`, {
+    const response = await fetch(`${env.convexUrl}${path}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -144,16 +146,16 @@ async function postServiceRoute(
       body: JSON.stringify(body),
       signal: controller.signal,
     });
+    let parsed: any = null;
+    try {
+      parsed = await response.json();
+    } catch {
+      // Tolerated; status carries the signal.
+    }
+    return { status: response.status, body: parsed };
   } finally {
     clearTimeout(timeout);
   }
-  let parsed: any = null;
-  try {
-    parsed = await response.json();
-  } catch {
-    // Tolerated; status carries the signal.
-  }
-  return { status: response.status, body: parsed };
 }
 
 async function claimNext(
@@ -194,12 +196,36 @@ async function reportOutcome(report: CheckReport): Promise<void> {
   }
 }
 
+/**
+ * Refresh the lease, and THROW if the backend refused.
+ *
+ * A silently-discarded status is the dangerous version of this call: the
+ * interval would treat every rejected heartbeat as a success, and after five
+ * minutes of that the backend's sweep concludes the check `infra_error` while
+ * this worker is still happily running it. Failing loudly at least puts the
+ * reason in the logs next to the check that got taken away.
+ */
 async function sendHeartbeat(
   triggerId: string,
   claimedBy: string
 ): Promise<void> {
-  await postServiceRoute(`${SERVICE_BASE}/heartbeat`, { triggerId, claimedBy });
+  const { status, body } = await postServiceRoute(`${SERVICE_BASE}/heartbeat`, {
+    triggerId,
+    claimedBy,
+  });
+  if (status !== 200 || !body?.ok) {
+    throw new Error(`heartbeat rejected (${status}): ${JSON.stringify(body)}`);
+  }
+  // The route answers 200 with `result.ok: false` when this worker no longer
+  // holds the claim (lease recovered, row superseded). Nothing to retry, but the
+  // lease is gone and that belongs in the logs beside the lost check.
+  if (body.result && body.result.ok === false) {
+    throw new Error(`heartbeat not applied: ${body.result.error ?? "unknown"}`);
+  }
 }
+
+/** Test seam: the heartbeat's response validation is the whole point of it. */
+export const sendHeartbeatForTests = sendHeartbeat;
 
 async function recordEphemeralServer(
   triggerId: string,
@@ -315,6 +341,35 @@ async function defaultDeleteEphemeralServer(args: {
 }
 
 /**
+ * Run statuses the eval runner treats as final. `timed_out` is included because
+ * the runner stamps it before rethrowing — re-finalizing as `failed` would
+ * overwrite a real timeout verdict.
+ */
+const TERMINAL_RUN_STATUSES = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+  "timed_out",
+]);
+
+async function isRunTerminal(
+  client: { query: (name: any, args: any) => Promise<any> },
+  runId: string
+): Promise<boolean> {
+  try {
+    const run = (await client.query("testSuites:getTestSuiteRun" as any, {
+      runId,
+    })) as { status?: string } | null;
+    return TERMINAL_RUN_STATUSES.has(String(run?.status));
+  } catch {
+    // Can't tell. Let the defensive finalize proceed — `recorder.finalize`
+    // tolerates an already-terminal run, so the worst case is a duplicate
+    // terminal write rather than a run stranded mid-flight.
+    return false;
+  }
+}
+
+/**
  * Run the dedicated suite against the just-built server.
  *
  * The `serverIds` override is what makes this work at all: the suite is a
@@ -358,26 +413,62 @@ async function defaultRunEvalSuite(args: {
       idempotencyKey: args.claimed.triggerId,
     });
 
+    const client = createConvexClient(args.bearer);
+
     try {
       await prepared.execute();
     } catch (error) {
-      // The runner owns terminal run status (it finalizes failed runs before
-      // rethrowing). The run exists, so read its verdict below rather than
-      // treating this as an infrastructure failure.
-      logger.warn(
-        "[github-checks] eval run threw; reading its terminal state",
-        {
-          triggerId: args.claimed.triggerId,
-          runId: prepared.runId,
-          error: error instanceof Error ? error.message : String(error),
+      // `runEvalSuiteWithAiSdk` finalizes a failed run itself before rethrowing,
+      // so USUALLY the terminal write already happened and we can just read the
+      // verdict. But a throw from OUTSIDE its own try leaves the run
+      // non-terminal, and reading that gives `result: undefined` → a bogus
+      // `evals_failed` on the PR with a run left running forever. Mirror the
+      // detached /api/v1 path: check terminality, and finalize defensively when
+      // the runner did not.
+      logger.warn("[github-checks] eval run threw; checking its run state", {
+        triggerId: args.claimed.triggerId,
+        runId: prepared.runId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      const terminal = await isRunTerminal(client, prepared.runId);
+      if (!terminal) {
+        if (!prepared.recorder) {
+          // Nothing can finalize the run, so do not invent a verdict from it.
+          throw error;
         }
-      );
+        await prepared.recorder
+          .finalize({
+            status: "failed",
+            notes:
+              error instanceof Error
+                ? error.message.slice(0, 500)
+                : String(error).slice(0, 500),
+          })
+          .catch((finalizeError: unknown) => {
+            logger.error(
+              "[github-checks] failed to finalize a non-terminal eval run",
+              finalizeError,
+              { triggerId: args.claimed.triggerId, runId: prepared.runId }
+            );
+          });
+      }
     }
 
-    const client = createConvexClient(args.bearer);
     const run = (await client.query("testSuites:getTestSuiteRun" as any, {
       runId: prepared.runId,
-    })) as { result?: string; summary?: CheckSummary } | null;
+    })) as { status?: string; result?: string; summary?: CheckSummary } | null;
+
+    // A run that is somehow STILL not terminal has no verdict to report. Raising
+    // here lands it as `infra_error` (neutral) rather than a false failure — this
+    // is our problem, not the PR's.
+    if (!TERMINAL_RUN_STATUSES.has(String(run?.status))) {
+      throw new Error(
+        `eval run ${prepared.runId} never reached a terminal status (last: ${
+          run?.status ?? "unknown"
+        })`
+      );
+    }
 
     return {
       runId: prepared.runId,

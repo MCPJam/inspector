@@ -246,8 +246,10 @@ describe("executeClaimedCheck — failure attribution", () => {
     });
     await executeClaimedCheck(CLAIM, "worker-1", h.deps);
     expect(h.reports[0].outcome).toBe("infra_error");
-    // No server row was created, so nothing to delete.
+    // No server row was created, so nothing to delete…
     expect(h.events.some((e) => e.startsWith("deleteServer"))).toBe(false);
+    // …but the sandbox was already provisioned, and a leaked box costs money.
+    expect(h.events).toContain("killSandbox");
   });
 
   it("still reports and cleans up when the clone drifts from the claimed sha", async () => {
@@ -340,6 +342,30 @@ describe("executeClaimedCheck — cleanup and heartbeat", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("reports a rejected heartbeat instead of counting it as a success", async () => {
+    // The route answering 401/409/500 must not look like a refreshed lease: the
+    // backend's sweep would take the check away while this worker still runs it.
+    const rejections: unknown[] = [];
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ ok: false, error: "Unauthorized" }), {
+            status: 401,
+            headers: { "content-type": "application/json" },
+          })
+      )
+    );
+    const { sendHeartbeatForTests } = await import("../github-checks-worker");
+    await sendHeartbeatForTests("trig-1", "worker-1").catch((error) =>
+      rejections.push(error)
+    );
+    expect(rejections).toHaveLength(1);
+    expect(String(rejections[0])).toMatch(/heartbeat rejected \(401\)/);
   });
 
   it("keeps going when a heartbeat request fails", async () => {
