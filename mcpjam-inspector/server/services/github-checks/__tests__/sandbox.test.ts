@@ -916,6 +916,43 @@ describe("waitForMcpInitialize", () => {
     ).toBe(true);
   });
 
+  it("does not accept a correct result acknowledged with 202", async () => {
+    // 202 is an acknowledgement: the transport drains the body, discards it, and
+    // returns before any result processing. So this answer never reaches the
+    // client's `initialize`, and calling the server healthy would hand its failure
+    // to us as a neutral `infra_error`.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ jsonrpc: "2.0", id: 1, result: INITIALIZE_RESULT }),
+          { status: 202, headers: { "content-type": "application/json" } }
+        )
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", {
+        ...seams,
+        fetchImpl,
+        timeoutMs: 5,
+      })
+    ).toBe(false);
+  });
+
+  it("accepts a result served with a 2xx other than 200", async () => {
+    // Only 202 is special-cased by the transport; every other 2xx is processed by
+    // content type. Narrowing to 200 would be stricter than the client, which is
+    // how a working PR earns a false `server_unhealthy`.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ jsonrpc: "2.0", id: 1, result: INITIALIZE_RESULT }),
+          { status: 201, headers: { "content-type": "application/json" } }
+        )
+    ) as unknown as typeof fetch;
+    expect(
+      await waitForMcpInitialize("https://box/mcp", { ...seams, fetchImpl })
+    ).toBe(true);
+  });
+
   it("does not accept a correct result served with the wrong content type", async () => {
     // The eval run's transport rejects anything that is not `application/json`
     // or `text/event-stream` before it parses the body at all. A server that

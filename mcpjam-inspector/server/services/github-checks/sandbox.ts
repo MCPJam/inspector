@@ -703,7 +703,7 @@ export async function waitForMcpInitialize(
         signal: abort.signal,
       });
       if (
-        response.ok &&
+        transportProcessesBody(response) &&
         (await probeResponseIsHealthy(response, era.accepts))
       ) {
         return true;
@@ -882,6 +882,24 @@ async function probeResponseIsHealthy(
     // holding the stream open, so drop it rather than leaking the socket.
     void reader.cancel().catch(() => {});
   }
+}
+
+/**
+ * Whether the transport would read this response's body as an answer to the
+ * request at all — as opposed to discarding it.
+ *
+ * `ok` is not the test. HTTP 202 is an ACKNOWLEDGEMENT: the transport drains the
+ * body, throws it away, and returns before any result processing, so a handshake
+ * result served with 202 never reaches the client and its `initialize` goes
+ * unanswered. Accepting one here would call that server healthy and then hand its
+ * failure to us as a neutral `infra_error`.
+ *
+ * Only 202 is excluded, not "everything but 200": the transport processes any other
+ * 2xx by content type, so rejecting a 201 or 203 that carries a real answer would
+ * be stricter than the client and risk a false `server_unhealthy`.
+ */
+function transportProcessesBody(response: Response): boolean {
+  return response.ok && response.status !== 202;
 }
 
 /**
