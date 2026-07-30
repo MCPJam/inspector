@@ -23,6 +23,10 @@ import {
 import { ProjectEnvironmentEditor } from "./ProjectEnvironmentEditor";
 import { EnvironmentChatboxSection } from "./environment-chatbox-section";
 import { useProjectEnvironmentConsumers } from "./use-project-environment-consumers";
+import {
+  takeEnvironmentDraftSeed,
+  type EnvironmentDraftSeed,
+} from "@/lib/environment-draft-seed";
 
 /**
  * Full-page list⇄detail management screen for Project environments — named
@@ -64,11 +68,34 @@ export function ProjectEnvironmentsRoute({
   //     matches, but clearing it avoids a flash of the wrong detail.
   //   - `justCreated` holds a raw env object from the OLD project that
   //     `selected` would otherwise return for up to 3s.
+  // A Connect "Save as environment" seed, consumed one-shot below. Held in
+  // state (not read inline) so the create form keeps it across re-renders.
+  const [seed, setSeed] = useState<EnvironmentDraftSeed | null>(null);
+
   useEffect(() => {
     setSelectedId(null);
     setCreating(false);
     setJustCreated(null);
+    // A project switch also invalidates any seeded draft: the seed's hostId
+    // belongs to the project it was captured in (same hazard as the editor's
+    // own projectId reset).
+    setSeed(null);
   }, [projectId]);
+
+  // Consume the Connect handoff. Gated on the flag having SETTLED true: while
+  // it hydrates this route renders null, and the seed waits in sessionStorage —
+  // that is exactly why the handoff is storage-based, not in-memory. `take` is
+  // read+delete, so a later manual /environments visit can't re-enter create
+  // mode. Runs AFTER the projectId reset effect above (hook order), so the
+  // reset can't clobber a same-render seed consumption.
+  useEffect(() => {
+    if (flagEnabled !== true || !projectId) return;
+    const taken = takeEnvironmentDraftSeed(projectId);
+    if (taken) {
+      setSeed(taken);
+      setCreating(true);
+    }
+  }, [flagEnabled, projectId]);
 
   useEffect(() => {
     if (!justCreated) return;
@@ -114,21 +141,32 @@ export function ProjectEnvironmentsRoute({
           <div className="space-y-4">
             <BackLink
               label="All environments"
-              onClick={() => setCreating(false)}
+              onClick={() => {
+                setCreating(false);
+                setSeed(null);
+              }}
             />
             <h1 className="text-lg font-semibold text-foreground">
               New environment
             </h1>
             <ProjectEnvironmentEditor
+              // Remount when a seed arrives so a form already open in create
+              // mode picks up the seeded initializer.
+              key={seed ? "seeded" : "blank"}
               projectId={projectId}
               environment={null}
               canManage={canManage}
+              initialDraft={seed ?? undefined}
               onCreated={(env) => {
                 setCreating(false);
+                setSeed(null);
                 setJustCreated(env);
                 setSelectedId(env.environmentId);
               }}
-              onCancelCreate={() => setCreating(false)}
+              onCancelCreate={() => {
+                setCreating(false);
+                setSeed(null);
+              }}
             />
           </div>
         ) : selected ? (

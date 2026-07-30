@@ -15,12 +15,18 @@ const {
   mockHosts,
   mockNavigateApp,
   mockUseHostList,
+  mockPreviewedHostId,
+  mockCanManage,
+  mockSaveSeed,
 } = vi.hoisted(() => ({
   mockFlagValue: { value: true as boolean | undefined },
   mockEnvironments: { value: undefined as unknown },
   mockHosts: { value: [] as Array<{ hostId: string; name: string }> },
   mockNavigateApp: vi.fn(),
   mockUseHostList: vi.fn(),
+  mockPreviewedHostId: { value: null as string | null },
+  mockCanManage: { value: true },
+  mockSaveSeed: vi.fn(),
 }));
 
 vi.mock("posthog-js/react", () => ({
@@ -46,6 +52,15 @@ vi.mock("@/lib/app-navigation", () => ({
   navigateApp: mockNavigateApp,
   routePaths: { environments: "/environments", playground: "/playground" },
 }));
+vi.mock("@/hooks/use-previewed-client-id", () => ({
+  usePreviewedHostId: () => [mockPreviewedHostId.value, vi.fn()] as const,
+}));
+vi.mock("@/hooks/useProjects", () => ({
+  useProjectMembers: () => ({ canManageMembers: mockCanManage.value }),
+}));
+vi.mock("@/lib/environment-draft-seed", () => ({
+  saveEnvironmentDraftSeed: mockSaveSeed,
+}));
 
 import { ConnectEnvironmentsStrip } from "../ConnectEnvironmentsStrip";
 
@@ -53,6 +68,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
   mockFlagValue.value = true;
+  mockPreviewedHostId.value = null;
+  mockCanManage.value = true;
   mockHosts.value = [{ hostId: "host_1", name: "Claude Code" }];
   mockEnvironments.value = [
     {
@@ -79,12 +96,74 @@ describe("ConnectEnvironmentsStrip", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("renders nothing when the project has no environments", () => {
+  it("zero environments: admins get the capture empty-state, members nothing", () => {
     mockEnvironments.value = [];
+    render(<ConnectEnvironmentsStrip projectId="proj_1" />);
+    expect(
+      screen.getByTestId("connect-environments-strip-empty")
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("connect-environments-save-as")
+    ).toBeInTheDocument();
+  });
+
+  it("zero environments + non-admin renders nothing (the old behavior)", () => {
+    mockEnvironments.value = [];
+    mockCanManage.value = false;
     const { container } = render(
       <ConnectEnvironmentsStrip projectId="proj_1" />
     );
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it("renders nothing while environments are still loading", () => {
+    mockEnvironments.value = undefined;
+    const { container } = render(
+      <ConnectEnvironmentsStrip projectId="proj_1" />
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("Save as environment seeds the previewed host + honest nulls, then navigates", () => {
+    mockEnvironments.value = [];
+    mockPreviewedHostId.value = "host_1";
+    render(<ConnectEnvironmentsStrip projectId="proj_1" />);
+    fireEvent.click(screen.getByTestId("connect-environments-save-as"));
+    expect(mockSaveSeed).toHaveBeenCalledWith("proj_1", {
+      hostId: "host_1",
+      name: "Claude Code",
+      serverAttachmentId: null,
+      skillSelection: null,
+    });
+    expect(mockNavigateApp).toHaveBeenCalledWith("/environments");
+  });
+
+  it("Save as environment with no previewed host still seeds (hostId null, no name)", () => {
+    mockEnvironments.value = [];
+    render(<ConnectEnvironmentsStrip projectId="proj_1" />);
+    fireEvent.click(screen.getByTestId("connect-environments-save-as"));
+    expect(mockSaveSeed).toHaveBeenCalledWith("proj_1", {
+      hostId: null,
+      serverAttachmentId: null,
+      skillSelection: null,
+    });
+    expect(mockNavigateApp).toHaveBeenCalledWith("/environments");
+  });
+
+  it("populated strip: header CTA present for admins, hidden for members", () => {
+    render(<ConnectEnvironmentsStrip projectId="proj_1" />);
+    expect(
+      screen.getByTestId("connect-environments-save-as")
+    ).toBeInTheDocument();
+  });
+
+  it("populated strip hides the CTA for non-admins but keeps the cards", () => {
+    mockCanManage.value = false;
+    render(<ConnectEnvironmentsStrip projectId="proj_1" />);
+    expect(
+      screen.queryByTestId("connect-environments-save-as")
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Staging")).toBeInTheDocument();
   });
 
   it("shows only row-available data — never a resolved server count", () => {

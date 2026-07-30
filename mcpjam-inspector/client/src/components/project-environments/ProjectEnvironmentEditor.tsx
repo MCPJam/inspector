@@ -64,6 +64,7 @@ export function ProjectEnvironmentEditor({
   projectId,
   environment,
   canManage,
+  initialDraft,
   onCreated,
   onCancelCreate,
 }: {
@@ -72,6 +73,14 @@ export function ProjectEnvironmentEditor({
   environment: ProjectEnvironmentView | null;
   /** Admin-gated writes; members get a read-only form. */
   canManage: boolean;
+  /**
+   * Create-mode-only pre-seed (the Connect "Save as environment" handoff).
+   * Merged into the create initializer ONLY — deliberately NOT into the
+   * projectId-reset effect, whose whole job is wiping cross-project host ids;
+   * a seed surviving that reset would reintroduce exactly that hazard.
+   * Ignored in edit mode.
+   */
+  initialDraft?: Partial<EnvironmentDraft>;
   onCreated?: (env: ProjectEnvironmentView) => void;
   onCancelCreate?: () => void;
 }) {
@@ -97,6 +106,7 @@ export function ProjectEnvironmentEditor({
           serverAttachmentId: null,
           skillSelection: null,
           computerEnvironmentId: null,
+          ...initialDraft,
         }
   );
   // Captured at draft init/reset — the ONLY revision update may send.
