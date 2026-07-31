@@ -195,6 +195,10 @@ import {
   getCachedChatHistoryDetail,
   prefetchChatHistorySession,
 } from "@/components/chat-v2/history/chat-history-prefetch";
+import {
+  usePlaygroundConversationUrl,
+  type ConversationRestoreOutcome,
+} from "@/components/ui-playground/use-playground-conversation-url";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
 import {
   resolveSelectablePlaygroundModel,
@@ -402,6 +406,13 @@ interface PlaygroundMainProps {
    * here from the live messages (toolCallId → owning user-turn ordinal).
    */
   recorder?: RecorderProps;
+  /**
+   * Mirror the active conversation into `?conversation=<chatSessionId>` and
+   * reopen it on load. Opt-in because only the routed Playground owns the URL —
+   * the eval preview embeds this same surface in a docked panel, where writing
+   * the page's query string would be a side effect on someone else's route.
+   */
+  syncConversationToUrl?: boolean;
 }
 
 type PlaygroundTraceViewMode = "chat" | "timeline" | "raw";
@@ -498,6 +509,7 @@ export function PlaygroundMain({
   onStreamingChange,
   suppressHistoryConflictToast,
   recorder,
+  syncConversationToUrl = false,
 }: PlaygroundMainProps) {
   const { signUp } = useAuth();
   const clearLogs = useTrafficLogStore((s) => s.clear);
@@ -538,6 +550,17 @@ export function PlaygroundMain({
   const historySelectionRequestIdRef = useRef(0);
   const activeHistorySessionIdRef = useRef<string | null>(null);
   const reactiveHistoryLoadRequestIdRef = useRef(0);
+  // Model from a restored conversation that the catalog didn't know yet. Kept
+  // WITH its session id: the catalog can arrive after the user has moved to a
+  // different thread, and applying it then would retag their new thread with
+  // the old one's model.
+  const pendingRestoredModelRef = useRef<{
+    chatSessionId: string;
+    modelId: string;
+  } | null>(null);
+  // Set by `usePlaygroundConversationUrl` below; called from the chat hook's
+  // `onReset` above it, which is why this is a ref rather than the callback.
+  const clearConversationUrlRef = useRef<() => void>(() => {});
   const appliedHistoryContentSignatureRef = useRef<string | null>(null);
   const resumedThreadSendBaselineRef = useRef<{
     sessionId: string;
@@ -908,6 +931,14 @@ export function PlaygroundMain({
       setInjectedToolRenderOverrides({});
       if (reason === "servers-changed") {
         return;
+      }
+      // Only an explicit New Chat drops the conversation from the URL. The
+      // other reasons that empty the transcript — `auth-bootstrap` above all —
+      // are re-mints of the SAME conversation, and clearing on those would
+      // strip the id right before the restore effect goes looking for it.
+      if (reason === "reset") {
+        pendingRestoredModelRef.current = null;
+        clearConversationUrlRef.current();
       }
       composerOnResetRef.current();
     },
@@ -2222,6 +2253,119 @@ export function PlaygroundMain({
     ]
   );
 
+  // Reopen the conversation named in the URL. Same machinery as picking the
+  // thread from the rail (`handleSelectThread`), minus the discard-draft
+  // confirm — this only ever runs against an empty transcript.
+  const restoreConversationFromUrl = useCallback(
+    async (conversationId: string): Promise<ConversationRestoreOutcome> => {
+      const selectionRequestId = historySelectionRequestIdRef.current + 1;
+      historySelectionRequestIdRef.current = selectionRequestId;
+      // Same as picking the thread from the rail: the restored transcript
+      // lives on the single chat session, so the compare grid must stand down
+      // rather than render over it.
+      setViewingHistoryReplay(true);
+      let restored = false;
+
+      try {
+        const detail = await getCachedChatHistoryDetail({
+          chatSessionId: conversationId,
+          projectId: convexProjectId ?? undefined,
+        });
+
+        if (historySelectionRequestIdRef.current !== selectionRequestId) {
+          return "failed";
+        }
+
+        await loadHistorySession(detail.session, detail.widgetSnapshots, {
+          turnTraces: detail.turnTraces,
+          shouldApply: () =>
+            historySelectionRequestIdRef.current === selectionRequestId,
+        });
+
+        if (historySelectionRequestIdRef.current !== selectionRequestId) {
+          return "failed";
+        }
+        restoreHistoryServerSelection(
+          detail.session.resumeConfig?.selectedServers
+        );
+        // `loadHistorySession` skips the model when the catalog hasn't loaded
+        // yet; remember it so the effect below can apply it on arrival.
+        pendingRestoredModelRef.current = detail.session.modelId
+          ? {
+              chatSessionId: detail.session.chatSessionId,
+              modelId: detail.session.modelId,
+            }
+          : null;
+        restored = true;
+        return "restored";
+      } catch (error) {
+        // 404: deleted, archived away, or never existed. 403: someone else's.
+        // Either way this id will never restore — say so, so the caller drops
+        // it from the URL instead of retrying on every scope change.
+        if (
+          error instanceof WebApiError &&
+          (error.status === 403 || error.status === 404)
+        ) {
+          if (error.status === 403) {
+            toast.error("You no longer have access to that chat.");
+          }
+          return "unavailable";
+        }
+        console.error(
+          "[PlaygroundMain] Failed to restore conversation from URL",
+          error
+        );
+        return "failed";
+      } finally {
+        // Nothing restored means nothing to replay — release the compare
+        // suppression so the user's own layout isn't stuck off.
+        if (
+          !restored &&
+          historySelectionRequestIdRef.current === selectionRequestId
+        ) {
+          setViewingHistoryReplay(false);
+        }
+      }
+    },
+    [convexProjectId, loadHistorySession, restoreHistoryServerSelection]
+  );
+
+  const { isRestoringConversation, clearConversation } =
+    usePlaygroundConversationUrl({
+      enabled: syncConversationToUrl,
+      chatSessionId,
+      hasMessages: !isThreadEmpty,
+      isSessionBootstrapComplete,
+      isStreaming,
+      projectId: convexProjectId,
+      isMultiModelLayoutMode,
+      isEvalHandoffPending:
+        !!evalChatHandoff &&
+        appliedEvalChatHandoffIdRef.current !== evalChatHandoff.id,
+      activeHistorySessionId,
+      restoreConversation: restoreConversationFromUrl,
+    });
+  clearConversationUrlRef.current = clearConversation;
+
+  // The model catalog can arrive after the transcript. Apply the restored
+  // model once — and only while the restored conversation is still the one on
+  // screen, so a thread the user opened in the meantime keeps its own model.
+  useEffect(() => {
+    const pending = pendingRestoredModelRef.current;
+    if (!pending) return;
+    if (pending.chatSessionId !== chatSessionId) {
+      pendingRestoredModelRef.current = null;
+      return;
+    }
+    const matchingModel = availableModels.find(
+      (model) => String(model.id) === pending.modelId
+    );
+    if (!matchingModel) return;
+    pendingRestoredModelRef.current = null;
+    if (String(selectedModel?.id ?? "") === pending.modelId) return;
+    setSelectedModel(matchingModel);
+  }, [availableModels, chatSessionId, selectedModel, setSelectedModel]);
+
   const resetMultiModelSessions = useCallback(() => {
     clearMultiModelUiState();
     setMultiModelSessionGeneration((previous) => previous + 1);
@@ -2462,13 +2606,16 @@ export function PlaygroundMain({
   // visible feedback.
   const [showLoadingOverlay, setShowLoadingOverlay] = useState(false);
   useEffect(() => {
-    if (!loadingHistorySessionId) {
+    // A URL restore is the same "fetching a transcript" wait, and it happens on
+    // a cold load — without it the user stares at an empty composer until the
+    // messages land.
+    if (!loadingHistorySessionId && !isRestoringConversation) {
       setShowLoadingOverlay(false);
       return;
     }
     const timerId = window.setTimeout(() => setShowLoadingOverlay(true), 120);
     return () => window.clearTimeout(timerId);
-  }, [loadingHistorySessionId]);
+  }, [isRestoringConversation, loadingHistorySessionId]);
 
   // `compareSummaries` / `compareHasMessages` are keyed by `compareId`,
   // which is a modelId in multi-model mode and a hostId in multi-host
@@ -3378,6 +3525,10 @@ export function PlaygroundMain({
   // no broadcast consumer in single-model mode.
   const handleStarterPrompt = useCallback(
     (prompt: string) => {
+      track("chat_starter_prompt_clicked", {
+        prompt,
+        location: isCompareMode ? "playground_compare" : "playground_single",
+      });
       if (composerDisabled || sendBlocked) {
         composer.setInput(prompt);
         return;
