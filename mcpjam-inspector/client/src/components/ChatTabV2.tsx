@@ -2012,7 +2012,7 @@ export function ChatTabV2({
   };
 
   const handleStarterPrompt = async (prompt: string) => {
-    track("chat_starter_prompt_clicked", { location: "chat_tab" });
+    track("chat_starter_prompt_clicked", { prompt, location: "chat_tab" });
     if (composerDisabled || sendBlocked) {
       setInput(prompt);
       return;

@@ -63,6 +63,11 @@ import {
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
 } from "@/shared/progressive-tool-discovery";
+import type { MrtrEngineResume } from "./mrtr-hosted-chat.js";
+import {
+  isSuspendedScopeStepUpOutputChunk,
+  resumeScopeStepUpBeforeDirectTurn,
+} from "./direct-chat-scope-step-up.js";
 
 export interface OrgModelHandlerOptions {
   projectId: string;
@@ -128,6 +133,7 @@ export interface OrgModelHandlerOptions {
    * See MCPJamHandlerOptions.maxSteps. Forwarded as-is.
    */
   maxSteps?: number;
+  scopeStepUpResume?: MrtrEngineResume;
   /**
    * Extra body fields merged into the per-step Convex `/stream/org` POST.
    * Swarm runs use this to thread `journeyRunId` so the backend BYOK writer
@@ -283,6 +289,9 @@ export interface OrgLocalModelHandlerOptions {
    * fewer agentic steps when routed through a local provider.
    */
   maxSteps?: number;
+  scopeStepUpResume?: MrtrEngineResume;
+  shouldPauseAfterStep?: () => boolean;
+  suspendedToolCallId?: () => string | undefined;
   /**
    * Progressive tool discovery plan. When `plan.enabled === true`, each
    * step's `activeTools` is recomputed from `discoveryState` via the AI SDK
@@ -419,6 +428,12 @@ export function handleLocalOrgChatModel(
     },
     execute: async ({ writer }) => {
       onStreamWriterReady?.({ write: (chunk) => writer.write(chunk) });
+      const shouldRunModel = await resumeScopeStepUpBeforeDirectTurn({
+        writer,
+        messageHistory: messages,
+        resume: options.scopeStepUpResume,
+      });
+      if (!shouldRunModel) return;
 
       // Cursor PR-review fix (Medium "Failed turns persist sessions"):
       // legacy route 3 gated `onConversationComplete` on `!streamErrored`
@@ -450,6 +465,8 @@ export function handleLocalOrgChatModel(
         ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
         ...(onLiveTextDelta ? { onLiveTextDelta } : {}),
         maxSteps: resolvedMaxSteps,
+        shouldPauseAfterStep: options.shouldPauseAfterStep,
+        suspendedToolCallId: options.suspendedToolCallId,
         // Shared SSE-callback factory — byte-identical wire output with
         // route 4 (`streamDirectChatWithLiveTrace`).
         traceEvents: buildDirectChatTraceCallbacks(writer),
@@ -495,6 +512,14 @@ export function handleLocalOrgChatModel(
             return formatLocalStreamError(error);
           },
         })) {
+          if (
+            isSuspendedScopeStepUpOutputChunk(
+              chunk,
+              options.suspendedToolCallId?.(),
+            )
+          ) {
+            continue;
+          }
           writer.write(withMcpToolOriginChunkMetadata(chunk, options.tools));
         }
       } catch (error) {
@@ -713,6 +738,7 @@ export async function handleHostedOrgChatModel(
     abortSignal: options.abortSignal,
     heartbeatIntervalMs: options.heartbeatIntervalMs,
     maxSteps: options.maxSteps,
+    scopeStepUpResume: options.scopeStepUpResume,
     progressivePlan: options.progressivePlan,
     discoveryState: options.discoveryState,
     endpointPath: "/stream/org",
