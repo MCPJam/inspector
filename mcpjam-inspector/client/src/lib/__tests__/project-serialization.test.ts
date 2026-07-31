@@ -622,3 +622,62 @@ describe("OAuth test-profile round-trip (protocol version + registration strateg
     expect(profile.protocolVersion).toBeUndefined();
   });
 });
+
+describe("oauthAllowPathScopedIssuer round-trip", () => {
+  // Regression: the flag first shipped nested inside `oauthFlowProfile`, which
+  // the serializer rebuilds from a fixed field list — so it was dropped on every
+  // save and the OAuth Debugger toggle read back off. It has to be a top-level
+  // server field, like the XAA equivalent.
+  it("survives serialize for persistence", () => {
+    const out = serializeServersForPersistence(
+      makeOAuthHttpServer("read write", { oauthAllowPathScopedIssuer: true })
+    ) as Record<string, any>;
+    expect(out.s1.oauthAllowPathScopedIssuer).toBe(true);
+  });
+
+  it("keeps an explicit false rather than dropping it to undefined", () => {
+    const out = serializeServersForPersistence(
+      makeOAuthHttpServer("read write", { oauthAllowPathScopedIssuer: false })
+    ) as Record<string, any>;
+    expect(out.s1.oauthAllowPathScopedIssuer).toBe(false);
+  });
+
+  it("round-trips a true flag back through deserialize", () => {
+    const servers = deserializeServersFromConvex([
+      {
+        name: "s1",
+        enabled: true,
+        useOAuth: true,
+        url: "https://example.test/mcp",
+        oauthAllowPathScopedIssuer: true,
+      },
+    ]);
+    expect(servers.s1.oauthAllowPathScopedIssuer).toBe(true);
+  });
+
+  it("stays absent for legacy rows that predate the column", () => {
+    const servers = deserializeServersFromConvex([
+      {
+        name: "s1",
+        enabled: true,
+        useOAuth: true,
+        url: "https://example.test/mcp",
+      },
+    ]);
+    expect(servers.s1.oauthAllowPathScopedIssuer).toBeUndefined();
+  });
+
+  it("is independent of the XAA toggle", () => {
+    const servers = deserializeServersFromConvex([
+      {
+        name: "s1",
+        enabled: true,
+        useOAuth: true,
+        url: "https://example.test/mcp",
+        xaaAllowPathScopedIssuer: true,
+      },
+    ]);
+    expect(servers.s1.xaaAllowPathScopedIssuer).toBe(true);
+    expect(servers.s1.oauthAllowPathScopedIssuer).toBeUndefined();
+  });
+});

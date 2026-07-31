@@ -582,6 +582,127 @@ function quoteUntrusted(value: string): string {
   return `\`${capped}\``;
 }
 
+// True when `advertised` is the origin root or a path-prefix ancestor of
+// `requested` on the SAME origin (scheme + host + port). Segment-aware:
+// /resources is an ancestor of /resources/res_x but not of /resources-evil.
+// A query or fragment on either side disqualifies the relaxation outright —
+// RFC 8414 §2 forbids both in an issuer identifier, and this toggle is
+// documented to relax a PATH difference and nothing else.
+// Mirrors the XAA debugger's isOriginPrefix (server/services/xaa-discovery.ts).
+function isOriginPrefixIssuer(advertised: string, requested: string): boolean {
+  let adv: URL;
+  let req: URL;
+  try {
+    adv = new URL(advertised);
+    req = new URL(requested);
+  } catch {
+    return false;
+  }
+  if (adv.origin !== req.origin) return false;
+  if (adv.search || adv.hash || req.search || req.hash) return false;
+  const strip = (p: string) => (p.endsWith("/") ? p.slice(0, -1) : p);
+  const advPath = strip(adv.pathname);
+  const reqPath = strip(req.pathname);
+  if (advPath === reqPath) return false;
+  return advPath === "" || advPath === "/"
+    ? reqPath.length > 0
+    : reqPath.startsWith(`${advPath}/`);
+}
+
+function isSameOriginUrl(a: string, b: string): boolean {
+  try {
+    return new URL(a).origin === new URL(b).origin;
+  } catch {
+    return false;
+  }
+}
+
+// An endpoint that receives credentials must sit on the advertised issuer's own
+// origin. Absent is fine — there is nothing to bind, and the required-field
+// checks reject a missing token_endpoint on their own. Anything PRESENT but not
+// a parseable same-origin string counts as escaping: a non-string value would
+// otherwise skip this gate silently (`typeof x === "string"` is false, so a
+// naive check reads it as "does not escape") and surface only much later, after
+// dynamic registration and the authorization redirect have already run.
+function endpointEscapesIssuerOrigin(
+  endpoint: unknown,
+  issuer: string
+): boolean {
+  if (endpoint === undefined || endpoint === null) return false;
+  if (typeof endpoint !== "string") return true;
+  return !isSameOriginUrl(endpoint, issuer);
+}
+
+function describeEndpoint(endpoint: unknown): string {
+  return typeof endpoint === "string" ? `"${endpoint}"` : "a non-string value";
+}
+
+export interface PathScopedIssuerVerdict {
+  /** True when the per-server opt-in accepts this issuer mismatch. */
+  accepted: boolean;
+  /**
+   * Diagnostic appended to the RFC 8414 §3.3 rejection, naming why the
+   * relaxation did not apply. Empty for an ordinary mismatch with nothing
+   * path-scoped about it.
+   */
+  hint: string;
+}
+
+/**
+ * Decide whether an advertised `issuer` that differs from the URL discovery
+ * started from is the multi-tenant, path-scoped shape the per-server
+ * "Path-scoped authorization server" opt-in accepts — issuer at the origin
+ * root, endpoints scoped under a path (e.g. Scalekit's `/resources/res_x`).
+ *
+ * Pure and total: never throws, never fetches, so the caller owns what a
+ * rejection does. With the opt-in off every mismatch is rejected, which is the
+ * strict RFC 8414 §3.3 behavior.
+ *
+ * Two rules hold even under the opt-in. The advertised issuer must be a
+ * same-origin path-prefix ancestor (segment-aware, no query or fragment), and
+ * the token and registration endpoints must stay on that issuer's own origin.
+ * Without the second rule a same-origin tenant — exactly the party this feature
+ * extends trust to — could advertise the origin-root issuer to pass the prefix
+ * check while pointing `token_endpoint` at an arbitrary public host,
+ * redirecting the client secret and authorization code off-origin.
+ */
+export function evaluatePathScopedIssuer(input: {
+  advertisedIssuer: string;
+  discoveryUrl: string;
+  tokenEndpoint: unknown;
+  registrationEndpoint: unknown;
+  allowPathScopedIssuer: boolean;
+}): PathScopedIssuerVerdict {
+  const {
+    advertisedIssuer,
+    discoveryUrl,
+    tokenEndpoint,
+    registrationEndpoint,
+    allowPathScopedIssuer,
+  } = input;
+
+  const originPrefix = isOriginPrefixIssuer(advertisedIssuer, discoveryUrl);
+  const optIn = allowPathScopedIssuer && originPrefix;
+  const tokenEscapes =
+    optIn && endpointEscapesIssuerOrigin(tokenEndpoint, advertisedIssuer);
+  const registrationEscapes =
+    optIn &&
+    endpointEscapesIssuerOrigin(registrationEndpoint, advertisedIssuer);
+
+  if (optIn && !tokenEscapes && !registrationEscapes) {
+    return { accepted: true, hint: "" };
+  }
+
+  const hint = tokenEscapes
+    ? ` The path-scoped authorization server's token endpoint (${describeEndpoint(tokenEndpoint)}) is not on the same origin as its issuer ("${advertisedIssuer}"); refusing to send credentials off-origin.`
+    : registrationEscapes
+      ? ` The path-scoped authorization server's registration endpoint (${describeEndpoint(registrationEndpoint)}) is not on the same origin as its issuer ("${advertisedIssuer}"); refusing dynamic registration off-origin.`
+      : originPrefix
+        ? ' The advertised issuer is the same-origin root of the discovery URL — a multi-tenant, path-scoped authorization server. Enable "Path-scoped authorization server" in the server\'s OAuth configuration (Advanced settings) to allow this.'
+        : "";
+  return { accepted: false, hint };
+}
+
 /**
  * RFC 9207 authorization-response `iss` validation — a 2026-07-28 requirement.
  * Four rows:
@@ -693,6 +814,7 @@ export const createDebugOAuthStateMachine = (
     authMode,
     hasClientSecret = false,
     strictConformance = false,
+    allowPathScopedIssuer = false,
     resourceIndicatorEnforcement = "warn",
     registrationStrategy = "cimd", // Default to CIMD for 2026-07-28
   } = config;
@@ -1320,14 +1442,28 @@ export const createDebugOAuthStateMachine = (
             // finding, not something to paper over). This binds the metadata
             // document to the issuer and is the anchor every later issuer check
             // (record_issuer, callback `iss`) trusts.
+            // A same-origin path-prefix "mismatch" is the multi-tenant AS shape
+            // (issuer at the origin root, endpoints scoped under a path). Only
+            // the per-server "Path-scoped authorization server" opt-in accepts
+            // it — mirroring the XAA debugger's toggle.
             if (authServerMetadata.issuer !== state.authorizationServerUrl) {
-              throw new Error(
-                "Authorization server metadata `issuer` does not match the " +
-                  "authorization server URL it was discovered from " +
-                  `(expected "${state.authorizationServerUrl}", got ` +
-                  `"${authServerMetadata.issuer}"). RFC 8414 §3.3 requires an ` +
-                  "exact match; refusing to continue."
-              );
+              const pathScoped = evaluatePathScopedIssuer({
+                advertisedIssuer: authServerMetadata.issuer,
+                discoveryUrl: state.authorizationServerUrl,
+                tokenEndpoint: authServerMetadata.token_endpoint,
+                registrationEndpoint: authServerMetadata.registration_endpoint,
+                allowPathScopedIssuer,
+              });
+              if (!pathScoped.accepted) {
+                throw new Error(
+                  "Authorization server metadata `issuer` does not match the " +
+                    "authorization server URL it was discovered from " +
+                    `(expected "${state.authorizationServerUrl}", got ` +
+                    `"${authServerMetadata.issuer}"). RFC 8414 §3.3 requires an ` +
+                    "exact match; refusing to continue." +
+                    pathScoped.hint
+                );
+              }
             }
             if (!authServerMetadata.authorization_endpoint) {
               throw new Error(
@@ -1385,13 +1521,35 @@ export const createDebugOAuthStateMachine = (
               "boolean"
                 ? authServerMetadata.client_id_metadata_document_supported
                 : "false (not advertised, defaults to false per spec)";
-            const infoLogs = addInfoLog(
+            let infoLogs = addInfoLog(
               getCurrentState(),
               "received_authorization_server_metadata",
               "cimd-support",
               "Derived: CIMD Support",
               { "CIMD Supported": cimdSupported }
             );
+
+            // Reaching here with an issuer that differs from the discovery URL
+            // means the path-scoped opt-in accepted it — every other mismatch
+            // threw above, so the inequality IS the acceptance signal.
+            if (authServerMetadata.issuer !== state.authorizationServerUrl) {
+              infoLogs = addInfoLog(
+                { ...getCurrentState(), infoLogs },
+                "received_authorization_server_metadata",
+                "path-scoped-issuer",
+                "Path-scoped authorization server",
+                {
+                  "Discovery URL": state.authorizationServerUrl,
+                  "Advertised issuer": authServerMetadata.issuer,
+                  Note:
+                    "The advertised issuer is the same-origin root of the discovery URL. " +
+                    'Accepted because "Path-scoped authorization server" is enabled for this server; ' +
+                    "strict RFC 8414 §3.3 conformance requires an exact issuer match, and strict " +
+                    "MCP clients may refuse to connect.",
+                },
+                { level: "warning" }
+              );
+            }
 
             if (!supportedMethods.includes("S256")) {
               const s256Error =

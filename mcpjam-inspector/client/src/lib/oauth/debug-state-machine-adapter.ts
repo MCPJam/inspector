@@ -31,6 +31,12 @@ export interface InspectorOAuthStateMachineConfig {
   customScopes?: string;
   customHeaders?: Record<string, string>;
   /**
+   * Opt-in: accept a path-scoped authorization server whose metadata
+   * advertises the same-origin root as issuer (multi-tenant AS deployments
+   * like Scalekit). Off = strict RFC 8414 issuer match.
+   */
+  allowPathScopedIssuer?: boolean;
+  /**
    * Credentials the user configured on the OAuth test profile ("Configure
    * Server to Test" → Client credentials). Secrets are never written to
    * localStorage, so they can only reach the state machine through here —
