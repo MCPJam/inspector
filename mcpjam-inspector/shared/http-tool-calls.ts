@@ -12,11 +12,21 @@ import {
 import { ToolResultPart } from "ai";
 import { isAbortError } from "./abort-errors";
 import { isMrtrSuspendSignalShape } from "./mrtr-continuation";
+import { SCOPE_STEP_UP_SUSPEND_CODE } from "./scope-step-up";
 import { isClientFulfilledToolName } from "./client-fulfilled-tools";
 import { mergeMcpToolOriginMetadata } from "./mcp-tool-origin-metadata";
 
 type ToolsMap = Record<string, any>;
 type Toolsets = Record<string, ToolsMap>;
+
+function isToolExecutionSuspendSignal(value: unknown): boolean {
+  return (
+    isMrtrSuspendSignalShape(value) ||
+    (!!value &&
+      typeof value === "object" &&
+      (value as { code?: unknown }).code === SCOPE_STEP_UP_SUSPEND_CODE)
+  );
+}
 
 /**
  * Flatten toolsets and attach serverId metadata to each tool
@@ -407,40 +417,48 @@ export async function executeToolCallsFromMessages(
           ...(signal ? { abortSignal: signal } : {}),
         });
         throwIfAborted(signal);
-        const providerOptions = mergeMcpToolOriginMetadata(
-          undefined,
-          serverId
-        );
-        // MCP App tools scrub structuredContent from the model-facing copy
-        // (`mappedOutput`), but their widgets read structuredContent from
-        // the raw result. Preserve the raw result for UI hydration whenever
-        // it carries structuredContent — the model copy no longer does.
-        // Other toModelOutput tools (e.g. the eval `computer` tool) return
-        // no structuredContent, so they keep omitting `result:` and don't
-        // bloat subsequent per-step request bodies with large content.
-        const rawHasStructuredContent =
-          !!result &&
-          typeof result === "object" &&
-          "structuredContent" in (result as Record<string, unknown>);
-        const preserveRawResultForUi = shouldPreserveRawResultForUi(tool);
-        return {
-          role: "tool" as const,
-          content: [
-            {
-              type: "tool-result",
-              toolCallId: content.toolCallId,
-              toolName: toolName,
-              output: mappedOutput,
-              // UI-only raw result for app-tool widgets (stripped from the
-              // model copy via `output`/toModelOutput above).
-              ...(rawHasStructuredContent || preserveRawResultForUi
-                ? { result }
-                : {}),
-              serverId,
-              ...(providerOptions ? { providerOptions } : {}),
-            },
-          ],
-        } as any;
+        // SDK-converted MCP tools intentionally return `undefined` from
+        // toModelOutput for ordinary text/JSON results: the mapper is an
+        // image-specialization hook, not a replacement for the normal
+        // serialization path. Falling through preserves the CallToolResult
+        // instead of emitting an output-less tool result (which becomes `{}`
+        // on the wire and can leave the resumed model turn with no answer).
+        if (mappedOutput !== undefined) {
+          const providerOptions = mergeMcpToolOriginMetadata(
+            undefined,
+            serverId
+          );
+          // MCP App tools scrub structuredContent from the model-facing copy
+          // (`mappedOutput`), but their widgets read structuredContent from
+          // the raw result. Preserve the raw result for UI hydration whenever
+          // it carries structuredContent — the model copy no longer does.
+          // Other toModelOutput tools (e.g. the eval `computer` tool) return
+          // no structuredContent, so they keep omitting `result:` and don't
+          // bloat subsequent per-step request bodies with large content.
+          const rawHasStructuredContent =
+            !!result &&
+            typeof result === "object" &&
+            "structuredContent" in (result as Record<string, unknown>);
+          const preserveRawResultForUi = shouldPreserveRawResultForUi(tool);
+          return {
+            role: "tool" as const,
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: content.toolCallId,
+                toolName: toolName,
+                output: mappedOutput,
+                // UI-only raw result for app-tool widgets (stripped from the
+                // model copy via `output`/toModelOutput above).
+                ...(rawHasStructuredContent || preserveRawResultForUi
+                  ? { result }
+                  : {}),
+                serverId,
+                ...(providerOptions ? { providerOptions } : {}),
+              },
+            ],
+          } as any;
+        }
       }
 
       let output: ToolResultPart;
@@ -547,7 +565,7 @@ export async function executeToolCallsFromMessages(
       // suspend signal to unwind and return control to the worker. Like an
       // abort, this must propagate — capturing it as an error-text result would
       // both hide the pause AND poison history with a phantom tool failure.
-      if (isMrtrSuspendSignalShape(error)) {
+      if (isToolExecutionSuspendSignal(error)) {
         throw error;
       }
       // -32042: the server wants an out-of-band interaction first. Surface
@@ -600,7 +618,7 @@ export async function executeToolCallsFromMessages(
       try {
         outcomes.push(await executeSingleToolCall(pending.content));
       } catch (error) {
-        if (isMrtrSuspendSignalShape(error)) {
+        if (isToolExecutionSuspendSignal(error)) {
           suspendSignal = error;
           break;
         }
@@ -614,7 +632,7 @@ export async function executeToolCallsFromMessages(
     // Preserve Promise.all abort semantics: a NON-suspend rejection (abort or
     // an unexpected throw) fails the whole batch with nothing spliced.
     for (const s of settled) {
-      if (s.status === "rejected" && !isMrtrSuspendSignalShape(s.reason)) {
+      if (s.status === "rejected" && !isToolExecutionSuspendSignal(s.reason)) {
         throw s.reason;
       }
     }
