@@ -21,13 +21,6 @@ export interface OAuthTestProfile {
   customHeaders: Array<{ key: string; value: string }>;
   protocolVersion: OAuthProtocolVersion;
   registrationStrategy: OAuthRegistrationStrategy;
-  /**
-   * Opt-in: accept a path-scoped authorization server whose metadata
-   * advertises the same-origin root as issuer (multi-tenant AS deployments
-   * like Scalekit). Off = strict RFC 8414 issuer match. Mirrors the XAA
-   * debugger's `xaaAllowPathScopedIssuer` per-server toggle.
-   */
-  allowPathScopedIssuer?: boolean;
 }
 
 export const EMPTY_OAUTH_TEST_PROFILE: OAuthTestProfile = {
@@ -39,7 +32,6 @@ export const EMPTY_OAUTH_TEST_PROFILE: OAuthTestProfile = {
   customHeaders: [],
   protocolVersion: "2025-11-25",
   registrationStrategy: "dcr",
-  allowPathScopedIssuer: false,
 };
 
 const OAUTH_PROTOCOL_VERSIONS: readonly OAuthProtocolVersion[] = [

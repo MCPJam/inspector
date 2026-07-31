@@ -104,6 +104,10 @@ export function OAuthProfileModal({
       ? derivedProfile.customHeaders.map((header) => createHeaderRow(header))
       : [createHeaderRow()],
   );
+  // Top-level server field, not part of the OAuth test profile: only flat
+  // server columns round-trip through a save, so a nested profile key would be
+  // silently dropped and the switch would read back off.
+  const [allowPathScopedIssuer, setAllowPathScopedIssuer] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const supportedStrategies = useMemo(
@@ -136,9 +140,16 @@ export function OAuthProfileModal({
             )
           : [createHeaderRow()],
       );
+      setAllowPathScopedIssuer(server?.oauthAllowPathScopedIssuer === true);
       setError(null);
     }
-  }, [open, derivedProfile, generateDefaultName, agentSeed]);
+  }, [
+    open,
+    derivedProfile,
+    generateDefaultName,
+    agentSeed,
+    server?.oauthAllowPathScopedIssuer,
+  ]);
 
   const normalizedHeaders = useMemo(
     () =>
@@ -235,6 +246,7 @@ export function OAuthProfileModal({
       oauthScopes: scopesArray,
       clientId: validated.trimmedClientId || undefined,
       clientSecret: validated.trimmedClientSecret || undefined,
+      oauthAllowPathScopedIssuer: allowPathScopedIssuer,
     };
 
     // Await so a rejected save keeps the modal open with the entered values
@@ -252,7 +264,6 @@ export function OAuthProfileModal({
           customHeaders: normalizedHeaders,
           protocolVersion: draft.protocolVersion,
           registrationStrategy: draft.registrationStrategy,
-          allowPathScopedIssuer: draft.allowPathScopedIssuer === true,
         },
       });
       onOpenChange(false);
@@ -572,13 +583,8 @@ export function OAuthProfileModal({
                     <div className="flex items-start gap-2 pt-1">
                       <Switch
                         id="oauth-profile-path-scoped"
-                        checked={draft.allowPathScopedIssuer === true}
-                        onCheckedChange={(checked) =>
-                          setDraft((prev) => ({
-                            ...prev,
-                            allowPathScopedIssuer: checked,
-                          }))
-                        }
+                        checked={allowPathScopedIssuer}
+                        onCheckedChange={setAllowPathScopedIssuer}
                       />
                       <div className="space-y-0.5">
                         <label

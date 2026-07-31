@@ -1783,6 +1783,12 @@ export function useServerState({
         ...(serverEntry.xaaAllowPathScopedIssuer !== undefined
           ? { xaaAllowPathScopedIssuer: serverEntry.xaaAllowPathScopedIssuer }
           : {}),
+        ...(serverEntry.oauthAllowPathScopedIssuer !== undefined
+          ? {
+              oauthAllowPathScopedIssuer:
+                serverEntry.oauthAllowPathScopedIssuer,
+            }
+          : {}),
         ...(serverEntry.useXaa !== undefined
           ? { useXaa: serverEntry.useXaa }
           : {}),
@@ -2637,6 +2643,8 @@ export function useServerState({
             hasClientSecret: existingServer?.hasClientSecret,
             xaaAuthzIssuer: existingServer?.xaaAuthzIssuer,
             xaaAllowPathScopedIssuer: existingServer?.xaaAllowPathScopedIssuer,
+            oauthAllowPathScopedIssuer:
+              existingServer?.oauthAllowPathScopedIssuer,
             initializationInfo: existingServer?.initializationInfo,
             useOAuth: true,
             oauthProtocolMode:
@@ -3043,6 +3051,9 @@ export function useServerState({
         xaaAllowPathScopedIssuer:
           formData.xaaAllowPathScopedIssuer ??
           existingServerForSave?.xaaAllowPathScopedIssuer,
+        oauthAllowPathScopedIssuer:
+          formData.oauthAllowPathScopedIssuer ??
+          existingServerForSave?.oauthAllowPathScopedIssuer,
         useXaa: formData.useXaa ?? false,
         // Shared atomic identity-pair semantics (omitted pair preserves the
         // stored values, explicit "" pair clears) + authServerMode default.
@@ -3573,6 +3584,9 @@ export function useServerState({
         xaaAllowPathScopedIssuer:
           formData.xaaAllowPathScopedIssuer ??
           existingServer?.xaaAllowPathScopedIssuer,
+        oauthAllowPathScopedIssuer:
+          formData.oauthAllowPathScopedIssuer ??
+          existingServer?.oauthAllowPathScopedIssuer,
         useXaa: formData.useXaa ?? false,
         // Shared atomic identity-pair semantics (omitted pair preserves the
         // stored values, explicit "" pair clears) + authServerMode default.
@@ -5336,6 +5350,9 @@ export function useServerState({
           xaaAllowPathScopedIssuer:
             formData.xaaAllowPathScopedIssuer ??
             originalServer?.xaaAllowPathScopedIssuer,
+          oauthAllowPathScopedIssuer:
+            formData.oauthAllowPathScopedIssuer ??
+            originalServer?.oauthAllowPathScopedIssuer,
           useXaa: formData.useXaa ?? false,
           // Shared atomic identity-pair semantics (omitted pair preserves
           // the stored values, explicit "" pair clears) + authServerMode
