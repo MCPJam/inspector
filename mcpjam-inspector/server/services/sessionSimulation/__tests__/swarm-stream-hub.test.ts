@@ -55,6 +55,111 @@ describe("JourneyRunStreamHub", () => {
     expect(listener).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps live frames out of the ring buffer, coalesced per session", () => {
+    const hub = new JourneyRunStreamHub();
+    const frame = (sequence: number, chatSessionId = "synth_run_1_host_a_0") =>
+      event({
+        type: "browser_frame",
+        chatSessionId,
+        frame: {
+          sequence,
+          promptIndex: 0,
+          toolCallId: "tc-1",
+          stepIndex: sequence,
+          action: "left_click",
+          ts: 1_000 + sequence,
+        },
+      });
+
+    hub.emit(event({ type: "attempt_status", status: "running" }));
+    for (let i = 1; i <= 500; i++) hub.emit(frame(i));
+    hub.emit(frame(1, "synth_run_1_host_a_1"));
+
+    // A click-happy agent must not be able to flush lifecycle events out of the
+    // ring — that's the whole reason frames get their own channel.
+    expect(hub.getBuffer()).toHaveLength(1);
+    expect(hub.getBuffer()[0]!.type).toBe("attempt_status");
+    // One retained frame per session: the current one. No history.
+    expect(hub.getLatestFrames().size).toBe(2);
+    const latest = hub.getLatestFrames().get("synth_run_1_host_a_0") as any;
+    expect(latest.frame.sequence).toBe(500);
+  });
+
+  it("replays the current frame BEFORE the ring, so a post-run joiner sees it", () => {
+    const hub = new JourneyRunStreamHub();
+    hub.emit(event({ type: "attempt_status", status: "running" }));
+    hub.emit(
+      event({
+        type: "browser_frame",
+        frame: {
+          sequence: 7,
+          promptIndex: 0,
+          toolCallId: "tc-1",
+          stepIndex: 6,
+          action: "type",
+          ts: 2_000,
+        },
+      }),
+    );
+
+    const late: string[] = [];
+    hub.subscribe((e) => late.push(e.type));
+    // Frames FIRST: the SSE route closes the stream on a replayed `run_complete`,
+    // so anything after the ring is dropped for a joiner arriving after the run
+    // ended — exactly when the retained frame is the only picture there is.
+    expect(late).toEqual(["browser_frame", "attempt_status"]);
+  });
+
+  it("delivers the retained frame even when run_complete is already buffered", () => {
+    const hub = new JourneyRunStreamHub();
+    hub.emit(
+      event({
+        type: "browser_frame",
+        frame: {
+          sequence: 1,
+          promptIndex: 0,
+          toolCallId: "tc-1",
+          stepIndex: 0,
+          action: "left_click",
+          ts: 1,
+        },
+      }),
+    );
+    hub.emit(event({ type: "run_complete" }));
+
+    // A subscriber that stops listening at `run_complete` — what the route does.
+    const seen: string[] = [];
+    let closed = false;
+    hub.subscribe((e) => {
+      if (closed) return;
+      seen.push(e.type);
+      if (e.type === "run_complete") closed = true;
+    });
+    expect(seen).toEqual(["browser_frame", "run_complete"]);
+  });
+
+  it("still fans out frames live to existing subscribers", () => {
+    const hub = new JourneyRunStreamHub();
+    const seen: number[] = [];
+    hub.subscribe((e) => {
+      if (e.type === "browser_frame") seen.push(e.frame.sequence);
+    });
+    hub.emit(
+      event({
+        type: "browser_frame",
+        frame: {
+          sequence: 1,
+          promptIndex: 0,
+          toolCallId: "tc-1",
+          stepIndex: 0,
+          action: "left_click",
+          ts: 1,
+        },
+      }),
+    );
+    expect(seen).toEqual([1]);
+  });
+
   it("subscriber errors do not break emit", () => {
     const hub = new JourneyRunStreamHub();
     hub.subscribe(() => {
