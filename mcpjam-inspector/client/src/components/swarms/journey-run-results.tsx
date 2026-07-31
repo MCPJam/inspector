@@ -13,6 +13,7 @@ import {
   type TraceViewMode,
 } from "@/components/evals/trace-view-mode-tabs";
 import type { TraceEnvelope } from "@/components/evals/trace-viewer-adapter";
+import { hasReplayArtifacts } from "@/components/evals/browser-step-replay";
 import {
   swarmCellKey,
   type JourneyRunStreamState,
@@ -312,17 +313,36 @@ export function SwarmLiveStreamPane({
   // Completed / late-open sessions: SSE buffer is gone — load the persisted
   // transcript blob the same way ShareUsageThreadDetail does.
   const persisted = usePersistedSessionTrace(convexSession?.id ?? null);
-  const displayTrace = fallbackTrace ?? persisted.trace;
 
-  // Replay availability, mirroring the TraceViewer's own gate so the tab and the
-  // panel can't disagree. Steps count: a swarm session driving one
-  // already-mounted widget by Computer Use has a full recording and no render
-  // observations. `replayActive` is component state that survives a cell switch,
-  // so clamp it rather than resetting — flipping back restores the view.
-  const hasReplay =
-    (displayTrace?.widgetRenderObservations?.length ?? 0) > 0 ||
-    (displayTrace?.browserInteractionSteps?.length ?? 0) > 0 ||
-    displayTrace?.videoUrl != null;
+  // The live SSE trace wins for the transcript — it is ahead of the persisted
+  // blob while the run is going. But its browser artifacts are only the LIVE
+  // frames: no video (there is none until the run ends) and no render
+  // observations. The persisted query is where the final ones arrive, and it
+  // keeps polling after the run finishes, so overlay them on top of the fallback
+  // rather than letting a lingering live trace hide the finished recording.
+  const displayTrace: TraceEnvelope | null = useMemo(() => {
+    if (!fallbackTrace) return persisted.trace;
+    const finalized = persisted.trace;
+    if (!finalized) return fallbackTrace;
+    return {
+      ...fallbackTrace,
+      ...(finalized.widgetRenderObservations?.length
+        ? { widgetRenderObservations: finalized.widgetRenderObservations }
+        : {}),
+      // Persisted steps supersede the live frames once they exist: same steps,
+      // full-resolution screenshots, and a `videoOffsetMs` to seek with.
+      ...(finalized.browserInteractionSteps?.length
+        ? { browserInteractionSteps: finalized.browserInteractionSteps }
+        : {}),
+      ...(finalized.videoUrl ? { videoUrl: finalized.videoUrl } : {}),
+    };
+  }, [fallbackTrace, persisted.trace]);
+
+  // Replay availability — the SHARED predicate, so this pane's tab and the
+  // viewer's panel can't disagree about (say) an empty-string videoUrl.
+  // `replayActive` is component state that survives a cell switch, so clamp it
+  // rather than resetting: flipping back restores the view.
+  const hasReplay = hasReplayArtifacts(displayTrace ?? {});
   const showReplay = replayActive && hasReplay;
 
   if (!selection) {

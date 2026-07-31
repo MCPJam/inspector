@@ -74,6 +74,7 @@ import {
   createBrowserSessionContext,
   boundFollowUpsForArtifact,
 } from "../browser-session-context";
+import type { LiveBrowserFrame } from "@/shared/browser-live-frame";
 
 const CLAUDE_MODEL = "claude-haiku-4-5";
 const NON_CLAUDE_MODEL = "gpt-5-mini";
@@ -512,7 +513,7 @@ describe("createBrowserSessionContext — live browser frames", () => {
   }
 
   it("emits a frame as each action COMPLETES, not at drain time", async () => {
-    const frames: any[] = [];
+    const frames: LiveBrowserFrame[] = [];
     const ctx = await createBrowserSessionContext({
       model: CLAUDE_MODEL,
       enableComputerUse: true,
@@ -531,7 +532,7 @@ describe("createBrowserSessionContext — live browser frames", () => {
 
     // The frame is here BEFORE any drain — that's the whole point.
     expect(ctx.drainNewArtifacts().steps).toHaveLength(1);
-    expect(frames).toHaveLength(1);
+    await vi.waitFor(() => expect(frames).toHaveLength(1));
     expect(frames[0]).toMatchObject({
       sequence: 1,
       promptIndex: 2,
@@ -543,11 +544,10 @@ describe("createBrowserSessionContext — live browser frames", () => {
       thumbnailBase64: "iVBORw0KGgo=",
       thumbnailMediaType: "image/png",
     });
-    expect(harness.getRecordingStartedAt).toBeDefined();
   });
 
   it("numbers frames monotonically so a consumer can drop stale ones", async () => {
-    const frames: any[] = [];
+    const frames: LiveBrowserFrame[] = [];
     const ctx = await createBrowserSessionContext({
       model: CLAUDE_MODEL,
       enableComputerUse: true,
@@ -560,11 +560,14 @@ describe("createBrowserSessionContext — live browser frames", () => {
     };
     await computer.execute({ action: "left_click", coordinate: [7, 9] }, {});
     await computer.execute({ action: "left_click", coordinate: [7, 9] }, {});
+    // Ordered by ACTION, not by whichever thumbnail finished encoding first —
+    // the sequence is taken synchronously and the emissions are serialized.
+    await vi.waitFor(() => expect(frames).toHaveLength(2));
     expect(frames.map((f) => f.sequence)).toEqual([1, 2]);
   });
 
   it("re-encodes a thumbnail when the step screenshot is over the live cap", async () => {
-    const frames: any[] = [];
+    const frames: LiveBrowserFrame[] = [];
     const ctx = await createBrowserSessionContext({
       model: CLAUDE_MODEL,
       enableComputerUse: true,
@@ -572,7 +575,7 @@ describe("createBrowserSessionContext — live browser frames", () => {
       onBrowserAction: (frame) => frames.push(frame),
     });
     const harness = armedHarness("A".repeat(200_000));
-    (harness as any).captureLiveThumbnail = vi
+    harness.captureLiveThumbnail = vi
       .fn()
       .mockResolvedValue("small-jpeg");
 
@@ -582,12 +585,13 @@ describe("createBrowserSessionContext — live browser frames", () => {
     await computer.execute({ action: "left_click", coordinate: [7, 9] }, {});
 
     // A 200 KB base64 must never go on the wire per click.
+    await vi.waitFor(() => expect(frames).toHaveLength(1));
     expect(frames[0].thumbnailBase64).toBe("small-jpeg");
     expect(frames[0].thumbnailMediaType).toBe("image/jpeg");
   });
 
   it("still emits the action when no thumbnail can be produced", async () => {
-    const frames: any[] = [];
+    const frames: LiveBrowserFrame[] = [];
     const ctx = await createBrowserSessionContext({
       model: CLAUDE_MODEL,
       enableComputerUse: true,
@@ -595,7 +599,7 @@ describe("createBrowserSessionContext — live browser frames", () => {
       onBrowserAction: (frame) => frames.push(frame),
     });
     const harness = armedHarness();
-    (harness as any).captureLiveThumbnail = vi.fn().mockResolvedValue(null);
+    harness.captureLiveThumbnail = vi.fn().mockResolvedValue(null);
 
     const computer = ctx.computerWidgetTools.computer as {
       execute: (input: unknown, opts: unknown) => Promise<unknown>;
@@ -603,7 +607,7 @@ describe("createBrowserSessionContext — live browser frames", () => {
     await computer.execute({ action: "left_click", coordinate: [7, 9] }, {});
 
     // Metadata is still worth delivering; the viewer keeps its last image.
-    expect(frames).toHaveLength(1);
+    await vi.waitFor(() => expect(frames).toHaveLength(1));
     expect(frames[0].thumbnailBase64).toBeUndefined();
   });
 
@@ -624,6 +628,8 @@ describe("createBrowserSessionContext — live browser frames", () => {
       computer.execute({ action: "left_click", coordinate: [7, 9] }, {}),
     ).resolves.toBeDefined();
     expect(ctx.browserInteractionSteps).toHaveLength(1);
+    // The queued emission rejects into the context's own containment, never out.
+    await vi.waitFor(() => expect(ctx.browserInteractionSteps).toHaveLength(1));
   });
 
   it("does no thumbnail work at all without a sink (flag off)", async () => {
@@ -634,7 +640,7 @@ describe("createBrowserSessionContext — live browser frames", () => {
     });
     const harness = armedHarness("A".repeat(200_000));
     const captureLiveThumbnail = vi.fn().mockResolvedValue("x");
-    (harness as any).captureLiveThumbnail = captureLiveThumbnail;
+    harness.captureLiveThumbnail = captureLiveThumbnail;
 
     const computer = ctx.computerWidgetTools.computer as {
       execute: (input: unknown, opts: unknown) => Promise<unknown>;
@@ -642,6 +648,7 @@ describe("createBrowserSessionContext — live browser frames", () => {
     await computer.execute({ action: "left_click", coordinate: [7, 9] }, {});
 
     // A true no-op: not even the extra JPEG shot the live path would take.
+    await vi.waitFor(() => expect(ctx.browserInteractionSteps).toHaveLength(1));
     expect(captureLiveThumbnail).not.toHaveBeenCalled();
     expect(ctx.browserInteractionSteps).toHaveLength(1);
   });

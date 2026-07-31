@@ -460,6 +460,12 @@ export type CompareRunRecord = {
    * still going.
    */
   streamingLiveBrowserSteps?: EvalTraceBrowserInteractionStepView[];
+  /**
+   * Highest live-frame `sequence` accepted, carried alongside the steps so the
+   * reducer's monotonic guard survives being rebuilt from this record on every
+   * event (otherwise every frame would look like the first one).
+   */
+  streamingLiveBrowserFrameSequence?: number;
   /** Live actual tool calls collected from streamed snapshots. */
   streamingActualToolCalls?: EvalStreamToolCall[];
   /** Live metrics from stream events. */

@@ -13,7 +13,7 @@ describe("pickAutoFollowCell", () => {
         cellStatus: { "host_a:0": "succeeded", "host_a:1": "running" },
         currentCell: null,
       }),
-    ).toBe("host_a:1");
+    ).toEqual({ targetKey: "host_a", sessionIndex: 1 });
   });
 
   it("stays on the watched attempt while it is still running", () => {
@@ -34,7 +34,7 @@ describe("pickAutoFollowCell", () => {
         cellStatus: { "host_a:0": "succeeded", "host_b:0": "running" },
         currentCell: "host_a:0",
       }),
-    ).toBe("host_b:0");
+    ).toEqual({ targetKey: "host_b", sessionIndex: 0 });
   });
 
   it("stays put when nothing is running", () => {
@@ -48,6 +48,32 @@ describe("pickAutoFollowCell", () => {
     expect(
       pickAutoFollowCell({
         cellStatus: { "host_a:0": "pending" },
+        currentCell: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("splits a targetKey that itself contains a colon", () => {
+    // `environment:e1` is a real target key shape — returning the parsed pieces
+    // keeps the caller from re-deriving them and getting this wrong.
+    expect(
+      pickAutoFollowCell({
+        cellStatus: { "environment:e1:2": "running" },
+        currentCell: null,
+      }),
+    ).toEqual({ targetKey: "environment:e1", sessionIndex: 2 });
+  });
+
+  it("rejects a malformed cell key rather than guessing", () => {
+    expect(
+      pickAutoFollowCell({
+        cellStatus: { "no-colon": "running" },
+        currentCell: null,
+      }),
+    ).toBeNull();
+    expect(
+      pickAutoFollowCell({
+        cellStatus: { "host_a:notanumber": "running" },
         currentCell: null,
       }),
     ).toBeNull();

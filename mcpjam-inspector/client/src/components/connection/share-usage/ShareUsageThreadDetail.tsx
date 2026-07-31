@@ -18,6 +18,7 @@ import {
 } from "@/components/evals/trace-viewer-adapter";
 import { TraceViewer } from "@/components/evals/trace-viewer";
 import { BrowserArtifactsView } from "@/components/evals/browser-artifacts-view";
+import { hasReplayArtifacts } from "@/components/evals/browser-step-replay";
 import {
   ChatTraceViewModeHeaderBar,
   type TraceViewMode,
@@ -292,18 +293,16 @@ export function ShareUsageThreadDetail({
   // artifact presence, the same heuristic the eval trace viewer uses.
   const renderObservations = browserArtifacts?.widgetRenderObservations ?? [];
   const interactionSteps = browserArtifacts?.browserInteractionSteps ?? [];
-  // The Browser tab renders only the per-widget render observations now; the
-  // interaction steps surface on the Trace tab (`Interact · …` spans), so they
-  // ride the trace blob below rather than gating this tab.
-  const replayVideoUrl = browserArtifacts?.videoUrl ?? null;
-  // Observations OR steps OR video. Steps count now that the Replay tab carries
-  // the synchronized filmstrip: a session that drove one already-mounted widget
-  // by Computer Use has a full recording and no render observations, and used to
-  // get no tab at all.
-  const hasBrowserArtifacts =
-    renderObservations.length > 0 ||
-    interactionSteps.length > 0 ||
-    replayVideoUrl != null;
+  const replayUrl = browserArtifacts?.videoUrl ?? null;
+  // The SHARED predicate — observations OR steps OR video. Steps count now that
+  // the Replay tab carries the synchronized filmstrip: a session that drove one
+  // already-mounted widget by Computer Use has a full recording and no render
+  // observations, and used to get no tab at all.
+  const hasBrowserArtifacts = hasReplayArtifacts({
+    widgetRenderObservations: renderObservations,
+    browserInteractionSteps: interactionSteps,
+    videoUrl: replayUrl,
+  });
 
   // The "browser" mode is only valid while the LOADED session actually has
   // artifacts. `viewMode` is component state that survives a `threadId`
@@ -328,13 +327,13 @@ export function ShareUsageThreadDetail({
       ...(interactionSteps.length > 0
         ? { browserInteractionSteps: interactionSteps }
         : {}),
-      ...(replayVideoUrl ? { videoUrl: replayVideoUrl } : {}),
+      ...(replayUrl ? { videoUrl: replayUrl } : {}),
     };
   }, [
     messages,
     widgetSnapshots,
     hydratedSpans,
-    replayVideoUrl,
+    replayUrl,
     renderObservations,
     interactionSteps,
   ]);
@@ -543,7 +542,7 @@ export function ShareUsageThreadDetail({
             <BrowserArtifactsView
               observations={renderObservations}
               steps={interactionSteps}
-              videoUrl={replayVideoUrl}
+              videoUrl={replayUrl}
             />
           </div>
         ) : effectiveViewMode === "chat" ? (

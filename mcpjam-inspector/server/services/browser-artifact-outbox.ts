@@ -174,45 +174,78 @@ export function createBrowserArtifactOutbox(args: {
   };
 
   /**
-   * Upload + sanitize every raw bucket into its wire batch. A bucket is removed
-   * from `raw` only once serialized, so a later flush never re-uploads the same
-   * screenshot. The per-artifact serializers are already fail-soft (a failed
-   * screenshot upload drops the blob id and KEEPS the row), so a throw here is
-   * systemic; drop that bucket with a warn rather than retry-uploading forever.
+   * Upload + sanitize every raw artifact into its wire batch.
+   *
+   * Isolated PER ARTIFACT, and each one is `shift()`ed off its raw bucket only
+   * once it has landed in a wire batch. That's what keeps the module's whole
+   * promise intact under a mid-bucket throw: an artifact that was already
+   * uploaded moved to `wire` (so it never re-uploads), one that threw is dropped
+   * with a warn (so it can't retry-upload forever), and every artifact behind it
+   * stays in `raw` for the next flush instead of being lost with the bucket.
+   *
+   * The per-artifact serializers are themselves fail-soft about the screenshot
+   * (a failed upload drops the blob id and KEEPS the row), so a throw here is a
+   * systemic failure about one record, not a lost turn.
    */
   const serializePending = async (
     convexClient: ConvexHttpClient,
   ): Promise<void> => {
     for (const bucket of [...raw.values()]) {
-      try {
-        const observations = await serializeRenderObservationsForBackend(
-          bucket.observations,
-          convexClient,
-        );
-        const steps = await serializeBrowserStepsForBackend(
-          bucket.steps,
-          convexClient,
-        );
-        for (const obs of observations) {
-          wireBatch(bucketOf(obs.promptIndex, bucket.promptIndex)).observations.push(
-            toObservationPayload(obs),
+      while (bucket.observations.length > 0) {
+        const obs = bucket.observations[0]!;
+        try {
+          const [serialized] = await serializeRenderObservationsForBackend(
+            [obs],
+            convexClient,
+          );
+          bucket.observations.shift();
+          if (serialized) {
+            wireBatch(
+              bucketOf(serialized.promptIndex, bucket.promptIndex),
+            ).observations.push(toObservationPayload(serialized));
+          }
+        } catch (err) {
+          bucket.observations.shift();
+          logger.warn(
+            `[${logScope}] dropped one render observation it could not serialize`,
+            {
+              chatSessionId,
+              promptIndex: bucket.promptIndex,
+              toolCallId: obs.toolCallId,
+              error: err instanceof Error ? err.message : String(err),
+            },
           );
         }
-        for (const step of steps) {
-          wireBatch(bucketOf(step.promptIndex, bucket.promptIndex)).steps.push(
-            toBrowserStepPayload(step),
+      }
+      while (bucket.steps.length > 0) {
+        const step = bucket.steps[0]!;
+        try {
+          const [serialized] = await serializeBrowserStepsForBackend(
+            [step],
+            convexClient,
+          );
+          bucket.steps.shift();
+          if (serialized) {
+            wireBatch(
+              bucketOf(serialized.promptIndex, bucket.promptIndex),
+            ).steps.push(toBrowserStepPayload(serialized));
+          }
+        } catch (err) {
+          bucket.steps.shift();
+          logger.warn(
+            `[${logScope}] dropped one interaction step it could not serialize`,
+            {
+              chatSessionId,
+              promptIndex: bucket.promptIndex,
+              toolCallId: step.toolCallId,
+              stepIndex: step.stepIndex,
+              error: err instanceof Error ? err.message : String(err),
+            },
           );
         }
+      }
+      if (bucket.observations.length === 0 && bucket.steps.length === 0) {
         raw.delete(bucket.promptIndex);
-      } catch (err) {
-        raw.delete(bucket.promptIndex);
-        logger.warn(`[${logScope}] browser artifact serialization failed`, {
-          chatSessionId,
-          promptIndex: bucket.promptIndex,
-          observations: bucket.observations.length,
-          steps: bucket.steps.length,
-          error: err instanceof Error ? err.message : String(err),
-        });
       }
     }
   };
@@ -242,6 +275,16 @@ export function createBrowserArtifactOutbox(args: {
       if (!convexClient) return;
       try {
         stagedVideoBlobId = await uploadVideoBlob(convexClient, bytes);
+        if (stagedVideoBlobId === undefined) {
+          // `uploadVideoBlob` also returns undefined WITHOUT throwing — an
+          // unusable upload URL, or a response carrying no storageId. Staging
+          // happens once per session, so this loss is permanent; say so rather
+          // than letting the terminal report a bare `videoAttached: false`.
+          logger.warn(
+            `[${logScope}] replay video upload returned no storage id; dropping it`,
+            { chatSessionId, bytes: bytes.length },
+          );
+        }
       } catch (err) {
         // Bounded by `uploadVideoBlob` (size + timeout). A dropped video still
         // leaves the screenshots, which the Replay UI renders on their own.
@@ -262,6 +305,7 @@ export function createBrowserArtifactOutbox(args: {
           videoAttached,
         };
       }
+
 
       await serializePending(convexClient);
 
@@ -343,7 +387,16 @@ export function createBrowserArtifactOutbox(args: {
         }
       }
 
-      return { written, pending: wire.size, videoAttached };
+      // A staged-but-unattached video IS outstanding work — and unlike a batch
+      // it can never be retried once the run is over. Counting only `wire.size`
+      // let the terminal path report "nothing pending" while silently losing the
+      // replay.
+      const videoPending = !videoAttached && stagedVideoBlobId !== undefined;
+      return {
+        written,
+        pending: wire.size + (videoPending ? 1 : 0),
+        videoAttached,
+      };
     },
   };
 }

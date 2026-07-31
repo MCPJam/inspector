@@ -89,7 +89,7 @@ describe("TraceViewModeTabs", () => {
       "bg-sidebar-accent",
       "text-sidebar-accent-foreground",
     );
-    // With App active, no standard tab is highlighted.
+    // With Replay active, no standard tab is highlighted.
     expect(screen.getByRole("button", { name: "Trace" })).not.toHaveClass(
       "bg-sidebar-accent",
     );

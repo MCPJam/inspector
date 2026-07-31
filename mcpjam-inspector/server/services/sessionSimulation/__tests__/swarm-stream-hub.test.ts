@@ -85,7 +85,7 @@ describe("JourneyRunStreamHub", () => {
     expect(latest.frame.sequence).toBe(500);
   });
 
-  it("replays the current frame per session after the ring, for late joiners", () => {
+  it("replays the current frame BEFORE the ring, so a post-run joiner sees it", () => {
     const hub = new JourneyRunStreamHub();
     hub.emit(event({ type: "attempt_status", status: "running" }));
     hub.emit(
@@ -104,8 +104,38 @@ describe("JourneyRunStreamHub", () => {
 
     const late: string[] = [];
     hub.subscribe((e) => late.push(e.type));
-    // History first, then the current picture.
-    expect(late).toEqual(["attempt_status", "browser_frame"]);
+    // Frames FIRST: the SSE route closes the stream on a replayed `run_complete`,
+    // so anything after the ring is dropped for a joiner arriving after the run
+    // ended — exactly when the retained frame is the only picture there is.
+    expect(late).toEqual(["browser_frame", "attempt_status"]);
+  });
+
+  it("delivers the retained frame even when run_complete is already buffered", () => {
+    const hub = new JourneyRunStreamHub();
+    hub.emit(
+      event({
+        type: "browser_frame",
+        frame: {
+          sequence: 1,
+          promptIndex: 0,
+          toolCallId: "tc-1",
+          stepIndex: 0,
+          action: "left_click",
+          ts: 1,
+        },
+      }),
+    );
+    hub.emit(event({ type: "run_complete" }));
+
+    // A subscriber that stops listening at `run_complete` — what the route does.
+    const seen: string[] = [];
+    let closed = false;
+    hub.subscribe((e) => {
+      if (closed) return;
+      seen.push(e.type);
+      if (e.type === "run_complete") closed = true;
+    });
+    expect(seen).toEqual(["browser_frame", "run_complete"]);
   });
 
   it("still fans out frames live to existing subscribers", () => {

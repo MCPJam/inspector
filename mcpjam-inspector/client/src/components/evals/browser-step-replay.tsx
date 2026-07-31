@@ -84,6 +84,34 @@ export function browserStepKey(
   return `${step.toolCallId}:${step.stepIndex}`;
 }
 
+/**
+ * Normalize a replay video URL: an empty string means "no video", the same way
+ * the trace viewer reads it. Kept here so the tab gate and the player agree.
+ */
+export function replayVideoUrl(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+/**
+ * Does this run have anything to replay? Observations OR steps OR a video.
+ *
+ * ONE owner. This predicate was spelled out independently in the trace viewer,
+ * `ShareUsageThreadDetail`, the swarm live pane, and the eval quick-run column —
+ * each copy annotated with a plea that the copies not disagree. They did:
+ * one accepted an empty-string `videoUrl` the player then treated as absent.
+ */
+export function hasReplayArtifacts(source: {
+  widgetRenderObservations?: unknown[] | null;
+  browserInteractionSteps?: unknown[] | null;
+  videoUrl?: unknown;
+}): boolean {
+  return (
+    (source.widgetRenderObservations?.length ?? 0) > 0 ||
+    (source.browserInteractionSteps?.length ?? 0) > 0 ||
+    replayVideoUrl(source.videoUrl) !== null
+  );
+}
+
 function statusLabel(status: BrowserStepStatus): string {
   return status === "ok" ? "OK" : status === "error" ? "Failed" : "Unknown";
 }
@@ -251,7 +279,11 @@ export function BrowserStepFilmstrip({
   // Set only by video playback, so a manual selection isn't immediately
   // overwritten by the `seeking` → `timeupdate` echo of its own seek.
   const [playheadKey, setPlayheadKey] = useState<string | null>(null);
+  // Armed by `selectStep`, consumed by the one `timeupdate` its seek emits.
+  const pendingSeekRef = useRef(false);
   const [videoFailed, setVideoFailed] = useState(false);
+
+  const resolvedVideoUrl = replayVideoUrl(videoUrl);
 
   const ordered = useMemo(
     () =>
@@ -271,7 +303,10 @@ export function BrowserStepFilmstrip({
     [ordered, activeKey],
   );
 
-  const seekable = videoUrl != null && !videoFailed;
+  const seekable = resolvedVideoUrl != null && !videoFailed;
+  // "Screenshots preserved" has to be TRUE to be said: a run can have steps
+  // whose screenshot upload dropped, leaving rows with no frame at all.
+  const hasAnyScreenshot = ordered.some((step) => step.screenshotUrl);
 
   const selectStep = useCallback(
     (step: EvalTraceBrowserInteractionStepView) => {
@@ -279,6 +314,7 @@ export function BrowserStepFilmstrip({
       const video = videoRef.current;
       if (!video || !seekable || step.videoOffsetMs == null) return;
       // Seek, don't play: the point is to look at the frame this step produced.
+      pendingSeekRef.current = true;
       video.currentTime = step.videoOffsetMs / 1000;
     },
     [seekable],
@@ -289,6 +325,14 @@ export function BrowserStepFilmstrip({
     if (!video) return;
     const current = stepAtVideoOffset(ordered, video.currentTime * 1000);
     setPlayheadKey(current ? browserStepKey(current) : null);
+    if (pendingSeekRef.current) {
+      // The echo of our OWN seek. Keep the manual pin: browsers resolve a seek
+      // to the nearest decodable frame, which can land just before the requested
+      // offset, so releasing here would slide the selection to the previous step
+      // the instant the user clicked one.
+      pendingSeekRef.current = false;
+      return;
+    }
     // Once playback moves on its own, the manual pin is stale — release it so
     // the filmstrip follows the video again.
     setSelectedKey(null);
@@ -300,7 +344,7 @@ export function BrowserStepFilmstrip({
     setVideoFailed(false);
   }, [videoUrl]);
 
-  if (ordered.length === 0 && !videoUrl) {
+  if (ordered.length === 0 && !resolvedVideoUrl) {
     return (
       <div
         className="flex items-center justify-center rounded-md border border-dashed border-border/40 py-8 text-xs text-muted-foreground"
@@ -325,10 +369,10 @@ export function BrowserStepFilmstrip({
             screen recording of the app interactions in this run
           </span>
         </h3>
-        {videoUrl && !videoFailed ? (
+        {resolvedVideoUrl && !videoFailed ? (
           <video
             ref={videoRef}
-            src={videoUrl}
+            src={resolvedVideoUrl}
             controls
             preload="metadata"
             onTimeUpdate={onTimeUpdate}
@@ -343,9 +387,13 @@ export function BrowserStepFilmstrip({
           >
             {isRunning
               ? "Finalizing replay — the recording is written when the run ends."
-              : ordered.length > 0
-                ? "Video unavailable — screenshots preserved."
-                : "Partial capture — no recording and no screenshots for this run."}
+              : videoFailed
+                ? hasAnyScreenshot
+                  ? "Recording failed to load — screenshots preserved."
+                  : "Recording failed to load, and no screenshots were captured."
+                : hasAnyScreenshot
+                  ? "Video unavailable — screenshots preserved."
+                  : "Partial capture — no recording, and no screenshots survived."}
           </p>
         )}
       </div>

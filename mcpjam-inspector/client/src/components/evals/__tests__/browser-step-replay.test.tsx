@@ -5,7 +5,7 @@
  * frames.
  */
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { EvalTraceBrowserInteractionStepView } from "@/shared/eval-trace";
 import {
@@ -136,7 +136,7 @@ describe("BrowserStepFilmstrip", () => {
     ).toHaveTextContent(/Finalizing replay/);
   });
 
-  it("reports partial capture when neither a video nor a frame survived", () => {
+  it("plays the video even when no interaction steps were recorded", () => {
     render(
       <BrowserStepFilmstrip
         videoUrl="https://example.test/replay.webm"
@@ -146,6 +146,87 @@ describe("BrowserStepFilmstrip", () => {
     // A video with no steps still plays; the filmstrip track is simply absent.
     expect(screen.getByTestId("browser-replay-video")).toBeTruthy();
     expect(screen.queryByTestId("browser-filmstrip-track")).toBeNull();
+  });
+
+  it("keeps the manual pin through the echo of its own seek", async () => {
+    render(
+      <BrowserStepFilmstrip
+        videoUrl="https://example.test/replay.webm"
+        steps={[
+          step({ stepIndex: 0, videoOffsetMs: 1_000 }),
+          step({ stepIndex: 1, videoOffsetMs: 6_000 }),
+        ]}
+      />,
+    );
+    const video = screen.getByTestId(
+      "browser-replay-video",
+    ) as HTMLVideoElement;
+    let currentTime = 0;
+    Object.defineProperty(video, "currentTime", {
+      configurable: true,
+      get: () => currentTime,
+      set: (value: number) => {
+        currentTime = value;
+      },
+    });
+
+    const frames = screen.getAllByTestId("browser-filmstrip-frame");
+    await userEvent.click(frames[1]!);
+
+    // Browsers resolve a seek to the nearest decodable frame, which can land
+    // just BEFORE the requested offset. If that echo released the pin, the
+    // selection would slide back to step 0 the instant the user clicked step 1.
+    currentTime = 5.9;
+    await act(async () => {
+      video.dispatchEvent(new Event("timeupdate"));
+    });
+    expect(
+      screen.getAllByTestId("browser-filmstrip-frame")[1],
+    ).toHaveAttribute("data-active", "true");
+
+    // A LATER timeupdate is real playback — the pin releases and the filmstrip
+    // follows the video again.
+    currentTime = 1.2;
+    await act(async () => {
+      video.dispatchEvent(new Event("timeupdate"));
+    });
+    expect(
+      screen.getAllByTestId("browser-filmstrip-frame")[0],
+    ).toHaveAttribute("data-active", "true");
+  });
+
+  it("does not claim screenshots survived when none did", () => {
+    render(
+      <BrowserStepFilmstrip
+        videoUrl={null}
+        steps={[step({ screenshotUrl: undefined })]}
+      />,
+    );
+    expect(
+      screen.getByTestId("browser-replay-video-unavailable"),
+    ).toHaveTextContent("no screenshots survived");
+  });
+
+  it("says the recording failed to LOAD when the player errored", async () => {
+    render(
+      <BrowserStepFilmstrip
+        videoUrl="https://example.test/gone.webm"
+        steps={[step()]}
+      />,
+    );
+    screen.getByTestId("browser-replay-video").dispatchEvent(new Event("error"));
+    // Distinct from "never uploaded" — the run DID record one.
+    expect(
+      await screen.findByTestId("browser-replay-video-unavailable"),
+    ).toHaveTextContent("Recording failed to load — screenshots preserved.");
+  });
+
+  it("treats an empty-string videoUrl as no video", () => {
+    render(<BrowserStepFilmstrip videoUrl="" steps={[step()]} />);
+    expect(screen.queryByTestId("browser-replay-video")).toBeNull();
+    expect(
+      screen.getByTestId("browser-replay-video-unavailable"),
+    ).toHaveTextContent("Video unavailable — screenshots preserved.");
   });
 
   it("shows an empty state rather than a broken player with nothing at all", () => {
@@ -187,7 +268,7 @@ describe("BrowserStepFilmstrip", () => {
     video.dispatchEvent(new Event("error"));
     expect(
       await screen.findByTestId("browser-replay-video-unavailable"),
-    ).toHaveTextContent("Video unavailable — screenshots preserved.");
+    ).toHaveTextContent("Recording failed to load — screenshots preserved.");
   });
 });
 

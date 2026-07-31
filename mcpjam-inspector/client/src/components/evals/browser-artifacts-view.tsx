@@ -13,7 +13,10 @@ import type {
   EvalTraceWidgetRenderObservationView,
   EvalTraceWidgetRenderStatus,
 } from "@/shared/eval-trace";
-import { BrowserStepFilmstrip } from "./browser-step-replay";
+import {
+  BrowserStepFilmstrip,
+  replayVideoUrl,
+} from "./browser-step-replay";
 
 /**
  * The "Replay" view — everything the headless-Chromium harness recorded that is
@@ -241,7 +244,15 @@ export function BrowserArtifactsView({
   isRunning?: boolean;
   className?: string;
 }) {
-  if (observations.length === 0 && steps.length === 0 && !videoUrl) {
+  // A LIVE run with nothing captured yet is not a run without MCP Apps — it just
+  // hasn't clicked anything yet. Fall through so the filmstrip can say
+  // "Finalizing replay" instead of declaring the run empty.
+  if (
+    !isRunning &&
+    observations.length === 0 &&
+    steps.length === 0 &&
+    !replayVideoUrl(videoUrl)
+  ) {
     return (
       <div
         className="flex items-center justify-center rounded-md border border-dashed border-border/40 py-8 text-xs text-muted-foreground"
@@ -260,7 +271,7 @@ export function BrowserArtifactsView({
       {/* Video + filmstrip + step detail, kept in sync. Shown whenever there is
           either a recording or steps to scrub through — a run with steps but no
           video still gets the filmstrip, and says why the player is missing. */}
-      {videoUrl || steps.length > 0 ? (
+      {isRunning || replayVideoUrl(videoUrl) || steps.length > 0 ? (
         <BrowserStepFilmstrip
           steps={steps}
           videoUrl={videoUrl}

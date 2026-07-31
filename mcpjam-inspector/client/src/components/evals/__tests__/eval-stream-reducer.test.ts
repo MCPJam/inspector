@@ -200,11 +200,11 @@ describe("reduceEvalStreamEvent — live browser frames", () => {
       type: "browser_frame",
       frame: frame({ sequence: 2, stepIndex: 1, action: "type" }),
     } as EvalStreamEvent);
-    // The hub replays the CURRENT frame per session to every late joiner, so the
-    // same click must not appear twice in the filmstrip.
+    // A NEWER frame for a click we already have (the harness can re-shoot the
+    // same step) replaces it in place — one click, one filmstrip entry.
     state = reduceEvalStreamEvent(state, {
       type: "browser_frame",
-      frame: frame({ sequence: 2, stepIndex: 1, action: "type", ts: 9_999 }),
+      frame: frame({ sequence: 3, stepIndex: 1, action: "type", ts: 9_999 }),
     } as EvalStreamEvent);
 
     expect(state.liveBrowserSteps.map((s) => s.stepIndex)).toEqual([0, 1]);
@@ -225,6 +225,32 @@ describe("reduceEvalStreamEvent — live browser frames", () => {
       state.liveBrowserSteps,
     );
     expect(merged?.browserInteractionSteps).toHaveLength(1);
+  });
+
+  it("ignores a frame whose sequence is not newer", () => {
+    let state = reduceEvalStreamEvent(initialEvalStreamState, {
+      type: "browser_frame",
+      frame: frame({ sequence: 5, stepIndex: 0 }),
+    } as EvalStreamEvent);
+    // A delayed or replayed frame must not move the view backwards.
+    state = reduceEvalStreamEvent(state, {
+      type: "browser_frame",
+      frame: frame({ sequence: 4, stepIndex: 1 }),
+    } as EvalStreamEvent);
+    state = reduceEvalStreamEvent(state, {
+      type: "browser_frame",
+      frame: frame({ sequence: 5, stepIndex: 2 }),
+    } as EvalStreamEvent);
+
+    expect(state.liveBrowserSteps.map((s) => s.stepIndex)).toEqual([0]);
+    expect(state.liveBrowserFrameSequence).toBe(5);
+
+    // A genuinely newer one still lands.
+    state = reduceEvalStreamEvent(state, {
+      type: "browser_frame",
+      frame: frame({ sequence: 6, stepIndex: 1 }),
+    } as EvalStreamEvent);
+    expect(state.liveBrowserSteps.map((s) => s.stepIndex)).toEqual([0, 1]);
   });
 
   it("leaves the envelope null when there is nothing at all", () => {

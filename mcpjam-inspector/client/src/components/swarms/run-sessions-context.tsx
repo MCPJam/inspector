@@ -72,14 +72,25 @@ const RunSessionsContext = createContext<RunSessionsContextValue | null>(null);
 export function pickAutoFollowCell(args: {
   cellStatus: Record<string, string>;
   currentCell: string | null;
-}): string | null {
+}): { targetKey: string; sessionIndex: number } | null {
   const { cellStatus, currentCell } = args;
   if (currentCell && cellStatus[currentCell] === "running") return null;
   const next = Object.entries(cellStatus).find(
     ([, status]) => status === "running",
   );
   if (!next) return null;
-  return next[0] === currentCell ? null : next[0];
+  const key = next[0];
+  if (key === currentCell) return null;
+  // Returned STRUCTURED rather than as a composite key. The caller used to
+  // reverse-parse `targetKey:sessionIndex` with `lastIndexOf(":")`, which happens
+  // to work only because sessionIndex is a colon-free integer even when the
+  // targetKey itself contains one (`environment:e1`) — an untested coupling to
+  // `swarmCellKey`'s format that no compiler would have caught changing.
+  const cut = key.lastIndexOf(":");
+  if (cut <= 0) return null;
+  const sessionIndex = Number(key.slice(cut + 1));
+  if (!Number.isInteger(sessionIndex) || sessionIndex < 0) return null;
+  return { targetKey: key.slice(0, cut), sessionIndex };
 }
 
 export function useRunSessionsContext() {
@@ -191,6 +202,24 @@ export function RunSessionsProvider({
   );
 
   const appliedInitialThreadRef = useRef(false);
+  const appliedInitialTargetRef = useRef(false);
+
+  // Every piece of selection state above is scoped to ONE run detail. The
+  // provider is not guaranteed to remount when the route moves to another run,
+  // and a pin carried across would both show the wrong session and keep
+  // auto-follow from ever starting on the new one. Reset on the run identity.
+  const scopeKey = `${runId}::${initialTargetKey ?? ""}::${initialThreadId ?? ""}`;
+  const appliedScopeRef = useRef(scopeKey);
+  if (appliedScopeRef.current !== scopeKey) {
+    appliedScopeRef.current = scopeKey;
+    appliedInitialThreadRef.current = false;
+    appliedInitialTargetRef.current = false;
+    // Render-phase reset (not an effect) so the very first render of the new run
+    // never paints the previous run's selection.
+    setMatrixSelection(null);
+    setPinnedManually(false);
+  }
+
   useEffect(() => {
     if (appliedInitialThreadRef.current || !initialThreadId) return;
     const match = rows.find((s) => s.id === initialThreadId);
@@ -212,7 +241,6 @@ export function RunSessionsProvider({
     });
   }, [initialThreadId, rows, runId, targets, sessionsPerHost]);
 
-  const appliedInitialTargetRef = useRef(false);
   useEffect(() => {
     if (
       appliedInitialTargetRef.current ||
@@ -275,20 +303,31 @@ export function RunSessionsProvider({
   // ever selected once, so a viewer ended up staring at a completed session
   // while the rest of the run played out unwatched.
   useEffect(() => {
-    if (pinnedManually || !streamEnabled) return;
+    // `pinnedManually` is state, so a deep-link effect that just called
+    // `setPinnedManually(true)` in this same commit is not visible here yet — but
+    // its ref IS. Consult both, or auto-follow can steal the very session the
+    // user navigated to. Also skip while a deep link is still PENDING (the prop
+    // is set but the matching row hasn't loaded), so we don't grab a running cell
+    // and then get overridden a beat later.
+    const deepLinkRequested = Boolean(initialThreadId || initialTargetKey);
+    if (
+      pinnedManually ||
+      appliedInitialThreadRef.current ||
+      appliedInitialTargetRef.current ||
+      deepLinkRequested ||
+      !streamEnabled
+    ) {
+      return;
+    }
     const currentCell = matrixSelection
       ? swarmCellKey(matrixSelection.targetKey, matrixSelection.sessionIndex)
       : null;
-    const key = pickAutoFollowCell({
+    const picked = pickAutoFollowCell({
       cellStatus: stream.cellStatus,
       currentCell,
     });
-    if (!key) return;
-    const cut = key.lastIndexOf(":");
-    if (cut <= 0) return;
-    const targetKey = key.slice(0, cut);
-    const sessionIndex = Number(key.slice(cut + 1));
-    if (!Number.isFinite(sessionIndex)) return;
+    if (!picked) return;
+    const { targetKey, sessionIndex } = picked;
     const target = targets.find((t) => t.key === targetKey);
     if (!target) return;
     setMatrixSelection({
@@ -308,6 +347,8 @@ export function RunSessionsProvider({
     stream.cellStatus,
     runId,
     targets,
+    initialThreadId,
+    initialTargetKey,
   ]);
 
   const value = useMemo<RunSessionsContextValue>(

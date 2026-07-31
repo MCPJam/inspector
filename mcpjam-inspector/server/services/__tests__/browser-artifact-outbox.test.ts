@@ -10,6 +10,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mutationMock = vi.fn();
 const uploadScreenshotBlobMock = vi.fn();
 const uploadVideoBlobMock = vi.fn();
+// Delegates to the real serializer by default; a test overrides it to prove the
+// per-artifact isolation of a SYSTEMIC serialization failure.
+const serializeBrowserStepsMock = vi.fn();
 
 vi.mock("convex/browser", () => ({
   ConvexHttpClient: class {
@@ -25,6 +28,17 @@ vi.mock("../../utils/mcp-app-widget-capture.js", () => ({
     uploadScreenshotBlobMock(...args),
   uploadVideoBlob: (...args: unknown[]) => uploadVideoBlobMock(...args),
 }));
+
+vi.mock("../browser-artifact-serialization.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../browser-artifact-serialization.js")
+  >("../browser-artifact-serialization.js");
+  return {
+    ...actual,
+    serializeBrowserStepsForBackend: (...args: unknown[]) =>
+      serializeBrowserStepsMock(...args),
+  };
+});
 
 import { createBrowserArtifactOutbox } from "../browser-artifact-outbox.js";
 
@@ -77,11 +91,19 @@ function makeOutbox() {
   });
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  // `vi.mock` above intercepts every importer, including this file — so reach
+  // for the genuine implementation explicitly and make it the default.
+  const actual = await vi.importActual<
+    typeof import("../browser-artifact-serialization.js")
+  >("../browser-artifact-serialization.js");
   vi.stubEnv("CONVEX_URL", "https://example.convex.cloud");
   mutationMock.mockReset().mockResolvedValue({ observations: 1, steps: 1 });
   uploadScreenshotBlobMock.mockReset().mockResolvedValue("blob-1");
   uploadVideoBlobMock.mockReset().mockResolvedValue("video-1");
+  serializeBrowserStepsMock
+    .mockReset()
+    .mockImplementation(actual.serializeBrowserStepsForBackend);
 });
 
 afterEach(() => {
@@ -230,6 +252,104 @@ describe("createBrowserArtifactOutbox", () => {
 
     // Screenshots are the fallback the Replay UI renders when there is no video.
     expect(result).toMatchObject({ written: 1, pending: 0, videoAttached: false });
+  });
+
+  it("keeps every row when one screenshot upload fails, just without its blob", async () => {
+    const outbox = makeOutbox();
+    outbox.take(
+      fakeBrowser([
+        {
+          observations: [],
+          steps: [
+            step({ stepIndex: 0 }),
+            step({ stepIndex: 1 }),
+            step({ stepIndex: 2 }),
+          ],
+        },
+      ]),
+      0,
+    );
+    // The shared serializers are fail-soft per screenshot: a failed upload drops
+    // the blob id and KEEPS the row, because the action, verdict and timing are
+    // still worth replaying without the picture.
+    uploadScreenshotBlobMock
+      .mockResolvedValueOnce("blob-0")
+      .mockRejectedValueOnce(new Error("upload failed"))
+      .mockResolvedValueOnce("blob-2");
+
+    await outbox.flush();
+
+    const steps = mutationMock.mock.calls
+      .flatMap(([, args]) => (args as any).browserInteractionSteps ?? [])
+      .sort((a: any, b: any) => a.stepIndex - b.stepIndex);
+    expect(steps.map((st: any) => st.stepIndex)).toEqual([0, 1, 2]);
+    expect(steps.map((st: any) => st.screenshotBlobId)).toEqual([
+      "blob-0",
+      undefined,
+      "blob-2",
+    ]);
+  });
+
+  it("keeps the artifacts behind one that could not be serialized at all", async () => {
+    const outbox = makeOutbox();
+    outbox.take(
+      fakeBrowser([
+        {
+          observations: [],
+          steps: [
+            step({ stepIndex: 0 }),
+            step({ stepIndex: 1 }),
+            step({ stepIndex: 2 }),
+          ],
+        },
+      ]),
+      0,
+    );
+    // A SYSTEMIC serialization throw (not a screenshot failure — those are
+    // absorbed above). Serialization is isolated per artifact, so the one before
+    // the throw is already on the wire and the one after is still queued;
+    // dropping the whole bucket here was the P1 this replaced.
+    const real = serializeBrowserStepsMock.getMockImplementation()!;
+    serializeBrowserStepsMock.mockImplementation(async (steps: any, client: any) => {
+      if (steps?.[0]?.stepIndex === 1) throw new Error("systemic");
+      return real(steps, client);
+    });
+
+    await outbox.flush();
+
+    const stepIndexes = mutationMock.mock.calls
+      .flatMap(([, args]) => (args as any).browserInteractionSteps ?? [])
+      .map((st: any) => st.stepIndex)
+      .sort();
+    expect(stepIndexes).toEqual([0, 2]);
+  });
+
+  it("reports a video that uploaded to nothing as pending, not silently absent", async () => {
+    const outbox = makeOutbox();
+    outbox.take(fakeBrowser([{ observations: [observation()], steps: [] }]), 0);
+    // `uploadVideoBlob` also returns undefined WITHOUT throwing.
+    uploadVideoBlobMock.mockResolvedValueOnce(undefined);
+
+    await outbox.stageVideo(Buffer.from("webm-bytes"));
+    const result = await outbox.flush();
+
+    // The artifacts still land...
+    expect(result.written).toBe(1);
+    // ...and nothing claims the video attached.
+    expect(result.videoAttached).toBe(false);
+    expect((mutationMock.mock.calls[0]![1] as any).videoBlobId).toBeUndefined();
+  });
+
+  it("counts a staged-but-unattached video as pending work", async () => {
+    const outbox = makeOutbox();
+    await outbox.stageVideo(Buffer.from("webm-bytes"));
+    // The video-only attach fails. `pending` must say so — unlike a batch, a
+    // video cannot be retried once the run is over, so a silent 0 here would
+    // suppress the terminal warning about a permanently lost replay.
+    mutationMock.mockRejectedValueOnce(new Error("convex down"));
+
+    const result = await outbox.flush();
+    expect(result).toMatchObject({ pending: 1, videoAttached: false });
   });
 
   it("degrades to no-op (never throws) without CONVEX_URL", async () => {

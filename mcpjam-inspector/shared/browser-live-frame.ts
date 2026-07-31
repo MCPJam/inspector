@@ -53,24 +53,47 @@ export type LiveBrowserFrame = {
 export function isLiveBrowserFrame(value: unknown): value is LiveBrowserFrame {
   if (!value || typeof value !== "object") return false;
   const frame = value as Record<string, unknown>;
-  if (typeof frame.sequence !== "number" || !Number.isFinite(frame.sequence)) {
-    return false;
-  }
+
+  // Every number must be FINITE, not merely typed `number`. A NaN `stepIndex`
+  // poisons the step key the filmstrip dedupes on; an Infinity `ts` breaks its
+  // ordering. `undefined` is fine for the optional coordinates and nothing else.
+  const finite = (v: unknown): boolean =>
+    typeof v === "number" && Number.isFinite(v);
+  const finiteOrAbsent = (v: unknown): boolean => v === undefined || finite(v);
+
   if (
-    typeof frame.promptIndex !== "number" ||
-    typeof frame.stepIndex !== "number" ||
+    !finite(frame.sequence) ||
+    !finite(frame.promptIndex) ||
+    !finite(frame.stepIndex) ||
+    !finite(frame.ts) ||
+    !finiteOrAbsent(frame.coordinateX) ||
+    !finiteOrAbsent(frame.coordinateY) ||
     typeof frame.toolCallId !== "string" ||
-    typeof frame.action !== "string" ||
-    typeof frame.ts !== "number"
+    typeof frame.action !== "string"
   ) {
     return false;
   }
-  if (
-    frame.thumbnailBase64 !== undefined &&
-    typeof frame.thumbnailBase64 !== "string"
-  ) {
-    return false;
+
+  if (frame.thumbnailBase64 !== undefined) {
+    if (typeof frame.thumbnailBase64 !== "string") return false;
+    // Enforce the byte bound at the READ boundary too, not only at emit. A
+    // frame arrives from another process; trusting its size would let a buggy or
+    // hostile runner defeat the cap on whoever renders it. base64 inflates 4/3.
+    if ((frame.thumbnailBase64.length * 3) / 4 > LIVE_FRAME_MAX_BYTES) {
+      return false;
+    }
+    // The media type is interpolated straight into a `data:` URI downstream, so
+    // it must be one of the two literals we actually produce — never arbitrary
+    // caller-supplied text.
+    if (
+      frame.thumbnailMediaType !== undefined &&
+      frame.thumbnailMediaType !== "image/jpeg" &&
+      frame.thumbnailMediaType !== "image/png"
+    ) {
+      return false;
+    }
   }
+
   return true;
 }
 

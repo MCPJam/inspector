@@ -52,23 +52,27 @@ export class JourneyRunStreamHub {
   }
 
   /**
-   * Subscribe and immediately replay the ring buffer (late-join) followed by the
-   * current frame of each session, then receive live events. Frames come LAST so
-   * a joiner sees the run's history before its current picture. Returns an
-   * unsubscribe function.
+   * Subscribe and immediately replay the current frame of each session, then the
+   * ring buffer (late-join), then receive live events. Returns an unsubscribe
+   * function.
+   *
+   * Frames come FIRST, deliberately. The SSE route closes the stream the moment
+   * it sees a replayed `run_complete`, so anything delivered after the buffer is
+   * dropped for a joiner arriving after the run ended — which is exactly when the
+   * retained frame is the only picture available.
    */
   subscribe(listener: SwarmStreamListener): () => void {
     this.listeners.add(listener);
-    for (const event of this.buffer) {
+    for (const frame of this.latestFrames.values()) {
       try {
-        listener(event);
+        listener(frame);
       } catch {
         // ignore
       }
     }
-    for (const frame of this.latestFrames.values()) {
+    for (const event of this.buffer) {
       try {
-        listener(frame);
+        listener(event);
       } catch {
         // ignore
       }

@@ -111,6 +111,37 @@ export function liveBrowserFramesEnabled(): boolean {
   return process.env.MCPJAM_SWARM_LIVE_FRAMES?.trim().toLowerCase() !== "false";
 }
 
+/**
+ * Deadline on the terminal browser-artifact flush. `ConvexHttpClient.mutation`
+ * has no timeout of its own, and this runs as the session unwinds — nothing is
+ * pinned by then, but a hung mutation would hold a swarm worker slot.
+ */
+const TERMINAL_ARTIFACT_FLUSH_TIMEOUT_MS = 30_000;
+
+/**
+ * Resolve `promise`, or `fallback` if it hasn't settled within `timeoutMs`. The
+ * abandoned promise keeps running (nothing here can cancel a Convex mutation) —
+ * it just stops holding the caller. Rejections resolve to `fallback` too, so a
+ * terminal path can't be broken by what it is only observing.
+ */
+async function withDeadline<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  fallback: T
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise.catch(() => fallback),
+      new Promise<T>((resolve) => {
+        timer = setTimeout(() => resolve(fallback), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 // `errorMessage` rides along on failures so the batch loop can persist the
 // first one onto the run record (RunRecord.error) — previously the message
 // only reached server logs and the dialog rendered a bare "Failed".
@@ -306,9 +337,15 @@ export async function runSyntheticHostSession(
   let lastPromptIndex = 0;
 
   /**
-   * Persist the session row when no turn ever did. Idempotent, and safe to
-   * retry: the flag only flips on success, so a transient failure on the
-   * success path is re-attempted from the terminal path.
+   * Persist the session row when no turn ever did. Idempotent.
+   *
+   * The flag records "the write was ATTEMPTED", not "the row exists":
+   * `persistChatSessionToConvex` is fail-soft — an HTTP error, a timeout, or a
+   * missing `CONVEX_HTTP_URL`/auth header is logged and it returns normally. So a
+   * silently-failed write is not re-attempted from the terminal path. It only
+   * re-attempts a write that THREW. The outbox absorbs the rest:
+   * `recordBrowserArtifacts` returns `null` while the row is missing, and the
+   * batch stays held.
    *
    * No-ops before the manager is built — a session that failed to connect has
    * neither artifacts nor a transcript, so a row would carry nothing.
@@ -915,7 +952,23 @@ export async function runSyntheticHostSession(
 
     if (!browser || !browserArtifacts) {
       // No harness, or this surface didn't opt into durable capture — nothing to
-      // collect, so teardown is the whole terminal path (pre-feature behavior).
+      // collect. But a surface that DID opt in still wants its row: a failure
+      // during `prepareChatV2` or browser construction gets here, and without a
+      // `chatSessions` row that attempt can't be opened alongside the run at all.
+      if (browserArtifacts) {
+        try {
+          await ensureSessionPersisted();
+        } catch (err) {
+          logger.warn(
+            "[sessionSimulation.runner] terminal session persist failed",
+            {
+              runId,
+              chatSessionId,
+              error: err instanceof Error ? err.message : String(err),
+            }
+          );
+        }
+      }
       await disposeRuntime();
     } else {
       const activeBrowser = browser;
@@ -958,7 +1011,17 @@ export async function runSyntheticHostSession(
                 );
               }
               if (videoBytes) await outbox.stageVideo(videoBytes);
-              const result = await outbox.flush();
+              // Bounded: `ConvexHttpClient.mutation` carries no timeout of its
+              // own, and this runs on the way out of the session. Nothing is
+              // pinned by then (the browser and the manager are already gone),
+              // but a hung mutation would still hold a swarm worker slot while
+              // contributing nothing. Whatever doesn't land stays unpersisted and
+              // is reported by the `pending` warning below.
+              const result = await withDeadline(
+                outbox.flush(),
+                TERMINAL_ARTIFACT_FLUSH_TIMEOUT_MS,
+                { written: 0, pending: outbox.pendingBatchCount, videoAttached: false }
+              );
               if (result.pending > 0) {
                 logger.warn(
                   "[sessionSimulation.runner] browser artifacts left unpersisted",

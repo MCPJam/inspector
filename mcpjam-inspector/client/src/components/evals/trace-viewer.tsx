@@ -39,6 +39,7 @@ import {
 import { cn } from "@/lib/utils";
 import { TraceViewModeTabs } from "./trace-view-mode-tabs";
 import { BrowserArtifactsView } from "./browser-artifacts-view";
+import { hasReplayArtifacts } from "./browser-step-replay";
 import { StepReplayView } from "./step-replay-view";
 import { buildFrozenScreenshotOverrides } from "./frozen-screenshot-overrides";
 import { buildAppToolInvocationsFromBrowserSteps } from "./widget-tool-calls-to-app-invocations";
@@ -420,14 +421,16 @@ export function TraceViewer({
   const browserVideoUrl = useMemo(() => getBrowserVideoUrl(trace), [trace]);
   // Step-aligned replay tab: gated on the run carrying its authored step list.
   const hasSteps = (steps?.length ?? 0) > 0;
-  // Replay tab gate: observations OR steps OR video. Steps count now that the
-  // tab carries the synchronized filmstrip — a step-rich, observation-less run
-  // (a swarm session driving one already-mounted widget by Computer Use) has a
-  // full recording to show, and used to get no tab at all.
-  const hasBrowserArtifacts =
-    browserObservations.length > 0 ||
-    browserSteps.length > 0 ||
-    browserVideoUrl != null;
+  // Replay tab gate — ONE predicate, shared with every other surface that shows
+  // this tab (see `hasReplayArtifacts`). Steps count now that the tab carries the
+  // synchronized filmstrip: a step-rich, observation-less run (a swarm session
+  // driving one already-mounted widget by Computer Use) has a full recording to
+  // show, and used to get no tab at all.
+  const hasBrowserArtifacts = hasReplayArtifacts({
+    widgetRenderObservations: browserObservations,
+    browserInteractionSteps: browserSteps,
+    videoUrl: browserVideoUrl,
+  });
   const promptGroups = useMemo(
     () => (recordedSpans?.length ? buildPromptGroups(recordedSpans) : []),
     [recordedSpans]

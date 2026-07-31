@@ -522,15 +522,27 @@ export async function createBrowserSessionContext(
   // --- Live view --------------------------------------------------------
   const onBrowserAction = params.onBrowserAction;
   let liveFrameSequence = 0;
+  // Serializes the live-frame work so frames reach the sink in ACTION order.
+  // Without it, two rapid oversized actions each await a re-encode and can
+  // finish out of order, delivering a frame that shows the later page state
+  // under the earlier action.
+  let liveFrameChain: Promise<void> = Promise.resolve();
+
   /**
    * Emit one live frame for a just-completed action. The step's own screenshot is
    * reused when it already fits the live cap (the common small-widget case, so
-   * free); otherwise the harness shoots a low-quality JPEG. Either way this is
-   * containment-only — a live view must never slow or break the action it
+   * free); otherwise the harness shoots a low-quality JPEG.
+   *
+   * `sequence` is assigned SYNCHRONOUSLY by the caller below, before any await,
+   * so it reflects the order the actions actually happened in rather than the
+   * order their thumbnails finished encoding.
+   *
+   * Containment-only: a live view must never slow or break the action it
    * previews, so nothing here is awaited by the caller and nothing throws.
    */
   const emitLiveFrame = async (
     step: RunnerBrowserInteractionStep,
+    sequence: number,
   ): Promise<void> => {
     if (!onBrowserAction) return;
     try {
@@ -544,6 +556,9 @@ export async function createBrowserSessionContext(
           ? "image/jpeg"
           : "image/png";
       } else {
+        // Re-shot from the live page. This CAN show state a later action has
+        // already changed — the durable screenshot on the step is the accurate
+        // record; a live frame trades exactness for immediacy by design.
         const thumbnail =
           (await widgetHarnessRef.current?.captureLiveThumbnail(
             LIVE_FRAME_MAX_BYTES,
@@ -554,7 +569,7 @@ export async function createBrowserSessionContext(
         }
       }
       onBrowserAction({
-        sequence: ++liveFrameSequence,
+        sequence,
         promptIndex: step.promptIndex,
         toolCallId: step.toolCallId,
         stepIndex: step.stepIndex,
@@ -574,6 +589,13 @@ export async function createBrowserSessionContext(
         error: err instanceof Error ? err.message : String(err),
       });
     }
+  };
+
+  /** Queue one frame behind any still-encoding predecessor, in action order. */
+  const queueLiveFrame = (step: RunnerBrowserInteractionStep): void => {
+    if (!onBrowserAction) return;
+    const sequence = ++liveFrameSequence;
+    liveFrameChain = liveFrameChain.then(() => emitLiveFrame(step, sequence));
   };
 
   const computerWidgetTools: ToolSet = computerUseSupported
@@ -639,8 +661,10 @@ export async function createBrowserSessionContext(
           };
           browserInteractionSteps.push(step);
           // Capture time, not persist time — the whole point of the live
-          // channel. Not awaited: `onAction` is on the tool-call path.
-          void emitLiveFrame(step);
+          // channel. Not awaited: `onAction` is on the tool-call path. The
+          // sequence number is taken here, synchronously, so it orders by action
+          // rather than by whichever thumbnail finishes encoding first.
+          queueLiveFrame(step);
         },
       })
     : {};

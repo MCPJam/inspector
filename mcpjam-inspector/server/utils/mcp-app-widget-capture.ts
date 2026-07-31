@@ -312,10 +312,11 @@ function detectScreenshotMediaType(base64: string): "image/jpeg" | "image/png" {
 }
 
 /**
- * Ceiling on a replay `.webm` we will even attempt to upload. Mirrors the
- * backend's `MAX_REPLAY_VIDEO_BYTES` (`convex/chatSessions.ts`), which rejects
- * an oversized attach at the write boundary — checking here too means we don't
- * push tens of MB across the wire just to have it refused.
+ * Ceiling on a replay `.webm` this process will even attempt to upload. The
+ * backend enforces the same 64 MiB ceiling when the blob is attached to a
+ * session (it is the first place the byte count is knowable there), so checking
+ * here means we don't push tens of MB across the wire just to have it refused.
+ * Keep the two in step if either moves.
  */
 export const MAX_REPLAY_VIDEO_BYTES = 64 * 1024 * 1024;
 
@@ -371,9 +372,19 @@ export async function uploadVideoBlob(
     throw new Error(`Failed to upload replay video (${response.status})`);
   }
 
-  const body = (await response.json().catch(() => null)) as
-    | { storageId?: string }
-    | null;
+  // A timeout mid-body rejects `response.json()`. Swallowing that into
+  // `undefined` would report a TIMED-OUT upload as an ordinary absent video,
+  // which is the one thing a terminal caller can't distinguish. Surface it.
+  let body: { storageId?: string } | null = null;
+  try {
+    body = (await response.json()) as { storageId?: string } | null;
+  } catch (err) {
+    if (timeout.aborted) {
+      throw new Error("Timed out: replay video upload response");
+    }
+    // Anything else: a malformed body is genuinely "no storage id".
+    void err;
+  }
   return typeof body?.storageId === "string" ? body.storageId : undefined;
 }
 

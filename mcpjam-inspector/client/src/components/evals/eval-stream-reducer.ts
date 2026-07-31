@@ -50,6 +50,14 @@ export type EvalStreamState = {
    * run while it is still going, with no second component.
    */
   liveBrowserSteps: EvalTraceBrowserInteractionStepView[];
+  /**
+   * Highest live-frame `sequence` accepted so far. The frame contract promises
+   * monotonicity per session precisely so a consumer can drop a late arrival —
+   * without enforcing it here, a delayed frame could overwrite a newer thumbnail
+   * for the same click, or land after a step that already happened, and the
+   * filmstrip would move backwards.
+   */
+  liveBrowserFrameSequence: number;
 };
 
 export const initialEvalStreamState: EvalStreamState = {
@@ -61,6 +69,7 @@ export const initialEvalStreamState: EvalStreamState = {
   currentTurnIndex: 0,
   stepStatus: {},
   liveBrowserSteps: [],
+  liveBrowserFrameSequence: 0,
 };
 
 /**
@@ -240,21 +249,30 @@ export function reduceEvalStreamEvent(
     }
 
     case "browser_frame": {
+      // Enforce the monotonic contract: a frame that is not newer than what we
+      // have is a late or replayed duplicate and must not move the view.
+      if (event.frame.sequence <= state.liveBrowserFrameSequence) {
+        return state;
+      }
       const key = liveFrameStepKey(event.frame);
       const next = liveFrameToStepView(event.frame);
       const existingIndex = state.liveBrowserSteps.findIndex(
         (step) => `${step.toolCallId}:${step.stepIndex}` === key,
       );
-      // Replace in place on a re-delivery (the hub replays the current frame per
-      // session to every late joiner), append otherwise. Keyed on the step
-      // identity so the same click can't appear twice in the filmstrip.
+      // Replace in place when a newer frame arrives for a click we already have
+      // (the harness can re-shoot the same step), append otherwise. Keyed on the
+      // step identity so one click can't appear twice in the filmstrip.
       const liveBrowserSteps =
         existingIndex >= 0
           ? state.liveBrowserSteps.map((step, i) =>
               i === existingIndex ? next : step,
             )
           : [...state.liveBrowserSteps, next];
-      return { ...state, liveBrowserSteps };
+      return {
+        ...state,
+        liveBrowserSteps,
+        liveBrowserFrameSequence: event.frame.sequence,
+      };
     }
 
     case "step_status": {

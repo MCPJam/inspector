@@ -479,10 +479,13 @@ describe("runSyntheticHostSession — durable browser-artifact capture", () => {
     // taken while Chromium is alive, teardown happens next, and only THEN does
     // the network work run — so a stalled upload can't pin the browser or the
     // MCP manager open behind it.
-    const terminal = callOrder.slice(callOrder.indexOf("collectVideo"));
+    // The last take comes BEFORE collectVideo: `collectVideo` closes the
+    // Playwright context to flush the `.webm`, so a hook documented as running
+    // "while the browser is alive" has to be ahead of it.
+    const terminal = callOrder.slice(callOrder.lastIndexOf("outbox.take:0"));
     expect(terminal).toEqual([
-      "collectVideo",
       "outbox.take:0",
+      "collectVideo",
       "dispose",
       "outbox.stageVideo",
       "outbox.flush",
@@ -547,6 +550,27 @@ describe("runSyntheticHostSession — durable browser-artifact capture", () => {
     // teardown still has to happen.
     expect(result.outcome).toBe("succeeded");
     expect(callOrder).toContain("dispose");
+  });
+
+  it("persists the row when browser construction never happened", async () => {
+    // A `prepareChatV2` / context-construction failure lands here: no browser at
+    // all, so nothing to capture — but the attempt still needs a `chatSessions`
+    // row or it can't be opened alongside the run.
+    createBrowserSessionContextMock.mockImplementation(() => {
+      throw new Error("chromium unavailable");
+    });
+    const outbox = buildFakeOutbox();
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+    const result = await runSyntheticHostSession({
+      ...baseAdapter(),
+      browserArtifacts: outbox,
+    } as never);
+
+    expect(result.outcome).toBe("failed");
+    expect(persistChatSessionToConvexMock).toHaveBeenCalledTimes(1);
+    // Nothing to collect, so the outbox is untouched.
+    expect(outbox.take).not.toHaveBeenCalled();
   });
 
   it("without an outbox, the terminal path is teardown only (pre-feature)", async () => {

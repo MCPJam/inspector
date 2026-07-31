@@ -90,9 +90,10 @@ export type BrowserArtifactFinalizeSink =
 export async function finalizeWithBrowserArtifacts(args: {
   browser: BrowserSessionContext;
   /**
-   * Optional pre-persist capture, for callers holding artifacts the sink needs
-   * read out while the browser is still alive (a session run drains its last
-   * turn's screenshots here). Runs before `teardown`. Must not throw.
+   * Optional capture that needs the harness fully intact — a session run drains
+   * its last turn's screenshots here. Runs FIRST, before `collectVideo()` (which
+   * closes the Playwright context to flush the `.webm`) and before `teardown`.
+   * Must not throw.
    */
   captureBeforeTeardown?: () => Promise<void>;
   /**
@@ -106,6 +107,20 @@ export async function finalizeWithBrowserArtifacts(args: {
   /** Log prefix so each surface stays greppable. */
   logScope: string;
 }): Promise<void> {
+  // FIRST, while the harness is fully intact. `collectVideo()` below closes the
+  // Playwright context to flush the `.webm`, so anything that wants a live page
+  // has to run ahead of it — the hook's contract says "while the browser is
+  // alive", and running it after would have made that quietly false.
+  if (args.captureBeforeTeardown) {
+    try {
+      await args.captureBeforeTeardown();
+    } catch (err) {
+      logger.warn(`[${args.logScope}] terminal artifact capture failed`, {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   // Contractually fail-soft, but guarded anyway: this runs on a terminal path
   // where the result is already decided, so nothing here may be allowed to
   // change it — and a throw before `teardown` below would leak Chromium.
@@ -116,16 +131,6 @@ export async function finalizeWithBrowserArtifacts(args: {
     logger.warn(`[${args.logScope}] replay video collection failed`, {
       error: err instanceof Error ? err.message : String(err),
     });
-  }
-
-  if (args.captureBeforeTeardown) {
-    try {
-      await args.captureBeforeTeardown();
-    } catch (err) {
-      logger.warn(`[${args.logScope}] terminal artifact capture failed`, {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
   }
 
   if (args.teardown) {

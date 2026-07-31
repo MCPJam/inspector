@@ -123,6 +123,7 @@ import { buildIterationFinishParams } from "./evals/finalize-iteration.js";
 import {
   dispatchEvalIterationFinalize,
   finalizeWithBrowserArtifacts,
+  type EvalIterationFinishParams,
 } from "./browser-artifact-finalize.js";
 import {
   createBrowserSessionContext,
@@ -1018,10 +1019,7 @@ async function finalizeIterationWithBrowserArtifacts(args: {
   browser: BrowserSessionContext;
   recorder: SuiteRunRecorder | null;
   convexClient: ConvexHttpClient;
-  finishParams: Omit<
-    Parameters<SuiteRunRecorder["finishIteration"]>[0],
-    "videoBytes"
-  >;
+  finishParams: Omit<EvalIterationFinishParams, "videoBytes">;
 }): Promise<void> {
   await finalizeWithBrowserArtifacts({
     browser: args.browser,
