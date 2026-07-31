@@ -96,7 +96,7 @@ vi.mock("react-force-graph-2d", async () => {
       return (
         <div
           data-testid="force-graph"
-          data-halo-colors={frame.gradientStops.join(",")}
+          data-halo-colors={frame.gradientStops.join("|")}
         >
           <button
             type="button"
@@ -135,10 +135,24 @@ vi.mock("react-force-graph-2d", async () => {
 /** Colours the halo gradients were painted with this render. */
 function haloColors(): string[] {
   return (
-    screen.getByTestId("force-graph").getAttribute("data-halo-colors") ?? ""
-  )
-    .split(",")
-    .filter(Boolean);
+    (screen.getByTestId("force-graph").getAttribute("data-halo-colors") ?? "")
+      // "|" and not "," — a colour string like "rgba(251, 113, 133, 0.08)" has
+      // commas in it, so splitting on those shreds each stop into fragments.
+      .split("|")
+      .filter(Boolean)
+  );
+}
+
+/**
+ * A hex colour as `hexToRgba` renders its channels: "#4ade80" -> "74, 222, 128".
+ * Halo gradients carry decimal rgba(), so hex substrings never match them.
+ */
+function rgbTriple(hex: string): string {
+  const value = hex.replace("#", "");
+  const red = Number.parseInt(value.slice(0, 2), 16);
+  const green = Number.parseInt(value.slice(2, 4), 16);
+  const blue = Number.parseInt(value.slice(4, 6), 16);
+  return `${red}, ${green}, ${blue}`;
 }
 
 /** True when the mock recorded this node as drawn dimmed. */
@@ -904,16 +918,35 @@ describe("ChatboxTopicMapPanel cluster halos", () => {
     expect(haloColors()).toEqual(themeHalos);
   });
 
-  it("does not paint an outcome colour into a halo", () => {
-    // session-a is `completed`; its outcome colour must not reach the halo.
+  it("does not paint an outcome colour into a halo", async () => {
+    // Two things this test has to get right to mean anything:
+    //  1. Compare decimal RGB triples, not hex. The gradient is built with
+    //     hexToRgba, which emits `rgba(74, 222, 128, …)`, so asserting against
+    //     the hex substring "4ade80" could never fail whatever colour was used.
+    //  2. Assert in OUTCOME mode. In theme mode a node's colour already IS the
+    //     cluster colour, so the bug this guards against cannot show up there.
+    const user = userEvent.setup();
     mockUseChatboxTopicMap.mockReturnValue(outcomeAwareHookValue());
     renderPanel();
-    const completedColor = colorForNode(
-      { clusterId: "cluster-a", outcome: "completed" },
-      "outcome"
+    await user.click(screen.getByRole("button", { name: "Outcome" }));
+
+    const outcomeRgb = rgbTriple(
+      colorForNode({ clusterId: "cluster-a", outcome: "completed" }, "outcome")
     );
-    for (const stop of haloColors()) {
-      expect(stop).not.toContain(completedColor.replace("#", ""));
+    const themeRgb = rgbTriple(
+      colorForNode({ clusterId: "cluster-a" }, "theme", 0)
+    );
+    // If these ever coincide the assertions below prove nothing, so say so
+    // loudly rather than passing for the wrong reason.
+    expect(outcomeRgb).not.toBe(themeRgb);
+
+    const stops = haloColors().filter((stop) => !stop.startsWith("rgba(0,0,0"));
+    expect(stops.length).toBeGreaterThan(0);
+    // The theme colour is present...
+    expect(stops.some((stop) => stop.includes(themeRgb))).toBe(true);
+    // ...and no outcome colour is.
+    for (const stop of stops) {
+      expect(stop).not.toContain(outcomeRgb);
     }
   });
 });
