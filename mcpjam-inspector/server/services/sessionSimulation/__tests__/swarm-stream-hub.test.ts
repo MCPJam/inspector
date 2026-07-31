@@ -160,6 +160,45 @@ describe("JourneyRunStreamHub", () => {
     expect(seen).toEqual([1]);
   });
 
+  it("bounds retained frames and evicts the least recently updated session", () => {
+    // Retention is per session and outlives each session's completion (that is
+    // what gives a post-run joiner a picture), so the map grows with a run's
+    // session COUNT. Bound it, and evict by recency rather than by which session
+    // happened to start first.
+    const hub = new JourneyRunStreamHub();
+    const frameFor = (session: string, sequence: number) =>
+      event({
+        type: "browser_frame",
+        chatSessionId: session,
+        frame: {
+          sequence,
+          promptIndex: 0,
+          toolCallId: `tc-${session}`,
+          stepIndex: 0,
+          action: "left_click",
+          ts: sequence,
+        },
+      } as Partial<SwarmStreamEvent> & Pick<SwarmStreamEvent, "type">);
+
+    // 64 sessions fill the cap exactly.
+    for (let i = 0; i < 64; i++) hub.emit(frameFor(`s-${i}`, 1));
+    // Touch the oldest so recency, not insertion order, decides who is dropped.
+    hub.emit(frameFor("s-0", 2));
+    // One more session pushes past the cap.
+    hub.emit(frameFor("s-64", 1));
+
+    const replayed: string[] = [];
+    hub.subscribe((e) => {
+      if (e.type === "browser_frame") replayed.push(e.chatSessionId);
+    });
+
+    expect(replayed).toHaveLength(64);
+    // s-1 was the least recently updated, so it went; the re-touched s-0 stayed.
+    expect(replayed).not.toContain("s-1");
+    expect(replayed).toContain("s-0");
+    expect(replayed).toContain("s-64");
+  });
+
   it("subscriber errors do not break emit", () => {
     const hub = new JourneyRunStreamHub();
     hub.subscribe(() => {

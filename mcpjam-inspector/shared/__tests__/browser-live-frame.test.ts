@@ -120,6 +120,26 @@ describe("isLiveBrowserFrame", () => {
     ).toBe(true);
   });
 
+  it("rejects a thumbnail that is not base64", () => {
+    // Defence in depth: React escapes the attribute and the media type beside it
+    // is allowlisted, so this can't inject — but a malformed payload should fail
+    // at the boundary rather than become a `data:` URI that can only 404.
+    for (const bad of [
+      '"><img src=x onerror=alert(1)>',
+      "not base64!",
+      "AAAA AAAA",
+      "AA=AAA",
+    ]) {
+      expect(isLiveBrowserFrame(frame({ thumbnailBase64: bad }))).toBe(false);
+    }
+  });
+
+  it("accepts correctly padded base64", () => {
+    for (const good of ["AAAA", "AAA=", "AA==", "AAAAAAA=", ""]) {
+      expect(isLiveBrowserFrame(frame({ thumbnailBase64: good }))).toBe(true);
+    }
+  });
+
   it("rejects a non-string thumbnail", () => {
     expect(isLiveBrowserFrame(frame({ thumbnailBase64: 42 }))).toBe(false);
   });

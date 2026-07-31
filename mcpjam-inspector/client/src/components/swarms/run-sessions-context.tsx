@@ -234,9 +234,18 @@ export function RunSessionsProvider({
   // and a pin carried across would both show the wrong session and keep
   // auto-follow from ever starting on the new one. Reset on the run identity.
   const scopeKey = `${runId}::${initialTargetKey ?? ""}::${initialThreadId ?? ""}`;
-  const appliedScopeRef = useRef(scopeKey);
-  if (appliedScopeRef.current !== scopeKey) {
-    appliedScopeRef.current = scopeKey;
+  // The guard is STATE, not a ref, and that distinction is the whole point.
+  // React may start a render and throw it away (concurrent rendering, a
+  // suspended sibling). A ref written during such a render keeps its new value
+  // even though nothing committed — so the guard would read as "already
+  // handled" while `setMatrixSelection(null)` never landed, leaving the new run
+  // showing the previous run's session with auto-follow permanently asleep.
+  // State is discarded with the render it belongs to, so the next attempt
+  // re-enters this block and redoes the reset; the ref writes inside are
+  // idempotent, which makes repeating them free.
+  const [appliedScope, setAppliedScope] = useState(scopeKey);
+  if (appliedScope !== scopeKey) {
+    setAppliedScope(scopeKey);
     appliedInitialThreadRef.current = false;
     appliedInitialTargetRef.current = false;
     // Render-phase reset (not an effect) so the very first render of the new run

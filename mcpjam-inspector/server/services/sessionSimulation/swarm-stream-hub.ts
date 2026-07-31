@@ -2,6 +2,14 @@ import type { SwarmStreamEvent } from "../../../shared/swarm-stream-events.js";
 
 const RING_BUFFER_SIZE = 200;
 
+/**
+ * How many sessions may hold a retained live frame at once. Frames are kept per
+ * session so a late joiner sees a picture even for a session that already
+ * finished, so this bounds the run's total retained bytes
+ * (~48 KiB x this) rather than throwing away that behavior.
+ */
+const MAX_RETAINED_FRAME_SESSIONS = 64;
+
 export type SwarmStreamListener = (event: SwarmStreamEvent) => void;
 
 /**
@@ -29,7 +37,25 @@ export class JourneyRunStreamHub {
   emit(event: SwarmStreamEvent): void {
     if (event.type === "browser_frame") {
       if (event.chatSessionId) {
+        // Delete-then-set so the Map's insertion order is true recency: `set`
+        // on an existing key keeps its ORIGINAL position, which would make the
+        // eviction below drop whichever session merely started first rather
+        // than the one that has gone quietest.
+        this.latestFrames.delete(event.chatSessionId);
         this.latestFrames.set(event.chatSessionId, event);
+        // Retention is per SESSION and deliberately outlives each session's
+        // completion — `subscribe` replays these first precisely so a joiner
+        // arriving after a session ended still gets a picture. That means the
+        // map grows with the run's session count, not its click count, so a
+        // large fan-out (hosts x sessions-per-host) is the only way it gets
+        // big: at 48 KiB a frame, a thousand sessions would be ~48 MB held for
+        // the life of the run. Cap it and drop the least-recently-updated
+        // session, which is the one whose picture is most likely already stale.
+        while (this.latestFrames.size > MAX_RETAINED_FRAME_SESSIONS) {
+          const oldest = this.latestFrames.keys().next();
+          if (oldest.done) break;
+          this.latestFrames.delete(oldest.value);
+        }
       }
       this.fanout(event);
       return;
