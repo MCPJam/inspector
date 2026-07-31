@@ -47,6 +47,8 @@ import {
   createBrowserSessionContext,
   type BrowserSessionContext,
 } from "../browser-session-context.js";
+import type { BrowserArtifactOutbox } from "../browser-artifact-outbox.js";
+import { finalizeWithBrowserArtifacts } from "../browser-artifact-finalize.js";
 import {
   appendDedupedModelMessages,
   type EvalTraceWidgetSnapshot,
@@ -195,11 +197,11 @@ export interface SyntheticHostSessionAdapter {
   /** Persistence attribution tags (chatbox vs swarm). */
   persist: SyntheticPersistAttribution;
   /**
-   * Optional per-turn side-persistence. The chatbox surface injects widget
-   * snapshots + browser artifacts (chatbox-scoped auth); the swarm surface
-   * injects widget snapshots via the mutation's direct-session path (session
-   * owner + per-snapshot `serverId` — no chatbox). Browser-artifact rows
-   * remain chatbox-only: `recordBrowserArtifacts` still requires a chatbox.
+   * Optional per-turn side-persistence — MCP App widget snapshots (the chatbox
+   * surface via chatbox-scoped auth; the swarm surface via the mutation's
+   * direct-session path). Browser-rendered artifacts do NOT go here: they ride
+   * {@link browserArtifacts} instead, because their terminal flush has to be
+   * ordered against browser teardown, which only this core can do.
    */
   onTurnPersisted?(args: {
     messages: ModelMessage[];
@@ -208,6 +210,18 @@ export interface SyntheticHostSessionAdapter {
     connectedServerIds: string[];
     promptIndex: number;
   }): Promise<void>;
+  /**
+   * Opt IN to durable browser-artifact capture (render observations, Computer
+   * Use steps, and the replay `.webm`). The SURFACE creates the outbox because
+   * it owns the Convex identity; the core drives it, because only the core knows
+   * when the harness can be torn down — `collectVideo()` must run before
+   * Chromium dies, and the uploads must run after, or a stalled upload pins both
+   * the browser and the MCP manager open behind it.
+   *
+   * Absent ⇒ artifacts are collected in memory and discarded at dispose, which
+   * is what every surface did before this existed.
+   */
+  browserArtifacts?: BrowserArtifactOutbox;
   /**
    * Optional live SSE emitter (swarm). Envelope (runId/hostId/chatSessionId/
    * sessionIndex) is bound by the caller — this only receives payloads.
@@ -230,6 +244,7 @@ export async function runSyntheticHostSession(
     nextPersonaTurn,
     persist,
     onTurnPersisted,
+    browserArtifacts,
     emit,
   } = adapter;
   const {
@@ -252,16 +267,94 @@ export async function runSyntheticHostSession(
   let manager: MCPClientManager | undefined;
   let dispose: (() => Promise<void>) | undefined;
   // Browser-rendered MCP App pipeline (same machinery as eval iterations):
-  // declared before the try so the finally can dispose a launched Chromium
-  // on every exit. Construction is cheap; Chromium launches lazily on the
-  // first widget render, so sessions that never touch an MCP App pay nothing.
+  // declared before the try so the terminal path can capture artifacts and
+  // dispose a launched Chromium on every exit. Construction is cheap; Chromium
+  // launches lazily on the first widget render, so sessions that never touch an
+  // MCP App pay nothing.
   let browser: BrowserSessionContext | undefined;
+
+  // --- Terminal-path state -------------------------------------------------
+  // Hoisted out of the try so the terminal path can persist a session row on
+  // EVERY exit, the failure branches included. A first-turn failure is the
+  // single most valuable thing to be able to watch back, and it used to return
+  // with no `chatSessions` row at all — leaving the artifacts it did produce
+  // with nothing to attach to.
+  let anyTurnPersisted = false;
+  let sessionRowEnsured = false;
+  let selectedServerIds: string[] = [];
+  let resumeConfig: Record<string, unknown> | undefined;
+  // Captured from the first drained turn so per-session persist calls stamp the
+  // correct modelSource on chatSessions. The chatbox/target modelId is pinned at
+  // start, so this is stable across turns.
+  let sessionModelSource: SyntheticModelSource | undefined;
+  // The last turn the browser context was stamped with — the fallback bucket for
+  // an artifact that somehow arrives without its own promptIndex.
+  let lastPromptIndex = 0;
+
+  /**
+   * Persist the session row when no turn ever did. Idempotent, and safe to
+   * retry: the flag only flips on success, so a transient failure on the
+   * success path is re-attempted from the terminal path.
+   *
+   * No-ops before the manager is built — a session that failed to connect has
+   * neither artifacts nor a transcript, so a row would carry nothing.
+   */
+  const ensureSessionPersisted = async (): Promise<void> => {
+    if (anyTurnPersisted || sessionRowEnsured || !resumeConfig) return;
+    // No turn ever ran, so `sessionModelSource` is undefined. Use the same
+    // resolver `drainAssistantTurn` uses so a local-runtime org-BYOK host isn't
+    // mis-attributed as cloud byok on the fallback row. Soft-fall-back to
+    // "byok" on resolver failure — real turns would have errored before
+    // reaching this persist; we're best-effort labeling an attribution row that
+    // exists only because the run ended (or died) before any turn landed.
+    let emptySessionModelSource: SyntheticModelSource;
+    try {
+      const resolution = await resolveSyntheticModelSource({
+        modelDefinition,
+        projectId,
+        authHeader,
+        chatboxId,
+        accessVersion,
+        serverIds: selectedServerIds,
+      });
+      emptySessionModelSource = resolution.source;
+    } catch {
+      emptySessionModelSource = "byok";
+    }
+    await persistChatSessionToConvex({
+      chatSessionId,
+      modelId: String(modelDefinition.id),
+      modelSource: emptySessionModelSource,
+      authHeader,
+      projectId,
+      sourceType: persist.sourceType,
+      origin: persist.origin,
+      ...(persist.surface ? { surface: persist.surface } : {}),
+      ...(persist.chatboxId ? { chatboxId: persist.chatboxId } : {}),
+      sessionMessages: messageHistory,
+      startedAt: sessionStartedAt,
+      lastActivityAt: Date.now(),
+      synthetic: true,
+      ...(persist.personaId ? { personaId: persist.personaId } : {}),
+      ...(persist.personaLabel ? { personaLabel: persist.personaLabel } : {}),
+      ...(persist.personaRefId ? { personaRefId: persist.personaRefId } : {}),
+      ...(persist.journeyRunId ? { journeyRunId: persist.journeyRunId } : {}),
+      ...(persist.hostId ? { hostId: persist.hostId } : {}),
+      ...(persist.targetId ? { targetId: persist.targetId } : {}),
+      resumeConfig,
+    });
+    sessionRowEnsured = true;
+  };
+
+  // Transcript so far — hoisted for `ensureSessionPersisted`, which persists
+  // whatever the session managed to say before it died.
+  let messageHistory: ModelMessage[] = [];
 
   try {
     const built = await managerFactory();
     manager = built.manager;
     dispose = built.dispose;
-    const selectedServerIds = built.connectedServerIds;
+    selectedServerIds = built.connectedServerIds;
     const selectedServerNames = built.connectedServerNames;
     // Servers the session may USE but must not be told to RECONNECT later.
     const nonResumable = new Set(built.nonResumableServerIds ?? []);
@@ -270,7 +363,7 @@ export async function runSyntheticHostSession(
     // viewer can reconnect the same servers when the user opens this session
     // later. Without this, `readResource()` for MCP App widgets fails at
     // replay time and `create_view` collapses to a tool pill.
-    const resumeConfig = {
+    resumeConfig = {
       systemPrompt,
       ...(temperature !== undefined ? { temperature } : {}),
       requireToolApproval,
@@ -423,15 +516,8 @@ export async function runSyntheticHostSession(
       logScope: "sessionSimulation",
     });
 
-    let messageHistory: ModelMessage[] = [];
     let lastTranscript: Array<{ role: "user" | "assistant"; content: string }> =
       [];
-    let anyTurnPersisted = false;
-    // Captured from the first drained turn so per-session persist calls
-    // (including the empty-history fallback below) stamp the correct
-    // modelSource on chatSessions. The chatbox modelId is pinned at start,
-    // so this is stable across turns.
-    let sessionModelSource: SyntheticModelSource | undefined;
 
     // Harness MCP-proxy plane. A synthetic run builds an ephemeral authorized
     // manager (like `/api/web/chat-v2`), so it's a WEB-authorized plane request:
@@ -468,6 +554,7 @@ export async function runSyntheticHostSession(
       // widget surface — a widget kept mounted by the previous turn must not
       // be advertised/targeted before this turn's own MCP App tool runs
       // (same per-turn hygiene as the eval runners).
+      lastPromptIndex = turn;
       browser.setActivePromptIndex(turn);
       await browser.dismissCarriedWidget();
 
@@ -619,13 +706,23 @@ export async function runSyntheticHostSession(
       lastTranscript.push({ role: "assistant", content: assistantText });
 
       if (!turnTrace) {
-        // No-trace turns skip persistence (today only the aborted local-BYOK
-        // path reaches here — failed turns throw above). Discard whatever the
-        // browser context collected during this turn: a later turn's drain
-        // would otherwise sweep these rows up and persist them under ITS
-        // batch promptIndex, misattributing artifacts across turns
-        // (CodeRabbit, PR 2610).
-        browser.drainNewArtifacts();
+        // No-trace turns skip transcript persistence (today only the aborted
+        // local-BYOK path reaches here — failed turns throw above). Their
+        // browser artifacts must still leave the context's "new" window now: a
+        // later turn's drain would otherwise sweep them up (CodeRabbit,
+        // PR 2610). With an outbox they are KEPT — it buckets by each
+        // artifact's own promptIndex, so they land under the turn that produced
+        // them rather than a later one, and a turn that clicked but produced no
+        // trace still has evidence. Without one, discard as before.
+        if (browserArtifacts) {
+          try {
+            browserArtifacts.take(browser, turn);
+          } catch {
+            browser.drainNewArtifacts();
+          }
+        } else {
+          browser.drainNewArtifacts();
+        }
         continue;
       }
 
@@ -688,11 +785,9 @@ export async function runSyntheticHostSession(
       });
       anyTurnPersisted = true;
 
-      // Chatbox-scoped side-persistence (MCP App widget snapshots + browser
-      // artifacts) so the Sessions viewer renders the actual widget instead of
-      // a collapsed tool pill. Injected by the chatbox surface; omitted by the
-      // swarm surface (those rows are keyed by chatboxId). Best-effort — a
-      // failure here never aborts the run.
+      // MCP App widget snapshots so the Sessions viewer renders the actual
+      // widget instead of a collapsed tool pill. Best-effort — a failure here
+      // never aborts the run.
       if (onTurnPersisted) {
         await onTurnPersisted({
           messages: messageHistory,
@@ -702,56 +797,39 @@ export async function runSyntheticHostSession(
           promptIndex: turn,
         });
       }
+
+      // Hand this turn's browser artifacts to the outbox and try to land them
+      // now. Anything the write can't take yet — most often turn 0, which races
+      // `/ingest-chat` — stays held and is retried on the next turn's flush and
+      // again at the terminal, instead of being dropped as it used to be.
+      //
+      // Contained: the outbox already swallows write failures, but a session
+      // must never FAIL because recording it did. That would be observability
+      // breaking the thing it observes.
+      if (browserArtifacts) {
+        try {
+          browserArtifacts.take(browser, turn);
+          await browserArtifacts.flush();
+        } catch (err) {
+          logger.warn(
+            "[sessionSimulation.runner] per-turn artifact flush failed",
+            {
+              runId,
+              chatSessionId,
+              promptIndex: turn,
+              error: err instanceof Error ? err.message : String(err),
+            }
+          );
+        }
+      }
     }
 
-    if (!anyTurnPersisted) {
-      // Session ended before any assistant turn completed (persona returned
-      // endSession on turn 0, or every turn aborted). Persist once with no
-      // trace so the chatSessions row exists and the run summary lines up.
-      // No turn ever ran, so sessionModelSource is undefined. Use the same
-      // resolver `drainAssistantTurn` uses so a local-runtime org-BYOK
-      // chatbox doesn't get mis-attributed as cloud byok on the fallback
-      // row. Soft-fall-back to "byok" on resolver failure — real turns
-      // would have errored before reaching this persist; we're best-effort
-      // labeling an attribution row that exists only because the run
-      // ended before any turn ran.
-      let emptySessionModelSource: SyntheticModelSource;
-      try {
-        const resolution = await resolveSyntheticModelSource({
-          modelDefinition,
-          projectId,
-          authHeader,
-          chatboxId,
-          accessVersion,
-          serverIds: selectedServerIds,
-        });
-        emptySessionModelSource = resolution.source;
-      } catch {
-        emptySessionModelSource = "byok";
-      }
-      await persistChatSessionToConvex({
-        chatSessionId,
-        modelId: String(modelDefinition.id),
-        modelSource: emptySessionModelSource,
-        authHeader,
-        projectId,
-        sourceType: persist.sourceType,
-        origin: persist.origin,
-        ...(persist.surface ? { surface: persist.surface } : {}),
-        ...(persist.chatboxId ? { chatboxId: persist.chatboxId } : {}),
-        sessionMessages: messageHistory,
-        startedAt: sessionStartedAt,
-        lastActivityAt: Date.now(),
-        synthetic: true,
-        ...(persist.personaId ? { personaId: persist.personaId } : {}),
-        ...(persist.personaLabel ? { personaLabel: persist.personaLabel } : {}),
-        ...(persist.personaRefId ? { personaRefId: persist.personaRefId } : {}),
-        ...(persist.journeyRunId ? { journeyRunId: persist.journeyRunId } : {}),
-        ...(persist.hostId ? { hostId: persist.hostId } : {}),
-        ...(persist.targetId ? { targetId: persist.targetId } : {}),
-        resumeConfig,
-      });
-    }
+    // Session ended before any assistant turn completed (persona returned
+    // endSession on turn 0, or every turn aborted). Persist once with no trace
+    // so the chatSessions row exists and the run summary lines up. Kept on the
+    // success path (rather than deferred to the terminal) so a failure to write
+    // it still fails the session, as it always has.
+    await ensureSessionPersisted();
 
     emit?.({ type: "session_complete", status: "succeeded" });
     return { outcome: "succeeded" };
@@ -787,24 +865,102 @@ export async function runSyntheticHostSession(
     // Tear down the browser harness (and its headless Chromium, if launched)
     // before the manager: the harness's widget bridge dispatches tools/call
     // through the manager, so it must die first.
-    if (browser) {
-      try {
-        await browser.dispose();
-      } catch (err) {
-        logger.warn("[sessionSimulation.runner] browser dispose failed", {
-          runId,
-          error: err instanceof Error ? err.message : String(err),
-        });
+    let runtimeDisposed = false;
+    const disposeRuntime = async (): Promise<void> => {
+      if (runtimeDisposed) return;
+      runtimeDisposed = true;
+      if (browser) {
+        try {
+          await browser.dispose();
+        } catch (err) {
+          logger.warn("[sessionSimulation.runner] browser dispose failed", {
+            runId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
       }
-    }
-    if (dispose) {
+      if (dispose) {
+        try {
+          await dispose();
+        } catch (err) {
+          logger.warn("[sessionSimulation.runner] manager dispose failed", {
+            runId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    };
+
+    if (!browser || !browserArtifacts) {
+      // No harness, or this surface didn't opt into durable capture — nothing to
+      // collect, so teardown is the whole terminal path (pre-feature behavior).
+      await disposeRuntime();
+    } else {
+      const activeBrowser = browser;
+      const outbox = browserArtifacts;
+      // Capture → teardown → persist. Only `collectVideo()` and the drain need
+      // Chromium alive; the uploads and the mutation do not, and running them
+      // first would let a stalled upload pin the browser AND the MCP manager
+      // open behind it. The shared helper owns that ordering for every surface.
+      //
+      // Wrapped whole: this runs in a `finally`, where a throw would REPLACE the
+      // session's already-decided result — turning a session that succeeded into
+      // a reported failure because a screenshot upload went wrong. Observability
+      // work must never do that.
       try {
-        await dispose();
+        await finalizeWithBrowserArtifacts({
+          browser: activeBrowser,
+          logScope: "sessionSimulation.runner",
+          // Memory-only drain of the last turn's artifacts (a failed turn never
+          // reached its per-turn take, so this is where a first-turn failure's
+          // screenshots come from).
+          captureBeforeTeardown: async () => {
+            outbox.take(activeBrowser, lastPromptIndex);
+          },
+          teardown: disposeRuntime,
+          sink: {
+            kind: "session",
+            persist: async (videoBytes) => {
+              // The row has to exist before the artifacts can attach to it —
+              // and on the failure paths nothing has written one yet.
+              try {
+                await ensureSessionPersisted();
+              } catch (err) {
+                logger.warn(
+                  "[sessionSimulation.runner] terminal session persist failed",
+                  {
+                    runId,
+                    chatSessionId,
+                    error: err instanceof Error ? err.message : String(err),
+                  }
+                );
+              }
+              if (videoBytes) await outbox.stageVideo(videoBytes);
+              const result = await outbox.flush();
+              if (result.pending > 0) {
+                logger.warn(
+                  "[sessionSimulation.runner] browser artifacts left unpersisted",
+                  {
+                    runId,
+                    chatSessionId,
+                    pending: result.pending,
+                    videoAttached: result.videoAttached,
+                  }
+                );
+              }
+            },
+          },
+        });
       } catch (err) {
-        logger.warn("[sessionSimulation.runner] manager dispose failed", {
+        logger.warn("[sessionSimulation.runner] terminal capture failed", {
           runId,
+          chatSessionId,
           error: err instanceof Error ? err.message : String(err),
         });
+      } finally {
+        // Idempotent — a no-op when the helper already tore down. Guarantees
+        // teardown even if the helper failed before reaching it.
+        await disposeRuntime();
       }
     }
   }

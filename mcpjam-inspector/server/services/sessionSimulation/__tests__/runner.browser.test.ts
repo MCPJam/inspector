@@ -145,6 +145,10 @@ function buildFakeBrowserContext(opts: { computerUse: boolean }) {
       artifacts.steps = [];
       return out;
     }),
+    collectVideo: vi.fn(async () => {
+      callOrder.push("collectVideo");
+      return null;
+    }),
     dismissCarriedWidget: vi.fn(async () => {
       callOrder.push("dismissCarriedWidget");
     }),
@@ -169,6 +173,8 @@ let turnPersistedCalls: Array<{ promptIndex: number }> = [];
 function baseAdapter(overrides?: {
   modelId?: string;
   runtime?: Record<string, unknown>;
+  persist?: Record<string, unknown>;
+  emit?: (payload: unknown) => void;
 }) {
   return {
     runId: "run-1",
@@ -206,7 +212,9 @@ function baseAdapter(overrides?: {
       hostId: "host-1",
       personaId: "p1",
       personaLabel: "Persona One",
+      ...(overrides?.persist ?? {}),
     },
+    ...(overrides?.emit ? { emit: overrides.emit } : {}),
     onTurnPersisted: vi.fn(async (args: { promptIndex: number }) => {
       turnPersistedCalls.push({ promptIndex: args.promptIndex });
     }),
@@ -310,7 +318,7 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     expect(engineOpts.prepareAdvertisedTools).toBeUndefined();
   });
 
-  it("passes computer resources to the built-in tool resolver", async () => {
+  it("passes computer resources to the built-in tool resolver (non-swarm surface)", async () => {
     const fake = buildFakeBrowserContext({ computerUse: false });
     createBrowserSessionContextMock.mockReturnValue(fake);
 
@@ -321,12 +329,40 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
           computer: { kind: "personal", workdir: "/workspace" },
           requireToolApproval: true,
         },
+        // A hosted-chatbox surface: bash is still resolved there. Swarm
+        // sessions are the ones that fail closed — see the test below.
+        persist: { sourceType: "chatbox", origin: "chatbox" },
       }) as never
     );
 
     const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
     expect(Object.keys(prepareOpts.builtInTools ?? {})).toEqual(["bash"]);
     expect(prepareOpts.builtInTools.bash).toBeDefined();
+  });
+
+  it("a swarm session gets no bash tool, and the run is told why", async () => {
+    const fake = buildFakeBrowserContext({ computerUse: false });
+    createBrowserSessionContextMock.mockReturnValue(fake);
+    const emitted: any[] = [];
+
+    await runSyntheticHostSession(
+      baseAdapter({
+        runtime: {
+          builtInToolIds: ["bash"],
+          computer: { kind: "personal", workdir: "/workspace" },
+        },
+        emit: (payload) => emitted.push(payload),
+      }) as never
+    );
+
+    // Nothing advertised at all — the whole built-in set collapses to undefined
+    // because bash was the only id, so no reserve is even reachable.
+    const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
+    expect(prepareOpts.builtInTools).toBeUndefined();
+
+    const notice = emitted.find((p) => p.type === "session_notice");
+    expect(notice).toMatchObject({ kind: "tool_suppressed", toolId: "bash" });
+    expect(notice.message).toMatch(/simulated \(swarm\) sessions/);
   });
 
   it("wires Cloud Skills on the emulated synthetic path (member, no harness)", async () => {
@@ -396,5 +432,129 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     const result = await runSyntheticHostSession(baseAdapter() as never);
 
     expect(result.outcome).toBe("rate_limited");
+  });
+});
+
+/** Fake outbox that logs into the shared `callOrder`. */
+function buildFakeOutbox(overrides?: { flush?: () => Promise<unknown> }) {
+  return {
+    take: vi.fn((_browser: unknown, promptIndex: number) => {
+      callOrder.push(`outbox.take:${promptIndex}`);
+    }),
+    stageVideo: vi.fn(async () => {
+      callOrder.push("outbox.stageVideo");
+    }),
+    flush: vi.fn(async () => {
+      callOrder.push("outbox.flush");
+      return (
+        (await overrides?.flush?.()) ?? {
+          written: 1,
+          pending: 0,
+          videoAttached: true,
+        }
+      );
+    }),
+    pendingBatchCount: 0,
+  };
+}
+
+describe("runSyntheticHostSession — durable browser-artifact capture", () => {
+  it("captures before teardown and persists after it", async () => {
+    const fake = buildFakeBrowserContext({ computerUse: true });
+    fake.collectVideo.mockImplementation(async () => {
+      callOrder.push("collectVideo");
+      return Buffer.from("webm");
+    });
+    createBrowserSessionContextMock.mockReturnValue(fake);
+    const outbox = buildFakeOutbox();
+
+    const result = await runSyntheticHostSession({
+      ...baseAdapter(),
+      browserArtifacts: outbox,
+    } as never);
+    expect(result.outcome).toBe("succeeded");
+
+    // The ordering that matters: the video is collected and the last drain
+    // taken while Chromium is alive, teardown happens next, and only THEN does
+    // the network work run — so a stalled upload can't pin the browser or the
+    // MCP manager open behind it.
+    const terminal = callOrder.slice(callOrder.indexOf("collectVideo"));
+    expect(terminal).toEqual([
+      "collectVideo",
+      "outbox.take:0",
+      "dispose",
+      "outbox.stageVideo",
+      "outbox.flush",
+    ]);
+  });
+
+  it("persists the session row AND its artifacts when the first turn fails", async () => {
+    const fake = buildFakeBrowserContext({ computerUse: true });
+    createBrowserSessionContextMock.mockReturnValue(fake);
+    const outbox = buildFakeOutbox();
+    // A first-turn failure is the case you most want to watch back — and it
+    // used to return with no `chatSessions` row at all.
+    runAssistantTurnMock.mockReset().mockRejectedValue(new Error("engine down"));
+    resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
+
+    const result = await runSyntheticHostSession({
+      ...baseAdapter(),
+      browserArtifacts: outbox,
+    } as never);
+
+    expect(result.outcome).toBe("failed");
+    // A row exists for the artifacts to attach to...
+    expect(persistChatSessionToConvexMock).toHaveBeenCalledTimes(1);
+    expect(persistChatSessionToConvexMock.mock.calls[0]![0]).toMatchObject({
+      chatSessionId: "synth_run-1_p1_0",
+      sourceType: "swarm",
+    });
+    // ...and the turn's artifacts were taken and flushed against it.
+    expect(outbox.take).toHaveBeenCalled();
+    expect(outbox.flush).toHaveBeenCalled();
+    expect(callOrder).toContain("dispose");
+  });
+
+  it("takes + flushes per turn so a mid-session crash keeps earlier turns", async () => {
+    const fake = buildFakeBrowserContext({ computerUse: true });
+    createBrowserSessionContextMock.mockReturnValue(fake);
+    const outbox = buildFakeOutbox();
+
+    await runSyntheticHostSession({
+      ...baseAdapter(),
+      browserArtifacts: outbox,
+    } as never);
+
+    // Turn 0's take/flush happen inline, not only at the terminal.
+    expect(outbox.take.mock.calls.map((c) => c[1])).toEqual([0, 0]);
+    expect(outbox.flush).toHaveBeenCalledTimes(2);
+  });
+
+  it("a terminal-path failure never changes the session's outcome", async () => {
+    const fake = buildFakeBrowserContext({ computerUse: true });
+    fake.collectVideo.mockRejectedValue(new Error("chromium gone"));
+    createBrowserSessionContextMock.mockReturnValue(fake);
+    const outbox = buildFakeOutbox();
+    outbox.flush.mockRejectedValue(new Error("convex down"));
+
+    const result = await runSyntheticHostSession({
+      ...baseAdapter(),
+      browserArtifacts: outbox,
+    } as never);
+
+    // Observability must never be able to fail a session that succeeded — and
+    // teardown still has to happen.
+    expect(result.outcome).toBe("succeeded");
+    expect(callOrder).toContain("dispose");
+  });
+
+  it("without an outbox, the terminal path is teardown only (pre-feature)", async () => {
+    const fake = buildFakeBrowserContext({ computerUse: true });
+    createBrowserSessionContextMock.mockReturnValue(fake);
+
+    await runSyntheticHostSession(baseAdapter() as never);
+
+    expect(fake.collectVideo).not.toHaveBeenCalled();
+    expect(callOrder.at(-1)).toBe("dispose");
   });
 });

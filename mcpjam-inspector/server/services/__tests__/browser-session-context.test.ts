@@ -36,6 +36,7 @@ const harnessInstances: Array<{
   dispose: ReturnType<typeof vi.fn>;
   executeAction: ReturnType<typeof vi.fn>;
   runScriptedStep: ReturnType<typeof vi.fn>;
+  getRecordingStartedAt: ReturnType<typeof vi.fn>;
 }> = [];
 
 // Shared across all (lazily-created) harness instances so a test can control a
@@ -55,6 +56,9 @@ vi.mock("../../utils/mcp-app-browser-harness", async () => {
         dispose: vi.fn().mockResolvedValue(undefined),
         executeAction: vi.fn(),
         runScriptedStep: (...args: unknown[]) => runScriptedStepImpl(...args),
+        // Recording-start origin for `videoOffsetMs`. Null (no recording) is
+        // the default, matching a harness that never launched Chromium.
+        getRecordingStartedAt: vi.fn().mockReturnValue(null),
       };
       harnessInstances.push(instance);
       return instance;
@@ -433,6 +437,60 @@ describe("createBrowserSessionContext — interaction steps", () => {
 
     expect(ctx.browserInteractionSteps).toHaveLength(1);
     expect(ctx.browserInteractionSteps[0]!.note).toBeUndefined();
+  });
+
+  it("stamps videoOffsetMs on a Computer Use step once recording is live", async () => {
+    const ctx = await createBrowserSessionContext({
+      model: CLAUDE_MODEL,
+      enableComputerUse: true,
+      mcpClientManager: stubManager(),
+    });
+    const harness = harnessInstances[0]!;
+    harness.getMountedWidgetId.mockReturnValue("tc-w");
+    harness.executeAction.mockResolvedValue({
+      action: { action: "left_click", coordinate: [1, 2] },
+      screenshotBase64: "img",
+      widgetToolCalls: [],
+      elapsedMs: 3,
+    });
+    // Recording started 5s before this step lands.
+    const now = Date.now();
+    harness.getRecordingStartedAt.mockReturnValue(now - 5_000);
+
+    const computer = ctx.computerWidgetTools.computer as {
+      execute: (input: unknown, opts: unknown) => Promise<unknown>;
+    };
+    await computer.execute({ action: "left_click", coordinate: [1, 2] }, {});
+
+    // Computer Use is the SWARM mode, and only the scripted path used to get
+    // this — without it the replay filmstrip can't seek the `.webm` to the
+    // frame a click produced.
+    const step = ctx.browserInteractionSteps[0]!;
+    expect(step.videoOffsetMs).toBeGreaterThanOrEqual(5_000);
+    // Derived from the SAME `ts` the row carries, so the two can't drift.
+    expect(step.videoOffsetMs).toBe(step.ts - (now - 5_000));
+  });
+
+  it("leaves videoOffsetMs absent when nothing is recording", async () => {
+    const ctx = await createBrowserSessionContext({
+      model: CLAUDE_MODEL,
+      enableComputerUse: true,
+      mcpClientManager: stubManager(),
+    });
+    const harness = harnessInstances[0]!;
+    harness.getMountedWidgetId.mockReturnValue("tc-w");
+    harness.executeAction.mockResolvedValue({
+      action: { action: "screenshot" },
+      widgetToolCalls: [],
+      elapsedMs: 1,
+    });
+
+    const computer = ctx.computerWidgetTools.computer as {
+      execute: (input: unknown, opts: unknown) => Promise<unknown>;
+    };
+    await computer.execute({ action: "screenshot" }, {});
+
+    expect(ctx.browserInteractionSteps[0]!.videoOffsetMs).toBeUndefined();
   });
 });
 

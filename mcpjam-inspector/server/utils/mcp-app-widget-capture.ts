@@ -312,21 +312,47 @@ function detectScreenshotMediaType(base64: string): "image/jpeg" | "image/png" {
 }
 
 /**
- * Upload one iteration's Playwright replay `.webm` to Convex storage and return
- * its storageId. Same path as {@link uploadScreenshotBlob} (generate URL → POST
- * bytes → storageId); only the mime type differs. One video per iteration, so
- * this runs at most once per finalize. Throws on transport failure — the caller
- * (`finalize-iteration.ts`) wraps it best-effort so a missing replay never fails
- * the iteration.
+ * Ceiling on a replay `.webm` we will even attempt to upload. Mirrors the
+ * backend's `MAX_REPLAY_VIDEO_BYTES` (`convex/chatSessions.ts`), which rejects
+ * an oversized attach at the write boundary — checking here too means we don't
+ * push tens of MB across the wire just to have it refused.
+ */
+export const MAX_REPLAY_VIDEO_BYTES = 64 * 1024 * 1024;
+
+/**
+ * Wall-clock bound on the whole upload (URL mint + POST). Video upload happens
+ * on a TERMINAL path, after the run has already produced its result, so a
+ * stalled upload must never hold the caller open — for a session run it would
+ * pin the browser and the MCP manager alive behind it.
+ */
+export const VIDEO_UPLOAD_TIMEOUT_MS = 60_000;
+
+/**
+ * Upload one run's Playwright replay `.webm` to Convex storage and return its
+ * storageId. Same path as {@link uploadScreenshotBlob} (generate URL → POST
+ * bytes → storageId); only the mime type differs. One video per run, so this
+ * runs at most once per finalize.
+ *
+ * Bounded on both axes — size ({@link MAX_REPLAY_VIDEO_BYTES}, matching the
+ * backend's write-boundary check) and time ({@link VIDEO_UPLOAD_TIMEOUT_MS}).
+ * Throws on transport failure, oversize, or timeout; callers wrap it
+ * best-effort so a missing replay never fails the run it came from.
  */
 export async function uploadVideoBlob(
   convexClient: ConvexHttpClient,
   bytes: Buffer,
 ): Promise<string | undefined> {
-  const uploadUrl = await convexClient.mutation(
-    "chatSessions:generateSnapshotUploadUrl" as any,
-    {},
-  );
+  if (bytes.length > MAX_REPLAY_VIDEO_BYTES) {
+    throw new Error(
+      `Replay video is too large to upload (${bytes.length} bytes; max ${MAX_REPLAY_VIDEO_BYTES})`,
+    );
+  }
+
+  const timeout = AbortSignal.timeout(VIDEO_UPLOAD_TIMEOUT_MS);
+  const uploadUrl = await Promise.race([
+    convexClient.mutation("chatSessions:generateSnapshotUploadUrl" as any, {}),
+    abortRejection(timeout, "replay video upload url"),
+  ]);
 
   if (typeof uploadUrl !== "string" || uploadUrl.length === 0) {
     return undefined;
@@ -338,6 +364,7 @@ export async function uploadVideoBlob(
     // `new Uint8Array(bytes)` so a Node `Buffer` is a valid `BlobPart`
     // regardless of its backing-buffer type.
     body: new Blob([new Uint8Array(bytes)], { type: "video/webm" }),
+    signal: timeout,
   });
 
   if (!response.ok) {
@@ -348,6 +375,24 @@ export async function uploadVideoBlob(
     | { storageId?: string }
     | null;
   return typeof body?.storageId === "string" ? body.storageId : undefined;
+}
+
+/**
+ * A promise that never resolves and rejects when `signal` aborts. Used to bound
+ * a call that takes no signal of its own (the Convex client's `mutation`).
+ */
+function abortRejection(signal: AbortSignal, label: string): Promise<never> {
+  return new Promise((_resolve, reject) => {
+    if (signal.aborted) {
+      reject(new Error(`Timed out: ${label}`));
+      return;
+    }
+    signal.addEventListener(
+      "abort",
+      () => reject(new Error(`Timed out: ${label}`)),
+      { once: true },
+    );
+  });
 }
 
 /**

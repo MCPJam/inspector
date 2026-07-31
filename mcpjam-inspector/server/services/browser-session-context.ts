@@ -539,6 +539,12 @@ export async function createBrowserSessionContext(
               });
             }
           }
+          // Same video-relative stamp the scripted path applies (see
+          // `replayWidgetScriptedStep`). Computer Use is the SWARM mode, and
+          // without this the replay filmstrip has no way to seek the `.webm`
+          // to the frame a click produced.
+          const ts = Date.now();
+          const videoOffsetMs = videoOffsetFor(ts);
           browserInteractionSteps.push({
             toolCallId,
             stepIndex,
@@ -546,6 +552,7 @@ export async function createBrowserSessionContext(
             ...(activeAuthoredStepId
               ? { authoredStepId: activeAuthoredStepId }
               : {}),
+            ...(videoOffsetMs !== undefined ? { videoOffsetMs } : {}),
             action: result.action.action,
             coordinateX: result.action.coordinate?.[0],
             coordinateY: result.action.coordinate?.[1],
@@ -557,7 +564,7 @@ export async function createBrowserSessionContext(
             widgetToolCalls: result.widgetToolCalls,
             elapsedMs: result.elapsedMs,
             ...(note ? { note } : {}),
-            ts: Date.now(),
+            ts,
           });
         },
       })
