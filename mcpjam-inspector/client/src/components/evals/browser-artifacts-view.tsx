@@ -9,22 +9,25 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type {
+  EvalTraceBrowserInteractionStepView,
   EvalTraceWidgetRenderObservationView,
   EvalTraceWidgetRenderStatus,
 } from "@/shared/eval-trace";
+import { BrowserStepFilmstrip } from "./browser-step-replay";
 
 /**
- * Eval replay "App" view. Renders the iteration-level artifacts the
- * headless-Chromium harness captured that are NOT recoverable elsewhere:
- *   - videoUrl: the `.webm` replay player.
- *   - widgetRenderObservations: one status card per MCP App (the LATEST
- *     render outcome — the backend upserts per toolCallId), with a screenshot.
+ * The "Replay" view — everything the headless-Chromium harness recorded that is
+ * not recoverable elsewhere, for any surface that ran one (eval iterations, a
+ * swarm session, a shared usage thread):
+ *   - the synchronized filmstrip: the `.webm` player, one frame per interaction
+ *     step, and the selected step's detail, all on one cursor
+ *     (`browser-step-replay.tsx`).
+ *   - widgetRenderObservations: one status card per MCP App (the LATEST render
+ *     outcome — the backend upserts per toolCallId), with a screenshot.
  *
- * The per-step Computer Use / scripted interaction timeline is NOT rendered
- * here anymore: it lives on the Trace tab as `Interact · …` spans (same
- * `browserInteractionSteps` source), which is the canonical step view —
- * screenshots, verdicts, coordinates, and the triggered widget tool calls all
- * hang off each span. See `trace-timeline.tsx`.
+ * The per-step timeline also appears on the Trace tab as `Interact · …` spans
+ * from the same `browserInteractionSteps` source; both render each step through
+ * the shared `BrowserStepDetail`, so they can't drift.
  */
 
 type Tone = "success" | "warning" | "danger" | "neutral";
@@ -220,21 +223,31 @@ export function RenderObservationCard({
 
 export function BrowserArtifactsView({
   observations = [],
+  steps = [],
   videoUrl = null,
+  isRunning = false,
   className,
 }: {
   observations?: EvalTraceWidgetRenderObservationView[];
-  /** Iteration replay `.webm` URL; renders a "Replay" player when present. */
+  /**
+   * Recorded interaction steps (Computer Use + scripted). Drive the synchronized
+   * filmstrip, which is how the replay video becomes navigable — each step
+   * carries its `videoOffsetMs`.
+   */
+  steps?: EvalTraceBrowserInteractionStepView[];
+  /** Run replay `.webm` URL. */
   videoUrl?: string | null;
+  /** True while the run is still going — a missing video isn't yet a loss. */
+  isRunning?: boolean;
   className?: string;
 }) {
-  if (observations.length === 0 && !videoUrl) {
+  if (observations.length === 0 && steps.length === 0 && !videoUrl) {
     return (
       <div
         className="flex items-center justify-center rounded-md border border-dashed border-border/40 py-8 text-xs text-muted-foreground"
         data-testid="browser-artifacts-empty"
       >
-        No MCP Apps in this iteration.
+        No MCP Apps in this run.
       </div>
     );
   }
@@ -244,22 +257,15 @@ export function BrowserArtifactsView({
       className={cn("flex min-h-0 flex-col gap-4 overflow-auto", className)}
       data-testid="browser-artifacts-view"
     >
-      {videoUrl ? (
-        <section className="flex flex-col gap-2" data-testid="browser-replay">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Replay
-            <span className="ml-1.5 font-normal normal-case text-muted-foreground/70">
-              screen recording of MCP App interactions during this run
-            </span>
-          </h3>
-          <video
-            src={videoUrl}
-            controls
-            preload="metadata"
-            className="w-full rounded-md border border-border/60 bg-black"
-            data-testid="browser-replay-video"
-          />
-        </section>
+      {/* Video + filmstrip + step detail, kept in sync. Shown whenever there is
+          either a recording or steps to scrub through — a run with steps but no
+          video still gets the filmstrip, and says why the player is missing. */}
+      {videoUrl || steps.length > 0 ? (
+        <BrowserStepFilmstrip
+          steps={steps}
+          videoUrl={videoUrl}
+          isRunning={isRunning}
+        />
       ) : null}
       {observations.length > 0 ? (
         <section className="flex flex-col gap-2">

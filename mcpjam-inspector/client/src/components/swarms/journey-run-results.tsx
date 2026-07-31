@@ -291,17 +291,32 @@ export function SwarmLiveStreamPane({
 }) {
   // Match playground default: Chat while the stream is live.
   const [viewMode, setViewMode] = useState<TraceViewMode>("chat");
+  // The Replay tab's mode lives outside the shared `TraceViewMode` union (see
+  // trace-view-mode-tabs.tsx), so it rides its own flag.
+  const [replayActive, setReplayActive] = useState(false);
 
   useEffect(() => {
     // Reset to Chat when the selected cell changes so each session opens on
     // the streaming-friendly view (same idea as playground turn start).
     setViewMode("chat");
+    setReplayActive(false);
   }, [selection?.chatSessionId]);
 
   // Completed / late-open sessions: SSE buffer is gone — load the persisted
   // transcript blob the same way ShareUsageThreadDetail does.
   const persisted = usePersistedSessionTrace(convexSession?.id ?? null);
   const displayTrace = fallbackTrace ?? persisted.trace;
+
+  // Replay availability, mirroring the TraceViewer's own gate so the tab and the
+  // panel can't disagree. Steps count: a swarm session driving one
+  // already-mounted widget by Computer Use has a full recording and no render
+  // observations. `replayActive` is component state that survives a cell switch,
+  // so clamp it rather than resetting — flipping back restores the view.
+  const hasReplay =
+    (displayTrace?.widgetRenderObservations?.length ?? 0) > 0 ||
+    (displayTrace?.browserInteractionSteps?.length ?? 0) > 0 ||
+    displayTrace?.videoUrl != null;
+  const showReplay = replayActive && hasReplay;
 
   if (!selection) {
     return (
@@ -424,9 +439,15 @@ export function SwarmLiveStreamPane({
           mode={viewMode}
           onModeChange={(next) => {
             if (next === "tools") return;
+            setReplayActive(false);
             setViewMode(next);
           }}
           showToolsTab={false}
+          // Swarms are the one surface that runs Computer Use, so they produce
+          // the richest recording — the Replay tab is where you watch it back.
+          showBrowserTab={hasReplay}
+          browserActive={showReplay}
+          onSelectBrowser={() => setReplayActive(true)}
         />
       </div>
 
@@ -446,7 +467,7 @@ export function SwarmLiveStreamPane({
             connectedServerIds={[]}
             chromeDensity="compact"
             hideToolbar
-            forcedViewMode={viewMode}
+            forcedViewMode={showReplay ? "browser" : viewMode}
             isLoading={isStreaming && !fallbackTrace}
             fillContent
           />

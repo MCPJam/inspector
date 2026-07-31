@@ -420,12 +420,14 @@ export function TraceViewer({
   const browserVideoUrl = useMemo(() => getBrowserVideoUrl(trace), [trace]);
   // Step-aligned replay tab: gated on the run carrying its authored step list.
   const hasSteps = (steps?.length ?? 0) > 0;
-  // The Browser tab now shows only the replay video + per-widget render
-  // observations; the per-step interaction timeline moved to the Trace tab
-  // (`Interact · …` spans, same `browserSteps` source), so steps alone no
-  // longer gate this tab.
+  // Replay tab gate: observations OR steps OR video. Steps count now that the
+  // tab carries the synchronized filmstrip — a step-rich, observation-less run
+  // (a swarm session driving one already-mounted widget by Computer Use) has a
+  // full recording to show, and used to get no tab at all.
   const hasBrowserArtifacts =
-    browserObservations.length > 0 || browserVideoUrl != null;
+    browserObservations.length > 0 ||
+    browserSteps.length > 0 ||
+    browserVideoUrl != null;
   const promptGroups = useMemo(
     () => (recordedSpans?.length ? buildPromptGroups(recordedSpans) : []),
     [recordedSpans]
@@ -830,7 +832,9 @@ export function TraceViewer({
           >
             <BrowserArtifactsView
               observations={browserObservations}
+              steps={browserSteps}
               videoUrl={browserVideoUrl}
+              isRunning={isLoading}
               className={flexFillChrome ? "flex-1" : undefined}
             />
           </div>

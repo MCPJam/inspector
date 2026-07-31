@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  useSessionBrowserArtifacts,
   useSharedChatThread,
   useSharedChatTurnTraces,
   useSharedChatWidgetSnapshots,
@@ -78,6 +79,12 @@ export function usePersistedSessionTrace(threadId: string | null): {
   // into the envelope (same as ShareUsageThreadDetail) so the Chat view
   // replays the actual widget instead of collapsing to a plain tool pill.
   const { snapshots } = useSharedChatWidgetSnapshots({ threadId });
+  // What the session's headless Chromium recorded: render observations,
+  // Computer Use steps, and the replay `.webm`. Joined into the envelope so the
+  // Replay tab and the Raw view see them, mirroring ShareUsageThreadDetail.
+  const { artifacts: browserArtifacts } = useSessionBrowserArtifacts({
+    threadId,
+  });
   const [messages, setMessages] = useState<unknown[] | null>(null);
   const [spans, setSpans] = useState<EvalTraceSpan[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
@@ -165,6 +172,10 @@ export function usePersistedSessionTrace(threadId: string | null): {
     [snapshots],
   );
 
+  const renderObservations = browserArtifacts?.widgetRenderObservations ?? [];
+  const interactionSteps = browserArtifacts?.browserInteractionSteps ?? [];
+  const videoUrl = browserArtifacts?.videoUrl ?? null;
+
   const loading = loadingMessages || loadingSpans;
   const trace: TraceEnvelope | null =
     messages == null
@@ -174,6 +185,13 @@ export function usePersistedSessionTrace(threadId: string | null): {
           messages: messages as TraceEnvelope["messages"],
           ...(spans.length > 0 ? { spans } : {}),
           ...(widgetSnapshots.length > 0 ? { widgetSnapshots } : {}),
+          ...(renderObservations.length > 0
+            ? { widgetRenderObservations: renderObservations }
+            : {}),
+          ...(interactionSteps.length > 0
+            ? { browserInteractionSteps: interactionSteps }
+            : {}),
+          ...(videoUrl ? { videoUrl } : {}),
         };
 
   return {

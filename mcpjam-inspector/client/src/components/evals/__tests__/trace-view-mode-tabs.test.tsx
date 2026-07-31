@@ -34,7 +34,7 @@ describe("TraceViewModeTabs", () => {
     );
   });
 
-  it("hides the App tab by default", () => {
+  it("hides the Replay tab by default", () => {
     render(
       <TraceViewModeTabs
         mode="timeline"
@@ -42,10 +42,10 @@ describe("TraceViewModeTabs", () => {
         showToolsTab={false}
       />,
     );
-    expect(screen.queryByRole("button", { name: "App" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Replay" })).toBeNull();
   });
 
-  it("shows the App tab when showBrowserTab is set", () => {
+  it("shows the Replay tab when showBrowserTab is set", () => {
     render(
       <TraceViewModeTabs
         mode="timeline"
@@ -55,7 +55,7 @@ describe("TraceViewModeTabs", () => {
       />,
     );
     expect(
-      screen.getByRole("button", { name: "App" }),
+      screen.getByRole("button", { name: "Replay" }),
     ).toBeInTheDocument();
   });
 
@@ -75,7 +75,7 @@ describe("TraceViewModeTabs", () => {
     );
   });
 
-  it("applies active styling to the App tab when browserActive is set", () => {
+  it("applies active styling to the Replay tab when browserActive is set", () => {
     render(
       <TraceViewModeTabs
         mode="timeline"
@@ -85,7 +85,7 @@ describe("TraceViewModeTabs", () => {
         browserActive
       />,
     );
-    expect(screen.getByRole("button", { name: "App" })).toHaveClass(
+    expect(screen.getByRole("button", { name: "Replay" })).toHaveClass(
       "bg-sidebar-accent",
       "text-sidebar-accent-foreground",
     );

@@ -295,7 +295,15 @@ export function ShareUsageThreadDetail({
   // The Browser tab renders only the per-widget render observations now; the
   // interaction steps surface on the Trace tab (`Interact · …` spans), so they
   // ride the trace blob below rather than gating this tab.
-  const hasBrowserArtifacts = renderObservations.length > 0;
+  const replayVideoUrl = browserArtifacts?.videoUrl ?? null;
+  // Observations OR steps OR video. Steps count now that the Replay tab carries
+  // the synchronized filmstrip: a session that drove one already-mounted widget
+  // by Computer Use has a full recording and no render observations, and used to
+  // get no tab at all.
+  const hasBrowserArtifacts =
+    renderObservations.length > 0 ||
+    interactionSteps.length > 0 ||
+    replayVideoUrl != null;
 
   // The "browser" mode is only valid while the LOADED session actually has
   // artifacts. `viewMode` is component state that survives a `threadId`
@@ -320,11 +328,13 @@ export function ShareUsageThreadDetail({
       ...(interactionSteps.length > 0
         ? { browserInteractionSteps: interactionSteps }
         : {}),
+      ...(replayVideoUrl ? { videoUrl: replayVideoUrl } : {}),
     };
   }, [
     messages,
     widgetSnapshots,
     hydratedSpans,
+    replayVideoUrl,
     renderObservations,
     interactionSteps,
   ]);
@@ -530,7 +540,11 @@ export function ShareUsageThreadDetail({
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {effectiveViewMode === "browser" ? (
           <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-            <BrowserArtifactsView observations={renderObservations} />
+            <BrowserArtifactsView
+              observations={renderObservations}
+              steps={interactionSteps}
+              videoUrl={replayVideoUrl}
+            />
           </div>
         ) : effectiveViewMode === "chat" ? (
           <div className="min-h-0 flex-1 overflow-y-auto">

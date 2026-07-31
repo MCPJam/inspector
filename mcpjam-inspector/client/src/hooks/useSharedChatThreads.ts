@@ -220,13 +220,19 @@ export function useSharedChatTurnTraces({
 export interface SessionBrowserArtifacts {
   widgetRenderObservations: EvalTraceWidgetRenderObservationView[];
   browserInteractionSteps: EvalTraceBrowserInteractionStepView[];
+  /**
+   * Session-scoped replay `.webm`, resolved server-side. Present (as `null`) on
+   * the artifact-less shape too, so a replay surface branches on data rather
+   * than on `undefined`.
+   */
+  videoUrl: string | null;
 }
 
 /**
- * Browser-rendered MCP App artifacts for a session (render observations +
- * Computer Use steps), written by the synthetic-session runner. Sorted and
- * screenshot-url-resolved server-side; empty arrays for sessions without
- * browser artifacts (live visitor sessions, pre-feature synthetic runs).
+ * Browser-rendered MCP App artifacts for a session — render observations,
+ * Computer Use steps, and the replay video — written by the synthetic-session
+ * runner. Sorted and url-resolved server-side; empty arrays / null video for
+ * sessions without browser artifacts (live visitor sessions, pre-feature runs).
  */
 export function useSessionBrowserArtifacts({
   threadId,
