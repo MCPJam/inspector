@@ -7,8 +7,9 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatTabV2 } from "../ChatTabV2";
+import { track } from "@/lib/analytics";
 
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
@@ -114,6 +115,12 @@ vi.mock("@/components/chat-v2/error", () => ({
   ),
 }));
 
+// Mutable so individual tests can render starter chips; kept empty by
+// default so layout tests don't churn on real starter copy.
+const mockStarterPrompts = vi.hoisted(
+  () => [] as Array<{ label: string; text: string }>,
+);
+
 vi.mock("@/components/chat-v2/shared/chat-helpers", async (importOriginal) => {
   const actual =
     await importOriginal<
@@ -121,7 +128,7 @@ vi.mock("@/components/chat-v2/shared/chat-helpers", async (importOriginal) => {
     >();
   return {
     ...actual,
-    STARTER_PROMPTS: [],
+    STARTER_PROMPTS: mockStarterPrompts,
     formatErrorMessage: (error: Error | null) =>
       error ? { message: error.message } : null,
     buildMcpPromptMessages: () => [],
@@ -357,6 +364,39 @@ describe("ChatTabV2 trace views", () => {
     rerender(<ChatTabV2 {...defaultProps} enableTraceViews={true} />);
 
     expect(screen.queryByTestId("trace-view-tabs")).not.toBeInTheDocument();
+  });
+
+  describe("starter prompt tracking", () => {
+    beforeEach(() => {
+      mockStarterPrompts.push({
+        label: "Starter chip",
+        text: "Starter chip prompt",
+      });
+    });
+
+    afterEach(() => {
+      mockStarterPrompts.length = 0;
+    });
+
+    it("tracks the chip click with the prompt and chat tab location", () => {
+      render(<ChatTabV2 {...defaultProps} />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
+
+      // Filter by event name: mount fires other events (chat_tab_viewed), so
+      // a bare call count can't prove the click emitted exactly one.
+      const starterCalls = vi
+        .mocked(track)
+        .mock.calls.filter(
+          ([event]) => event === "chat_starter_prompt_clicked",
+        );
+      expect(starterCalls).toEqual([
+        [
+          "chat_starter_prompt_clicked",
+          { prompt: "Starter chip prompt", location: "chat_tab" },
+        ],
+      ]);
+    });
   });
 
   it("sends a handoff's pendingUserMessage after the seeded conversation is applied", async () => {
