@@ -35,8 +35,12 @@ const harnessInstances: Array<{
   dismissWidget: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
   executeAction: ReturnType<typeof vi.fn>;
-  runScriptedStep: ReturnType<typeof vi.fn>;
+  // Delegates to the shared `runScriptedStepImpl` rather than being its own
+  // mock, so a test can set a scripted verdict BEFORE the render that creates
+  // this instance.
+  runScriptedStep: (...args: unknown[]) => unknown;
   getRecordingStartedAt: ReturnType<typeof vi.fn>;
+  captureLiveThumbnail?: ReturnType<typeof vi.fn>;
 }> = [];
 
 // Shared across all (lazily-created) harness instances so a test can control a

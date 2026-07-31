@@ -10,9 +10,10 @@
  * attempt through, so these are swarm-critical guarantees.
  *
  * Drives the core directly (the chatbox batch loop that used to wrap it is
- * gone). Chatbox-only side-persistence — `chatSessions:recordBrowserArtifacts`
- * — went with it; the surviving surface-injected side-persist is the widget
- * snapshot capture, exercised via `onTurnPersisted` below.
+ * gone). Two side-persistence paths are exercised here: the widget-snapshot
+ * capture the surface injects via `onTurnPersisted`, and the browser-artifact
+ * outbox the core drives itself (`browserArtifacts`) — the latter because its
+ * capture-before-teardown ordering is only correct if the CORE owns it.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -145,7 +146,7 @@ function buildFakeBrowserContext(opts: { computerUse: boolean }) {
       artifacts.steps = [];
       return out;
     }),
-    collectVideo: vi.fn(async () => {
+    collectVideo: vi.fn(async (): Promise<Buffer | null> => {
       callOrder.push("collectVideo");
       return null;
     }),
