@@ -1,15 +1,18 @@
 ---
-title: "Claude Code host"
-description: "Run the real Claude Code agent inside your project's Computer — observe its native tools, MCP client, and execution behavior directly"
+title: "Claude Code and Codex hosts"
+description: "Run the real Claude Code or Codex agent inside your project's Computer — observe native tools, MCP client, and execution behavior directly"
 icon: "terminal"
 ---
 
-Selecting **Claude Code** as a host runs the real Claude Code agent inside your project's Computer (a cloud Linux sandbox) instead of MCPJam's emulated chat loop. You are observing the actual runtime — its native tools, its own MCP client, its real execution behavior — not a simulation of it.
+MCPJam supports two harness hosts that run a real agent runtime inside your project's Computer (a cloud Linux sandbox) instead of MCPJam's emulated chat loop. You are observing the actual runtime — its native tools, its own agent loop, its real execution behavior — not a simulation of it.
+
+- **Claude Code** — runs the real Claude Code agent with Anthropic models. Supports selected MCP servers and native tool approval.
+- **Codex** — runs the real Codex CLI agent with OpenAI gpt-5 family models. Supports skills; does not support selected MCP servers.
 
 <Note>
-  The Claude Code host is available to organizations where the feature has been
-  enabled. Contact your account team if you don't see it in the host template
-  catalog.
+  The Claude Code and Codex hosts are available to organizations where the
+  respective feature has been enabled. Contact your account team if you don't
+  see them in the host template catalog.
 </Note>
 
 ## What happens when you run a turn
