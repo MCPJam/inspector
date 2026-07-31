@@ -29,6 +29,27 @@ function step(
   } as EvalTraceBrowserInteractionStepView;
 }
 
+/**
+ * jsdom has no media pipeline: `currentTime` is inert and no seek ever resolves.
+ * Stand in for it so a test can place the playhead and then fire the events a
+ * real player would.
+ */
+function mockPlayhead(video: HTMLVideoElement, initial = 0) {
+  let currentTime = initial;
+  Object.defineProperty(video, "currentTime", {
+    configurable: true,
+    get: () => currentTime,
+    set: (value: number) => {
+      currentTime = value;
+    },
+  });
+  return {
+    seekTo: (value: number) => {
+      currentTime = value;
+    },
+  };
+}
+
 describe("stepAtVideoOffset", () => {
   const steps = [
     step({ stepIndex: 0, videoOffsetMs: 1_000 }),
@@ -161,14 +182,7 @@ describe("BrowserStepFilmstrip", () => {
     const video = screen.getByTestId(
       "browser-replay-video",
     ) as HTMLVideoElement;
-    let currentTime = 0;
-    Object.defineProperty(video, "currentTime", {
-      configurable: true,
-      get: () => currentTime,
-      set: (value: number) => {
-        currentTime = value;
-      },
-    });
+    const playhead = mockPlayhead(video);
 
     const frames = screen.getAllByTestId("browser-filmstrip-frame");
     await userEvent.click(frames[1]!);
@@ -176,7 +190,7 @@ describe("BrowserStepFilmstrip", () => {
     // Browsers resolve a seek to the nearest decodable frame, which can land
     // just BEFORE the requested offset. If that echo released the pin, the
     // selection would slide back to step 0 the instant the user clicked step 1.
-    currentTime = 5.9;
+    playhead.seekTo(5.9);
     await act(async () => {
       video.dispatchEvent(new Event("seeked"));
       video.dispatchEvent(new Event("timeupdate"));
@@ -186,13 +200,56 @@ describe("BrowserStepFilmstrip", () => {
       "true",
     );
 
-    // Playback carrying on past the pinned step IS the pin going stale — release
+    // Playback moving away from the pinned step IS the pin going stale — release
     // it so the filmstrip follows the video again.
-    currentTime = 1.2;
+    playhead.seekTo(1.2);
     await act(async () => {
       video.dispatchEvent(new Event("timeupdate"));
     });
     expect(screen.getAllByTestId("browser-filmstrip-frame")[0]).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+  });
+
+  it("releases the pin as soon as playback passes the pinned step", async () => {
+    render(
+      <BrowserStepFilmstrip
+        videoUrl="https://example.test/replay.webm"
+        steps={[
+          step({ stepIndex: 0, videoOffsetMs: 1_000 }),
+          step({ stepIndex: 1, videoOffsetMs: 6_000 }),
+          // Inside a symmetric 500ms window around step 1 — the case that window
+          // used to swallow.
+          step({ stepIndex: 2, videoOffsetMs: 6_300 }),
+        ]}
+      />,
+    );
+    const video = screen.getByTestId(
+      "browser-replay-video",
+    ) as HTMLVideoElement;
+    const playhead = mockPlayhead(video);
+
+    await userEvent.click(screen.getAllByTestId("browser-filmstrip-frame")[1]!);
+    playhead.seekTo(5.95);
+    await act(async () => {
+      video.dispatchEvent(new Event("seeked"));
+      video.dispatchEvent(new Event("timeupdate"));
+    });
+    expect(screen.getAllByTestId("browser-filmstrip-frame")[1]).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+
+    // Playback continues into the NEXT step, which is only 300ms later. The
+    // undershoot slack is one-sided precisely so this frame isn't hidden: a
+    // symmetric window would have held the pin on step 1 and made the filmstrip
+    // skip step 2 entirely.
+    playhead.seekTo(6.35);
+    await act(async () => {
+      video.dispatchEvent(new Event("timeupdate"));
+    });
+    expect(screen.getAllByTestId("browser-filmstrip-frame")[2]).toHaveAttribute(
       "data-active",
       "true",
     );
@@ -211,21 +268,14 @@ describe("BrowserStepFilmstrip", () => {
     const video = screen.getByTestId(
       "browser-replay-video",
     ) as HTMLVideoElement;
-    let currentTime = 1.1;
-    Object.defineProperty(video, "currentTime", {
-      configurable: true,
-      get: () => currentTime,
-      set: (value: number) => {
-        currentTime = value;
-      },
-    });
+    const playhead = mockPlayhead(video, 1.1);
 
     await userEvent.click(screen.getAllByTestId("browser-filmstrip-frame")[1]!);
     // The seek was requested but hasn't landed; a `timeupdate` from the playback
     // that was already running reports the OLD position. Identifying the echo by
     // "first timeupdate after a seek" would spend the guard here and drop the
     // click the user just made.
-    currentTime = 1.15;
+    playhead.seekTo(1.15);
     await act(async () => {
       video.dispatchEvent(new Event("timeupdate"));
     });
@@ -234,8 +284,8 @@ describe("BrowserStepFilmstrip", () => {
       "true",
     );
 
-    // The seek then lands where it was asked to, and the pin is still the user's.
-    currentTime = 6;
+    // The seek then lands just shy of the offset, and the pin is still the user's.
+    playhead.seekTo(5.98);
     await act(async () => {
       video.dispatchEvent(new Event("seeked"));
       video.dispatchEvent(new Event("timeupdate"));

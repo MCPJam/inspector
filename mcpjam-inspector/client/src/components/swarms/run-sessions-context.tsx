@@ -97,13 +97,14 @@ export function pickAutoFollowCell(args: {
  * Whether a deep link may still resolve, and auto-follow should therefore hold
  * off so it doesn't grab a running cell only to be overridden a beat later.
  *
- * Scoped to "while the session list can still turn up the target" rather than
- * "for as long as a deep link was requested": a URL pointing at a thread this
- * run never had would otherwise suppress auto-follow for the provider's whole
- * lifetime, leaving the viewer on nothing while the run played out. Once
- * pagination is exhausted the deep-link effects have lost their chance for now —
- * and if the row does appear later they still win, because applying one pins the
- * selection.
+ * Bounded to "a page fetch is in flight" rather than "a deep link was requested"
+ * or even "more pages exist": both of the wider readings can hold indefinitely —
+ * a URL naming a thread this run never had, or a target sitting past a page
+ * nobody clicked for — and auto-follow being off indefinitely means the viewer
+ * stares at nothing while the run plays out. A load always settles, so this
+ * always ends. Chasing the target across pages is the provider's auto-pagination
+ * effect's job, not this gate's; if the row turns up later it still wins, because
+ * applying a deep link pins the selection.
  */
 export function isDeepLinkPending(args: {
   hasDeepLink: boolean;
@@ -113,8 +114,7 @@ export function isDeepLinkPending(args: {
   if (!args.hasDeepLink || args.applied) return false;
   return (
     args.sessionsStatus === "LoadingFirstPage" ||
-    args.sessionsStatus === "LoadingMore" ||
-    args.sessionsStatus === "CanLoadMore"
+    args.sessionsStatus === "LoadingMore"
   );
 }
 
@@ -248,12 +248,27 @@ export function RunSessionsProvider({
   // Recomputed every render: the refs flip inside the deep-link effects below,
   // and each of those also sets state, so this is re-evaluated on the commit that
   // resolves them.
+  const deepLinkUnresolved =
+    Boolean(initialThreadId || initialTargetKey) &&
+    !appliedInitialThreadRef.current &&
+    !appliedInitialTargetRef.current;
   const deepLinkPending = isDeepLinkPending({
     hasDeepLink: Boolean(initialThreadId || initialTargetKey),
     applied:
       appliedInitialThreadRef.current || appliedInitialTargetRef.current,
     sessionsStatus,
   });
+
+  // A deep link can name a session past the first page, and the effects below
+  // only search rows that are LOADED — so without this the link never applies at
+  // all and the viewer lands on a run detail that ignored their URL. Pull pages
+  // until the row turns up or the list runs out. Self-limiting: each call moves
+  // the status to `LoadingMore`, so this walks the list once rather than
+  // spinning, and it stops the moment a deep-link effect claims its match.
+  useEffect(() => {
+    if (!deepLinkUnresolved || sessionsStatus !== "CanLoadMore") return;
+    loadMore(DEFAULT_PAGE_SIZE);
+  }, [deepLinkUnresolved, sessionsStatus, loadMore]);
 
   useEffect(() => {
     if (appliedInitialThreadRef.current || !initialThreadId) return;

@@ -25,12 +25,17 @@ import type { EvalTraceBrowserInteractionStepView } from "@/shared/eval-trace";
 export type BrowserStepStatus = "ok" | "error" | "unknown";
 
 /**
- * How far the playhead may sit from a manually selected step's offset and still
- * count as "on" it. A seek resolves to the nearest decodable frame, which in a
- * low-keyframe-rate `.webm` can land a few hundred ms short of the requested
+ * How far SHORT of a manually selected step's offset the playhead may sit and
+ * still count as "on" it. A seek resolves to the nearest decodable frame, which
+ * in a low-keyframe-rate `.webm` can land a few hundred ms before the requested
  * offset; without this slack a click would release its own selection.
+ *
+ * One-sided on purpose. The undershoot is the only case that needs protecting,
+ * and a symmetric window would hold the pin for half a second AFTER the step,
+ * hiding any interaction that happened inside it — the filmstrip would visibly
+ * skip frames during ordinary playback.
  */
-const SEEK_SETTLE_TOLERANCE_MS = 500;
+const SEEK_UNDERSHOOT_TOLERANCE_MS = 500;
 
 export const BROWSER_STEP_STATUS_BADGE_CLASS: Record<
   BrowserStepStatus,
@@ -348,18 +353,20 @@ export function BrowserStepFilmstrip({
     // A seek we asked for hasn't landed: this tick reports a position from
     // BEFORE the click, so it says nothing about whether the pin is stale.
     if (pendingSeekTargetRef.current != null) return;
-    // The pin holds while the playhead is still on the pinned step's own offset.
-    // Browsers resolve a seek to the nearest decodable frame, which can land
-    // just before the requested offset — releasing on position alone would slide
-    // the selection to the previous step the instant the user clicked one.
+    // The pin holds while the playhead is still SHORT of the pinned step's own
+    // offset: browsers resolve a seek to the nearest decodable frame, which can
+    // land just before what was asked for, and releasing there would slide the
+    // selection to the previous step the instant the user clicked one. Once
+    // playback reaches or passes the step, control goes back to the video.
     if (selectedKey != null) {
-      const pinned = ordered.find((step) => browserStepKey(step) === selectedKey);
-      if (
-        pinned?.videoOffsetMs != null &&
-        Math.abs(video.currentTime * 1000 - pinned.videoOffsetMs) <
-          SEEK_SETTLE_TOLERANCE_MS
-      ) {
-        return;
+      const pinned = ordered.find(
+        (step) => browserStepKey(step) === selectedKey,
+      );
+      if (pinned?.videoOffsetMs != null) {
+        const shortfallMs = pinned.videoOffsetMs - video.currentTime * 1000;
+        if (shortfallMs > 0 && shortfallMs < SEEK_UNDERSHOOT_TOLERANCE_MS) {
+          return;
+        }
       }
     }
     // Playback has moved on, so the manual pin is stale — release it and let the

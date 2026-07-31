@@ -103,29 +103,27 @@ describe("isDeepLinkPending", () => {
     ).toBe(false);
   });
 
-  it("holds auto-follow off while the target could still load", () => {
-    for (const sessionsStatus of [
-      "LoadingFirstPage",
-      "LoadingMore",
-      "CanLoadMore",
-    ]) {
+  it("holds auto-follow off only while a page fetch is in flight", () => {
+    for (const sessionsStatus of ["LoadingFirstPage", "LoadingMore"]) {
       expect(
         isDeepLinkPending({ hasDeepLink: true, applied: false, sessionsStatus }),
       ).toBe(true);
     }
   });
 
-  it("releases once pagination is exhausted and the link never matched", () => {
-    // The bug this pins down: a URL naming a thread this run never had used to
-    // suppress auto-follow for the provider's whole life, so the viewer sat on
-    // nothing while the run played out.
-    expect(
-      isDeepLinkPending({
-        hasDeepLink: true,
-        applied: false,
-        sessionsStatus: "Exhausted",
-      }),
-    ).toBe(false);
+  it("releases on any settled status, so the hold always ends", () => {
+    // Two ways this used to hang forever: a URL naming a thread this run never
+    // had (suppressing auto-follow for the provider's whole life), and a target
+    // past the first page — `CanLoadMore` is a steady state, since pagination
+    // advances only when something asks it to. Both leave the viewer on nothing
+    // while the run plays out, so neither may gate auto-follow. Chasing the
+    // target across pages is the provider's auto-pagination effect's job, and a
+    // link that lands later still wins by pinning the selection.
+    for (const sessionsStatus of ["CanLoadMore", "Exhausted"]) {
+      expect(
+        isDeepLinkPending({ hasDeepLink: true, applied: false, sessionsStatus }),
+      ).toBe(false);
+    }
   });
 
   it("releases as soon as the deep link has been applied", () => {
@@ -135,7 +133,7 @@ describe("isDeepLinkPending", () => {
       isDeepLinkPending({
         hasDeepLink: true,
         applied: true,
-        sessionsStatus: "CanLoadMore",
+        sessionsStatus: "LoadingMore",
       }),
     ).toBe(false);
   });
