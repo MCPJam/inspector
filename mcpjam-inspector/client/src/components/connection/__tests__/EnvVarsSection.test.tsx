@@ -215,3 +215,192 @@ describe("EnvVarsSection value masking", () => {
     expectMasked(valueInput("2"));
   });
 });
+
+describe("EnvVarsSection stored keys", () => {
+  it("asks for the names once when the section opens, and never for the values", () => {
+    const onRequestStoredKeys = vi.fn();
+    const onReveal = vi.fn();
+    const { rerender } = render(
+      <EnvVarsSection
+        envVars={[]}
+        showEnvVars
+        onToggle={vi.fn()}
+        onAdd={vi.fn()}
+        onRemove={vi.fn()}
+        onUpdate={vi.fn()}
+        hasStoredEnv
+        onReveal={onReveal}
+        onRequestStoredKeys={onRequestStoredKeys}
+      />
+    );
+
+    expect(onRequestStoredKeys).toHaveBeenCalledTimes(1);
+    // Names cost no secret; values do. Opening the disclosure buys the first
+    // and not the second.
+    expect(onReveal).not.toHaveBeenCalled();
+
+    // A failed fetch leaves the names empty — it must not re-fire on every
+    // render.
+    rerender(
+      <EnvVarsSection
+        envVars={[]}
+        showEnvVars
+        onToggle={vi.fn()}
+        onAdd={vi.fn()}
+        onRemove={vi.fn()}
+        onUpdate={vi.fn()}
+        hasStoredEnv
+        onReveal={onReveal}
+        onRequestStoredKeys={onRequestStoredKeys}
+      />
+    );
+
+    expect(onRequestStoredKeys).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays shut until the section is opened", () => {
+    const onRequestStoredKeys = vi.fn();
+    render(
+      <EnvVarsSection
+        envVars={[]}
+        showEnvVars={false}
+        onToggle={vi.fn()}
+        onAdd={vi.fn()}
+        onRemove={vi.fn()}
+        onUpdate={vi.fn()}
+        hasStoredEnv
+        onRequestStoredKeys={onRequestStoredKeys}
+      />
+    );
+
+    expect(onRequestStoredKeys).not.toHaveBeenCalled();
+  });
+
+  it("names each stored row and masks its value", () => {
+    render(
+      <EnvVarsSection
+        envVars={[]}
+        showEnvVars
+        onToggle={vi.fn()}
+        onAdd={vi.fn()}
+        onRemove={vi.fn()}
+        onUpdate={vi.fn()}
+        hasStoredEnv
+        storedEnvKeys={["OPENAI_API_KEY", "LOG_LEVEL"]}
+        onReveal={vi.fn()}
+        onRequestStoredKeys={vi.fn()}
+      />
+    );
+
+    // The reported ask: blur the value, not the key.
+    expect(screen.getByLabelText("Environment variable 1 name")).toHaveValue(
+      "OPENAI_API_KEY"
+    );
+    expect(screen.getByLabelText("Environment variable 2 name")).toHaveValue(
+      "LOG_LEVEL"
+    );
+    expectMasked(valueInput("1"));
+    expectMasked(valueInput("2"));
+    // Which also answers how many are set.
+    expect(screen.getByText("2")).toBeInTheDocument();
+    // The rows aren't in the form, so nothing here can be edited or deleted
+    // into it — a save built from name-only rows would write empty values
+    // over the stored secrets.
+    expect(screen.getByLabelText("Environment variable 1 name")).toHaveAttribute(
+      "readonly"
+    );
+    expect(
+      screen.queryByRole("button", { name: "Remove OPENAI_API_KEY" })
+    ).not.toBeInTheDocument();
+    // The anonymous stand-in is what these rows replace.
+    expect(
+      screen.queryByRole("button", {
+        name: "Reveal saved environment variables",
+      })
+    ).not.toBeInTheDocument();
+  });
+
+  it("uncovers only the row whose eye was clicked once the values land", async () => {
+    const user = userEvent.setup();
+
+    function StoredHarness() {
+      const [envVars, setEnvVars] = useState<EnvVar[]>([]);
+      return (
+        <EnvVarsSection
+          envVars={envVars}
+          showEnvVars
+          onToggle={vi.fn()}
+          onAdd={vi.fn()}
+          onRemove={vi.fn()}
+          onUpdate={vi.fn()}
+          hasStoredEnv={envVars.length === 0}
+          storedEnvKeys={["OPENAI_API_KEY", "LOG_LEVEL"]}
+          // The reveal returns the whole set, and in a different order than the
+          // names arrived — the clicked row is matched by name, not position.
+          onReveal={() =>
+            setEnvVars([
+              { key: "LOG_LEVEL", value: "debug" },
+              { key: "OPENAI_API_KEY", value: "sk-proj-secret" },
+            ])
+          }
+          onRequestStoredKeys={vi.fn()}
+        />
+      );
+    }
+
+    render(<StoredHarness />);
+
+    await user.click(
+      screen.getByRole("button", { name: "Show value for OPENAI_API_KEY" })
+    );
+
+    expectMasked(valueInput("1"));
+    expectUncovered(valueInput("2"), "sk-proj-secret");
+  });
+
+  it("counts the form's rows, not the stored names, once the values are in", () => {
+    // Revealed, then every row deleted. The stored names are stale the moment
+    // the form owns the rows, so they must not keep counting rows that are
+    // gone.
+    render(
+      <EnvVarsSection
+        envVars={[]}
+        showEnvVars
+        onToggle={vi.fn()}
+        onAdd={vi.fn()}
+        onRemove={vi.fn()}
+        onUpdate={vi.fn()}
+        hasStoredEnv={false}
+        storedEnvKeys={["OPENAI_API_KEY", "LOG_LEVEL"]}
+        onReveal={vi.fn()}
+        onRequestStoredKeys={vi.fn()}
+      />
+    );
+
+    expect(screen.queryByText("2")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Add variable" })
+    ).toBeInTheDocument();
+  });
+
+  it("falls back to the anonymous mask when the names can't be fetched", () => {
+    render(
+      <EnvVarsSection
+        envVars={[]}
+        showEnvVars
+        onToggle={vi.fn()}
+        onAdd={vi.fn()}
+        onRemove={vi.fn()}
+        onUpdate={vi.fn()}
+        hasStoredEnv
+        storedEnvKeys={[]}
+        onReveal={vi.fn()}
+        onRequestStoredKeys={vi.fn()}
+      />
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Reveal saved environment variables" })
+    ).toBeInTheDocument();
+  });
+});

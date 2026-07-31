@@ -1,5 +1,5 @@
 import { Input } from "@mcpjam/design-system/input";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface MaskedValueInputProps {
@@ -15,6 +15,14 @@ interface MaskedValueInputProps {
   placeholder?: string;
   /** Wrapper class, so callers keep their own row flex sizing. */
   className?: string;
+  /**
+   * The value isn't in the client yet — this row names a stored secret the
+   * server still holds. Stays masked whatever `visible` says, and the eye asks
+   * for the value rather than uncovering one already here.
+   */
+  pendingReveal?: boolean;
+  /** A reveal is in flight; the eye becomes a spinner and stops accepting clicks. */
+  isRevealing?: boolean;
 }
 
 /** Fixed-width stand-in for a hidden value — the same twelve dots
@@ -39,10 +47,13 @@ export function MaskedValueInput({
   subject,
   placeholder = "value",
   className,
+  pendingReveal = false,
+  isRevealing = false,
 }: MaskedValueInputProps) {
   // An empty row has nothing to give away, so it keeps its placeholder rather
-  // than showing dots for a value that isn't there.
-  const hidden = !visible && value.length > 0;
+  // than showing dots for a value that isn't there. A pending row is the
+  // exception: it holds no value precisely because one is stored server-side.
+  const hidden = pendingReveal || (!visible && value.length > 0);
 
   return (
     <div className={cn("relative", className)}>
@@ -71,12 +82,17 @@ export function MaskedValueInput({
       <button
         type="button"
         onClick={onToggleVisibility}
+        disabled={isRevealing}
         aria-label={
-          visible ? `Hide value for ${subject}` : `Show value for ${subject}`
+          visible && !pendingReveal
+            ? `Hide value for ${subject}`
+            : `Show value for ${subject}`
         }
-        className="absolute right-0.5 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
+        className="absolute right-0.5 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed"
       >
-        {visible ? (
+        {isRevealing ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : visible && !pendingReveal ? (
           <EyeOff className="h-3.5 w-3.5" />
         ) : (
           <Eye className="h-3.5 w-3.5" />

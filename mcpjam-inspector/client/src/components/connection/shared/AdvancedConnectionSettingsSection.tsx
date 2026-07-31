@@ -1,9 +1,10 @@
-import { useId } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Plus, X } from "lucide-react";
 import { Input } from "@mcpjam/design-system/input";
 import { useMaskedValues } from "../hooks/use-masked-values";
 import { HiddenValuesField } from "./HiddenValuesField";
 import { MaskedValueInput } from "./MaskedValueInput";
+import { StoredKeyRows } from "./StoredKeyRows";
 import { Switch } from "@mcpjam/design-system/switch";
 import {
   Select,
@@ -58,6 +59,11 @@ interface AdvancedConnectionSettingsSectionProps {
   isRevealingHeaders?: boolean;
   headersRevealError?: string | null;
   onRevealHeaders?: () => void;
+  /** Names of the headers the server has stored, once fetched. Excludes
+   * Authorization, which the bearer field owns. */
+  storedHeaderKeys?: string[];
+  /** Asks for those names — names only, no values. See EnvVarsSection. */
+  onRequestStoredKeys?: () => void;
   /** Identity of the server these headers belong to. Re-masks everything when
    * it changes, so a form that swaps servers without remounting can't carry an
    * uncovered row onto the next server's values. */
@@ -112,6 +118,8 @@ export function AdvancedConnectionSettingsSection({
   isRevealingHeaders = false,
   headersRevealError,
   onRevealHeaders,
+  storedHeaderKeys,
+  onRequestStoredKeys,
   maskingKey,
   clientCapabilitiesOverrideEnabled = false,
   onClientCapabilitiesOverrideEnabledChange,
@@ -141,10 +149,34 @@ export function AdvancedConnectionSettingsSection({
     maskedHeaders.dropAt(index);
     onRemoveHeader?.(index);
   };
-  // Same as the env-var editor: `onRevealHeaders` stays wired to the mask
-  // only. Expanding "Connection overrides" must not decrypt stored headers —
-  // these carry bearer tokens, so the fetch needs an explicit gesture. See
-  // EnvVarsSection.
+  // Same as the env-var editor: expanding "Connection overrides" fetches the
+  // header *names* so the masked rows can say which are set, and nothing more.
+  // `onRevealHeaders` decrypts the values — including a bearer token — so it
+  // stays behind an explicit gesture on a row. See EnvVarsSection.
+  const storedKeys = storedHeaderKeys ?? [];
+  const keysRequested = useRef(false);
+  useEffect(() => {
+    if (!showConfiguration || !headersHidden || !onRequestStoredKeys) return;
+    if (keysRequested.current) return;
+    keysRequested.current = true;
+    onRequestStoredKeys();
+  }, [showConfiguration, headersHidden, onRequestStoredKeys]);
+
+  const [pendingRevealKey, setPendingRevealKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (!pendingRevealKey) return;
+    const index = (customHeaders ?? []).findIndex(
+      (header) => header.key === pendingRevealKey
+    );
+    if (index === -1) return;
+    maskedHeaders.show(index);
+    setPendingRevealKey(null);
+  }, [customHeaders, maskedHeaders, pendingRevealKey]);
+
+  const handleRevealStoredKey = (key: string) => {
+    setPendingRevealKey(key);
+    onRevealHeaders?.();
+  };
   const showClientCapabilitiesControls =
     onClientCapabilitiesOverrideEnabledChange !== undefined &&
     onClientCapabilitiesOverrideTextChange !== undefined;
@@ -239,7 +271,19 @@ export function AdvancedConnectionSettingsSection({
                     Add
                   </button>
                 </div>
-                {headersHidden && (
+                {headersHidden && storedKeys.length > 0 && (
+                  <StoredKeyRows
+                    keys={storedKeys}
+                    separator=":"
+                    rowNoun="Header"
+                    isRevealing={isRevealingHeaders}
+                    error={headersRevealError}
+                    onReveal={handleRevealStoredKey}
+                  />
+                )}
+                {/* No names yet — in flight, or the fetch failed and this is
+                    the retry. */}
+                {headersHidden && storedKeys.length === 0 && (
                   <HiddenValuesField
                     subject="headers"
                     isRevealing={isRevealingHeaders}

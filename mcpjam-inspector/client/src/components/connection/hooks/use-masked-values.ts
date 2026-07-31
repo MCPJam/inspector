@@ -36,12 +36,15 @@ export function useMaskedValues(resetKey?: string | null) {
     }));
   };
 
+  /** Uncover one row, whatever it was showing before. */
+  const show = (index: number) => {
+    setOverrides((prev) => ({ ...prev, [index]: true }));
+  };
+
   /** Call when a row is appended: the row you're about to type into starts
    * unmasked, because masking your own keystrokes as you paste a key helps
    * nobody. `index` is the position the new row lands at. */
-  const markAdded = (index: number) => {
-    setOverrides((prev) => ({ ...prev, [index]: true }));
-  };
+  const markAdded = show;
 
   /** Call when a row is removed. Rows are keyed by position, so dropping one
    * has to slide every override above it down a slot — otherwise the eye state
@@ -58,5 +61,5 @@ export function useMaskedValues(resetKey?: string | null) {
     });
   };
 
-  return { isVisible, toggle, markAdded, dropAt };
+  return { isVisible, toggle, show, markAdded, dropAt };
 }

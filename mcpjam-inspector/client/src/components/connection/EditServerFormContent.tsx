@@ -14,7 +14,10 @@ import { HostedConnectionTypeControl } from "./shared/HostedConnectionTypeContro
 import type { useServerForm } from "./hooks/use-server-form";
 import { HOSTED_MODE } from "@/lib/config";
 import type { McpProtocolVersion } from "@/lib/client-config-v2";
-import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
+import {
+  fetchServerSecretKeys,
+  fetchServerSecrets,
+} from "@/lib/apis/server-secrets-api";
 
 interface EditServerFormContentProps {
   formState: ReturnType<typeof useServerForm>;
@@ -66,6 +69,32 @@ export function EditServerFormContent({
   const [bearerRevealError, setBearerRevealError] = useState<string | null>(
     null
   );
+
+  // Names of the stored env vars / headers, so the masked rows can say which
+  // ones are set. Held here rather than in form state: they are labels, not
+  // values, and rows built from them must never be saved back over the
+  // secrets they stand for.
+  const [storedEnvKeys, setStoredEnvKeys] = useState<string[]>([]);
+  const [storedHeaderKeys, setStoredHeaderKeys] = useState<string[]>([]);
+
+  const loadStoredKeys = useCallback(async () => {
+    if (!projectId || !hostedServerId) return;
+    try {
+      const { envKeys, headerKeys } = await fetchServerSecretKeys({
+        projectId,
+        serverId: hostedServerId,
+      });
+      setStoredEnvKeys(envKeys);
+      // Authorization belongs to the bearer field, not the custom-header rows —
+      // same split `revealStoredHeaders` makes when the values arrive.
+      setStoredHeaderKeys(
+        headerKeys.filter((key) => key.trim().toLowerCase() !== "authorization")
+      );
+    } catch {
+      // Leaves the rows unnamed: the section falls back to the single masked
+      // field, which doubles as the retry for the values themselves.
+    }
+  }, [hostedServerId, projectId]);
 
   const revealSecrets = useCallback(
     // "bearer" reuses the headers reveal — fetchServerSecrets returns the full
@@ -325,6 +354,8 @@ export function EditServerFormContent({
             isRevealing={revealingEnv}
             revealError={envRevealError}
             onReveal={() => revealSecrets("env")}
+            storedEnvKeys={storedEnvKeys}
+            onRequestStoredKeys={loadStoredKeys}
             maskingKey={hostedServerId}
           />
         )}
@@ -375,6 +406,8 @@ export function EditServerFormContent({
                 isRevealingHeaders: revealingHeaders,
                 headersRevealError,
                 onRevealHeaders: () => revealSecrets("headers"),
+                storedHeaderKeys,
+                onRequestStoredKeys: loadStoredKeys,
                 maskingKey: hostedServerId,
                 headersWarning: formState.oauthAuthorizationHeaderWarning,
               }

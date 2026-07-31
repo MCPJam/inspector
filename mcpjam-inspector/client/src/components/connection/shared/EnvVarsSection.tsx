@@ -1,9 +1,10 @@
-import { useId } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Input } from "@mcpjam/design-system/input";
 import { ChevronDown, ChevronRight, Plus, X } from "lucide-react";
 import { useMaskedValues } from "../hooks/use-masked-values";
 import { HiddenValuesField } from "./HiddenValuesField";
 import { MaskedValueInput } from "./MaskedValueInput";
+import { StoredKeyRows } from "./StoredKeyRows";
 
 interface EnvVarsSectionProps {
   envVars: Array<{ key: string; value: string }>;
@@ -16,6 +17,12 @@ interface EnvVarsSectionProps {
   isRevealing?: boolean;
   revealError?: string | null;
   onReveal?: () => void;
+  /** Names of the variables the server has stored, once they've been fetched.
+   * Lets the masked rows say which variables are set. */
+  storedEnvKeys?: string[];
+  /** Asks for those names. Called once, when the section is first opened on a
+   * server whose values are stored — names cost no secret, values do. */
+  onRequestStoredKeys?: () => void;
   /** Identity of the server these rows belong to. Re-masks everything when it
    * changes, so a form that swaps servers without remounting can't carry an
    * uncovered row onto the next server's values. */
@@ -33,9 +40,13 @@ export function EnvVarsSection({
   isRevealing = false,
   revealError,
   onReveal,
+  storedEnvKeys,
+  onRequestStoredKeys,
   maskingKey,
 }: EnvVarsSectionProps) {
   const isHidden = hasStoredEnv && envVars.length === 0;
+  const storedKeys = storedEnvKeys ?? [];
+  const rowCount = isHidden ? storedKeys.length : envVars.length;
   // Per-instance so the add and edit forms can be mounted at the same time
   // without colliding on a shared element id.
   const bodyId = useId();
@@ -57,11 +68,36 @@ export function EnvVarsSection({
     onRemove(index);
   };
 
-  // Stored values stay on the server until the mask is clicked. Expanding this
-  // section must not fetch them: `onReveal` decrypts the whole secret set and
-  // drops it into form state, so binding it to a disclosure would turn an
-  // idle chevron click into a secret access. One click on the mask then buys
-  // both things at once — the rows arrive named, and still masked.
+  // Opening the section asks *what is configured*, so it fetches the names —
+  // `onRequestStoredKeys` returns key names with no values attached. It must
+  // not fetch the values: `onReveal` decrypts the whole secret set and drops it
+  // into form state, so binding that to a disclosure would turn an idle chevron
+  // click into a secret access. The eye on a row is what asks for a value.
+  const keysRequested = useRef(false);
+  useEffect(() => {
+    if (!showEnvVars || !isHidden || !onRequestStoredKeys) return;
+    // Once per mount, so a failed fetch doesn't re-fire on every render.
+    if (keysRequested.current) return;
+    keysRequested.current = true;
+    onRequestStoredKeys();
+  }, [showEnvVars, isHidden, onRequestStoredKeys]);
+
+  // Which stored row asked to be uncovered. The reveal returns the whole set,
+  // so the row is remembered by name and matched once the values land — the
+  // server is free to hand them back in a different order than the names came.
+  const [pendingRevealKey, setPendingRevealKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (!pendingRevealKey) return;
+    const index = envVars.findIndex((envVar) => envVar.key === pendingRevealKey);
+    if (index === -1) return;
+    masked.show(index);
+    setPendingRevealKey(null);
+  }, [envVars, masked, pendingRevealKey]);
+
+  const handleRevealStoredKey = (key: string) => {
+    setPendingRevealKey(key);
+    onReveal?.();
+  };
 
   return (
     <div className="space-y-2">
@@ -81,9 +117,14 @@ export function EnvVarsSection({
           <span className="text-sm font-medium text-foreground">
             Environment Variables
           </span>
-          {envVars.length > 0 && (
+          {/* Counts the stored rows too, once their names are known — "how
+              many are set" is part of what the section is asked. The stored
+              count only stands in while those rows are what's on screen;
+              after a reveal the form's own rows are the truth, including
+              when the user has deleted them all. */}
+          {rowCount > 0 && (
             <span className="rounded-full bg-muted px-1.5 py-px text-[10px] font-medium tabular-nums text-muted-foreground">
-              {envVars.length}
+              {rowCount}
             </span>
           )}
         </button>
@@ -105,7 +146,21 @@ export function EnvVarsSection({
           </p>
         )}
 
-        {showEnvVars && isHidden && (
+        {showEnvVars && isHidden && storedKeys.length > 0 && (
+          <StoredKeyRows
+            keys={storedKeys}
+            separator="="
+            rowNoun="Environment variable"
+            isRevealing={isRevealing}
+            error={revealError}
+            onReveal={handleRevealStoredKey}
+          />
+        )}
+
+        {/* No names yet — the fetch is in flight, or it failed and this is the
+            retry. One anonymous mask says less than named rows, but it is all
+            there is to say before the names arrive. */}
+        {showEnvVars && isHidden && storedKeys.length === 0 && (
           <HiddenValuesField
             subject="environment variables"
             isRevealing={isRevealing}

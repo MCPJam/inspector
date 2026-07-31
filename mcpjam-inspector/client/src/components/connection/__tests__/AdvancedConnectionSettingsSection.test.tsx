@@ -178,6 +178,42 @@ describe("AdvancedConnectionSettingsSection", () => {
       expectMasked(screen.getByLabelText("Header 1 value"));
     });
 
+    it("names the stored headers on open without decrypting them", () => {
+      const onRequestStoredKeys = vi.fn();
+      const onRevealHeaders = vi.fn();
+      render(
+        <AdvancedConnectionSettingsSection
+          showConfiguration={true}
+          onToggle={vi.fn()}
+          requestTimeout="10000"
+          onRequestTimeoutChange={vi.fn()}
+          inheritedRequestTimeout={10000}
+          customHeaders={[]}
+          onAddHeader={vi.fn()}
+          onRemoveHeader={vi.fn()}
+          onUpdateHeader={vi.fn()}
+          hasStoredHeaders
+          storedHeaderKeys={["X-API-Key", "X-Tenant"]}
+          onRequestStoredKeys={onRequestStoredKeys}
+          onRevealHeaders={onRevealHeaders}
+        />,
+      );
+
+      expect(onRequestStoredKeys).toHaveBeenCalledTimes(1);
+      // The names came without the values — the bearer token these rows may
+      // hide is still on the server.
+      expect(onRevealHeaders).not.toHaveBeenCalled();
+      expect(screen.getByLabelText("Header 1 name")).toHaveValue("X-API-Key");
+      expect(screen.getByLabelText("Header 2 name")).toHaveValue("X-Tenant");
+      expectMasked(screen.getByLabelText("Header 1 value"));
+      expectMasked(screen.getByLabelText("Header 2 value"));
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Show value for X-Tenant" }),
+      );
+      expect(onRevealHeaders).toHaveBeenCalledTimes(1);
+    });
+
     /** The parent owns the rows, so add/remove bookkeeping only runs for real
      * against state. A static array with vi.fn() callbacks would leave the
      * index this component hands the masking hook untested. */
