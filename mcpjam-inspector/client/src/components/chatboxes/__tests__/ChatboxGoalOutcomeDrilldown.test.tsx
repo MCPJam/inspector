@@ -1,7 +1,10 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ChatboxGoalOutcomeDrilldown } from "../ChatboxGoalOutcomeDrilldown";
+import {
+  ChatboxGoalOutcomeDrilldown,
+  resolveNextBefore,
+} from "../ChatboxGoalOutcomeDrilldown";
 import { EMPTY_USAGE_FILTER, toggleChip } from "@/hooks/chatbox-usage-filters";
 
 const { mockUseGoalOutcomeDrilldown } = vi.hoisted(() => ({
@@ -384,5 +387,67 @@ describe("ChatboxGoalOutcomeDrilldown", () => {
       />
     );
     expect(screen.getByText(/No sessions match/i)).toBeInTheDocument();
+  });
+
+  it("removes the pager as soon as the final page settles with no cursor", async () => {
+    // The settled `nextBefore: null` is an answer ("no more rows"), not a gap
+    // to coalesce over. Falling back to the previous page's cursor here keeps
+    // a dead "Load more" button on screen after the set is exhausted.
+    const user = userEvent.setup();
+    mockUseGoalOutcomeDrilldown.mockReturnValue({
+      drilldown: {
+        sessions: [session("s1", "first")],
+        nextBefore: 555,
+        total: 2,
+        totalTruncated: false,
+      },
+      isLoading: false,
+    });
+    const { rerender } = renderDrilldown(CELL_A);
+    await user.click(screen.getByRole("button", { name: /Load 25 more/ }));
+
+    mockUseGoalOutcomeDrilldown.mockReturnValue({
+      drilldown: {
+        sessions: [session("s2", "second")],
+        nextBefore: null,
+        total: 2,
+        totalTruncated: false,
+      },
+      isLoading: false,
+    });
+    rerender(
+      <ChatboxGoalOutcomeDrilldown
+        chatboxId="chatbox-1"
+        cell={CELL_A}
+        filter={EMPTY_USAGE_FILTER}
+        onClose={vi.fn()}
+        onOpenSession={vi.fn()}
+      />
+    );
+    expect(
+      screen.queryByRole("button", { name: /Load 25 more/ })
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("resolveNextBefore", () => {
+  // The DOM assertions above cannot pin the regression exactly: the buggy
+  // frame lives between render and the accumulate effect, and testing-library
+  // flushes effects before any assertion runs. The derivation is therefore a
+  // pure exported function, pinned here where the distinction IS observable.
+  it("honors a settled null instead of falling back to the stale cursor", () => {
+    expect(resolveNextBefore({ nextBefore: null }, 555)).toBeNull();
+  });
+
+  it("keeps the last settled cursor while the next page is in flight", () => {
+    expect(resolveNextBefore(undefined, 555)).toBe(555);
+  });
+
+  it("reports a live cursor as-is", () => {
+    expect(resolveNextBefore({ nextBefore: 123 }, 555)).toBe(123);
+  });
+
+  it("is null before anything has settled", () => {
+    expect(resolveNextBefore(undefined, undefined)).toBeNull();
   });
 });

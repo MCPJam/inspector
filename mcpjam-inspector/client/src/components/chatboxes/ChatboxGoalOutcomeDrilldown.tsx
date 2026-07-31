@@ -86,6 +86,22 @@ type PagingState = {
   lastNextBefore?: number | null;
 };
 
+/**
+ * The pager's cursor for this render.
+ *
+ * NOT a `??` chain over the live value: a settled page reports "no more rows"
+ * AS `nextBefore: null`, so coalescing on null would fall back to the previous
+ * page's cursor and keep rendering "Load more" for a paint after the set is
+ * exhausted — the settled null is an answer, not a gap. The last settled cursor
+ * is a fallback only while the next page is in flight (live result undefined).
+ */
+export function resolveNextBefore(
+  live: { nextBefore: number | null } | undefined,
+  lastSettled: number | null | undefined,
+): number | null {
+  return live !== undefined ? live.nextBefore : (lastSettled ?? null);
+}
+
 export function ChatboxGoalOutcomeDrilldown({
   chatboxId,
   cell,
@@ -151,7 +167,7 @@ export function ChatboxGoalOutcomeDrilldown({
   const total = drilldown?.total ?? active.lastTotal;
   const totalTruncated =
     drilldown?.totalTruncated ?? active.lastTotalTruncated ?? false;
-  const nextBefore = drilldown?.nextBefore ?? active.lastNextBefore ?? null;
+  const nextBefore = resolveNextBefore(drilldown, active.lastNextBefore);
   const showEmpty = !isLoading && drilldown !== undefined && rows.length === 0;
 
   return (
