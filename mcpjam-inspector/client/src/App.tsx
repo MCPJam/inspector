@@ -141,9 +141,10 @@ import { useLocalStateMigration } from "./hooks/use-local-state-migration";
 import { AppReadyProvider } from "./hooks/use-app-ready";
 import { useInspectorCommandBus } from "./hooks/use-inspector-command-bus";
 import {
-  driveScopeStepUp,
+  driveChatScopeStepUp,
   resolveScopeStepUpServer,
 } from "./lib/scope-step-up";
+import { markPendingChatScopeStepUpCancelled } from "./lib/scope-step-up-pending";
 import { HOSTED_MODE, NON_PROD_LOCKDOWN } from "./lib/config";
 import {
   createInspectorCommandClientError,
@@ -265,6 +266,7 @@ import {
   Navigate,
   Outlet,
   UNSAFE_LocationContext,
+  useLocation,
   useOutletContext,
   useParams,
 } from "react-router";
@@ -1004,7 +1006,7 @@ export function ToolsRoute() {
           }
           tasksMode={taskModeForSurface(
             readTasksPolicy(activeHost?.config),
-            "tools",
+            "tools"
           )}
           mcpToolResultImageRendering={gateMcpToolResultImageRenderingByModelVisibility(
             activeHost?.config?.mcpToolResultImageRendering,
@@ -1598,7 +1600,16 @@ export function OrganizationsRoute() {
 }
 
 export function ChatAliasRoute() {
-  return <Navigate to={routePaths.playground} replace />;
+  // Forward the query string: `/chat?conversation=<id>` is what an OAuth return
+  // marker or an old bookmark can still carry, and dropping the search here
+  // would land the user on an empty Playground with the id already gone.
+  const location = useLocation();
+  return (
+    <Navigate
+      to={{ pathname: routePaths.playground, search: location.search }}
+      replace
+    />
+  );
 }
 
 export function ServersRedirectRoute() {
@@ -1801,6 +1812,12 @@ export default function App() {
 
     const finalizeHostedOAuth = (errorMessage?: string | null) => {
       if (cancelled) return;
+      if (errorMessage && callbackContext.serverName) {
+        markPendingChatScopeStepUpCancelled(
+          callbackContext.serverName,
+          errorMessage
+        );
+      }
       if (callbackContext.serverName) {
         writeHostedOAuthResumeMarker({
           surface: callbackContext.surface,
@@ -1953,6 +1970,14 @@ export default function App() {
 
   const isDebugCallback = isDebugOAuthCallbackPath(window.location.pathname);
   const isOAuthCallback = window.location.pathname === "/callback";
+  const isMcpOAuthCallback = window.location.pathname === "/oauth/callback";
+  // Project callbacks are completed by `useServerState`, which has its own
+  // project-aware restoration path. The App-level hosted flow intentionally
+  // excludes them, so its loading gate must too; otherwise this callback can
+  // remain on a blank screen while that hook performs the exchange.
+  const isProjectMcpOAuthCallback =
+    isMcpOAuthCallback &&
+    getHostedOAuthCallbackContext()?.surface === "project";
   const electronMcpCallbackUrl = buildElectronMcpCallbackUrl();
 
   useEffect(() => {
@@ -2133,12 +2158,17 @@ export default function App() {
       const server = resolveScopeStepUpServer(appState, {
         serverId: event.serverId,
       });
-      driveScopeStepUp(server, {
+      // The harness delivers a turn's 403 out-of-band, but it is still a CHAT
+      // step-up: redirecting here while the turn streams loses the transcript
+      // just the same. Same queue as the stream-part channel, so whichever of
+      // the two arrives second is deduped rather than doubling the redirect.
+      // Outside a turn this is exactly `driveScopeStepUp`.
+      driveChatScopeStepUp(server, {
         requiredScope: event.requiredScope,
         resourceMetadataUrl: event.resourceMetadataUrl,
       });
     },
-    [appState],
+    [appState]
   );
   useInspectorCommandBus({ onScopeStepUp: handleInspectorScopeStepUp });
   // MCPJam UI tools: registered in both modes for the in-app "Ask MCPJam"
@@ -3583,6 +3613,13 @@ export default function App() {
   }
 
   if (hostedOAuthHandling) {
+    return <LoadingScreen />;
+  }
+
+  // MCP OAuth completion/reconnect is handled by useServerState above. Keep
+  // the app shell hidden until that effect restores the exact saved route so
+  // the Connect tab never flashes between the authorization server and chat.
+  if (isMcpOAuthCallback && !isProjectMcpOAuthCallback) {
     return <LoadingScreen />;
   }
 

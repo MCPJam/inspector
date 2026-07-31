@@ -1,26 +1,31 @@
 ---
-title: "Claude Code host"
-description: "Run the real Claude Code agent inside your project's Computer — observe its native tools, MCP client, and execution behavior directly"
+title: "Claude Code and Codex hosts"
+description: "Run the real Claude Code or Codex agent inside your project's Computer — observe native tools, MCP client, and execution behavior directly"
 icon: "terminal"
 ---
 
-Selecting **Claude Code** as a host runs the real Claude Code agent inside your project's Computer (a cloud Linux sandbox) instead of MCPJam's emulated chat loop. You are observing the actual runtime — its native tools, its own MCP client, its real execution behavior — not a simulation of it.
+MCPJam supports two harness hosts that run a real agent runtime inside your project's Computer (a cloud Linux sandbox) instead of MCPJam's emulated chat loop. You are observing the actual runtime — its native tools, its own agent loop, its real execution behavior — not a simulation of it.
+
+- **Claude Code** — runs the real Claude Code agent with Anthropic models. Supports selected MCP servers and native tool approval.
+- **Codex** — runs the real Codex CLI agent with OpenAI gpt-5 family models. Supports skills; does not support selected MCP servers.
 
 <Note>
-  The Claude Code host is available to organizations where the feature has been
-  enabled. Contact your account team if you don't see it in the host template
-  catalog.
+  The Claude Code and Codex hosts are available to organizations where the
+  respective feature has been enabled. Contact your account team if you don't
+  see them in the host template catalog.
 </Note>
 
 ## What happens when you run a turn
 
-1. **Pre-flight check.** Before the stream opens, MCPJam verifies that the host can run: the model is an MCPJam-provided Anthropic model, the Computer data plane is configured, and the host settings are ones the runtime can honor. Any failure returns a clear error before the turn starts — a turn never silently falls back to the emulated engine.
-2. **Computer wake.** The host's project Computer is reserved or woken (provisioned on first use). The Claude Code host **requires** a Computer — there is no local fallback.
+1. **Pre-flight check.** Before the stream opens, MCPJam verifies that the host can run: the model is supported by the selected harness, the Computer data plane is configured, and the host settings are ones the runtime can honor. Any failure returns a clear error before the turn starts — a turn never silently falls back to the emulated engine.
+2. **Computer wake.** The host's project Computer is reserved or woken (provisioned on first use). Both harness hosts **require** a Computer — there is no local fallback.
 3. **Credential delivery.** MCPJam installs a short-lived model credential into the sandbox's egress layer outside the VM. Neither the sandbox nor your browser ever holds a real model key. The agent runs pointed at MCPJam's model proxy, which verifies the credential and meters every generation. There is no raw-key fallback.
-4. **MCP delivery.** Selected MCP servers are written into the session's MCP config, each pointed at MCPJam's per-server proxy tunnel — no upstream credentials enter the sandbox.
-5. **The turn runs.** Claude Code's own agent loop executes; native tools (Bash, Read, Write, and others) run inside the sandbox; file changes land on the Computer's disk; the transcript and trace persist like any other chat.
+4. **MCP delivery.** For Claude Code hosts, selected MCP servers are written into the session's MCP config, each pointed at MCPJam's per-server proxy tunnel — no upstream credentials enter the sandbox. Codex hosts do not support selected MCP servers.
+5. **The turn runs.** The agent's own loop executes; native tools run inside the sandbox; file changes land on the Computer's disk; the transcript and trace persist like any other chat.
 
 ## Host settings
+
+### Claude Code
 
 | Setting | Behavior |
 |---|---|
@@ -32,23 +37,36 @@ Selecting **Claude Code** as a host runs the real Claude Code agent inside your 
 | Temperature and other sampling controls | Not honored — the Claude Code runtime owns its own sampling. These controls are grayed out in the UI. |
 | Progressive tool disclosure | Not applied — the real runtime owns tool discovery. |
 
+### Codex
+
+| Setting | Behavior |
+|---|---|
+| Model | Honored — must be an MCPJam-provided OpenAI gpt-5 family model. Other models are not supported and fail closed. |
+| System prompt | Honored — passed to the runtime. |
+| Require tool approval | Not supported — the Codex runtime does not pause for tool approval. The toggle is disabled. |
+| Selected MCP servers | Not supported — Codex does not make MCP server tools model-callable. A Codex host with selected servers is rejected at pre-flight. |
+| Skills | Honored — runtime skills are materialized into the sandbox. |
+| Temperature and other sampling controls | Not honored — the Codex runtime owns its own sampling. These controls are grayed out in the UI. |
+| Progressive tool disclosure | Not applied — the real runtime owns tool discovery. |
+
 <Note>
   Host-page tool-level toggles (such as tool visibility) are not re-enforced
-  for Claude Code runs. Controls the runtime cannot honor are disabled in the UI
+  for harness runs. Controls the runtime cannot honor are disabled in the UI
   rather than silently ignored.
 </Note>
 
 ## Requirements
 
 - A project **Computer** (the E2B data plane must be configured for your deployment).
-- An **MCPJam-provided Anthropic model** selected on the host.
-- A **signed-in project member** — guest sessions cannot run the Claude Code host.
+- For **Claude Code**: an MCPJam-provided Anthropic model selected on the host.
+- For **Codex**: an MCPJam-provided OpenAI gpt-5 family model selected on the host.
+- A **signed-in project member** — guest sessions cannot run harness hosts.
 
 No credential configuration is needed. Broker delivery is on by default and the model proxy is always-on.
 
 ## Billing
 
-- **Computer time** — the Claude Code runtime keeps the Computer awake, so it meters into your org's monthly computer-time allowance exactly like terminal use.
+- **Computer time** — the harness runtime keeps the Computer awake, so it meters into your org's monthly computer-time allowance exactly like terminal use.
 - **Model tokens** — every generation is priced and settled by the model proxy against your org, the same accounting as regular chat. Spend caps and empty-wallet rejections apply before the stream starts.
 
 ## Failure modes
@@ -58,9 +76,10 @@ None of these fall back to the emulated engine — a turn that says it ran the r
 | Condition | What you see |
 |---|---|
 | Enterprise-managed authorization policy on the host | Pre-flight error — the combination is rejected rather than silently bypassed. |
-| Require tool approval + selected MCP servers | Pre-flight error — turn approval off or remove the MCP servers. |
+| Require tool approval + selected MCP servers (Claude Code) | Pre-flight error — turn approval off or remove the MCP servers. |
+| Selected MCP servers on a Codex host | Pre-flight error — Codex does not support MCP server tool delivery. |
 | Computer data plane not configured | Pre-flight error naming the data plane requirement. |
-| Model not MCPJam-provided or not runnable | Pre-flight error asking you to pick an eligible model. |
+| Model not supported by the selected harness | Pre-flight error asking you to pick an eligible model. |
 | Computer at daily start cap | Start-limit dialog with upgrade option. |
 | Org out of compute allowance and credits | Computer pauses with a billing notice. |
 | Org spending limit reached | Clean rejection before any model call. |

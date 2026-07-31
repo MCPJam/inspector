@@ -31,10 +31,22 @@ import {
 } from "./auth";
 import { verifyHarnessProxyToken } from "../../utils/harness/harness-proxy-token";
 import { rpcLogBus } from "../../services/rpc-log-bus";
-import { enqueueHarnessRpcLog } from "../../utils/harness/harness-rpc-log-sink";
+import {
+  enqueueHarnessRpcLog,
+  flushHarnessRpcLogs,
+  isRpcLogSinkConfigured,
+} from "../../utils/harness/harness-rpc-log-sink";
 import { logger } from "../../utils/logger";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { HOSTED_MODE } from "../../config.js";
+import {
+  HARNESS_SCOPE_STEP_UP_CORRELATION_HEADER,
+  HARNESS_SCOPE_STEP_UP_CORRELATION_QUERY,
+  buildCrossInstanceHarnessScopeStepUpMessage,
+  normalizeHarnessScopeStepUpCorrelationId,
+  publishHarnessScopeStepUp,
+} from "../../utils/harness/harness-scope-step-up.js";
+import { scopeStepUpInfoFromToolError } from "../../utils/insufficient-scope-step-up.js";
 
 const harnessMcp = new Hono();
 
@@ -46,6 +58,7 @@ const HARNESS_MCP_STREAM_MAX_MS = 10 * 60_000;
 const RATE_WINDOW_MS = 60_000;
 const RATE_MAX_PER_WINDOW = 600;
 const rateBuckets = new Map<string, { count: number; resetAt: number }>();
+const CROSS_INSTANCE_SCOPE_STEP_UP_DELIVERY_GRACE_MS = 1250;
 
 function rateLimited(key: string): boolean {
   const now = Date.now();
@@ -71,6 +84,13 @@ function rateLimited(key: string): boolean {
  */
 function readProxyToken(c: any): string | undefined {
   return c.req.header("x-mcpjam-proxy-token") || undefined;
+}
+
+function readScopeStepUpCorrelationId(c: any): string | undefined {
+  return normalizeHarnessScopeStepUpCorrelationId(
+    c.req.header(HARNESS_SCOPE_STEP_UP_CORRELATION_HEADER) ??
+      c.req.query(HARNESS_SCOPE_STEP_UP_CORRELATION_QUERY)
+  );
 }
 
 async function handle(c: any) {
@@ -214,7 +234,56 @@ async function handle(c: any) {
           },
         }
       ),
-      (manager) => handleJsonRpc(serverId, body, manager, "adapter")
+      (manager) =>
+        handleJsonRpc(serverId, body, manager, "adapter", {
+          onToolCallError: async (context) => {
+            const info = scopeStepUpInfoFromToolError(context);
+            if (!info) return;
+            const event = {
+              ...info,
+              ...(context.toolName ? { toolName: context.toolName } : {}),
+              ...(Object.prototype.hasOwnProperty.call(context, "toolInput")
+                ? { toolInput: context.toolInput }
+                : {}),
+            };
+            const correlationId = readScopeStepUpCorrelationId(c);
+            const deliveredLocally = publishHarnessScopeStepUp(
+              correlationId,
+              event
+            );
+            if (
+              deliveredLocally ||
+              !correlationId ||
+              !isRpcLogSinkConfigured()
+            ) {
+              return;
+            }
+
+            const relay = buildCrossInstanceHarnessScopeStepUpMessage(
+              correlationId,
+              event
+            );
+            if (!relay) return;
+            enqueueHarnessRpcLog({
+              serverId,
+              projectId: claims.projectId,
+              organizationId: claims.orgId,
+              direction: "receive",
+              loggedAt: new Date().toISOString(),
+              message: relay,
+            });
+            await flushHarnessRpcLogs();
+            // The live turn polls once per second. Hold only this actionable
+            // error response briefly so the remote replica can suspend before
+            // the harness sees a failure and asks the model to narrate it.
+            await new Promise((resolve) =>
+              setTimeout(
+                resolve,
+                CROSS_INSTANCE_SCOPE_STEP_UP_DELIVERY_GRACE_MS
+              )
+            );
+          },
+        })
     );
     // Notification (no id) → 202 Accepted, no body.
     if (!response) return c.body("Accepted", 202);
