@@ -1191,7 +1191,17 @@ export function ChatboxTopicMapPanel({
           continue;
         }
         clusters.set(clusterKey, {
-          color: node.color,
+          // Halos denote the CLUSTER, so they always take the theme colour —
+          // never `node.color`, which in outcome mode is the first-iterated
+          // node's outcome. A mixed-outcome cluster would otherwise get an
+          // order-dependent halo asserting one outcome for the whole goal,
+          // which is exactly the overclaim the outcome tint exists to avoid.
+          color: colorForCluster(
+            node.clusterId,
+            node.clusterId != null
+              ? clusterColorIndex.get(node.clusterId)
+              : undefined,
+          ),
           nodes: [node],
           sumX: node.x ?? node.seedX,
           sumY: node.y ?? node.seedY,
@@ -1250,7 +1260,7 @@ export function ChatboxTopicMapPanel({
         ctx.restore();
       }
     },
-    [graphData],
+    [clusterColorIndex, graphData],
   );
 
   if (

@@ -27,6 +27,7 @@ const { mockUseChatboxTopicMap } = vi.hoisted(() => ({
  */
 function makeRecordingCtx() {
   const alphas: number[] = [];
+  const gradientStops: string[] = [];
   const noop = () => {};
   const ctx = {
     save: noop,
@@ -42,7 +43,11 @@ function makeRecordingCtx() {
     fillRect: noop,
     fillText: noop,
     measureText: () => ({ width: 10 }),
-    createRadialGradient: () => ({ addColorStop: noop }),
+    createRadialGradient: () => ({
+      addColorStop: (_offset: number, color: string) => {
+        gradientStops.push(color);
+      },
+    }),
     globalCompositeOperation: "",
     shadowColor: "",
     shadowBlur: 0,
@@ -57,7 +62,7 @@ function makeRecordingCtx() {
       return alphas[alphas.length - 1] ?? 1;
     },
   };
-  return { ctx, alphas };
+  return { ctx, alphas, gradientStops };
 }
 
 vi.mock("react-force-graph-2d", async () => {
@@ -71,6 +76,7 @@ vi.mock("react-force-graph-2d", async () => {
           ctx: unknown,
           globalScale: number
         ) => void;
+        onRenderFramePre?: (ctx: unknown) => void;
         onNodeClick?: (node: { id: string }) => void;
         onBackgroundClick?: () => void;
       },
@@ -79,8 +85,19 @@ vi.mock("react-force-graph-2d", async () => {
       React.useImperativeHandle(ref, () => ({
         zoomToFit: vi.fn(),
       }));
+      // Halos are drawn in onRenderFramePre as radial gradients; record their
+      // colour stops so "what colour is this cluster's halo" is assertable.
+      const frame = makeRecordingCtx();
+      try {
+        props.onRenderFramePre?.(frame.ctx);
+      } catch {
+        // Ignore: halo drawing must not mask the node assertions.
+      }
       return (
-        <div data-testid="force-graph">
+        <div
+          data-testid="force-graph"
+          data-halo-colors={frame.gradientStops.join(",")}
+        >
           <button
             type="button"
             data-testid="force-graph-background"
@@ -114,6 +131,15 @@ vi.mock("react-force-graph-2d", async () => {
     }),
   };
 });
+
+/** Colours the halo gradients were painted with this render. */
+function haloColors(): string[] {
+  return (
+    screen.getByTestId("force-graph").getAttribute("data-halo-colors") ?? ""
+  )
+    .split(",")
+    .filter(Boolean);
+}
 
 /** True when the mock recorded this node as drawn dimmed. */
 function isNodeDimmed(sessionId: string): boolean {
@@ -846,5 +872,48 @@ describe("ChatboxTopicMapPanel outcome narrowing", () => {
     expect(isNodeDimmed("session-a")).toBe(false);
     // The cluster constraint is still applied.
     expect(isNodeDimmed("session-b")).toBe(true);
+  });
+});
+
+describe("ChatboxTopicMapPanel cluster halos", () => {
+  function renderPanel() {
+    return render(
+      <ChatboxTopicMapPanel
+        chatboxId="chatbox-1"
+        filter={EMPTY_USAGE_FILTER}
+        onToggleChip={vi.fn()}
+        onClearChip={vi.fn()}
+        onRebuild={vi.fn()}
+      />
+    );
+  }
+
+  it("paints halos with the theme colour in both modes", async () => {
+    // A halo denotes the CLUSTER. Deriving it from a member node's colour means
+    // that in outcome mode a mixed-outcome cluster gets whichever outcome the
+    // first-iterated node had — an order-dependent halo asserting one outcome
+    // for the whole goal. Halos are therefore mode-independent.
+    const user = userEvent.setup();
+    mockUseChatboxTopicMap.mockReturnValue(outcomeAwareHookValue());
+    renderPanel();
+
+    const themeHalos = haloColors();
+    expect(themeHalos.length).toBeGreaterThan(0);
+
+    await user.click(screen.getByRole("button", { name: "Outcome" }));
+    expect(haloColors()).toEqual(themeHalos);
+  });
+
+  it("does not paint an outcome colour into a halo", () => {
+    // session-a is `completed`; its outcome colour must not reach the halo.
+    mockUseChatboxTopicMap.mockReturnValue(outcomeAwareHookValue());
+    renderPanel();
+    const completedColor = colorForNode(
+      { clusterId: "cluster-a", outcome: "completed" },
+      "outcome"
+    );
+    for (const stop of haloColors()) {
+      expect(stop).not.toContain(completedColor.replace("#", ""));
+    }
   });
 });
