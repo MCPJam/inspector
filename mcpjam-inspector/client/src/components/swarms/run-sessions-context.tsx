@@ -349,7 +349,11 @@ export function RunSessionsProvider({
     }
     if (!hasDeepLink || sessionsStatus !== "CanLoadMore") return;
     loadMore(DEFAULT_PAGE_SIZE);
-  }, [hasDeepLink, sessionsStatus, loadMore]);
+    // `scopeKey` is a dependency because the scope reset above clears the applied
+    // refs: pointing at a different target within the SAME run leaves
+    // `hasDeepLink`, `sessionsStatus`, and `loadMore` all identical, so without it
+    // the page walk would never restart for the new, still-unresolved target.
+  }, [hasDeepLink, scopeKey, sessionsStatus, loadMore]);
 
   // Auto-follow: while the run is live and the user hasn't pinned anything, keep
   // the view on a RUNNING attempt — pick one when nothing is selected, and move
