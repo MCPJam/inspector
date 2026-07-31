@@ -292,7 +292,11 @@ export async function runSyntheticHostSession(
   let anyTurnPersisted = false;
   let sessionRowEnsured = false;
   let selectedServerIds: string[] = [];
-  let resumeConfig: Record<string, unknown> | undefined;
+  // Derived from the persist signature rather than restated, so hoisting this
+  // out of the try can't quietly widen what the persist accepts.
+  let resumeConfig:
+    | Parameters<typeof persistChatSessionToConvex>[0]["resumeConfig"]
+    | undefined;
   // Captured from the first drained turn so per-session persist calls stamp the
   // correct modelSource on chatSessions. The chatbox/target modelId is pinned at
   // start, so this is stable across turns.
