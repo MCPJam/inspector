@@ -1,15 +1,20 @@
 import type { ToolSet } from "ai";
 import {
   emitInsufficientScopeChunk,
+  emitScopeStepUpRequiredChunk,
   type ElicitationChunkWriter,
   type InsufficientScopeInfo,
 } from "../routes/web/hosted-elicitation.js";
+import type { ScopeStepUpRequiredEvent } from "@/shared/scope-step-up";
 import { extractInsufficientScopeChallenge } from "./mcp-error-serialize.js";
+import { ScopeStepUpSuspendSignal } from "./scope-step-up-continuation.js";
 
 export type ScopeStepUpToolError = {
   error: unknown;
   serverId: string;
   toolCallId?: string;
+  toolName?: string;
+  toolInput?: unknown;
 };
 
 export type ScopeStepUpObserverOptions = {
@@ -17,6 +22,17 @@ export type ScopeStepUpObserverOptions = {
   onToolError?: (context: ScopeStepUpToolError) => void;
   /** Override delivery while retaining the shared extraction/actionability gate. */
   emitInsufficientScope?: (info: InsufficientScopeInfo) => void;
+  /**
+   * Chat pause mode. Creates the server-side continuation for the exact
+   * operation. When supplied, an actionable challenge is emitted through the
+   * typed resumable data part and thrown as a suspension signal instead of
+   * becoming a model-facing tool error.
+   */
+  createContinuation?: (input: {
+    info: InsufficientScopeInfo;
+    toolName: string;
+    toolInput: unknown;
+  }) => ScopeStepUpRequiredEvent | Promise<ScopeStepUpRequiredEvent>;
 };
 
 /**
@@ -24,7 +40,7 @@ export type ScopeStepUpObserverOptions = {
  * payload shared by both in-process tools and the harness proxy.
  */
 export function scopeStepUpInfoFromToolError(
-  context: ScopeStepUpToolError,
+  context: ScopeStepUpToolError
 ): InsufficientScopeInfo | undefined {
   const challenge = extractInsufficientScopeChallenge(context.error);
   if (
@@ -55,7 +71,7 @@ export function scopeStepUpInfoFromToolError(
 export function wrapToolsWithScopeStepUp<TTools extends ToolSet>(
   tools: TTools,
   getScopeChallengeWriter: () => ElicitationChunkWriter | null,
-  observerOptions: ScopeStepUpObserverOptions = {},
+  observerOptions: ScopeStepUpObserverOptions = {}
 ): TTools {
   return Object.fromEntries(
     Object.entries(tools as Record<string, any>).map(([name, tool]) => {
@@ -79,6 +95,15 @@ export function wrapToolsWithScopeStepUp<TTools extends ToolSet>(
                 serverId,
                 toolCallId,
               });
+              if (info?.toolCallId && observerOptions.createContinuation) {
+                const event = await observerOptions.createContinuation({
+                  info,
+                  toolName: name,
+                  toolInput: input,
+                });
+                emitScopeStepUpRequiredChunk(getScopeChallengeWriter(), event);
+                throw new ScopeStepUpSuspendSignal(event);
+              }
               if (info) {
                 if (observerOptions.emitInsufficientScope) {
                   observerOptions.emitInsufficientScope(info);
@@ -86,7 +111,7 @@ export function wrapToolsWithScopeStepUp<TTools extends ToolSet>(
                   emitInsufficientScopeChunk(
                     getScopeChallengeWriter(),
                     undefined,
-                    info,
+                    info
                   );
                 }
               }
@@ -95,6 +120,6 @@ export function wrapToolsWithScopeStepUp<TTools extends ToolSet>(
           },
         },
       ];
-    }),
+    })
   ) as TTools;
 }

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   render,
   screen,
@@ -8,9 +8,11 @@ import {
   within,
 } from "@testing-library/react";
 import { PlaygroundMain } from "../PlaygroundMain";
+import { track } from "@/lib/analytics";
 import { DEFAULT_CHAT_COMPOSER_PLACEHOLDER } from "@/components/chat-v2/shared/chat-helpers";
 import { useHostContextStore } from "@/stores/client-context-store";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
+import { invalidateChatHistoryPrefetch } from "@/components/chat-v2/history/chat-history-prefetch";
 
 vi.mock("framer-motion", async (importOriginal) => {
   const actual = await importOriginal<typeof import("framer-motion")>();
@@ -1411,6 +1413,35 @@ describe("PlaygroundMain", () => {
       ).not.toHaveLength(0);
     });
 
+    it("tracks the chip click with the compare location when multi-model is active", () => {
+      mockUseChatSession.availableModels = [
+        { id: "gpt-4", name: "GPT-4", provider: "openai" },
+        {
+          id: "claude-sonnet-4-5",
+          name: "Claude Sonnet 4.5",
+          provider: "anthropic",
+        },
+      ];
+      mockUseChatSession.selectedModelIds = ["gpt-4", "claude-sonnet-4-5"];
+      mockUseChatSession.multiModelEnabled = true;
+
+      render(<PlaygroundMain {...defaultProps} enableMultiModelChat={true} />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
+
+      const starterCalls = vi
+        .mocked(track)
+        .mock.calls.filter(
+          ([event]) => event === "chat_starter_prompt_clicked",
+        );
+      expect(starterCalls).toEqual([
+        [
+          "chat_starter_prompt_clicked",
+          { prompt: "Starter chip prompt", location: "playground_compare" },
+        ],
+      ]);
+    });
+
     it("shows trace empty diagnostics and hides compare grid when Trace is selected before first message", () => {
       mockUseChatSession.availableModels = [
         {
@@ -1472,6 +1503,26 @@ describe("PlaygroundMain", () => {
           expect.objectContaining({ text: "Starter chip prompt" }),
         );
       });
+    });
+
+    it("tracks the chip click with the prompt and single-model location", () => {
+      render(<PlaygroundMain {...defaultProps} />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
+
+      // Filter by event name: the single-model click also fires
+      // app_builder_send_message, so a bare call count would be racy.
+      const starterCalls = vi
+        .mocked(track)
+        .mock.calls.filter(
+          ([event]) => event === "chat_starter_prompt_clicked",
+        );
+      expect(starterCalls).toEqual([
+        [
+          "chat_starter_prompt_clicked",
+          { prompt: "Starter chip prompt", location: "playground_single" },
+        ],
+      ]);
     });
 
     it("hides starter chips when the welcome hero is suppressed", () => {
@@ -2047,6 +2098,126 @@ describe("PlaygroundMain", () => {
       await waitFor(() => {
         expect(onExecutionInjected).toHaveBeenCalled();
       });
+    });
+  });
+
+  /**
+   * A conversation restored from `?conversation=` carries a model id, but the
+   * model catalog loads independently and can arrive afterwards. The deferred
+   * apply therefore has to remember WHICH conversation asked for that model.
+   */
+  describe("restored model applied late", () => {
+    const RESTORED_SESSION_ID = "restored-chat-session";
+    const LATE_MODEL = {
+      id: "late-model",
+      name: "Late Model",
+      provider: "openai",
+      contextWindow: 8192,
+      maxOutputTokens: 4096,
+      supportsTools: true,
+      supportsVision: false,
+      supportsStreaming: true,
+    };
+
+    const arriveAtRestoredConversation = () => {
+      window.history.replaceState(
+        {},
+        "",
+        `/playground?conversation=${RESTORED_SESSION_ID}`,
+      );
+      mockGetChatHistoryDetail.mockResolvedValue({
+        ok: true,
+        session: {
+          _id: "history-restored",
+          chatSessionId: RESTORED_SESSION_ID,
+          firstMessagePreview: "Hello",
+          status: "active" as const,
+          directVisibility: "private" as const,
+          version: 3,
+          createdAt: 1,
+          updatedAt: 1,
+          lastActivityAt: 1,
+          isPinned: false,
+          manualUnread: false,
+          isUnread: false,
+          messagesBlobUrl: "https://storage.test/blob",
+          // The catalog is empty at restore time, so `loadChatSession` cannot
+          // apply this and it becomes the deferred model.
+          modelId: LATE_MODEL.id,
+          resumeConfig: {},
+        },
+        widgetSnapshots: [],
+      });
+    };
+
+    beforeEach(() => {
+      // The detail cache is module-level and outlives a test, so without this
+      // the second restore of the same id is served from the first test's
+      // entry and never reaches the mock.
+      invalidateChatHistoryPrefetch();
+    });
+
+    afterEach(() => {
+      window.history.replaceState({}, "", "/");
+      invalidateChatHistoryPrefetch();
+    });
+
+    it("applies the restored model when the catalog arrives", async () => {
+      arriveAtRestoredConversation();
+
+      const { rerender } = render(
+        <PlaygroundMain {...defaultProps} syncConversationToUrl />,
+      );
+
+      await waitFor(() => {
+        expect(mockGetChatHistoryDetail).toHaveBeenCalledWith(
+          expect.objectContaining({ chatSessionId: RESTORED_SESSION_ID }),
+        );
+      });
+      expect(mockUseChatSession.setSelectedModel).not.toHaveBeenCalled();
+
+      // Hydration lands, then the catalog does.
+      mockUseChatSession.chatSessionId = RESTORED_SESSION_ID;
+      mockUseChatSession.availableModels = [LATE_MODEL];
+      await act(async () => {
+        rerender(<PlaygroundMain {...defaultProps} syncConversationToUrl />);
+      });
+
+      expect(mockUseChatSession.setSelectedModel).toHaveBeenCalledWith(
+        LATE_MODEL,
+      );
+    });
+
+    it("does not retag a different thread opened before the catalog arrives", async () => {
+      arriveAtRestoredConversation();
+
+      const { rerender } = render(
+        <PlaygroundMain {...defaultProps} syncConversationToUrl />,
+      );
+
+      await waitFor(() => {
+        expect(mockGetChatHistoryDetail).toHaveBeenCalledWith(
+          expect.objectContaining({ chatSessionId: RESTORED_SESSION_ID }),
+        );
+      });
+
+      // The user moves to another thread while the catalog is still loading.
+      mockUseChatSession.chatSessionId = "some-other-session";
+      mockUseChatSession.availableModels = [LATE_MODEL];
+      await act(async () => {
+        rerender(<PlaygroundMain {...defaultProps} syncConversationToUrl />);
+      });
+
+      // Applying it now would silently switch THEIR thread to the restored
+      // conversation's model.
+      expect(mockUseChatSession.setSelectedModel).not.toHaveBeenCalled();
+
+      // And the stale pending model must not linger to fire later either.
+      mockUseChatSession.chatSessionId = "yet-another-session";
+      await act(async () => {
+        rerender(<PlaygroundMain {...defaultProps} syncConversationToUrl />);
+      });
+      expect(mockUseChatSession.setSelectedModel).not.toHaveBeenCalled();
     });
   });
 });
