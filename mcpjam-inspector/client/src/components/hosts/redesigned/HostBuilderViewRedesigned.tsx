@@ -476,7 +476,11 @@ export function HostBuilderViewRedesigned({
               value="host"
               ariaLabel="Connect view"
               onChange={(next) => {
-                track("connect_view_selected", { from: "host", to: next });
+                try {
+                  track("connect_view_selected", { from: "host", to: next });
+                } catch {
+                  // swallow — a posthog throw must never block navigation
+                }
                 if (next === "servers") {
                   // Skip `onBack()` (which would push `/hosts` first via
                   // the parent's handleSelectHost) and just navigate.

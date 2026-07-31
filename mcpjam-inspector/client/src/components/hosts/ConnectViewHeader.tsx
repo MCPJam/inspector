@@ -47,7 +47,11 @@ export function ConnectViewHeader({
     // from the sidebar would otherwise drop the `sidebar_nav_clicked` signal
     // for skills entries. One wrapper covers every route that renders this
     // header.
-    track("connect_view_selected", { from: value, to: next });
+    try {
+      track("connect_view_selected", { from: value, to: next });
+    } catch {
+      // swallow — a posthog throw must never block navigation
+    }
     onChange(next);
   };
 
