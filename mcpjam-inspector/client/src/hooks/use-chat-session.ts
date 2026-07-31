@@ -1515,7 +1515,7 @@ export function useChatSession(
     selectedModelId,
     setSelectedModelId,
     selectedModelIds,
-    setSelectedModelIds,
+    setSelectedModelIds: persistSelectedModelIds,
     multiModelEnabled,
     setMultiModelEnabled,
   } = usePersistedModel();
@@ -1612,6 +1612,26 @@ export function useChatSession(
       setSelectedModelId(String(model.id));
     },
     [initialModelId, setSelectedModelId]
+  );
+
+  const setSelectedModelIds = useCallback(
+    (modelIds: string[]) => {
+      // A surface with a pinned model — a hosted chatbox or share link,
+      // where `executionConfig.modelId` names the model the chatbox owner
+      // chose — is not expressing *this* user's choice. `setSelectedModel`
+      // already no-ops for that reason; this setter has to as well, because
+      // it ends in `saveSelectedModelId` (`use-persisted-model.ts:150-159`)
+      // and so writes the same global lead key. Without the guard, opening a
+      // share link overwrote the model the user had selected in their own
+      // chats — the load-time clobber of BACK2-628, by a second route that
+      // `isSelectedModelResolved` cannot gate (it short-circuits to true
+      // whenever `initialModelId` is set).
+      if (initialModelId) {
+        return;
+      }
+      persistSelectedModelIds(modelIds);
+    },
+    [initialModelId, persistSelectedModelIds]
   );
 
   const isMcpJamModel = useMemo(() => {
