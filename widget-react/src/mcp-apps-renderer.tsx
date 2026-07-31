@@ -1136,12 +1136,15 @@ export function MCPAppsRendererSurface({
   );
 
   // Clear the sticky inline-preference flag the moment the effective
-  // mode moves off "inline" — that transition can only come from the
-  // user (close-button paths set the flag true and switch to inline;
-  // the widget's `request-display-mode` is gated by the flag). So a
-  // non-inline mode means the user has re-opted into fullscreen / PIP
-  // via the host's display-mode picker, and the widget should be free
-  // to keep its preferred mode again.
+  // mode moves off "inline". Under `user-initiated-only` — the policy
+  // the flag actually gates — that transition can only come from the
+  // user, since close-button paths set the flag true and switch to
+  // inline while the widget's `request-display-mode` is declined. So a
+  // non-inline mode means the user re-opted into fullscreen / PIP via
+  // the host's display-mode picker, and the widget should be free to
+  // keep its preferred mode again. Under `accept` a widget-driven
+  // transition also clears it, which is harmless: the handler doesn't
+  // consult the flag under that policy.
   useEffect(() => {
     if (effectiveDisplayMode !== "inline") {
       userPreferInlineRef.current = false;
@@ -1433,17 +1436,25 @@ export function MCPAppsRendererSurface({
   const isReadyRef = useRef(false);
   const lastInlineHeightRef = useRef<string>("400px");
   // Sticky flag set when the user explicitly returned to inline (X
-  // click in fullscreen / PIP). While set, widget-driven
-  // `ui/request-display-mode` requests for non-inline modes are
-  // declined. Cleared whenever the user explicitly picks a non-inline
-  // mode again (display-mode picker). Without this, widgets that
-  // re-request their preferred mode on every `host-context-changed`
-  // can trap the user in a mode they just dismissed.
+  // click in fullscreen / PIP). Cleared whenever the user explicitly
+  // picks a non-inline mode again (display-mode picker).
+  //
+  // Gates widget-driven `ui/request-display-mode` under the
+  // `"user-initiated-only"` policy ONLY — there, a widget that
+  // re-requests its preferred mode on every `host-context-changed`
+  // would otherwise trap the user in a mode they just dismissed. Under
+  // `"accept"` the host honors widget requests and this flag is not
+  // consulted, so closing PIP / fullscreen never mutes the widget's
+  // later requests. See the handler in `onRequestDisplayMode`.
   //
   // Seeded from the `widgetDisplayModeRequests` host policy so the
   // `"user-initiated-only"` mode kicks in from the first mount: a widget
   // that requests fullscreen on init is treated the same as one
   // re-requesting it after the user dismissed once.
+  //
+  // Also gates the app-tools auto-promote below, which is host-initiated
+  // UX rather than a widget request: a user who dismissed fullscreen
+  // shouldn't be yanked back into it by the host under any policy.
   const userPreferInlineRef = useRef(
     earlyEffectiveMcpAppsCapabilities.widgetDisplayModeRequests ===
       "user-initiated-only"
@@ -3175,10 +3186,24 @@ export function MCPAppsRendererSurface({
               });
               return { mode: granted };
             }
-            // Sticky inline-preference override: if the user explicitly
-            // returned to inline (or the policy seeded the flag at mount),
-            // decline widget non-inline requests by returning inline.
-            if (requestedMode !== "inline" && userPreferInlineRef.current) {
+            // Sticky inline-preference override — `user-initiated-only` ONLY.
+            // Under that policy a user dismissal (or the mount seed) pins the
+            // widget to inline until the user re-opens a non-inline mode from
+            // the host picker, so a view can't re-grab fullscreen on every
+            // `host-context-changed`.
+            //
+            // `accept` deliberately skips this gate: that policy means the
+            // host honors widget-initiated requests, and the flag is also set
+            // by the host's own close chrome. Applying it here let a single X
+            // click mute `ui/request-display-mode` for the rest of the
+            // widget's life — an app's own display-mode buttons went dead
+            // after the user closed PIP or fullscreen once, with no way back
+            // except the host picker.
+            if (
+              requestedMode !== "inline" &&
+              policy === "user-initiated-only" &&
+              userPreferInlineRef.current
+            ) {
               logWidgetDebug("ui-to-host", "ui/request-display-mode", {
                 requested: requestedMode,
                 granted: "inline",
@@ -3199,10 +3224,26 @@ export function MCPAppsRendererSurface({
               isMobile && requestedMode === "pip"
                 ? "fullscreen"
                 : requestedMode;
-            const actualMode = resolvers.clampDisplayModeToAvailableModes(
-              mobileAdjustedMode,
-              hostAvailableModes
-            );
+            // A request for a mode the host doesn't advertise is REFUSED,
+            // not silently rewritten. `clampDisplayModeToAvailableModes`
+            // falls back to `availableDisplayModes[0]` — "inline" in every
+            // preset — which turned an unavailable-mode request into a
+            // forced mode CHANGE: a widget sitting in PIP that asked for
+            // fullscreen (e.g. because its declared
+            // `appCapabilities.availableDisplayModes` omits fullscreen, so
+            // the advertised host ∩ app set does too) got dropped to inline
+            // instead of staying where it was. Hold the current mode, the
+            // same shape the `decline` policy branch above uses.
+            if (!hostAvailableModes.includes(mobileAdjustedMode)) {
+              const granted = effectiveDisplayModeRef.current;
+              logWidgetDebug("ui-to-host", "ui/request-display-mode", {
+                requested: requestedMode,
+                granted,
+                reason: "mode-unavailable",
+              });
+              return { mode: granted };
+            }
+            const actualMode = mobileAdjustedMode;
 
             setDisplayModeRef.current(actualMode);
 
