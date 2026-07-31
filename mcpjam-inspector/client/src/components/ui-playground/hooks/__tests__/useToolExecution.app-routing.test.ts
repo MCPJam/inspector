@@ -38,10 +38,8 @@ vi.mock("@/lib/apis/mcp-resources-api", () => ({
 const mockApplyToolCallStepUp = vi.fn();
 const mockResetToolCallStepUp = vi.fn();
 vi.mock("@/state/oauth-orchestrator", () => ({
-  applyToolCallStepUp: (...args: unknown[]) =>
-    mockApplyToolCallStepUp(...args),
-  resetToolCallStepUp: (...args: unknown[]) =>
-    mockResetToolCallStepUp(...args),
+  applyToolCallStepUp: (...args: unknown[]) => mockApplyToolCallStepUp(...args),
+  resetToolCallStepUp: (...args: unknown[]) => mockResetToolCallStepUp(...args),
 }));
 
 // --- Helpers ----------------------------------------------------------------
@@ -493,7 +491,7 @@ describe("useToolExecution step-up (SEP-2350)", () => {
 
     const { result } = renderHook(
       () => useToolExecution(makeHookOptions({ selectedTool: "get_weather" })),
-      { wrapper: withServer(server) },
+      { wrapper: withServer(server) }
     );
 
     await act(async () => {
@@ -501,10 +499,19 @@ describe("useToolExecution step-up (SEP-2350)", () => {
     });
 
     expect(mockApplyToolCallStepUp).toHaveBeenCalledTimes(1);
-    expect(mockApplyToolCallStepUp).toHaveBeenCalledWith(server, {
-      requiredScope: "read write admin",
-      resourceMetadataUrl: "https://rs.example/.well-known",
-    });
+    expect(mockApplyToolCallStepUp).toHaveBeenCalledWith(
+      server,
+      {
+        requiredScope: "read write admin",
+        resourceMetadataUrl: "https://rs.example/.well-known",
+      },
+      {
+        operation: {
+          method: "tools/call",
+          operation: "get_weather",
+        },
+      }
+    );
     expect(mockResetToolCallStepUp).not.toHaveBeenCalled();
   });
 
@@ -516,14 +523,17 @@ describe("useToolExecution step-up (SEP-2350)", () => {
 
     const { result } = renderHook(
       () => useToolExecution(makeHookOptions({ selectedTool: "get_weather" })),
-      { wrapper: withServer(server) },
+      { wrapper: withServer(server) }
     );
 
     await act(async () => {
       await result.current.executeTool({ parameters: {} });
     });
 
-    expect(mockResetToolCallStepUp).toHaveBeenCalledWith(server);
+    expect(mockResetToolCallStepUp).toHaveBeenCalledWith(server, {
+      method: "tools/call",
+      operation: "get_weather",
+    });
     expect(mockApplyToolCallStepUp).not.toHaveBeenCalled();
   });
 
@@ -532,7 +542,7 @@ describe("useToolExecution step-up (SEP-2350)", () => {
 
     const { result } = renderHook(
       () => useToolExecution(makeHookOptions({ selectedTool: "get_weather" })),
-      { wrapper: withServer(server) },
+      { wrapper: withServer(server) }
     );
 
     await act(async () => {
@@ -555,7 +565,7 @@ describe("useToolExecution step-up (SEP-2350)", () => {
 
     const { result } = renderHook(
       () => useToolExecution(makeHookOptions({ selectedTool: "get_weather" })),
-      { wrapper: withServer(server) },
+      { wrapper: withServer(server) }
     );
 
     await act(async () => {
@@ -563,10 +573,19 @@ describe("useToolExecution step-up (SEP-2350)", () => {
     });
 
     expect(mockApplyToolCallStepUp).toHaveBeenCalledTimes(1);
-    expect(mockApplyToolCallStepUp).toHaveBeenCalledWith(server, {
-      requiredScope: undefined,
-      resourceMetadataUrl: "https://rs.example/.well-known",
-    });
+    expect(mockApplyToolCallStepUp).toHaveBeenCalledWith(
+      server,
+      {
+        requiredScope: undefined,
+        resourceMetadataUrl: "https://rs.example/.well-known",
+      },
+      {
+        operation: {
+          method: "tools/call",
+          operation: "get_weather",
+        },
+      }
+    );
   });
 
   it("does not drive step-up for an errorDescription-only challenge (nothing to re-authorize with)", async () => {
@@ -581,7 +600,7 @@ describe("useToolExecution step-up (SEP-2350)", () => {
 
     const { result } = renderHook(
       () => useToolExecution(makeHookOptions({ selectedTool: "get_weather" })),
-      { wrapper: withServer(server) },
+      { wrapper: withServer(server) }
     );
 
     await act(async () => {
