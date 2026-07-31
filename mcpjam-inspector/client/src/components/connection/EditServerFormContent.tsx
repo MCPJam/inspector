@@ -1,5 +1,5 @@
 import { Input } from "@mcpjam/design-system/input";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   Select,
   SelectContent,
@@ -75,7 +75,7 @@ export function EditServerFormContent({
   // values, and rows built from them must never be saved back over the
   // secrets they stand for.
   const [storedEnvKeys, setStoredEnvKeys] = useState<string[]>([]);
-  const [storedHeaderKeys, setStoredHeaderKeys] = useState<string[]>([]);
+  const [storedHeaderNames, setStoredHeaderNames] = useState<string[]>([]);
 
   const loadStoredKeys = useCallback(async () => {
     if (!projectId || !hostedServerId) return;
@@ -85,16 +85,34 @@ export function EditServerFormContent({
         serverId: hostedServerId,
       });
       setStoredEnvKeys(envKeys);
-      // Authorization belongs to the bearer field, not the custom-header rows —
-      // same split `revealStoredHeaders` makes when the values arrive.
-      setStoredHeaderKeys(
-        headerKeys.filter((key) => key.trim().toLowerCase() !== "authorization")
-      );
+      setStoredHeaderNames(headerKeys);
     } catch {
       // Leaves the rows unnamed: the section falls back to the single masked
       // field, which doubles as the retry for the values themselves.
     }
   }, [hostedServerId, projectId]);
+
+  // A stored Authorization header only stops being a header row when the
+  // reveal would route it into the bearer field, and `revealStoredHeaders`
+  // does that for a bearer server whose stored Authorization actually carries
+  // a `Bearer ` token — which is exactly what `hasStoredBearerToken` flags.
+  // An OAuth/none server can hold an Authorization header of its own (Basic
+  // auth, say); dropping that from the names would hide a row that reappears
+  // the moment the values land. Derived rather than filtered at fetch time, so
+  // changing the auth type re-answers the question without another request.
+  const authorizationBecomesBearerToken =
+    formState.authType === "bearer" && formState.hasStoredBearerToken;
+  const storedHeaderKeys = useMemo(
+    () =>
+      storedHeaderNames.filter(
+        (key) =>
+          !(
+            authorizationBecomesBearerToken &&
+            key.trim().toLowerCase() === "authorization"
+          )
+      ),
+    [storedHeaderNames, authorizationBecomesBearerToken]
+  );
 
   const revealSecrets = useCallback(
     // "bearer" reuses the headers reveal — fetchServerSecrets returns the full

@@ -104,8 +104,18 @@ serverSecretsWeb.post("/reveal-secrets", async (c) => {
  * cannot say *which* variables are set without asking. Asking for the values to
  * learn their names would put every secret in the browser for a question that
  * never needed them — so the reveal response is unwrapped here and only the key
- * names travel on. Values leave this process only through `/reveal-secrets`,
- * which the user reaches by clicking a row's eye.
+ * names travel on. Values reach the browser only through `/reveal-secrets`,
+ * which the user gets to by clicking a row's eye.
+ *
+ * Be clear about what that does and doesn't buy. This still calls the reveal
+ * endpoint, so Convex decrypts the whole set to answer a question about names —
+ * the saving is that the plaintext dies in this process instead of crossing to
+ * the client. Expanding a disclosure therefore still *reaches* the reveal path,
+ * which matters if it is audit-logged: an expand would look like a read.
+ *
+ * The fix for that is upstream and not in this repo: have the server record
+ * carry `envKeys` / `headerKeys` next to `hasEnv`, on a payload already being
+ * sent, and this route can go away entirely along with the request it costs.
  */
 serverSecretsWeb.post("/secret-keys", async (c) => {
   try {
