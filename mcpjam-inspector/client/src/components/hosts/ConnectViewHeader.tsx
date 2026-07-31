@@ -1,8 +1,16 @@
 import type { ReactNode } from "react";
 import { ViewModeSelector } from "@/components/shared/view-mode-selector";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
+import { HOSTED_MODE } from "@/lib/config";
+import { track } from "@/lib/analytics";
 
-export type ConnectViewValue = "servers" | "host" | "compare" | "computer";
+export type ConnectViewValue =
+  | "servers"
+  | "host"
+  | "compare"
+  | "computer"
+  | "skills";
 
 interface ConnectViewHeaderProps {
   value: ConnectViewValue;
@@ -27,6 +35,22 @@ export function ConnectViewHeader({
   // The Computer tab only appears for users the `computers-enabled` flag is
   // rolled out to (also keeps it hidden pre-launch).
   const computersEnabled = useComputersEnabled();
+  // Skills is gated by `skills-enabled` in HOSTED mode only — local-mode
+  // filesystem skills never read the flag (see `useSkillsEnabled`), so the tab
+  // stays visible in the local app / Electron exactly as it was as a sidebar
+  // item. Hook is called unconditionally; only its use is mode-dependent.
+  const skillsEnabled = useSkillsEnabled();
+  const showSkillsTab = !HOSTED_MODE || skillsEnabled;
+
+  const handleChange = (next: ConnectViewValue) => {
+    // Connect tab switching had no tracking of its own; Skills moving here
+    // from the sidebar would otherwise drop the `sidebar_nav_clicked` signal
+    // for skills entries. One wrapper covers every route that renders this
+    // header.
+    track("connect_view_selected", { from: value, to: next });
+    onChange(next);
+  };
+
   return (
     <div
       className="@container relative shrink-0 border-b border-border/40 px-4 py-2.5 md:px-8"
@@ -42,7 +66,7 @@ export function ConnectViewHeader({
           <ViewModeSelector
             value={value}
             ariaLabel="Connect view"
-            onChange={onChange}
+            onChange={handleChange}
             options={[
               { value: "servers", label: "Servers" },
               {
@@ -54,6 +78,12 @@ export function ConnectViewHeader({
               // (see HostSectionTabs) rather than a peer primary tab.
               ...(computersEnabled
                 ? ([{ value: "computer", label: "Computer" }] as const)
+                : []),
+              // Skills is execution-context config like the tabs above it, so
+              // it lives here rather than in the sidebar. Hidden in hosted mode
+              // until `skills-enabled` is rolled out; always shown locally.
+              ...(showSkillsTab
+                ? ([{ value: "skills", label: "Skills" }] as const)
                 : []),
             ]}
           />
