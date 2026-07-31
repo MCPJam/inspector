@@ -27,6 +27,10 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import { StepListEditor } from "./step-list-editor";
 import {
+  EvalAttachmentsEditor,
+  type EvalAttachment,
+} from "./eval-attachments-editor";
+import {
   CasePreviewPane,
   type CasePreviewTab,
 } from "./preview/case-preview-pane";
@@ -3036,6 +3040,20 @@ export function TestTemplateEditor({
                       />
                     ) : null}
                   </div>
+
+                  {!isDraft && currentTestCase._id ? (
+                    <div className="pt-1">
+                      <EvalAttachmentsEditor
+                        suiteId={suiteId}
+                        testCaseId={currentTestCase._id}
+                        value={
+                          (currentTestCase.attachments as
+                            | EvalAttachment[]
+                            | undefined) ?? []
+                        }
+                      />
+                    </div>
+                  ) : null}
 
                   {currentTestCase.lastMessageRun ? (
                     <div className="flex items-center justify-end">
