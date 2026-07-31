@@ -48,6 +48,27 @@ function breakdown(overrides: Partial<UsageBreakdown> = {}): UsageBreakdown {
   };
 }
 
+/**
+ * The `<td>` under a named column, located via the header row.
+ *
+ * Numeric cells are asserted through this rather than with a bare
+ * `getByText("4")` scoped to the row: a bare text query passes or fails on
+ * whether that string happens to appear in some *other* cell, which is a
+ * property of the fixture rather than of the column under test. Deriving the
+ * index from the headers also means adding or reordering a column cannot make
+ * an assertion silently start checking its neighbour.
+ */
+function cellForColumn(row: HTMLElement, columnName: string): HTMLElement {
+  const headers = screen
+    .getAllByRole("columnheader")
+    .map((header) => header.textContent?.trim());
+  const index = headers.indexOf(columnName);
+  expect(index, `no column named '${columnName}'`).toBeGreaterThanOrEqual(0);
+  // The first column is the row header (the goal label), not a <td>, so the
+  // Nth columnheader maps to the (N-1)th cell.
+  return within(row).getAllByRole("cell")[index - 1];
+}
+
 describe("ChatboxGoalOutcomeGrid", () => {
   it("renders the target reading: goal, volume, unresolved rate, route count", () => {
     render(
@@ -335,9 +356,10 @@ describe("ChatboxGoalOutcomeGrid", () => {
       />
     );
     const otherRow = screen.getByRole("row", { name: /Other \(2 goals\)/ });
-    expect(within(otherRow).queryByText("2")).not.toBeInTheDocument();
-    // Routes and Spread both read as unknown for the folded row.
-    expect(within(otherRow).getAllByText("—").length).toBeGreaterThanOrEqual(2);
+    // Two folded goals each with 1 route: the naive sum is 2, the correct union
+    // is 1, and we claim neither — the fold cannot know which paths overlap.
+    expect(cellForColumn(otherRow, "Routes")).toHaveTextContent(/^—$/);
+    expect(cellForColumn(otherRow, "Spread")).toHaveTextContent(/^—$/);
   });
 
   it("explains an empty grid on a run that predates the split", () => {

@@ -5,7 +5,11 @@ import {
   useGoalOutcomeDrilldown,
   type SessionOutcome,
 } from "@/hooks/useUsageInsights";
-import { chipKey, type UsageFilterState } from "@/hooks/chatbox-usage-filters";
+import {
+  chipKey,
+  outcomeChipValue,
+  type UsageFilterState,
+} from "@/hooks/chatbox-usage-filters";
 
 /**
  * Sessions behind one goal × outcome cell.
@@ -61,7 +65,7 @@ function requestKeyOf(
   return [
     chatboxId,
     cell.clusterId,
-    cell.outcome ?? "__unlabeled__",
+    outcomeChipValue(cell.outcome),
     filter.preset,
     chips,
   ].join("|");

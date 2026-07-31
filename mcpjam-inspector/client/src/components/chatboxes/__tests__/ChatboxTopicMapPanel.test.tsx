@@ -17,12 +17,60 @@ const { mockUseChatboxTopicMap } = vi.hoisted(() => ({
   mockUseChatboxTopicMap: vi.fn(),
 }));
 
+/**
+ * Minimal 2D-context stub that records every `globalAlpha` assignment.
+ *
+ * Dimming is a canvas concern — `drawNode` expresses it as
+ * `ctx.globalAlpha = dimmed ? 0.16 : 1` — so it is invisible to the DOM unless
+ * the mock actually runs the draw callback. Without this, a test can only assert
+ * that nodes render at all, which stays green even if filtering is deleted.
+ */
+function makeRecordingCtx() {
+  const alphas: number[] = [];
+  const noop = () => {};
+  const ctx = {
+    save: noop,
+    restore: noop,
+    beginPath: noop,
+    closePath: noop,
+    arc: noop,
+    arcTo: noop,
+    moveTo: noop,
+    lineTo: noop,
+    fill: noop,
+    stroke: noop,
+    fillRect: noop,
+    fillText: noop,
+    measureText: () => ({ width: 10 }),
+    createRadialGradient: () => ({ addColorStop: noop }),
+    globalCompositeOperation: "",
+    shadowColor: "",
+    shadowBlur: 0,
+    fillStyle: "",
+    strokeStyle: "",
+    lineWidth: 0,
+    font: "",
+    set globalAlpha(value: number) {
+      alphas.push(value);
+    },
+    get globalAlpha() {
+      return alphas[alphas.length - 1] ?? 1;
+    },
+  };
+  return { ctx, alphas };
+}
+
 vi.mock("react-force-graph-2d", async () => {
   const React = await import("react");
   return {
     default: React.forwardRef(function MockForceGraph2D(
       props: {
         graphData?: { nodes?: Array<{ id: string }> };
+        nodeCanvasObject?: (
+          node: unknown,
+          ctx: unknown,
+          globalScale: number
+        ) => void;
         onNodeClick?: (node: { id: string }) => void;
         onBackgroundClick?: () => void;
       },
@@ -40,20 +88,40 @@ vi.mock("react-force-graph-2d", async () => {
           >
             Graph background
           </button>
-          {(props.graphData?.nodes ?? []).map((node) => (
-            <button
-              key={node.id}
-              type="button"
-              onClick={() => props.onNodeClick?.(node)}
-            >
-              Graph node {node.id}
-            </button>
-          ))}
+          {(props.graphData?.nodes ?? []).map((node) => {
+            // Run the real draw callback against a recording context so each
+            // node's dimmed state becomes assertable from the DOM. The first
+            // globalAlpha write is the dim decision.
+            const { ctx, alphas } = makeRecordingCtx();
+            try {
+              props.nodeCanvasObject?.(node, ctx, 1);
+            } catch {
+              // A draw failure must not silently mask the other assertions.
+            }
+            return (
+              <button
+                key={node.id}
+                type="button"
+                data-node-alpha={String(alphas[0] ?? 1)}
+                onClick={() => props.onNodeClick?.(node)}
+              >
+                Graph node {node.id}
+              </button>
+            );
+          })}
         </div>
       );
     }),
   };
 });
+
+/** True when the mock recorded this node as drawn dimmed. */
+function isNodeDimmed(sessionId: string): boolean {
+  const node = screen.getByRole("button", {
+    name: new RegExp(`graph node ${sessionId}`, "i"),
+  });
+  return Number(node.getAttribute("data-node-alpha")) < 1;
+}
 
 vi.mock("@/hooks/useChatboxTopicMap", () => ({
   useChatboxTopicMap: (...args: unknown[]) => mockUseChatboxTopicMap(...args),
@@ -690,35 +758,54 @@ describe("ChatboxTopicMapPanel color-by mode", () => {
 });
 
 describe("ChatboxTopicMapPanel outcome narrowing", () => {
-  it("dims nodes outside the selected outcome, not just outside the goal", () => {
-    // Before this, clicking an outcome cell highlighted the goal and left every
-    // outcome inside it lit — the map disagreed with the grid about what was
-    // selected. Nodes now carry an outcome, so the map can honor the chip.
-    mockUseChatboxTopicMap.mockReturnValue(outcomeAwareHookValue());
-    const { container } = render(
+  function renderWithFilter(filter: UsageFilterState) {
+    return render(
       <ChatboxTopicMapPanel
         chatboxId="chatbox-1"
-        filter={selectCell(EMPTY_USAGE_FILTER, {
-          clusterId: "cluster-a",
-          outcome: "unresolved",
-        })}
+        filter={filter}
         onToggleChip={vi.fn()}
         onClearChip={vi.fn()}
         onRebuild={vi.fn()}
       />
     );
-    // session-a is cluster-a/completed, so the unresolved chip excludes it.
-    // Both nodes still render; dimming is a canvas concern, so assert via the
-    // exported colour helper that the two are distinguishable at all.
-    expect(container).toBeTruthy();
-    expect(
-      colorForNode({ clusterId: "cluster-a", outcome: "completed" }, "outcome")
-    ).not.toBe(
-      colorForNode({ clusterId: "cluster-a", outcome: "unresolved" }, "outcome")
+  }
+
+  it("dims nodes outside the selected outcome, not just outside the goal", () => {
+    // session-a is cluster-a/completed; session-b is cluster-b/unresolved.
+    // Selecting cluster-a/unresolved must leave NOTHING lit in cluster-a —
+    // previously the goal chip lit every outcome inside it.
+    mockUseChatboxTopicMap.mockReturnValue(outcomeAwareHookValue());
+    renderWithFilter(
+      selectCell(EMPTY_USAGE_FILTER, {
+        clusterId: "cluster-a",
+        outcome: "unresolved",
+      })
     );
+    expect(isNodeDimmed("session-a")).toBe(true);
+    expect(isNodeDimmed("session-b")).toBe(true);
   });
 
-  it("treats the unlabeled sentinel as selecting nodes with no outcome", () => {
+  it("leaves the matching node lit", () => {
+    mockUseChatboxTopicMap.mockReturnValue(outcomeAwareHookValue());
+    renderWithFilter(
+      selectCell(EMPTY_USAGE_FILTER, {
+        clusterId: "cluster-a",
+        outcome: "completed",
+      })
+    );
+    expect(isNodeDimmed("session-a")).toBe(false);
+    // Different goal AND different outcome.
+    expect(isNodeDimmed("session-b")).toBe(true);
+  });
+
+  it("dims nothing when no cell is selected", () => {
+    mockUseChatboxTopicMap.mockReturnValue(outcomeAwareHookValue());
+    renderWithFilter(EMPTY_USAGE_FILTER);
+    expect(isNodeDimmed("session-a")).toBe(false);
+    expect(isNodeDimmed("session-b")).toBe(false);
+  });
+
+  it("selects nodes with no outcome for the unlabeled sentinel", () => {
     const base = outcomeAwareHookValue();
     mockUseChatboxTopicMap.mockReturnValue({
       ...base,
@@ -726,26 +813,38 @@ describe("ChatboxTopicMapPanel outcome narrowing", () => {
         ...base.snapshot,
         nodes: [
           base.snapshot.nodes[0],
-          // A node with no outcome at all.
-          (({ outcome: _o, ...rest }) => rest)(base.snapshot.nodes[1]),
+          // session-b carries no outcome at all.
+          (({ outcome: _outcome, ...rest }) => rest)(base.snapshot.nodes[1]),
         ],
       },
     });
-    render(
-      <ChatboxTopicMapPanel
-        chatboxId="chatbox-1"
-        filter={selectCell(EMPTY_USAGE_FILTER, {
-          clusterId: "cluster-b",
-          outcome: null,
-        })}
-        onToggleChip={vi.fn()}
-        onClearChip={vi.fn()}
-        onRebuild={vi.fn()}
-      />
+    renderWithFilter(
+      selectCell(EMPTY_USAGE_FILTER, {
+        clusterId: "cluster-b",
+        outcome: null,
+      })
     );
-    // The unlabeled node is the one the sentinel selects; it still renders.
-    expect(
-      screen.getByRole("button", { name: /graph node session-b/i })
-    ).toBeInTheDocument();
+    // The unanalyzed node in the selected goal is the one that stays lit.
+    expect(isNodeDimmed("session-b")).toBe(false);
+    expect(isNodeDimmed("session-a")).toBe(true);
+  });
+
+  it("does not dim the whole map on a pre-bump snapshot", () => {
+    // A v1 snapshot has no outcome on any node, so a concrete outcome chip
+    // would match nothing and blank the canvas — which reads as a broken map
+    // rather than as stale data. The snapshot cannot honor the constraint, so
+    // it is exempt from it; the cluster chip still narrows.
+    mockUseChatboxTopicMap.mockReturnValue(
+      createDefaultChatboxTopicMapHookValue()
+    );
+    renderWithFilter(
+      selectCell(EMPTY_USAGE_FILTER, {
+        clusterId: "cluster-a",
+        outcome: "unresolved",
+      })
+    );
+    expect(isNodeDimmed("session-a")).toBe(false);
+    // The cluster constraint is still applied.
+    expect(isNodeDimmed("session-b")).toBe(true);
   });
 });

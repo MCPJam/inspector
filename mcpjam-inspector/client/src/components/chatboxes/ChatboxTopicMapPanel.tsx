@@ -630,6 +630,12 @@ export function ChatboxTopicMapPanel({
   // the goal and silently leaving every outcome in it lit. Empty set = no
   // outcome narrowing. (Other dimensions — device, language — are not
   // represented on nodes at all, so the map cannot honor those.)
+  // Whether this stored snapshot can answer "color by outcome" at all. A
+  // pre-bump blob carries no outcome on its nodes, so offering the mode would
+  // paint every node neutral and look like a bug rather than like stale data.
+  const supportsOutcomeColor =
+    (snapshot?.version ?? 0) >= OUTCOME_SNAPSHOT_VERSION;
+
   const activeOutcomes = useMemo(
     () =>
       new Set(
@@ -757,7 +763,13 @@ export function ChatboxTopicMapPanel({
       // OR within the dimension, matching the chip semantics everywhere else.
       // The sentinel selects nodes with NO outcome; a concrete value never
       // matches a node missing one.
+      //
+      // A pre-bump snapshot is exempt entirely: none of its nodes carry an
+      // outcome, so a concrete outcome chip would match nothing and dim the
+      // whole map — a blank canvas reads as a broken map, not as stale data.
+      // The snapshot cannot honor the constraint, so it does not pretend to.
       const outcomeMatch =
+        !supportsOutcomeColor ||
         activeOutcomes.size === 0 ||
         (node.outcome
           ? activeOutcomes.has(node.outcome)
@@ -768,7 +780,13 @@ export function ChatboxTopicMapPanel({
         focusedNeighborhood == null || focusedNeighborhood.has(node.id);
       return !(clusterMatch && outcomeMatch && searchMatch && focusMatch);
     },
-    [activeClusterIds, activeOutcomes, focusedNeighborhood, searchMatchIds],
+    [
+      activeClusterIds,
+      activeOutcomes,
+      focusedNeighborhood,
+      searchMatchIds,
+      supportsOutcomeColor,
+    ],
   );
 
   const communities = useMemo(
@@ -778,12 +796,6 @@ export function ChatboxTopicMapPanel({
       ),
     [snapshot?.clusters],
   );
-
-  // Whether this stored snapshot can answer "color by outcome" at all. A
-  // pre-bump blob carries no outcome on its nodes, so offering the mode would
-  // paint every node neutral and look like a bug rather than like stale data.
-  const supportsOutcomeColor =
-    (snapshot?.version ?? 0) >= OUTCOME_SNAPSHOT_VERSION;
 
   // A snapshot can be new enough to have the field yet still have nothing in
   // it — every session unanalyzed. Distinguish that so the empty legend is
