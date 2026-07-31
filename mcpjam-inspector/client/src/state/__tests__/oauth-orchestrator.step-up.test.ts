@@ -31,9 +31,14 @@ import {
 import { persistRequestedScopes } from "@/lib/oauth/requested-scopes";
 
 const ISSUER = "https://as.example";
+const SERVER_OPERATION = {
+  resourceUrl: "https://mcp.asana.com/sse",
+  method: "tools/call" as const,
+  operation: "server:asana",
+};
 
 const createServer = (
-  overrides: Partial<ServerWithName> = {},
+  overrides: Partial<ServerWithName> = {}
 ): ServerWithName =>
   ({
     name: "asana",
@@ -45,7 +50,7 @@ const createServer = (
     useOAuth: true,
     oauthTokens: { access_token: "access-token", refresh_token: "refresh" },
     ...overrides,
-  }) as ServerWithName;
+  } as ServerWithName);
 
 describe("resolveInsufficientScopeStepUp (SEP-2350)", () => {
   beforeEach(() => {
@@ -68,6 +73,7 @@ describe("resolveInsufficientScopeStepUp (SEP-2350)", () => {
       challengedScopes: ["admin"],
       authMode: "interactive",
       maxRetries: 1,
+      operationKey: SERVER_OPERATION,
     });
 
     expect(decision.action).toBe("reauthorize");
@@ -99,7 +105,7 @@ describe("resolveInsufficientScopeStepUp (SEP-2350)", () => {
       expect.objectContaining({
         serverName: "asana",
         scopes: ["read", "write", "admin"],
-      }),
+      })
     );
   });
 
@@ -220,9 +226,11 @@ describe("resolveInsufficientScopeStepUp (SEP-2350)", () => {
     });
     // The counter is written to sessionStorage (survives a redirect within the
     // session) and NOT localStorage (would block a fresh browser session).
-    expect(sessionStorage.getItem("mcp-stepup-attempts-asana")).toContain(
-      ISSUER,
+    const ledgerKey = Object.keys(sessionStorage).find((key) =>
+      key.startsWith("mcp-stepup-ledger-v2-")
     );
+    expect(ledgerKey).toBeDefined();
+    expect(sessionStorage.getItem(ledgerKey!)).toContain(ISSUER);
     expect(localStorage.getItem("mcp-stepup-attempts-asana")).toBeNull();
   });
 
@@ -240,7 +248,7 @@ describe("resolveInsufficientScopeStepUp (SEP-2350)", () => {
     expect(outcome.reauthorization).toEqual({ kind: "redirect" });
     // The fresh flow requests the widened union.
     expect(initiateOAuthMock).toHaveBeenCalledWith(
-      expect.objectContaining({ scopes: ["read", "write", "admin"] }),
+      expect.objectContaining({ scopes: ["read", "write", "admin"] })
     );
   });
 
@@ -261,8 +269,69 @@ describe("resolveInsufficientScopeStepUp (SEP-2350)", () => {
       challengedScopes: ["admin"],
       authMode: "interactive",
       maxRetries: 1,
+      operationKey: SERVER_OPERATION,
     });
     expect(retry.action).toBe("throw");
+  });
+
+  it("keeps the redirect bound for a repeated challenge on the same protected resource", async () => {
+    readStoredOAuthConfigMock.mockReturnValue({ scopes: ["read"] });
+    initiateOAuthMock.mockResolvedValue({ success: true });
+    const server = createServer();
+
+    const first = await applyToolCallStepUp(server, {
+      requiredScope: "admin",
+    });
+    const repeated = await applyToolCallStepUp(server, {
+      requiredScope: "admin",
+    });
+
+    expect(first.reauthorization).toEqual({ kind: "redirect" });
+    expect(repeated.action).toBe("throw");
+    expect(initiateOAuthMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts a fresh bound when the server entry points at a different protected resource", async () => {
+    readStoredOAuthConfigMock.mockReturnValue({ scopes: ["read"] });
+    initiateOAuthMock.mockResolvedValue({ success: true });
+
+    const first = await applyToolCallStepUp(createServer(), {
+      requiredScope: "admin",
+    });
+    const second = await applyToolCallStepUp(
+      createServer({
+        config: { type: "http", url: "https://mcp.asana.com/mcp-2026" },
+      }),
+      { requiredScope: "admin" }
+    );
+
+    expect(first.reauthorization).toEqual({ kind: "redirect" });
+    expect(second.action).toBe("reauthorize");
+    expect(second.attempt).toBe(0);
+    expect(second.reauthorization).toEqual({ kind: "redirect" });
+    expect(initiateOAuthMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("recovers a legacy boolean pending marker that cannot identify its protected resource", async () => {
+    readStoredOAuthConfigMock.mockReturnValue({ scopes: ["read"] });
+    initiateOAuthMock.mockResolvedValue({ success: true });
+    sessionStorage.setItem(
+      "mcp-stepup-attempts-asana",
+      JSON.stringify({ [ISSUER]: 1 })
+    );
+    sessionStorage.setItem(
+      "mcp-stepup-pending-asana",
+      JSON.stringify({ [ISSUER]: true })
+    );
+
+    const outcome = await applyToolCallStepUp(createServer(), {
+      requiredScope: "admin",
+    });
+
+    expect(outcome.action).toBe("reauthorize");
+    expect(outcome.attempt).toBe(0);
+    expect(outcome.reauthorization).toEqual({ kind: "redirect" });
+    expect(initiateOAuthMock).toHaveBeenCalledTimes(1);
   });
 
   it("recovers a stale pre-marker attempt left by an older broken run", async () => {
@@ -277,6 +346,7 @@ describe("resolveInsufficientScopeStepUp (SEP-2350)", () => {
       challengedScopes: ["admin"],
       authMode: "interactive",
       maxRetries: 1,
+      operationKey: SERVER_OPERATION,
     });
 
     const outcome = await applyToolCallStepUp(createServer(), {
@@ -316,6 +386,7 @@ describe("resolveInsufficientScopeStepUp (SEP-2350)", () => {
       challengedScopes: ["admin"],
       authMode: "interactive",
       maxRetries: 1,
+      operationKey: SERVER_OPERATION,
     });
     expect(retry.action).toBe("throw");
   });
@@ -349,7 +420,7 @@ describe("resolveInsufficientScopeStepUp (SEP-2350)", () => {
     const outcome = await applyToolCallStepUp(
       createServer(),
       { requiredScope: "admin" },
-      { authMode: "m2m" },
+      { authMode: "m2m" }
     );
     expect(outcome.action).toBe("throw");
     expect(outcome.reauthorization).toBeUndefined();
@@ -381,12 +452,12 @@ describe("resolveInsufficientScopeStepUp (SEP-2350)", () => {
     };
     resolveInsufficientScopeStepUp({ ...base, issuer: ISSUER });
     expect(
-      resolveInsufficientScopeStepUp({ ...base, issuer: ISSUER }).action,
+      resolveInsufficientScopeStepUp({ ...base, issuer: ISSUER }).action
     ).toBe("throw");
     // A different issuer has its own bucket → first attempt is reauthorize.
     expect(
       resolveInsufficientScopeStepUp({ ...base, issuer: "https://other.as" })
-        .action,
+        .action
     ).toBe("reauthorize");
   });
 
@@ -406,7 +477,7 @@ describe("resolveInsufficientScopeStepUp (SEP-2350)", () => {
     expect(outcome.action).toBe("reauthorize");
     // The challenge's metadata URL is threaded down to PRM discovery.
     expect(initiateOAuthMock).toHaveBeenCalledWith(
-      expect.objectContaining({ resourceMetadataUrl }),
+      expect.objectContaining({ resourceMetadataUrl })
     );
   });
 
@@ -427,7 +498,7 @@ describe("resolveInsufficientScopeStepUp (SEP-2350)", () => {
 
     expect(outcome.action).toBe("reauthorize");
     expect(initiateOAuthMock).toHaveBeenCalledWith(
-      expect.objectContaining({ resourceMetadataUrl }),
+      expect.objectContaining({ resourceMetadataUrl })
     );
   });
 
@@ -445,7 +516,7 @@ describe("resolveInsufficientScopeStepUp (SEP-2350)", () => {
 
     expect(outcome.action).toBe("reauthorize");
     expect(initiateOAuthMock).toHaveBeenCalledWith(
-      expect.objectContaining({ resourceMetadataUrl: undefined }),
+      expect.objectContaining({ resourceMetadataUrl: undefined })
     );
   });
 
@@ -467,7 +538,7 @@ describe("resolveInsufficientScopeStepUp (SEP-2350)", () => {
       expect.objectContaining({
         scopes: ["read", "write"],
         resourceMetadataUrl,
-      }),
+      })
     );
   });
 });

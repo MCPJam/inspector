@@ -1,14 +1,12 @@
 import type { UIMessageChunk } from "ai";
 import type { RpcLogger } from "@mcpjam/sdk";
-import {
-  isRpcMessageLogEvent,
-  rpcLogBus,
-} from "../../services/rpc-log-bus.js";
+import { isRpcMessageLogEvent, rpcLogBus } from "../../services/rpc-log-bus.js";
 import { logger } from "../../utils/logger.js";
 import {
   isRpcLogSinkConfigured,
   readCrossInstanceRpcLogs,
 } from "../../utils/harness/harness-rpc-log-sink.js";
+import { consumeCrossInstanceHarnessScopeStepUpMessage } from "../../utils/harness/harness-scope-step-up.js";
 import type {
   HostedRpcLogEvent,
   HostedRpcLogPluginOrigin,
@@ -271,6 +269,9 @@ export function startCrossInstanceRpcLogPoll(
       for (const e of page.entries) {
         if (seen.has(e.id)) continue;
         seen.add(e.id);
+        if (consumeCrossInstanceHarnessScopeStepUpMessage(e.message)) {
+          continue;
+        }
         collector.rpcLogger({
           direction: e.direction,
           message: e.message,

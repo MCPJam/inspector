@@ -3133,6 +3133,323 @@ describe("MCPAppsRenderer widgetDisplayModeRequests policy", () => {
   });
 });
 
+// SEP-1865 regression: the sticky inline preference set by the host's own
+// close chrome (the X on PIP / fullscreen) must gate widget-initiated
+// `ui/request-display-mode` under `user-initiated-only` ONLY. Applying it
+// under `accept` meant one X click permanently muted the widget's display
+// mode requests — an app's own PIP / fullscreen / inline buttons went dead
+// for the rest of that widget's life, recoverable only via the host picker.
+//
+// These drive the renderer in CONTROLLED mode (the shape Thread uses), so
+// the assertions cover the real transition — the mode returned to the
+// widget, the mode published in HostContext, and the parent's
+// fullscreen/PIP ownership ids — not just the handler's return value.
+describe("MCPAppsRenderer display-mode requests after a user close", () => {
+  beforeEach(() => {
+    mockHostContextStoreState.draftHostContext = {};
+    Object.assign(mockPreferencesState, {
+      themeMode: "light",
+      hostStyle: "claude",
+    });
+    Object.assign(mockPlaygroundStoreState, {
+      isPlaygroundActive: true,
+      mcpAppsCspMode: "permissive",
+      globals: { locale: "en-US", timeZone: "UTC" },
+      displayMode: "inline",
+      capabilities: { hover: true, touch: false },
+      safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
+      // Desktop keeps PIP a distinct mode; the handler coerces PIP to
+      // fullscreen on mobile / tablet surfaces.
+      deviceType: "desktop",
+    });
+    mockBridge.connect.mockClear().mockResolvedValue(undefined);
+    mockBridge.close.mockClear().mockResolvedValue(undefined);
+    mockBridge.teardownResource.mockClear().mockResolvedValue({});
+    // The app declares every mode, so the host ∩ app intersection can't be
+    // what refuses a request in these cases.
+    mockBridge.getAppCapabilities.mockReturnValue({
+      availableDisplayModes: ["inline", "fullscreen", "pip"],
+    });
+    mockBridge.oninitialized = null;
+    mockBridge.onrequestdisplaymode = null;
+    mockBridge.setHostContext.mockClear();
+    sandboxProxyBehaviorRef.current.autoReady = true;
+    vi.mocked(authFetch).mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          html: "<html><body>live-widget</body></html>",
+          csp: {
+            connectDomains: [],
+            resourceDomains: [],
+            frameDomains: [],
+            baseUriDomains: [],
+          },
+          permissions: {},
+          permissive: true,
+          mimeTypeValid: true,
+          prefersBorder: true,
+        }),
+      status: 200,
+      headers: new Headers(),
+    } as Response);
+  });
+
+  type DisplayModeName = "inline" | "fullscreen" | "pip";
+  type ControlledState = {
+    displayMode: DisplayModeName;
+    pipWidgetId: string | null;
+    fullscreenWidgetId: string | null;
+  };
+
+  const controlledState: { current: ControlledState | null } = {
+    current: null,
+  };
+
+  /**
+   * Mirrors Thread's controlled display-mode wiring: the parent owns the
+   * mode plus the fullscreen / PIP ownership ids, and clears an id only
+   * when the widget that claimed it asks to exit.
+   */
+  function ControlledHost() {
+    const [displayMode, setDisplayMode] =
+      React.useState<DisplayModeName>("inline");
+    const [pipWidgetId, setPipWidgetId] = React.useState<string | null>(null);
+    const [fullscreenWidgetId, setFullscreenWidgetId] = React.useState<
+      string | null
+    >(null);
+    controlledState.current = { displayMode, pipWidgetId, fullscreenWidgetId };
+    const clearIfOwned = (id: string) => (current: string | null) =>
+      current !== null && current === id ? null : current;
+    // Stands in for ToolPart's display-mode picker (the user-initiated
+    // path), which isn't mounted alongside a bare renderer. Same call
+    // order as `ToolPart.handleDisplayModeChange`.
+    const pickMode = (mode: DisplayModeName) => {
+      if (displayMode === "fullscreen" && mode !== "fullscreen") {
+        setFullscreenWidgetId(clearIfOwned(fullscreenWidgetId ?? "call-1"));
+      } else if (displayMode === "pip" && mode !== "pip") {
+        setPipWidgetId(clearIfOwned(pipWidgetId ?? "call-1"));
+      }
+      if (mode === "fullscreen") setFullscreenWidgetId("call-1");
+      else if (mode === "pip") setPipWidgetId("call-1");
+      setDisplayMode(mode);
+    };
+    return (
+      <>
+        <button type="button" onClick={() => pickMode("pip")}>
+          host-picker-pip
+        </button>
+        <button type="button" onClick={() => pickMode("fullscreen")}>
+          host-picker-fullscreen
+        </button>
+        <HostedRenderer
+          {...baseProps}
+          displayMode={displayMode}
+          onDisplayModeChange={(mode: DisplayModeName) => setDisplayMode(mode)}
+          pipWidgetId={pipWidgetId}
+          fullscreenWidgetId={fullscreenWidgetId}
+          onRequestPip={(id: string) => setPipWidgetId(id)}
+          onExitPip={(id: string) => setPipWidgetId(clearIfOwned(id))}
+          onRequestFullscreen={(id: string) => setFullscreenWidgetId(id)}
+          onExitFullscreen={(id: string) =>
+            setFullscreenWidgetId(clearIfOwned(id))
+          }
+        />
+      </>
+    );
+  }
+
+  const profileWith = (
+    policy: "accept" | "user-initiated-only" | "decline"
+  ): HostConfigMcpProfileV1 => ({
+    profileVersion: 1,
+    apps: { mcpAppsOverrides: { widgetDisplayModeRequests: policy } },
+  });
+
+  async function mountControlled(
+    policy: "accept" | "user-initiated-only" | "decline"
+  ) {
+    render(
+      <ActiveMcpProfileProvider value={profileWith(policy)}>
+        <ChatboxHostStyleProvider value="claude">
+          <ControlledHost />
+        </ChatboxHostStyleProvider>
+      </ActiveMcpProfileProvider>
+    );
+    await vi.waitFor(() => {
+      expect(mockBridge.onrequestdisplaymode).not.toBeNull();
+    });
+    // Deliver the app's declared display modes.
+    await act(async () => {
+      mockBridge.oninitialized?.();
+    });
+
+    /** Drive a widget-initiated `ui/request-display-mode`. */
+    const requestMode = async (mode: DisplayModeName) => {
+      let granted: { mode: string } | undefined;
+      await act(async () => {
+        granted = await (
+          mockBridge.onrequestdisplaymode as unknown as (args: {
+            mode: DisplayModeName;
+          }) => Promise<{ mode: string }>
+        )({ mode });
+      });
+      return granted?.mode;
+    };
+
+    /** Click the host's own close chrome — the sticky-flag trigger. */
+    const clickHostClose = async (label: string) => {
+      await act(async () => {
+        fireEvent.click(screen.getByLabelText(label));
+      });
+    };
+
+    const publishedDisplayMode = () =>
+      (
+        mockBridge.setHostContext.mock.calls.at(-1)?.[0] as
+          | { displayMode?: string }
+          | undefined
+      )?.displayMode;
+
+    return { requestMode, clickHostClose, publishedDisplayMode };
+  }
+
+  it("accept: honors a fullscreen request after the user closes PIP", async () => {
+    const { requestMode, clickHostClose, publishedDisplayMode } =
+      await mountControlled("accept");
+
+    expect(await requestMode("pip")).toBe("pip");
+    expect(controlledState.current?.pipWidgetId).toBe("call-1");
+
+    await clickHostClose("Close PiP mode");
+    expect(controlledState.current?.displayMode).toBe("inline");
+
+    // The regression: this returned "inline" and stranded the widget.
+    expect(await requestMode("fullscreen")).toBe("fullscreen");
+    expect(controlledState.current?.displayMode).toBe("fullscreen");
+    expect(controlledState.current?.fullscreenWidgetId).toBe("call-1");
+    expect(controlledState.current?.pipWidgetId).toBeNull();
+    expect(publishedDisplayMode()).toBe("fullscreen");
+  });
+
+  it("accept: honors a PIP request after the user closes fullscreen", async () => {
+    const { requestMode, clickHostClose, publishedDisplayMode } =
+      await mountControlled("accept");
+
+    expect(await requestMode("fullscreen")).toBe("fullscreen");
+    expect(controlledState.current?.fullscreenWidgetId).toBe("call-1");
+
+    await clickHostClose("Exit fullscreen");
+    expect(controlledState.current?.displayMode).toBe("inline");
+
+    expect(await requestMode("pip")).toBe("pip");
+    expect(controlledState.current?.displayMode).toBe("pip");
+    expect(controlledState.current?.pipWidgetId).toBe("call-1");
+    expect(controlledState.current?.fullscreenWidgetId).toBeNull();
+    expect(publishedDisplayMode()).toBe("pip");
+  });
+
+  it("accept: keeps honoring requests across repeated user closes", async () => {
+    const { requestMode, clickHostClose } = await mountControlled("accept");
+
+    expect(await requestMode("pip")).toBe("pip");
+    await clickHostClose("Close PiP mode");
+    expect(await requestMode("fullscreen")).toBe("fullscreen");
+    await clickHostClose("Exit fullscreen");
+    // A second dismissal must not mute the widget either.
+    expect(await requestMode("pip")).toBe("pip");
+  });
+
+  it("accept: honors a widget round-trip through its own inline request", async () => {
+    const { requestMode } = await mountControlled("accept");
+
+    expect(await requestMode("pip")).toBe("pip");
+    expect(await requestMode("inline")).toBe("inline");
+    expect(await requestMode("fullscreen")).toBe("fullscreen");
+    expect(controlledState.current?.fullscreenWidgetId).toBe("call-1");
+  });
+
+  it("user-initiated-only: keeps declining after the user closes PIP", async () => {
+    const { requestMode, clickHostClose, publishedDisplayMode } =
+      await mountControlled("user-initiated-only");
+
+    // The mount seed seeds the sticky flag, so the widget can't open PIP
+    // itself — the user does it from the host picker, which clears it.
+    expect(await requestMode("pip")).toBe("inline");
+
+    await act(async () => {
+      fireEvent.click(screen.getByText("host-picker-pip"));
+    });
+    await vi.waitFor(() => {
+      expect(controlledState.current?.displayMode).toBe("pip");
+    });
+
+    await clickHostClose("Close PiP mode");
+
+    // Sticky protection is this policy's whole point: still declined.
+    expect(await requestMode("fullscreen")).toBe("inline");
+    expect(controlledState.current?.displayMode).toBe("inline");
+    expect(controlledState.current?.fullscreenWidgetId).toBeNull();
+    expect(publishedDisplayMode()).toBe("inline");
+  });
+
+  it("decline: refuses widget requests with or without a prior close", async () => {
+    const { requestMode, clickHostClose } = await mountControlled("decline");
+
+    expect(await requestMode("pip")).toBe("inline");
+    expect(await requestMode("fullscreen")).toBe("inline");
+
+    // Reach a non-inline mode via the host picker, then dismiss it — the
+    // policy still refuses, and reports the mode the widget is actually in.
+    await act(async () => {
+      fireEvent.click(screen.getByText("host-picker-fullscreen"));
+    });
+    await vi.waitFor(() => {
+      expect(controlledState.current?.displayMode).toBe("fullscreen");
+    });
+    expect(await requestMode("pip")).toBe("fullscreen");
+
+    await clickHostClose("Exit fullscreen");
+    expect(await requestMode("fullscreen")).toBe("inline");
+  });
+
+  // A request for a mode outside the advertised host ∩ app set is refused.
+  // It used to be rewritten to `availableDisplayModes[0]` ("inline" in every
+  // preset), so an unavailable-mode request became a forced mode change that
+  // evicted the widget from the mode it already held.
+  it("holds the current mode when the app asks for an unadvertised mode", async () => {
+    // The app declares no fullscreen, so the advertised intersection can't
+    // include it — but the widget asks for fullscreen anyway.
+    mockBridge.getAppCapabilities.mockReturnValue({
+      availableDisplayModes: ["inline", "pip"],
+    });
+    const { requestMode, publishedDisplayMode } = await mountControlled(
+      "accept"
+    );
+
+    expect(await requestMode("pip")).toBe("pip");
+    expect(controlledState.current?.pipWidgetId).toBe("call-1");
+
+    // Refused — and the widget stays in PIP rather than dropping to inline.
+    expect(await requestMode("fullscreen")).toBe("pip");
+    expect(controlledState.current?.displayMode).toBe("pip");
+    expect(controlledState.current?.pipWidgetId).toBe("call-1");
+    expect(controlledState.current?.fullscreenWidgetId).toBeNull();
+    expect(publishedDisplayMode()).toBe("pip");
+  });
+
+  it("reports inline when an unadvertised mode is requested from inline", async () => {
+    mockBridge.getAppCapabilities.mockReturnValue({
+      availableDisplayModes: ["inline", "pip"],
+    });
+    const { requestMode } = await mountControlled("accept");
+
+    expect(await requestMode("fullscreen")).toBe("inline");
+    expect(controlledState.current?.displayMode).toBe("inline");
+    expect(controlledState.current?.fullscreenWidgetId).toBeNull();
+  });
+});
+
 describe("MCPAppsRenderer requestTeardown policy", () => {
   beforeEach(() => {
     vi.clearAllMocks();

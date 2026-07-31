@@ -90,6 +90,15 @@ import type { HostedMrtrBridge } from "./mrtr-hosted-bridge.js";
 import type { HostedTaskCreatedBridge } from "./hosted-task-created-bridge.js";
 import type { MrtrEngineResume } from "./mrtr-hosted-chat.js";
 import {
+  buildHostedScopeStepUpCancellation,
+  buildHostedScopeStepUpResume,
+  createHostedScopeStepUpContinuation,
+} from "./hosted-scope-step-up-continuation.js";
+import type {
+  ScopeStepUpCancelRequest,
+  ScopeStepUpResumeRequest,
+} from "@/shared/scope-step-up";
+import {
   bridgeHarnessRpcLogsToCollector,
   startCrossInstanceRpcLogPoll,
 } from "./../routes/web/hosted-rpc-logs.js";
@@ -336,6 +345,16 @@ export interface WebChatTurnRuntime {
    * call and splices the driven result. Emulated MCPJam engine only.
    */
   mrtrResume?: MrtrEngineResume;
+  /**
+   * Durable SEP-2350 chat suspension context. The bearer never reaches the
+   * browser; it is used only for the opaque Convex continuation store.
+   */
+  scopeStepUp?: {
+    bearer: string;
+    authPrincipal: string;
+    resumeRequest?: ScopeStepUpResumeRequest;
+    cancelRequest?: ScopeStepUpCancelRequest;
+  };
   /** Hono context (needed for getClientIp fallback / future hooks). */
   c: Context;
 }
@@ -508,8 +527,62 @@ export async function streamWebChatTurn(
   // fallback would emit an id-only event that never matches the name-keyed
   // client store and step-up would silently no-op.
   const scopeStepUpServerNamesById =
-    buildServerNamesById(persist.selectedServerIds, persist.selectedServerNames) ??
-    {};
+    buildServerNamesById(
+      persist.selectedServerIds,
+      persist.selectedServerNames
+    ) ?? {};
+  let suspendedScopeStepUpToolCallId: string | undefined;
+  const scopeStepUpResume =
+    runtime.scopeStepUp?.resumeRequest && persist.chatSessionId
+      ? buildHostedScopeStepUpResume({
+          request: runtime.scopeStepUp.resumeRequest,
+          bearer: runtime.scopeStepUp.bearer,
+          authPrincipal: runtime.scopeStepUp.authPrincipal,
+          projectId: persist.projectId,
+          chatSessionId: persist.chatSessionId,
+          manager,
+          messages: modelMessages,
+          tools: preparedTools,
+          modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
+          abortSignal: runtime.abortSignal,
+        })
+      : runtime.scopeStepUp?.cancelRequest
+      ? buildHostedScopeStepUpCancellation({
+          request: runtime.scopeStepUp.cancelRequest,
+          bearer: runtime.scopeStepUp.bearer,
+          messages: modelMessages,
+          tools: preparedTools,
+        })
+      : undefined;
+  const createScopeStepUpContinuation =
+    runtime.scopeStepUp && persist.chatSessionId
+      ? async ({
+          info,
+          toolName,
+          toolInput,
+        }: {
+          info: Parameters<
+            typeof createHostedScopeStepUpContinuation
+          >[0]["info"];
+          toolName: string;
+          toolInput: unknown;
+        }) => {
+          const event = await createHostedScopeStepUpContinuation({
+            bearer: runtime.scopeStepUp!.bearer,
+            authPrincipal: runtime.scopeStepUp!.authPrincipal,
+            projectId: persist.projectId,
+            chatSessionId: persist.chatSessionId!,
+            manager,
+            serverName: scopeStepUpServerNamesById[info.serverId],
+            info,
+            toolName,
+            toolInput,
+            abortSignal: runtime.abortSignal,
+          });
+          suspendedScopeStepUpToolCallId = event.toolCallId;
+          return event;
+        }
+      : undefined;
 
   /**
    * Observe in-process tool-call failures from every ToolSet-driven engine to
@@ -530,11 +603,9 @@ export async function streamWebChatTurn(
    * advertised, so it falls back to the raw stream writer when there is no
    * bridge (SEP-2350).
    *
-   * Harness MCP-server tools are deliberately outside this contract: the
-   * harness executes them out of process through `.mcp.json`, bypassing this
-   * ToolSet. Supporting their step-up challenges requires a correlated
-   * harness-proxy-to-chat side channel. Host-executed harness tools still pass
-   * through this set.
+   * Harness MCP-server tools execute out of process through `.mcp.json` and
+   * therefore use the correlated harness-proxy side channel instead. Host-
+   * executed harness tools still pass through this set.
    *
    * The shared wrapper rethrows always: this only observes. The engines' own
    * error handling still produces the tool result the model sees.
@@ -565,10 +636,20 @@ export async function streamWebChatTurn(
           emitInsufficientScopeChunk(
             scopeChallengeWriter,
             scopeStepUpServerNamesById[challenge.serverId],
-            challenge,
+            challenge
           );
         }
       },
+      ...(createScopeStepUpContinuation
+        ? {
+            createContinuation: ({ info, toolName, toolInput }) =>
+              createScopeStepUpContinuation({
+                info: { ...info, toolCallId: info.toolCallId! },
+                toolName,
+                toolInput,
+              }),
+          }
+        : {}),
     }
   );
 
@@ -762,6 +843,10 @@ export async function streamWebChatTurn(
           runtime.elicitationBridge?.attachStreamWriter(writer);
           runtime.taskCreatedBridge?.attachStreamWriter(writer);
         },
+        ...(scopeStepUpResume ? { scopeStepUpResume } : {}),
+        shouldPauseAfterStep: () =>
+          suspendedScopeStepUpToolCallId !== undefined,
+        suspendedToolCallId: () => suspendedScopeStepUpToolCallId,
         abortSignal: runtime.abortSignal,
       });
     }
@@ -799,6 +884,7 @@ export async function streamWebChatTurn(
         runtime.elicitationBridge?.attachStreamWriter(writer);
         runtime.taskCreatedBridge?.attachStreamWriter(writer);
       },
+      ...(scopeStepUpResume ? { scopeStepUpResume } : {}),
       abortSignal: runtime.abortSignal,
     });
   }
@@ -876,6 +962,12 @@ export async function streamWebChatTurn(
     // output-schema validation) before the first model call, splices the
     // driven result, and resumes the loop to a final assistant message.
     ...(runtime.mrtrResume ? { mrtrResume: runtime.mrtrResume } : {}),
+    ...(scopeStepUpResume ? { scopeStepUpResume } : {}),
+    ...(persist.harness && createScopeStepUpContinuation
+      ? {
+          createHarnessScopeStepUpContinuation: createScopeStepUpContinuation,
+        }
+      : {}),
     // Forwarded SEPARATELY (also merged into `tools` for the emulated engine)
     // so the harness path can hand MCPJam's server-executed built-ins
     // (web_search) to HarnessAgent without the MCP-server tools, which the
