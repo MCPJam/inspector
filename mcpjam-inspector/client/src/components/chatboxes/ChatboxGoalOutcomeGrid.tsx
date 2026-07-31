@@ -55,16 +55,22 @@ const OUTCOME_LABELS: Record<SessionOutcome, string> = {
 function cellTint(outcome: SessionOutcome, share: number): string {
   if (share <= 0) return "";
   const bucket = share >= 0.6 ? "strong" : share >= 0.3 ? "medium" : "weak";
+  // Tinted surfaces take `text-<color>`, not `text-<color>-foreground`: the
+  // foreground tokens pair with SOLID fills (success/destructive foreground is
+  // white in both themes — see design-system tokens.css), so on a /25 tint over
+  // a light page they render white-on-near-white. `warning` is the deliberate
+  // exception: its foreground token IS theme-aware (dark in light mode), while
+  // bare `text-warning` is a yellow that fails contrast on a light page.
   if (outcome === "completed") {
     return {
-      strong: "bg-success/25 text-success-foreground",
+      strong: "bg-success/25 text-success",
       medium: "bg-success/15",
       weak: "bg-success/8",
     }[bucket];
   }
   if (outcome === "unresolved" || outcome === "errored") {
     return {
-      strong: "bg-destructive/25 text-destructive-foreground",
+      strong: "bg-destructive/25 text-destructive",
       medium: "bg-destructive/15",
       weak: "bg-destructive/8",
     }[bucket];

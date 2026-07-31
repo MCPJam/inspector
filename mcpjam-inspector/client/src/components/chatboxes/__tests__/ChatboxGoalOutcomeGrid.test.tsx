@@ -257,6 +257,40 @@ describe("ChatboxGoalOutcomeGrid", () => {
     ).toHaveAttribute("aria-pressed", "false");
   });
 
+  it("colors strong tints with the tint text token, not the solid-fill foreground", () => {
+    // `--success-foreground`/`--destructive-foreground` are white in BOTH
+    // themes (they pair with solid fills), so on a /25 tint over a light page
+    // they render white-on-near-white. tokens.css's own guidance for tinted
+    // surfaces is `text-destructive`/`text-success`.
+    render(
+      <ChatboxGoalOutcomeGrid
+        breakdown={breakdown({
+          goalFacets: [
+            facet({
+              total: 10,
+              outcomes: {
+                completed: 0,
+                partial: 0,
+                unresolved: 7, // share 0.7 → the "strong" tint bucket
+                errored: 0,
+                unclear: 3,
+              },
+            }),
+          ],
+        })}
+        filter={EMPTY_USAGE_FILTER}
+        onSelectCell={vi.fn()}
+      />
+    );
+    const classes = screen
+      .getByRole("button", { name: /Unresolved: 7 sessions/ })
+      .className.split(/\s+/);
+    expect(classes).toContain("text-destructive");
+    // Substring-safe: "text-destructive" is a prefix of the wrong class, so
+    // assert on the exact class list rather than the class string.
+    expect(classes).not.toContain("text-destructive-foreground");
+  });
+
   it("disables empty cells so there is nothing to drill into", () => {
     render(
       <ChatboxGoalOutcomeGrid
